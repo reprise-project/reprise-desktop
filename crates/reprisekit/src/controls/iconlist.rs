@@ -9,6 +9,7 @@ use crate::look::Paint;
 use crate::look::widgets::{draw_field_frame, draw_hscrollbar};
 use crate::pointer::Lit;
 use crate::raster::{Canvas, Rect};
+use crate::theme::TextUnits;
 use accesskit::{NodeId, Role};
 
 pub const CELL_W: i32 = 36;
@@ -32,19 +33,38 @@ pub struct Layout {
     pub cells: Rect,
     pub bar: Rect,
     pub cols: usize,
+    /// A cell's size and its icon's offset in it.
+    pub cell: (i32, i32),
+    pub icon: (i32, i32),
 }
 
 pub fn layout(r: Rect, cm: &ControlMetrics) -> Layout {
+    layout_grown(r, cm, TextUnits::ONE)
+}
+
+/// [`layout`] with the cells and the icons' offsets grown by `u`, for a list whose host hands
+/// it icons at 32 px grown by `u`.
+pub fn layout_grown(r: Rect, cm: &ControlMetrics, u: TextUnits) -> Layout {
+    let cell = (u.len(CELL_W), u.len(CELL_H));
     let inner = r.inset(2);
-    let bar_y = inner.y + ROWS as i32 * CELL_H + BAR_GAP;
+    let bar_y = inner.y + ROWS as i32 * cell.1 + BAR_GAP;
     let bar = Rect::new(inner.x, bar_y, inner.width, cm.scroll);
     let cells = Rect::new(inner.x, inner.y, inner.width, bar_y - inner.y);
     Layout {
         frame: r,
         cells,
         bar,
-        cols: (inner.width / CELL_W).max(1) as usize,
+        cols: (inner.width / cell.0).max(1) as usize,
+        cell,
+        icon: (u.len(ICON_DX), u.len(ICON_DY)),
     }
+}
+
+/// The height a list `h` px tall at 100% takes with its cells grown by `u`: its frame and bar
+/// keep theirs.
+pub fn grown_height(h: i32, u: TextUnits) -> i32 {
+    let rows = ROWS as i32 * CELL_H;
+    h - rows + u.len(rows)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,11 +153,12 @@ impl IconList {
 
     pub fn cell_rect(&self, lay: &Layout, k: usize) -> Option<Rect> {
         let col = (k / ROWS).checked_sub(self.left)?;
+        let (w, h) = lay.cell;
         let r = Rect::new(
-            lay.cells.x + col as i32 * CELL_W,
-            lay.cells.y + (k % ROWS) as i32 * CELL_H,
-            CELL_W,
-            CELL_H,
+            lay.cells.x + col as i32 * w,
+            lay.cells.y + (k % ROWS) as i32 * h,
+            w,
+            h,
         );
         (r.x < lay.cells.right()).then_some(r)
     }
@@ -161,8 +182,8 @@ impl IconList {
         if !lay.cells.contains(x, y) {
             return None;
         }
-        let col = ((x - lay.cells.x) / CELL_W) as usize + self.left;
-        let row = ((y - lay.cells.y) / CELL_H) as usize;
+        let col = ((x - lay.cells.x) / lay.cell.0) as usize + self.left;
+        let row = ((y - lay.cells.y) / lay.cell.1) as usize;
         let k = col * ROWS + row;
         (row < ROWS && k < self.names.len()).then_some(Hit::Cell(k))
     }
@@ -211,7 +232,7 @@ pub fn draw(c: &mut Canvas, p: &Paint, list: &IconList, lay: &Layout, cue: bool,
             c.fill_rect(r.intersect(&clip), cs.hilight);
         }
         if let Some(Some(icon)) = list.icons.get(k) {
-            c.blit_over_clipped(r.x + ICON_DX * s, r.y + ICON_DY * s, icon, clip);
+            c.blit_over_clipped(r.x + lay.icon.0 * s, r.y + lay.icon.1 * s, icon, clip);
         }
         if picked && cue {
             crate::classic::widgets::draw_focus_ring(c, r.intersect(&clip), s, cs.hilight_text);

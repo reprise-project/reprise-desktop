@@ -241,7 +241,7 @@ pub struct Item {
     pub indent: Indent,
     /// What a reader calls a control no drawn label names ([`Item::named`]).
     pub name: Option<&'static str>,
-    /// A framed picture that grows with the text, its frame kept ([`Item::grows`]).
+    /// A framed picture or an icon list that grows with the text ([`Item::grows`]).
     pub grows: bool,
 }
 
@@ -279,8 +279,9 @@ impl Item {
         }
     }
 
-    /// A picture whose size grows with the text, its frame kept: its host hands it a canvas
-    /// at the grown size. Other pictures keep their size.
+    /// A picture whose size grows with the text, its frame kept, or an icon list whose cells
+    /// grow: its host hands it canvases at the grown size. Other pictures and icon lists keep
+    /// their size.
     pub fn grows(self) -> Item {
         Item {
             grows: true,
@@ -2273,7 +2274,7 @@ impl Form {
                 let Some(i) = self.focus else {
                     return Event::None;
                 };
-                let id = self.items[i].id;
+                let (id, grows) = (self.items[i].id, self.items[i].grows);
                 let rect = self.at(&self.items[i]);
                 match (&mut self.items[i].control, other) {
                     (Control::Check { checked, mixed, .. }, Key::Space) => {
@@ -2300,7 +2301,11 @@ impl Form {
                             _ => iconlist::Step::End,
                         };
                         let moved = l.step(step);
-                        l.follow(&iconlist::layout(rect, &self.rendered.controls.get()));
+                        l.follow(&icon_list_layout(
+                            grows,
+                            rect,
+                            &self.rendered.controls.get(),
+                        ));
                         if moved {
                             Event::Changed(id)
                         } else {
@@ -2745,7 +2750,7 @@ impl Form {
                     }
                 }
                 Control::IconList(l) => {
-                    let lay = iconlist::layout(self.at(it), &cm_all);
+                    let lay = icon_list_layout(it.grows, self.at(it), &cm_all);
                     match l.hit(&lay, &cm_all, x, y) {
                         Some(h) => Part::IconList(h),
                         None if lay.frame.contains(x, y) => Part::Body,
@@ -2891,6 +2896,7 @@ impl Form {
         if self.items[i].focusable() {
             self.set_focus(Some(i));
         }
+        let grows = self.items[i].grows;
         match (&mut self.items[i].control, h.part) {
             (
                 Control::Button { enabled, .. }
@@ -2908,7 +2914,7 @@ impl Form {
                 }
             }
             (Control::IconList(l), Part::IconList(h)) => {
-                let lay = iconlist::layout(rect, &self.rendered.controls.get());
+                let lay = icon_list_layout(grows, rect, &self.rendered.controls.get());
                 let picked = matches!(h, iconlist::Hit::Cell(_));
                 if l.press(h, &lay) && picked {
                     Event::Changed(self.items[i].id)
@@ -3282,6 +3288,7 @@ impl Form {
         let i = h.item;
         let cm = self.rendered.controls.get();
         let rect = self.at(&self.items[i]);
+        let grows = self.items[i].grows;
         let focused = self.focus() == Some(i);
         let moved = match &mut self.items[i].control {
             Control::Combo(_) if !focused => false,
@@ -3307,7 +3314,7 @@ impl Form {
             }
             Control::IconList(l) => {
                 let notches = rows.signum() * (rows.abs() / WHEEL_ROWS).max(1);
-                l.scroll(notches as i64, &iconlist::layout(rect, &cm))
+                l.scroll(notches as i64, &icon_list_layout(grows, rect, &cm))
             }
             Control::Memo(memo) if memo.enabled => {
                 let mut view = memo.view.get();
@@ -3452,6 +3459,12 @@ fn unmasked_index(edit: &TextEdit, at: usize) -> usize {
 /// only move; a separator and a rule keep their thickness, and an icon list, whose
 /// rows of fixed icons fill its height, keeps its height. Indents keep their px: they
 /// step past a check box, which keeps its size.
+/// An icon list's layout in `r`, its cells grown with the text when its item [`Item::grows`].
+fn icon_list_layout(grows: bool, r: Rect, cm: &ControlMetrics) -> iconlist::Layout {
+    let u = if grows { cm.text } else { TextUnits::ONE };
+    iconlist::layout_grown(r, cm, u)
+}
+
 fn place(it: &Item, rect: Rect, cm: &ControlMetrics, u: TextUnits, origin: (i32, i32)) -> Rect {
     let r = match it.control {
         Control::Picture { frame, .. } if it.grows => {
@@ -3466,6 +3479,10 @@ fn place(it: &Item, rect: Rect, cm: &ControlMetrics, u: TextUnits, origin: (i32,
         | Control::Monitor(_)
         | Control::Spectrum
         | Control::Sample { .. } => u.at(rect),
+        Control::IconList(_) if it.grows => Rect {
+            height: iconlist::grown_height(rect.height, u),
+            ..u.rect(rect)
+        },
         Control::Separator | Control::IconList(_) => Rect {
             height: rect.height,
             ..u.rect(rect)
@@ -3952,7 +3969,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 hotkey::draw(c, text, p, h, field, focused, form.caret, ptr, px);
             }
             Control::IconList(l) => {
-                let lay = iconlist::layout(placed, &cm);
+                let lay = icon_list_layout(it.grows, placed, &cm);
                 iconlist::draw(c, p, l, &lay, cue, cm.thumb_min);
             }
             Control::Arrange(a) => {
@@ -4185,7 +4202,7 @@ impl Form {
                     (tree.push(up, key, n), None)
                 }
                 Control::IconList(l) => {
-                    let lay = iconlist::layout(r, &cm);
+                    let lay = icon_list_layout(it.grows, r, &cm);
                     let id = iconlist::access(l, &lay, tree, up, key);
                     (id, Some(id))
                 }
@@ -7927,6 +7944,42 @@ mod tests {
         draw(&mut Canvas::new(700, 300), &text, &p, &f, false, 22);
         assert_eq!(f.rect("across"), Some(Rect::new(20, 200, 600, 1)));
         assert_eq!(f.rect("down"), Some(Rect::new(40, 20, 2, 120)));
+    }
+
+    /// At 200% a growing icon list's cells double, 72x88, and its height takes them: the bar
+    /// sits as far above the frame's foot as at 100%.
+    #[test]
+    fn a_growing_icon_list_doubles_its_cells() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let icons = iconlist::IconList::new(vec!["a".into(); 8], vec![None; 8], Some(0));
+        let r = Rect::new(10, 20, 76, 199);
+        let f = Form::new(vec![
+            Item::new("icons", r, Control::IconList(Box::new(icons))).grows(),
+        ]);
+        let theme = Theme::default();
+        let u = TextUnits::new(22, 11);
+        let p = Paint {
+            text: u,
+            ..classic_paint(&theme.colors, 1)
+        };
+        draw(&mut Canvas::new(400, 500), &text, &p, &f, false, 22);
+        let grown = f.rect("icons").unwrap();
+        assert_eq!(grown, Rect::new(20, 40, 152, 199 + 4 * 44));
+        let cm = ControlMetrics::CLASSIC.grown(u);
+        let lay = icon_list_layout(true, grown, &cm);
+        assert_eq!((lay.cell, lay.icon, lay.cols), ((72, 88), (4, 12), 2));
+        let at_100 = iconlist::layout(r, &ControlMetrics::CLASSIC);
+        assert_eq!(
+            grown.bottom() - lay.bar.bottom(),
+            r.bottom() - at_100.bar.bottom()
+        );
+        let Control::IconList(l) = &f.items[0].control else {
+            unreachable!()
+        };
+        assert_eq!(
+            l.cell_rect(&lay, 5),
+            Some(Rect::new(22 + 72, 42 + 88, 72, 88))
+        );
     }
 
     #[test]

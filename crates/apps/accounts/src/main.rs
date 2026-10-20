@@ -209,13 +209,13 @@ impl AccountsApp {
             .collect()
     }
 
-    /// The text size changed: the list's pictures and the sheet's General picture are made
-    /// again at their grown sizes.
+    /// The text size changed: the list's pictures and the sheet's are made again at their
+    /// grown sizes.
     fn regrow(&mut self) {
-        self.face = None;
         self.users.pictures = self.row_pictures(&self.users.rows);
+        let face = self.face.take();
         if let Some(p) = &mut self.props {
-            p.regrow(self.forms.text);
+            p.regrow(self.forms.text, |u, px| sheet_face(u, px, face.as_ref()));
         }
     }
 
@@ -226,11 +226,8 @@ impl AccountsApp {
         let Some(u) = self.user(uid).cloned() else {
             return;
         };
-        let face = picture::of_user(&u.icon, u.you, props::PREVIEW_PX).or_else(|| {
-            self.face
-                .as_ref()
-                .map(|c| c.resample_box(props::PREVIEW_PX, props::PREVIEW_PX))
-        });
+        let px = self.forms.text.px(props::PREVIEW_PX);
+        let face = sheet_face(&u, px, self.face.as_ref());
         let last = self.last_admin(uid);
         self.props = Some(props::Props::new(u, face, last, self.forms.text));
     }
@@ -540,7 +537,11 @@ impl AccountsApp {
                         Reply::redraw()
                     }
                     Ok(Resolved::File(path)) => {
-                        match picture::load_file(&path, props::PREVIEW_PX) {
+                        let px = self
+                            .props
+                            .as_ref()
+                            .map_or(props::PREVIEW_PX, |p| p.preview_px());
+                        match picture::load_file(&path, px) {
                             Some(c) => {
                                 if let Some(p) = &mut self.props {
                                     p.browsed(path, c);
@@ -573,6 +574,11 @@ impl AccountsApp {
             _ => None,
         }
     }
+}
+
+/// `u`'s picture for the sheet at `px`, else the stock face `fallback` stands in for a missing one.
+fn sheet_face(u: &User, px: u32, fallback: Option<&Canvas>) -> Option<Canvas> {
+    picture::of_user(&u.icon, u.you, px).or_else(|| fallback.map(|c| c.resample_box(px, px)))
 }
 
 fn p_unapplied(p: &mut Option<props::Props>) {
