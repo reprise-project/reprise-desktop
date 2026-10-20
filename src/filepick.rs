@@ -24,6 +24,7 @@ use reprisekit::icontheme::{IconCache, ListingIcons};
 use reprisekit::selection::Mods;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::EditKey;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub const TOOLBAR: [&str; 4] = ["go-previous", "go-up", "folder-new", "view-list"];
@@ -506,6 +507,21 @@ impl FilePicker {
             shown = true;
         }
         shown
+    }
+
+    /// Lists the folder shown again when it is one of `due`; true when it is.
+    pub fn relist(&mut self, due: &BTreeSet<PathBuf>) -> bool {
+        let Some(id) = self.dlg.folder() else {
+            return false;
+        };
+        let Some(path) = (self.folders.path(id))
+            .filter(|p| due.contains(*p))
+            .map(Path::to_path_buf)
+        else {
+            return false;
+        };
+        self.listing = Some(self.request(Some(id), path, None));
+        true
     }
 
     pub fn current(&self) -> Option<&Path> {
@@ -1209,6 +1225,22 @@ mod tests {
         assert_eq!(names(&p), ["Pictures", "dunes"]);
         p.event(Event::NeedListing(here));
         assert_eq!(p.take_requests().len(), 1, "an answered read is read again");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_due_again_is_read_again_and_another_is_left() {
+        let dir = sandbox("due");
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        settle(&mut p);
+        assert!(!p.relist(&BTreeSet::from([dir.join("Pictures")])));
+        assert!(p.take_requests().is_empty(), "another folder is left alone");
+        assert!(p.relist(&BTreeSet::from([dir.clone()])));
+        let again = p.take_requests();
+        assert_eq!(again.len(), 1, "the folder shown is read again");
+        for r in again {
+            assert_eq!(p.reply(r.run(), &mut cache(), 1), Outcome::Redraw);
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

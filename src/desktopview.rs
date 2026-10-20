@@ -979,6 +979,26 @@ fn mounts_on_loop(state: &mut State) {
     }
 }
 
+/// Lists the desktop and each Browse dialog again when the folder it shows listed a link
+/// unfollowed whose target has since answered.
+pub fn relist_on_loop(state: &mut State) {
+    let (ping, source) = match smithay::reexports::calloop::ping::make_ping() {
+        Ok(p) => p,
+        Err(e) => return log::warn!("desktop icons: no relist ping: {e}"),
+    };
+    let relist = reprisefs::listing::Relist::new(move || ping.ping());
+    let added = state.handle.insert_source(source, move |_, _, state| {
+        let due = relist.take();
+        if (state.desktop.as_ref()).is_some_and(|v| due.contains(&v.dir)) {
+            state.settle_rescan();
+        }
+        state.relist_pickers(&due);
+    });
+    if let Err(e) = added {
+        log::warn!("desktop icons: {}", e.error);
+    }
+}
+
 impl State {
     /// The primary output: the one `[[outputs]] primary` names while in the layout,
     /// else the first with a non-empty layout box. Icons sit on it; balloons and the

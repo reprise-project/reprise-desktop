@@ -317,6 +317,8 @@ pub struct Explorer {
     /// The `--select` entry or a renamed item, and its folder, waiting on that folder's listing.
     selecting: Option<(Place, PathBuf)>,
     watch: Option<Watch>,
+    /// Lists the place again once a link it listed unfollowed answers.
+    relist: reprisefs::listing::Relist,
     pub hover: Option<Hover>,
     pub tip: Option<Tip>,
     pub folder_tip: Option<(PathBuf, Vec<String>)>,
@@ -486,6 +488,10 @@ impl Explorer {
                     log::warn!("no folder watch: {e}");
                     None
                 }
+            },
+            relist: {
+                let wake = ctx.wake.clone();
+                reprisefs::listing::Relist::new(move || wake.wake())
             },
             hover: None,
             tip: None,

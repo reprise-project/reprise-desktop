@@ -165,7 +165,10 @@ impl Explorer {
             let r = self.follow_gone(&from, ctx);
             return put.unwrap_or_default().and(r);
         }
-        if self.watch.as_mut().is_some_and(|w| w.take_changed()) {
+        let due = self.relist.take();
+        if self.watch.as_mut().is_some_and(|w| w.take_changed())
+            || (!due.is_empty() && self.place.path().is_some_and(|p| due.contains(&p)))
+        {
             let r = self.refresh(ctx);
             return put.unwrap_or_default().and(r);
         }
