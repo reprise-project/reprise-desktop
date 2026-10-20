@@ -171,6 +171,20 @@ fn read_dir_with(
     follow: fn(&Path) -> Target,
     wait: Duration,
 ) -> Vec<Item> {
+    entries_with(dir, globs, follow, wait)
+        .into_iter()
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// [`read_dir_with`]'s items, each with whether its target answered: false for a symlink listed
+/// unfollowed, whose type nobody knows yet.
+fn entries_with(
+    dir: &Path,
+    globs: &MimeDb,
+    follow: fn(&Path) -> Target,
+    wait: Duration,
+) -> Vec<(Item, bool)> {
     let entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)
         .map(|rd| rd.flatten().collect())
         .unwrap_or_default();
@@ -180,24 +194,22 @@ fn read_dir_with(
         .iter()
         .map(|e| (e.path(), e.file_type().is_ok_and(|t| t.is_symlink())))
         .partition(|(_, is_link)| *is_link);
-    let mut items: Vec<Item> = plain
+    let mut items: Vec<(Item, bool)> = plain
         .iter()
-        .map(|(p, _)| item_with(p, false, target_of(p), &listed, globs))
+        .map(|(p, _)| (item_with(p, false, target_of(p), &listed, globs), true))
         .collect();
     let mut links: Vec<PathBuf> = links.into_iter().map(|(p, _)| p).collect();
     links.sort();
     let targets = follow_links(links.clone(), follow, wait);
-    items.extend(
-        links
-            .iter()
-            .zip(targets)
-            .map(|(p, target)| item_with(p, true, target, &listed, globs)),
-    );
+    items.extend(links.iter().zip(targets).map(|(p, target)| {
+        let followed = target.followed;
+        (item_with(p, true, target, &listed, globs), followed)
+    }));
     // Sort on the collected `Item`s: re-statting in the comparator can
     // change answers mid-sort and panic.
     // Names differing only in case break on the exact name, not on
     // read_dir's order, which is the filesystem's hash order.
-    items.sort_by_cached_key(|i| (!i.is_folder(), i.name.to_lowercase(), i.name.clone()));
+    items.sort_by_cached_key(|(i, _)| (!i.is_folder(), i.name.to_lowercase(), i.name.clone()));
     items
 }
 
@@ -355,6 +367,7 @@ struct Target {
     meta: Option<std::fs::Metadata>,
     program: bool,
     shortcut: Option<crate::apps::Shortcut>,
+    followed: bool,
 }
 
 /// One stat follows a link for its folder-ness and what opens it. A mount root is described from
@@ -374,6 +387,7 @@ fn target_of(p: &Path) -> Target {
         meta,
         program,
         shortcut,
+        followed: true,
     }
 }
 
@@ -391,6 +405,7 @@ fn item_with(
         meta,
         program,
         shortcut,
+        followed: _,
     } = target;
     let is_dir = match &mount {
         Some(m) => m.is_dir,
@@ -498,14 +513,25 @@ pub struct Row {
 }
 
 /// `dir` as a file dialog lists it: [`read_dir`]'s order, hidden entries
-/// dropped, and only the entries `keep` accepts. The My Recent Documents
+/// dropped, and only the entries `keep` accepts, plus the links listed
+/// unfollowed, which may yet open as folders. The My Recent Documents
 /// place ([`places::RECENT`]) lists the recently used files instead.
 pub fn dialog_rows(dir: &Path, globs: &MimeDb, keep: impl FnMut(&Item) -> bool) -> Vec<Row> {
+    dialog_rows_with(dir, globs, keep, target_of, LINK_WAIT)
+}
+
+fn dialog_rows_with(
+    dir: &Path,
+    globs: &MimeDb,
+    keep: impl FnMut(&Item) -> bool,
+    follow: fn(&Path) -> Target,
+    wait: Duration,
+) -> Vec<Row> {
     if places::is_recent(dir) {
         let files = recent::RecentFiles::new().current(RECENT_LIMIT);
         return recent_rows(&files, globs, keep);
     }
-    rows(read_dir(dir, globs), keep)
+    rows(entries_with(dir, globs, follow, wait), keep)
 }
 
 const RECENT_LIMIT: usize = 50;
@@ -519,16 +545,20 @@ fn recent_rows(files: &[PathBuf], globs: &MimeDb, keep: impl FnMut(&Item) -> boo
         .iter()
         .map(|p| item_at(p, globs))
         .filter(|i| seen.insert(i.name.clone()))
-        .collect();
+        .map(|i| (i, true));
     rows(items, keep)
 }
 
-fn rows(items: Vec<Item>, mut keep: impl FnMut(&Item) -> bool) -> Vec<Row> {
+/// `entries` a dialog lists: those not hidden that `keep` accepts or whose target never answered.
+fn rows(
+    entries: impl IntoIterator<Item = (Item, bool)>,
+    mut keep: impl FnMut(&Item) -> bool,
+) -> Vec<Row> {
     let is_12h = locale::is_12h();
-    items
+    entries
         .into_iter()
-        .filter(|i| !i.hidden && keep(i))
-        .map(|item| Row {
+        .filter(|(i, followed)| !i.hidden && (!followed || keep(i)))
+        .map(|(item, _)| Row {
             modified: item
                 .modified
                 .map(|s| date_text(s, is_12h))
@@ -862,6 +892,32 @@ mod tests {
             "the folder is due once the target answers"
         );
         drop(relist);
+    }
+
+    #[test]
+    fn a_dialog_keeps_a_link_listed_unfollowed_that_its_filter_refuses() {
+        use std::os::unix::fs::FileTypeExt;
+        fn follow(p: &Path) -> Target {
+            if std::fs::metadata(p).is_ok_and(|m| m.file_type().is_fifo()) {
+                let _ = std::fs::File::open(p);
+            }
+            target_of(p)
+        }
+        let t = dead_and_live();
+        std::os::unix::fs::symlink("pipe", t.path().join("dead")).unwrap();
+        std::os::unix::fs::symlink("gone", t.path().join("broken")).unwrap();
+        std::fs::write(t.path().join("a.png"), "").unwrap();
+        std::fs::write(t.path().join("b.txt"), "").unwrap();
+        let rows = dialog_rows_with(
+            t.path(),
+            &MimeDb::empty(),
+            |i| i.is_dir || i.name.ends_with(".txt"),
+            follow,
+            Duration::from_millis(100),
+        );
+        let names: Vec<&str> = rows.iter().map(|r| r.item.name.as_str()).collect();
+        assert_eq!(names, ["folder", "b.txt", "dead"]);
+        unblock(&t.path().join("pipe"));
     }
 
     /// Follows that wait for the test: every follow is counted, and one of a link named `held*`

@@ -471,7 +471,9 @@ dialogs. [More in programs.md](programs.md#explorer).
   into such a mount lists after 2 s as a plain shortcut, in Explorer, the
   file dialogs and on the desktop; the folder's other links still list
   as theirs, and later listings show it at once until the mount answers.
-  When it answers, the folder lists again with the link followed.
+  A file dialog lists such a link whatever its type filter, since it may
+  open as a folder. When it answers, the folder lists again with the link
+  followed.
 - **Programs stuck on a dead mount** lose their windows once killed, without
   End Program (see [End Program](#windows)).
 
