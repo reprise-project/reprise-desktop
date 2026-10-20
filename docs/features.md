@@ -347,6 +347,9 @@ are.
 - **Input methods.** fcitx5 and ibus work in programs and in Reprise's own
   fields: Run, the launcher, the Start menu's search, a desktop rename and
   the dialogs. Spin boxes take digits only and leave the input method off.
+  With ibus, leave `GTK_IM_MODULE` and `QT_IM_MODULE` unset so programs
+  use Wayland's text input: set to `ibus`, they make ibus show its
+  candidate list as a window of its own, away from the caret.
 - **Drop text into fields.** Text dragged from any program lands in a
   text field of Reprise's programs and dialogs, Run included, where the
   drop caret shows, and a drag held at the field's edge scrolls it.
