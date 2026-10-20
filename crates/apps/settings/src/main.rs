@@ -1552,7 +1552,7 @@ impl SettingsApp {
             match ev {
                 Event::CloseRequest => shortcutdlg::Outcome::Cancel,
                 Event::Blink => {
-                    d.form.caret = ctx.caret_on;
+                    d.form.blink(ctx.caret_on);
                     return Reply::redraw();
                 }
                 ev => match form_input(&mut d.form, &ev, ctx) {
@@ -1880,7 +1880,7 @@ impl SettingsApp {
             match ev {
                 Event::CloseRequest => additem::Outcome::Cancel,
                 Event::Blink => {
-                    d.form.caret = ctx.caret_on;
+                    d.form.blink(ctx.caret_on);
                     return Reply::redraw();
                 }
                 ev => match form_input(&mut d.form, &ev, ctx) {
@@ -1924,7 +1924,7 @@ impl SettingsApp {
             match ev {
                 Event::CloseRequest => saverdlg::Outcome::Cancel,
                 Event::Blink => {
-                    d.form.caret = ctx.caret_on;
+                    d.form.blink(ctx.caret_on);
                     return Reply::redraw();
                 }
                 ev => match form_input(&mut d.form, &ev, ctx) {
@@ -2033,7 +2033,7 @@ impl SettingsApp {
             match ev {
                 Event::CloseRequest => renamedlg::Outcome::Cancel,
                 Event::Blink => {
-                    d.form.caret = ctx.caret_on;
+                    d.form.blink(ctx.caret_on);
                     return Reply::redraw();
                 }
                 ev => match form_input(&mut d.form, &ev, ctx) {
@@ -2212,7 +2212,6 @@ impl SettingsApp {
             };
             match ev {
                 Event::CloseRequest => layoutdlg::Outcome::Cancel,
-                Event::Blink => return Reply::none(),
                 ev => match form_input(&mut d.form, &ev, ctx) {
                     Some(ev) => d.event(ev),
                     None => return Reply::none(),
@@ -3119,7 +3118,7 @@ impl SettingsApp {
             }
             Event::CloseRequest => self.display_close(&mut ctx.heads),
             Event::Blink => {
-                self.sheet.open_mut().caret = ctx.caret_on;
+                self.sheet.open_mut().blink(ctx.caret_on);
                 Reply::redraw()
             }
             Event::Key(k) => {

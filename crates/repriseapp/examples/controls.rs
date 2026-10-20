@@ -117,7 +117,7 @@ impl App for Controls {
                 ..Default::default()
             },
             Event::Blink => {
-                self.form.caret = ctx.caret_on;
+                self.form.blink(ctx.caret_on);
                 Reply::redraw()
             }
             Event::Key(k) => {
