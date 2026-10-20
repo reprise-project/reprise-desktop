@@ -1178,6 +1178,7 @@ pub fn run(app: Box<dyn App>) {
     let icons = look.icons();
     let (ping, ping_source) = make_ping().expect("ping");
     let (a11y, a11y_source) = channel();
+    let (a11y_ready, a11y_ready_source) = channel::<()>();
     let (look_tx, look_source) = channel::<(String, String)>();
     let (portal_done, portal_source) = channel::<OnLoop>();
     let mut host = Host {
@@ -1248,6 +1249,7 @@ pub fn run(app: Box<dyn App>) {
         exit: false,
         last_serial: 0,
         a11y,
+        a11y_bus: false,
         key_echo: None,
         look,
     };
@@ -1291,6 +1293,19 @@ pub fn run(app: Box<dyn App>) {
             }
         })
         .expect("access source");
+    loop_handle
+        .insert_source(a11y_ready_source, |msg, _, host: &mut Host| {
+            if let reprise_channel::Event::Msg(()) = msg {
+                host.a11y_bus = true;
+                for s in &mut host.slots {
+                    s.access.connect(s.id, &host.a11y, host.focus == Some(s.id));
+                }
+            }
+        })
+        .expect("access ready source");
+    reprisebus::a11y::when_bus_ready(move || {
+        let _ = a11y_ready.send(());
+    });
     loop_handle
         .insert_source(look_source, |msg, _, host: &mut Host| {
             if let reprise_channel::Event::Msg((key, value)) = msg {
@@ -1564,6 +1579,8 @@ struct Host {
     exit: bool,
     last_serial: u32,
     a11y: Sender<access::Msg>,
+    /// The accessibility bus answered: windows get adapters from then on.
+    a11y_bus: bool,
     key_echo: Option<reprisebus::a11y::KeyEcho>,
     look: Look,
 }
@@ -2079,7 +2096,7 @@ impl Host {
                 mapped: false,
                 modal: false,
                 caption,
-                access: access::SlotAccess::new(MAIN, &self.a11y),
+                access: access::SlotAccess::new(MAIN, self.a11y_bus.then_some(&self.a11y)),
                 glass: None,
                 glass_top: (0, 0),
                 cues: Cues::opened(self.key_last),
@@ -2292,7 +2309,7 @@ impl Host {
                 mapped: false,
                 modal: c.modal,
                 caption,
-                access: access::SlotAccess::new(c.id, &self.a11y),
+                access: access::SlotAccess::new(c.id, self.a11y_bus.then_some(&self.a11y)),
                 glass: None,
                 glass_top: (0, 0),
                 cues: Cues::opened(self.key_last),
@@ -2476,7 +2493,7 @@ impl Host {
             mapped: false,
             modal: false,
             caption: Caption::Window,
-            access: access::SlotAccess::new(f.id, &self.a11y),
+            access: access::SlotAccess::new(f.id, self.a11y_bus.then_some(&self.a11y)),
             glass: None,
             glass_top: (0, 0),
             cues: Cues::opened(self.key_last),
@@ -2504,7 +2521,10 @@ impl Host {
         let (app, ctx) = (&mut self.app, &self.ctx);
         let menu = self.edit_menu.menu(id);
         let acc = &mut self.slots[i].access;
-        acc.adapter.update_if_active(|| {
+        let Some(adapter) = acc.adapter.as_mut() else {
+            return;
+        };
+        adapter.update_if_active(|| {
             let mut tree = Tree::window(&title, size);
             if modal && let Some(root) = tree.get_mut(reprisekit::access::ROOT) {
                 root.set_role(accesskit::Role::Dialog);
@@ -3376,8 +3396,10 @@ impl KeyboardHandler for Host {
             return;
         };
         self.focus = Some(id);
-        if let Some(s) = self.slot_mut(id) {
-            s.access.adapter.update_window_focus_state(true);
+        if let Some(s) = self.slot_mut(id)
+            && let Some(a) = s.access.adapter.as_mut()
+        {
+            a.update_window_focus_state(true);
         }
         self.redraw_if_active_shows(id);
         self.send(id, Event::Focus(true));
@@ -3397,7 +3419,9 @@ impl KeyboardHandler for Host {
             self.focus = None;
         }
         if let Some(s) = self.slot_mut(id) {
-            s.access.adapter.update_window_focus_state(false);
+            if let Some(a) = s.access.adapter.as_mut() {
+                a.update_window_focus_state(false);
+            }
             s.dirty |= s.cues.blur();
         }
         self.redraw_if_active_shows(id);
