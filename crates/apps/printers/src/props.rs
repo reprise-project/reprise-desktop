@@ -439,14 +439,17 @@ impl PropsSheet {
         let (a, p) = (&self.applied, &self.pending);
         let differs = |x: &String, y: &String| (x != y).then(|| y.clone());
         let mut defaults = Vec::new();
+        // Colour and quality go together: a PPD's presets are picked by both.
         let settings: [(&str, &Option<String>, &Option<String>, bool); 4] = [
             ("media-default", &a.media, &p.media, false),
             ("sides-default", &a.sides, &p.sides, false),
             ("print-color-mode-default", &a.color, &p.color, false),
             ("print-quality-default", &a.quality, &p.quality, true),
         ];
+        let preset_moved = a.color != p.color || a.quality != p.quality;
         for (name, was, now, is_enum) in settings {
-            if was != now
+            let preset = name.starts_with("print-");
+            if (was != now || preset && preset_moved)
                 && let Some(v) = now
             {
                 let value = if is_enum {
@@ -681,6 +684,32 @@ mod tests {
         assert_eq!(f[0], "Color: No");
         assert_eq!(f[1], "Double-sided: Yes");
         assert_eq!(f[2], "Paper: A4 (210 x 297 mm)");
+    }
+
+    #[test]
+    fn colour_goes_with_the_quality_it_picks_a_preset_with() {
+        let mut o = options();
+        o.color = Setting {
+            choices: vec!["monochrome".into(), "color".into()],
+            default: Some("color".into()),
+        };
+        let mut p = PropsSheet::new(&laser(), None);
+        p.set_options(o, &laser());
+        p.sheet.pages[DEVICE].set_combo(COLOR, 0);
+        p.read(COLOR);
+        match p.event(propsheet::Event::Ok) {
+            Outcome::Apply { change, .. } => assert_eq!(
+                change.defaults,
+                [
+                    (
+                        "print-color-mode-default".to_string(),
+                        Value::keyword("monochrome")
+                    ),
+                    ("print-quality-default".to_string(), Value::Enum(4)),
+                ]
+            ),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
