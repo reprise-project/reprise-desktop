@@ -1202,11 +1202,11 @@ impl Form {
                 (Control::Combo(_), fit::Kind::Stretch { need }) => need - r.width,
                 (Control::Check { label, .. }, _) => {
                     let lr = check_label_rect(r, it.indent, &cm, measure(label));
-                    lr.right() - room.limit(i, lr.x)
+                    lr.right() - room.edge(i, lr.x, self.clip_of(it))
                 }
                 (Control::Radio { label, .. }, _) => {
                     let lr = radio_label_rect(r, &cm, measure(label));
-                    lr.right() - room.limit(i, lr.x)
+                    lr.right() - room.edge(i, lr.x, self.clip_of(it))
                 }
                 (Control::Lines(lines) | Control::GreyedLines(lines), _) => {
                     let shown = note_lines(text, lines, r.width, px);
@@ -4081,10 +4081,12 @@ struct ChoiceRoom {
 }
 
 impl ChoiceRoom {
-    /// Where item `i`'s label starting at `from` may run to for [`Form::overflows`]: the next
-    /// control on its row, its group box's frame, or the form's right edge.
-    fn limit(&self, i: usize, from: i32) -> i32 {
-        fit::limit(&self.rects, &self.kinds, i, from, self.pad)
+    /// Where item `i`'s label starting at `from` may run to for [`Form::overflows`]: where
+    /// drawing cuts it ([`ChoiceRoom::cut`], the view `clip`), else the form's right edge.
+    fn edge(&self, i: usize, from: i32, clip: Option<Rect>) -> i32 {
+        let form = fit::limit(&self.rects, &self.kinds, i, from, self.pad);
+        let drawn = self.cut(i, from).into_iter().chain(clip.map(|v| v.right()));
+        drawn.fold(form, i32::min)
     }
 
     /// Where item `i`'s label starting at `from` is cut: the next control on its row, its group
@@ -8543,6 +8545,30 @@ mod tests {
             assert!(form.tip_tick(), "at {y}");
             assert_eq!(form.label_tip().as_deref(), Some(LONG), "at {y}");
         }
+    }
+
+    /// A check box built narrower than its label, with the form reaching further right on
+    /// another row, draws its label cut, and the audit reports it.
+    #[test]
+    fn the_audit_reports_a_check_box_label_cut_at_its_own_edge() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut narrow = Item::check("narrow", 10, 10, LONG);
+        narrow.rect.width = 60;
+        let wide = Item::label_at("wide", 10, 40, 400, "x");
+        let form = Form::new(vec![narrow, wide]);
+        let theme = Theme::default();
+        let p = classic_paint(&theme.colors, 1);
+        draw(&mut Canvas::new(500, 100), &text, &p, &form, false, 11);
+        assert_eq!(
+            *form.rendered.ellipsized.borrow(),
+            vec![0],
+            "the label draws cut"
+        );
+        assert!(
+            matches!(form.overflows(&text, 11)[..], [("narrow", by)] if by > 0),
+            "the audit reports the cut label, got {:?}",
+            form.overflows(&text, 11)
+        );
     }
 
     /// At 200% a box-sized check box's or radio's rect grows past where its label starts; the
