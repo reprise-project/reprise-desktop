@@ -10,7 +10,7 @@ use reprisescene::{BufferId, Prepared};
 use smithay::backend::{
     allocator::{
         Allocator, Buffer, Fourcc, Modifier,
-        dmabuf::{AsDmabuf, Dmabuf, DmabufMappingMode, DmabufSyncFlags},
+        dmabuf::{AsDmabuf, Dmabuf},
         gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
     },
     renderer::{ImportDma, gles::GlesRenderer},
@@ -19,8 +19,8 @@ use smithay::backend::{
 use crate::{compositor::DeskScene, output::upload_scaled, raster::Canvas};
 
 /// Fills dma-bufs off the loop on a GBM device of its own, opened on the render node at first
-/// use. The first failure, in a fill or in the renderer's import, stops further tries (virtio-gpu
-/// refuses linear buffers).
+/// use. The first failure, in a fill or in the renderer's import, stops further tries (a driver
+/// may refuse linear buffers).
 #[derive(Clone)]
 pub struct Uploads {
     node: PathBuf,
@@ -69,32 +69,31 @@ impl Uploads {
 
     fn try_fill(&self, canvas: &Canvas) -> Result<Dmabuf, String> {
         let (w, h) = (canvas.width, canvas.height);
-        let bo = {
-            let alloc = self.allocator().ok_or("no GBM device")?;
-            let mut alloc = alloc.lock().map_err(|_| "poisoned")?;
-            (alloc.create_buffer(w, h, Fourcc::Argb8888, &[Modifier::Linear]))
-                .map_err(|e| format!("no {w}x{h} buffer: {e}"))?
-        };
-        let dmabuf = bo.export().map_err(|e| format!("export failed: {e}"))?;
-        let stride = dmabuf.strides().next().unwrap_or(0) as usize;
         let row = w as usize * 4;
-        let map = (dmabuf.map_plane(0, DmabufMappingMode::WRITE))
-            .map_err(|e| format!("map failed: {e}"))?;
-        if stride < row || map.length() < stride * (h as usize - 1) + row {
-            return Err(format!("stride {stride} too short for {w}x{h}"));
-        }
-        let _ = dmabuf.sync_plane(0, DmabufSyncFlags::START | DmabufSyncFlags::WRITE);
-        for (y, src) in canvas.pixels.chunks_exact(w as usize).enumerate() {
-            // SAFETY: the mapping holds `h` rows of `stride` bytes (checked above), this
-            // thread is the buffer's only user, and ARGB8888 is the canvas's pixels in
-            // little-endian byte order.
-            unsafe {
-                let dst = map.ptr().cast::<u8>().add(y * stride);
-                std::ptr::copy_nonoverlapping(src.as_ptr().cast::<u8>(), dst, row);
+        let alloc = self.allocator().ok_or("no GBM device")?;
+        // Held through the map and export: a GBM device is not safe to share between threads.
+        let mut alloc = alloc.lock().map_err(|_| "poisoned")?;
+        let mut bo = (alloc.create_buffer(w, h, Fourcc::Argb8888, &[Modifier::Linear]))
+            .map_err(|e| format!("no {w}x{h} buffer: {e}"))?;
+        // Through gbm_bo_map, not an mmap of the dma-buf: on virtio-gpu only the driver's
+        // unmap carries the pixels over to the host's copy the renderer samples.
+        (bo.map_mut(0, 0, w, h, |m| {
+            let stride = m.stride() as usize;
+            let dst = m.buffer_mut();
+            if stride < row || dst.len() < stride * (h as usize - 1) + row {
+                return Err(format!("stride {stride} too short for {w}x{h}"));
             }
-        }
-        let _ = dmabuf.sync_plane(0, DmabufSyncFlags::END | DmabufSyncFlags::WRITE);
-        Ok(dmabuf)
+            for (y, src) in canvas.pixels.chunks_exact(w as usize).enumerate() {
+                // ARGB8888 is the canvas's pixels in little-endian byte order.
+                let line = &mut dst[y * stride..][..row];
+                for (d, p) in line.as_chunks_mut::<4>().0.iter_mut().zip(src) {
+                    *d = p.to_le_bytes();
+                }
+            }
+            Ok(())
+        }))
+        .map_err(|e| format!("map failed: {e}"))??;
+        bo.export().map_err(|e| format!("export failed: {e}"))
     }
 }
 
@@ -175,9 +174,9 @@ mod tests {
     use super::*;
     use smithay::backend::{
         egl::EGLDevice,
-        renderer::{Bind, ExportMem, Texture},
+        renderer::{Bind, ExportMem, Frame, Offscreen, Renderer, Texture, gles::GlesTexture},
     };
-    use smithay::utils::Rectangle;
+    use smithay::utils::{Rectangle, Transform};
 
     #[test]
     fn a_refused_import_stops_further_fills() {
@@ -229,10 +228,27 @@ mod tests {
                 return;
             }
         };
-        let mut texture = renderer.import_dmabuf(&dmabuf, None).unwrap();
+        let texture = renderer.import_dmabuf(&dmabuf, None).unwrap();
         let size = texture.size();
         assert_eq!((size.w, size.h), (37, 5));
-        let fb = renderer.bind(&mut texture).unwrap();
+        // Sampled as a compositor frame samples it: drawn into a target of the renderer's own.
+        let mut target: GlesTexture = renderer.create_buffer(Fourcc::Argb8888, size).unwrap();
+        let mut fb = renderer.bind(&mut target).unwrap();
+        let out = (size.w, size.h).into();
+        let mut frame = renderer.render(&mut fb, out, Transform::Normal).unwrap();
+        let full = Rectangle::from_size(out);
+        (frame.render_texture_at(
+            &texture,
+            (0, 0).into(),
+            1,
+            1.0,
+            Transform::Normal,
+            &[full],
+            &[],
+            1.0,
+        ))
+        .unwrap();
+        frame.finish().unwrap().wait().unwrap();
         let mapping = renderer
             .copy_framebuffer(&fb, Rectangle::from_size(size), Fourcc::Argb8888)
             .unwrap();
