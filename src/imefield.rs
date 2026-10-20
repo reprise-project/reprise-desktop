@@ -616,6 +616,7 @@ mod tests {
             multiline: false,
             can_undo: false,
             selected: false,
+            digits: false,
         }
     }
 

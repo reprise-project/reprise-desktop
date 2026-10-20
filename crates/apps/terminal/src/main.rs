@@ -851,6 +851,7 @@ impl Terminal {
             multiline: true,
             can_undo: false,
             selected: false,
+            digits: false,
         });
     }
 }

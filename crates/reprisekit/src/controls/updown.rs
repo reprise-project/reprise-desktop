@@ -22,7 +22,7 @@ use crate::paint::Paint;
 use crate::pointer::Lit;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
-use crate::textedit::{EditKey, TextEdit};
+use crate::textedit::{EditKey, TextEdit, TextSpot};
 use crate::theme::TextUnits;
 use accesskit::{NodeId, Role};
 
@@ -387,7 +387,10 @@ pub fn draw(
             let bar = Rect::new(cx, tr.y + 2 * s, s, tr.height - 4 * s);
             c.fill_rect(bar, cs.button_text);
             if let Some(e) = &ud.edit {
-                c.report_spot(e.spot(lay.edit.scaled(s), bar));
+                c.report_spot(TextSpot {
+                    digits: true,
+                    ..e.spot(lay.edit.scaled(s), bar)
+                });
             }
         }
     } else {
@@ -664,6 +667,7 @@ mod tests {
         let spot = render(&ud, true).expect("a focused field reports its spot");
         assert_eq!(spot.field, l.edit, "the digits' part, not the arrows");
         assert!(spot.selected && !spot.multiline && !spot.secret);
+        assert!(spot.digits, "digits only, so no input method turns on");
         assert_eq!(spot.caret.x, 92, "the caret after the number");
     }
 
