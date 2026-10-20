@@ -56,6 +56,16 @@ pub fn quiet<'a, M: 'a>(
     !retiring && all.into_iter().all(|t| t.quiet(now))
 }
 
+/// Whether main may change a mode now: `quiet`, and no output's frame is on its thread, since
+/// that job holds the compositor a mode change goes through.
+pub fn modes_settle<'a, M: 'a>(
+    all: impl IntoIterator<Item = &'a Track<M>> + Clone,
+    retiring: bool,
+    now: Instant,
+) -> bool {
+    quiet(all.clone(), retiring, now) && !all.into_iter().any(Track::busy)
+}
+
 /// Whether `own`'s next frame is held past `STALL`: its own job or flip stalled, or another
 /// output's stall keeps the device from going quiet, and no output renders until it is.
 pub fn held<M>(own: &Track<M>, all: &[&Track<M>], retiring: bool, now: Instant) -> bool {
@@ -539,6 +549,15 @@ mod tests {
         assert!(!t.idle() && !t.busy());
         assert_eq!(t.vblank(7), Some(7));
         assert!(t.idle());
+    }
+
+    #[test]
+    fn a_mode_waits_for_a_frame_on_the_thread() {
+        let (idle, frame) = (Track::<u32>::default(), busy());
+        let now = Instant::now();
+        assert!(quiet([&idle, &frame], false, now), "a frame job is quiet");
+        assert!(!modes_settle([&idle, &frame], false, now));
+        assert!(modes_settle([&idle, &idle], false, now));
     }
 
     #[test]
