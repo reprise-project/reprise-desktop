@@ -1,5 +1,6 @@
-//! Keys reported to the AT-SPI registry for a screen reader, and the wait for the accessibility bus
-//! before a host's first AccessKit adapter ([`when_bus_ready`]).
+//! Keys reported to the AT-SPI registry for a screen reader, the wait for the accessibility bus
+//! before a host's first AccessKit adapter ([`when_bus_ready`]), and the watch for its restart
+//! ([`on_bus_restart`]).
 //!
 //! A screen reader under Wayland cannot see the keyboard: Orca learns of keys from the toolkit of
 //! whatever has the keyboard, which reports each one to the registry
@@ -46,6 +47,102 @@ pub fn when_bus_ready(ready: impl FnOnce() + Send + 'static) {
         .spawn(run)
     {
         log::warn!("a11y bus wait thread: {e}");
+    }
+}
+
+/// Runs `restarted` on a thread of its own each time a reader turns on an accessibility bus that
+/// was restarted since the host made its adapters. accesskit_unix joins the new bus then, but only
+/// with its root: adapters it holds active keep their nodes on the old bus's connection, so the
+/// host makes them again. Call once [`when_bus_ready`] has answered.
+pub fn on_bus_restart(restarted: impl Fn() + Send + 'static) {
+    let run = move || {
+        if let Err(e) = follow_launcher(&restarted) {
+            log::info!("accessibility bus watch: {e}; a restarted bus is not rejoined");
+        }
+    };
+    if let Err(e) = std::thread::Builder::new()
+        .name("a11y bus watch".into())
+        .spawn(run)
+    {
+        log::warn!("a11y bus watch thread: {e}");
+    }
+}
+
+/// How long after the reader's IsEnabled the adapters are made again: accesskit_unix hears the
+/// same signal and joins the new bus first.
+const REJOIN_AFTER: Duration = Duration::from_secs(1);
+
+fn follow_launcher(restarted: &impl Fn()) -> zbus::Result<()> {
+    let conn = crate::session()?;
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .sender("org.a11y.Bus")?
+        .path("/org/a11y/bus")?
+        .interface("org.freedesktop.DBus.Properties")?
+        .member("PropertiesChanged")?
+        .add_arg("org.a11y.Status")?
+        .build();
+    let signals = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None)?;
+    let owner = zbus::blocking::fdo::DBusProxy::new(&conn)?
+        .get_name_owner("org.a11y.Bus".try_into()?)
+        .ok()
+        .map(|o| o.to_string());
+    let mut launcher = Launcher::new(owner);
+    for msg in signals {
+        let msg = msg?;
+        let header = msg.header();
+        let Some(sender) = header.sender() else {
+            continue;
+        };
+        let Ok((_, changed, _)) = msg.body().deserialize::<(
+            String,
+            std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+            Vec<String>,
+        )>() else {
+            continue;
+        };
+        let enabled = changed
+            .get("IsEnabled")
+            .and_then(|v| bool::try_from(v).ok());
+        if launcher.heard(sender.as_str(), enabled) {
+            log::info!("accessibility bus restarted; making the adapters again");
+            std::thread::sleep(REJOIN_AFTER);
+            restarted();
+        }
+    }
+    Ok(())
+}
+
+/// The accessibility bus launcher behind `org.a11y.Bus`, followed through its signals.
+#[derive(Debug, Default)]
+struct Launcher {
+    /// The unique name of the launcher the adapters last joined.
+    owner: Option<String>,
+    /// Another launcher took the name since the adapters were made.
+    stale: bool,
+}
+
+impl Launcher {
+    fn new(owner: Option<String>) -> Launcher {
+        Launcher {
+            owner,
+            stale: false,
+        }
+    }
+
+    /// A PropertiesChanged on `org.a11y.Status` from `sender`, carrying IsEnabled `enabled` if
+    /// it changed. True when the adapters are to be made again: a reader turned on a launcher
+    /// that took the name after the one they joined.
+    fn heard(&mut self, sender: &str, enabled: Option<bool>) -> bool {
+        if self.owner.as_deref() != Some(sender) {
+            self.stale |= self.owner.is_some();
+            self.owner = Some(sender.to_string());
+        }
+        if enabled == Some(true) && self.stale {
+            self.stale = false;
+            return true;
+        }
+        false
     }
 }
 
@@ -100,7 +197,7 @@ impl KeyEcho {
     pub fn spawn() -> KeyEcho {
         let (tx, rx) = std::sync::mpsc::channel::<KeyNote>();
         let run = move || {
-            let conn = match a11y_bus() {
+            let mut conn = match a11y_bus() {
                 Ok(c) => c,
                 Err(e) => {
                     log::warn!("accessibility bus: {e}; keys are not reported");
@@ -117,13 +214,24 @@ impl KeyEcho {
                     n.text.as_str(),
                     n.is_text,
                 );
-                if let Err(e) = conn.call_method(
-                    Some("org.a11y.atspi.Registry"),
-                    "/org/a11y/atspi/registry/deviceeventcontroller",
-                    Some("org.a11y.atspi.DeviceEventController"),
-                    "NotifyListenersSync",
-                    &(event,),
-                ) {
+                let notify = |conn: &zbus::blocking::Connection| {
+                    conn.call_method(
+                        Some("org.a11y.atspi.Registry"),
+                        "/org/a11y/atspi/registry/deviceeventcontroller",
+                        Some("org.a11y.atspi.DeviceEventController"),
+                        "NotifyListenersSync",
+                        &(event,),
+                    )
+                };
+                // A restarted bus leaves the old connection closed: join the new one and retry.
+                let sent = notify(&conn).or_else(|e| match e {
+                    zbus::Error::MethodError(..) | zbus::Error::FDO(_) => Err(e),
+                    _ => {
+                        conn = a11y_bus()?;
+                        notify(&conn)
+                    }
+                });
+                if let Err(e) = sent {
                     log::debug!("NotifyListenersSync: {e}");
                 }
             }
@@ -162,6 +270,25 @@ fn a11y_bus_of(session: &zbus::blocking::Connection) -> zbus::Result<zbus::block
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reader_turning_on_a_restarted_launcher_remakes_the_adapters_once() {
+        let mut l = Launcher::new(Some(":1.5".into()));
+        assert!(!l.heard(":1.5", Some(false)), "the same launcher off");
+        assert!(!l.heard(":1.5", Some(true)), "the same launcher on again");
+        assert!(!l.heard(":1.9", Some(false)), "a new launcher, still off");
+        assert!(l.heard(":1.9", Some(true)), "a reader turns the new one on");
+        assert!(!l.heard(":1.9", Some(true)), "made again only once");
+        assert!(l.heard(":1.12", Some(true)), "a second restart");
+    }
+
+    #[test]
+    fn the_first_launcher_heard_without_a_known_owner_remakes_nothing() {
+        let mut l = Launcher::new(None);
+        assert!(!l.heard(":1.5", Some(true)));
+        assert!(!l.heard(":1.5", None));
+        assert!(l.heard(":1.7", Some(true)), "a later launcher");
+    }
 
     #[test]
     fn retries_double_from_a_quarter_second_to_four_seconds() {

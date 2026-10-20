@@ -124,16 +124,23 @@ impl Access {
             );
             return Access::default();
         }
-        let (ready, ready_rx) = channel::channel::<()>();
+        // True once the bus answers; false when it came back after a restart.
+        let (ready, ready_rx) = channel::channel::<bool>();
         let joined = handle.insert_source(ready_rx, |ev, _, state| {
-            if let Event::Msg(()) = ev {
+            if let Event::Msg(first) = ev {
                 state.access.bus = true;
+                if !first {
+                    state.access.slots.clear();
+                }
                 touch(state);
             }
         });
         match joined {
             Ok(_) => reprisebus::a11y::when_bus_ready(move || {
-                let _ = ready.send(());
+                let _ = ready.send(true);
+                reprisebus::a11y::on_bus_restart(move || {
+                    let _ = ready.send(false);
+                });
             }),
             Err(e) => {
                 log::warn!(
