@@ -19,6 +19,7 @@ log.workspace = true
 md5 = "0.8"
 png.workspace = true
 reprisebus = { path = "../reprisebus" }
+rustc-hash = "2"
 serde.workspace = true
 # `[recycle_bin]` in config.toml, which every host's Delete reads.
 toml_edit.workspace = true

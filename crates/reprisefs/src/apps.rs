@@ -800,11 +800,7 @@ pub(crate) fn mime_dirs() -> Vec<PathBuf> {
 }
 
 fn read_globs(paths: &[PathBuf]) -> MimeDb {
-    let texts: Vec<String> = paths
-        .iter()
-        .filter_map(|p| std::fs::read_to_string(p).ok())
-        .collect();
-    MimeDb::parse(texts.iter().map(String::as_str))
+    MimeDb::from_texts(paths.iter().filter_map(|p| std::fs::read_to_string(p).ok()))
 }
 
 /// A [`MimeDb`] for a long-lived process: `current` stats the `globs2`
@@ -853,27 +849,23 @@ impl Default for MimeGlobs {
     }
 }
 
-#[derive(Clone, Debug)]
+/// A byte range of a [`GlobTable`]'s `text`.
+#[derive(Clone, Copy, Debug)]
+struct Span {
+    start: u32,
+    len: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
 struct GlobRule {
     weight: u32,
     /// Line order within its file: the earlier of two equal matches wins.
-    order: usize,
-    mime: String,
+    order: u32,
+    mime: Span,
     /// Lower-cased unless case-sensitive.
-    pattern: String,
+    pattern: Span,
     suffix: bool,
     case_sensitive: bool,
-}
-
-impl GlobRule {
-    fn hits(&self, name: &str, lower: &str) -> bool {
-        let subject = if self.case_sensitive { name } else { lower };
-        if self.suffix {
-            subject.ends_with(&self.pattern)
-        } else {
-            subject == self.pattern
-        }
-    }
 }
 
 /// One `globs2` file's rules, indexed so a lookup reads only the rules
@@ -881,30 +873,129 @@ impl GlobRule {
 /// its last extension, and the few suffixes with no dot (`*~`).
 #[derive(Debug, Default)]
 struct GlobTable {
-    names: HashMap<String, Vec<GlobRule>>,
-    /// Dotted suffixes, keyed by what follows their last dot (`.tar.gz` under `gz`).
-    by_ext: HashMap<String, Vec<GlobRule>>,
-    other: Vec<GlobRule>,
+    /// The file's text followed by the lower-cased patterns that differ
+    /// from their line; every [`Span`] points in here.
+    text: String,
+    rules: Vec<GlobRule>,
+    /// `(key hash, rule index)` sorted by hash: literal names keyed by the
+    /// name, dotted suffixes by what follows their last dot (`.tar.gz`
+    /// under `gz`). A hash collision only adds a candidate `hits` drops.
+    names: Vec<(u64, u32)>,
+    by_ext: Vec<(u64, u32)>,
+    other: Vec<u32>,
+}
+
+fn key_hash(key: &str) -> u64 {
+    use std::hash::BuildHasher;
+    rustc_hash::FxBuildHasher.hash_one(key)
+}
+
+fn rules_under(index: &[(u64, u32)], key: &str) -> impl Iterator<Item = u32> {
+    let h = key_hash(key);
+    let from = index.partition_point(|e| e.0 < h);
+    index[from..]
+        .iter()
+        .take_while(move |e| e.0 == h)
+        .map(|e| e.1)
 }
 
 impl GlobTable {
-    fn new(rules: Vec<GlobRule>) -> GlobTable {
-        let mut t = GlobTable::default();
-        for r in rules {
-            match r.pattern.rsplit_once('.') {
-                _ if !r.suffix => t.names.entry(r.pattern.clone()).or_default().push(r),
-                Some((_, ext)) => t.by_ext.entry(ext.to_string()).or_default().push(r),
-                None => t.other.push(r),
+    /// Parse one `globs2` text. Comment lines take no line order; globs
+    /// with a wildcard past a leading `*` are left out.
+    fn parse(text: String) -> GlobTable {
+        let mut lowered = String::new();
+        let mut rules = Vec::new();
+        let span = |s: &str| Span {
+            start: (s.as_ptr() as usize - text.as_ptr() as usize) as u32,
+            len: s.len() as u32,
+        };
+        let lines = text.lines().filter(|l| !l.starts_with('#'));
+        for (order, line) in lines.enumerate() {
+            let mut parts = line.splitn(4, ':');
+            let (Some(w), Some(mime), Some(glob)) = (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let Ok(weight) = w.parse::<u32>() else {
+                continue;
+            };
+            let case_sensitive = parts
+                .next()
+                .is_some_and(|f| f.split(',').any(|f| f == "cs"));
+            let (suffix, body) = match glob.strip_prefix('*') {
+                Some(s) => (true, s),
+                None => (false, glob),
+            };
+            if body.contains(['*', '?', '[']) {
+                continue;
+            }
+            let unchanged = case_sensitive
+                || if body.is_ascii() {
+                    !body.bytes().any(|b| b.is_ascii_uppercase())
+                } else {
+                    body.to_lowercase() == body
+                };
+            let pattern = if unchanged {
+                span(body)
+            } else {
+                let start = text.len() + lowered.len();
+                lowered.push_str(&body.to_lowercase());
+                Span {
+                    start: start as u32,
+                    len: (text.len() + lowered.len() - start) as u32,
+                }
+            };
+            rules.push(GlobRule {
+                weight,
+                order: order as u32,
+                mime: span(mime),
+                pattern,
+                suffix,
+                case_sensitive,
+            });
+        }
+        let mut t = GlobTable {
+            text,
+            rules,
+            ..GlobTable::default()
+        };
+        t.text.push_str(&lowered);
+        for (i, r) in t.rules.iter().enumerate() {
+            let i = i as u32;
+            let pattern = &t.text[r.pattern.start as usize..][..r.pattern.len as usize];
+            match pattern.rsplit_once('.') {
+                _ if !r.suffix => t.names.push((key_hash(pattern), i)),
+                Some((_, ext)) => t.by_ext.push((key_hash(ext), i)),
+                None => t.other.push(i),
             }
         }
+        t.names.sort_unstable();
+        t.by_ext.sort_unstable();
         t
     }
 
-    fn candidates<'a>(&'a self, subject: &str) -> impl Iterator<Item = &'a GlobRule> {
+    fn str(&self, s: Span) -> &str {
+        &self.text[s.start as usize..][..s.len as usize]
+    }
+
+    fn hits(&self, r: &GlobRule, name: &str, lower: &str) -> bool {
+        let subject = if r.case_sensitive { name } else { lower };
+        let pattern = self.str(r.pattern);
+        if r.suffix {
+            subject.ends_with(pattern)
+        } else {
+            subject == pattern
+        }
+    }
+
+    fn candidates(&self, subject: &str) -> impl Iterator<Item = &GlobRule> {
         let ext = subject.rsplit_once('.').map(|(_, e)| e);
-        let names = self.names.get(subject).into_iter().flatten();
-        let by_ext = ext.and_then(|e| self.by_ext.get(e)).into_iter().flatten();
-        names.chain(by_ext)
+        let names = rules_under(&self.names, subject);
+        let by_ext = ext
+            .map(|e| rules_under(&self.by_ext, e))
+            .into_iter()
+            .flatten();
+        names.chain(by_ext).map(|i| &self.rules[i as usize])
     }
 }
 
@@ -919,11 +1010,12 @@ pub struct MimeDb {
 impl MimeDb {
     /// Parse `globs2` texts, the first taking precedence.
     pub fn parse<'a>(texts: impl IntoIterator<Item = &'a str>) -> MimeDb {
+        MimeDb::from_texts(texts.into_iter().map(str::to_string))
+    }
+
+    fn from_texts(texts: impl IntoIterator<Item = String>) -> MimeDb {
         MimeDb {
-            tables: texts
-                .into_iter()
-                .map(|t| GlobTable::new(parse_globs(t)))
-                .collect(),
+            tables: texts.into_iter().map(GlobTable::parse).collect(),
             descriptions: Default::default(),
         }
     }
@@ -945,10 +1037,10 @@ impl MimeDb {
             table
                 .candidates(&lower)
                 .chain(cased.into_iter().flatten())
-                .chain(&table.other)
-                .filter(|r| r.hits(name, &lower))
-                .max_by_key(|r| (r.weight, r.pattern.len(), std::cmp::Reverse(r.order)))
-                .map(|r| r.mime.clone())
+                .chain(table.other.iter().map(|&i| &table.rules[i as usize]))
+                .filter(|r| table.hits(r, name, &lower))
+                .max_by_key(|r| (r.weight, r.pattern.len, std::cmp::Reverse(r.order)))
+                .map(|r| table.str(r.mime).to_string())
         })
     }
 
@@ -967,53 +1059,22 @@ impl MimeDb {
     /// heaviest `*.ext` glob, the earlier file and line among equals. A
     /// type with only literal names or wildcards has none.
     pub fn extensions(&self) -> HashMap<String, String> {
-        let mut best: HashMap<String, (u32, usize, usize, String)> = HashMap::new();
+        let mut best: HashMap<&str, (u32, usize, u32, &str)> = HashMap::new();
         for (t, table) in self.tables.iter().enumerate() {
-            for r in table.by_ext.values().flatten() {
-                let key = (r.weight, usize::MAX - t, usize::MAX - r.order);
-                let better = best.get(&r.mime).is_none_or(|b| key > (b.0, b.1, b.2));
+            for &(_, i) in &table.by_ext {
+                let r = &table.rules[i as usize];
+                let key = (r.weight, usize::MAX - t, u32::MAX - r.order);
+                let mime = table.str(r.mime);
+                let better = best.get(mime).is_none_or(|b| key > (b.0, b.1, b.2));
                 if better {
-                    best.insert(r.mime.clone(), (key.0, key.1, key.2, r.pattern.clone()));
+                    best.insert(mime, (key.0, key.1, key.2, table.str(r.pattern)));
                 }
             }
         }
-        best.into_iter().map(|(m, b)| (m, b.3)).collect()
+        best.into_iter()
+            .map(|(m, b)| (m.to_string(), b.3.to_string()))
+            .collect()
     }
-}
-
-fn parse_globs(text: &str) -> Vec<GlobRule> {
-    text.lines()
-        .filter(|l| !l.starts_with('#'))
-        .enumerate()
-        .filter_map(|(order, line)| {
-            let mut parts = line.splitn(4, ':');
-            let (w, mime, glob) = (parts.next()?, parts.next()?, parts.next()?);
-            let weight = w.parse::<u32>().ok()?;
-            let case_sensitive = parts
-                .next()
-                .is_some_and(|f| f.split(',').any(|f| f == "cs"));
-            let (suffix, body) = match glob.strip_prefix('*') {
-                Some(s) => (true, s),
-                None => (false, glob),
-            };
-            if body.contains(['*', '?', '[']) {
-                return None;
-            }
-            let pattern = if case_sensitive {
-                body.to_string()
-            } else {
-                body.to_lowercase()
-            };
-            Some(GlobRule {
-                weight,
-                order,
-                mime: mime.to_string(),
-                pattern,
-                suffix,
-                case_sensitive,
-            })
-        })
-        .collect()
 }
 
 pub fn mime_from_globs(text: &str, name: &str) -> Option<String> {
@@ -1825,6 +1886,36 @@ mod tests {
             mime_from_globs(globs, "Main.C").as_deref(),
             Some("text/x-upper")
         );
+    }
+
+    #[test]
+    fn mime_globs_fold_mixed_case_patterns_and_prefer_longer_dotted_suffixes() {
+        let user = "50:text/x-user:*.Notes\n";
+        let system = "50:text/x-notes:*.notes\n50:application/x-compressed-tar:*.tar.GZ\n\
+                      50:application/gzip:*.gz\n50:text/x-cmake:CMakeLists.txt\n\
+                      50:text/plain:*.txt\n50:text/x-greek:*.ΣΤ\n60:text/x-upper:*.TXT:cs\n";
+        let db = MimeDb::parse([user, system]);
+        let cases = [
+            ("today.notes", Some("text/x-user")),
+            ("TODAY.NOTES", Some("text/x-user")),
+            ("backup.TAR.gz", Some("application/x-compressed-tar")),
+            ("backup.tar.gz.part", None),
+            ("only.gz", Some("application/gzip")),
+            ("CMAKELISTS.txt", Some("text/x-cmake")),
+            ("a.TXT", Some("text/x-upper")),
+            ("a.Txt", Some("text/plain")),
+            ("βιβλίο.στ", Some("text/x-greek")),
+            ("tar.gz", Some("application/gzip")),
+        ];
+        for (name, mime) in cases {
+            assert_eq!(db.mime_of_name(name).as_deref(), mime, "{name}");
+        }
+        let ext = db.extensions();
+        assert_eq!(
+            ext.get("application/x-compressed-tar").map(String::as_str),
+            Some(".tar.gz")
+        );
+        assert_eq!(ext.get("text/x-user").map(String::as_str), Some(".notes"));
     }
 
     #[test]
