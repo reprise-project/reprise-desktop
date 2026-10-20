@@ -314,8 +314,9 @@ are.
   and move to their own tab when they take its title within 10 seconds. A
   window with the title of one the program had outside any group stays out
   of the groups. A program
-  starts once; if its other grouped windows aren't back 4 seconds after a
-  window of it appears, it starts again for each one missing that no
+  starts once; if its other grouped windows or its windows outside the
+  groups aren't back 4 seconds after a window of it appears, it starts
+  again for each one missing that no
   earlier start is still bringing, never more often than it had windows.
   Windows that don't come back within two minutes are left out.
 - **XDG autostart,** with a Startup page in Reprise Settings to turn entries

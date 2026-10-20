@@ -15,8 +15,8 @@
 //! slot saved with the title it takes in `GUESS_SETTLE`, or out of the
 //! group when that title was one of its app's windows outside any group. An app starts once;
 //! `RESTART_SETTLE` after a window of it maps, it starts again for each empty
-//! slot no start in flight will fill, so an app that brings back its own
-//! windows gets no extra one.
+//! slot or missing outside window no start in flight will fill, so an app that
+//! brings back its own windows gets no extra one.
 
 use crate::compositor::State;
 use crate::windowrules::Remembered;
@@ -250,12 +250,14 @@ pub struct PendingTabs<T> {
     restarts: Vec<Restart>,
 }
 
-/// A restored app that may start again for its empty tab slots.
+/// A restored app that may start again for its empty tab slots and missing loose windows.
 #[derive(Debug)]
 struct Restart {
     app: String,
     /// Starts left within the cap of one per saved window, the first included.
     left: usize,
+    /// Its saved loose windows not back yet.
+    loose: usize,
     /// Starts whose window has not mapped yet.
     in_flight: usize,
     armed: bool,
@@ -302,8 +304,8 @@ impl<T: Copy + Eq> PendingTabs<T> {
     }
 
     /// Restore has started `app_id` once: it may start again for empty
-    /// slots, at most once per window it had (its slots and its loose
-    /// windows), that first start included.
+    /// slots and missing loose windows, at most once per window it had, that
+    /// first start included.
     pub fn started(&mut self, app_id: &str) {
         let loose = self.loose.iter().filter(|(a, _)| a == app_id).count();
         let windows = self.free_slots(app_id) + loose;
@@ -311,6 +313,7 @@ impl<T: Copy + Eq> PendingTabs<T> {
             self.restarts.push(Restart {
                 app: app_id.to_string(),
                 left: windows - 1,
+                loose,
                 in_flight: 1,
                 armed: false,
             });
@@ -324,15 +327,28 @@ impl<T: Copy + Eq> PendingTabs<T> {
             .count()
     }
 
+    /// `app_id`'s windows still missing: its empty slots and loose windows not back.
+    fn missing(&self, app_id: &str) -> usize {
+        let loose = self.restarts.iter().find(|r| r.app == app_id);
+        self.free_slots(app_id) + loose.map_or(0, |r| r.loose)
+    }
+
+    /// A window of `app_id` came back outside every group.
+    fn loose_back(&mut self, app_id: &str) {
+        if let Some(r) = self.restarts.iter_mut().find(|r| r.app == app_id) {
+            r.loose = r.loose.saturating_sub(1);
+        }
+    }
+
     /// A window of `app_id` has mapped (after its `claim`), landing one of
     /// its starts: whether to arm the `RESTART_SETTLE` timer that ends in
     /// `restart`.
     pub fn settle(&mut self, app_id: &str, now: Instant) -> bool {
-        let (open, free) = (self.open(now), self.free_slots(app_id));
+        let (open, missing) = (self.open(now), self.missing(app_id));
         let Some(i) = self.restarts.iter().position(|r| r.app == app_id) else {
             return false;
         };
-        if !open || free == 0 {
+        if !open || missing == 0 {
             self.restarts.remove(i);
             return false;
         }
@@ -342,10 +358,10 @@ impl<T: Copy + Eq> PendingTabs<T> {
     }
 
     /// `app_id`'s settle has ended: how many more times to start it, one per
-    /// empty slot no start in flight will fill, within its cap. The next
+    /// missing window no start in flight will fill, within its cap. The next
     /// settle waits for its next window.
     pub fn restart(&mut self, app_id: &str, now: Instant) -> usize {
-        let (open, free) = (self.open(now), self.free_slots(app_id));
+        let (open, missing) = (self.open(now), self.missing(app_id));
         let Some(i) = self
             .restarts
             .iter()
@@ -356,7 +372,7 @@ impl<T: Copy + Eq> PendingTabs<T> {
         let r = &mut self.restarts[i];
         r.armed = false;
         let n = if open {
-            free.saturating_sub(r.in_flight).min(r.left)
+            missing.saturating_sub(r.in_flight).min(r.left)
         } else {
             0
         };
@@ -503,6 +519,7 @@ impl<T: Copy + Eq> PendingTabs<T> {
         }
         let Some(gs) = self.slot_for(app_id, title, now) else {
             self.take_loose(app_id, title);
+            self.loose_back(app_id);
             return Claim::None;
         };
         let by_title = self.groups[gs.0].slots[gs.1].title == title && !title.is_empty();
@@ -532,6 +549,7 @@ impl<T: Copy + Eq> PendingTabs<T> {
             let slot = &mut self.groups[gs.0].slots[gs.1];
             slot.window = None;
             slot.guessed = None;
+            self.loose_back(app_id);
         } else {
             return false;
         }
@@ -687,7 +705,7 @@ pub fn restore(state: &mut State, autostarted: &[Entry]) {
 }
 
 /// A window of `app_id` has mapped: when restore started it and some of its
-/// saved tab slots are empty, start it again for those after `RESTART_SETTLE`.
+/// saved windows are still missing, start it again for those after `RESTART_SETTLE`.
 pub fn settle_restart(state: &mut State, app_id: &str) {
     if !state.session.regrouping.settle(app_id, Instant::now()) {
         return;
@@ -702,7 +720,7 @@ pub fn settle_restart(state: &mut State, app_id: &str) {
             return TimeoutAction::Drop;
         };
         log::info!(
-            "session: {app} left {n} tab slot(s) empty {RESTART_SETTLE:?} after a window, starting it again"
+            "session: {app} is {n} window(s) short {RESTART_SETTLE:?} after a window, starting it again"
         );
         let argv = reprisefs::apps::launch_argv(e, &state.config.terminal);
         for _ in 0..n {
@@ -956,6 +974,79 @@ mod tests {
         p.claim("ed", "notes.txt", 1, t);
         assert!(p.settle("ed", t));
         assert_eq!(p.restart("ed", later), 1, "a one-tab group's slot is empty");
+    }
+
+    fn tt() -> (SavedApp, [SavedTabs; 1]) {
+        let tt = SavedApp {
+            loose: vec!["Charlie".into()],
+            ..saved("ed", "ed.desktop", 0)
+        };
+        (tt, [titled(&["Alpha", "Bravo"])])
+    }
+
+    #[test]
+    fn a_loose_window_the_first_start_left_out_gets_a_start() {
+        let t = Instant::now();
+        let later = t + RESTART_SETTLE;
+        let (tt, group) = tt();
+        let mut p = PendingTabs::new(&group, std::slice::from_ref(&tt), t);
+        p.started("ed");
+        p.claim("ed", "Alpha", 1, t);
+        assert!(p.settle("ed", t));
+        p.claim("ed", "Bravo", 2, t);
+        assert!(!p.settle("ed", t), "one settle at a time");
+        assert_eq!(p.restart("ed", later), 1, "Charlie is missing");
+        assert_eq!(p.claim("ed", "Charlie", 3, later), Claim::None);
+        assert!(!p.settle("ed", later), "all three are back");
+        assert_eq!(p.restart("ed", later + RESTART_SETTLE), 0);
+    }
+
+    #[test]
+    fn a_loose_window_back_under_another_title_counts_as_back() {
+        let t = Instant::now();
+        let (tt, group) = tt();
+        let mut p = PendingTabs::new(&group, std::slice::from_ref(&tt), t);
+        p.started("ed");
+        p.claim("ed", "Alpha", 1, t);
+        assert!(p.settle("ed", t));
+        p.claim("ed", "Bravo", 2, t);
+        p.settle("ed", t);
+        assert_eq!(p.claim("ed", "Editor", 3, t), Claim::None);
+        p.settle("ed", t);
+        assert_eq!(p.restart("ed", t + RESTART_SETTLE), 0);
+        let mut p = PendingTabs::new(&group, &[tt], t);
+        p.started("ed");
+        p.claim("ed", "Editor", 1, t);
+        assert!(p.settle("ed", t));
+        p.claim("ed", "Bravo", 2, t);
+        p.settle("ed", t);
+        assert!(p.retitle("ed", "Charlie", 1, t));
+        assert_eq!(
+            p.restart("ed", t + RESTART_SETTLE),
+            1,
+            "Alpha's slot is empty"
+        );
+    }
+
+    #[test]
+    fn a_start_that_maps_no_window_is_not_repeated_for_a_loose_window() {
+        let t = Instant::now();
+        let (tt, group) = tt();
+        let mut p = PendingTabs::new(&group, &[tt], t);
+        p.started("ed");
+        p.claim("ed", "Alpha", 1, t);
+        assert!(p.settle("ed", t));
+        p.claim("ed", "Bravo", 2, t);
+        p.settle("ed", t);
+        assert_eq!(p.restart("ed", t + RESTART_SETTLE), 1);
+        assert_eq!(
+            p.restart("ed", t + RESTART_SETTLE * 2),
+            0,
+            "no window mapped: no settle"
+        );
+        assert_eq!(p.claim("ed", "Alpha", 3, t), Claim::None);
+        assert!(!p.settle("ed", t), "a second Alpha leaves nothing missing");
+        assert_eq!(p.restart("ed", t + RESTART_SETTLE * 3), 0);
     }
 
     #[test]
