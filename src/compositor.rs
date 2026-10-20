@@ -435,6 +435,7 @@ impl State {
                     .backend()
                     .dispatch_single_client(state, id);
             }
+            state.ime_sync_grab();
         })?;
 
         let mut seat_state = SeatState::new();
