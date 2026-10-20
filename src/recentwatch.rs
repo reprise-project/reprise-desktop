@@ -114,10 +114,7 @@ pub fn follow_recent(state: &mut State) {
             let added = add.run();
             Box::new(move |s: &mut State| {
                 s.recent.folder_adds.remove(&dir);
-                let new = !added.is_empty();
-                if let Some(w) = s.recent.folder_watch.as_mut() {
-                    w.adopt(added);
-                }
+                let new = (s.recent.folder_watch.as_mut()).is_some_and(|w| w.adopt(added));
                 if new {
                     // A wider want on this folder that came while it was being added.
                     follow_recent(s);
