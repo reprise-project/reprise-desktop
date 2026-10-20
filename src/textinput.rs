@@ -1393,3 +1393,137 @@ mod tests {
         assert!(s.goes_to_grab(32, false, true));
     }
 }
+
+#[cfg(test)]
+mod harness_tests {
+    use super::ime_holds_keyboard;
+    use crate::{
+        compositor::State,
+        harness::{Harness, Popup, TestClient, Toplevel},
+    };
+    use smithay::desktop::PopupKeyboardGrab;
+
+    const KEY_A: u32 = 30;
+    const KEY_B: u32 = 48;
+    const KEY_LEFTSHIFT: u32 = 42;
+
+    fn focused_client() -> (Harness, TestClient, Toplevel) {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        (h, c, t)
+    }
+
+    /// An input method client; with `grab`, its keyboard grab holds the keyboard.
+    fn input_method(h: &mut Harness, grab: bool) -> TestClient {
+        let mut m = h.connect();
+        m.input_method();
+        h.roundtrip(&mut m);
+        if grab {
+            m.grab_keyboard(0);
+            h.roundtrip(&mut m);
+            assert!(ime_holds_keyboard(&h.state.seat.get_keyboard().unwrap()));
+        }
+        m
+    }
+
+    /// Toplevel `t`'s client opens a grabbing popup from a click, as a menu does.
+    fn open_menu(h: &mut Harness, c: &mut TestClient, t: Toplevel) -> Popup {
+        let p = h.map_popup(c, t, 100, 80);
+        let pointer = h.state.seat.get_pointer().unwrap();
+        assert!(
+            crate::popupgrab::holding(&pointer).is_some(),
+            "the menu grabs"
+        );
+        p
+    }
+
+    fn popup_holds_keyboard(h: &Harness) -> bool {
+        let kb = h.state.seat.get_keyboard().unwrap();
+        kb.with_grab(|_, g| g.downcast_ref::<PopupKeyboardGrab<State>>().is_some())
+            .unwrap_or(false)
+    }
+
+    fn tap(h: &mut Harness, code: u32) {
+        h.key(code, true);
+        h.key(code, false);
+    }
+
+    #[test]
+    fn a_menus_keyboard_grab_survives_the_input_method_releasing_its_own() {
+        let (mut h, mut c, t) = focused_client();
+        let mut m = input_method(&mut h, true);
+        let p = open_menu(&mut h, &mut c, t);
+        assert!(popup_holds_keyboard(&h), "the menu takes the keyboard");
+        assert_eq!(c.side.keyboard_focus.as_ref(), Some(&p.surface));
+        m.release_grab(0);
+        h.roundtrip(&mut m);
+        assert!(popup_holds_keyboard(&h), "the menu has its grab back");
+        c.hide_popup(&p);
+        h.roundtrip(&mut c);
+        c.side.keys.clear();
+        tap(&mut h, KEY_A);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            c.side.keys,
+            [(KEY_A, true), (KEY_A, false)],
+            "keys after the menu closed reach the window"
+        );
+    }
+
+    #[test]
+    fn an_input_method_grab_keeps_the_keyboard_inside_a_grabbing_popup_until_released() {
+        let (mut h, mut c, t) = focused_client();
+        let mut m = input_method(&mut h, false);
+        open_menu(&mut h, &mut c, t);
+        m.grab_keyboard(0);
+        h.roundtrip(&mut m);
+        c.side.keys.clear();
+        tap(&mut h, KEY_A);
+        h.roundtrip(&mut m);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            m.side.ims[0].grab_keys,
+            [(KEY_A, true), (KEY_A, false)],
+            "the input method serves a field inside the popup"
+        );
+        assert!(c.side.keys.is_empty(), "no raw key: {:?}", c.side.keys);
+        m.release_grab(0);
+        h.roundtrip(&mut m);
+        assert!(popup_holds_keyboard(&h), "the popup has its grab back");
+    }
+
+    #[test]
+    fn the_input_methods_grab_hears_each_modifier_state_once() {
+        let (mut h, _c, _) = focused_client();
+        let mut m = input_method(&mut h, true);
+        m.side.ims[0].grab_mods.clear();
+        tap(&mut h, KEY_LEFTSHIFT);
+        h.roundtrip(&mut m);
+        assert_eq!(m.side.ims[0].grab_mods, [1, 0], "Shift down, then up");
+    }
+
+    #[test]
+    fn a_virtual_keyboards_key_skips_the_input_methods_grab() {
+        let (mut h, mut c, _) = focused_client();
+        let mut m = input_method(&mut h, true);
+        let vk = m.virtual_keyboard();
+        h.roundtrip(&mut m);
+        tap(&mut h, KEY_A);
+        m.vk_key(vk, KEY_B, true);
+        m.vk_key(vk, KEY_B, false);
+        h.roundtrip(&mut m);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            m.side.ims[0].grab_keys,
+            [(KEY_A, true), (KEY_A, false)],
+            "the seat's key goes to the grab"
+        );
+        assert_eq!(
+            c.side.keys,
+            [(KEY_B, true), (KEY_B, false)],
+            "the virtual keyboard's key goes to the window"
+        );
+    }
+}
