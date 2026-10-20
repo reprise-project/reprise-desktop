@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use reprisekit::wallpapers::Builtin;
 use reprisescene::BufferId;
 use smithay::{
+    backend::renderer::gles::GlesTexture,
     output::Output,
     reexports::calloop::{
         RegistrationToken, channel,
@@ -194,6 +195,8 @@ struct WallpaperNode {
     placed: Option<Rect>,
     /// The fit a job is composing for this output.
     composing: Option<Fit>,
+    /// The staged dma-buf's texture the buffer shows, which the desktop water samples too.
+    texture: Option<GlesTexture>,
 }
 
 impl WallpaperNode {
@@ -209,8 +212,9 @@ impl WallpaperNode {
     }
 
     /// The buffer holds the picture composed for `fit`; a job composing another fit lands stale.
-    fn shown(&mut self, fit: Fit) {
+    fn shown(&mut self, fit: Fit, texture: Option<GlesTexture>) {
         self.fit = Some(fit);
+        self.texture = texture;
         self.placed = Some(fit.rect);
         self.composing = None;
     }
@@ -685,6 +689,7 @@ impl State {
                             fit: None,
                             placed: None,
                             composing: None,
+                            texture: None,
                         },
                     ));
                     w.nodes.len() - 1
@@ -723,18 +728,21 @@ impl State {
             if staged.is_some() {
                 taken.push(size);
             }
-            match staged {
+            let texture = match staged {
                 // Borrowed: the picture is shown as drawn, so what was staged is the canvas.
                 Some(p) if matches!(canvas, Cow::Borrowed(_)) => {
                     let renderer = self.backend.as_mut().map(|b| &mut b.renderer);
-                    p.show(&mut self.scene, renderer, node.buffer, &canvas, scale);
+                    p.show(&mut self.scene, renderer, node.buffer, &canvas, scale)
                 }
-                _ => upload_scaled(&mut self.scene, node.buffer, &canvas, scale),
-            }
-            node.shown(fit);
+                _ => {
+                    upload_scaled(&mut self.scene, node.buffer, &canvas, scale);
+                    None
+                }
+            };
+            node.shown(fit, texture.clone());
             changed = true;
             let out = w.nodes[i].0.clone();
-            self.water_wallpaper(&out, Pane::Desktop, &canvas, fresh);
+            self.water_wallpaper(&out, Pane::Desktop, &canvas, texture, fresh);
         }
         w.staged.retain(|p| !taken.contains(&staged_size(p)));
         let compose: Vec<_> = (compose.into_iter())
@@ -784,12 +792,13 @@ impl State {
                 if !node.takes(fit) {
                     return;
                 }
-                node.shown(fit);
                 let b = fit.rect;
                 state.scene.set_position(node.buffer, b.x, b.y);
                 let renderer = state.backend.as_mut().map(|b| &mut b.renderer);
-                staged.show(&mut state.scene, renderer, node.buffer, &canvas, fit.scale);
-                state.water_wallpaper(&out, Pane::Desktop, &canvas, false);
+                let texture =
+                    staged.show(&mut state.scene, renderer, node.buffer, &canvas, fit.scale);
+                node.shown(fit, texture.clone());
+                state.water_wallpaper(&out, Pane::Desktop, &canvas, texture, false);
                 state.redraw_all();
             })
         });
@@ -797,6 +806,13 @@ impl State {
 
     fn uploads(&self) -> Option<Uploads> {
         self.backend.as_ref().map(|b| b.uploads.clone())
+    }
+
+    /// The staged texture `out`'s wallpaper buffer shows, unless a job is composing another.
+    pub fn wallpaper_texture(&self, out: &Output) -> Option<GlesTexture> {
+        let w = self.wallpaper.as_ref()?;
+        let (_, node) = w.nodes.iter().find(|(o, _)| o == out)?;
+        (node.composing.is_none() && node.fit.is_some()).then(|| node.texture.clone())?
     }
 
     /// The wallpaper as `out` shows it, at `scale`: the lock screen's
@@ -915,9 +931,10 @@ mod tests {
             fit: Some(fit(1920)),
             placed: Some(fit(1920).rect),
             composing: Some(fit(1280)),
+            texture: None,
         };
         assert!(node.takes(fit(1280)));
-        node.shown(fit(960));
+        node.shown(fit(960), None);
         assert!(
             !node.takes(fit(1280)),
             "the job for the older fit lands stale"

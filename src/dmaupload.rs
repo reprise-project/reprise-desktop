@@ -17,7 +17,10 @@ use smithay::backend::{
         dmabuf::{AsDmabuf, Dmabuf},
         gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
     },
-    renderer::{ImportDma, gles::GlesRenderer},
+    renderer::{
+        ImportDma,
+        gles::{GlesRenderer, GlesTexture},
+    },
 };
 use smithay::reexports::gbm::{AsRaw, BufferObject};
 
@@ -216,7 +219,8 @@ impl Staged {
     }
 
     /// Show it in `sb` at `scale`, as `upload_scaled` shows `canvas`, which it was made from
-    /// and which shows instead when the renderer refuses the dma-buf.
+    /// and which shows instead when the renderer refuses the dma-buf. Returns the dma-buf's
+    /// texture when it shows, for others to sample.
     pub fn show(
         self,
         scene: &mut DeskScene,
@@ -224,22 +228,29 @@ impl Staged {
         sb: BufferId,
         canvas: &Canvas,
         scale: i32,
-    ) {
+    ) -> Option<GlesTexture> {
         let scale = scale.max(1);
         let (w, h) = self.size();
-        match self {
+        let texture = match self {
             Staged::Dmabuf(d, refused) => {
                 let Some(r) = renderer else {
-                    return upload_scaled(scene, sb, canvas, scale);
+                    upload_scaled(scene, sb, canvas, scale);
+                    return None;
                 };
                 let Some(t) = imported(r.import_dmabuf(&d, None), &refused) else {
-                    return upload_scaled(scene, sb, canvas, scale);
+                    upload_scaled(scene, sb, canvas, scale);
+                    return None;
                 };
-                scene.buffer_set_texture(sb, r, t);
+                scene.buffer_set_texture(sb, r, t.clone());
+                Some(t)
             }
-            Staged::Memory(p) => scene.buffer_set_prepared(sb, p),
-        }
+            Staged::Memory(p) => {
+                scene.buffer_set_prepared(sb, p);
+                None
+            }
+        };
         scene.buffer_set_dest_size(sb, Some((w / scale, h / scale).into()));
+        texture
     }
 }
 
@@ -334,5 +345,37 @@ mod tests {
                 .collect();
             assert_eq!(read, expected);
         }
+    }
+
+    #[test]
+    fn a_shown_dma_buf_hands_back_the_texture_its_buffer_shows() {
+        let mut scene = DeskScene::new();
+        let sb = scene.buffer_create(scene.root());
+        let canvas = Canvas::new(8, 4);
+        let memory = Staged::new(None, &canvas);
+        assert!(
+            memory.show(&mut scene, None, sb, &canvas, 1).is_none(),
+            "a copy in pixel memory has no texture to hand back"
+        );
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let node = EGLDevice::device_for_display(renderer.egl_context().display())
+            .ok()
+            .and_then(|d| d.try_get_render_node().ok().flatten())
+            .and_then(|n| n.dev_path());
+        let Some(node) = node else {
+            eprintln!("skipped: no render node");
+            return;
+        };
+        let staged = Staged::new(Some(&Uploads::new(node)), &canvas);
+        if !matches!(staged, Staged::Dmabuf(..)) {
+            eprintln!("skipped: no linear dma-buf");
+            return;
+        }
+        let texture = staged.show(&mut scene, Some(&mut renderer), sb, &canvas, 1);
+        let size = texture.expect("the imported dma-buf's texture").size();
+        assert_eq!((size.w, size.h), (8, 4));
     }
 }

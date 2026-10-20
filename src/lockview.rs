@@ -494,7 +494,7 @@ fn paint_wall(state: &mut State, output: &Output, tree: TreeId, wall: BufferId) 
     match canvas.filter(|_| state.water_on()) {
         Some(c) => {
             state.water_lock_cover(output, tree, wall);
-            state.water_wallpaper(output, Pane::Lock, &c, false);
+            state.water_wallpaper(output, Pane::Lock, &c, None, false);
         }
         None => state.water_lock_uncover(output, wall),
     }

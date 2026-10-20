@@ -100,11 +100,17 @@ fn next_flavour(profile: Profile, flavour: usize) -> usize {
     }
 }
 
+/// A pane's next picture: a canvas to import, or a texture the wallpaper already holds.
+enum Picture {
+    Canvas(Canvas),
+    Texture(GlesTexture),
+}
+
 struct PaneState {
     sim: Sim,
     id: Id,
     prev_id: Id,
-    pending: Option<Canvas>,
+    pending: Option<Picture>,
     texture: Option<GlesTexture>,
     previous: Option<GlesTexture>,
     fade: f32,
@@ -172,8 +178,11 @@ impl PaneState {
     }
 
     fn import_pending(&mut self, r: &mut GlesRenderer) -> Result<(), GlesError> {
-        if let Some(c) = self.pending.take() {
-            self.texture = Some(import(r, &c)?);
+        if let Some(picture) = self.pending.take() {
+            self.texture = Some(match picture {
+                Picture::Canvas(c) => import(r, &c)?,
+                Picture::Texture(t) => t,
+            });
             self.bump();
         }
         Ok(())
@@ -861,18 +870,22 @@ impl State {
             }
             let canvas = if solid {
                 None
-            } else if unpictured {
+            } else if !unpictured {
+                continue;
+            } else if let Some(t) = self.wallpaper_texture(&out) {
+                self.water_picture(&out, Pane::Desktop, Picture::Texture(t), false);
+                changed = true;
+                continue;
+            } else {
                 let scale = self.draw_scale_at(Some(&out));
                 self.wallpaper_canvas(&out, scale)
-            } else {
-                continue;
             };
             match canvas {
-                Some(c) => self.water_wallpaper(&out, Pane::Desktop, &c, false),
+                Some(c) => self.water_picture(&out, Pane::Desktop, Picture::Canvas(c), false),
                 None if shows != Some(bg) => {
                     let mut c = Canvas::new(1, 1);
                     c.fill_rect(c.bounds(), bg);
-                    self.water_wallpaper(&out, Pane::Desktop, &c, false);
+                    self.water_picture(&out, Pane::Desktop, Picture::Canvas(c), false);
                     if let Some(p) = self.water.panes.borrow_mut().get_mut(&key) {
                         p.solid = Some(bg);
                     }
@@ -928,8 +941,21 @@ impl State {
     }
 
     /// Hand `pane` of `out` the picture it draws, composed at the output's size (imported at its
-    /// next step). With `fading_in` the picture showing stays under it until `water_fade` reaches 1.
-    pub fn water_wallpaper(&mut self, out: &Output, pane: Pane, canvas: &Canvas, fading_in: bool) {
+    /// next step), or `texture` when the wallpaper already holds it as one. With `fading_in` the
+    /// picture showing stays under it until `water_fade` reaches 1.
+    pub fn water_wallpaper(
+        &mut self,
+        out: &Output,
+        pane: Pane,
+        canvas: &Canvas,
+        texture: Option<GlesTexture>,
+        fading_in: bool,
+    ) {
+        let picture = texture.map_or_else(|| Picture::Canvas(canvas.clone()), Picture::Texture);
+        self.water_picture(out, pane, picture, fading_in);
+    }
+
+    fn water_picture(&mut self, out: &Output, pane: Pane, picture: Picture, fading_in: bool) {
         {
             let mut panes = self.water.panes.borrow_mut();
             let Some(p) = panes.get_mut(&(out.name(), pane)) else {
@@ -944,7 +970,7 @@ impl State {
                 p.previous = None;
                 p.fade = 1.0;
             }
-            p.pending = Some(canvas.clone());
+            p.pending = Some(picture);
             p.solid = None;
             p.bump();
         }
@@ -1406,6 +1432,28 @@ mod tests {
         let now = Instant::now();
         ctx.prepare_named("DP-1", covered, now);
         ctx.next_step_named("DP-1", now)
+    }
+
+    #[test]
+    fn a_pane_handed_the_wallpapers_texture_draws_it_without_an_import() {
+        use smithay::backend::renderer::Offscreen;
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let texture: GlesTexture = renderer
+            .create_buffer(Fourcc::Argb8888, (8, 4).into())
+            .unwrap();
+        let mut p = PaneState::new(1, Sim::Ripples(Pool::new()));
+        p.pending = Some(Picture::Texture(texture.clone()));
+        p.import_pending(&mut renderer).unwrap();
+        let shown = p.texture.as_ref().expect("the pane's picture");
+        assert_eq!(
+            shown.tex_id(),
+            texture.tex_id(),
+            "the wallpaper's own texture"
+        );
+        assert!(p.pending.is_none());
     }
 
     fn ctx_with(outputs: &[&str]) -> Rc<WaterCtx> {
