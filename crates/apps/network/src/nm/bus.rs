@@ -346,6 +346,10 @@ fn ran(cmd: &Cmd, result: Result<Option<NmMsg>, Failure>) -> Wake {
             log::info!("{cmd:?}: the password prompt was dismissed");
             (None, None)
         }
+        Err(Failure::Text(e)) if matches!(cmd, Cmd::Stats { .. }) => {
+            log::info!("{cmd:?} failed: {e}");
+            (None, None)
+        }
         Err(Failure::Text(e)) => {
             log::warn!("{cmd:?} failed: {e}");
             (None, Some(e))
@@ -723,10 +727,39 @@ impl std::fmt::Display for Failure {
     }
 }
 
-/// A D-Bus error as the message box shows it, without NM's bus-name prefix.
+/// A D-Bus error as the balloon shows it: a sentence for a common NetworkManager error, logged
+/// raw, else the text without NM's bus-name prefix.
 fn clean(e: impl std::fmt::Display) -> Failure {
-    Failure::Text(e.to_string().replace("org.freedesktop.NetworkManager.", ""))
+    let raw = e.to_string();
+    match plain(&raw) {
+        Some(said) => {
+            log::warn!("{raw}");
+            Failure::Text(said.into())
+        }
+        None => Failure::Text(raw.replace("org.freedesktop.NetworkManager.", "")),
+    }
 }
+
+/// The sentence for a zbus error text (`name: message`) NetworkManager commonly answers.
+fn plain(raw: &str) -> Option<&'static str> {
+    let (name, msg) = raw.split_once(": ").unwrap_or((raw, ""));
+    let short = name.rsplit('.').next().unwrap_or(name);
+    match short {
+        "PermissionDenied" | "AccessDenied" | "NotAuthorized" => {
+            Some(reprisebus::polkit::NOT_ALLOWED)
+        }
+        _ if msg.to_ascii_lowercase().starts_with("not authorized") => {
+            Some(reprisebus::polkit::NOT_ALLOWED)
+        }
+        "ConnectionNotAvailable" | "UnknownDevice" => Some(NOT_READY),
+        _ if msg.contains("because device") => Some(NOT_READY),
+        "NoSecrets" => Some("This connection needs a password, and none was given."),
+        _ => None,
+    }
+}
+
+const NOT_READY: &str =
+    "The network adapter is not ready. Make sure it is turned on and enabled, then try again.";
 
 /// NetworkManager answers a `PermissionDenied` for a dismissed prompt and a
 /// refused password alike; `dismissed` tells them apart.
@@ -1340,6 +1373,83 @@ mod tests {
     }
 
     #[test]
+    fn common_network_manager_errors_read_as_sentences() {
+        let nm = |name: &str, msg: &str| {
+            let raw = format!("org.freedesktop.NetworkManager.{name}: {msg}");
+            match clean(raw) {
+                Failure::Text(t) => t,
+                Failure::Dismissed => panic!("an error is never a dismissal"),
+            }
+        };
+        let not_allowed = reprisebus::polkit::NOT_ALLOWED;
+        let not_ready = "The network adapter is not ready. Make sure it is turned on and \
+                         enabled, then try again.";
+        assert_eq!(
+            nm("PermissionDenied", "Not authorized to control networking."),
+            not_allowed
+        );
+        assert_eq!(
+            nm("Settings.PermissionDenied", "Insufficient privileges."),
+            not_allowed
+        );
+        assert_eq!(
+            nm("Failed", "Not authorized to share connections"),
+            not_allowed
+        );
+        assert_eq!(
+            nm(
+                "ConnectionNotAvailable",
+                "No suitable device found for this connection (device wlan0 not available \
+                 because device is not available)."
+            ),
+            not_ready
+        );
+        assert_eq!(
+            nm("UnknownDevice", "No device found for the requested iface."),
+            not_ready
+        );
+        assert_eq!(
+            nm(
+                "AgentManager.NoSecrets",
+                "No agents were available for this request."
+            ),
+            "This connection needs a password, and none was given."
+        );
+        assert_eq!(
+            nm(
+                "ConnectionAlreadyActive",
+                "This connection is already active."
+            ),
+            "ConnectionAlreadyActive: This connection is already active.",
+            "an unmapped error keeps its text without the bus-name prefix"
+        );
+        assert_eq!(
+            clean("org.freedesktop.zbus.Error: Not authorized to perform this operation"),
+            Failure::Text(not_allowed.into()),
+            "a refused property write reaches zbus as its own error name"
+        );
+        assert_eq!(
+            clean("org.freedesktop.DBus.Error.AccessDenied: Rejected send message"),
+            Failure::Text(not_allowed.into())
+        );
+    }
+
+    #[test]
+    fn a_refused_stats_refresh_rate_has_no_balloon() {
+        let stats = Cmd::Stats {
+            device: "/org/freedesktop/NetworkManager/Devices/3".into(),
+            on: true,
+        };
+        let refused = Err(clean(
+            "org.freedesktop.zbus.Error: Not authorized to perform this operation",
+        ));
+        assert!(matches!(
+            ran(&stats, refused),
+            Wake::Ran { error: None, .. }
+        ));
+    }
+
+    #[test]
     fn a_dismissed_prompt_has_no_message_box_and_a_refusal_has_one() {
         let msg = zbus::Message::method_call("/", "ActivateConnection")
             .and_then(|b| b.build(&()))
@@ -1362,7 +1472,7 @@ mod tests {
         let refused = auth_failure(denied(), || false);
         assert_eq!(
             refused,
-            Failure::Text("PermissionDenied: Not authorized to control networking.".into())
+            Failure::Text(reprisebus::polkit::NOT_ALLOWED.into())
         );
         assert!(matches!(
             ran(&join(), Err(refused)),

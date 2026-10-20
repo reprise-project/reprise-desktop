@@ -43,6 +43,9 @@ pub enum Refusal {
 pub const TIMED_OUT: &str =
     "The password prompt was open too long, so nothing was changed. Try again.";
 
+/// What a program says for [`Refusal::Denied`].
+pub const NOT_ALLOWED: &str = "You are not allowed to make this change.";
+
 const NO_REPLY: &str = "org.freedesktop.DBus.Error.NoReply";
 
 /// The refusal `e` is, when its error name passes `refused` or is `NoReply`, or

@@ -406,7 +406,7 @@ fn failure(name: &str, msg: Option<&str>, dismissed: impl FnOnce() -> bool) -> F
     if dismissed() {
         return Failure::Dismissed;
     }
-    Failure::Text("You are not allowed to make this change.".into())
+    Failure::Text(reprisebus::polkit::NOT_ALLOWED.into())
 }
 
 /// Your `~/.face` and `~/.face.icon`, when you keep them, take the new
@@ -477,7 +477,7 @@ mod tests {
         );
         assert_eq!(
             failure(DENIED, Some("Not authorized"), || false),
-            Failure::Text("You are not allowed to make this change.".into())
+            Failure::Text(reprisebus::polkit::NOT_ALLOWED.into())
         );
         let other = failure(
             "org.freedesktop.Accounts.Error.Failed",
