@@ -20,6 +20,8 @@ pub const W: i32 = 360;
 pub const VISIBLE: usize = 10;
 const PAD: i32 = 4;
 pub const EMPTY: &str = "Nothing has been copied yet.";
+/// What a reader calls the filter field.
+pub const FILTER: &str = "Filter";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
@@ -344,6 +346,7 @@ pub fn access(
     let ll = listbox::layout(&m.list, lay.list, cm);
     let focus = listbox::access_filtered(
         &m.edit,
+        FILTER,
         lay.field,
         &m.list,
         Some(&ll),
@@ -393,6 +396,7 @@ mod tests {
             crate::access::accesskit::Role::TextInput,
             "with no rows the field has the focus"
         );
+        assert_eq!(t.get(focus).unwrap().label(), Some(FILTER));
         assert!(
             t.nodes().any(|(_, n)| n.value() == Some(EMPTY)),
             "the empty history's label is there"

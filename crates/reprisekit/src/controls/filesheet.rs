@@ -45,6 +45,8 @@ pub struct SetFacts {
 pub const CALCULATING: &str = "Calculating...";
 
 pub const NAME: &str = "name";
+/// What a reader calls the name field, which no label names.
+pub const NAME_FIELD: &str = "Name";
 pub const READ_ONLY: &str = "readonly";
 pub const HIDDEN: &str = "hidden";
 pub const EXECUTABLE: &str = "executable";
@@ -350,7 +352,8 @@ pub fn general_page(
                             first: std::cell::Cell::new(0),
                             enabled: true,
                         },
-                    ),
+                    )
+                    .named(NAME_FIELD),
                 });
                 y = FIELD.bottom() + FIELD_TO_SEP;
             }
@@ -1915,6 +1918,19 @@ mod tests {
             Control::Label { text, .. } => text,
             other => panic!("{id} is a label, not {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_reader_calls_the_name_field_name() {
+        let (page, _) = general_page(&rows(&facts(false)), "notes.txt", None, None);
+        let text = crate::text::TextRenderer::load(&crate::theme::FontConfig::default());
+        let mut t = crate::access::Tree::window("", (400, 400));
+        page.access(&mut t, crate::access::ROOT, &text, 11);
+        let (_, field) = t
+            .nodes()
+            .find(|(_, n)| n.role() == crate::access::accesskit::Role::TextInput)
+            .expect("the name field");
+        assert_eq!(field.label(), Some(NAME_FIELD));
     }
 
     #[test]

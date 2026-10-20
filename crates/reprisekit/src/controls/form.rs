@@ -239,6 +239,8 @@ pub struct Item {
     pub rect: Rect,
     pub control: Control,
     pub indent: Indent,
+    /// What a reader calls a control no drawn label names ([`Item::named`]).
+    pub name: Option<&'static str>,
 }
 
 /// How an item's rect is anchored. `UnderCheck`: under a check box's label, starting
@@ -263,6 +265,14 @@ impl Item {
             rect,
             control,
             indent: Indent::None,
+            name: None,
+        }
+    }
+
+    pub fn named(self, name: &'static str) -> Item {
+        Item {
+            name: Some(name),
+            ..self
         }
     }
 
@@ -4257,8 +4267,12 @@ impl Form {
                     (id, Some(id))
                 }
             };
-            if let (Some(l), Some(n)) = (label, bare.and_then(|b| tree.get_mut(b))) {
-                n.push_labelled_by(l);
+            if let Some(n) = bare.and_then(|b| tree.get_mut(b)) {
+                match (it.name, label) {
+                    (Some(name), _) => n.set_label(name),
+                    (None, Some(l)) => n.push_labelled_by(l),
+                    (None, None) => {}
+                }
             }
             label = None;
             if self.focus == Some(i) {

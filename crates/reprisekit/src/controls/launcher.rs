@@ -37,6 +37,8 @@ pub const MAX_SETTINGS: usize = 4;
 pub const MAX_FILES: usize = 8;
 pub const SETTINGS_HEADING: &str = "Settings";
 pub const FILES_HEADING: &str = "Files";
+/// What a reader calls the field.
+pub const SEARCH: &str = "Search";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
@@ -767,6 +769,7 @@ pub fn access(
     let ll = lay.list.map(|frame| listbox::layout(&l.list, frame, &cm));
     let focus = listbox::access_filtered(
         &l.edit,
+        SEARCH,
         lay.field,
         &l.list,
         ll.as_ref(),
@@ -1058,6 +1061,7 @@ mod tests {
             accesskit::Role::TextInput,
             "with no rows the field has the focus"
         );
+        assert_eq!(t.get(focus).unwrap().label(), Some(SEARCH));
         typed(&mut l, "n");
         l.set_rows(rows(&["Notepad", "Notion"]));
         l.set_files(vec![FileRow {

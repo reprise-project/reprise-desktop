@@ -364,12 +364,13 @@ pub fn access(
 
 /// A filter field over a list box, as the launcher and the clipboard
 /// history draw them: `edit` in the sunken `field` as a text input, then
-/// the list at `lay`. Returns the highlighted row's node, else the
-/// field's: the arrows move the highlight while the text stays in the
-/// field, so a reader follows the row.
+/// the list at `lay`, the field read as `name`. Returns the highlighted
+/// row's node, else the field's: the arrows move the highlight while the
+/// text stays in the field, so a reader follows the row.
 #[allow(clippy::too_many_arguments)]
 pub fn access_filtered(
     edit: &crate::textedit::TextEdit,
+    name: &str,
     field: Rect,
     lb: &ListBox,
     lay: Option<&Layout>,
@@ -383,6 +384,9 @@ pub fn access_filtered(
     let f = crate::classic::widgets::access_edit(
         edit, first, false, field, true, text, px, tree, parent, "field",
     );
+    if let Some(n) = tree.get_mut(f) {
+        n.set_label(name);
+    }
     match lay {
         Some(lay) if lb.selected.is_some() => access(lb, lay, tree, parent, "rows"),
         Some(lay) => {
