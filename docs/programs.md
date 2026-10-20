@@ -213,7 +213,9 @@ pick its own password at first login.
 Checks for system, Flatpak and firmware updates after login and every six
 hours, and again when a Flatpak installation changes, a firmware device is
 plugged in or out, or new firmware metadata arrives. Lists them by source, all
-ticked; untick what you'd rather skip and click Install. When a device asks for
+ticked; untick what you'd rather skip and click Install. Where fetching firmware
+metadata takes a password, the checks on their own skip it and Check Now asks
+for it. When a device asks for
 something mid-update (unplug it, press a button), the window says what; with
 the window closed, a balloon does. It says when a restart or a log off is due.
 Closing the window doesn't stop an install halfway, and nothing installs on its
