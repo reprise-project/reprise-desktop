@@ -10625,6 +10625,40 @@ mod tests {
         assert_eq!(d.tray().unwrap().client(), (1184, 602), "back at 100%");
     }
 
+    /// At 200% on a 1024x768 output the Customize dialog keeps inside the work area with its
+    /// buttons in the client, under each interface; at 100% Classic's and Blue's room changes
+    /// nothing (Glass's 1184 px page narrows to the output at any size).
+    #[test]
+    fn the_tray_customize_dialog_fits_a_small_output_at_200() {
+        use reprisekit::interface::Interface;
+        const AREA_768: (i32, i32) = (1024, 708);
+        let text = TextRenderer::load(&FontConfig::default());
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = reprisekit::interfaces::theme_for(i);
+            let mut d = tray_dialog(&theme);
+            d.fit(&theme, &text);
+            let whole = DialogLayout::compute(&theme, &text, &d);
+            d.fit_in(&theme, &text, AREA_768);
+            let fitted = DialogLayout::compute(&theme, &text, &d);
+            if i != Interface::Glass {
+                assert_eq!(fitted, whole, "{i:?} at 100%");
+            }
+            let huge = theme.with_text_size(200);
+            d.fit_in(&huge, &text, AREA_768);
+            let l = DialogLayout::compute(&huge, &text, &d);
+            assert!(
+                l.size.0 <= AREA_768.0 && l.size.1 <= AREA_768.1,
+                "{i:?}: {:?}",
+                l.size
+            );
+            let tray = d.tray().unwrap();
+            let client = tray.client();
+            let parts = tray.layout(&text, huge.fonts.size_px, (0, 0));
+            assert!(parts.cancel.right() <= client.0, "{i:?}");
+            assert!(parts.cancel.bottom() <= client.1, "{i:?}");
+        }
+    }
+
     /// Every compositor dialog laid out as a form, under each interface, at each text size.
     fn form_dialogs(theme: &Theme, text: &TextRenderer) -> Vec<Dialog> {
         use reprisekit::controls::iconlist::IconList;
