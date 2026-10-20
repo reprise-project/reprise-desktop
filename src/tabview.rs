@@ -18,7 +18,9 @@
 
 use std::time::{Duration, Instant};
 
-use reprisekit::controls::captiontabs::{self, TabHit};
+use reprisekit::access::Tree;
+use reprisekit::access::accesskit::NodeId;
+use reprisekit::controls::captiontabs::{self, CaptionTabs, TabEntry, TabHit};
 use reprisekit::frame::FrameHit;
 use reprisekit::raster::Rect;
 use smithay::reexports::calloop::RegistrationToken;
@@ -253,6 +255,28 @@ impl State {
             &win.geom,
             members.len(),
         ))
+    }
+
+    /// `w`'s tab strip for a screen reader under `parent`, in the frame's coordinates; nothing
+    /// when its caption draws no tabs.
+    pub fn strip_access(&self, w: WindowId, tree: &mut Tree, parent: NodeId) {
+        let (Some((members, selected, ghost)), Some(l)) =
+            (self.strip_windows(w), self.strip_layout(w))
+        else {
+            return;
+        };
+        let titles: Vec<String> = (members.iter())
+            .map(|&m| self.win(m).map(|x| x.title()).unwrap_or_default())
+            .collect();
+        let tabs = CaptionTabs {
+            tabs: (titles.iter())
+                .map(|title| TabEntry { title, icon: None })
+                .collect(),
+            selected,
+            ghost,
+            ..CaptionTabs::default()
+        };
+        captiontabs::access(&tabs, &l, tree, parent, "tabs");
     }
 
     /// What on `w`'s tab strip layout point (`x`, `y`) is over, and the
@@ -1047,7 +1071,7 @@ impl State {
         self.focus_window(w);
     }
 
-    /// the pointer is still on it.
+    /// A press on a tab's close box closes its window when the release lands on the box too.
     pub fn tab_press_released(&mut self) {
         let Interaction::TabPress {
             window,
@@ -1059,7 +1083,9 @@ impl State {
             return;
         };
         let held = self.tabs.held.take();
-        let on = held.is_some() && self.tabs.hot == held;
+        let at = self.pointer_location();
+        let on =
+            held.is_some() && self.tab_at(window, at.x, at.y).map(|(h, _)| (window, h)) == held;
         self.redraw_caption(window);
         if close && on {
             self.close(member);
