@@ -359,9 +359,10 @@ where
     }
 
     /// Whether a leaf the screen draws under `node`'s subtree, in a
-    /// subtree [`Scene::set_in_backdrop`] left out, meets `area` (layout):
-    /// whether [`Scene::elements_below`] there differs from the backdrop.
-    /// Makes no elements.
+    /// subtree [`Scene::set_in_backdrop`] left out, meets `area` (layout),
+    /// a custom node only where it [`draws_in`](crate::CustomNode::draws_in) it: whether
+    /// [`Scene::elements_below`] there differs from the backdrop. Makes no
+    /// elements.
     pub fn left_out_below(&self, node: impl Into<NodeId>, area: Rectangle<i32, Logical>) -> bool {
         let passed = Cell::new(false);
         let pass = Pass {
@@ -380,7 +381,13 @@ where
             false,
             pass,
             None,
-            &mut |_, _, _, _, left_out, _| hit |= left_out,
+            &mut |_, n, pos, _, left_out, _| {
+                hit |= left_out
+                    && match &n.content {
+                        Content::Custom(c) => c.draws_in(Rectangle::new(area.loc - pos, area.size)),
+                        _ => true,
+                    }
+            },
         );
         hit
     }

@@ -121,6 +121,13 @@ pub trait CustomNode<R: Renderer> {
         self.in_backdrop()
     }
 
+    /// Whether the node draws anything in `area` (logical, from its top-left):
+    /// [`Scene::left_out_below`](crate::Scene::left_out_below) passes over a
+    /// node whose size reaches the area but whose drawing does not.
+    fn draws_in(&self, _area: Rectangle<i32, Logical>) -> bool {
+        true
+    }
+
     /// The node's elements, front to back, for a view at `scale` where the
     /// node's top-left lands at `location`, physical, from the view's
     /// top-left. `alpha` is the node's opacity times its ancestors'.
