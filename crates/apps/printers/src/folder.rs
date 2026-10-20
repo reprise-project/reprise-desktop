@@ -72,7 +72,7 @@ fn badges(p: &Printer, default: bool) -> Vec<Badge> {
 }
 
 pub fn cells(p: &Printer, s: &Snapshot) -> Vec<String> {
-    let docs = s.jobs_of(&p.name).count();
+    let docs = s.documents_of(&p.name).count();
     vec![
         p.name.clone(),
         docs.to_string(),
@@ -87,7 +87,7 @@ fn actions(p: &Printer, s: &Snapshot, menu: bool) -> Vec<(String, bool, Option<A
     let name = &p.name;
     let out = |o: Outcome| Some(Act::Out(o));
     let is_default = s.default.as_deref() == Some(name.as_str());
-    let jobs = s.jobs_of(name).count() > 0;
+    let jobs = s.documents_of(name).next().is_some();
     let stopped = p.state == PrinterState::Stopped;
     let mut rows = Vec::new();
     if menu {
@@ -194,7 +194,7 @@ fn details(p: Option<&Printer>, s: &Snapshot) -> Vec<(String, bool)> {
     }
     match p {
         Some(p) => {
-            let docs = s.jobs_of(&p.name).count();
+            let docs = s.documents_of(&p.name).count();
             let mut l = vec![(p.name.clone(), true)];
             if s.default.as_deref() == Some(p.name.as_str()) {
                 l.push(("Default printer".into(), false));
@@ -777,6 +777,27 @@ mod tests {
         );
         assert_eq!(cells[0][1], "0");
         assert_eq!(cells[0][2], "Ready");
+    }
+
+    #[test]
+    fn an_aborted_document_cups_keeps_counts_and_can_be_cancelled() {
+        let mut s = snap();
+        s.aborted = vec![Job {
+            id: 2,
+            printer: "Inkjet".into(),
+            owner: "ann".into(),
+            state: JobState::Aborted,
+            preserved: true,
+            ..Default::default()
+        }];
+        let inkjet = &s.printers[0];
+        assert_eq!(cells(inkjet, &s)[1], "1");
+        assert!(details(Some(inkjet), &s).contains(&("Documents: 1".to_string(), false)));
+        let cancel = actions(inkjet, &s, false)
+            .into_iter()
+            .find(|a| a.0 == "Cancel all documents")
+            .expect("Cancel all documents");
+        assert!(cancel.1, "Cancel all documents is enabled");
     }
 
     #[test]

@@ -423,16 +423,18 @@ impl Snapshot {
         self.jobs.iter().filter(move |j| j.printer == printer)
     }
 
-    /// The documents a printer's queue window lists: its jobs and its
-    /// restartable aborted ones, oldest first.
-    pub fn queue_of(&self, printer: &str) -> Vec<Job> {
-        let mut out: Vec<Job> = self
-            .jobs
+    /// A printer's documents: its unfinished jobs and the aborted ones
+    /// CUPS keeps, as the folder counts them and the queue window lists them.
+    pub fn documents_of<'a>(&'a self, printer: &'a str) -> impl Iterator<Item = &'a Job> {
+        self.jobs
             .iter()
             .chain(&self.aborted)
-            .filter(|j| j.printer == printer)
-            .cloned()
-            .collect();
+            .filter(move |j| j.printer == printer)
+    }
+
+    /// The documents a printer's queue window lists, oldest first.
+    pub fn queue_of(&self, printer: &str) -> Vec<Job> {
+        let mut out: Vec<Job> = self.documents_of(printer).cloned().collect();
         out.sort_by_key(|j| j.id);
         out
     }
@@ -657,23 +659,33 @@ pub fn resume(c: &Client, name: &str) -> Result<()> {
     })
 }
 
-/// Cancel every job on `name`. cups-pk-helper has no per-printer
-/// cancel, so it is asked job by job. An account that may not cancel
-/// other people's jobs and has no cups-pk-helper cancels its own.
+/// Cancel every job on `name` and purge its kept aborted ones, which
+/// Cancel-Jobs leaves. cups-pk-helper has no per-printer cancel, so it is
+/// asked job by job. An account that may not cancel other people's jobs
+/// and has no cups-pk-helper cancels and purges its own.
 pub fn cancel_all(c: &Client, name: &str) -> Result<()> {
-    let all = c.admin(printer_op(c, CANCEL_JOBS, name), || {
+    let kept = aborted(c, Some(name)).unwrap_or_default();
+    let peer = printer_op(c, CANCEL_JOBS, name);
+    let by_peer = peer.is_ok();
+    let all = c.admin(peer, || {
         let mut all = jobs(c, Some(name)).unwrap_or_default();
-        all.extend(aborted(c, Some(name)).unwrap_or_default());
+        all.extend(kept.iter().cloned());
         cancel_calls(&all)
     });
-    match all {
+    let purge: Vec<Job> = match all {
+        Ok(()) if by_peer => kept,
         Err(Error::NeedsHelper) => {
             let req =
                 Request::new(CANCEL_MY_JOBS).op_attr("printer-uri", Value::uri(&printer_uri(name)));
-            c.call("/", req).map(drop)
+            c.call("/", req)?;
+            kept.into_iter().filter(|j| j.owner == c.user).collect()
         }
-        r => r,
+        r => return r,
+    };
+    for j in purge {
+        c.call("/jobs/", job_request(j.id, JobOp::Remove))?;
     }
+    Ok(())
 }
 
 fn cancel_calls(jobs: &[Job]) -> Vec<Call> {
@@ -734,6 +746,12 @@ pub enum JobOp {
 }
 
 pub fn job_op(c: &Client, id: i32, op: JobOp) -> Result<()> {
+    c.admin(c.call("/jobs/", job_request(id, op)).map(drop), || {
+        vec![job_call(id, op)]
+    })
+}
+
+fn job_request(id: i32, op: JobOp) -> Request {
     let code = match op {
         JobOp::Pause => HOLD_JOB,
         JobOp::Resume => RELEASE_JOB,
@@ -744,7 +762,7 @@ pub fn job_op(c: &Client, id: i32, op: JobOp) -> Result<()> {
     if op == JobOp::Remove {
         req = req.op_attr("purge-job", Value::Bool(true));
     }
-    c.admin(c.call("/jobs/", req).map(drop), || vec![job_call(id, op)])
+    req
 }
 
 /// A job operation as cups-pk-helper takes it: another user's job needs
@@ -2192,6 +2210,7 @@ mod tests {
         };
         let ids: Vec<i32> = s.queue_of("Laser").iter().map(|j| j.id).collect();
         assert_eq!(ids, [2, 5]);
-        assert_eq!(s.jobs_of("Laser").count(), 1, "the folder counts live jobs");
+        assert_eq!(s.documents_of("Laser").count(), 2);
+        assert_eq!(s.jobs_of("Laser").count(), 1);
     }
 }
