@@ -1887,7 +1887,7 @@ impl State {
         let pos = self.pointer_location();
         let out = self.output_at(pos.x, pos.y);
         let scale = self.draw_scale_at(out.as_ref());
-        let icons = crate::filepick::icons(&mut self.icons, scale);
+        let icons = crate::filepick::icons(&mut self.icons, scale, self.config.theme.text);
         let mut picker =
             crate::filepick::FilePicker::run_command(&start, icons, self.config.recent_files);
         picker.remember_in(repriseconf::filedialog::path());
@@ -1910,7 +1910,7 @@ impl State {
             .views
             .last()
             .map_or(1, |v| self.draw_scale_at(Some(&v.output)));
-        let icons = crate::filepick::icons(&mut self.icons, scale);
+        let icons = crate::filepick::icons(&mut self.icons, scale, self.config.theme.text);
         let mut picker = crate::filepick::FilePicker::program(
             std::path::Path::new("/usr/bin"),
             icons,

@@ -727,10 +727,13 @@ impl FileDlg {
     }
 
     /// How far the dialog lays out shorter than `min_client`: the places bar down to its
-    /// last tile, the shell view down to half its opening height.
+    /// last tile at its least ([`PlacesMetrics::least_tiles`]), the shell view down to half its
+    /// opening height.
+    ///
+    /// [`PlacesMetrics::least_tiles`]: crate::metrics::PlacesMetrics::least_tiles
     fn shrink(&self, cm: &ControlMetrics) -> i32 {
         let u = |v: i32| cm.text.len(v);
-        let tiles = self.places.places.len() as i32 * cm.places.tile;
+        let tiles = cm.places.least_tiles(self.places.places.len());
         let places = u(SHELL_Y + PLACES_H) - u(SHELL_Y) - tiles;
         let shell = (u(SHELL_Y + SHELL_H) - u(SHELL_Y)) / 2;
         places.min(shell).max(0)
@@ -1084,7 +1087,7 @@ impl FileDlg {
         let client = r;
         let dy = self.grow(r, cm);
         let r = rows(r, cm);
-        // 100% lengths at the text size; the toolbar's buttons and the icons keep their px.
+        // 100% lengths at the text size; the Look in field's icon keeps its px.
         let u = |v: i32| cm.text.len(v);
         let label_h = px as i32 + 2;
         let lookin_label_w = text.measure(&split_mnemonic(LOOKIN_LABEL).0, false, px);
@@ -1095,7 +1098,8 @@ impl FileDlg {
             label_h,
         );
         let lookin_h = u(LOOKIN_H);
-        let toolbar_y = r.y + u(TOOLBAR_Y) + (lookin_h - LOOKIN_H) / 2;
+        let toolbar_h = toolbar::height(false, cm);
+        let toolbar_y = r.y + u(TOOLBAR_Y) + (lookin_h - toolbar_h) / 2;
 
         // An item's width does not depend on the rect, so one pass at x 0
         // gives the natural width, and the rects shift into place after it.
@@ -1103,7 +1107,7 @@ impl FileDlg {
             &self.toolbar,
             text,
             px,
-            Rect::new(0, toolbar_y, 0, toolbar::HEIGHT),
+            Rect::new(0, toolbar_y, 0, toolbar_h),
             cm,
         );
         let toolbar_w = toolbar_rects.last().map_or(0, |b| b.right());
@@ -1111,7 +1115,7 @@ impl FileDlg {
         for b in &mut toolbar_rects {
             b.x += toolbar_x;
         }
-        let toolbar = Rect::new(toolbar_x, toolbar_y, toolbar_w, toolbar::HEIGHT);
+        let toolbar = Rect::new(toolbar_x, toolbar_y, toolbar_w, toolbar_h);
 
         let lookin_x = r.x + u(LOOKIN_X);
         let lookin_w = (toolbar_x - u(TOOLBAR_GAP) - lookin_x).max(0);
@@ -3413,9 +3417,12 @@ mod tests {
             "got {hit:?}"
         );
 
-        let tiles = 6 * cm.places.tile;
+        let tiles = cm.places.least_tiles(6);
+        assert_eq!(tiles, 6 * (3 + 32 + 2 * 30), "tiles with 32 px icons");
         let lay = d.layout(&t, 22, Rect::new(0, 0, w, 100), &cm);
         assert_eq!(lay.places.height, tiles, "the places bar keeps its tiles");
+        let squeezed = placesbar::layout(&d.places, lay.places, &cm.places);
+        assert_eq!(squeezed[5].bottom(), lay.places.bottom(), "all six fit");
         assert_eq!(
             lay.shell.frame.height,
             base.shell.frame.height - (base.places.height - tiles)
@@ -3463,8 +3470,8 @@ mod tests {
     }
 
     /// At 200% text the client opens at twice its 100% minimum and every row, field and button
-    /// grows from the client's corner; the toolbar's buttons keep their px, centred on the Look in
-    /// row; a host's extra rows draw and hit at their grown place.
+    /// grows from the client's corner, the toolbar's buttons and the places bar's tiles too; a
+    /// host's extra rows draw and hit at their grown place.
     #[test]
     fn a_grown_text_size_grows_the_dialog() {
         let t = text();
@@ -3487,8 +3494,21 @@ mod tests {
             lay.lookin.field,
             Rect::new(198, 16, lay.lookin.field.width, 44)
         );
-        assert_eq!(lay.toolbar.height, toolbar::HEIGHT);
-        assert_eq!(lay.toolbar.y, 16 + (44 - toolbar::HEIGHT) / 2);
+        assert_eq!(
+            lay.toolbar,
+            Rect::new(lay.toolbar.x, 16, lay.toolbar.width, 44)
+        );
+        assert_eq!(
+            lay.toolbar_rects[0].width,
+            2 * toolbar::BUTTON,
+            "a toolbar button doubles"
+        );
+        let pm = ControlMetrics::CLASSIC.grown(u).places;
+        assert_eq!(
+            (pm.tile, pm.icon),
+            (3 + 2 * 62, 64),
+            "a places tile and its icon"
+        );
         assert_eq!(
             lay.places,
             Rect::new(12, 74, 2 * placesbar::WIDTH, 2 * PLACES_H)

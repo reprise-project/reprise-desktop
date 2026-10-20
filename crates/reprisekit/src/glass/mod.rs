@@ -823,6 +823,7 @@ fn controls() -> ControlMetrics {
             icon_top: 2,
             label_gap: 1,
             line_lead: 0,
+            ..PlacesMetrics::CLASSIC
         },
         clock_face: clock::SIDE,
         rebar: RebarMetrics {

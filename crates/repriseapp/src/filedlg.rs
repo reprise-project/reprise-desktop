@@ -19,10 +19,11 @@ use crate::listicons::{ListIcons, ReadIcons};
 use crate::listjob::Job;
 use crate::thumbs::{self, Thumbs};
 use reprisefs::folders::FolderTable;
+use reprisekit::art::viewsicon;
 use reprisekit::controls::filedlg::{Crumb, Fields, FileDlg, Folder, FolderId, Hit, Remembered};
-use reprisekit::controls::placesbar::Place;
+use reprisekit::controls::placesbar::{self, Place};
 use reprisekit::controls::shellview::{self, Entry, Mode};
-use reprisekit::icontheme::{IconCache, IconTheme, ListingIcons};
+use reprisekit::icontheme::{self, IconCache, IconTheme, ListingIcons};
 use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::Canvas;
 use reprisekit::theme::{Metrics, TextUnits, Theme};
@@ -47,43 +48,64 @@ pub fn places() -> Vec<Place> {
 }
 
 /// The toolbar's icon names in `FileDlg::set_toolbar_icons`' order (Back, Up, New Folder, Views).
-/// `view-list` may not resolve; a `None` gets the dialog's drawn Views icon.
+/// `view-list` may not resolve; then Views gets the drawn icon ([`viewsicon::draw16_near`]).
 const TOOLBAR_ICONS: [&str; 4] = ["go-previous", "go-up", "folder-new", "view-list"];
+const TOOLBAR_VIEWS: usize = 3;
+const TOOLBAR_PX: i32 = 16;
 
 #[derive(Default)]
 pub struct Icons {
     pub places: [Option<Canvas>; 6],
     pub toolbar: [Option<Canvas>; 4],
-    /// The cache's scale and theme when they were fetched.
+    /// The cache's scale and theme and the text size when they were fetched.
     scale: i32,
     theme: Option<Arc<IconTheme>>,
+    text: TextUnits,
+}
+
+/// The drawn Views icon `px` logical px across on a canvas at `scale`, as the cache's are.
+fn views_icon(px: i32, scale: i32) -> Canvas {
+    viewsicon::draw16_near(px * scale).at_scale(scale)
 }
 
 impl Icons {
-    /// Fetches the icons not yet held, all of them again when `icons` is at another scale or
-    /// looks names up in another theme.
+    /// Fetches the icons not yet held, at the text size they were last fetched at.
     pub fn prime(&mut self, icons: &mut IconCache) {
-        if !self.fetched_from(icons) {
+        self.prime_at(icons, self.text);
+    }
+
+    /// Fetches the icons not yet held, grown by `u` as the dialog's places bar and toolbar are;
+    /// all of them again when `icons` is at another scale or theme, or `u` is another size.
+    fn prime_at(&mut self, icons: &mut IconCache, u: TextUnits) {
+        if !self.fetched_from(icons, u) {
             *self = Icons {
                 scale: icons.scale(),
                 theme: Some(icons.theme()),
+                text: u,
                 ..Icons::default()
             };
         }
+        let get = |icons: &mut IconCache, name: &str, px: i32| {
+            let icon = icons.get(name, px)?;
+            Some(icontheme::grown_icon(icon, px, u))
+        };
         for (icon, place) in self.places.iter_mut().zip(dialog_places()) {
             if icon.is_none() {
-                *icon = icons.get(place.icon, 32);
+                *icon = get(icons, place.icon, u.len(placesbar::ICON_PX));
             }
         }
-        for (icon, name) in self.toolbar.iter_mut().zip(TOOLBAR_ICONS) {
+        let px = u.len(TOOLBAR_PX);
+        for (i, (icon, name)) in self.toolbar.iter_mut().zip(TOOLBAR_ICONS).enumerate() {
             if icon.is_none() {
-                *icon = icons.get(name, 16);
+                *icon = get(icons, name, px)
+                    .or_else(|| (i == TOOLBAR_VIEWS).then(|| views_icon(px, icons.scale())));
             }
         }
     }
 
-    fn fetched_from(&self, icons: &IconCache) -> bool {
+    fn fetched_from(&self, icons: &IconCache, u: TextUnits) -> bool {
         self.scale == icons.scale()
+            && self.text == u
             && self
                 .theme
                 .as_ref()
@@ -463,7 +485,8 @@ impl Host {
     }
 
     /// The dialog draws at `scale`, `icons`' scale: its places, toolbar and entries wear their
-    /// icons at that scale, the places and toolbar from `icons`' theme, and its pictures are
+    /// icons at that scale, the places and toolbar from `icons`' theme at the dialog's text size
+    /// ([`FileDlg::text`]), and its pictures are
     /// asked for again at it. The thumbnails and icon files it shows stay until theirs arrive
     /// and `wake` fires.
     fn follow_scale(
@@ -474,8 +497,8 @@ impl Host {
         wake: &crate::Waker,
     ) {
         let rescaled = std::mem::replace(&mut self.icons_scale, scale) != scale;
-        if rescaled || !self.icons.fetched_from(icons) {
-            self.icons.prime(icons);
+        if rescaled || !self.icons.fetched_from(icons, dlg.text()) {
+            self.icons.prime_at(icons, dlg.text());
             dlg.set_place_icons(self.icons.places.to_vec());
             self.icons.set_toolbar(dlg);
         }
@@ -1645,6 +1668,35 @@ mod tests {
         icons.set_scale(1);
         h.follow_scale(&mut dlg, 1, &mut icons, &wake);
         assert!(dlg == fresh(&mut icons).0, "and the scale 1 ones again");
+    }
+
+    /// At 200% text the places tiles wear 64 px icons and the toolbar 32 px ones, Views too
+    /// (the theme's grown or the drawn one); back at 100% they are 32 and 16 px again.
+    #[test]
+    fn a_text_size_change_fetches_the_places_and_toolbar_icons_grown() {
+        let t = pictures_folder();
+        let mut icons = flat_icons(t.path());
+        let mut h = host_in(&t.path().join("list"));
+        h.icons.prime(&mut icons);
+        let mut dlg = open_dlg(&mut h);
+        let wake = crate::Waker::noop();
+        let widths = |h: &Host| {
+            [&h.icons.places[5], &h.icons.toolbar[1], &h.icons.toolbar[3]]
+                .map(|c| c.as_ref().map(|c| c.width))
+        };
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+        assert_eq!(widths(&h), [Some(32), Some(16), Some(16)], "at 100%");
+
+        dlg.set_text(TextUnits::new(22, 11));
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+        assert_eq!(widths(&h), [Some(64), Some(32), Some(32)], "at 200%");
+        let mut grown = open_dlg(&mut h);
+        grown.set_text(TextUnits::new(22, 11));
+        assert!(dlg == grown, "the dialog wears the grown icons");
+
+        dlg.set_text(TextUnits::ONE);
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+        assert_eq!(widths(&h), [Some(32), Some(16), Some(16)], "at 100% again");
     }
 
     #[test]

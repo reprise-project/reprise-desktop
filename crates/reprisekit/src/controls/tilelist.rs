@@ -427,8 +427,8 @@ pub struct Tile<'a> {
     pub greyed: bool,
 }
 
-/// A tile in row `r`: its two lines sit where a 100% row puts them, grown by `u`; the icon keeps
-/// its size, centred down the row.
+/// A tile in row `r`: its two lines sit where a 100% row puts them, grown by `u`; the icon draws
+/// at its own size, centred down the row, and the text starts past it.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_tile(
     c: &mut Canvas,
@@ -449,9 +449,13 @@ pub fn draw_tile(
     c.fill_rect(r, if selected { cs.hilight } else { cs.window });
     let mut tx = r.x + TEXT_X;
     if let Some(icon) = tile.icon {
-        let iy = r.y + (r.height - ICON_PX) / 2;
+        let (iw, ih) = (
+            ICON_PX.max(icon.width as i32),
+            ICON_PX.max(icon.height as i32),
+        );
+        let iy = r.y + (r.height - ih) / 2;
         c.blit_over(r.x + ICON_X, iy, icon);
-        tx = r.x + ICON_X + ICON_PX + TEXT_X;
+        tx = r.x + ICON_X + iw + TEXT_X;
     }
     let right = r.right() - TEXT_RIGHT;
     let mut title_right = right;
@@ -829,6 +833,55 @@ mod tests {
                 assert_eq!(c.get(x, y), window, "({x}, {y}) is background");
             }
         }
+    }
+
+    /// A 64 px picture in a 200% row is centred down it and the title starts 9 px past it; a
+    /// 16 px one keeps the 32 px slot.
+    #[test]
+    fn a_grown_picture_widens_its_slot() {
+        use crate::theme::Color;
+        const RED: Color = Color::rgb(255, 0, 0);
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let u = TextUnits::new(22, 11);
+        let h = u.len(TILE_H);
+        let first_ink = |side: u32| {
+            let mut icon = Canvas::new(side, side);
+            icon.fill_rect(icon.bounds(), RED);
+            let tile = Tile {
+                icon: Some(&icon),
+                title: "Jo",
+                tag: "",
+                caption: "",
+                greyed: false,
+            };
+            let mut c = Canvas::new(300, h as u32);
+            draw_tile(
+                &mut c,
+                &text,
+                cs,
+                Rect::new(0, 0, 300, h),
+                &tile,
+                false,
+                22,
+                u,
+            );
+            let red_top = (0..h).find(|&y| c.get(ICON_X, y) == RED.argb());
+            let ink_x = (0..300).find(|&x| (0..h).any(|y| c.get(x, y) == cs.window_text.argb()));
+            (red_top, ink_x)
+        };
+        let (top, ink) = first_ink(64);
+        assert_eq!(top, Some((h - 64) / 2), "centred down the row");
+        assert!(
+            ink.is_some_and(|x| x >= ICON_X + 64 + TEXT_X),
+            "title at {ink:?}"
+        );
+        let (_, ink) = first_ink(16);
+        assert!(
+            ink.is_some_and(|x| (ICON_X + ICON_PX + TEXT_X..ICON_X + 64).contains(&x)),
+            "a small icon's title at {ink:?}"
+        );
     }
 
     #[test]

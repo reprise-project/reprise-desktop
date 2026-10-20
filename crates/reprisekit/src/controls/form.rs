@@ -241,6 +241,8 @@ pub struct Item {
     pub indent: Indent,
     /// What a reader calls a control no drawn label names ([`Item::named`]).
     pub name: Option<&'static str>,
+    /// A framed picture that grows with the text, its frame kept ([`Item::grows`]).
+    pub grows: bool,
 }
 
 /// How an item's rect is anchored. `UnderCheck`: under a check box's label, starting
@@ -266,12 +268,22 @@ impl Item {
             control,
             indent: Indent::None,
             name: None,
+            grows: false,
         }
     }
 
     pub fn named(self, name: &'static str) -> Item {
         Item {
             name: Some(name),
+            ..self
+        }
+    }
+
+    /// A picture whose size grows with the text, its frame kept: its host hands it a canvas
+    /// at the grown size. Other pictures keep their size.
+    pub fn grows(self) -> Item {
+        Item {
+            grows: true,
             ..self
         }
     }
@@ -3442,6 +3454,14 @@ fn unmasked_index(edit: &TextEdit, at: usize) -> usize {
 /// step past a check box, which keeps its size.
 fn place(it: &Item, rect: Rect, cm: &ControlMetrics, u: TextUnits, origin: (i32, i32)) -> Rect {
     let r = match it.control {
+        Control::Picture { frame, .. } if it.grows => {
+            let f = 2 * frame;
+            Rect {
+                width: u.len(rect.width - f) + f,
+                height: u.len(rect.height - f) + f,
+                ..u.at(rect)
+            }
+        }
         Control::Picture { .. }
         | Control::Monitor(_)
         | Control::Spectrum
@@ -4288,6 +4308,28 @@ mod tests {
     use super::*;
     use crate::look::classic_paint;
     use crate::theme::{FontConfig, Theme};
+
+    /// At 200% text a growing picture's 48 px canvas room doubles inside its 2 px frame; a plain
+    /// picture keeps its size; both move with the text.
+    #[test]
+    fn a_growing_picture_doubles_inside_its_kept_frame() {
+        let picture = |id, y| {
+            Item::new(
+                id,
+                Rect::new(10, y, 52, 52),
+                Control::Picture {
+                    canvas: None,
+                    frame: 2,
+                },
+            )
+        };
+        let f = Form::new(vec![picture("grows", 20).grows(), picture("keeps", 80)]);
+        f.drawn_with(&Theme::default().with_text_size(200).paint());
+        assert_eq!(f.rect("grows"), Some(Rect::new(20, 40, 100, 100)));
+        assert_eq!(f.rect("keeps"), Some(Rect::new(20, 160, 52, 52)));
+        f.drawn_with(&Theme::default().paint());
+        assert_eq!(f.rect("grows"), Some(Rect::new(10, 20, 52, 52)), "at 100%");
+    }
 
     /// A memo takes typing, Space, a pasted line break and Ctrl+Enter as text; Enter is still
     /// the dialog's default and Tab still leaves it. It draws in a 2 px sunken frame with a

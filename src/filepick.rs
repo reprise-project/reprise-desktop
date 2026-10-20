@@ -17,13 +17,14 @@ use reprisefs::listing::Row;
 use reprisekit::art::viewsicon;
 use reprisekit::controls::filedlg::{self, Crumb, Event, Fields, FileDlg, Folder, FolderId};
 use reprisekit::controls::form::Key;
-use reprisekit::controls::placesbar::Place;
+use reprisekit::controls::placesbar::{self, Place};
 use reprisekit::controls::shellview::{self, Entry, Mode};
 use reprisekit::frame::Edges;
-use reprisekit::icontheme::{IconCache, ListingIcons};
+use reprisekit::icontheme::{self, IconCache, ListingIcons};
 use reprisekit::selection::Mods;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::EditKey;
+use reprisekit::theme::TextUnits;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -67,36 +68,45 @@ impl Purpose {
 }
 
 /// The dialog's own icons, fetched by the host: the places tiles at 32 px in
-/// `reprisefs::places::dialog_places`' order, the toolbar's buttons at 16 in `TOOLBAR`'s, and the
-/// Look in folder. The dialog draws on device pixels, so each is a scale-1 canvas `scale` times
-/// that size, as are the listing's, which come from the cache handed to [`FilePicker::reply`].
+/// `reprisefs::places::dialog_places`' order, the toolbar's buttons at 16 in `TOOLBAR`'s, both
+/// grown with the text size, and the Look in folder. The dialog draws on device pixels, so each
+/// is a scale-1 canvas `scale` times that size, as are the listing's, which come from the cache
+/// handed to [`FilePicker::reply`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Icons {
     pub places: Vec<Option<Canvas>>,
     pub toolbar: Vec<Option<Canvas>>,
     pub folder: Option<Canvas>,
     pub scale: i32,
+    pub text: TextUnits,
 }
 
-/// The dialog's icons from the compositor's scale-1 `cache`, for a dialog drawn at `scale`.
-pub fn icons(cache: &mut IconCache, scale: i32) -> Icons {
+/// The dialog's icons from the compositor's scale-1 `cache`, for a dialog drawn at `scale` with
+/// text grown by `u`.
+pub fn icons(cache: &mut IconCache, scale: i32, u: TextUnits) -> Icons {
     let scale = scale.max(1);
+    let tool_px = u.len(16) * scale;
+    let mut get = |name: &str, px: i32| {
+        let icon = cache.get(name, px)?;
+        Some(icontheme::grown_icon(icon, px, u))
+    };
     Icons {
         places: reprisefs::places::dialog_places(true)
             .iter()
-            .map(|p| cache.get(p.icon, 32 * scale))
+            .map(|p| get(p.icon, u.len(placesbar::ICON_PX) * scale))
             .collect(),
         toolbar: TOOLBAR
             .iter()
-            .map(|i| cache.get(i, 16 * scale))
+            .map(|i| get(i, tool_px))
             .enumerate()
             .map(|(n, icon)| match icon {
-                None if n == TOOLBAR_VIEWS => Some(viewsicon::draw16_at(scale).at_scale(1)),
+                None if n == TOOLBAR_VIEWS => Some(viewsicon::draw16_near(tool_px).at_scale(1)),
                 icon => icon,
             })
             .collect(),
         folder: cache.get("folder", 16 * scale),
         scale,
+        text: u,
     }
 }
 
@@ -434,13 +444,16 @@ impl FilePicker {
     /// would draw at the wrong size, and its pictures are fetched again. True when it changed.
     pub fn follow_scale(&mut self, scale: i32, cache: &mut IconCache) -> bool {
         let mut changed = false;
-        if self.icons.scale != scale {
-            self.icons = icons(cache, scale);
+        let u = self.dlg.text();
+        let rescaled = self.icons.scale != scale;
+        if rescaled || self.icons.text != u {
+            self.icons = icons(cache, scale, u);
             self.dlg.set_place_icons(self.icons.places.clone());
             let tb = |i: usize| self.icons.toolbar.get(i).cloned().flatten();
             self.dlg.set_toolbar_icons(tb(0), tb(1), tb(2), tb(3));
             self.dlg.set_crumb_icons(vec![self.icons.folder.clone()]);
-            if self.listing.is_none()
+            if rescaled
+                && self.listing.is_none()
                 && let Some(id) = self.dlg.folder()
                 && let Some(path) = self.folders.path(id).map(Path::to_path_buf)
             {
@@ -902,7 +915,7 @@ mod tests {
     #[test]
     fn views_without_a_theme_icon_draws_at_the_dialogs_scale() {
         for scale in [1, 2] {
-            let views = icons(&mut cache(), scale).toolbar[TOOLBAR_VIEWS]
+            let views = icons(&mut cache(), scale, TextUnits::ONE).toolbar[TOOLBAR_VIEWS]
                 .clone()
                 .expect("the drawn Views icon");
             assert_eq!(
@@ -915,6 +928,22 @@ mod tests {
                 "scale {scale}"
             );
         }
+    }
+
+    /// A text size change fetches the toolbar's icons grown, the drawn Views icon 32 px at 200%,
+    /// without listing the folder again.
+    #[test]
+    fn a_text_size_change_grows_the_toolbar_icons_without_a_relisting() {
+        let dir = sandbox("icons-grown");
+        let mut p = FilePicker::run_command(&dir, icons(&mut cache(), 1, TextUnits::ONE), true);
+        settle(&mut p);
+        let views = |p: &FilePicker| p.icons.toolbar[TOOLBAR_VIEWS].as_ref().map(|c| c.width);
+        assert!(!p.follow_scale(1, &mut cache()), "nothing changed");
+        assert_eq!(views(&p), Some(16));
+        p.dlg.set_text(TextUnits::new(22, 11));
+        assert!(p.follow_scale(1, &mut cache()));
+        assert_eq!(views(&p), Some(32));
+        assert!(p.take_requests().is_empty(), "nothing to relist");
     }
 
     /// Runs the picker's queued requests the way the host's thread would,
@@ -1295,7 +1324,7 @@ mod tests {
             .unwrap();
         std::fs::create_dir(&art).unwrap();
         reprisefs::meta::set_folder_icon(&art, pic.to_str()).unwrap();
-        let opened = super::icons(&mut icons, 2);
+        let opened = super::icons(&mut icons, 2, TextUnits::ONE);
         let size = |c: &Option<Canvas>| c.as_ref().map(|c| (c.width, c.scale()));
         assert_eq!(
             size(&opened.folder),

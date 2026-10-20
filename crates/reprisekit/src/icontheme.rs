@@ -1154,6 +1154,16 @@ impl IconCache {
     }
 }
 
+/// `icon`, fetched for `want` logical px with text grown by `u`, grown as the text when the theme
+/// had it only smaller, up to `want`: a 16 px icon asked for at 32 px for 200% text draws at 32 px.
+pub fn grown_icon(icon: Canvas, want: i32, u: crate::theme::TextUnits) -> Canvas {
+    let side = u.len(icon.width as i32).min(want);
+    if icon.width as i32 >= side || icon.width != icon.height {
+        return icon;
+    }
+    icon.resample_box(side as u32, side as u32)
+}
+
 /// `name` (an icon name or an absolute path) at `px` and `scale` as [`IconCache::get`] loads it,
 /// without a cache: for a job filling one through [`IconCache::put_icons`].
 pub fn load_icon(theme: &IconTheme, name: &str, px: i32, scale: i32) -> Option<Canvas> {
@@ -1282,6 +1292,19 @@ impl ListingIcons {
 mod tests {
     use super::*;
     use std::fs;
+
+    /// At 200% text an icon the theme had only at 16 px for a 32 px slot draws at 32 px, a 48 px
+    /// one for a 64 px slot at 64 px; at 100%, or when it already fits, it is kept.
+    #[test]
+    fn a_smaller_icon_grows_with_the_text_up_to_its_slot() {
+        use crate::theme::TextUnits;
+        let two = TextUnits::new(22, 11);
+        let side = |w: u32, want: i32, u: TextUnits| grown_icon(Canvas::new(w, w), want, u).width;
+        assert_eq!(side(16, 32, two), 32);
+        assert_eq!(side(48, 64, two), 64);
+        assert_eq!(side(64, 64, two), 64);
+        assert_eq!(side(16, 32, TextUnits::ONE), 16);
+    }
 
     /// A throwaway icon root with one theme; the caller removes it.
     fn fixture(tag: &str, theme: &str, index: &str, files: &[&str]) -> PathBuf {
