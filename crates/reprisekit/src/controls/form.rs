@@ -1192,10 +1192,8 @@ impl Form {
         let text = text.dialog(self.font);
         let (cm, u) = (self.controls(), self.units());
         let measure = |s: &str| text.ink_width(&crate::text::split_mnemonic(s).0, false, px);
-        let (_, kinds) = self.fit_input(text, px);
-        let rects: Vec<Rect> = self.items.iter().map(|it| self.at(it)).collect();
-        // A check box's or radio's label may run up to its group box's frame.
-        let pad = u.len(2);
+        let room = self.choice_room(text, px);
+        let (rects, kinds) = (&room.rects, &room.kinds);
         let mut over = Vec::new();
         for (i, it) in self.items.iter().enumerate() {
             let r = rects[i];
@@ -1204,11 +1202,11 @@ impl Form {
                 (Control::Combo(_), fit::Kind::Stretch { need }) => need - r.width,
                 (Control::Check { label, .. }, _) => {
                     let lr = check_label_rect(r, it.indent, &cm, measure(label));
-                    lr.right() - fit::limit(&rects, &kinds, i, lr.x, pad)
+                    lr.right() - room.limit(i, lr.x)
                 }
                 (Control::Radio { label, .. }, _) => {
                     let lr = radio_label_rect(r, &cm, measure(label));
-                    lr.right() - fit::limit(&rects, &kinds, i, lr.x, pad)
+                    lr.right() - room.limit(i, lr.x)
                 }
                 (Control::Lines(lines) | Control::GreyedLines(lines), _) => {
                     let shown = note_lines(text, lines, r.width, px);
@@ -1224,6 +1222,17 @@ impl Form {
             }
         }
         over
+    }
+
+    /// The laid-out rects a check box's or radio's label runs in, for text `text` at `px`
+    /// ([`Form::fit_text`] has run).
+    fn choice_room(&self, text: &TextRenderer, px: u32) -> ChoiceRoom {
+        let (_, kinds) = self.fit_input(text, px);
+        ChoiceRoom {
+            rects: self.items.iter().map(|it| self.at(it)).collect(),
+            kinds,
+            pad: self.units().len(2),
+        }
     }
 
     /// The rect item `id` was last drawn in, on the surface: its rect grown with the text and
@@ -1355,13 +1364,31 @@ impl Form {
         }
     }
 
-    /// The label under (`x`, `y`), if any: labels take no pointer, but an ellipsized one shows
-    /// its whole text in a tip ([`Form::tip_tick`]).
+    /// The label, else the check box or radio, under (`x`, `y`), if any: an ellipsized label
+    /// shows its whole text in a tip ([`Form::tip_tick`]).
     fn label_at(&self, x: i32, y: i32) -> Option<usize> {
-        self.items.iter().position(|it| {
-            matches!(it.control, Control::Label { .. })
-                && self.at(it).contains(x, y)
-                && self.clip_of(it).is_none_or(|c| c.contains(x, y))
+        let cm = self.rendered.controls.get();
+        let w = self.units().len(200);
+        let shown = |it: &Item| self.clip_of(it).is_none_or(|c| c.contains(x, y));
+        let label = self.items.iter().position(|it| {
+            matches!(it.control, Control::Label { .. }) && self.at(it).contains(x, y) && shown(it)
+        });
+        label.or_else(|| {
+            self.items.iter().position(|it| {
+                let r = self.at(it);
+                let over = match it.control {
+                    Control::Check { .. } => {
+                        check_box(r, &cm, glyph_dy(it, r)).contains(x, y)
+                            || check_label_rect(r, it.indent, &cm, w).contains(x, y)
+                    }
+                    Control::Radio { .. } => {
+                        radio_box(r, &cm, glyph_dy(it, r)).contains(x, y)
+                            || radio_label_rect(r, &cm, w).contains(x, y)
+                    }
+                    _ => false,
+                };
+                over && shown(it)
+            })
         })
     }
 
@@ -1446,7 +1473,9 @@ impl Form {
             return None;
         }
         match &self.items.get(self.tip.item?)?.control {
-            Control::Label { text, .. } => Some(crate::text::split_mnemonic(text).0),
+            Control::Label { text, .. }
+            | Control::Check { label: text, .. }
+            | Control::Radio { label: text, .. } => Some(crate::text::split_mnemonic(text).0),
             _ => None,
         }
     }
@@ -3636,6 +3665,11 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
     let cm = form.controls();
     let grow = p.text;
     let text = text.dialog(form.font);
+    let choices = form
+        .items
+        .iter()
+        .any(|it| matches!(it.control, Control::Check { .. } | Control::Radio { .. }));
+    let room = choices.then(|| form.choice_room(text, px));
     let at_ink = |r: Rect| {
         if form.labels_at_ink {
             Rect::new(r.x - text.lead() * s, r.y, r.width, r.height)
@@ -3736,9 +3770,11 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 } else {
                     draw_checkbox_state_disabled(c, p, b, state);
                 }
-                let lr = check_label_rect(placed, it.indent, &cm, 0).scaled(s);
+                let lr = check_label_rect(placed, it.indent, &cm, 0);
+                let room = choice_label_room(room.as_ref(), i, lr.x, clip, c, s);
+                let label = &*ellipsized(form, i, text, label, room, px);
                 let part = crate::style::Part::CheckBox;
-                draw_choice_label(c, text, p, lr, label, *enabled, part, cue, px);
+                draw_choice_label(c, text, p, lr.scaled(s), label, *enabled, part, cue, px);
             }
             Control::Radio {
                 label,
@@ -3753,9 +3789,11 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 } else {
                     draw_radio_disabled(c, p, b, *checked);
                 }
-                let lr = radio_label_rect(placed, &cm, 0).scaled(s);
+                let lr = radio_label_rect(placed, &cm, 0);
+                let room = choice_label_room(room.as_ref(), i, lr.x, clip, c, s);
+                let label = &*ellipsized(form, i, text, label, room, px);
                 let part = crate::style::Part::Radio;
-                draw_choice_label(c, text, p, lr, label, *enabled, part, cue, px);
+                draw_choice_label(c, text, p, lr.scaled(s), label, *enabled, part, cue, px);
             }
             Control::Edit {
                 edit,
@@ -4020,6 +4058,47 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
     if let (Some(text), Some(at)) = (form.label_tip(), form.point) {
         c.report_tip(crate::raster::ReportedTip { text, at });
     }
+}
+
+/// The rects and fit kinds a check box's or radio's label is bounded by, as laid out.
+struct ChoiceRoom {
+    rects: Vec<Rect>,
+    kinds: Vec<fit::Kind>,
+    /// Kept inside a group box's frame.
+    pad: i32,
+}
+
+impl ChoiceRoom {
+    /// Where item `i`'s label starting at `from` may run to for [`Form::overflows`]: the next
+    /// control on its row, its group box's frame, or the form's right edge.
+    fn limit(&self, i: usize, from: i32) -> i32 {
+        fit::limit(&self.rects, &self.kinds, i, from, self.pad)
+    }
+
+    /// Where item `i`'s label starting at `from` is cut: the next control on its row, its group
+    /// box's frame, or the item's own right edge when its rect reaches past the box.
+    fn cut(&self, i: usize, from: i32) -> Option<i32> {
+        let own = Some(self.rects[i].right()).filter(|&r| r > from);
+        let stop = fit::stop(&self.rects, &self.kinds, i, from, self.pad);
+        stop.into_iter().chain(own).min()
+    }
+}
+
+/// The device px item `i`'s check box or radio label starting at `from` (logical px) has before
+/// [`ChoiceRoom::cut`] or the edge of the window or clip `clip`.
+fn choice_label_room(
+    room: Option<&ChoiceRoom>,
+    i: usize,
+    from: i32,
+    clip: Option<Rect>,
+    c: &Canvas,
+    s: i32,
+) -> i32 {
+    let shown = clip.map_or(c.bounds(), |v| v.scaled(s).intersect(&c.bounds()));
+    let cut = room
+        .and_then(|r| r.cut(i, from))
+        .map_or(i32::MAX, |x| x * s);
+    cut.min(shown.right()) - from * s
 }
 
 /// `label`, or when its ink outruns `width` its text cut to end in an ellipsis (keeping its
@@ -8425,6 +8504,33 @@ mod tests {
             vec![0],
             "cut at the window's edge"
         );
+    }
+
+    #[test]
+    fn a_check_or_radio_label_cut_by_the_next_control_tips_its_whole_text() {
+        let text = tr();
+        let mut form = Form::new(vec![
+            Item::check("fits", 10, 10, "Model"),
+            Item::check("long", 10, 30, LONG),
+            Item::radio("pick", 10, 50, LONG, "g"),
+            Item::button_at("b1", 150, 26, 60, "Go", true),
+            Item::button_at("b2", 150, 46, 60, "Go", true),
+        ]);
+        let theme = Theme::default();
+        let p = classic_paint(&theme.colors, 1);
+        draw(&mut Canvas::new(300, 100), &text, &p, &form, false, PX);
+        assert_eq!(
+            *form.rendered.ellipsized.borrow(),
+            vec![1, 2],
+            "the labels running into a button are cut"
+        );
+        form.motion(40, 15, None);
+        assert!(!form.tip_tick(), "a check box label that fits has no tip");
+        for y in [35, 55] {
+            form.motion(40, y, None);
+            assert!(form.tip_tick(), "at {y}");
+            assert_eq!(form.label_tip().as_deref(), Some(LONG), "at {y}");
+        }
     }
 
     #[test]

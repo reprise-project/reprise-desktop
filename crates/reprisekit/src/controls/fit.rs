@@ -32,6 +32,20 @@ pub(crate) const PAD: i32 = 6;
 /// the row starting right of `from`, or item `i`'s group box's right edge less `pad`. A control
 /// at `from` itself (a check box label's second line) is the text's own.
 pub(crate) fn limit(rects: &[Rect], kinds: &[Kind], i: usize, from: i32, pad: i32) -> i32 {
+    stop(rects, kinds, i, from, pad).unwrap_or_else(|| {
+        let f = Fit {
+            out: rects.to_vec(),
+            kinds,
+            gap: 0,
+            pad,
+        };
+        f.bound(i)
+    })
+}
+
+/// What text on item `i`'s row starting at `from` runs into, as [`limit`] finds it, or `None`
+/// for text outside any group box with no control after it.
+pub(crate) fn stop(rects: &[Rect], kinds: &[Kind], i: usize, from: i32, pad: i32) -> Option<i32> {
     let f = Fit {
         out: rects.to_vec(),
         kinds,
@@ -42,7 +56,7 @@ pub(crate) fn limit(rects: &[Rect], kinds: &[Kind], i: usize, from: i32, pad: i3
         .filter(|&j| f.row(i, j) && rects[j].x > from)
         .map(|j| rects[j].x)
         .min()
-        .unwrap_or_else(|| f.bound(i))
+        .or_else(|| f.group(i).map(|g| rects[g].right() - pad))
 }
 
 impl Kind {

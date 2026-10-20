@@ -98,9 +98,8 @@ pub fn parse_choices(v: &Value<'_>) -> Vec<Choice> {
 
 /// The rows for `choices` stacked from `(x, y)`, and the y under the last row, in 100% units for
 /// text set at `px` that grows by `u`. The combos end `w` px from `x`, or `room` px (at least
-/// `w`) for one whose widest option needs it; the form's text may run `room` px from `x`, and a
-/// check box's label longer than that ends in an ellipsis. A combo's label keeps its whole text
-/// for the form to cut and tip.
+/// `w`) for one whose widest option needs it; the form's text may run `room` px from `x`. Labels
+/// keep their whole text for the form to cut and tip.
 pub fn choice_rows(
     choices: &[Choice],
     (x, y): (i32, i32),
@@ -120,14 +119,12 @@ pub fn choice_rows(
         // on one line.
         let plain = crate::dialog::one_line(&c.label);
         if c.options.is_empty() {
-            let check_label = ControlMetrics::CLASSIC.check_label;
-            let fits = text.ellipsize(&plain, u.len(room - check_label), false, px);
             // The rect spans the room so the form lets the label run that far.
             items.push(Item::new(
                 IDS[i],
                 Rect::new(x, y, room, CHECK),
                 Control::Check {
-                    label: reprisekit::text::escape_mnemonic(&fits),
+                    label: reprisekit::text::escape_mnemonic(&plain),
                     checked: c.initial == "true",
                     enabled: true,
                     mixed: None,
@@ -282,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn a_long_check_label_ends_in_an_ellipsis_and_a_combo_keeps_its_need() {
+    fn long_labels_keep_their_whole_text_and_a_combo_keeps_its_need() {
         let text = TextRenderer::load(&FontConfig::default());
         let words = "Open the exported picture in the image viewer once it is written to disk";
         let check = Choice {
@@ -306,9 +303,7 @@ mod tests {
         let Control::Check { label, .. } = &f.item("choice0").unwrap().control else {
             panic!("a check box");
         };
-        assert!(label.ends_with("..."), "{label}");
-        let check_label = ControlMetrics::CLASSIC.check_label;
-        assert!(text.measure(label, false, 11) <= 354 - check_label);
+        assert_eq!(label, words, "the check box's label keeps its whole text");
         assert_eq!(
             f.item("choice0").unwrap().rect.width,
             354,
@@ -357,6 +352,41 @@ mod tests {
         };
         assert!(draw(&f) == draw(&cut), "drawn as the label cut to its rect");
         f.rest_pointer(Some((r.x + 20, r.y + 5)));
+        assert!(f.tip_tick(), "the blink brings the tip up");
+        assert_eq!(f.label_tip().as_deref(), Some(words));
+    }
+
+    /// The form cuts a check box's label at the room's edge and tips its whole text.
+    #[test]
+    fn a_cut_check_label_draws_its_ellipsis_and_tips_its_whole_text() {
+        use reprisekit::controls::form;
+        use reprisekit::raster::Canvas;
+        use reprisekit::theme::Theme;
+        let text = TextRenderer::load(&FontConfig::default());
+        let words = "Open the exported picture in the image viewer once it is written to disk";
+        let long = Choice {
+            label: words.into(),
+            ..check("open", "true")
+        };
+        let at = (195, 451);
+        let (items, _) = choice_rows(&[long], at, 246, 354, &text, 11, TextUnits::ONE);
+        let mut f = Form::new(items);
+        let r = f.item("choice0").unwrap().rect;
+        let mut cut = f.clone();
+        let Control::Check { label, .. } = &mut cut.item_mut("choice0").unwrap().control else {
+            panic!("a check box");
+        };
+        let room = 354 - ControlMetrics::CLASSIC.check_label;
+        *label = text.ellipsize(words, room, false, 11).into_owned();
+        assert!(label.ends_with("..."), "{label}");
+        let theme = Theme::default();
+        let draw = |f: &Form| {
+            let mut c = Canvas::new(600, 520);
+            form::draw(&mut c, &text, &theme.paint(), f, false, 11);
+            c.pixels
+        };
+        assert!(draw(&f) == draw(&cut), "drawn cut at the room's edge");
+        f.rest_pointer(Some((r.x + 40, r.y + 5)));
         assert!(f.tip_tick(), "the blink brings the tip up");
         assert_eq!(f.label_tip().as_deref(), Some(words));
     }
