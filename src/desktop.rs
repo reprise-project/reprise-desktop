@@ -410,6 +410,23 @@ pub fn scan(
     globs: &reprisefs::apps::MimeDb,
     shown: names::Extensions,
 ) -> Vec<DesktopEntry> {
+    scan_with(
+        dir,
+        globs,
+        shown,
+        Followed::of,
+        reprisefs::listing::LINK_WAIT,
+    )
+}
+
+/// [`scan`] with `follow` reading the symlinks' targets, given up once one takes longer than `wait`.
+fn scan_with(
+    dir: &Path,
+    globs: &reprisefs::apps::MimeDb,
+    shown: names::Extensions,
+    follow: fn(&Path) -> Followed,
+    wait: std::time::Duration,
+) -> Vec<DesktopEntry> {
     let rd = match std::fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -422,15 +439,24 @@ pub fn scan(
         }
     };
     let listed = reprisefs::hidden::Listed::read(dir);
+    // The entry's own type comes from the listing (d_type).
+    let (mut links, plain): (Vec<_>, Vec<_>) = rd
+        .flatten()
+        .filter(|e| !listed.hides(&e.file_name()))
+        .map(|e| (e.path(), e.file_type().is_ok_and(|t| t.is_symlink())))
+        .partition(|(_, symlink)| *symlink);
+    let plain = plain
+        .into_iter()
+        .map(|(p, _)| entry_with(Followed::of(&p), p, false, globs, shown));
+    links.sort();
+    let links: Vec<PathBuf> = links.into_iter().map(|(p, _)| p).collect();
+    let mut followed = reprisefs::listing::follow_links(links.clone(), follow, wait).into_iter();
+    let links = links
+        .into_iter()
+        .map(|p| entry_with(followed.next().unwrap_or_default(), p, true, globs, shown));
     let mut folders = Vec::new();
     let mut files = Vec::new();
-    for entry in rd.flatten() {
-        if listed.hides(&entry.file_name()) {
-            continue;
-        }
-        // The entry's own type comes from the listing (d_type).
-        let symlink = entry.file_type().is_ok_and(|t| t.is_symlink());
-        let e = entry_with(entry.path(), symlink, globs, shown);
+    for e in plain.chain(links) {
         if e.is_dir && !e.shortcut {
             folders.push(e);
         } else {
@@ -453,12 +479,44 @@ pub fn entry_at(
     shown: names::Extensions,
 ) -> DesktopEntry {
     let symlink = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
-    entry_with(path.to_path_buf(), symlink, globs, shown)
+    entry_with(
+        Followed::of(path),
+        path.to_path_buf(),
+        symlink,
+        globs,
+        shown,
+    )
 }
 
-/// One stat follows a symlink, and a dangling one shows as a plain file. `path` keeps a name that
-/// is not UTF-8; only `name` and the label show it lossily.
+/// What a desktop icon reads through a symlink, the part that may wait on another file system.
+/// The default is a link that is dangling or whose target never answered.
+#[derive(Default)]
+struct Followed {
+    /// A file system is mounted here; nothing inside it is read, as it may never answer.
+    mount_root: bool,
+    meta: Option<std::fs::Metadata>,
+}
+
+impl Followed {
+    fn of(path: &Path) -> Followed {
+        match reprisefs::listing::is_mount_root(path) {
+            true => Followed {
+                mount_root: true,
+                meta: None,
+            },
+            false => Followed {
+                mount_root: false,
+                meta: std::fs::metadata(path).ok(),
+            },
+        }
+    }
+}
+
+/// The icon for `path` as `followed` describes it; a link without metadata shows as a plain file
+/// and reads nothing through it. `path` keeps a name that is not UTF-8; only `name` and the label
+/// show it lossily.
 fn entry_with(
+    followed: Followed,
     path: PathBuf,
     symlink: bool,
     globs: &reprisefs::apps::MimeDb,
@@ -469,9 +527,12 @@ fn entry_with(
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
-    let meta = std::fs::metadata(&path).ok();
-    if meta.as_ref().is_some_and(|m| m.is_dir()) {
-        let icon = reprisefs::meta::folder_icon(&path).unwrap_or_else(|| "folder".into());
+    let Followed { mount_root, meta } = followed;
+    if mount_root || meta.as_ref().is_some_and(|m| m.is_dir()) {
+        let icon = (!mount_root)
+            .then(|| reprisefs::meta::folder_icon(&path))
+            .flatten()
+            .unwrap_or_else(|| "folder".into());
         return DesktopEntry {
             label: file_name.clone(),
             name: file_name,
@@ -506,7 +567,7 @@ fn entry_with(
     let icon = file_icon(mime.as_deref(), &path, &target, &|_| false);
     DesktopEntry {
         label: names::label_for(&file_name, globs, shown),
-        allow_launching: can_allow_launching_at(&path, &target),
+        allow_launching: meta.is_some() && can_allow_launching_at(&path, &target),
         name: file_name,
         icon,
         target,
@@ -951,6 +1012,46 @@ mod tests {
             "a symlink to a folder sorts among the files"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_lists_a_link_whose_target_never_answers_as_a_plain_file() {
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::FileTypeExt;
+        // Opening a FIFO blocks until a writer comes, as a lookup on a stopped mount does.
+        fn follow(p: &Path) -> Followed {
+            if std::fs::metadata(p).is_ok_and(|m| m.file_type().is_fifo()) {
+                let _ = std::fs::File::open(p);
+            }
+            Followed::of(p)
+        }
+        let dir = fixture("dead_link");
+        let _cleanup = Cleanup(dir.clone());
+        let fifo = dir.join("pipe");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c` is a NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        std::fs::create_dir(dir.join("Reports")).unwrap();
+        std::os::unix::fs::symlink(dir.join("Reports"), dir.join("a live")).unwrap();
+        std::os::unix::fs::symlink(&fifo, dir.join("b dead.desktop")).unwrap();
+        let list = scan_with(
+            &dir,
+            &apps::MimeDb::empty(),
+            names::Extensions::Show,
+            follow,
+            std::time::Duration::from_millis(200),
+        );
+        let by = |n: &str| list.iter().find(|e| e.name == n).unwrap();
+        assert!(
+            by("a live").is_dir,
+            "a link that answered opens as a folder"
+        );
+        let dead = by("b dead.desktop");
+        assert!(dead.shortcut && !dead.is_dir && !dead.allow_launching);
+        assert_eq!(dead.target, Target::Open(dir.join("b dead.desktop")));
+        assert!(by("Reports").is_dir);
+        // Lets the blocked follow return.
+        drop(std::fs::File::options().write(true).open(&fifo));
     }
 
     #[test]
