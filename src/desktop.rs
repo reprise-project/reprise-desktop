@@ -419,7 +419,7 @@ pub fn scan(
     )
 }
 
-/// [`scan`] with `follow` reading the symlinks' targets, given up once one takes longer than `wait`.
+/// [`scan`] with `follow` reading the symlinks' targets as [`reprisefs::listing::follow_links`] does.
 fn scan_with(
     dir: &Path,
     globs: &reprisefs::apps::MimeDb,
@@ -1052,6 +1052,45 @@ mod tests {
         assert!(by("Reports").is_dir);
         // Lets the blocked follow return.
         drop(std::fs::File::options().write(true).open(&fifo));
+    }
+
+    #[test]
+    fn scan_follows_a_live_link_sorted_after_a_dead_one() {
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
+        fn follow(p: &Path) -> Followed {
+            if std::fs::metadata(p).is_ok_and(|m| m.file_type().is_fifo()) {
+                let _ = std::fs::File::open(p);
+            }
+            Followed::of(p)
+        }
+        let dir = fixture("dead_link_first");
+        let _cleanup = Cleanup(dir.clone());
+        let fifo = dir.join("pipe");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c` is a NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        std::fs::create_dir(dir.join("Reports")).unwrap();
+        std::os::unix::fs::symlink(&fifo, dir.join("a dead")).unwrap();
+        std::os::unix::fs::symlink(dir.join("Reports"), dir.join("b live")).unwrap();
+        for _ in 0..3 {
+            let list = scan_with(
+                &dir,
+                &apps::MimeDb::empty(),
+                names::Extensions::Show,
+                follow,
+                std::time::Duration::from_millis(100),
+            );
+            let by = |n: &str| list.iter().find(|e| e.name == n).unwrap();
+            assert!(!by("a dead").is_dir);
+            assert!(by("b live").is_dir, "b live opens as a folder");
+        }
+        drop(
+            std::fs::File::options()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&fifo),
+        );
     }
 
     #[test]
