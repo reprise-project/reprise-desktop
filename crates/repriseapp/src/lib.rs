@@ -1182,7 +1182,8 @@ pub fn run(app: Box<dyn App>) {
     let icons = look.icons();
     let (ping, ping_source) = make_ping().expect("ping");
     let (a11y, a11y_source) = channel();
-    let (a11y_ready, a11y_ready_source) = channel::<()>();
+    // True once the accessibility bus answers; false when it came back after a restart.
+    let (a11y_ready, a11y_ready_source) = channel::<bool>();
     let (look_tx, look_source) = channel::<(String, String)>();
     let (portal_done, portal_source) = channel::<OnLoop>();
     let mut host = Host {
@@ -1303,16 +1304,22 @@ pub fn run(app: Box<dyn App>) {
         .expect("access source");
     loop_handle
         .insert_source(a11y_ready_source, |msg, _, host: &mut Host| {
-            if let reprise_channel::Event::Msg(()) = msg {
+            if let reprise_channel::Event::Msg(first) = msg {
                 host.a11y_bus = true;
                 for s in &mut host.slots {
+                    if !first {
+                        s.access = access::SlotAccess::new(s.id, None);
+                    }
                     s.access.connect(s.id, &host.a11y, host.focus == Some(s.id));
                 }
             }
         })
         .expect("access ready source");
     reprisebus::a11y::when_bus_ready(move || {
-        let _ = a11y_ready.send(());
+        let _ = a11y_ready.send(true);
+        reprisebus::a11y::on_bus_restart(move || {
+            let _ = a11y_ready.send(false);
+        });
     });
     loop_handle
         .insert_source(look_source, |msg, _, host: &mut Host| {
