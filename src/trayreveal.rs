@@ -410,6 +410,8 @@ fn tick(state: &mut State) -> TimeoutAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::fd::AsRawFd;
+    use std::sync::Arc;
 
     fn shape() -> TaskbarShape {
         TaskbarShape::CLASSIC
@@ -628,5 +630,161 @@ mod tests {
         assert!(!follow(&mut open, &mut slide, 60, now));
         assert!(!open);
         assert_eq!(slide.x(now), 0);
+    }
+
+    use crate::harness::{Harness, LEFT};
+    use crate::tray::{TrayEvent, TrayItem};
+
+    const KEY_ENTER: u32 = 28;
+
+    fn passive(id: &str) -> TrayItem {
+        TrayItem {
+            id: id.into(),
+            key: id.into(),
+            service: id.into(),
+            path: "/StatusNotifierItem".into(),
+            title: id.into(),
+            tooltip: String::new(),
+            icon_name: None,
+            icon_theme_path: None,
+            pixmaps: Arc::from([]),
+            named: Arc::from([]),
+            menu_path: None,
+            passive: true,
+            pid: None,
+        }
+    }
+
+    /// A Classic bar on one output whose tray hides two passive items behind the arrow, and its
+    /// tree.
+    fn hidden_two() -> (Harness, TreeId) {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (tx, wake) = crate::tray::headless(&mut h.state);
+        for id in ["a", "b"] {
+            tx.send(TrayEvent::Added(passive(id))).expect("send");
+        }
+        // SAFETY: `wake` is an open eventfd and the buffer a live 8-byte local.
+        let n = unsafe { libc::write(wake.as_raw_fd(), (&1u64 as *const u64).cast(), 8) };
+        assert_eq!(n, 8);
+        h.dispatch();
+        assert_eq!(hidden(&h.state), 2, "both items wait behind the arrow");
+        let tree = h.state.bars[0].tree;
+        (h, tree)
+    }
+
+    /// The middle of bar `tree`'s arrow where it is drawn now.
+    fn arrow(h: &Harness, tree: TreeId) -> (f64, f64) {
+        let bar = h.state.bar(tree).expect("bar");
+        let y = 768.0 - 15.0;
+        let xs: Vec<f64> = (0..1024)
+            .map(f64::from)
+            .filter(|&x| h.state.bar_hit(bar, x, y) == TaskbarHit::Chevron)
+            .collect();
+        let (first, last) = (
+            xs.first().expect("the arrow"),
+            xs.last().expect("the arrow"),
+        );
+        ((first + last) / 2.0, y)
+    }
+
+    fn open(h: &Harness, tree: TreeId) -> bool {
+        h.state.bar(tree).is_some_and(|b| b.tray_open)
+    }
+
+    fn look(h: &Harness, tree: TreeId) -> (bool, bool) {
+        let b = h.state.bar(tree).expect("bar");
+        (b.chevron_hot, b.chevron_held)
+    }
+
+    #[test]
+    fn a_click_on_the_arrow_opens_the_run_and_a_second_shuts_it() {
+        let (mut h, tree) = hidden_two();
+        let (x, y) = arrow(&h, tree);
+        h.click(x, y);
+        assert!(open(&h, tree));
+        h.run_for(u64::from(SLIDE_MS) + 50);
+        let (x2, y) = arrow(&h, tree);
+        assert!(
+            x2 < x,
+            "the run opened between the arrow and the shown icons"
+        );
+        h.click(x2, y);
+        assert!(!open(&h, tree));
+    }
+
+    #[test]
+    fn a_held_arrow_looks_held_only_while_the_pointer_is_on_it() {
+        let (mut h, tree) = hidden_two();
+        let (x, y) = arrow(&h, tree);
+        h.pointer_to(x, y);
+        h.button(LEFT, true);
+        assert_eq!(look(&h, tree), (true, true), "held under the pointer");
+        h.pointer_to(x, y - 200.0);
+        assert_eq!(look(&h, tree), (false, false), "dragged off: at rest");
+        h.pointer_to(x, y);
+        assert_eq!(look(&h, tree), (true, true), "back on: held again");
+        h.pointer_to(x, y - 200.0);
+        h.button(LEFT, false);
+        assert!(!open(&h, tree), "a release off the arrow opens nothing");
+    }
+
+    #[test]
+    fn a_second_button_ends_the_arrow_press_without_opening() {
+        let (mut h, tree) = hidden_two();
+        let (x, y) = arrow(&h, tree);
+        h.pointer_to(x, y);
+        h.button(LEFT, true);
+        h.button(crate::input::BTN_RIGHT, true);
+        assert!(!look(&h, tree).1, "no longer held");
+        h.button(crate::input::BTN_RIGHT, false);
+        h.button(LEFT, false);
+        assert!(!open(&h, tree));
+    }
+
+    #[test]
+    fn enter_on_the_arrow_of_an_auto_hidden_bar_toggles_its_run_and_keeps_the_keys() {
+        let (mut h, tree) = hidden_two();
+        let mut c = h.state.config.clone();
+        c.taskbar.auto_hide = true;
+        crate::configwatch::reload(&mut h.state, c);
+        h.pointer_to(512.0, 300.0);
+        h.run_for(crate::autohide::HIDE_DELAY.as_millis() as u64 + 400);
+        let output = h.state.bars[0].output.clone();
+        assert!(h.state.bar_hide.drawn(&output) > 0.0, "the bar hid");
+        h.state.focus_bar_item(tree, TaskbarHit::Chevron);
+        h.key(KEY_ENTER, true);
+        h.key(KEY_ENTER, false);
+        assert!(open(&h, tree));
+        let keys = h.state.bar_shared.keys.expect("the bar keeps the keyboard");
+        assert_eq!(keys.at, TaskbarHit::Chevron);
+        h.key(KEY_ENTER, true);
+        h.key(KEY_ENTER, false);
+        assert!(!open(&h, tree));
+    }
+
+    #[test]
+    fn leaving_the_open_runs_area_shuts_it_after_the_idle_time_and_coming_back_holds_it() {
+        let (mut h, tree) = hidden_two();
+        let (x, y) = arrow(&h, tree);
+        h.click(x, y);
+        assert!(open(&h, tree));
+        let armed = |h: &Harness| {
+            h.state
+                .bar_shared
+                .reveal_idle
+                .iter()
+                .any(|&(b, _)| b == tree)
+        };
+        h.pointer_to(x, y - 200.0);
+        assert!(armed(&h), "off the area: the idle timer runs");
+        h.pointer_to(x, y);
+        assert!(!armed(&h), "back on the area: it stops");
+        h.run_for(IDLE_MS + 100);
+        assert!(open(&h, tree), "the pointer on the area holds the run");
+        h.pointer_to(x, y - 200.0);
+        h.run_for(IDLE_MS + 100);
+        assert!(!open(&h, tree), "the idle time shut it");
+        assert!(!armed(&h));
     }
 }

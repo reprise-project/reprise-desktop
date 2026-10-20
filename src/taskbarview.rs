@@ -1961,4 +1961,34 @@ mod tests {
             "under a fullscreen window it stays with the bar"
         );
     }
+
+    #[test]
+    fn a_bar_moved_under_a_still_pointer_lights_only_the_cell_under_it() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.pointer_to(4.0, 764.0);
+        assert!(h.state.bars[0].start_hot, "Start under the pointer");
+        let mut top = h.state.config.clone();
+        top.taskbar.position = reprisekit::taskbar::Edge::Top;
+        crate::configwatch::reload(&mut h.state, top);
+        h.dispatch();
+        assert!(
+            !h.state.bars[0].start_hot,
+            "Start moved out from under the pointer"
+        );
+        h.pointer_to(4.0, 4.0);
+        let mut bottom = h.state.config.clone();
+        bottom.taskbar.position = reprisekit::taskbar::Edge::Bottom;
+        crate::configwatch::reload(&mut h.state, bottom);
+        h.dispatch();
+        assert!(!h.state.bars[0].start_hot, "Start moved away again");
+        let mut top = h.state.config.clone();
+        top.taskbar.position = reprisekit::taskbar::Edge::Top;
+        crate::configwatch::reload(&mut h.state, top);
+        h.dispatch();
+        assert!(
+            h.state.bars[0].start_hot,
+            "Start moved in under the still pointer"
+        );
+    }
 }

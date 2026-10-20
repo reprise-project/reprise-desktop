@@ -1330,4 +1330,38 @@ mod tests {
         t.forget_torn();
         assert_eq!(t.take_torn(a), None, "a new move forgets the tear-off");
     }
+
+    #[test]
+    fn a_click_on_a_tabs_close_box_closes_it_without_the_pointer_moving_there() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "test.a", 500, 300);
+        let b = h.map_toplevel(&mut c, "test.b", 500, 300);
+        h.state.join_tabs(b.id, a.id, usize::MAX, false);
+        h.roundtrip(&mut c);
+        let shown = h.state.tabs.groups.shown_of(a.id);
+        let r = h.state.win(shown).expect("window").frame_rect();
+        let caption = h.state.win(shown).expect("window").geom.caption;
+        let (x, y, member) = (r.x..r.right())
+            .flat_map(|x| (r.y..r.y + caption.y + caption.height).map(move |y| (x, y)))
+            .find_map(|(x, y)| {
+                let (hit, m) = h.state.tab_at(shown, f64::from(x), f64::from(y))?;
+                hit.close.then_some((f64::from(x), f64::from(y), m))
+            })
+            .expect("a tab's close box");
+        h.pointer_to(512.0, 700.0);
+        crate::access::click(&mut h.state, (x, y), crate::input::BTN_LEFT);
+        h.roundtrip(&mut c);
+        let shell = [a, b]
+            .into_iter()
+            .find(|t| t.id == member)
+            .expect("a tab")
+            .shell;
+        assert_eq!(
+            c.side.closes,
+            [shell],
+            "the tab's window was asked to close"
+        );
+    }
 }

@@ -2212,4 +2212,53 @@ mod tests {
             "back on the first area, the split is where the drag left it"
         );
     }
+
+    #[test]
+    fn a_size_cut_short_by_a_snap_leaves_the_next_press_on_an_edge_in_its_zone() {
+        use crate::harness::{Harness, LEFT};
+        const KEY_LEFT: u32 = 105;
+        const KEY_RIGHT: u32 = 106;
+        const KEY_LEFTMETA: u32 = 125;
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let snap = |h: &mut Harness, c: &mut crate::harness::TestClient, key| {
+            h.key(KEY_LEFTMETA, true);
+            h.key(key, true);
+            h.key(key, false);
+            h.key(KEY_LEFTMETA, false);
+            h.roundtrip(c);
+        };
+        snap(&mut h, &mut c, KEY_LEFT);
+        let r = h.state.win(t.id).expect("window").frame_rect();
+        assert_eq!((r.x, r.width), (0, 512), "the left half");
+        let mid = f64::from(r.y + r.height / 2);
+        h.pointer_to(f64::from(r.right()) - 1.0, mid);
+        h.button(LEFT, true);
+        assert!(
+            h.state.interaction.is_resize_of(t.id),
+            "the right edge sizes"
+        );
+        h.pointer_to(f64::from(r.right()) + 59.0, mid);
+        h.roundtrip(&mut c);
+        snap(&mut h, &mut c, KEY_RIGHT);
+        h.button(LEFT, false);
+        let r = h.state.win(t.id).expect("window").frame_rect();
+        assert_eq!((r.x, r.width), (512, 512), "the right half");
+        let in_zone = |h: &Harness| {
+            h.state.wm.snap.group_of(t.id).is_some()
+                && h.state.win(t.id).is_some_and(|w| w.snapped.is_some())
+        };
+        assert!(in_zone(&h), "snapped into the right half");
+        h.pointer_to(f64::from(r.x), mid);
+        h.button(LEFT, true);
+        assert!(
+            h.state.interaction.is_resize_of(t.id),
+            "the left edge sizes"
+        );
+        h.button(LEFT, false);
+        h.roundtrip(&mut c);
+        assert!(in_zone(&h), "a press without a move keeps the zone");
+    }
 }

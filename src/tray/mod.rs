@@ -652,6 +652,33 @@ pub fn setup(state: &mut State) {
         log::warn!("tray: could not start the D-Bus thread; tray disabled");
         return;
     };
+    install(state, eventfd, rx, commands, Some(thread));
+}
+
+/// The tray of a test, with no D-Bus thread: what is sent on the returned channel arrives
+/// once the returned eventfd is written, as the thread's events do.
+#[cfg(test)]
+pub fn headless(state: &mut State) -> (std::sync::mpsc::Sender<TrayEvent>, OwnedFd) {
+    // SAFETY: plain syscall, no pointers.
+    let raw = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+    assert!(raw >= 0, "eventfd");
+    // SAFETY: `raw` is a fresh fd nothing else owns.
+    let eventfd = unsafe { OwnedFd::from_raw_fd(raw) };
+    let wake = eventfd.try_clone().expect("dup");
+    let (tx, rx) = std::sync::mpsc::channel::<TrayEvent>();
+    let (commands, _) = async_channel::unbounded();
+    install(state, eventfd, rx, commands, None);
+    (tx, wake)
+}
+
+/// The tray reading `events` whenever `eventfd` is written.
+fn install(
+    state: &mut State,
+    eventfd: OwnedFd,
+    events: std::sync::mpsc::Receiver<TrayEvent>,
+    commands: async_channel::Sender<TrayCommand>,
+    thread: Option<JoinHandle<()>>,
+) {
     let source = Generic::new(eventfd, Interest::READ, Mode::Level);
     let token = state.handle.insert_source(source, |_, fd, state| {
         tray_readable(state, fd.as_fd());
@@ -675,10 +702,10 @@ pub fn setup(state: &mut State) {
         hidden: Vec::new(),
         choices: crate::state::load().tray_icons,
         flyout: None,
-        events: rx,
+        events,
         commands,
         source,
-        thread: Some(thread),
+        thread,
         pending_menu: None,
         submenus: Submenus::default(),
         gone: false,
