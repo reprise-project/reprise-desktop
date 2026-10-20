@@ -58,8 +58,8 @@ pub use crate::controls::shellgrid::{
 };
 
 /// One file or folder. The host fills the fields its modes need: `icon`
-/// (16 px) for List and Details, `icon32` for Icons, `icon48` for Tiles,
-/// `thumb` for Thumbnails. `id` is the host's own handle (a `filedlg::FolderId`
+/// (16 px) for List and Details, `icon32` for Icons and for List and Details once the text
+/// grows their icon column to 32 px ([`list_icon`]), `icon48` for Tiles, `thumb` for Thumbnails. `id` is the host's own handle (a `filedlg::FolderId`
 /// for a directory, whatever it keys its files by otherwise); reprisekit only carries it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Entry {
@@ -437,6 +437,15 @@ pub fn sort(sv: &mut ShellView) {
     sv.selection.reorder(&order);
 }
 
+/// The icon List and Details draw for `e` in an icon column `slot` px wide: the 32 px one once
+/// it fits, else the 16 px one.
+pub fn list_icon(e: &Entry, slot: i32) -> Option<&Canvas> {
+    match slot >= 32 {
+        true => e.icon32.as_deref().or(e.icon.as_deref()),
+        false => e.icon.as_deref(),
+    }
+}
+
 /// `sv.entries` as Details rows through `sv.fields`: a folder's size cell is
 /// empty, a file's is `size_text`.
 pub struct DetailsRows<'a>(pub &'a [Entry], pub &'a [Field]);
@@ -447,6 +456,12 @@ impl listview::Rows for DetailsRows<'_> {
     }
     fn icon(&self, row: usize) -> Option<&Canvas> {
         self.0.get(row).and_then(|e| e.icon.as_deref())
+    }
+    fn icon_slot(&self, u: TextUnits) -> i32 {
+        u.len(ICON_PX)
+    }
+    fn icon_in(&self, row: usize, slot: i32) -> Option<&Canvas> {
+        self.0.get(row).and_then(|e| list_icon(e, slot))
     }
     fn cell(&self, row: usize, col: usize) -> Cow<'_, str> {
         let Some(e) = self.0.get(row) else {
@@ -560,10 +575,11 @@ pub fn label_rect(sv: &ShellView, lay: &Layout, i: usize, text: &TextRenderer, p
     };
     match sv.mode {
         Mode::List => {
-            let w = (cell.width - ICON_PX).max(0);
+            let slot = lay.controls.text.len(ICON_PX);
+            let w = (cell.width - slot).max(0);
             let shown = text.ellipsize(&e.name, w, false, px);
             Rect::new(
-                cell.x + ICON_PX,
+                cell.x + slot,
                 cell.y,
                 text.measure(&shown, false, px).min(w),
                 cell.height,
@@ -1169,18 +1185,21 @@ impl Hit {
 struct ListRow<'a> {
     name: &'a str,
     icon: Option<&'a Canvas>,
+    /// The icon column's width, [`ICON_PX`] grown with the text.
+    slot: i32,
     mark: Mark,
     selected: bool,
     /// False while the name is being renamed: the host draws the rename box over the label.
     label: bool,
 }
 
-/// The label's part of an already-scaled List cell: all of it right of the icon.
-fn label_area(cell_s: Rect, s: i32) -> Rect {
+/// The label's part of an already-scaled List cell: all of it right of an icon column `slot`
+/// px wide.
+fn label_area(cell_s: Rect, s: i32, slot: i32) -> Rect {
     Rect::new(
-        cell_s.x + ICON_PX * s,
+        cell_s.x + slot * s,
         cell_s.y,
-        (cell_s.width - ICON_PX * s).max(0),
+        (cell_s.width - slot * s).max(0),
         cell_s.height,
     )
 }
@@ -1196,21 +1215,21 @@ fn draw_list_row(
     px: u32,
 ) {
     let Paint { cs, s, .. } = *p;
-    let label_full = label_area(cell_s, s);
+    let slot = row.slot;
+    let label_full = label_area(cell_s, s, slot);
     let shown = text.ellipsize(row.name, label_full.width, false, px);
     // A look that boxes its items boxes the icon and name, 3 px past its ink, under both; the text stays.
     let ink_w = text.measure(&shown, false, px);
-    let item_box = Rect::new(
-        cell_s.x,
-        cell_s.y,
-        ICON_PX * s + ink_w + 3 * s,
-        cell_s.height,
-    )
-    .intersect(&clip_s);
+    let item_box =
+        Rect::new(cell_s.x, cell_s.y, slot * s + ink_w + 3 * s, cell_s.height).intersect(&clip_s);
     let boxed = item::draw_item(c, p, item_box, row.mark);
     if let Some(icon) = row.icon {
-        let dy = (cell_s.height / s - ICON_PX) / 2 * s;
-        c.blit_over_clipped(cell_s.x, cell_s.y + dy, icon, clip_s);
+        let (mut dx, mut dy) = (0, (cell_s.height / s - slot) / 2 * s);
+        if slot > ICON_PX {
+            dx += (slot * s - icon.width as i32).max(0) / 2;
+            dy += (slot * s - icon.height as i32).max(0) / 2;
+        }
+        c.blit_over_clipped(cell_s.x + dx, cell_s.y + dy, icon, clip_s);
     }
     let label = label_full.intersect(&clip_s);
     if label.is_empty() || !row.label {
@@ -1293,6 +1312,7 @@ pub fn drag_image(
         let row = ListRow {
             name: &e.name,
             icon: r.icon,
+            slot: lay.controls.text.len(ICON_PX),
             mark: Mark::default(),
             selected: false,
             label: true,
@@ -1418,23 +1438,25 @@ pub fn draw(
         }
         return;
     }
+    let slot = lay.controls.text.len(ICON_PX);
     for (i, (cell, entry)) in lay.cells.iter().zip(&sv.entries).enumerate() {
         let visible = cell.intersect(&lay.body);
         if visible.is_empty() {
             continue;
         }
         let editing = matches!(&sv.edit, Some((j, _)) if *j == i);
-        let icon = shellgrid::entry_icon(entry, Mode::List);
+        let icon = shellgrid::faded(entry, list_icon(entry, slot));
         let row = ListRow {
             name: &entry.name,
             icon: icon.as_deref(),
+            slot,
             mark: if editing { Mark::default() } else { sv.mark(i) },
             selected: sv.selection.is(i) || sv.drop_target == Some(i),
             label: !editing,
         };
         let (cell_s, visible_s) = (cell.scaled(s), visible.scaled(s));
         draw_list_row(c, text, p, &row, cell_s, visible_s, px);
-        if editing && !label_area(cell_s, s).intersect(&visible_s).is_empty() {
+        if editing && !label_area(cell_s, s, slot).intersect(&visible_s).is_empty() {
             let label = label_rect(sv, lay, i, text, px);
             draw_rename(c, text, p, sv, i, label.scaled(s), px);
         }
@@ -1793,6 +1815,53 @@ pub(crate) mod tests {
             Some(2),
             "no match leaves the selection alone"
         );
+    }
+
+    /// List and Details draw an entry's 16 px icon at 100% and its 32 px one at 200%, in a
+    /// column grown to 32 px with the name starting past it.
+    #[test]
+    fn list_and_details_icons_grow_to_32_px_at_200_percent() {
+        let (text, _) = rend();
+        let (red, blue) = (Color::rgb(255, 0, 0), Color::rgb(0, 0, 255));
+        for mode in [Mode::List, Mode::Details] {
+            for (pct, side) in [(100, 16), (200, 32)] {
+                let theme = Theme::default().with_text_size(pct);
+                let cs = &theme.colors;
+                let mut sv = view(1);
+                sv.mode = mode;
+                sv.entries[0].name = "WWW".into();
+                sv.entries[0].icon = Some(Rc::new(square(16, red)));
+                sv.entries[0].icon32 = Some(Rc::new(square(32, blue)));
+                let r = Rect::new(0, 0, 400, 120);
+                let lay = layout(&sv, r, &theme.controls());
+                let mut c = Canvas::new(400, 120);
+                let p = Paint {
+                    text: theme.text,
+                    ..classic_paint(cs, 1)
+                };
+                draw(&mut c, &text, &p, &sv, &lay, None, theme.fonts.size_px);
+                let ink = if side == 16 { red } else { blue };
+                let at: Vec<(i32, i32)> = (0..120)
+                    .flat_map(|y| (0..400).map(move |x| (x, y)))
+                    .filter(|&(x, y)| c.get(x, y) == ink.argb())
+                    .collect();
+                let xs = at.iter().map(|p| p.0);
+                let ys = at.iter().map(|p| p.1);
+                let (left, right) = (xs.clone().min().unwrap(), xs.max().unwrap());
+                let (top, bottom) = (ys.clone().min().unwrap(), ys.max().unwrap());
+                assert_eq!(
+                    (right - left + 1, bottom - top + 1),
+                    (side, side),
+                    "{mode:?} {pct}%: the icon's size"
+                );
+                let label = (right + 1..400)
+                    .find(|&x| (top..=bottom).any(|y| c.get(x, y) == cs.window_text.argb()));
+                assert!(
+                    label.is_some_and(|x| x > right),
+                    "{mode:?} {pct}%: the name starts past the icon, got {label:?}"
+                );
+            }
+        }
     }
 
     /// The selected entry's label is filled with the hilight colour and drawn in hilight text; nothing else is.

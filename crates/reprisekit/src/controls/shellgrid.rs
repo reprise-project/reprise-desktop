@@ -198,7 +198,13 @@ pub(crate) fn entry_icon(e: &Entry, mode: Mode) -> Option<Cow<'_, Canvas>> {
         Mode::Icons => e.icon32.as_deref(),
         Mode::Thumbnails => e.thumb.as_ref().or(e.icon32.as_deref()),
         Mode::List | Mode::Details => e.icon.as_deref(),
-    }?;
+    };
+    faded(e, icon)
+}
+
+/// `icon`, faded to half (a copy) when `e` is cut.
+pub(crate) fn faded<'a>(e: &Entry, icon: Option<&'a Canvas>) -> Option<Cow<'a, Canvas>> {
+    let icon = icon?;
     if !e.cut {
         return Some(Cow::Borrowed(icon));
     }

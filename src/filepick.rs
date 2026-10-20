@@ -68,8 +68,8 @@ impl Purpose {
 }
 
 /// The dialog's own icons, fetched by the host: the places tiles at 32 px in
-/// `reprisefs::places::dialog_places`' order, the toolbar's buttons at 16 in `TOOLBAR`'s, both
-/// grown with the text size, and the Look in folder. The dialog draws on device pixels, so each
+/// `reprisefs::places::dialog_places`' order, the toolbar's buttons at 16 in `TOOLBAR`'s and the
+/// Look in folder at 16, all grown with the text size. The dialog draws on device pixels, so each
 /// is a scale-1 canvas `scale` times that size, as are the listing's, which come from the cache
 /// handed to [`FilePicker::reply`].
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -104,7 +104,7 @@ pub fn icons(cache: &mut IconCache, scale: i32, u: TextUnits) -> Icons {
                 icon => icon,
             })
             .collect(),
-        folder: cache.get("folder", 16 * scale),
+        folder: get("folder", tool_px),
         scale,
         text: u,
     }
@@ -1353,6 +1353,21 @@ mod tests {
         assert_eq!(widths(&p, "Art"), at(1));
         assert!(!p.follow_scale(1, &mut icons));
         assert!(p.take_requests().is_empty(), "nothing to relist");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The Look in folder comes at 16 px at 100% and 32 px at 200%, at the scale times that.
+    #[test]
+    fn the_look_in_folder_grows_with_the_text() {
+        let dir = sandbox("lookin-grown");
+        let mut cache = flat_icons(&dir.join(".icons"), &[("folder", 0xff20_40c0)]);
+        let two = TextUnits::new(22, 11);
+        let width = |scale: i32, u: TextUnits, cache: &mut IconCache| {
+            icons(cache, scale, u).folder.map(|c| c.width)
+        };
+        assert_eq!(width(1, TextUnits::ONE, &mut cache), Some(16));
+        assert_eq!(width(1, two, &mut cache), Some(32));
+        assert_eq!(width(2, two, &mut cache), Some(64));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
