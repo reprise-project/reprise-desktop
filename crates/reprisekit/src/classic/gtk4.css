@@ -279,6 +279,11 @@ menubar > item popover.menu.background popover.menu.background > contents {
   background-color: @reprise_menu;
   box-shadow: %window_raised%;
 }
+popover.menu.background > arrow, popover.menu > arrow {
+  border: none;
+  background: none;
+  box-shadow: none;
+}
 popover.menu modelbutton { min-height: 17px; padding: 0 6px; border-radius: 0; }
 popover.menu modelbutton:disabled {
   color: @reprise_shadow;
