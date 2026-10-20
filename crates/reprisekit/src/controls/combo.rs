@@ -75,6 +75,18 @@ fn shell(items: &[ListItem]) -> bool {
     items.iter().any(|i| i.icon.is_some())
 }
 
+/// A shell list's icon column: 16 px, or as wide as its widest icon drawn `device` px per px,
+/// up to the `row_h` row it sits in.
+fn icon_slot(items: &[ListItem], device: i32, row_h: i32) -> i32 {
+    let widest = items
+        .iter()
+        .filter_map(|i| i.icon.as_ref())
+        .map(|c| c.width as i32 / device.max(1))
+        .max()
+        .unwrap_or(0);
+    widest.min(row_h).max(16)
+}
+
 fn items_row_h(items: &[ListItem], cm: &ControlMetrics) -> i32 {
     if shell(items) {
         cm.text.len(SHELL_ROW_H)
@@ -431,12 +443,13 @@ pub fn layout_rows(combo: &Combo, field: Rect, cm: &ControlMetrics, row_h: i32) 
 /// to `right` at most; a row still wider ends in an ellipsis when drawn.
 pub fn widen_list(combo: &Combo, lay: &mut Layout, text: &TextRenderer, px: u32, right: i32) {
     let shell = shell(&combo.items);
+    let slot = icon_slot(&combo.items, 1, lay.row_h);
     let need = combo
         .items
         .iter()
         .map(|it| {
             let start = match shell {
-                true => LIST_ICON_X + it.indent * INDENT_STEP + 16 + ICON_GAP,
+                true => LIST_ICON_X + it.indent * INDENT_STEP + slot + ICON_GAP,
                 false => 2,
             };
             1 + start + text.measure(&it.text, false, px) + 3
@@ -835,6 +848,7 @@ pub fn draw_list_rows(
         draw_scrollbar(c, p, sb, top, rows, items.len(), bar);
     }
     let shell = shell(items);
+    let slot = icon_slot(items, s, row_h);
     let rh = row_h * s;
     for (row, i) in (top..items.len().min(top + rows)).enumerate() {
         let r = Rect::new(inner.x, inner.y + row as i32 * rh, inner.width, rh);
@@ -858,9 +872,14 @@ pub fn draw_list_rows(
         }
         let ix = r.x + (LIST_ICON_X + items[i].indent * INDENT_STEP) * s;
         if let Some(icon) = &items[i].icon {
-            c.blit_over(ix, r.y + (row_h - SHELL_ROW_H) / 2 * s, icon);
+            let (mut dx, mut dy) = (0, (row_h - SHELL_ROW_H) / 2 * s);
+            if slot > 16 {
+                dx = (slot * s - icon.width as i32).max(0) / 2;
+                dy = (rh - icon.height as i32).max(0) / 2;
+            }
+            c.blit_over(ix + dx, r.y + dy, icon);
         }
-        let tx = ix + (16 + ICON_GAP) * s;
+        let tx = ix + (slot + ICON_GAP) * s;
         let label = fitted(text, &items[i].text, inner.right() - s - tx, px);
         let tw = text.measure(&label, false, px);
         if highlighted == Some(i) {
@@ -1637,6 +1656,46 @@ mod tests {
                 .collect();
             assert_eq!(lit.first(), Some(&(2 + row_h)), "{pct}%: highlight top");
             assert_eq!(lit.last(), Some(&(2 * row_h)), "{pct}%: highlight bottom");
+        }
+    }
+
+    /// A shell list whose icons are 32 px (a grown Look in folder) draws them whole in 32 px
+    /// rows with the labels past them; 16 px icons keep their 16 px column.
+    #[test]
+    fn a_shell_list_widens_its_icon_column_for_larger_icons() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let red = Color::rgb(0xFF, 0, 0);
+        let theme = Theme::default().with_text_size(200);
+        let p = Paint {
+            text: theme.text,
+            ..classic_paint(&theme.colors, 1)
+        };
+        let px = theme.fonts.size_px;
+        for side in [16, 32] {
+            let mut icon = Canvas::new(side as u32, side as u32);
+            icon.fill_rect(Rect::new(0, 0, side, side), red);
+            let items = [ListItem::shell("W", Some(icon), 0)];
+            let list = Rect::new(0, 0, 200, 32 + 2);
+            let mut c = Canvas::new(200, list.height as u32);
+            draw_list(&mut c, &text, &p, &items, None, 0, 1, list, None, None, px);
+            let reds: Vec<i32> = (0..200)
+                .filter(|&x| (0..list.height).any(|y| c.get(x, y) == red.argb()))
+                .collect();
+            let x = 1 + LIST_ICON_X;
+            let left = x;
+            assert_eq!(reds.first(), Some(&left), "{side} px: icon left");
+            assert_eq!(
+                reds.last(),
+                Some(&(left + side - 1)),
+                "{side} px: icon right"
+            );
+            let ink = (left + side..199).find(|&x| {
+                (1..list.height - 1).any(|y| c.get(x, y) == theme.colors.button_text.argb())
+            });
+            assert!(
+                ink.is_some_and(|i| i >= x + side + ICON_GAP),
+                "{side} px: the label starts past the icon, got {ink:?}"
+            );
         }
     }
 
