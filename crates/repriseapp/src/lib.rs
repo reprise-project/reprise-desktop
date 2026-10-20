@@ -1279,6 +1279,7 @@ pub fn run(app: Box<dyn App>) {
         slots: Vec::new(),
         focus: None,
         keyboard: None,
+        keyboard_due: false,
         pointer: None,
         mods: Modifiers::default(),
         pointer_pos: (0, 0),
@@ -1428,6 +1429,7 @@ pub fn run(app: Box<dyn App>) {
             }
             host.draw(id, &qh);
         }
+        host.bind_keyboard(&conn, &qh);
         // After the draws: a window's draw opens the menu a right press asked for.
         host.settle_keyboard();
         host.sync_menu();
@@ -1644,6 +1646,8 @@ struct Host {
     slots: Vec<Slot>,
     focus: Option<WinId>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
+    /// The seat has a keyboard `bind_keyboard` has not bound yet.
+    keyboard_due: bool,
     pointer: Option<wl_pointer::WlPointer>,
     mods: Modifiers,
     pointer_pos: (i32, i32),
@@ -3422,17 +3426,7 @@ impl SeatHandler for Host {
     ) {
         if capability == Capability::Keyboard && self.keyboard.is_none() {
             self.seat = Some(seat.clone());
-            let keyboard = self
-                .seat_state
-                .get_keyboard_with_repeat(
-                    qh,
-                    &seat,
-                    None,
-                    self.loop_handle.clone(),
-                    Box::new(|host: &mut Host, _, event| host.key(event)),
-                )
-                .expect("keyboard");
-            self.keyboard = Some(keyboard);
+            self.keyboard_due = true;
             if let Some(manager) = &self.text_input_manager
                 && self.text_input.is_none()
             {
@@ -3458,6 +3452,9 @@ impl SeatHandler for Host {
         _: wl_seat::WlSeat,
         capability: Capability,
     ) {
+        if capability == Capability::Keyboard {
+            self.keyboard_due = false;
+        }
         if capability == Capability::Keyboard
             && let Some(k) = self.keyboard.take()
         {
@@ -3476,6 +3473,31 @@ impl SeatHandler for Host {
 }
 
 impl Host {
+    /// Binds the keyboard `new_capability` left due, once a window has shown its first frame:
+    /// the keymap and compose table cost a few milliseconds, and the compositor sends `enter`
+    /// to a keyboard bound while one of the client's windows has focus.
+    fn bind_keyboard(&mut self, conn: &Connection, qh: &QueueHandle<Self>) {
+        if !self.keyboard_due || !self.slots.iter().any(|s| s.mapped) {
+            return;
+        }
+        let Some(seat) = self.seat.clone() else {
+            return;
+        };
+        self.keyboard_due = false;
+        let _ = conn.flush();
+        let keyboard = self
+            .seat_state
+            .get_keyboard_with_repeat(
+                qh,
+                &seat,
+                None,
+                self.loop_handle.clone(),
+                Box::new(|host: &mut Host, _, event| host.key(event)),
+            )
+            .expect("keyboard");
+        self.keyboard = Some(keyboard);
+    }
+
     /// Window `id` lost the keyboard.
     fn lose_keyboard(&mut self, id: WinId) {
         if self.focus == Some(id) {
