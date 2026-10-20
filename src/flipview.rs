@@ -19,7 +19,7 @@ use smithay::{
         RegistrationToken,
         timer::{TimeoutAction, Timer},
     },
-    utils::{Logical, Physical, Point, Scale, Size},
+    utils::{Logical, Physical, Point, Rectangle, Scale, Size},
 };
 
 use crate::{
@@ -186,6 +186,16 @@ impl State {
             && self.config.interface == reprisekit::interface::Interface::Glass
     }
 
+    /// Whether `w` draws as a card (inactive, no shadow): a stack is up or
+    /// flying back on an output its frame meets.
+    pub(crate) fn carded(&self, w: WindowId) -> bool {
+        let sw = &self.switcher;
+        let Some(frame) = self.win(w).filter(|_| sw.cards).map(|x| x.frame_rect()) else {
+            return false;
+        };
+        (sw.stack.iter().chain(&sw.leaving)).any(|st| frame.intersects(st.area))
+    }
+
     fn flip_entries(&self) -> Vec<Entry> {
         let mut entries = self.switch_entries();
         if !entries.contains(&Entry::Desktop) {
@@ -298,7 +308,8 @@ impl State {
         st.out = Tween::new(0.0, 1.0, now, OPEN_MS, Ease::Out);
         st.shade = Tween::new(0.0, 1.0, now, OPEN_MS, Ease::Linear);
         st.stepping = true;
-        let hidden = self.hide_for_flip();
+        let area = st.area;
+        let hidden = self.hide_for_flip(area);
         if let Some(st) = self.switcher.stack.as_mut() {
             st.hidden = hidden;
         }
@@ -309,42 +320,37 @@ impl State {
         self.flip_moved();
     }
 
-    /// Turn the windows off for the stack: their layers, and every shown
-    /// dialog's tree, which it returns.
-    fn hide_for_flip(&mut self) -> Vec<TreeId> {
-        for layer in [
-            self.layers.windows,
-            self.layers.on_top,
-            self.layers.fullscreen,
-        ] {
-            self.scene.set_enabled(layer, false);
+    /// Turn the windows off on the stack's output, `area`: their layers,
+    /// and every dialog's tree, which it returns. Other outputs keep theirs.
+    fn hide_for_flip(&mut self, area: Rect) -> Vec<TreeId> {
+        let area = Some(logical(area));
+        for layer in self.flip_layers() {
+            self.scene.set_hidden_in(layer, area);
         }
-        let dialogs: Vec<TreeId> = (self.dialogs.views.iter())
-            .map(|v| v.tree())
-            .filter(|&t| self.scene.enabled(t))
-            .collect();
+        let dialogs: Vec<TreeId> = self.dialogs.views.iter().map(|v| v.tree()).collect();
         for &t in &dialogs {
-            self.scene.set_enabled(t, false);
+            self.scene.set_hidden_in(t, area);
         }
         dialogs
     }
 
+    fn flip_layers(&self) -> [TreeId; 3] {
+        let l = &self.layers;
+        [l.windows, l.on_top, l.fullscreen]
+    }
+
     fn show_after_flip(&mut self, hidden: &[TreeId]) {
-        for layer in [
-            self.layers.windows,
-            self.layers.on_top,
-            self.layers.fullscreen,
-        ] {
-            self.scene.set_enabled(layer, true);
+        for layer in self.flip_layers() {
+            self.scene.set_hidden_in(layer, None);
         }
         for &t in hidden {
-            self.scene.set_enabled(t, true);
+            self.scene.set_hidden_in(t, None);
         }
         self.redraw_all();
     }
 
     /// A dialog shown while the stack is up or flying back stays under
-    /// it: its tree goes off with the windows until the cards land.
+    /// it: its tree goes off the stack's output until the cards land.
     pub(crate) fn flip_hide_dialog(&mut self, tree: TreeId) {
         let sw = &mut self.switcher;
         let open = sw.stack.as_mut().filter(|st| st.revealed());
@@ -352,7 +358,8 @@ impl State {
             return;
         };
         st.hidden.push(tree);
-        self.scene.set_enabled(tree, false);
+        let area = Some(logical(st.area));
+        self.scene.set_hidden_in(tree, area);
     }
 
     /// Where each of `entries` lies on the desktop, relative to `area`: a
@@ -903,6 +910,10 @@ impl State {
         tree.set_focus(focus);
         Some(tree)
     }
+}
+
+fn logical(r: Rect) -> Rectangle<i32, Logical> {
+    Rectangle::new((r.x, r.y).into(), (r.width, r.height).into())
 }
 
 /// Put `entry` (`size`, lying at `flat`) into `st` at `now`, before the

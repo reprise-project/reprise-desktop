@@ -439,6 +439,36 @@ fn coords_add_up_through_nested_trees() {
 }
 
 #[test]
+fn a_tree_hidden_in_one_output_still_draws_on_the_other() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let a = s.tree_create(root);
+    let r = s.rect_create(a, (300, 10), RED);
+    s.set_hidden_in(a, Some(rect(0, 0, 100, 100)));
+    let left = View::new(rect(0, 0, 100, 100), 1.0);
+    let right = View::new(rect(100, 0, 100, 100), 1.0);
+    let part = View::new(rect(10, 0, 20, 20), 1.0);
+    let both = View::new(rect(0, 0, 200, 100), 1.0);
+    assert!(s.render_elements(&mut TestRenderer, &left).is_empty());
+    assert!(s.render_elements(&mut TestRenderer, &part).is_empty());
+    assert!(s.backdrop_elements(&mut TestRenderer, &left).is_empty());
+    assert_eq!(s.render_elements(&mut TestRenderer, &right).len(), 1);
+    assert_eq!(s.render_elements(&mut TestRenderer, &both).len(), 1);
+    assert_eq!(s.node_at(root, pt(5.0, 5.0)), None);
+    assert_eq!(
+        s.node_at(root, pt(150.0, 5.0)).map(|h| h.node),
+        Some(r.node())
+    );
+    assert_eq!(
+        s.render_elements_of(&mut TestRenderer, r, &left).len(),
+        1,
+        "a picture of a node under the tree ignores its ancestors' hiding"
+    );
+    s.set_hidden_in(a, None);
+    assert_eq!(s.render_elements(&mut TestRenderer, &left).len(), 1);
+}
+
+#[test]
 fn a_disabled_ancestor_hides_a_node() {
     let mut s = TestScene::new();
     let root = s.root();

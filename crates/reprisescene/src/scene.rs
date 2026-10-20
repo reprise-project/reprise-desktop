@@ -99,6 +99,7 @@ impl<R: Renderer, D> Scene<R, D> {
                     in_backdrop: true,
                     opacity: 1.0,
                     clip: None,
+                    hidden_in: None,
                     input: Input::All,
                     data: None,
                     content: Content::Tree(Vec::new()),
@@ -192,6 +193,7 @@ impl<R: Renderer, D> Scene<R, D> {
             in_backdrop: true,
             opacity: 1.0,
             clip: None,
+            hidden_in: None,
             input: Input::All,
             data: None,
             content,
@@ -351,6 +353,23 @@ impl<R: Renderer, D> Scene<R, D> {
 
     pub fn opacity(&self, node: impl Into<NodeId>) -> Option<f32> {
         self.node(node.into()).map(|n| n.opacity)
+    }
+
+    /// Leave `node`'s subtree out of every view lying wholly inside `area`
+    /// (layout), such as one output's, and out of hit tests there; other
+    /// views draw it as usual. None shows it everywhere.
+    pub fn set_hidden_in(
+        &mut self,
+        node: impl Into<NodeId>,
+        area: Option<Rectangle<i32, Logical>>,
+    ) {
+        if let Some(n) = self.node_mut(node.into()) {
+            n.hidden_in = area;
+        }
+    }
+
+    pub fn hidden_in(&self, node: impl Into<NodeId>) -> Option<Rectangle<i32, Logical>> {
+        self.node(node.into())?.hidden_in
     }
 
     /// Draw and hit `tree`'s leaves only inside `clip` (node-local, so it moves with the

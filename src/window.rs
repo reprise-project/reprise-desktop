@@ -1015,7 +1015,8 @@ impl State {
         }
     }
 
-    /// The 3D switcher's cards came up or went: while up, frames draw inactive and shadows hide.
+    /// The 3D switcher's cards came up or went: while up, frames on its output draw inactive and
+    /// their shadows hide (`carded`).
     pub(crate) fn cards_changed(&mut self) {
         let ids: Vec<(WindowId, bool)> = (self.windows.iter())
             .map(|x| (x.id, x.minimized || Some(x.id) == self.focused))
@@ -1069,7 +1070,7 @@ impl State {
         let layout = self.layout_box(None);
         let limit = (layout.width * scale, layout.height * scale);
         let title = win.title();
-        let active = win.is_active(self.focused) && !self.switcher.cards;
+        let active = win.is_active(self.focused) && !self.carded(w);
         let state = FrameState {
             title: &title,
             active,
@@ -1187,7 +1188,7 @@ impl State {
     /// shows its frame; the client is then left out of what glass blurs, so its own glass reads
     /// what lies behind the window.
     fn place_client_glass(&mut self, w: WindowId, sheet: bool) {
-        let active = self.win(w).is_some_and(|x| x.is_active(self.focused)) && !self.switcher.cards;
+        let active = self.win(w).is_some_and(|x| x.is_active(self.focused)) && !self.carded(w);
         let scale = self.draw_scale_for_window(w);
         let theme = crate::theme::Theme {
             active,
@@ -1240,7 +1241,7 @@ impl State {
             return;
         }
         let sheet = self.is_sheet(w);
-        let on = glass && (win.has_frame() || sheet) && !self.switcher.cards;
+        let on = glass && (win.has_frame() || sheet) && !self.carded(w);
         let (fw, fh) = win.geom.total;
         let active = win.is_active(focused) && !sheet;
         let placed = shadow::place(Rect::new(0, 0, fw, fh), active, win.maximized || !on);
