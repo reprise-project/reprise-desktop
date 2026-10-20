@@ -1747,3 +1747,60 @@ fn a_rows_drag_image_wears_the_grown_icon_at_200_percent() {
         }
     }
 }
+
+/// At 125% to 175% a List or Details drag at scale 2 decodes an icon file at the grown icon
+/// column (20, 25 and 28 px), the size its row wears.
+#[test]
+fn a_rows_dragged_icon_file_is_decoded_at_the_grown_column() {
+    const BLUE: u32 = 0xff00_00ff;
+    let pics = tempfile::tempdir().expect("a temp dir");
+    let pic = pics.path().join("blue.png");
+    let mut c = Canvas::new(96, 96);
+    c.pixels.fill(BLUE);
+    std::fs::write(&pic, reprisekit::raster::to_png(&c)).expect("png");
+    for (pct, side) in [(125, 20), (150, 25), (175, 28)] {
+        for mode in [Mode::List, Mode::Details] {
+            let mut ctx = test_ctx();
+            ctx.theme = reprisekit::theme::Theme::default().with_text_size(pct);
+            ctx.size = (1600, 900);
+            let dir = tempfile::tempdir().expect("a temp dir");
+            let folder = dir.path().join("Pic");
+            std::fs::create_dir(&folder).expect("mkdir");
+            let entry = format!("[Desktop Entry]\nIcon={}\n", pic.display());
+            std::fs::write(folder.join(".directory"), entry).expect("write");
+            let mut ex =
+                crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+            ex.sv.mode = mode;
+            let at = centre(&ex, &ctx, index_of(&ex, "Pic"));
+            press(&mut ex, &mut ctx, at, BTN_LEFT);
+            motion(&mut ex, &mut ctx, (at.0 + THRESHOLD + 1, at.1));
+            ex.drag_image(&mut ctx, 2).expect("an image at scale 2");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !ex.wake(&mut ctx).redraw_drag {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "{mode:?} at {pct}%: the decode asks for the image again"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let (img, _) = ex.drag_image(&mut ctx, 2).expect("an image at scale 2");
+            let dw = img.device_size().0 as i32;
+            // The image is faded: a pixel is the icon's when only its blue channel is lit.
+            let lit: Vec<(i32, i32)> = (img.pixels.iter().enumerate())
+                .filter(|(_, p)| *p & 0xff_ffff != 0 && *p & 0xff_ff00 == 0)
+                .map(|(i, _)| (i as i32 % dw, i as i32 / dw))
+                .collect();
+            let xs = lit.iter().map(|p| p.0);
+            let ys = lit.iter().map(|p| p.1);
+            let size = (
+                xs.clone().max().unwrap_or(-1) - xs.min().unwrap_or(0) + 1,
+                ys.clone().max().unwrap_or(-1) - ys.min().unwrap_or(0) + 1,
+            );
+            assert_eq!(
+                size,
+                (2 * side, 2 * side),
+                "{mode:?} at {pct}%: the icon's device size"
+            );
+        }
+    }
+}

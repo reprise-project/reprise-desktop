@@ -445,10 +445,10 @@ pub fn list_icon_px(u: TextUnits) -> i32 {
 
 /// The icon List and Details draw for `e` in an icon column `slot` px wide: the 32 px one once
 /// it fits, else `icon`.
-pub fn list_icon(e: &Entry, slot: i32) -> Option<&Canvas> {
+pub fn list_icon(e: &Entry, slot: i32) -> Option<&std::rc::Rc<Canvas>> {
     match slot >= 32 {
-        true => e.icon32.as_deref().or(e.icon.as_deref()),
-        false => e.icon.as_deref(),
+        true => e.icon32.as_ref().or(e.icon.as_ref()),
+        false => e.icon.as_ref(),
     }
 }
 
@@ -467,7 +467,10 @@ impl listview::Rows for DetailsRows<'_> {
         u.len(ICON_PX)
     }
     fn icon_in(&self, row: usize, slot: i32) -> Option<&Canvas> {
-        self.0.get(row).and_then(|e| list_icon(e, slot))
+        self.0
+            .get(row)
+            .and_then(|e| list_icon(e, slot))
+            .map(|c| &**c)
     }
     fn cell(&self, row: usize, col: usize) -> Cow<'_, str> {
         let Some(e) = self.0.get(row) else {
@@ -1451,7 +1454,7 @@ pub fn draw(
             continue;
         }
         let editing = matches!(&sv.edit, Some((j, _)) if *j == i);
-        let icon = shellgrid::faded(entry, list_icon(entry, slot));
+        let icon = shellgrid::faded(entry, list_icon(entry, slot).map(|c| &**c));
         let row = ListRow {
             name: &entry.name,
             icon: icon.as_deref(),
