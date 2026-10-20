@@ -1423,12 +1423,14 @@ fn a_send_to_drive_whose_stat_is_out_greys_its_row_and_a_send_past_the_deadline_
     drop(closed);
     ex.held = None;
     ex.dialog = None;
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    // The menu's rows wait on the late stat, so it has landed once they are built.
+    let (i, enabled) = send_row(&mut ex, &mut ctx);
+    assert!(enabled, "the late stat landed");
     ex.finish_puts(&mut ctx);
     assert!(!stick.join("a.txt").exists(), "the late stat sends nothing");
 
-    let (i, enabled) = send_row(&mut ex, &mut ctx);
-    assert!(enabled, "the late stat landed");
+    // A copy's flush to the drive can sit behind other writes for longer than 20 ms.
+    ex.action_deadline = crate::acting::ACTION_DEADLINE;
     ex.send_to(i, &mut ctx);
     ex.finish_puts(&mut ctx);
     assert!(
