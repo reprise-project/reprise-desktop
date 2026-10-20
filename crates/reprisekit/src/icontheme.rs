@@ -8,6 +8,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Env var carrying the icon theme name from the compositor; clients without it load `hicolor`.
@@ -83,6 +84,9 @@ impl DirEntry {
         }
     }
 }
+
+/// Most threads [`IconTheme::warm`] reads directories on.
+const WARM_THREADS: usize = 4;
 
 const EXTENSIONS: [&str; 3] = ["png", "svg", "xpm"];
 const EXTENSION_FLAGS: [u16; 3] = [themecache::PNG, themecache::SVG, themecache::XPM];
@@ -442,10 +446,31 @@ impl IconTheme {
     }
 
     /// Reads every cache and checks or lists every directory now, so later lookups touch the
-    /// file system only for the icon files. Hosts run it on a thread right after `load`.
+    /// file system only for the icon files. Hosts run it on a thread right after `load`; it
+    /// spreads the directories over a few threads, so fewer are left for the first lookups on
+    /// the caller's loop to read.
     pub fn warm(&self) {
-        let dirs = self.dirs.iter().map(|d| &d.path).chain(&self.roots);
-        for (i, dir) in dirs.enumerate() {
+        let next = AtomicUsize::new(0);
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+        std::thread::scope(|s| {
+            for _ in 1..threads.min(WARM_THREADS) {
+                s.spawn(|| self.warm_from(&next));
+            }
+            self.warm_from(&next);
+        });
+    }
+
+    /// Reads the directories `warm` hands out through `next` until none is left.
+    fn warm_from(&self, next: &AtomicUsize) {
+        loop {
+            let i = next.fetch_add(1, Ordering::Relaxed);
+            let dir = match self.dirs.get(i) {
+                Some(d) => &d.path,
+                None => match self.roots.get(i - self.dirs.len()) {
+                    Some(root) => root,
+                    None => return,
+                },
+            };
             self.listing(i, dir);
         }
     }
