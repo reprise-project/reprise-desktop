@@ -10,6 +10,8 @@ use crate::apps::MimeDb;
 use crate::{hidden, locale, places, props, recent};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
@@ -71,19 +73,48 @@ impl Item {
 /// Everything in `dir`, folders ([`Item::is_folder`]) first then
 /// case-insensitively by name.
 /// `globs` is `apps::mime_globs()`; pass `MimeDb::empty()` to skip MIME.
+/// A symlink whose target has not answered within [`LINK_WAIT`] (one into a dead mount) lists as a
+/// broken link would.
 pub fn read_dir(dir: &Path, globs: &MimeDb) -> Vec<Item> {
+    read_dir_with(dir, globs, target_of, LINK_WAIT)
+}
+
+/// How long a listing waits on its symlinks' targets after the last one answered.
+pub const LINK_WAIT: Duration = Duration::from_secs(2);
+
+/// Link-following threads still running (one on a dead mount stays until it answers); past this
+/// many a listing lists its links unfollowed.
+const MAX_STUCK_LINKS: usize = 8;
+
+static LINKS_RUNNING: AtomicUsize = AtomicUsize::new(0);
+
+/// [`read_dir`] with `follow` reading the symlinks' targets on a thread of their own.
+fn read_dir_with(
+    dir: &Path,
+    globs: &MimeDb,
+    follow: fn(&Path) -> Target,
+    wait: Duration,
+) -> Vec<Item> {
     let entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)
         .map(|rd| rd.flatten().collect())
         .unwrap_or_default();
     let listed = hidden::Listed::read(dir);
-    let mut items: Vec<Item> = entries
+    // The entry's own type is free on Linux.
+    let (links, plain): (Vec<_>, Vec<_>) = entries
         .iter()
-        .map(|e| {
-            // The entry's own type is free on Linux.
-            let is_link = e.file_type().is_ok_and(|t| t.is_symlink());
-            item_with(&e.path(), is_link, &listed, globs)
-        })
+        .map(|e| (e.path(), e.file_type().is_ok_and(|t| t.is_symlink())))
+        .partition(|(_, is_link)| *is_link);
+    let mut items: Vec<Item> = plain
+        .iter()
+        .map(|(p, _)| item_with(p, false, target_of(p), &listed, globs))
         .collect();
+    let mut links: Vec<PathBuf> = links.into_iter().map(|(p, _)| p).collect();
+    links.sort();
+    let mut targets = follow_links(links.clone(), follow, wait).into_iter();
+    items.extend(links.iter().map(|p| {
+        let target = targets.next().unwrap_or_default();
+        item_with(p, true, target, &listed, globs)
+    }));
     // Sort on the collected `Item`s: re-statting in the comparator can
     // change answers mid-sort and panic.
     // Names differing only in case break on the exact name, not on
@@ -92,22 +123,86 @@ pub fn read_dir(dir: &Path, globs: &MimeDb) -> Vec<Item> {
     items
 }
 
+/// `follow` of each of `links` in order, read on a thread, as many as answered before one took
+/// longer than `wait`. A thread left blocked ends when its mount answers or goes away.
+pub fn follow_links<T: Send + 'static>(
+    links: Vec<PathBuf>,
+    follow: fn(&Path) -> T,
+    wait: Duration,
+) -> Vec<T> {
+    if links.is_empty() || LINKS_RUNNING.load(Ordering::Acquire) >= MAX_STUCK_LINKS {
+        return Vec::new();
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    LINKS_RUNNING.fetch_add(1, Ordering::AcqRel);
+    let spawned = std::thread::Builder::new()
+        .name("listing-links".into())
+        .spawn(move || {
+            for p in &links {
+                if tx.send(follow(p)).is_err() {
+                    break;
+                }
+            }
+            LINKS_RUNNING.fetch_sub(1, Ordering::AcqRel);
+        });
+    if spawned.is_err() {
+        LINKS_RUNNING.fetch_sub(1, Ordering::AcqRel);
+        return Vec::new();
+    }
+    std::iter::from_fn(|| rx.recv_timeout(wait).ok()).collect()
+}
+
 pub fn item_at(path: &Path, globs: &MimeDb) -> Item {
     let is_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
     let listed = path.parent().map(hidden::Listed::read).unwrap_or_default();
-    item_with(path, is_link, &listed, globs)
+    item_with(path, is_link, target_of(path), &listed, globs)
 }
 
-/// One stat follows a link for its folder-ness and what opens it; the
-/// size and date the columns show are a symlink's own, a shortcut's as
-/// its Properties sheet reads them. `listed` is the folder's `.hidden`.
-/// A mount root is described from [`mount_root_stat`] alone.
-fn item_with(p: &Path, is_link: bool, listed: &hidden::Listed, globs: &MimeDb) -> Item {
+/// What an entry's listing reads through a symlink: everything that may wait on the target's
+/// file system. The default is a link whose target never answered.
+#[derive(Default)]
+struct Target {
+    mount: Option<MountStat>,
+    meta: Option<std::fs::Metadata>,
+    program: bool,
+    shortcut: Option<crate::apps::Shortcut>,
+}
+
+/// One stat follows a link for its folder-ness and what opens it. A mount root is described from
+/// [`mount_root_stat`] alone.
+fn target_of(p: &Path) -> Target {
     let mount = mount_root_stat(p);
     let meta = match mount {
         Some(_) => None,
         None => std::fs::metadata(p).ok(),
     };
+    let program = meta.as_ref().is_some_and(|m| {
+        m.is_file() && m.permissions().mode() & 0o111 != 0 && crate::program::is_program(p, m)
+    });
+    let shortcut = meta.as_ref().and_then(|m| crate::apps::shortcut_at(p, m));
+    Target {
+        mount,
+        meta,
+        program,
+        shortcut,
+    }
+}
+
+/// The size and date the columns show are a symlink's own, a shortcut's as its Properties sheet
+/// reads them. `listed` is the folder's `.hidden`.
+fn item_with(
+    p: &Path,
+    is_link: bool,
+    target: Target,
+    listed: &hidden::Listed,
+    globs: &MimeDb,
+) -> Item {
+    let Target {
+        mount,
+        meta,
+        program,
+        shortcut,
+    } = target;
     let is_dir = match &mount {
         Some(m) => m.is_dir,
         None => meta.as_ref().is_some_and(|m| m.is_dir()),
@@ -115,10 +210,6 @@ fn item_with(p: &Path, is_link: bool, listed: &hidden::Listed, globs: &MimeDb) -
     let exec = meta
         .as_ref()
         .is_some_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
-    let program = exec
-        && meta
-            .as_ref()
-            .is_some_and(|m| crate::program::is_program(p, m));
     let name = p
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -144,10 +235,7 @@ fn item_with(p: &Path, is_link: bool, listed: &hidden::Listed, globs: &MimeDb) -
         p.file_name()
             .and_then(|n| globs.mime_of_name(&n.to_string_lossy()))
     };
-    let shortcut = meta
-        .as_ref()
-        .and_then(|m| crate::apps::shortcut_at(p, m))
-        .map(Box::new);
+    let shortcut = shortcut.map(Box::new);
     let kind = match shortcut.as_deref() {
         Some(crate::apps::Shortcut::Link(_)) => WEB_SHORTCUT.to_string(),
         Some(crate::apps::Shortcut::App(_)) => SHORTCUT.to_string(),
@@ -422,6 +510,49 @@ mod tests {
         );
         assert_eq!(link.size, "mfolder".len() as u64);
         assert!(items[0].is_folder());
+    }
+    #[test]
+    fn a_symlink_whose_target_never_answers_lists_as_a_broken_link() {
+        use std::os::unix::ffi::OsStrExt;
+        // Opening a FIFO blocks until a writer comes, as a lookup on a stopped mount does.
+        fn follow(p: &Path) -> Target {
+            if std::fs::metadata(p).is_ok_and(|m| m.file_type().is_fifo()) {
+                let _ = std::fs::File::open(p);
+            }
+            target_of(p)
+        }
+        use std::os::unix::fs::FileTypeExt;
+        let t = tempfile::tempdir().unwrap();
+        let fifo = t.path().join("pipe");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c` is a NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        std::fs::create_dir(t.path().join("folder")).unwrap();
+        std::fs::write(t.path().join("doc.txt"), "x").unwrap();
+        std::os::unix::fs::symlink("folder", t.path().join("a live")).unwrap();
+        std::os::unix::fs::symlink("pipe", t.path().join("b dead.txt")).unwrap();
+        let started = std::time::Instant::now();
+        let items = read_dir_with(
+            t.path(),
+            &MimeDb::empty(),
+            follow,
+            Duration::from_millis(200),
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let by = |n: &str| items.iter().find(|i| i.name == n).unwrap();
+        let live = by("a live");
+        assert!(
+            live.is_link && live.is_dir,
+            "a link that answered opens as a folder"
+        );
+        let dead = by("b dead.txt");
+        assert!(dead.is_link && !dead.is_dir && dead.shortcut.is_none());
+        assert_eq!(dead.kind, SHORTCUT);
+        assert_eq!(dead.size, "pipe".len() as u64, "the link's own size");
+        assert!(by("folder").is_folder());
+        assert_eq!(by("doc.txt").size, 1);
+        // Lets the blocked follow return.
+        drop(std::fs::File::options().write(true).open(&fifo));
     }
     #[test]
     fn a_program_is_an_executable_script_or_elf_file() {

@@ -253,6 +253,30 @@ fn a_folders_node_read_late_fills_on_a_later_wake() {
     assert_eq!(labels, ["inner"]);
 }
 
+/// The Desktop node's children are read on a listing thread when the tree is built: a symlink
+/// among them may point into a mount that never answers.
+#[test]
+fn building_the_tree_reads_the_desktop_off_the_loop() {
+    use std::sync::{Arc, RwLock};
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let gate = Arc::new(RwLock::new(()));
+    let closed = gate.write().expect("lock");
+    ex.held = Some(gate.clone());
+    ex.build_tree(&mut ctx);
+    let root = &ex.tree.roots[0];
+    assert!(
+        root.expanded && root.children.is_empty(),
+        "nothing read yet"
+    );
+
+    drop(closed);
+    ex.held = None;
+    wake_until(&mut ex, &mut ctx, |ex| ex.filling.is_empty());
+    assert!(!ex.tree.roots[0].children.is_empty());
+}
+
 /// A Folders node read again after a file operation (a folder made in it) reads on a listing
 /// thread: one that does not answer (a dead mount) leaves the node as it was and fills on a wake.
 #[test]

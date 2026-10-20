@@ -8,13 +8,8 @@ use std::path::PathBuf;
 
 impl Explorer {
     pub fn build_tree(&mut self, ctx: &mut Ctx) {
-        let inp = Inputs {
-            show_hidden: self.settings.show_hidden,
-            drives: &self.drives,
-            volumes: &self.volumes,
-            drive_mounts: &self.drive_mounts,
-        };
-        foldertree::build(&mut self.tree, &mut self.tree_places, &inp, &mut ctx.icons);
+        foldertree::build(&mut self.tree, &mut self.tree_places, &mut ctx.icons);
+        self.fill_node(vec![0], ctx);
     }
 
     /// Reads a Folders node's children on a thread. One that takes longer than [`LIST_WAIT`] (a

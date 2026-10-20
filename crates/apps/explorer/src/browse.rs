@@ -178,22 +178,21 @@ impl Explorer {
         };
         let mut tree = TreeView::new(Vec::new(), Style::Picker);
         let mut places = Vec::new();
-        foldertree::build(&mut tree, &mut places, &inp, &mut ctx.icons);
+        foldertree::build(&mut tree, &mut places, &mut ctx.icons);
         let here = items[0].parent().map(Place::from_path);
+        let walk_to = here.clone().unwrap_or(Place::Desktop);
         let mut walking = None;
-        if let Some(here) = &here {
-            let chain = foldertree::to_fill(&tree, &places, here, inp.drive_mounts);
-            match self.read_job(ctx, self.chain_reader(chain)) {
-                Ok(read) => foldertree::follow_with(
-                    &mut tree,
-                    &mut places,
-                    here,
-                    &inp,
-                    &mut ctx.icons,
-                    read,
-                ),
-                Err(job) => walking = Some((here.clone(), job)),
-            }
+        let chain = foldertree::to_fill(&tree, &places, &walk_to, inp.drive_mounts);
+        match self.read_job(ctx, self.chain_reader(chain)) {
+            Ok(read) => foldertree::follow_with(
+                &mut tree,
+                &mut places,
+                &walk_to,
+                &inp,
+                &mut ctx.icons,
+                read,
+            ),
+            Err(job) => walking = Some((walk_to, job)),
         }
         let accept = if mv { "Move" } else { "Copy" };
         let mut b = Browse {
