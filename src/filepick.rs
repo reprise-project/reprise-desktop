@@ -20,13 +20,14 @@ use reprisekit::controls::form::Key;
 use reprisekit::controls::placesbar::{self, Place};
 use reprisekit::controls::shellview::{self, Entry, Mode};
 use reprisekit::frame::Edges;
-use reprisekit::icontheme::{self, IconCache, ListingIcons};
+use reprisekit::icontheme::{self, IconCache, IconTheme, ListingIcons};
 use reprisekit::selection::Mods;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::EditKey;
 use reprisekit::theme::TextUnits;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub const TOOLBAR: [&str; 4] = ["go-previous", "go-up", "folder-new", "view-list"];
 /// Few themes carry `view-list`: without it Views gets the drawn icon at the dialog's scale.
@@ -79,6 +80,32 @@ pub struct Icons {
     pub folder: Option<Canvas>,
     pub scale: i32,
     pub text: TextUnits,
+    pub theme: ThemeOf,
+}
+
+/// The icon theme a dialog's icons came from: equal only to the same loaded theme.
+#[derive(Clone, Default)]
+pub struct ThemeOf(Option<Arc<IconTheme>>);
+
+impl ThemeOf {
+    pub fn of(cache: &IconCache) -> ThemeOf {
+        ThemeOf(Some(cache.theme()))
+    }
+}
+
+impl PartialEq for ThemeOf {
+    fn eq(&self, o: &ThemeOf) -> bool {
+        match (&self.0, &o.0) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        }
+    }
+}
+
+impl std::fmt::Debug for ThemeOf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0.as_ref().map_or("no theme", |_| "a theme"))
+    }
 }
 
 /// The dialog's icons from the compositor's scale-1 `cache`, for a dialog drawn at `scale` with
@@ -107,6 +134,7 @@ pub fn icons(cache: &mut IconCache, scale: i32, u: TextUnits) -> Icons {
         folder: get("folder", tool_px),
         scale,
         text: u,
+        theme: ThemeOf::of(cache),
     }
 }
 
@@ -137,7 +165,7 @@ pub struct FilePicker {
     listing: Option<u64>,
     opening: Option<u64>,
     /// The relisting of the folder shown that only gives its entries their icons at the
-    /// dialog's new scale ([`FilePicker::follow_scale`]).
+    /// dialog's new scale or icon theme ([`FilePicker::follow_scale`]).
     restyling: Option<u64>,
     /// My Recent Documents' files by the name each is listed as, while
     /// that listing is on screen.
@@ -439,13 +467,14 @@ impl FilePicker {
         Some((p.generation, shellview::thumb_px(p.scale), p.paths.clone()))
     }
 
-    /// The dialog draws at `scale`: its icons are fetched at that scale from `cache`, and the
-    /// listing's again off the loop; thumbnails made at another scale are dropped, since they
-    /// would draw at the wrong size, and its pictures are fetched again. True when it changed.
+    /// The dialog draws at `scale` in `cache`'s icon theme: its icons are fetched at that scale
+    /// from `cache`, and once the scale or theme changes the listing's again off the loop;
+    /// thumbnails made at another scale are dropped, since they would draw at the wrong size, and
+    /// its pictures are fetched again. True when it changed.
     pub fn follow_scale(&mut self, scale: i32, cache: &mut IconCache) -> bool {
         let mut changed = false;
         let u = self.dlg.text();
-        let rescaled = self.icons.scale != scale;
+        let rescaled = self.icons.scale != scale || self.icons.theme != ThemeOf::of(cache);
         if rescaled || self.icons.text != u {
             self.icons = icons(cache, scale, u);
             self.dlg.set_place_icons(self.icons.places.clone());
@@ -935,13 +964,14 @@ mod tests {
     #[test]
     fn a_text_size_change_grows_the_toolbar_icons_without_a_relisting() {
         let dir = sandbox("icons-grown");
-        let mut p = FilePicker::run_command(&dir, icons(&mut cache(), 1, TextUnits::ONE), true);
+        let mut cache = cache();
+        let mut p = FilePicker::run_command(&dir, icons(&mut cache, 1, TextUnits::ONE), true);
         settle(&mut p);
         let views = |p: &FilePicker| p.icons.toolbar[TOOLBAR_VIEWS].as_ref().map(|c| c.width);
-        assert!(!p.follow_scale(1, &mut cache()), "nothing changed");
+        assert!(!p.follow_scale(1, &mut cache), "nothing changed");
         assert_eq!(views(&p), Some(16));
         p.dlg.set_text(TextUnits::new(22, 11));
-        assert!(p.follow_scale(1, &mut cache()));
+        assert!(p.follow_scale(1, &mut cache));
         assert_eq!(views(&p), Some(32));
         assert!(p.take_requests().is_empty(), "nothing to relist");
     }
@@ -1371,6 +1401,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A new icon theme gives the Look in folder and the listed entries its icons, the entries
+    /// keeping their places while their icons arrive.
+    #[test]
+    fn a_new_icon_theme_gives_the_dialog_and_its_entries_its_icons() {
+        let dir = sandbox("icons-theme");
+        std::fs::create_dir(dir.join("Sub")).unwrap();
+        let (blue, green) = (0xff20_40c0, 0xff20_a040);
+        let mut flat = flat_icons(&dir.join(".icons"), &[("folder", blue)]);
+        let mut p = FilePicker::run_command(&dir, icons(&mut flat, 1, TextUnits::ONE), true);
+        settle_with(&mut p, &mut flat);
+        let worn = |p: &FilePicker| {
+            let e = p.dlg.entries().iter().find(|e| e.name == "Sub").unwrap();
+            [&e.icon, &e.icon32, &e.icon48].map(|c| c.as_ref().map(|c| c.get(4, 4)))
+        };
+        let folder = |p: &FilePicker| p.icons.folder.as_ref().map(|c| c.get(4, 4));
+        assert_eq!(worn(&p), [Some(blue); 3]);
+        assert_eq!(folder(&p), Some(blue));
+        assert!(!p.follow_scale(1, &mut flat), "the same theme");
+
+        let mut other = flat_icons(&dir.join(".other"), &[("folder", green)]);
+        assert!(p.follow_scale(1, &mut other));
+        assert_eq!(folder(&p), Some(green));
+        assert_eq!(worn(&p), [Some(blue); 3], "until the icons arrive");
+        assert_eq!(settle_with(&mut p, &mut other), Outcome::Redraw);
+        assert_eq!(worn(&p), [Some(green); 3]);
+        assert!(!p.follow_scale(1, &mut other));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// An icon theme drawing `names` in their flat colours at 16, 32 and 48 px under `root`.
     fn flat_icons(root: &Path, names: &[(&str, u32)]) -> IconCache {
         let theme = root.join("flat");
@@ -1494,7 +1553,8 @@ mod tests {
         let dir = sandbox("thumbs-rescale");
         let pic = dir.join("dunes.png");
         std::fs::write(&pic, b"never decoded here").unwrap();
-        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        let mut cache = cache();
+        let mut p = FilePicker::run_command(&dir, icons(&mut cache, 1, TextUnits::ONE), true);
         p.dlg.set_filter(1);
         p.sync_filter();
         settle(&mut p);
@@ -1504,9 +1564,9 @@ mod tests {
         assert_eq!(px, 94);
         let thumb = |w| vec![(pic.clone(), Canvas::new(w, w / 2), (800, 400))];
         assert!(p.thumbs(generation, thumb(94)));
-        assert!(!p.follow_scale(1, &mut cache()), "the scale it fetched at");
+        assert!(!p.follow_scale(1, &mut cache), "the scale it fetched at");
 
-        assert!(p.follow_scale(2, &mut cache()));
+        assert!(p.follow_scale(2, &mut cache));
         let shown = |p: &FilePicker| p.dlg.entries().iter().any(|e| e.thumb.is_some());
         assert!(!shown(&p), "a scale-1 thumbnail would draw at half size");
         let (again, px, paths) = p.take_pictures().expect("fetched again");

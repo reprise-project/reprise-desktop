@@ -366,6 +366,10 @@ pub struct Host {
     wake: Option<crate::Waker>,
     /// A folder still being read after [`LIST_WAIT`]; the dialog shows the one before.
     reading: Option<(ReadKey, Job<Read>)>,
+    /// The icon theme the shown listing's icons came from.
+    listed_theme: Option<Arc<IconTheme>>,
+    /// The shown folder read again for a new icon theme's icons ([`Host::restyle`]).
+    restyling: Option<Job<Read>>,
     /// The last [`Host::list`] and how to start it again: a link it listed unfollowed that
     /// answers since (`relist`) reads the folder anew.
     again: Option<(ReadKey, PathBuf, StartRead)>,
@@ -502,6 +506,15 @@ impl Host {
             dlg.set_place_icons(self.icons.places.to_vec());
             self.icons.set_toolbar(dlg);
         }
+        let theme = icons.theme();
+        if let Some(had) = &self.listed_theme
+            && !Arc::ptr_eq(had, &theme)
+        {
+            self.listed_theme = Some(theme);
+            if let Some((_, _, start)) = &self.again {
+                self.restyling = Some(start());
+            }
+        }
         self.list_icons
             .follow(scale, icons, dlg.entries_mut(), wake);
         let p = &mut self.pictures;
@@ -523,6 +536,11 @@ impl Host {
         {
             self.reading = None;
             self.show_read(dlg, id, read, cache);
+            return true;
+        }
+        if let Some(read) = self.restyling.as_ref().and_then(Job::take) {
+            self.restyling = None;
+            self.restyle(dlg, read, cache);
             return true;
         }
         let icons = self.list_icons.take(dlg.entries_mut(), cache);
@@ -740,6 +758,8 @@ impl Host {
         self.aliases.clear();
         self.aliases.extend(l.aliases);
         self.list_icons.listed(l.icons, icons.scale());
+        self.listed_theme = Some(icons.theme());
+        self.restyling = None;
         let p = &mut self.pictures;
         p.generation += 1;
         p.asked = false;
@@ -754,6 +774,33 @@ impl Host {
         }
         dlg.set_listing(l.folder);
         self.ask_thumbs(dlg);
+    }
+
+    /// The shown folder's `read` for a new icon theme: each entry still listed wears the icon
+    /// the theme gives it, named again since the theme may lack the old name; the view, its
+    /// selection and scroll stay.
+    fn restyle(&mut self, dlg: &mut FileDlg, read: Read, icons: &mut IconCache) {
+        let Some(id) = dlg.folder() else {
+            return;
+        };
+        if self.folders.path(id) != Some(read.path.as_path()) {
+            return;
+        }
+        let l = listing(&mut self.folders, id, read, icons);
+        let fresh: HashMap<&str, &Entry> = l
+            .folder
+            .entries
+            .iter()
+            .map(|e| (e.name.as_str(), e))
+            .collect();
+        for e in dlg.entries_mut() {
+            if let Some(f) = fresh.get(e.name.as_str()) {
+                e.icon = f.icon.clone();
+                e.icon32 = f.icon32.clone();
+                e.icon48 = f.icon48.clone();
+            }
+        }
+        self.list_icons.listed(l.icons, icons.scale());
     }
 
     /// Lists the dialog's folder once, unless it is still being read.
@@ -1596,6 +1643,56 @@ mod tests {
         );
         assert!(pic.thumb.is_none(), "no thumbnail before it is decoded");
         assert_eq!(pic.detail[0], pic.kind);
+    }
+
+    /// A new icon theme gives the listed entries its icons without listing the folder again,
+    /// each named anew: a folder whose own icon the old theme lacked wears it now.
+    #[test]
+    fn a_new_icon_theme_gives_the_listed_entries_its_icons() {
+        let t = pictures_folder();
+        let dir = t.path().join("list");
+        std::fs::create_dir(dir.join("music")).unwrap();
+        reprisefs::meta::set_folder_icon(&dir.join("music"), Some("folder-music")).unwrap();
+        let mut icons = flat_icons(t.path());
+        let mut h = host_in(&dir);
+        let mut dlg = open_dlg(&mut h);
+        h.ensure_listed(&mut dlg, &mut icons, &|_| true);
+        let wake = crate::Waker::noop();
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+        let sizes = |dlg: &FileDlg, name: &str| {
+            let e = entry(dlg, name);
+            [&e.icon, &e.icon32, &e.icon48].map(colour)
+        };
+        assert_eq!(sizes(&dlg, "sub")[0], Some((16, FOLDER)));
+        assert_eq!(
+            sizes(&dlg, "music")[0],
+            Some((16, FOLDER)),
+            "flat has no folder-music"
+        );
+        view(&mut h, &mut dlg, Mode::List);
+        let shown = dlg.entries().to_vec();
+
+        let other = t.path().join("other");
+        let theme = other.join("dark");
+        let dirs = ["16x16/places", "32x32/places", "48x48/places"];
+        let mut index = format!("[Icon Theme]\nName=Dark\nDirectories={}\n", dirs.join(","));
+        for (d, px) in dirs.iter().zip([16, 32, 48]) {
+            index += &format!("\n[{d}]\nSize={px}\nType=Fixed\n");
+            std::fs::create_dir_all(theme.join(d)).unwrap();
+            png(&theme.join(d).join("folder.png"), px, px, PICTURE);
+            png(&theme.join(d).join("folder-music.png"), px, px, TEXT);
+        }
+        std::fs::write(theme.join("index.theme"), index).unwrap();
+        let mut dark = IconCache::new(reprisekit::icontheme::IconTheme::load("dark", &[other]));
+        h.follow_scale(&mut dlg, 1, &mut dark, &wake);
+        settle_thumbs(&mut h, &mut dlg, &mut dark);
+        let each = |c| [Some((16, c)), Some((32, c)), Some((48, c))];
+        assert_eq!(sizes(&dlg, "sub"), each(PICTURE));
+        assert_eq!(sizes(&dlg, "music"), each(TEXT));
+        let names = |e: &[Entry]| e.iter().map(|e| e.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(dlg.entries()), names(&shown), "the same entries");
+        assert_eq!(dlg.view(), Mode::List, "the view stays");
+        assert!(h.reading.is_none(), "no listing to show");
     }
 
     #[test]
