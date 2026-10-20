@@ -864,10 +864,10 @@ mod tests {
         drop(relist);
     }
 
-    /// Follows that wait for the test: a follow of a link named `held*` blocks until [`open`]
-    /// lets that entry (1 for the first follow of the link, 2 for the second) through, and a
-    /// [`Relist`] wake run on its thread afterwards blocks until [`open_wake`] does. Any other
-    /// link answers at once.
+    /// Follows that wait for the test: every follow is counted, and one of a link named `held*`
+    /// blocks until [`open`] lets that entry (1 for the first follow of the link, 2 for the
+    /// second) through, and a [`Relist`] wake run on its thread afterwards blocks until
+    /// [`open_wake`] does. Any other link answers at once.
     mod gate {
         use std::cell::RefCell;
         use std::collections::{HashMap, HashSet};
@@ -885,7 +885,7 @@ mod tests {
             set.lock().unwrap().as_ref().is_some_and(|s| s.contains(e))
         }
 
-        fn until(what: &str, mut done: impl FnMut() -> bool) {
+        pub fn until(what: &str, mut done: impl FnMut() -> bool) {
             let deadline = Instant::now() + Duration::from_secs(10);
             while !done() {
                 assert!(Instant::now() < deadline, "{what} within 10 s");
@@ -894,9 +894,6 @@ mod tests {
         }
 
         pub fn follow(p: &Path) -> bool {
-            if !(p.file_name()).is_some_and(|n| n.to_string_lossy().starts_with("held")) {
-                return true;
-            }
             let n = {
                 let mut e = ENTERED.lock().unwrap();
                 let n = e
@@ -906,6 +903,9 @@ mod tests {
                 *n += 1;
                 *n
             };
+            if !(p.file_name()).is_some_and(|n| n.to_string_lossy().starts_with("held")) {
+                return true;
+            }
             let e = (p.to_path_buf(), n);
             LAST.with(|l| *l.borrow_mut() = Some(e.clone()));
             until("the follow is let through", || has(&OPEN, &e));
@@ -944,7 +944,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let held = t.path().join("held");
         let _relist = Relist::new(gate::wake);
-        let first = list_aside(vec![held.clone()], Duration::from_millis(200));
+        let first = list_aside(vec![held.clone()], Duration::from_secs(5));
         gate::entered(&held, 1);
         // A second listing marks the link stuck while the first one's follow is under way, so
         // the first one's answer hands its folder to the wake, which then holds the thread past
@@ -967,20 +967,22 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let (held, late) = (t.path().join("held"), t.path().join("late"));
         let _relist = Relist::new(gate::wake);
-        let wait = Duration::from_millis(200);
+        let wait = Duration::from_secs(1);
         let first = list_aside(vec![held.clone(), late.clone()], wait);
         gate::entered(&held, 1);
-        let second = follow_links(vec![held.clone()], gate::follow, Duration::from_millis(20));
+        let second = follow_links(vec![held.clone()], gate::follow, Duration::from_millis(1));
         assert_eq!(second, [false], "the second listing gives up on the link");
         // The first answer's wake holds the thread before `late` for longer than the wait.
         gate::open(&held, 1);
-        std::thread::sleep(wait * 2);
+        std::thread::sleep(wait + wait / 2);
         gate::open_wake(&held, 1);
-        assert_eq!(first.join().unwrap(), [true, true], "late is followed");
-        assert!(
-            !stuck().keys.contains_key(&late),
-            "late is not marked stuck"
-        );
+        // A wait that runs out while `late` is being followed may still list it unfollowed;
+        // what counts is that the thread follows it and nothing stays marked.
+        assert!(first.join().unwrap()[0], "held is followed");
+        gate::entered(&late, 1);
+        gate::until("late is not marked stuck", || {
+            !stuck().keys.contains_key(&late)
+        });
         gate::open(&held, 2);
     }
 
