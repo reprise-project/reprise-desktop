@@ -1828,9 +1828,9 @@ impl App for Notepad {
         reply
     }
 
-    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+    fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
         if win != MAIN {
-            return repriseapp::reader_popup(self, win);
+            return repriseapp::reader_popup(self, win, ctx);
         }
         if self.bar.open.is_some() {
             return Some(Box::new(&mut self.bar));
