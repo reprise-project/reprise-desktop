@@ -641,11 +641,14 @@ mod tests {
         );
     }
 
-    /// A headless state whose file actions run on threads and give up after 100 ms.
-    fn with_file_jobs() -> Harness {
+    /// A give-up deadline short enough for a test to wait out.
+    const GIVE_UP: std::time::Duration = std::time::Duration::from_millis(100);
+
+    /// A headless state whose file actions run on threads and give up after `deadline`.
+    fn with_file_jobs(deadline: std::time::Duration) -> Harness {
         let mut h = Harness::new();
         h.output("TEST-1", 1024, 768);
-        h.state.fsjobs.deadline = Some(std::time::Duration::from_millis(100));
+        h.state.fsjobs.deadline = Some(deadline);
         crate::fsjobs::setup(&mut h.state);
         h
     }
@@ -671,7 +674,7 @@ mod tests {
     #[test]
     fn a_desktop_delete_asks_trashes_or_erases_as_the_recycle_bin_settings_say() {
         let home = SystemBin::new();
-        let mut h = with_file_jobs();
+        let mut h = with_file_jobs(crate::fsjobs::ACTION_DEADLINE);
         let (a, b) = (home.0.join("a.txt"), home.0.join("b.txt"));
         std::fs::write(&a, "a").expect("write");
         std::fs::write(&b, "b").expect("write");
@@ -701,7 +704,7 @@ mod tests {
     #[test]
     fn a_desktop_delete_gives_up_when_its_recycle_bin_stops_answering() {
         let home = SystemBin::new();
-        let mut h = with_file_jobs();
+        let mut h = with_file_jobs(GIVE_UP);
         let a = home.0.join("a.txt");
         std::fs::write(&a, "a").expect("write");
         let pipe = home.hang();
@@ -724,7 +727,7 @@ mod tests {
     #[test]
     fn empty_recycle_bin_gives_up_when_a_drive_bin_stops_answering() {
         let home = SystemBin::new();
-        let mut h = with_file_jobs();
+        let mut h = with_file_jobs(GIVE_UP);
         let trash = home.0.join("Trash");
         std::fs::create_dir_all(trash.join("files")).expect("mkdir");
         std::fs::create_dir_all(trash.join("info")).expect("mkdir");
