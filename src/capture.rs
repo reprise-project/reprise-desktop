@@ -296,6 +296,7 @@ fn render_scene_into(
     } = state;
     let cursor = crate::saverview::cursor(saver, cursor);
     let b = backend.as_mut().ok_or("no backend")?;
+    crate::gpufence::ready(&b.renderer)?;
     // A capture shows the backdrop as it is now: nothing to hold.
     glass.begin(
         output,
@@ -351,6 +352,7 @@ fn draw(
             let result = tracker
                 .render_output(renderer, &mut fb, 0, elements, clear)
                 .map_err(|e| format!("{e:?}"))?;
+            crate::gpufence::issued(renderer, &result.sync);
             Ok(Drawn {
                 sync: result.sync,
                 shm: None,
@@ -380,8 +382,10 @@ fn draw(
                     .copy_framebuffer(&fb, Rectangle::from_size((size.w, size.h).into()), fourcc)
                     .map_err(|e| e.to_string())?
             };
+            let sync = crate::gpufence::sync_now(renderer)?;
+            crate::gpufence::issued(renderer, &sync);
             Ok(Drawn {
-                sync: crate::gpufence::sync_now(renderer)?,
+                sync,
                 shm: Some(ShmCopy {
                     buffer: buffer.clone(),
                     mapping,
@@ -489,6 +493,7 @@ fn render_window(state: &mut State, w: WindowId, target: Target<'_>) -> Result<D
         .to_physical(scale)
         .to_i32_round();
     let b = state.backend.as_mut().ok_or("no backend")?;
+    crate::gpufence::ready(&b.renderer)?;
     let renderer = &mut b.renderer;
     let elements: Vec<OutputElement> = if locked {
         Vec::new()
@@ -583,6 +588,10 @@ fn fill_cursor(state: &mut State, session: &CursorSessionRef, frame: Frame) {
     let Some(b) = backend.as_mut() else {
         return frame.fail(CaptureFailureReason::Unknown);
     };
+    if let Err(e) = crate::gpufence::ready(&b.renderer) {
+        log::warn!("cursor capture on {}: {e}", output.name());
+        return frame.fail(CaptureFailureReason::Unknown);
+    }
     let renderer = &mut b.renderer;
     let parts = Parts {
         scene,

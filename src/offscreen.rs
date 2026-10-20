@@ -81,6 +81,7 @@ impl Target {
             .tracker
             .render_output(renderer, &mut fb, age, elements, self.clear)
             .map_err(|e| format!("{e:?}"))?;
+        crate::gpufence::issued(renderer, &result.sync);
         self.drawn = true;
         // The texture is upright from its top-left, as the elements are placed: physical and buffer pixels are the same.
         Ok(result

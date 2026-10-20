@@ -113,6 +113,9 @@ impl State {
             ..
         } = self;
         let renderer = &mut backend.as_mut()?.renderer;
+        (crate::gpufence::ready(renderer))
+            .map_err(|e| log::warn!("window still: {e}"))
+            .ok()?;
         // No glass in the picture: it would blur the transparency it is
         // drawn over.
         if let Some(o) = &output {

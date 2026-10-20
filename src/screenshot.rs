@@ -128,6 +128,9 @@ impl State {
         let Some(renderer) = self.backend.as_mut().map(|b| &mut b.renderer) else {
             return;
         };
+        if let Err(e) = crate::gpufence::ready(renderer) {
+            return log::warn!("screenshot: {e}");
+        }
         let view = View::new(
             Rectangle::new(
                 (client.x, client.y).into(),

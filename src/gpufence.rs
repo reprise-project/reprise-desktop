@@ -1,8 +1,10 @@
 //! Waiting for the GPU to finish a render without blocking the loop: a capture's buffer or a
 //! picture read back waits for its fence on the loop, or for a bounded time. A fence that never
-//! signals (a GPU lost across a suspend) costs that one result.
+//! signals (a GPU lost across a suspend) costs that one result, and the renders after it are
+//! refused (`lost`) rather than stalling in the driver on textures the lost one still reads.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -23,6 +25,12 @@ pub const CAPTURE_DEADLINE: Duration = Duration::from_secs(2);
 
 /// How long a picture read back on the loop may hold it.
 pub const READ_DEADLINE: Duration = Duration::from_millis(500);
+
+/// A render the GPU has not finished this long after it was issued counts as lost.
+pub const STUCK: Duration = Duration::from_millis(500);
+
+/// How many unfinished renders are remembered; past it the newer ones make way.
+const KEPT: usize = 16;
 
 /// How often a fence that has no fd is checked.
 const POLL: Duration = Duration::from_millis(1);
@@ -140,6 +148,75 @@ pub fn reached_within(fence: &EGLFence, deadline: Duration) -> bool {
 /// A fence after the renderer's last command, as a capture waits for it.
 pub fn sync_now(renderer: &mut GlesRenderer) -> Result<SyncPoint, String> {
     fence_now(renderer).map(SyncPoint::from)
+}
+
+/// The renders main issued that the GPU has not reached yet, oldest first. One GL context
+/// reaches its fences in order, so the oldest tells how far behind the GPU is.
+#[derive(Default)]
+pub struct Renders {
+    pending: VecDeque<(SyncPoint, Instant)>,
+    told: bool,
+}
+
+impl Renders {
+    /// Checks no fence until `KEPT` are held, so a frame pays nothing.
+    pub fn issued(&mut self, sync: SyncPoint, at: Instant) {
+        if self.pending.len() >= KEPT {
+            self.forget_reached();
+        }
+        if self.pending.len() >= KEPT {
+            self.pending.remove(1);
+        }
+        self.pending.push_back((sync, at));
+    }
+
+    fn forget_reached(&mut self) {
+        while self.pending.front().is_some_and(|(s, _)| s.is_reached()) {
+            self.pending.pop_front();
+        }
+    }
+
+    /// Whether the oldest render not reached was issued over `STUCK` before `now`. Never waits.
+    pub fn lost(&mut self, now: Instant) -> bool {
+        self.forget_reached();
+        let lost = (self.pending.front())
+            .is_some_and(|(_, at)| now.saturating_duration_since(*at) > STUCK);
+        if lost != self.told {
+            self.told = lost;
+            match lost {
+                true => log::warn!(
+                    "gpu: a render is unfinished after {STUCK:?}; stills and captures are refused"
+                ),
+                false => log::info!(
+                    "gpu: the unfinished render is done; stills and captures render again"
+                ),
+            }
+        }
+        lost
+    }
+}
+
+fn renders(renderer: &GlesRenderer) -> &RefCell<Renders> {
+    let data = renderer.egl_context().user_data();
+    data.insert_if_missing(|| RefCell::new(Renders::default()));
+    data.get().expect("inserted above")
+}
+
+/// Remembers a render `renderer` issued, finished once `sync` is reached.
+pub fn issued(renderer: &GlesRenderer, sync: &SyncPoint) {
+    renders(renderer)
+        .borrow_mut()
+        .issued(sync.clone(), Instant::now());
+}
+
+/// Err while a render `renderer` issued is lost (`Renders::lost`). A render off the screen's
+/// pace gives up then: building its elements writes textures the lost render reads, and the
+/// driver waits for that render first.
+pub fn ready(renderer: &GlesRenderer) -> Result<(), String> {
+    match renders(renderer).borrow_mut().lost(Instant::now()) {
+        true => Err(format!("an earlier render is unfinished after {STUCK:?}")),
+        false => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -268,6 +345,77 @@ mod tests {
             }
             assert_eq!(*calls.borrow(), 1, "exported {exported}");
         }
+    }
+
+    #[test]
+    fn a_render_unfinished_past_stuck_is_lost_until_it_is_reached() {
+        let mut h = held(true);
+        let mut r = Renders::default();
+        let t0 = Instant::now();
+        r.issued(h.sync.clone(), t0);
+        assert!(!r.lost(t0 + STUCK), "not past STUCK yet");
+        assert!(r.lost(t0 + STUCK + Duration::from_millis(1)));
+        h.signal();
+        assert!(!r.lost(t0 + STUCK * 10), "reached");
+    }
+
+    #[test]
+    fn the_oldest_unfinished_render_decides_and_reached_ones_are_forgotten() {
+        let mut first = held(false);
+        let second = held(false);
+        let mut r = Renders::default();
+        let t0 = Instant::now();
+        r.issued(SyncPoint::signaled(), t0);
+        r.issued(first.sync.clone(), t0);
+        r.issued(second.sync.clone(), t0 + STUCK);
+        assert!(r.lost(t0 + STUCK * 2), "the first is past STUCK");
+        first.signal();
+        assert!(!r.lost(t0 + STUCK * 2), "the second is not past STUCK yet");
+        assert!(r.lost(t0 + STUCK * 3));
+    }
+
+    #[test]
+    fn a_full_list_keeps_the_oldest_render() {
+        let oldest = held(false);
+        let rest: Vec<Held> = (0..KEPT * 2).map(|_| held(false)).collect();
+        let mut r = Renders::default();
+        let t0 = Instant::now();
+        r.issued(oldest.sync.clone(), t0);
+        for h in &rest {
+            r.issued(h.sync.clone(), t0 + STUCK * 4);
+        }
+        assert_eq!(r.pending.len(), KEPT);
+        assert!(
+            r.lost(t0 + STUCK * 2),
+            "the oldest render is still the one timed"
+        );
+    }
+
+    #[test]
+    fn a_full_list_of_reached_renders_is_emptied_by_the_next() {
+        let mut r = Renders::default();
+        let t0 = Instant::now();
+        for _ in 0..KEPT {
+            r.issued(SyncPoint::signaled(), t0);
+        }
+        let h = held(false);
+        r.issued(h.sync.clone(), t0);
+        assert_eq!(r.pending.len(), 1);
+    }
+
+    #[test]
+    fn a_renderer_refuses_renders_while_one_it_issued_is_lost() {
+        let r = match reprisefx::headless::renderer() {
+            Ok(r) => r,
+            Err(e) => return eprintln!("skipped: {e}"),
+        };
+        assert_eq!(ready(&r), Ok(()));
+        let mut h = held(true);
+        let long_ago = Instant::now() - STUCK * 2;
+        renders(&r).borrow_mut().issued(h.sync.clone(), long_ago);
+        assert!(ready(&r).is_err(), "the render is lost");
+        h.signal();
+        assert_eq!(ready(&r), Ok(()), "the GPU caught up");
     }
 
     #[test]
