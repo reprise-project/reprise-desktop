@@ -650,6 +650,9 @@ pub struct Bar {
     popup: Option<crate::controls::menu::PopupMenu>,
     /// A host shows the open menus on popups ([`Hosted`]): the bar's draw leaves them out.
     hosted: bool,
+    /// The last pointer point the bar saw. A host may resend a motion at it (a compositor
+    /// restoring pointer focus as a popup grab ends); only a move picks the title under it.
+    pointer: Option<(i32, i32)>,
 }
 
 fn chosen(title: usize, path: Vec<usize>) -> Action {
@@ -681,6 +684,7 @@ impl Bar {
             banded: false,
             popup: None,
             hosted: false,
+            pointer: None,
         }
     }
 
@@ -865,6 +869,7 @@ impl Bar {
         px: u32,
     ) -> Action {
         use crate::controls::menu::MenuAction;
+        self.pointer = Some((x, y));
         if let (Some(open), true) = (
             self.open,
             self.popup.as_ref().is_some_and(|p| p.contains(x, y)),
@@ -904,6 +909,7 @@ impl Bar {
         m: &crate::theme::Theme,
         px: u32,
     ) -> Action {
+        let moved = self.pointer.replace((x, y)).is_some_and(|p| p != (x, y));
         let Some(open) = self.open else {
             return Action::Ignored;
         };
@@ -914,7 +920,8 @@ impl Bar {
             popup.motion(tree, x, y, &cx);
             return Action::Redraw;
         }
-        if let Some(i) = lay.hit(x, y)
+        if moved
+            && let Some(i) = lay.hit(x, y)
             && self.open != Some(i)
         {
             self.open_title(i, lay, text, m, px, false);
@@ -923,6 +930,7 @@ impl Bar {
     }
 
     pub fn hover(&mut self, x: i32, y: i32, lay: &Layout) -> bool {
+        self.pointer = Some((x, y));
         let hot = if self.open.is_some() {
             None
         } else {
@@ -1448,6 +1456,40 @@ mod bar_tests {
             c.get(px0 + 1, py0 + 1),
             theme.colors.button_hilight.argb(),
             "popup edge"
+        );
+    }
+
+    #[test]
+    fn a_motion_that_leaves_the_pointer_still_keeps_the_title_the_keyboard_picked() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let (m, px) = (&theme, theme.fonts.size_px);
+        let mut b = bar();
+        let lay = Layout::compute(
+            &text,
+            px,
+            Rect::new(0, 0, 300, 200),
+            &b.titles,
+            &MenuTitles::CLASSIC,
+        );
+        let (f, e) = (lay.frames[0], lay.frames[1]);
+        b.press(f.x + 3, f.y + 3, &lay, &text, m, px);
+        b.motion(e.x + 3, e.y + 3, &lay, &text, m, px);
+        assert_eq!(b.open, Some(1), "a move onto a title opens it");
+        b.key(Key::Left, &lay, &text, m, px);
+        b.motion(e.x + 3, e.y + 3, &lay, &text, m, px);
+        assert_eq!(b.open, Some(0), "the pointer resting on Edit");
+        b.motion(e.x + 4, e.y + 3, &lay, &text, m, px);
+        assert_eq!(b.open, Some(1), "a move within Edit");
+
+        b.close();
+        b.hover(e.x + 4, e.y + 3, &lay);
+        b.key(Key::Char('f', true), &lay, &text, m, px);
+        b.motion(e.x + 4, e.y + 3, &lay, &text, m, px);
+        assert_eq!(
+            b.open,
+            Some(0),
+            "File opened from the keyboard over a still Edit"
         );
     }
 
