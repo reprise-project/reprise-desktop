@@ -270,16 +270,15 @@ fn full_hinting(lib: &Library) {
     }
 }
 
-/// The system font database, shared by every renderer (a scan takes about 20 ms); rescanned when it
-/// lacks the preferred family.
+/// The system font database, shared by every renderer and cached on disk ([`crate::fontcache`]);
+/// read again when it lacks the preferred family.
 pub(crate) fn system_fonts(families: &[String]) -> Arc<Database> {
     static FONTS: Mutex<Option<Arc<Database>>> = Mutex::new(None);
     let mut fonts = FONTS.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(db) = fonts.as_ref().filter(|db| !needs_scan(db, families)) {
         return db.clone();
     }
-    let mut db = Database::new();
-    db.load_system_fonts();
+    let mut db = crate::fontcache::system_database();
     if let Some(dir) = test_fonts_dir() {
         load_test_fonts(&mut db, &dir);
     }

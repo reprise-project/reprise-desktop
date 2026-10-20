@@ -46,6 +46,7 @@ pub mod emoji;
 pub mod flip;
 pub mod fluid;
 pub mod flyout;
+mod fontcache;
 mod fontfallback;
 pub mod frame;
 pub mod fuzzy;
