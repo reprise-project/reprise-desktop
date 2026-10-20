@@ -399,6 +399,18 @@ mod tests {
     }
 
     #[test]
+    fn a_gtk4_menu_popover_draws_no_arrow_over_its_raised_box() {
+        let gtk4 = gtk4_bevels(&ColorScheme::default());
+        let arrow = rule(
+            &gtk4,
+            "popover.menu.background > arrow, popover.menu > arrow {",
+        );
+        for none in ["border: none;", "background: none;", "box-shadow: none;"] {
+            assert!(arrow.contains(none), "{none}");
+        }
+    }
+
+    #[test]
     fn gtk4_reads_the_pictures_beside_gtk3s() {
         let cs = ColorScheme::default();
         let gtk4 = gtk4_bevels(&cs);
