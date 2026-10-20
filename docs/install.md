@@ -133,7 +133,11 @@ desktop and stays out of the way when it's missing.
 - polkit, for the admin password prompt
 - gnome-keyring, for saved passwords and the Secret portal. SDDM's PAM file
   unlocks it at login, and the lock screen's password unlocks it when it was
-  left locked.
+  left locked. Under SDDM autologin PAM has no password, so no login keyring
+  is created and the Secret portal fails until one exists: create it once by
+  running `gnome-keyring-daemon --unlock`, typing the new password and
+  Ctrl+D, or by one password login. Each autologin session then asks for
+  that password the first time a program reads a secret.
 - fprintd, for a fingerprint at the lock screen (enroll with
   `fprintd-enroll`) through the `reprise-fingerprint` PAM service, which
   keeps an account pam_faillock locked locked. The admin prompt takes one
