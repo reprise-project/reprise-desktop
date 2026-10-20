@@ -1,4 +1,4 @@
-//! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history and the balloons, speaking AT-SPI on the session's accessibility bus.
+//! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history, the balloons and each framed window's caption, speaking AT-SPI on the session's accessibility bus.
 //! `accesskit_unix` runs its D-Bus side on its own thread and calls the handlers (`reprisekit::access::Handler`) there; they post a `Msg` to a calloop channel, so the loop never waits on the bus. Trees are built on the loop, in an idle pass [`touch`] queues, only for adapters a reader holds.
 //! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). The lock screen has no tree, so its password field's text stays here.
 //! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths; focusing a taskbar item gives the bar the keyboard (`barkeys`), a dialog's button or a Start panel spot takes it unpressed; ScrollIntoView on a row out of view scrolls its list ([`reveal`]); any other action there scrolls it in, then acts on it.
@@ -20,6 +20,7 @@ use crate::compositor::State;
 use crate::input::{Hit, Interaction};
 use crate::keyroute::KeyPress;
 use crate::raster::Rect;
+use crate::window::WindowId;
 use smithay::backend::input::InputTime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -41,6 +42,9 @@ pub enum Surface {
     /// Always there (see `notifyview::access`), so a balloon's alert is announced.
     Balloons,
     NotifyCenter,
+    /// A framed window's caption: its buttons, window menu and tabs. It never claims the
+    /// focus; the client's own tree has it.
+    Frame(WindowId),
 }
 
 type Msg = reprisekit::access::Msg<Surface>;
@@ -277,7 +281,40 @@ fn surfaces(state: &State) -> Vec<Surface> {
             .filter(|d| !d.minimized)
             .map(|d| Surface::Dialog(d.id)),
     );
+    v.extend(
+        (state.windows.iter())
+            .filter(|w| w.mapped && w.has_frame() && w.geom.chrome.decorated)
+            .filter(|w| state.on_current_desktop(w.id) && !state.minimized_along_chain(w.id))
+            .filter(|w| !state.is_sheet(w.id))
+            .map(|w| Surface::Frame(w.id)),
+    );
     v
+}
+
+/// Window `w`'s frame as a reader sees it: its title bar with the window menu, the caption
+/// buttons and the tab strip, placed where the frame stands.
+fn frame_tree(state: &State, w: WindowId) -> Option<Tree> {
+    let win = state.win(w)?;
+    let title = win.title();
+    let mut t = root(Role::Window, &title, win.frame_rect());
+    let strip = (state.tabs.groups.group_of(w).is_some())
+        .then_some(|t: &mut Tree, bar| state.strip_access(w, t, bar));
+    reprisekit::frame::access(
+        &win.geom,
+        &title,
+        win.maximized,
+        strip,
+        &mut t,
+        reprisekit::access::ROOT,
+    );
+    Some(t)
+}
+
+/// Republish after a frame changed size or place, while a reader holds any tree.
+pub fn frame_changed(state: &mut State) {
+    if state.access.slots.iter().any(|x| x.active) {
+        touch(state);
+    }
 }
 
 fn tree(state: &State, surface: Surface) -> Option<Tree> {
@@ -298,6 +335,7 @@ fn tree(state: &State, surface: Surface) -> Option<Tree> {
         Surface::Displays => crate::displaysview::access(state),
         Surface::NotifyCenter => crate::notifycenter::access(state),
         Surface::Balloons => Some(crate::notifyview::access(state)),
+        Surface::Frame(w) => frame_tree(state, w),
     }
 }
 
@@ -476,6 +514,7 @@ fn lands_on(state: &State, surface: Surface, hit: &Hit) -> bool {
         (Surface::Dialog(id), Hit::Dialog { index, .. }) => {
             state.dialogs.views.get(*index).is_some_and(|v| v.id == id)
         }
+        (Surface::Frame(w), Hit::Frame { window, .. }) => *window == w,
         (Surface::Menus, Hit::Menu { .. })
         | (Surface::Switcher, Hit::Switcher { .. })
         | (Surface::Overview, Hit::Overview { .. })
@@ -502,6 +541,10 @@ fn lands_on(state: &State, surface: Surface, hit: &Hit) -> bool {
 /// ([`reveal`]); after anything but ScrollIntoView the trees are published
 /// again and `req` acts on the row in view.
 fn act(state: &mut State, surface: Surface, req: Request) {
+    // A move publishes nothing on its own: aim at where the frame stands now.
+    if let Surface::Frame(_) = surface {
+        sync(state);
+    }
     let route = |state: &State| {
         (state.access.slots.iter())
             .find(|x| x.surface == surface && x.active)
@@ -522,7 +565,14 @@ fn act(state: &mut State, surface: Surface, req: Request) {
         Route::Act(t) => t,
         Route::None => return,
     };
-    let hit = state.scene_hit(Point::from(target.at));
+    let mut hit = state.scene_hit(Point::from(target.at));
+    // A frame another window covers comes up first, as a user's click on it would need.
+    if let Surface::Frame(w) = surface
+        && !lands_on(state, surface, &hit)
+    {
+        state.focus_window(w);
+        hit = state.scene_hit(Point::from(target.at));
+    }
     if !lands_on(state, surface, &hit) {
         log::debug!("access: {req:?} on {surface:?} lands on {hit:?}; dropped");
         return;

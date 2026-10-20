@@ -221,7 +221,13 @@ pub fn access(
         .map(|(i, (e, r))| {
             let mut n = access::titled(Role::Tab, *r, e.title);
             n.set_selected(i == tabs.selected && !tabs.is_ghost(i));
-            tree.push(list, i, n)
+            let tab = tree.push(list, i, n);
+            if let Some(c) = l.closes[i].filter(|_| !tabs.is_ghost(i)) {
+                let mut n = access::titled(Role::Button, c, "Close");
+                n.add_action(accesskit::Action::Click);
+                tree.push(tab, "close", n);
+            }
+            tab
         })
         .collect()
 }
@@ -633,5 +639,34 @@ mod tests {
             "tabs",
         );
         assert_eq!(tree.get(ids[0]).unwrap().label(), Some("R&D notes"));
+    }
+
+    #[test]
+    fn each_tab_wide_enough_offers_a_close_button_on_its_close_box() {
+        let theme = Theme::default();
+        let g = geom(&theme, 600);
+        let mut t = tabs(3, 0);
+        t.ghost = Some(2);
+        let l = layout(&theme, &g, 3);
+        let mut tree = Tree::window("w", (600, 60));
+        let ids = access(&t, &l, &mut tree, crate::access::ROOT, "tabs");
+        let close = |i: usize| {
+            let kids = tree.get(ids[i]).unwrap().children();
+            kids.first().map(|&c| tree.get(c).unwrap())
+        };
+        let c = close(1).expect("a close button on a tab at rest");
+        assert_eq!((c.role(), c.label()), (Role::Button, Some("Close")));
+        assert!(c.supports_action(accesskit::Action::Click));
+        let r = l.closes[1].unwrap();
+        let b = c.bounds().unwrap();
+        assert_eq!((b.x0, b.y0), (f64::from(r.x), f64::from(r.y)));
+        assert_eq!(
+            hit(&l, r.x + r.width / 2, r.y + r.height / 2),
+            Some(TabHit {
+                tab: 1,
+                close: true
+            })
+        );
+        assert!(close(2).is_none(), "the ghost has none");
     }
 }
