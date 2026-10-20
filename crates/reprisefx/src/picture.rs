@@ -21,7 +21,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use reprisekit::glass::{Settings, streak};
+use reprisekit::glass::Settings;
 use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture};
 use smithay::backend::renderer::utils::{DamageBag, DamageSnapshot};
 use smithay::backend::renderer::{Bind, Frame, Renderer, Texture};
@@ -188,7 +188,7 @@ impl Picture {
             plan: Plan::new(s.blur, s.material, u.quality, u.scale),
             output: u.output,
             scale: u.scale.to_bits(),
-            streaks: streak::shown(s),
+            streaks: fx.streaks_ready(s, u.output, u.scale),
         };
         let (f, out, extent) = (key.plan.factor, key.texels(), key.extent());
         let whole = self.drawn != Some(key) || self.picture.is_none();
@@ -257,7 +257,11 @@ impl Picture {
         let picture_uniforms = blur::gaussian(key.plan, (0.0, 1.0 / out.h as f32));
         let across_parts = texels(&parts.across);
         let picture_parts = texels(&parts.picture);
-        let streaks = fx.streaks(renderer, s, u.output, u.scale)?;
+        let streaks = if key.streaks {
+            fx.streaks(renderer, s, u.output, u.scale)?
+        } else {
+            None
+        };
         // One frame for the passes, on the picture that none of them reads: each frame's finish
         // costs a submission.
         let mut target = renderer.bind(&mut picture)?;

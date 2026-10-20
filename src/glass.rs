@@ -198,6 +198,13 @@ impl GlassCtx {
         self.strokes.set(strokes);
     }
 
+    /// See [`GlassFx::on_streaks`].
+    pub fn on_streaks(&self, wake: impl Fn() + Send + Sync + 'static) {
+        if let Some(fx) = self.fx.borrow().as_ref() {
+            fx.on_streaks(wake);
+        }
+    }
+
     pub fn flip_fx(&self) -> Option<reprisefx::FlipFx> {
         self.flip.borrow().clone()
     }

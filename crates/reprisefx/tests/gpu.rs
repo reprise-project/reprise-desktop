@@ -1019,6 +1019,45 @@ fn only_frosted_glass_shows_the_streaks() {
     }
 }
 
+fn streaks_over_black(
+    r: &mut Rig,
+    fx: &GlassFx,
+    back: &TextureBuffer<GlesTexture>,
+) -> Vec<[u8; 3]> {
+    let s = Settings::default();
+    let shapes = [Shape::rect(rect(0, 0, 640, 360))];
+    let mut f = r.frame(&shapes, &[], &s);
+    f.surface = None;
+    r.frames = 0;
+    let glass = Glass::new().element(fx, &f).unwrap();
+    r.render(vec![glass], back).0.px
+}
+
+#[test]
+fn streaks_made_on_their_own_thread_land_as_those_made_in_the_frame() {
+    let Some(mut r) = rig(640, 360) else { return };
+    let black = r.backdrop(|_, _| [0; 3]);
+    let made_in_frame = r.fx.clone();
+    let inline = streaks_over_black(&mut r, &made_in_frame, &black);
+    let fx = GlassFx::new(&mut r.renderer).expect("the glass shaders compile");
+    let (tx, woken) = std::sync::mpsc::channel();
+    fx.on_streaks(move || tx.send(std::thread::current().id()).unwrap());
+    assert_ne!(
+        streaks_over_black(&mut r, &fx, &black),
+        inline,
+        "the first frame draws no streaks"
+    );
+    let on = woken
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("woken once the streaks are made");
+    assert_ne!(on, std::thread::current().id(), "made on another thread");
+    assert_eq!(
+        streaks_over_black(&mut r, &fx, &black),
+        inline,
+        "a frame after that draws them"
+    );
+}
+
 /// The rig's output as seen, from `els` rendered into its turned target:
 /// a first frame with a backdrop that names each pixel (red = x, green =
 /// y, through the same projection) says where each target pixel lies.

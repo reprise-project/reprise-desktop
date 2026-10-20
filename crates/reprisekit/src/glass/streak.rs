@@ -35,17 +35,49 @@ pub const SHADE: &[(f64, f64)] = &[
 ];
 
 fn along(stops: &[(f64, f64)], u: f64) -> f64 {
-    stops
-        .windows(2)
-        .find(|w| (w[0].0..=w[1].0).contains(&u))
-        .map_or(0.0, |w| {
-            let ((u0, v0), (u1, v1)) = (w[0], w[1]);
-            if u1 > u0 {
-                v0 + (v1 - v0) * (u - u0) / (u1 - u0)
-            } else {
-                v0.max(v1)
-            }
-        })
+    Along::new(stops).at(u)
+}
+
+/// [`along`] for a run of `u`s that rarely falls: the window the last `u` lay in is kept, so a
+/// rising run walks the stops once.
+struct Along<'a> {
+    stops: &'a [(f64, f64)],
+    i: usize,
+    last: f64,
+}
+
+impl<'a> Along<'a> {
+    fn new(stops: &'a [(f64, f64)]) -> Along<'a> {
+        Along {
+            stops,
+            i: 0,
+            last: f64::NEG_INFINITY,
+        }
+    }
+
+    fn at(&mut self, u: f64) -> f64 {
+        if u.is_nan() {
+            return 0.0;
+        }
+        if u < self.last {
+            self.i = 0;
+        }
+        self.last = u;
+        let s = self.stops;
+        // The first window that ends at or past `u`: the one `u` lies in, or none.
+        while self.i + 1 < s.len() && s[self.i + 1].0 < u {
+            self.i += 1;
+        }
+        if self.i + 1 >= s.len() || u < s[self.i].0 {
+            return 0.0;
+        }
+        let ((u0, v0), (u1, v1)) = (s[self.i], s[self.i + 1]);
+        if u1 > u0 {
+            v0 + (v1 - v0) * (u - u0) / (u1 - u0)
+        } else {
+            v0.max(v1)
+        }
+    }
 }
 
 /// The streak layer at `u` along the diagonal (`x - STREAK_SLOPE * y`,
@@ -53,28 +85,36 @@ fn along(stops: &[(f64, f64)], u: f64) -> f64 {
 /// brightness over black at the shadow's alpha. It only brightens where a
 /// band lies, so its colour may exceed its alpha.
 pub fn at(u: f64) -> u32 {
-    let light = along(LIGHT, u);
-    let shade = along(SHADE, u);
+    layer(along(LIGHT, u), along(SHADE, u))
+}
+
+fn layer(light: f64, shade: f64) -> u32 {
     let a = (LIGHT_ALPHA * light + shade).round().clamp(0.0, 255.0) as u32;
     let c = light.round().clamp(0.0, 255.0) as u32;
     a << 24 | c << 16 | c << 8 | c
 }
 
+/// [`picture`], None unless [`shown`].
+pub fn pixels(s: &Settings, px: (i32, i32), scale: f32) -> Option<Vec<u32>> {
+    shown(s).then(|| picture(px, scale))
+}
+
 /// The streaks for a picture of `px` pixels that covers its screen at
 /// `scale` picture pixels per logical pixel: premultiplied ARGB rows, each
-/// pixel the layer at its centre. None unless [`shown`].
-pub fn pixels(s: &Settings, px: (i32, i32), scale: f32) -> Option<Vec<u32>> {
-    if !shown(s) {
-        return None;
-    }
+/// pixel the layer at its centre.
+pub fn picture(px: (i32, i32), scale: f32) -> Vec<u32> {
     let (w, h) = (px.0.max(0) as usize, px.1.max(0) as usize);
     let step = 1.0 / f64::from(scale);
     let mut out = Vec::with_capacity(w * h);
     for y in 0..h {
         let row = -STREAK_SLOPE * (y as f64 + 0.5) * step;
-        out.extend((0..w).map(|x| at((x as f64 + 0.5) * step + row)));
+        let (mut light, mut shade) = (Along::new(LIGHT), Along::new(SHADE));
+        out.extend((0..w).map(|x| {
+            let u = (x as f64 + 0.5) * step + row;
+            layer(light.at(u), shade.at(u))
+        }));
     }
-    Some(out)
+    out
 }
 
 /// Whether `s`'s glass shows the streaks: Frosted glass that lets the
@@ -167,6 +207,19 @@ mod tests {
             .max()
             .unwrap();
         assert!(near <= 2, "the same logical point, within 2 levels");
+    }
+
+    #[test]
+    fn every_pixel_is_the_layer_at_its_centre() {
+        for (scale, px) in [(0.5, (300, 200)), (1.25, (257, 131)), (2.0, (640, 90))] {
+            let p = pixels(&Settings::default(), px, scale).unwrap();
+            let step = 1.0 / f64::from(scale);
+            for (i, v) in p.iter().enumerate() {
+                let (x, y) = ((i % px.0 as usize) as f64, (i / px.0 as usize) as f64);
+                let u = (x + 0.5) * step - STREAK_SLOPE * (y + 0.5) * step;
+                assert_eq!(*v, at(u), "pixel {i} at scale {scale}");
+            }
+        }
     }
 
     #[test]
