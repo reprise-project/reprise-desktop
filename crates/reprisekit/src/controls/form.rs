@@ -1856,6 +1856,7 @@ impl Form {
         match &self.items.get(self.focus?)?.control {
             Control::Edit { edit, .. } => Some(FocusedEdit::Line(edit)),
             Control::Memo(m) => Some(FocusedEdit::Lines(&m.edit)),
+            Control::UpDown(u) => u.edit().map(FocusedEdit::Line),
             _ => None,
         }
     }
@@ -1875,6 +1876,13 @@ impl Form {
             }
             Some((id, Control::Edit { edit, .. })) => {
                 if edit.paste(&text, &[]) {
+                    Event::Changed(id)
+                } else {
+                    Event::Redraw
+                }
+            }
+            Some((id, Control::UpDown(u))) if u.enabled => {
+                if u.paste(&text) {
                     Event::Changed(id)
                 } else {
                     Event::Redraw
@@ -2770,27 +2778,25 @@ impl Form {
         None
     }
 
-    /// A right press, ahead of the host's edit menu: an enabled single-line field under it takes
-    /// the focus, its caret moving to the press unless the press is inside its selection.
+    /// A right press, ahead of the host's edit menu: an enabled single-line field or spinner under
+    /// it takes the focus, its caret moving to the press unless the press is inside its selection.
     pub fn right_press(&mut self, hit: Option<Hit>) -> Event {
-        let Some(Hit {
-            item,
-            part: Part::Edit(at),
-            ..
-        }) = hit
-        else {
+        let Some(Hit { item, part, .. }) = hit else {
             return Event::None;
         };
-        if !matches!(
-            self.items[item].control,
-            Control::Edit { enabled: true, .. }
-        ) {
-            return Event::None;
-        }
+        let at = match (&self.items[item].control, part) {
+            (Control::Edit { enabled: true, .. }, Part::Edit(at)) => at,
+            (Control::UpDown(u), Part::UpDown(updown::Hit::Edit(at))) if u.enabled => at,
+            _ => return Event::None,
+        };
         self.close_popups();
         self.set_focus(Some(item));
-        if let Control::Edit { edit, .. } = &mut self.items[item].control {
-            edit.press_for_menu(at);
+        match &mut self.items[item].control {
+            Control::Edit { edit, .. } => {
+                edit.press_for_menu(at);
+            }
+            Control::UpDown(u) => u.press_for_menu(at),
+            _ => {}
         }
         Event::Redraw
     }
@@ -6242,6 +6248,48 @@ mod tests {
             Control::UpDown(u) => u,
             _ => unreachable!("spin is an up-down"),
         }
+    }
+
+    #[test]
+    fn a_spinner_takes_a_right_press_and_the_clipboard_keys() {
+        let mut f = form();
+        let at = |at| {
+            Some(Hit {
+                item: 3,
+                part: Part::UpDown(updown::Hit::Edit(at)),
+                x: 0,
+            })
+        };
+        assert_eq!(f.right_press(at(1)), Event::Redraw);
+        assert_eq!(f.focus, Some(3), "the press focuses the spinner");
+        assert_eq!(
+            spin(&f).edit().map(|e| e.selection()),
+            Some(0..2),
+            "the number focus selected stays selected under the press"
+        );
+        let Some(FocusedEdit::Line(e)) = f.focused_edit() else {
+            panic!("the spinner's digits are the focused edit");
+        };
+        assert_eq!(FocusedEdit::Line(e).copy_text().as_deref(), Some("10"));
+        assert_eq!(f.key(Key::Edit(EditKey::Copy)), Event::Redraw);
+        assert_eq!(f.key(Key::Edit(EditKey::Cut)), Event::Changed("spin"));
+        assert_eq!(spin(&f).shown(), "");
+        assert_eq!(f.paste(" 42\n".into()), Event::Changed("spin"));
+        assert_eq!(spin(&f).value(), 42);
+        assert_eq!(
+            f.paste("abc".into()),
+            Event::Redraw,
+            "only a number goes in"
+        );
+        assert_eq!(spin(&f).value(), 42);
+        assert_eq!(f.key(Key::Edit(EditKey::Undo)), Event::Changed("spin"));
+        assert_eq!(spin(&f).shown(), "");
+        assert_eq!(f.right_press(at(0)), Event::Redraw);
+        assert_eq!(
+            spin(&f).edit().map(|e| (e.selection(), e.caret())),
+            Some((0..0, 0)),
+            "a press off the selection moves the caret"
+        );
     }
 
     #[test]
