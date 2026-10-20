@@ -1357,6 +1357,7 @@ impl State {
             return;
         }
         self.refit_scale(w);
+        self.refresh_bounds(w);
         self.place_ime_popup();
         self.place_x11(w);
         self.follow_tabs(w, false);
@@ -2554,6 +2555,31 @@ impl State {
         }
     }
 
+    /// Send xdg toplevel `w` the bounds of the work area its frame's centre is on, when they
+    /// differ from the ones it last heard.
+    pub fn refresh_bounds(&mut self, w: WindowId) {
+        let Some(win) = self.win(w).filter(|w| w.mapped) else {
+            return;
+        };
+        let Some(t) = win.xdg() else {
+            return;
+        };
+        let r = win.frame_rect();
+        let out = self.output_at((r.x + r.width / 2) as f64, (r.y + r.height / 2) as f64);
+        let area = self.usable_area(out.as_ref());
+        if out.is_none() || area.width <= 0 || area.height <= 0 {
+            return;
+        }
+        let most = area_client(&self.config.theme.metrics, area, win.chrome());
+        let changed = t.with_pending_state(|s| {
+            let was = s.bounds.replace(most.into());
+            was != s.bounds
+        });
+        if changed {
+            self.send_configure(w);
+        }
+    }
+
     pub fn usable_area_for_window(&self, w: WindowId) -> Rect {
         let Some(r) = self.win(w).map(Window::frame_rect) else {
             return Rect::default();
@@ -3256,5 +3282,35 @@ mod tests {
         h.roundtrip(&mut c);
         assert!(h.state.win(b.id).is_none());
         assert_eq!(h.state.focused, Some(a.id));
+    }
+
+    #[test]
+    fn a_window_moved_to_an_output_with_another_work_area_hears_its_bounds() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1920, 1080);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.roundtrip(&mut c);
+        let first = c.side.shells[t.shell].bounds;
+        assert!(
+            first.0 > 0 && first.0 < 1024,
+            "bounds on the first output: {first:?}"
+        );
+        let two = h.state.scene.outputs()[1].clone();
+        let b = h.state.layout_box(Some(&two));
+        h.state.move_to(t.id, b.x + 100, b.y + 100);
+        h.roundtrip(&mut c);
+        let moved = c.side.shells[t.shell].bounds;
+        assert!(
+            moved.0 > 1024 && moved.1 > first.1,
+            "bounds on the larger output: {moved:?}"
+        );
+        h.state.move_to(t.id, 100, 100);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            c.side.shells[t.shell].bounds, first,
+            "and back on the first"
+        );
     }
 }
