@@ -68,7 +68,7 @@ struct DrivesApp {
     tray_state: Option<reprisetray::Shown>,
     flyout: Option<Flyout>,
     unlock: Option<unlock::Unlock>,
-    /// The unlock box's client size at the text size it opened at.
+    /// The unlock box's client size at the text size it last heard.
     unlock_size: (i32, i32),
     unlock_queue: VecDeque<String>,
     removing: HashMap<String, Removing>,
@@ -539,6 +539,9 @@ impl App for DrivesApp {
             (_, Event::Wake) => self.wake(ctx),
             (FLYOUT, ev) => self.flyout_event(ev, ctx),
             (UNLOCK, ev) => {
+                if ev == Event::Resized {
+                    self.unlock_size = unlock::Unlock::client(ctx);
+                }
                 let field = self.unlock.as_ref().and_then(|u| u.form.focused_edit());
                 let clip = form_clipboard(field, &ev);
                 self.unlock_event(ev, ctx).with_clipboard(clip)
@@ -609,6 +612,50 @@ mod tests {
     use super::*;
     use reprisekit::text::TextRenderer;
     use reprisekit::theme::{FontConfig, Theme};
+
+    fn test_ctx(text_size: u32) -> Ctx {
+        let theme = Theme::default();
+        Ctx {
+            theme: theme.with_text_size(text_size),
+            text: TextRenderer::load(&theme.fonts).into(),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: unlock::CLIENT,
+            maximized: false,
+            origin: (0, 0),
+            wake: repriseapp::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            at_pick: false,
+            text_size,
+        }
+    }
+
+    #[test]
+    fn the_unlock_box_resizes_when_the_text_size_changes() {
+        let mut app = DrivesApp::default();
+        let mut ctx = test_ctx(100);
+        app.unlock_queue
+            .push_back("/org/freedesktop/UDisks2/block_devices/sdc".into());
+        app.open_unlock(&mut ctx);
+        assert_eq!(app.children()[0].size, unlock::CLIENT);
+        let mut ctx = test_ctx(200);
+        let _ = app.event(UNLOCK, Event::Resized, &mut ctx);
+        assert_eq!(
+            app.children()[0].size,
+            (2 * unlock::CLIENT.0, 2 * unlock::CLIENT.1)
+        );
+        let fresh = unlock::Unlock::open("sdc".into(), "Removable Disk", &mut ctx);
+        let u = app.unlock.as_ref().expect("the box stays up");
+        assert_eq!(
+            u.form.item("message").map(|i| &i.control),
+            fresh.form.item("message").map(|i| &i.control),
+            "the message wraps as a box opened at 200% wraps it"
+        );
+    }
 
     #[test]
     fn the_menu_opens_up_and_left_of_the_click() {

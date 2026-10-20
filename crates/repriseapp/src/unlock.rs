@@ -8,7 +8,9 @@ use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
+use reprisekit::text::TextRenderer;
 use reprisekit::textedit::TextEdit;
+use reprisekit::theme::Theme;
 use zeroize::Zeroizing;
 
 use crate::keys::form_input;
@@ -45,12 +47,20 @@ pub enum Outcome {
 /// The dialog's model: the form and the container it unlocks. Dropping it wipes the field.
 pub struct Unlock {
     pub volume: String,
+    /// The drive's name in the message, wrapped again at each text size.
+    name: String,
     pub form: Form,
     busy: bool,
 }
 
 pub fn message(name: &str) -> String {
     format!("'{name}' is encrypted. Type its passphrase to unlock it.")
+}
+
+/// The message naming `name`, wrapped to its rect at `forms`' text size.
+fn wrapped(name: &str, text: &TextRenderer, forms: &Theme) -> Vec<String> {
+    let width = forms.text.len(MSG_W);
+    reprisekit::text::wrap(text, &message(name), width, forms.fonts.size_px)
 }
 
 /// The status line for a failed unlock with UDisks2 `message`.
@@ -66,13 +76,11 @@ pub fn failure(message: &str) -> &str {
 impl Unlock {
     /// The box for container `volume`, named `name` in its message.
     pub fn open(volume: String, name: &str, ctx: &mut Ctx) -> Unlock {
-        let forms = ctx.forms();
-        let width = forms.text.len(MSG_W);
-        let lines = reprisekit::text::wrap(&ctx.text, &message(name), width, forms.fonts.size_px);
-        Unlock::new(volume, &lines, ctx.icons.get(ICON_NAME, 32))
+        let lines = wrapped(name, &ctx.text, &ctx.forms());
+        Unlock::new(volume, name, &lines, ctx.icons.get(ICON_NAME, 32))
     }
 
-    pub fn new(volume: String, lines: &[String], icon: Option<Canvas>) -> Unlock {
+    pub fn new(volume: String, name: &str, lines: &[String], icon: Option<Canvas>) -> Unlock {
         let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
         let items = vec![
             Item::picture("icon", ICON, icon),
@@ -119,6 +127,7 @@ impl Unlock {
         form.focus_id("passphrase");
         Unlock {
             volume,
+            name: name.into(),
             form,
             busy: false,
         }
@@ -150,6 +159,12 @@ impl Unlock {
     pub fn input(&mut self, ev: Event, ctx: &Ctx) -> Outcome {
         match ev {
             Event::CloseRequest => Outcome::Cancel,
+            // The window hears a text size change as a resize.
+            Event::Resized => {
+                let lines = wrapped(&self.name, &ctx.text, &ctx.forms());
+                self.form.set_lines("message", &lines);
+                Outcome::Redraw
+            }
             Event::Pasted(text) => {
                 let ev = self.form.paste(text);
                 self.event(ev)
@@ -254,10 +269,8 @@ mod tests {
     #[test]
     fn the_box_fits_its_text() {
         let over = reprisekit::interfaces::form_overflows(|_, forms, text| {
-            let width = forms.text.len(MSG_W);
-            let msg = message("Kingston DataTraveler");
-            let lines = reprisekit::text::wrap(text, &msg, width, forms.fonts.size_px);
-            let mut d = Unlock::new("sdc".into(), &lines, None);
+            let name = "Kingston DataTraveler";
+            let mut d = Unlock::new("sdc".into(), name, &wrapped(name, text, forms), None);
             let fresh = d.form.clone();
             d.fail(WRONG);
             vec![("unlock".into(), fresh), ("wrong".into(), d.form.clone())]
@@ -267,7 +280,7 @@ mod tests {
 
     #[test]
     fn ok_waits_for_a_passphrase_and_hands_it_over_once() {
-        let mut d = Unlock::new("sdc".into(), &[message("VAULT")], None);
+        let mut d = Unlock::new("sdc".into(), "VAULT", &[message("VAULT")], None);
         assert!(matches!(d.event(form::Event::Default), Outcome::None));
         typed(&mut d, "hunter2");
         match d.event(form::Event::Default) {
@@ -284,7 +297,7 @@ mod tests {
 
     #[test]
     fn a_wrong_passphrase_says_so_and_takes_another() {
-        let mut d = Unlock::new("sdc".into(), &[message("VAULT")], None);
+        let mut d = Unlock::new("sdc".into(), "VAULT", &[message("VAULT")], None);
         typed(&mut d, "nope");
         d.event(form::Event::Default);
         d.fail(WRONG);
