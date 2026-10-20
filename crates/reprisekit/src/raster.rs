@@ -248,6 +248,13 @@ pub enum EdgeStyle {
     ThinRaised,
 }
 
+/// A label tip a form drew no pixels for yet: its whole text and the pointer, in device px.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReportedTip {
+    pub text: String,
+    pub at: (i32, i32),
+}
+
 /// A canvas has a logical size, which drawing calls measure in, and a
 /// scale: each logical pixel is `scale` x `scale` device pixels of
 /// `pixels`.
@@ -265,6 +272,8 @@ pub struct Canvas {
     /// Boxed like `spot`: canvases are held by value and rarely carry either.
     preedit: Option<Box<Preedit>>,
     spot: Option<Box<TextSpot>>,
+    /// A form's label tip waiting for the host to draw it over everything ([`Canvas::report_tip`]).
+    tip: Option<Box<ReportedTip>>,
     /// Rows at the top drawn clear for the frame's glass ([`Canvas::report_glass_top`]).
     glass_top: i32,
     /// What the frame changed ([`Canvas::report_damage`]); `None` is the whole canvas.
@@ -344,6 +353,7 @@ impl Canvas {
             scale,
             preedit: None,
             spot: None,
+            tip: None,
             glass_top: 0,
             damage: None,
         }
@@ -361,6 +371,7 @@ impl Canvas {
             scale: 1,
             preedit: None,
             spot: None,
+            tip: None,
             glass_top: 0,
             damage: None,
         }
@@ -393,6 +404,16 @@ impl Canvas {
         self.spot.take().map(|s| *s)
     }
 
+    /// A form reports the tip of the ellipsized label the pointer rests on; the host draws it
+    /// last, over the form's popups ([`crate::controls::form::draw_tip`]).
+    pub fn report_tip(&mut self, tip: ReportedTip) {
+        self.tip = Some(Box::new(tip));
+    }
+
+    pub fn take_tip(&mut self) -> Option<ReportedTip> {
+        self.tip.take().map(|t| *t)
+    }
+
     /// The top `rows` of a window's canvas are drawn clear for the frame's glass to show
     /// through ([`crate::look::client_glass`]); the host reads the deepest report of a frame.
     pub fn report_glass_top(&mut self, rows: i32) {
@@ -407,6 +428,13 @@ impl Canvas {
     /// a frame with no report changed the whole canvas.
     pub fn report_damage(&mut self, r: Rect) {
         self.damage.get_or_insert_with(Vec::new).push(r);
+    }
+
+    /// `r` changed too: added to a partial damage report, while a whole-canvas one stays whole.
+    pub fn widen_damage(&mut self, r: Rect) {
+        if let Some(d) = self.damage.as_mut() {
+            d.push(r);
+        }
     }
 
     pub fn take_damage(&mut self) -> Option<Vec<Rect>> {

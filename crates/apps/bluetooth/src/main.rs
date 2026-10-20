@@ -508,7 +508,7 @@ impl BtApp {
         let out = match ev {
             Event::CloseRequest => return self.close_main(),
             Event::Blink => {
-                self.devices.sheet.open_mut().caret = ctx.caret_on;
+                self.devices.sheet.open_mut().blink(ctx.caret_on);
                 return Reply::redraw();
             }
             ev => match self.devices_list_event(&ev, ctx) {
@@ -581,7 +581,7 @@ impl BtApp {
         let out = match ev {
             Event::CloseRequest => w.event(form::Event::Cancel, &text, &forms),
             Event::Blink => {
-                w.page.form.caret = ctx.caret_on;
+                w.page.form.blink(ctx.caret_on);
                 return Reply::redraw();
             }
             Event::Pasted(t) => {
@@ -688,7 +688,7 @@ impl BtApp {
         let out = match ev {
             Event::CloseRequest => props::Outcome::Close,
             Event::Blink => {
-                p.sheet.open_mut().caret = ctx.caret_on;
+                p.sheet.open_mut().blink(ctx.caret_on);
                 return Reply::redraw();
             }
             Event::Pasted(t) => p.paste(t),
@@ -728,7 +728,7 @@ impl BtApp {
         let out = match ev {
             Event::CloseRequest => pairdlg::Outcome::Done,
             Event::Blink => {
-                d.form.caret = ctx.caret_on;
+                d.form.blink(ctx.caret_on);
                 return Reply::redraw();
             }
             Event::Pasted(t) => {

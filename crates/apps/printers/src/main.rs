@@ -593,9 +593,7 @@ impl PrintersApp {
         let out = match ev {
             Event::CloseRequest => props::Outcome::Close,
             Event::Blink => {
-                let page = p.sheet.open_mut();
-                page.caret = ctx.caret_on;
-                page.tip_tick();
+                p.sheet.open_mut().blink(ctx.caret_on);
                 return Reply::redraw();
             }
             Event::Pasted(t) => p.paste(t),
@@ -648,7 +646,7 @@ impl PrintersApp {
         let out = match ev {
             Event::CloseRequest => addwiz::Outcome::Close,
             Event::Blink => {
-                w.page.form.caret = ctx.caret_on;
+                w.page.form.blink(ctx.caret_on);
                 return Reply::redraw();
             }
             Event::Pasted(t) => {
@@ -1016,7 +1014,6 @@ impl App for PrintersApp {
             _ if let Some(p) = self.props.get(win) => {
                 c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
                 propsheet::draw(c, &ctx.text, &paint, &p.sheet, true, px);
-                form::draw_tip(c, &ctx.text, &forms, p.sheet.open());
             }
             WIZARD => {
                 if let Some(w) = &self.wizard {

@@ -349,7 +349,7 @@ impl AccountsApp {
         let out = match ev {
             Event::CloseRequest => props::Outcome::Close,
             Event::Blink => {
-                p.sheet.open_mut().caret = ctx.caret_on;
+                p.sheet.open_mut().blink(ctx.caret_on);
                 return Reply::redraw();
             }
             Event::Pasted(t) => p.paste(t),
@@ -396,7 +396,7 @@ impl AccountsApp {
         let out = match ev {
             Event::CloseRequest => adduser::Outcome::Cancel,
             Event::Blink => {
-                d.form.caret = ctx.caret_on;
+                d.form.blink(ctx.caret_on);
                 return Reply::redraw();
             }
             Event::Pasted(t) => {

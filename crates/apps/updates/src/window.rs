@@ -424,7 +424,6 @@ impl Window {
             let bar = forms.text.rect(BAR);
             draw_progress(c, &paint, bar, fraction.unwrap_or(0.0), true);
         }
-        form::draw_tip(c, text, forms, &self.form);
     }
 }
 

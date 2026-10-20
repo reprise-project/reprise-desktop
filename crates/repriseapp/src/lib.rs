@@ -109,6 +109,7 @@ pub use fielddrop::{DropForm, FileDrop};
 use reprisefs::pipe::PasteBuf;
 pub use reprisekit;
 use reprisekit::access::{Gesture, Reveal, Route, Tree, accesskit};
+use reprisekit::controls::form;
 use reprisekit::controls::menu::MenuCtx;
 use reprisekit::cues::Cues;
 use reprisekit::icontheme::{IconCache, IconTheme};
@@ -2954,6 +2955,12 @@ impl Host {
         let menu = &mut self.edit_menu;
         let spot = self.ctx.at_scale(scale, |ctx| {
             app.draw(id, &mut canvas, ctx);
+            // A form's label tip goes over everything; a kept canvas would keep its pixels.
+            if app.keeps_canvas(id) {
+                canvas.take_tip();
+            } else if let Some(r) = form::draw_tip(&mut canvas, &ctx.text, &ctx.forms()) {
+                canvas.widen_damage(r);
+            }
             let spot = canvas.take_spot();
             let cx = MenuCtx {
                 text: &ctx.text,

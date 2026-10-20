@@ -577,10 +577,10 @@ fn render_label_ellipsis(scale: i32) -> Canvas {
             Item::label_at("grey", 10, 50, 204, model).enabled(false),
         ]);
         let px = theme.fonts.size_px;
-        form::draw(&mut cell, &text, &theme.paint(), &f, false, px);
         f.motion(120, 55, None);
         f.tip_tick();
-        form::draw_tip(&mut cell, &text, &theme, &f);
+        form::draw(&mut cell, &text, &theme.paint(), &f, false, px);
+        form::draw_tip(&mut cell, &text, &theme);
         c.blit_canvas(w * scale * i as i32, 0, &cell);
     }
     c

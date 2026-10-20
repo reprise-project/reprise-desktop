@@ -446,7 +446,8 @@ impl Explorer {
         let clip = repriseapp::keys::form_clipboard(p.sheet.open().focused_edit(), &ev);
         let out = match ev {
             Event::Blink => {
-                p.sheet.open_mut().caret = !p.sheet.open().caret;
+                let on = !p.sheet.open().caret;
+                p.sheet.open_mut().blink(on);
                 return Reply::redraw();
             }
             Event::Pasted(text) => p.sheet.paste(text),

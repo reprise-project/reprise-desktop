@@ -113,7 +113,6 @@ impl SettingsApp {
         };
         let out = match ev {
             Event::CloseRequest => Outcome::Revert,
-            Event::Blink => return Reply::none(),
             ev => match form_input(&mut q.dialog.form, &ev, ctx) {
                 Some(ev) => q.dialog.event(ev),
                 None => return Reply::none(),

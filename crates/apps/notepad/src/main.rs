@@ -109,7 +109,7 @@ fn form_event(
         Event::CloseRequest => FormStep::Closed,
         Event::Blink => {
             if let Some(f) = form {
-                f.caret = caret_on;
+                f.blink(caret_on);
             }
             FormStep::Redraw
         }

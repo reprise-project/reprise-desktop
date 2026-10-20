@@ -1363,6 +1363,19 @@ impl Form {
         before != self.tip_shown()
     }
 
+    /// Whether the pointer rests on a label whose tip is still to come or still up: a host
+    /// keeps calling [`Form::tip_tick`] on each blink while this holds.
+    pub fn tip_waiting(&self) -> bool {
+        self.tip.item.is_some() && self.tip.ticks <= TIP_TICKS
+    }
+
+    /// A caret blink for a host that times it: the caret shows as `on`, and the label tip counts
+    /// the blink ([`Form::tip_tick`]). Whether the tip came or went.
+    pub fn blink(&mut self, on: bool) -> bool {
+        self.caret = on;
+        self.tip_tick()
+    }
+
     /// The whole text of the ellipsized label whose tip is up ([`Form::tip_tick`]).
     pub fn label_tip(&self) -> Option<String> {
         if !self.tip_shown() {
@@ -3914,6 +3927,9 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
         }
     }
     draw_open_popups(c, text, p, form, px);
+    if let (Some(text), Some(at)) = (form.label_tip(), form.point) {
+        c.report_tip(crate::raster::ReportedTip { text, at });
+    }
 }
 
 /// `label`, or when its ink outruns `width` its text cut to end in an ellipsis (keeping its
@@ -3949,12 +3965,14 @@ fn ellipsized<'a>(
     out.into()
 }
 
-/// The tip of an ellipsized label ([`Form::label_tip`]) under the pointer, kept inside `c` and
-/// wrapped to its width. `theme` is the one the form draws in; hosts draw it last.
-pub fn draw_tip(c: &mut Canvas, text: &TextRenderer, theme: &Theme, form: &Form) {
-    let (Some(full), Some((x, y))) = (form.label_tip(), form.point) else {
-        return;
-    };
+/// The tip a form drawn into `c` reported ([`Canvas::report_tip`]), kept inside `c` and wrapped
+/// to its width; the rect it covers. `theme` is the one the form draws in. The program runtime
+/// and the compositor's dialogs call it after the window's draw, so it lands over everything.
+pub fn draw_tip(c: &mut Canvas, text: &TextRenderer, theme: &Theme) -> Option<Rect> {
+    let crate::raster::ReportedTip {
+        text: full,
+        at: (x, y),
+    } = c.take_tip()?;
     let s = theme.scale.max(1);
     let bounds = c.bounds();
     let frame = tooltip::tip_size(text, theme, "").0;
@@ -3967,6 +3985,7 @@ pub fn draw_tip(c: &mut Canvas, text: &TextRenderer, theme: &Theme, form: &Form)
         at.1,
         &tooltip::draw_tip_at(theme, text, &label, c.scale()),
     );
+    Some(Rect::new(at.0, at.1, size.0, size.1))
 }
 
 /// The form's open popups, which [`draw`] puts over the other controls. A host drawing its
@@ -8080,7 +8099,8 @@ mod tests {
 
             form.motion(20, 15, None);
             form.tip_tick();
-            draw_tip(&mut c, &text, &theme, &form);
+            report_tip(&mut c, &text, &form);
+            assert!(draw_tip(&mut c, &text, &theme).is_some());
             assert_ne!(c.pixels, want.pixels, "@{s}: the tip shows");
             got.push((format!("tip @{s}"), fnv(&c)));
         }
@@ -8105,7 +8125,8 @@ mod tests {
         form.tip_tick();
         let mut blank = Canvas::new(150, 120);
         blank.pixels.copy_from_slice(&c.pixels);
-        draw_tip(&mut c, &text, &theme, &form);
+        report_tip(&mut c, &text, &form);
+        draw_tip(&mut c, &text, &theme);
         let inked = |y: i32| (0..150).any(|x| c.get(x, y) != blank.get(x, y));
         let rows: Vec<i32> = (0..120).filter(|&y| inked(y)).collect();
         assert!(!rows.is_empty());
@@ -8117,6 +8138,51 @@ mod tests {
             (0..120).all(|y| c.get(149, y) == blank.get(149, y)),
             "clear of the right edge"
         );
+    }
+
+    /// Draws `form` aside and hands the tip it reports to `c`, leaving `c`'s pixels as they are.
+    fn report_tip(c: &mut Canvas, text: &TextRenderer, form: &Form) {
+        let mut aside = Canvas::with_scale(c.width, c.height, c.scale());
+        let theme = Theme::default();
+        draw(
+            &mut aside,
+            text,
+            &classic_paint(&theme.colors, 1),
+            form,
+            false,
+            PX,
+        );
+        if let Some(tip) = aside.take_tip() {
+            c.report_tip(tip);
+        }
+    }
+
+    #[test]
+    fn a_form_reports_its_label_tip_only_once_a_blink_shows_it() {
+        let text = tr();
+        let theme = Theme::default();
+        let mut form = long_label_form();
+        let drawn = |form: &Form| {
+            let mut c = Canvas::new(150, 120);
+            draw(&mut c, &text, &theme.paint(), form, false, PX);
+            c
+        };
+        assert_eq!(drawn(&form).take_tip(), None, "nothing at rest");
+        form.motion(125, 35, None);
+        let mut c = drawn(&form);
+        assert_eq!(c.take_tip(), None, "nothing before a blink");
+        assert_eq!(draw_tip(&mut c, &text, &theme), None);
+        form.tip_tick();
+        let mut c = drawn(&form);
+        let before = c.pixels.clone();
+        let tip = c.take_tip().expect("the tip after a blink");
+        assert_eq!(tip.at, (125, 35), "at the pointer");
+        assert_eq!(tip.text, LONG, "the whole text");
+        c.report_tip(tip);
+        let r = draw_tip(&mut c, &text, &theme).expect("the host draws it");
+        assert_ne!(c.pixels, before);
+        assert!(r.width > 0 && r.height > 0);
+        assert_eq!(c.take_tip(), None, "taken once");
     }
 
     fn fnv(c: &Canvas) -> u64 {

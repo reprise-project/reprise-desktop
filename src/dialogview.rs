@@ -35,6 +35,8 @@ use reprisekit::frame::{CaptionButton, Edges};
 #[derive(Default)]
 pub struct Dialogs {
     pub views: Vec<DialogView>,
+    /// Counts blinks for the top dialog's label tip while the pointer rests on a label.
+    tip_timer: Option<RegistrationToken>,
     /// The top dialog has the keyboard until a window takes the focus.
     pub active: bool,
     pub run_history: Vec<String>,
@@ -1012,6 +1014,8 @@ impl State {
                 v.cues.keys,
             );
         }
+        // An ellipsized label's tip, over everything the dialog drew.
+        reprisekit::controls::form::draw_tip(&mut canvas, text, &theme);
         // What the backdrop sees: the client area.
         let part = wanted
             .then(|| client_part(&canvas, &v.layout, scale))
@@ -1178,6 +1182,50 @@ impl State {
             if redraw {
                 self.redraw_dialog(i);
             }
+        }
+        self.arm_dialog_tip();
+    }
+
+    /// Starts counting blinks for the top dialog's label tip once the pointer rests on a label.
+    fn arm_dialog_tip(&mut self) {
+        let waiting = self
+            .dialogs
+            .views
+            .last()
+            .and_then(|v| v.dialog.form())
+            .and_then(|f| f.open_page())
+            .is_some_and(|p| p.tip_waiting());
+        if !waiting || self.dialogs.tip_timer.is_some() {
+            return;
+        }
+        let timer = Timer::from_duration(crate::caret::BLINK);
+        match self
+            .handle
+            .insert_source(timer, |_, _, state| state.dialog_tip_tick())
+        {
+            Ok(t) => self.dialogs.tip_timer = Some(t),
+            Err(e) => log::warn!("dialog tip timer: {}", e.error),
+        }
+    }
+
+    /// One blink for the top dialog's label tip: it redraws when the tip came or went.
+    fn dialog_tip_tick(&mut self) -> TimeoutAction {
+        let top = self.dialogs.views.len().checked_sub(1);
+        let page = top
+            .and_then(|i| self.dialogs.views[i].dialog.form_mut())
+            .and_then(|f| f.open_page_mut());
+        let (changed, waiting) = match page {
+            Some(p) => (p.tip_tick(), p.tip_waiting()),
+            None => (false, false),
+        };
+        if let (true, Some(i)) = (changed, top) {
+            self.redraw_dialog(i);
+        }
+        if waiting {
+            TimeoutAction::ToDuration(crate::caret::BLINK)
+        } else {
+            self.dialogs.tip_timer = None;
+            TimeoutAction::Drop
         }
     }
 
