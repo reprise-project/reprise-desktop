@@ -2433,6 +2433,7 @@ version = "0.1.0"
 dependencies = [
  "accesskit",
  "emojis",
+ "fontconfig-parser",
  "fontdb",
  "freetype-rs",
  "libc",
