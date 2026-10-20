@@ -2,7 +2,7 @@
 //! and Confirm Attribute Changes boxes. All coordinates are client coordinates.
 
 use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, CheckState, LINE_H};
-use crate::controls::form::{CHECK, Control, Form, Item};
+use crate::controls::form::{CHECK, Control, Form, Item, RADIO_ROW};
 use crate::raster::{Canvas, Rect};
 use crate::text::{DialogFont, TextRenderer, escape_mnemonic};
 use crate::textedit::TextEdit;
@@ -1750,7 +1750,7 @@ pub fn attr_form(verb: &str, subject: Subject, text: &TextRenderer, px: u32, u: 
             Rect::new(
                 ATTR_RADIO.0,
                 ATTR_RADIO.1 + i as i32 * ATTR_RADIO_PITCH,
-                CHECK,
+                RADIO_ROW,
                 CHECK,
             ),
             Control::Radio {
@@ -2166,6 +2166,22 @@ mod tests {
         assert!(line(&f, "attr_q0").contains("the selected items only"));
         let folder = attr_form("set read-only", Subject::Folder, &t, px, TextUnits::ONE);
         assert_eq!(line(&folder, ATTR_ONLY), ATTR_LABELS[0]);
+    }
+
+    #[test]
+    fn the_attribute_radios_keep_their_whole_labels_at_200() {
+        let t = text();
+        let theme = Theme::default().with_text_size(200);
+        let px = theme.fonts.size_px;
+        let mut form = attr_form("set read-only", Subject::Folder, &t, px, theme.text);
+        let (w, h) = (theme.text.len(ATTR_SIZE.0), theme.text.len(ATTR_SIZE.1));
+        let mut c = Canvas::new(w as u32, h as u32);
+        crate::controls::form::draw(&mut c, &t, &theme.paint(), &form, false, px);
+        for id in [ATTR_ONLY, ATTR_TREE] {
+            let r = form.rect(id).unwrap();
+            form.motion(r.x + 80, r.y + r.height / 2, None);
+            assert!(!form.tip_tick(), "{id} draws its whole label");
+        }
     }
 
     #[test]
