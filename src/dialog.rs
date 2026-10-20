@@ -2928,12 +2928,19 @@ impl Dialog {
     }
 
     /// The wheel turned `rows` rows (down is positive) over `hit`. A form's page takes it as
-    /// `Form::wheel` does, the chooser's list scrolls while the pointer is on it, Run's open drop
-    /// list scrolls anywhere. Not the tray dialog's or the file picker's.
+    /// `Form::wheel` does, a page's scroll bar as `PropSheet::wheel` does, the chooser's list
+    /// scrolls while the pointer is on it, Run's open drop list scrolls anywhere. Not the tray
+    /// dialog's or the file picker's.
     pub fn wheel(&mut self, hit: Option<DialogHit>, rows: i32) -> Outcome {
         if let Some(f) = self.form_mut() {
             let h = match hit {
                 Some(DialogHit::Control(h)) => Some(h),
+                Some(DialogHit::PageBar(h)) => {
+                    let Some(s) = f.sheet_mut() else {
+                        return Outcome::Nothing;
+                    };
+                    return redraw_if(s.wheel(Some(h), rows) != SheetEvent::None);
+                }
                 _ => None,
             };
             let Some(form) = f.open_page_mut() else {

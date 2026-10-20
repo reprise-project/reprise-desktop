@@ -452,11 +452,6 @@ mod tests {
         assert_eq!(DialogLayout::compute(&theme, &text, &d).icon, None);
     }
 
-    /// "Do not move files"'s second line starts a pixel right of the first in
-    /// Classic and under it in Blue and Glass, 16 px past the box. Its "D" tops
-    /// out 3 px below the box's top in Classic and 2 px in Blue and Glass, and
-    /// the second line's "R" 13 px below the "D". The group's top line runs to
-    /// x 29 and on from x 186 in every look.
     #[test]
     fn every_page_fits_its_text_in_every_look_and_size() {
         let over = reprisekit::interfaces::form_overflows(|_, _, _| {
@@ -468,6 +463,11 @@ mod tests {
         assert!(over.is_empty(), "{}", over.join("\n"));
     }
 
+    /// "Do not move files"'s second line starts a pixel right of the first in
+    /// Classic and under it in Blue and Glass, 16 px past the box. Its "D" tops
+    /// out 3 px below the box's top in Classic and 2 px in Blue and Glass, and
+    /// the second line's "R" 13 px below the "D". The group's top line runs to
+    /// x 29 and on from x 186 in every look.
     #[test]
     fn the_do_not_move_second_line_follows_the_label_in_every_look() {
         if !reprisekit::text::test_tahoma() {
@@ -647,6 +647,34 @@ mod tests {
                 .unwrap()
                 .layout(&text, one.fonts.size_px);
             assert_eq!(sl.bar, None, "{look:?}");
+        }
+    }
+
+    #[test]
+    fn the_wheel_over_a_pages_horizontal_bar_scrolls_it_sideways() {
+        use reprisekit::interface::Interface;
+        let text = TextRenderer::load(&FontConfig::default());
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let big = reprisekit::interfaces::theme_for(look).with_text_size(200);
+            let px = big.fonts.size_px;
+            let mut d = dialog(sheet(), (0, 0), "user-trash-full");
+            d.fit_in(&big, &text, (400, 560));
+            let l = DialogLayout::compute(&big, &text, &d);
+            let sl = d.form().unwrap().sheet().unwrap().layout(&text, px);
+            let hbar = sl.hbar.expect("the page scrolls sideways");
+            let hit = l.hit(
+                &d,
+                hbar.x + hbar.width / 2,
+                hbar.y + hbar.height / 2,
+                &text,
+                px,
+            );
+            let confirm = |d: &Dialog| d.form().unwrap().pages()[0].rect("confirm").unwrap();
+            let before = confirm(&d);
+            assert_eq!(d.wheel(hit, 1), Outcome::Redraw, "{look:?}");
+            let after = confirm(&d);
+            assert!(after.x < before.x, "{look:?}: the page moves left");
+            assert_eq!(after.y, before.y, "{look:?}: the page keeps its height");
         }
     }
 
