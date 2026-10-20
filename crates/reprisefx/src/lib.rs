@@ -105,7 +105,7 @@ pub mod water;
 
 pub use blur::Quality;
 pub use colorfx::{ColorElement, ColorFx};
-pub use element::{Glass, GlassElement, GlassFrame, GlassFx, Shape};
+pub use element::{Fill, Glass, GlassElement, GlassFrame, GlassFx, Shape};
 pub use flip::{FlipCard, FlipCardElement, FlipFx, mipmaps};
 pub use fluid::{FluidElement, FluidFx, FluidPool};
 pub use lens::Lens;

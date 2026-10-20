@@ -8,6 +8,7 @@ use std::sync::{Arc, mpsc};
 use reprisekit::glass::tint::Surface;
 use reprisekit::glass::{Settings, streak};
 use smithay::backend::allocator::Fourcc;
+use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
 use smithay::backend::renderer::gles::{
     GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform,
@@ -15,7 +16,7 @@ use smithay::backend::renderer::gles::{
 use smithay::backend::renderer::utils::{
     CommitCounter, DamageBag, DamageSet, DamageSnapshot, OpaqueRegions,
 };
-use smithay::backend::renderer::{Frame, FrameContext, ImportMem, Texture};
+use smithay::backend::renderer::{Frame, FrameContext, ImportDma, ImportMem, Texture};
 use smithay::utils::user_data::UserDataMap;
 use smithay::utils::{Buffer, Physical, Point, Rectangle, Scale, Size, Transform};
 
@@ -38,6 +39,7 @@ struct Shared {
     /// Streak pictures being made on a thread of their own ([`GlassFx::on_streaks`]).
     jobs: RefCell<Vec<(StreakKey, Job)>>,
     wake: RefCell<Option<Wake>>,
+    fill: RefCell<Option<Filler>>,
 }
 
 #[derive(Clone)]
@@ -49,10 +51,29 @@ impl std::fmt::Debug for Wake {
     }
 }
 
+#[derive(Clone)]
+struct Filler(Fill);
+
+impl std::fmt::Debug for Filler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Filler")
+    }
+}
+
+/// Copies a `w`x`h` ARGB8888 picture, rows of `w * 4` bytes, into a dma-buf the renderer can import.
+pub type Fill = Arc<dyn Fn(&[u8], (u32, u32)) -> Option<Dmabuf> + Send + Sync>;
+
 #[derive(Debug)]
 enum Job {
-    Making(mpsc::Receiver<Vec<u8>>),
-    Made(Vec<u8>),
+    Making(mpsc::Receiver<Made>),
+    Made(Made),
+}
+
+/// A streak picture made on its thread: its bytes, and a dma-buf holding them when one was filled.
+#[derive(Debug)]
+struct Made {
+    bytes: Vec<u8>,
+    dmabuf: Option<Dmabuf>,
 }
 
 type StreakKey = (Size<i32, Physical>, u64);
@@ -67,6 +88,7 @@ impl GlassFx {
             streaks: RefCell::new(Vec::new()),
             jobs: RefCell::new(Vec::new()),
             wake: RefCell::new(None),
+            fill: RefCell::new(None),
         })))
     }
 
@@ -75,6 +97,12 @@ impl GlassFx {
     /// first needs them.
     pub fn on_streaks(&self, wake: impl Fn() + Send + Sync + 'static) {
         *self.0.wake.borrow_mut() = Some(Wake(Arc::new(wake)));
+    }
+
+    /// Copy each streak picture made on its thread into a dma-buf with `fill` there, which the frame
+    /// imports as it stands. A picture `fill` returns None for, or the renderer refuses, is uploaded.
+    pub fn fill_streaks(&self, fill: Fill) {
+        *self.0.fill.borrow_mut() = Some(Filler(fill));
     }
 
     /// Whether glass over `output` at `scale` draws streaks now: shown and made. Starts making them
@@ -113,10 +141,14 @@ impl GlassFx {
             None => {
                 let (tx, rx) = mpsc::channel();
                 let px = streak_px(output);
+                let fill = self.0.fill.borrow().clone();
                 let spawned = std::thread::Builder::new()
                     .name("glass-streaks".into())
                     .spawn(move || {
-                        if tx.send(streak_bytes(px, scale)).is_ok() {
+                        let bytes = streak_bytes(px, scale);
+                        let size = (px.0 as u32, px.1 as u32);
+                        let dmabuf = fill.and_then(|f| (f.0)(&bytes, size));
+                        if tx.send(Made { bytes, dmabuf }).is_ok() {
                             (wake.0)();
                         }
                     });
@@ -167,11 +199,26 @@ impl GlassFx {
                 .position(|(k, j)| *k == key && matches!(j, Job::Made(_)));
             i.map(|i| jobs.remove(i).1)
         };
-        let bytes = match made {
-            Some(Job::Made(bytes)) => bytes,
-            _ => streak_bytes(px, scale),
+        let made = match made {
+            Some(Job::Made(made)) => made,
+            _ => Made {
+                bytes: streak_bytes(px, scale),
+                dmabuf: None,
+            },
         };
-        let t = renderer.import_memory(&bytes, Fourcc::Argb8888, px.into(), false)?;
+        let imported = made.dmabuf.and_then(|d| {
+            renderer
+                .import_dmabuf(&d, None)
+                .map_err(|e| {
+                    log::warn!("glass: streaks uploaded from now on, the dma-buf was refused: {e}");
+                    *self.0.fill.borrow_mut() = None;
+                })
+                .ok()
+        });
+        let t = match imported {
+            Some(t) => t,
+            None => renderer.import_memory(&made.bytes, Fourcc::Argb8888, px.into(), false)?,
+        };
         cache.insert(0, (key, t.clone()));
         cache.truncate(STREAK_TEXTURES);
         Ok(Some(t))
