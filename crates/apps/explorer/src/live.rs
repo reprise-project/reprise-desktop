@@ -115,13 +115,13 @@ impl Explorer {
         let opened = self.take_opened(ctx);
         let tipped = self.poll_tip_walk(ctx);
         let clashed = self.take_clashes(ctx);
+        let browsed = self.take_browse(ctx);
         if self.closing && !self.busy() {
             return opened.unwrap_or_default().and(Reply {
                 quit: true,
                 ..Default::default()
             });
         }
-        let browsed = self.take_browse(ctx);
         let mut dirty = tipped
             | self.take_fills(ctx)
             | self.take_link_status(ctx)
