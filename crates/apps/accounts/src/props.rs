@@ -39,6 +39,7 @@ const AT_LOGIN: &str = "at_login";
 
 const FACE_PX: u32 = 48;
 pub const PREVIEW_PX: u32 = 96;
+const STOCK_PX: u32 = 32;
 
 const X: i32 = 16;
 const FIELD_X: i32 = 150;
@@ -135,8 +136,14 @@ fn general_page(user: &User, face: Option<Canvas>, last_admin: bool) -> Form {
     ])
 }
 
-fn picture_page(face: Option<Canvas>) -> Form {
-    let icons = ALL.iter().map(|p| Some(userpic::draw(*p, 32))).collect();
+/// The stock pictures at the list's 32 px grown by `u`.
+fn stock_icons(u: TextUnits) -> Vec<Option<Canvas>> {
+    let px = u.px(STOCK_PX);
+    ALL.iter().map(|p| Some(userpic::draw(*p, px))).collect()
+}
+
+fn picture_page(face: Option<Canvas>, u: TextUnits) -> Form {
+    let icons = stock_icons(u);
     let names = ALL.iter().map(|p| p.name().to_string()).collect();
     let list_w = 2 * iconlist::CELL_W + 4;
     let list_h = iconlist::ROWS as i32 * iconlist::CELL_H + 2 + 17 + 4;
@@ -157,7 +164,8 @@ fn picture_page(face: Option<Canvas>) -> Form {
             STOCK,
             Rect::new(X, 80, list_w, list_h),
             Control::IconList(Box::new(IconList::new(names, icons, None))),
-        ),
+        )
+        .grows(),
         Item::new(
             PREVIEW,
             Rect::new(right, 80, px, px),
@@ -165,7 +173,8 @@ fn picture_page(face: Option<Canvas>) -> Form {
                 canvas: face,
                 frame: 2,
             },
-        ),
+        )
+        .grows(),
         Item::button_at(BROWSE, right, 80 + px + 12, px, "&Browse...", true),
     ])
 }
@@ -230,13 +239,13 @@ fn wipe(form: &mut Form, id: &str) {
 }
 
 impl Props {
-    /// The sheet for `user` with text grown by `u`. `face` is its picture at [`PREVIEW_PX`];
-    /// `last_admin` greys Standard on the only administrator.
+    /// The sheet for `user` with text grown by `u`. `face` is its picture at [`PREVIEW_PX`]
+    /// grown by `u`; `last_admin` greys Standard on the only administrator.
     pub fn new(user: User, face: Option<Canvas>, last_admin: bool, u: TextUnits) -> Props {
         let small = face.as_ref().map(|c| face_of(c, u));
         let pages = vec![
             general_page(&user, small, last_admin),
-            picture_page(face),
+            picture_page(face, u),
             password_page(&user),
         ];
         let mut p = Props {
@@ -250,19 +259,28 @@ impl Props {
         p
     }
 
-    /// The text size changed to `u`: General's picture is made again at its grown size.
-    pub fn regrow(&mut self, u: TextUnits) {
+    /// The size [`Props::browsed`] wants its preview at: [`PREVIEW_PX`] grown with the text.
+    pub fn preview_px(&self) -> u32 {
+        self.units.px(PREVIEW_PX)
+    }
+
+    /// The text size changed to `u`: the pictures are made again at their grown sizes, the
+    /// picked one from its source, else the account's own from `face` at the px it is given.
+    pub fn regrow(&mut self, u: TextUnits, face: impl FnOnce(&User, u32) -> Option<Canvas>) {
         self.units = u;
-        let preview = match self.sheet.pages[TAB_PICTURE]
-            .item(PREVIEW)
-            .map(|i| &i.control)
-        {
-            Some(Control::Picture {
-                canvas: Some(c), ..
-            }) => c.clone(),
-            _ => return,
+        let px = self.preview_px();
+        let preview = match &self.picture {
+            Some(src) => crate::picture::load(src, px),
+            None => face(&self.user, px),
         };
-        self.sheet.pages[TAB_GENERAL].set_picture(FACE, face_of(&preview, u));
+        let page = &mut self.sheet.pages[TAB_PICTURE];
+        if let Some(Control::IconList(l)) = page.item_mut(STOCK).map(|i| &mut i.control) {
+            l.icons = stock_icons(u);
+        }
+        if let Some(preview) = preview {
+            self.sheet.pages[TAB_GENERAL].set_picture(FACE, face_of(&preview, u));
+            self.sheet.pages[TAB_PICTURE].set_picture(PREVIEW, preview);
+        }
     }
 
     pub fn window_title(&self) -> String {
@@ -415,7 +433,7 @@ impl Props {
                         });
                 if let Some(i) = picked {
                     let p = ALL[i];
-                    self.show_picture(Source::Stock(p), userpic::draw(p, PREVIEW_PX));
+                    self.show_picture(Source::Stock(p), userpic::draw(p, self.preview_px()));
                 }
                 Outcome::Redraw
             }
@@ -438,7 +456,7 @@ impl Props {
     }
 
     /// Browse... came back with a picture file, `preview` its square at
-    /// [`PREVIEW_PX`]. The stock pick, if any, is let go.
+    /// [`Props::preview_px`]. The stock pick, if any, is let go.
     pub fn browsed(&mut self, path: PathBuf, preview: Canvas) {
         if let Some(Control::IconList(l)) = self.sheet.pages[TAB_PICTURE]
             .item_mut(STOCK)
@@ -599,8 +617,8 @@ mod tests {
         reprisekit::raster::write_preview(&out, "accounts-props-preview.png");
     }
 
-    fn general_picture(p: &Props) -> (u32, u32) {
-        match p.sheet.pages[TAB_GENERAL].item(FACE).map(|i| &i.control) {
+    fn picture_size(p: &Props, tab: usize, id: &str) -> (u32, u32) {
+        match p.sheet.pages[tab].item(id).map(|i| &i.control) {
             Some(Control::Picture {
                 canvas: Some(c), ..
             }) => (c.width, c.height),
@@ -614,12 +632,73 @@ mod tests {
         use reprisekit::theme::Theme;
         let face = Some(userpic::draw(userpic::Picture::Tree, PREVIEW_PX));
         let mut p = Props::new(user(true, false), face, false, TextUnits::new(22, 11));
-        assert_eq!(general_picture(&p), (96, 96));
+        assert_eq!(picture_size(&p, TAB_GENERAL, FACE), (96, 96));
         let page = &p.sheet.pages[TAB_GENERAL];
         page.drawn_with(&Theme::default().with_text_size(200).paint());
         assert_eq!(page.rect(FACE), Some(Rect::new(2 * X, 80, 100, 100)));
-        p.regrow(TextUnits::ONE);
-        assert_eq!(general_picture(&p), (48, 48));
+        p.regrow(TextUnits::ONE, |_, px| {
+            Some(userpic::draw(userpic::Picture::Tree, px))
+        });
+        assert_eq!(picture_size(&p, TAB_GENERAL, FACE), (48, 48));
+    }
+
+    /// At 200% text the Picture page's preview is 192 px in a 196 px well with Browse... 28 px
+    /// under it, and the stock list's cells double so its eight 64 px pictures fill its two
+    /// columns. Back at 100% the pictures are 96 and 32 px again.
+    #[test]
+    fn at_200_percent_the_picture_page_grows_its_pictures() {
+        use reprisekit::controls::metrics::ControlMetrics;
+        use reprisekit::theme::Theme;
+        let u = TextUnits::new(22, 11);
+        let face = Some(userpic::draw(userpic::Picture::Tree, u.px(PREVIEW_PX)));
+        let mut p = Props::new(user(true, false), face, false, u);
+        let theme = Theme::default().with_text_size(200);
+        let page = &p.sheet.pages[TAB_PICTURE];
+        page.drawn_with(&theme.paint());
+        let preview = page.rect(PREVIEW).unwrap();
+        assert_eq!(preview, Rect::new(2 * 116, 160, 196, 196));
+        assert_eq!(page.rect(BROWSE).unwrap().y - preview.bottom(), 28);
+        let stock = page.rect(STOCK).unwrap();
+        assert!(
+            stock.right() + 40 <= preview.x,
+            "the list clears the preview"
+        );
+        let Some(Control::IconList(l)) = page.item(STOCK).map(|i| &i.control) else {
+            unreachable!()
+        };
+        let lay = iconlist::layout_grown(stock, &ControlMetrics::CLASSIC.grown(u), u);
+        assert_eq!(lay.cols, 2);
+        let last = l.cell_rect(&lay, 7).unwrap();
+        assert!(lay.cells.contains(last.right() - 1, last.bottom() - 1));
+        assert!(
+            l.icons
+                .iter()
+                .all(|c| c.as_ref().is_some_and(|c| c.width == 64))
+        );
+        assert_eq!(picture_size(&p, TAB_PICTURE, PREVIEW), (192, 192));
+
+        p.sheet.pages[TAB_PICTURE].focus_id(STOCK);
+        let ev = p.sheet.pages[TAB_PICTURE].key(form::Key::Down);
+        p.event(propsheet::Event::Page(TAB_PICTURE, ev), no_file);
+        assert_eq!(
+            picture_size(&p, TAB_PICTURE, PREVIEW),
+            (192, 192),
+            "a stock pick"
+        );
+        assert_eq!(picture_size(&p, TAB_GENERAL, FACE), (96, 96));
+
+        p.regrow(TextUnits::ONE, |_, _| None);
+        assert_eq!(picture_size(&p, TAB_PICTURE, PREVIEW), (96, 96));
+        assert_eq!(picture_size(&p, TAB_GENERAL, FACE), (48, 48));
+        let Some(Control::IconList(l)) = p.sheet.pages[TAB_PICTURE].item(STOCK).map(|i| &i.control)
+        else {
+            unreachable!()
+        };
+        assert!(
+            l.icons
+                .iter()
+                .all(|c| c.as_ref().is_some_and(|c| c.width == 32))
+        );
     }
 
     #[test]
