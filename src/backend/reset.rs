@@ -4,7 +4,7 @@
 
 use std::{
     collections::{HashMap, hash_map::Entry},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use smithay::{
@@ -86,6 +86,10 @@ pub fn plan(now: &Snapshot, keep: &[Keep]) -> Plan {
     }
 }
 
+/// How long a return's reset waits for DRM master before it is sent anyway.
+const MASTER_WAIT: Duration = Duration::from_secs(1);
+const MASTER_POLL: Duration = Duration::from_millis(1);
+
 /// Main's side of the reset each session return needs. Outputs render only once the latest
 /// return's reset is done.
 #[derive(Debug, Default)]
@@ -129,6 +133,16 @@ impl Return {
             self.due = false;
         }
         settles
+    }
+
+    /// logind reports the session active before it hands DRM master back, and a reset sent
+    /// without master is refused (EACCES): the delay before checking `master` again, or `None`
+    /// to go on.
+    pub fn master_wait(&self, master: bool, now: Instant) -> Option<Duration> {
+        let waited = self
+            .since
+            .map_or(Duration::MAX, |s| now.saturating_duration_since(s));
+        (!master && waited < MASTER_WAIT).then_some(MASTER_POLL)
     }
 
     /// A commit that started at `at` went in after the latest return.
@@ -273,6 +287,25 @@ fn reset_legacy(fd: &DrmDeviceFd) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_return_sends_its_reset_only_once_the_device_is_master_again() {
+        let mut r = Return::default();
+        let t = Instant::now();
+        r.activated(t);
+        assert_eq!(
+            r.master_wait(false, t),
+            Some(MASTER_POLL),
+            "waits for master"
+        );
+        assert_eq!(r.master_wait(false, t + MASTER_WAIT / 2), Some(MASTER_POLL));
+        assert_eq!(r.master_wait(true, t), None, "master: the reset goes now");
+        assert_eq!(
+            r.master_wait(false, t + MASTER_WAIT),
+            None,
+            "after the wait the reset goes anyway and logs its failure"
+        );
+    }
 
     fn h<H: From<RawResourceHandle>>(id: u32) -> H {
         H::from(RawResourceHandle::new(id).unwrap())
