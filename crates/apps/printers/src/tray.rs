@@ -1,13 +1,14 @@
 //! The printer icon in the notification area, shown while the user has
-//! documents waiting or printing.
+//! documents waiting, printing or aborted and kept by CUPS.
 
 use reprisetray::{Config, Icon, Msg, Node, Raise, Shown};
 
-use crate::cups::{JobState, Snapshot};
+use crate::cups::{Job, JobState, Snapshot};
 
 pub const BUS_NAME: &str = "reprise.printers";
 pub const TITLE: &str = "Printers";
 const ICON: &str = "printer";
+const ERROR_ICON: &str = "printer-error";
 
 /// Menu row ids: Printers, then one per printer from `QUEUE_BASE`.
 const ID_FOLDER: i32 = 1;
@@ -34,17 +35,28 @@ pub fn translate(msg: Msg) -> Option<TrayMsg> {
     })
 }
 
-/// The printers holding `user`'s unfinished documents, in folder order.
+/// The printers holding `user`'s documents, in folder order.
 pub fn busy_printers(s: &Snapshot, user: &str) -> Vec<String> {
     s.printers
         .iter()
-        .filter(|p| s.jobs_of(&p.name).any(|j| j.owner == user))
+        .filter(|p| s.documents_of(&p.name).any(|j| j.owner == user))
         .map(|p| p.name.clone())
         .collect()
 }
 
-/// Tip text: how many of `user`'s documents wait, and what prints.
+fn failed<'a>(s: &'a Snapshot, user: &'a str) -> impl Iterator<Item = &'a Job> {
+    s.aborted.iter().filter(move |j| j.owner == user)
+}
+
+/// Tip text: which of `user`'s documents could not print, else how many
+/// wait and what prints.
 pub fn tip(s: &Snapshot, user: &str) -> String {
+    let failed: Vec<_> = failed(s, user).collect();
+    match failed.as_slice() {
+        [] => {}
+        [one] => return format!("{} could not be printed", one.name),
+        jobs => return format!("{} documents could not be printed", jobs.len()),
+    }
     let mine: Vec<_> = s.jobs.iter().filter(|j| j.owner == user).collect();
     match mine.as_slice() {
         [] => TITLE.into(),
@@ -71,8 +83,13 @@ pub fn shown(s: &Snapshot, user: &str) -> Shown {
         nodes.push(Node::separator(ID_SEP));
     }
     nodes.push(Node::row(ID_FOLDER, TITLE));
+    let icon = if failed(s, user).next().is_some() {
+        ERROR_ICON
+    } else {
+        ICON
+    };
     Shown {
-        icon: Icon::Name(ICON.into()),
+        icon: Icon::Name(icon.into()),
         tip: tip(s, user),
         active: !busy.is_empty(),
         nodes,
@@ -140,6 +157,31 @@ mod tests {
         let mut one = s.clone();
         one.jobs.retain(|j| j.id == 1);
         assert_eq!(tip(&one, "ann"), "Printing doc1");
+    }
+
+    #[test]
+    fn an_aborted_document_cups_keeps_shows_the_error_icon() {
+        let mut s = snap();
+        s.aborted = vec![Job {
+            id: 7,
+            printer: "Office".into(),
+            name: "doc7".into(),
+            owner: "carol".into(),
+            state: JobState::Aborted,
+            preserved: true,
+            ..Default::default()
+        }];
+        assert_eq!(busy_printers(&s, "carol"), ["Office"]);
+        let sh = shown(&s, "carol");
+        assert!(sh.active);
+        assert_eq!(sh.icon, Icon::Name(ERROR_ICON.into()));
+        assert_eq!(sh.tip, "doc7 could not be printed");
+        assert_eq!(shown(&s, "ann").icon, Icon::Name(ICON.into()));
+        s.aborted.push(Job {
+            id: 8,
+            ..s.aborted[0].clone()
+        });
+        assert_eq!(tip(&s, "carol"), "2 documents could not be printed");
     }
 
     #[test]
