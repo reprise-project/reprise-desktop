@@ -1444,6 +1444,31 @@ fn a_right_press_in_the_rename_box_keeps_it_and_one_in_the_address_field_focuses
 }
 
 #[test]
+fn a_right_press_in_the_rename_box_past_its_selection_moves_the_caret_there() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = explorer(&mut ctx);
+    let a = index_of(&ex, "a.txt");
+    ex.sv.selection.set_only(Some(a));
+    ex.run(crate::commands::Command::Rename, &mut ctx);
+    let px = ctx.theme.fonts.size_px;
+    let sl = ex.view_layout(ex.layout(&ctx).view, &ctx);
+    let r = shellview::label_rect(&ex.sv, &sl, a, &ctx.text, px);
+    press(
+        &mut ex,
+        &mut ctx,
+        (r.right() - 1, r.y + r.height / 2),
+        BTN_RIGHT,
+    );
+    let (_, ed) = ex
+        .sv
+        .edit
+        .clone()
+        .expect("the box stays up for its edit menu");
+    assert!(!ed.has_selection(), "the stem's selection is dropped");
+    assert_eq!(ed.caret(), "a.txt".len(), "the caret is at the press");
+}
+
+#[test]
 fn the_address_field_and_the_rename_box_copy_and_paste_text() {
     let mut ctx = test_ctx();
     let (_dir, mut ex) = explorer(&mut ctx);
@@ -1512,7 +1537,7 @@ fn a_move_onto_the_files_own_folder_before_their_facts_answer_moves_nothing() {
 }
 
 #[test]
-fn a_drag_over_folders_while_its_facts_are_out_reads_one_at_a_time() {
+fn a_folder_on_the_files_disk_moves_while_another_folders_facts_are_out() {
     let mut ctx = test_ctx();
     let (dir, mut ex) = explorer(&mut ctx);
     let other = tempfile::tempdir_in(dir.path()).expect("a temp dir");
@@ -1524,27 +1549,38 @@ fn a_drag_over_folders_while_its_facts_are_out_reads_one_at_a_time() {
     let bg = background(&ex, &ctx);
     ex.drag_enter(bg.0, bg.1, FILES, false, &ctx);
     ex.drag_files(vec![far.clone()], &ctx);
-    let first = ex.drop_facts.as_ref().map(|f| f.dir.clone());
+    assert_eq!(ex.facts(std::slice::from_ref(&far), dir.path(), &ctx), None);
+
+    ex.held = None;
+    let into_crate = centre(&ex, &ctx, index_of(&ex, "Crate"));
+    let r = ex.drag_over(into_crate.0, into_crate.1, &ctx);
+    let a = r.drag_accept.flatten().expect("Crate takes it");
+    assert_eq!(a.preferred, Some(DragAction::Move), "a move inside a drive");
+
+    ex.held = Some(gate.clone());
+    let into_box = centre(&ex, &ctx, index_of(&ex, "Box"));
+    let r = ex.drag_over(into_box.0, into_box.1, &ctx);
+    let a = r.drag_accept.flatten().expect("Box takes it");
+    assert_eq!(a.preferred, Some(DragAction::Copy), "Box's read is out");
+    ex.held = None;
+    let third = other.path().to_path_buf();
     assert_eq!(
-        first.as_deref(),
-        Some(dir.path()),
-        "the folder's read is out"
+        ex.facts(std::slice::from_ref(&far), &third, &ctx),
+        None,
+        "no third read starts while two are out"
     );
 
-    let into_box = centre(&ex, &ctx, index_of(&ex, "Box"));
-    ex.drag_over(into_box.0, into_box.1, &ctx);
-    let asked = ex.drop_facts.as_ref().map(|f| f.dir.clone());
-    assert_eq!(asked, first, "Box waits for the folder's read");
-
     drop(closed);
-    ex.held = None;
     let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while ex.drop_facts.as_ref().map(|f| f.dir.as_path()) != Some(&dir.path().join("Box")) {
+    loop {
+        let r = ex.drag_over(into_box.0, into_box.1, &ctx);
+        if r.drag_accept.flatten().and_then(|a| a.preferred) == Some(DragAction::Move) {
+            break;
+        }
         assert!(
             std::time::Instant::now() < end,
-            "Box is read once the first lands"
+            "Box moves once its read lands"
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
-        ex.drag_over(into_box.0, into_box.1, &ctx);
     }
 }

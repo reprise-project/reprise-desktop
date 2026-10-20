@@ -438,13 +438,18 @@ impl Explorer {
         self.popup = None;
         let lay = self.layout(ctx);
         let px = ctx.theme.fonts.size_px;
-        // A right-click in the rename box leaves it to the edit menu; anywhere else it commits
-        // the rename, before the menu it opens sees the new selection.
+        // A right-click in the rename box moves its caret unless it lands in the selection, and
+        // leaves it to the edit menu; anywhere else it commits the rename, before the menu it
+        // opens sees the new selection.
         if let Some((i, _)) = self.sv.edit {
             let sl = self.view_layout(lay.view, ctx);
             if lay.view.contains(x, y)
                 && shellview::label_rect(&self.sv, &sl, i, &ctx.text, px).contains(x, y)
             {
+                let at = shellview::edit_index_at(&self.sv, &sl, x, y, &ctx.text, px);
+                if let (Some(at), Some((_, ed))) = (at, self.sv.edit.as_mut()) {
+                    ed.press_for_menu(at);
+                }
                 return Reply::redraw();
             }
             return self.commit_rename(ctx);

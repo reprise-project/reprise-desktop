@@ -298,9 +298,18 @@ impl EditLine {
 /// The rename box for `edit` in a `w` px wide cell at `theme.scale`: text wrapped and
 /// centred in a white box with a 1 px border, never narrower than 30 px.
 pub fn edit_layout(theme: &Theme, text: &TextRenderer, edit: &TextEdit, w: i32) -> EditLayout {
-    let s = theme.scale.max(1);
+    edit_layout_at(theme.scale.max(1), theme.fonts.size_px, text, edit, w)
+}
+
+/// [`edit_layout`] at scale `s` with `font` px text.
+pub fn edit_layout_at(
+    s: i32,
+    font: u32,
+    text: &TextRenderer,
+    edit: &TextEdit,
+    w: i32,
+) -> EditLayout {
     let size = w * s;
-    let font = theme.fonts.size_px;
     let step = font as i32 + 2 * s;
     let ranges = wrap_edit(text, &edit.text, size - 8 * s, font);
     let widths: Vec<i32> = ranges

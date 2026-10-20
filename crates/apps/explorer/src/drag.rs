@@ -109,7 +109,11 @@ pub struct Facts {
     pub in_place: bool,
 }
 
-/// [`Facts`] for the last folder a drag asked about, or the read still out.
+/// The most [`Facts`] reads a drag keeps out at once: a drag over dead mounts holds this many
+/// threads, and a later folder answers once one of them lands.
+const FACTS_OUT: usize = 2;
+
+/// [`Facts`] for one folder a drag asked about, or the read still out.
 pub struct FactsRead {
     paths: Vec<PathBuf>,
     dir: PathBuf,
@@ -468,7 +472,7 @@ impl Explorer {
             .as_ref()
             .filter(|d| own && d.started)
             .map(|d| d.paths.clone());
-        self.drop_facts = None;
+        self.drop_facts.clear();
         self.incoming = Some(Incoming {
             offered,
             own,
@@ -812,24 +816,28 @@ impl Explorer {
     }
 
     /// [`Facts`] of `paths` against `dir`, read once per folder a drag rests on: the first ask waits
-    /// the listing wait, later ones take a late answer once it has come. While a read is out, for
-    /// any folder, no other starts: a drag of files on a dead mount holds one thread.
+    /// the listing wait, later ones take a late answer once it has come. At most [`FACTS_OUT`]
+    /// reads are out at once; past that a new folder answers `None`.
     fn facts(&mut self, paths: &[PathBuf], dir: &Path, ctx: &Ctx) -> Option<Facts> {
         if paths.is_empty() {
             return Some(Facts::default());
         }
-        if let Some(f) = self.drop_facts.as_mut() {
+        for f in &mut self.drop_facts {
             if let Err(job) = &f.read
                 && let Some(read) = job.take()
             {
                 f.read = Ok(read);
             }
-            if f.dir == dir && f.paths == paths {
-                return f.read.as_ref().ok().copied();
-            }
-            if f.read.is_err() {
-                return None;
-            }
+        }
+        if let Some(f) = self
+            .drop_facts
+            .iter()
+            .find(|f| f.dir == dir && f.paths == paths)
+        {
+            return f.read.as_ref().ok().copied();
+        }
+        if self.drop_facts.iter().filter(|f| f.read.is_err()).count() >= FACTS_OUT {
+            return None;
         }
         let (p, d) = (paths.to_vec(), dir.to_path_buf());
         let read = self.read_job(ctx, move || Facts {
@@ -837,7 +845,7 @@ impl Explorer {
             in_place: lands_in_place(&p, &d),
         });
         let facts = read.as_ref().ok().copied();
-        self.drop_facts = Some(FactsRead {
+        self.drop_facts.push(FactsRead {
             paths: paths.to_vec(),
             dir: dir.to_path_buf(),
             read,
