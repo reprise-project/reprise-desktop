@@ -640,7 +640,7 @@ pub fn try_spawn_held<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
         c.current_dir(dir);
     }
     reprisefs::scope::hold(&mut c, app)?;
-    start(c, &what, Some(&name))
+    start_forked(c, &what, Some(&name))
 }
 
 fn first<S>(argv: &[S]) -> std::io::Result<&S> {
@@ -730,23 +730,149 @@ fn gtk_launch_id(cmd: &str) -> Option<String> {
 
 /// Start `c` detached, hand its pid to `reap_children` and record the launch for `mapfocus`;
 /// `what` names it in the log. A `name` gives its output a journal stream of its own; without
-/// one it writes to the compositor's.
+/// one it writes to the compositor's. Spawned without a fork ([`spawn_detached`]).
 fn start(mut c: std::process::Command, what: &str, name: Option<&str>) -> std::io::Result<u32> {
+    use std::os::fd::AsFd;
+    let journal = name.and_then(crate::journal::stream_for);
+    if let Some((_, stream)) = &journal {
+        c.env("JOURNAL_STREAM", stream);
+    }
+    let out = journal.as_ref().map(|(fd, _)| fd.as_fd());
+    started(what, || spawn_detached(&c, out))
+}
+
+/// [`start`] for a `c` with a `pre_exec` of its own, which needs a fork.
+fn start_forked(
+    mut c: std::process::Command,
+    what: &str,
+    name: Option<&str>,
+) -> std::io::Result<u32> {
     detach(&mut c);
     if let Some((fd, stream)) = name.and_then(crate::journal::stream_for) {
         c.env("JOURNAL_STREAM", stream);
         c.stdout(fd.try_clone()?);
         c.stderr(fd);
     }
+    started(what, || c.spawn().map(|child| child.id()))
+}
+
+fn started(what: &str, spawn: impl FnOnce() -> std::io::Result<u32>) -> std::io::Result<u32> {
     // Held across the spawn: a child started off the loop that exits at once is listed before
-    // the loop's `reap_children` can look for it. Dropping the `Child` does not reap.
+    // the loop's `reap_children` can look for it. Dropping a `Child` does not reap.
     let mut children = CHILDREN.lock().unwrap_or_else(|e| e.into_inner());
-    let child = c.spawn()?;
-    children.push((child.id() as libc::pid_t, what.to_string()));
+    let pid = spawn()?;
+    children.push((pid as libc::pid_t, what.to_string()));
     drop(children);
-    crate::mapfocus::grant(child.id() as i32);
+    crate::mapfocus::grant(pid as i32);
     log::info!("spawned {what:?}");
-    Ok(child.id())
+    Ok(pid)
+}
+
+/// Spawns `c`'s program, arguments, environment changes and working directory set up as
+/// [`detach`] does, with stdout and stderr on `out` or else the compositor's, and returns the
+/// pid or the exec's own error. posix_spawn instead of `Command::spawn`, which forks once a
+/// `pre_exec` is set: forking the compositor's address space holds the loop for milliseconds.
+fn spawn_detached(
+    c: &std::process::Command,
+    out: Option<std::os::fd::BorrowedFd>,
+) -> std::io::Result<u32> {
+    use std::ffi::{CString, OsStr, OsString};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    let cstr = |s: &OsStr| {
+        CString::new(s.as_bytes())
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "nul in argument"))
+    };
+    let check = |r: libc::c_int| match r {
+        0 => Ok(()),
+        e => Err(std::io::Error::from_raw_os_error(e)),
+    };
+    let program = cstr(c.get_program())?;
+    let args = std::iter::once(c.get_program())
+        .chain(c.get_args())
+        .map(cstr)
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let mut env: std::collections::BTreeMap<OsString, OsString> = std::env::vars_os().collect();
+    for (k, v) in c.get_envs() {
+        match v {
+            Some(v) => env.insert(k.to_owned(), v.to_owned()),
+            None => env.remove(k),
+        };
+    }
+    let env = env
+        .into_iter()
+        .map(|(mut kv, v)| {
+            kv.push("=");
+            kv.push(v);
+            cstr(&kv)
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let dir = c
+        .get_current_dir()
+        .map(|d| cstr(d.as_os_str()))
+        .transpose()?;
+    let ptrs = |v: &[CString]| -> Vec<*mut libc::c_char> {
+        (v.iter().map(|s| s.as_ptr().cast_mut()))
+            .chain(std::iter::once(std::ptr::null_mut()))
+            .collect()
+    };
+    let (argv, envp) = (ptrs(&args), ptrs(&env));
+    // SAFETY: the actions and attributes are initialised before use and destroyed once; every
+    // pointer handed over points into a CString or array above that outlives the call.
+    unsafe {
+        let mut actions: libc::posix_spawn_file_actions_t = std::mem::zeroed();
+        let mut attr: libc::posix_spawnattr_t = std::mem::zeroed();
+        check(libc::posix_spawn_file_actions_init(&mut actions))?;
+        check(libc::posix_spawnattr_init(&mut attr))?;
+        let mut pid: libc::pid_t = 0;
+        let r = (|| {
+            check(libc::posix_spawn_file_actions_addopen(
+                &mut actions,
+                0,
+                c"/dev/null".as_ptr(),
+                libc::O_RDONLY,
+                0,
+            ))?;
+            if let Some(out) = out {
+                for to in [1, 2] {
+                    let fd = out.as_raw_fd();
+                    check(libc::posix_spawn_file_actions_adddup2(&mut actions, fd, to))?;
+                }
+            }
+            if let Some(dir) = &dir {
+                check(libc::posix_spawn_file_actions_addchdir_np(
+                    &mut actions,
+                    dir.as_ptr(),
+                ))?;
+            }
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            check(libc::posix_spawnattr_setsigmask(&mut attr, &set))?;
+            libc::sigaddset(&mut set, libc::SIGINT);
+            libc::sigaddset(&mut set, libc::SIGPIPE);
+            check(libc::posix_spawnattr_setsigdefault(&mut attr, &set))?;
+            let flags = libc::POSIX_SPAWN_SETSIGMASK | libc::POSIX_SPAWN_SETSIGDEF;
+            check(libc::posix_spawnattr_setflags(
+                &mut attr,
+                libc::POSIX_SPAWN_SETSID | flags as libc::c_short,
+            ))?;
+            let spawn = match program.as_bytes().contains(&b'/') {
+                true => libc::posix_spawn,
+                false => libc::posix_spawnp,
+            };
+            check(spawn(
+                &mut pid,
+                program.as_ptr(),
+                &actions,
+                &attr,
+                argv.as_ptr(),
+                envp.as_ptr(),
+            ))
+        })();
+        libc::posix_spawn_file_actions_destroy(&mut actions);
+        libc::posix_spawnattr_destroy(&mut attr);
+        r.map(|()| pid as u32)
+    }
 }
 
 /// Make `c` a child of its own: new session with no controlling terminal, stdin on `/dev/null`,
@@ -1425,6 +1551,86 @@ mod tests {
         let ours = unsafe { libc::getsid(0) };
         assert_ne!(sid, ours, "the child's session is not the test's");
         assert_eq!(lines.next(), Some("/dev/null"), "stdin is /dev/null");
+    }
+
+    /// Runs `c` through [`spawn_detached`] and returns what it printed.
+    fn detached_output(c: &std::process::Command) -> String {
+        use std::io::Read;
+        use std::os::fd::{AsFd, FromRawFd, OwnedFd};
+        let mut fds = [0; 2];
+        // SAFETY: `fds` is the two-fd out-param pipe2 fills.
+        assert_eq!(unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) }, 0);
+        // SAFETY: pipe2 succeeded, so both fds are open and owned by nothing else.
+        let (r, w) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        let pid = spawn_detached(c, Some(w.as_fd())).unwrap();
+        drop(w);
+        let mut out = String::new();
+        std::fs::File::from(r).read_to_string(&mut out).unwrap();
+        // SAFETY: `pid` is this test's own child; a null status is allowed.
+        unsafe { libc::waitpid(pid as libc::pid_t, std::ptr::null_mut(), 0) };
+        out
+    }
+
+    #[test]
+    fn a_detached_spawn_runs_in_its_own_session_with_its_env_and_dir() {
+        let mut c = std::process::Command::new("sh");
+        c.args([
+            "-c",
+            "cut -d' ' -f6 /proc/self/stat; readlink /proc/self/fd/0; echo $LAUNCHED ${HOME-unset}; pwd",
+        ]);
+        c.env("LAUNCHED", "yes").env_remove("HOME").current_dir("/");
+        let out = detached_output(&c);
+        let mut lines = out.lines();
+        let sid: libc::pid_t = lines.next().unwrap().parse().unwrap();
+        // SAFETY: getsid(0) only reads the calling process's session id.
+        let ours = unsafe { libc::getsid(0) };
+        assert_ne!(sid, ours, "the child's session is not the test's");
+        assert_eq!(lines.next(), Some("/dev/null"), "stdin is /dev/null");
+        assert_eq!(
+            lines.next(),
+            Some("yes unset"),
+            "LAUNCHED set, HOME removed"
+        );
+        assert_eq!(lines.next(), Some("/"), "runs in /");
+    }
+
+    #[test]
+    fn a_detached_spawn_starts_with_no_blocked_or_ignored_interrupt() {
+        // SAFETY: the mask is this thread's own and restored; SIGINT's disposition is restored
+        // before the test returns, and no test relies on it.
+        let (old_mask, old_int) = unsafe {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            let mut old: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            libc::sigaddset(&mut set, libc::SIGTERM);
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, &mut old);
+            (old, libc::signal(libc::SIGINT, libc::SIG_IGN))
+        };
+        let mut c = std::process::Command::new("sh");
+        c.args(["-c", "grep -E '^Sig(Blk|Ign)' /proc/self/status"]);
+        let out = detached_output(&c);
+        // SAFETY: restores what the block above saved.
+        unsafe {
+            libc::signal(libc::SIGINT, old_int);
+            libc::pthread_sigmask(libc::SIG_SETMASK, &old_mask, std::ptr::null_mut());
+        }
+        let mask = |key: &str| {
+            let line = out.lines().find(|l| l.starts_with(key)).unwrap();
+            u64::from_str_radix(line[key.len()..].trim(), 16).unwrap()
+        };
+        assert_eq!(mask("SigBlk:"), 0, "no signal is blocked");
+        assert_eq!(
+            mask("SigIgn:") & (1 << (libc::SIGINT - 1)),
+            0,
+            "SIGINT is not ignored"
+        );
+    }
+
+    #[test]
+    fn a_detached_spawn_of_a_missing_program_returns_the_exec_error() {
+        let c = std::process::Command::new("/srv/no-such-program");
+        let e = spawn_detached(&c, None).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
     }
 
     /// A child of a compositor that ignores SIGINT still gets SIGINT's
