@@ -253,6 +253,7 @@ fn run(
     sandbox::set_trusted(&state.config.clipboard.trusted_apps);
     spawn::stop_stale_scopes(&state.env, state.config.session.end_processes);
     desktopview::setup(&mut state);
+    desktopview::relist_on_loop(&mut state);
     dialogview::setup(&mut state);
     state.refresh_recent();
     state.keyboard_setup();
