@@ -849,6 +849,10 @@ pub struct ClientState {
     /// Whether it runs in a sandbox, for the global filters (`sandbox`).
     pub sandbox: crate::sandbox::ClientSandbox,
     peer: crate::clientlog::ClientPeer,
+    /// The pid `State::client_pid` reports in place of the socket's, so a test's client can
+    /// stand for another process.
+    #[cfg(test)]
+    pub pid: Option<i32>,
 }
 
 impl ClientState {
@@ -859,6 +863,8 @@ impl ClientState {
             compositor_state: CompositorClientState::default(),
             sandbox: crate::sandbox::ClientSandbox::of_stream(stream, context),
             peer: crate::clientlog::ClientPeer::of_stream(stream),
+            #[cfg(test)]
+            pid: None,
         }
     }
 }

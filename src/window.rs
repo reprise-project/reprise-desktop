@@ -702,7 +702,17 @@ impl State {
 
     pub fn client_pid(&self, w: WindowId) -> Option<i32> {
         let pid = match &self.win(w)?.kind {
-            Kind::Xdg(t) => t.wl_surface().client()?.get_credentials(&self.dh).ok()?.pid,
+            Kind::Xdg(t) => {
+                let client = t.wl_surface().client()?;
+                #[cfg(test)]
+                if let Some(pid) = client
+                    .get_data::<crate::compositor::ClientState>()
+                    .and_then(|d| d.pid)
+                {
+                    return Some(pid);
+                }
+                client.get_credentials(&self.dh).ok()?.pid
+            }
             Kind::X11(x) => i32::try_from(x.pid()?).ok()?,
         };
         (pid > 0).then_some(pid)
