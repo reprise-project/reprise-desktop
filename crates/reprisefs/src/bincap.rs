@@ -393,6 +393,18 @@ pub(crate) fn took(root: &Path, t: &crate::trash::Trashed, size: u64, before: u6
     remember(root, before.saturating_add(size));
 }
 
+/// Drops the `directorysizes` line of `files`, an entry of a trash's `files/` that left it.
+pub(crate) fn gone(files: &Path) {
+    let (Some(name), Some(root)) = (files.file_name(), files.parent().and_then(Path::parent))
+    else {
+        return;
+    };
+    let mut sizes = read_dir_sizes(root);
+    if sizes.remove(name.as_bytes()).is_some() {
+        write_dir_sizes(root, &sizes);
+    }
+}
+
 /// Erase the oldest items of the trash at `root` (by their `.trashinfo`
 /// DeletionDate, an item with none counting as oldest, then by name)
 /// until `incoming` more bytes fit under `cap`, given it holds `used`.
@@ -436,6 +448,7 @@ pub(crate) fn make_room(
         {
             log::warn!("trash: left the record of {} behind: {e}", files.display());
         }
+        gone(&files);
         log::info!("trash: made room by erasing {}", files.display());
         used -= h.size;
         purged.push(files);
