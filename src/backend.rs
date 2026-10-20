@@ -1039,9 +1039,6 @@ fn activate(state: &mut State) {
     };
     log::info!("session active");
     b.back.activated(std::time::Instant::now());
-    // logind answers this only once it has finished the switch; a device reset sent before
-    // that is refused (EACCES) and its modesets fail.
-    inputfds::release_one(&mut b.session, &b.input_fds);
     if let Err(e) = b.drm.activate(false) {
         log::error!("drm activate: {e}");
     }
@@ -1057,9 +1054,10 @@ fn activate(state: &mut State) {
     input_back(state);
 }
 
-/// Releases the device files still held after `activate` one per loop turn, then resumes
+/// Releases the device files held through the pause one per loop turn, then resumes
 /// libinput in a turn of its own: each release is a synchronous logind call and the resume
-/// reopens every device, ~40 ms in one turn.
+/// reopens every device, ~40 ms in one turn. The releases start once logind has handed DRM
+/// master back (`Return::master_wait`); until then it answers them only when the switch ends.
 fn input_back(state: &mut State) {
     let Some(b) = state.backend.as_mut() else {
         return;
@@ -1073,6 +1071,12 @@ fn input_back(state: &mut State) {
             let Some(b) = state.backend.as_mut() else {
                 return TimeoutAction::Drop;
             };
+            if let Some(poll) = b
+                .back
+                .master_wait(is_master(&b.drm), std::time::Instant::now())
+            {
+                return TimeoutAction::ToDuration(poll);
+            }
             match inputfds::release_one(&mut b.session, &b.input_fds) {
                 inputfds::Back::Released => return TimeoutAction::ToDuration(Duration::ZERO),
                 inputfds::Back::Paused => {}
@@ -1339,26 +1343,34 @@ fn on_quiet(state: &mut State) {
         return;
     };
     if b.step.is_none() && b.step_due(outman).is_some() {
-        let token = state
-            .handle
-            .insert_source(Timer::immediate(), |_, _, state| {
-                if let Some(b) = state.backend.as_mut() {
-                    b.step = None;
-                }
-                quiet_step(state);
-                on_quiet(state);
-                TimeoutAction::Drop
-            });
-        match token {
-            Ok(t) => b.step = Some(t),
-            Err(e) => log::warn!("deferred work: {}", e.error),
-        }
+        step_after(state, Timer::immediate());
     }
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
     let crtcs: Vec<crtc::Handle> = b.surfaces.keys().copied().collect();
     for crtc in crtcs {
         retrain_link(state, crtc);
     }
     watch(state);
+}
+
+fn step_after(state: &mut State, timer: Timer) {
+    let token = state.handle.insert_source(timer, |_, _, state| {
+        if let Some(b) = state.backend.as_mut() {
+            b.step = None;
+        }
+        quiet_step(state);
+        on_quiet(state);
+        TimeoutAction::Drop
+    });
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    match token {
+        Ok(t) => b.step = Some(t),
+        Err(e) => log::warn!("deferred work: {}", e.error),
+    }
 }
 
 fn quiet_step(state: &mut State) {
@@ -1370,7 +1382,13 @@ fn quiet_step(state: &mut State) {
         return;
     };
     match step {
-        Step::Reset => reset_device(state),
+        Step::Reset => match b
+            .back
+            .master_wait(is_master(&b.drm), std::time::Instant::now())
+        {
+            Some(poll) => step_after(state, Timer::from_duration(poll)),
+            None => reset_device(state),
+        },
         Step::Probe => {
             if std::mem::take(&mut b.rescan) {
                 gated(b, "connector list");
@@ -2701,6 +2719,17 @@ fn read_lut(dev: &DrmDevice, crtc: crtc::Handle, gamma: &Gamma, held: Option<Lut
     let (handles, values) = props.as_props_and_values();
     let i = handles.iter().position(|&h| h == prop)?;
     lut_from_blob(values[i], blob, held)
+}
+
+/// libdrm's `drmIsMaster`: the kernel checks master before the token, so token 0 fails with
+/// EACCES only on a fd that is not master.
+fn is_master(dev: &impl std::os::fd::AsFd) -> bool {
+    use std::os::fd::AsRawFd;
+    const DRM_IOCTL_AUTH_MAGIC: libc::c_ulong = 0x4004_6411;
+    let magic: u32 = 0;
+    // SAFETY: `magic` is the kernel's `drm_auth` layout; the kernel only reads it.
+    let r = unsafe { libc::ioctl(dev.as_fd().as_raw_fd(), DRM_IOCTL_AUTH_MAGIC, &magic) };
+    r == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EACCES)
 }
 
 fn create_blob(dev: &impl std::os::fd::AsFd, data: &[u8]) -> std::io::Result<u64> {
