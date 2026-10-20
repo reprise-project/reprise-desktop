@@ -1193,13 +1193,13 @@ fn gated(b: &Backend, op: &str) {
     debug_assert!(b.quiet(), "{op} while a commit holds the modeset locks");
 }
 
-/// Whether main may change outputs now (`commit::quiet`); output management refuses its
-/// changes otherwise ("display busy").
+/// Whether main may change outputs now (`commit::quiet`).
 pub fn quiet(state: &State) -> bool {
     state.backend.as_ref().is_none_or(Backend::quiet)
 }
 
-/// Whether a reload's output changes may go now; else they wait (`defer_output_config`).
+/// Whether a mode change may go now; else a reload's output changes wait
+/// (`defer_output_config`) and an output management apply is held.
 pub fn modes_settle(state: &State) -> bool {
     state.backend.as_ref().is_none_or(Backend::modes_settle)
 }
@@ -1224,7 +1224,7 @@ pub fn stalled(state: &State, output: &Output) -> bool {
 
 /// Deferred work, in the order it runs: the device reset before the scan reads connectors
 /// again, each connector's probe, the scan of what they read, outputs enabled again, then the
-/// reloaded config's output changes.
+/// reloaded config's output changes and the held output management applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Step {
     Reset,
@@ -1257,7 +1257,7 @@ fn next_step(
 impl Backend {
     /// The step `on_quiet` may run now. The reset also waits for every job's `Done`, which
     /// calls `on_quiet` again.
-    fn step_due(&self) -> Option<Step> {
+    fn step_due(&self, outman: bool) -> Option<Step> {
         if !self.quiet() || !self.session.is_active() {
             return None;
         }
@@ -1266,7 +1266,7 @@ impl Backend {
             self.rescan,
             self.probe.as_ref().map(|p| p.left.len()),
             self.reenable.iter().any(|c| !self.retiring.contains_key(c)),
-            self.config_from.is_some(),
+            self.config_from.is_some() || outman,
         )?;
         match step {
             Step::Config => self.modes_settle(),
@@ -1281,10 +1281,11 @@ impl Backend {
 /// no turn holds clients' round trips for all of it. A step that sends a blocking job leaves
 /// the rest for its `Done`.
 fn on_quiet(state: &mut State) {
+    let outman = state.outputs_mgmt.holds();
     let Some(b) = state.backend.as_mut() else {
         return;
     };
-    if b.step.is_none() && b.step_due().is_some() {
+    if b.step.is_none() && b.step_due(outman).is_some() {
         let token = state
             .handle
             .insert_source(Timer::immediate(), |_, _, state| {
@@ -1312,7 +1313,7 @@ fn quiet_step(state: &mut State) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
-    let Some(step) = b.step_due() else {
+    let Some(step) = b.step_due(state.outputs_mgmt.holds()) else {
         return;
     };
     match step {
@@ -1368,6 +1369,7 @@ fn quiet_step(state: &mut State) {
             {
                 state.update_layout();
             }
+            crate::outputmgmt::release_held(state);
         }
     }
 }

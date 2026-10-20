@@ -5,7 +5,7 @@
 //! niri's, a configuration is checked against the outputs (`resolve`) before
 //! anything is applied, so a test answers what an apply would do and a refused
 //! configuration changes nothing; an apply runs head by head through
-//! `State::apply_head`.
+//! `State::apply_head`, once modes settle (`backend::modes_settle`).
 
 use std::collections::HashMap;
 
@@ -98,6 +98,8 @@ pub struct OutputMgmt {
     serial: u32,
     clients: HashMap<ClientId, ClientData>,
     heads: Vec<HeadState>,
+    /// Applies waiting for modes to settle, answered by `release_held`.
+    held: Vec<Pending>,
 }
 
 struct ClientData {
@@ -120,7 +122,13 @@ impl OutputMgmt {
             serial: 0,
             clients: HashMap::new(),
             heads: Vec::new(),
+            held: Vec::new(),
         }
+    }
+
+    /// Whether an apply waits for modes to settle.
+    pub fn holds(&self) -> bool {
+        !self.held.is_empty()
     }
 
     /// Tell every client what changed from the heads it was last told of to `new`;
@@ -162,6 +170,9 @@ impl OutputMgmt {
                     *state = Conf::Cancelled;
                 }
             }
+        }
+        for p in self.held.drain(..) {
+            p.conf.cancelled();
         }
     }
 }
@@ -276,10 +287,6 @@ pub fn resolve(
 /// Run a resolved configuration head by head, stopping at the first failure
 /// (earlier heads stay applied), then lay out once.
 fn apply(state: &mut State, reqs: Vec<(String, HeadRequest)>) -> bool {
-    if !crate::backend::quiet(state) {
-        log::warn!("output management: display busy, configuration refused");
-        return false;
-    }
     let mut ok = true;
     for (name, req) in reqs {
         let output = crate::backend::heads(state)
@@ -301,7 +308,7 @@ fn apply(state: &mut State, reqs: Vec<(String, HeadRequest)>) -> bool {
 }
 
 /// An applied configuration waiting for the art of the draw scales it brings
-/// (`State::start_scale_warm`).
+/// (`State::start_scale_warm`) or for modes to settle (`answer`).
 pub struct Pending {
     reqs: Vec<(String, HeadRequest)>,
     conf: ZwlrOutputConfigurationV1,
@@ -325,14 +332,46 @@ fn apply_after_warm(state: &mut State, p: Pending) {
     }
 }
 
-/// Apply a waiting configuration and answer it; cancelled when the heads changed meanwhile.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Verdict {
+    Cancel,
+    Hold,
+    Apply,
+}
+
+/// What a waiting apply resolved against heads serial `asked` does now: cancelled once the heads
+/// moved on, held while a commit or a frame keeps modes from settling, else applied.
+fn verdict(current: u32, asked: u32, settle: bool) -> Verdict {
+    match () {
+        _ if current != asked => Verdict::Cancel,
+        _ if !settle => Verdict::Hold,
+        _ => Verdict::Apply,
+    }
+}
+
+/// Apply a waiting configuration and answer it, or hold it until modes settle; cancelled when
+/// the heads changed meanwhile.
 pub fn answer(state: &mut State, p: Pending) {
-    if p.serial != state.outputs_mgmt.serial {
-        p.conf.cancelled();
-    } else if apply(state, p.reqs) {
-        p.conf.succeeded();
-    } else {
-        p.conf.failed();
+    let settle = crate::backend::modes_settle(state);
+    match verdict(state.outputs_mgmt.serial, p.serial, settle) {
+        Verdict::Cancel => p.conf.cancelled(),
+        Verdict::Hold => {
+            log::info!("output management: display busy, the configuration waits for it");
+            state.outputs_mgmt.held.push(p);
+        }
+        Verdict::Apply if apply(state, p.reqs) => p.conf.succeeded(),
+        Verdict::Apply => p.conf.failed(),
+    }
+}
+
+/// Answer the applies held for modes to settle (`backend::on_quiet`), behind a scale warm
+/// under way if there is one.
+pub fn release_held(state: &mut State) {
+    for p in std::mem::take(&mut state.outputs_mgmt.held) {
+        match state.scale_warm.as_mut() {
+            Some(w) => w.wait(p),
+            None => answer(state, p),
+        }
     }
 }
 
@@ -760,6 +799,14 @@ fn send_new_head(dh: &DisplayHandle, client: &Client, data: &mut ClientData, h: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_apply_waits_for_modes_to_settle_unless_the_heads_moved_on() {
+        assert_eq!(verdict(3, 3, false), Verdict::Hold);
+        assert_eq!(verdict(3, 3, true), Verdict::Apply);
+        assert_eq!(verdict(4, 3, false), Verdict::Cancel);
+        assert_eq!(verdict(4, 3, true), Verdict::Cancel);
+    }
 
     #[test]
     fn a_configuration_keeps_a_head_on_and_in_range() {
