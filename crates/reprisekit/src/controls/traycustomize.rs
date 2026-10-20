@@ -958,8 +958,18 @@ impl TrayCustomize {
     }
 
     /// A reader's Focus on what `hit` names: it takes the keyboard as Tab gives it, without
-    /// opening, pressing or picking anything.
+    /// opening, pressing or picking anything. A page row's field selects its row and focuses
+    /// the combo.
     pub fn focus_on(&mut self, hit: Option<Hit>) -> Event {
+        if let Some(Hit::Row(i)) = hit
+            && self.is_page()
+            && self.list_enabled()
+        {
+            self.combo.open = None;
+            self.focus = Focus::Combo;
+            self.select(i);
+            return Event::Redraw;
+        }
         let f = match hit {
             Some(Hit::Row(_) | Hit::List) => Focus::List,
             Some(Hit::Combo(_)) => Focus::Combo,
@@ -2265,17 +2275,24 @@ impl TrayCustomize {
         out
     }
 
-    /// Name the combo just added to `list` by its row's item.
-    /// Names the combo just pushed under `list` for entry `i` of `total` and gives it the
-    /// entry's place, which a reader's scroll-in counts by ([`Published::reveal`]).
+    /// Names the combo just pushed under `list` for entry `i` of `total`, gives it the
+    /// entry's place, which a reader's scroll-in counts by ([`Published::reveal`]), and makes
+    /// the entry's row `row` control it, so a reader's focus on the row lands on the combo
+    /// ([`Published::route`]).
     ///
     /// [`Published::reveal`]: crate::access::Published::reveal
-    fn name_combo(tree: &mut Tree, list: NodeId, name: &str, i: usize, total: usize) {
-        let combo = tree.get(list).and_then(|l| l.children().last().copied());
-        if let Some(n) = combo.and_then(|c| tree.get_mut(c)) {
+    /// [`Published::route`]: crate::access::Published::route
+    fn name_combo(tree: &mut Tree, list: NodeId, row: NodeId, name: &str, i: usize, total: usize) {
+        let Some(combo) = tree.get(list).and_then(|l| l.children().last().copied()) else {
+            return;
+        };
+        if let Some(n) = tree.get_mut(combo) {
             n.set_label(name);
             n.set_position_in_set(i + 1);
             n.set_size_of_set(total);
+        }
+        if let Some(n) = tree.get_mut(row) {
+            n.set_controls([combo]);
         }
     }
 
@@ -2297,6 +2314,7 @@ impl TrayCustomize {
         access::focusable(&mut ln, live);
         let list = tree.push(root, "list", ln);
         let mut focus_row = list;
+        let mut row_ids = Vec::with_capacity(self.entries.len());
         let rows = self.row_rects(lay);
         for (i, e) in self.entries.iter().enumerate() {
             let mut n = access::node(Role::ListBoxOption, Rect::default());
@@ -2307,6 +2325,7 @@ impl TrayCustomize {
             n.set_description(w.label(w.choices()[w.index(e.behaviour, e.passive)]));
             n.set_selected(self.selected == Some(i));
             let id = tree.push(list, ("row", i), n);
+            row_ids.push(id);
             if self.is_page()
                 && let Some(n) = tree.get_mut(id)
             {
@@ -2330,7 +2349,8 @@ impl TrayCustomize {
                 "combo",
             ));
             if self.is_page() {
-                Self::name_combo(tree, list, &self.entries[*i].name, *i, self.entries.len());
+                let name = &self.entries[*i].name;
+                Self::name_combo(tree, list, row_ids[*i], name, *i, self.entries.len());
             }
         }
         if self.is_page() && live {
@@ -2343,7 +2363,7 @@ impl TrayCustomize {
                 let row = Combo::new(&labels, w.index(e.behaviour, e.passive), labels.len());
                 let cl = combo::layout(&row, field, &self.metrics);
                 combo::access(&row, &cl, text, px, tree, list, ("combo", i));
-                Self::name_combo(tree, list, &e.name, i, self.entries.len());
+                Self::name_combo(tree, list, row_ids[i], &e.name, i, self.entries.len());
             }
         }
         let all = match (lay.check, lay.check_label, self.all_icons) {
@@ -2469,6 +2489,39 @@ mod tests {
             (w == Wording::Glass).then_some(false),
             metrics(w),
         )
+    }
+
+    #[test]
+    fn a_readers_focus_on_a_page_row_focuses_its_combo_without_opening_or_picking() {
+        use crate::access::{Act, Published, Request, Route, Tree};
+        let (text, px) = (TextRenderer::load(&crate::theme::FontConfig::default()), 11);
+        let mut t = sample(Wording::Glass);
+        let mail = t.entries.iter().position(|e| e.name == "Mail").unwrap();
+        assert_ne!(t.selected, Some(mail));
+        let behaviour = t.entries[mail].behaviour;
+        let lay = t.layout(&text, px, (0, 0));
+        let mut tree = Tree::window("", t.client());
+        t.access(&mut tree, &lay, &text, px);
+        let row = tree.find(Role::ListBoxOption, "Mail").unwrap();
+        let mut p = Published::default();
+        p.update(tree);
+        let Route::Act(target) = p.route(Request {
+            node: row,
+            act: Act::Focus,
+        }) else {
+            panic!("Mail's row is in view");
+        };
+        assert_eq!(target.role, Role::ComboBox);
+        let (x, y) = (target.at.0 as i32, target.at.1 as i32);
+        assert_eq!(t.focus_on(t.hit(&lay, x, y)), Event::Redraw);
+        assert_eq!((t.focus, t.selected), (Focus::Combo, Some(mail)));
+        assert_eq!(t.combo.open, None);
+        assert_eq!(t.entries[mail].behaviour, behaviour);
+        let lay = t.layout(&text, px, (0, 0));
+        let mut tree = Tree::window("", t.client());
+        let focus = t.access(&mut tree, &lay, &text, px);
+        let n = tree.get(focus).unwrap();
+        assert_eq!((n.role(), n.label()), (Role::ComboBox, Some("Mail")));
     }
 
     #[test]

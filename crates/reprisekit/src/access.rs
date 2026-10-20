@@ -231,7 +231,7 @@ impl Published {
     /// How a host carries out `req`. ScrollIntoView on a row out of view scrolls its list; so
     /// does any other action, and `then` asks the host to publish again and route `req` once
     /// more, so one Focus or Click lands on the row scrolled in. A row in view is acted on at
-    /// its [`Target`].
+    /// its [`Target`], or at the first node it controls when it offers no such action itself.
     pub fn route(&self, req: Request) -> Route {
         if let Some(reveal) = self.reveal(req.node) {
             return Route::Reveal {
@@ -239,7 +239,11 @@ impl Published {
                 then: req.act != Act::ScrollIntoView,
             };
         }
-        match (req.act, self.target(req.node)) {
+        let node = match self.nodes.get(&req.node) {
+            Some(n) if !Act::offered(req.act, n) => n.controls().first().copied(),
+            _ => None,
+        };
+        match (req.act, self.target(node.unwrap_or(req.node))) {
             (Act::ScrollIntoView, _) | (_, None) => Route::None,
             (_, Some(t)) => Route::Act(t),
         }
@@ -305,6 +309,16 @@ pub enum Act {
 }
 
 impl Act {
+    /// Whether `n` lists `act` among its actions; ScrollIntoView is always offered.
+    fn offered(act: Act, n: &Node) -> bool {
+        match act {
+            Act::Click => n.supports_action(Action::Click),
+            Act::Focus => n.supports_action(Action::Focus),
+            Act::ContextMenu => n.supports_action(Action::ShowContextMenu),
+            Act::ScrollIntoView => true,
+        }
+    }
+
     fn of(a: Action) -> Option<Act> {
         Some(match a {
             Action::Click => Act::Click,
@@ -954,6 +968,35 @@ mod tests {
         assert_eq!(p.route(req(shown, Act::Focus)), Route::Act(at));
         assert_eq!(p.route(req(shown, Act::ScrollIntoView)), Route::None);
         assert_eq!(p.route(req(NodeId(99), Act::Click)), Route::None);
+    }
+
+    #[test]
+    fn an_action_a_node_does_not_offer_goes_to_the_node_it_controls() {
+        let mut t = Tree::window("T", (100, 100));
+        let list = t.push(ROOT, "list", node(Role::ListBox, Rect::new(0, 0, 100, 40)));
+        let row = t.push(list, 0, node(Role::ListBoxOption, Rect::new(0, 0, 100, 20)));
+        let combo = t.push(list, 1, node(Role::ComboBox, Rect::new(60, 0, 40, 20)));
+        let n = t.get_mut(row).unwrap();
+        n.remove_action(Action::Focus);
+        n.add_action(Action::Click);
+        n.set_controls([combo]);
+        let mut p = Published::default();
+        p.update(t);
+        let req = |act| Request { node: row, act };
+        let on_combo = Target {
+            role: Role::ComboBox,
+            at: (80.0, 10.0),
+        };
+        let on_row = Target {
+            role: Role::ListBoxOption,
+            at: (50.0, 10.0),
+        };
+        assert_eq!(p.route(req(Act::Focus)), Route::Act(on_combo));
+        assert_eq!(
+            p.route(req(Act::Click)),
+            Route::Act(on_row),
+            "a click it offers stays on the row"
+        );
     }
 
     #[test]
