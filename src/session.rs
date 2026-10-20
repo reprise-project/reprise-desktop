@@ -11,7 +11,9 @@
 //! Tab groups come back too: each saved group's windows, matched by app id
 //! (and title, when a window maps with the one it had) as they map, join in their old tab order on the group's desktop and in
 //! the group's own frame, and the tab that showed shows again once its
-//! window is back. An app starts once;
+//! window is back. A window that took a slot by map order alone moves to the
+//! slot saved with the title it takes in `GUESS_SETTLE`, or out of the
+//! group when that title was one of its app's windows outside any group. An app starts once;
 //! `RESTART_SETTLE` after a window of it maps, it starts again for each empty
 //! slot no start in flight will fill, so an app that brings back its own
 //! windows gets no extra one.
@@ -32,6 +34,10 @@ const DESKTOP_WINDOW: Duration = Duration::from_secs(120);
 /// windows have to come back before it is started again for them.
 pub const RESTART_SETTLE: Duration = Duration::from_secs(4);
 
+/// How long after a window takes a tab slot by map order alone a title it
+/// takes can still move it.
+const GUESS_SETTLE: Duration = Duration::from_secs(10);
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedApp {
     /// Its windows' app_id (for X11, the class).
@@ -41,6 +47,9 @@ pub struct SavedApp {
     /// The virtual desktop its newest window was on, from 0.
     #[serde(default)]
     pub desktop: usize,
+    /// The titles of its windows in no saved tab group, when it has one in a group.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loose: Vec<String>,
 }
 
 fn excluded(exclude: &[String], app_id: &str) -> bool {
@@ -67,6 +76,7 @@ pub fn pick(open: &[(String, usize)], apps: &[AppEntry], exclude: &[String]) -> 
             app_id: app_id.clone(),
             entry: e.id.clone(),
             desktop: *desktop,
+            loose: Vec::new(),
         });
     }
     saved
@@ -113,6 +123,18 @@ pub fn pick_tabs(groups: &[SavedTabs], saved: &[SavedApp]) -> Vec<SavedTabs> {
             })
         })
         .collect()
+}
+
+/// Give each app in `saved` with a window in `tabs` the titles of its `open` windows
+/// (app id, title) outside them.
+pub fn note_loose(saved: &mut [SavedApp], tabs: &[SavedTabs], open: &[(String, String)]) {
+    for s in saved {
+        if !tabs.iter().any(|t| t.apps.contains(&s.app_id)) {
+            continue;
+        }
+        let titles = open.iter().filter(|(a, _)| *a == s.app_id);
+        s.loose = titles.map(|(_, t)| t.clone()).collect();
+    }
 }
 
 /// Programs that start another program named further down their command line.
@@ -198,10 +220,19 @@ pub enum Claim<T> {
 }
 
 #[derive(Debug)]
+struct Slot<T> {
+    /// The app id it waits for; empty once its window closed.
+    app: String,
+    /// The saved title.
+    title: String,
+    window: Option<T>,
+    /// When `window` took it by map order alone, while its title may still move it.
+    guessed: Option<Instant>,
+}
+
+#[derive(Debug)]
 struct Regroup<T> {
-    slots: Vec<(String, Option<T>)>,
-    /// The slots' saved titles.
-    titles: Vec<String>,
+    slots: Vec<Slot<T>>,
     shown: usize,
     desktop: usize,
     frame: Option<Remembered>,
@@ -211,6 +242,10 @@ struct Regroup<T> {
 #[derive(Debug)]
 pub struct PendingTabs<T> {
     groups: Vec<Regroup<T>>,
+    /// Restored apps' windows outside any group, as (app id, title).
+    loose: Vec<(String, String)>,
+    /// Windows a claim or retitle moved besides its own, for `moved`.
+    bumped: Vec<T>,
     until: Option<Instant>,
     restarts: Vec<Restart>,
 }
@@ -230,6 +265,8 @@ impl<T> Default for PendingTabs<T> {
     fn default() -> Self {
         PendingTabs {
             groups: Vec::new(),
+            loose: Vec::new(),
+            bumped: Vec::new(),
             until: None,
             restarts: Vec::new(),
         }
@@ -237,18 +274,28 @@ impl<T> Default for PendingTabs<T> {
 }
 
 impl<T: Copy + Eq> PendingTabs<T> {
-    pub fn new(tabs: &[SavedTabs], now: Instant) -> PendingTabs<T> {
+    pub fn new(tabs: &[SavedTabs], apps: &[SavedApp], now: Instant) -> PendingTabs<T> {
+        let slot = |(i, a): (usize, &String), t: &SavedTabs| Slot {
+            app: a.clone(),
+            title: t.titles.get(i).cloned().unwrap_or_default(),
+            window: None,
+            guessed: None,
+        };
+        let loose = apps
+            .iter()
+            .flat_map(|a| a.loose.iter().map(|t| (a.app_id.clone(), t.clone())));
         PendingTabs {
             groups: tabs
                 .iter()
                 .map(|t| Regroup {
-                    slots: t.apps.iter().map(|a| (a.clone(), None)).collect(),
-                    titles: t.titles.clone(),
+                    slots: t.apps.iter().enumerate().map(|a| slot(a, t)).collect(),
                     shown: t.shown,
                     desktop: t.desktop,
                     frame: t.frame.clone(),
                 })
                 .collect(),
+            loose: loose.collect(),
+            bumped: Vec::new(),
             until: Some(now + DESKTOP_WINDOW),
             restarts: Vec::new(),
         }
@@ -270,7 +317,9 @@ impl<T: Copy + Eq> PendingTabs<T> {
 
     fn free_slots(&self, app_id: &str) -> usize {
         let slots = self.groups.iter().flat_map(|r| &r.slots);
-        slots.filter(|(a, w)| w.is_none() && a == app_id).count()
+        slots
+            .filter(|s| s.window.is_none() && s.app == app_id)
+            .count()
     }
 
     /// A window of `app_id` has mapped (after its `claim`), landing one of
@@ -321,24 +370,106 @@ impl<T: Copy + Eq> PendingTabs<T> {
         self.until.is_some_and(|u| now <= u)
     }
 
-    /// The group and slot the next window of `app_id` titled `title`
-    /// fills: the first free one saved with that title, else the first free
-    /// one of its app.
-    fn free_slot(&self, app_id: &str, title: &str) -> Option<(usize, usize)> {
-        let free: Vec<(usize, usize)> = self
-            .groups
-            .iter()
-            .enumerate()
-            .flat_map(|(g, r)| {
-                let slots = r.slots.iter().enumerate();
-                let free = slots.filter(|(_, (a, w))| w.is_none() && a == app_id);
-                free.map(move |(s, _)| (g, s))
-            })
+    /// The group and slot the next window of `app_id` titled `title` takes
+    /// at `now`: one saved with that title, free or held by a guess; else,
+    /// unless the title is one of the app's loose windows', its first free one.
+    fn slot_for(&self, app_id: &str, title: &str, now: Instant) -> Option<(usize, usize)> {
+        self.titled(app_id, title, now, None).or_else(|| {
+            let loose = self.is_loose(app_id, title);
+            self.slots(app_id)
+                .find(|&(g, s)| !loose && self.groups[g].slots[s].window.is_none())
+        })
+    }
+
+    fn slots(&self, app_id: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
+        let app = app_id.to_string();
+        self.groups.iter().enumerate().flat_map(move |(g, r)| {
+            let app = app.clone();
+            let mine = r
+                .slots
+                .iter()
+                .enumerate()
+                .filter(move |(_, s)| s.app == app);
+            mine.map(move |(s, _)| (g, s))
+        })
+    }
+
+    /// The slot of `app_id` saved with `title`, other than `but`: a free one
+    /// first, else one a window holds by a guess still settling at `now`.
+    fn titled(
+        &self,
+        app_id: &str,
+        title: &str,
+        now: Instant,
+        but: Option<(usize, usize)>,
+    ) -> Option<(usize, usize)> {
+        if title.is_empty() {
+            return None;
+        }
+        let at = |&(g, s): &(usize, usize)| &self.groups[g].slots[s];
+        let named: Vec<(usize, usize)> = self
+            .slots(app_id)
+            .filter(|gs| Some(*gs) != but && at(gs).title == title)
             .collect();
-        let titled = |&&(g, s): &&(usize, usize)| {
-            !title.is_empty() && self.groups[g].titles.get(s).is_some_and(|t| t == title)
+        let free = named.iter().find(|gs| at(gs).window.is_none());
+        free.or_else(|| named.iter().find(|gs| settling(at(gs).guessed, now)))
+            .copied()
+    }
+
+    fn is_loose(&self, app_id: &str, title: &str) -> bool {
+        !title.is_empty() && self.loose.iter().any(|(a, t)| a == app_id && t == title)
+    }
+
+    fn take_loose(&mut self, app_id: &str, title: &str) -> bool {
+        let i = (self.loose.iter()).position(|(a, t)| a == app_id && t == title);
+        i.map(|i| self.loose.remove(i)).is_some()
+    }
+
+    fn holding(&self, w: T) -> Option<(usize, usize)> {
+        self.groups.iter().enumerate().find_map(|(g, r)| {
+            let s = r.slots.iter().position(|s| s.window == Some(w))?;
+            Some((g, s))
+        })
+    }
+
+    /// Put `w` into slot `(g, s)`, out of any it held. A window guessed into
+    /// that slot moves to its app's first free slot, or out of every one, and
+    /// waits in `bumped`.
+    fn put(&mut self, (g, s): (usize, usize), w: T, guessed: Option<Instant>) {
+        if let Some(was) = self.holding(w) {
+            self.groups[was.0].slots[was.1].window = None;
+        }
+        let slot = &mut self.groups[g].slots[s];
+        let out = slot.window.replace(w).filter(|&o| o != w);
+        let out_guessed = std::mem::replace(&mut slot.guessed, guessed);
+        let Some(o) = out else {
+            return;
         };
-        free.iter().find(titled).or(free.first()).copied()
+        let app = slot.app.clone();
+        let free = self
+            .slots(&app)
+            .find(|&(g, s)| self.groups[g].slots[s].window.is_none());
+        if let Some((g, s)) = free {
+            let slot = &mut self.groups[g].slots[s];
+            slot.window = Some(o);
+            slot.guessed = out_guessed;
+        }
+        self.bumped.push(o);
+    }
+
+    /// Where the window in slot `(g, s)` goes among the members of its group back.
+    fn joining(&self, (g, s): (usize, usize)) -> Claim<T> {
+        let r = &self.groups[g];
+        let back = |range: &[Slot<T>]| range.iter().find_map(|s| s.window);
+        let target = back(&r.slots[..s]).or_else(|| back(&r.slots[s + 1..]));
+        match target {
+            None => Claim::First,
+            Some(target) => Claim::Join {
+                target,
+                before: back(&r.slots[s + 1..]),
+                show: r.slots.get(r.shown).and_then(|s| s.window),
+            },
+        }
     }
 
     /// The desktop the next window of `app_id` titled `title` goes to,
@@ -347,7 +478,7 @@ impl<T: Copy + Eq> PendingTabs<T> {
         if !self.open(now) {
             return None;
         }
-        self.free_slot(app_id, title)
+        self.slot_for(app_id, title, now)
             .map(|(g, _)| self.groups[g].desktop)
     }
 
@@ -357,47 +488,82 @@ impl<T: Copy + Eq> PendingTabs<T> {
         if !self.open(now) {
             return None;
         }
-        let (g, _) = self.free_slot(app_id, title)?;
+        let (g, _) = self.slot_for(app_id, title, now)?;
         self.groups[g].frame.as_ref()
     }
 
     /// Window `w` of `app_id` titled `title` has mapped: it takes its
-    /// `free_slot`, and joins the members of that group already back.
+    /// `slot_for`, and joins the members of that group already back. A
+    /// window it takes the slot from is in `moved`.
     pub fn claim(&mut self, app_id: &str, title: &str, w: T, now: Instant) -> Claim<T> {
         if !self.open(now) {
             return Claim::None;
         }
-        let Some((g, s)) = self.free_slot(app_id, title) else {
+        let Some(gs) = self.slot_for(app_id, title, now) else {
+            self.take_loose(app_id, title);
             return Claim::None;
         };
-        let r = &mut self.groups[g];
-        r.slots[s].1 = Some(w);
-        let back = |range: &[(String, Option<T>)]| range.iter().find_map(|(_, m)| *m);
-        let target = back(&r.slots[..s]).or_else(|| back(&r.slots[s + 1..]));
-        let claim = match target {
-            None => Claim::First,
-            Some(target) => Claim::Join {
-                target,
-                before: back(&r.slots[s + 1..]),
-                show: r.slots.get(r.shown).and_then(|(_, m)| *m),
-            },
+        let by_title = self.groups[gs.0].slots[gs.1].title == title && !title.is_empty();
+        self.put(gs, w, (!by_title).then_some(now));
+        self.joining(gs)
+    }
+
+    /// Window `w` of `app_id`, in a slot by a guess still settling, is titled
+    /// `title` now: it moves to the slot saved with that title, or out of its
+    /// group when that is a loose window's title. Whether it moved; the
+    /// windows to place again are in `moved`.
+    pub fn retitle(&mut self, app_id: &str, title: &str, w: T, now: Instant) -> bool {
+        let Some(gs) = self.holding(w).filter(|_| self.open(now)) else {
+            return false;
         };
-        if r.slots.iter().all(|(a, m)| m.is_some() || a.is_empty()) {
-            self.groups.remove(g);
+        let slot = &mut self.groups[gs.0].slots[gs.1];
+        if !settling(slot.guessed, now) {
+            return false;
         }
-        claim
+        if slot.title == title {
+            slot.guessed = None;
+            return false;
+        }
+        if let Some(to) = self.titled(app_id, title, now, Some(gs)) {
+            self.put(to, w, None);
+        } else if self.take_loose(app_id, title) {
+            let slot = &mut self.groups[gs.0].slots[gs.1];
+            slot.window = None;
+            slot.guessed = None;
+        } else {
+            return false;
+        }
+        self.bumped.retain(|&o| o != w);
+        self.bumped.insert(0, w);
+        true
+    }
+
+    /// The windows a claim or retitle moved, to place again with `placing`.
+    pub fn moved(&mut self) -> Vec<T> {
+        std::mem::take(&mut self.bumped)
+    }
+
+    /// Where moved window `w` goes now: `Claim::None` when it holds no slot.
+    pub fn placing(&self, w: T) -> Claim<T> {
+        self.holding(w).map_or(Claim::None, |gs| self.joining(gs))
     }
 
     /// `w` is gone: its slot stays empty for good, and a window that joins
     /// later takes another member as its target.
     pub fn forget(&mut self, w: T) {
-        for (a, m) in self.groups.iter_mut().flat_map(|r| &mut r.slots) {
-            if *m == Some(w) {
-                a.clear();
-                *m = None;
+        for slot in self.groups.iter_mut().flat_map(|r| &mut r.slots) {
+            if slot.window == Some(w) {
+                slot.app.clear();
+                slot.window = None;
+                slot.guessed = None;
             }
         }
     }
+}
+
+/// Whether a slot guessed at `at` may still move at `now`.
+fn settling(at: Option<Instant>, now: Instant) -> bool {
+    at.is_some_and(|t| now <= t + GUESS_SETTLE)
 }
 
 /// `State::session`: the last session's apps and tab groups (kept in the
@@ -460,6 +626,12 @@ pub fn save(state: &mut State) {
             })
             .collect();
         let tabs = pick_tabs(&groups, &saved);
+        let loose: Vec<(String, String)> = (state.windows.iter())
+            .filter(|w| saving(w) && state.tabs.groups.group_of(w.id).is_none())
+            .map(|w| (w.app(), w.title()))
+            .collect();
+        let mut saved = saved;
+        note_loose(&mut saved, &tabs, &loose);
         (saved, tabs)
     } else {
         (Vec::new(), Vec::new())
@@ -500,7 +672,7 @@ pub fn restore(state: &mut State, autostarted: &[Entry]) {
         autostarted,
     );
     let now = Instant::now();
-    let mut regrouping = PendingTabs::new(&state.session.tabs, now);
+    let mut regrouping = PendingTabs::new(&state.session.tabs, &state.session.apps, now);
     for (s, e) in &start {
         log::info!("session: restoring {} ({})", s.app_id, e.id);
         let argv = reprisefs::apps::launch_argv(e, &state.config.terminal);
@@ -565,6 +737,7 @@ mod tests {
             app_id: app_id.into(),
             entry: entry.into(),
             desktop,
+            loose: Vec::new(),
         }
     }
 
@@ -721,10 +894,10 @@ mod tests {
     #[test]
     fn an_app_whose_windows_all_come_back_gets_no_second_start() {
         let t = Instant::now();
-        let mut p = PendingTabs::<u32>::new(&[tabs(&["firefox", "firefox"], 0, 0)], t);
+        let mut p = PendingTabs::<u32>::new(&[tabs(&["firefox", "firefox"], 0, 0)], &[], t);
         p.started("firefox");
         assert_eq!(p.restart("firefox", t), 0, "no window yet: no settle armed");
-        let mut p = PendingTabs::<u32>::new(&[tabs(&["firefox", "firefox"], 0, 0)], t);
+        let mut p = PendingTabs::<u32>::new(&[tabs(&["firefox", "firefox"], 0, 0)], &[], t);
         p.started("firefox");
         p.claim("firefox", "", 1, t);
         assert!(p.settle("firefox", t));
@@ -741,7 +914,7 @@ mod tests {
             tabs(&["foot", "foot", "gimp"], 0, 0),
             tabs(&["foot", "x"], 0, 0),
         ];
-        let mut p = PendingTabs::new(&saved, t);
+        let mut p = PendingTabs::new(&saved, &[], t);
         p.started("foot");
         p.started("gimp");
         p.claim("foot", "", 1, t);
@@ -755,7 +928,7 @@ mod tests {
         p.claim("gimp", "", 3, t);
         assert!(!p.settle("gimp", t), "gimp's one slot is full");
         let late = t + DESKTOP_WINDOW + Duration::from_secs(1);
-        let mut p = PendingTabs::new(&saved, t);
+        let mut p = PendingTabs::new(&saved, &[], t);
         p.started("foot");
         p.claim("foot", "", 1, t);
         assert!(p.settle("foot", t));
@@ -765,7 +938,7 @@ mod tests {
     #[test]
     fn a_start_whose_window_has_not_mapped_is_not_started_again() {
         let t = Instant::now();
-        let mut p = PendingTabs::new(&[tabs(&["lo", "lo", "lo", "lo"], 0, 0)], t);
+        let mut p = PendingTabs::new(&[tabs(&["lo", "lo", "lo", "lo"], 0, 0)], &[], t);
         p.started("lo");
         p.claim("lo", "", 1, t);
         assert!(p.settle("lo", t));
@@ -788,7 +961,11 @@ mod tests {
     #[test]
     fn windows_regroup_in_tab_order_as_they_come_back() {
         let t = Instant::now();
-        let mut p = PendingTabs::new(&[tabs(&["a", "b", "c"], 1, 2), tabs(&["b", "d"], 0, 0)], t);
+        let mut p = PendingTabs::new(
+            &[tabs(&["a", "b", "c"], 1, 2), tabs(&["b", "d"], 0, 0)],
+            &[],
+            t,
+        );
         assert_eq!(p.desktop("c", "", t), Some(2));
         assert_eq!(p.desktop("d", "", t), Some(0));
         assert_eq!(p.claim("x", "", 9, t), Claim::None);
@@ -832,7 +1009,7 @@ mod tests {
             titled(&["a.txt", "b.txt"], 10),
             titled(&["c.txt", "d.txt"], 300),
         ];
-        let mut p = PendingTabs::new(&saved, t);
+        let mut p = PendingTabs::new(&saved, &[], t);
         assert_eq!(p.frame("ed", "d.txt", t).map(|f| f.x), Some(300));
         assert_eq!(p.claim("ed", "d.txt", 4, t), Claim::First);
         assert_eq!(
@@ -859,6 +1036,137 @@ mod tests {
         );
     }
 
+    fn titled(titles: &[&str]) -> SavedTabs {
+        SavedTabs {
+            titles: titles.iter().map(|s| s.to_string()).collect(),
+            ..tabs(&vec!["ed"; titles.len()], 0, 0)
+        }
+    }
+
+    #[test]
+    fn a_window_guessed_into_a_slot_moves_to_the_one_its_title_names() {
+        let t = Instant::now();
+        let mut p = PendingTabs::new(&[titled(&["a.txt", "b.txt", "c.txt"])], &[], t);
+        assert_eq!(p.claim("ed", "Editor", 1, t), Claim::First);
+        assert!(matches!(p.claim("ed", "Editor", 2, t), Claim::Join { .. }));
+        assert!(p.retitle("ed", "c.txt", 1, t));
+        assert_eq!(p.moved(), [1]);
+        assert_eq!(
+            p.placing(1),
+            Claim::Join {
+                target: 2,
+                before: None,
+                show: None
+            }
+        );
+        assert!(p.retitle("ed", "a.txt", 2, t));
+        assert_eq!(p.moved(), [2]);
+        assert_eq!(
+            p.placing(2),
+            Claim::Join {
+                target: 1,
+                before: Some(1),
+                show: Some(2)
+            }
+        );
+        assert_eq!(
+            p.claim("ed", "b.txt", 3, t),
+            Claim::Join {
+                target: 2,
+                before: Some(1),
+                show: Some(2)
+            },
+            "the slot the guess left"
+        );
+        assert!(
+            !p.retitle("ed", "b.txt", 1, t),
+            "a window moved by its title stays"
+        );
+    }
+
+    #[test]
+    fn a_guess_settles_by_its_title_or_in_time() {
+        let t = Instant::now();
+        let mut p = PendingTabs::new(&[titled(&["a.txt", "b.txt"])], &[], t);
+        p.claim("ed", "Editor", 1, t);
+        p.claim("ed", "Editor", 2, t);
+        assert!(!p.retitle("ed", "a.txt", 1, t), "its own slot's title");
+        assert!(!p.retitle("ed", "b.txt", 1, t), "and then it stays");
+        let late = t + GUESS_SETTLE + Duration::from_secs(1);
+        assert!(!p.retitle("ed", "a.txt", 2, late));
+        assert!(!p.retitle("ed", "x.txt", 2, t), "a title no slot has");
+        assert!(p.moved().is_empty());
+    }
+
+    #[test]
+    fn a_window_back_with_a_slots_title_takes_it_from_a_guess() {
+        let t = Instant::now();
+        let mut p = PendingTabs::new(&[titled(&["a.txt", "b.txt"])], &[], t);
+        assert_eq!(p.claim("ed", "Editor", 1, t), Claim::First);
+        assert_eq!(
+            p.claim("ed", "a.txt", 2, t),
+            Claim::Join {
+                target: 1,
+                before: Some(1),
+                show: Some(2)
+            }
+        );
+        assert_eq!(p.moved(), [1]);
+        assert_eq!(
+            p.placing(1),
+            Claim::Join {
+                target: 2,
+                before: None,
+                show: Some(2)
+            },
+            "the guess moves to the free slot"
+        );
+    }
+
+    #[test]
+    fn a_loose_windows_title_keeps_its_window_out_of_the_group() {
+        let t = Instant::now();
+        let ed = SavedApp {
+            loose: vec!["notes.txt".into()],
+            ..saved("ed", "ed.desktop", 0)
+        };
+        let group = [titled(&["a.txt", "b.txt"])];
+        let mut p = PendingTabs::new(&group, std::slice::from_ref(&ed), t);
+        assert_eq!(p.desktop("ed", "notes.txt", t), None);
+        assert_eq!(p.claim("ed", "notes.txt", 1, t), Claim::None);
+        assert_eq!(
+            p.claim("ed", "notes.txt", 2, t),
+            Claim::First,
+            "one loose window was saved"
+        );
+        let mut p = PendingTabs::new(&group, &[ed], t);
+        p.claim("ed", "Editor", 1, t);
+        p.claim("ed", "Editor", 2, t);
+        assert!(p.retitle("ed", "notes.txt", 1, t));
+        assert_eq!(p.moved(), [1]);
+        assert_eq!(p.placing(1), Claim::None);
+        assert_eq!(
+            p.desktop("ed", "Editor", t),
+            Some(0),
+            "its slot is free again"
+        );
+    }
+
+    #[test]
+    fn note_loose_keeps_the_titles_outside_groups_of_grouped_apps() {
+        let mut apps = [
+            saved("ed", "ed.desktop", 0),
+            saved("gimp", "gimp.desktop", 0),
+        ];
+        let open = [
+            ("ed".to_string(), "notes.txt".to_string()),
+            ("gimp".to_string(), "pic".to_string()),
+        ];
+        note_loose(&mut apps, &[tabs(&["ed", "ed"], 0, 0)], &open);
+        assert_eq!(apps[0].loose, ["notes.txt"]);
+        assert!(apps[1].loose.is_empty(), "gimp is in no group");
+    }
+
     #[test]
     fn pick_tabs_keeps_the_titles_of_the_windows_it_keeps() {
         let saved = [saved("ed", "ed.desktop", 0)];
@@ -875,7 +1183,7 @@ mod tests {
     #[test]
     fn a_closed_member_leaves_its_slot_empty_and_the_rest_still_join() {
         let t = Instant::now();
-        let mut p = PendingTabs::new(&[tabs(&["a", "b", "c"], 0, 0)], t);
+        let mut p = PendingTabs::new(&[tabs(&["a", "b", "c"], 0, 0)], &[], t);
         assert_eq!(p.claim("a", "", 1, t), Claim::First);
         p.forget(1);
         assert_eq!(p.claim("b", "", 2, t), Claim::First);
@@ -905,7 +1213,7 @@ mod tests {
             },
             tabs(&["gimp", "foot"], 0, 0),
         ];
-        let mut p = PendingTabs::new(&saved, t);
+        let mut p = PendingTabs::new(&saved, &[], t);
         assert_eq!(p.frame("foot", "", t), Some(&frame("DP-1", 10, false)));
         p.claim("foot", "", 1, t);
         p.claim("foot", "", 2, t);
@@ -923,7 +1231,7 @@ mod tests {
         );
         assert_eq!(p.frame("gimp", "", t), None);
         let late = t + DESKTOP_WINDOW + Duration::from_secs(1);
-        let p = PendingTabs::<u32>::new(&saved, t);
+        let p = PendingTabs::<u32>::new(&saved, &[], t);
         assert_eq!(p.frame("foot", "", late), None);
     }
 
@@ -944,7 +1252,7 @@ mod tests {
     fn regrouping_ends_with_the_restore_window() {
         let t = Instant::now();
         let late = t + DESKTOP_WINDOW + Duration::from_secs(1);
-        let mut p = PendingTabs::new(&[tabs(&["a", "b"], 0, 1)], t);
+        let mut p = PendingTabs::new(&[tabs(&["a", "b"], 0, 1)], &[], t);
         assert_eq!(p.claim("a", "", 1, t), Claim::First);
         assert_eq!(p.desktop("b", "", late), None);
         assert_eq!(p.claim("b", "", 2, late), Claim::None);
