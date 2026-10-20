@@ -166,6 +166,26 @@ pub(crate) fn fallback_strike(strikes: impl IntoIterator<Item = u32>, size_px: u
         .min_by_key(|&p| (p.abs_diff(size_px), std::cmp::Reverse(p)))
 }
 
+/// How a char the UI face lacks draws at `size_px` on a canvas at `scale`, given the bitmap
+/// fallback face's [`fallback_strike`] for `size_px`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FallbackDraw {
+    /// The bitmap strike at this ppem, in mono.
+    Strike(u32),
+    /// An outline face at this device ppem, smoothed.
+    Outline(u32),
+}
+
+/// Bitmap strikes draw only at scale 1. Off scale 1 the outline takes the strike's size times
+/// the scale, so it fills the logical advance the strike set.
+pub(crate) fn fallback_draw(strike: Option<u32>, size_px: u32, scale: u32) -> FallbackDraw {
+    match strike {
+        Some(p) if scale == 1 => FallbackDraw::Strike(p),
+        Some(p) => FallbackDraw::Outline(p * scale),
+        None => FallbackDraw::Outline(size_px * scale),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,6 +271,15 @@ mod tests {
         assert_eq!(fallback_strike(wqy, 14), Some(15), "the larger on a tie");
         assert_eq!(fallback_strike(wqy, 9), None, "none within 2 px");
         assert_eq!(fallback_strike([], 11), None);
+    }
+
+    #[test]
+    fn a_bitmap_strike_draws_at_scale_1_and_an_outline_of_its_size_off_it() {
+        assert_eq!(fallback_draw(Some(12), 11, 1), FallbackDraw::Strike(12));
+        assert_eq!(fallback_draw(Some(12), 11, 2), FallbackDraw::Outline(24));
+        assert_eq!(fallback_draw(Some(12), 11, 3), FallbackDraw::Outline(36));
+        assert_eq!(fallback_draw(None, 11, 1), FallbackDraw::Outline(11));
+        assert_eq!(fallback_draw(None, 11, 2), FallbackDraw::Outline(22));
     }
 
     #[test]

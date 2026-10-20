@@ -2,7 +2,9 @@
 //! as `FT_LOAD_TARGET_MONO` (bytecode hinter, monochrome); on, hinted 8-bit coverage is blended and
 //! `full_hinting` fits stems across as well as down.
 
-use crate::fontfallback::{FaceFile, FallbackCache, fallback_strike, fontconfig_face_for};
+use crate::fontfallback::{
+    FaceFile, FallbackCache, FallbackDraw, fallback_draw, fallback_strike, fontconfig_face_for,
+};
 use crate::raster::{Canvas, Rect};
 use crate::theme::{Color, FontConfig};
 use fontdb::{Database, Family, Query, Weight};
@@ -621,27 +623,35 @@ impl TextRenderer {
         let (face, strike) = self.source(bold, size_px)?;
         let index = face.get_char_index(ch as usize);
         // A char the UI face lacks comes from a fallback face: a bitmap face in mono when
-        // `antialias` is off and a strike fits, else an outline face smoothed (an outline CJK face
-        // in mono ink at 11 px loses its strokes).
+        // `antialias` is off, a strike fits and the canvas is at scale 1, else an outline face
+        // smoothed (an outline CJK face in mono ink at 11 px loses its strokes).
         let fallback = match index {
             Some(_) => None,
-            None => self
-                .fallback_face(ch, bold, true)
-                .and_then(|fb| {
+            None => {
+                let strike = self.fallback_face(ch, bold, true).and_then(|fb| {
                     let p = fallback_strike(
                         fixed_sizes(&fb)
                             .iter()
                             .map(|s| ((s.y_ppem + 32) >> 6) as u32),
                         size_px,
                     )?;
-                    let index = fb.get_char_index(ch as usize)?;
-                    self.rasterize(&fb, index, p * scale, Some(p), false)
-                })
-                .or_else(|| {
+                    Some((fb, p))
+                });
+                let outline = |px: u32| {
                     let fb = self.fallback_face(ch, bold, false)?;
                     let index = fb.get_char_index(ch as usize)?;
-                    self.rasterize(&fb, index, size_px * scale, None, true)
-                }),
+                    self.rasterize(&fb, index, px, None, true)
+                };
+                match fallback_draw(strike.as_ref().map(|s| s.1), size_px, scale) {
+                    FallbackDraw::Strike(p) => strike
+                        .and_then(|(fb, _)| {
+                            let index = fb.get_char_index(ch as usize)?;
+                            self.rasterize(&fb, index, p, Some(p), false)
+                        })
+                        .or_else(|| outline(size_px)),
+                    FallbackDraw::Outline(px) => outline(px),
+                }
+            }
         };
         if index.is_none() && fallback.is_none() {
             key.0 = None;
@@ -1538,7 +1548,7 @@ mod tests {
     }
 
     #[test]
-    fn mono_text_takes_a_char_the_ui_face_lacks_from_a_bitmap_face() {
+    fn mono_text_draws_a_fallback_char_from_a_bitmap_face_at_scale_1_only() {
         let r = TextRenderer::load(&FontConfig {
             antialias: false,
             ..FontConfig::default()
@@ -1569,22 +1579,19 @@ mod tests {
             );
             c
         };
+        let is_mono = |c: &Canvas| c.pixels.iter().all(|&p| p == 0 || p == 0xFFFF_FFFF);
         let (one, two) = (draw(1), draw(2));
         assert!(one.pixels.iter().any(|&p| p != 0), "the glyph inks");
-        let mono = one.pixels.iter().all(|&p| p == 0 || p == 0xFFFF_FFFF);
-        assert_eq!(mono, bitmap, "mono from a bitmap face, else smoothed");
-        if !bitmap {
-            return;
-        }
-        for y in 0..40 {
-            for x in 0..80 {
-                assert_eq!(
-                    two.pixels[y * 80 + x],
-                    one.pixels[y / 2 * 40 + x / 2],
-                    "device pixel ({x}, {y}) at scale 2"
-                );
-            }
-        }
+        assert_eq!(
+            is_mono(&one),
+            bitmap,
+            "mono from a bitmap face, else smoothed"
+        );
+        assert!(
+            two.pixels.iter().any(|&p| p != 0),
+            "the glyph inks at scale 2"
+        );
+        assert!(!is_mono(&two), "smoothed outline at scale 2");
     }
 
     #[test]
