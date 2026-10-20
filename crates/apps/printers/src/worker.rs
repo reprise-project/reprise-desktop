@@ -125,8 +125,7 @@ struct State {
     client: Client,
     poster: Poster,
     last: Option<Snapshot>,
-    /// The jobs the last read had, to tell which ones ended since.
-    active: BTreeMap<i32, Job>,
+    jobs: Jobs,
     watching: bool,
     /// Whether the system bus carries cupsd's signals to this thread.
     listening: bool,
@@ -147,7 +146,7 @@ fn run(rx: Receiver<Cmd>, tx: Sender<Cmd>, poster: Poster) {
         client: Client::new(),
         poster,
         last: None,
-        active: BTreeMap::new(),
+        jobs: Jobs::default(),
         watching: false,
         listening,
         lease: None,
@@ -322,25 +321,20 @@ impl State {
                 Snapshot::default()
             }
         };
-        let first = self.last.is_none();
-        let now: BTreeMap<i32, Job> = snap.jobs.iter().map(|j| (j.id, j.clone())).collect();
-        if !first {
-            for (id, was) in &self.active {
-                if now.contains_key(id) {
-                    continue;
-                }
-                let ended = ended(
-                    was,
-                    cups::job(&self.client, *id).ok(),
-                    self.last.as_ref(),
-                    &snap,
-                );
-                if ended.state.done() {
-                    self.poster.post(Msg::JobEnded(ended));
-                }
-            }
+        let finished = if snap.running {
+            cups::finished_after(&self.client, self.jobs.newest.unwrap_or(0)).unwrap_or_else(|e| {
+                log::debug!("reading finished jobs: {e:?}");
+                Vec::new()
+            })
+        } else {
+            Vec::new()
+        };
+        let client = &self.client;
+        for j in self.jobs.read(self.last.as_ref(), &snap, finished, |id| {
+            cups::job(client, id).ok()
+        }) {
+            self.poster.post(Msg::JobEnded(j));
         }
-        self.active = now;
         if self.last.as_ref() != Some(&snap) {
             self.last = Some(snap.clone());
             self.poster.post(Msg::Snapshot(snap));
@@ -436,6 +430,53 @@ fn failed(cmd: &Cmd, e: &cups::Error) -> Option<Msg> {
     })
 }
 
+/// The jobs the worker has seen, to tell which ones ended between two reads.
+#[derive(Default)]
+struct Jobs {
+    /// The queue as the last read had it; `None` before the first.
+    active: Option<BTreeMap<i32, Job>>,
+    /// The highest job id a read of a running cupsd has seen, history included.
+    newest: Option<i32>,
+}
+
+impl Jobs {
+    /// One read: `snap`'s queue (`last` the read before) and `finished`, cupsd's finished jobs numbered after
+    /// `newest`. Returns the jobs that ended since the last read: those that left the queue,
+    /// ended as `read_back` gives them, and those that came and went in between. Nothing
+    /// before a first read has set the marks.
+    fn read(
+        &mut self,
+        last: Option<&Snapshot>,
+        snap: &Snapshot,
+        finished: Vec<Job>,
+        read_back: impl Fn(i32) -> Option<Job>,
+    ) -> Vec<Job> {
+        let now: BTreeMap<i32, Job> = snap.jobs.iter().map(|j| (j.id, j.clone())).collect();
+        let mut out = Vec::new();
+        if let Some(active) = &self.active {
+            for (id, was) in active {
+                if !now.contains_key(id) {
+                    out.push(ended(was, read_back(*id), last, snap));
+                }
+            }
+            if let Some(newest) = self.newest {
+                let unseen = |j: &&Job| {
+                    j.id > newest && !active.contains_key(&j.id) && !now.contains_key(&j.id)
+                };
+                out.extend(finished.iter().filter(unseen).cloned());
+            }
+            out.retain(|j| j.state.done());
+            out.sort_by_key(|j| j.id);
+        }
+        if snap.running {
+            let ids = now.keys().chain(finished.iter().map(|j| &j.id));
+            self.newest = Some(ids.fold(self.newest.unwrap_or(0), |a, &b| a.max(b)));
+        }
+        self.active = Some(now);
+        out
+    }
+}
+
 /// How job `was`, gone from the queue, ended: as CUPS reads it back (`read`), keeping its printer
 /// when the read has none. A job CUPS no longer has printed and was dropped from the history,
 /// unless its printer was in `last` and is gone from `snap`: then it went with the printer,
@@ -529,6 +570,71 @@ mod tests {
             ended(&was, None, Some(&printers), &printers).state,
             cups::JobState::Completed
         );
+    }
+
+    #[test]
+    fn a_job_that_came_and_went_between_two_reads_ends_once_and_history_never_does() {
+        use cups::JobState;
+        let job = |id: i32, state: JobState| Job {
+            id,
+            printer: "Office".into(),
+            name: format!("doc{id}.pdf"),
+            state,
+            ..Job::default()
+        };
+        let queue = |jobs: Vec<Job>| Snapshot {
+            running: true,
+            printers: vec![cups::Printer {
+                name: "Office".into(),
+                ..Default::default()
+            }],
+            jobs,
+            ..Snapshot::default()
+        };
+        let none = |_: i32| None;
+        let ids = |v: Vec<Job>| v.iter().map(|j| (j.id, j.state)).collect::<Vec<_>>();
+        let mut jobs = Jobs::default();
+
+        let old = vec![job(3, JobState::Completed), job(4, JobState::Canceled)];
+        assert_eq!(
+            ids(jobs.read(None, &queue(vec![job(5, JobState::Printing)]), old, none)),
+            [],
+            "the first read only takes the marks"
+        );
+        assert_eq!(jobs.newest, Some(5));
+
+        let fast = vec![job(5, JobState::Completed), job(6, JobState::Completed)];
+        assert_eq!(
+            ids(jobs.read(None, &queue(vec![]), fast, |id| Some(job(
+                id,
+                JobState::Completed
+            )))),
+            [(5, JobState::Completed), (6, JobState::Completed)],
+            "the job that left the queue and the one never seen in it both ended"
+        );
+        assert_eq!(
+            ids(jobs.read(
+                None,
+                &queue(vec![]),
+                vec![job(6, JobState::Completed)],
+                none
+            )),
+            [],
+            "a job ends once"
+        );
+        assert_eq!(
+            ids(jobs.read(
+                None,
+                &queue(vec![job(8, JobState::Pending)]),
+                vec![job(7, JobState::Aborted)],
+                none
+            )),
+            [(7, JobState::Aborted)],
+            "a failed one ends too, beside a job still queued"
+        );
+
+        jobs.read(None, &Snapshot::default(), vec![], none);
+        assert_eq!(jobs.newest, Some(8), "a cupsd that is down moves no mark");
     }
 
     #[test]
