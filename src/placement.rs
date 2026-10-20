@@ -17,12 +17,21 @@ pub struct Wm {
 }
 
 impl Wm {
-    pub fn load() -> Wm {
+    /// `p`'s remembered frames; the file dialogs' kept place is read only for a `session`.
+    pub fn from_persisted(p: &crate::state::Persisted, session: bool) -> Wm {
+        let file_dialog = if session {
+            crate::filedlggeom::Kept::load()
+        } else {
+            crate::filedlggeom::Kept {
+                path: crate::state::path().with_file_name("filedialog.toml"),
+                geometry: None,
+            }
+        };
         Wm {
-            remembered: crate::state::load().window_geometry,
+            remembered: p.window_geometry.clone(),
             snap: Default::default(),
             shake: Default::default(),
-            file_dialog: crate::filedlggeom::Kept::load(),
+            file_dialog,
         }
     }
 }
