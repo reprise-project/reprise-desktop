@@ -36,7 +36,7 @@ impl State {
     pub fn clip_has_text(&self) -> bool {
         match self.own_offers() {
             Some(offers) => TEXT_MIMES.iter().any(|m| answer(&offers, m).is_some()),
-            None => text_mime(&self.clip.offered).is_some(),
+            None => text_mime(self.clip_offered()).is_some(),
         }
     }
 

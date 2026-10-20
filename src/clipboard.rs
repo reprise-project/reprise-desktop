@@ -18,8 +18,9 @@ use smithay::{
     wayland::selection::{
         SelectionHandler, SelectionSource, SelectionTarget,
         data_device::{
-            clear_data_device_selection, current_data_device_selection_userdata,
-            request_data_device_client_selection, set_data_device_selection,
+            SelectionRequestError, clear_data_device_selection,
+            current_data_device_selection_userdata, request_data_device_client_selection,
+            set_data_device_selection,
         },
         primary_selection::{PrimarySelectionHandler, PrimarySelectionState},
     },
@@ -58,6 +59,7 @@ impl Owner {
 
 pub struct Clip {
     pub primary: PrimarySelectionState,
+    /// Read through [`State::clip_offered`].
     pub(crate) offered: Vec<String>,
     paste: Option<Paste>,
 }
@@ -231,6 +233,30 @@ impl State {
         self.handle.insert_idle(|state| state.record_selection());
     }
 
+    /// The types a client's clipboard offers. Smithay drops a destroyed source (its client
+    /// gone) without a `new_selection`, so a source no longer held offers nothing.
+    pub(crate) fn clip_offered(&self) -> &[String] {
+        if self.clip.offered.is_empty() || self.clipboard_held() {
+            &self.clip.offered
+        } else {
+            &[]
+        }
+    }
+
+    fn clipboard_held(&self) -> bool {
+        if current_data_device_selection_userdata(&self.seat).is_some() {
+            return true;
+        }
+        let Ok(null) = std::fs::File::open("/dev/null") else {
+            return true;
+        };
+        // No source offers the empty type, so a held one refuses it and is sent nothing.
+        !matches!(
+            request_data_device_client_selection(&self.seat, String::new(), null.into()),
+            Err(SelectionRequestError::NoSelection)
+        )
+    }
+
     pub fn own_file_clip(&self) -> Option<FileClip> {
         own_files(&self.own_offers()?)
     }
@@ -239,7 +265,7 @@ impl State {
         match self.own_offers() {
             // No stat: a file gone since is skipped by the paste.
             Some(offers) => own_files(&offers).is_some_and(|c| !c.paths.is_empty()),
-            None => fileclip::source(&self.clip.offered).is_some(),
+            None => fileclip::source(self.clip_offered()).is_some(),
         }
     }
 
@@ -252,7 +278,7 @@ impl State {
             }
             return;
         }
-        let Some(source) = fileclip::source(&self.clip.offered) else {
+        let Some(source) = fileclip::source(self.clip_offered()) else {
             log::debug!("paste: the clipboard offers no files");
             return;
         };
@@ -293,10 +319,10 @@ impl State {
             }
             return;
         }
-        let Some(mime) = text_mime(&self.clip.offered) else {
+        let Some(mime) = text_mime(self.clip_offered()) else {
             log::debug!(
                 "paste: the clipboard offers no text ({:?})",
-                self.clip.offered
+                self.clip_offered()
             );
             return;
         };
@@ -520,6 +546,30 @@ mod tests {
         assert_eq!(answer(&offers, KDE_CUT).map(|b| &b[..]), Some(&b"1"[..]));
         assert_eq!(own_files(&offers), Some(clip));
         assert_eq!(file_offers(&FileClip::default()), None, "nothing to offer");
+    }
+
+    #[test]
+    fn paste_greys_once_the_clipboard_source_is_destroyed_or_its_client_goes() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        let source = c.copy(&["text/plain"]);
+        h.roundtrip(&mut c);
+        assert!(h.state.clip_has_text(), "the client's text is pastable");
+        source.destroy();
+        h.roundtrip(&mut c);
+        assert!(
+            !h.state.clip_has_text(),
+            "a destroyed source offers no text"
+        );
+
+        c.copy(&["text/uri-list"]);
+        h.roundtrip(&mut c);
+        assert!(h.state.clip_has_files(), "the client's files are pastable");
+        drop(c);
+        h.run_for(50);
+        assert!(!h.state.clip_has_files(), "a gone client offers no files");
     }
 
     #[test]
