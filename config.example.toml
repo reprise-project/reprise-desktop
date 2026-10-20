@@ -396,8 +396,9 @@ suspend_after = 0            # run [power] standby
 #                            # captions and tooltips, the heights that hold them (and the caption
 #                            # buttons), dialogs, settings
 #                            # pages and program forms (they grow with the text; check boxes,
-#                            # bevels and most icons keep their size, the file dialog's places
-#                            # and toolbar icons and User Accounts' pictures grow), the file
+#                            # bevels and most icons keep their size; the file dialog's places,
+#                            # toolbar and Look in icons, List and Details icons in Explorer and
+#                            # the file dialog, and User Accounts' pictures grow), the file
 #                            # dialog, Open With, Log Off and Turn Off, the windows of
 #                            # Explorer, Notepad, Network
 #                            # Connections, Printers, Volume Control, Software Updates, User

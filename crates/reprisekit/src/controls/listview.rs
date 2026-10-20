@@ -46,6 +46,11 @@ pub const ICON_PX: i32 = 16;
 /// The name column: icon 2 px in, text 2 px after it; other columns' text and the header text 6 px in.
 pub(crate) const ICON_X: i32 = 2;
 const NAME_X: i32 = ICON_X + ICON_PX + 2;
+
+/// The name's x in its row past an icon column `slot` px wide.
+fn name_x(slot: i32) -> i32 {
+    NAME_X - ICON_PX + slot
+}
 const CELL_X: i32 = 6;
 const HEADER_TEXT_X: i32 = 6;
 /// A check column's box: the look's check box side (13 px), 8 px from the frame edge, 3 px below the
@@ -115,6 +120,17 @@ pub trait Rows {
     }
     fn icon(&self, row: usize) -> Option<&Canvas>;
     fn cell(&self, row: usize, col: usize) -> Cow<'_, str>;
+    /// The icon column's width at text size `u`; rows that hand grown icons ([`Rows::icon_in`])
+    /// grow it, the rest keep [`ICON_PX`].
+    fn icon_slot(&self, u: TextUnits) -> i32 {
+        let _ = u;
+        ICON_PX
+    }
+    /// Row `row`'s icon for an icon column `slot` px wide, centred in it when the slot is wider.
+    fn icon_in(&self, row: usize, slot: i32) -> Option<&Canvas> {
+        let _ = slot;
+        self.icon(row)
+    }
 }
 
 impl Rows for Vec<Row> {
@@ -539,7 +555,7 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
         let cw = self.columns.as_ref().first().map_or(0, |c| lay.col_w(c));
         let tx = match &self.checks {
             Some(_) => lay.frame.x + CHECK_X + lay.check + CHECK_TEXT_GAP,
-            None => cx + NAME_X,
+            None => cx + name_x(self.rows.icon_slot(lay.text)),
         };
         let name = self.rows.cell(row, 0);
         let shown = text.ellipsize(&name, (cx + cw - tx - 2).max(0), false, px);
@@ -554,7 +570,7 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
             _ => &self.rows.cell(row, 0),
         };
         let y = lay.body.y + self.slot_y(row, lay);
-        let tx = lay.body.x - self.left_in(lay) + NAME_X;
+        let tx = lay.body.x - self.left_in(lay) + name_x(self.rows.icon_slot(lay.text));
         let w = text.measure(shown, false, px);
         Rect::new(tx - EDIT_BACK, y, w + EDIT_PAD_L + EDIT_PAD_R, lay.row_h())
     }
@@ -837,6 +853,7 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
         }
     }
     let row_h = lay.row_h() * s;
+    let icon_w = lv.rows.icon_slot(lay.text);
     let title_h = lay.text.len(GROUP_TITLE_H);
     let rule = GroupRule {
         y: title_h - 1,
@@ -882,10 +899,15 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
                     let tx = cr.right() + CHECK_TEXT_GAP * s;
                     (tx, cx + cw - tx - 2 * s)
                 } else {
-                    if let Some(ic) = lv.rows.icon(i) {
-                        c.blit_over(cx + ICON_X * s, y + (row_h - ic.height as i32) / 2, ic);
+                    if let Some(ic) = lv.rows.icon_in(i, icon_w) {
+                        let dx = match icon_w > ICON_PX {
+                            true => (icon_w * s - ic.width as i32).max(0) / 2,
+                            false => 0,
+                        };
+                        c.blit_over(cx + ICON_X * s + dx, y + (row_h - ic.height as i32) / 2, ic);
                     }
-                    (cx + NAME_X * s, cw - NAME_X * s - 2 * s)
+                    let name_x = name_x(icon_w);
+                    (cx + name_x * s, cw - name_x * s - 2 * s)
                 }
             } else {
                 (cx + CELL_X * s, cw - 2 * CELL_X * s)

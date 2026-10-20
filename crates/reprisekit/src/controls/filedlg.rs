@@ -287,6 +287,13 @@ const LOOKIN_ICON_Y: i32 = 3;
 const LOOKIN_ICON_GAP: i32 = 3;
 const LOOKIN_ICON_PX: i32 = 16;
 
+/// The Look in field's folder icon slot in `field`, grown with the text by `u`.
+fn lookin_icon(field: Rect, u: TextUnits) -> Rect {
+    let side = u.len(LOOKIN_ICON_PX);
+    let y = field.y + u.len(LOOKIN_ICON_Y) + (field.height - u.len(LOOKIN_H)) / 2;
+    Rect::new(field.x + u.len(LOOKIN_ICON_X), y, side, side)
+}
+
 fn views_items() -> [(&'static str, Mode); 5] {
     [
         ("Thumbnails", Mode::Thumbnails),
@@ -1087,7 +1094,7 @@ impl FileDlg {
         let client = r;
         let dy = self.grow(r, cm);
         let r = rows(r, cm);
-        // 100% lengths at the text size; the Look in field's icon keeps its px.
+        // 100% lengths at the text size.
         let u = |v: i32| cm.text.len(v);
         let label_h = px as i32 + 2;
         let lookin_label_w = text.measure(&split_mnemonic(LOOKIN_LABEL).0, false, px);
@@ -1124,7 +1131,7 @@ impl FileDlg {
         let mut lookin = combo::layout(&self.lookin, lookin_field, cm);
         combo::widen_list(&self.lookin, &mut lookin, text, px, list_right);
         if self.crumb_icon().is_some() {
-            let shift = LOOKIN_ICON_X + LOOKIN_ICON_PX + LOOKIN_ICON_GAP - 2;
+            let shift = u(LOOKIN_ICON_X + LOOKIN_ICON_PX + LOOKIN_ICON_GAP) - 2;
             lookin.text.x += shift;
             lookin.text.width -= shift;
             lookin.highlight.x += shift;
@@ -2102,9 +2109,10 @@ impl FileDlg {
             px,
         );
         if let Some(icon) = self.crumb_icon() {
+            let slot = lookin_icon(lay.lookin.field, self.drawn.0.get().text).scaled(s);
             c.blit_over(
-                (lay.lookin.field.x + LOOKIN_ICON_X) * s,
-                (lay.lookin.field.y + LOOKIN_ICON_Y + (lay.lookin.field.height - LOOKIN_H) / 2) * s,
+                slot.x + (slot.width - icon.width as i32).max(0) / 2,
+                slot.y + (slot.height - icon.height as i32).max(0) / 2,
                 icon,
             );
         }
@@ -4160,6 +4168,48 @@ mod tests {
         d.click(R, Some(Hit::ViewsItem(9)), Mods::default());
         assert_eq!(d.shell.mode, Mode::List);
         assert!(!d.views_open);
+    }
+
+    /// At 200% the Look in field's 32 px folder icon sits whole 12 px in and 6 px down, and the
+    /// folder's name starts past it.
+    #[test]
+    fn at_200_percent_the_look_in_icon_grows() {
+        let t = text();
+        let u = TextUnits::new(22, 11);
+        let green = crate::theme::Color::rgb(0x20, 0x80, 0x20);
+        let mut d = sample();
+        let mut f = folder(1, None, vec![]);
+        let mut icon = Canvas::new(32, 32);
+        icon.fill_rect(Rect::new(0, 0, 32, 32), green);
+        f.crumbs[0].icon = Some(icon);
+        d.set_listing(f);
+        d.set_text(u);
+        let (w, h) = d.client();
+        let r = Rect::new(0, 0, w, h);
+        let cs = ColorScheme::default();
+        let p = Paint {
+            text: u,
+            ..classic_paint(&cs, 1)
+        };
+        let mut c = Canvas::new(w as u32, h as u32);
+        d.draw(&mut c, &t, &p, r, 22);
+        let lay = d.layout(&t, 22, r, &ControlMetrics::CLASSIC.grown(u));
+        let field = lay.lookin.field;
+        let (x, y) = (field.x + 12, field.y + 6);
+        for (px, py) in [(x, y), (x + 31, y + 31)] {
+            assert_eq!(c.get(px, py), green.argb(), "icon corner ({px}, {py})");
+        }
+        assert_ne!(c.get(x + 32, y + 16), green.argb(), "past the icon");
+        assert_ne!(c.get(x + 16, y + 32), green.argb(), "under the icon");
+        let mut bare = sample();
+        bare.set_listing(folder(1, None, vec![]));
+        bare.set_text(u);
+        let plain = bare.layout(&t, 22, r, &ControlMetrics::CLASSIC.grown(u));
+        assert_eq!(
+            lay.lookin.text.x - plain.lookin.text.x,
+            48,
+            "the name moves past the icon and its 6 px gap"
+        );
     }
 
     #[test]
