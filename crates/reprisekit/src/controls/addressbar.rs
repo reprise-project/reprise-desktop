@@ -3,6 +3,7 @@
 
 use crate::access::{self, Tree, accesskit};
 use crate::controls::combo::{self, Combo, ListItem};
+use crate::controls::form::Key;
 use crate::controls::metrics::ControlMetrics;
 use crate::look::Paint;
 use crate::look::widgets::toolbar;
@@ -124,6 +125,63 @@ impl AddressBar {
             Hit::Combo(combo::Hit::Thumb(_)) => Event::Redraw,
             Hit::Go => Event::Navigate(self.text().to_string()),
             Hit::Nothing => Event::None,
+        }
+    }
+
+    /// A key while the list is open: Up and Down move the highlight, Page Up and Page Down
+    /// scroll, Enter takes the row, Escape, Tab and the drop key close the list. With the list
+    /// closed only the drop key (F4, Alt+Down) answers, opening it. `None` for any other key.
+    pub fn list_key(&mut self, key: &Key) -> Option<Event> {
+        let rows = self.combo.rows as i32;
+        match (self.combo.open, key) {
+            (None, Key::Drop) => {
+                self.combo.toggle();
+            }
+            (None, _) => return None,
+            (Some(i), Key::Enter) => return Some(self.take(i)),
+            (Some(_), Key::Up | Key::Down) => {
+                self.combo.step(*key == Key::Down);
+            }
+            (Some(_), Key::PageUp) => {
+                self.combo.scroll(-rows);
+            }
+            (Some(_), Key::PageDown) => {
+                self.combo.scroll(rows);
+            }
+            (Some(_), Key::Escape | Key::Drop | Key::Tab { .. }) => self.combo.open = None,
+            (Some(_), _) => return None,
+        }
+        Some(Event::Redraw)
+    }
+
+    /// A press while the list is open anywhere but on the list or the drop arrow closes the
+    /// list and goes no further. Returns whether it closed.
+    pub fn press_outside(&mut self, hit: Hit) -> bool {
+        let inside = matches!(
+            hit,
+            Hit::Combo(
+                combo::Hit::Drop
+                    | combo::Hit::Row(_)
+                    | combo::Hit::ScrollUp
+                    | combo::Hit::ScrollDown
+                    | combo::Hit::PageUp
+                    | combo::Hit::PageDown
+                    | combo::Hit::Thumb(_)
+            )
+        );
+        if self.combo.open.is_none() || inside {
+            return false;
+        }
+        self.combo.open = None;
+        true
+    }
+
+    /// The pointer at what [`hit`] returned: the open list's row under it lights. Returns
+    /// whether the highlight moved.
+    pub fn hover(&mut self, hit: Hit) -> bool {
+        match hit {
+            Hit::Combo(combo::Hit::Row(i)) => self.combo.hover(i),
+            _ => false,
         }
     }
 
@@ -544,6 +602,57 @@ mod tests {
                 "{v:?}: the label keeps its place"
             );
         }
+    }
+
+    #[test]
+    fn the_open_lists_keys_move_take_and_close() {
+        let mut ab = bar();
+        assert_eq!(ab.list_key(&Key::Down), None, "closed, Down is the field's");
+        assert_eq!(ab.list_key(&Key::Drop), Some(Event::Redraw));
+        assert_eq!(
+            ab.combo.open,
+            Some(1),
+            "the drop key opens on the picked place"
+        );
+        ab.list_key(&Key::Down);
+        assert_eq!(ab.combo.open, Some(2));
+        assert_eq!(ab.list_key(&Key::Enter), Some(Event::Pick(2)));
+        assert_eq!(ab.combo.open, None);
+        for close in [Key::Escape, Key::Drop, Key::Tab { back: false }] {
+            ab.combo.toggle();
+            assert_eq!(ab.list_key(&close), Some(Event::Redraw));
+            assert_eq!(ab.combo.open, None, "{close:?} closes the list");
+        }
+        ab.combo.toggle();
+        assert_eq!(
+            ab.list_key(&Key::Char('a')),
+            None,
+            "a letter is the field's"
+        );
+    }
+
+    #[test]
+    fn a_press_off_the_open_list_closes_it_and_the_pointer_lights_its_rows() {
+        let mut ab = bar();
+        assert!(
+            !ab.press_outside(Hit::Nothing),
+            "closed, a press is the window's"
+        );
+        ab.combo.toggle();
+        assert!(!ab.hover(Hit::Nothing));
+        assert!(ab.hover(Hit::Combo(combo::Hit::Row(0))));
+        assert_eq!(ab.combo.open, Some(0), "the row under the pointer lights");
+        for on_list in [combo::Hit::Row(2), combo::Hit::Drop, combo::Hit::ScrollDown] {
+            assert!(
+                !ab.press_outside(Hit::Combo(on_list)),
+                "{on_list:?} is the list's"
+            );
+        }
+        assert!(ab.combo.open.is_some());
+        assert!(ab.press_outside(Hit::Combo(combo::Hit::Field)));
+        assert_eq!(ab.combo.open, None, "a press in the field closes the list");
+        ab.combo.toggle();
+        assert!(ab.press_outside(Hit::Go), "a press on Go closes the list");
     }
 
     #[test]

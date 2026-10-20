@@ -180,6 +180,9 @@ impl Explorer {
 
         self.sync_menus();
         let lay = self.layout(ctx);
+        if self.address_press_outside(x, y, ctx) {
+            return Reply::redraw();
+        }
         // A click outside the view commits an in-place rename; inside
         // it, the view branch below decides.
         if self.sv.edit.is_some() && !lay.view.contains(x, y) {
@@ -438,6 +441,9 @@ impl Explorer {
 
     fn right_press(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
         self.popup = None;
+        if self.address_press_outside(x, y, ctx) {
+            return Reply::redraw();
+        }
         let lay = self.layout(ctx);
         let px = ctx.theme.fonts.size_px;
         // A right-click in the rename box moves its caret unless it lands in the selection, and
@@ -752,6 +758,15 @@ impl Explorer {
             self.bar.motion(x, y, &ml, &ctx.text, &m, px);
             return Reply::redraw();
         }
+        // The open list lights the row under the pointer, and nothing else lights under it.
+        if self.address.combo.open.is_some() {
+            let lit = lay.address.is_some_and(|r| {
+                let al = addressbar::layout(&self.address, &ctx.text, px, r, &ctx.theme.controls());
+                let hit = addressbar::hit(&self.address, &al, x, y);
+                self.address.hover(hit)
+            });
+            return if lit { Reply::redraw() } else { Reply::none() };
+        }
         let mut dirty = false;
         let ml = self.bar_layout(ctx);
         dirty |= self.bar.hover(x, y, &ml) && ctx.styled();
@@ -788,6 +803,23 @@ impl Explorer {
         } else {
             Reply::none()
         }
+    }
+
+    /// A press at (`x`, `y`) with the address list open anywhere but on the list or its drop
+    /// arrow closes the list and goes no further: whether it did.
+    fn address_press_outside(&mut self, x: i32, y: i32, ctx: &Ctx) -> bool {
+        if self.address.combo.open.is_none() {
+            return false;
+        }
+        let hit = match self.layout(ctx).address {
+            Some(r) => {
+                let px = ctx.theme.fonts.size_px;
+                let al = addressbar::layout(&self.address, &ctx.text, px, r, &ctx.theme.controls());
+                addressbar::hit(&self.address, &al, x, y)
+            }
+            None => addressbar::Hit::Nothing,
+        };
+        self.address.press_outside(hit)
     }
 
     /// Light the task pane's title band or enabled link under `(x, y)`; whether
