@@ -568,7 +568,7 @@ impl Host {
         };
         let out = match ev {
             Event::CloseRequest => return Step::Closed,
-            Event::Blink => return Step::Redraw,
+            Event::Blink => dlg.blink(),
             Event::Resized => {
                 dlg.set_size(size);
                 return Step::Redraw;
