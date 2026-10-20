@@ -329,7 +329,12 @@ impl State {
                 if now.contains_key(id) {
                     continue;
                 }
-                let ended = ended(was, cups::job(&self.client, *id).ok(), &snap);
+                let ended = ended(
+                    was,
+                    cups::job(&self.client, *id).ok(),
+                    self.last.as_ref(),
+                    &snap,
+                );
                 if ended.state.done() {
                     self.poster.post(Msg::JobEnded(ended));
                 }
@@ -433,13 +438,16 @@ fn failed(cmd: &Cmd, e: &cups::Error) -> Option<Msg> {
 
 /// How job `was`, gone from the queue, ended: as CUPS reads it back (`read`), keeping its printer
 /// when the read has none. A job CUPS no longer has printed and was dropped from the history,
-/// unless its printer is gone from `snap` too: then it went with the printer, cancelled.
-fn ended(was: &Job, read: Option<Job>, snap: &Snapshot) -> Job {
+/// unless its printer was in `last` and is gone from `snap`: then it went with the printer,
+/// cancelled. A class is in neither, so its jobs count as printed.
+fn ended(was: &Job, read: Option<Job>, last: Option<&Snapshot>, snap: &Snapshot) -> Job {
     let Some(read) = read else {
-        let state = if snap.printer(&was.printer).is_some() {
-            cups::JobState::Completed
-        } else {
+        let deleted = last.is_some_and(|l| l.printer(&was.printer).is_some())
+            && snap.printer(&was.printer).is_none();
+        let state = if deleted {
             cups::JobState::Canceled
+        } else {
+            cups::JobState::Completed
         };
         return Job {
             state,
@@ -482,18 +490,44 @@ mod tests {
             running: true,
             ..Snapshot::default()
         };
-        assert_eq!(ended(&was, None, &deleted).state, JobState::Canceled);
-        assert_eq!(ended(&was, None, &with_office).state, JobState::Completed);
+        let last = Some(&with_office);
+        assert_eq!(ended(&was, None, last, &deleted).state, JobState::Canceled);
+        assert_eq!(
+            ended(&was, None, last, &with_office).state,
+            JobState::Completed
+        );
 
         let read = Job {
             printer: String::new(),
             state: JobState::Canceled,
             ..was.clone()
         };
-        let back = ended(&was, Some(read), &with_office);
+        let back = ended(&was, Some(read), last, &with_office);
         assert_eq!(
             (back.state, back.printer.as_str()),
             (JobState::Canceled, "Office")
+        );
+    }
+
+    #[test]
+    fn a_job_sent_to_a_class_and_purged_from_the_history_printed() {
+        let was = Job {
+            id: 8,
+            printer: "Floor2".into(),
+            state: cups::JobState::Printing,
+            ..Job::default()
+        };
+        let printers = Snapshot {
+            running: true,
+            printers: vec![cups::Printer {
+                name: "Office".into(),
+                ..Default::default()
+            }],
+            ..Snapshot::default()
+        };
+        assert_eq!(
+            ended(&was, None, Some(&printers), &printers).state,
+            cups::JobState::Completed
         );
     }
 
