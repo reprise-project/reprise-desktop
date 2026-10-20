@@ -97,12 +97,32 @@ pub fn form_clipboard(focused: Option<form::FocusedEdit>, ev: &Event) -> Reply {
     }
 }
 
+thread_local! {
+    /// The clipboard half [`form_input`] and [`sheet_input`] read off the event being handled;
+    /// the runtime adds it to the program's reply ([`take_clipboard`]).
+    static CLIP: std::cell::RefCell<Reply> = std::cell::RefCell::new(Reply::none());
+}
+
+/// Notes `ev`'s clipboard half for the focused edit `focused`, read before the key edits it.
+fn note_clipboard(focused: Option<form::FocusedEdit>, ev: &Event) {
+    let clip = form_clipboard(focused, ev);
+    if clip.copy.is_some() || clip.paste {
+        CLIP.with_borrow_mut(|c| *c = std::mem::replace(c, Reply::none()).with_clipboard(clip));
+    }
+}
+
+/// The clipboard half the forms read while the program handled an event, taken.
+pub(crate) fn take_clipboard() -> Reply {
+    CLIP.take()
+}
+
 /// One event fed to a property sheet: a key through [`form_key`] with Ctrl+Tab
 /// and Ctrl+Page Down turning the page ([`propsheet::page_step`]), a left press
 /// hit-tested and clicked, a right press on a field readying it for the edit menu, motion tracked, a release released, Leave clearing
 /// what the pointer lit, a drop on a field ([`crate::fielddrop`]) heard as the
 /// open page's, a tick stepping a held scrollbar arrow, a blink timing the tip of an ellipsized
-/// label ([`Form::tip_tick`]). `None` is an event the host answers
+/// label ([`Form::tip_tick`]), clipboard keys and text for the focused field ([`form_clipboard`],
+/// `Event::Pasted`). `None` is an event the host answers
 /// itself. First the sheet fits the window ([`PropSheet::fit`], [`PropSheet::fit_tabs`]): a
 /// window cut short or narrow scrolls the page, and one cut narrow wraps the tabs to it. While an arrow is held the host keeps ticking ([`Ctx::want_tick`]).
 pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
@@ -126,9 +146,11 @@ fn sheet_event(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet
             .tip_tick()
             .then_some(propsheet::Event::Redraw)?,
         Event::Key(k) => {
+            note_clipboard(sheet.open().focused_edit(), ev);
             let ctrl_tab = propsheet::page_step(k.sym, k.mods.ctrl, k.mods.shift);
             sheet.key(form_key(k)?, ctrl_tab)
         }
+        Event::Pasted(text) => sheet.paste(text.clone()),
         Event::Pointer(PointerInput::Press {
             x,
             y,
@@ -191,8 +213,12 @@ pub fn form_input(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event>
         }
         Event::Key(k) => match hotkey_input(form, k, true) {
             Some(e) => e,
-            None => form.key(form_key(k)?),
+            None => {
+                note_clipboard(form.focused_edit(), ev);
+                form.key(form_key(k)?)
+            }
         },
+        Event::Pasted(text) => form.paste(text.clone()),
         Event::KeyUp(k) => hotkey_input(form, k, false)?,
         Event::Blink => form.tip_tick().then_some(form::Event::Redraw)?,
         Event::Pointer(PointerInput::Press {
@@ -592,6 +618,76 @@ mod tests {
         pw.key(EditKey::SelectAll);
         let secret = Some(form::FocusedEdit::Line(&pw));
         assert_eq!(form_clipboard(secret, &ctrl(b'c')).copy, None, "a secret");
+    }
+
+    /// A dialog that feeds its form through `form_input` alone gets the clipboard: the copy
+    /// and the paste request ride on the program's reply, and the pasted text lands.
+    #[test]
+    fn form_input_copies_cuts_and_pastes_for_a_spinner() {
+        use reprisekit::controls::form::{Control, Item};
+        use reprisekit::controls::updown::UpDown;
+        use reprisekit::raster::Rect;
+        let ctx = Ctx {
+            theme: reprisekit::theme::Theme::default(),
+            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
+                &reprisekit::theme::FontConfig::default(),
+            )),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: (200, 100),
+            maximized: false,
+            origin: (0, 0),
+            wake: crate::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            at_pick: false,
+            text_size: 100,
+        };
+        let ctrl = |ch: u8| {
+            Event::Key(KeyInput {
+                sym: u32::from(ch),
+                utf8: None,
+                mods: crate::Mods {
+                    ctrl: true,
+                    ..Default::default()
+                },
+                edit: reprisekit::textedit::key_for(u32::from(ch), true, false, None),
+            })
+        };
+        let mut form = Form::new(vec![Item::new(
+            "spin",
+            Rect::new(0, 0, 50, 20),
+            Control::UpDown(UpDown::new(15, 0, 99)),
+        )]);
+        form.focus_id("spin");
+        let value = |form: &Form| match &form.items[0].control {
+            Control::UpDown(u) => u.value(),
+            _ => unreachable!(),
+        };
+
+        form_input(&mut form, &ctrl(b'c'), &ctx);
+        assert_eq!(take_clipboard().copy.as_deref(), Some("15"));
+        assert_eq!(
+            form_input(&mut form, &ctrl(b'x'), &ctx),
+            Some(form::Event::Changed("spin"))
+        );
+        assert_eq!(
+            take_clipboard().copy.as_deref(),
+            Some("15"),
+            "read before the cut"
+        );
+        assert_eq!(value(&form), 0);
+        form_input(&mut form, &ctrl(b'v'), &ctx);
+        assert!(take_clipboard().paste);
+        assert_eq!(
+            form_input(&mut form, &Event::Pasted("42".into()), &ctx),
+            Some(form::Event::Changed("spin"))
+        );
+        assert_eq!(value(&form), 42);
+        assert_eq!(take_clipboard(), Reply::none(), "taken once");
     }
 
     /// Ctrl+Home and Ctrl+End take a memo's caret to its first and last

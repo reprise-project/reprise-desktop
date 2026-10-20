@@ -248,8 +248,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   opens Undo, Cut, Copy, Paste, Delete and Select All: in Run and the other
   dialogs, the Start menu's search, the launcher, the clipboard history, the
   emoji picker, a notification's reply field, the desktop's rename box, the
-  file dialogs' File name, Settings, and Explorer's address bar and rename
-  box.
+  file dialogs' File name, Settings and its dialogs, Explorer's address bar
+  and rename box, and every spin box.
   In the launcher and the Start menu's search those keys open a lit row's
   menu first. Paste greys while the clipboard holds no text, and a password
   field keeps Cut and Copy greyed.

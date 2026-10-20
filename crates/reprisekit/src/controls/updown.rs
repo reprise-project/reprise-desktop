@@ -145,12 +145,12 @@ impl UpDown {
             | EditKey::Right { .. }
             | EditKey::Home { .. }
             | EditKey::End { .. }
-            | EditKey::SelectAll => {}
-            EditKey::Copy
+            | EditKey::SelectAll
             | EditKey::Cut
-            | EditKey::Paste
-            | EditKey::Undo
-            | EditKey::DeleteSurrounding { .. } => return None,
+            | EditKey::Undo => {}
+            // The host copies the selection and pastes through `paste`.
+            EditKey::Copy | EditKey::Paste => return Some(false),
+            EditKey::DeleteSurrounding { .. } => return None,
         }
         edit.key(key.clone());
         let typed = edit.text.parse::<i32>().unwrap_or(self.min);
@@ -158,6 +158,26 @@ impl UpDown {
         let changed = next != self.value;
         self.value = next;
         Some(changed)
+    }
+
+    /// Clipboard text: a number (blanks around it dropped) goes in at the caret as typed digits
+    /// would; anything else is refused. Whether the value changed.
+    pub fn paste(&mut self, text: &str) -> bool {
+        let t = text.trim();
+        !t.is_empty()
+            && t.bytes().all(|b| b.is_ascii_digit())
+            && self.key(&EditKey::Insert(t.to_string())) == Some(true)
+    }
+
+    /// The digits being edited, while the field has the focus.
+    pub fn edit(&self) -> Option<&TextEdit> {
+        self.edit.as_ref()
+    }
+
+    /// A right press at byte `at`, ahead of the edit menu: inside the selection it stays,
+    /// anywhere else the caret moves there.
+    pub fn press_for_menu(&mut self, at: usize) {
+        self.edit_mut().press_for_menu(at);
     }
 
     pub fn digit(&mut self, d: char) -> bool {
@@ -364,10 +384,11 @@ pub fn draw(
                     px,
                 );
             }
-            c.fill_rect(
-                Rect::new(cx, tr.y + 2 * s, s, tr.height - 4 * s),
-                cs.button_text,
-            );
+            let bar = Rect::new(cx, tr.y + 2 * s, s, tr.height - 4 * s);
+            c.fill_rect(bar, cs.button_text);
+            if let Some(e) = &ud.edit {
+                c.report_spot(e.spot(lay.edit.scaled(s), bar));
+            }
         }
     } else {
         draw_disabled_label(
@@ -624,6 +645,39 @@ mod tests {
         let cx = x0 + text.measure("1", false, 11);
         assert_eq!(c.get(cx, 290), cs.button_text.argb(), "caret after the 1");
         assert_eq!(c.get(92, 290), cs.window.argb(), "no caret at the end");
+    }
+
+    #[test]
+    fn a_focused_field_reports_its_digits_for_the_edit_menu() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let p = classic_paint(&theme.colors, 1);
+        let l = layout(61, 282);
+        let mut ud = UpDown::new(10, 1, 9999);
+        let render = |ud: &UpDown, focused: bool| {
+            let mut c = Canvas::new(130, 320);
+            draw(&mut c, &text, &p, ud, &l, focused, None, 11);
+            c.take_spot()
+        };
+        assert_eq!(render(&ud, false), None, "an unfocused field reports none");
+        ud.enter();
+        let spot = render(&ud, true).expect("a focused field reports its spot");
+        assert_eq!(spot.field, l.edit, "the digits' part, not the arrows");
+        assert!(spot.selected && !spot.multiline && !spot.secret);
+        assert_eq!(spot.caret.x, 92, "the caret after the number");
+    }
+
+    #[test]
+    fn a_paste_takes_a_number_that_fits() {
+        let mut ud = UpDown::new(10, 1, 9999);
+        ud.enter();
+        assert!(ud.paste(" 250\n"));
+        assert_eq!(ud.value(), 250);
+        assert!(!ud.paste("12a"), "not a number");
+        assert!(!ud.paste(""));
+        ud.key(&EditKey::SelectAll);
+        assert!(!ud.paste("12345"), "more digits than the field holds");
+        assert_eq!(ud.value(), 250);
     }
 
     #[test]
