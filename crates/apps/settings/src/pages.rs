@@ -3962,7 +3962,7 @@ mod tests {
     }
 
     #[test]
-    fn the_monitor_shows_the_colour_then_the_picture() {
+    fn the_monitor_shows_the_colour_then_the_picture_and_keeps_it_while_the_next_is_read() {
         let text = TextRenderer::load(&FontConfig::default());
         let px = Theme::default().fonts.size_px;
         let at = Page::Background.index();
@@ -3986,8 +3986,12 @@ mod tests {
             c.get(r.x + sx + x, r.y + sy + y)
         };
         let bg = 0xFF10_2030;
-        backgroundpage::show(&mut s.pages[at], &want, "", None);
-        assert_eq!(at_screen(&s, 76, 56), bg, "no wallpaper: the colour");
+        backgroundpage::show(&mut s.pages[at], &want, "", None, true);
+        assert_eq!(
+            at_screen(&s, 76, 56),
+            bg,
+            "no picture shown yet: the colour, even with a picture on its way"
+        );
         // An 8 px red picture from a 960 px wide file on a 1920 px screen is centred at half the screen's width: 76 px of the 152.
         want.wallpaper = "/w/red.png".into();
         want.wallpaper_position = "center".into();
@@ -3998,7 +4002,7 @@ mod tests {
             canvas: Some(red),
             source_w: 960,
         };
-        backgroundpage::show(&mut s.pages[at], &want, "/w/red.png", Some(&pic));
+        backgroundpage::show(&mut s.pages[at], &want, "/w/red.png", Some(&pic), false);
         assert_eq!(
             at_screen(&s, 76, 56),
             0xFFFF_0000,
@@ -4010,8 +4014,20 @@ mod tests {
             "the colour round a centred picture"
         );
         want.wallpaper = "/w/blue.png".into();
-        backgroundpage::show(&mut s.pages[at], &want, "/w/blue.png", Some(&pic));
-        assert_eq!(at_screen(&s, 76, 56), bg);
+        backgroundpage::show(&mut s.pages[at], &want, "/w/blue.png", Some(&pic), true);
+        assert_eq!(
+            at_screen(&s, 76, 56),
+            0xFFFF_0000,
+            "red stays while blue is decoded"
+        );
+        backgroundpage::show(&mut s.pages[at], &want, "", None, true);
+        assert_eq!(
+            at_screen(&s, 76, 56),
+            0xFFFF_0000,
+            "red stays while a slideshow folder is listed"
+        );
+        backgroundpage::show(&mut s.pages[at], &want, "/w/blue.png", Some(&pic), false);
+        assert_eq!(at_screen(&s, 76, 56), bg, "blue did not decode: the colour");
     }
 
     #[test]
@@ -5397,7 +5413,13 @@ mod tests {
         let pic =
             crate::cursors::preview("Adwaita", 32, preview_size(Area::MIN), theme.colors.window);
         sheet.pages[Page::Pointers.index()].set_picture(CURSOR_PREVIEW, pic);
-        backgroundpage::show(&mut sheet.pages[Page::Background.index()], &two, "", None);
+        backgroundpage::show(
+            &mut sheet.pages[Page::Background.index()],
+            &two,
+            "",
+            None,
+            false,
+        );
         let mut lv = new_list();
         let entries: Vec<Entry> = [
             (
