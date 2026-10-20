@@ -6,7 +6,8 @@
 //! program's own menu. The menu shows on popups of its own ([`crate::menupopup`]).
 
 use reprisekit::controls::editmenu::{self, Live, Menu, Step};
-use reprisekit::controls::menu::MenuCtx;
+use reprisekit::controls::hosted::{Chain, Hosted};
+use reprisekit::controls::menu::{MenuCtx, PopupMenu};
 use reprisekit::textedit::{TextSpot, key_for};
 
 use crate::{BTN_RIGHT, Event, KeyInput, Mods, PointerInput, WinId};
@@ -21,8 +22,15 @@ pub(crate) struct EditMenu {
 struct Open {
     win: WinId,
     menu: Menu,
-    /// The point it opened at, in the window's coordinates.
-    at: (i32, i32),
+}
+
+impl Chain for Open {
+    fn chain(&self) -> &PopupMenu {
+        self.menu.chain()
+    }
+    fn chain_mut(&mut self) -> &mut PopupMenu {
+        self.menu.chain_mut()
+    }
 }
 
 /// What [`EditMenu::event`] did with an event.
@@ -58,6 +66,7 @@ pub(crate) fn pick_key(cmd: editmenu::Command) -> KeyInput {
 }
 
 impl EditMenu {
+    #[cfg(test)]
     pub fn is_open(&self, win: WinId) -> bool {
         self.open.as_ref().is_some_and(|o| o.win == win)
     }
@@ -113,7 +122,7 @@ impl EditMenu {
                 };
                 let at = editmenu::under_caret(spot);
                 let menu = Menu::open(Live::of(spot, paste), at, cx, true);
-                self.open = Some(Open { win, menu, at });
+                self.open = Some(Open { win, menu });
                 Outcome::Redraw
             }
             Event::Pointer(PointerInput::Press {
@@ -153,11 +162,7 @@ impl EditMenu {
             return false;
         };
         let menu = Menu::open(Live::of(spot, paste), (x, y), cx, false);
-        self.open = Some(Open {
-            win,
-            menu,
-            at: (x, y),
-        });
+        self.open = Some(Open { win, menu });
         true
     }
 
@@ -165,21 +170,11 @@ impl EditMenu {
         self.open.as_ref().filter(|o| o.win == win).map(|o| &o.menu)
     }
 
-    /// The open menu, its window and the point it opened at.
-    pub fn shown(&self) -> Option<(WinId, &Menu, (i32, i32))> {
-        self.open.as_ref().map(|o| (o.win, &o.menu, o.at))
-    }
-
-    /// Moves the open menu's level `i` to where its popup was put.
-    pub fn place(&mut self, i: usize, origin: (i32, i32)) {
-        if let Some(o) = self.open.as_mut() {
-            o.menu.place(i, origin);
-        }
-    }
-
-    /// Closes the menu without a pick: the compositor dismissed it.
-    pub fn dismiss(&mut self) {
-        self.open = None;
+    /// The open menu and its window, for its popups ([`crate::menupopup`]); dismissing it
+    /// closes the menu.
+    pub fn hosted(&mut self) -> Option<(WinId, Box<dyn Hosted + '_>)> {
+        let win = self.open.as_ref()?.win;
+        Some((win, Box::new(&mut self.open)))
     }
 
     /// Drops what belongs to a window `live` says is gone.

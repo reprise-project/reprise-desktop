@@ -16,6 +16,7 @@ use crate::controls::calendar::{self, Calendar};
 use crate::controls::colorbutton::{self, ColorButton};
 use crate::controls::combo::{self, Combo};
 use crate::controls::fit;
+use crate::controls::hosted::{Anchor, Hosted, Spot};
 use crate::controls::hotkey::{self, HotKey};
 use crate::controls::iconlist;
 use crate::controls::listbox::{self, ListBox};
@@ -557,6 +558,8 @@ pub struct Form {
     pub view: Option<View>,
     tip: LabelTip,
     rendered: Rendered,
+    /// A host shows the open combo list on a popup ([`Hosted`]): `draw` leaves it out.
+    hosted: bool,
 }
 
 /// The label the pointer rests on and how many blinks ([`Form::tip_tick`]) it has rested there.
@@ -600,6 +603,8 @@ struct Rendered {
     /// The last draw's scale, 0 before the first: a memo keeps its
     /// horizontal scroll in device px, which `hit` and `access` read at 1x.
     scale: Cell<i32>,
+    /// The last draw's text px.
+    px: Cell<u32>,
     /// Whether the last draw's look lights parts under the pointer
     /// ([`crate::look::Look::lights_pointer`]); any other lights only a
     /// held push button.
@@ -949,6 +954,7 @@ impl Form {
             view: None,
             tip: LabelTip::default(),
             rendered: Rendered::default(),
+            hosted: false,
         };
         let first = (0..form.items.len()).find(|&i| form.tab_stop(i));
         form.set_focus(first);
@@ -3621,6 +3627,7 @@ fn draw_choice_label(
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: bool, px: u32) {
     let Paint { cs, s, .. } = *p;
     form.drawn_with(p);
+    form.rendered.px.set(px);
     form.fit_text(text, px);
     form.lay_out_notes(text, s, px);
     form.rendered.ellipsized.borrow_mut().clear();
@@ -4080,7 +4087,7 @@ fn draw_open_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form,
     let cm = form.controls();
     for (i, it) in form.items.iter().enumerate() {
         match &it.control {
-            Control::Combo(combo) if combo.open.is_some() => {
+            Control::Combo(combo) if combo.open.is_some() && !form.hosted => {
                 let lay = combo::layout(combo, form.at(it), &cm);
                 combo::draw_list(
                     c,
@@ -4098,6 +4105,101 @@ fn draw_open_popups(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form,
             }
             Control::Color(b) if b.open => colorbutton::draw_popup(c, text, p, form.at(it), b, px),
             _ => {}
+        }
+    }
+}
+
+impl Form {
+    /// The open combo's item, if a combo's list is down.
+    fn open_list(&self) -> Option<usize> {
+        self.items
+            .iter()
+            .position(|i| matches!(&i.control, Control::Combo(c) if c.open.is_some()))
+    }
+}
+
+/// The open combo's list; dismissing it closes the list.
+impl Hosted for Form {
+    fn spots(&self) -> Vec<Spot> {
+        let Some(i) = self.open_list() else {
+            return Vec::new();
+        };
+        let it = &self.items[i];
+        let Control::Combo(c) = &it.control else {
+            return Vec::new();
+        };
+        let field = self.at(it);
+        let lay = combo::layout(c, field, &self.controls());
+        vec![Spot {
+            rect: lay.list,
+            anchor: Anchor::Below(field),
+        }]
+    }
+
+    fn place(&mut self, level: usize, origin: (i32, i32)) {
+        if level == 0
+            && let Some(i) = self.open_list()
+            && let Control::Combo(c) = &mut self.items[i].control
+        {
+            c.list_at = Some(origin);
+        }
+    }
+
+    fn shadow(&self, theme: &Theme) -> i32 {
+        combo::list_shadow(theme)
+    }
+
+    fn draw_level(
+        &self,
+        level: usize,
+        c: &mut Canvas,
+        by: (i32, i32),
+        theme: &Theme,
+        text: &TextRenderer,
+    ) {
+        let Some(i) = self.open_list().filter(|_| level == 0) else {
+            return;
+        };
+        let it = &self.items[i];
+        let Control::Combo(combo) = &it.control else {
+            return;
+        };
+        // As the form's own draw painted it.
+        let p = Paint {
+            text: self.rendered.text.get(),
+            s: self.rendered.scale.get().max(1),
+            ..theme.paint()
+        };
+        let lay = combo::layout(combo, self.at(it), &self.controls());
+        let moved = |r: Rect| Rect::new(r.x + by.0, r.y + by.1, r.width, r.height);
+        let px = match self.rendered.px.get() {
+            0 => theme.fonts.size_px,
+            px => px,
+        };
+        combo::draw_list(
+            c,
+            text.dialog(self.font),
+            &p,
+            &combo.items,
+            combo.open,
+            combo.top,
+            combo.rows,
+            moved(lay.list),
+            lay.scrollbar.map(moved),
+            self.bar_lit(i),
+            px,
+        );
+    }
+
+    fn host(&mut self) {
+        self.hosted = true;
+    }
+
+    fn dismiss(&mut self) {
+        if let Some(i) = self.open_list()
+            && let Control::Combo(c) = &mut self.items[i].control
+        {
+            c.open = None;
         }
     }
 }
@@ -7075,6 +7177,50 @@ mod tests {
 
     /// With the list open the wheel scrolls it, wherever the pointer is,
     /// and leaves the pick alone.
+    #[test]
+    fn a_hosted_combo_list_draws_alone_as_in_the_form_and_is_hit_where_it_was_put() {
+        use crate::controls::hosted::{Anchor, Hosted};
+        let theme = Theme::default();
+        let t = tr();
+        let items = ["a", "b", "c", "d", "e", "f"];
+        let mut f = Form::new(vec![Item::combo("c", 10, 10, 120, &items, 3)]);
+        assert!(f.spots().is_empty(), "nothing to show while closed");
+        f.click(at(&f, 20, 15));
+        let p = classic_paint(&theme.colors, 1);
+        let mut whole = Canvas::new(200, 120);
+        draw(&mut whole, &t, &p, &f, false, PX);
+        let spots = f.spots();
+        assert_eq!(spots.len(), 1);
+        assert_eq!(spots[0].anchor, Anchor::Below(f.rect("c").unwrap()));
+        let r = spots[0].rect;
+        let mut own = Canvas::new(r.width as u32, r.height as u32);
+        f.draw_level(0, &mut own, (-r.x, -r.y), &theme, &t);
+        for y in 0..r.height {
+            for x in 0..r.width {
+                assert_eq!(own.get(x, y), whole.get(r.x + x, r.y + y), "({x}, {y})");
+            }
+        }
+        f.host();
+        let mut bare = Canvas::new(200, 120);
+        draw(&mut bare, &t, &p, &f, false, PX);
+        assert_eq!(
+            bare.get(r.x + 5, r.y + 5),
+            0,
+            "the form leaves the list out"
+        );
+        f.place(0, (300, 400));
+        let row = (r.height - 2) / 3;
+        f.click(at(&f, 310, 401 + row + row / 2));
+        let Control::Combo(c) = &f.items[0].control else {
+            unreachable!()
+        };
+        assert_eq!(
+            (c.selected, c.open),
+            (1, None),
+            "the second row, where it was put"
+        );
+    }
+
     #[test]
     fn the_wheel_scrolls_an_open_combo_list() {
         let items = ["a", "b", "c", "d", "e", "f"];

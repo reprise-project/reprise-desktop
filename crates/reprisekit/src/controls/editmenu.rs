@@ -2,6 +2,7 @@
 //! like an Edit menu. A host opens [`tree`] as a [`PopupMenu`] and maps the chosen path back
 //! through [`command`], or holds a whole open [`Menu`] and runs a pick as its [`shortcut`].
 
+use super::hosted::Chain;
 use super::menu::{MenuAction, MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu};
 use crate::access::Tree;
 use crate::raster::{Canvas, Rect};
@@ -200,6 +201,15 @@ impl Menu {
     /// The menu's nodes under `parent`; the returned node takes the focus.
     pub fn access(&self, tree: &mut Tree, parent: NodeId) -> NodeId {
         self.chain.access(tree, parent, "editmenu")
+    }
+}
+
+impl Chain for Menu {
+    fn chain(&self) -> &PopupMenu {
+        &self.chain
+    }
+    fn chain_mut(&mut self) -> &mut PopupMenu {
+        &mut self.chain
     }
 }
 

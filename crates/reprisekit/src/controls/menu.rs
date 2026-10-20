@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 
 use crate::access::{self, Tree, accesskit};
+use crate::controls::hosted::{Anchor, Chain, Spot};
 use crate::metrics::StartMenuMetrics;
 use crate::raster::{Canvas, EdgeStyle, Insets, Rect};
 use crate::text::{Align, TextRenderer, split_mnemonic};
@@ -844,6 +845,10 @@ pub struct PopupMenu {
     /// Opened from the keyboard: the chain underlines its access keys
     /// whatever its host's cues say.
     pub(crate) keys: bool,
+    /// What the root opens off: the point it was asked at, before the clamp into `within`.
+    pub(crate) anchor: Anchor,
+    /// Shown on popups by a host ([`Hosted`]): [`PopupMenu::draw`] leaves it out.
+    hosted: bool,
 }
 
 fn level_layout(items: &[MenuItem], cx: &MenuCtx) -> MenuLayout {
@@ -871,6 +876,8 @@ impl PopupMenu {
                 hovered,
             }],
             keys: by_keyboard,
+            anchor: Anchor::Point(at.0, at.1),
+            hosted: false,
         }
     }
 
@@ -1073,6 +1080,9 @@ impl PopupMenu {
     /// casts it over what lies under it first.
     /// `underline` is the host's cue; a chain opened from the keyboard underlines regardless.
     pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer, underline: bool) {
+        if self.hosted {
+            return;
+        }
         for i in 0..self.levels.len() {
             self.draw_level(i, (0, 0), c, theme, text, underline);
         }
@@ -1112,6 +1122,33 @@ impl PopupMenu {
         );
     }
 
+    /// Each level's [`Spot`]: the root off its anchor, a submenu beside its row.
+    pub fn spots(&self) -> Vec<Spot> {
+        (0..self.levels.len())
+            .map(|i| Spot {
+                rect: self.levels[i].rect(),
+                anchor: match i {
+                    0 => self.anchor,
+                    _ => {
+                        let (rect, dy) = self.submenu_anchor(i).unwrap_or_default();
+                        Anchor::Beside { rect, dy }
+                    }
+                },
+            })
+            .collect()
+    }
+
+    /// Opens the root off `anchor` when a host shows it ([`PopupMenu::spots`]); `open`'s point
+    /// by default.
+    pub fn set_anchor(&mut self, anchor: Anchor) {
+        self.anchor = anchor;
+    }
+
+    /// The host shows the chain on popups: [`PopupMenu::draw`] leaves it out.
+    pub fn host(&mut self) {
+        self.hosted = true;
+    }
+
     /// Moves level `i` to `origin`, where its host's compositor put it.
     pub fn place(&mut self, i: usize, origin: (i32, i32)) {
         if let Some(level) = self.levels.get_mut(i) {
@@ -1130,6 +1167,15 @@ impl PopupMenu {
         let overlap = BORDER + INSET.left;
         let w = (parent.layout.width - 2 * overlap).max(1);
         Some((Rect::new(overlap, row.y, w, row.height), -INSET.top))
+    }
+}
+
+impl Chain for PopupMenu {
+    fn chain(&self) -> &PopupMenu {
+        self
+    }
+    fn chain_mut(&mut self) -> &mut PopupMenu {
+        self
     }
 }
 
@@ -2977,6 +3023,41 @@ mod tests {
         p.key(t, MenuKey::Right, cx);
         assert_eq!(p.depth(), 2);
         p
+    }
+
+    #[test]
+    fn a_hosted_chain_draws_nothing_in_its_window_and_opens_off_the_point_asked() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let cx = MenuCtx {
+            within: Rect::new(0, 0, 120, 80),
+            ..nested_ctx(&theme, &text)
+        };
+        let t = nested_tree();
+        let mut p = PopupMenu::open(&t, (100, 70), &cx, false);
+        assert_ne!(
+            (p.rect().x, p.rect().y),
+            (100, 70),
+            "pushed inside the window"
+        );
+        assert_eq!(
+            p.spots(),
+            [Spot {
+                rect: p.rect(),
+                anchor: Anchor::Point(100, 70)
+            }]
+        );
+        let drawn = |p: &PopupMenu| {
+            let mut c = Canvas::new(300, 200);
+            p.draw(&mut c, &theme, &text, false);
+            c.pixels.iter().any(|&px| px != 0)
+        };
+        assert!(drawn(&p));
+        p.host();
+        assert!(!drawn(&p));
+        p.place(0, (100, 70));
+        assert_eq!(p.rect().x, 100);
+        assert_eq!(p.hit(101, 72), Some((0, None)), "hit where it was put");
     }
 
     #[test]

@@ -111,6 +111,7 @@ use reprisefs::pipe::PasteBuf;
 pub use reprisekit;
 use reprisekit::access::{Gesture, Reveal, Route, Tree, accesskit};
 use reprisekit::controls::form;
+use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::menu::MenuCtx;
 use reprisekit::cues::Cues;
 use reprisekit::icontheme::{IconCache, IconTheme};
@@ -731,6 +732,13 @@ pub trait App {
     fn drop_form(&mut self, _win: WinId) -> Option<DropForm<'_>> {
         None
     }
+    /// The menu or drop list window `win` has open, which the host shows on popups of their own
+    /// ([`reprisekit::controls::hosted`]): the program keeps it and gets its input as the
+    /// window's, laid out where the compositor put each level. Asked before each draw. Defaults
+    /// to [`reader_popup`].
+    fn popup(&mut self, win: WinId, _ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        reader_popup(self, win)
+    }
     /// The form in window `win` that a screen reader's Focus and ScrollIntoView reach without a
     /// click: a row scrolls into view, a button takes the focus unpressed. Defaults to
     /// [`App::drop_form`].
@@ -754,6 +762,14 @@ pub trait App {
 
 /// A screen reader's `act` carried out on window `win`'s [`App::reader_form`], else its
 /// [`App::drop_file_dialog`]; what [`App::reader`] does unless a program answers it.
+/// The open combo list of [`App::reader_form`]'s form or sheet.
+pub fn reader_popup<A: App + ?Sized>(app: &mut A, win: WinId) -> Option<Box<dyn Hosted + '_>> {
+    match app.reader_form(win)? {
+        ReaderForm::Form(d) => Some(Box::new(d.form)),
+        ReaderForm::Sheet(s) => Some(Box::new(s)),
+    }
+}
+
 pub fn reader_forms<A: App + ?Sized>(app: &mut A, win: WinId, act: Reader, ctx: &Ctx) -> bool {
     let base = ctx.base_px();
     if let Some(f) = app.reader_form(win) {
@@ -1389,6 +1405,9 @@ pub fn run(app: Box<dyn App>) {
             .filter(|s| s.dirty && s.configured)
             .map(|s| s.id)
             .collect();
+        // Before the draws: an open menu on popups is left out of its window and laid out
+        // where it shows.
+        host.place_menu();
         for id in ready {
             if let Some(s) = host.slot_mut(id) {
                 s.dirty = false;
@@ -1773,7 +1792,11 @@ impl Host {
         self.slots[i].dirty |= self.edit_menu.is_pending(win);
         match out {
             editmenu::Outcome::Pass => false,
-            editmenu::Outcome::Taken | editmenu::Outcome::Redraw => true,
+            editmenu::Outcome::Taken => true,
+            editmenu::Outcome::Redraw => {
+                self.menu_changed(win);
+                true
+            }
             editmenu::Outcome::Run(k) => {
                 self.send(win, Event::Key(k));
                 true
@@ -3018,6 +3041,8 @@ impl Host {
             spot
         });
         self.slots[i].spot = spot.clone();
+        // The window's draw follows its model; so do its menu's popups.
+        self.menu_changed(id);
         let glass_top = canvas.take_glass_top();
         let glass_top = match reprisekit::look::client_glass(&self.ctx.theme, true) {
             Some(_) => glass_top.clamp(0, h),
@@ -3513,7 +3538,7 @@ impl KeyboardHandler for Host {
         let window = self.slot_of(surface);
         // A menu popup, open or just destroyed, or a window handing the keyboard to its menu:
         // where it went is known once the turn's events are in.
-        let to_menu = window.is_some_and(|id| self.edit_menu.is_open(id));
+        let to_menu = window.is_some_and(|id| self.has_menu(id));
         if window.is_none() && was_on.is_some() || to_menu {
             self.kb_settle = true;
             return;

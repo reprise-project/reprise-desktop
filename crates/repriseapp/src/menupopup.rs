@@ -1,9 +1,11 @@
-//! The edit menu on xdg_popups, so it shows whole past a short window's edges: one popup per
-//! [`PopupMenu`] level, placed by the compositor through an xdg_positioner and handed back to the
-//! chain in the window's coordinates once configured. Only the root takes a grab; submenus are
-//! plain children of it, so the keyboard stays on the root.
+//! Menus and drop lists on xdg_popups, so they show whole past a short window's edges: the edit
+//! menu and whatever a program's [`App::popup`] has open ([`Hosted`]). One popup per level,
+//! placed by the compositor through an xdg_positioner and handed back to the model in the
+//! window's coordinates once configured; input on a popup reaches the owner as the window's own.
+//! Only the root takes a grab; submenus are plain children of it, so the keyboard stays on the
+//! root.
 
-use reprisekit::controls::menu::{PopupMenu, level_shadow};
+use reprisekit::controls::hosted::{Anchor as Opens, Hosted, Spot};
 use reprisekit::raster::{Canvas, Rect};
 use smithay_client_toolkit::compositor::Region;
 use smithay_client_toolkit::reexports::protocols::xdg::shell::client::xdg_positioner::{
@@ -15,9 +17,10 @@ use smithay_client_toolkit::shm::slot::{Buffer, SlotPool};
 use wayland_client::protocol::{wl_shm, wl_surface};
 use wayland_client::{Connection, QueueHandle};
 
-use crate::{Host, Shell, WinId, copy_pixels};
+use crate::editmenu::EditMenu;
+use crate::{App, Ctx, Host, Shell, Slot, WinId, copy_pixels};
 
-/// The popups of the open menu, one per chain level, root first.
+/// The popups of the open menu, one per level, root first.
 pub(crate) struct MenuPopups {
     owner: WinId,
     levels: Vec<LevelSurface>,
@@ -25,22 +28,15 @@ pub(crate) struct MenuPopups {
 
 struct LevelSurface {
     popup: Popup,
-    /// The chain level's path this popup shows.
-    path: Vec<usize>,
+    /// The level as it was when its popup was made.
+    spot: Spot,
     /// Where the compositor put it, from its parent's corner; none until configured.
     at: Option<(i32, i32)>,
     /// Field order is drop order: the buffer before its pool.
     buffer: Option<Buffer>,
     pool: Option<SlotPool>,
-    drawn: Option<Drawn>,
-}
-
-/// What a level's last buffer showed: it draws again when any of it changes.
-#[derive(Clone, PartialEq)]
-struct Drawn {
-    level: reprisekit::controls::menu::Level,
-    underline: bool,
-    scale: i32,
+    /// The buffer shows the model as it is.
+    fresh: bool,
 }
 
 /// How a level's popup asks to be placed.
@@ -55,35 +51,39 @@ pub(crate) struct Placement {
     pub adjust: ConstraintAdjustment,
 }
 
-/// Level `i` of `chain`, the root opened at `at`: the root grows right and down from its point
-/// and flips or slides to stay on screen; a submenu opens right of its row, flipping left.
-pub(crate) fn placement(chain: &PopupMenu, i: usize, at: (i32, i32)) -> Option<Placement> {
-    let r = chain.levels().get(i)?.rect();
+/// How `spot`'s popup asks to be placed: a root off a point grows right and down and flips or
+/// slides on both axes; one under a rect flips above it; a submenu opens right of its row,
+/// flipping left.
+pub(crate) fn placement(spot: &Spot) -> Placement {
+    let r = spot.rect;
     let size = (r.width.max(1), r.height.max(1));
-    if i == 0 {
-        return Some(Placement {
+    let slide = ConstraintAdjustment::SlideX | ConstraintAdjustment::SlideY;
+    match spot.anchor {
+        Opens::Point(x, y) => Placement {
             size,
-            anchor_rect: Rect::new(at.0, at.1, 1, 1),
+            anchor_rect: Rect::new(x, y, 1, 1),
             anchor: Anchor::TopLeft,
             gravity: Gravity::BottomRight,
             offset: (0, 0),
-            adjust: ConstraintAdjustment::FlipX
-                | ConstraintAdjustment::FlipY
-                | ConstraintAdjustment::SlideX
-                | ConstraintAdjustment::SlideY,
-        });
+            adjust: ConstraintAdjustment::FlipX | ConstraintAdjustment::FlipY | slide,
+        },
+        Opens::Below(rect) => Placement {
+            size,
+            anchor_rect: Rect::new(rect.x, rect.y, rect.width.max(1), rect.height.max(1)),
+            anchor: Anchor::BottomLeft,
+            gravity: Gravity::BottomRight,
+            offset: (0, 0),
+            adjust: ConstraintAdjustment::FlipY | slide,
+        },
+        Opens::Beside { rect, dy } => Placement {
+            size,
+            anchor_rect: rect,
+            anchor: Anchor::TopRight,
+            gravity: Gravity::BottomRight,
+            offset: (0, dy),
+            adjust: ConstraintAdjustment::FlipX | slide,
+        },
     }
-    let (anchor_rect, dy) = chain.submenu_anchor(i)?;
-    Some(Placement {
-        size,
-        anchor_rect,
-        anchor: Anchor::TopRight,
-        gravity: Gravity::BottomRight,
-        offset: (0, dy),
-        adjust: ConstraintAdjustment::FlipX
-            | ConstraintAdjustment::SlideX
-            | ConstraintAdjustment::SlideY,
-    })
 }
 
 /// Each level's corner in the window's coordinates from where each popup was put against its
@@ -99,9 +99,38 @@ pub(crate) fn origins(at: &[Option<(i32, i32)>]) -> Vec<(i32, i32)> {
     out
 }
 
-/// How many of the popups showing `have` still show the chain's levels `want`.
-pub(crate) fn kept(have: &[&[usize]], want: &[&[usize]]) -> usize {
-    have.iter().zip(want).take_while(|(a, b)| a == b).count()
+/// How many popups made for `have` still fit the levels `want`: same anchor, same size. A
+/// placed level moves, so its corner does not count.
+pub(crate) fn kept(have: &[Spot], want: &[Spot]) -> usize {
+    let same = |a: &Spot, b: &Spot| {
+        a.anchor == b.anchor && (a.rect.width, a.rect.height) == (b.rect.width, b.rect.height)
+    };
+    have.iter()
+        .zip(want)
+        .take_while(|(a, b)| same(a, b))
+        .count()
+}
+
+/// The menu on popups: the edit menu over a field of `ids`, else the first of `ids` whose
+/// program has one open.
+fn hosted<'a>(
+    edit: &'a mut EditMenu,
+    app: &'a mut dyn App,
+    ctx: &mut Ctx,
+    slots: &[Slot],
+    ids: &[WinId],
+) -> Option<(WinId, Box<dyn Hosted + 'a>)> {
+    if edit.hosted().is_some_and(|(w, _)| ids.contains(&w)) {
+        return edit.hosted();
+    }
+    let mut ask = |app: &mut dyn App, id: WinId| {
+        if let Some(s) = slots.iter().find(|s| s.id == id) {
+            ctx.aim(s);
+        }
+        app.popup(id, ctx).is_some_and(|h| !h.spots().is_empty())
+    };
+    let id = ids.iter().copied().find(|&id| ask(app, id))?;
+    app.popup(id, ctx).map(|h| (id, h))
 }
 
 impl MenuPopups {
@@ -117,6 +146,10 @@ impl MenuPopups {
 
     fn owns(&self, surface: &wl_surface::WlSurface) -> bool {
         self.levels.iter().any(|l| l.popup.wl_surface() == surface)
+    }
+
+    fn spots(&self) -> Vec<Spot> {
+        self.levels.iter().map(|l| l.spot).collect()
     }
 
     /// Destroys the levels from `n` up, topmost first as the protocol asks.
@@ -142,6 +175,11 @@ impl Host {
             .map(|m| m.owner)
     }
 
+    /// Whether window `id`'s menu shows on popups.
+    pub(crate) fn has_menu(&self, id: WinId) -> bool {
+        self.menu_popups.as_ref().is_some_and(|m| m.owner == id)
+    }
+
     /// A point on a menu popup's `surface` in its owner's coordinates.
     pub(crate) fn menu_point(
         &self,
@@ -162,20 +200,50 @@ impl Host {
         self.edit_menu.retain(live);
     }
 
-    /// Brings the popups in line with the edit menu: a popup per level, each placed and drawn.
+    /// The menu's popups draw again: what they show changed.
+    pub(crate) fn menu_changed(&mut self, owner: WinId) {
+        if let Some(m) = self.menu_popups.as_mut().filter(|m| m.owner == owner) {
+            for l in &mut m.levels {
+                l.fresh = false;
+            }
+        }
+    }
+
+    /// The open menu's owner and levels, after the model hears that it is hosted and where its
+    /// configured levels are. Before each window draws, so the draw leaves the menu out and
+    /// lays it out where it shows.
+    pub(crate) fn place_menu(&mut self) -> Option<(WinId, Vec<Spot>)> {
+        let ids: Vec<WinId> = self
+            .slots
+            .iter()
+            .filter(|s| s.mapped && s.configured)
+            .map(|s| s.id)
+            .collect();
+        let (owner, mut h) = hosted(
+            &mut self.edit_menu,
+            &mut *self.app,
+            &mut self.ctx,
+            &self.slots,
+            &ids,
+        )?;
+        h.host();
+        if let Some(m) = self.menu_popups.as_ref().filter(|m| m.owner == owner) {
+            let keep = kept(&m.spots(), &h.spots());
+            let at: Vec<_> = m.levels[..keep].iter().map(|l| l.at).collect();
+            for (i, o) in origins(&at).into_iter().enumerate() {
+                h.place(i, o);
+            }
+        }
+        let spots = h.spots();
+        Some((owner, spots))
+    }
+
+    /// Brings the popups in line with the open menu: a popup per level, each placed and drawn.
     pub(crate) fn sync_menu(&mut self) {
-        let Some((owner, menu, at)) = self.edit_menu.shown() else {
+        let Some((owner, spots)) = self.place_menu() else {
             self.menu_popups = None;
             return;
         };
-        let chain = menu.chain().clone();
-        let ready = self
-            .slots
-            .iter()
-            .any(|s| s.id == owner && s.mapped && s.configured);
-        if !ready {
-            return;
-        }
         if self.menu_popups.as_ref().is_some_and(|m| m.owner != owner) {
             self.menu_popups = None;
         }
@@ -183,38 +251,29 @@ impl Host {
             owner,
             levels: Vec::new(),
         });
-        let have: Vec<&[usize]> = popups.levels.iter().map(|l| l.path.as_slice()).collect();
-        let want: Vec<&[usize]> = chain.levels().iter().map(|l| l.path.as_slice()).collect();
-        let keep = kept(&have, &want);
+        let keep = kept(&popups.spots(), &spots);
+        let changed = keep < popups.levels.len();
         popups.truncate(keep);
-        let at_list: Vec<_> = popups.levels.iter().map(|l| l.at).collect();
-        for (i, o) in origins(&at_list).into_iter().enumerate() {
-            self.edit_menu.place(i, o);
-        }
-        for i in 0..chain.depth() {
-            let n = self.menu_popups.as_ref().map_or(0, |m| m.levels.len());
-            if i < n {
-                continue;
-            }
+        for (i, spot) in spots.iter().enumerate().skip(keep) {
             // A submenu waits for its parent to show: it is placed against the parent's corner.
             let parent_shown = i == 0
                 || self
                     .menu_popups
                     .as_ref()
                     .is_some_and(|m| m.levels[i - 1].buffer.is_some());
-            if !parent_shown || !self.open_level(&chain, i, at) {
+            if !parent_shown || !self.open_level(spot, i) {
                 break;
             }
         }
         self.draw_menu();
-        self.publish(owner);
+        if changed || keep < spots.len() {
+            self.publish(owner);
+        }
     }
 
-    /// Opens level `i`'s popup; `false` when it could not be made.
-    fn open_level(&mut self, chain: &PopupMenu, i: usize, at: (i32, i32)) -> bool {
-        let Some(p) = placement(chain, i, at) else {
-            return false;
-        };
+    /// Opens level `i`'s popup for `spot`; `false` when it could not be made.
+    fn open_level(&mut self, spot: &Spot, i: usize) -> bool {
+        let p = placement(spot);
         let Some(owner) = self.menu_popups.as_ref().map(|m| m.owner) else {
             return false;
         };
@@ -282,60 +341,59 @@ impl Host {
             popup.xdg_popup().grab(seat, self.input_serial);
         }
         popup.wl_surface().commit();
-        let path = chain.levels()[i].path.clone();
         if let Some(m) = self.menu_popups.as_mut() {
             m.levels.push(LevelSurface {
                 popup,
-                path,
+                spot: *spot,
                 at: None,
                 buffer: None,
                 pool: None,
-                drawn: None,
+                fresh: false,
             });
         }
         true
     }
 
-    /// Draws each configured level whose look changed since its last buffer.
+    /// Draws each configured level whose buffer is behind the model, at the owner's scale and
+    /// with its access-key cue.
     fn draw_menu(&mut self) {
         let Some(owner) = self.menu_popups.as_ref().map(|m| m.owner) else {
             return;
         };
-        let Some(menu) = self.edit_menu.menu(owner) else {
-            return;
-        };
-        let chain = menu.chain().clone();
         let Some(slot) = self.slots.iter().find(|s| s.id == owner) else {
             return;
         };
         let scale = slot.scaling.drawn.max(1);
         let underline = slot.cues.keys;
+        let Some((_, h)) = hosted(
+            &mut self.edit_menu,
+            &mut *self.app,
+            &mut self.ctx,
+            &self.slots,
+            &[owner],
+        ) else {
+            return;
+        };
+        let spots = h.spots();
         let shm = &self.shm;
         let ctx = &mut self.ctx;
         let Some(popups) = self.menu_popups.as_mut() else {
             return;
         };
+        ctx.theme.access_keys = underline;
         for (i, ls) in popups.levels.iter_mut().enumerate() {
-            let Some(level) = chain.levels().get(i) else {
+            let Some(spot) = spots.get(i) else {
                 break;
             };
-            if ls.at.is_none() {
+            if ls.at.is_none() || ls.fresh {
                 continue;
             }
-            let now = Drawn {
-                level: level.clone(),
-                underline,
-                scale,
-            };
-            if ls.drawn.as_ref() == Some(&now) {
-                continue;
-            }
-            let r = level.rect();
-            let (w, h) = (r.width.max(1), r.height.max(1));
+            let r = spot.rect;
+            let (w, h_) = (r.width.max(1), r.height.max(1));
             let canvas = ctx.at_scale(scale, |ctx| {
-                let m = level_shadow(&ctx.theme);
-                let mut c = Canvas::with_scale((w + m) as u32, (h + m) as u32, scale);
-                chain.draw_level(i, (-r.x, -r.y), &mut c, &ctx.theme, &ctx.text, underline);
+                let m = h.shadow(&ctx.theme);
+                let mut c = Canvas::with_scale((w + m) as u32, (h_ + m) as u32, scale);
+                h.draw_level(i, &mut c, (-r.x, -r.y), &ctx.theme, &ctx.text);
                 c
             });
             let (bw, bh) = (canvas.width as i32 * scale, canvas.height as i32 * scale);
@@ -368,8 +426,9 @@ impl Host {
             }
             surface.commit();
             ls.buffer = Some(buffer);
-            ls.drawn = Some(now);
+            ls.fresh = true;
         }
+        ctx.theme.access_keys = false;
     }
 }
 
@@ -381,7 +440,7 @@ impl Host {
             .iter_mut()
             .flat_map(|m| m.levels.iter_mut())
         {
-            l.drawn = None;
+            l.fresh = false;
         }
     }
 }
@@ -401,22 +460,36 @@ impl PopupHandler for Host {
             return;
         };
         ls.at = Some(config.position);
-        // A moved level draws again; the reader's tree learns where it went.
-        ls.drawn = None;
+        // A moved level draws again; the window and the reader's tree learn where it went.
+        ls.fresh = false;
         let owner = m.owner;
         if let Some(s) = self.slot_mut(owner) {
             s.access.state.dirty = true;
+            s.dirty = true;
         }
     }
 
     fn done(&mut self, _: &Connection, _: &QueueHandle<Self>, popup: &Popup) {
-        if self
+        let Some(owner) = self
             .menu_popups
             .as_ref()
-            .is_some_and(|m| m.levels.iter().any(|l| &l.popup == popup))
-        {
-            self.menu_popups = None;
-            self.edit_menu.dismiss();
+            .filter(|m| m.levels.iter().any(|l| &l.popup == popup))
+            .map(|m| m.owner)
+        else {
+            return;
+        };
+        self.menu_popups = None;
+        if let Some((_, mut h)) = hosted(
+            &mut self.edit_menu,
+            &mut *self.app,
+            &mut self.ctx,
+            &self.slots,
+            &[owner],
+        ) {
+            h.dismiss();
+        }
+        if let Some(s) = self.slot_mut(owner) {
+            s.dirty = true;
         }
     }
 }
@@ -424,7 +497,7 @@ impl PopupHandler for Host {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reprisekit::controls::menu::{MenuCtx, MenuItem, MenuKey, MenuTree};
+    use reprisekit::controls::menu::{MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu};
     use reprisekit::text::TextRenderer;
     use reprisekit::theme::{FontConfig, Theme};
 
@@ -456,7 +529,8 @@ mod tests {
         let (theme, text) = (Theme::default(), TextRenderer::load(&FontConfig::default()));
         let t = tree();
         let p = chain(&t, &theme, &text);
-        let root = placement(&p, 0, (40, 30)).expect("the root's placement");
+        let spots = p.spots();
+        let root = placement(&spots[0]);
         let r = p.levels()[0].rect();
         assert_eq!(root.size, (r.width, r.height));
         assert_eq!(root.anchor_rect, Rect::new(40, 30, 1, 1));
@@ -474,11 +548,33 @@ mod tests {
     }
 
     #[test]
+    fn a_root_under_a_rect_hangs_from_its_left_end_and_flips_above_it() {
+        let title = Rect::new(30, 2, 37, 18);
+        let below = placement(&Spot {
+            rect: Rect::new(30, 20, 150, 90),
+            anchor: Opens::Below(title),
+        });
+        assert_eq!(below.size, (150, 90));
+        assert_eq!(below.anchor_rect, title);
+        assert_eq!(
+            (below.anchor, below.gravity, below.offset),
+            (Anchor::BottomLeft, Gravity::BottomRight, (0, 0))
+        );
+        assert_eq!(
+            below.adjust,
+            ConstraintAdjustment::FlipY
+                | ConstraintAdjustment::SlideX
+                | ConstraintAdjustment::SlideY,
+            "it flips above the rect, never beside it"
+        );
+    }
+
+    #[test]
     fn a_submenu_opens_off_its_row_and_flips_only_sideways() {
         let (theme, text) = (Theme::default(), TextRenderer::load(&FontConfig::default()));
         let t = tree();
         let p = chain(&t, &theme, &text);
-        let sub = placement(&p, 1, (40, 30)).expect("the submenu's placement");
+        let sub = placement(&p.spots()[1]);
         let (rect, dy) = p.submenu_anchor(1).unwrap();
         assert_eq!((sub.anchor_rect, sub.offset), (rect, (0, dy)));
         assert_eq!(
@@ -487,7 +583,6 @@ mod tests {
         );
         assert!(!sub.adjust.contains(ConstraintAdjustment::FlipY));
         assert!(sub.adjust.contains(ConstraintAdjustment::FlipX));
-        assert_eq!(placement(&p, 2, (40, 30)), None, "no third level");
     }
 
     #[test]
@@ -501,12 +596,38 @@ mod tests {
     }
 
     #[test]
-    fn popups_showing_the_chains_levels_are_kept_and_the_rest_go() {
-        let (root, a, b): (&[usize], &[usize], &[usize]) = (&[], &[1], &[2]);
-        assert_eq!(kept(&[root, a], &[root, a]), 2);
-        assert_eq!(kept(&[root, a], &[root, b]), 1, "another submenu opened");
-        assert_eq!(kept(&[root, a], &[root]), 1, "the submenu closed");
-        assert_eq!(kept(&[root], &[root, a]), 1, "a submenu to add");
-        assert_eq!(kept(&[], &[root]), 0);
+    fn popups_are_kept_while_their_level_opens_off_the_same_anchor_at_the_same_size() {
+        let spot = |x, w, anchor| Spot {
+            rect: Rect::new(x, 20, w, 90),
+            anchor,
+        };
+        let file = Opens::Below(Rect::new(4, 2, 30, 18));
+        let edit = Opens::Below(Rect::new(34, 2, 30, 18));
+        let row = Opens::Beside {
+            rect: Rect::new(3, 22, 140, 17),
+            dy: -3,
+        };
+        let other_row = Opens::Beside {
+            rect: Rect::new(3, 39, 140, 17),
+            dy: -3,
+        };
+        let have = [spot(4, 150, file), spot(150, 120, row)];
+        assert_eq!(
+            kept(&have, &[spot(600, 150, file), spot(9, 120, row)]),
+            2,
+            "a placed level moved, nothing else"
+        );
+        assert_eq!(
+            kept(&have, &[spot(4, 150, file), spot(150, 120, other_row)]),
+            1
+        );
+        assert_eq!(kept(&have, &[spot(4, 150, file)]), 1, "the submenu closed");
+        assert_eq!(
+            kept(&have, &[spot(34, 150, edit)]),
+            0,
+            "the next title's menu"
+        );
+        assert_eq!(kept(&have, &[spot(4, 160, file)]), 0, "the menu grew");
+        assert_eq!(kept(&[], &have), 0);
     }
 }

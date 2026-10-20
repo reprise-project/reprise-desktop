@@ -7,6 +7,7 @@
 //! way; on an unfocused window the titles ink grey.
 
 use crate::access::{self, Tree, accesskit};
+use crate::controls::hosted::{Anchor, Hosted, Spot};
 use crate::look::Paint;
 use crate::metrics::{ControlMetrics, MenuTitles};
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -647,6 +648,8 @@ pub struct Bar {
     pub hot: Option<usize>,
     pub banded: bool,
     popup: Option<crate::controls::menu::PopupMenu>,
+    /// A host shows the open menus on popups ([`Hosted`]): the bar's draw leaves them out.
+    hosted: bool,
 }
 
 fn chosen(title: usize, path: Vec<usize>) -> Action {
@@ -677,6 +680,7 @@ impl Bar {
             hot: None,
             banded: false,
             popup: None,
+            hosted: false,
         }
     }
 
@@ -738,6 +742,10 @@ impl Bar {
         );
         // The bar decides ([`Bar::underlined`]): arrowing on from a pointer-opened menu keeps them hidden.
         popup.keys = false;
+        popup.set_anchor(Anchor::Below(lay.frames[i]));
+        if self.hosted {
+            popup.host();
+        }
         self.popup = Some(popup);
         self.open = Some(i);
         self.active = Some(i);
@@ -1018,6 +1026,45 @@ impl Bar {
     }
 }
 
+/// The open title's menu; dismissing it closes the bar.
+impl Hosted for Bar {
+    fn spots(&self) -> Vec<Spot> {
+        self.popup
+            .as_ref()
+            .map(crate::controls::menu::PopupMenu::spots)
+            .unwrap_or_default()
+    }
+    fn place(&mut self, level: usize, origin: (i32, i32)) {
+        if let Some(p) = self.popup.as_mut() {
+            p.place(level, origin);
+        }
+    }
+    fn shadow(&self, theme: &crate::theme::Theme) -> i32 {
+        crate::controls::menu::level_shadow(theme)
+    }
+    fn draw_level(
+        &self,
+        level: usize,
+        c: &mut Canvas,
+        by: (i32, i32),
+        theme: &crate::theme::Theme,
+        text: &TextRenderer,
+    ) {
+        if let Some(p) = &self.popup {
+            p.draw_level(level, by, c, theme, text, self.underlined(theme));
+        }
+    }
+    fn host(&mut self) {
+        self.hosted = true;
+        if let Some(p) = self.popup.as_mut() {
+            p.host();
+        }
+    }
+    fn dismiss(&mut self) {
+        self.close();
+    }
+}
+
 impl Bar {
     pub fn access(&self, lay: &Layout, tree: &mut Tree, parent: NodeId) -> Option<NodeId> {
         let bar = tree.push(parent, "menubar", access::node(Role::MenuBar, lay.bar));
@@ -1074,6 +1121,48 @@ mod bar_tests {
             ("&File", file),
             ("&Edit", MenuTree::flat(vec![MenuItem::item("&Undo")])),
         ])
+    }
+
+    #[test]
+    fn a_hosted_bar_hangs_each_menu_under_its_title_and_draws_only_the_titles() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let px = theme.fonts.size_px;
+        let mut b = bar();
+        let lay = Layout::compute(
+            &text,
+            px,
+            Rect::new(0, 0, 300, 40),
+            &b.titles,
+            &MenuTitles::CLASSIC,
+        );
+        let drawn = |b: &Bar| {
+            let mut c = Canvas::new(300, 200);
+            b.draw(&mut c, &text, &theme, &lay);
+            c.pixels
+        };
+        let titles = drawn(&b);
+        b.open_title(0, &lay, &text, &theme, px, false);
+        assert_ne!(drawn(&b), titles, "an open menu draws in the window");
+        b.host();
+        let spots = b.spots();
+        assert_eq!(spots.len(), 1);
+        assert_eq!(spots[0].anchor, Anchor::Below(lay.frames[0]));
+        b.open_title(1, &lay, &text, &theme, px, false);
+        assert_eq!(b.spots()[0].anchor, Anchor::Below(lay.frames[1]));
+        assert_eq!(
+            drawn(&b),
+            {
+                let mut c = Canvas::new(300, 200);
+                b.draw_titles(&mut c, &text, &theme, &lay);
+                c.pixels
+            },
+            "a later title's menu is left out too"
+        );
+        b.place(0, (500, -90));
+        assert_eq!((b.spots()[0].rect.x, b.spots()[0].rect.y), (500, -90));
+        b.dismiss();
+        assert!(!b.is_active() && b.spots().is_empty());
     }
 
     #[test]
