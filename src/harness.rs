@@ -16,7 +16,10 @@ use wayland_client::{
         wl_shm, wl_shm_pool, wl_surface::WlSurface,
     },
 };
-use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_protocols::xdg::{
+    activation::v1::client::xdg_activation_v1::XdgActivationV1,
+    shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base},
+};
 
 use crate::{
     compositor::{ClientState, Host, State},
@@ -26,6 +29,22 @@ use crate::{
 
 /// `BTN_LEFT`.
 pub const LEFT: u32 = 0x110;
+
+/// The test process's own folder for the files a [`State`] saves; removed as the process exits.
+pub fn scratch() -> std::path::PathBuf {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    extern "C" fn remove() {
+        let _ = std::fs::remove_dir_all(dir());
+    }
+    fn dir() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("reprise-test-{}", std::process::id()))
+    }
+    // SAFETY: `remove` is a plain function that touches no state torn down before exit handlers.
+    ONCE.call_once(|| unsafe {
+        libc::atexit(remove);
+    });
+    dir()
+}
 
 pub struct Harness {
     pub event_loop: EventLoop<'static, State>,
@@ -39,9 +58,7 @@ impl Harness {
 
     pub fn with_config(config: Config) -> Harness {
         let event_loop: EventLoop<'static, State> = EventLoop::try_new().expect("event loop");
-        let config_path = std::env::temp_dir()
-            .join(format!("reprise-test-{}", std::process::id()))
-            .join("config.toml");
+        let config_path = scratch().join("config.toml");
         let state = State::on_display(
             config,
             config_path,
@@ -229,6 +246,9 @@ impl TestClient {
                 "xdg_wm_base" => {
                     self.side.wm_base = Some(registry.bind(name, version.min(6), &qh, ()));
                 }
+                "xdg_activation_v1" => {
+                    self.side.activation = Some(registry.bind(name, 1, &qh, ()));
+                }
                 "wl_seat" => {
                     let seat: wl_seat::WlSeat = registry.bind(name, version.min(7), &qh, ());
                     self.side.keyboard = Some(seat.get_keyboard(&qh, ()));
@@ -259,6 +279,13 @@ impl TestClient {
             size: (0, 0),
         });
         i
+    }
+
+    /// Ask to raise toplevel `t` with activation `token`, as a program handed one does.
+    pub fn activate(&self, token: &str, t: Toplevel) {
+        (self.side.activation.as_ref())
+            .expect("xdg_activation_v1")
+            .activate(token.into(), &self.side.shells[t.shell].surface);
     }
 
     /// Destroy toplevel `t`'s role objects, as a client closing it does.
@@ -305,6 +332,7 @@ pub struct ClientSide {
     compositor: Option<WlCompositor>,
     shm: Option<wl_shm::WlShm>,
     wm_base: Option<xdg_wm_base::XdgWmBase>,
+    activation: Option<XdgActivationV1>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     pub shells: Vec<Shell>,
     /// Each key event the keyboard heard: its evdev code and whether it went down.
@@ -420,6 +448,7 @@ wc::delegate_noop!(ClientSide: ignore wl_shm::WlShm);
 wc::delegate_noop!(ClientSide: ignore wl_shm_pool::WlShmPool);
 wc::delegate_noop!(ClientSide: ignore WlBuffer);
 wc::delegate_noop!(ClientSide: ignore wl_seat::WlSeat);
+wc::delegate_noop!(ClientSide: ignore XdgActivationV1);
 
 #[test]
 fn a_headless_state_maps_a_clients_toplevel_on_its_output() {

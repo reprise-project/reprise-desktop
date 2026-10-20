@@ -660,7 +660,7 @@ mod tests {
     fn hidden_two() -> (Harness, TreeId) {
         let mut h = Harness::new();
         h.output("TEST-1", 1024, 768);
-        let (tx, wake) = crate::tray::headless(&mut h.state);
+        let (tx, wake, _) = crate::tray::headless(&mut h.state);
         for id in ["a", "b"] {
             tx.send(TrayEvent::Added(passive(id))).expect("send");
         }

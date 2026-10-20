@@ -4296,4 +4296,46 @@ mod tests {
         let done = now + Duration::from_secs(10);
         assert_eq!(band(&stack[0].motion, false, done), Band::Resting);
     }
+
+    #[test]
+    fn a_notification_click_hands_its_program_a_token_that_raises_its_window() {
+        use crate::tray::{TrayCommand, TrayEvent};
+        use std::os::fd::AsRawFd;
+        const PID: i32 = i32::MAX - 637;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (tx, wake, heard) = crate::tray::headless(&mut h.state);
+        let mut c = h.connect();
+        let mail = h.map_toplevel(&mut c, "mail", 300, 200);
+        let other = h.map_toplevel(&mut c, "other", 300, 200);
+        assert_eq!(h.state.focused, Some(other.id));
+
+        let mut n = note(7, "Mail");
+        n.actions = vec![("default".into(), "Open".into())];
+        n.pid = Some(PID);
+        tx.send(TrayEvent::Notify(n)).expect("send");
+        // SAFETY: `wake` is an open eventfd and the buffer a live 8-byte local.
+        let wrote = unsafe { libc::write(wake.as_raw_fd(), (&1u64 as *const u64).cast(), 8) };
+        assert_eq!(wrote, 8);
+        h.dispatch();
+        invoke(&mut h.state, 7, "default");
+
+        let token = std::iter::from_fn(|| heard.try_recv().ok())
+            .find_map(|cmd| match cmd {
+                TrayCommand::ActionInvoked { id: 7, key, token } if key == "default" => token,
+                _ => None,
+            })
+            .expect("ActionInvoked carries a token");
+        assert!(
+            crate::mapfocus::take_recorded_launch(&[PID], None).is_some(),
+            "the sender's next window may take focus"
+        );
+        c.activate(&token, mail);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            h.state.focused,
+            Some(mail.id),
+            "the token raises the window"
+        );
+    }
 }

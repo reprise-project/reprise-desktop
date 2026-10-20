@@ -277,4 +277,36 @@ mod tests {
         assert_eq!(returns_to(Back::Dialog(1), &[w]), None);
         assert_eq!(returns_to(Back::Nobody, &[w]), None);
     }
+
+    #[test]
+    fn enter_on_a_grouped_button_with_pinned_off_opens_its_window_list() {
+        const KEY_ENTER: u32 = 28;
+        let mut config = crate::config::Config::default();
+        config.taskbar.pinned = false;
+        config.taskbar.buttons = crate::config::TaskbarButtons::Combine;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let b = h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.dispatch();
+        let tree = h.state.bars[0].tree;
+        let i = (h.state.bars[0].buttons.iter())
+            .position(|ws| ws.len() == 2)
+            .expect("one button holds both windows");
+        h.state.focus_bar_item(tree, TaskbarHit::Task(i));
+        let focused = h.state.focused;
+        h.key(KEY_ENTER, true);
+        h.key(KEY_ENTER, false);
+        assert_eq!(
+            h.state.menu_root(),
+            Some(crate::menuview::MenuRoot::WindowList(i))
+        );
+        assert_eq!(h.state.focused, focused, "no window is brought up yet");
+        assert!(
+            [a, b]
+                .iter()
+                .all(|t| h.state.win(t.id).is_some_and(|w| !w.minimized))
+        );
+    }
 }

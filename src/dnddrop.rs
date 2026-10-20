@@ -512,7 +512,7 @@ impl State {
                 .map(|items| sort(items, &target, dir.as_deref()));
             Box::new(move |state| state.drop_received(id, got))
         });
-        let deadline = Timer::from_duration(crate::fsjobs::ACTION_DEADLINE);
+        let deadline = Timer::from_duration(self.fsjobs.deadline());
         let armed = self.handle.insert_source(deadline, move |_, _, state| {
             state.drop_gave_up(id);
             TimeoutAction::Drop
@@ -533,7 +533,7 @@ impl State {
         let r = drops.remove(i);
         log::warn!(
             "drop: gave up on drop {id} after {:?}",
-            crate::fsjobs::ACTION_DEADLINE
+            self.fsjobs.deadline()
         );
         let title = give_up_title(r.answer.plan);
         end(r, None);
@@ -994,5 +994,83 @@ mod tests {
         );
         assert_eq!(heard(uris, None), (None, NONE));
         assert_eq!(heard(None, a(COPY)), (None, NONE));
+    }
+
+    /// A drag source that takes the drop's pipe and never writes, as a drop onto a folder on a
+    /// mount that stopped answering never sorts. Dropping the pipes ends the read.
+    #[derive(Default)]
+    struct Stall {
+        pipes: std::sync::Mutex<Vec<OwnedFd>>,
+        cancelled: std::sync::atomic::AtomicBool,
+    }
+
+    impl IsAlive for Stall {
+        fn alive(&self) -> bool {
+            true
+        }
+    }
+
+    impl Source for Stall {
+        fn metadata(&self) -> Option<smithay::input::dnd::SourceMetadata> {
+            Some(smithay::input::dnd::SourceMetadata {
+                mime_types: vec![dropdata::URI_LIST.into()],
+                dnd_actions: [DndAction::Move].into_iter().collect(),
+            })
+        }
+        fn choose_action(&self, _: DndAction) {}
+        fn send(&self, _: &str, fd: OwnedFd) {
+            self.pipes.lock().unwrap().push(fd);
+        }
+        fn drop_performed(&self) {}
+        fn cancel(&self) {
+            (self.cancelled).store(true, std::sync::atomic::Ordering::Release);
+        }
+        fn finished(&self) {}
+    }
+
+    #[test]
+    fn a_drop_whose_data_has_not_landed_by_its_deadline_is_refused_with_an_error_box() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.fsjobs.deadline = Some(Duration::from_millis(100));
+        crate::fsjobs::setup(&mut h.state);
+        let stall = std::sync::Arc::new(Stall::default());
+        let source = SeatSource::new(crate::dnd::Origin::Own(stall.clone()));
+        let over = Over {
+            target: DropTarget::Folder("/srv/share".into()),
+            mime: Some(dropdata::URI_LIST),
+            answer: Some(Answer {
+                action: DndAction::Move,
+                plan: Plan::Put(Some(DropOp::Move)),
+            }),
+            allowed: W_MOVE,
+        };
+        h.state.drop_released(source, over);
+        let titles = |h: &crate::harness::Harness| -> Vec<String> {
+            (h.state.dialogs.views.iter())
+                .map(|v| v.dialog.title.clone())
+                .collect()
+        };
+        let end = std::time::Instant::now() + Duration::from_secs(3);
+        while titles(&h).is_empty() {
+            assert!(
+                std::time::Instant::now() < end,
+                "timed out waiting for the give-up"
+            );
+            h.run_for(5);
+        }
+        assert_eq!(titles(&h), ["Error Moving File or Folder"]);
+        assert!(
+            stall.cancelled.load(std::sync::atomic::Ordering::Acquire),
+            "the source hears the drop is refused"
+        );
+        assert!(h.state.dnd.drops.receiving.is_empty());
+        stall.pipes.lock().unwrap().clear();
+        h.run_for(100);
+        assert_eq!(
+            titles(&h),
+            ["Error Moving File or Folder"],
+            "the read ending later changes nothing"
+        );
     }
 }

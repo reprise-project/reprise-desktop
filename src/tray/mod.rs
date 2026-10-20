@@ -656,9 +656,16 @@ pub fn setup(state: &mut State) {
 }
 
 /// The tray of a test, with no D-Bus thread: what is sent on the returned channel arrives
-/// once the returned eventfd is written, as the thread's events do.
+/// once the returned eventfd is written, as the thread's events do. The receiver hears the
+/// commands the thread would.
 #[cfg(test)]
-pub fn headless(state: &mut State) -> (std::sync::mpsc::Sender<TrayEvent>, OwnedFd) {
+pub fn headless(
+    state: &mut State,
+) -> (
+    std::sync::mpsc::Sender<TrayEvent>,
+    OwnedFd,
+    async_channel::Receiver<TrayCommand>,
+) {
     // SAFETY: plain syscall, no pointers.
     let raw = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
     assert!(raw >= 0, "eventfd");
@@ -666,9 +673,9 @@ pub fn headless(state: &mut State) -> (std::sync::mpsc::Sender<TrayEvent>, Owned
     let eventfd = unsafe { OwnedFd::from_raw_fd(raw) };
     let wake = eventfd.try_clone().expect("dup");
     let (tx, rx) = std::sync::mpsc::channel::<TrayEvent>();
-    let (commands, _) = async_channel::unbounded();
+    let (commands, heard) = async_channel::unbounded();
     install(state, eventfd, rx, commands, None);
-    (tx, wake)
+    (tx, wake, heard)
 }
 
 /// The tray reading `events` whenever `eventfd` is written.

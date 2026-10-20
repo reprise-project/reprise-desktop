@@ -29,6 +29,9 @@ pub struct FsJobs {
     files: Pool,
     /// Actions asked for by hand, apart from `files` so neither starves the other.
     actions: Pool,
+    /// How long an action or a drop waits before it gives up; None for [`ACTION_DEADLINE`].
+    /// Tests shorten it.
+    pub deadline: Option<Duration>,
 }
 
 /// Threads of one kind of job, at most [`MAX_THREADS`] at once.
@@ -69,6 +72,10 @@ fn run_one(run: OnLoop, state: &mut State) {
 }
 
 impl FsJobs {
+    pub fn deadline(&self) -> Duration {
+        self.deadline.unwrap_or(ACTION_DEADLINE)
+    }
+
     /// The channel's sending end, for a worker of its own that hands results to the loop.
     pub fn sender(&self) -> Option<Sender<OnLoop>> {
         self.tx.clone()
@@ -302,11 +309,12 @@ impl State {
             return true;
         };
         let gate = Gate::default();
-        let timer = Timer::from_duration(ACTION_DEADLINE);
+        let deadline = self.fsjobs.deadline();
+        let timer = Timer::from_duration(deadline);
         let watch = gate.clone();
         let armed = self.handle.insert_source(timer, move |_, _, state| {
             if let Some(changing) = watch.give_up() {
-                log::warn!("fsjobs: {} gave up after {ACTION_DEADLINE:?}", action.title);
+                log::warn!("fsjobs: {} gave up after {deadline:?}", action.title);
                 let text = action.not_responding(changing);
                 state.open_dialog(crate::dialog::Dialog::error(action.title, text));
             }
