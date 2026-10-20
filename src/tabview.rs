@@ -591,6 +591,67 @@ impl State {
         }
     }
 
+    /// Put `w` into `target`'s group in front of `before` (at the end when None) and show `show`,
+    /// else the tab that showed.
+    fn join_claimed(
+        &mut self,
+        w: WindowId,
+        target: WindowId,
+        before: Option<WindowId>,
+        show: Option<WindowId>,
+    ) {
+        let lead = self.tabs.groups.shown_of(target);
+        let members = self.tabs.groups.members_of(target);
+        let slot = before
+            .and_then(|b| members.iter().position(|&m| m == b))
+            .unwrap_or(usize::MAX);
+        if self.join_tabs_quiet(w, target, slot, false) {
+            self.select_tab(show.unwrap_or(lead));
+        }
+    }
+
+    /// Place again the windows restored tab slots moved: each joins its new slot's group in
+    /// tab order, or steps off its group when it holds no slot or no other member is back.
+    fn place_moved(&mut self) {
+        for m in self.session.regrouping.moved() {
+            match self.session.regrouping.placing(m) {
+                Claim::Join {
+                    target,
+                    before,
+                    show,
+                } => {
+                    let lead = self.tabs.groups.shown_of(target);
+                    self.leave_tabs_quiet(m);
+                    self.join_claimed(m, target, before, show.or(Some(lead)));
+                }
+                Claim::First | Claim::None => {
+                    if self.leave_tabs_quiet(m) {
+                        self.step_off_group(m);
+                    }
+                }
+            }
+        }
+    }
+
+    /// `w`'s title changed: a restored window guessed into a tab slot moves to the slot saved
+    /// with its title.
+    pub(crate) fn tab_retitled(&mut self, w: WindowId) {
+        let Some((app, title)) = self
+            .win(w)
+            .filter(|x| x.mapped)
+            .map(|x| (x.app(), x.title()))
+        else {
+            return;
+        };
+        if self
+            .session
+            .regrouping
+            .retitle(&app, &title, w, Instant::now())
+        {
+            self.place_moved();
+        }
+    }
+
     /// A window that just mapped joins the tab group it belongs in: the
     /// restored session's group it is back for, or else the group of the
     /// oldest open window its `tab_group` rule names that was not pulled
@@ -611,16 +672,7 @@ impl State {
                 target,
                 before,
                 show,
-            } => {
-                let lead = self.tabs.groups.shown_of(target);
-                let members = self.tabs.groups.members_of(target);
-                let slot = before
-                    .and_then(|b| members.iter().position(|&m| m == b))
-                    .unwrap_or(usize::MAX);
-                if self.join_tabs_quiet(w, target, slot, false) {
-                    self.select_tab(show.unwrap_or(lead));
-                }
-            }
+            } => self.join_claimed(w, target, before, show),
             Claim::None => {
                 if let Some(l) = self.win_mut(w).and_then(|x| x.tab_leader.take()) {
                     self.join_next_to(w, l);
@@ -636,6 +688,7 @@ impl State {
                 }
             }
         }
+        self.place_moved();
         if self.desktop_of(w) != desktop {
             self.desktops_changed();
         }

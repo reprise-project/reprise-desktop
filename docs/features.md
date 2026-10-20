@@ -307,8 +307,10 @@ are.
   groups come back in their tab order with the same tab shown, each where
   it was: same screen, size and maximized state, on the primary screen
   when its screen is gone. A window that opens with the title it had goes
-  back to its own group and tab; others fill their program's tabs in order.
-  A program
+  back to its own group and tab; others fill their program's tabs in order,
+  and move to their own tab when they take its title within 10 seconds. A
+  window with the title of one the program had outside any group stays out
+  of the groups. A program
   starts once; if its other grouped windows aren't back 4 seconds after a
   window of it appears, it starts again for each one missing that no
   earlier start is still bringing, never more often than it had windows.
