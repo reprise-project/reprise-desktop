@@ -30,26 +30,54 @@ const GRAY: [(&str, &str); 5] = [
 /// Adobe's size-matching tolerance, in points.
 const EPSILON: f64 = 5.0;
 
+/// Preset options by print-color-mode (monochrome, color) and print-quality
+/// (draft, normal, high), as libcups builds them from `*APPrinterPreset`.
+type Presets = [[Vec<(String, String)>; 3]; 2];
+
 /// `ppd` with the Default lines of the IPP options in `defaults` (media,
 /// sides, print-color-mode, print-quality and their values) set to the
-/// choices they map to, and the options that found a choice. Every other
-/// byte stays as it was.
+/// choices they map to, and the options that found a choice. Colour and
+/// quality also mark every option of the preset they pick, over the grey
+/// switch and quality option. Every other byte stays as it was.
 pub fn with_defaults(ppd: &[u8], defaults: &[(String, String)]) -> (Vec<u8>, Vec<String>) {
     let p = Parsed::new(ppd);
     let mut marks: Vec<(&str, &str)> = Vec::new();
     let mut applied = Vec::new();
+    let value_of = |name: &str| {
+        defaults
+            .iter()
+            .find(|(o, _)| o == name)
+            .map(|(_, v)| v.as_str())
+    };
     for (option, value) in defaults {
-        let mark = match option.as_str() {
+        let m = match option.as_str() {
             "media" => p.page_size(value).map(|c| ("PageSize", c)),
             "sides" => p.sides(value),
             "print-color-mode" => p.color(value),
             "print-quality" => p.quality(value),
             _ => None,
         };
-        if let Some(m) = mark {
-            marks.retain(|(k, _)| *k != m.0);
-            marks.push(m);
+        if let Some(m) = m {
+            mark(&mut marks, m);
             applied.push(option.clone());
+        }
+    }
+    let (color, quality) = (value_of("print-color-mode"), value_of("print-quality"));
+    if color.is_some() || quality.is_some() {
+        let preset: Vec<_> = p
+            .preset(color, quality)
+            .iter()
+            .filter_map(|(o, c)| Some((p.option(o)?, p.find(o, c)?)))
+            .collect();
+        if !preset.is_empty() {
+            for m in preset {
+                mark(&mut marks, m);
+            }
+            for o in ["print-color-mode", "print-quality"] {
+                if value_of(o).is_some() && !applied.iter().any(|a| a == o) {
+                    applied.push(o.to_string());
+                }
+            }
         }
     }
     let marked = |key: &str| {
@@ -80,6 +108,11 @@ pub fn with_defaults(ppd: &[u8], defaults: &[(String, String)]) -> (Vec<u8>, Vec
     (out, applied)
 }
 
+fn mark<'a>(marks: &mut Vec<(&'a str, &'a str)>, m: (&'a str, &'a str)) {
+    marks.retain(|(k, _)| *k != m.0);
+    marks.push(m);
+}
+
 /// The lines of `ppd`, each with its line ending.
 fn lines(ppd: &[u8]) -> impl Iterator<Item = &[u8]> {
     ppd.split_inclusive(|&b| b == b'\n')
@@ -99,6 +132,7 @@ fn default_line(line: &[u8]) -> Option<(&str, &str)> {
 struct Parsed {
     choices: Vec<(String, String)>,
     dims: Vec<(String, (f64, f64))>,
+    presets: Presets,
 }
 
 impl Parsed {
@@ -127,19 +161,73 @@ impl Parsed {
                 choices.push((key.to_string(), choice.to_string()));
             }
         }
-        Parsed { choices, dims }
+        let mut p = Parsed {
+            choices,
+            dims,
+            presets: presets(ppd),
+        };
+        p.gray_presets();
+        p
     }
 
-    fn choices_of(&self, option: &'static str) -> impl Iterator<Item = &str> {
+    fn choices_of<'a>(&'a self, option: &'a str) -> impl Iterator<Item = &'a str> {
         self.choices
             .iter()
             .filter(move |(k, _)| k == option)
             .map(|(_, c)| c.as_str())
     }
 
-    fn find(&self, option: &'static str, choice: &str) -> Option<&str> {
+    fn find<'a>(&'a self, option: &'a str, choice: &str) -> Option<&'a str> {
         self.choices_of(option)
             .find(|c| c.eq_ignore_ascii_case(choice))
+    }
+
+    /// `option` as this PPD spells it.
+    fn option(&self, option: &str) -> Option<&str> {
+        self.choices
+            .iter()
+            .find(|(k, _)| k == option)
+            .map(|(k, _)| k.as_str())
+    }
+
+    /// With no monochrome preset, libcups makes them from the colour ones
+    /// (or none, at normal quality) plus the grey switch.
+    fn gray_presets(&mut self) {
+        if self.presets[0].iter().any(|p| !p.is_empty()) {
+            return;
+        }
+        let Some((option, gray)) = GRAY.into_iter().find(|(o, g)| self.find(o, g).is_some()) else {
+            return;
+        };
+        for q in 0..3 {
+            if self.presets[1][q].is_empty() && q != 1 {
+                continue;
+            }
+            let mut mono = self.presets[1][q].clone();
+            mono.retain(|(o, _)| o != option);
+            mono.push((option.to_string(), gray.to_string()));
+            self.presets[0][q] = mono;
+        }
+    }
+
+    /// The preset cupsMarkOptions applies for a print-color-mode and
+    /// print-quality, falling back to normal quality, then to colour.
+    fn preset(&self, color: Option<&str>, quality: Option<&str>) -> &[(String, String)] {
+        let t = &self.presets;
+        let mut c = usize::from(color != Some("monochrome"));
+        let mut q = quality.map_or(1, |q| {
+            (q.trim().parse::<i64>().unwrap_or(0) - 3).clamp(0, 2) as usize
+        });
+        if t[c][q].is_empty() {
+            if !t[c][1].is_empty() {
+                q = 1;
+            } else if !t[1][q].is_empty() {
+                c = 1;
+            } else {
+                (c, q) = (1, 1);
+            }
+        }
+        &t[c][q]
     }
 
     /// The PageSize a PWG media keyword names: the size cupsd listed under
@@ -222,6 +310,70 @@ impl Parsed {
             .find(|c| names.iter().any(|n| c.eq_ignore_ascii_case(n)))?;
         Some((option, choice))
     }
+}
+
+/// The `*APPrinterPreset` table of `ppd`: the first preset for each slot,
+/// skipping Photo or coated-paper presets below high quality, as libcups does.
+fn presets(ppd: &[u8]) -> Presets {
+    let text = String::from_utf8_lossy(ppd);
+    let mut out = Presets::default();
+    let starts = text
+        .match_indices("*APPrinterPreset ")
+        .map(|(i, _)| i)
+        .filter(|&i| i == 0 || text.as_bytes()[i - 1] == b'\n');
+    for at in starts {
+        let rest = &text[at..];
+        let Some(open) = rest
+            .find(':')
+            .and_then(|c| rest[c..].find('"').map(|q| c + q + 1))
+        else {
+            continue;
+        };
+        let Some(len) = rest[open..].find('"') else {
+            continue;
+        };
+        let mut tokens = rest[open..open + len].split_whitespace();
+        let mut pairs = Vec::new();
+        while let (Some(k), Some(v)) = (tokens.next(), tokens.next()) {
+            pairs.push((k, v));
+        }
+        let get = |name: &str| {
+            pairs
+                .iter()
+                .rev()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| *v)
+        };
+        let Some(quality) = get("com.apple.print.preset.quality") else {
+            continue;
+        };
+        let q = match quality {
+            "low" => 0,
+            "high" => 2,
+            _ => 1,
+        };
+        let coated = get("com.apple.print.preset.media-front-coating")
+            .is_some_and(|c| c != "none" && c != "autodetect");
+        if q != 2 && (get("com.apple.print.preset.graphicsType") == Some("Photo") || coated) {
+            continue;
+        }
+        let mono = match (
+            get("com.apple.print.preset.output-mode"),
+            get("*ColorModel"),
+        ) {
+            (Some(mode), _) => mode == "monochrome",
+            (None, Some(model)) => model.eq_ignore_ascii_case("Gray"),
+            (None, None) => false,
+        };
+        let slot = &mut out[usize::from(!mono)][q];
+        if slot.is_empty() {
+            *slot = pairs
+                .iter()
+                .filter_map(|(k, v)| Some((k.strip_prefix('*')?.to_string(), v.to_string())))
+                .collect();
+        }
+    }
+    out
 }
 
 /// A `*Option Choice/Text: value` line as option, choice and value.
@@ -420,6 +572,187 @@ two\"\r
         );
         assert!(applied.is_empty());
         assert_eq!(out, plain);
+    }
+
+    /// The colour and quality part of the PPD cupsd writes for an IPP
+    /// Everywhere queue.
+    const EVERYWHERE: &str = "*PPD-Adobe: \"4.3\"
+*ColorDevice: True
+*OpenUI *cupsPrintQuality: PickOne
+*OrderDependency: 10 AnySetup *cupsPrintQuality
+*en.Translation cupsPrintQuality/Print Quality: \"\"
+*DefaultcupsPrintQuality: Normal
+*cupsPrintQuality Draft: \"<</HWResolution[300 300]>>setpagedevice\"
+*en.cupsPrintQuality Draft/Draft: \"\"
+*cupsPrintQuality Normal: \"<</HWResolution[600 600]>>setpagedevice\"
+*en.cupsPrintQuality Normal/Normal: \"\"
+*cupsPrintQuality High: \"<</HWResolution[1200 1200]>>setpagedevice\"
+*en.cupsPrintQuality High/High: \"\"
+*CloseUI: *cupsPrintQuality
+*OpenUI *ColorModel: PickOne
+*OrderDependency: 10 AnySetup *ColorModel
+*en.Translation ColorModel/Color Mode: \"\"
+*ColorModel Gray: \"<</cupsColorSpace 18/cupsBitsPerColor 8/cupsColorOrder 0/cupsCompression 0>>setpagedevice\"
+*en.ColorModel Gray/Grayscale: \"\"
+*ColorModel RGB: \"<</cupsColorSpace 19/cupsBitsPerColor 8/cupsColorOrder 0/cupsCompression 0>>setpagedevice\"
+*en.ColorModel RGB/Color: \"\"
+*DefaultColorModel: RGB
+*CloseUI: *ColorModel
+*APPrinterPreset Gray_with_Paper_Auto-Detect_-_Draft/Draft B&W: \"
+  *cupsPrintQuality Draft *ColorModel Gray
+  com.apple.print.preset.graphicsType General
+  com.apple.print.preset.quality low
+  com.apple.print.preset.media-front-coating autodetect
+  com.apple.print.preset.output-mode monochrome\"
+*End
+*APPrinterPreset Gray_with_Paper_Auto-Detect/Black and White: \"
+  *cupsPrintQuality Normal *ColorModel Gray
+  com.apple.print.preset.graphicsType General
+  com.apple.print.preset.quality mid
+  com.apple.print.preset.media-front-coating autodetect
+  com.apple.print.preset.output-mode monochrome\"
+*End
+*APPrinterPreset Color_with_Paper_Auto-Detect/Color: \"
+  *cupsPrintQuality Normal *ColorModel RGB
+  com.apple.print.preset.graphicsType General
+  com.apple.print.preset.quality mid
+  com.apple.print.preset.media-front-coating autodetect
+  com.apple.print.preset.output-mode color\"
+*End
+*APPrinterPreset Photo_with_Paper_Auto-Detect/Photo: \"
+  *cupsPrintQuality High *ColorModel RGB
+  com.apple.print.preset.graphicsType Photo
+  com.apple.print.preset.quality high
+  com.apple.print.preset.media-front-coating autodetect
+  com.apple.print.preset.output-mode color\"
+*End
+";
+
+    fn color_and_quality(ppd: &str, color: &str, quality: &str) -> Vec<String> {
+        let (out, applied) = set(
+            ppd,
+            &[("print-color-mode", color), ("print-quality", quality)],
+        );
+        assert_eq!(applied, ["print-color-mode", "print-quality"]);
+        defaults_in(&out).into_iter().map(String::from).collect()
+    }
+
+    #[test]
+    fn colour_and_quality_mark_the_preset_they_pick() {
+        assert_eq!(
+            color_and_quality(EVERYWHERE, "monochrome", "3"),
+            [
+                "*DefaultcupsPrintQuality: Draft",
+                "*DefaultColorModel: Gray"
+            ]
+        );
+        assert_eq!(
+            color_and_quality(EVERYWHERE, "color", "5"),
+            ["*DefaultcupsPrintQuality: High", "*DefaultColorModel: RGB"]
+        );
+    }
+
+    #[test]
+    fn a_missing_preset_falls_back_to_normal_quality() {
+        assert_eq!(
+            color_and_quality(EVERYWHERE, "monochrome", "5"),
+            [
+                "*DefaultcupsPrintQuality: Normal",
+                "*DefaultColorModel: Gray"
+            ]
+        );
+        assert_eq!(
+            color_and_quality(EVERYWHERE, "color", "3"),
+            [
+                "*DefaultcupsPrintQuality: Normal",
+                "*DefaultColorModel: RGB"
+            ]
+        );
+    }
+
+    #[test]
+    fn photo_and_coated_presets_count_only_at_high_quality() {
+        let ppd = "*PPD-Adobe: \"4.3\"
+*OpenUI *OutputMode: PickOne
+*DefaultOutputMode: Normal
+*OutputMode Draft/Draft: \"\"
+*OutputMode Normal/Normal: \"\"
+*OutputMode Best/Best: \"\"
+*CloseUI: *OutputMode
+*OpenUI *MediaType: PickOne
+*DefaultMediaType: Plain
+*MediaType Plain/Plain Paper: \"\"
+*MediaType Glossy/Photo Paper: \"\"
+*CloseUI: *MediaType
+*OpenUI *ColorModel: PickOne
+*DefaultColorModel: RGB
+*ColorModel Gray/Grayscale: \"\"
+*ColorModel RGB/Color: \"\"
+*CloseUI: *ColorModel
+*APPrinterPreset Photo_Draft/Photo Draft: \"*OutputMode Draft *ColorModel RGB com.apple.print.preset.graphicsType Photo com.apple.print.preset.quality low\"
+*End
+*APPrinterPreset Glossy_Normal/Glossy: \"*OutputMode Normal *MediaType Glossy com.apple.print.preset.quality mid com.apple.print.preset.media-front-coating glossy\"
+*End
+*APPrinterPreset Plain_Draft/Fast Draft: \"*OutputMode Draft *MediaType Plain com.apple.print.preset.quality low\"
+*End
+*APPrinterPreset Glossy_Best/Photo on Photo Paper: \"*OutputMode Best *MediaType Glossy com.apple.print.preset.graphicsType Photo com.apple.print.preset.quality high com.apple.print.preset.media-front-coating glossy\"
+*End
+";
+        let (out, _) = set(
+            ppd,
+            &[("print-color-mode", "color"), ("print-quality", "5")],
+        );
+        assert_eq!(
+            defaults_in(&out),
+            [
+                "*DefaultOutputMode: Best",
+                "*DefaultMediaType: Glossy",
+                "*DefaultColorModel: RGB"
+            ]
+        );
+        let (out, _) = set(
+            ppd,
+            &[("print-color-mode", "color"), ("print-quality", "3")],
+        );
+        assert_eq!(
+            defaults_in(&out),
+            [
+                "*DefaultOutputMode: Draft",
+                "*DefaultMediaType: Plain",
+                "*DefaultColorModel: RGB"
+            ],
+            "the Photo draft preset is passed over"
+        );
+        let (out, _) = set(
+            ppd,
+            &[("print-color-mode", "monochrome"), ("print-quality", "3")],
+        );
+        assert_eq!(
+            defaults_in(&out),
+            [
+                "*DefaultOutputMode: Draft",
+                "*DefaultMediaType: Plain",
+                "*DefaultColorModel: Gray"
+            ],
+            "with no grey preset, the colour one plus the grey switch"
+        );
+    }
+
+    #[test]
+    fn a_preset_without_a_quality_is_passed_over() {
+        let ppd = format!(
+            "{LASER}*APPrinterPreset ChartsAndGraphs/Charts & Graphs: \"
+\t*ColorModel RGB
+\tcom.apple.print.preset.graphicsType General\"
+*End
+"
+        );
+        let (out, _) = set(
+            &ppd,
+            &[("print-color-mode", "monochrome"), ("print-quality", "5")],
+        );
+        assert!(out.contains("*DefaultColorModel: Gray\r\n"));
+        assert!(out.contains("*DefaultcupsPrintQuality: High\r\n"));
     }
 
     #[test]
