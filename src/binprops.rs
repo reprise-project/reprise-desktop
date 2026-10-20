@@ -61,9 +61,9 @@ const SIZE: (i32, i32) = (338, 376);
 const STOPS: usize = 101;
 const TICK_EVERY: usize = 10;
 
-/// The "Do not move files" pair, trackbar, percentage and caption both pages
-/// share, with the page's own x for each (inside the Global group box; a
-/// drive's are 9 px further left). `live` greys the lot when off; the
+/// The "Do not move files" pair, trackbar, percentage and caption (one label
+/// per line, at most two) both pages share, with the page's own x for each
+/// (inside the Global group box; a drive's are 9 px further left). `live` greys the lot when off; the
 /// trackbar and labels also grey while files are not moved.
 #[allow(clippy::too_many_arguments)]
 fn size_controls(
@@ -71,14 +71,14 @@ fn size_controls(
     bar_x: i32,
     pct_x: i32,
     caption_x: i32,
-    caption: &str,
+    caption: &[&str],
     rule: Rule,
     live: bool,
 ) -> Vec<Item> {
     let mut bar = TrackBar::new(usize::from(rule.max_percent), STOPS).paged(TICK_EVERY, TICK_EVERY);
     let sized = live && !rule.remove_immediately;
     bar.enabled = sized;
-    vec![
+    let mut items = vec![
         Item::check(
             "no_bin",
             check_x,
@@ -107,8 +107,12 @@ fn size_controls(
             Align::Center,
         )
         .enabled(sized),
-        Item::label("size_l", Rect::new(caption_x, 197, 300, 13), caption).enabled(sized),
-    ]
+    ];
+    for (line, (id, text)) in ["size_l", "size_l2"].into_iter().zip(caption).enumerate() {
+        let y = 197 + 13 * line as i32;
+        items.push(Item::label(id, Rect::new(caption_x, y, 265, 13), text).enabled(sized));
+    }
+    items
 }
 
 impl BinSheet {
@@ -143,7 +147,7 @@ impl BinSheet {
             54,
             139,
             46,
-            "&Maximum size of Recycle Bin (percent of each drive)",
+            &["&Maximum size of Recycle Bin", "(percent of each drive)"],
             p.global,
             !p.independent,
         ));
@@ -175,7 +179,7 @@ impl BinSheet {
             45,
             130,
             37,
-            "&Maximum size of Recycle Bin (percent of drive)",
+            &["&Maximum size of Recycle Bin (percent of drive)"],
             rule,
             self.pending.independent,
         ));
@@ -453,6 +457,17 @@ mod tests {
     /// out 3 px below the box's top in Classic and 2 px in Blue and Glass, and
     /// the second line's "R" 13 px below the "D". The group's top line runs to
     /// x 29 and on from x 186 in every look.
+    #[test]
+    fn every_page_fits_its_text_in_every_look_and_size() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            let s = sheet();
+            let mut pages = vec![("global".to_string(), s.page_global())];
+            pages.extend(s.drives.iter().map(|d| (d.key.clone(), s.page_drive(d))));
+            pages
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
     #[test]
     fn the_do_not_move_second_line_follows_the_label_in_every_look() {
         if !reprisekit::text::test_tahoma() {
