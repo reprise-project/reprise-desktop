@@ -450,18 +450,20 @@ impl Wayland {
         self.capture_on(&session.session, Which::Main, buf, wait)
     }
 
-    pub fn capture_cursor(
-        &mut self,
-        session: &CaptureSession,
-        buf: &ShmBuffer,
-        wait: Duration,
-    ) -> Result<bool, CaptureError> {
-        let Some((_, capture)) = session.cursor.as_ref() else {
-            return Ok(false);
-        };
+    /// [`Wayland::ask`] for the cursor's image; `None` without a cursor
+    /// session.
+    pub fn ask_cursor(&mut self, session: &CaptureSession, buf: &ShmBuffer) -> Option<Asked> {
+        let (_, capture) = session.cursor.as_ref()?;
         let capture = capture.clone();
-        self.capture_on(&capture, Which::Cursor, buf, wait)
-            .map(|()| true)
+        Some(self.ask_on(&capture, Which::Cursor, buf))
+    }
+
+    /// [`Wayland::answer`] for the cursor frame last asked for.
+    pub fn cursor_answer(&mut self) -> Option<Result<(), CaptureError>> {
+        if let Err(e) = pump(&mut self.queue, &mut self.state, Duration::ZERO) {
+            return Some(Err(e));
+        }
+        self.take_answer(Which::Cursor)
     }
 
     /// Ask for one frame into `buf` and return at once; [`Wayland::answer`]
