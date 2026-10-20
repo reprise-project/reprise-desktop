@@ -185,6 +185,8 @@ pub struct Bar {
     pub tray_open: bool,
     pub tray_reveal: reprisekit::anim::Slide,
     pub tray_reveal_drawn: i32,
+    #[cfg(test)]
+    pub draws: usize,
 }
 
 fn empty_layout() -> TaskbarLayout {
@@ -403,6 +405,8 @@ impl State {
             tray_open: false,
             tray_reveal: reprisekit::anim::Slide::at(0),
             tray_reveal_drawn: 0,
+            #[cfg(test)]
+            draws: 0,
         }
     }
 
@@ -713,6 +717,10 @@ impl State {
     /// An output out of the layout has an empty box: its bar hides and forgets
     /// its buttons, so neither a stale bar nor a closed window can be hit.
     fn redraw_taskbar_with(&mut self, bar: &mut Bar, tasks: &TaskWindows) {
+        #[cfg(test)]
+        {
+            bar.draws += 1;
+        }
         let b = self.layout_box(Some(&bar.output));
         if b.width <= 0 {
             self.scene.set_enabled(bar.tree, false);
