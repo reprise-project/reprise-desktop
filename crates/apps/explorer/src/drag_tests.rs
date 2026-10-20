@@ -896,6 +896,80 @@ fn the_drag_image_draws_again_at_another_scale() {
     assert!(b > r, "scale 2 wears the 64 px folder");
 }
 
+/// A folder's own icon file is decoded at an output's scale once the drag reaches it: the
+/// first image there is the listing's resampled, the next, asked for when the decode lands, is
+/// the file drawn again at that scale.
+#[test]
+fn a_dragged_icon_file_is_decoded_again_at_another_scale() {
+    let pics = tempfile::tempdir().expect("a temp dir");
+    let pic = pics.path().join("checks.png");
+    let mut checks = Canvas::new(64, 64);
+    for y in 0..64 {
+        for x in 0..64 {
+            checks.pixels[(y * 64 + x) as usize] = match (x + y) % 2 {
+                0 => 0xff00_0000,
+                _ => 0xffff_ffff,
+            };
+        }
+    }
+    std::fs::write(&pic, reprisekit::raster::to_png(&checks)).expect("png");
+    let mut ctx = test_ctx();
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let folder = dir.path().join("Pic");
+    std::fs::create_dir(&folder).expect("mkdir");
+    let entry = format!("[Desktop Entry]\nIcon={}\n", pic.display());
+    std::fs::write(folder.join(".directory"), entry).expect("write");
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.sv.mode = Mode::Icons;
+    let i = index_of(&ex, "Pic");
+    let c = cell(&ex, &ctx, i);
+    let at = centre(&ex, &ctx, i);
+    press(&mut ex, &mut ctx, at, BTN_LEFT);
+    let started = motion(&mut ex, &mut ctx, (at.0 + THRESHOLD + 1, at.1));
+    let grab = started.start_drag.expect("the drag started").grab;
+    // A device pixel of the folder icon and its right neighbour.
+    let (x, y) = (
+        c.x - (at.0 - grab.0) + 21 + 16,
+        c.y - (at.1 - grab.1) + 2 + 16,
+    );
+    let pair = |img: &Canvas| {
+        let s = img.scale();
+        let dw = img.device_size().0 as i32;
+        let p = (y * s * dw + x * s) as usize;
+        (img.pixels[p], img.pixels[p + 1])
+    };
+
+    let (one, _) = ex.drag_image(&mut ctx, 1).expect("an image");
+    let (a, b) = pair(&one);
+    assert_eq!(
+        a, b,
+        "scale 1 wears the checks decoded to 32 px, an even grey"
+    );
+    let (stretched, _) = ex.drag_image(&mut ctx, 2).expect("an image at scale 2");
+    let (a, b) = pair(&stretched);
+    assert_eq!(
+        a, b,
+        "until the decode lands scale 2 wears the 32 px grey resampled"
+    );
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !ex.wake(&mut ctx).redraw_drag {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the decode asks for the image again"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let (two, _) = ex.drag_image(&mut ctx, 2).expect("an image at scale 2");
+    let (a, b) = pair(&two);
+    let red = |p: u32| (p >> 16 & 0xff) as i32;
+    assert!(
+        (red(a) - red(b)).abs() >= 0x40,
+        "scale 2 wears the checks decoded at 64 px, dark beside light: {a:08x} {b:08x}"
+    );
+    assert!(!ex.wake(&mut ctx).redraw_drag, "nothing more to decode");
+}
+
 /// A Thumbnails drag carries each thumbnail's own picture in its frame, the frame centred in the cell.
 #[test]
 fn a_thumbnails_drag_image_carries_the_picture() {
