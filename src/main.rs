@@ -41,6 +41,8 @@ mod gammacontrol;
 mod glass;
 mod globalshortcuts;
 mod handlers;
+#[cfg(test)]
+mod harness;
 mod hoverfade;
 mod icon;
 mod iconedit;
@@ -305,17 +307,7 @@ fn run(
     }
     autostart::start(&mut state, session_begun);
 
-    event_loop.run(None, &mut state, |state| {
-        state.popups.cleanup();
-        state.refresh_toplevels();
-        state.refresh_workspaces();
-        sessionend::tick(state);
-        state.ime_field_sync();
-        state.decode_wanted_icons();
-        if let Err(e) = state.dh.flush_clients() {
-            log::warn!("flush: {e}");
-        }
-    })?;
+    event_loop.run(None, &mut state, State::turn_end)?;
     tray::shutdown(&mut state);
     // Open windows end with the session: their places and apps are what the next
     // one restores.

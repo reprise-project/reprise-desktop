@@ -414,11 +414,10 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn load() -> Session {
-        let p = crate::state::load();
+    pub fn from_persisted(p: &crate::state::Persisted) -> Session {
         Session {
-            apps: p.session,
-            tabs: p.session_tabs,
+            apps: p.session.clone(),
+            tabs: p.session_tabs.clone(),
             ..Session::default()
         }
     }

@@ -3205,4 +3205,46 @@ mod tests {
         };
         assert_eq!(anchored_position(&a, (120, 80), (50, 60)), (50, 60));
     }
+
+    /// Two mapped toplevels on one output with the desktop holding the keyboard; the second's
+    /// window marked override-redirect when `menu`.
+    fn behind_the_desktop(
+        menu: bool,
+    ) -> (
+        crate::harness::Harness,
+        crate::harness::TestClient,
+        crate::harness::Toplevel,
+        crate::harness::Toplevel,
+    ) {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "test.a", 300, 200);
+        let b = h.map_toplevel(&mut c, "test.b", 100, 80);
+        h.state.focus_desktop();
+        assert_eq!(h.state.focused, None);
+        if let Some(w) = h.state.win_mut(b.id) {
+            w.override_redirect = menu;
+        }
+        (h, c, a, b)
+    }
+
+    #[test]
+    fn a_closing_override_redirect_window_leaves_the_focus_where_it_is() {
+        let (mut h, mut c, a, b) = behind_the_desktop(true);
+        c.destroy(b);
+        h.roundtrip(&mut c);
+        assert!(h.state.win(b.id).is_none(), "the window went");
+        assert_eq!(h.state.focused, None, "the desktop keeps the keyboard");
+        assert!(h.state.win(a.id).is_some());
+    }
+
+    #[test]
+    fn a_closing_window_hands_the_focus_to_the_top_one() {
+        let (mut h, mut c, a, b) = behind_the_desktop(false);
+        c.destroy(b);
+        h.roundtrip(&mut c);
+        assert!(h.state.win(b.id).is_none());
+        assert_eq!(h.state.focused, Some(a.id));
+    }
 }
