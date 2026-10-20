@@ -184,6 +184,35 @@ pub fn draw_taskbar(
     }
 }
 
+/// Redraw only Start's part of `canvas`, which [`draw_taskbar`] drew for a state that
+/// [`TaskbarState::same_but_start`] matches with `state`.
+pub fn redraw_taskbar_start(
+    canvas: &mut Canvas,
+    theme: &Theme,
+    text: &TextRenderer,
+    start_text: &TextRenderer,
+    layout: &TaskbarLayout,
+    state: &TaskbarState,
+) {
+    let r = start_damage(theme, text, layout);
+    canvas.with_clip(r, |c| {
+        c.clear_rect(r);
+        draw_taskbar(c, theme, text, start_text, layout, state);
+    });
+}
+
+/// The bar's rect that [`TaskbarState`]'s Start fields reach: Start's cell, the orb's rows and
+/// Classic's focus ring.
+fn start_damage(theme: &Theme, text: &TextRenderer, layout: &TaskbarLayout) -> Rect {
+    let cell = layout.start_orb(true).unwrap_or(layout.start);
+    match theme.look {
+        Look::Classic => [false, true].into_iter().fold(cell, |r, pressed| {
+            r.union(&classic::taskbar::start_ring(theme, text, layout, pressed))
+        }),
+        Look::Styled(_) => cell,
+    }
+}
+
 /// Dispatch the orb's own buffer (`layout.start_orb`) to a skinned [`Style`]; `canvas` is sized to it. Classic's Start stays inside its bar.
 pub fn draw_start_above(
     canvas: &mut Canvas,
@@ -667,6 +696,120 @@ mod tests {
             tray_icons: vec![],
             clock: "00:00".into(),
         }
+    }
+
+    #[test]
+    fn redrawing_only_start_gives_the_bar_a_full_draw_gives() {
+        use crate::taskbar::{BarSpan, ClockText, Edge, TaskEntry, TaskbarCounts};
+        let text = TextRenderer::load(&FontConfig::default());
+        let counts = TaskbarCounts {
+            quick: 2,
+            pager: 2,
+            tasks: 3,
+            tray: 2,
+            show_desktop: true,
+            ..TaskbarCounts::default()
+        };
+        let state = |pressed: bool, hot: bool, focus: bool| {
+            let mut st = empty_taskbar_state();
+            st.start_pressed = pressed;
+            st.start_hot = hot;
+            st.start_focus = focus;
+            st.quick_icons = vec![None, None];
+            st.pager = vec![Default::default(); 2];
+            st.tasks = ["Terminal", "Files", "Notes"]
+                .map(|t| TaskEntry {
+                    title: t.into(),
+                    active: t == "Files",
+                    attention: false,
+                    icon: None,
+                    glow: None,
+                })
+                .into();
+            st.tray_icons = vec![None, None];
+            st
+        };
+        let states: Vec<_> = (0..8)
+            .map(|k| (k & 1 != 0, k & 2 != 0, k & 4 != 0))
+            .collect();
+        for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let base = theme_for(interface);
+            let start_text = match base.look.style() {
+                Some(st) => TextRenderer::load(&st.start_text.font()),
+                None => TextRenderer::load(&FontConfig::default()),
+            };
+            let shape = base.taskbar_shape();
+            for edge in [Edge::Bottom, Edge::Top, Edge::Left] {
+                let length = if edge.is_side() { 700 } else { 1000 };
+                let thickness = if edge.is_side() {
+                    120
+                } else {
+                    base.metrics.taskbar_height
+                };
+                let span = BarSpan {
+                    edge,
+                    length,
+                    thickness,
+                };
+                let clock = ClockText { time: 40, date: 60 };
+                let l = TaskbarLayout::compute_on(
+                    &base.metrics,
+                    &shape,
+                    span,
+                    true,
+                    counts,
+                    clock,
+                    Default::default(),
+                );
+                for s in [1, 2] {
+                    let theme = base.scaled(s);
+                    let layout = l.scaled(s);
+                    let draw = |st: &TaskbarState| {
+                        let mut c = Canvas::new(layout.width as u32, layout.height as u32);
+                        draw_taskbar(&mut c, &theme, &text, &start_text, &layout, st);
+                        c
+                    };
+                    for &(p0, h0, f0) in &states {
+                        let mut c = draw(&state(p0, h0, f0));
+                        for &(p1, h1, f1) in &states {
+                            let next = state(p1, h1, f1);
+                            assert!(next.same_but_start(&state(p0, h0, f0)));
+                            redraw_taskbar_start(
+                                &mut c,
+                                &theme,
+                                &text,
+                                &start_text,
+                                &layout,
+                                &next,
+                            );
+                            assert!(
+                                c.pixels == draw(&next).pixels,
+                                "{interface:?} {edge:?} scale {s}: ({p0} {h0} {f0}) -> ({p1} {h1} {f1})"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_state_differing_past_start_needs_a_full_draw() {
+        let base = empty_taskbar_state();
+        let mut clock = empty_taskbar_state();
+        clock.clock = "00:01".into();
+        assert!(!clock.same_but_start(&base), "the clock changed");
+        let mut focus = empty_taskbar_state();
+        focus.focus = Some(crate::taskbar::TaskbarHit::Start);
+        assert!(!focus.same_but_start(&base), "the focus moved");
+        let icon = Some(std::sync::Arc::new(Canvas::new(1, 1)));
+        let (mut a, mut b) = (empty_taskbar_state(), empty_taskbar_state());
+        a.start_icon = icon.clone();
+        b.start_icon = Some(std::sync::Arc::new(Canvas::new(1, 1)));
+        assert!(!a.same_but_start(&b), "another icon, even an equal one");
+        b.start_icon = icon;
+        b.start_pressed = true;
+        assert!(a.same_but_start(&b), "the same icon, Start pressed");
     }
 
     #[test]

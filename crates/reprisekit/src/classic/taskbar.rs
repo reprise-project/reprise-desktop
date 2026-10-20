@@ -7,6 +7,25 @@ use crate::taskbar::{TaskbarHit, TaskbarLayout, TaskbarState, quick_icon_origin}
 use crate::text::{Align, TextRenderer};
 use crate::theme::Theme;
 
+/// The dotted ring of a focused Start; it may reach past Start's cell.
+pub(crate) fn start_ring(
+    theme: &Theme,
+    text: &TextRenderer,
+    layout: &TaskbarLayout,
+    pressed: bool,
+) -> Rect {
+    let s = theme.scale.max(1);
+    let st = layout.start;
+    let o = if pressed { s } else { 0 };
+    let tw = text.measure("Start", true, theme.fonts.size_px);
+    Rect::new(
+        st.x + 19 * s + o,
+        st.y + 5 * s,
+        tw + 4 * s,
+        st.height - 6 * s,
+    )
+}
+
 /// Draw into `canvas` sized to `layout` (already scaled to `theme.scale`). The
 /// hilight line and ^ are turned to `layout.edge`; the rest draws upright at the layout's rects.
 pub fn draw_taskbar(
@@ -64,8 +83,7 @@ pub fn draw_taskbar(
         size,
     );
     if state.start_focus || state.focus == Some(crate::taskbar::TaskbarHit::Start) {
-        let tw = text.measure("Start", true, size);
-        let ring = Rect::new(label.x, st.y + 5 * s, tw + 4 * s, st.height - 6 * s);
+        let ring = start_ring(theme, text, layout, state.start_pressed);
         for x in (ring.x..ring.right()).step_by(2 * s as usize) {
             canvas.fill_rect(Rect::new(x, ring.y, s, s), cs.button_text);
             canvas.fill_rect(Rect::new(x, ring.bottom() - s, s, s), cs.button_text);
