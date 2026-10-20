@@ -2813,4 +2813,40 @@ mod tests {
             "the other output's bar is not drawn"
         );
     }
+
+    #[test]
+    fn opening_and_closing_start_redraws_only_starts_part_of_the_bar() {
+        for interface in ["classic", "glass"] {
+            let toml = format!("[appearance]\ninterface = \"{interface}\"\n");
+            let mut config = crate::config::Config::parse(&toml).unwrap();
+            config.startmenu_style = crate::config::StartMenuStyle::Glass;
+            let mut h = crate::harness::Harness::with_config(config);
+            h.output("TEST-1", 1024, 768);
+            let bar = h.state.bars[0].tree;
+            for open in [true, false] {
+                let before = h.state.bar(bar).unwrap().start_only_draws;
+                h.state.toggle_start(bar);
+                assert_eq!(h.state.start_panel.is_some(), open);
+                let b = h.state.bar(bar).unwrap();
+                assert_eq!(b.start_only_draws, before + 1, "{interface} open {open}");
+                let d = b.drawn.as_ref().unwrap();
+                assert_eq!(d.state.start_pressed, open);
+                let theme = h.state.config.theme.scaled(d.scale);
+                let mut want = Canvas::new(d.canvas.width, d.canvas.height);
+                let s = &h.state;
+                reprisekit::look::draw_taskbar(
+                    &mut want,
+                    &theme,
+                    &s.text,
+                    &s.start_text,
+                    &d.layout,
+                    &d.state,
+                );
+                assert!(
+                    d.canvas.pixels == want.pixels,
+                    "{interface} open {open}: the bar as a full draw gives it"
+                );
+            }
+        }
+    }
 }

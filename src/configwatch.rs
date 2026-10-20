@@ -278,6 +278,10 @@ pub fn reload(state: &mut State, cfg: Config) {
     }
     // The old config says which output keys changed.
     let old = std::mem::replace(&mut state.config, cfg);
+    // A bar's kept picture may be of the old theme or fonts.
+    for bar in &mut state.bars {
+        bar.drawn = None;
+    }
     // A turn between a row and a column drops the first band's width,
     // a length along the old axis.
     let bands =
