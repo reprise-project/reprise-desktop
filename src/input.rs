@@ -575,7 +575,7 @@ impl State {
             && self.seat.get_pointer().is_some_and(|p| !p.is_grabbed())
     }
 
-    fn owe_repoint(&mut self, time: InputTime, left: Duration) {
+    pub(crate) fn owe_repoint(&mut self, time: InputTime, left: Duration) {
         self.pointers.owed = Some(time);
         if self.pointers.settle_timer.is_some() {
             return;

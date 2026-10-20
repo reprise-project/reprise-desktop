@@ -558,6 +558,27 @@ mod tests {
     }
 
     #[test]
+    fn a_dialog_opened_under_a_resting_pointer_takes_the_desktop_tip_down() {
+        let mut h = crate::harness::Harness::new();
+        let out = h.output("TEST-1", 1024, 768);
+        let area = h.state.usable_area(Some(&out));
+        let (cx, cy) = (area.x + area.width / 2, area.y + area.height / 2);
+        h.pointer_to(f64::from(cx), f64::from(cy));
+        rest_on(&mut h.state, Target::Desktop(0), |_| {
+            Some(Tip::Icon(vec!["Recycle Bin".into()]))
+        });
+        h.state.open_dialog(crate::dialog::Dialog::error(
+            "Error",
+            "Under the pointer.".into(),
+        ));
+        h.run_for(u64::from(SHOW_MS) + 200);
+        assert!(
+            h.state.tooltip.shown.is_none() && h.state.tooltip.pending.is_none(),
+            "the pointer rests on the dialog, so the icon's tip stays down"
+        );
+    }
+
+    #[test]
     fn the_flyouts_tip_stays_put() {
         assert_eq!(chevron_tip(false, false), "Show hidden icons");
         assert_eq!(chevron_tip(false, true), "Show hidden icons");
