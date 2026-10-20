@@ -2421,6 +2421,17 @@ pub(crate) mod tests {
             let it = text.measure("it", false, px);
             assert_eq!(at(start + it), Some(2), "{mode:?}: after \"it\"");
             assert_eq!(at(start + 200), Some(5), "{mode:?}: past the end");
+            let off = |x, y| edit_index_at(&sv, &lay, x, y, &text, px);
+            assert_eq!(
+                off(start - 40, y - 60),
+                Some(0),
+                "{mode:?}: dragged above and left"
+            );
+            assert_eq!(
+                off(start + 200, y + 60),
+                Some(5),
+                "{mode:?}: dragged below and right"
+            );
         }
         assert_eq!(
             edit_index_at(
