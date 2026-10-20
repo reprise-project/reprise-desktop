@@ -665,6 +665,36 @@ impl SwitchAnimation {
 
 pub const EFFECTS_MS_MAX: u32 = 2000;
 
+/// How a menu or the Start panel opens over `[metrics] menu_fade_ms`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MenuAnimation {
+    None,
+    #[default]
+    Fade,
+    /// It unrolls from the side facing what opened it.
+    Slide,
+}
+
+impl MenuAnimation {
+    pub const ALL: [MenuAnimation; 3] = [
+        MenuAnimation::None,
+        MenuAnimation::Fade,
+        MenuAnimation::Slide,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            MenuAnimation::None => "none",
+            MenuAnimation::Fade => "fade",
+            MenuAnimation::Slide => "slide",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<MenuAnimation> {
+        MenuAnimation::ALL.into_iter().find(|v| v.name() == s)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EffectsConfig {
     pub window_animation: bool,
@@ -676,6 +706,8 @@ pub struct EffectsConfig {
     pub hover_out_ms: u32,
     pub taskbar_slide: bool,
     pub taskbar_hide_ms: u32,
+    /// The same under every interface.
+    pub menu_animation: MenuAnimation,
     /// On under every interface, unlike the switches above.
     pub session_fade: bool,
     pub session_fade_in_ms: u32,
@@ -695,6 +727,7 @@ impl EffectsConfig {
             hover_out_ms: 250,
             taskbar_slide: glass,
             taskbar_hide_ms: 200,
+            menu_animation: MenuAnimation::Fade,
             session_fade: true,
             session_fade_in_ms: 600,
             session_fade_out_ms: 400,
@@ -1950,6 +1983,7 @@ struct FileEffects {
     hover_out_ms: Option<i64>,
     taskbar_slide: Option<bool>,
     taskbar_hide_ms: Option<i64>,
+    menu_animation: Option<String>,
     session_fade: Option<bool>,
     session_fade_in_ms: Option<i64>,
     session_fade_out_ms: Option<i64>,
@@ -2487,6 +2521,14 @@ const UNREADABLE_NOTICE: &str = "Reprise could not read config.toml and started 
                                  defaults. `journalctl --user -t reprise` names the error.";
 
 impl Config {
+    /// How menus open: None when `menu_fade_ms` is 0 whatever `[effects] menu_animation` says.
+    pub fn menu_opening(&self) -> MenuAnimation {
+        match self.theme.metrics.menu_fade_ms {
+            0 => MenuAnimation::None,
+            _ => self.effects.menu_animation,
+        }
+    }
+
     pub fn default_path() -> PathBuf {
         repriseconf::config_path()
     }
@@ -3141,6 +3183,13 @@ impl Config {
             }
             if let Some(v) = e.session_fade {
                 fx.session_fade = v;
+            }
+            if let Some(name) = &e.menu_animation {
+                fx.menu_animation = MenuAnimation::from_name(name).ok_or_else(|| {
+                    format!(
+                        "effects: menu_animation must be \"none\", \"fade\" or \"slide\", got {name:?}"
+                    )
+                })?;
             }
             ms(e.window_open_ms, "window_open_ms", &mut fx.window_open_ms)?;
             ms(
@@ -4818,6 +4867,30 @@ mod tests {
                 .iter()
                 .any(|b| b.mods == mods && b.keysym == keysym && b.action == Action::EmojiPicker)
         );
+    }
+
+    #[test]
+    fn menus_fade_unless_told_to_slide_or_keep_still() {
+        let opening = |text: &str| Config::parse(text).unwrap().menu_opening();
+        assert_eq!(opening(""), MenuAnimation::Fade);
+        assert_eq!(
+            opening("[appearance]\ninterface = \"glass\"\n"),
+            MenuAnimation::Fade
+        );
+        assert_eq!(
+            opening("[effects]\nmenu_animation = \"slide\"\n"),
+            MenuAnimation::Slide
+        );
+        assert_eq!(
+            opening("[effects]\nmenu_animation = \"none\"\n"),
+            MenuAnimation::None
+        );
+        assert_eq!(
+            opening("[metrics]\nmenu_fade_ms = 0\n[effects]\nmenu_animation = \"slide\"\n"),
+            MenuAnimation::None,
+            "a 0 ms opening is no animation"
+        );
+        assert!(Config::parse("[effects]\nmenu_animation = \"roll\"\n").is_err());
     }
 
     #[test]
