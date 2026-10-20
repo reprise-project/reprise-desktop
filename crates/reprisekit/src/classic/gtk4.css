@@ -110,6 +110,9 @@ label:disabled, label:disabled:backdrop {
 }
 .view label:disabled, row label:disabled, tooltip label:disabled, headerbar label:disabled,
 button label:disabled { text-shadow: none; }
+headerbar popover.menu modelbutton label:disabled, .titlebar popover.menu modelbutton label:disabled {
+  text-shadow: inherit;
+}
 
 entry, entry:focus-within, entry:backdrop, spinbutton:not(.vertical),
 spinbutton:focus-within:not(.vertical), spinbutton:backdrop:not(.vertical) {

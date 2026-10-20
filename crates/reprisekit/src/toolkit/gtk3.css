@@ -191,6 +191,9 @@ headerbar:backdrop .title, .titlebar:backdrop .title, headerbar:backdrop .subtit
 .titlebar:backdrop .subtitle, headerbar:backdrop label, .titlebar:backdrop label {
   color: @reprise_inactive_caption_text;
 }
+/* GTK4 popovers are CSS children of the button that opens them */
+headerbar popover label:not(:disabled), .titlebar popover label:not(:disabled) { color: inherit; }
+headerbar popover label:disabled, .titlebar popover label:disabled { color: @insensitive_fg_color; }
 headerbar button label, .titlebar button label,
 headerbar:backdrop button label, .titlebar:backdrop button label { color: @theme_fg_color; }
 headerbar button:disabled label, .titlebar button:disabled label { color: @insensitive_fg_color; }
