@@ -1152,8 +1152,8 @@ fn reset_device(state: &mut State) {
 }
 
 /// The device reset's commit returned: unless the session went away or came back again
-/// meanwhile, re-read each output's state, drop its buffers and the frame whose vblank
-/// `Track::reset` forgot, then let the outputs render.
+/// meanwhile, re-read each output's state, zero its buffers' ages and drop the frame whose
+/// vblank `Track::reset` forgot, then let the outputs render.
 fn device_reset_done(state: &mut State, done: commit::Done<Vec<crtc::Handle>>) {
     let Some(b) = state.backend.as_mut() else {
         return;
@@ -1188,11 +1188,14 @@ fn finish_reset(state: &mut State) {
     };
     gated(b, "output state read");
     for s in b.surfaces.values() {
+        // Held buffers may be kept: `due` renders nothing until the return is handled and every
+        // render is queued in its own turn, so no pre-reset frame is queued after this.
+        debug_assert!(!s.track.busy(), "a commit job outlived the device reset");
         let mut c = lock(&s.compositor);
         if let Err(e) = c.reset_state() {
             log::warn!("{}: reset state: {e}", s.output.name());
         }
-        c.reset_buffers();
+        c.reset_buffer_ages_keep_held();
         if let Err(e) = c.frame_submitted() {
             log::warn!("{}: drop pending frame: {e}", s.output.name());
         }

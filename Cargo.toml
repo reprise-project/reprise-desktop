@@ -51,11 +51,12 @@ serde = "1"
 # Pinned to a commit on our fork: upstream master (far ahead of the last
 # release) plus a fix to `Rectangle::subtract_rects_many_in_place`, without
 # which the damage tracker redraws overlapping windows on every frame, and
-# `DrmCompositor::reposition_cursor` for pointer-only frames, and an
-# xdg_toplevel_icon_v1 fix that stops a request after its immutable error.
-# Back to upstream once all three are merged there.
-smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "d52f5da17ba2065b2dfe4d4dbade905f3b8e3a18", default-features = false }
-smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "d52f5da17ba2065b2dfe4d4dbade905f3b8e3a18" }
+# `DrmCompositor::reposition_cursor` for pointer-only frames, an
+# xdg_toplevel_icon_v1 fix that stops a request after its immutable error, and
+# `DrmCompositor::reset_buffer_ages_keep_held`, which keeps the buffers a VT
+# return would reallocate. Back to upstream once all four are merged there.
+smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "faf0e37066b241e3e54d12a574b591ce6bad56eb", default-features = false }
+smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "faf0e37066b241e3e54d12a574b591ce6bad56eb" }
 tempfile = "3"
 toml = "1"
 toml_edit = "0.25"
