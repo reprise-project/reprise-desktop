@@ -18,23 +18,40 @@ use reprisekit::text::TextRenderer;
 pub(crate) type Msg = reprisekit::access::Msg<WinId>;
 
 pub(crate) struct SlotAccess {
-    pub adapter: accesskit_unix::Adapter,
+    /// None until the accessibility bus answers (`reprisebus::a11y::when_bus_ready`).
+    pub adapter: Option<accesskit_unix::Adapter>,
     pub state: AccessState,
 }
 
 impl SlotAccess {
-    pub fn new(win: WinId, tx: &Sender<Msg>) -> SlotAccess {
-        let handler = || {
-            let tx = tx.clone();
-            Handler::new(win, move |m| {
-                let _ = tx.send(m);
-            })
-        };
+    /// `tx` is None while the accessibility bus has not answered.
+    pub fn new(win: WinId, tx: Option<&Sender<Msg>>) -> SlotAccess {
         SlotAccess {
-            adapter: accesskit_unix::Adapter::new(handler(), handler(), handler()),
+            adapter: tx.map(|tx| adapter(win, tx)),
             state: AccessState::new(),
         }
     }
+
+    /// Makes the adapter of a window that opened before the accessibility bus answered.
+    pub fn connect(&mut self, win: WinId, tx: &Sender<Msg>, focused: bool) {
+        if self.adapter.is_none() {
+            let mut a = adapter(win, tx);
+            if focused {
+                a.update_window_focus_state(true);
+            }
+            self.adapter = Some(a);
+        }
+    }
+}
+
+fn adapter(win: WinId, tx: &Sender<Msg>) -> accesskit_unix::Adapter {
+    let handler = || {
+        let tx = tx.clone();
+        Handler::new(win, move |m| {
+            let _ = tx.send(m);
+        })
+    };
+    accesskit_unix::Adapter::new(handler(), handler(), handler())
 }
 
 pub(crate) struct AccessState {
