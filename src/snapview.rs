@@ -2356,4 +2356,35 @@ mod tests {
             "the size from before the snap"
         );
     }
+
+    #[test]
+    fn a_keyboard_size_of_a_snapped_windows_outer_edge_takes_it_out_of_its_group() {
+        const KEY_ENTER: u32 = 28;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        super_arrow(&mut h, &mut c, KEY_LEFT);
+        assert!(
+            h.state.wm.snap.group_of(t.id).is_some(),
+            "snapped into the left half"
+        );
+        h.state.begin_key_size(t.id);
+        for key in [KEY_LEFT, KEY_RIGHT, KEY_ENTER] {
+            h.key(key, true);
+            h.key(key, false);
+            h.roundtrip(&mut c);
+        }
+        assert!(
+            !h.state.interaction.is_resize_of(t.id),
+            "Enter ends the size"
+        );
+        let w = h.state.win(t.id).expect("window");
+        assert!(w.frame_rect().x > 0, "the left edge moved in");
+        assert!(w.snapped.is_none(), "no size from before the snap");
+        assert!(
+            h.state.wm.snap.group_of(t.id).is_none(),
+            "out of its group, as a pointer size of that edge"
+        );
+    }
 }
