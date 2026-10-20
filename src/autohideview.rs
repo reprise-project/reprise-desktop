@@ -27,7 +27,7 @@ use crate::autohide::{AutoHide, Rules, Signals};
 use crate::compositor::State;
 use crate::config::Config;
 use crate::input::Interaction;
-use crate::menuview::{Menu, MenuFrom};
+use crate::menuview::Menu;
 use crate::raster::Rect;
 use crate::taskbarview::Bar;
 
@@ -110,7 +110,7 @@ fn rules(c: &Config) -> Rules {
 fn menu_holds(menus: &[Menu], out: &Output) -> bool {
     menus
         .first()
-        .is_some_and(|m| m.output == *out && m.from == MenuFrom::Bar)
+        .is_some_and(|m| m.output == *out && m.from.holds_bar())
 }
 
 fn attention_on(state: &State, out: &Output) -> bool {
@@ -439,7 +439,7 @@ pub fn config_changed(state: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::menuview::MenuKind;
+    use crate::menuview::{MenuFrom, MenuKind};
 
     fn test_output(name: &str) -> Output {
         Output::new(
