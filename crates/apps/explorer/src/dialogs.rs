@@ -596,10 +596,6 @@ impl Explorer {
         };
         let out = if let Some(form) = kept {
             match ev {
-                Event::Key(k) => match dialog_key(&k) {
-                    Some(key) => form.key(key),
-                    None => return Reply::none(),
-                },
                 Event::Pointer(PointerInput::Press {
                     x,
                     y,
@@ -616,21 +612,10 @@ impl Explorer {
                         form.click(hit)
                     }
                 }
-                // A push button acts on the release over it; the release
-                // also lets go of whatever the press held.
-                Event::Pointer(PointerInput::Release {
-                    button: BTN_LEFT, ..
-                }) => form.release(),
-                Event::Pointer(PointerInput::Motion { x, y }) => {
-                    let hit = form.hit(x, y, &self.dialog_text, self.forms.fonts.size_px);
-                    form.motion(x, y, hit)
-                }
-                Event::Pointer(PointerInput::Scroll { x, y, rows }) => {
-                    let hit = form.hit(x, y, &self.dialog_text, self.forms.fonts.size_px);
-                    form.wheel(hit, rows)
-                }
-                Event::Pointer(PointerInput::Leave) => form.leave(),
-                _ => return Reply::none(),
+                ev => match repriseapp::keys::form_input(form, &ev, ctx) {
+                    Some(out) => out,
+                    None => return Reply::none(),
+                },
             }
         } else {
             let Some(mut f) = self.box_form().or_else(|| self.replace_form()) else {

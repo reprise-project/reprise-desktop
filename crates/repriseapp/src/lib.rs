@@ -1675,7 +1675,10 @@ impl Host {
         );
         CLIPBOARD_FILES
             .set(offer.is_some_and(|o| o.with_mime_types(reprisefs::fileclip::source).is_some()));
-        let mut reply = self.app.event(win, ev, &mut self.ctx);
+        let mut reply = self
+            .app
+            .event(win, ev, &mut self.ctx)
+            .with_clipboard(keys::take_clipboard());
         reply.tick |= self.ctx.want_tick.take();
         self.apply(win, reply);
     }
