@@ -21,6 +21,7 @@ use reprisekit::controls::editmenu;
 use reprisekit::controls::filedlg::{CLIENT, DlgMode, Event as FileEvent, Fields, FileDlg};
 use reprisekit::controls::finddlg;
 use reprisekit::controls::form::{self, Control, Form, Item};
+use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::menu::{MenuCtx, MenuItem};
 use reprisekit::controls::menubar::{self, Action, Bar, Key};
 use reprisekit::controls::msgbox;
@@ -1827,6 +1828,16 @@ impl App for Notepad {
         reply
     }
 
+    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        if win != MAIN {
+            return repriseapp::reader_popup(self, win);
+        }
+        if self.bar.open.is_some() {
+            return Some(Box::new(&mut self.bar));
+        }
+        Some(Box::new(&mut self.context))
+    }
+
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
         let (form, px) = match win {
             GOTO => (self.goto.as_mut()?, None),
@@ -2693,6 +2704,47 @@ mod tests {
         np.event(MAIN, typed(0x75, Some("u"), false), &mut ctx);
         assert_eq!(np.edit.text(), "alpha", "Undo");
         repriseapp::fake_clipboard_text(false);
+    }
+
+    #[test]
+    fn the_open_menu_goes_to_the_host_and_the_window_draws_without_it() {
+        use reprisekit::controls::hosted::Anchor;
+        let mut ctx = test_ctx();
+        let mut np = Notepad::new(None);
+        let mut before = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+        np.draw_main(&mut before, &ctx);
+        assert!(np.popup(MAIN, &ctx).unwrap().spots().is_empty());
+
+        np.event(MAIN, typed(keysym::F10, None, true), &mut ctx);
+        let caret = np.context.as_ref().unwrap().rect();
+        let spots = np.popup(MAIN, &ctx).unwrap().spots();
+        assert_eq!(spots.len(), 1);
+        assert_eq!(spots[0].anchor, Anchor::Point(caret.x, caret.y));
+        np.popup(MAIN, &ctx).unwrap().host();
+        let mut after = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+        np.draw_main(&mut after, &ctx);
+        assert!(
+            before.pixels == after.pixels,
+            "the context menu is left out"
+        );
+        np.event(MAIN, typed(keysym::ESCAPE, None, false), &mut ctx);
+
+        np.event(MAIN, typed(keysym::F10, None, false), &mut ctx);
+        np.event(MAIN, typed(keysym::DOWN, None, false), &mut ctx);
+        let lay = np.bar_layout(&ctx);
+        let spots = np.popup(MAIN, &ctx).unwrap().spots();
+        assert_eq!(spots[0].anchor, Anchor::Below(lay.frames[0]), "File's menu");
+        np.popup(MAIN, &ctx).unwrap().host();
+        let mut open = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+        np.draw_main(&mut open, &ctx);
+        let r = spots[0].rect;
+        assert_eq!(
+            open.get(r.x + 10, r.bottom() - 4),
+            before.get(r.x + 10, r.bottom() - 4),
+            "the bar's menu is left out"
+        );
+        np.popup(MAIN, &ctx).unwrap().dismiss();
+        assert!(np.bar.open.is_none(), "a dismissed menu closes the bar");
     }
 
     #[test]
