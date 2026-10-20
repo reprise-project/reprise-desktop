@@ -1121,6 +1121,27 @@ fn settings_changes_defer_the_write() {
     }
 }
 
+#[test]
+fn a_blink_redraws_only_while_the_address_field_has_the_caret() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut ctx = test_ctx();
+    let ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let mut app = Lazy {
+        start: Start {
+            place: ex.place.clone(),
+            dir: None,
+            select: None,
+        },
+        inner: Some(ex),
+        units: TextUnits::ONE,
+    };
+    let _ = app.event(MAIN, Event::Resized, &mut ctx);
+    app.inner.as_mut().expect("the window").focus = Focus::View;
+    assert!(!app.event(MAIN, Event::Blink, &mut ctx).redraw);
+    app.inner.as_mut().expect("the window").focus = Focus::Address;
+    assert!(app.event(MAIN, Event::Blink, &mut ctx).redraw);
+}
+
 /// The host tells a text size change as a resize at the old size, then regrows a window still at
 /// its opening size to the size `initial_size` gives; a window the user sized keeps its size.
 #[test]
