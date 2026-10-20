@@ -932,6 +932,7 @@ impl State {
         }
         crate::tooltip::hover_start_panel(self, None);
         self.close_menu();
+        crate::recentwatch::lists_closed(self);
         v.search.stop(&self.handle);
         if self.editor().is_some() {
             self.restart_caret();
