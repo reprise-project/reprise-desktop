@@ -23,6 +23,7 @@ use std::time::Duration;
 use reprisefs::dropdata::{self, Dropped};
 use smithay::{
     input::dnd::{DndAction, Source},
+    reexports::calloop::timer::{TimeoutAction, Timer},
     reexports::wayland_server::protocol::wl_data_device_manager::DndAction as WlDndAction,
     utils::IsAlive,
 };
@@ -341,6 +342,15 @@ fn items(mime: &str, bytes: &[u8]) -> std::io::Result<Vec<Dropped>> {
     Ok(files.into_iter().map(Dropped::File).collect())
 }
 
+/// The error box's title for a drop given up before its op was settled.
+fn give_up_title(plan: Plan) -> &'static str {
+    match plan {
+        Plan::Put(Some(op)) | Plan::Ask(Some(op)) => op.failure_title(),
+        Plan::Link => DropOp::Shortcut.failure_title(),
+        Plan::Put(None) | Plan::Ask(None) => DropOp::Copy.failure_title(),
+    }
+}
+
 /// A source gone meanwhile hears nothing.
 fn end(r: Receiving, action: Option<DndAction>) {
     if !r.source.alive() {
@@ -502,6 +512,33 @@ impl State {
                 .map(|items| sort(items, &target, dir.as_deref()));
             Box::new(move |state| state.drop_received(id, got))
         });
+        let deadline = Timer::from_duration(crate::fsjobs::ACTION_DEADLINE);
+        let armed = self.handle.insert_source(deadline, move |_, _, state| {
+            state.drop_gave_up(id);
+            TimeoutAction::Drop
+        });
+        if let Err(e) = armed {
+            log::warn!("drop: no deadline for drop {id}: {}", e.error);
+        }
+    }
+
+    /// A drop whose data is still being read and sorted at its deadline (its target folder sits
+    /// on a mount that stopped answering) is refused with an error box; [`State::drop_received`]
+    /// drops its answer whenever it comes.
+    fn drop_gave_up(&mut self, id: u64) {
+        let drops = &mut self.dnd.drops.receiving;
+        let Some(i) = drops.iter().position(|r| r.id == id && r.waiting.is_none()) else {
+            return;
+        };
+        let r = drops.remove(i);
+        log::warn!(
+            "drop: gave up on drop {id} after {:?}",
+            crate::fsjobs::ACTION_DEADLINE
+        );
+        let title = give_up_title(r.answer.plan);
+        end(r, None);
+        let text = reprisefs::deadline::not_responding(true, false);
+        self.open_dialog(crate::dialog::Dialog::error(title, text));
     }
 
     /// The source hears the drop is done (or cancelled) with the action taken,
@@ -652,6 +689,19 @@ mod tests {
 
     fn plan(a: Option<Answer>) -> Option<(DndAction, Plan)> {
         a.map(|a| (a.action, a.plan))
+    }
+
+    #[test]
+    fn a_drop_given_up_is_titled_by_the_op_it_planned() {
+        assert_eq!(
+            give_up_title(Plan::Put(Some(DropOp::Move))),
+            "Error Moving File or Folder"
+        );
+        assert_eq!(give_up_title(Plan::Link), "Error Creating Shortcut");
+        assert_eq!(
+            give_up_title(Plan::Ask(None)),
+            "Error Copying File or Folder"
+        );
     }
 
     #[test]
