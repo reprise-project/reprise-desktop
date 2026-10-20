@@ -313,10 +313,8 @@ impl XdgShellHandler for State {
         positioner: PositionerState,
         token: u32,
     ) {
-        surface.with_pending_state(|state| {
-            state.geometry = positioner.get_geometry();
-            state.positioner = positioner;
-        });
+        surface.with_pending_state(|state| state.positioner = positioner);
+        self.unconstrain_popup(&surface);
         surface.send_repositioned(token);
     }
 

@@ -265,6 +265,19 @@ impl Harness {
     /// A `w`x`h` xdg popup on toplevel `t`, mapped with its first buffer, that asks for the
     /// seat's grab under the last keyboard enter's serial, as a menu does.
     pub fn map_popup(&mut self, c: &mut TestClient, t: Toplevel, w: i32, h: i32) -> Popup {
+        self.map_popup_with(c, t, w, h, |p| p.set_anchor_rect(0, 0, 1, 1))
+    }
+
+    /// [`Harness::map_popup`] with `place` setting the positioner's anchor, gravity and
+    /// constraint adjustments.
+    pub fn map_popup_with(
+        &mut self,
+        c: &mut TestClient,
+        t: Toplevel,
+        w: i32,
+        h: i32,
+        place: impl FnOnce(&xdg_positioner::XdgPositioner),
+    ) -> Popup {
         let qh = c.qh();
         let wm = c.side.wm_base.clone().expect("xdg_wm_base");
         let surface = (c.side.compositor.as_ref())
@@ -273,7 +286,7 @@ impl Harness {
         let xdg = wm.get_xdg_surface(&surface, &qh, ());
         let positioner = wm.create_positioner(&qh, ());
         positioner.set_size(w, h);
-        positioner.set_anchor_rect(0, 0, 1, 1);
+        place(&positioner);
         let popup = xdg.get_popup(Some(&c.side.shells[t.shell].xdg), &positioner, &qh, ());
         positioner.destroy();
         let seat = c.side.seat.as_ref().expect("wl_seat");
