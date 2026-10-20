@@ -297,10 +297,11 @@ impl Explorer {
             self.focus = Focus::View;
             let sl = self.view_layout(lay.view, ctx);
             let hit = shellview::hit(&self.sv, &sl, x, y);
-            // An in-place rename commits on a click anywhere but the
-            // box itself; the box's own rect is `label_rect`.
+            // An in-place rename commits on a click anywhere but the box itself.
             if let Some((i, _)) = self.sv.edit.clone() {
-                if shellview::label_rect(&self.sv, &sl, i, &ctx.text, px).contains(x, y) {
+                if shellview::rename_rect(&self.sv, &sl, i, &ctx.text, px)
+                    .is_some_and(|r| r.contains(x, y))
+                {
                     return Reply::none();
                 }
                 let reply = self.commit_rename(ctx);
@@ -444,7 +445,8 @@ impl Explorer {
         if let Some((i, _)) = self.sv.edit {
             let sl = self.view_layout(lay.view, ctx);
             if lay.view.contains(x, y)
-                && shellview::label_rect(&self.sv, &sl, i, &ctx.text, px).contains(x, y)
+                && shellview::rename_rect(&self.sv, &sl, i, &ctx.text, px)
+                    .is_some_and(|r| r.contains(x, y))
             {
                 let at = shellview::edit_index_at(&self.sv, &sl, x, y, &ctx.text, px);
                 if let (Some(at), Some((_, ed))) = (at, self.sv.edit.as_mut()) {

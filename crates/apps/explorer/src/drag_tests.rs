@@ -1405,6 +1405,32 @@ fn a_link_drop_past_its_deadline_writes_nothing() {
 }
 
 #[test]
+fn a_right_press_on_the_rename_boxs_frame_keeps_it_in_every_mode() {
+    let mut ctx = test_ctx();
+    let (_dir, mut ex) = explorer(&mut ctx);
+    let a = index_of(&ex, "a.txt");
+    let px = ctx.theme.fonts.size_px;
+    for mode in [Mode::List, Mode::Details, Mode::Tiles, Mode::Icons] {
+        ex.sv.set_mode(mode);
+        ex.sv.selection.set_only(Some(a));
+        ex.run(crate::commands::Command::Rename, &mut ctx);
+        let sl = ex.view_layout(ex.layout(&ctx).view, &ctx);
+        let r = shellview::rename_rect(&ex.sv, &sl, a, &ctx.text, px).expect("the box is up");
+        for at in [
+            (r.x, r.y + r.height / 2),
+            (r.right() - 1, r.y + r.height / 2),
+        ] {
+            press(&mut ex, &mut ctx, at, BTN_RIGHT);
+            assert!(
+                ex.sv.edit.is_some(),
+                "{mode:?}: a press at {at:?} keeps the box"
+            );
+        }
+        ex.commit_rename(&mut ctx);
+    }
+}
+
+#[test]
 fn a_right_press_in_the_rename_box_keeps_it_and_one_in_the_address_field_focuses_it() {
     let mut ctx = test_ctx();
     let (_dir, mut ex) = explorer(&mut ctx);

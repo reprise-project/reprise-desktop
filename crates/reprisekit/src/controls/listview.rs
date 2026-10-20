@@ -30,7 +30,7 @@ use crate::pointer::{Click, DoubleClick, Lit, Pointer};
 use crate::raster::{Canvas, Rect};
 use crate::selection::{Mods, Selection, step_index};
 use crate::text::{Align, TextRenderer};
-use crate::textedit::{Caret, TextEdit};
+use crate::textedit::{Caret, TextEdit, TextSpot};
 use crate::theme::{Color, ColorScheme, TextUnits};
 use accesskit::{Node, NodeId, Role};
 use std::borrow::{Borrow, Cow};
@@ -993,6 +993,10 @@ pub(crate) fn draw_rename_box(
     );
     let first = edit_first_visible(text, ed, inner.width, px, 0);
     draw_edit(c, text, ed, inner, px, p, Caret::Shown, first);
+    // The field is the whole box: a press on its frame is a press in the field.
+    if let Some(spot) = c.take_spot() {
+        c.report_spot(TextSpot { field: b, ..spot });
+    }
 }
 
 pub fn draw<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
