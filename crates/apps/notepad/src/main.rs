@@ -218,8 +218,10 @@ struct Notepad {
     pending: Pending,
     savechanges: bool,
     savechanges_focus: usize,
+    savechanges_shown: oneshot::Shown,
     overwrite: Option<PathBuf>,
     overwrite_focus: usize,
+    overwrite_shown: oneshot::Shown,
     lossy: Option<(MsgBox, String)>,
     /// Kept here because `children(&self)` has no `Ctx`.
     dialog_text: Rc<TextRenderer>,
@@ -388,8 +390,10 @@ impl Notepad {
             pending: Pending::default(),
             savechanges: false,
             savechanges_focus: 0,
+            savechanges_shown: oneshot::Shown::default(),
             overwrite: None,
             overwrite_focus: 1,
+            overwrite_shown: oneshot::Shown::default(),
             lossy: None,
             dialog_text: repriseapp::start_text(),
             dialog_px: Theme::default().fonts.size_px,
@@ -1559,6 +1563,7 @@ impl Notepad {
             None => {
                 self.savechanges = true;
                 self.savechanges_focus = 0;
+                self.savechanges_shown = oneshot::Shown::default();
                 Reply::redraw_all()
             }
         }
@@ -1608,7 +1613,13 @@ impl Notepad {
 
     fn savechanges_event(&mut self, ev: Event, _ctx: &mut Ctx) -> Reply {
         let mut fields = self.savechanges_fields();
-        let step = oneshot::msgbox_event(&ev, &self.dialog_text, &self.forms, &mut fields);
+        let step = oneshot::msgbox_event(
+            &ev,
+            &self.dialog_text,
+            &self.forms,
+            &mut fields,
+            &self.savechanges_shown,
+        );
         self.savechanges_focus = fields.default;
         match step {
             FormStep::Closed => {
@@ -1919,45 +1930,25 @@ impl App for Notepad {
                 );
             }
             SAVECHANGES => {
-                c.fill_rect(c.bounds(), cs.button_face);
                 let f = msgbox::form(
                     &self.savechanges_fields(),
                     &self.dialog_text,
                     self.forms.fonts.size_px,
                     self.forms.text,
                 );
-                form::draw(
-                    c,
-                    &self.dialog_text,
-                    &Paint {
-                        s: 1,
-                        ..self.forms.paint()
-                    },
-                    &f,
-                    true,
-                    self.forms.fonts.size_px,
-                );
+                self.savechanges_shown
+                    .draw(c, &self.forms, &self.dialog_text, f);
             }
             OVERWRITE => {
                 if let Some(path) = &self.overwrite {
-                    c.fill_rect(c.bounds(), cs.button_face);
                     let f = msgbox::form(
                         &self.overwrite_fields(path),
                         &self.dialog_text,
                         self.forms.fonts.size_px,
                         self.forms.text,
                     );
-                    form::draw(
-                        c,
-                        &self.dialog_text,
-                        &Paint {
-                            s: 1,
-                            ..self.forms.paint()
-                        },
-                        &f,
-                        true,
-                        self.forms.fonts.size_px,
-                    );
+                    self.overwrite_shown
+                        .draw(c, &self.forms, &self.dialog_text, f);
                 }
             }
             OPEN => {
