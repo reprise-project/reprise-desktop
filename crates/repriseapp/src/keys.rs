@@ -101,7 +101,8 @@ pub fn form_clipboard(focused: Option<form::FocusedEdit>, ev: &Event) -> Reply {
 /// and Ctrl+Page Down turning the page ([`propsheet::page_step`]), a left press
 /// hit-tested and clicked, a right press on a field readying it for the edit menu, motion tracked, a release released, Leave clearing
 /// what the pointer lit, a drop on a field ([`crate::fielddrop`]) heard as the
-/// open page's, a tick stepping a held scrollbar arrow. `None` is an event the host answers
+/// open page's, a tick stepping a held scrollbar arrow, a blink timing the tip of an ellipsized
+/// label ([`Form::tip_tick`]). `None` is an event the host answers
 /// itself. First the sheet fits the window ([`PropSheet::fit`], [`PropSheet::fit_tabs`]): a
 /// window cut short or narrow scrolls the page, and one cut narrow wraps the tabs to it. While an arrow is held the host keeps ticking ([`Ctx::want_tick`]).
 pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet::Event> {
@@ -120,6 +121,10 @@ fn sheet_event(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet
     sheet.fit_tabs(&ctx.text, px);
     Some(match ev {
         Event::Tick if sheet.ticking() => sheet.tick(std::time::Instant::now()),
+        Event::Blink => sheet
+            .open_mut()
+            .tip_tick()
+            .then_some(propsheet::Event::Redraw)?,
         Event::Key(k) => {
             let ctrl_tab = propsheet::page_step(k.sym, k.mods.ctrl, k.mods.shift);
             sheet.key(form_key(k)?, ctrl_tab)
@@ -189,6 +194,7 @@ pub fn form_input(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event>
             None => form.key(form_key(k)?),
         },
         Event::KeyUp(k) => hotkey_input(form, k, false)?,
+        Event::Blink => form.tip_tick().then_some(form::Event::Redraw)?,
         Event::Pointer(PointerInput::Press {
             x,
             y,

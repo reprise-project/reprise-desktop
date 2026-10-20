@@ -23,6 +23,7 @@ use crate::controls::metrics::ControlMetrics;
 use crate::controls::multiedit;
 use crate::controls::scrollbar::ThumbDrag;
 use crate::controls::timefield::{self, TimeField};
+use crate::controls::tooltip;
 use crate::controls::treeview::{self, TreeView};
 use crate::controls::updown::{self, UpDown};
 use crate::look::widgets::{
@@ -531,8 +532,19 @@ pub struct Form {
     pub origin: (i32, i32),
     /// The part of the surface a form that can scroll shows through: a sheet's page.
     pub view: Option<View>,
+    tip: LabelTip,
     rendered: Rendered,
 }
+
+/// The label the pointer rests on and how many blinks ([`Form::tip_tick`]) it has rested there.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct LabelTip {
+    item: Option<usize>,
+    ticks: u8,
+}
+
+/// The blinks an ellipsized label's tip stays up for (about 5 s at the host's 530 ms blink).
+const TIP_TICKS: u8 = 10;
 
 /// A scrolled form's window onto the surface: every item but those in `keep` draws and takes
 /// the pointer only inside `rect`, laid out as an item's is (for 100% text, from the origin).
@@ -572,6 +584,8 @@ struct Rendered {
     /// The notes the last draw found taller than their rects, by item, and by how much at
     /// 100%: their rewrapped lines run below, so [`Form::flowed`] moves what lies under them.
     flow: RefCell<Vec<(usize, i32)>>,
+    /// The labels the last draw ended in an ellipsis, by item.
+    ellipsized: RefCell<Vec<usize>>,
     #[cfg(test)]
     renders: Cell<usize>,
 }
@@ -910,6 +924,7 @@ impl Form {
             field_drop: None,
             origin: (0, 0),
             view: None,
+            tip: LabelTip::default(),
             rendered: Rendered::default(),
         };
         let first = (0..form.items.len()).find(|&i| form.tab_stop(i));
@@ -1286,9 +1301,13 @@ impl Form {
     /// part stays held until the release.
     pub fn leave(&mut self) -> Event {
         let before = self.shown();
+        let hid = self.rest_tip(None);
         self.point = None;
         self.pointer.leave();
-        self.redraw_if(before)
+        match self.redraw_if(before) {
+            Event::None if hid => Event::Redraw,
+            e => e,
+        }
     }
 
     /// Let go of the pointer outright, held part and drag included: the
@@ -1297,11 +1316,61 @@ impl Form {
     pub fn cancel_pointer(&mut self) {
         self.pointer.clear();
         self.point = None;
+        self.tip = LabelTip::default();
         // A held tile goes back where the press found it.
         if let Some(Drag::Arrange(i)) = self.drag.take()
             && let Some(Control::Arrange(a)) = self.items.get_mut(i).map(|it| &mut it.control)
         {
             a.cancel_held();
+        }
+    }
+
+    /// The label under (`x`, `y`), if any: labels take no pointer, but an ellipsized one shows
+    /// its whole text in a tip ([`Form::tip_tick`]).
+    fn label_at(&self, x: i32, y: i32) -> Option<usize> {
+        self.items.iter().position(|it| {
+            matches!(it.control, Control::Label { .. })
+                && self.at(it).contains(x, y)
+                && self.clip_of(it).is_none_or(|c| c.contains(x, y))
+        })
+    }
+
+    /// The pointer now rests on label `on` (or none): a new rest starts its count again.
+    /// Whether a shown tip went away.
+    fn rest_tip(&mut self, on: Option<usize>) -> bool {
+        if self.tip.item == on {
+            return false;
+        }
+        let was = self.tip_shown();
+        self.tip = LabelTip { item: on, ticks: 0 };
+        was
+    }
+
+    fn tip_shown(&self) -> bool {
+        self.tip
+            .item
+            .is_some_and(|i| self.rendered.ellipsized.borrow().contains(&i))
+            && (1..=TIP_TICKS).contains(&self.tip.ticks)
+    }
+
+    /// One caret blink went by: an ellipsized label the pointer rests on shows its whole text
+    /// in a tip from the next blink on, for [`TIP_TICKS`] blinks. Whether the tip came or went.
+    pub fn tip_tick(&mut self) -> bool {
+        let before = self.tip_shown();
+        if self.tip.item.is_some() {
+            self.tip.ticks = self.tip.ticks.saturating_add(1);
+        }
+        before != self.tip_shown()
+    }
+
+    /// The whole text of the ellipsized label whose tip is up ([`Form::tip_tick`]).
+    pub fn label_tip(&self) -> Option<String> {
+        if !self.tip_shown() {
+            return None;
+        }
+        match &self.items.get(self.tip.item?)?.control {
+            Control::Label { text, .. } => Some(crate::text::split_mnemonic(text).0),
+            _ => None,
         }
     }
 
@@ -2977,6 +3046,14 @@ impl Form {
 
     /// The pointer moved to (`x`, `y`); `over` is what it is over now.
     pub fn motion(&mut self, x: i32, y: i32, over: Option<Hit>) -> Event {
+        let hid = self.rest_tip(self.label_at(x, y));
+        match self.move_pointer(x, y, over) {
+            Event::None if hid => Event::Redraw,
+            e => e,
+        }
+    }
+
+    fn move_pointer(&mut self, x: i32, y: i32, over: Option<Hit>) -> Event {
         self.point = Some((x, y));
         let before = self.shown();
         self.pointer.motion(self.light(over));
@@ -3446,6 +3523,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
     form.drawn_with(p);
     form.fit_text(text, px);
     form.lay_out_notes(text, s, px);
+    form.rendered.ellipsized.borrow_mut().clear();
     let cm = form.controls();
     let grow = p.text;
     let text = text.dialog(form.font);
@@ -3472,6 +3550,11 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                 align,
             } => {
                 let r = if *align == Align::Left { at_ink(r) } else { r };
+                // The fit may widen a label past the page or window that shows it.
+                let shown = clip
+                    .map_or(c.bounds(), |v| v.scaled(s).intersect(&c.bounds()))
+                    .right();
+                let label = &*ellipsized(form, i, text, label, r.right().min(shown) - r.x, px);
                 if *enabled {
                     draw_label(
                         c,
@@ -3825,6 +3908,59 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
         }
     }
     draw_open_popups(c, text, p, form, px);
+}
+
+/// `label`, or when its ink outruns `width` its text cut to end in an ellipsis (keeping its
+/// access key when the cut leaves it), noted for [`Form::label_tip`].
+fn ellipsized<'a>(
+    form: &Form,
+    i: usize,
+    text: &TextRenderer,
+    label: &'a str,
+    width: i32,
+    px: u32,
+) -> std::borrow::Cow<'a, str> {
+    let (plain, key) = crate::text::split_mnemonic(label);
+    if text.ink_width(&plain, false, px) <= width {
+        return label.into();
+    }
+    let mut noted = form.rendered.ellipsized.borrow_mut();
+    if !noted.contains(&i) {
+        noted.push(i);
+    }
+    let cut = text.ellipsize(&plain, width, false, px);
+    let kept = cut.chars().count().saturating_sub(3);
+    let mut out = String::with_capacity(cut.len() + 2);
+    for (k, ch) in cut.chars().enumerate() {
+        if key == Some(k) && k < kept {
+            out.push('&');
+        }
+        if ch == '&' {
+            out.push('&');
+        }
+        out.push(ch);
+    }
+    out.into()
+}
+
+/// The tip of an ellipsized label ([`Form::label_tip`]) under the pointer, kept inside `c` and
+/// wrapped to its width. `theme` is the one the form draws in; hosts draw it last.
+pub fn draw_tip(c: &mut Canvas, text: &TextRenderer, theme: &Theme, form: &Form) {
+    let (Some(full), Some((x, y))) = (form.label_tip(), form.point) else {
+        return;
+    };
+    let s = theme.scale.max(1);
+    let bounds = c.bounds();
+    let frame = tooltip::tip_size(text, theme, "").0;
+    let lines = crate::text::wrap(text, &full, bounds.width - 2 - frame, theme.fonts.size_px);
+    let label = lines.join("\n");
+    let size = tooltip::tip_size(text, theme, &label);
+    let at = tooltip::place((x * s, y * s), size, bounds, true);
+    c.blit_over(
+        at.0,
+        at.1,
+        &tooltip::draw_tip_at(theme, text, &label, c.scale()),
+    );
 }
 
 /// The form's open popups, which [`draw`] puts over the other controls. A host drawing its
@@ -7763,5 +7899,183 @@ mod tests {
         draw(&mut Canvas::new(500, 400), &text, &p, &f, false, 17);
         let r = f.rect("ok").unwrap();
         assert_eq!((r.x, r.y), (3 + u.len(130), 21 + u.len(140)));
+    }
+
+    const LONG: &str = "HP LaserJet 4250 PostScript Printer Driver";
+
+    fn long_label_form() -> Form {
+        Form::new(vec![
+            Item::label_at("short", 10, 10, 120, "Model:"),
+            Item::label_at("long", 10, 30, 120, LONG),
+        ])
+    }
+
+    #[test]
+    fn a_label_wider_than_its_rect_tips_its_whole_text_after_a_blink() {
+        let text = tr();
+        let mut form = long_label_form();
+        draw(
+            &mut Canvas::new(200, 60),
+            &text,
+            &classic_paint(&Theme::default().colors, 1),
+            &form,
+            false,
+            PX,
+        );
+        assert_eq!(
+            *form.rendered.ellipsized.borrow(),
+            vec![1],
+            "only the long label is cut"
+        );
+
+        assert_eq!(form.motion(20, 15, None), Event::None);
+        assert!(!form.tip_tick(), "a label that fits has no tip");
+        assert_eq!(form.label_tip(), None);
+
+        form.motion(20, 35, None);
+        assert_eq!(form.label_tip(), None, "no tip before a blink");
+        assert!(form.tip_tick());
+        assert_eq!(form.label_tip().as_deref(), Some(LONG));
+        assert!(!form.tip_tick());
+        assert_eq!(
+            form.motion(25, 35, None),
+            Event::None,
+            "moving on the label keeps it up"
+        );
+        assert_eq!(form.label_tip().as_deref(), Some(LONG));
+
+        assert_eq!(
+            form.motion(20, 15, None),
+            Event::Redraw,
+            "moving off takes it down"
+        );
+        assert_eq!(form.label_tip(), None);
+        form.motion(20, 35, None);
+        form.tip_tick();
+        assert_eq!(form.leave(), Event::Redraw);
+        assert_eq!(form.label_tip(), None);
+
+        form.motion(20, 35, None);
+        let ups: Vec<bool> = (0..=TIP_TICKS).map(|_| form.tip_tick()).collect();
+        assert_eq!(
+            ups.iter().filter(|&&b| b).count(),
+            2,
+            "it comes up and pops after a while"
+        );
+        assert_eq!(form.label_tip(), None);
+    }
+
+    #[test]
+    fn an_ellipsized_label_keeps_an_access_key_the_cut_leaves() {
+        let text = tr();
+        let form = Form::new(Vec::new());
+        let cut = |label: &str| ellipsized(&form, 0, &text, label, 80, PX).into_owned();
+        let kept = cut("&Maximum size of the Recycle Bin");
+        assert!(kept.starts_with("&Max") && kept.ends_with("..."), "{kept}");
+        let gone = cut("Maximum size of the Recycle &Bin");
+        assert!(!gone.contains('&') && gone.ends_with("..."), "{gone}");
+        let amp = cut("R&&D: maximum size of the Recycle Bin");
+        assert!(amp.starts_with("R&&D") && amp.ends_with("..."), "{amp}");
+        assert_eq!(cut("&Size"), "&Size", "fits");
+    }
+
+    #[test]
+    fn a_label_running_past_its_window_ends_in_an_ellipsis_at_the_edge() {
+        let text = tr();
+        let form = Form::new(vec![Item::label_at("wide", 10, 10, 400, LONG)]);
+        let theme = Theme::default();
+        let p = classic_paint(&theme.colors, 1);
+        draw(&mut Canvas::new(500, 40), &text, &p, &form, false, PX);
+        assert!(
+            form.rendered.ellipsized.borrow().is_empty(),
+            "fits in a wide window"
+        );
+        draw(&mut Canvas::new(120, 40), &text, &p, &form, false, PX);
+        assert_eq!(
+            *form.rendered.ellipsized.borrow(),
+            vec![0],
+            "cut at the window's edge"
+        );
+    }
+
+    #[test]
+    fn a_long_label_ends_in_an_ellipsis_at_scale_1_and_2() {
+        if !crate::text::test_tahoma() {
+            return;
+        }
+        let text = tr();
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let mut got = Vec::new();
+        for s in [1, 2] {
+            let mut form = Form::new(vec![
+                Item::label_at("left", 10, 10, 120, LONG),
+                Item::value_at("right", 10, 30, 120, LONG),
+                Item::label_at("grey", 10, 50, 120, LONG).enabled(false),
+            ]);
+            let mut c = Canvas::with_scale(160, 120, s);
+            c.fill_rect(c.bounds(), cs.button_face);
+            draw(&mut c, &text, &classic_paint(cs, 1), &form, false, PX);
+
+            let cut = text.ellipsize(LONG, 120, false, PX);
+            assert!(cut.ends_with("...") && cut.len() < LONG.len());
+            let mut want = Canvas::with_scale(160, 120, s);
+            want.fill_rect(want.bounds(), cs.button_face);
+            let plain = Form::new(vec![
+                Item::label_at("left", 10, 10, 120, &cut),
+                Item::value_at("right", 10, 30, 120, &cut),
+                Item::label_at("grey", 10, 50, 120, &cut).enabled(false),
+            ]);
+            draw(&mut want, &text, &classic_paint(cs, 1), &plain, false, PX);
+            assert_eq!(c.pixels, want.pixels, "@{s}: drawn as the cut text");
+            got.push((format!("labels @{s}"), fnv(&c)));
+
+            form.motion(20, 15, None);
+            form.tip_tick();
+            draw_tip(&mut c, &text, &theme, &form);
+            assert_ne!(c.pixels, want.pixels, "@{s}: the tip shows");
+            got.push((format!("tip @{s}"), fnv(&c)));
+        }
+        crate::pins::check("form/label_ellipsis", &got);
+    }
+
+    #[test]
+    fn a_tip_wider_than_the_window_wraps_inside_it() {
+        let text = tr();
+        let theme = Theme::default();
+        let mut form = long_label_form();
+        let mut c = Canvas::new(150, 120);
+        draw(
+            &mut c,
+            &text,
+            &classic_paint(&theme.colors, 1),
+            &form,
+            false,
+            PX,
+        );
+        form.motion(125, 35, None);
+        form.tip_tick();
+        let mut blank = Canvas::new(150, 120);
+        blank.pixels.copy_from_slice(&c.pixels);
+        draw_tip(&mut c, &text, &theme, &form);
+        let inked = |y: i32| (0..150).any(|x| c.get(x, y) != blank.get(x, y));
+        let rows: Vec<i32> = (0..120).filter(|&y| inked(y)).collect();
+        assert!(!rows.is_empty());
+        assert!(
+            rows.last().unwrap() - rows[0] > 2 * PX as i32,
+            "the text runs onto more lines"
+        );
+        assert!(
+            (0..120).all(|y| c.get(149, y) == blank.get(149, y)),
+            "clear of the right edge"
+        );
+    }
+
+    fn fnv(c: &Canvas) -> u64 {
+        c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, w| {
+            w.to_le_bytes()
+                .iter()
+                .fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+        })
     }
 }
