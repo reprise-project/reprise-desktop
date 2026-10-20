@@ -488,26 +488,52 @@ pub fn entry_at(
     )
 }
 
-/// What a desktop icon reads through a symlink, the part that may wait on another file system.
-/// The default is a link that is dangling or whose target never answered.
+/// Everything a desktop icon reads through a symlink, so all that may wait on another file system
+/// runs where [`scan`] follows links. The default is a link that is dangling or whose target
+/// never answered.
 #[derive(Default)]
 struct Followed {
     /// A file system is mounted here; nothing inside it is read, as it may never answer.
     mount_root: bool,
     meta: Option<std::fs::Metadata>,
+    /// A folder's own icon ([`reprisefs::meta::folder_icon`]).
+    folder_icon: Option<String>,
+    shortcut: Option<apps::Shortcut>,
+    target: Option<Target>,
+    allow_launching: bool,
 }
 
 impl Followed {
     fn of(path: &Path) -> Followed {
-        match reprisefs::listing::is_mount_root(path) {
-            true => Followed {
+        if reprisefs::listing::is_mount_root(path) {
+            return Followed {
                 mount_root: true,
-                meta: None,
-            },
-            false => Followed {
-                mount_root: false,
-                meta: std::fs::metadata(path).ok(),
-            },
+                ..Followed::default()
+            };
+        }
+        let Some(meta) = std::fs::metadata(path).ok() else {
+            return Followed::default();
+        };
+        if meta.is_dir() {
+            return Followed {
+                folder_icon: reprisefs::meta::folder_icon(path),
+                meta: Some(meta),
+                ..Followed::default()
+            };
+        }
+        if let Some(sc) = apps::shortcut_at(path, &meta) {
+            return Followed {
+                shortcut: Some(sc),
+                meta: Some(meta),
+                ..Followed::default()
+            };
+        }
+        let target = plain_target(path, &meta);
+        Followed {
+            allow_launching: can_allow_launching_at(path, &target),
+            target: Some(target),
+            meta: Some(meta),
+            ..Followed::default()
         }
     }
 }
@@ -527,12 +553,16 @@ fn entry_with(
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
-    let Followed { mount_root, meta } = followed;
+    let Followed {
+        mount_root,
+        meta,
+        folder_icon,
+        shortcut,
+        target,
+        allow_launching,
+    } = followed;
     if mount_root || meta.as_ref().is_some_and(|m| m.is_dir()) {
-        let icon = (!mount_root)
-            .then(|| reprisefs::meta::folder_icon(&path))
-            .flatten()
-            .unwrap_or_else(|| "folder".into());
+        let icon = folder_icon.unwrap_or_else(|| "folder".into());
         return DesktopEntry {
             label: file_name.clone(),
             name: file_name,
@@ -545,7 +575,7 @@ fn entry_with(
             allow_launching: false,
         };
     }
-    if let Some(sc) = meta.as_ref().and_then(|m| apps::shortcut_at(&path, m)) {
+    if let Some(sc) = shortcut {
         let (label, icon) = (sc.name().to_string(), sc.icon().to_string());
         return DesktopEntry {
             name: file_name,
@@ -560,14 +590,11 @@ fn entry_with(
         };
     }
     let mime = globs.mime_of_name(&file_name);
-    let target = match &meta {
-        Some(m) => plain_target(&path, m),
-        None => Target::Open(path.clone()),
-    };
+    let target = target.unwrap_or_else(|| Target::Open(path.clone()));
     let icon = file_icon(mime.as_deref(), &path, &target, &|_| false);
     DesktopEntry {
         label: names::label_for(&file_name, globs, shown),
-        allow_launching: meta.is_some() && can_allow_launching_at(&path, &target),
+        allow_launching,
         name: file_name,
         icon,
         target,
@@ -1012,6 +1039,56 @@ mod tests {
             "a symlink to a folder sorts among the files"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_link_wears_only_what_its_follow_read() {
+        fn bare(p: &Path) -> Followed {
+            Followed {
+                meta: std::fs::metadata(p).ok(),
+                ..Followed::default()
+            }
+        }
+        let dir = std::env::temp_dir().join(format!("reprise-follow-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _clean = Cleanup(dir.clone());
+        std::fs::create_dir_all(dir.join("in/Music")).unwrap();
+        std::fs::write(
+            dir.join("in/Music/.directory"),
+            "[Desktop Entry]\nIcon=folder-music\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("in/app.desktop"),
+            "[Desktop Entry]\nType=Application\nName=App\nExec=app\n",
+        )
+        .unwrap();
+        std::fs::create_dir(dir.join("desk")).unwrap();
+        std::os::unix::fs::symlink(dir.join("in/Music"), dir.join("desk/Music")).unwrap();
+        std::os::unix::fs::symlink(dir.join("in/app.desktop"), dir.join("desk/app.desktop"))
+            .unwrap();
+        let globs = apps::MimeDb::empty();
+        let wait = std::time::Duration::from_secs(5);
+        let by =
+            |list: &[DesktopEntry], n: &str| list.iter().find(|e| e.name == n).cloned().unwrap();
+        let bare = scan_with(
+            &dir.join("desk"),
+            &globs,
+            names::Extensions::Hide,
+            bare,
+            wait,
+        );
+        assert_eq!(by(&bare, "Music").icon, "folder");
+        assert!(!by(&bare, "app.desktop").allow_launching);
+        let full = scan_with(
+            &dir.join("desk"),
+            &globs,
+            names::Extensions::Hide,
+            Followed::of,
+            wait,
+        );
+        assert_eq!(by(&full, "Music").icon, "folder-music");
+        assert!(by(&full, "app.desktop").allow_launching);
     }
 
     #[test]

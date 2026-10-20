@@ -106,15 +106,25 @@ pub struct DesktopView {
     pub(crate) bins: DriveBins,
 }
 
-/// The drives' Recycle Bins as the last read found them: the folders the watch adds for them
-/// and whether all are empty. A drive can be a mount that never answers, so reads run on file jobs.
+/// The drives' Recycle Bins as the last reads found them: the folders the watch adds for them
+/// and whether all are empty. A drive can be a mount that never answers, so each drive is read on
+/// a file job of its own.
 #[derive(Default)]
 pub(crate) struct DriveBins {
     wants: Vec<Want>,
     full: bool,
+    /// Reads of the drive list, which looks at no drive.
     reads: crate::fsjobs::Reads,
     /// A read was asked for while one ran: read again when it lands.
     again: bool,
+    /// The drives listed, in mount order.
+    listed: Vec<PathBuf>,
+    /// Each listed drive's bin folders and whether one holds something, as its last read found
+    /// them.
+    drives: HashMap<PathBuf, (Vec<Want>, bool)>,
+    /// The drives whose bins are being read. A drive that never answers keeps its read, and no
+    /// second one starts.
+    drive_reads: HashSet<PathBuf>,
     /// Each drive's Recycle Bin Properties tab as its last read found it, None for no bin.
     tabs: HashMap<PathBuf, Option<crate::binprops::Drive>>,
     /// The drives whose tab is being read. A drive that never answers keeps its read, and no
@@ -130,16 +140,43 @@ impl DriveBins {
         id
     }
 
-    /// Takes read `id`'s answer: whether it changed the bins (a stale answer changes nothing),
-    /// and whether to read again.
-    fn land(&mut self, id: u64, wants: Vec<Want>, full: bool) -> (bool, bool) {
+    /// Takes read `id`'s drive list `tops`: whether it changed the bins (a stale answer changes
+    /// nothing), whether to read again, and the drives to read, now counted as read.
+    fn land(&mut self, id: u64, tops: Vec<PathBuf>) -> (bool, bool, Vec<PathBuf>) {
         let again = std::mem::take(&mut self.again);
-        if !self.reads.land(id) || (self.wants == wants && self.full == full) {
-            return (false, again);
+        if !self.reads.land(id) {
+            return (false, again, Vec::new());
+        }
+        self.drives.retain(|t, _| tops.contains(t));
+        let read = (tops.iter())
+            .filter(|t| self.drive_reads.insert(t.to_path_buf()))
+            .cloned()
+            .collect();
+        self.listed = tops;
+        (self.sum(), again, read)
+    }
+
+    /// Takes drive `top`'s read: whether it changed the bins.
+    fn land_drive(&mut self, top: PathBuf, wants: Vec<Want>, full: bool) -> bool {
+        self.drive_reads.remove(&top);
+        if !self.listed.contains(&top) {
+            return false;
+        }
+        self.drives.insert(top, (wants, full));
+        self.sum()
+    }
+
+    /// Joins the drives' answers in mount order: whether that changed the bins.
+    fn sum(&mut self) -> bool {
+        let found = || self.listed.iter().filter_map(|t| self.drives.get(t));
+        let wants: Vec<Want> = found().flat_map(|(w, _)| w.iter().cloned()).collect();
+        let full = found().any(|(_, f)| *f);
+        if self.wants == wants && self.full == full {
+            return false;
         }
         self.wants = wants;
         self.full = full;
-        (true, again)
+        true
     }
 
     /// The tabs of `tops` the reads have found so far, in `tops`' order.
@@ -163,13 +200,22 @@ impl DriveBins {
     }
 }
 
-/// [`drive_trash_wants`] for the folders there now, and whether any drive's bin holds something.
-fn read_drive_bins(bins: &reprisefs::trash::Bins) -> (Vec<Want>, bool) {
-    let wants = drive_trash_wants(bins)
+/// The drives `bins` may hold a Recycle Bin on, read without looking at any.
+fn drive_tops(bins: &reprisefs::trash::Bins) -> Vec<PathBuf> {
+    (bins.mounts.iter())
+        .filter(|m| !bins.unlisted.contains(*m))
+        .cloned()
+        .collect()
+}
+
+/// Drive `top`'s [`drive_trash_wants`] for the folders there now, and whether its bin holds
+/// something.
+fn read_drive_bin(bins: &reprisefs::trash::Bins, top: &Path) -> (Vec<Want>, bool) {
+    let wants = drive_trash_wants(bins, top)
         .into_iter()
         .filter(|w| w.dir.is_dir())
         .collect();
-    let full = (bins.roots().iter().skip(1)).any(|r| !places::trash_empty(&r.join("files")));
+    let full = (bins.drive_roots(top).iter()).any(|r| !places::trash_empty(&r.join("files")));
     (wants, full)
 }
 
@@ -724,7 +770,7 @@ fn migrate_launcher_keys(
 /// What the desktop watch covers besides the drives' bins. When `files` shows the folder's files:
 /// the desktop folder (ATTRIB, because chmod +x turns a `.desktop` file into a launcher) and its
 /// parent (for the folder being made). The home trash (`home_trash_wants`), so the Recycle Bin's
-/// icon flips between empty and full; the drives' trashes as [`read_drive_bins`] last found them
+/// icon flips between empty and full; the drives' trashes as [`State::read_drive_bins`] last found them
 /// join it on the loop.
 fn watch_wants(dir: &Path, files: bool, system_icons: &[String]) -> Vec<Want> {
     let mut want = Vec::new();
@@ -755,23 +801,20 @@ fn watch_wants(dir: &Path, files: bool, system_icons: &[String]) -> Vec<Want> {
     want
 }
 
-/// Each mounted drive's trash, and each drive's top for its trash being
-/// made; an eject drops the watch, which is a change. A top the user cannot
-/// read (`/root` on its own subvolume) holds no trash of theirs and is left out.
-fn drive_trash_wants(bins: &reprisefs::trash::Bins) -> Vec<Want> {
+/// Drive `top`'s trashes, and the top itself for its trash being made; an eject drops the
+/// watch, which is a change. A top the user cannot read (`/root` on its own subvolume) holds no
+/// trash of theirs and is left out.
+fn drive_trash_wants(bins: &reprisefs::trash::Bins, top: &Path) -> Vec<Want> {
     let mut want = Vec::new();
-    let names = [".Trash".into(), format!(".Trash-{}", bins.uid).into()];
-    for top in bins.mounts.iter().filter(|m| !bins.unlisted.contains(*m)) {
-        if !readable(top) {
-            continue;
-        }
+    if readable(top) {
+        let names = [".Trash".into(), format!(".Trash-{}", bins.uid).into()];
         want.push(Want {
-            dir: top.clone(),
+            dir: top.to_path_buf(),
             mask: WatchMask::CREATE | WatchMask::MOVED_TO,
             only: names.to_vec(),
         });
     }
-    for root in bins.roots().into_iter().skip(1) {
+    for root in bins.drive_roots(top) {
         want.push(Want {
             dir: root.join("files"),
             mask: TRASH_MASK,
@@ -1079,23 +1122,44 @@ impl State {
         });
     }
 
-    /// Reads the drives' Recycle Bins on a file job; an answer that changes them rescans.
+    /// Lists the drives on a file job, then reads each drive's Recycle Bins on a file job of its
+    /// own; an answer that changes them rescans.
     fn read_drive_bins(&mut self) {
         let now = std::time::Instant::now();
         let Some(id) = (self.desktop.as_mut()).and_then(|v| v.bins.start(now)) else {
             return;
         };
         self.spawn_fs_job(move || {
-            let read = reprisefs::trash::Bins::system().map(|b| read_drive_bins(&b));
+            let bins = reprisefs::trash::Bins::system();
             Box::new(move |state: &mut State| {
-                let (wants, full) = read.unwrap_or_default();
+                let tops = bins.as_ref().map(drive_tops).unwrap_or_default();
                 let Some(view) = state.desktop.as_mut() else {
                     return;
                 };
-                match view.bins.land(id, wants, full) {
-                    (true, _) => state.rescan_desktop(),
-                    (false, true) => state.read_drive_bins(),
-                    (false, false) => {}
+                let (changed, again, read) = view.bins.land(id, tops);
+                if let Some(bins) = bins {
+                    for top in read {
+                        state.read_drive_bin(bins.clone(), top);
+                    }
+                }
+                if changed {
+                    state.rescan_desktop();
+                } else if again {
+                    state.read_drive_bins();
+                }
+            })
+        });
+    }
+
+    fn read_drive_bin(&mut self, bins: reprisefs::trash::Bins, top: PathBuf) {
+        self.spawn_fs_job(move || {
+            let (wants, full) = read_drive_bin(&bins, &top);
+            Box::new(move |state: &mut State| {
+                let Some(view) = state.desktop.as_mut() else {
+                    return;
+                };
+                if view.bins.land_drive(top, wants, full) {
+                    state.rescan_desktop();
                 }
             })
         });
@@ -2529,36 +2593,63 @@ mod tests {
         let bin = stick.join(format!(".Trash-{}", bins.uid));
         std::fs::create_dir_all(bin.join("files")).unwrap();
         std::fs::write(bin.join("files/a.txt"), "").unwrap();
-        let (wants, full) = read_drive_bins(&bins);
+        assert_eq!(drive_tops(&bins), [stick.clone(), card.clone()]);
+        let (wants, full) = read_drive_bin(&bins, &stick);
         let dirs: Vec<PathBuf> = wants.into_iter().map(|w| w.dir).collect();
-        assert_eq!(dirs, [stick, card, bin.join("files"), bin.clone()]);
+        assert_eq!(dirs, [stick.clone(), bin.join("files"), bin.clone()]);
         assert!(full, "a.txt is in STICK's bin");
+        let (wants, full) = read_drive_bin(&bins, &card);
+        let dirs: Vec<PathBuf> = wants.into_iter().map(|w| w.dir).collect();
+        assert_eq!((dirs, full), (vec![card], false), "CARD has no bin");
         std::fs::remove_file(bin.join("files/a.txt")).unwrap();
-        assert!(!read_drive_bins(&bins).1, "every drive bin empty");
+        assert!(!read_drive_bin(&bins, &stick).1, "STICK's bin is empty");
         let _ = std::fs::remove_dir_all(&t);
     }
 
     #[test]
-    fn one_drive_bin_read_runs_at_a_time_and_one_asked_for_meanwhile_reads_again() {
+    fn one_drive_list_read_runs_at_a_time_and_one_asked_for_meanwhile_reads_again() {
         let now = std::time::Instant::now();
         let mut bins = DriveBins::default();
         let first = bins.start(now).unwrap();
         assert_eq!(bins.start(now), None, "a read is under way");
         assert_eq!(
-            bins.land(first, Vec::new(), true),
-            (true, true),
-            "a bin filled, and a read was asked for meanwhile"
+            bins.land(first, Vec::new()),
+            (false, true, Vec::new()),
+            "a read was asked for meanwhile"
         );
-        assert!(bins.full);
         let second = bins.start(now).unwrap();
-        assert_eq!(
-            bins.land(second, Vec::new(), true),
-            (false, false),
-            "the same answer changes nothing"
+        assert_eq!(bins.land(second, Vec::new()), (false, false, Vec::new()));
+    }
+
+    #[test]
+    fn a_drive_that_never_answers_keeps_its_one_read_and_the_others_still_land() {
+        let want = |d: &str| Want {
+            dir: PathBuf::from(d),
+            mask: TRASH_MASK,
+            only: Vec::new(),
+        };
+        let (a, b) = (PathBuf::from("/media/A"), PathBuf::from("/media/B"));
+        let now = std::time::Instant::now();
+        let mut bins = DriveBins::default();
+        let id = bins.start(now).unwrap();
+        let (changed, _, read) = bins.land(id, vec![a.clone(), b.clone()]);
+        assert!(!changed);
+        assert_eq!(read, [a.clone(), b.clone()]);
+        assert!(bins.land_drive(b.clone(), vec![want("/media/B/.Trash-1000")], true));
+        assert!(bins.full, "B's bin holds something while A never answers");
+        assert_eq!(bins.wants, [want("/media/B/.Trash-1000")]);
+        let id = bins.start(now).unwrap();
+        let (_, _, read) = bins.land(id, vec![a.clone(), b.clone()]);
+        assert_eq!(read, std::slice::from_ref(&b), "A's read is still out");
+        assert!(bins.land_drive(a.clone(), vec![want("/media/A")], false));
+        assert_eq!(bins.wants, [want("/media/A"), want("/media/B/.Trash-1000")]);
+        let id = bins.start(now).unwrap();
+        let (changed, _, _) = bins.land(id, vec![a.clone()]);
+        assert!(changed && !bins.full, "B was ejected");
+        assert!(
+            !bins.land_drive(b, Vec::new(), true),
+            "an answer from B is dropped"
         );
-        let third = bins.start(now).unwrap();
-        assert_eq!(bins.land(third, Vec::new(), false), (true, false));
-        assert!(!bins.full);
     }
 
     #[test]
@@ -2600,8 +2691,9 @@ mod tests {
         std::fs::create_dir_all(&shut).unwrap();
         std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o300)).unwrap();
         let bins = reprisefs::trash::Bins::new(top.join("home"), vec![open.clone(), shut]);
-        let dirs: Vec<PathBuf> = drive_trash_wants(&bins)
-            .into_iter()
+        let dirs: Vec<PathBuf> = drive_tops(&bins)
+            .iter()
+            .flat_map(|top| drive_trash_wants(&bins, top))
             .map(|w| w.dir)
             .collect();
         let _ = std::fs::remove_dir_all(&top);
