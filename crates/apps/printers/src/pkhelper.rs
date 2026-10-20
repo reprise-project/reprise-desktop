@@ -86,6 +86,12 @@ fn outcome(method: &str, error: &str) -> Result<()> {
         return Ok(());
     }
     log::warn!("{method}: {error}");
+    // A refusal that sets no status of its own leaves the last request's.
+    if error == "successful-ok" {
+        return Err(Error::Refused(
+            "cups-pk-helper could not make the change.".into(),
+        ));
+    }
     Err(Error::Refused(crate::cups::sentence(error)))
 }
 
@@ -276,6 +282,12 @@ mod tests {
         assert_eq!(
             outcome("PrinterDelete", "printer not found"),
             Err(Error::Refused("Printer not found.".into()))
+        );
+        assert_eq!(
+            outcome("PrinterRename", "successful-ok"),
+            Err(Error::Refused(
+                "cups-pk-helper could not make the change.".into()
+            ))
         );
     }
 
