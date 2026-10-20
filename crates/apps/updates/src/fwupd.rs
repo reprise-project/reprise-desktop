@@ -308,31 +308,45 @@ fn fetch(location: &str, scratch: &Scratch) -> Result<File, String> {
     File::open(&path).map_err(|e| format!("Could not open {}: {e}.", path.display()))
 }
 
-/// Hand the daemon fresh metadata for each due download remote (all with `force`); fetch failures are logged and skipped.
+/// fwupd's polkit action for `UpdateMetadata`.
+const REFRESH_REMOTE: &str = "org.freedesktop.fwupd.refresh-remote";
+
+/// Hand the daemon fresh metadata for each due download remote (all with `force`, which is the
+/// user's Check Now); fetch failures are logged and skipped. fwupd lets polkit prompt for any
+/// call, so without `force` nothing is handed over when that would take a password.
 pub async fn refresh(conn: &Connection, force: bool) -> Result<(), Error> {
     let remotes: Vec<Dict> = call(conn, "GetRemotes", &())
         .await
         .and_then(|m| m.body().deserialize())
         .map_err(failed)?;
     let now = now();
-    for r in remotes {
-        let enabled = r
-            .get("Enabled")
-            .and_then(|v| bool::try_from(v).ok())
-            .unwrap_or(false);
-        let (id, uri) = (text(&r, "RemoteId"), text(&r, "Uri"));
-        if !enabled || number(&r, "Type") != u64::from(REMOTE_DOWNLOAD) || uri.is_empty() {
-            continue;
-        }
-        if !force
-            && !due(
-                number(&r, "ModificationTime"),
-                number(&r, "RefreshInterval"),
-                now,
-            )
-        {
-            continue;
-        }
+    let fetch: Vec<(String, String)> = remotes
+        .iter()
+        .filter(|r| {
+            let enabled = r
+                .get("Enabled")
+                .and_then(|v| bool::try_from(v).ok())
+                .unwrap_or(false);
+            enabled
+                && number(r, "Type") == u64::from(REMOTE_DOWNLOAD)
+                && !text(r, "Uri").is_empty()
+                && (force
+                    || due(
+                        number(r, "ModificationTime"),
+                        number(r, "RefreshInterval"),
+                        now,
+                    ))
+        })
+        .map(|r| (text(r, "RemoteId"), text(r, "Uri")))
+        .collect();
+    if fetch.is_empty() {
+        return Ok(());
+    }
+    if !force && !reprisebus::polkit::allowed_without_prompt(conn, REFRESH_REMOTE).await {
+        log::info!("firmware metadata is not refreshed in the background: it needs a password");
+        return Ok(());
+    }
+    for (id, uri) in fetch {
         let (data, sig) = (Scratch::new("metadata"), Scratch::new("metadata.jcat"));
         let fetched = download(&uri, &data.0)
             .and_then(|()| download(&format!("{uri}.jcat"), &sig.0))
@@ -713,5 +727,145 @@ mod tests {
             Some("Writing the firmware to Webcam")
         );
         assert_eq!(status_line(1, "Webcam"), None, "idle says nothing");
+    }
+
+    mod bus {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Child, Command, Stdio};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        use zbus::zvariant::{OwnedFd, OwnedValue, Value};
+
+        use super::super::{Dict, NAME, refresh};
+
+        struct Bus(Child, String);
+
+        impl Drop for Bus {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        fn bus() -> Option<Bus> {
+            let mut child = Command::new("dbus-daemon")
+                .args(["--session", "--nofork", "--print-address"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()?;
+            let mut line = String::new();
+            BufReader::new(child.stdout.take()?)
+                .read_line(&mut line)
+                .ok()?;
+            Some(Bus(child, line.trim().to_string()))
+        }
+
+        async fn connect(address: &str) -> zbus::Connection {
+            zbus::connection::Builder::address(address)
+                .expect("address")
+                .build()
+                .await
+                .expect("connect")
+        }
+
+        struct Fwupd {
+            uri: String,
+            handed: Arc<AtomicUsize>,
+        }
+
+        #[zbus::interface(name = "org.freedesktop.fwupd")]
+        impl Fwupd {
+            fn get_remotes(&self) -> Vec<Dict> {
+                let v = |v: Value| OwnedValue::try_from(v).unwrap();
+                vec![Dict::from([
+                    ("RemoteId".to_string(), v(Value::from("lvfs"))),
+                    ("Enabled".to_string(), v(Value::from(true))),
+                    ("Type".to_string(), v(Value::from(1u32))),
+                    ("Uri".to_string(), v(Value::from(self.uri.as_str()))),
+                    ("ModificationTime".to_string(), v(Value::from(0u64))),
+                    ("RefreshInterval".to_string(), v(Value::from(86400u64))),
+                ])]
+            }
+
+            fn update_metadata(&self, _id: &str, _data: OwnedFd, _sig: OwnedFd) {
+                self.handed.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        struct Authority(Arc<AtomicBool>);
+
+        #[zbus::interface(name = "org.freedesktop.PolicyKit1.Authority")]
+        impl Authority {
+            fn check_authorization(
+                &self,
+                _subject: (String, std::collections::HashMap<String, OwnedValue>),
+                action: &str,
+                _details: std::collections::HashMap<String, String>,
+                flags: u32,
+                _cancel: &str,
+            ) -> (bool, bool, std::collections::HashMap<String, String>) {
+                assert_eq!(action, "org.freedesktop.fwupd.refresh-remote");
+                assert_eq!(flags, 0, "asked without a prompt");
+                let yes = self.0.load(Ordering::SeqCst);
+                (yes, !yes, Default::default())
+            }
+        }
+
+        /// fwupd prompts whatever the call's flags, so the six-hourly refresh asks polkit first
+        /// and leaves the metadata alone when it would take a password; Check Now hands it over.
+        #[test]
+        fn a_background_refresh_hands_over_no_metadata_that_needs_a_password() {
+            let Some(bus) = bus() else {
+                eprintln!("no dbus-daemon; skipped");
+                return;
+            };
+            let dir =
+                std::env::temp_dir().join(format!("reprise-fwupd-refresh-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let metadata = dir.join("firmware.xml.zst");
+            std::fs::write(&metadata, b"metadata").unwrap();
+            std::fs::write(dir.join("firmware.xml.zst.jcat"), b"signature").unwrap();
+            let handed = Arc::new(AtomicUsize::new(0));
+            let allowed = Arc::new(AtomicBool::new(false));
+            zbus::block_on(async {
+                let services = connect(&bus.1).await;
+                let fwupd = Fwupd {
+                    uri: format!("file://{}", metadata.display()),
+                    handed: handed.clone(),
+                };
+                services.object_server().at("/", fwupd).await.unwrap();
+                services.request_name(NAME).await.unwrap();
+                let authority = Authority(allowed.clone());
+                services
+                    .object_server()
+                    .at("/org/freedesktop/PolicyKit1/Authority", authority)
+                    .await
+                    .unwrap();
+                services
+                    .request_name("org.freedesktop.PolicyKit1")
+                    .await
+                    .unwrap();
+                let conn = connect(&bus.1).await;
+
+                refresh(&conn, false).await.unwrap();
+                assert_eq!(
+                    handed.load(Ordering::SeqCst),
+                    0,
+                    "a password would be asked for"
+                );
+                refresh(&conn, true).await.unwrap();
+                assert_eq!(handed.load(Ordering::SeqCst), 1, "Check Now hands it over");
+                allowed.store(true, Ordering::SeqCst);
+                refresh(&conn, false).await.unwrap();
+                assert_eq!(
+                    handed.load(Ordering::SeqCst),
+                    2,
+                    "allowed without a password"
+                );
+            });
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 }
