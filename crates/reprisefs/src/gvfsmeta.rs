@@ -52,17 +52,22 @@ fn file_path(uri: &str) -> Option<String> {
     String::from_utf8(bytes).ok().filter(|p| p.starts_with('/'))
 }
 
-/// The tree in `db_dir` holding `file`, and `file`'s path in it.
+/// The tree in `db_dir` holding `file`, and `file`'s path in it. The home tree holds only files on
+/// home's own file system: one mounted under it keeps its own tree, as gvfsd-metadata files it.
 fn tree_of(file: &Path, db_dir: &Path, home: Option<&Path>) -> Option<(PathBuf, Vec<u8>)> {
     let file = std::fs::canonicalize(file).ok()?;
     let home = home.and_then(|h| std::fs::canonicalize(h).ok());
-    if let Some(rel) = home.as_deref().and_then(|h| file.strip_prefix(h).ok()) {
+    let dev = |p: &Path| std::fs::metadata(p).ok().map(|m| m.dev());
+    let file_dev = dev(&file)?;
+    if let Some(h) = home.as_deref()
+        && let Ok(rel) = file.strip_prefix(h)
+        && dev(h) == Some(file_dev)
+    {
         let mut path = b"/".to_vec();
         path.extend_from_slice(rel.as_os_str().as_bytes());
         return Some((db_dir.join("home"), path));
     }
-    let dev = |p: &Path| std::fs::metadata(p).ok().map(|m| m.dev());
-    (dev(&file)? == dev(Path::new("/"))?)
+    (file_dev == dev(Path::new("/"))?)
         .then(|| (db_dir.join("root"), file.as_os_str().as_bytes().to_vec()))
 }
 
@@ -449,6 +454,19 @@ mod tests {
             custom_icon_in(&dir, other.path(), None),
             None,
             "not on the root tree"
+        );
+    }
+
+    #[test]
+    fn a_file_system_mounted_under_home_is_not_in_the_home_tree() {
+        let db = Path::new("/srv/gvfs-metadata");
+        let (tree, path) = tree_of(Path::new("/proc"), db, Some(Path::new("/proc")))
+            .expect("home itself is in the home tree");
+        assert_eq!((tree, path), (db.join("home"), b"/".to_vec()));
+        assert_eq!(
+            tree_of(Path::new("/proc/self"), db, Some(Path::new("/"))),
+            None,
+            "/proc is its own file system under a home of /"
         );
     }
 
