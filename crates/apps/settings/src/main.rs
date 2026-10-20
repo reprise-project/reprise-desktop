@@ -976,6 +976,7 @@ impl SettingsApp {
             &self.want,
             &file,
             self.picture.as_ref(),
+            self.listing.is_some() || self.decoding.is_some(),
         );
     }
 

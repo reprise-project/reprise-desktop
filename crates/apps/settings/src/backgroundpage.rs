@@ -368,7 +368,8 @@ pub fn selected(form: &Form) -> Option<usize> {
 
 /// What the monitor shows for `s` with `want` the file it shows
 /// ([`monitor_file`]). With none, or while its decode is still running,
-/// or when it did not decode, that is the desktop colour alone. Once
+/// or when it did not decode, that is the desktop colour alone (but see
+/// [`show`]). Once
 /// `picture` is `want`'s decode (the same file, however the config
 /// spells it), the picture is composed over the colour the way the
 /// desktop places it.
@@ -402,10 +403,14 @@ pub fn next_decode(want: &str, shown: Option<&str>, busy: bool) -> Option<PathBu
     (!on && !busy).then_some(file)
 }
 
-pub fn show(form: &mut Form, s: &Settings, want: &str, picture: Option<&Picture>) {
+/// Put [`screen`] on the monitor, except that while a slideshow folder is
+/// listed or a picture decoded (`pending`) a picture already shown stays,
+/// so a pick goes from one picture straight to the next.
+pub fn show(form: &mut Form, s: &Settings, want: &str, picture: Option<&Picture>, pending: bool) {
     let want = screen(s, want, picture);
     if let Some(Control::Monitor(on)) = form.item_mut(MONITOR).map(|i| &mut i.control)
         && *on != want
+        && !(pending && matches!(on, Screen::Picture(_)))
     {
         *on = want;
     }
