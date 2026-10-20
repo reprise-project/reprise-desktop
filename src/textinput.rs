@@ -24,6 +24,7 @@ use smithay::{
         wayland_protocols_misc::{
             zwp_input_method_v2::server::{
                 zwp_input_method_keyboard_grab_v2::ZwpInputMethodKeyboardGrabV2,
+                zwp_input_method_manager_v2::ZwpInputMethodManagerV2,
                 zwp_input_method_v2::ZwpInputMethodV2,
                 zwp_input_popup_surface_v2::ZwpInputPopupSurfaceV2,
             },
@@ -46,8 +47,8 @@ use smithay::{
         Dispatch2, GlobalData, GlobalDispatch2,
         compositor::add_destruction_hook,
         input_method::{
-            InputMethodHandle, InputMethodHandler, InputMethodKeyboardGrab,
-            InputMethodManagerState, InputMethodSeat, PopupSurface,
+            InputMethodHandle, InputMethodHandler, InputMethodKeyboardGrab, InputMethodSeat,
+            PopupSurface,
         },
         text_input::{TextInputActivation, TextInputManagerState, TextInputSeat},
         virtual_keyboard::{
@@ -72,7 +73,6 @@ pub struct Ime {
     cursors: HashMap<ObjectId, TiState>,
     pub vk: VkKeymap,
     vk_key: bool,
-    _input_method: InputMethodManagerState,
     _text_input: TextInputManagerState,
 }
 
@@ -86,10 +86,18 @@ struct ImePopup {
 
 impl Ime {
     pub fn new(dh: &DisplayHandle, seat: &smithay::input::Seat<State>) -> Ime {
-        // Smithay answers a second input method by telling the first one it
-        // is unavailable, so a second never sees the global while one is
-        // bound.
+        // Smithay tells a second input method it is unavailable and keeps it
+        // inert, so no client sees the global while one is bound.
         let bound = seat.input_method().clone();
+        dh.create_global::<State, ZwpInputMethodManagerV2, _>(
+            1,
+            crate::imefield::ImGlobal {
+                filter: Box::new(move |client| {
+                    !bound.has_instance()
+                        && crate::sandbox::client_may_see(client, "zwp_input_method_manager_v2")
+                }),
+            },
+        );
         dh.create_global::<State, ZwpVirtualKeyboardManagerV1, _>(
             1,
             VkGlobal {
@@ -107,10 +115,6 @@ impl Ime {
             cursors: HashMap::new(),
             vk: VkKeymap::default(),
             vk_key: false,
-            _input_method: InputMethodManagerState::new::<State, _>(dh, move |client| {
-                !bound.has_instance()
-                    && crate::sandbox::client_may_see(client, "zwp_input_method_manager_v2")
-            }),
             _text_input: TextInputManagerState::new::<State>(dh),
         }
     }
@@ -735,7 +739,6 @@ pub fn ime_holds_keyboard(kb: &smithay::input::keyboard::KeyboardHandle<State>) 
 
 impl State {
     pub fn ime_sync_grab(&mut self) {
-        self.ime_tap_input_method();
         self.ime_return_popup_grab();
         let handle = self.seat.input_method().clone();
         if !handle.keyboard_grabbed() {
