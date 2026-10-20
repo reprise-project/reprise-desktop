@@ -151,15 +151,24 @@ struct Read {
     path: PathBuf,
     rows: Vec<Row>,
     icons: ReadIcons,
+    /// List and Details' icon size the icon files were decoded at.
+    list: i32,
 }
 
 /// Folder `path`'s rows, hidden entries and those `keep` refuses left out, with their icons read
-/// at `scale`. Runs on a listing's thread: any of it may sit on a mount that never answers.
-fn read(path: PathBuf, keep: impl FnMut(&Item) -> bool, scale: i32) -> Read {
+/// at `scale` and List and Details' at `list` px. Runs on a listing's thread: any of it may sit
+/// on a mount that never answers.
+fn read(path: PathBuf, keep: impl FnMut(&Item) -> bool, scale: i32, list: i32) -> Read {
     let globs = reprisefs::apps::mime_globs();
     let rows = reprisefs::listing::dialog_rows(&path, &globs, keep);
-    let icons = ReadIcons::read(rows.iter().map(|r| &r.item), scale);
-    Read { path, rows, icons }
+    let sizes = icontheme::listing_px(list);
+    let icons = ReadIcons::read(rows.iter().map(|r| &r.item), sizes, scale);
+    Read {
+        path,
+        rows,
+        icons,
+        list,
+    }
 }
 
 /// What a folder's read depends on besides `keep`, which follows the dialog's filter. A relist
@@ -171,6 +180,7 @@ struct ReadKey {
     typed: Option<String>,
     filter: usize,
     scale: i32,
+    list: i32,
 }
 
 impl ReadKey {
@@ -181,6 +191,7 @@ impl ReadKey {
             typed: dlg.wildcard().map(str::to_string),
             filter: dlg.filter(),
             scale,
+            list: shellview::list_icon_px(dlg.text()),
         }
     }
 }
@@ -210,6 +221,7 @@ fn listing(folders: &mut FolderTable, id: FolderId, read: Read, icons: &mut Icon
         path,
         rows,
         icons: read_icons,
+        list,
     } = read;
     read_icons.put(icons);
     let specials = reprisefs::places::special_folders();
@@ -220,7 +232,7 @@ fn listing(folders: &mut FolderTable, id: FolderId, read: Read, icons: &mut Icon
             reprisefs::icons::item_icon_with(&r.item, own.as_deref(), &specials, &|n| icons.has(n))
         })
         .collect();
-    let mut shared = ListingIcons::default();
+    let mut shared = ListingIcons::default().with_list(list);
     let mut aliases: Vec<(String, OsString)> = Vec::new();
     let mut pictures = Vec::new();
     let entries = rows
@@ -527,8 +539,9 @@ impl Host {
                 self.restyling = Some(start());
             }
         }
+        let list = shellview::list_icon_px(dlg.text());
         self.list_icons
-            .follow(scale, icons, dlg.entries_mut(), wake);
+            .follow(scale, list, icons, dlg.entries_mut(), wake);
         let p = &mut self.pictures;
         if p.scale != scale {
             p.scale = scale;
@@ -732,7 +745,7 @@ impl Host {
         };
         let key = ReadKey::of(dlg, id, icons.scale());
         let start = {
-            let (path, keep, scale) = (path.clone(), keep.clone(), key.scale);
+            let (path, keep, scale, list) = (path.clone(), keep.clone(), key.scale, key.list);
             let (folders_only, typed) = (key.folders_only, key.typed.clone());
             let wake = self.wake.clone();
             move || {
@@ -740,7 +753,7 @@ impl Host {
                     path.clone(),
                     picks(folders_only, typed.clone(), keep.clone()),
                 );
-                Job::spawn(wake.as_ref(), move || read(path, keep, scale))
+                Job::spawn(wake.as_ref(), move || read(path, keep, scale, list))
             }
         };
         let job = match self.reading.take() {
@@ -913,7 +926,7 @@ mod tests {
         keep: impl Fn(&Item) -> bool,
     ) -> Folder {
         let path = folders.path(id).expect("the id resolves").to_path_buf();
-        let r = read(path, picks(folders_only, None, keep), icons.scale());
+        let r = read(path, picks(folders_only, None, keep), icons.scale(), 16);
         listing(folders, id, r, icons).folder
     }
 
@@ -1986,6 +1999,54 @@ mod tests {
         );
     }
 
+    /// At 125% and 150% text List and Details' icons are fetched at their grown column, 20 and
+    /// 25 px, without listing the folder again: theme icons at once, icon files once their thread
+    /// decodes them. A listing made there wears them too.
+    #[test]
+    fn a_text_size_change_fetches_the_list_icons_at_the_grown_column() {
+        const OWN: u32 = 0xff80_20a0;
+        let t = pictures_folder();
+        let dir = t.path().join("list");
+        let own = t.path().join("own.png");
+        png(&own, 96, 96, OWN);
+        let directory = format!("[Desktop Entry]\nIcon={}\n", own.display());
+        std::fs::write(dir.join("sub/.directory"), directory).unwrap();
+        let mut icons = flat_icons(t.path());
+        let mut h = host_in(&dir);
+        let mut dlg = open_dlg(&mut h);
+        h.ensure_listed(&mut dlg, &mut icons, &|_| true);
+        let wake = crate::Waker::noop();
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+        let listing = h.pictures.generation;
+        let list = |dlg: &FileDlg, name: &str| icon_sizes(entry(dlg, name))[0];
+        assert_eq!(list(&dlg, "notes.txt"), Some((1, 16, TEXT)));
+
+        for (u, side) in [(TextUnits::new(14, 11), 20), (TextUnits::new(17, 11), 25)] {
+            dlg.set_text(u);
+            h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+            assert_eq!(list(&dlg, "notes.txt"), Some((1, side, TEXT)));
+            settle_thumbs(&mut h, &mut dlg, &mut icons);
+            assert_eq!(list(&dlg, "sub"), Some((1, side, OWN)), "the icon file");
+            assert_eq!(icon_sizes(entry(&dlg, "sub"))[1], Some((1, 32, OWN)));
+        }
+        assert_eq!(
+            h.pictures.generation, listing,
+            "the folder is not listed again"
+        );
+
+        h.list(&mut dlg, h.folder.unwrap(), &mut icons, &|_| true);
+        assert_eq!(
+            list(&dlg, "notes.txt"),
+            Some((1, 25, TEXT)),
+            "listed at 150%"
+        );
+        assert_eq!(list(&dlg, "sub"), Some((1, 25, OWN)));
+
+        dlg.set_text(TextUnits::ONE);
+        h.follow_scale(&mut dlg, 1, &mut icons, &wake);
+        assert_eq!(list(&dlg, "notes.txt"), Some((1, 16, TEXT)));
+    }
+
     /// A folder still being read leaves the dialog as it was and its loop free; the listing
     /// lands once the read answers, wearing the folder icon and icon file its thread read though
     /// both are gone by then.
@@ -2002,7 +2063,7 @@ mod tests {
         let mut h = host_in(&dir);
         let mut dlg = open_dlg(&mut h);
         let id = h.folder.unwrap();
-        let read = read(dir.clone(), |_: &Item| true, icons.scale());
+        let read = read(dir.clone(), |_: &Item| true, icons.scale(), 16);
         std::fs::remove_file(dir.join("sub/.directory")).unwrap();
         std::fs::remove_file(&own).unwrap();
         let (answer, gate) = std::sync::mpsc::channel::<()>();
@@ -2036,7 +2097,7 @@ mod tests {
         let mut dlg = open_dlg(&mut h);
         let id = h.folder.unwrap();
         let in_flight = |h: &mut Host, key: ReadKey| {
-            let before = read(t.clone(), |_: &Item| true, 1);
+            let before = read(t.clone(), |_: &Item| true, 1, 16);
             h.reading = Some((key, Job::spawn(None, move || before)));
         };
         let names = |dlg: &FileDlg| -> Vec<String> {

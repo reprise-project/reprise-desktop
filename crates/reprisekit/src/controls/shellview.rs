@@ -58,8 +58,9 @@ pub use crate::controls::shellgrid::{
 };
 
 /// One file or folder. The host fills the fields its modes need: `icon`
-/// (16 px) for List and Details, `icon32` for Icons and for List and Details once the text
-/// grows their icon column to 32 px ([`list_icon`]), `icon48` for Tiles, `thumb` for Thumbnails. `id` is the host's own handle (a `filedlg::FolderId`
+/// for List and Details (16 px, or [`list_icon_px`] grown with the text), `icon32` for Icons
+/// and for List and Details once the text grows their icon column to 32 px ([`list_icon`]),
+/// `icon48` for Tiles, `thumb` for Thumbnails. `id` is the host's own handle (a `filedlg::FolderId`
 /// for a directory, whatever it keys its files by otherwise); reprisekit only carries it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Entry {
@@ -437,8 +438,13 @@ pub fn sort(sv: &mut ShellView) {
     sv.selection.reorder(&order);
 }
 
+/// List and Details' icon column at text size `u`, the size a host fetches `Entry::icon` at.
+pub fn list_icon_px(u: TextUnits) -> i32 {
+    u.len(ICON_PX)
+}
+
 /// The icon List and Details draw for `e` in an icon column `slot` px wide: the 32 px one once
-/// it fits, else the 16 px one.
+/// it fits, else `icon`.
 pub fn list_icon(e: &Entry, slot: i32) -> Option<&Canvas> {
     match slot >= 32 {
         true => e.icon32.as_deref().or(e.icon.as_deref()),

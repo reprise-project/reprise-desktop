@@ -138,9 +138,6 @@ pub fn icons(cache: &mut IconCache, scale: i32, u: TextUnits) -> Icons {
     }
 }
 
-/// The listing's icon sizes: List and Details, Icons and Thumbnails, Tiles.
-const LISTING_PX: [i32; 3] = [16, 32, 48];
-
 /// The Browse dialog: the dialog, its folder table and icons.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FilePicker {
@@ -209,6 +206,8 @@ pub struct Request {
     folder_only: bool,
     /// The dialog's draw scale, at which icon files the listing names are decoded.
     scale: i32,
+    /// List and Details' icon size ([`shellview::list_icon_px`]).
+    list: i32,
     /// The view file ([`FilePicker::remember_in`]) the first listing reads along with its
     /// folder, so a dead `$XDG_STATE_HOME` never stalls the loop.
     view_file: Option<PathBuf>,
@@ -219,6 +218,7 @@ impl Request {
     fn same_work(&self, o: &Request) -> bool {
         self.id == o.id
             && self.scale == o.scale
+            && self.list == o.list
             && self.path == o.path
             && self.exts == o.exts
             && self.pattern == o.pattern
@@ -239,7 +239,7 @@ impl Request {
             }
         };
         let art = match &found {
-            Found::Folder(rows) => icon_files(rows, self.scale),
+            Found::Folder(rows) => icon_files(rows, self.scale, self.list),
             _ => Vec::new(),
         };
         let view = (self.view_file.as_deref())
@@ -248,6 +248,7 @@ impl Request {
             view,
             seq: self.seq,
             scale: self.scale,
+            list: self.list,
             id: self.id,
             path: self.path,
             pattern: self.folder_only.then_some(self.pattern).flatten(),
@@ -269,8 +270,9 @@ struct Listed {
 #[derive(Debug)]
 pub struct Reply {
     seq: u64,
-    /// The scale its icons were made for.
+    /// The scale and List and Details' icon size its icons were made for.
     scale: i32,
+    list: i32,
     id: Option<FolderId>,
     path: PathBuf,
     /// The typed pattern whose folder part was looked up, which the
@@ -278,8 +280,8 @@ pub struct Reply {
     pattern: Option<String>,
     found: Found,
     /// Icon files the listing's rows wear (a folder's or a launcher's `Icon=/...`), decoded at
-    /// [`LISTING_PX`] times `scale` on the job's thread: the file may be anywhere, a dead mount
-    /// included.
+    /// [`icontheme::listing_px`] of `list` times `scale` on the job's thread: the file may be
+    /// anywhere, a dead mount included.
     art: Vec<(String, [Option<Canvas>; 3])>,
     /// The stored view and sort, when the request carried the view file.
     view: Option<filedlg::Remembered>,
@@ -366,6 +368,7 @@ impl FilePicker {
             pattern: typed.or(self.dlg.wildcard()).map(str::to_string),
             folder_only: typed.is_some(),
             scale: self.icons.scale,
+            list: self.list_px(),
             view_file: None,
         };
         if let Some(same) = self.pending.iter().find(|p| p.same_work(&req)) {
@@ -391,7 +394,7 @@ impl FilePicker {
             r.art
                 .iter()
                 .flat_map(|(file, art)| {
-                    LISTING_PX
+                    icontheme::listing_px(r.list)
                         .into_iter()
                         .zip(art)
                         .map(|(px, c)| (file.clone(), px * r.scale, c.clone()))
@@ -401,7 +404,7 @@ impl FilePicker {
         if self.restyling.is_some_and(|seq| seq == r.seq) {
             self.restyling = None;
             if let Found::Folder(rows) = r.found {
-                self.restyle(rows, cache, r.scale);
+                self.restyle(rows, cache, r.scale, r.list);
             }
             return Outcome::Redraw;
         }
@@ -428,9 +431,9 @@ impl FilePicker {
                 } else {
                     Default::default()
                 };
-                let (entries, pictures) = self.entries(rows, cache, r.scale);
+                let (entries, pictures) = self.entries(rows, cache, r.scale, r.list);
                 self.show(id, &r.path, entries);
-                if r.scale != self.icons.scale {
+                if r.scale != self.icons.scale || r.list != self.list_px() {
                     self.restyling = Some(self.request(Some(id), r.path.clone(), None));
                 }
                 self.pictures.paths = pictures;
@@ -468,13 +471,16 @@ impl FilePicker {
     }
 
     /// The dialog draws at `scale` in `cache`'s icon theme: its icons are fetched at that scale
-    /// from `cache`, and once the scale or theme changes the listing's again off the loop;
+    /// from `cache`, and once the scale, theme or List and Details' icon size changes the
+    /// listing's again off the loop;
     /// thumbnails made at another scale are dropped, since they would draw at the wrong size, and
     /// its pictures are fetched again. True when it changed.
     pub fn follow_scale(&mut self, scale: i32, cache: &mut IconCache) -> bool {
         let mut changed = false;
         let u = self.dlg.text();
-        let rescaled = self.icons.scale != scale || self.icons.theme != ThemeOf::of(cache);
+        let rescaled = self.icons.scale != scale
+            || self.icons.theme != ThemeOf::of(cache)
+            || self.list_px() != shellview::list_icon_px(u);
         if rescaled || self.icons.text != u {
             self.icons = icons(cache, scale, u);
             self.dlg.set_place_icons(self.icons.places.clone());
@@ -503,10 +509,15 @@ impl FilePicker {
         true
     }
 
-    /// The folder shown, relisted at `scale`: each entry still listed takes its icons. Showing
-    /// another folder drops the relisting.
-    fn restyle(&mut self, rows: Vec<Listed>, cache: &mut IconCache, scale: i32) {
-        let (fresh, _) = self.entries(rows, cache, scale);
+    /// List and Details' icon size at the text size the dialog's icons were fetched at.
+    fn list_px(&self) -> i32 {
+        shellview::list_icon_px(self.icons.text)
+    }
+
+    /// The folder shown, relisted at `scale` and List and Details' icon size `list`: each entry
+    /// still listed takes its icons. Showing another folder drops the relisting.
+    fn restyle(&mut self, rows: Vec<Listed>, cache: &mut IconCache, scale: i32, list: i32) {
+        let (fresh, _) = self.entries(rows, cache, scale, list);
         let by_name: std::collections::HashMap<&str, &Entry> =
             fresh.iter().map(|e| (e.name.as_str(), e)).collect();
         for e in self.dlg.entries_mut() {
@@ -589,6 +600,7 @@ impl FilePicker {
         rows: Vec<Listed>,
         cache: &mut IconCache,
         scale: i32,
+        list: i32,
     ) -> (Vec<Entry>, Vec<PathBuf>) {
         let specials = reprisefs::places::special_folders();
         let names: Vec<String> = rows
@@ -602,7 +614,7 @@ impl FilePicker {
                 }
             })
             .collect();
-        let mut shared = ListingIcons::device(scale);
+        let mut shared = ListingIcons::device(scale).with_list(list);
         let mut pictures = Vec::new();
         let entries = rows
             .into_iter()
@@ -903,7 +915,7 @@ fn read_folder(dir: &Path, exts: Option<&[&str]>, pattern: Option<&str>) -> Vec<
 }
 
 /// The icon files `rows` wear, each decoded once at every listing size times `scale`.
-fn icon_files(rows: &[Listed], scale: i32) -> Vec<(String, [Option<Canvas>; 3])> {
+fn icon_files(rows: &[Listed], scale: i32, list: i32) -> Vec<(String, [Option<Canvas>; 3])> {
     let mut files: Vec<&str> = rows
         .iter()
         .filter_map(|l| match &l.row.item.shortcut {
@@ -917,7 +929,7 @@ fn icon_files(rows: &[Listed], scale: i32) -> Vec<(String, [Option<Canvas>; 3])>
     files
         .into_iter()
         .map(|f| {
-            let art = LISTING_PX
+            let art = icontheme::listing_px(list)
                 .map(|px| reprisekit::icontheme::decode_file(Path::new(f), px * scale, 1));
             (f.to_string(), art)
         })
@@ -960,9 +972,9 @@ mod tests {
     }
 
     /// A text size change fetches the toolbar's icons grown, the drawn Views icon 32 px at 200%,
-    /// without listing the folder again.
+    /// and relists the folder only for List and Details' grown icons.
     #[test]
-    fn a_text_size_change_grows_the_toolbar_icons_without_a_relisting() {
+    fn a_text_size_change_grows_the_toolbar_icons_and_restyles_the_entries() {
         let dir = sandbox("icons-grown");
         let mut cache = cache();
         let mut p = FilePicker::run_command(&dir, icons(&mut cache, 1, TextUnits::ONE), true);
@@ -973,7 +985,8 @@ mod tests {
         p.dlg.set_text(TextUnits::new(22, 11));
         assert!(p.follow_scale(1, &mut cache));
         assert_eq!(views(&p), Some(32));
-        assert!(p.take_requests().is_empty(), "nothing to relist");
+        assert_eq!(p.take_requests().len(), 1, "one relisting");
+        assert!(p.restyling.is_some(), "for the entries' icons only");
     }
 
     /// Runs the picker's queued requests the way the host's thread would,
@@ -1180,6 +1193,7 @@ mod tests {
             Reply {
                 seq: p.listing.unwrap(),
                 scale: 1,
+                list: 16,
                 id: Some(recent),
                 path: PathBuf::from(reprisefs::places::RECENT),
                 pattern: None,
@@ -1340,6 +1354,46 @@ mod tests {
             "Pictures wears folder-music"
         );
         assert_eq!(worn("Art"), [Some(cover); 3], "Art wears its picture");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// At 125% and 150% text List and Details' icons are fetched at their grown column, 20 and
+    /// 25 px, theme icons and icon files alike; back at 100% they are 16 px again.
+    #[test]
+    fn list_icons_follow_the_text_size() {
+        let dir = sandbox("icons-text");
+        let mut icons = flat_icons(&dir.join(".icons"), &[("folder", 0xff20_40c0)]);
+        let art = dir.join("Art");
+        let pic = dir.join("cover.png");
+        image::RgbaImage::from_pixel(48, 48, image::Rgba([0x20, 0xa0, 0x40, 0xff]))
+            .save(&pic)
+            .unwrap();
+        std::fs::create_dir(&art).unwrap();
+        reprisefs::meta::set_folder_icon(&art, pic.to_str()).unwrap();
+        let opened = super::icons(&mut icons, 1, TextUnits::ONE);
+        let mut p = FilePicker::run_command(&dir, opened, true);
+        settle_with(&mut p, &mut icons);
+        let widths = |p: &FilePicker, name: &str| {
+            let e = p.dlg.entries().iter().find(|e| e.name == name).unwrap();
+            [&e.icon, &e.icon32, &e.icon48].map(|c| c.as_ref().map(|c| c.width))
+        };
+        let at = |list: u32| [Some(list), Some(32), Some(48)];
+        assert_eq!(widths(&p, "Pictures"), at(16));
+        for (u, list) in [(TextUnits::new(14, 11), 20), (TextUnits::new(17, 11), 25)] {
+            p.dlg.set_text(u);
+            assert!(p.follow_scale(1, &mut icons));
+            settle_with(&mut p, &mut icons);
+            assert_eq!(
+                widths(&p, "Pictures"),
+                at(list),
+                "a theme icon at {list} px"
+            );
+            assert_eq!(widths(&p, "Art"), at(list), "an icon file at {list} px");
+        }
+        p.dlg.set_text(TextUnits::ONE);
+        assert!(p.follow_scale(1, &mut icons));
+        settle_with(&mut p, &mut icons);
+        assert_eq!(widths(&p, "Art"), at(16));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

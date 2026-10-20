@@ -83,13 +83,14 @@ impl Explorer {
     }
 
     /// The main window draws at `scale`, `ctx.icons`' scale: the chrome and the entries wear
-    /// their icons at that scale, icon files once a thread decodes them, and thumbnails made at
-    /// another one are asked for again.
+    /// their icons at that scale (List and Details' at the text's size), icon files once a thread
+    /// decodes them, and thumbnails made at another one are asked for again.
     pub fn follow_scale(&mut self, scale: i32, ctx: &mut Ctx) {
+        let list = shellview::list_icon_px(ctx.theme.text);
+        self.list_icons
+            .follow(scale, list, &mut ctx.icons, &mut self.sv.entries, &ctx.wake);
         if std::mem::replace(&mut self.drawn_scale, scale) != scale {
             self.rescale_chrome(ctx);
-            self.list_icons
-                .follow(scale, &mut ctx.icons, &mut self.sv.entries, &ctx.wake);
             self.request_thumbs(scale);
         }
     }
@@ -1144,6 +1145,34 @@ mod tests {
             [Some((2, 32, OWN)), Some((2, 64, OWN)), Some((2, 96, OWN))]
         );
         assert_eq!(ex.selected_paths(), [sub], "the folder is not listed again");
+    }
+
+    #[test]
+    fn a_text_size_change_fetches_the_list_icons_at_the_grown_column() {
+        const OWN: u32 = 0xff80_20a0;
+        let mut ctx = test_ctx();
+        let (dir, mut ex) = explorer(&mut ctx);
+        let art = tempfile::tempdir().expect("a temp dir");
+        let own = art.path().join("own.png");
+        let mut c = Canvas::new(96, 96);
+        c.pixels.fill(OWN);
+        std::fs::write(&own, reprisekit::raster::to_png(&c)).expect("write");
+        let directory = format!("[Desktop Entry]\nIcon={}\n", own.display());
+        std::fs::write(dir.path().join("sub/.directory"), directory).expect("write");
+        ex.refresh(&mut ctx);
+        ex.follow_scale(1, &mut ctx);
+        let list = |ex: &Explorer| {
+            let e = &ex.sv.entries[index_of(ex, "sub")];
+            e.icon.as_ref().map(|c| (c.width, c.get(4, 4)))
+        };
+        assert_eq!(list(&ex), Some((16, OWN)));
+
+        ctx.theme = reprisekit::theme::Theme::default().with_text_size(150);
+        ex.follow_scale(1, &mut ctx);
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+            list(ex).is_some_and(|(w, _)| w == 25)
+        });
+        assert_eq!(list(&ex), Some((25, OWN)));
     }
 
     #[test]
