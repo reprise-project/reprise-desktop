@@ -6,7 +6,7 @@ use reprisekit::access::Tree;
 use reprisekit::access::accesskit::NodeId;
 use reprisekit::controls::hosted::Chain;
 use reprisekit::controls::menu::{MenuAction, MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu};
-use reprisekit::raster::{Canvas, Rect};
+use reprisekit::raster::Canvas;
 use reprisekit::textedit::keysym;
 
 pub struct Popup<A> {
@@ -106,7 +106,7 @@ fn menu_ctx(ctx: &Ctx) -> MenuCtx<'_> {
         text: &ctx.text,
         theme: &ctx.theme,
         px: ctx.theme.fonts.size_px,
-        within: Rect::new(0, 0, ctx.size.0, ctx.size.1),
+        within: ctx.menu_within(),
     }
 }
 

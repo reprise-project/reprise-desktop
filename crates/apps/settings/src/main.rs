@@ -3524,6 +3524,7 @@ mod tests {
             wake: repriseapp::Waker::noop(),
             heads: repriseapp::heads::HeadRequests::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 100,
         }

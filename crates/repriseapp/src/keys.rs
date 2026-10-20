@@ -303,6 +303,7 @@ mod tests {
             wake: crate::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 100,
         };
@@ -379,6 +380,7 @@ mod tests {
             wake: crate::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 100,
         };
@@ -438,6 +440,7 @@ mod tests {
             wake: crate::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 100,
         };
@@ -495,6 +498,7 @@ mod tests {
             wake: crate::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 100,
         };
@@ -643,6 +647,7 @@ mod tests {
             wake: crate::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 100,
         };
@@ -714,6 +719,7 @@ mod tests {
             wake: crate::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 100,
         };

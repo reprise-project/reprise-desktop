@@ -200,12 +200,14 @@ impl Volume {
     }
 
     fn bar_layout(&self, ctx: &Ctx) -> menubar::Layout {
-        self.bar.layout(
-            &ctx.text,
-            ctx.theme.fonts.size_px,
-            Rect::new(0, 0, ctx.size.0, ctx.size.1),
-            &ctx.theme.controls(),
-        )
+        self.bar
+            .layout(
+                &ctx.text,
+                ctx.theme.fonts.size_px,
+                Rect::new(0, 0, ctx.size.0, ctx.size.1),
+                &ctx.theme.controls(),
+            )
+            .reaching(ctx.menu_within())
     }
 
     /// One panel naming the device, text 2 px in, no grip; the bar's last row of
@@ -857,6 +859,7 @@ mod tests {
             wake: repriseapp::Waker::noop(),
             heads: Default::default(),
             want_tick: Default::default(),
+            output_size: None,
             at_pick: false,
             text_size: 100,
         }

@@ -49,6 +49,9 @@ impl Title {
 pub struct Layout {
     pub bar: Rect,
     pub frames: Vec<Rect>,
+    /// What the menus fit their width to and stay inside: under the bar, as wide as it, unless
+    /// [`Layout::reaching`] says otherwise.
+    pub within: Rect,
 }
 
 impl Layout {
@@ -70,7 +73,18 @@ impl Layout {
                 r
             })
             .collect();
-        Layout { bar, frames }
+        let within = Rect::new(bar.x, bar.y, bar.width, i32::MAX / 4);
+        Layout {
+            bar,
+            frames,
+            within,
+        }
+    }
+
+    /// The layout with its menus fitting `within` instead: a host showing them on popups
+    /// passes the area a popup may cover.
+    pub fn reaching(self, within: Rect) -> Layout {
+        Layout { within, ..self }
     }
 
     pub fn hit(&self, x: i32, y: i32) -> Option<usize> {
@@ -600,9 +614,11 @@ mod tests {
     fn a_flat_bar_doubles_at_scale_2() {
         let text = TextRenderer::load(&FontConfig::default());
         let titles = vec![Title::new(""), Title::new("")];
+        let bar = Rect::new(2, 2, 60, BAR_H);
         let lay = Layout {
-            bar: Rect::new(2, 2, 60, BAR_H),
+            bar,
             frames: vec![Rect::new(4, 3, 20, 18), Rect::new(24, 3, 20, 18)],
+            within: bar,
         };
         let draw = |c: &mut Canvas, p: &Paint| {
             draw(c, &text, p, &lay, &titles, None, Some(1), false, false, 11)
@@ -724,7 +740,7 @@ impl Bar {
             text,
             theme,
             px,
-            within: Rect::new(lay.bar.x, lay.bar.y, lay.bar.width, i32::MAX / 4),
+            within: lay.within,
         }
     }
 
@@ -1171,6 +1187,46 @@ mod bar_tests {
         assert_eq!((b.spots()[0].rect.x, b.spots()[0].rect.y), (500, -90));
         b.dismiss();
         assert!(!b.is_active() && b.spots().is_empty());
+    }
+
+    #[test]
+    fn a_bar_reaching_past_its_width_fits_menus_to_their_rows() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = Theme::default();
+        let px = theme.fonts.size_px;
+        let mut b = Bar::new(vec![(
+            "&File",
+            vec![MenuItem::item(
+                "&Open the most recently saved document again",
+            )],
+        )]);
+        let titles = b.titles.clone();
+        let width = |b: &mut Bar, lay: &Layout| {
+            b.open_title(0, lay, &text, &theme, px, false);
+            b.popup.as_ref().expect("open").rect().width
+        };
+        let at = |w| {
+            Layout::compute(
+                &text,
+                px,
+                Rect::new(0, 0, w, 40),
+                &titles,
+                &MenuTitles::CLASSIC,
+            )
+        };
+        let natural = width(&mut b, &at(1920));
+        assert!(natural > 120, "the row needs {natural} px");
+        assert_eq!(
+            width(&mut b, &at(120)),
+            120,
+            "a menu under a narrow bar fits it"
+        );
+        let reaching = at(120).reaching(Rect::new(0, 0, 1920, 1080));
+        assert_eq!(
+            width(&mut b, &reaching),
+            natural,
+            "a reaching bar's menu keeps its rows whole"
+        );
     }
 
     #[test]
