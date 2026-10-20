@@ -830,6 +830,16 @@ impl State {
         true
     }
 
+    /// Whether the open or leaving stack's output went or its box changed since the stack was laid
+    /// out on it; any other layout pass (a config reload) keeps the stack.
+    pub(crate) fn flip_misplaced(&self) -> bool {
+        let sw = &self.switcher;
+        [&sw.stack, &sw.leaving].into_iter().flatten().any(|st| {
+            !self.scene.outputs().contains(&st.output)
+                || self.layout_box(Some(&st.output)) != st.area
+        })
+    }
+
     /// A window or dialog opened (`map_window`, `open_dialog`): one the open
     /// stack lists but does not hold joins it before the desktop
     /// (`flip::insert_roll`), shown as its card.
@@ -966,4 +976,42 @@ fn forget_entry(st: &mut Stack, entry: Entry, now: Instant) -> Option<Pic> {
         t => t,
     };
     Some(st.pics.remove(k))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::Config;
+    use crate::harness::Harness;
+    use crate::switcherview::Entry;
+
+    fn glass() -> Harness {
+        let config = Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+        let mut h = Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        h
+    }
+
+    fn stacked(h: &Harness) -> Option<Vec<Entry>> {
+        h.state.switcher.stack.as_ref().map(|st| st.entries.clone())
+    }
+
+    #[test]
+    fn a_reload_that_leaves_the_output_alone_keeps_the_stack_up() {
+        let mut h = glass();
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "one", 300, 200);
+        h.map_toplevel(&mut c, "two", 300, 200);
+        h.state.open_flip(crate::keys::MOD_LOGO);
+        assert!(stacked(&h).is_some(), "the stack is up");
+        let mut calmer = h.state.config.clone();
+        calmer.effects.hover_fade = !calmer.effects.hover_fade;
+        crate::configwatch::reload(&mut h.state, calmer);
+        h.dispatch();
+        assert!(stacked(&h).is_some(), "a reload of another key keeps it");
+        let mut wide = h.state.config.clone();
+        wide.interface = reprisekit::interface::Interface::Blue;
+        crate::configwatch::reload(&mut h.state, wide);
+        h.dispatch();
+        assert!(stacked(&h).is_none(), "leaving Glass ends it");
+    }
 }
