@@ -1412,16 +1412,24 @@ mod tests {
 
     #[test]
     fn an_italic_config_loads_an_italic_face_when_one_exists() {
+        let db = system_fonts(&[]);
+        let mut slanted: Vec<&str> = db
+            .faces()
+            .filter(|f| f.style == fontdb::Style::Italic)
+            .filter_map(|f| f.families.first().map(|(name, _)| name.as_str()))
+            .collect();
+        slanted.sort_unstable();
+        let Some(&family) = slanted.first() else {
+            return;
+        };
         let cfg = FontConfig {
-            family: vec!["Trebuchet MS".into()],
+            family: vec![family.into()],
             italic: true,
             ..FontConfig::default()
         };
         let t = TextRenderer::load(&cfg);
-        if !t.has_face("Trebuchet MS") {
-            return;
-        }
-        assert!(t.is_italic());
+        assert!(t.has_face(family), "{family} loads");
+        assert!(t.is_italic(), "{family} loads its italic face");
     }
 
     #[test]
