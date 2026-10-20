@@ -127,8 +127,24 @@ mod tests {
         );
         let h = l.titles[1];
         assert_eq!(c.get(h.x + 2, h.y + 2), cs.hilight.argb(), "the hot header");
-        let h0 = l.titles[0];
-        assert_eq!(c.get(h0.x + 2, h0.y + 2), cs.button_face.argb());
+        let inks = |r: Rect| {
+            let mut seen = std::collections::HashSet::new();
+            for y in r.y..r.bottom() {
+                for x in r.x..r.right() {
+                    seen.insert(c.get(x, y));
+                }
+            }
+            seen
+        };
+        let (unlit, lit) = (inks(l.titles[0]), inks(h));
+        assert!(
+            unlit.contains(&cs.button_text.argb()) && !unlit.contains(&cs.hilight.argb()),
+            "the unlit header's title is button text on no highlight"
+        );
+        assert!(
+            lit.contains(&cs.hilight_text.argb()),
+            "the hot header's title is highlight text"
+        );
         let x = l.assist_close(1).unwrap();
         assert_ne!(
             c.get(x.x + x.width / 2, x.y + x.height / 2),
