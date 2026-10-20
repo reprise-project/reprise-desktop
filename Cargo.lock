@@ -2041,6 +2041,7 @@ dependencies = [
  "clap",
  "futures-lite",
  "futures-util",
+ "gbm-sys",
  "image",
  "inotify",
  "input",

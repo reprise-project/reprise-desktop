@@ -97,6 +97,8 @@ smithay-drm-extras.workspace = true
 input = { version = "0.10", default-features = false, features = ["libinput_1_26"] }
 tracing = { version = "0.1", default-features = false, features = ["std"] }
 xcursor = "0.3"
+# gbm_bo_map with write-only transfer flags (`gbm` maps read-write).
+gbm-sys = "0.4"
 # focus, `_NET_WM_ICON` and counting the X11 programs (X-Resource) to stop
 # an idle server (`xwayland`). Smithay's xwayland still pulls in 0.13; no
 # types cross between the two connections, so both versions build.
