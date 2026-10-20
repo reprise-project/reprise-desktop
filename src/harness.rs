@@ -170,8 +170,19 @@ impl Harness {
 
     /// A client on one end of a socket pair, its registry read.
     pub fn connect(&mut self) -> TestClient {
+        self.connect_with(None)
+    }
+
+    /// A client [`State::client_pid`] takes for process `pid`; pick one above the kernel's
+    /// pid limit so no real process answers to it.
+    pub fn connect_as(&mut self, pid: i32) -> TestClient {
+        self.connect_with(Some(pid))
+    }
+
+    fn connect_with(&mut self, pid: Option<i32>) -> TestClient {
         let (server, client) = UnixStream::pair().expect("socket pair");
-        let data = ClientState::of_stream(&server, None);
+        let mut data = ClientState::of_stream(&server, None);
+        data.pid = pid;
         self.state
             .dh
             .insert_client(server, Arc::new(data))
