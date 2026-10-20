@@ -385,25 +385,48 @@ impl Bins {
     }
 
     pub fn roots(&self) -> Vec<PathBuf> {
-        use std::os::unix::fs::MetadataExt;
-        let mut seen = HashSet::new();
-        if let Ok(m) = std::fs::metadata(&self.home) {
-            seen.insert((m.dev(), m.ino()));
-        }
+        let mut seen: HashSet<(u64, u64)> = self.home_key().into_iter().collect();
         let mut out = vec![self.home.clone()];
         for top in self.mounts.iter().filter(|m| !self.unlisted.contains(*m)) {
-            let shared = top.join(".Trash");
-            let found = [
-                sticky_dir(&shared).then(|| shared.join(self.uid.to_string())),
-                Some(top.join(format!(".Trash-{}", self.uid))),
-            ];
-            for root in found.into_iter().flatten() {
-                let Ok(m) = std::fs::symlink_metadata(&root) else {
-                    continue;
-                };
-                if m.is_dir() && m.uid() == self.uid && seen.insert((m.dev(), m.ino())) {
-                    out.push(root);
-                }
+            let found = self.top_roots(top).into_iter();
+            out.extend(found.filter(|(_, key)| seen.insert(*key)).map(|(r, _)| r));
+        }
+        out
+    }
+
+    /// The trashes of drive `top` that [`Bins::roots`] lists, the home trash left out. Looks
+    /// inside `top` only.
+    pub fn drive_roots(&self, top: &Path) -> Vec<PathBuf> {
+        let home = self.home_key();
+        (self.top_roots(top).into_iter())
+            .filter(|(_, key)| Some(*key) != home)
+            .map(|(r, _)| r)
+            .collect()
+    }
+
+    fn home_key(&self) -> Option<(u64, u64)> {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(&self.home)
+            .ok()
+            .map(|m| (m.dev(), m.ino()))
+    }
+
+    /// The user's trash folders at `top`, each with its device and inode.
+    fn top_roots(&self, top: &Path) -> Vec<(PathBuf, (u64, u64))> {
+        use std::os::unix::fs::MetadataExt;
+        let shared = top.join(".Trash");
+        let found = [
+            sticky_dir(&shared).then(|| shared.join(self.uid.to_string())),
+            Some(top.join(format!(".Trash-{}", self.uid))),
+        ];
+        let mut out: Vec<(PathBuf, (u64, u64))> = Vec::new();
+        for root in found.into_iter().flatten() {
+            let Ok(m) = std::fs::symlink_metadata(&root) else {
+                continue;
+            };
+            let key = (m.dev(), m.ino());
+            if m.is_dir() && m.uid() == self.uid && !out.iter().any(|(_, k)| *k == key) {
+                out.push((root, key));
             }
         }
         out
@@ -1164,6 +1187,7 @@ mod tests {
         let own = drive.join(format!(".Trash-{}", uid()));
 
         assert_eq!(bins.roots(), [bins.home.clone(), own.clone()]);
+        assert_eq!(bins.drive_roots(&drive), std::slice::from_ref(&own));
         assert_eq!(
             bins.files_dirs(),
             [bins.home.join("files"), own.join("files")]
