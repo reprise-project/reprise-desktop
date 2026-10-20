@@ -813,3 +813,99 @@ mod tests {
         assert!(!field_route(&KeyRoute::Swallow));
     }
 }
+
+#[cfg(test)]
+mod harness_tests {
+    use crate::harness::{Harness, ImHeard, TestClient};
+
+    const KEY_A: u32 = 30;
+
+    /// A harness with one output, no window, and an input method client.
+    fn with_input_method() -> (Harness, TestClient) {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut m = h.connect();
+        m.input_method();
+        h.roundtrip(&mut m);
+        (h, m)
+    }
+
+    #[test]
+    fn the_run_box_gets_the_input_method_back_after_a_client_without_the_keyboard_drops_its_text_input()
+     {
+        let (mut h, mut m) = with_input_method();
+        h.state.toggle_launcher();
+        h.roundtrip(&mut m);
+        assert!(m.side.ims[0].active(), "the Run box activates it");
+        let mut other = h.connect();
+        let ti = other.text_input();
+        h.roundtrip(&mut other);
+        other.destroy_text_input(ti);
+        h.roundtrip(&mut other);
+        h.roundtrip(&mut m);
+        let events = &m.side.ims[0].events;
+        assert!(
+            events.contains(&ImHeard::Deactivate),
+            "the dropped text input deactivated it: {events:?}"
+        );
+        assert!(
+            m.side.ims[0].active(),
+            "the Run box activated it again: {events:?}"
+        );
+    }
+
+    #[test]
+    fn the_run_box_activates_the_seats_input_method_and_not_an_inert_one() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let (mut first, mut inert) = (h.connect(), h.connect());
+        first.input_method();
+        h.roundtrip(&mut first);
+        inert.input_method();
+        h.roundtrip(&mut inert);
+        assert_eq!(inert.side.ims[0].events, [ImHeard::Unavailable]);
+        first.destroy_input_method(0);
+        h.roundtrip(&mut first);
+        let mut seats = h.connect();
+        seats.input_method();
+        h.roundtrip(&mut seats);
+        h.state.toggle_launcher();
+        h.roundtrip(&mut seats);
+        h.roundtrip(&mut inert);
+        assert!(
+            seats.side.ims[0].active(),
+            "the seat's input method serves the Run box"
+        );
+        assert_eq!(
+            inert.side.ims[0].events,
+            [ImHeard::Unavailable],
+            "the inert one hears nothing more"
+        );
+    }
+
+    #[test]
+    fn the_run_box_takes_the_seats_keys_through_the_input_methods_grab_and_its_echo_from_the_virtual_keyboard()
+     {
+        let (mut h, mut m) = with_input_method();
+        h.state.toggle_launcher();
+        m.grab_keyboard(0);
+        let vk = m.virtual_keyboard();
+        h.roundtrip(&mut m);
+        assert!(h.state.ime_takes_field_keys());
+        let query = |h: &Harness| h.state.launcher.as_ref().unwrap().model.query().to_string();
+        h.key(KEY_A, true);
+        h.key(KEY_A, false);
+        h.roundtrip(&mut m);
+        assert_eq!(
+            m.side.ims[0].grab_keys,
+            [(KEY_A, true), (KEY_A, false)],
+            "the input method's grab hears the seat's key"
+        );
+        assert_eq!(query(&h), "", "and the field does not");
+        m.vk_key(vk, KEY_A, true);
+        m.vk_key(vk, KEY_A, false);
+        h.roundtrip(&mut m);
+        assert_eq!(query(&h), "a", "the key it sent back is typed");
+        assert_eq!(m.side.ims[0].grab_keys.len(), 2, "and is not heard again");
+    }
+}
