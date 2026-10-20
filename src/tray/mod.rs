@@ -13,6 +13,7 @@ use crate::menuview::{MenuFrom, MenuKind};
 use crate::raster::{Canvas, Rect};
 use crate::startmenu::{MenuItem, MenuLayout, MenuStyle, place_submenu, submenu_max_rows};
 use crate::taskbar::TaskbarHit;
+use reprisekit::controls::shellview;
 use reprisekit::controls::traycustomize::{self, Behaviour, Choices, Entry, TrayCustomize};
 use reprisekit::icon::{IconSource, premultiply};
 use reprisescene::TreeId;
@@ -1030,10 +1031,11 @@ pub fn customize(state: &mut State) {
     let all_icons =
         (wording == traycustomize::Wording::Glass).then(|| !overflow_enabled(&state.config));
     let metrics = theme.look.controls();
+    let list = shellview::list_icon_px(metrics.text);
     let past = past_keys
         .into_iter()
         .map(|(key, r)| {
-            let icon = past_icon(&mut state.icons, r.icon.as_deref());
+            let icon = past_icon(&mut state.icons, r.icon.as_deref(), list);
             let name = if r.name.is_empty() {
                 key.clone()
             } else {
@@ -1133,10 +1135,11 @@ fn refill_past(
     file: &str,
 ) -> bool {
     let current = t.current;
+    let list = shellview::list_icon_px(t.metrics.text);
     let mut refilled = false;
     for e in &mut t.entries[current..] {
         if choices.get(&e.key).and_then(|r| r.icon.as_deref()) == Some(file) {
-            e.icon = past_icon(icons, Some(file)).into();
+            e.icon = past_icon(icons, Some(file), list).into();
             refilled = true;
         }
     }
@@ -1144,10 +1147,14 @@ fn refill_past(
 }
 
 /// A remembered item's icon for the Customize list. A file is never read on the loop: one not
-/// decoded yet shows the stand-in until [`customize_icon_landed`] refills the row.
-fn past_icon(icons: &mut IconCache, name: Option<&str>) -> Vec<IconSource> {
+/// decoded yet shows the stand-in until [`customize_icon_landed`] refills the row. It is
+/// fetched at 16 and 32 px and at the list's icon px `list` and twice that, for scale 2.
+fn past_icon(icons: &mut IconCache, name: Option<&str>, list: i32) -> Vec<IconSource> {
     let name = name.unwrap_or(crate::icon::STAND_IN);
-    [16, 32]
+    let mut sizes = vec![16, 32, list, 2 * list];
+    sizes.sort_unstable();
+    sizes.dedup();
+    sizes
         .into_iter()
         .filter_map(|px| crate::icon::unread(icons, name, px))
         .map(|c| IconSource {
@@ -1673,18 +1680,26 @@ mod tests {
     fn a_remembered_icon_file_is_never_read_on_the_loop() {
         let file = "/srv/icons/tray.png";
         let mut icons = IconCache::new(crate::icontheme::IconTheme::load("none", &[]));
-        assert!(past_icon(&mut icons, Some(file)).is_empty());
+        assert!(past_icon(&mut icons, Some(file), 16).is_empty());
         assert_eq!(
             icons.take_wanted(),
             [(file.to_string(), 16), (file.to_string(), 32)]
         );
         icons.put_file(file, 16, Some(Canvas::new(16, 16)));
         icons.put_file(file, 32, None);
-        let widths: Vec<u32> = past_icon(&mut icons, Some(file))
+        let widths: Vec<u32> = past_icon(&mut icons, Some(file), 16)
             .iter()
             .map(|s| s.width)
             .collect();
         assert_eq!(widths, [16]);
+    }
+
+    #[test]
+    fn a_remembered_icon_is_fetched_at_the_lists_grown_icon_size() {
+        let mut icons = IconCache::new(crate::icontheme::IconTheme::load("none", &[]));
+        past_icon(&mut icons, Some("/srv/icons/tray.png"), 24);
+        let sizes: Vec<i32> = icons.take_wanted().into_iter().map(|(_, px)| px).collect();
+        assert_eq!(sizes, [16, 24, 32, 48]);
     }
 
     #[test]
@@ -1699,7 +1714,7 @@ mod tests {
             passive: false,
             behaviour: Behaviour::Hide,
         };
-        let past = past_icon(&mut icons, Some(file));
+        let past = past_icon(&mut icons, Some(file), 16);
         assert!(past.is_empty());
         let mut t = TrayCustomize::new(
             traycustomize::Wording::Classic,
