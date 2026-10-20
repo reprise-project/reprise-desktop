@@ -1072,6 +1072,10 @@ impl App for Terminal {
             tabstrip::doc_access(&self.w.tabs.strip, &lay.strip, tree, ROOT, "tabs");
         }
         termgrid::access(&self.w.snap, lay.grid, tree, ROOT, "grid");
+        if let Some(m) = &self.w.chrome.menu {
+            let focus = m.access(tree);
+            tree.set_focus(focus);
+        }
     }
 }
 

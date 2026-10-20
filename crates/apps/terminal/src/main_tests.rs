@@ -340,6 +340,39 @@ fn the_add_button_and_its_menu_open_tabs() {
 }
 
 #[test]
+fn the_new_tab_menu_has_menu_item_nodes_and_focus_follows_the_highlight() {
+    use reprisekit::access::accesskit::Role;
+    let mut ctx = test_ctx();
+    let mut t = terminal(&["cat"]);
+    let lay = t.chrome_layout(&ctx);
+    let (x, y) = centre(lay.strip.menu);
+    t.event(MAIN, press(x, y, BTN_LEFT), &mut ctx);
+    let mut tree = Tree::window("Terminal", ctx.size);
+    t.access(MAIN, &mut tree, &ctx);
+    let menu = tree.focus();
+    assert_eq!(
+        tree.get(menu).map(|n| n.role()),
+        Some(Role::Menu),
+        "the open menu takes the focus"
+    );
+    let row = tree
+        .find(Role::MenuItem, "sh")
+        .expect("the shell row is a menu item");
+    t.event(MAIN, key(keysym::DOWN, false, false), &mut ctx);
+    let mut tree = Tree::window("Terminal", ctx.size);
+    t.access(MAIN, &mut tree, &ctx);
+    assert_eq!(tree.focus(), row, "Down focuses the shell row");
+    t.event(MAIN, key(keysym::ESCAPE, false, false), &mut ctx);
+    let mut tree = Tree::window("Terminal", ctx.size);
+    t.access(MAIN, &mut tree, &ctx);
+    assert_eq!(
+        tree.find(Role::MenuItem, "sh"),
+        None,
+        "a closed menu leaves no nodes"
+    );
+}
+
+#[test]
 fn closing_a_tab_mid_press_drops_the_press() {
     let mut ctx = test_ctx();
     let mut t = terminal(&["cat"]);
