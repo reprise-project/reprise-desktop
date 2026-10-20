@@ -250,9 +250,28 @@ const DROP_RADII: [f64; 4] = [0.0, FIELD_RADIUS, FIELD_RADIUS, 0.0];
 
 const SPIN_SIZE: (i32, i32) = (15, 9);
 
+/// A part's painter at a scale.
+type Paint = fn(i32) -> PartImage;
+
+/// Each field part with its painter.
+pub fn painters() -> [(Part, Paint); 5] {
+    [
+        (Part::EditBorder, field_part),
+        (Part::ComboList, list_part),
+        (Part::ComboDrop, drop_part),
+        (Part::SpinUp, |d| spin_part(Glyph::ArrowUp, d)),
+        (Part::SpinDown, |d| spin_part(Glyph::ArrowDown, d)),
+    ]
+}
+
+#[cfg(test)]
 pub fn parts(d: i32) -> [(Part, PartImage); 5] {
+    painters().map(|(part, paint)| (part, paint(d)))
+}
+
+fn field_part(d: i32) -> PartImage {
     let d = d.max(1);
-    let field = PartImage {
+    PartImage {
         border_only: true,
         ..PartImage::new(
             stack(FIELD_LINES.iter().map(|l| field_frame(l, d))),
@@ -261,13 +280,17 @@ pub fn parts(d: i32) -> [(Part, PartImage); 5] {
         )
         .sizing(Insets::new(2, 2, 2, 2))
         .at_scale(d)
-    };
-    // The list's 4 left columns and its right 18 (the chevron's among
-    // them) stay put. A taller list repeats row 7, in the light half, and
-    // row 13, in the shaded half, one each for a 23 px list, so its face
-    // steps and its chevron sit a row lower, in the middle; the rows
-    // between them (the chevron's among them) keep their shape.
-    let list = PartImage::new(
+    }
+}
+
+/// The list's 4 left columns and its right 18 (the chevron's among
+/// them) stay put. A taller list repeats row 7, in the light half, and
+/// row 13, in the shaded half, one each for a 23 px list, so its face
+/// steps and its chevron sit a row lower, in the middle; the rows
+/// between them (the chevron's among them) keep their shape.
+fn list_part(d: i32) -> PartImage {
+    let d = d.max(1);
+    PartImage::new(
         stack(STATES.iter().zip(&LIST).map(|(&st, f)| {
             let chevron = Chevron {
                 ink: chevron_ink(st),
@@ -280,12 +303,16 @@ pub fn parts(d: i32) -> [(Part, PartImage); 5] {
     )
     .sizing(Insets::new(4, 13, 18, 2))
     .two_bands(7, 13)
-    .at_scale(d);
-    // The button reaches from a column right of the drop rect's left edge
-    // to the field's own right edge, and over the field's top and bottom
-    // lines: a 16 px drop rect 2 px inside the field gives the 17 px
-    // button. Its top 14 rows hold the chevron.
-    let drop = PartImage::new(
+    .at_scale(d)
+}
+
+/// The button reaches from a column right of the drop rect's left edge
+/// to the field's own right edge, and over the field's top and bottom
+/// lines: a 16 px drop rect 2 px inside the field gives the 17 px
+/// button. Its top 14 rows hold the chevron.
+fn drop_part(d: i32) -> PartImage {
+    let d = d.max(1);
+    PartImage::new(
         stack(STATES.iter().map(|&st| {
             let face = match st {
                 State::Hot => Some(&DROP_HOT),
@@ -303,31 +330,26 @@ pub fn parts(d: i32) -> [(Part, PartImage); 5] {
     )
     .sizing(Insets::new(2, 14, 2, 2))
     .outset(Insets::new(-1, 2, 2, 2))
-    .at_scale(d);
-    let spin = |glyph: Glyph| {
-        let frames = STATES.iter().zip(&SPIN).map(|(&st, f)| {
-            let ink = match st {
-                State::Disabled => SPIN_GREYED_INK,
-                _ => SPIN_CHEVRON.ink,
-            };
-            let chevron = Chevron {
-                glyph,
-                ink,
-                ..SPIN_CHEVRON
-            };
-            button(SPIN_SIZE, [0.0; 4], d, Some(f), chevron)
-        });
-        PartImage::new(stack(frames), &STATES, Layout::Vertical)
-            .sizing(Insets::new(2, 6, 2, 2))
-            .at_scale(d)
-    };
-    [
-        (Part::EditBorder, field),
-        (Part::ComboList, list),
-        (Part::ComboDrop, drop),
-        (Part::SpinUp, spin(Glyph::ArrowUp)),
-        (Part::SpinDown, spin(Glyph::ArrowDown)),
-    ]
+    .at_scale(d)
+}
+
+fn spin_part(glyph: Glyph, d: i32) -> PartImage {
+    let d = d.max(1);
+    let frames = STATES.iter().zip(&SPIN).map(|(&st, f)| {
+        let ink = match st {
+            State::Disabled => SPIN_GREYED_INK,
+            _ => SPIN_CHEVRON.ink,
+        };
+        let chevron = Chevron {
+            glyph,
+            ink,
+            ..SPIN_CHEVRON
+        };
+        button(SPIN_SIZE, [0.0; 4], d, Some(f), chevron)
+    });
+    PartImage::new(stack(frames), &STATES, Layout::Vertical)
+        .sizing(Insets::new(2, 6, 2, 2))
+        .at_scale(d)
 }
 
 fn chevron_ink(state: State) -> [Color; 2] {

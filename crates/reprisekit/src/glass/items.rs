@@ -102,11 +102,27 @@ fn stack(boxes: Vec<(Canvas, State)>, d: i32) -> PartImage {
 /// (7, 8) ([`Part::TreeExpander`]).
 const EXPANDER: i32 = 16;
 
+/// A part's painter at a scale.
+type Paint = fn(i32) -> PartImage;
+
 /// The list items' boxes, the tree's expanders and the places bar's tiles, each standing
 /// 1 px in from the bar's sides (remapped in dark Glass with the rest of the control art,
-/// but for the items and tiles: [`dark_items`], [`dark_places`]), painted at `d`.
+/// but for the items and tiles: [`dark_items`], [`dark_places`]), each with its painter.
+pub fn painters() -> [(Part, Paint); 3] {
+    [
+        (Part::ListItem, list_items),
+        (Part::TreeExpander, expanders),
+        (Part::PlacesTile, places),
+    ]
+}
+
+#[cfg(test)]
 pub fn parts(d: i32) -> [(Part, PartImage); 3] {
-    let items = boxes(
+    painters().map(|(part, paint)| (part, paint(d)))
+}
+
+fn list_items(d: i32) -> PartImage {
+    boxes(
         &[
             (&HOT, State::Hot),
             (&SELECTED, State::Checked),
@@ -115,7 +131,10 @@ pub fn parts(d: i32) -> [(Part, PartImage); 3] {
             (&FOCUS, State::Focused),
         ],
         d,
-    );
+    )
+}
+
+fn expanders(d: i32) -> PartImage {
     let mut a = Canvas::new((EXPANDER * d) as u32, (4 * EXPANDER * d) as u32);
     let frames = [
         (&COLLAPSED, COLLAPSED_INK, false),
@@ -126,13 +145,16 @@ pub fn parts(d: i32) -> [(Part, PartImage); 3] {
     for (i, &(m, ink, hot)) in frames.iter().enumerate() {
         a.blit_over(0, i as i32 * EXPANDER * d, &expander(m, ink, hot, d));
     }
-    let expanders = PartImage::new(
+    PartImage::new(
         a,
         &[State::Normal, State::Hot, State::Checked, State::CheckedHot],
         Layout::Vertical,
     )
-    .at_scale(d);
-    let places = boxes(
+    .at_scale(d)
+}
+
+fn places(d: i32) -> PartImage {
+    boxes(
         &[
             (&HOT, State::Hot),
             (&SELECTED, State::Checked),
@@ -141,12 +163,7 @@ pub fn parts(d: i32) -> [(Part, PartImage); 3] {
         ],
         d,
     )
-    .outset(Insets::new(-1, 0, -1, 0));
-    [
-        (Part::ListItem, items),
-        (Part::TreeExpander, expanders),
-        (Part::PlacesTile, places),
-    ]
+    .outset(Insets::new(-1, 0, -1, 0))
 }
 
 /// Dark Glass's lit, selected and selected-under-the-pointer boxes: the remap turns the
