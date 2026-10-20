@@ -702,19 +702,23 @@ impl State {
 
     pub fn client_pid(&self, w: WindowId) -> Option<i32> {
         let pid = match &self.win(w)?.kind {
-            Kind::Xdg(t) => {
-                let client = t.wl_surface().client()?;
-                #[cfg(test)]
-                if let Some(pid) = client
-                    .get_data::<crate::compositor::ClientState>()
-                    .and_then(|d| d.pid)
-                {
-                    return Some(pid);
-                }
-                client.get_credentials(&self.dh).ok()?.pid
-            }
+            Kind::Xdg(t) => return self.surface_pid(t.wl_surface()),
             Kind::X11(x) => i32::try_from(x.pid()?).ok()?,
         };
+        (pid > 0).then_some(pid)
+    }
+
+    /// The process of the Wayland client owning `surface`.
+    pub fn surface_pid(&self, surface: &WlSurface) -> Option<i32> {
+        let client = surface.client()?;
+        #[cfg(test)]
+        if let Some(pid) = client
+            .get_data::<crate::compositor::ClientState>()
+            .and_then(|d| d.pid)
+        {
+            return Some(pid);
+        }
+        let pid = client.get_credentials(&self.dh).ok()?.pid;
         (pid > 0).then_some(pid)
     }
 
