@@ -21,6 +21,7 @@ use repriseapp::oneshot;
 use repriseapp::{App, Child, Ctx, Event, Reply, WinId};
 use reprisekit::access::Tree;
 use reprisekit::controls::form;
+use reprisekit::controls::hosted::Hosted;
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
 use reprisekit::theme::TextUnits;
@@ -390,6 +391,11 @@ impl App for PolkitApp {
             let px = a.dialog.form.units().px(ctx.theme.fonts.size_px);
             oneshot::access_form(&a.dialog.form, tree, &ctx.text, px);
         }
+    }
+
+    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        let a = self.active.as_mut().filter(|_| win == RUNAS)?;
+        Some(Box::new(&mut a.dialog.form))
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {

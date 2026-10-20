@@ -4,6 +4,7 @@ use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, KeyInput};
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::art::neticon::{self, NetIcon};
 use reprisekit::classic::widgets::{Axis, BarHit, ScrollHit};
+use reprisekit::controls::hosted::Chain;
 use reprisekit::controls::listview::{self, Column, ListView};
 use reprisekit::controls::menu::{MenuAction, MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu};
 use reprisekit::controls::taskpane::{self, Body, Section, TaskPane};
@@ -68,11 +69,20 @@ pub enum Outcome {
     StopHotspot(String),
 }
 
-/// An open context menu: the tree it walks, the chain reprisekit lays out, and what each row does (`None` for a separator or greyed row). It draws inside the window's surface, not a popup.
+/// An open context menu: the tree it walks, the chain reprisekit lays out, and what each row does (`None` for a separator or greyed row). It shows on popups of its own ([`repriseapp::App::popup`]).
 pub struct Popup {
     tree: MenuTree,
     chain: PopupMenu,
     actions: Vec<Option<Outcome>>,
+}
+
+impl Chain for Popup {
+    fn chain(&self) -> &PopupMenu {
+        &self.chain
+    }
+    fn chain_mut(&mut self) -> &mut PopupMenu {
+        &mut self.chain
+    }
 }
 
 /// The list's rows, cells and groups from a snapshot: adapters first, saved VPNs under their own heading; empty without NetworkManager. Icons are left to [`Folder::refresh`], which has the icon theme.

@@ -34,6 +34,7 @@ use reprisekit::access::Tree;
 use reprisekit::art::neticon;
 use reprisekit::controls::filedlg::{self, DlgMode, Event as FileEvent, Fields, FileDlg};
 use reprisekit::controls::form;
+use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::msgbox;
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::look::Paint;
@@ -1235,6 +1236,13 @@ impl App for NetApp {
             }
             _ => self.folder.access(tree, ctx),
         }
+    }
+
+    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        if win == repriseapp::MAIN {
+            return Some(Box::new(&mut self.folder.popup));
+        }
+        repriseapp::reader_popup(self, win)
     }
 
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {

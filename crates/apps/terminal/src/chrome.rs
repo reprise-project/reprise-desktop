@@ -3,6 +3,7 @@
 //! the new-tab split button. The pointer on them, and the new-tab menu.
 
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, KeyInput, PointerInput, Reply};
+use reprisekit::controls::hosted::Chain;
 use reprisekit::controls::menu::{MenuAction, MenuCtx, MenuKey, MenuTree, PopupMenu};
 use reprisekit::controls::rebar;
 use reprisekit::controls::tabstrip::{self, AdderPart, DocHit, DocLayout, Drag, TabStrip};
@@ -73,6 +74,15 @@ pub struct Popup {
     tree: MenuTree,
     chain: PopupMenu,
     choices: Vec<Option<Choice>>,
+}
+
+impl Chain for Popup {
+    fn chain(&self) -> &PopupMenu {
+        &self.chain
+    }
+    fn chain_mut(&mut self) -> &mut PopupMenu {
+        &mut self.chain
+    }
 }
 
 pub struct Layout {
@@ -405,10 +415,7 @@ impl Terminal {
     fn menu_action(&mut self, action: MenuAction) -> Reply {
         match action {
             MenuAction::None => Reply::none(),
-            MenuAction::Redraw => {
-                self.w.full = true;
-                Reply::redraw()
-            }
+            MenuAction::Redraw => Reply::redraw(),
             MenuAction::Close => self.close_menu(),
             MenuAction::Chosen(path) => {
                 let choice = self
