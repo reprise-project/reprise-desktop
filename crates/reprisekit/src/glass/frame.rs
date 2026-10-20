@@ -23,6 +23,9 @@
 //!
 //! [`DENSE_CEILING`]: super::panel::DENSE_CEILING
 
+use std::ops::Range;
+use std::sync::Mutex;
+
 use super::panel::{self, Corners, Ends, Glass};
 use super::tint::{self, Recolour, Surface};
 use super::{CORNER, Frame, Settings, art};
@@ -536,35 +539,77 @@ const EDGE_FADE: f64 = 24.0;
 /// What draws, over [`client_glass`] in `band` (a restored window's top rows, device pixels at
 /// `d` per design pixel, the client `client_h` device pixels tall), each side's
 /// [`EDGE_FADE`] px and the client edges beside them: the side border's sheen on that row,
-/// which runs down the window's height, turning into [`client_glass`]'s own.
+/// which runs down the window's height, turning into [`client_glass`]'s own. The last
+/// [`EDGES_KEPT`] strips painted are kept, so a frame redrawn at its size only copies them.
 pub fn client_glass_edges(s: &Settings) -> impl Fn(&mut Canvas, Rect, i32, State, i32) + use<> {
     let paints = SURFACES.map(|(surface, _)| Paint::new(s, surface));
+    let kept: Mutex<Vec<(EdgesKey, Vec<u32>)>> = Mutex::default();
     move |c, band, client_h, state, d| {
-        let p = &paints[usize::from(state == State::Inactive)];
-        let fw = f64::from(band.width / d + 2 * SIDE);
+        let inactive = state == State::Inactive;
+        let key = (band.width, band.height, client_h, inactive, d);
         let (o, fade) = (CLIENT_EDGES * d, (EDGE_FADE * f64::from(d)) as i32);
         let left = -o..fade.min(band.width);
         let right = (band.width - fade).max(fade)..band.width + o;
+        let mut kept = kept.lock().unwrap_or_else(|e| e.into_inner());
+        let at = match kept.iter().position(|(k, _)| *k == key) {
+            Some(i) => i,
+            None => {
+                let p = &paints[usize::from(inactive)];
+                let strip = edge_strip(p, band, client_h, d, (&left, &right));
+                kept.push((key, strip));
+                if kept.len() > EDGES_KEPT {
+                    kept.remove(0);
+                }
+                kept.len() - 1
+            }
+        };
+        let mut px = kept[at].1.iter();
         for row in -o..band.height {
-            let y = centre(row, d) + f64::from(BAND);
-            let side = p
-                .side
-                .at((f64::from(row) + 0.5) / f64::from(client_h.max(1)));
             for col in left.clone().chain(right.clone()) {
-                let x = centre(col, d) + f64::from(SIDE);
-                let own = CLIENT_SHEEN
-                    .at_point(x, y)
-                    .max(CLIENT_SHEEN.at_point(fw - 1.0 - x, y));
-                let inward = (x - f64::from(SIDE)).min(fw - 1.0 - f64::from(SIDE) - x);
-                let w = match row < 0 {
-                    true => 0.0,
-                    false => 1.0 - smooth(inward / EDGE_FADE),
-                };
-                let sheen = own + (side - own) * w;
-                c.put_raw(band.x + col, band.y + row, p.px(Ring::Glass, sheen));
+                let p = *px.next().expect("a pixel per strip cell");
+                c.put_raw(band.x + col, band.y + row, p);
             }
         }
     }
+}
+
+/// Strips [`client_glass_edges`] keeps: a few windows' sizes, focused and not.
+const EDGES_KEPT: usize = 8;
+
+/// A kept strip's band width and height, client height, inactive and scale.
+type EdgesKey = (i32, i32, i32, bool, i32);
+
+/// [`client_glass_edges`]' pixels row by row over the `left` then `right` columns.
+fn edge_strip(
+    p: &Paint,
+    band: Rect,
+    client_h: i32,
+    d: i32,
+    (left, right): (&Range<i32>, &Range<i32>),
+) -> Vec<u32> {
+    let fw = f64::from(band.width / d + 2 * SIDE);
+    let o = CLIENT_EDGES * d;
+    let mut out = Vec::new();
+    for row in -o..band.height {
+        let y = centre(row, d) + f64::from(BAND);
+        let side = p
+            .side
+            .at((f64::from(row) + 0.5) / f64::from(client_h.max(1)));
+        for col in left.clone().chain(right.clone()) {
+            let x = centre(col, d) + f64::from(SIDE);
+            let own = CLIENT_SHEEN
+                .at_point(x, y)
+                .max(CLIENT_SHEEN.at_point(fw - 1.0 - x, y));
+            let inward = (x - f64::from(SIDE)).min(fw - 1.0 - f64::from(SIDE) - x);
+            let w = match row < 0 {
+                true => 0.0,
+                false => 1.0 - smooth(inward / EDGE_FADE),
+            };
+            let sheen = own + (side - own) * w;
+            out.push(p.px(Ring::Glass, sheen));
+        }
+    }
+    out
 }
 
 fn client_outset() -> Insets {
@@ -853,6 +898,31 @@ mod tests {
             let got = [1, 2].map(|d| fnv(&sheet(&s, d)));
             assert_eq!(got, want, "{mode:?} {material:?} {frame:?}: {got:X?}");
         }
+    }
+
+    #[test]
+    fn client_glass_edges_drawn_from_a_kept_strip_match_a_fresh_paint() {
+        let s = Settings::default();
+        let kept = client_glass_edges(&s);
+        let draw = |edges: &dyn Fn(&mut Canvas, Rect, i32, State, i32), x, state, d| {
+            let mut c = Canvas::new(700, 200);
+            edges(&mut c, Rect::new(x, 10, 600, 80 * d), 400 * d, state, d);
+            c.pixels
+        };
+        for d in [1, 2] {
+            for state in [State::Normal, State::Inactive] {
+                let fresh = draw(&client_glass_edges(&s), 4, state, d);
+                assert_eq!(draw(&kept, 4, state, d), fresh, "first paint at {d}");
+                assert_eq!(draw(&kept, 4, state, d), fresh, "kept strip at {d}");
+            }
+        }
+        let shifted = draw(&kept, 9, State::Normal, 1);
+        let at4 = draw(&kept, 4, State::Normal, 1);
+        assert_eq!(
+            shifted[5..],
+            at4[..at4.len() - 5],
+            "a strip lands wherever the band is"
+        );
     }
 
     #[test]
