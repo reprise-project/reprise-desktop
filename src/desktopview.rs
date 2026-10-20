@@ -1025,7 +1025,8 @@ fn watch_on_loop(state: &mut State, watch: &DirWatch) {
     }
 }
 
-/// Rescan when gvfs metadata changes for a file on the desktop: a folder icon Nautilus sets.
+/// Rescan the desktop and list each Browse dialog again when gvfs metadata changes for a file
+/// in the folder it shows: a folder icon Nautilus or `gio set` sets.
 fn gvfs_on_loop(state: &mut State) {
     let (ping, source) = match smithay::reexports::calloop::ping::make_ping() {
         Ok(p) => p,
@@ -1033,12 +1034,13 @@ fn gvfs_on_loop(state: &mut State) {
     };
     let changes = reprisefs::gvfsmeta::Changes::new(move || ping.ping());
     let added = state.handle.insert_source(source, move |_, _, state| {
-        let changed = changes.take();
-        if (state.desktop.as_ref())
-            .is_some_and(|v| changed.iter().any(|f| f.parent() == Some(v.dir.as_path())))
-        {
+        let folders: BTreeSet<PathBuf> = (changes.take().iter())
+            .filter_map(|f| f.parent().map(Path::to_path_buf))
+            .collect();
+        if (state.desktop.as_ref()).is_some_and(|v| folders.contains(&v.dir)) {
             state.settle_rescan();
         }
+        state.relist_pickers(&folders);
     });
     if let Err(e) = added {
         log::warn!("desktop icons: {}", e.error);

@@ -13,6 +13,7 @@ use reprisefs::listing::Item;
 use reprisekit::controls::form::FocusedEdit;
 use reprisekit::controls::shellview::{self, Mode};
 use reprisekit::controls::taskpane;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -167,11 +168,17 @@ impl Explorer {
         }
         let due = self.relist.take();
         let metadata = self.gvfs.take();
+        let holders: BTreeSet<PathBuf> = (metadata.iter())
+            .filter_map(|f| f.parent().map(Path::to_path_buf))
+            .collect();
+        for dir in &holders {
+            self.refill_tree_node(&Place::from_path(dir), ctx);
+        }
+        dirty |= !holders.is_empty();
         let shown = || self.place.path();
         if self.watch.as_mut().is_some_and(|w| w.take_changed())
             || (!due.is_empty() && shown().is_some_and(|p| due.contains(&p)))
-            || (!metadata.is_empty()
-                && shown().is_some_and(|p| metadata.iter().any(|f| f.parent() == Some(&p))))
+            || shown().is_some_and(|p| holders.contains(&p))
         {
             let r = self.refresh(ctx);
             return put.unwrap_or_default().and(r);
@@ -1129,6 +1136,37 @@ mod tests {
             [Some((2, 32, OWN)), Some((2, 64, OWN)), Some((2, 96, OWN))]
         );
         assert_eq!(ex.selected_paths(), [sub], "the folder is not listed again");
+    }
+
+    #[test]
+    fn a_new_draw_scale_fetches_a_folders_own_icon_in_the_tree_again() {
+        const OWN: u32 = 0xff20_80a0;
+        let dir = tempfile::Builder::new()
+            .prefix("tree")
+            .tempdir()
+            .expect("a temp dir shown in the tree");
+        let own = dir.path().join("own.png");
+        let mut c = Canvas::new(32, 32);
+        c.pixels.fill(OWN);
+        std::fs::write(&own, reprisekit::raster::to_png(&c)).expect("write");
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).expect("mkdir");
+        let directory = format!("[Desktop Entry]\nIcon={}\n", own.display());
+        std::fs::write(sub.join(".directory"), directory).expect("write");
+        let mut ctx = test_ctx();
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        let worn = |ex: &Explorer| {
+            let path = ex.tree_path_of(&Place::Folder(sub.clone()))?;
+            let icon = ex.tree.node(&path)?.icon.clone()?;
+            Some((icon.scale(), icon.device_size().0, icon.get(8, 8)))
+        };
+        assert_eq!(worn(&ex), Some((1, 16, OWN)));
+        ctx.icons.set_scale(2);
+        ex.follow_scale(2, &mut ctx);
+        crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
+            worn(ex).is_some_and(|(scale, ..)| scale == 2)
+        });
+        assert_eq!(worn(&ex), Some((2, 32, OWN)));
     }
 
     #[test]
