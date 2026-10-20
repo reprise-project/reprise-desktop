@@ -1,9 +1,10 @@
 //! Output and window capture for ext-image-copy-capture-v1 and
 //! wlr-screencopy-v1: an output's elements, or a window's client surface
 //! tree, rendered into the client's shm or dmabuf buffer. A session's
-//! first frame is filled at once; later ones, and every
-//! `copy_with_damage`, wait for the output's next drawn frame or the
-//! window's next commit, so an idle screen costs a screencast nothing.
+//! frame is filled at once when its source changed since the last one
+//! (and for the first); otherwise it, and every `copy_with_damage`,
+//! waits for the output's next drawn frame or the window's next commit,
+//! so an idle screen costs a screencast nothing.
 //! A pointer cursor session on an output copies the pointer's image and
 //! follows it over the output.
 //!
@@ -106,6 +107,14 @@ impl Captures {
         self.cursor_sessions.retain(|s| !stops(&shown(&s.source())));
     }
 
+    /// The source `on` drew or committed: its sessions' next frames are
+    /// filled at once.
+    fn changed(&self, on: &Option<Shown>) {
+        for s in self.sessions.iter().filter(|s| shown(&s.source()) == *on) {
+            fresh(s).mark();
+        }
+    }
+
     pub fn live(&self) -> (usize, usize) {
         let windows = self
             .sessions
@@ -163,6 +172,7 @@ pub fn constraints_changed(state: &mut State, output: &Output) {
 
 pub fn output_drawn(state: &mut State, output: &Output) {
     let on = Some(Shown::Output(output.clone()));
+    state.captures.changed(&on);
     for w in take_waiting(state, |s| *s == on) {
         match w {
             Waiting::Ext { session, frame } => fill_ext(state, output, &session, frame),
@@ -178,6 +188,7 @@ pub fn window_committed(state: &mut State, w: WindowId) {
         return;
     }
     let on = Some(Shown::Window(w));
+    state.captures.changed(&on);
     let constraints = window_constraints(state, w);
     for s in &state.captures.sessions {
         if shown(&s.source()) == on
@@ -443,7 +454,7 @@ fn fill_window(state: &mut State, w: WindowId, session: &SessionRef, frame: Fram
     let buffer = frame.buffer();
     match render_window(state, w, Target::of(&buffer)) {
         Ok(()) => {
-            delivered(session).store(true, Ordering::Relaxed);
+            fresh(session).clear();
             frame.success(Transform::Normal, None, state.now());
         }
         Err(e) => {
@@ -533,7 +544,7 @@ fn fill_ext(state: &mut State, output: &Output, session: &SessionRef, frame: Fra
         Target::of(&buffer),
     ) {
         Ok(()) => {
-            delivered(session).store(true, Ordering::Relaxed);
+            fresh(session).clear();
             frame.success(output.current_transform(), None, state.now());
         }
         Err(e) => {
@@ -588,14 +599,35 @@ impl State {
     }
 }
 
-fn delivered(session: &SessionRef) -> &AtomicBool {
+/// Whether a session's source changed since its last delivered frame. A
+/// new session starts changed, so its first frame is filled at once.
+struct Fresh(AtomicBool);
+
+impl Default for Fresh {
+    fn default() -> Fresh {
+        Fresh(AtomicBool::new(true))
+    }
+}
+
+impl Fresh {
+    fn mark(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    fn clear(&self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
+
+    fn get(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+fn fresh(session: &SessionRef) -> &Fresh {
     session
         .user_data()
-        .insert_if_missing_threadsafe(|| AtomicBool::new(false));
-    session
-        .user_data()
-        .get::<AtomicBool>()
-        .expect("inserted above")
+        .insert_if_missing_threadsafe(Fresh::default);
+    session.user_data().get::<Fresh>().expect("inserted above")
 }
 
 impl ScreencopyHandler for State {
@@ -724,11 +756,11 @@ impl ImageCopyCaptureHandler for State {
 
     fn frame(&mut self, session: &SessionRef, frame: Frame) {
         let shows = shown(&session.source());
-        let first = !delivered(session).load(Ordering::Relaxed);
+        let changed = fresh(session).get();
         match shows {
             None => frame.fail(CaptureFailureReason::Stopped),
-            Some(Shown::Output(o)) if first => fill_ext(self, &o, session, frame),
-            Some(Shown::Window(w)) if first => fill_window(self, w, session, frame),
+            Some(Shown::Output(o)) if changed => fill_ext(self, &o, session, frame),
+            Some(Shown::Window(w)) if changed => fill_window(self, w, session, frame),
             Some(Shown::Output(o)) => {
                 self.captures.waiting.push(Waiting::Ext {
                     session: session.clone(),
@@ -772,4 +804,25 @@ fn dmabuf_formats(renderer: &GlesRenderer) -> Vec<(Fourcc, Vec<Modifier>)> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Fresh;
+
+    #[test]
+    fn a_change_between_frames_is_kept_for_the_next_request() {
+        let f = Fresh::default();
+        assert!(f.get(), "a new session's first frame is filled at once");
+        f.clear();
+        assert!(!f.get(), "a delivered frame leaves the next one waiting");
+        f.mark();
+        assert!(
+            f.get(),
+            "a commit with no frame waiting fills the next at once"
+        );
+        f.mark();
+        f.clear();
+        assert!(!f.get());
+    }
 }
