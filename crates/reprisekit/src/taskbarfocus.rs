@@ -38,10 +38,10 @@ pub fn key(sym: u32, shift: bool) -> Option<BarKey> {
 
 pub fn items(layout: &TaskbarLayout) -> Vec<TaskbarHit> {
     let mut v = vec![TaskbarHit::Start];
-    let tools = (0..layout.quick.len())
-        .map(TaskbarHit::Quick)
-        .chain(layout.quick_more.map(|_| TaskbarHit::QuickMore))
-        .chain((0..layout.pager.len()).map(TaskbarHit::Pager));
+    let tools = (0..layout.pager.len())
+        .map(TaskbarHit::Pager)
+        .chain((0..layout.quick.len()).map(TaskbarHit::Quick))
+        .chain(layout.quick_more.map(|_| TaskbarHit::QuickMore));
     let tasks = (0..layout.tasks.len()).map(TaskbarHit::Task);
     if layout.bands.tasks_first {
         v.extend(tasks);
@@ -61,8 +61,8 @@ pub fn items(layout: &TaskbarLayout) -> Vec<TaskbarHit> {
 fn group(h: TaskbarHit) -> u8 {
     match h {
         TaskbarHit::Start => 0,
-        TaskbarHit::Quick(_) | TaskbarHit::QuickMore => 1,
-        TaskbarHit::Pager(_) => 2,
+        TaskbarHit::Pager(_) => 1,
+        TaskbarHit::Quick(_) | TaskbarHit::QuickMore => 2,
         TaskbarHit::Task(_) | TaskbarHit::More => 3,
         TaskbarHit::Chevron | TaskbarHit::Tray(_) => 4,
         TaskbarHit::Clock => 5,
@@ -192,10 +192,10 @@ mod tests {
             items(&bar(false)),
             [
                 Start,
-                Quick(0),
-                Quick(1),
                 Pager(0),
                 Pager(1),
+                Quick(0),
+                Quick(1),
                 Task(0),
                 Task(1),
                 Chevron,
@@ -208,7 +208,7 @@ mod tests {
         let swapped = items(&bar(true));
         assert_eq!(
             &swapped[1..7],
-            [Task(0), Task(1), Quick(0), Quick(1), Pager(0), Pager(1)],
+            [Task(0), Task(1), Pager(0), Pager(1), Quick(0), Quick(1)],
             "the task row first when it is the first band"
         );
     }
@@ -218,13 +218,13 @@ mod tests {
         let v = items(&bar(false));
         assert_eq!(step(&v, Start, BarKey::Prev), ShowDesktop);
         assert_eq!(step(&v, ShowDesktop, BarKey::Next), Start);
-        assert_eq!(step(&v, Quick(1), BarKey::Next), Pager(0));
-        assert_eq!(step(&v, Quick(1), BarKey::NextGroup), Pager(0));
+        assert_eq!(step(&v, Pager(1), BarKey::Next), Quick(0));
+        assert_eq!(step(&v, Pager(1), BarKey::NextGroup), Quick(0));
         assert_eq!(step(&v, Task(0), BarKey::NextGroup), Chevron);
         assert_eq!(step(&v, Tray(1), BarKey::PrevGroup), Task(0));
         assert_eq!(
             step(&v, Task(1), BarKey::PrevGroup),
-            Pager(0),
+            Quick(0),
             "the first item of the group before"
         );
         assert_eq!(step(&v, Start, BarKey::PrevGroup), ShowDesktop);
@@ -255,13 +255,13 @@ mod tests {
         let v = items(&bar(false));
         assert_eq!(fit(&v, Task(1)), Some(Task(1)));
         assert_eq!(fit(&v, Task(5)), Some(Task(1)), "the last task left");
-        assert_eq!(fit(&v, More), Some(Pager(1)), "no » on a bottom bar");
+        assert_eq!(fit(&v, More), Some(Quick(1)), "no » on a bottom bar");
         let no_tasks: Vec<_> = v
             .iter()
             .copied()
             .filter(|h| !matches!(h, Task(_)))
             .collect();
-        assert_eq!(fit(&no_tasks, Task(0)), Some(Pager(1)));
+        assert_eq!(fit(&no_tasks, Task(0)), Some(Quick(1)));
         assert_eq!(fit(&[], Start), None);
     }
 

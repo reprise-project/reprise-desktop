@@ -1743,35 +1743,48 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
         .copied()
         .chain(layout.quick_more)
         .collect();
-    if !quick_cells.is_empty() {
-        let id = bar(tree, "quick", &quick_cells, "Quick Launch");
-        for (i, (r, name)) in layout.quick.iter().zip(&names.quick).enumerate() {
-            mark(TaskbarHit::Quick(i), tree.push(id, i, button(*r, name)));
+    // The bands read in the order they are drawn: the pager, then Quick Launch, with the task
+    // row before both when it is the first band.
+    let tools = |tree: &mut Tree, mark: &mut dyn FnMut(TaskbarHit, NodeId)| {
+        if !layout.pager.is_empty() {
+            let id = bar(tree, "pager", &layout.pager, "Desktops");
+            for (i, r) in layout.pager.iter().enumerate() {
+                let mut n = button(*r, &format!("Desktop {}", i + 1));
+                n.set_toggled((i == names.desktop).into());
+                wants(&mut n, names.pager_attention.get(i));
+                mark(TaskbarHit::Pager(i), tree.push(id, i, n));
+            }
         }
-        if let Some(r) = layout.quick_more {
-            let mut n = button(r, QUICK_MORE_NAME);
-            n.set_has_popup(HasPopup::Menu);
-            n.set_expanded(names.quick_more_open);
-            mark(TaskbarHit::QuickMore, tree.push(id, "more", n));
+        if !quick_cells.is_empty() {
+            let id = bar(tree, "quick", &quick_cells, "Quick Launch");
+            for (i, (r, name)) in layout.quick.iter().zip(&names.quick).enumerate() {
+                mark(TaskbarHit::Quick(i), tree.push(id, i, button(*r, name)));
+            }
+            if let Some(r) = layout.quick_more {
+                let mut n = button(r, QUICK_MORE_NAME);
+                n.set_has_popup(HasPopup::Menu);
+                n.set_expanded(names.quick_more_open);
+                mark(TaskbarHit::QuickMore, tree.push(id, "more", n));
+            }
         }
-    }
-    if !layout.pager.is_empty() {
-        let id = bar(tree, "pager", &layout.pager, "Desktops");
-        for (i, r) in layout.pager.iter().enumerate() {
-            let mut n = button(*r, &format!("Desktop {}", i + 1));
-            n.set_toggled((i == names.desktop).into());
-            wants(&mut n, names.pager_attention.get(i));
-            mark(TaskbarHit::Pager(i), tree.push(id, i, n));
+    };
+    let tasks = |tree: &mut Tree, mark: &mut dyn FnMut(TaskbarHit, NodeId)| {
+        if !layout.tasks.is_empty() {
+            let id = bar(tree, "tasks", &layout.tasks, "Running Applications");
+            for (i, (r, (title, active))) in layout.tasks.iter().zip(&names.tasks).enumerate() {
+                let mut n = button(*r, title);
+                n.set_toggled((*active).into());
+                wants(&mut n, names.attention.get(i));
+                mark(TaskbarHit::Task(i), tree.push(id, i, n));
+            }
         }
-    }
-    if !layout.tasks.is_empty() {
-        let id = bar(tree, "tasks", &layout.tasks, "Running Applications");
-        for (i, (r, (title, active))) in layout.tasks.iter().zip(&names.tasks).enumerate() {
-            let mut n = button(*r, title);
-            n.set_toggled((*active).into());
-            wants(&mut n, names.attention.get(i));
-            mark(TaskbarHit::Task(i), tree.push(id, i, n));
-        }
+    };
+    if layout.bands.tasks_first {
+        tasks(tree, &mut mark);
+        tools(tree, &mut mark);
+    } else {
+        tools(tree, &mut mark);
+        tasks(tree, &mut mark);
     }
     if let Some(r) = layout.more {
         let mut n = button(r, "Show more windows");
@@ -2046,6 +2059,54 @@ mod tests {
         let clock = t.find(Role::Button, "12:00").unwrap();
         assert_eq!(t.get(clock).unwrap().description(), Some("Friday"));
         assert_eq!(t.focus(), access::ROOT, "the bar has no keyboard");
+    }
+
+    #[test]
+    fn a_reader_meets_the_bands_in_the_order_they_are_drawn() {
+        let c = TaskbarCounts {
+            quick: 2,
+            pager: 2,
+            tasks: 2,
+            tray: 1,
+            ..TaskbarCounts::default()
+        };
+        let names = TaskbarNames {
+            quick: vec!["A".into(), "B".into()],
+            tasks: vec![("T0".into(), false), ("T1".into(), false)],
+            tray: vec!["Volume".into()],
+            ..TaskbarNames::default()
+        };
+        for (tasks_first, want) in [
+            (false, ["Desktops", "Quick Launch", "Running Applications"]),
+            (true, ["Running Applications", "Desktops", "Quick Launch"]),
+        ] {
+            let bands = Bands {
+                tasks_first,
+                first_width: None,
+            };
+            let l = TaskbarLayout::compute_with(
+                &Metrics::default(),
+                &TaskbarShape::CLASSIC,
+                800,
+                true,
+                c,
+                40,
+                bands,
+            );
+            let mut t = Tree::window("Taskbar", (l.width, l.height));
+            access(&l, &names, &mut t, access::ROOT);
+            let bars: Vec<(f64, &str)> = (t.get(access::ROOT).unwrap().children().iter())
+                .map(|&id| t.get(id).unwrap())
+                .filter(|n| n.role() == Role::Toolbar)
+                .map(|n| (n.bounds().unwrap().x0, n.label().unwrap()))
+                .collect();
+            let names: Vec<&str> = bars.iter().map(|b| b.1).take(3).collect();
+            assert_eq!(names, want, "tasks first: {tasks_first}");
+            assert!(
+                bars.iter().map(|b| b.0).is_sorted(),
+                "left to right as drawn: {bars:?}"
+            );
+        }
     }
 
     #[test]
