@@ -1,6 +1,11 @@
 //! reprise-polkit's record of dismissed password prompts, on the session bus.
 //! A service behind polkit answers the same error for a dismissed prompt and
 //! a refused password; a program asks here which one it was.
+//! [`allowed_without_prompt`] asks polkit itself whether an action needs a password.
+
+use std::collections::HashMap;
+
+use zbus::zvariant::Value;
 
 pub const NAME: &str = "reprise.polkit";
 pub const PATH: &str = "/reprise/polkit/Dismissals";
@@ -61,6 +66,40 @@ pub fn refusal(
             Refusal::Denied
         }),
         _ => None,
+    }
+}
+
+/// Whether polkit lets the owner of `conn` do `action` with no password prompt. A service that
+/// asks polkit with interaction allowed whatever the call's flags (fwupd does) prompts otherwise.
+/// False when polkit does not answer.
+pub async fn allowed_without_prompt(conn: &zbus::Connection, action: &str) -> bool {
+    let Some(name) = conn.unique_name() else {
+        return false;
+    };
+    let subject = (
+        "system-bus-name",
+        HashMap::from([("name", Value::from(name.as_str()))]),
+    );
+    let details: HashMap<&str, &str> = HashMap::new();
+    let reply = conn
+        .call_method(
+            Some("org.freedesktop.PolicyKit1"),
+            "/org/freedesktop/PolicyKit1/Authority",
+            Some("org.freedesktop.PolicyKit1.Authority"),
+            "CheckAuthorization",
+            &(subject, action, details, 0u32, ""),
+        )
+        .await
+        .and_then(|m| {
+            m.body()
+                .deserialize::<(bool, bool, HashMap<String, String>)>()
+        });
+    match reply {
+        Ok((authorized, _, _)) => authorized,
+        Err(e) => {
+            log::info!("polkit does not say whether {action} needs a password: {e}");
+            false
+        }
     }
 }
 
