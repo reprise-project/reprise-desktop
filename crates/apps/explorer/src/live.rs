@@ -171,9 +171,17 @@ impl Explorer {
         let holders: BTreeSet<PathBuf> = (metadata.iter())
             .filter_map(|f| f.parent().map(Path::to_path_buf))
             .collect();
+        let mut picker = false;
         for dir in &holders {
-            self.refill_tree_node(&Place::from_path(dir), ctx);
+            let place = Place::from_path(dir);
+            self.refill_tree_node(&place, ctx);
+            picker |= self.refill_browse_node(&place, ctx);
         }
+        // The picker is its own window, which only a redraw of all of them repaints.
+        let put = match picker {
+            true => Some(put.unwrap_or_default().and(Reply::redraw_all())),
+            false => put,
+        };
         dirty |= !holders.is_empty();
         let shown = || self.place.path();
         if self.watch.as_mut().is_some_and(|w| w.take_changed())

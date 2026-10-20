@@ -32,8 +32,9 @@ pub struct Browse {
     /// The walk to the items' folder still being read: the picker shows the Desktop until it
     /// lands, and a row picked by then keeps the pick.
     pub walking: Option<(Place, Job<foldertree::Chain>)>,
-    /// Opened nodes whose children are still being read.
-    pub filling: Vec<(Place, Job<Kids>)>,
+    /// Opened nodes whose children are still being read, and whether to read them again once
+    /// that lands ([`Explorer::refill_browse_node`]).
+    pub filling: Vec<(Place, Job<Kids>, bool)>,
     /// A Make New Folder or a rename still on disk (a dead mount); another is ignored until it lands.
     pub making: Option<Making>,
     pub clicks: DoubleClick<Option<browsefolder::Hit>>,
@@ -313,7 +314,7 @@ impl Explorer {
             browsefolder::Event::Redraw | browsefolder::Event::Selected(_) => Reply::redraw(),
             browsefolder::Event::Expand(p) => {
                 if let Some(place) = foldertree::place_of(&b.bf.tree, &b.places, &p)
-                    && !b.filling.iter().any(|(q, _)| *q == place)
+                    && !b.filling.iter().any(|(q, ..)| *q == place)
                 {
                     let read = self.kids_reader_in(&b.bf.tree, &b.places, &p, place.clone());
                     match self.read_job(ctx, read) {
@@ -327,7 +328,7 @@ impl Explorer {
                                 &mut ctx.icons,
                             );
                         }
-                        Err(job) => b.filling.push((place, job)),
+                        Err(job) => b.filling.push((place, job, false)),
                     }
                 }
                 Reply::redraw()
@@ -593,6 +594,57 @@ impl Explorer {
         }
     }
 
+    /// Reads the picker's node standing for `place` again when it was opened, as
+    /// [`Explorer::refill_tree_node`] does for the Folders tree. True when the node was filled
+    /// at once; a late read lands through [`Explorer::take_browse`].
+    pub(crate) fn refill_browse_node(&mut self, place: &Place, ctx: &mut Ctx) -> bool {
+        let mut b = match self.dialog.take() {
+            Some(Dialog::Browse(b)) => b,
+            other => {
+                self.dialog = other;
+                return false;
+            }
+        };
+        let filled = self.refill_browse_in(&mut b, place, ctx);
+        self.dialog = Some(Dialog::Browse(b));
+        filled
+    }
+
+    fn refill_browse_in(&self, b: &mut Browse, place: &Place, ctx: &mut Ctx) -> bool {
+        let Some(path) = foldertree::refill_path(&b.bf.tree, &b.places, place, &self.drive_mounts)
+        else {
+            return false;
+        };
+        if let Some((.., again)) = b.filling.iter_mut().find(|(p, ..)| p == place) {
+            *again = true;
+            return false;
+        }
+        let read = self.kids_reader_in(&b.bf.tree, &b.places, &path, place.clone());
+        match self.read_job(ctx, read) {
+            Ok(kids) => {
+                let inp = Inputs {
+                    show_hidden: self.settings.show_hidden,
+                    drives: &self.drives,
+                    volumes: &self.volumes,
+                    drive_mounts: &self.drive_mounts,
+                };
+                foldertree::fill_with(
+                    &mut b.bf.tree,
+                    &mut b.places,
+                    path,
+                    kids,
+                    &inp,
+                    &mut ctx.icons,
+                );
+                true
+            }
+            Err(job) => {
+                b.filling.push((place.clone(), job, false));
+                false
+            }
+        }
+    }
+
     /// Takes the picker's reads that landed after their wait: the walk to the items' folder,
     /// opened nodes, the pick's judging and a Make New Folder or rename, a closed picker's too.
     /// True when one did.
@@ -634,14 +686,14 @@ impl Explorer {
             landed = true;
         }
         let mut done = Vec::new();
-        b.filling.retain(|(place, job)| match job.take() {
+        b.filling.retain(|(place, job, again)| match job.take() {
             Some(kids) => {
-                done.push((place.clone(), kids));
+                done.push((place.clone(), kids, *again));
                 false
             }
             None => true,
         });
-        for (place, kids) in done {
+        for (place, kids, again) in done {
             if let Some(path) = foldertree::path_of(&b.bf.tree, &b.places, &place, inp.drive_mounts)
             {
                 foldertree::fill_with(
@@ -652,6 +704,9 @@ impl Explorer {
                     &inp,
                     &mut ctx.icons,
                 );
+            }
+            if again {
+                self.refill_browse_in(&mut b, &place, ctx);
             }
             landed = true;
         }
