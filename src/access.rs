@@ -81,6 +81,9 @@ pub struct Access {
     /// None when the channel could not join the loop: nothing is ever
     /// published.
     tx: Option<Sender<Msg>>,
+    /// The accessibility bus answered ([`reprisebus::a11y::when_bus_ready`]): no adapter is
+    /// made before.
+    bus: bool,
     queued: bool,
     keys: Option<KeyEcho>,
     /// The surface a popup took the seat's keyboard from (see
@@ -120,6 +123,25 @@ impl Access {
                 e.error
             );
             return Access::default();
+        }
+        let (ready, ready_rx) = channel::channel::<()>();
+        let joined = handle.insert_source(ready_rx, |ev, _, state| {
+            if let Event::Msg(()) = ev {
+                state.access.bus = true;
+                touch(state);
+            }
+        });
+        match joined {
+            Ok(_) => reprisebus::a11y::when_bus_ready(move || {
+                let _ = ready.send(());
+            }),
+            Err(e) => {
+                log::warn!(
+                    "access: {}; screen readers get no compositor trees",
+                    e.error
+                );
+                return Access::default();
+            }
         }
         Access {
             tx: Some(tx),
@@ -459,7 +481,7 @@ fn sync(state: &mut State) {
     if popup {
         move_keyboard(state, focus);
     }
-    if let Some(tx) = state.access.tx.clone() {
+    if let Some(tx) = state.access.tx.clone().filter(|_| state.access.bus) {
         publish(state, &tx, focus);
     }
     if !popup {
