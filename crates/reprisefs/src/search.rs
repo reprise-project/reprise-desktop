@@ -593,9 +593,24 @@ fn collect_with(
         }
     }
     over.store(true, Ordering::Relaxed);
-    let _ = child.kill();
-    let _ = child.wait();
+    abandon(child);
     found
+}
+
+/// Kills `child` and reaps it on a thread of its own. A tool with a thread blocked on a stopped
+/// network mount stays a zombie past SIGKILL until the mount answers, so waiting here would keep
+/// the search's answer with it.
+fn abandon(mut child: std::process::Child) {
+    let _ = child.kill();
+    if let Ok(Some(_)) = child.try_wait() {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("search-reap".into())
+        .spawn(move || child.wait());
+    if let Err(e) = spawned {
+        log::warn!("search: cannot start a thread to reap the tool: {e}");
+    }
 }
 
 #[cfg(test)]
@@ -778,6 +793,20 @@ mod tests {
             t.elapsed() < Duration::from_secs(2),
             "the tool is killed, not waited for"
         );
+    }
+
+    #[test]
+    fn abandoning_a_tool_returns_at_once_and_reaps_it_later() {
+        let child = sh("sleep 30").spawn().unwrap();
+        let pid = child.id();
+        let t = Instant::now();
+        abandon(child);
+        assert!(t.elapsed() < Duration::from_millis(500), "returned at once");
+        let gone = (0..200).any(|_| {
+            std::thread::sleep(Duration::from_millis(10));
+            !Path::new(&format!("/proc/{pid}")).exists()
+        });
+        assert!(gone, "the tool is reaped, leaving no zombie");
     }
 
     #[test]
