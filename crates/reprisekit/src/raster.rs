@@ -827,7 +827,8 @@ impl Canvas {
 
     /// Draws `from` of the scale-1 atlas `src` into `to` as a nine-grid with
     /// border `m` (see [`nine_source`]), composed over what is there. Builds
-    /// only the part of `to` inside the canvas and clip.
+    /// only the part of `to` inside the canvas and clip, and with `border_only`
+    /// only the bands round the skipped centre.
     #[allow(clippy::too_many_arguments)]
     pub fn blit_nine(
         &mut self,
@@ -862,27 +863,48 @@ impl Canvas {
                 (s.div_euclid(k), mid)
             })
             .collect();
-        let mut out = Canvas::new(vis.width as u32, vis.height as u32);
-        for (row, y) in out.pixels.chunks_exact_mut(vis.width as usize).zip(vis.y..) {
-            let (sy, mid_y) = nine_axis(
-                y - to.y,
-                to.height,
-                from.y,
-                from.height,
-                m.top,
-                m.bottom,
-                fill_y,
-                k,
-            );
-            let sy = sy.div_euclid(k);
-            let skip_mid = border_only && mid_y;
-            for (px, &(sx, mid_x)) in row.iter_mut().zip(&cols) {
-                if !(skip_mid && mid_x) {
+        let rows: Vec<(i32, bool)> = (vis.y..vis.bottom())
+            .map(|y| {
+                let (s, mid) = nine_axis(
+                    y - to.y,
+                    to.height,
+                    from.y,
+                    from.height,
+                    m.top,
+                    m.bottom,
+                    fill_y,
+                    k,
+                );
+                (s.div_euclid(k), mid)
+            })
+            .collect();
+        let (w, h) = (cols.len(), rows.len());
+        let mut piece = |x0: usize, x1: usize, y0: usize, y1: usize| {
+            if x0 >= x1 || y0 >= y1 {
+                return;
+            }
+            let mut out = Canvas::new((x1 - x0) as u32, (y1 - y0) as u32);
+            for (row, &(sy, _)) in out.pixels.chunks_exact_mut(x1 - x0).zip(&rows[y0..y1]) {
+                for (px, &(sx, _)) in row.iter_mut().zip(&cols[x0..x1]) {
                     *px = src.get(sx, sy);
                 }
             }
+            self.blit_over(vis.x + x0 as i32, vis.y + y0 as i32, &out);
+        };
+        // The middle rows and columns are one run each, so a skipped centre leaves four bands.
+        let run = |v: &[(i32, bool)]| {
+            let a = v.iter().position(|e| e.1)?;
+            Some((a, a + v[a..].iter().take_while(|e| e.1).count()))
+        };
+        match (border_only, run(&cols), run(&rows)) {
+            (true, Some((cx0, cx1)), Some((ry0, ry1))) => {
+                piece(0, w, 0, ry0);
+                piece(0, cx0, ry0, ry1);
+                piece(cx1, w, ry0, ry1);
+                piece(0, w, ry1, h);
+            }
+            _ => piece(0, w, 0, h),
         }
-        self.blit_over(vis.x, vis.y, &out);
     }
 
     /// Fill `r` with logical column `i` (counted from `r.x`) in
