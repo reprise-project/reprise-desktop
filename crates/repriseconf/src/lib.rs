@@ -63,6 +63,23 @@ pub fn config_path() -> PathBuf {
         .join("config.toml")
 }
 
+/// `text` parsed, the last parse on this thread reused while the file reads the same: a program
+/// starting up asks for several keys, each reading the file anew.
+fn parsed(text: &str) -> Option<std::rc::Rc<DocumentMut>> {
+    type Last = Option<(String, Option<std::rc::Rc<DocumentMut>>)>;
+    thread_local! {
+        static LAST: std::cell::RefCell<Last> = const { std::cell::RefCell::new(None) };
+    }
+    LAST.with_borrow_mut(|last| match last {
+        Some((t, doc)) if t == text => doc.clone(),
+        _ => {
+            let doc = text.parse::<DocumentMut>().ok().map(std::rc::Rc::new);
+            *last = Some((text.to_string(), doc.clone()));
+            doc
+        }
+    })
+}
+
 /// Whether `[privacy] recent_files` lets Reprise show recently used files (true unless `false`),
 /// read now.
 pub fn recent_files() -> bool {
@@ -71,7 +88,7 @@ pub fn recent_files() -> bool {
 }
 
 fn recent_files_in(text: &str) -> bool {
-    let Ok(doc) = text.parse::<DocumentMut>() else {
+    let Some(doc) = parsed(text) else {
         return true;
     };
     get(&doc, &key("privacy", "recent_files"))
@@ -82,7 +99,7 @@ fn recent_files_in(text: &str) -> bool {
 /// `[glass] color` as written (a colour's name or "#RRGGBB"), read now; `None` when unset.
 pub fn glass_color() -> Option<String> {
     let text = std::fs::read_to_string(config_path()).unwrap_or_default();
-    let doc = text.parse::<DocumentMut>().ok()?;
+    let doc = parsed(&text)?;
     get(&doc, &key("glass", "color"))
         .and_then(Item::as_str)
         .map(String::from)
@@ -110,8 +127,8 @@ pub fn look_keys() -> LookKeys {
 }
 
 fn look_keys_in(text: &str) -> LookKeys {
-    let doc = text.parse::<DocumentMut>().ok();
-    let doc = doc.as_ref();
+    let doc = parsed(text);
+    let doc = doc.as_deref();
     LookKeys {
         shell_dlg: doc.and_then(shell_dlg_of),
         font_family: doc.and_then(font_family_of),
@@ -161,8 +178,7 @@ pub fn taskbar_position() -> String {
 }
 
 fn taskbar_position_in(text: &str) -> String {
-    text.parse::<DocumentMut>()
-        .ok()
+    parsed(text)
         .and_then(|doc| {
             get(&doc, &key("taskbar", "position"))
                 .and_then(Item::as_str)
@@ -179,8 +195,7 @@ pub fn drives_on_insert() -> String {
 }
 
 fn drives_on_insert_in(text: &str) -> String {
-    text.parse::<DocumentMut>()
-        .ok()
+    parsed(text)
         .and_then(|doc| {
             get(&doc, &key("drives", "on_insert"))
                 .and_then(Item::as_str)
@@ -196,8 +211,8 @@ pub fn terminal() -> String {
 }
 
 fn terminal_in(text: &str) -> String {
-    let doc = text.parse::<DocumentMut>().ok();
-    doc.as_ref()
+    parsed(text)
+        .as_deref()
         .and_then(|d| get(d, &key("", "terminal"))?.as_str())
         .unwrap_or(reprisefs::apps::DEFAULT_TERMINAL)
         .to_string()
@@ -210,8 +225,7 @@ pub fn script_terminal() -> reprisefs::program::ScriptEnd {
 }
 
 fn script_terminal_in(text: &str) -> reprisefs::program::ScriptEnd {
-    text.parse::<DocumentMut>()
-        .ok()
+    parsed(text)
         .and_then(|d| {
             get(&d, &key("", "script_terminal"))?
                 .as_str()
@@ -252,7 +266,7 @@ pub fn thumbnail_cache() -> ThumbnailCache {
 
 fn thumbnail_cache_in(text: &str) -> ThumbnailCache {
     let d = ThumbnailCache::DEFAULT;
-    let Ok(doc) = text.parse::<DocumentMut>() else {
+    let Some(doc) = parsed(text) else {
         return d;
     };
     let mb = ThumbnailCache::MAX_MB;
@@ -573,6 +587,27 @@ pub mod system_icons {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_same_text_is_parsed_once_and_new_text_again() {
+        let a = parsed("[fonts]\nantialias = true\n").expect("parses");
+        let again = parsed("[fonts]\nantialias = true\n").expect("parses");
+        assert!(
+            std::rc::Rc::ptr_eq(&a, &again),
+            "the same text reuses its parse"
+        );
+        let b = parsed("[fonts]\nantialias = false\n").expect("parses");
+        assert!(!std::rc::Rc::ptr_eq(&a, &b), "new text is parsed anew");
+        assert_eq!(
+            look_keys_in("[fonts]\nantialias = false\n").antialias,
+            Some(false)
+        );
+        assert!(parsed("[fonts").is_none());
+        assert!(
+            parsed("[fonts").is_none(),
+            "a text that does not parse stays unparsed"
+        );
+    }
 
     #[test]
     fn recent_files_is_on_unless_privacy_turns_it_off() {
