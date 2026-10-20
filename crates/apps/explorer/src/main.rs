@@ -241,8 +241,8 @@ pub struct Explorer {
     pub drag: Option<drag::Drag>,
     pub incoming: Option<drag::Incoming>,
     pub pending_drop: Option<drag::PendingDrop>,
-    /// What the drag's files are to the folder under it ([`drag::Facts`]).
-    pub(crate) drop_facts: Option<drag::FactsRead>,
+    /// What the drag's files are to each folder it rested on ([`drag::Facts`]).
+    pub(crate) drop_facts: Vec<drag::FactsRead>,
     /// The status bar's text for a selected shortcut, read late or still being read.
     pub(crate) link_status: Option<chrome::LinkStatus>,
     pub(crate) put: Option<fileops::Put>,
@@ -436,7 +436,7 @@ impl Explorer {
             drag: None,
             incoming: None,
             pending_drop: None,
-            drop_facts: None,
+            drop_facts: Vec::new(),
             link_status: None,
             put: None,
             put_queue: std::collections::VecDeque::new(),
