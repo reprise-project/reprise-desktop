@@ -329,20 +329,7 @@ impl State {
                 if now.contains_key(id) {
                     continue;
                 }
-                let ended = cups::job(&self.client, *id).unwrap_or_else(|_| Job {
-                    state: cups::JobState::Completed,
-                    ..was.clone()
-                });
-                // A job read back without its printer keeps the one it
-                // had.
-                let ended = Job {
-                    printer: if ended.printer.is_empty() {
-                        was.printer.clone()
-                    } else {
-                        ended.printer
-                    },
-                    ..ended
-                };
+                let ended = ended(was, cups::job(&self.client, *id).ok(), &snap);
                 if ended.state.done() {
                     self.poster.post(Msg::JobEnded(ended));
                 }
@@ -444,9 +431,71 @@ fn failed(cmd: &Cmd, e: &cups::Error) -> Option<Msg> {
     })
 }
 
+/// How job `was`, gone from the queue, ended: as CUPS reads it back (`read`), keeping its printer
+/// when the read has none. A job CUPS no longer has printed and was dropped from the history,
+/// unless its printer is gone from `snap` too: then it went with the printer, cancelled.
+fn ended(was: &Job, read: Option<Job>, snap: &Snapshot) -> Job {
+    let Some(read) = read else {
+        let state = if snap.printer(&was.printer).is_some() {
+            cups::JobState::Completed
+        } else {
+            cups::JobState::Canceled
+        };
+        return Job {
+            state,
+            ..was.clone()
+        };
+    };
+    Job {
+        printer: if read.printer.is_empty() {
+            was.printer.clone()
+        } else {
+            read.printer
+        },
+        ..read
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_job_purged_with_its_printer_ended_cancelled_and_one_purged_alone_printed() {
+        use cups::JobState;
+        let was = Job {
+            id: 7,
+            printer: "Office".into(),
+            name: "report.pdf".into(),
+            state: JobState::Held,
+            ..Job::default()
+        };
+        let with_office = Snapshot {
+            running: true,
+            printers: vec![cups::Printer {
+                name: "Office".into(),
+                ..Default::default()
+            }],
+            ..Snapshot::default()
+        };
+        let deleted = Snapshot {
+            running: true,
+            ..Snapshot::default()
+        };
+        assert_eq!(ended(&was, None, &deleted).state, JobState::Canceled);
+        assert_eq!(ended(&was, None, &with_office).state, JobState::Completed);
+
+        let read = Job {
+            printer: String::new(),
+            state: JobState::Canceled,
+            ..was.clone()
+        };
+        let back = ended(&was, Some(read), &with_office);
+        assert_eq!(
+            (back.state, back.printer.as_str()),
+            (JobState::Canceled, "Office")
+        );
+    }
 
     #[test]
     fn with_the_notifier_cupsd_is_read_on_events_and_a_slow_safety_tick() {
