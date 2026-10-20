@@ -13,6 +13,7 @@ use reprisekit::controls::iconlist::{self, IconList};
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::TextEdit;
+use reprisekit::theme::TextUnits;
 
 use crate::acct::{Op, User};
 use crate::picture::Source;
@@ -64,6 +65,8 @@ pub struct Props {
     last_admin: bool,
     /// A picture picked and not yet applied.
     picture: Option<Source>,
+    /// The text size the pictures were made for.
+    units: TextUnits,
 }
 
 fn secret(id: &'static str, y: i32) -> Item {
@@ -88,7 +91,8 @@ fn general_page(user: &User, face: Option<Canvas>, last_admin: bool) -> Form {
                 canvas: face,
                 frame: 2,
             },
-        ),
+        )
+        .grows(),
         Item::label_at("login", 84, 50, 290, &user.login),
         Item::label_at(KIND, 84, 50 + LINE_H + 4, 290, user.kind()),
         Item::new(
@@ -226,10 +230,10 @@ fn wipe(form: &mut Form, id: &str) {
 }
 
 impl Props {
-    /// The sheet for `user`. `face` is its picture at [`PREVIEW_PX`];
+    /// The sheet for `user` with text grown by `u`. `face` is its picture at [`PREVIEW_PX`];
     /// `last_admin` greys Standard on the only administrator.
-    pub fn new(user: User, face: Option<Canvas>, last_admin: bool) -> Props {
-        let small = face.as_ref().map(|c| c.resample_box(FACE_PX, FACE_PX));
+    pub fn new(user: User, face: Option<Canvas>, last_admin: bool, u: TextUnits) -> Props {
+        let small = face.as_ref().map(|c| face_of(c, u));
         let pages = vec![
             general_page(&user, small, last_admin),
             picture_page(face),
@@ -240,9 +244,25 @@ impl Props {
             user,
             last_admin,
             picture: None,
+            units: u,
         };
         p.sync();
         p
+    }
+
+    /// The text size changed to `u`: General's picture is made again at its grown size.
+    pub fn regrow(&mut self, u: TextUnits) {
+        self.units = u;
+        let preview = match self.sheet.pages[TAB_PICTURE]
+            .item(PREVIEW)
+            .map(|i| &i.control)
+        {
+            Some(Control::Picture {
+                canvas: Some(c), ..
+            }) => c.clone(),
+            _ => return,
+        };
+        self.sheet.pages[TAB_GENERAL].set_picture(FACE, face_of(&preview, u));
     }
 
     pub fn window_title(&self) -> String {
@@ -410,7 +430,7 @@ impl Props {
     }
 
     fn show_picture(&mut self, src: Source, preview: Canvas) {
-        let small = preview.resample_box(FACE_PX, FACE_PX);
+        let small = face_of(&preview, self.units);
         self.sheet.pages[TAB_PICTURE].set_picture(PREVIEW, preview);
         self.sheet.pages[TAB_GENERAL].set_picture(FACE, small);
         self.picture = Some(src);
@@ -473,6 +493,12 @@ impl Props {
     }
 }
 
+/// General's picture: `preview` at [`FACE_PX`] grown by `u`.
+fn face_of(preview: &Canvas, u: TextUnits) -> Canvas {
+    let px = u.px(FACE_PX);
+    preview.resample_box(px, px)
+}
+
 impl Drop for Props {
     fn drop(&mut self) {
         self.wipe_passwords();
@@ -531,7 +557,7 @@ mod tests {
             [("yours", user(true, true)), ("another", user(false, false))]
                 .into_iter()
                 .flat_map(|(whose, u)| {
-                    let s = Props::new(u, None, false).sheet.clone();
+                    let s = Props::new(u, None, false, TextUnits::ONE).sheet.clone();
                     let tabs = s
                         .tabs
                         .labels
@@ -563,7 +589,7 @@ mod tests {
             .iter()
             .enumerate()
         {
-            let mut p = Props::new(user(*you, true), face.clone(), false);
+            let mut p = Props::new(user(*you, true), face.clone(), false, TextUnits::ONE);
             p.sheet.tabs.open = *tab;
             let mut c = Canvas::new(w as u32, h as u32);
             c.fill_rect(c.bounds(), theme.colors.button_face);
@@ -573,9 +599,32 @@ mod tests {
         reprisekit::raster::write_preview(&out, "accounts-props-preview.png");
     }
 
+    fn general_picture(p: &Props) -> (u32, u32) {
+        match p.sheet.pages[TAB_GENERAL].item(FACE).map(|i| &i.control) {
+            Some(Control::Picture {
+                canvas: Some(c), ..
+            }) => (c.width, c.height),
+            _ => (0, 0),
+        }
+    }
+
+    /// At 200% text General's picture is 96 px in a 100 px well; back at 100% it is 48 px.
+    #[test]
+    fn at_200_percent_generals_picture_doubles() {
+        use reprisekit::theme::Theme;
+        let face = Some(userpic::draw(userpic::Picture::Tree, PREVIEW_PX));
+        let mut p = Props::new(user(true, false), face, false, TextUnits::new(22, 11));
+        assert_eq!(general_picture(&p), (96, 96));
+        let page = &p.sheet.pages[TAB_GENERAL];
+        page.drawn_with(&Theme::default().with_text_size(200).paint());
+        assert_eq!(page.rect(FACE), Some(Rect::new(2 * X, 80, 100, 100)));
+        p.regrow(TextUnits::ONE);
+        assert_eq!(general_picture(&p), (48, 48));
+    }
+
     #[test]
     fn nothing_changed_applies_nothing() {
-        let mut p = Props::new(user(true, true), None, false);
+        let mut p = Props::new(user(true, true), None, false, TextUnits::ONE);
         assert!(!p.dirty());
         assert_eq!(p.event(propsheet::Event::Ok, no_file), Outcome::Close);
         assert_eq!(p.window_title(), "Jo Doe Properties");
@@ -583,7 +632,7 @@ mod tests {
 
     #[test]
     fn a_new_name_and_type_become_their_calls() {
-        let mut p = Props::new(user(false, false), None, false);
+        let mut p = Props::new(user(false, false), None, false, TextUnits::ONE);
         type_into(&mut p, TAB_GENERAL, NAME, " Jr");
         let page = &mut p.sheet.pages[TAB_GENERAL];
         page.focus_id(ADMIN);
@@ -606,7 +655,7 @@ mod tests {
 
     #[test]
     fn the_only_administrator_cannot_be_made_standard() {
-        let p = Props::new(user(true, true), None, true);
+        let p = Props::new(user(true, true), None, true, TextUnits::ONE);
         assert!(matches!(
             p.sheet.pages[TAB_GENERAL]
                 .item(STANDARD)
@@ -617,7 +666,7 @@ mod tests {
 
     #[test]
     fn your_password_needs_the_current_one_and_a_match() {
-        let mut p = Props::new(user(true, false), None, false);
+        let mut p = Props::new(user(true, false), None, false, TextUnits::ONE);
         type_into(&mut p, TAB_PASSWORD, NEW, "newpass1");
         type_into(&mut p, TAB_PASSWORD, CONFIRM, "newpass1");
         assert_eq!(
@@ -647,7 +696,7 @@ mod tests {
 
     #[test]
     fn another_accounts_password_is_set_or_left_to_their_next_login() {
-        let mut p = Props::new(user(false, false), None, false);
+        let mut p = Props::new(user(false, false), None, false, TextUnits::ONE);
         assert!(p.sheet.pages[TAB_PASSWORD].item(CURRENT).is_none());
         let page = &mut p.sheet.pages[TAB_PASSWORD];
         page.focus_id(AT_LOGIN);
@@ -667,7 +716,7 @@ mod tests {
 
     #[test]
     fn a_stock_pick_shows_and_applies_as_a_picture() {
-        let mut p = Props::new(user(true, false), None, false);
+        let mut p = Props::new(user(true, false), None, false, TextUnits::ONE);
         if let Some(Control::IconList(l)) = p.sheet.pages[TAB_PICTURE]
             .item_mut(STOCK)
             .map(|i| &mut i.control)

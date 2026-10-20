@@ -25,7 +25,8 @@ pub const WIDTH: i32 = 87;
 /// [`PlacesMetrics::tile`](crate::metrics::PlacesMetrics::tile).
 pub const TILE_H: i32 = PlacesMetrics::CLASSIC.tile;
 
-pub const ICON_PX: i32 = 32;
+/// An icon's side at 100%; [`PlacesMetrics::icon`] at the text size.
+pub const ICON_PX: i32 = PlacesMetrics::CLASSIC.icon;
 
 /// The panel's own border thickness on each side, unscaled: the two
 /// rings `EdgeStyle::ButtonSunken` draws (`ring_t` at `t` then `t` again
@@ -72,9 +73,11 @@ impl PlacesBar {
     }
 }
 
-/// Each tile's rect inside `r`, stacked top to bottom. The panel's border
-/// belongs to `draw`, so a click anywhere in a tile's band selects it.
+/// Each tile's rect inside `r`, stacked top to bottom, shrunk to fit it
+/// ([`PlacesMetrics::fit`]). The panel's border belongs to `draw`, so a click anywhere in a
+/// tile's band selects it.
 pub fn layout(pb: &PlacesBar, r: Rect, pm: &PlacesMetrics) -> Vec<Rect> {
+    let pm = pm.fit(pb.places.len(), r.height);
     (0..pb.places.len())
         .map(|i| Rect::new(r.x, r.y + i as i32 * pm.tile, r.width, pm.tile))
         .collect()
@@ -86,10 +89,16 @@ pub fn hit(rects: &[Rect], x: i32, y: i32) -> Option<usize> {
 }
 
 /// The bar: the look's panel, then each tile's frame for its [`PlacesBar::state`], icon and
-/// up to two centred label lines (`iconview::wrap_label`).
+/// up to two centred label lines (`iconview::wrap_label`). An icon larger than a shrunk tile's
+/// draws resampled to it.
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: Rect, px: u32) {
     let Paint { cs, s, .. } = *p;
-    let pm = p.look.controls().grown(p.text).places;
+    let pm = p
+        .look
+        .controls()
+        .grown(p.text)
+        .places
+        .fit(pb.places.len(), r.height);
     let sr = r.scaled(s);
     crate::look::widgets::placesbar::draw_panel(c, p, sr);
     let content_x = sr.x + BORDER * s;
@@ -104,13 +113,19 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: R
             crate::look::widgets::placesbar::draw_tile(c, p, band, state);
         }
         if let Some(icon) = &place.icon {
+            let side = pm.icon * s;
+            let shrunk = (icon.device_size().0 as i32 > side).then(|| {
+                let w = (side / icon.scale()) as u32;
+                icon.resample_box(w, w)
+            });
+            let icon = shrunk.as_ref().unwrap_or(icon);
             let ix = content_x + (content_w - icon.width as i32) / 2;
             let iy = tile_y + pm.icon_top * s;
             c.blit_over(ix, iy, icon);
         }
         let max_w = content_w - 4 * s;
         let lines = wrap_label(text, &place.label, max_w, px);
-        let label_y = tile_y + (pm.icon_top + ICON_PX + pm.label_gap) * s;
+        let label_y = tile_y + (pm.icon_top + pm.icon + pm.label_gap) * s;
         for (j, line) in lines.iter().enumerate() {
             let ly = label_y + j as i32 * stride;
             let lr = Rect::new(content_x, ly, content_w, step);
@@ -127,6 +142,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: R
 /// How far the label lines reaching furthest run past their tile's bottom in `r` with text at
 /// `px`, at 1x, as `draw` sets them: for an audit.
 pub fn overflow(pb: &PlacesBar, text: &TextRenderer, r: Rect, pm: &PlacesMetrics, px: u32) -> i32 {
+    let pm = &pm.fit(pb.places.len(), r.height);
     let max_w = r.width - 2 * BORDER - 4;
     let step = px as i32 + 2;
     let stride = px as i32 + pm.line_lead;
@@ -136,7 +152,7 @@ pub fn overflow(pb: &PlacesBar, text: &TextRenderer, r: Rect, pm: &PlacesMetrics
         .map(|(tile, place)| {
             let lines = wrap_label(text, &place.label, max_w, px).len() as i32;
             let label = (lines - 1) * stride + step;
-            tile.y + pm.icon_top + ICON_PX + pm.label_gap + label - tile.bottom()
+            tile.y + pm.icon_top + pm.icon + pm.label_gap + label - tile.bottom()
         })
         .max()
         .unwrap_or(0)
@@ -377,6 +393,61 @@ mod tests {
                 assert_eq!(c.get(x, y) == ICON.argb(), want, "tile {tile} row {y}");
             }
         }
+    }
+
+    /// At 200% text a Classic tile is 3 + 2 * 62 px with a 64 px icon 3 px down, and the label
+    /// starts under that icon.
+    #[test]
+    fn at_200_percent_the_icon_grows_and_the_label_sits_under_it() {
+        use crate::theme::{Color, TextUnits};
+        const ICON: Color = Color::rgb(1, 2, 3);
+        let u = TextUnits::new(22, 11);
+        let theme = Theme::default();
+        let p = Paint {
+            text: u,
+            ..classic_paint(&theme.colors, 1)
+        };
+        let pm = p.look.controls().grown(u).places;
+        assert_eq!((pm.tile, pm.icon), (127, 64));
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut pb = sample();
+        let mut icon = Canvas::new(64, 64);
+        icon.fill_rect(icon.bounds(), ICON);
+        for place in &mut pb.places {
+            place.icon = Some(icon.clone());
+        }
+        let (w, h) = (2 * WIDTH, 5 * pm.tile);
+        let r = Rect::new(0, 0, w, h);
+        let mut c = Canvas::new(w as u32, h as u32);
+        draw(&mut c, &text, &p, &pb, r, 22);
+        let x = w / 2;
+        for (y, want) in [(2, false), (3, true), (66, true), (67, false)] {
+            assert_eq!(c.get(x, 127 + y) == ICON.argb(), want, "row {y}");
+        }
+        let ink = |y: i32| (0..w).any(|x| c.get(x, y) == theme.colors.button_text.argb());
+        let label_top = (127..2 * 127)
+            .find(|&y| ink(y))
+            .expect("the label is drawn");
+        assert!(
+            label_top >= 127 + 3 + 64 + 3,
+            "the label starts at {label_top}, under the icon"
+        );
+        assert!(
+            overflow(&pb, &text, r, &pm, 22) <= 0,
+            "the labels fit their tiles"
+        );
+
+        let squeezed = PlacesMetrics {
+            tile: 100,
+            icon: 37,
+            ..pm
+        };
+        assert_eq!(pm.fit(5, 500), squeezed, "five tiles in 500 px");
+        assert_eq!(pm.fit(5, 10).icon, 32, "never under 32 px");
+        let mut c = Canvas::new(w as u32, 500);
+        draw(&mut c, &text, &p, &pb, Rect::new(0, 0, w, 500), 22);
+        let red = (0..w).filter(|&x| c.get(x, 100 + 3) == ICON.argb()).count();
+        assert_eq!(red, 37, "a squeezed tile draws its icon at 37 px");
     }
 
     /// Writes target/placesbar-blue-preview.png: the five places, no

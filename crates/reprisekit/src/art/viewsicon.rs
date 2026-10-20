@@ -24,6 +24,12 @@ pub fn draw16_at(scale: i32) -> Canvas {
     icons::VIEWS_16.canvas_at(scale)
 }
 
+/// [`draw16`] at the whole multiple of 16 px nearest `px`, at least 1: the small strip's icon
+/// grown with the text and the scale.
+pub fn draw16_near(px: i32) -> Canvas {
+    draw16_at(((px + 8) / 16).max(1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

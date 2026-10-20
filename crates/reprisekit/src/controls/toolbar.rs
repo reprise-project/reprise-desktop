@@ -11,7 +11,7 @@ use crate::metrics::{ButtonPads, ControlMetrics, ToolbarMetrics};
 use crate::raster::{Canvas, Rect};
 use crate::style::State;
 use crate::text::{Align, TextRenderer};
-use crate::theme::Color;
+use crate::theme::{Color, TextUnits};
 use accesskit::{NodeId, Role};
 
 pub const BACK: &str = "back";
@@ -128,9 +128,10 @@ fn main_width(
     text: &TextRenderer,
     px: u32,
     m: &ToolbarMetrics,
+    u: TextUnits,
 ) -> i32 {
     if !big {
-        return BUTTON;
+        return u.len(BUTTON);
     }
     let pads = pads(drop, label, m);
     let label = match label {
@@ -140,16 +141,22 @@ fn main_width(
     pads.inset + BIG_ICON + label + pads.trail
 }
 
-fn drop_width(big: bool, item: &Item, m: &ToolbarMetrics) -> i32 {
+fn drop_width(big: bool, item: &Item, m: &ToolbarMetrics, u: TextUnits) -> i32 {
     match (big, is_split(item)) {
-        (false, _) => DROP_W,
+        (false, _) => u.len(DROP_W),
         (true, true) => m.split_drop,
         (true, false) => BIG_DROP_W,
     }
 }
 
+/// The strip's height: the big one's from the look, the small one's [`HEIGHT`] grown with the
+/// text, as its buttons are.
 pub fn height(big: bool, cm: &ControlMetrics) -> i32 {
-    if big { cm.toolbar.height } else { HEIGHT }
+    if big {
+        cm.toolbar.height
+    } else {
+        cm.text.len(HEIGHT)
+    }
 }
 
 /// Each item's rect inside `r`, flush left to right from the look's lead on the big strip. All share `r.height`.
@@ -160,22 +167,22 @@ pub fn layout(
     r: Rect,
     cm: &ControlMetrics,
 ) -> Vec<Rect> {
-    let m = &cm.toolbar;
+    let (m, u) = (&cm.toolbar, cm.text);
     let mut x = r.x + if tb.big { m.lead } else { 0 };
     tb.items
         .iter()
         .map(|item| {
             let w = match item {
-                Item::Button { .. } => main_width(tb.big, false, label_of(item), text, px, m),
+                Item::Button { .. } => main_width(tb.big, false, label_of(item), text, px, m, u),
                 Item::DropButton { .. } => {
-                    main_width(tb.big, true, label_of(item), text, px, m)
-                        + drop_width(tb.big, item, m)
+                    main_width(tb.big, true, label_of(item), text, px, m, u)
+                        + drop_width(tb.big, item, m, u)
                 }
                 Item::Separator => {
                     if tb.big {
                         BIG_SEP_W
                     } else {
-                        SEP_W
+                        u.len(SEP_W)
                     }
                 }
             };
@@ -210,7 +217,8 @@ pub fn hit_part(
             match item {
                 Item::Button { enabled: true, .. } => Some((i, Part::Main)),
                 Item::DropButton { enabled: true, .. } => {
-                    let part = if x >= rect.right() - drop_width(tb.big, item, &cm.toolbar) {
+                    let part = if x >= rect.right() - drop_width(tb.big, item, &cm.toolbar, cm.text)
+                    {
                         Part::Drop
                     } else {
                         Part::Main
@@ -307,7 +315,7 @@ fn draw_strip(
     px: u32,
     glass_ink: Option<Color>,
 ) {
-    let s = p.s;
+    let (s, u) = (p.s, p.text);
     let m = &p.look.controls().toolbar;
     look::draw_background(c, p, r.scaled(s));
     for (i, (item, &rect)) in tb.items.iter().zip(rects).enumerate() {
@@ -338,12 +346,12 @@ fn draw_strip(
             tb.pressed == Some(i),
             tb.latched == Some(i),
         );
-        let drop_w = drop_width(tb.big, item, m) * s;
+        let drop_w = drop_width(tb.big, item, m, u) * s;
         let split = is_split(item).then(|| sr.right() - drop_w);
         look::draw_button(c, p, sr, split, state);
         let off = look::content_shift(p, state);
 
-        let main_w = main_width(tb.big, drop, label, text, px, m) * s;
+        let main_w = main_width(tb.big, drop, label, text, px, m, u) * s;
         let pads = pads(drop, label, m);
         let icon_box = if tb.big {
             Rect::new(
@@ -393,8 +401,9 @@ fn draw_strip(
                 };
                 draw_big_arrow(c, arrow_r, s, dy, color);
             } else {
-                let x0 = sr.right() - ARROW_RIGHT * s + off;
-                let y0 = sr.y + ARROW_DY * s + off;
+                // The 5x3 arrow keeps its px; its centre moves with the grown button.
+                let x0 = sr.right() - (u.len(2 * ARROW_RIGHT - 5) + 5) / 2 * s + off;
+                let y0 = sr.y + (u.len(2 * ARROW_DY + 3) - 3) / 2 * s + off;
                 widgets::draw_small_arrow(c, x0, y0, s, color);
             }
         }
@@ -529,6 +538,58 @@ mod tests {
         assert_eq!(rects[1].x, rects[0].right());
     }
 
+    /// At 200% text the small strip doubles: 46 px buttons, a 14 px drop part and a 44 px
+    /// strip, a 32 px icon centred in its button and the drop arrow's middle 13 px in from the
+    /// right.
+    #[test]
+    fn at_200_percent_the_small_strip_doubles() {
+        use crate::theme::Color;
+        const RED: Color = Color::rgb(255, 0, 0);
+        let u = TextUnits::new(22, 11);
+        let cm = ControlMetrics::CLASSIC.grown(u);
+        let text = renderer();
+        let mut icon = Canvas::new(32, 32);
+        icon.fill_rect(icon.bounds(), RED);
+        let tb = small(vec![
+            Item::Button {
+                id: UP,
+                icon: Some(icon),
+                label: None,
+                enabled: true,
+            },
+            Item::Separator,
+            drop_button(VIEWS, None, true),
+        ]);
+        let h = height(false, &cm);
+        assert_eq!(h, 44);
+        let rects = layout(&tb, &text, 22, Rect::new(0, 0, 200, h), &cm);
+        let widths: Vec<i32> = rects.iter().map(|r| r.width).collect();
+        assert_eq!(widths, [46, 16, 60]);
+        assert!(rects.iter().all(|r| r.height == 44));
+        let cs = Theme::default().colors;
+        let p = Paint {
+            text: u,
+            ..classic_paint(&cs, 1)
+        };
+        let mut c = Canvas::new(200, 44);
+        draw(&mut c, &text, &p, &tb, Rect::new(0, 0, 200, 44), &rects, 22);
+        let red: Vec<(i32, i32)> = (0..44)
+            .flat_map(|y| (0..46).map(move |x| (x, y)))
+            .filter(|&(x, y)| c.get(x, y) == RED.argb())
+            .collect();
+        assert_eq!(red.first(), Some(&(7, 6)), "the icon's top-left");
+        assert_eq!(red.last(), Some(&(38, 37)), "the icon's bottom-right");
+        let views = rects[2];
+        let arrow: Vec<i32> = (views.x..views.right())
+            .filter(|&x| c.get(x, 21) == cs.button_text.argb())
+            .collect();
+        assert_eq!(
+            arrow,
+            (views.right() - 15..views.right() - 10).collect::<Vec<_>>(),
+            "the arrow's top row"
+        );
+    }
+
     #[test]
     fn a_small_button_ignores_its_label() {
         let text = renderer();
@@ -591,8 +652,14 @@ mod tests {
                 (248, VIEWS_W),
             ]
         );
-        assert_eq!(drop_width(true, &tb.items[0], &cm.toolbar), 14);
-        assert_eq!(drop_width(true, &tb.items[6], &cm.toolbar), BIG_DROP_W);
+        assert_eq!(
+            drop_width(true, &tb.items[0], &cm.toolbar, TextUnits::ONE),
+            14
+        );
+        assert_eq!(
+            drop_width(true, &tb.items[6], &cm.toolbar, TextUnits::ONE),
+            BIG_DROP_W
+        );
         let back = pads(true, Some("Back"), &cm.toolbar);
         assert_eq!((back.inset, back.gap), (6, 5));
         let folders = pads(false, Some("Folders"), &cm.toolbar);
@@ -670,6 +737,7 @@ mod tests {
     }
 
     /// The big strip grows with its labels' line, 13 px at 100%; the 24 px icons centre down it.
+    /// The small strip grows with the text.
     #[test]
     fn a_big_strip_grows_to_fit_its_grown_labels() {
         const EXPECTED: [(u32, i32); 3] = [(100, 30), (150, 37), (200, 43)];
@@ -679,8 +747,8 @@ mod tests {
             assert_eq!(height(true, &cm), h, "{pct}%");
             assert_eq!(
                 height(false, &cm),
-                HEIGHT,
-                "{pct}%: the small strip keeps its height"
+                theme.text.len(HEIGHT),
+                "{pct}%: the small strip grows with the text"
             );
             let text = TextRenderer::load(&theme.fonts);
             let px = theme.fonts.size_px;
