@@ -38,7 +38,7 @@ impl<S: Session> LibinputInterface for InputFds<S> {
 }
 
 /// Releases the held device files, only while the session is active.
-pub fn release<S: Session>(session: &mut S, held: &Held) {
+fn release<S: Session>(session: &mut S, held: &Held) {
     if !session.is_active() {
         return;
     }
@@ -47,6 +47,31 @@ pub fn release<S: Session>(session: &mut S, held: &Held) {
             log::warn!("input device release: {e:?}");
         }
     }
+}
+
+/// What a turn of the return to an active session did (`release_one`).
+#[derive(Debug, PartialEq)]
+pub enum Back {
+    /// One held device file was released; more may be left.
+    Released,
+    /// None is held: libinput may reopen its devices.
+    Resume,
+    /// The session went away again.
+    Paused,
+}
+
+/// Releases one held device file, so a return spreads its logind calls over loop turns.
+pub fn release_one<S: Session>(session: &mut S, held: &Held) -> Back {
+    if !session.is_active() {
+        return Back::Paused;
+    }
+    let Some(fd) = held.borrow_mut().pop() else {
+        return Back::Resume;
+    };
+    if let Err(e) = session.close(fd) {
+        log::warn!("input device release: {e:?}");
+    }
+    Back::Released
 }
 
 #[cfg(test)]
@@ -108,6 +133,41 @@ mod tests {
         release(&mut s, &held);
         assert_eq!(s.closed.get(), 2, "both devices are released on return");
         assert!(held.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_return_releases_one_held_device_per_turn_before_libinput_resumes() {
+        let mut s = FakeSession::default();
+        s.active.set(true);
+        let held = Held::default();
+        let mut fds = InputFds::new(s.clone(), held.clone());
+        fds.close_restricted(null());
+        fds.close_restricted(null());
+        assert_eq!(release_one(&mut s, &held), Back::Released);
+        assert_eq!(s.closed.get(), 1, "a turn releases one device");
+        assert_eq!(release_one(&mut s, &held), Back::Released);
+        assert_eq!(s.closed.get(), 2);
+        assert_eq!(release_one(&mut s, &held), Back::Resume);
+        assert_eq!(s.closed.get(), 2, "resume is its own turn");
+    }
+
+    #[test]
+    fn a_pause_during_the_return_stops_the_releases() {
+        let mut s = FakeSession::default();
+        s.active.set(true);
+        let held = Held::default();
+        let mut fds = InputFds::new(s.clone(), held.clone());
+        fds.close_restricted(null());
+        fds.close_restricted(null());
+        assert_eq!(release_one(&mut s, &held), Back::Released);
+        s.active.set(false);
+        assert_eq!(release_one(&mut s, &held), Back::Paused);
+        assert_eq!(s.closed.get(), 1, "nothing is released while paused");
+        assert_eq!(
+            held.borrow().len(),
+            1,
+            "the rest stays held for the next return"
+        );
     }
 
     #[test]
