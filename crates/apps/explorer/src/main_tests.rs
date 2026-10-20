@@ -1104,9 +1104,17 @@ fn settings_changes_defer_the_write() {
         inner: Some(ex),
         units: TextUnits::ONE,
     };
+    ctx.at_pick = true;
     let _ = app.event(MAIN, Event::Resized, &mut ctx);
     let ex = app.inner.as_mut().expect("the window");
-    assert!(ex.settings_dirty, "a resize marks the settings");
+    assert!(!ex.settings_dirty, "the opening size marks nothing");
+    ctx.at_pick = false;
+    let _ = app.event(MAIN, Event::Resized, &mut ctx);
+    let ex = app.inner.as_mut().expect("the window");
+    assert!(
+        ex.settings_dirty,
+        "a resize the user gives marks the settings"
+    );
     for cmd in [
         Command::Mode(reprisekit::controls::shellview::Mode::Details),
         Command::Sort(1),

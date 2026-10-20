@@ -1444,9 +1444,10 @@ impl App for Lazy {
             }
             // A maximized window's size is the screen's: a hand size still pending is saved.
             Event::Resized if ctx.maximized => Reply::redraw(),
+            // Only a size the user gives is kept: the opening configure leaves the file alone.
             Event::Resized => {
                 ex.window_px = (!ctx.at_pick).then_some(ctx.size);
-                ex.settings_dirty = true;
+                ex.settings_dirty |= ex.window_px.is_some();
                 Reply::redraw()
             }
             Event::CloseRequest => ex.close(ctx),
