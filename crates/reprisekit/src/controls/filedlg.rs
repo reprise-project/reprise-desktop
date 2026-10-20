@@ -2315,8 +2315,8 @@ impl FileDlg {
     /// last [`FileDlg::draw`] or [`FileDlg::drawn_with`] laid it out, by name and how many px
     /// over, for an audit: a label into its field, a button's label to its sides less 3 px
     /// each, a place's lines past its tile, and the extra rows' [`form::Form::overflows`] and
-    /// any of them past the client's right margin. The combos' values and rows and the places'
-    /// lines end in an ellipsis where they run out of room.
+    /// any of them past the client's right margin. The combos' values and rows, the places'
+    /// lines and the extra check boxes' labels end in an ellipsis where they run out of room.
     pub fn overflows(&self, text: &TextRenderer, px: u32) -> Vec<(&'static str, i32)> {
         let cm = self.drawn.0.get();
         let u = cm.text;
@@ -2359,17 +2359,19 @@ impl FileDlg {
                 let it = f.item(id)?;
                 let r = f.rect(id)?;
                 Some(match &it.control {
-                    form::Control::Check { label, .. } => r.x + cm.check_label + width(label),
+                    form::Control::Check { label, .. } => {
+                        (r.x + cm.check_label + width(label)).min(r.right())
+                    }
                     _ => r.right(),
                 })
             };
             for (id, by) in f.overflows(text, px) {
-                // A combo that fills the room ellipsizes what is still wider.
-                let combo = matches!(
+                // A combo or check box that fills the room ellipsizes what is still wider.
+                let cuts = matches!(
                     f.item(id).map(|it| &it.control),
-                    Some(form::Control::Combo(_))
+                    Some(form::Control::Combo(_) | form::Control::Check { .. })
                 );
-                if !(combo && f.rect(id).is_some_and(|r| r.right() >= right)) {
+                if !(cuts && f.rect(id).is_some_and(|r| r.right() >= right)) {
                     over.push((id, by));
                 }
             }
