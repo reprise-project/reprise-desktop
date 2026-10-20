@@ -1,7 +1,7 @@
 //! File operations off the caller's thread. A [`PutJob`] runs a batch of [`ops::put_in`] calls on
 //! its own thread, reports each item as it lands and counts its progress ([`crate::progress`]);
 //! cancel stops it inside a file; one stuck for [`ACTION_DEADLINE`] fails as not responding.
-//! The host polls from its loop.
+//! The host polls from its loop, and quits only once the job [`PutJob::settled`].
 
 use crate::deadline::ACTION_DEADLINE;
 use crate::ops::{self, DropOp};
@@ -43,6 +43,20 @@ pub struct PutJob {
     events: Receiver<PutEvent>,
     meter: Arc<Meter>,
     finished: bool,
+    settled: Arc<AtomicBool>,
+}
+
+/// Marks the put's thread returned and wakes the host, on every way out of the thread.
+struct Settle<W: Fn()> {
+    settled: Arc<AtomicBool>,
+    wake: Arc<W>,
+}
+
+impl<W: Fn()> Drop for Settle<W> {
+    fn drop(&mut self) {
+        self.settled.store(true, Ordering::Release);
+        (*self.wake)();
+    }
 }
 
 impl PutJob {
@@ -52,6 +66,16 @@ impl PutJob {
         wake: impl Fn() + Send + Sync + 'static,
     ) -> PutJob {
         Self::start_past(items, dir, Vec::new(), wake)
+    }
+
+    /// [`Self::start`], failing after `deadline` without headway instead of [`ACTION_DEADLINE`].
+    pub fn start_within(
+        items: Vec<PutItem>,
+        dir: PathBuf,
+        deadline: Duration,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> PutJob {
+        Self::start_until(items, dir, Vec::new(), Arc::default(), deadline, wake)
     }
 
     /// [`Self::start`], with `taken` counted among `dir`'s names when a copy or shortcut is named.
@@ -91,9 +115,15 @@ impl PutJob {
             (*watch_wake)();
         });
         let m = meter.clone();
+        let settled = Arc::new(AtomicBool::new(false));
+        let settle = Settle {
+            settled: settled.clone(),
+            wake: wake.clone(),
+        };
         let spawned = std::thread::Builder::new()
             .name("reprisefs-put".into())
             .spawn(move || {
+                let _settle = settle;
                 let stop = &m.cancel;
                 let finish = || {
                     if !ended.swap(true, Ordering::AcqRel) {
@@ -189,6 +219,7 @@ impl PutJob {
             events,
             meter,
             finished: false,
+            settled,
         }
     }
 
@@ -230,6 +261,12 @@ impl PutJob {
 
     pub fn is_finished(&self) -> bool {
         self.finished
+    }
+
+    /// The put's thread has returned. One that gave up finishes with its stuck call still out, and
+    /// removes the part it was writing only once that call returns: the process must not exit first.
+    pub fn settled(&self) -> bool {
+        self.settled.load(Ordering::Acquire)
     }
 }
 
@@ -551,6 +588,37 @@ mod tests {
             "the stuck call stops the put once it returns"
         );
         release.send(()).unwrap();
+    }
+
+    #[test]
+    fn a_put_that_gave_up_settles_once_its_stuck_call_returns() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("a.txt"), "a").unwrap();
+        let dest = t.path().join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        let (release, gate) = channel();
+        let (wtx, woke) = channel();
+        let mut job = PutJob::start_until(
+            vec![stuck(t.path().join("a.txt"), gate)],
+            dest,
+            Vec::new(),
+            Arc::default(),
+            Duration::from_millis(300),
+            move || {
+                let _ = wtx.send(());
+            },
+        );
+        while !job.is_finished() {
+            woke.recv_timeout(Duration::from_secs(5)).expect("a wake");
+            job.poll();
+        }
+        assert!(!job.settled(), "the stuck call is still out");
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !job.settled() {
+            woke.recv_timeout(deadline - std::time::Instant::now())
+                .expect("a wake as the thread returns");
+        }
     }
 
     #[test]

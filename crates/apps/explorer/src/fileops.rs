@@ -497,7 +497,12 @@ impl Explorer {
     fn start_put(&mut self, pending: PendingPut, ops: Vec<ItemOp>, ctx: &Ctx) {
         use reprisekit::controls::copyprogress::Kind;
         let wake = ctx.wake.clone();
-        let job = PutJob::start(pending.items, pending.dir.clone(), move || wake.wake());
+        let job = PutJob::start_within(
+            pending.items,
+            pending.dir.clone(),
+            self.action_deadline,
+            move || wake.wake(),
+        );
         wake_to_show(ctx);
         let kind = if ops.iter().all(|(_, op, ..)| *op == DropOp::Move) {
             Kind::Move
@@ -525,6 +530,7 @@ impl Explorer {
     }
 
     pub(crate) fn poll_put(&mut self, ctx: &mut Ctx) -> Option<Reply> {
+        self.unsettled.retain(|j| !j.settled());
         let put = self.put.as_mut()?;
         let mut finished = false;
         for ev in put.job.poll() {
@@ -562,6 +568,9 @@ impl Explorer {
             return Some(Reply::none());
         }
         let mut put = self.put.take()?;
+        if !put.job.settled() {
+            self.unsettled.push(put.job);
+        }
         let failed = put.failed.take();
         put.progress.ended(put.landed.len(), failed.as_ref());
         self.publish_task_progress();
@@ -633,6 +642,7 @@ impl Explorer {
 
     pub(crate) fn busy(&self) -> bool {
         self.put.is_some()
+            || self.unsettled.iter().any(|j| !j.settled())
             || !self.clashing.is_empty()
             || self.removing.is_some()
             || self.jobs_pending > 0
