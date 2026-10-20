@@ -1,10 +1,12 @@
 //! One PipeWire `Video/Source` stream per screencast, on its own thread:
 //! the thread owns a Wayland connection with a capture session and a
-//! PipeWire main loop with the stream. PipeWire's `process` asks for a
-//! buffer; the thread points the compositor at the memfd behind it,
-//! blocks until the frame is ready, stamps the header and hands the
-//! buffer on. The consumer therefore reads frames the compositor wrote
-//! directly, no copy in between.
+//! PipeWire main loop with the stream, which also watches the Wayland
+//! fd. The thread keeps one buffer out with the compositor and, as soon
+//! as the frame is ready, stamps the header, hands it on and asks for
+//! the next; nothing blocks the loop. A source that does not change
+//! keeps the buffer out, and the consumer holds the last frame. The
+//! consumer therefore reads frames the compositor wrote directly, no
+//! copy in between.
 //!
 //! Buffers: when the capture session names a dma-buf device, one
 //! `EnumFormat` per dma-buf format goes first with its modifiers as an
@@ -27,18 +29,21 @@
 //! window falls back to hidden.
 
 use crate::wayland::{
-    CaptureBuffer, CaptureError, Constraints, CursorInfo, DmaBuffer, Gbm, ShmBuffer, Target,
+    Asked, CaptureBuffer, CaptureError, Constraints, CursorInfo, DmaBuffer, Gbm, ShmBuffer, Target,
     Wayland, fourcc_of_shm_format, shm_format_of_fourcc,
 };
 use pipewire::spa;
 use pipewire::spa::pod::deserialize::PodDeserializer;
 use pipewire::spa::pod::{self, Pod};
+use pipewire::spa::support::system::IoFlags;
 use pipewire::spa::sys as spa_sys;
 use pipewire::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Fraction, Id, Rectangle};
 use pipewire::stream::{StreamFlags, StreamRc, StreamState};
 use pipewire::sys as pw_sys;
+use std::cell::RefCell;
 use std::io::Cursor;
 use std::os::fd::AsRawFd;
+use std::rc::Rc;
 use std::time::Duration;
 use wayland_client::protocol::wl_shm;
 use wayland_protocols::ext::image_copy_capture::v1::client::ext_image_copy_capture_frame_v1::FailureReason;
@@ -55,11 +60,6 @@ pub enum CursorMode {
     Metadata,
 }
 
-/// How long one `process` waits for the compositor's frame. A live
-/// source answers within a refresh; a source with no damage never
-/// answers, and the buffer goes back empty so the loop keeps serving
-/// PipeWire (and the stop message).
-const FRAME_WAIT: Duration = Duration::from_millis(200);
 /// The cursor's image is small and its session answers at once; a
 /// short wait keeps a missing cursor plane from stalling the frame.
 const CURSOR_WAIT: Duration = Duration::from_millis(50);
@@ -169,8 +169,10 @@ struct Data {
     reported: Option<std::sync::mpsc::Sender<NodeReport>>,
     /// The loop to quit when the compositor stops the session.
     main_loop: pipewire::main_loop::MainLoopWeak,
+    /// The buffer out with the compositor, by address, and its frame.
+    asked: Option<(usize, Asked)>,
     seq: u64,
-    /// Process calls so far, for the debug log of the first captures.
+    /// Frames answered so far, for the debug log of the first captures.
     calls: u64,
 }
 
@@ -298,15 +300,21 @@ fn run(
         cursor: plane,
         reported: Some(report),
         main_loop: main_loop.downgrade(),
+        asked: None,
         seq: 0,
         calls: 0,
     };
     let data_gbm = data.gbm.is_some();
+    let fd = Fd(data.wl.fd());
+    // The stream's callbacks and the Wayland fd's share the state; each
+    // runs from the loop on its own, so a borrow never nests.
+    let data = Rc::new(RefCell::new(data));
     let _listener = stream
-        .add_local_listener_with_user_data(data)
-        .state_changed(|stream, d, _old, new| on_state(stream, d, new))
-        .param_changed(on_param)
+        .add_local_listener_with_user_data(data.clone())
+        .state_changed(|stream, d, _old, new| on_state(stream, &mut d.borrow_mut(), new))
+        .param_changed(|stream, d, id, pod| on_param(stream, &mut d.borrow_mut(), id, pod))
         .add_buffer(|_stream, d, buf| {
+            let d = &mut *d.borrow_mut();
             // A buffer left without memory would reach the consumer
             // unusable, so the cast ends and the session closes instead.
             if let Err(e) = on_add_buffer(d, buf) {
@@ -314,10 +322,14 @@ fn run(
                 d.quit();
             }
         })
-        .remove_buffer(|_stream, d, buf| on_remove_buffer(d, buf))
-        .process(on_process)
+        .remove_buffer(|_stream, d, buf| on_remove_buffer(&mut d.borrow_mut(), buf))
+        .process(|stream, d| on_process(stream, &mut d.borrow_mut()))
         .register()
         .map_err(|e| e.to_string())?;
+    let replies = stream.clone();
+    let _replies = main_loop.loop_().add_io(fd, IoFlags::IN, move |_| {
+        on_process(&replies, &mut data.borrow_mut());
+    });
 
     let params = format_params(&constraints, format, data_gbm, None);
     let mut refs: Vec<&Pod> = params.iter().map(|p| &**p).collect();
@@ -606,6 +618,9 @@ fn on_add_buffer(d: &mut Data, buf: *mut pw_sys::pw_buffer) -> Result<(), String
 }
 
 fn on_remove_buffer(d: &mut Data, buf: *mut pw_sys::pw_buffer) {
+    if d.asked.as_ref().is_some_and(|(k, _)| *k == buf as usize) {
+        d.asked = None;
+    }
     d.buffers.retain(|(k, _)| *k != buf as usize);
     // The fds belong to the buffers just dropped.
     // SAFETY: PipeWire passes remove_buffer the live pw_buffer it passed
@@ -618,34 +633,63 @@ fn on_remove_buffer(d: &mut Data, buf: *mut pw_sys::pw_buffer) {
     }
 }
 
+/// The Wayland connection's fd, for the loop to watch.
+struct Fd(std::os::fd::RawFd);
+
+impl AsRawFd for Fd {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.0
+    }
+}
+
+/// Every graph cycle, and whenever the compositor sent events: hand the
+/// answered buffer on, then ask for a frame into the next free one.
 fn on_process(stream: &pipewire::stream::Stream, d: &mut Data) {
     if d.wl.stopped() {
         d.quit();
         return;
     }
-    // SAFETY: every path below queues `buf` back on this stream.
-    let buf = unsafe { stream.dequeue_raw_buffer() };
-    if buf.is_null() {
-        return;
+    if d.asked.is_some() {
+        let Some(result) = d.wl.answer() else {
+            d.wl.flush();
+            return;
+        };
+        let (buf, asked) = d.asked.take().expect("checked above");
+        drop(asked);
+        hand_on(stream, d, buf as *mut pw_sys::pw_buffer, result);
     }
+    // SAFETY: the buffer is kept in `d.asked` until `hand_on` queues it
+    // back, or queued back here.
+    let buf = unsafe { stream.dequeue_raw_buffer() };
+    if !buf.is_null() {
+        match d.buffers.iter().position(|(k, _)| *k == buf as usize) {
+            Some(i) => {
+                let asked = d.wl.ask(&d.session, d.buffers[i].1.capture_buffer());
+                d.asked = Some((buf as usize, asked));
+            }
+            // SAFETY: `buf` was dequeued from this stream just above.
+            None => unsafe { stream.queue_raw_buffer(buf) },
+        }
+    }
+    d.wl.flush();
+}
+
+/// Queue `buf` back on `stream` with the compositor's `result` for it:
+/// the frame, or an empty or corrupted chunk.
+fn hand_on(
+    stream: &pipewire::stream::Stream,
+    d: &mut Data,
+    buf: *mut pw_sys::pw_buffer,
+    result: Result<(), CaptureError>,
+) {
     let Some(i) = d.buffers.iter().position(|(k, _)| *k == buf as usize) else {
-        // SAFETY: `buf` was dequeued from this stream just above.
-        unsafe { stream.queue_raw_buffer(buf) };
         return;
     };
-    let started = std::time::Instant::now();
-    let result =
-        d.wl.capture(&d.session, d.buffers[i].1.capture_buffer(), FRAME_WAIT);
     d.calls += 1;
     if d.calls <= 8 || d.calls.is_multiple_of(200) {
-        log::debug!(
-            "process #{}: {:?} after {} ms",
-            d.calls,
-            result,
-            started.elapsed().as_millis()
-        );
+        log::debug!("frame #{}: {:?}", d.calls, result);
     }
-    // SAFETY: `buf` is dequeued and ours until queued back; it is in
+    // SAFETY: `buf` was dequeued and is ours until queued back; it is in
     // `d.buffers`, so on_add_buffer saw at least one data entry, which
     // ALLOC_BUFFERS gives a chunk.
     unsafe {
@@ -658,13 +702,6 @@ fn on_process(stream: &pipewire::stream::Stream, d: &mut Data) {
                 d.seq += 1;
                 stamp_header(sb, d.seq, 0);
                 stamp_cursor(sb, d);
-            }
-            Err(CaptureError::Timeout) => {
-                // Nothing changed on the source: hand the buffer back
-                // empty rather than hold the loop for a frame that may
-                // never come.
-                chunk.flags = spa_sys::SPA_CHUNK_FLAG_EMPTY as i32;
-                chunk.size = 0;
             }
             Err(CaptureError::Failed(FailureReason::BufferConstraints)) => {
                 // The source changed size: adopt the new constraints and
@@ -687,14 +724,13 @@ fn on_process(stream: &pipewire::stream::Stream, d: &mut Data) {
                 chunk.size = 0;
                 d.quit();
             }
-            Err(CaptureError::Failed(_)) => {
+            Err(CaptureError::Failed(_)) | Err(CaptureError::Timeout) => {
                 chunk.flags = spa_sys::SPA_CHUNK_FLAG_CORRUPTED as i32;
                 chunk.size = 0;
             }
         }
         stream.queue_raw_buffer(buf);
     }
-    d.wl.flush();
 }
 
 /// Fill the `SPA_META_Cursor` if the consumer asked for one: the
