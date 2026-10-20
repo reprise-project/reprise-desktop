@@ -1228,8 +1228,14 @@ impl Form {
     /// ([`Form::fit_text`] has run).
     fn choice_room(&self, text: &TextRenderer, px: u32) -> ChoiceRoom {
         let (_, kinds) = self.fit_input(text, px);
+        let wide = |it: &Item| match it.control {
+            Control::Check { .. } => it.rect.width > CHECK,
+            Control::Radio { .. } => it.rect.width > RADIO_ROW,
+            _ => false,
+        };
         ChoiceRoom {
             rects: self.items.iter().map(|it| self.at(it)).collect(),
+            wide: self.items.iter().map(wide).collect(),
             kinds,
             pad: self.units().len(2),
         }
@@ -4067,6 +4073,8 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
 /// The rects and fit kinds a check box's or radio's label is bounded by, as laid out.
 struct ChoiceRoom {
     rects: Vec<Rect>,
+    /// Built wider than its box at 100%: a grown box-sized rect is no edge for its label.
+    wide: Vec<bool>,
     kinds: Vec<fit::Kind>,
     /// Kept inside a group box's frame.
     pad: i32,
@@ -4080,9 +4088,9 @@ impl ChoiceRoom {
     }
 
     /// Where item `i`'s label starting at `from` is cut: the next control on its row, its group
-    /// box's frame, or the item's own right edge when its rect reaches past the box.
+    /// box's frame, or the item's own right edge when it was built wider than the box.
     fn cut(&self, i: usize, from: i32) -> Option<i32> {
-        let own = Some(self.rects[i].right()).filter(|&r| r > from);
+        let own = Some(self.rects[i].right()).filter(|&r| self.wide[i] && r > from);
         let stop = fit::stop(&self.rects, &self.kinds, i, from, self.pad);
         stop.into_iter().chain(own).min()
     }
@@ -8535,6 +8543,31 @@ mod tests {
             assert!(form.tip_tick(), "at {y}");
             assert_eq!(form.label_tip().as_deref(), Some(LONG), "at {y}");
         }
+    }
+
+    /// At 200% a box-sized check box's or radio's rect grows past where its label starts; the
+    /// label still runs to the form's edge. A check box built wider is still cut at its edge.
+    #[test]
+    fn a_grown_box_sized_check_or_radio_keeps_its_whole_label() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let mut wide = Item::check("wide", 10, 50, LONG);
+        wide.rect.width = 60;
+        let form = Form::new(vec![
+            Item::check("check", 10, 10, "Turn on Bluetooth"),
+            Item::radio("radio", 10, 30, "Turn on Bluetooth", "g"),
+            wide,
+        ]);
+        let theme = Theme::default();
+        let p = Paint {
+            text: TextUnits::new(22, 11),
+            ..classic_paint(&theme.colors, 1)
+        };
+        draw(&mut Canvas::new(800, 200), &text, &p, &form, false, 22);
+        assert_eq!(
+            *form.rendered.ellipsized.borrow(),
+            vec![2],
+            "only the check box built 60 px wide is cut"
+        );
     }
 
     #[test]
