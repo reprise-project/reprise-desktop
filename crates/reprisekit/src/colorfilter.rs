@@ -3,11 +3,11 @@
 //! affine map `out = M · rgb + offset` on 0..1 channels, clamped. The
 //! compositor applies it on the GPU; the settings preview applies it here.
 //!
-//! Corrections are daltonization in linear light: simulate the eye (`S`, via
-//! LMS), take the lost colour (`rgb - S·rgb`) and add it into channels still
-//! told apart (`D`), so the matrix is `I + k·D·(I - S)`, `k` the intensity (0
-//! no change, 1 full correction). Neutral greys are unchanged. Grayscale and
-//! invert work on the sRGB-encoded values.
+//! Corrections are daltonization in linear light: simulate the eye (`S`), take
+//! the lost colour (`rgb - S·rgb`) and add it into channels still told apart
+//! (`D`), so the matrix is `I + k·D·(I - S)`, `k` the intensity (0 no change, 1
+//! full correction). Neutral greys are unchanged. Grayscale and invert work on
+//! the sRGB-encoded values.
 
 use crate::wallpapers::tone::{to_linear, to_srgb};
 
@@ -92,11 +92,20 @@ const RGB_TO_LMS: M3 = [
 /// What an eye missing one kind of cone sees, in LMS: that response made from the other two.
 const PROTAN_LMS: M3 = [[0.0, 2.02344, -2.52581], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 const DEUTAN_LMS: M3 = [[1.0, 0.0, 0.0], [0.494207, 0.0, 1.24827], [0.0, 0.0, 1.0]];
-const TRITAN_LMS: M3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [-0.395913, 0.801109, 0.0]];
 
-/// Where the lost colour goes: red-green into green and blue, blue-yellow into red and green.
+/// What a tritan eye sees, in linear RGB, at full severity
+/// ("A Physiologically-based Model for Simulation of Color Vision Deficiency").
+const TRITAN_RGB: M3 = [
+    [1.255528, -0.076749, -0.178779],
+    [-0.078411, 0.930809, 0.147602],
+    [0.004733, 0.691367, 0.303900],
+];
+
+/// Where lost red-green colour goes: into green and blue.
 const RED_GREEN_SHIFT: M3 = [[0.0, 0.0, 0.0], [0.7, 1.0, 0.0], [0.7, 0.0, 1.0]];
-const BLUE_YELLOW_SHIFT: M3 = [[1.0, 0.0, 0.7], [0.0, 1.0, 0.7], [0.0, 0.0, 0.0]];
+/// Where lost blue-yellow colour goes: into green, about half the blue mixed in. Every entry of the
+/// map stays non-negative, so no colour leaves the gamut.
+const BLUE_YELLOW_SHIFT: M3 = [[0.0, 0.0, 0.0], [0.0, 0.045, 0.72], [0.0, 0.0, 0.0]];
 
 /// Rec. 709 luma weights.
 const LUMA: [f64; 3] = [0.2126, 0.7152, 0.0722];
@@ -119,7 +128,7 @@ fn inverse(m: &M3) -> M3 {
     std::array::from_fn(|i| std::array::from_fn(|j| c(j, i) / det))
 }
 
-fn simulation(lms: &M3) -> M3 {
+fn lms_simulation(lms: &M3) -> M3 {
     mul(&inverse(&RGB_TO_LMS), &mul(lms, &RGB_TO_LMS))
 }
 
@@ -133,8 +142,8 @@ fn linear_light(m: M3) -> Matrix {
 /// The map `filter` draws with at `intensity` (0 to 1, corrections only); None for no filter.
 pub fn matrix(filter: Filter, intensity: f64) -> Option<Matrix> {
     let k = intensity.clamp(0.0, 1.0);
-    let correction = |lms: &M3, shift: &M3| {
-        let lost = add(&IDENTITY, &simulation(lms), -1.0);
+    let correction = |eye: &M3, shift: &M3| {
+        let lost = add(&IDENTITY, eye, -1.0);
         linear_light(add(&IDENTITY, &mul(shift, &lost), k))
     };
     Some(match filter {
@@ -154,9 +163,9 @@ pub fn matrix(filter: Filter, intensity: f64) -> Option<Matrix> {
             ],
             linear: false,
         },
-        Filter::Deuteranopia => correction(&DEUTAN_LMS, &RED_GREEN_SHIFT),
-        Filter::Protanopia => correction(&PROTAN_LMS, &RED_GREEN_SHIFT),
-        Filter::Tritanopia => correction(&TRITAN_LMS, &BLUE_YELLOW_SHIFT),
+        Filter::Deuteranopia => correction(&lms_simulation(&DEUTAN_LMS), &RED_GREEN_SHIFT),
+        Filter::Protanopia => correction(&lms_simulation(&PROTAN_LMS), &RED_GREEN_SHIFT),
+        Filter::Tritanopia => correction(&TRITAN_RGB, &BLUE_YELLOW_SHIFT),
     })
 }
 
@@ -181,11 +190,15 @@ impl Matrix {
 mod tests {
     use super::*;
 
-    const CORRECTIONS: [(Filter, &M3); 3] = [
-        (Filter::Deuteranopia, &DEUTAN_LMS),
-        (Filter::Protanopia, &PROTAN_LMS),
-        (Filter::Tritanopia, &TRITAN_LMS),
-    ];
+    const CORRECTIONS: [Filter; 3] = [Filter::Deuteranopia, Filter::Protanopia, Filter::Tritanopia];
+
+    fn eye(f: Filter) -> M3 {
+        match f {
+            Filter::Deuteranopia => lms_simulation(&DEUTAN_LMS),
+            Filter::Protanopia => lms_simulation(&PROTAN_LMS),
+            _ => TRITAN_RGB,
+        }
+    }
 
     fn close(a: [f32; 3], b: [f32; 3], eps: f32) -> bool {
         (0..3).all(|i| (a[i] - b[i]).abs() <= eps)
@@ -233,7 +246,7 @@ mod tests {
 
     #[test]
     fn corrections_leave_greys_alone() {
-        for (f, _) in CORRECTIONS {
+        for f in CORRECTIONS {
             let m = matrix(f, 1.0).unwrap();
             for v in [0.0, 0.25, 0.5, 1.0] {
                 let got = m.apply([v; 3]);
@@ -247,7 +260,7 @@ mod tests {
 
     #[test]
     fn intensity_zero_is_no_change() {
-        for (f, _) in CORRECTIONS {
+        for f in CORRECTIONS {
             let m = matrix(f, 0.0).unwrap();
             let c = [0.8, 0.3, 0.1];
             assert!(close(m.apply(c), c, 1e-5), "{f:?}");
@@ -267,8 +280,8 @@ mod tests {
             ([0.8, 0.2, 0.2], [0.4, 0.5, 0.2]),
             ([0.3, 0.3, 0.9], [0.3, 0.5, 0.5]),
         ];
-        for ((f, lms), (a, b)) in CORRECTIONS.into_iter().zip(pairs) {
-            let eye = simulation(lms);
+        for (f, (a, b)) in CORRECTIONS.into_iter().zip(pairs) {
+            let eye = eye(f);
             let before = distance(see_encoded(&eye, a), see_encoded(&eye, b));
             let m = matrix(f, 1.0).unwrap();
             let after = distance(see_encoded(&eye, m.apply(a)), see_encoded(&eye, m.apply(b)));
@@ -308,7 +321,7 @@ mod tests {
             ),
             (
                 Filter::Tritanopia,
-                [0xffff_ff00, 0xff00_0000, 0xff00_00ff, 0x80ff_ea20],
+                [0xffff_0000, 0xff00_bc00, 0xff00_bbff, 0x80c0_3320],
             ),
         ];
         let got = want.map(|(f, _)| {
@@ -316,6 +329,76 @@ mod tests {
             (f, colours.map(|c| m.apply_argb(c)))
         });
         assert_eq!(got, want, "{got:08x?}");
+    }
+
+    #[test]
+    fn tritan_mixes_half_the_blue_into_green() {
+        let m = matrix(Filter::Tritanopia, 1.0).unwrap();
+        let want = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0001, 0.5053, 0.4945, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ];
+        for (got, want) in m.rows.iter().zip(want) {
+            assert!(
+                (0..4).all(|j| (got[j] - want[j]).abs() < 1e-4),
+                "{:?}",
+                m.rows
+            );
+        }
+    }
+
+    #[test]
+    fn tritan_keeps_every_colour_in_gamut_at_any_intensity() {
+        for k in [0.25, 0.5, 1.0] {
+            let m = matrix(Filter::Tritanopia, k).unwrap();
+            for r in m.rows {
+                assert!(r.iter().all(|&v| v >= 0.0), "{k}: negative entry in {r:?}");
+                assert!(
+                    (r[0] + r[1] + r[2] - 1.0).abs() < 1e-5,
+                    "{k}: row {r:?} sums to 1"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tritan_turns_no_primary_or_secondary_black_or_white() {
+        let m = matrix(Filter::Tritanopia, 1.0).unwrap();
+        let colours = [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0],
+        ];
+        for c in colours {
+            let out = m.apply(c);
+            let (lo, hi) = (
+                out.iter().copied().fold(1.0, f32::min),
+                out.iter().copied().fold(0.0, f32::max),
+            );
+            assert!(hi > 0.2 && lo < 0.8, "{c:?} goes to {out:?}");
+        }
+    }
+
+    /// Pairs a tritan eye sees alike: a blue and a green, a yellow and a violet.
+    #[test]
+    fn tritan_separates_blue_from_green_and_yellow_from_violet() {
+        let eye = TRITAN_RGB;
+        let m = matrix(Filter::Tritanopia, 1.0).unwrap();
+        for (a, b) in [
+            ([0.2, 0.4, 1.0], [0.0, 0.65, 0.3]),
+            ([1.0, 0.9, 0.2], [1.0, 0.65, 1.0]),
+        ] {
+            let before = distance(see_encoded(&eye, a), see_encoded(&eye, b));
+            let after = distance(see_encoded(&eye, m.apply(a)), see_encoded(&eye, m.apply(b)));
+            assert!(
+                after > before * 2.0,
+                "{a:?}/{b:?}: {before} apart before, {after} after"
+            );
+        }
     }
 
     #[test]
