@@ -8,9 +8,10 @@
 
 use crate::apps::MimeDb;
 use crate::{hidden, locale, places, props, recent};
+use std::collections::BTreeSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,11 +83,17 @@ pub fn read_dir(dir: &Path, globs: &MimeDb) -> Vec<Item> {
 /// How long a listing waits on its symlinks' targets after the last one answered.
 pub const LINK_WAIT: Duration = Duration::from_secs(2);
 
-/// Link-following threads still running (one on a dead mount stays until it answers); past this
-/// many a listing lists its links unfollowed.
+/// Past this many stuck targets ([`stuck_key`]) a listing lists its links unfollowed, so blocked
+/// threads stay bounded.
 const MAX_STUCK_LINKS: usize = 8;
 
-static LINKS_RUNNING: AtomicUsize = AtomicUsize::new(0);
+/// Keys of the links whose follow outlasted its wait and has not returned yet. One blocked thread
+/// stands behind each; a link with its key here is not followed again until that thread returns.
+static STUCK: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+
+fn stuck() -> MutexGuard<'static, BTreeSet<PathBuf>> {
+    STUCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// [`read_dir`] with `follow` reading the symlinks' targets on a thread of their own.
 fn read_dir_with(
@@ -110,11 +117,13 @@ fn read_dir_with(
         .collect();
     let mut links: Vec<PathBuf> = links.into_iter().map(|(p, _)| p).collect();
     links.sort();
-    let mut targets = follow_links(links.clone(), follow, wait).into_iter();
-    items.extend(links.iter().map(|p| {
-        let target = targets.next().unwrap_or_default();
-        item_with(p, true, target, &listed, globs)
-    }));
+    let targets = follow_links(links.clone(), follow, wait);
+    items.extend(
+        links
+            .iter()
+            .zip(targets)
+            .map(|(p, target)| item_with(p, true, target, &listed, globs)),
+    );
     // Sort on the collected `Item`s: re-statting in the comparator can
     // change answers mid-sort and panic.
     // Names differing only in case break on the exact name, not on
@@ -123,33 +132,106 @@ fn read_dir_with(
     items
 }
 
-/// `follow` of each of `links` in order, read on a thread, as many as answered before one took
-/// longer than `wait`. A thread left blocked ends when its mount answers or goes away.
-pub fn follow_links<T: Send + 'static>(
+/// `follow` of each of `links`, read in order off the caller's thread; one per link. A link that
+/// took longer than `wait` (counted from the previous answer) gives `T::default()` and the rest go
+/// on on a fresh thread; a link whose target is already stuck gives the default without a follow.
+/// A thread left blocked ends when its mount answers or goes away.
+pub fn follow_links<T: Default + Send + 'static>(
     links: Vec<PathBuf>,
     follow: fn(&Path) -> T,
     wait: Duration,
 ) -> Vec<T> {
-    if links.is_empty() || LINKS_RUNNING.load(Ordering::Acquire) >= MAX_STUCK_LINKS {
-        return Vec::new();
+    let mut out: Vec<T> = std::iter::repeat_with(T::default)
+        .take(links.len())
+        .collect();
+    if links.is_empty() {
+        return out;
     }
-    let (tx, rx) = std::sync::mpsc::channel();
-    LINKS_RUNNING.fetch_add(1, Ordering::AcqRel);
-    let spawned = std::thread::Builder::new()
-        .name("listing-links".into())
-        .spawn(move || {
-            for p in &links {
-                if tx.send(follow(p)).is_err() {
+    let network = places::network_mounts(std::fs::read("/proc/self/mounts").unwrap_or_default());
+    let keys: Arc<Vec<PathBuf>> = Arc::new(links.iter().map(|l| stuck_key(l, &network)).collect());
+    let links = Arc::new(links);
+    let mut from = 0;
+    while from < links.len() && stuck().len() < MAX_STUCK_LINKS {
+        let (tx, rx) = std::sync::mpsc::channel::<(usize, Option<T>)>();
+        let (l, k) = (links.clone(), keys.clone());
+        let spawned = std::thread::Builder::new()
+            .name("listing-links".into())
+            .spawn(move || {
+                for i in from..l.len() {
+                    let skip = stuck().contains(&k[i]);
+                    let t = (!skip).then(|| follow(&l[i]));
+                    // Held over the send, so a caller giving up on `i` sees either the answer or
+                    // the key still absent.
+                    let mut s = stuck();
+                    if t.is_some() {
+                        s.remove(&k[i]);
+                    }
+                    if tx.send((i, t)).is_err() {
+                        break;
+                    }
+                }
+            });
+        if spawned.is_err() {
+            break;
+        }
+        let mut next = from;
+        loop {
+            match rx.recv_timeout(wait) {
+                Ok((i, t)) => {
+                    out[i] = t.unwrap_or_default();
+                    next = i + 1;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    let mut s = stuck();
+                    if let Ok((i, t)) = rx.try_recv() {
+                        drop(s);
+                        out[i] = t.unwrap_or_default();
+                        next = i + 1;
+                        continue;
+                    }
+                    s.insert(keys[next].clone());
+                    next += 1;
+                    break;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    next = links.len();
                     break;
                 }
             }
-            LINKS_RUNNING.fetch_sub(1, Ordering::AcqRel);
-        });
-    if spawned.is_err() {
-        LINKS_RUNNING.fetch_sub(1, Ordering::AcqRel);
-        return Vec::new();
+        }
+        from = next;
     }
-    std::iter::from_fn(|| rx.recv_timeout(wait).ok()).collect()
+    out
+}
+
+/// What a stuck follow of `link` is remembered by: the network mount its target names (read
+/// without following, `..` taken lexically), so one dead mount stops every link into it, else the
+/// link itself.
+fn stuck_key(link: &Path, network: &std::collections::HashSet<PathBuf>) -> PathBuf {
+    let Ok(target) = std::fs::read_link(link) else {
+        return link.to_path_buf();
+    };
+    let mut lexical = PathBuf::new();
+    for c in link
+        .parent()
+        .unwrap_or(Path::new("/"))
+        .join(target)
+        .components()
+    {
+        match c {
+            std::path::Component::ParentDir => {
+                lexical.pop();
+            }
+            std::path::Component::CurDir => {}
+            c => lexical.push(c),
+        }
+    }
+    network
+        .iter()
+        .filter(|m| lexical.starts_with(m))
+        .max_by_key(|m| m.components().count())
+        .cloned()
+        .unwrap_or_else(|| link.to_path_buf())
 }
 
 pub fn item_at(path: &Path, globs: &MimeDb) -> Item {
@@ -554,6 +636,100 @@ mod tests {
         // Lets the blocked follow return.
         drop(std::fs::File::options().write(true).open(&fifo));
     }
+    /// A folder in a temp dir holding `pipe`, a FIFO whose open blocks until a writer comes, as a
+    /// lookup on a stopped mount does, and `folder`.
+    fn dead_and_live() -> tempfile::TempDir {
+        use std::os::unix::ffi::OsStrExt;
+        let t = tempfile::tempdir().unwrap();
+        let c = std::ffi::CString::new(t.path().join("pipe").as_os_str().as_bytes()).unwrap();
+        // SAFETY: `c` is a NUL-terminated path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        std::fs::create_dir(t.path().join("folder")).unwrap();
+        t
+    }
+
+    fn unblock(fifo: &Path) {
+        use std::os::unix::fs::OpenOptionsExt;
+        drop(
+            std::fs::File::options()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(fifo),
+        );
+    }
+
+    #[test]
+    fn a_dead_link_sorted_before_a_live_one_leaves_the_live_one_followed() {
+        use std::os::unix::fs::FileTypeExt;
+        fn follow(p: &Path) -> Target {
+            if std::fs::metadata(p).is_ok_and(|m| m.file_type().is_fifo()) {
+                let _ = std::fs::File::open(p);
+            }
+            target_of(p)
+        }
+        let t = dead_and_live();
+        std::os::unix::fs::symlink("pipe", t.path().join("a dead")).unwrap();
+        std::os::unix::fs::symlink("folder", t.path().join("b live")).unwrap();
+        std::os::unix::fs::symlink("folder", t.path().join("c live")).unwrap();
+        let items = read_dir_with(
+            t.path(),
+            &MimeDb::empty(),
+            follow,
+            Duration::from_millis(200),
+        );
+        let by = |n: &str| items.iter().find(|i| i.name == n).unwrap();
+        assert!(!by("a dead").is_dir);
+        assert!(by("b live").is_dir, "b live opens as a folder");
+        assert!(by("c live").is_dir, "c live opens as a folder");
+        unblock(&t.path().join("pipe"));
+    }
+
+    #[test]
+    fn relisting_a_dead_link_twenty_times_keeps_live_links_and_one_blocked_follow() {
+        use std::os::unix::fs::FileTypeExt;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static BLOCKED: AtomicUsize = AtomicUsize::new(0);
+        fn follow(p: &Path) -> Target {
+            if std::fs::metadata(p).is_ok_and(|m| m.file_type().is_fifo()) {
+                BLOCKED.fetch_add(1, Ordering::SeqCst);
+                let _ = std::fs::File::open(p);
+                BLOCKED.fetch_sub(1, Ordering::SeqCst);
+            }
+            target_of(p)
+        }
+        let t = dead_and_live();
+        std::os::unix::fs::symlink("pipe", t.path().join("a dead")).unwrap();
+        std::os::unix::fs::symlink("folder", t.path().join("b live")).unwrap();
+        for n in 0..20 {
+            let items = read_dir_with(
+                t.path(),
+                &MimeDb::empty(),
+                follow,
+                Duration::from_millis(100),
+            );
+            let live = items.iter().find(|i| i.name == "b live").unwrap();
+            assert!(live.is_dir, "b live opens as a folder in listing {n}");
+        }
+        assert_eq!(
+            BLOCKED.load(Ordering::SeqCst),
+            1,
+            "one follow stays blocked"
+        );
+        unblock(&t.path().join("pipe"));
+    }
+
+    #[test]
+    fn a_stuck_follow_is_remembered_by_the_network_mount_its_target_names() {
+        let t = tempfile::tempdir().unwrap();
+        let network = std::collections::HashSet::from([PathBuf::from("/mnt/nas")]);
+        let link = t.path().join("a");
+        std::os::unix::fs::symlink("/mnt/nas/share/../x", &link).unwrap();
+        assert_eq!(stuck_key(&link, &network), PathBuf::from("/mnt/nas"));
+        let local = t.path().join("b");
+        std::os::unix::fs::symlink("/mnt/nas2/x", &local).unwrap();
+        assert_eq!(stuck_key(&local, &network), local, "not under /mnt/nas");
+    }
+
     #[test]
     fn a_program_is_an_executable_script_or_elf_file() {
         let t = tempfile::tempdir().unwrap();

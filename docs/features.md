@@ -463,7 +463,8 @@ dialogs. [More in programs.md](programs.md#explorer).
   for a drive to flush gets up to 5 min, so a slow stick isn't taken for a
   dead one. A Send To drive that stops answering greys its row. A symlink
   into such a mount lists after 2 s as a plain shortcut, in Explorer, the
-  file dialogs and on the desktop.
+  file dialogs and on the desktop; the folder's other links still list
+  as theirs, and later listings show it at once until the mount answers.
 - **Programs stuck on a dead mount** lose their windows once killed, without
   End Program (see [End Program](#windows)).
 
