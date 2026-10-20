@@ -1157,6 +1157,16 @@ impl Backend {
         )
     }
 
+    /// No commit holds the modeset locks and no frame holds a compositor (`commit::modes_settle`).
+    fn modes_settle(&self) -> bool {
+        let all: Vec<_> = self.tracks().collect();
+        commit::modes_settle(
+            all.iter().copied(),
+            !self.retiring.is_empty(),
+            std::time::Instant::now(),
+        )
+    }
+
     /// Every output's track and the device reset's.
     fn tracks(&self) -> impl Iterator<Item = &commit::Track<Flip>> {
         let outputs = self.surfaces.values().map(|s| &s.track);
@@ -1183,13 +1193,18 @@ fn gated(b: &Backend, op: &str) {
     debug_assert!(b.quiet(), "{op} while a commit holds the modeset locks");
 }
 
-/// Whether main may change outputs now; else output changes are refused ("display busy") or
-/// wait (`defer_output_config`).
+/// Whether main may change outputs now (`commit::quiet`); output management refuses its
+/// changes otherwise ("display busy").
 pub fn quiet(state: &State) -> bool {
     state.backend.as_ref().is_none_or(Backend::quiet)
 }
 
-/// Keep the config from before a reload whose output changes wait for quiet; of several
+/// Whether a reload's output changes may go now; else they wait (`defer_output_config`).
+pub fn modes_settle(state: &State) -> bool {
+    state.backend.as_ref().is_none_or(Backend::modes_settle)
+}
+
+/// Keep the config from before a reload whose output changes wait (`modes_settle`); of several
 /// reloads meanwhile, the first one's.
 pub fn defer_output_config(state: &mut State, old: &crate::config::Config) {
     if let Some(b) = state.backend.as_mut() {
@@ -1253,8 +1268,12 @@ impl Backend {
             self.reenable.iter().any(|c| !self.retiring.contains_key(c)),
             self.config_from.is_some(),
         )?;
-        let busy = self.surfaces.values().any(|s| s.track.busy());
-        (step != Step::Reset || !busy).then_some(step)
+        match step {
+            Step::Config => self.modes_settle(),
+            Step::Reset => !self.surfaces.values().any(|s| s.track.busy()),
+            _ => true,
+        }
+        .then_some(step)
     }
 }
 
