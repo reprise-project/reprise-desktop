@@ -518,6 +518,13 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     let style = GROUPS.into_iter().fold(style, |st, (parts, paint)| {
         st.with_painted_group(parts, move || paint(scale).into_iter().map(ink).collect())
     });
+    // A program draws only some of these, so each is painted on its own.
+    let style = fields::painters()
+        .into_iter()
+        .chain(items::painters())
+        .fold(style, |st, (part, paint)| {
+            st.with_painted(part, move || ink((part, paint(scale))).1)
+        });
     let style = if is_dark {
         style
             .with_painted(Part::PlacesTile, move || items::dark_places(scale))
@@ -553,20 +560,10 @@ fn build_at(s: &Settings, scale: i32) -> Style {
 type Group = (&'static [Part], fn(i32) -> Vec<(Part, PartImage)>);
 
 /// Glass's control parts, each group painted the first time one of its parts is drawn.
-const GROUPS: [Group; 13] = [
+const GROUPS: [Group; 11] = [
     (&[Part::CheckBox, Part::Radio], |d| {
         controls::parts(d).into()
     }),
-    (
-        &[
-            Part::EditBorder,
-            Part::ComboList,
-            Part::ComboDrop,
-            Part::SpinUp,
-            Part::SpinDown,
-        ],
-        |d| fields::parts(d).into(),
-    ),
     (
         &[
             Part::PushButton,
@@ -640,10 +637,6 @@ const GROUPS: [Group; 13] = [
     (
         &[Part::CalendarToday, Part::CalendarPrev, Part::CalendarNext],
         |d| flyouts::parts(d).into(),
-    ),
-    (
-        &[Part::ListItem, Part::TreeExpander, Part::PlacesTile],
-        |d| items::parts(d).into(),
     ),
 ];
 
