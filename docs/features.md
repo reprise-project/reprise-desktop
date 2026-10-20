@@ -455,9 +455,9 @@ program. Sandboxed programs get Reprise's own Open, Save and Open With
 dialogs. [More in programs.md](programs.md#explorer).
 
 - **Dead mounts.** On a mount that stops answering, Explorer and the desktop
-  keep answering. A copy, move, delete, Empty Recycle Bin, rename, New Folder,
-  Properties or Send To on it gives up after 15 s with "The location is not
-  responding.", and an answer that comes later changes nothing. A copy's wait
+  keep answering. A copy, move, drop, delete, Empty Recycle Bin, rename, New
+  Folder, Properties or Send To on it gives up after 15 s with "The location
+  is not responding.", and an answer that comes later changes nothing. A copy's wait
   for a drive to flush gets up to 5 min, so a slow stick isn't taken for a
   dead one. A Send To drive that stops answering greys its row.
 - **Programs stuck on a dead mount** lose their windows once killed, without
