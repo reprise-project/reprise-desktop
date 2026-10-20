@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use reprisefs::apps::{AppEntry, Group};
+use reprisekit::anim::{Unroll, UnrollFrom};
 use reprisekit::startpanel::layout::{self, Layout};
 use reprisekit::startpanel::{
     self, Button, Event, Key, Mode, PlaceRow, ProgramRow, ResultGroup, ResultRow, Spot, StartPanel,
@@ -19,7 +20,7 @@ use smithay::utils::{Buffer as BufferCoords, Logical, Point, Rectangle};
 
 use crate::barplace::BarPlacement;
 use crate::compositor::{SceneOwner, State};
-use crate::config::{Action, MenuEntry, PowerAction};
+use crate::config::{Action, MenuAnimation, MenuEntry, PowerAction};
 use crate::dialogview::DialogKey;
 use crate::glass::{Backdrop, Pane, PaneShape};
 use crate::input::{BTN_LEFT, BTN_RIGHT};
@@ -66,7 +67,14 @@ pub struct StartPanelView {
     pressed: Option<Spot>,
     hover: Option<RegistrationToken>,
     opened: Instant,
+    /// The opening's timer, fading or unrolling.
     fade: Option<RegistrationToken>,
+    /// The side the panel unrolls from while it does.
+    unroll: Option<UnrollFrom>,
+    /// Where the unrolling panel draws from `at` this frame.
+    shift: (i32, i32),
+    /// The drawn canvas, panel-local: what unrolls.
+    extent: Rect,
     /// Layout coordinates.
     at: (i32, i32),
     tree: TreeId,
@@ -588,14 +596,16 @@ impl State {
         model.places = rows;
         model.user_picture =
             (self.start_pictures.shown(px)).or_else(|| self.icons.get("avatar-default", px));
+        let opening = self.config.menu_opening();
+        let unroll = (opening == MenuAnimation::Slide)
+            .then(|| crate::menuview::unroll_from_bar(self.bar_placement(&output).edge));
         let scene = &mut self.scene;
         let tree = scene.tree_create(self.layers.menu);
         scene.set_data(tree, Some(SceneOwner::StartPanel));
         crate::glass::leave_out(scene, tree);
         let glass_tree = scene.tree_create(tree);
         let buffer = scene.buffer_create(tree);
-        let fade = self.config.theme.metrics.menu_fade_ms > 0;
-        if fade {
+        if opening == MenuAnimation::Fade {
             scene.set_opacity(tree, 0.0);
         }
         self.start_panel = Some(StartPanelView {
@@ -618,6 +628,9 @@ impl State {
             hover: None,
             opened: Instant::now(),
             fade: None,
+            unroll,
+            shift: (0, 0),
+            extent: Rect::new(0, 0, 0, 0),
             at: (0, 0),
             tree,
             glass_tree,
@@ -637,7 +650,7 @@ impl State {
         if let Some(b) = self.bar_mut(bar) {
             b.start_pressed = true;
         }
-        if fade {
+        if opening != MenuAnimation::None {
             self.arm_start_panel_fade();
         }
         self.redraw_start_panel();
@@ -1202,7 +1215,10 @@ impl State {
 
     pub fn start_panel_hit(&self, x: f64, y: f64) -> Option<Spot> {
         let v = self.start_panel.as_ref()?;
-        let (x, y) = (x.floor() as i32 - v.at.0, y.floor() as i32 - v.at.1);
+        let (x, y) = (
+            x.floor() as i32 - v.at.0 - v.shift.0,
+            y.floor() as i32 - v.at.1 - v.shift.1,
+        );
         layout::hit(&layout::layout(&v.model), x, y)
     }
 
@@ -1594,7 +1610,11 @@ impl State {
                     v.fade = None;
                 }
                 let (tree, output) = (v.tree, v.output.clone());
-                state.scene.set_opacity(tree, t);
+                if v.unroll.is_some() {
+                    unroll_frame(v, &mut state.scene, t);
+                } else {
+                    state.scene.set_opacity(tree, t);
+                }
                 crate::backend::schedule(state, &output);
                 if t >= 1.0 {
                     TimeoutAction::Drop
@@ -1728,7 +1748,8 @@ impl State {
         let scale = self.draw_scale_at(Some(&v.output)).max(1);
         let pane = crate::glass::wanted(&self.config).then(|| panel_pane(&lay));
         let sl = lay.scaled(scale);
-        let fades = self.config.theme.metrics.menu_fade_ms > 0;
+        let fades = self.config.menu_opening() != MenuAnimation::None;
+        let ms = self.config.theme.metrics.menu_fade_ms.max(1) as f32;
         let key = RasterKey {
             model: v.model.clone(),
             pressed: v.pressed,
@@ -1773,7 +1794,15 @@ impl State {
             return;
         };
         v.at = at;
+        v.extent = lay.canvas;
         scene.set_position(v.tree, at.0, at.1);
+        if v.unroll.is_some() {
+            unroll_frame(
+                v,
+                scene,
+                (v.opened.elapsed().as_secs_f32() * 1000.0 / ms).min(1.0),
+            );
+        }
         scene.set_position(v.buffer, lay.canvas.x, lay.canvas.y);
         scene.set_input(v.buffer, Input::Test(Box::new(takes_pointer(&lay))));
         v.backdrop.set(scene, glass, v.glass_tree, pane);
@@ -1854,6 +1883,30 @@ impl State {
         let focus = startpanel::access::access(&v.model, &lay, &mut tree, ROOT);
         tree.set_focus(focus);
         Some(tree)
+    }
+}
+
+/// Shows the unrolling panel `v` at `t` (0 to 1) of its opening; at 1 it stands whole.
+fn unroll_frame(v: &mut StartPanelView, scene: &mut crate::compositor::DeskScene, t: f32) {
+    let Some(from) = v.unroll else {
+        return;
+    };
+    let e = v.extent;
+    let Unroll { shift, clip } = Unroll::at(from, (e.width, e.height), t);
+    let done = t >= 1.0;
+    v.shift = if done { (0, 0) } else { shift };
+    scene.set_position(v.tree, v.at.0 + v.shift.0, v.at.1 + v.shift.1);
+    scene.set_clip(
+        v.tree,
+        (!done).then(|| {
+            Rectangle::new(
+                (e.x + clip.x, e.y + clip.y).into(),
+                (clip.width, clip.height).into(),
+            )
+        }),
+    );
+    if done {
+        v.unroll = None;
     }
 }
 

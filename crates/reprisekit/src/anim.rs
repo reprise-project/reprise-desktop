@@ -4,6 +4,8 @@
 
 use std::time::Instant;
 
+use crate::raster::Rect;
+
 /// A highlight fading toward lit or dark at its own speed each way. The
 /// level runs linearly in time and is eased (smoothstep) as it is read.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -212,6 +214,87 @@ impl Tween {
     }
 }
 
+/// The side a menu unrolls from as it opens: the one facing what opened it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnrollFrom {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+impl UnrollFrom {
+    /// For a menu at `menu` opened from the point `at` (a click or a key's anchor): up when it
+    /// hangs above `at`, sideways when it stands beside it, down otherwise.
+    pub fn facing(menu: Rect, at: (i32, i32)) -> UnrollFrom {
+        let level = at.1 > menu.y;
+        if at.1 >= menu.bottom() {
+            UnrollFrom::Bottom
+        } else if level && at.0 >= menu.right() {
+            UnrollFrom::Right
+        } else if level && at.0 < menu.x {
+            UnrollFrom::Left
+        } else {
+            UnrollFrom::Top
+        }
+    }
+
+    /// For a submenu at `menu` opened beside its parent at `parent`.
+    pub fn beside(menu: Rect, parent: Rect) -> UnrollFrom {
+        if 2 * menu.x + menu.width >= 2 * parent.x + parent.width {
+            UnrollFrom::Left
+        } else {
+            UnrollFrom::Right
+        }
+    }
+}
+
+/// One frame of a box of `size` unrolling from `from` at `t` (0 to 1, linear in time):
+/// the box draws moved by `shift` from its place and cut to `clip` (box-local), so its far
+/// edge leads in from the near one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Unroll {
+    pub shift: (i32, i32),
+    pub clip: Rect,
+}
+
+impl Unroll {
+    pub fn at(from: UnrollFrom, (w, h): (i32, i32), t: f32) -> Unroll {
+        let e = Ease::OutCubic.apply(t.clamp(0.0, 1.0));
+        let shown = |full: i32| ((full as f32 * e).round() as i32).clamp(0, full);
+        match from {
+            UnrollFrom::Top => {
+                let l = shown(h);
+                Unroll {
+                    shift: (0, l - h),
+                    clip: Rect::new(0, h - l, w, l),
+                }
+            }
+            UnrollFrom::Bottom => {
+                let l = shown(h);
+                Unroll {
+                    shift: (0, h - l),
+                    clip: Rect::new(0, 0, w, l),
+                }
+            }
+            UnrollFrom::Left => {
+                let l = shown(w);
+                Unroll {
+                    shift: (l - w, 0),
+                    clip: Rect::new(w - l, 0, l, h),
+                }
+            }
+            UnrollFrom::Right => {
+                let l = shown(w);
+                Unroll {
+                    shift: (w - l, 0),
+                    clip: Rect::new(0, 0, l, h),
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,5 +458,101 @@ mod tests {
         assert!(t.settled(at(t0, 250)));
         assert!(Tween::at(4.0).settled(t0));
         assert_eq!(Tween::at(4.0).value(t0), 4.0);
+    }
+
+    #[test]
+    fn an_unroll_runs_from_hidden_to_whole_with_the_far_edge_leading() {
+        let size = (100, 60);
+        for from in [
+            UnrollFrom::Top,
+            UnrollFrom::Bottom,
+            UnrollFrom::Left,
+            UnrollFrom::Right,
+        ] {
+            let start = Unroll::at(from, size, 0.0);
+            assert_eq!(
+                start.clip.width * start.clip.height,
+                0,
+                "{from:?}: nothing shows at the start"
+            );
+            assert_eq!(
+                Unroll::at(from, size, 1.0),
+                Unroll {
+                    shift: (0, 0),
+                    clip: Rect::new(0, 0, 100, 60)
+                },
+                "{from:?}: whole and in place at the end"
+            );
+        }
+        let half = |from| Unroll::at(from, size, 0.5);
+        assert_eq!(
+            half(UnrollFrom::Top),
+            Unroll {
+                shift: (0, -7),
+                clip: Rect::new(0, 7, 100, 53)
+            },
+            "from the top, the bottom rows show first just under the top edge"
+        );
+        assert_eq!(
+            half(UnrollFrom::Bottom),
+            Unroll {
+                shift: (0, 7),
+                clip: Rect::new(0, 0, 100, 53)
+            },
+            "from the bottom, the top rows show first just over the bottom edge"
+        );
+        assert_eq!(
+            half(UnrollFrom::Left),
+            Unroll {
+                shift: (-12, 0),
+                clip: Rect::new(12, 0, 88, 60)
+            }
+        );
+        assert_eq!(
+            half(UnrollFrom::Right),
+            Unroll {
+                shift: (12, 0),
+                clip: Rect::new(0, 0, 88, 60)
+            }
+        );
+    }
+
+    #[test]
+    fn an_unroll_eases_out_and_never_shrinks() {
+        let mut last = 0;
+        for i in 0..=20 {
+            let u = Unroll::at(UnrollFrom::Top, (10, 200), i as f32 / 20.0);
+            assert!(u.clip.height >= last, "step {i}");
+            assert_eq!(
+                u.clip.y + u.shift.1,
+                0,
+                "the shown part starts at the top edge"
+            );
+            last = u.clip.height;
+        }
+        assert!(
+            Unroll::at(UnrollFrom::Top, (10, 200), 0.25).clip.height > 100,
+            "more than half shows a quarter of the way in"
+        );
+    }
+
+    #[test]
+    fn a_menu_unrolls_away_from_what_opened_it() {
+        let menu = Rect::new(100, 100, 80, 120);
+        assert_eq!(UnrollFrom::facing(menu, (100, 100)), UnrollFrom::Top);
+        assert_eq!(UnrollFrom::facing(menu, (130, 90)), UnrollFrom::Top);
+        assert_eq!(UnrollFrom::facing(menu, (150, 220)), UnrollFrom::Bottom);
+        assert_eq!(UnrollFrom::facing(menu, (180, 150)), UnrollFrom::Right);
+        assert_eq!(UnrollFrom::facing(menu, (90, 150)), UnrollFrom::Left);
+        assert_eq!(UnrollFrom::facing(menu, (120, 150)), UnrollFrom::Top);
+        let parent = Rect::new(0, 100, 100, 200);
+        assert_eq!(
+            UnrollFrom::beside(Rect::new(97, 120, 80, 50), parent),
+            UnrollFrom::Left
+        );
+        assert_eq!(
+            UnrollFrom::beside(Rect::new(-77, 120, 80, 50), parent),
+            UnrollFrom::Right
+        );
     }
 }
