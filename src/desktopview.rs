@@ -940,6 +940,7 @@ pub fn setup(state: &mut State) {
         Ok(w) => {
             watch_on_loop(state, &w);
             mounts_on_loop(state);
+            gvfs_on_loop(state);
             Some(w)
         }
         Err(e) => {
@@ -997,6 +998,26 @@ fn watch_on_loop(state: &mut State, watch: &DirWatch) {
     let added = state.handle.insert_source(source, |_, _, state| {
         state.desktop_watch_ready();
         Ok(PostAction::Continue)
+    });
+    if let Err(e) = added {
+        log::warn!("desktop icons: {}", e.error);
+    }
+}
+
+/// Rescan when gvfs metadata changes for a file on the desktop: a folder icon Nautilus sets.
+fn gvfs_on_loop(state: &mut State) {
+    let (ping, source) = match smithay::reexports::calloop::ping::make_ping() {
+        Ok(p) => p,
+        Err(e) => return log::warn!("desktop icons: no gvfs ping: {e}"),
+    };
+    let changes = reprisefs::gvfsmeta::Changes::new(move || ping.ping());
+    let added = state.handle.insert_source(source, move |_, _, state| {
+        let changed = changes.take();
+        if (state.desktop.as_ref())
+            .is_some_and(|v| changed.iter().any(|f| f.parent() == Some(v.dir.as_path())))
+        {
+            state.settle_rescan();
+        }
     });
     if let Err(e) = added {
         log::warn!("desktop icons: {}", e.error);

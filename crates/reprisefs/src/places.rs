@@ -365,7 +365,7 @@ fn mount_lines(mounts: &[u8]) -> impl Iterator<Item = (&[u8], &[u8], String)> {
     })
 }
 
-fn mount_path(field: &[u8]) -> PathBuf {
+pub(crate) fn mount_path(field: &[u8]) -> PathBuf {
     PathBuf::from(OsString::from_vec(unescape_mount(field)))
 }
 

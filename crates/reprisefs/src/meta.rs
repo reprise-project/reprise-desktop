@@ -181,8 +181,18 @@ pub fn with_folder_icon(text: &str, icon: Option<&str>) -> String {
 /// Give `dir` the icon `icon`, or remove it for None, in its [`DIRECTORY_FILE`]. A file left with
 /// only an empty `[Desktop Entry]` goes. A link, non-regular file or one over 64 KiB is refused.
 /// Written via a temp file with the old mode and renamed over, so a crash leaves the old or new
-/// file.
+/// file. None also clears an icon Nautilus set in gvfs metadata.
 pub fn set_folder_icon(dir: &Path, icon: Option<&str>) -> io::Result<()> {
+    set_directory_icon(dir, icon)?;
+    if icon.is_none()
+        && let Err(e) = crate::gvfsmeta::unset_custom_icon(dir)
+    {
+        log::warn!("{}: could not clear its gvfs icon: {e}", dir.display());
+    }
+    Ok(())
+}
+
+fn set_directory_icon(dir: &Path, icon: Option<&str>) -> io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let path = dir.join(DIRECTORY_FILE);
