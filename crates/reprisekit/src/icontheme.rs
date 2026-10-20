@@ -102,7 +102,11 @@ pub struct IconTheme {
     /// What each entry of `dirs`, then `roots`, holds, read on first visit so a miss costs a
     /// hash probe instead of a stat. `extra` directories are not cached.
     listings: Vec<OnceLock<Listing>>,
+    /// The `dirs` indices `find_with_extra` visits per (size, scale), groups in chain order.
+    orders: Mutex<HashMap<(i32, i32), DirOrder>>,
 }
+
+type DirOrder = Arc<[usize]>;
 
 /// One theme's directory under one root.
 struct Home {
@@ -350,6 +354,7 @@ impl IconTheme {
             homes: Vec::new(),
             dir_home: Vec::new(),
             listings: Vec::new(),
+            orders: Mutex::default(),
         };
         theme.walk(name);
         // Fallbacks beyond `hicolor` so standard names (`system-run`, ...) resolve with a bare
@@ -459,23 +464,10 @@ impl IconTheme {
                 }
             }
         }
-        // One theme at a time in chain order: a themed icon, even a size mismatch, beats an
-        // inherited exact one. After the exact sizes comes the closest, but a bigger icon
-        // scaled down beats a smaller one scaled up: upscaled bitmaps blur.
-        for group in &self.groups {
-            let (mut order, mut rest): (Vec<usize>, Vec<usize>) = group
-                .clone()
-                .partition(|&i| self.dirs[i].matches(size, scale));
-            rest.sort_by_key(|&i| {
-                let d = &self.dirs[i];
-                (d.upscales(size, scale), d.distance(size, scale))
-            });
-            order.extend(rest);
-            for i in order {
-                for p in self.files_listed(i, &self.dirs[i].path, name, &files) {
-                    if let Some(t) = take(p) {
-                        return Some(t);
-                    }
+        for &i in self.order(size, scale).iter() {
+            for p in self.files_listed(i, &self.dirs[i].path, name, &files) {
+                if let Some(t) = take(p) {
+                    return Some(t);
                 }
             }
         }
@@ -488,6 +480,29 @@ impl IconTheme {
             }
         }
         None
+    }
+
+    /// One theme at a time in chain order: a themed icon, even a size mismatch, beats an
+    /// inherited exact one. After the exact sizes comes the closest, but a bigger icon
+    /// scaled down beats a smaller one scaled up: upscaled bitmaps blur.
+    fn order(&self, size: i32, scale: i32) -> DirOrder {
+        let mut orders = self.orders.lock().unwrap_or_else(|e| e.into_inner());
+        let order = orders.entry((size, scale)).or_insert_with(|| {
+            let mut all = Vec::with_capacity(self.dirs.len());
+            for group in &self.groups {
+                let (order, mut rest): (Vec<usize>, Vec<usize>) = group
+                    .clone()
+                    .partition(|&i| self.dirs[i].matches(size, scale));
+                rest.sort_by_key(|&i| {
+                    let d = &self.dirs[i];
+                    (d.upscales(size, scale), d.distance(size, scale))
+                });
+                all.extend(order);
+                all.extend(rest);
+            }
+            all.into()
+        });
+        Arc::clone(order)
     }
 
     /// Those of `files`, `name` with each of [`EXTENSIONS`], directly in `dir`, through
@@ -1447,6 +1462,11 @@ mod tests {
         assert_eq!(
             t.lookup("firefox", 24, 1),
             Some(root.join("test/32x32/apps/firefox.png"))
+        );
+        // Each size keeps its own search order once the others have been asked.
+        assert_eq!(
+            t.lookup("firefox", 16, 1),
+            Some(root.join("test/16x16/apps/firefox.png"))
         );
         fs::remove_dir_all(&root).unwrap();
     }
