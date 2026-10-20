@@ -118,9 +118,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   window back where it was.
 - **End Program.** Reprise pings windows, so one that stopped answering gets
   End Program as soon as you close it instead of after a wait. A program
-  that has exited while one of its threads hangs on a dead mount stops
-  answering too; its windows go without End Program, within a quarter
-  second when another of its threads exits (Linux 6.9+), else within 2 s.
+  that has exited or been killed while one of its threads hangs on a dead
+  mount stops answering too; its windows go without End Program, within a
+  quarter second when another of its threads exits (Linux 6.9+), else within
+  2 s.
 - **Modal dialogs that stay modal.** Focus can't land behind a dialog a
   toolkit marked modal.
 - **No focus stealing.** A window takes the keyboard only with a trusted
@@ -450,6 +451,15 @@ Explorer has thumbnails, five views, live folders, background copies, undo,
 a shared freedesktop trash, Send To and drag and drop with every other
 program. Sandboxed programs get Reprise's own Open, Save and Open With
 dialogs. [More in programs.md](programs.md#explorer).
+
+- **Dead mounts.** On a mount that stops answering, Explorer and the desktop
+  keep answering. A copy, move, delete, Empty Recycle Bin, rename, New Folder,
+  Properties or Send To on it gives up after 15 s with "The location is not
+  responding.", and an answer that comes later changes nothing. A copy's wait
+  for a drive to flush gets up to 5 min, so a slow stick isn't taken for a
+  dead one. A Send To drive that stops answering greys its row.
+- **Programs stuck on a dead mount** lose their windows once killed, without
+  End Program (see [End Program](#windows)).
 
 ## Configuration
 
