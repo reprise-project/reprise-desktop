@@ -54,7 +54,9 @@ provides=('reprise')
 conflicts=('reprise-git')
 backup=('etc/pam.d/reprise' 'etc/pam.d/reprise-fingerprint')
 # makepkg's lto turns the C shim in libspa-sys into GCC bitcode that rustc's
-# lld cannot link (undefined *_libspa_rs symbols in reprise-portal).
+# lld cannot link (undefined *_libspa_rs symbols in reprise-portal). The option
+# only touches CFLAGS, CXXFLAGS and LDFLAGS; Rust LTO follows Cargo.toml's
+# release profile.
 options=(!lto)
 source=()
 

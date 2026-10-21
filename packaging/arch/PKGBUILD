@@ -47,7 +47,8 @@ conflicts=('reprise')
 backup=('etc/pam.d/reprise' 'etc/pam.d/reprise-fingerprint')
 # makepkg's lto option puts -flto=auto into CFLAGS, which turns the C shim in
 # libspa-sys into GCC bitcode that rustc's lld cannot link (undefined
-# *_libspa_rs symbols in reprise-portal). Rust does its own LTO from Cargo.toml.
+# *_libspa_rs symbols in reprise-portal). The option only touches CFLAGS,
+# CXXFLAGS and LDFLAGS; Rust LTO follows Cargo.toml's release profile.
 options=(!lto)
 source=("git+$url.git")
 sha256sums=('SKIP')
