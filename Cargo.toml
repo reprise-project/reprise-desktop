@@ -150,6 +150,11 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
 
+# One codegen unit runs the programs on about 4% fewer instructions. Thin LTO
+# saves more but makes a workspace rebuild five times slower.
+[profile.release]
+codegen-units = 1
+
 # Test VM builds: release code, built incrementally, so a rebuild after an
 # edit takes seconds. Packages still build with `--release`.
 [profile.vm]
