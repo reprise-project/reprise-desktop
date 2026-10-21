@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use reprisekit::glass::Settings;
 use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture};
 use smithay::backend::renderer::utils::{DamageBag, DamageSnapshot};
-use smithay::backend::renderer::{Bind, Frame, Renderer, Texture};
+use smithay::backend::renderer::{Bind, Renderer, Texture};
 use smithay::utils::{Buffer, Physical, Rectangle, Size, Transform};
 
 use crate::blur::{self, Plan, Quality, Streaks};
@@ -141,8 +141,7 @@ fn draw_alone(
     let mut target = renderer.bind(&mut backdrop)?;
     let mut frame = renderer.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
     draw(&mut frame)?;
-    let _ = frame.finish()?;
-    Ok(())
+    frame.finish_unsynced()
 }
 
 impl Picture {
@@ -262,8 +261,7 @@ impl Picture {
         } else {
             None
         };
-        // One frame for the passes, on the picture that none of them reads: each frame's finish
-        // costs a submission.
+        // One frame for the passes, on the picture that none of them reads.
         let mut target = renderer.bind(&mut picture)?;
         let mut frame = renderer.render(&mut target, (out.w, out.h).into(), Transform::Normal)?;
         if let Some(d) = draw {
@@ -311,7 +309,7 @@ impl Picture {
             };
             blur::streak_over(&mut frame, &streaks, out, &picture_parts)?;
         }
-        let _ = frame.finish()?;
+        frame.finish_unsynced()?;
         // A lookup at an output pixel reads the texels either side of it.
         let output = Rectangle::from_size(u.output);
         self.damage.add(

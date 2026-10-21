@@ -47,6 +47,10 @@
 //!   [`blur::backdrop_downscale`], the shapes laid out on the output, and a
 //!   source.
 //!
+//! Only the renderer that draws them reads the picture, capture and water
+//! textures: their frames end with `GlesFrame::finish_unsynced`, no flush or
+//! fence, and the frame that reads them flushes. Keep them off other contexts.
+//!
 //! `[glass] fast_drag`: pass [`blur::quality`]`(dragging, fast_drag)`. A
 //! quality change changes the element's commit, so the drag's end re-blurs
 //! at full quality in the next frame.
