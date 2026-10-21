@@ -759,18 +759,41 @@ impl State {
         crate::backend::schedule_all(self, crate::backend::Ask::Content);
     }
 
-    /// Ask the outputs showing `surface` for a new frame for what it drew, as
-    /// `redraw_content` does for every output; every output when no node shows it.
+    /// Ask the outputs `commit_outputs` names for a new frame for what `surface` drew, as
+    /// `redraw_content` does for every output; every output when nothing places it.
     pub fn redraw_surface(
         &mut self,
         surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
     ) {
-        match self.scene.outputs_showing(surface) {
+        match self.commit_outputs(surface) {
             Some(outputs) => {
                 crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Content)
             }
             None => self.redraw_content(),
         }
+    }
+
+    /// The outputs a commit to the surface tree under `surface` can change: the cursor's
+    /// (`backend::cursor_outputs`) when it is the cursor, none for a cursor surface not in use,
+    /// else those showing it. `None` when nothing places it.
+    pub fn commit_outputs(
+        &self,
+        surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    ) -> Option<Vec<smithay::output::Output>> {
+        use smithay::wayland::{compositor::get_role, seat::CURSOR_IMAGE_ROLE};
+        if matches!(&self.cursor, CursorImageStatus::Surface(c) if c == surface) {
+            return Some(crate::backend::cursor_outputs(self));
+        }
+        if get_role(surface) == Some(CURSOR_IMAGE_ROLE) {
+            return Some(Vec::new());
+        }
+        self.scene.outputs_showing(surface)
+    }
+
+    /// Ask the outputs showing the cursor for a frame with its new image.
+    pub fn redraw_cursor(&mut self) {
+        let outputs = crate::backend::cursor_outputs(self);
+        crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Content);
     }
 
     /// Ask for a new frame for where the pointer went, when nothing else
@@ -990,5 +1013,38 @@ mod tests {
             &caption_text(&theme),
             &reprisekit::look::caption_text(style)
         ));
+    }
+
+    #[test]
+    fn a_cursor_commit_asks_only_the_outputs_showing_the_cursor() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let b = h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let cursor = h.bare_surface(&mut c);
+        assert_eq!(h.state.commit_outputs(&cursor), None, "nothing places it");
+        h.state.cursor = CursorImageStatus::Surface(cursor.clone());
+        assert_eq!(
+            h.state.commit_outputs(&cursor),
+            Some(vec![]),
+            "no output has drawn the cursor yet"
+        );
+        let b_at = reprisescene::output_rect(&b).expect("TEST-2's place").loc;
+        h.pointer_to(f64::from(b_at.x + 100), f64::from(b_at.y + 100));
+        h.state.zoom(crate::magnifier::ZoomStep::In);
+        h.state.cursor = CursorImageStatus::Surface(cursor.clone());
+        assert_eq!(
+            h.state.commit_outputs(&cursor),
+            Some(vec![b]),
+            "a zoom follows it"
+        );
+        h.state.cursor = CursorImageStatus::default_named();
+        smithay::wayland::compositor::give_role(&cursor, smithay::wayland::seat::CURSOR_IMAGE_ROLE)
+            .expect("the cursor role");
+        assert_eq!(
+            h.state.commit_outputs(&cursor),
+            Some(vec![]),
+            "a cursor surface not in use shows nowhere"
+        );
     }
 }

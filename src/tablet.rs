@@ -76,7 +76,7 @@ impl TabletSeatHandler for State {
     /// the pointer.
     fn tablet_tool_image(&mut self, _tool: &TabletToolDescriptor, image: CursorImageStatus) {
         self.cursor = image;
-        self.redraw_content();
+        self.redraw_cursor();
     }
 }
 

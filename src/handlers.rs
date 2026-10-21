@@ -177,7 +177,7 @@ impl SeatHandler for State {
 
     fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
         self.cursor = image;
-        self.redraw_content();
+        self.redraw_cursor();
     }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {

@@ -1701,6 +1701,24 @@ pub fn schedule_pointer(state: &mut State, pointer: Point<f64, Logical>) {
     }
 }
 
+/// The outputs a new cursor image changes: those whose last frame drew the cursor and those a
+/// zoom follows it on. An output the pointer just reached has a pointer ask pending
+/// (`schedule_pointer`), whose frame draws the image as it is by then. Reads no pointer state:
+/// smithay sets the cursor from inside the pointer's lock.
+pub fn cursor_outputs(state: &State) -> Vec<Output> {
+    let backend = state.backend.as_ref();
+    let shown = |o: &Output| {
+        crtc_of(o)
+            .and_then(|crtc| backend?.surfaces.get(&crtc))
+            .is_some_and(|s| s.pointer_shown)
+    };
+    let outputs = state.scene.outputs().iter();
+    outputs
+        .filter(|o| shown(o) || state.magnifier.zooms(o))
+        .cloned()
+        .collect()
+}
+
 pub fn schedule_all(state: &mut State, ask: Ask) {
     let outputs: Vec<Output> = state.scene.outputs().to_vec();
     schedule_on(state, &outputs, ask);

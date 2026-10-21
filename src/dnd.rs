@@ -1029,7 +1029,7 @@ impl State {
             log::debug!("drag cursor {name}");
             self.cursors.drag = Some(name);
             self.cursor = CursorImageStatus::default_named();
-            self.redraw_content();
+            self.redraw_cursor();
         }
     }
 

@@ -188,7 +188,8 @@ impl Harness {
         let (server, client) = UnixStream::pair().expect("socket pair");
         let mut data = ClientState::of_stream(&server, None);
         data.pid = pid;
-        self.state
+        let server = self
+            .state
             .dh
             .insert_client(server, Arc::new(data))
             .expect("client");
@@ -199,6 +200,7 @@ impl Harness {
         let mut c = TestClient {
             queue,
             side: ClientSide::default(),
+            server,
         };
         self.roundtrip(&mut c);
         c.bind_globals();
@@ -302,6 +304,21 @@ impl Harness {
         }
     }
 
+    /// A `wl_surface` from `c` with no role yet, as the compositor sees it.
+    pub fn bare_surface(
+        &mut self,
+        c: &mut TestClient,
+    ) -> smithay::reexports::wayland_server::protocol::wl_surface::WlSurface {
+        use wc::Proxy;
+        let surface = (c.side.compositor.as_ref())
+            .expect("wl_compositor")
+            .create_surface(&c.qh(), ());
+        self.roundtrip(c);
+        c.server
+            .object_from_protocol_id(&self.state.dh, surface.id().protocol_id())
+            .expect("the surface on the compositor's side")
+    }
+
     /// A flyout as `repriseapp` opens one: an overlay layer surface over the whole output that
     /// holds the keyboard outright, configured and mapped with its first buffer.
     pub fn map_flyout(&mut self, c: &mut TestClient) -> WlSurface {
@@ -347,6 +364,8 @@ pub struct Toplevel {
 pub struct TestClient {
     pub queue: EventQueue<ClientSide>,
     pub side: ClientSide,
+    /// The compositor's side of the connection.
+    pub server: smithay::reexports::wayland_server::Client,
 }
 
 impl TestClient {
