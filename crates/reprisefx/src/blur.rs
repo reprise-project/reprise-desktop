@@ -11,7 +11,7 @@ use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::gles::{
     GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, ffi,
 };
-use smithay::backend::renderer::{Bind, Frame, Offscreen, Renderer, Texture};
+use smithay::backend::renderer::{Bind, Offscreen, Renderer, Texture};
 use smithay::utils::{Buffer, Physical, Rectangle, Size, Transform};
 
 use crate::space::Space;
@@ -402,7 +402,7 @@ impl Levels {
         if let Some(s) = &c.streaks {
             streak_over(&mut f, s, size, &[full])?;
         }
-        let _ = f.finish()?;
+        f.finish_unsynced()?;
         self.region = c.region;
         Ok(())
     }
