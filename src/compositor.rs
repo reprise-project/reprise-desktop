@@ -755,11 +755,13 @@ impl State {
         crate::backend::schedule_all(self, crate::backend::Ask::Content);
     }
 
-    /// Ask every output for a new frame for where the pointer went, when
-    /// nothing else changed: the frame may only move the cursor plane
-    /// (`backend::pointer_frame`).
+    /// Ask for a new frame for where the pointer went, when nothing else
+    /// changed: the frame may only move the cursor plane
+    /// (`backend::pointer_frame`). Outputs the pointer neither is on nor left
+    /// take no frame (`backend::schedule_pointer`).
     pub fn redraw_pointer(&mut self) {
-        crate::backend::schedule_all(self, crate::backend::Ask::Pointer);
+        let pointer = self.pointer_location();
+        crate::backend::schedule_pointer(self, pointer);
     }
 }
 

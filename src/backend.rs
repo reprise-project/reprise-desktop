@@ -56,7 +56,7 @@ use smithay::{
         udev::{EventType, MonitorBuilder},
         wayland_server::backend::GlobalId,
     },
-    utils::{DeviceFd, Monotonic},
+    utils::{DeviceFd, Logical, Monotonic, Point, Rectangle},
     wayland::dmabuf::{DmabufFeedbackBuilder, DmabufGlobal, DmabufState},
     wayland::presentation::Refresh,
 };
@@ -1585,6 +1585,19 @@ fn request(state: &mut State, output: &Output, ask: Ask) {
     queue_render(state, crtc);
 }
 
+/// Whether a pointer ask needs a render on the output at `geo`: `pointer` is on it or its last
+/// frame `shows` it, a zoom follows it, or a scene node `moved` since that frame. Any other output
+/// would render an empty frame for every pointer report.
+fn pointer_ask_renders(
+    geo: Option<Rectangle<i32, Logical>>,
+    pointer: Point<f64, Logical>,
+    shows: bool,
+    zooms: bool,
+    moved: bool,
+) -> bool {
+    shows || zooms || moved || geo.is_some_and(|g| g.to_f64().contains(pointer))
+}
+
 /// Render `crtc` from an idle callback, unless one is armed or a frame is in flight.
 fn queue_render(state: &mut State, crtc: crtc::Handle) {
     let Some(s) = state
@@ -1663,6 +1676,30 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
         Err(e) => {
             log::warn!("step timer: {}", e.error);
             request(state, output, Ask::Content);
+        }
+    }
+}
+
+/// Ask for a pointer frame (`Ask::Pointer`) on the outputs where the pointer, now at `pointer`,
+/// needs one (`pointer_ask_renders`). The caller reads `pointer`: inside a pointer grab's
+/// callbacks, reading it here would lock the pointer twice.
+pub fn schedule_pointer(state: &mut State, pointer: Point<f64, Logical>) {
+    let changes = state.scene.changes();
+    let outputs: Vec<Output> = state.scene.outputs().to_vec();
+    for o in &outputs {
+        let wanted = crtc_of(o)
+            .and_then(|crtc| state.backend.as_ref()?.surfaces.get(&crtc))
+            .is_some_and(|s| {
+                pointer_ask_renders(
+                    reprisescene::output_rect(o),
+                    pointer,
+                    s.pointer_shown,
+                    state.magnifier.zooms(o),
+                    s.scene_seen != changes,
+                )
+            });
+        if wanted {
+            request(state, o, Ask::Pointer);
         }
     }
 }
@@ -2981,8 +3018,10 @@ fn write_gamma(
 mod tests {
     use super::{
         Ask, Asked, CrtcNow, GammaStep, LINK_TRIES, LinkStep, Lut, ModeInfo, OutputMode, Step,
-        asks_scan, gamma_step, link_mode, link_step, lut_from_blob, next_step, waits_for_frame,
+        asks_scan, gamma_step, link_mode, link_step, lut_from_blob, next_step, pointer_ask_renders,
+        waits_for_frame,
     };
+    use smithay::utils::{Point, Rectangle};
 
     fn asked(asks: &[Ask]) -> Asked {
         let mut a = Asked::default();
@@ -3002,6 +3041,27 @@ mod tests {
         assert!(!waits_for_frame(true, true, false, true));
         assert!(!waits_for_frame(true, false, false, false));
         assert!(!waits_for_frame(false, false, false, true));
+    }
+
+    #[test]
+    fn a_pointer_ask_renders_only_the_output_the_pointer_is_on_or_left() {
+        let left = Some(Rectangle::new((0, 0).into(), (1920, 1080).into()));
+        let right = Some(Rectangle::new((1920, 0).into(), (1920, 1080).into()));
+        let on_left = Point::from((960.0, 540.0));
+        let right_edge = Point::from((1920.0, 0.0));
+        assert!(pointer_ask_renders(left, on_left, false, false, false));
+        assert!(
+            !pointer_ask_renders(right, on_left, false, false, false),
+            "the output away from the pointer has nothing to draw"
+        );
+        assert!(
+            pointer_ask_renders(right, on_left, true, false, false),
+            "the output the pointer left draws it away"
+        );
+        assert!(pointer_ask_renders(right, on_left, false, true, false));
+        assert!(pointer_ask_renders(right, on_left, false, false, true));
+        assert!(pointer_ask_renders(right, right_edge, false, false, false));
+        assert!(!pointer_ask_renders(None, on_left, false, false, false));
     }
 
     #[test]
