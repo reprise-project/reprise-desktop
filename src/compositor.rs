@@ -633,7 +633,7 @@ impl State {
                 recent: persisted.launches.clone(),
             },
             apps_watch: Default::default(),
-            icon_watch: None,
+            icon_watch: Default::default(),
             start_text,
             start_panel_text,
             quicklaunch,

@@ -1317,6 +1317,7 @@ pub fn run(app: Box<dyn App>) {
         a11y_bus: false,
         key_echo: None,
         look,
+        icon_watch: None,
     };
     // Started before the roundtrip, so the theme warms while the compositor answers.
     host.watch_icons();
@@ -1675,6 +1676,8 @@ struct Host {
     a11y_bus: bool,
     key_echo: Option<reprisebus::a11y::KeyEcho>,
     look: Look,
+    /// Ends the thread watching the icon theme's directories when replaced.
+    icon_watch: Option<reprisefs::dirchange::Stop>,
 }
 
 impl Host {
@@ -2648,7 +2651,16 @@ impl Host {
 
     /// Warms the icon theme off the loop, then reloads it once a directory it reads changes, so
     /// an icon installed or removed while the program runs shows.
-    fn watch_icons(&self) {
+    fn watch_icons(&mut self) {
+        self.icon_watch = None;
+        let (stop, stopped) = match reprisefs::dirchange::stop() {
+            Ok(pair) => pair,
+            Err(e) => {
+                log::warn!("icon theme watch: {e}");
+                return;
+            }
+        };
+        self.icon_watch = Some(stop);
         let theme = self.ctx.icons.theme();
         let tx = self.portal_done.clone();
         let spawned = std::thread::Builder::new()
@@ -2658,7 +2670,8 @@ impl Host {
                 let dirs = theme.watch_dirs();
                 let watched = Arc::downgrade(&theme);
                 drop(theme);
-                if reprisefs::dirchange::wait(&dirs, ICONS_SETTLE).is_ok() {
+                let woke = reprisefs::dirchange::wait(&dirs, ICONS_SETTLE, &stopped);
+                if let Ok(reprisefs::dirchange::Woke::Changed) = woke {
                     let _ = tx.send(Box::new(move |host: &mut Host| {
                         host.icons_changed(&watched)
                     }));

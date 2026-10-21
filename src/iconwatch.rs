@@ -1,6 +1,7 @@
 //! Keeps `State::icons` current: a thread warms the icon theme off the loop, then waits for a
 //! directory it reads to change, and the loop reloads the theme and redraws what shows icons.
 use crate::compositor::State;
+use reprisefs::dirchange::{Stop, Woke};
 use reprisekit::icontheme::IconTheme;
 use smithay::reexports::calloop::channel::{self, Event, Sender};
 use std::sync::{Arc, Weak};
@@ -9,7 +10,12 @@ use std::time::Duration;
 /// One package install is one reload.
 const SETTLE: Duration = Duration::from_millis(500);
 
-pub type IconWatch = Option<Sender<Weak<IconTheme>>>;
+/// The loop's end of the watch, and the [`Stop`] of the thread watching the current theme.
+#[derive(Default)]
+pub struct IconWatch {
+    tx: Option<Sender<Weak<IconTheme>>>,
+    stop: Option<Stop>,
+}
 
 /// Join the watch's channel to the loop and watch the theme. Runs once, after `State::new`.
 pub fn setup(state: &mut State) {
@@ -20,7 +26,7 @@ pub fn setup(state: &mut State) {
         }
     });
     match joined {
-        Ok(_) => state.icon_watch = Some(tx),
+        Ok(_) => state.icon_watch.tx = Some(tx),
         Err(e) => log::warn!("icon theme watch: {}", e.error),
     }
     watch(state);
@@ -38,10 +44,20 @@ pub fn apply(state: &mut State, theme: IconTheme) {
     watch(state);
 }
 
-fn watch(state: &State) {
-    let Some(tx) = state.icon_watch.clone() else {
+fn watch(state: &mut State) {
+    // The thread watching the theme before this one ends now.
+    state.icon_watch.stop = None;
+    let Some(tx) = state.icon_watch.tx.clone() else {
         return;
     };
+    let (stop, stopped) = match reprisefs::dirchange::stop() {
+        Ok(pair) => pair,
+        Err(e) => {
+            log::warn!("icon theme watch: {e}");
+            return;
+        }
+    };
+    state.icon_watch.stop = Some(stop);
     let theme = state.icons.theme();
     let spawned = std::thread::Builder::new()
         .name("icon-watch".into())
@@ -50,7 +66,7 @@ fn watch(state: &State) {
             let dirs = theme.watch_dirs();
             let watched = Arc::downgrade(&theme);
             drop(theme);
-            if reprisefs::dirchange::wait(&dirs, SETTLE).is_ok() {
+            if let Ok(Woke::Changed) = reprisefs::dirchange::wait(&dirs, SETTLE, &stopped) {
                 let _ = tx.send(watched);
             }
         });
