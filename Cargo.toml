@@ -54,9 +54,11 @@ serde = "1"
 # `DrmCompositor::reposition_cursor` for pointer-only frames, an
 # xdg_toplevel_icon_v1 fix that stops a request after its immutable error, and
 # `DrmCompositor::reset_buffer_ages_keep_held`, which keeps the buffers a VT
-# return would reallocate. Back to upstream once all four are merged there.
-smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "faf0e37066b241e3e54d12a574b591ce6bad56eb", default-features = false }
-smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "faf0e37066b241e3e54d12a574b591ce6bad56eb" }
+# return would reallocate, and `GlesFrame::finish_unsynced` for offscreen
+# frames read only by the same context. Back to upstream once all five are
+# merged there.
+smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "e29c11db4cfd82c11b2414b8b7c252a81555e433", default-features = false }
+smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "e29c11db4cfd82c11b2414b8b7c252a81555e433" }
 tempfile = "3"
 toml = "1"
 toml_edit = "0.25"

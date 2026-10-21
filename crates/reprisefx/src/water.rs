@@ -13,9 +13,7 @@ use smithay::backend::renderer::gles::{
     GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, ffi,
 };
 use smithay::backend::renderer::utils::{CommitCounter, DamageSet, OpaqueRegions};
-use smithay::backend::renderer::{
-    Bind, ExportMem, Frame, ImportMem, Renderer, Texture, TextureFilter,
-};
+use smithay::backend::renderer::{Bind, ExportMem, ImportMem, Renderer, Texture, TextureFilter};
 use smithay::utils::user_data::UserDataMap;
 use smithay::utils::{Buffer, Physical, Rectangle, Scale, Size, Transform};
 
@@ -116,12 +114,12 @@ impl Pool {
         let size = front.size();
         let inside = inside(obstacles, size);
         let seed = self.steps;
-        // One frame for the step and the obstacles: each frame's finish costs a submission.
+        // One frame for the step and the obstacles.
         nearest(r, |r| {
             let mut target = r.bind(back)?;
             let mut frame = r.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
             draw_step(&mut frame, fx, &front, splashes, &inside, step, seed)?;
-            let _ = frame.finish()?;
+            frame.finish_unsynced()?;
             Ok(())
         })?;
         std::mem::swap(&mut self.front, &mut self.back);
@@ -130,7 +128,7 @@ impl Pool {
     }
 
     /// A step for each entry of `splashes` (its splashes laid in that step), then the normals at
-    /// `gain`: all in one frame, as each frame's finish costs a submission. None when empty.
+    /// `gain`: all in one frame. None when empty.
     pub fn advance(
         &mut self,
         r: &mut GlesRenderer,
@@ -171,7 +169,7 @@ impl Pool {
                 _ => &front,
             };
             draw_normals(&mut frame, fx, last, gain)?;
-            let _ = frame.finish()?;
+            frame.finish_unsynced()?;
             Ok(())
         })?;
         if splashes.len() % 2 == 1 {
@@ -196,7 +194,7 @@ impl Pool {
             let mut target = r.bind(normals)?;
             let mut frame = r.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
             draw_normals(&mut frame, fx, &front, gain)?;
-            let _ = frame.finish()?;
+            frame.finish_unsynced()?;
             Ok(())
         })?;
         self.shaded();
@@ -366,7 +364,7 @@ fn fill(
     let mut target = r.bind(to)?;
     let mut frame = r.render(&mut target, (size.w, size.h).into(), Transform::Normal)?;
     rest_in(&mut frame, rest, parts)?;
-    let _ = frame.finish()?;
+    frame.finish_unsynced()?;
     Ok(())
 }
 
