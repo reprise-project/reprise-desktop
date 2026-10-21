@@ -171,6 +171,10 @@ pub struct State {
     /// Clients `drop_client` disconnected, and the ping that has their objects freed.
     dropped_clients: Vec<ClientId>,
     drop_kick: Ping,
+    /// Idles `insert_idle_woken` queued that have not run, and the ping `turn_end` wakes the next
+    /// poll with while any is owed.
+    idles_owed: u32,
+    idle_wake: Ping,
     /// Stops the event loop: SIGTERM, SIGINT.
     /// The session's end (the `exit` bind, Log Off) stops it too.
     pub signal: LoopSignal,
@@ -456,6 +460,8 @@ impl State {
             }
             state.ime_sync_grab();
         })?;
+        let (idle_wake, woken) = make_ping()?;
+        handle.insert_source(woken, |_, _, _| {})?;
 
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&dh, "seat0");
@@ -706,6 +712,8 @@ impl State {
             handle,
             dropped_clients: Vec::new(),
             drop_kick,
+            idles_owed: 0,
+            idle_wake,
             signal,
             clock: Clock::new(),
             env,
@@ -724,6 +732,20 @@ impl State {
         if let Err(e) = self.dh.flush_clients() {
             log::warn!("flush: {e}");
         }
+        if self.idles_owed > 0 {
+            self.idle_wake.ping();
+        }
+    }
+
+    /// `insert_idle` for work that must not wait for an unrelated event. calloop runs an idle
+    /// queued by another idle or by `turn_end` only after the next poll returns, and the loop
+    /// polls with no timeout, so `turn_end` wakes that poll at once while one is owed.
+    pub fn insert_idle_woken(&mut self, f: impl FnOnce(&mut State) + 'static) {
+        self.idles_owed += 1;
+        self.handle.insert_idle(move |state| {
+            state.idles_owed -= 1;
+            f(state);
+        });
     }
 
     pub fn socket(&self) -> OsString {
@@ -1013,6 +1035,31 @@ mod tests {
             &caption_text(&theme),
             &reprisekit::look::caption_text(style)
         ));
+    }
+
+    #[test]
+    fn an_idle_queued_from_an_idle_runs_on_the_next_turn_with_nothing_else_ready() {
+        let mut h = crate::harness::Harness::new();
+        h.run_for(200);
+        let ran = Rc::new(std::cell::Cell::new(false));
+        let inner = Rc::clone(&ran);
+        h.state.handle.insert_idle(move |state| {
+            state.insert_idle_woken(move |_| inner.set(true));
+        });
+        h.dispatch();
+        assert!(
+            !ran.get(),
+            "an idle queued by an idle waits for the next turn"
+        );
+        let started = std::time::Instant::now();
+        h.event_loop
+            .dispatch(Some(std::time::Duration::from_secs(3)), &mut h.state)
+            .expect("dispatch");
+        assert!(ran.get(), "the queued idle ran");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "the poll returned at once, not after its 3 s timeout"
+        );
     }
 
     #[test]
