@@ -18,16 +18,19 @@ use smithay::{
     backend::{
         allocator::{Fourcc, Modifier, dmabuf::Dmabuf},
         renderer::{
-            Bind, Color32F, ExportMem, Offscreen,
+            Bind, Color32F,
             damage::OutputDamageTracker,
             element::{Kind, surface::render_elements_from_surface_tree},
-            gles::{GlesMapping, GlesRenderer, GlesTexture},
+            gles::GlesRenderer,
             sync::SyncPoint,
         },
     },
     output::{Output, WeakOutput},
-    reexports::wayland_server::protocol::{wl_buffer::WlBuffer, wl_pointer::WlPointer, wl_shm},
-    utils::{Physical, Point, Rectangle, Scale, Size, Transform},
+    reexports::{
+        calloop::timer::{TimeoutAction, Timer},
+        wayland_server::protocol::{wl_buffer::WlBuffer, wl_pointer::WlPointer, wl_shm},
+    },
+    utils::{Physical, Point, Scale, Size, Transform},
     wayland::{
         dmabuf::get_dmabuf,
         foreign_toplevel_list::ForeignToplevelHandle,
@@ -47,6 +50,7 @@ use smithay::{
 use crate::{
     captureborder::{Captured, WlrKey},
     compositor::State,
+    readback::{Key, Readbacks, Slot},
     render::{OutputElement, Parts, clear_color, cursor_image, output_elements},
     screencopy::{Screencopy, ScreencopyBuffer, ScreencopyHandler},
     window::WindowId,
@@ -64,6 +68,7 @@ pub struct Captures {
     sessions: Vec<Session>,
     cursor_sessions: Vec<CursorSession>,
     waiting: Vec<Waiting>,
+    readbacks: Readbacks,
 }
 
 enum Waiting {
@@ -292,6 +297,7 @@ fn render_scene_into(
         config,
         glass,
         interaction,
+        captures,
         ..
     } = state;
     let cursor = crate::saverview::cursor(saver, cursor);
@@ -322,7 +328,14 @@ fn render_scene_into(
     );
     let scale = output.current_scale().fractional_scale();
     let at = (size, scale, output.current_transform());
-    draw(renderer, at, &elements, clear, target)
+    draw(
+        renderer,
+        &mut captures.readbacks,
+        at,
+        &elements,
+        clear,
+        target,
+    )
 }
 
 /// A capture rendered into its buffer, waiting for the GPU to finish.
@@ -334,12 +347,13 @@ struct Drawn {
 
 struct ShmCopy {
     buffer: WlBuffer,
-    mapping: GlesMapping,
+    slot: Slot,
     size: Size<i32, Physical>,
 }
 
 fn draw(
     renderer: &mut GlesRenderer,
+    readbacks: &mut Readbacks,
     (size, scale, transform): (Size<i32, Physical>, f64, Transform),
     elements: &[OutputElement],
     clear: Color32F,
@@ -370,25 +384,20 @@ fn draw(
                 }
             })
             .map_err(|e| format!("{e:?}"))??;
-            let mut texture: GlesTexture = renderer
-                .create_buffer(fourcc, size.to_logical(1).to_buffer(1, Transform::Normal))
-                .map_err(|e| e.to_string())?;
-            let mapping = {
-                let mut fb = renderer.bind(&mut texture).map_err(|e| e.to_string())?;
-                tracker
-                    .render_output(renderer, &mut fb, 0, elements, clear)
-                    .map_err(|e| format!("{e:?}"))?;
-                renderer
-                    .copy_framebuffer(&fb, Rectangle::from_size((size.w, size.h).into()), fourcc)
-                    .map_err(|e| e.to_string())?
-            };
+            let mut slot = readbacks.slot(renderer, Key { size, fourcc })?;
+            let mut fb = renderer.bind(slot.texture()).map_err(|e| e.to_string())?;
+            tracker
+                .render_output(renderer, &mut fb, 0, elements, clear)
+                .map_err(|e| format!("{e:?}"))?;
+            drop(fb);
+            slot.read(renderer)?;
             let sync = crate::gpufence::sync_now(renderer)?;
             crate::gpufence::issued(renderer, &sync);
             Ok(Drawn {
                 sync,
                 shm: Some(ShmCopy {
                     buffer: buffer.clone(),
-                    mapping,
+                    slot,
                     size,
                 }),
             })
@@ -398,9 +407,10 @@ fn draw(
 
 impl ShmCopy {
     fn fill(&self, renderer: &mut GlesRenderer) -> Result<(), String> {
-        let bytes = renderer
-            .map_texture(&self.mapping)
-            .map_err(|e| e.to_string())?;
+        self.slot.bytes(renderer, |bytes| self.copy(bytes))?
+    }
+
+    fn copy(&self, bytes: &[u8]) -> Result<(), String> {
         let row = self.size.w as usize * 4;
         let rows = self.size.h as usize;
         if bytes.len() < row * rows {
@@ -451,8 +461,42 @@ fn when_done(
             (true, Some(copy), Some(b)) => copy.fill(&mut b.renderer),
             (true, Some(_), None) => Err("no backend".into()),
         };
+        // A slot whose render was not reached may still be in flight: dropped, never reused.
+        if let (true, Some(copy)) = (reached, drawn.shm) {
+            keep(state, copy.slot);
+        }
         done(state, filled);
     });
+}
+
+/// Returns `slot` to the pool and frees the pool's slots once idle.
+fn keep(state: &mut State, slot: Slot) {
+    let readbacks = &mut state.captures.readbacks;
+    readbacks.give(slot, Instant::now());
+    if !readbacks.arm() {
+        return;
+    }
+    let timer = Timer::from_duration(crate::readback::IDLE);
+    let armed = state.handle.insert_source(timer, |_, _, state| {
+        let next = match state.backend.as_mut() {
+            Some(b) => state
+                .captures
+                .readbacks
+                .expire(&mut b.renderer, Instant::now()),
+            None => None,
+        };
+        match next {
+            Some(at) => TimeoutAction::ToInstant(at),
+            None => {
+                state.captures.readbacks.disarm();
+                TimeoutAction::Drop
+            }
+        }
+    });
+    if let Err(e) = armed {
+        log::warn!("capture buffers: no expiry timer: {e}");
+        state.captures.readbacks.disarm();
+    }
 }
 
 /// The scale `w` is captured at: its output's, where its frame's centre
@@ -495,6 +539,7 @@ fn render_window(state: &mut State, w: WindowId, target: Target<'_>) -> Result<D
     let b = state.backend.as_mut().ok_or("no backend")?;
     crate::gpufence::ready(&b.renderer)?;
     let renderer = &mut b.renderer;
+    let readbacks = &mut state.captures.readbacks;
     let elements: Vec<OutputElement> = if locked {
         Vec::new()
     } else {
@@ -511,7 +556,14 @@ fn render_window(state: &mut State, w: WindowId, target: Target<'_>) -> Result<D
         .collect()
     };
     let at = (size, scale, Transform::Normal);
-    draw(renderer, at, &elements, Color32F::TRANSPARENT, target)
+    draw(
+        renderer,
+        readbacks,
+        at,
+        &elements,
+        Color32F::TRANSPARENT,
+        target,
+    )
 }
 
 fn fill_window(state: &mut State, w: WindowId, session: &SessionRef, frame: Frame) {
@@ -582,6 +634,7 @@ fn fill_cursor(state: &mut State, session: &CursorSessionRef, frame: Frame) {
         cursor,
         saver,
         cursors,
+        captures,
         ..
     } = state;
     let cursor = crate::saverview::cursor(saver, cursor);
@@ -604,6 +657,7 @@ fn fill_cursor(state: &mut State, session: &CursorSessionRef, frame: Frame) {
     let buffer = frame.buffer();
     let drawn = draw(
         renderer,
+        &mut captures.readbacks,
         at,
         &elements,
         Color32F::TRANSPARENT,
