@@ -385,6 +385,33 @@ fn a_surface_node_is_found_by_its_surface() {
 }
 
 #[test]
+fn a_surface_is_shown_by_the_outputs_it_overlaps_and_those_it_was_last_drawn_on() {
+    let mut w = World::new();
+    let surface = w.surface();
+    let other = w.surface();
+    let mut scene = Scene::<DummyRenderer>::new();
+    scene.add_output(&w.left);
+    scene.add_output(&w.right);
+    assert_eq!(scene.outputs_showing(&surface), None, "no node shows it");
+    let s = scene.surface_create(scene.root(), surface.clone());
+    scene.set_position(s, 10, 10);
+    w.rendered(&mut scene);
+    assert_eq!(scene.outputs_showing(&surface), Some(vec![w.left.clone()]));
+    scene.set_position(s, 150, 10);
+    assert_eq!(
+        scene.outputs_showing(&surface),
+        Some(vec![w.right.clone(), w.left.clone()]),
+        "the left output still shows its old place"
+    );
+    w.rendered(&mut scene);
+    assert_eq!(scene.outputs_showing(&surface), Some(vec![w.right.clone()]));
+    scene.set_enabled(s, false);
+    w.rendered(&mut scene);
+    assert_eq!(scene.outputs_showing(&surface), Some(vec![]), "hidden");
+    assert_eq!(scene.outputs_showing(&other), None);
+}
+
+#[test]
 fn removing_an_output_makes_its_surfaces_leave() {
     let mut w = World::new();
     let surface = w.surface();
