@@ -42,6 +42,7 @@ use smithay::{
         gles::{GlesRenderer, GlesTexture},
         utils::{CommitCounter, DamageSet, OpaqueRegions, with_renderer_surface_state},
     },
+    output::Output,
     reexports::calloop::{
         RegistrationToken,
         timer::{TimeoutAction, Timer},
@@ -359,6 +360,7 @@ impl State {
         }
         let now = self.now();
         let output = self.scene.outputs().first().cloned();
+        let shown_on = self.thumb_outputs(jobs.iter().map(|(i, _)| *i));
         let State {
             backend,
             scene,
@@ -417,8 +419,30 @@ impl State {
         }
         if drew {
             // A picture over glass changes nothing the glass blurs.
-            self.redraw_content();
+            match shown_on {
+                Some(outputs) => {
+                    crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Content)
+                }
+                None => self.redraw_content(),
+            }
         }
+    }
+
+    /// The outputs showing the thumbs at `indices`: those their wells overlap. None when one is a
+    /// whole-window picture, which its host draws wherever it shows it.
+    fn thumb_outputs(&self, indices: impl Iterator<Item = usize>) -> Option<Vec<Output>> {
+        let mut out: Vec<Output> = Vec::new();
+        for i in indices {
+            let Show::Well { buffer, .. } = self.live_previews.thumbs[i].show else {
+                return None;
+            };
+            for o in self.scene.outputs_of(buffer) {
+                if !out.contains(&o) {
+                    out.push(o);
+                }
+            }
+        }
+        Some(out)
     }
 }
 
@@ -868,5 +892,34 @@ mod tests {
         assert_eq!(preview_wait(Some(t0), t0 + ms(30), period), ms(70));
         assert_eq!(preview_wait(Some(t0), t0 + ms(100), period), Duration::ZERO);
         assert_eq!(preview_wait(Some(t0), t0 + ms(250), period), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_picture_asks_for_frames_only_on_the_outputs_its_well_is_on() {
+        let mut h = crate::harness::Harness::new();
+        let a = h.output("TEST-1", 1024, 768);
+        let b = h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let s = &mut h.state;
+        let tree = s.scene.tree_create(s.scene.root());
+        let id = s.thumb_create(t.id, tree, Rect::new(0, 0, 100, 80), 1);
+        assert!(id.is_some(), "the window has a picture");
+        let Show::Well { buffer, .. } = s.live_previews.thumbs[0].show else {
+            panic!("a well thumb");
+        };
+        s.scene.buffer_set_dest_size(buffer, Some((100, 80).into()));
+        let b_at = reprisescene::output_rect(&b).expect("TEST-2's place").loc;
+        s.scene.set_position(tree, b_at.x + 10, b_at.y + 10);
+        assert_eq!(s.thumb_outputs(0..1), Some(vec![b.clone()]));
+        s.scene.set_position(tree, b_at.x - 50, b_at.y + 10);
+        assert_eq!(s.thumb_outputs(0..1), Some(vec![a, b]), "across the border");
+        let slot = TextureSlot::default();
+        s.whole_thumb_create(t.id, (100, 80), slot);
+        assert_eq!(
+            s.thumb_outputs(0..2),
+            None,
+            "a whole-window picture shows where its host puts it"
+        );
     }
 }
