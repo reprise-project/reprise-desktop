@@ -1444,8 +1444,9 @@ impl State {
         .icon_px()
             * self.draw_scale_at(Some(&output)).max(1);
         self.refresh_recent();
-        let (items, kind) = self.documents_rows(px, false);
+        let (items, kind, icons) = self.documents_rows(px, false);
         self.push_start_popup((row.right(), row.y), items, kind, place_popup, false);
+        self.set_row_icons(0, icons);
     }
 
     pub(crate) fn quick_file_of(&self, id: &str) -> Option<String> {
