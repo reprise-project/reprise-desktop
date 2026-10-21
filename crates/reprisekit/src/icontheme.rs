@@ -475,7 +475,7 @@ impl IconTheme {
         }
     }
 
-    /// The existing directories whose entries lookups depend on: the roots, each theme's
+    /// The directories whose entries lookups depend on: the roots, made or not, each theme's
     /// directory, each size directory, or the closest one above a size directory not made yet.
     pub fn watch_dirs(&self) -> Vec<PathBuf> {
         let mut seen = HashSet::new();
@@ -488,8 +488,8 @@ impl IconTheme {
                 .take_while(|p| p.starts_with(home) && *p != home.as_path())
                 .find(|p| p.is_dir())
         });
-        let tops = self.roots.iter().map(PathBuf::as_path).chain(homes);
-        for dir in tops.filter(|p| p.is_dir()).chain(sizes) {
+        let roots = self.roots.iter().map(PathBuf::as_path);
+        for dir in roots.chain(homes).chain(sizes) {
             if seen.insert(dir) {
                 out.push(dir.to_path_buf());
             }
@@ -2994,9 +2994,11 @@ mod tests {
     #[test]
     fn watched_directories_are_the_roots_homes_and_each_size_directory_or_its_parent() {
         let (system, user) = cached_fixture();
-        let t = IconTheme::load("test", &[user.clone(), system.clone()]);
+        let unmade = user.join("not-made-yet");
+        let t = IconTheme::load("test", &[unmade.clone(), user.clone(), system.clone()]);
         let w = t.watch_dirs();
         for dir in [
+            unmade,
             user.clone(),
             system.clone(),
             user.join("test"),
