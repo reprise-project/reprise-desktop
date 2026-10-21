@@ -11,6 +11,7 @@ use std::rc::{Rc, Weak};
 use reprisefx::{Glass, GlassFrame, GlassFx, Lens, Picture, Quality, Shape, Source, Update};
 use reprisekit::backdrop::{corner_radius, rounded_rects};
 use reprisekit::classic::frame::FrameGeometry;
+use reprisekit::glass::tint::Surface;
 use reprisekit::glass::{Material, Settings};
 use reprisescene::{
     CustomElement, CustomId, CustomNode, Input, NodeId, SceneElement, TreeId, View,
@@ -1054,6 +1055,7 @@ pub struct Backdrop {
     /// The node, the tree it is in and its pane, which a new pane updates in place.
     node: Option<(CustomId, TreeId, Rc<RefCell<Pane>>)>,
     pane: Option<Pane>,
+    surface: Rc<Cell<Surface>>,
 }
 
 impl Backdrop {
@@ -1064,7 +1066,14 @@ impl Backdrop {
             glass,
             node: None,
             pane: None,
+            surface: Rc::new(Cell::new(Surface::Active)),
         }
+    }
+
+    /// Whose chrome lies over the glass, for the lift of its backdrop: a focused or unfocused
+    /// frame, or the taskbar. Focused until set; takes effect with the next frame drawn.
+    pub fn set_surface(&self, surface: Surface) {
+        self.surface.set(surface);
     }
 
     pub fn set(
@@ -1104,6 +1113,7 @@ impl Backdrop {
                     glass: self.glass.clone(),
                     beneath: Glass::new(),
                     pane: shared.clone(),
+                    surface: self.surface.clone(),
                 }),
             );
             scene.set_input(node, Input::Passthrough);
@@ -1125,6 +1135,7 @@ struct GlassNode {
     /// downscaled key stay apart from the screen's.
     beneath: Glass,
     pane: Rc<RefCell<Pane>>,
+    surface: Rc<Cell<Surface>>,
 }
 
 impl CustomNode<GlesRenderer> for GlassNode {
@@ -1192,7 +1203,7 @@ impl CustomNode<GlesRenderer> for GlassNode {
                 shapes: &shapes,
                 holes: &holes,
                 settings: &pass.settings,
-                surface: None,
+                surface: Some(self.surface.get()),
                 output: pass.output,
                 scale: scale.x,
                 alpha,
@@ -1684,12 +1695,13 @@ mod tests {
             )[..] else {
                 unreachable!()
             };
+            // The lift under a frame's glass takes up to 20 levels of red off white.
             assert!(
-                lower_alone > 230,
-                "{material:?}: the lower glass shows the white desktop"
+                lower_alone > 200,
+                "{material:?}: the lower glass shows the white desktop: {lower_alone}"
             );
             assert!(
-                both > 230,
+                both > 200,
                 "{material:?}: through the upper glass the lower glass shows, not the black under it: {both}"
             );
         }

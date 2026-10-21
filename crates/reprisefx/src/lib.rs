@@ -18,8 +18,9 @@
 //!    the tracker's per-element cache and are remade only when their size changes.
 //! 2. draw: each [`Shape`] draws the blurred picture through the glass
 //!    program: a rounded rectangle with per-corner radii (anti-aliased
-//!    distance field), holes left out of the drawn damage, and the tint of
-//!    [`tint`] per pixel.
+//!    distance field), holes left out of the drawn damage, and the backdrop
+//!    lifted per pixel for the chrome's glass over it
+//!    (`reprisekit::glass::tint::lift`).
 //!
 //! The element's geometry is its shapes' bounds grown by [`blur::reach`], so
 //! a change that close recaptures it. A frame with no damage under the glass
@@ -38,8 +39,8 @@
 //! - Per output with its own backdrop: a [`Picture`]; after each backdrop
 //!   render, [`Picture::update`] with where it changed.
 //! - Per frame and output: [`Glass::element`] with a [`GlassFrame`] (shapes
-//!   and holes in output-local physical pixels, `[glass]` settings, tint
-//!   surface, output size and scale, opacity, quality, hold, the picture's
+//!   and holes in output-local physical pixels, `[glass]` settings, the
+//!   surface whose chrome lies over it, output size and scale, opacity, quality, hold, the picture's
 //!   source if any). Put the element directly below the chrome it backs.
 //! - Glass beneath other glass, drawn into that glass's own backdrop: a
 //!   second [`Glass`] with [`GlassFrame::downscale`] the
@@ -60,7 +61,7 @@
 //!
 //! # Materials
 //!
-//! Frosted and Smoked differ only in the tint's colour, shares and the
+//! Frosted and Smoked differ only in the lift (none under Smoked) and the
 //! streaks' gain. Molten blurs lighter ([`blur::MOLTEN_SIGMA`]) and its shapes
 //! carry a [`Lens`]: the shader bends the backdrop lookup near the outer edge
 //! along the distance field's normal and lights a rim ([`lens`]). The
@@ -100,7 +101,6 @@ mod picture;
 mod shaders;
 mod space;
 pub mod strokes;
-pub mod tint;
 pub mod water;
 
 pub use blur::Quality;
@@ -111,5 +111,4 @@ pub use fluid::{FluidElement, FluidFx, FluidPool};
 pub use lens::Lens;
 pub use picture::{Drawing, Picture, Source, Update};
 pub use strokes::{Stroke, StrokeElement, StrokeFx, Strokes};
-pub use tint::Tint;
 pub use water::{Pool, WaterElement, WaterFx};

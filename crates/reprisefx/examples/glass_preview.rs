@@ -1,6 +1,7 @@
 //! Renders glass over a test picture offscreen and writes it as
 //! `target/glass_preview.png`, for looking at: a focused Frosted window, an
-//! unfocused one, a Smoked one and a taskbar, with the streaks on.
+//! unfocused one, a Smoked one and a taskbar, with the streaks on: the
+//! backdrop each lifts for its chrome, without the chrome.
 //!
 //! `cargo run -p reprisefx --example glass_preview [blur]`; set
 //! `LIBGL_ALWAYS_SOFTWARE=1` to render on the CPU.

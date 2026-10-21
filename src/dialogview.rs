@@ -1066,6 +1066,10 @@ impl State {
         }
         upload_scaled(scene, v.buffer, &canvas, scale);
         let pane = glass_pane(&base, wanted, &v.layout);
+        v.backdrop.set_surface(match active {
+            true => reprisekit::glass::tint::Surface::Active,
+            false => reprisekit::glass::tint::Surface::Inactive,
+        });
         v.backdrop.set(scene, glass, v.glass_tree, pane);
         let origin = (v.x, v.y);
         let id = v.id;

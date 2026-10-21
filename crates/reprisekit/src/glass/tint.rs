@@ -15,12 +15,14 @@
 //! P_c = colour·C_c + afterglow·(C_c - mean(C))/2      (0 ..= 255a)
 //! ```
 //!
-//! each scaled and offset by the surface's [`Fit`]. The art is drawn in Sky at the default intensity;
+//! each scaled and offset by the surface's [`Fit`]. The compositor's glass lifts the blurred backdrop
+//! under the art by the rest of the afterglow ([`lift`]), so the art lands on the formula. The art is drawn in Sky at the default intensity;
 //! [`Recolour`] moves every pixel by how far the formula moves the surface's plain glass, so Sky at the
 //! default intensity is the art itself and sheens, lines and glyphs keep what they add over the glass.
 
 use super::art;
 use super::{Material, Settings, Swatch, bar};
+use crate::backdrop::Lift;
 use crate::theme::Color;
 
 /// How a glass colour splits between the colour itself, the colour lit by the backdrop's brightness
@@ -264,6 +266,24 @@ pub fn plain(s: &Settings, surface: Surface) -> (f64, [f64; 3]) {
     let (da, dp) = shift(s, surface);
     let a = (a0 + da).clamp(0.0, 255.0);
     (a, std::array::from_fn(|i| (p0[i] + dp[i]).clamp(0.0, a)))
+}
+
+/// How `s`'s glass lifts the blurred backdrop under `surface`'s art. Over a backdrop B the art's plain
+/// glass, `P + (1 - a)·B`, misses `afterglow·(C·luma(B) - mean(C)·B - (C - mean(C))/2)` of the
+/// formula: nothing over mid grey, more colour over light backdrops and less over dark, a grey
+/// glass's afterglow greying a coloured backdrop. The lift adds that, at the surface's colour scale, through what the plain glass lets pass.
+pub fn lift(s: &Settings, surface: Surface) -> Lift {
+    let (c, [_, afterglow, _]) = material_glass(s);
+    let pass = 1.0 - plain(s, surface).0 / 255.0;
+    if !s.transparency || afterglow == 0.0 || pass <= 0.0 {
+        return Lift::NONE;
+    }
+    let c = c.map(|v| v / 255.0);
+    Lift {
+        colour: c.map(|v| v as f32),
+        mean: ((c[0] + c[1] + c[2]) / 3.0) as f32,
+        gain: (surface.fit(s.material).colour.0 * afterglow / pass) as f32,
+    }
 }
 
 /// Recolours art drawn in Sky at the default intensity to a glass colour and intensity on one surface,
@@ -573,6 +593,101 @@ mod tests {
             assert!(bm > bf, "more blur than Frosted at {i}");
             assert!((cm + am + bm - 1.0).abs() < 1e-9, "the shares sum to 1");
         }
+    }
+
+    /// `s`'s plain glass on `surface` over the backdrop `b` (0..1), in levels: as the art blends over the
+    /// lifted backdrop, and as it blends over `b` itself.
+    fn lifted_and_linear(s: &Settings, surface: Surface, b: [f32; 3]) -> ([f64; 3], [f64; 3]) {
+        let (a, p) = plain(s, surface);
+        let over = |b: [f32; 3]| std::array::from_fn(|i| p[i] + (255.0 - a) * f64::from(b[i]));
+        (over(lift(s, surface).over(b)), over(b))
+    }
+
+    #[test]
+    fn the_lifted_plain_glass_gains_the_afterglow_the_one_alpha_fit_misses() {
+        let backdrops = [
+            [0.5, 0.5, 0.5],
+            [0.2, 0.4, 0.7],
+            [0.7, 0.5, 0.3],
+            [0.25; 3],
+            [0.8; 3],
+        ];
+        for w in [SWATCHES[0], SWATCHES[2], SWATCHES[7], SWATCHES[11]] {
+            for surface in SURFACES {
+                let s = settings([w.color.r, w.color.g, w.color.b], w.intensity, true);
+                let (c, [cb, ab, bb]) = material_glass(&s);
+                let m = (c[0] + c[1] + c[2]) / 3.0;
+                let k = surface.fit(s.material).colour.0;
+                for b in backdrops {
+                    let b8 = b.map(|v| f64::from(v) * 255.0);
+                    let l = (0.299 * b8[0] + 0.587 * b8[1] + 0.114 * b8[2]) / 255.0;
+                    let (got, linear) = lifted_and_linear(&s, surface, b);
+                    for i in 0..3 {
+                        let formula = bb * b8[i] + cb * c[i] + ab * c[i] * l;
+                        let fit =
+                            (cb * c[i] + ab * (c[i] - m) / 2.0) + (bb + ab * m / 255.0) * b8[i];
+                        let want = linear[i] + k * (formula - fit);
+                        assert!(
+                            (got[i] - want).abs() < 0.01,
+                            "{} {surface:?} over {b:?}, channel {i}: {want}, got {}",
+                            w.name,
+                            got[i]
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn light_backdrops_show_more_of_the_colour_and_dark_ones_less() {
+        let sky = Settings::default();
+        let shift = |g: f32| {
+            let (got, linear) = lifted_and_linear(&sky, Surface::Active, [g; 3]);
+            [got[0] - linear[0], got[2] - linear[2]]
+        };
+        assert_eq!(shift(0.5), [0.0, 0.0], "mid grey: the fit itself");
+        let [r, b] = shift(0.85);
+        assert!(r < -8.0 && b > 8.0, "over light grey, bluer: {r} {b}");
+        let [r, b] = shift(0.15);
+        assert!(r > 8.0 && b < -8.0, "over dark grey, less blue: {r} {b}");
+    }
+
+    #[test]
+    fn grey_glass_greys_only_a_coloured_backdrop_and_smoked_or_opaque_glass_lifts_nothing() {
+        let slate = lift(&settings([83, 83, 83], 53, true), Surface::Active);
+        for g in [0.1, 0.5, 0.9] {
+            let got = slate.over([g; 3]);
+            assert!(
+                got.iter().all(|v| (v - g).abs() < 1e-6),
+                "Slate over grey {g}: {got:?}"
+            );
+        }
+        let b = [0.1, 0.6, 0.9];
+        let got = slate.over(b);
+        assert!(
+            got[0] > b[0] && got[2] < b[2],
+            "Slate over {b:?} greys it: {got:?}"
+        );
+        assert_eq!(
+            lift(&sky_in(Material::Smoked, 75), Surface::Active),
+            Lift::NONE
+        );
+        assert_eq!(
+            lift(&settings([112, 175, 252], 42, false), Surface::Active),
+            Lift::NONE
+        );
+        assert_eq!(
+            lift(&sky_in(Material::Frosted, 100), Surface::Active),
+            Lift::NONE,
+            "no afterglow at 100"
+        );
+        let molten = lift(&sky_in(Material::Molten, 42), Surface::Active).gain;
+        let frosted = lift(&sky_in(Material::Frosted, 42), Surface::Active).gain;
+        assert!(
+            molten > 0.0 && molten < frosted,
+            "Molten lifts less: {molten} {frosted}"
+        );
     }
 
     #[test]

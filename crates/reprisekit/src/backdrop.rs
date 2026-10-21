@@ -1,7 +1,7 @@
 //! Geometry for a translucent look's blurred backdrop: rects covering a
 //! rectangle with cut corners, and the draws of one blur step. Pure.
 
-use crate::raster::Rect;
+use crate::raster::{Canvas, Rect};
 
 /// One blur step's four draws: offset in source texels and blend alpha
 /// (1, 1/2, 1/3, 1/4 leave the mean).
@@ -95,6 +95,64 @@ pub const fn round_corner<const N: usize>() -> [i32; N] {
 
 pub fn grow(r: Rect, by: i32) -> Rect {
     Rect::new(r.x - by, r.y - by, r.width + 2 * by, r.height + 2 * by)
+}
+
+/// What a translucent look's glass adds to the blurred backdrop `b` under its chrome, channels 0..1:
+///
+/// ```text
+/// b' = b + gain·(colour·luma(b) - mean·b - (colour - mean)/2)
+/// ```
+///
+/// clamped to 0..1. The chrome's one-alpha glass over `b'` shows its colour in step with the
+/// backdrop's brightness (`glass::tint::lift`). The compositor's glass shader runs the same sum.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Lift {
+    pub colour: [f32; 3],
+    pub mean: f32,
+    pub gain: f32,
+}
+
+impl Lift {
+    pub const NONE: Lift = Lift {
+        colour: [0.0; 3],
+        mean: 0.0,
+        gain: 0.0,
+    };
+
+    pub fn over(&self, b: [f32; 3]) -> [f32; 3] {
+        let l = 0.299 * b[0] + 0.587 * b[1] + 0.114 * b[2];
+        std::array::from_fn(|i| {
+            let c = self.colour[i];
+            let d = c * l - self.mean * b[i] - (c - self.mean) * 0.5;
+            (b[i] + self.gain * d).clamp(0.0, 1.0)
+        })
+    }
+
+    /// An opaque `0xAARRGGBB` backdrop pixel, lifted and rounded.
+    pub fn px(&self, px: u32) -> u32 {
+        let ch = |shift: u32| ((px >> shift) & 0xFF) as f32 / 255.0;
+        let [r, g, b] = self
+            .over([ch(16), ch(8), ch(0)])
+            .map(|v| (v * 255.0).round() as u32);
+        px & 0xFF00_0000 | r << 16 | g << 8 | b
+    }
+
+    /// Lifts the pixels of `c` that `art`, about to be laid at (`x`, `y`), covers with any alpha:
+    /// the backdrop a CPU-drawn preview lays its glass art over. Both canvases at scale 1.
+    pub fn under(&self, c: &mut Canvas, x: i32, y: i32, art: &Canvas) {
+        if self.gain == 0.0 {
+            return;
+        }
+        let a = art.bounds();
+        for ay in 0..a.height {
+            for ax in 0..a.width {
+                if art.get(ax, ay) >> 24 != 0 && c.bounds().contains(x + ax, y + ay) {
+                    let px = c.get(x + ax, y + ay);
+                    c.put_raw(x + ax, y + ay, self.px(px));
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
