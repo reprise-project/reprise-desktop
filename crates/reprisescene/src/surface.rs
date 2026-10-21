@@ -64,6 +64,29 @@ impl<R: Renderer, D> Scene<R, D> {
             .collect()
     }
 
+    /// The outputs a commit of `surface` can change: those its nodes overlap now and those that
+    /// showed it in their last frame. `None` when no node shows it.
+    pub fn outputs_showing(&self, surface: &WlSurface) -> Option<Vec<Output>> {
+        let mut found = false;
+        let mut out: Vec<Output> = Vec::new();
+        for (id, n) in self.live() {
+            let Content::Surface(s) = &n.content else {
+                continue;
+            };
+            if s.surface != *surface {
+                continue;
+            }
+            found = true;
+            let entered = s.entered.iter().filter_map(|w| w.upgrade());
+            for o in self.outputs_of(id).into_iter().chain(entered) {
+                if !out.contains(&o) {
+                    out.push(o);
+                }
+            }
+        }
+        found.then_some(out)
+    }
+
     fn surfaces_on(&self, output: &Output) -> Vec<(WlSurface, Option<Output>)> {
         let Some(area) = output_rect(output) else {
             return Vec::new();

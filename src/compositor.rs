@@ -755,6 +755,20 @@ impl State {
         crate::backend::schedule_all(self, crate::backend::Ask::Content);
     }
 
+    /// Ask the outputs showing `surface` for a new frame for what it drew, as
+    /// `redraw_content` does for every output; every output when no node shows it.
+    pub fn redraw_surface(
+        &mut self,
+        surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    ) {
+        match self.scene.outputs_showing(surface) {
+            Some(outputs) => {
+                crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Content)
+            }
+            None => self.redraw_content(),
+        }
+    }
+
     /// Ask for a new frame for where the pointer went, when nothing else
     /// changed: the frame may only move the cursor plane
     /// (`backend::pointer_frame`). Outputs the pointer neither is on nor left

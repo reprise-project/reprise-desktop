@@ -1706,7 +1706,11 @@ pub fn schedule_pointer(state: &mut State, pointer: Point<f64, Logical>) {
 
 pub fn schedule_all(state: &mut State, ask: Ask) {
     let outputs: Vec<Output> = state.scene.outputs().to_vec();
-    for o in &outputs {
+    schedule_on(state, &outputs, ask);
+}
+
+pub fn schedule_on(state: &mut State, outputs: &[Output], ask: Ask) {
+    for o in outputs {
         request(state, o, ask);
     }
 }
