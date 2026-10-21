@@ -79,6 +79,7 @@ mod popupgrab;
 mod privacy;
 mod putview;
 mod quickwatch;
+mod readback;
 mod reblur;
 mod recentdocs;
 mod recentwatch;
