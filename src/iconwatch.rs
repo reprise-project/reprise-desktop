@@ -70,6 +70,7 @@ fn changed(state: &mut State, watched: &Weak<IconTheme>) {
     crate::tray::invalidate_icons(state);
     crate::configwatch::redraw_for_scale(state);
     state.redraw_taskbars();
+    state.relook_menu_icons();
     for depth in 0..state.menus.len() {
         state.redraw_menu(depth);
     }
