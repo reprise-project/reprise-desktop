@@ -763,7 +763,7 @@ impl State {
         // A capture keeps the pointer hidden.
         if self.cursor != named && !self.inputproto.captured() {
             self.cursor = named;
-            self.redraw_all();
+            self.redraw_cursor();
         }
     }
 
@@ -1765,6 +1765,7 @@ impl State {
                     w.pressed = None;
                 }
                 self.redraw_frame(window);
+                self.redraw_window(window);
                 let pos = self.pointer_location();
                 let hit = self
                     .win(window)
@@ -2072,6 +2073,23 @@ pub(crate) fn caption_cancelled(clicks: &mut DoubleClick<(WindowId, FrameHit)>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_named_cursor_change_asks_only_the_outputs_showing_the_cursor() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let b = h.output("TEST-2", 1024, 768);
+        let b_at = reprisescene::output_rect(&b).expect("TEST-2's place").loc;
+        h.pointer_to(f64::from(b_at.x + 100), f64::from(b_at.y + 100));
+        h.state.zoom(crate::magnifier::ZoomStep::In);
+        crate::backend::take_asks();
+        h.state.set_cursor("move");
+        assert_eq!(
+            crate::backend::take_asks(),
+            vec![("TEST-2".to_string(), crate::backend::Ask::Content)],
+            "only the zoomed TEST-2 follows the cursor; no output has drawn it yet"
+        );
+    }
 
     #[test]
     fn caption_presses_pair_on_one_part_within_the_configured_time_and_slop() {

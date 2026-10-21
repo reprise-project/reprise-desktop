@@ -26,7 +26,6 @@ impl State {
         }
         self.redraw_caption(w);
         self.watch_window(w);
-        self.redraw_all();
     }
 
     fn watch_window(&mut self, w: WindowId) {
@@ -83,7 +82,6 @@ impl State {
             .into_iter()
             .filter(|&t| self.start_fade_tick(t))
             .collect();
-        self.redraw_all();
         if self.fading_frames.is_empty() && self.fading_bars.is_empty() {
             log::debug!("hover fades settled; the timer stops");
             self.hover_timer = None;
@@ -91,5 +89,25 @@ impl State {
         } else {
             TimeoutAction::ToDuration(Duration::from_millis(TICK_MS))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_caption_fade_asks_only_the_outputs_its_window_is_on() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        crate::backend::take_asks();
+        h.state.glow_to_hot(t.id);
+        let asked = crate::backend::take_asks();
+        assert!(!asked.is_empty(), "the caption asks for a frame");
+        assert!(
+            asked.iter().all(|(o, _)| o == "TEST-1"),
+            "only TEST-1, which shows the window: {asked:?}"
+        );
     }
 }

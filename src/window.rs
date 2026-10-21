@@ -1051,11 +1051,22 @@ impl State {
         }
         if self.win(w).is_some_and(Window::has_frame) {
             self.draw_strips(w, true);
+            self.redraw_window(w);
         }
         let shown = self.tabs.groups.shown_of(w);
         if shown != w && self.win(shown).is_some_and(Window::has_frame) {
             self.draw_strips(shown, true);
+            self.redraw_window(shown);
         }
+    }
+
+    /// Ask for frames on the outputs `w`'s tree is on, for an edit of its frame.
+    pub fn redraw_window(&mut self, w: WindowId) {
+        let Some(tree) = self.win(w).map(|x| x.tree) else {
+            return;
+        };
+        let outputs = self.scene.outputs_of(tree);
+        crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Scene);
     }
 
     fn draw_strips(&mut self, w: WindowId, only_top: bool) {
