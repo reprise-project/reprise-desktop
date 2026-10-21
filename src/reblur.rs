@@ -6,6 +6,9 @@ use std::time::Duration;
 
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
+use smithay::output::Output;
+
+use crate::backend::Ask;
 use crate::compositor::State;
 
 /// The least time between two blurs at `rate` on an output refreshing every `interval`. Frames
@@ -36,21 +39,26 @@ pub fn catch_up(held: Option<Duration>, water_moves: bool) -> Option<Duration> {
 }
 
 impl State {
-    pub fn arm_reblur(&mut self, wait: Duration) {
-        if self.reblur_timer.is_some() {
+    /// Refresh the glass `output`'s held frame left stale after `wait` and ask the outputs that
+    /// held since the timer was armed for a frame; an armed timer keeps its wait.
+    pub fn arm_reblur(&mut self, output: &Output, wait: Duration) {
+        if let Some((_, held)) = &mut self.reblur {
+            if !held.contains(output) {
+                held.push(output.clone());
+            }
             return;
         }
         let token = self
             .handle
             .insert_source(Timer::from_duration(wait), |_, _, state| {
-                state.reblur_timer = None;
+                let held = state.reblur.take().map(|(_, held)| held);
                 if state.glass.refresh_stale() {
-                    state.redraw_all();
+                    crate::backend::schedule_on(state, &held.unwrap_or_default(), Ask::Scene);
                 }
                 TimeoutAction::Drop
             });
         match token {
-            Ok(t) => self.reblur_timer = Some(t),
+            Ok(t) => self.reblur = Some((t, vec![output.clone()])),
             Err(e) => log::warn!("glass: reblur timer: {}", e.error),
         }
     }
@@ -124,5 +132,20 @@ mod tests {
     #[test]
     fn a_frame_asked_for_by_anything_else_blurs_at_once() {
         assert_eq!(when(false, ms(1), CAP), Reblur::Now);
+    }
+
+    #[test]
+    fn the_reblur_timer_keeps_the_outputs_that_held_until_it_fires() {
+        let mut h = crate::harness::Harness::new();
+        let a = h.output("TEST-1", 1024, 768);
+        let b = h.output("TEST-2", 1024, 768);
+        let held = |h: &crate::harness::Harness| h.state.reblur.as_ref().map(|(_, o)| o.clone());
+        h.state.arm_reblur(&a, Duration::from_millis(5));
+        assert_eq!(held(&h), Some(vec![a.clone()]), "only the output that held");
+        h.state.arm_reblur(&a, Duration::from_millis(5));
+        h.state.arm_reblur(&b, Duration::from_millis(50));
+        assert_eq!(held(&h), Some(vec![a, b]));
+        h.run_for(30);
+        assert_eq!(held(&h), None, "the first wait fired");
     }
 }
