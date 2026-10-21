@@ -452,6 +452,16 @@ pub fn list_icon(e: &Entry, slot: i32) -> Option<&std::rc::Rc<Canvas>> {
     }
 }
 
+/// The [`ListingIcons::sizes`](crate::icontheme::ListingIcons::sizes) `mode` draws an entry's
+/// icon at, with List and Details' icon column `list` px wide ([`list_icon`]).
+pub fn drawn_sizes(mode: Mode, list: i32) -> [bool; 3] {
+    match mode {
+        Mode::List | Mode::Details => [true, list >= 32, false],
+        Mode::Icons | Mode::Thumbnails => [false, true, false],
+        Mode::Tiles => [false, false, true],
+    }
+}
+
 /// `sv.entries` as Details rows through `sv.fields`: a folder's size cell is
 /// empty, a file's is `size_text`.
 pub struct DetailsRows<'a>(pub &'a [Entry], pub &'a [Field]);
