@@ -306,8 +306,12 @@ pub struct State {
     /// Desktop water's fields and pictures (`waterview`).
     pub water: Rc<crate::waterview::WaterCtx>,
     /// Refreshes the glass a held frame left stale once `[glass]
-    /// blur_rate`'s cap is up (`reblur`), while armed.
-    pub reblur_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// blur_rate`'s cap is up (`reblur`), while armed, and the outputs
+    /// that held since.
+    pub reblur: Option<(
+        smithay::reexports::calloop::RegistrationToken,
+        Vec<smithay::output::Output>,
+    )>,
     /// The snap outline and grid, and each app's remembered frame
     /// (`placement`).
     pub wm: crate::placement::Wm,
@@ -643,7 +647,7 @@ impl State {
             desktop: None,
             glass: GlassCtx::new(),
             water: crate::waterview::WaterCtx::new(),
-            reblur_timer: None,
+            reblur: None,
             wm: crate::placement::Wm::from_persisted(&persisted, session),
             tabs: Default::default(),
             dialogs: Default::default(),

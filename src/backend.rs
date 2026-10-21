@@ -2201,7 +2201,7 @@ fn finish(
         s.pace.not_before = crate::framepace::next_render(drawn, s.needs_redraw, started, interval);
     }
     if let Some(wait) = held {
-        state.arm_reblur(wait);
+        state.arm_reblur(output, wait);
     }
     crate::sessionlock::rendered(state, output, drawn, empty);
     crate::sessionfade::rendered(state, output, empty);
