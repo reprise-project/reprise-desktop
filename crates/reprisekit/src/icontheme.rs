@@ -995,9 +995,11 @@ pub struct IconCache {
     scale: i32,
     /// `has` answers by name: folder scans ask per candidate name per file.
     known: RefCell<HashMap<String, bool>>,
-    /// The image `has` decoded for a name at [`PROBE_PX`] device px, until the first fetch at
-    /// that size takes it.
-    probed: RefCell<HashMap<String, Canvas>>,
+    /// Device px `has` decodes a name at ([`IconCache::set_probe_px`]).
+    probe_px: i32,
+    /// The image `has` decoded for a name and its device px, until the first fetch at that size
+    /// takes it.
+    probed: RefCell<HashMap<String, (i32, Canvas)>>,
     /// Entries of `cache` by [`Kind`], kept for the caps.
     counts: [usize; 3],
     file_cap: usize,
@@ -1039,6 +1041,7 @@ impl IconCache {
             cache: HashMap::new(),
             scale: 1,
             known: RefCell::new(HashMap::new()),
+            probe_px: PROBE_PX,
             probed: RefCell::new(HashMap::new()),
             counts: [0; 3],
             file_cap: FILE_CAP,
@@ -1083,6 +1086,16 @@ impl IconCache {
     /// Device pixels per logical pixel the program's windows draw at.
     pub fn scale(&self) -> i32 {
         self.scale
+    }
+
+    /// `has` decodes at `px` device px from now on: the size the host fetches the names it asks
+    /// about at, so the first fetch at that size reads no file.
+    pub fn set_probe_px(&mut self, px: i32) {
+        self.probe_px = px.max(1);
+    }
+
+    pub fn probe_px(&self) -> i32 {
+        self.probe_px
     }
 
     fn insert(&mut self, key: (String, i32, i32), canvas: Option<Arc<Canvas>>) {
@@ -1217,10 +1230,8 @@ impl IconCache {
         if let Some(&known) = self.known.borrow().get(name) {
             return known;
         }
-        let px = PROBE_PX as u32;
-        let art = self
-            .theme
-            .find_with_extra(name, PROBE_PX, 1, &[], |p| decode(&p, px));
+        let px = self.probe_px;
+        let art = (self.theme).find_with_extra(name, px, 1, &[], |p| decode(&p, px as u32));
         let found = art.is_some();
         let mut known = self.known.borrow_mut();
         let mut probed = self.probed.borrow_mut();
@@ -1231,7 +1242,7 @@ impl IconCache {
         }
         known.insert(name.to_string(), found);
         if let Some(art) = art {
-            probed.insert(name.to_string(), art);
+            probed.insert(name.to_string(), (px, art));
         }
         found
     }
@@ -1250,13 +1261,17 @@ impl IconCache {
         if let Some(hit) = self.cache.get(&key) {
             return hit.clone();
         }
-        // `has` looked this name up the way `load_with_extra` would at this size.
-        let probed = (px * self.scale == PROBE_PX
-            && extra.is_empty()
-            && !name.starts_with('/')
-            && bare_name(name) == name)
-            .then(|| self.probed.get_mut().remove(name))
-            .flatten();
+        // `has` looked this name up the way `load_with_extra` would at its size.
+        let probe = extra.is_empty() && !name.starts_with('/') && bare_name(name) == name;
+        let probed = self.probed.get_mut();
+        let hit = probe
+            && probed
+                .get(name)
+                .is_some_and(|(at, _)| *at == px * self.scale);
+        let probed = hit
+            .then(|| probed.remove(name))
+            .flatten()
+            .map(|(_, art)| art);
         let canvas = match probed {
             Some(art) => Some(art.at_scale(self.scale)),
             None => load_with_extra(&self.theme, name, px, self.scale, extra),
@@ -1299,8 +1314,8 @@ fn bare_name(name: &str) -> &str {
         .unwrap_or(name)
 }
 
-/// The device px [`IconCache::has`] decodes a name at: a list's small icon size, which the
-/// theme usually has as a bitmap.
+/// The device px [`IconCache::has`] decodes a name at until a host sets its own: a list's small
+/// icon size, which the theme usually has as a bitmap.
 const PROBE_PX: i32 = 16;
 
 fn load_with_extra(
@@ -1346,6 +1361,8 @@ pub struct ListingIcons {
     device: i32,
     /// List and Details' icon size; 0 is [`LISTING_PX`]'s.
     list: i32,
+    /// The sizes theme icons are fetched at; None is all three. Icon files always hold all three.
+    drawn: Option<[bool; 3]>,
 }
 
 impl ListingIcons {
@@ -1361,6 +1378,55 @@ impl ListingIcons {
     /// List and Details' icons fetched at `list` px ([`listing_px`]).
     pub fn with_list(self, list: i32) -> ListingIcons {
         ListingIcons { list, ..self }
+    }
+
+    /// Theme icons fetched only at the sizes a view draws, by index into
+    /// [`ListingIcons::sizes`]; [`ListingIcons::draw`] adds sizes.
+    pub fn drawing(self, drawn: [bool; 3]) -> ListingIcons {
+        let drawn = Some(drawn);
+        ListingIcons { drawn, ..self }
+    }
+
+    /// `name` from `cache` at the sizes it is held at: a theme icon at the drawn ones, an icon
+    /// file at all three.
+    fn fetch(&self, cache: &mut IconCache, name: &str) -> ListingSizes {
+        let (k, sizes, file) = (self.device.max(1), self.sizes(), name.starts_with('/'));
+        std::array::from_fn(|i| {
+            (file || self.drawn.is_none_or(|d| d[i]))
+                .then(|| cache.get(name, sizes[i] * k).map(std::rc::Rc::new))
+                .flatten()
+        })
+    }
+
+    /// A view now draws the `drawn` sizes too: every theme icon is fetched at those it lacked, and
+    /// each name's old and new canvases are returned for the entries to swap at once.
+    pub fn draw(
+        &mut self,
+        cache: &mut IconCache,
+        drawn: [bool; 3],
+    ) -> Vec<(ListingSizes, ListingSizes)> {
+        let Some(held) = self.drawn else {
+            return Vec::new();
+        };
+        let wider = std::array::from_fn(|i| held[i] || drawn[i]);
+        if wider == held {
+            return Vec::new();
+        }
+        self.drawn = Some(wider);
+        let k = self.device.max(1);
+        let sizes = self.sizes();
+        let mut swaps = Vec::new();
+        for (name, sizes_held) in &mut self.by_name {
+            if name.starts_with('/') {
+                continue;
+            }
+            let mut new = sizes_held.clone();
+            for i in (0..3).filter(|&i| wider[i] && !held[i]) {
+                new[i] = cache.get(name, sizes[i] * k).map(std::rc::Rc::new);
+            }
+            swaps.push((std::mem::replace(sizes_held, new.clone()), new));
+        }
+        swaps
     }
 
     /// The sizes each name is fetched at, in logical px.
@@ -1380,11 +1446,12 @@ impl ListingIcons {
     }
 
     pub fn get(&mut self, cache: &mut IconCache, name: &str) -> ListingSizes {
-        let (k, sizes) = (self.device.max(1), self.sizes());
-        self.by_name
-            .entry(name.to_string())
-            .or_insert_with(|| sizes.map(|px| cache.get(name, px * k).map(std::rc::Rc::new)))
-            .clone()
+        if let Some(held) = self.by_name.get(name) {
+            return held.clone();
+        }
+        let held = self.fetch(cache, name);
+        self.by_name.insert(name.to_string(), held.clone());
+        held
     }
 
     /// Fetches every name again from `cache`, now at another scale or list size: each name's old
@@ -1397,11 +1464,12 @@ impl ListingIcons {
         let (k, sizes) = (self.device.max(1), self.sizes());
         let mut swaps = Vec::new();
         let mut files = Vec::new();
-        for (name, sizes_held) in &mut self.by_name {
+        let names: Vec<String> = self.by_name.keys().cloned().collect();
+        for name in names {
             let new = if name.starts_with('/') {
-                let put = sizes.map(|px| cache.file_put(name, px * k));
+                let put = sizes.map(|px| cache.file_put(&name, px * k));
                 if put.iter().any(Option::is_none) {
-                    files.push(name.clone());
+                    files.push(name);
                     continue;
                 }
                 put.map(|c| {
@@ -1409,9 +1477,10 @@ impl ListingIcons {
                         .map(|c| std::rc::Rc::new(Arc::unwrap_or_clone(c)))
                 })
             } else {
-                sizes.map(|px| cache.get(name, px * k).map(std::rc::Rc::new))
+                self.fetch(cache, &name)
             };
-            swaps.push((std::mem::replace(sizes_held, new.clone()), new));
+            let held = self.by_name.get_mut(&name).expect("a held name");
+            swaps.push((std::mem::replace(held, new.clone()), new));
         }
         (swaps, files)
     }
@@ -2507,33 +2576,79 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
-    /// The first fetch at 16 device px takes the image `has` decoded without reading the file;
-    /// other sizes still read it.
+    /// The first fetch at the probe size (16 device px, or the host's) takes the image `has`
+    /// decoded without reading the file; other sizes still read it.
     #[test]
     fn a_fetch_at_the_probe_size_takes_what_has_decoded() {
-        for scale in [1, 2] {
-            let root = fixture("test", INDEX, &["16x16/apps/app.png"]);
+        for (set, probe, other) in [(None, 16, 32), (Some(48), 48, 16)] {
+            for scale in [1, 2] {
+                let tag = format!("probe{probe}-{scale}");
+                let root = fixture("test", INDEX, &["16x16/apps/app.png"]);
+                write_png(
+                    &root.join("test/16x16/apps/app.png"),
+                    1,
+                    1,
+                    &[255, 0, 0, 255],
+                );
+                let mut cache =
+                    IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+                cache.set_scale(scale);
+                if let Some(px) = set {
+                    cache.set_probe_px(px);
+                }
+                assert!(cache.has("app"));
+                fs::remove_dir_all(&root).unwrap();
+                let got = cache.get("app", probe / scale).expect("the probed image");
+                assert_eq!(
+                    (got.device_size(), got.scale(), got.get(0, 0)),
+                    ((probe as u32, probe as u32), scale, 0xFFFF_0000),
+                    "{tag}"
+                );
+                assert!(
+                    cache.get("app", other).is_none(),
+                    "{tag}: {other} px reads the disk"
+                );
+            }
+        }
+    }
+
+    /// A listing drawing one size fetches a theme icon at it alone; `draw` adds the sizes a new
+    /// view wants and hands the swaps, keeping the canvases already worn.
+    #[test]
+    fn a_listing_fetches_the_drawn_sizes_and_adds_a_new_views() {
+        let root = fixture("test", INDEX, &["16x16/apps/app.png", "32x32/apps/app.png"]);
+        for (f, px) in [("16x16/apps/app.png", 16), ("32x32/apps/app.png", 32)] {
             write_png(
-                &root.join("test/16x16/apps/app.png"),
-                1,
-                1,
-                &[255, 0, 0, 255],
-            );
-            let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
-            cache.set_scale(scale);
-            assert!(cache.has("app"));
-            fs::remove_dir_all(&root).unwrap();
-            let got = cache.get("app", 16 / scale).expect("the probed image");
-            assert_eq!(
-                (got.device_size(), got.scale(), got.get(0, 0)),
-                ((16, 16), scale, 0xFFFF_0000),
-                "scale {scale}"
-            );
-            assert!(
-                cache.get("app", 32).is_none(),
-                "scale {scale}: 32 px reads the disk"
+                &root.join("test").join(f),
+                px,
+                px,
+                &vec![255; (px * px * 4) as usize],
             );
         }
+        let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+        let mut icons = ListingIcons::default().drawing([false, false, true]);
+        let held = icons.get(&mut cache, "app");
+        let width = |s: &ListingSizes| s.clone().map(|c| c.map(|c| c.width));
+        assert_eq!(width(&held), [None, None, Some(48)]);
+        assert!(icons.draw(&mut cache, [false, false, true]).is_empty());
+
+        let swaps = icons.draw(&mut cache, [true, false, false]);
+        assert_eq!(swaps.len(), 1);
+        let (old, new) = &swaps[0];
+        assert!(std::rc::Rc::ptr_eq(
+            old[2].as_ref().unwrap(),
+            held[2].as_ref().unwrap()
+        ));
+        assert_eq!(width(new), [Some(16), None, Some(48)]);
+        assert!(std::rc::Rc::ptr_eq(
+            new[2].as_ref().unwrap(),
+            held[2].as_ref().unwrap()
+        ));
+        assert_eq!(
+            width(&icons.get(&mut cache, "other-app")),
+            [None, None, None]
+        );
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

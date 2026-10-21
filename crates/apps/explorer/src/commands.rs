@@ -268,6 +268,7 @@ impl Explorer {
 
             Command::Mode(m) => {
                 self.sv.set_mode(m);
+                self.draw_list_icons(ctx);
                 self.settings.mode = mode_name(m).to_string();
                 self.settings_dirty = true;
                 // Thumbnails and Tiles are the modes that show one, so

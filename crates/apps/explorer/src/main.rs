@@ -57,7 +57,7 @@ use reprisekit::controls::statusbar::{self, StatusBar};
 use reprisekit::controls::taskpane::TaskPane;
 use reprisekit::controls::toolbar::ToolBar;
 use reprisekit::controls::treeview::{Style, TreeView};
-use reprisekit::icontheme::ListingIcons;
+use reprisekit::icontheme::{ListingIcons, listing_px};
 use reprisekit::look::widgets::item;
 use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::{Canvas, Rect};
@@ -918,6 +918,12 @@ impl Explorer {
         self.set_columns(&place);
         let is_12h = reprisefs::locale::is_12h();
         read_icons.put(&mut ctx.icons);
+        let drawn = shellview::drawn_sizes(self.sv.mode, list);
+        let first = drawn.iter().position(|&d| d).unwrap_or(0);
+        let probe = ctx.icons.probe_px();
+        // `has` decodes each name at the size the view draws, which the fetch below then reuses.
+        ctx.icons
+            .set_probe_px(listing_px(list)[first] * ctx.icons.scale());
         // Resolved up front: `item_icon_with` asks what the theme carries, and the icons below want the cache mutable.
         let names: Vec<String> = items
             .iter()
@@ -938,7 +944,7 @@ impl Explorer {
                 }
             }
         }
-        let mut icons = ListingIcons::default().with_list(list);
+        let mut icons = ListingIcons::default().with_list(list).drawing(drawn);
         self.sv.hot = None;
         self.sv.entries = items
             .iter()
@@ -984,6 +990,7 @@ impl Explorer {
             })
             .collect();
         self.list_icons.listed(icons, ctx.icons.scale());
+        ctx.icons.set_probe_px(probe);
         let mut dims = HashMap::new();
         for (it, e) in items.iter().zip(self.sv.entries.iter_mut()) {
             let Some((size, modified, thumb)) = kept.remove(&it.path) else {

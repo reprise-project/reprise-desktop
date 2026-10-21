@@ -178,6 +178,13 @@ impl ListIcons {
         true
     }
 
+    /// The view now draws the `drawn` sizes ([`shellview::drawn_sizes`]): `entries` wear the theme
+    /// icons fetched at those they lacked before the next frame.
+    pub fn draw(&mut self, drawn: [bool; 3], cache: &mut IconCache, entries: &mut [Entry]) {
+        let swaps = self.icons.draw(cache, drawn);
+        shellview::swap_icons(entries, &swaps);
+    }
+
     /// The window draws at `scale`, `cache`'s scale, with List and Details' icons `list` px
     /// ([`shellview::list_icon_px`]): `entries` wear its theme icons now, and the icon files
     /// `cache` lacks decode on a thread that fires `wake` ([`ListIcons::take`]).

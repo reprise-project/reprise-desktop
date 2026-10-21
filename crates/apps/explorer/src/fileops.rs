@@ -717,12 +717,20 @@ impl Explorer {
         let is_dir = only.is_some_and(|it| it.is_dir && !it.is_link);
         let name = only.map(|it| it.name.clone()).unwrap_or_default();
         let kind = ConfirmKind::of(paths.len(), is_dir);
-        let own_icon = self
+        let selected = self
             .sv
             .selection
             .single()
-            .and_then(|i| self.sv.entries.get(i))
-            .and_then(|e| e.icon32.as_deref().cloned());
+            .and_then(|i| self.sv.entries.get(i));
+        // A view that draws no 32 px icon has not fetched it.
+        let own_icon =
+            selected.and_then(
+                |e| match (&e.icon32, e.icon.as_ref().or(e.icon48.as_ref())) {
+                    (Some(c), _) => Some((**c).clone()),
+                    (None, Some(worn)) => self.list_icons.fetch(worn, 32, &mut ctx.icons),
+                    (None, None) => None,
+                },
+            );
         let bin = in_bin.then(|| self.selected_bin_items());
         let read = paths.clone();
         let work = move |_: &Gate| {

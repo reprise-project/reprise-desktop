@@ -90,6 +90,7 @@ impl Explorer {
         let list = shellview::list_icon_px(ctx.theme.text);
         self.list_icons
             .follow(scale, list, &mut ctx.icons, &mut self.sv.entries, &ctx.wake);
+        self.draw_list_icons(ctx);
         let theme = std::sync::Arc::downgrade(&ctx.icons.theme());
         let rethemed = (self.drawn_theme.replace(theme.clone())).is_some_and(|t| !t.ptr_eq(&theme));
         if std::mem::replace(&mut self.drawn_scale, scale) != scale || rethemed {
@@ -100,6 +101,12 @@ impl Explorer {
             // Which icon name an entry wears depends on what the theme has.
             let _ = self.refresh(ctx);
         }
+    }
+
+    /// The entries wear their theme icons at every size the view now draws.
+    pub(crate) fn draw_list_icons(&mut self, ctx: &mut Ctx) {
+        let drawn = shellview::drawn_sizes(self.sv.mode, shellview::list_icon_px(ctx.theme.text));
+        (self.list_icons).draw(drawn, &mut ctx.icons, &mut self.sv.entries);
     }
 
     /// Icon files a drag's image missed at its scale arrived: the host asks for the image again.
@@ -918,6 +925,43 @@ mod tests {
         assert!(!ex.thumbs.asked(&path, 2));
     }
 
+    /// Tiles fetch a theme icon at 48 px only; each view switch wears the icons at the new size
+    /// before the next frame, with nothing to wait for.
+    #[test]
+    fn a_view_switch_wears_the_icons_at_the_new_size_at_once() {
+        let root = tempfile::tempdir().expect("a temp dir");
+        let mut ctx = test_ctx();
+        ctx.icons = chrome_theme(root.path());
+        let dir = tempfile::tempdir().expect("a temp dir");
+        std::fs::create_dir(dir.path().join("sub")).expect("mkdir");
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        let i = index_of(&ex, "sub");
+        let widths = |ex: &Explorer| {
+            let e = &ex.sv.entries[i];
+            [&e.icon, &e.icon32, &e.icon48].map(|c| c.as_ref().map(|c| c.width))
+        };
+        assert_eq!(ex.sv.mode, Mode::Tiles);
+        assert_eq!(widths(&ex), [None, None, Some(48)]);
+
+        for (mode, px) in [
+            (Mode::Icons, 32),
+            (Mode::List, 16),
+            (Mode::Details, 16),
+            (Mode::Thumbnails, 32),
+            (Mode::Tiles, 48),
+        ] {
+            ex.run(crate::commands::Command::Mode(mode), &mut ctx);
+            let e = &ex.sv.entries[i];
+            let drawn = match mode {
+                Mode::List | Mode::Details => shellview::list_icon(e, 16),
+                Mode::Icons | Mode::Thumbnails => e.icon32.as_ref(),
+                Mode::Tiles => e.icon48.as_ref(),
+            };
+            assert_eq!(drawn.map(|c| c.width), Some(px), "{mode:?}");
+        }
+        assert_eq!(widths(&ex), [Some(16), Some(32), Some(48)]);
+    }
+
     /// A theme carrying every name the window's chrome asks for, each a flat square at 16, 24,
     /// 32 and 48 px.
     fn chrome_theme(root: &Path) -> reprisekit::icontheme::IconCache {
@@ -1024,7 +1068,7 @@ mod tests {
         let mut ex = crate::tests::test_explorer(Place::Folder(folder), &mut ctx);
         crate::tests::wake_until(&mut ex, &mut ctx, |ex| ex.sv.entries.len() == 1);
         ex.follow_scale(1, &mut ctx);
-        assert!(ex.sv.entries[0].icon.is_none(), "not installed yet");
+        assert!(ex.sv.entries[0].icon48.is_none(), "not installed yet");
         let mut c = Canvas::new(16, 16);
         c.pixels.fill(0xffff_00ff);
         let png = reprisekit::raster::to_png(&c);
@@ -1032,7 +1076,7 @@ mod tests {
         ctx.icons.reload();
         ex.follow_scale(1, &mut ctx);
         crate::tests::wake_until(&mut ex, &mut ctx, |ex| {
-            ex.sv.entries.first().is_some_and(|e| e.icon.is_some())
+            ex.sv.entries.first().is_some_and(|e| e.icon48.is_some())
         });
     }
 

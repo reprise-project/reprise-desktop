@@ -17,6 +17,7 @@ fn explorer(ctx: &mut Ctx) -> (tempfile::TempDir, Explorer) {
     std::fs::create_dir(dir.path().join("Crate")).expect("mkdir");
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), ctx);
     ex.sv.mode = Mode::Icons;
+    ex.draw_list_icons(ctx);
     (dir, ex)
 }
 
