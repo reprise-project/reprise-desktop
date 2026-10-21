@@ -204,11 +204,11 @@ fn plain(material: Material) -> Settings {
     }
 }
 
-/// `tint.rs`'s formula over white: blur·255 + colour·C + afterglow·C
-/// (white's luma is 1), at `strength` over the backdrop.
-fn formula_over_white(s: &Settings, strength: f64) -> [f64; 3] {
-    let (c, [cb, ab, bb]) = tint::material_glass(s);
-    c.map(|c| 255.0 + strength * (bb * 255.0 + cb * c + ab * c - 255.0))
+/// What the glass draws over a flat backdrop `b` under `surface`'s chrome:
+/// `tint::lift`'s sum on the CPU, in levels.
+fn lifted(s: &Settings, surface: Surface, b: [u8; 3]) -> [f64; 3] {
+    let b = b.map(|v| f32::from(v) / 255.0);
+    tint::lift(s, surface).over(b).map(|v| f64::from(v) * 255.0)
 }
 
 fn near(got: [u8; 3], want: [f64; 3], within: f64) -> bool {
@@ -218,69 +218,97 @@ fn near(got: [u8; 3], want: [f64; 3], within: f64) -> bool {
 }
 
 #[test]
-fn frosted_sky_over_white_is_the_tint_formula() {
-    let Some(mut r) = rig(200, 120) else { return };
-    let white = r.backdrop(|_, _| [255; 3]);
-    let s = plain(Material::Frosted);
-    let glass = Glass::new();
-    let shapes = [Shape::rect(rect(40, 30, 120, 60))];
-    let el = glass.element(&r.fx, &r.frame(&shapes, &[], &s)).unwrap();
-    let (p, _) = r.render(vec![el], &white);
-    let want = formula_over_white(&s, 1.0);
-    for (x, y) in [(100, 60), (41, 31), (158, 88)] {
-        assert!(
-            near(p.at(x, y), want, 2.0),
-            "({x}, {y}) is {want:?}: {:?}",
-            p.at(x, y)
-        );
+fn the_glass_is_the_backdrop_through_the_cpu_lift() {
+    let Some(mut r) = rig(240, 80) else { return };
+    let colour = |rgb: [u8; 3], intensity, material| Settings {
+        color: reprisekit::theme::Color::rgb(rgb[0], rgb[1], rgb[2]),
+        intensity,
+        ..plain(material)
+    };
+    let cases = [
+        (plain(Material::Frosted), Surface::Active),
+        (
+            colour([201, 24, 15], 75, Material::Frosted),
+            Surface::Inactive,
+        ),
+        (
+            colour([49, 193, 201], 53, Material::Frosted),
+            Surface::Taskbar,
+        ),
+        (colour([11, 162, 0], 39, Material::Frosted), Surface::Active),
+    ];
+    let shapes: Vec<[Shape; 1]> = (0..cases.len() as i32)
+        .map(|i| [Shape::rect(rect(10 + 60 * i, 10, 40, 60))])
+        .collect();
+    let backdrops = [
+        [255, 255, 255],
+        [0, 0, 0],
+        [128, 128, 128],
+        [40, 90, 170],
+        [230, 180, 60],
+        [200, 210, 220],
+        [30, 30, 40],
+    ];
+    for b in backdrops {
+        let back = r.backdrop(|_, _| b);
+        let glasses: Vec<Glass> = cases.iter().map(|_| Glass::new()).collect();
+        let els = cases
+            .iter()
+            .zip(&shapes)
+            .zip(&glasses)
+            .map(|(((s, surface), shape), g)| {
+                let f = GlassFrame {
+                    surface: Some(*surface),
+                    ..r.frame(shape, &[], s)
+                };
+                g.element(&r.fx, &f).unwrap()
+            })
+            .collect();
+        let (p, _) = r.render(els, &back);
+        for (i, (s, surface)) in cases.iter().enumerate() {
+            let want = lifted(s, *surface, b);
+            let got = p.at(30 + 60 * i as i32, 40);
+            assert!(
+                near(got, want, 1.0),
+                "{surface:?} {:?} over {b:?} is {want:?}: {got:?}",
+                s.color
+            );
+        }
     }
-    assert_eq!(
-        p.at(20, 10),
-        [255; 3],
-        "outside the glass the backdrop shows"
-    );
 }
 
 #[test]
-fn smoked_over_white_is_darker_and_an_unfocused_window_keeps_it_dark() {
+fn smoked_glass_and_glass_with_no_chrome_leave_the_backdrop() {
     let Some(mut r) = rig(200, 120) else { return };
-    let white = r.backdrop(|_, _| [255; 3]);
+    let b = [40, 90, 170];
+    let back = r.backdrop(|_, _| b);
     let s = plain(Material::Smoked);
-    let (focused, unfocused) = (Glass::new(), Glass::new());
+    let frosted = plain(Material::Frosted);
+    let (smoked, bare) = (Glass::new(), Glass::new());
     let a = [Shape::rect(rect(10, 10, 80, 60))];
-    let b = [Shape::rect(rect(110, 10, 80, 60))];
-    let mut fb = r.frame(&b, &[], &s);
-    fb.surface = Some(Surface::Inactive);
+    let c = [Shape::rect(rect(110, 10, 80, 60))];
+    let bare_frame = GlassFrame {
+        surface: None,
+        ..r.frame(&c, &[], &frosted)
+    };
     let els = vec![
-        focused.element(&r.fx, &r.frame(&a, &[], &s)).unwrap(),
-        unfocused.element(&r.fx, &fb).unwrap(),
+        smoked.element(&r.fx, &r.frame(&a, &[], &s)).unwrap(),
+        bare.element(&r.fx, &bare_frame).unwrap(),
     ];
-    let (p, _) = r.render(els, &white);
-    let (on, off) = (p.at(50, 40), p.at(150, 40));
+    let (p, _) = r.render(els, &back);
     assert!(
-        near(on, formula_over_white(&s, 1.0), 2.0),
-        "focused: {on:?}"
+        near(p.at(50, 40), b.map(f64::from), 1.0),
+        "Smoked: {:?}",
+        p.at(50, 40)
     );
     assert!(
-        near(off, formula_over_white(&s, tint::SMOKE_INACTIVE), 2.0),
-        "unfocused, at SMOKE_INACTIVE: {off:?}"
-    );
-    // The blended art's plain glass over white (tint.rs's own tests): the
-    // shader's exact formula lands within a few levels of it.
-    assert!(
-        near(on, [100.0, 109.0, 114.0], 6.0),
-        "focused near the art's: {on:?}"
+        near(p.at(150, 40), b.map(f64::from), 1.0),
+        "no chrome: {:?}",
+        p.at(150, 40)
     );
     assert!(
-        near(off, [127.0, 136.0, 143.0], 9.0),
-        "unfocused near the art's: {off:?}"
-    );
-    let frosted = formula_over_white(&plain(Material::Frosted), 1.0);
-    assert!(
-        on.iter()
-            .zip(frosted)
-            .all(|(&s, f)| f64::from(s) + 60.0 < f),
-        "{on:?} is darker than Frosted's {frosted:?}"
+        !near(p.at(150, 40), lifted(&frosted, Surface::Active, b), 1.0),
+        "Frosted under a frame would lift it"
     );
 }
 
@@ -415,7 +443,7 @@ fn holes_and_the_margin_show_the_backdrop_untouched() {
 fn a_rounded_corner_leaves_its_outside_clear() {
     let Some(mut r) = rig(160, 120) else { return };
     let white = r.backdrop(|_, _| [255; 3]);
-    let s = plain(Material::Smoked);
+    let s = plain(Material::Frosted);
     let glass = Glass::new();
     let shapes = [Shape {
         rect: rect(20, 20, 100, 60),
@@ -424,7 +452,10 @@ fn a_rounded_corner_leaves_its_outside_clear() {
     let el = glass.element(&r.fx, &r.frame(&shapes, &[], &s)).unwrap();
     let (p, _) = r.render(vec![el], &white);
     let glass_px = p.at(70, 50);
-    assert!(glass_px[0] < 140, "the middle is glass: {glass_px:?}");
+    assert!(
+        glass_px[0] < 245,
+        "the middle is lifted glass: {glass_px:?}"
+    );
     assert_eq!(p.at(20, 20), [255; 3], "the top-left corner is cut");
     assert_eq!(p.at(22, 22), [255; 3], "and in from it");
     assert_eq!(p.at(23, 20), [255; 3], "along the top edge");
@@ -593,7 +624,11 @@ fn a_source_is_drawn_in_place_of_the_frame_and_only_its_changes_redraw() {
     };
     let (before, _) = r.render(vec![glass.element(&r.fx, &f).unwrap()], &black);
     assert!(
-        near(before.at(160, 100), formula_over_white(&s, 1.0), 2.0),
+        near(
+            before.at(160, 100),
+            lifted(&s, Surface::Active, [255; 3]),
+            2.0
+        ),
         "the glass shows the source: {:?}",
         before.at(160, 100)
     );
@@ -921,7 +956,7 @@ fn a_held_picture_keeps_its_blur_until_a_refresh() {
     };
     let (p, _) = r.render(vec![glass.element(&r.fx, &f).unwrap()], &black);
     assert!(
-        near(p.at(80, 60), formula_over_white(&s, 1.0), 2.0),
+        near(p.at(80, 60), lifted(&s, Surface::Active, [255; 3]), 2.0),
         "a refresh catches up: {:?}",
         p.at(80, 60)
     );
@@ -958,7 +993,7 @@ fn a_held_blur_waits_for_a_refresh() {
     glass.refresh();
     let (p, _) = r.render(vec![glass.element(&r.fx, &held).unwrap()], &white);
     assert!(
-        near(p.at(80, 60), formula_over_white(&s, 1.0), 2.0),
+        near(p.at(80, 60), lifted(&s, Surface::Active, [255; 3]), 2.0),
         "a refresh catches up: {:?}",
         p.at(80, 60)
     );

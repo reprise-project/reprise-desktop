@@ -5,8 +5,9 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::sync::{Arc, mpsc};
 
-use reprisekit::glass::tint::Surface;
-use reprisekit::glass::{Settings, streak};
+use reprisekit::backdrop::Lift;
+use reprisekit::glass::tint::{self, Surface};
+use reprisekit::glass::{Material, Settings, streak};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::allocator::dmabuf::Dmabuf;
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
@@ -25,7 +26,6 @@ use crate::lens::Lens;
 use crate::picture::Source;
 use crate::shaders::Programs;
 use crate::space::Space;
-use crate::tint::Tint;
 
 /// The programs and streak textures shared by every glass element of one renderer. Make it once per `GlesRenderer`; cloning shares it.
 #[derive(Clone, Debug)]
@@ -258,7 +258,8 @@ pub struct GlassFrame<'a> {
     pub shapes: &'a [Shape],
     pub holes: &'a [Rectangle<i32, Physical>],
     pub settings: &'a Settings,
-    /// Which tint: a focused or unfocused frame, or the taskbar. None draws the blurred backdrop alone, for chrome that lays its own glass over it.
+    /// Whose chrome lies over the glass: a focused or unfocused frame, or the taskbar; the backdrop is lifted for its glass
+    /// (`tint::lift`). None draws the blurred backdrop alone.
     pub surface: Option<Surface>,
     /// The output's size in physical pixels and its scale (the streaks are fixed to it).
     pub output: Size<i32, Physical>,
@@ -340,9 +341,9 @@ impl Glass {
         );
         let geometry = shrink(area, k);
         let plan = Plan::new(f.settings.blur, material, f.quality, f.scale);
-        let tint = f.surface.map(|s| Tint::new(f.settings, s));
+        let lift = f.surface.map_or(Lift::NONE, |s| tint::lift(f.settings, s));
         let streaks = fx.streaks_ready(f.settings, f.output, f.scale);
-        let drawn = key(f, area, plan, tint, &lenses, streaks);
+        let drawn = key(f, area, plan, lift, &lenses, streaks);
         let hold = f.hold && !self.refresh.replace(false);
         let caught_up = f.source.map(|s| self.catch_up(s, area, k, bend));
         if self.key.get() != Some(drawn) {
@@ -365,7 +366,7 @@ impl Glass {
             shapes: f.shapes.to_vec(),
             lenses,
             holes: f.holes.to_vec(),
-            tint,
+            lift,
             plan,
             settings: *f.settings,
             streaks,
@@ -455,13 +456,13 @@ fn shrink_in(r: Rectangle<i32, Physical>, k: i32) -> Rectangle<i32, Physical> {
 const DAMAGE_AGE: usize = 8;
 
 /// Everything about a frame's glass that changes its pixels, except where it is: shapes and holes from
-/// the element's corner, the lenses (edges on the output's border do not bend), tint, blur, streaks and
+/// the element's corner, the lenses (edges on the output's border do not bend), lift, blur, streaks and
 /// which source (or the frame) is blurred. The damage tracker sees moves itself.
 fn key(
     f: &GlassFrame<'_>,
     geometry: Rectangle<i32, Physical>,
     plan: Plan,
-    tint: Option<Tint>,
+    lift: Lift,
     lenses: &[Option<Lens>],
     streaks: bool,
 ) -> u64 {
@@ -482,12 +483,8 @@ fn key(
     for r in f.holes {
         local(*r).hash(&mut h);
     }
-    if let Some(t) = tint {
-        t.colour.map(f32::to_bits).hash(&mut h);
-        t.balance.map(f32::to_bits).hash(&mut h);
-        t.strength.to_bits().hash(&mut h);
-        t.material_index().to_bits().hash(&mut h);
-    }
+    lift.colour.map(f32::to_bits).hash(&mut h);
+    [lift.mean, lift.gain].map(f32::to_bits).hash(&mut h);
     (plan.factor, plan.sigma.to_bits(), plan.pairs.to_bits()).hash(&mut h);
     let s = f.settings;
     (
@@ -504,7 +501,7 @@ fn key(
 }
 
 /// Glass over one piece of chrome on one output: a framebuffer effect that copies what the frame holds
-/// under it, blurs it and draws it, tinted, into its shapes.
+/// under it, blurs it and draws it, lifted for the chrome's glass, into its shapes.
 #[derive(Debug, Clone)]
 pub struct GlassElement {
     fx: GlassFx,
@@ -518,7 +515,7 @@ pub struct GlassElement {
     shapes: Vec<Shape>,
     lenses: Vec<Option<Lens>>,
     holes: Vec<Rectangle<i32, Physical>>,
-    tint: Option<Tint>,
+    lift: Lift,
     plan: Plan,
     settings: Settings,
     /// Whether the streaks are drawn: shown and made ([`GlassFx::streaks_ready`]).
@@ -672,12 +669,11 @@ impl RenderElement<GlesRenderer> for GlassElement {
         let tex = picture.size();
         let kx = f64::from(tex.w) / f64::from(c.size.w);
         let ky = f64::from(tex.h) / f64::from(c.size.h);
-        let tint = self.tint.unwrap_or(Tint {
-            colour: [0.0; 3],
-            balance: [0.0, 0.0, 1.0],
-            strength: 0.0,
-            material: self.settings.material,
-        });
+        let material = match self.settings.material {
+            Material::Frosted => 0.0f32,
+            Material::Smoked => 1.0,
+            Material::Molten => 2.0,
+        };
         let k = self.downscale;
         let holes = self.holes.iter().map(|h| {
             let h = shrink_in(*h, k);
@@ -734,10 +730,9 @@ impl RenderElement<GlesRenderer> for GlassElement {
                 ),
                 Uniform::new("size", [b.size.w as f32, b.size.h as f32]),
                 Uniform::new("radii", radii),
-                Uniform::new("colour", tint.colour),
-                Uniform::new("balance", tint.balance),
-                Uniform::new("strength", tint.strength),
-                Uniform::new("material", tint.material_index()),
+                Uniform::new("colour", self.lift.colour),
+                Uniform::new("lift", [self.lift.mean, self.lift.gain]),
+                Uniform::new("material", material),
                 Uniform::new(
                     "lens",
                     lens.map_or([0.0, 0.0, 0.0, 1.0], |l| {

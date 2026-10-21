@@ -737,12 +737,14 @@ pub fn glow_chroma(c: Color) -> [f32; 3] {
     full.map(|x| x - mean)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlassSpec {
     /// Pixels outside the frame per row, outer row first; all four corners
     /// mirror it.
     pub corner: &'static [i32],
     pub panel: PanelSpec,
+    /// How the glass lifts the backdrop under a focused and an unfocused frame's art.
+    pub lift: [crate::backdrop::Lift; 2],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
