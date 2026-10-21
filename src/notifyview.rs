@@ -24,9 +24,13 @@ use reprisekit::style::{NotifyLook, SheetShape};
 use reprisekit::taskbar::Edge;
 use reprisekit::textedit::{Caret, EditKey, TextEdit};
 use reprisescene::{BufferId, Input, NodeId, TreeId};
-use smithay::reexports::calloop::{
-    RegistrationToken, channel,
-    timer::{TimeoutAction, Timer},
+use smithay::{
+    output::Output,
+    reexports::calloop::{
+        RegistrationToken, channel,
+        timer::{TimeoutAction, Timer},
+    },
+    utils::{Logical, Rectangle},
 };
 
 use crate::caret::Editor;
@@ -392,6 +396,10 @@ pub struct NotifyView {
     tick_timer: Option<RegistrationToken>,
     /// The bar edge the stack was last placed by.
     edge: Option<Edge>,
+    /// The output the stack was last placed on; its sheets and chip draw only inside it.
+    output: Option<Output>,
+    /// Outputs the stack left that still show it until their next frame.
+    left: Vec<Output>,
     /// A sheet or the chip is under the pointer, drawn or at rest, as of its last move, press or
     /// paint: a sheet sliding into a closed one's slot keeps the stack held.
     pointer_on: bool,
@@ -2028,7 +2036,7 @@ fn paint(state: &mut State) {
     } else {
         disarm_age(state);
     }
-    state.redraw_all();
+    redraw(state);
     crate::access::touch(state);
     arm_tick(state);
     warm_openings(state);
@@ -2041,6 +2049,11 @@ fn lay_stack(state: &mut State, opening_only: bool) -> bool {
     let Some(output) = state.first_output() else {
         return false;
     };
+    if let Some(old) = state.notify.output.replace(output.clone())
+        && old != output
+    {
+        state.notify.left.push(old);
+    }
     let p = state.bar_placement(&output);
     let area = crate::barplace::clear_of(state.usable_area(Some(&output)), &p);
     let shape = state.config.glass.notification.shape();
@@ -2448,6 +2461,7 @@ fn paint_one(
         glass,
         ..
     } = state;
+    let bounds = notify.output.as_ref().and_then(reprisescene::output_rect);
     let b = &mut notify.stack[i];
     b.opening = opening;
     b.glass = kept;
@@ -2477,7 +2491,7 @@ fn paint_one(
             size: (c.width as i32 / scale, c.height as i32 / scale),
         });
     }
-    pose_balloon(scene, glass, b, Instant::now(), edge, scale_from);
+    pose_balloon(scene, glass, b, Instant::now(), edge, scale_from, bounds);
     if replying && let Some(canvas) = canvas.as_mut() {
         let origin = (at.0 - ox / scale, at.1 - oy / scale);
         let spot = canvas.take_spot();
@@ -2513,6 +2527,12 @@ fn draw_chip_at(state: &mut State, more: usize, at: (i32, i32), size: (i32, i32)
     );
     upload_scaled(&mut state.scene, c.buffer, &canvas, scale);
     state.scene.set_position(c.tree, at.0, at.1);
+    let bounds = state
+        .notify
+        .output
+        .as_ref()
+        .and_then(reprisescene::output_rect);
+    state.scene.set_clip(c.tree, clip_to(bounds, at));
     state.notify.chip = Some(Chip {
         at,
         size,
@@ -2524,7 +2544,7 @@ fn draw_chip_at(state: &mut State, more: usize, at: (i32, i32), size: (i32, i32)
 fn drop_chip(state: &mut State) {
     if let Some(c) = state.notify.chip.take() {
         state.scene.destroy(c.tree);
-        state.redraw_all();
+        redraw(state);
     }
 }
 
@@ -2659,6 +2679,7 @@ fn pose_balloon(
     now: Instant,
     edge: Option<Edge>,
     scale_from: f64,
+    bounds: Option<Rectangle<i32, Logical>>,
 ) {
     let Some(drawn) = &b.drawn else {
         return;
@@ -2702,7 +2723,9 @@ fn pose_balloon(
             .map(|pane| crate::windowanim::scale_pane(pane, rest, r));
         (r, inset, alpha, pane, None)
     };
-    scene.set_position(b.tree, r.x + inset.0, r.y + inset.1);
+    let at = (r.x + inset.0, r.y + inset.1);
+    scene.set_position(b.tree, at.0, at.1);
+    scene.set_clip(b.tree, clip_to(bounds, at));
     scene.set_position(b.buffer, -inset.0, -inset.1);
     scene.buffer_set_dest_size(b.buffer, Some((r.width, r.height).into()));
     scene.set_opacity(b.tree, alpha);
@@ -2729,6 +2752,34 @@ fn pose_balloon(
     }
     if let (Some(backdrop), Some(pane)) = (b.backdrop.as_mut(), pane) {
         backdrop.set(scene, glass, b.glass_tree, Some(pane));
+    }
+}
+
+/// `bounds` (layout) as a clip for a tree at `at`: a sheet's shadow stops at its output's edge
+/// rather than spilling onto the output beside it.
+fn clip_to(
+    bounds: Option<Rectangle<i32, Logical>>,
+    at: (i32, i32),
+) -> Option<Rectangle<i32, Logical>> {
+    bounds.map(|o| Rectangle::new((o.loc.x - at.0, o.loc.y - at.1).into(), o.size))
+}
+
+/// The outputs a change to the stack draws on: the one it is placed on and those it left.
+fn frame_outputs(v: &NotifyView) -> Option<Vec<Output>> {
+    let mut outputs = v.left.clone();
+    outputs.extend(v.output.clone());
+    (!outputs.is_empty()).then_some(outputs)
+}
+
+/// Ask for a frame for a change to the stack on the outputs it draws on; every output before
+/// it was placed.
+fn redraw(state: &mut State) {
+    match frame_outputs(&state.notify) {
+        Some(outputs) => {
+            state.notify.left.clear();
+            crate::backend::schedule_on(state, &outputs, crate::backend::Ask::Scene);
+        }
+        None => state.redraw_all(),
     }
 }
 
@@ -2796,8 +2847,9 @@ fn tick(state: &mut State) -> bool {
         glass,
         ..
     } = state;
+    let bounds = notify.output.as_ref().and_then(reprisescene::output_rect);
     for b in notify.stack.iter_mut().chain(notify.leaving.iter_mut()) {
-        pose_balloon(scene, glass, b, now, edge, scale_from);
+        pose_balloon(scene, glass, b, now, edge, scale_from, bounds);
     }
     let (gone, kept): (Vec<Balloon>, Vec<Balloon>) = std::mem::take(&mut notify.leaving)
         .into_iter()
@@ -2807,7 +2859,7 @@ fn tick(state: &mut State) -> bool {
     for b in gone {
         destroy(state, b);
     }
-    state.redraw_all();
+    redraw(state);
     let settled = still(&state.notify, now);
     if settled {
         let p = state.pointer_location();
@@ -2891,7 +2943,7 @@ fn destroy(state: &mut State, mut b: Balloon) {
         gone.set(&mut state.scene, &state.glass, b.glass_tree, None);
     }
     state.scene.destroy(b.tree);
-    state.redraw_all();
+    redraw(state);
     crate::autohideview::poke(state);
     crate::access::touch(state);
 }
@@ -4398,6 +4450,32 @@ mod tests {
             h.state.focused,
             Some(mail.id),
             "the clicked notification's program maps its window in front"
+        );
+    }
+
+    #[test]
+    fn a_sheet_draws_and_asks_for_frames_only_on_its_output() {
+        let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        let a = h.output("TEST-1", 1024, 768);
+        let b = h.output("TEST-2", 1024, 768);
+        show(&mut h.state, note(1, "Mail"));
+        h.run_for(50);
+        let v = &h.state.notify;
+        assert_eq!(frame_outputs(v), Some(vec![a.clone()]));
+        let scene = &h.state.scene;
+        let tree = v.stack[0].tree;
+        let canvas = scene.extents(tree).expect("the sheet's canvas");
+        let beside = reprisescene::output_rect(&b).expect("TEST-2's place");
+        assert!(
+            canvas.overlaps(beside),
+            "the shadow reaches past TEST-1's edge: {canvas:?}"
+        );
+        let (at, _) = scene.coords(tree).expect("the sheet's place");
+        let clip = scene.clip(tree).expect("a clip");
+        assert_eq!(
+            Rectangle::new(clip.loc + at, clip.size),
+            reprisescene::output_rect(&a).expect("TEST-1's place")
         );
     }
 }
