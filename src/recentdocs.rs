@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use crate::compositor::State;
 use crate::fsjobs::Reads;
-use crate::menuview::{MenuKind, jump_relisted};
+use crate::menuview::{MenuKind, RowIcons, jump_relisted};
 use crate::raster::Rect;
 use crate::startmenu::{MenuItem, MenuLayout};
 
@@ -329,12 +329,13 @@ impl State {
                             target,
                             button,
                         },
+                        RowIcons::default(),
                     ))
                 }
                 _ => None,
             };
             depth += 1;
-            let Some((items, kind)) = fresh else {
+            let Some((items, kind, icons)) = fresh else {
                 continue;
             };
             let usable = self.usable_area(Some(&self.menus[depth - 1].output));
@@ -343,7 +344,7 @@ impl State {
             let fit = |l: &MenuLayout, items: &[MenuItem]| {
                 l.fit_column(text, items, size_px, usable.width)
             };
-            if !m.relist_to(items, kind, fit) {
+            if !m.relist_to(items, kind, icons, fit) {
                 continue;
             }
             let (tree, new_w, new_h) = (m.tree, m.layout.width, m.layout.height);
@@ -696,7 +697,7 @@ mod tests {
         menu.hovered = Some(3);
         let relist = |menu: &mut Menu, docs: &RecentDocs| {
             let (items, kind) = documents(&dir, &docs.current(3));
-            menu.relist_to(items, kind, |l, _| l.column_width)
+            menu.relist_to(items, kind, RowIcons::default(), |l, _| l.column_width)
         };
         let listed = |menu: &Menu| -> Vec<Option<PathBuf>> {
             let MenuKind::Documents { paths, .. } = &menu.kind else {
