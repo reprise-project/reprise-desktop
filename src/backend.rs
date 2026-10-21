@@ -1597,7 +1597,8 @@ fn pointer_ask_renders(
     shows || zooms || geo.is_some_and(|g| g.to_f64().contains(pointer))
 }
 
-/// Render `crtc` from an idle callback, unless one is armed or a frame is in flight.
+/// Render `crtc` from an idle callback, unless one is armed or a frame is in flight. A frame
+/// asked from an idle callback renders on the next turn (`State::insert_idle_woken`).
 fn queue_render(state: &mut State, crtc: crtc::Handle) {
     let Some(s) = state
         .backend
@@ -1610,7 +1611,7 @@ fn queue_render(state: &mut State, crtc: crtc::Handle) {
         return;
     }
     s.idle_scheduled = true;
-    state.handle.insert_idle(move |state| {
+    state.insert_idle_woken(move |state| {
         if let Some(s) = state
             .backend
             .as_mut()
