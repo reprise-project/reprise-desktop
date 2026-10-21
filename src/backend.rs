@@ -1562,7 +1562,20 @@ impl Asked {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static ASKED: std::cell::RefCell<Vec<(String, Ask)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The asks made on this thread since the last call, by output name.
+#[cfg(test)]
+pub fn take_asks() -> Vec<(String, Ask)> {
+    ASKED.with_borrow_mut(std::mem::take)
+}
+
 fn request(state: &mut State, output: &Output, ask: Ask) {
+    #[cfg(test)]
+    ASKED.with_borrow_mut(|a| a.push((output.name(), ask)));
     let Some(crtc) = crtc_of(output) else {
         return;
     };
