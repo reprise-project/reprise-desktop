@@ -1134,6 +1134,8 @@ impl State {
             holes: Vec::new(),
         });
         bar.glass
+            .set_surface(reprisekit::glass::tint::Surface::Taskbar);
+        bar.glass
             .set(&mut self.scene, &self.glass, bar.glass_tree, pane);
         crate::backend::schedule(self, &bar.output);
     }

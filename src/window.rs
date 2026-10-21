@@ -10,7 +10,7 @@ use reprisekit::classic::frame::{
     CaptionButton, Chrome, Edges, FrameGeometry, FrameHit, FrameState, frame_canvas_size,
 };
 use reprisekit::controls::captiontabs::{self, CaptionTabs, TabEntry};
-use reprisekit::glass::{Material, shadow};
+use reprisekit::glass::{Material, shadow, tint};
 use reprisekit::icon::IconSource;
 use reprisescene::{BufferId, Input, NodeId, SurfaceId, TreeId};
 use smithay::{
@@ -1187,6 +1187,11 @@ impl State {
             _ => None,
         };
         let over = self.config.glass.material == Material::Molten;
+        let active = self.win(w).is_some_and(|x| x.is_active(self.focused)) && !self.carded(w);
+        let surface = match sheet || active {
+            true => tint::Surface::Active,
+            false => tint::Surface::Inactive,
+        };
         let State {
             scene,
             windows,
@@ -1194,6 +1199,7 @@ impl State {
             ..
         } = self;
         if let Some(win) = windows.iter_mut().find(|x| x.id == w) {
+            win.glass.set_surface(surface);
             win.glass.set(scene, glass, win.backdrop, pane);
             stack_shadow(scene, &win.shadow, win.backdrop, over);
         }

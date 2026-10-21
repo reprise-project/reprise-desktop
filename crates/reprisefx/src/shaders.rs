@@ -1,7 +1,7 @@
 //! The GLSL ES 1.00 programs, as Smithay custom texture shaders: the blur's
 //! Gaussian pass, the glass that lays the blurred backdrop into its shape and
-//! tints it, the 3D switcher's tilted card, the colour filter and desktop
-//! water's step, normals and draw.
+//! lifts it for the chrome's glass, the 3D switcher's tilted card, the colour
+//! filter and desktop water's step, normals and draw.
 //!
 //! Smithay replaces the `//_DEFINES_` line with its variant defines
 //! (`EXTERNAL`, `NO_ALPHA`, `DEBUG_FLAGS`) and every variant must compile, so
@@ -59,11 +59,11 @@ void main() {
 "#;
 
 /// The glass over one shape: the blurred backdrop B (streaks already in it)
-/// tinted per pixel as
+/// lifted per pixel for the chrome's glass laid over it
+/// (`reprisekit::backdrop::Lift`):
 ///
 /// ```text
-/// glass = blur·B + colour·C + afterglow·C·luma(B)
-/// out   = mix(B, glass, strength)
+/// out = B + gain·(C·luma(B) - mean·B - (C - mean)/2)
 /// ```
 ///
 /// inside the shape's rounded rectangle (anti-aliased over one pixel by its
@@ -72,7 +72,7 @@ void main() {
 ///
 /// Molten first moves the lookup out along the lens box's normal by
 /// `strength · (1 - smoothstep(0, band, depth))²`, red a little farther and
-/// blue less, and saturates what it reads. After the tint the edge darkens a
+/// blue less, and saturates what it reads. After the lift the edge darkens a
 /// little just inside and the highlight (rim and glow, brightest where the
 /// edge faces the light) screens over it (`crate::lens`).
 const GLASS_SRC: &str = r#"#version 100
@@ -102,12 +102,9 @@ uniform vec2 size;
 uniform vec4 radii;
 // The glass colour C, 0..1.
 uniform vec3 colour;
-// The glass's shares: colour, afterglow, blur.
-uniform vec3 balance;
-// How far the glass lies over the backdrop: 0 shows the backdrop alone.
-uniform float strength;
-// Which material: 0 Frosted, 1 Smoked, 2 Molten. All tint by the formula
-// above with their own colour and balance; Molten bends `uv` first.
+// The lift's mean of C and gain; a gain of 0 shows the backdrop alone.
+uniform vec2 lift;
+// Which material: 0 Frosted, 1 Smoked, 2 Molten. Molten bends `uv` first.
 uniform float material;
 // Molten's lens: band, strength, rim, scale (crate::lens::Lens).
 uniform vec4 lens;
@@ -163,8 +160,7 @@ void main() {
         b = texture2D(tex, v_coords).rgb;
     }
     float l = dot(b, vec3(0.299, 0.587, 0.114));
-    vec3 glass = balance.z * b + balance.x * colour + balance.y * colour * l;
-    vec3 c = mix(b, clamp(glass, 0.0, 1.0), strength);
+    vec3 c = clamp(b + lift.y * (colour * l - lift.x * b - (colour - lift.x) * 0.5), 0.0, 1.0);
     c *= 1.0 - shade;
     vec3 hue = b / max(max(b.r, max(b.g, b.b)), 1e-3);
     vec3 hl = clamp(light, 0.0, 1.0) * mix(vec3(1.0), hue, SPEC_TINT);
@@ -577,8 +573,7 @@ impl Programs {
                 UniformName::new("size", UniformType::_2f),
                 UniformName::new("radii", UniformType::_4f),
                 UniformName::new("colour", UniformType::_3f),
-                UniformName::new("balance", UniformType::_3f),
-                UniformName::new("strength", UniformType::_1f),
+                UniformName::new("lift", UniformType::_2f),
                 UniformName::new("material", UniformType::_1f),
                 UniformName::new("lens", UniformType::_4f),
                 UniformName::new("lens_box", UniformType::_4f),

@@ -415,6 +415,9 @@ pub fn draw_sample_at(
         // Drawn apart and laid over, so the rounded corners show the sample's desktop.
         let mut pic = Canvas::new(g.total.0 as u32, g.total.1 as u32);
         style_frame::draw_frame(&mut pic, style, &scaled, &caption_text, &g, &state);
+        if let Some(glass) = style.glass {
+            glass.lift[usize::from(!active)].under(c, outer.x, outer.y, &pic);
+        }
         c.blit_over(outer.x, outer.y, &pic);
         let client = Rect::new(
             outer.x + g.client.x,
@@ -665,6 +668,57 @@ mod tests {
             theme.colors.background.argb(),
             "a rounded corner"
         );
+    }
+
+    #[test]
+    fn a_glass_sample_lifts_its_desktop_under_each_frame() {
+        use crate::backdrop::Lift;
+        use crate::interfaces::sample_theme;
+        let text = TextRenderer::load(&FontConfig::default());
+        let g = crate::glass::Settings::default();
+        // The inactive window's left border and the focused one's right border, both over the desktop.
+        let (inactive, active) = ((18, 60), (339, 60));
+        for (desk, want) in [
+            (Color::rgb(232, 232, 236), [0xFFD5_E2F0_u32, 0xFFC2_D6ED]),
+            (Color::rgb(24, 30, 44), [0xFF46_4F5C_u32, 0xFF6F_7780]),
+        ] {
+            let theme = sample_theme(Interface::Glass, "", &g, Some(desk));
+            let mut flat = theme.clone();
+            let mut style = theme.look.style().unwrap().clone();
+            let spec = style.glass.as_mut().unwrap();
+            let lift = spec.lift;
+            spec.lift = [Lift::NONE; 2];
+            flat.look = Look::Styled(std::sync::Arc::new(style));
+            let c = draw_sample(false, &theme, 1, &text, None);
+            let c0 = draw_sample(false, &flat, 1, &text, None);
+            assert_eq!(
+                c.get(16, 8),
+                desk.argb(),
+                "{desk:?}: the desktop past a corner"
+            );
+            for (i, (x, y)) in [inactive, active].into_iter().enumerate() {
+                let (got, before) = (c.get(x, y), c0.get(x, y));
+                assert_ne!(got, before, "{desk:?}: ({x}, {y}) lifted");
+                assert_eq!(got, want[i], "{desk:?}: ({x}, {y})");
+                let mut d = Canvas::new(1, 1);
+                d.put(0, 0, desk);
+                let mut art = Canvas::new(1, 1);
+                art.put_raw(0, 0, 1 << 24);
+                lift[1 - i].under(&mut d, 0, 0, &art);
+                let ch = |px: u32, k: u32| ((px >> k) & 0xFF) as i32;
+                let lifted = d.get(0, 0);
+                for k in [16, 8, 0] {
+                    let (moved, by) = (
+                        ch(got, k) - ch(before, k),
+                        ch(lifted, k) - ch(desk.argb(), k),
+                    );
+                    assert!(
+                        (moved * by >= 0 || moved.abs() <= 1) && moved.abs() <= by.abs() + 1,
+                        "{desk:?}: ({x}, {y}) moves {moved} as its desktop does, by up to {by}"
+                    );
+                }
+            }
+        }
     }
 
     fn empty_taskbar_state() -> TaskbarState {

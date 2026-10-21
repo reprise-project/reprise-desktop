@@ -399,6 +399,10 @@ fn build_at(s: &Settings, scale: i32) -> Style {
             shadow: preview::GRID.shadow,
             corner: preview::GRID.corner,
         },
+        lift: [
+            tint::lift(s, tint::Surface::Active),
+            tint::lift(s, tint::Surface::Inactive),
+        ],
     })
     .with_caption_title(title)
     .with_label_glow(label_glow(s.material, s.mode))

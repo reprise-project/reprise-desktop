@@ -87,7 +87,7 @@ Glass has no colour schemes. It has a `[glass]` section instead:
 | Key | Values | Default |
 | --- | --- | --- |
 | `color` | `sky`, `twilight`, `sea`, `leaf`, `lime`, `sun`, `pumpkin`, `ruby`, `fuchsia`, `blush`, `violet`, `lavender`, `taupe`, `chocolate`, `slate`, `frost`, or `"#RRGGBB"` | `sky` |
-| `intensity` | how much of the colour shows, 0 to 100 | 42 |
+| `intensity` | how much of the colour shows, 0 to 100; part of it follows the brightness behind the glass, so translucent glass shows more colour over light backdrops than over dark ones (not under Smoked) | 42 |
 | `mode` | `light` or `dark` | `light` |
 | `material` | `frosted`, `smoked` or `molten` | `frosted` |
 | `frame` | `rounded` or `square` | `rounded` |
