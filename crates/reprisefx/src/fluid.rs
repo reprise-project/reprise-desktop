@@ -50,7 +50,7 @@ impl FluidFx {
         })
     }
 
-    /// Runs `f`'s passes on the renderer's context, then sends them to the GPU.
+    /// Runs `f`'s passes on the renderer's context.
     fn run<T>(&self, r: &mut GlesRenderer, f: impl FnOnce(&Run<'_>) -> T) -> Result<T, GlesError> {
         r.with_context(|gl| {
             let out = f(&Run {
