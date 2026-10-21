@@ -314,14 +314,12 @@ pub(crate) fn zero(gl: &ffi::Gles2, fbo: u32, to: Tex) {
     }
 }
 
-/// Ends a run of passes on `fbo`: released (`release`) and the work sent to the GPU.
+/// Ends a run of passes on `fbo`: released (`release`) and the program unbound. No flush: every
+/// reader of the fluid textures is this context, which runs the passes in order.
 pub(crate) fn done(gl: &ffi::Gles2, fbo: u32) {
     release(gl, fbo);
     // SAFETY: the context is current.
-    unsafe {
-        gl.UseProgram(0);
-        gl.Flush();
-    }
+    unsafe { gl.UseProgram(0) };
 }
 
 #[cfg(test)]
