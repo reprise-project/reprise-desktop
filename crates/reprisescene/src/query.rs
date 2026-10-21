@@ -164,6 +164,20 @@ impl<R: Renderer, D> Scene<R, D> {
             .collect()
     }
 
+    /// Move `node` to (`x`, `y`): the outputs it overlapped before or overlaps after, the ones
+    /// the move changes.
+    pub fn move_on_outputs(&mut self, node: impl Into<NodeId>, x: i32, y: i32) -> Vec<Output> {
+        let node = node.into();
+        let mut out = self.outputs_of(node);
+        self.set_position(node, x, y);
+        for o in self.outputs_of(node) {
+            if !out.contains(&o) {
+                out.push(o);
+            }
+        }
+        out
+    }
+
     /// The output showing the largest part of `node`, ties to the first added; `None` if none shows it.
     pub fn primary_output(&self, node: impl Into<NodeId>) -> Option<Output> {
         let e = self.extents(node)?;

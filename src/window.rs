@@ -1355,8 +1355,8 @@ impl State {
         win.y = y;
         win.move_pending = true;
         let tree = win.tree;
-        self.scene.set_position(tree, x, y);
-        self.redraw_all();
+        let outputs = self.scene.move_on_outputs(tree, x, y);
+        crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Scene);
     }
 
     pub fn settle_move(&mut self, w: WindowId) {

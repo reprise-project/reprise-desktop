@@ -1586,16 +1586,15 @@ fn request(state: &mut State, output: &Output, ask: Ask) {
 }
 
 /// Whether a pointer ask needs a render on the output at `geo`: `pointer` is on it or its last
-/// frame `shows` it, a zoom follows it, or a scene node `moved` since that frame. Any other output
-/// would render an empty frame for every pointer report.
+/// frame `shows` it, or a zoom follows it. Any other output would render an empty frame for every
+/// pointer report; a scene edit asks the outputs it changes itself.
 fn pointer_ask_renders(
     geo: Option<Rectangle<i32, Logical>>,
     pointer: Point<f64, Logical>,
     shows: bool,
     zooms: bool,
-    moved: bool,
 ) -> bool {
-    shows || zooms || moved || geo.is_some_and(|g| g.to_f64().contains(pointer))
+    shows || zooms || geo.is_some_and(|g| g.to_f64().contains(pointer))
 }
 
 /// Render `crtc` from an idle callback, unless one is armed or a frame is in flight.
@@ -1684,7 +1683,6 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
 /// needs one (`pointer_ask_renders`). The caller reads `pointer`: inside a pointer grab's
 /// callbacks, reading it here would lock the pointer twice.
 pub fn schedule_pointer(state: &mut State, pointer: Point<f64, Logical>) {
-    let changes = state.scene.changes();
     let outputs: Vec<Output> = state.scene.outputs().to_vec();
     for o in &outputs {
         let wanted = crtc_of(o)
@@ -1695,7 +1693,6 @@ pub fn schedule_pointer(state: &mut State, pointer: Point<f64, Logical>) {
                     pointer,
                     s.pointer_shown,
                     state.magnifier.zooms(o),
-                    s.scene_seen != changes,
                 )
             });
         if wanted {
@@ -3053,19 +3050,18 @@ mod tests {
         let right = Some(Rectangle::new((1920, 0).into(), (1920, 1080).into()));
         let on_left = Point::from((960.0, 540.0));
         let right_edge = Point::from((1920.0, 0.0));
-        assert!(pointer_ask_renders(left, on_left, false, false, false));
+        assert!(pointer_ask_renders(left, on_left, false, false));
         assert!(
-            !pointer_ask_renders(right, on_left, false, false, false),
+            !pointer_ask_renders(right, on_left, false, false),
             "the output away from the pointer has nothing to draw"
         );
         assert!(
-            pointer_ask_renders(right, on_left, true, false, false),
+            pointer_ask_renders(right, on_left, true, false),
             "the output the pointer left draws it away"
         );
-        assert!(pointer_ask_renders(right, on_left, false, true, false));
-        assert!(pointer_ask_renders(right, on_left, false, false, true));
-        assert!(pointer_ask_renders(right, right_edge, false, false, false));
-        assert!(!pointer_ask_renders(None, on_left, false, false, false));
+        assert!(pointer_ask_renders(right, on_left, false, true));
+        assert!(pointer_ask_renders(right, right_edge, false, false));
+        assert!(!pointer_ask_renders(None, on_left, false, false));
     }
 
     #[test]

@@ -676,6 +676,40 @@ fn outputs_of_lists_the_outputs_a_node_overlaps() {
 }
 
 #[test]
+fn a_move_changes_the_outputs_a_node_left_and_those_it_reached() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let left = output("L", 0, 0, 1000, 800, 1.0);
+    let right = output("R", 1000, 0, 1000, 800, 1.0);
+    s.add_output(&left);
+    s.add_output(&right);
+    let t = s.tree_create(root);
+    s.rect_create(t, (100, 100), RED);
+    assert_eq!(s.move_on_outputs(t, 10, 10), vec![left.clone()]);
+    assert_eq!(
+        s.move_on_outputs(t, 200, 10),
+        vec![left.clone()],
+        "the right output shows nothing of it"
+    );
+    assert_eq!(
+        s.move_on_outputs(t, 950, 10),
+        vec![left.clone(), right.clone()]
+    );
+    assert_eq!(
+        s.move_on_outputs(t, 1200, 10),
+        vec![left.clone(), right.clone()],
+        "it left the left output"
+    );
+    assert_eq!(s.move_on_outputs(t, 1300, 10), vec![right.clone()]);
+    assert_eq!(s.position(t), Some((1300, 10).into()));
+    s.set_enabled(t, false);
+    assert!(
+        s.move_on_outputs(t, 10, 10).is_empty(),
+        "a hidden node changes no output"
+    );
+}
+
+#[test]
 fn primary_output_is_the_largest_overlap_ties_to_the_first_added() {
     let mut s = TestScene::new();
     let root = s.root();
