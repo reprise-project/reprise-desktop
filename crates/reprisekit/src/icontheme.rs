@@ -995,6 +995,9 @@ pub struct IconCache {
     scale: i32,
     /// `has` answers by name: folder scans ask per candidate name per file.
     known: RefCell<HashMap<String, bool>>,
+    /// The image `has` decoded for a name at [`PROBE_PX`] device px, until the first fetch at
+    /// that size takes it.
+    probed: RefCell<HashMap<String, Canvas>>,
     /// Entries of `cache` by [`Kind`], kept for the caps.
     counts: [usize; 3],
     file_cap: usize,
@@ -1036,6 +1039,7 @@ impl IconCache {
             cache: HashMap::new(),
             scale: 1,
             known: RefCell::new(HashMap::new()),
+            probed: RefCell::new(HashMap::new()),
             counts: [0; 3],
             file_cap: FILE_CAP,
             file_drops: 0,
@@ -1048,6 +1052,7 @@ impl IconCache {
     pub fn set_theme(&mut self, theme: IconTheme) {
         self.theme = Arc::new(theme);
         self.known.get_mut().clear();
+        self.probed.get_mut().clear();
         self.cache.retain(|k, _| k.0.starts_with('/'));
         self.counts = [0; 3];
         for (k, v) in &self.cache {
@@ -1212,16 +1217,22 @@ impl IconCache {
         if let Some(&known) = self.known.borrow().get(name) {
             return known;
         }
-        let found = self
+        let px = PROBE_PX as u32;
+        let art = self
             .theme
-            .find_with_extra(name, 32, 1, &[], |p| decode(&p, 32))
-            .is_some();
+            .find_with_extra(name, PROBE_PX, 1, &[], |p| decode(&p, px));
+        let found = art.is_some();
         let mut known = self.known.borrow_mut();
+        let mut probed = self.probed.borrow_mut();
         // Peer-driven names: bounded like the cache's misses, dropped whole at the cap.
         if known.len() >= HIT_CAP {
             known.clear();
+            probed.clear();
         }
         known.insert(name.to_string(), found);
+        if let Some(art) = art {
+            probed.insert(name.to_string(), art);
+        }
         found
     }
 
@@ -1239,7 +1250,17 @@ impl IconCache {
         if let Some(hit) = self.cache.get(&key) {
             return hit.clone();
         }
-        let canvas = load_with_extra(&self.theme, name, px, self.scale, extra);
+        // `has` looked this name up the way `load_with_extra` would at this size.
+        let probed = (px * self.scale == PROBE_PX
+            && extra.is_empty()
+            && !name.starts_with('/')
+            && bare_name(name) == name)
+            .then(|| self.probed.get_mut().remove(name))
+            .flatten();
+        let canvas = match probed {
+            Some(art) => Some(art.at_scale(self.scale)),
+            None => load_with_extra(&self.theme, name, px, self.scale, extra),
+        };
         let canvas = canvas.map(Arc::new);
         self.insert(key, canvas.clone());
         canvas
@@ -1270,6 +1291,18 @@ fn loadable(name: &str, px: i32) -> bool {
     !name.is_empty() && px > 0 && (name.starts_with('/') || !name.contains('/'))
 }
 
+/// `name` without the extension some `.desktop` files carry in `Icon=`; the spec says to strip it.
+fn bare_name(name: &str) -> &str {
+    name.strip_suffix(".png")
+        .or_else(|| name.strip_suffix(".svg"))
+        .or_else(|| name.strip_suffix(".xpm"))
+        .unwrap_or(name)
+}
+
+/// The device px [`IconCache::has`] decodes a name at: a list's small icon size, which the
+/// theme usually has as a bitmap.
+const PROBE_PX: i32 = 16;
+
 fn load_with_extra(
     theme: &IconTheme,
     name: &str,
@@ -1281,12 +1314,7 @@ fn load_with_extra(
     let canvas = if name.starts_with('/') {
         decode(Path::new(name), dpx as u32)
     } else {
-        // Some `.desktop` files carry an extension in `Icon=`; the spec says to strip it.
-        let bare = name
-            .strip_suffix(".png")
-            .or_else(|| name.strip_suffix(".svg"))
-            .or_else(|| name.strip_suffix(".xpm"))
-            .unwrap_or(name);
+        let bare = bare_name(name);
         // Theme lookup is in device pixels at scale 1: a 32 px request at 2x and a 32 px
         // icon at 1x want the same file. A file that fails to decode gives way to the next.
         let found = theme.find_with_extra(bare, dpx, 1, extra, |p| decode(&p, dpx as u32));
@@ -2477,6 +2505,35 @@ mod tests {
         assert!(!cache.has("legacy"), "xpm is not decoded");
         assert!(cache.has("half"));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The first fetch at 16 device px takes the image `has` decoded without reading the file;
+    /// other sizes still read it.
+    #[test]
+    fn a_fetch_at_the_probe_size_takes_what_has_decoded() {
+        for scale in [1, 2] {
+            let root = fixture("test", INDEX, &["16x16/apps/app.png"]);
+            write_png(
+                &root.join("test/16x16/apps/app.png"),
+                1,
+                1,
+                &[255, 0, 0, 255],
+            );
+            let mut cache = IconCache::new(IconTheme::load("test", std::slice::from_ref(&root)));
+            cache.set_scale(scale);
+            assert!(cache.has("app"));
+            fs::remove_dir_all(&root).unwrap();
+            let got = cache.get("app", 16 / scale).expect("the probed image");
+            assert_eq!(
+                (got.device_size(), got.scale(), got.get(0, 0)),
+                ((16, 16), scale, 0xFFFF_0000),
+                "scale {scale}"
+            );
+            assert!(
+                cache.get("app", 32).is_none(),
+                "scale {scale}: 32 px reads the disk"
+            );
+        }
     }
 
     #[test]
