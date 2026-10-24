@@ -24,12 +24,6 @@ impl PropSheet {
         self.reveal_focus();
     }
 
-    /// Open the next tab, or the previous when `back` (Ctrl+Tab, Ctrl+Shift+Tab).
-    /// True when another page opened.
-    pub fn cycle_tab(&mut self, back: bool) -> bool {
-        self.strip_key(&form::Key::Tab { back }, Some(back)) == StripKey::Turned
-    }
-
     /// Open tab `i` from the host, as a click does. True when another page opened.
     pub fn open_tab(&mut self, i: usize) -> bool {
         i != self.tabs.open && self.tab_click(i) == StripKey::Turned
@@ -40,17 +34,17 @@ impl PropSheet {
     pub fn strip_key(&mut self, key: &form::Key, ctrl_tab: Option<bool>) -> StripKey {
         let list = self.is_list();
         let r = nav_key(&mut self.tabs, &mut self.pages, key, ctrl_tab, list);
-        if r == StripKey::Turned {
-            self.reveal_open();
-            self.scroll_to(0);
-            self.scroll_across(0);
-        }
-        r
+        self.after_nav(r)
     }
 
     pub fn tab_click(&mut self, i: usize) -> StripKey {
         let list = self.is_list();
         let r = nav_click(&mut self.tabs, &mut self.pages, i, list);
+        self.after_nav(r)
+    }
+
+    /// A page turned by the strip or the list shows its row and starts unscrolled.
+    fn after_nav(&mut self, r: StripKey) -> StripKey {
         if r == StripKey::Turned {
             self.reveal_open();
             self.scroll_to(0);
