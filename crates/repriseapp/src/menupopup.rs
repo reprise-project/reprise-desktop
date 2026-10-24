@@ -17,8 +17,9 @@ use smithay_client_toolkit::shm::slot::{Buffer, SlotPool};
 use wayland_client::protocol::{wl_shm, wl_surface};
 use wayland_client::{Connection, QueueHandle};
 
+use crate::draw::copy_pixels;
 use crate::editmenu::EditMenu;
-use crate::{App, Ctx, Host, Shell, Slot, WinId, copy_pixels};
+use crate::{App, Ctx, Host, Shell, Slot, WinId};
 
 /// The popups of the open menu, one per level, root first.
 pub(crate) struct MenuPopups {
