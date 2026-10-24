@@ -657,13 +657,14 @@ impl FileDlg {
         self.filename.set_selected(text);
     }
 
-    /// A folder is being entered: the field goes back to what was typed,
-    /// or empties when what was typed is the folder's own name.
-    fn entering(&mut self, name: &str) {
+    /// Enters folder `id` named `name`: the field goes back to what was typed, or empties when
+    /// what was typed is the folder's own name, and the host is asked for the listing.
+    fn enter(&mut self, id: FolderId, name: &str) -> Event {
         if self.typed == name || self.fields.mode == DlgMode::Folder {
             self.typed.clear();
         }
         self.filename.set_selected(self.typed.clone());
+        Event::NeedListing(id)
     }
 
     /// The host opened a folder the user typed a path to: the field

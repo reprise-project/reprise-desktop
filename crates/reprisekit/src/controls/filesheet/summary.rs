@@ -1,4 +1,4 @@
-use super::button;
+use super::{button, field_texts, moves};
 use crate::classic::widgets::BUTTON_H;
 use crate::controls::form::{Control, Form, Item};
 use crate::raster::Rect;
@@ -70,19 +70,11 @@ pub fn summary_page(values: Option<&[String; 6]>) -> Form {
 }
 
 pub fn summary_values(page: &Form) -> [String; 6] {
-    SUMMARY_IDS.map(|id| match page.item(id).map(|i| &i.control) {
-        Some(Control::Edit { edit, .. }) => edit.text.clone(),
-        Some(Control::Memo(m)) => m.edit.text(),
-        _ => String::new(),
-    })
+    field_texts(page, SUMMARY_IDS)
 }
 
 pub fn summary_moves(page: &Form, opened: &[String; 6]) -> Vec<(usize, String)> {
-    summary_values(page)
-        .into_iter()
-        .enumerate()
-        .filter(|(k, now)| *now != opened[*k])
-        .collect()
+    moves(summary_values(page), opened)
 }
 
 pub fn summary_of(pages: &[Form]) -> Option<&Form> {
