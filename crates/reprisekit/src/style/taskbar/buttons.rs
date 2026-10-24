@@ -174,7 +174,7 @@ pub(super) fn draw_labelled(
     }
 }
 
-fn lights_slots(style: &Style) -> bool {
+pub(super) fn lights_slots(style: &Style) -> bool {
     style.has_parts(&[Part::SlotEdge, Part::SlotLight])
 }
 
