@@ -106,8 +106,7 @@ impl State {
                     return;
                 };
                 let px = PICTURE * state.draw_scale_at(Some(&p.output)).max(1);
-                let picture = (state.start_pictures.shown(px))
-                    .or_else(|| state.icons.get("avatar-default", px));
+                let picture = state.start_user_picture(px);
                 if let Some(p) = state.start_panel.as_mut()
                     && p.model.user_picture != picture
                 {
@@ -116,6 +115,11 @@ impl State {
                 }
             })
         });
+    }
+
+    /// The user picture at `px` device pixels, else avatar-default.
+    pub(super) fn start_user_picture(&mut self, px: i32) -> Option<Canvas> {
+        (self.start_pictures.shown(px)).or_else(|| self.icons.get("avatar-default", px))
     }
 
     /// Reads the user picture ahead at the Start sizes of each of draw `scales`.

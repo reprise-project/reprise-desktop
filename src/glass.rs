@@ -950,7 +950,7 @@ pub fn sheet_pane(size: (i32, i32), corner: &'static [i32]) -> Pane {
     }
 }
 
-pub fn flyout_pane(size: (i32, i32), border: i32, corner: &'static [i32]) -> Pane {
+fn flyout_pane(size: (i32, i32), border: i32, corner: &'static [i32]) -> Pane {
     let all = Rect::new(0, 0, size.0, size.1);
     Pane {
         shapes: vec![PaneShape {

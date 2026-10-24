@@ -129,8 +129,7 @@ impl State {
         self.refresh_recent();
         let (rows, places) = self.start_places(px, &user);
         model.places = rows;
-        model.user_picture =
-            (self.start_pictures.shown(px)).or_else(|| self.icons.get("avatar-default", px));
+        model.user_picture = self.start_user_picture(px);
         let opening = self.config.menu_opening();
         let unroll = (opening == MenuAnimation::Slide)
             .then(|| crate::menuview::unroll_from_bar(self.bar_placement(&output).edge));
@@ -239,5 +238,11 @@ impl State {
 
     pub(crate) fn start_panel_output(&self) -> Option<Output> {
         self.start_panel.as_ref().map(|v| v.output.clone())
+    }
+
+    /// The open panel's draw scale, at least 1.
+    fn start_panel_scale(&self) -> Option<i32> {
+        let v = self.start_panel.as_ref()?;
+        Some(self.draw_scale_at(Some(&v.output)).max(1))
     }
 }
