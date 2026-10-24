@@ -646,13 +646,11 @@ impl TreeView {
     }
 
     fn hparts(&self, lay: &Layout, hb: Rect) -> ScrollParts {
-        scrollbar_parts(
+        scrollbar::hparts(
             hb,
-            1,
-            self.left_in(lay) as usize,
-            lay.body.width.max(0) as usize,
-            lay.content_w.max(0) as usize,
-            true,
+            self.left_in(lay),
+            lay.body.width,
+            lay.content_w,
             lay.thumb_min,
         )
     }
@@ -673,9 +671,7 @@ impl TreeView {
         match lay.hscroll {
             Some(hb) => {
                 let p = self.hparts(lay, hb);
-                let visible = lay.body.width.max(0) as usize;
-                let total = lay.content_w.max(0) as usize;
-                scrollbar_pos_at(&p, x - grab, visible, total, true) as i32
+                scrollbar::left_at(&p, x, grab, lay.body.width, lay.content_w)
             }
             None => self.left_in(lay),
         }
@@ -748,23 +744,14 @@ fn layout_with(tv: &TreeView, r: Rect, content_w: i32, cm: &ControlMetrics) -> L
     }
 }
 
-fn dotted_h(c: &mut Canvas, x0: i32, x1: i32, y: i32, s: i32, ink: Color) {
-    let mut x = x0;
-    while x < x1 {
-        if ((x / s) + (y / s)) % 2 == 0 {
-            c.fill_rect(Rect::new(x, y, s, s), ink);
+/// The dots of a dotted line `r`: every other `s`-px cell on a grid shared by all lines.
+fn dotted(c: &mut Canvas, r: Rect, s: i32, ink: Color) {
+    for y in (r.y..r.bottom()).step_by(s as usize) {
+        for x in (r.x..r.right()).step_by(s as usize) {
+            if ((x / s) + (y / s)) % 2 == 0 {
+                c.fill_rect(Rect::new(x, y, s, s), ink);
+            }
         }
-        x += s;
-    }
-}
-
-fn dotted_v(c: &mut Canvas, x: i32, y0: i32, y1: i32, s: i32, ink: Color) {
-    let mut y = y0;
-    while y < y1 {
-        if ((x / s) + (y / s)) % 2 == 0 {
-            c.fill_rect(Rect::new(x, y, s, s), ink);
-        }
-        y += s;
     }
 }
 
@@ -850,13 +837,13 @@ pub fn draw(
             for (d, cont) in open_levels.iter().enumerate().take(row.depth) {
                 if *cont {
                     let lx = -left + (tv.icon_x(d) - INDENT + BOX_X + BOX / 2) * s;
-                    dotted_v(&mut bc, lx, y, y + row_h, s, line);
+                    dotted(&mut bc, Rect::new(lx, y, s, row_h), s, line);
                 }
             }
             let top = if i == 0 && row.depth == 0 { mid } else { y };
             let bottom = if row.last { mid } else { y + row_h };
-            dotted_v(&mut bc, cx, top, bottom, s, line);
-            dotted_h(&mut bc, cx, ix, mid, s, line);
+            dotted(&mut bc, Rect::new(cx, top, s, bottom - top), s, line);
+            dotted(&mut bc, Rect::new(cx, mid, ix - cx, s), s, line);
         }
         if node.has_children && tv.has_box(row.depth) && !boxed {
             let b = Rect::new(bx, mid - (BOX / 2) * s, BOX * s, BOX * s);

@@ -619,13 +619,11 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
     }
 
     fn hparts(&self, lay: &Layout, hb: Rect) -> ScrollParts {
-        scrollbar_parts(
+        scrollbar::hparts(
             hb,
-            1,
-            self.left_in(lay) as usize,
-            lay.body.width.max(0) as usize,
-            lay.total_w.max(0) as usize,
-            true,
+            self.left_in(lay),
+            lay.body.width,
+            lay.total_w,
             lay.thumb_min,
         )
     }
@@ -635,8 +633,7 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
         match lay.hscroll {
             Some(hb) => {
                 let p = self.hparts(lay, hb);
-                let visible = lay.body.width.max(0) as usize;
-                scrollbar_pos_at(&p, x - grab, visible, lay.total_w.max(0) as usize, true) as i32
+                scrollbar::left_at(&p, x, grab, lay.body.width, lay.total_w)
             }
             None => self.left_in(lay),
         }
