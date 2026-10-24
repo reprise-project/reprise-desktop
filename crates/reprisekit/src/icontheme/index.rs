@@ -104,30 +104,16 @@ pub(super) fn parse_index(theme_dir: &Path) -> (Vec<String>, Vec<DirEntry>) {
         values.entry((s.as_str(), k.as_str())).or_insert(v.as_str());
     }
     let get = |section: &str, key: &str| values.get(&(section, key)).copied();
-    let inherits: Vec<String> = get("Icon Theme", "Inherits")
-        .map(|v| {
-            v.split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-    let mut names: Vec<String> = get("Icon Theme", "Directories")
-        .map(|v| {
-            v.split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
-    if let Some(scaled) = get("Icon Theme", "ScaledDirectories") {
-        names.extend(
-            scaled
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty()),
-        );
-    }
+    let list = |key: &str| {
+        get("Icon Theme", key)
+            .into_iter()
+            .flat_map(|v| v.split(','))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let inherits: Vec<String> = list("Inherits").collect();
+    let mut names: Vec<String> = list("Directories").collect();
+    names.extend(list("ScaledDirectories"));
     let mut dirs = Vec::with_capacity(names.len());
     for name in names {
         let num = |key: &str| get(&name, key).and_then(|v| v.parse::<i32>().ok());
