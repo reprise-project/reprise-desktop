@@ -384,58 +384,13 @@ no_events!(
     xdg_toplevel_tag_manager_v1::XdgToplevelTagManagerV1,
     zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1,
     reprise_tabs_v1::RepriseTabsV1,
+    wp_viewporter::WpViewporter,
+    wp_viewport::WpViewport,
+    wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
+    zwp_text_input_manager_v3::ZwpTextInputManagerV3,
 );
 
-impl Dispatch2<wp_viewporter::WpViewporter, Host> for NoEvents {
-    fn event(
-        &self,
-        _: &mut Host,
-        _: &wp_viewporter::WpViewporter,
-        _: wp_viewporter::Event,
-        _: &Connection,
-        _: &QueueHandle<Host>,
-    ) {
-    }
-}
-
-impl Dispatch2<wp_viewport::WpViewport, Host> for NoEvents {
-    fn event(
-        &self,
-        _: &mut Host,
-        _: &wp_viewport::WpViewport,
-        _: wp_viewport::Event,
-        _: &Connection,
-        _: &QueueHandle<Host>,
-    ) {
-    }
-}
-
-impl Dispatch2<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, Host> for NoEvents {
-    fn event(
-        &self,
-        _: &mut Host,
-        _: &wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
-        _: wp_fractional_scale_manager_v1::Event,
-        _: &Connection,
-        _: &QueueHandle<Host>,
-    ) {
-    }
-}
-
-impl Dispatch2<zwp_text_input_manager_v3::ZwpTextInputManagerV3, Host> for NoEvents {
-    fn event(
-        &self,
-        _: &mut Host,
-        _: &zwp_text_input_manager_v3::ZwpTextInputManagerV3,
-        _: zwp_text_input_manager_v3::Event,
-        _: &Connection,
-        _: &QueueHandle<Host>,
-    ) {
-    }
-}
-
 delegate_dispatch2!(Host);
-
 delegate_registry!(Host);
 
 impl ProvidesRegistryState for Host {
