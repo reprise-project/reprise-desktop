@@ -116,8 +116,6 @@ pub fn mutes(state: &State, pid: Option<i32>) -> bool {
     };
     overflow_enabled(&state.config)
         && tray
-            .items
-            .iter()
-            .chain(&tray.hidden)
+            .all()
             .any(|i| i.pid == Some(pid) && !behaviour_of(&tray.choices, i).balloons())
 }

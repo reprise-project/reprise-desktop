@@ -1,4 +1,4 @@
-use super::Wake;
+use super::{Wake, lock};
 use std::sync::{Arc, Mutex};
 use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
@@ -78,7 +78,7 @@ impl Watcher {
         };
         let key = format!("{bus}{path}");
         {
-            let mut items = self.items.lock().unwrap_or_else(|e| e.into_inner());
+            let mut items = lock(&self.items);
             match admit(&items, &key, sender) {
                 Admission::Known => {}
                 Admission::New => items.push(Published {
@@ -114,7 +114,7 @@ impl Watcher {
 
     #[zbus(property)]
     fn registered_status_notifier_items(&self) -> Vec<String> {
-        let items = self.items.lock().unwrap_or_else(|e| e.into_inner());
+        let items = lock(&self.items);
         items.iter().map(|p| p.key.clone()).collect()
     }
 
