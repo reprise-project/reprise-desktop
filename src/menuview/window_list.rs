@@ -29,7 +29,7 @@ impl State {
         }
         self.close_menu();
         let style = MenuStyle::context(&self.config.theme, ContextBitmaps::Icons);
-        let px = style.icon_px() * self.draw_scale_at(Some(&output)).max(1);
+        let px = self.context_icon_px(&output);
         let titles: Vec<String> = wins
             .iter()
             .map(|&w| self.win(w).map(|x| x.title()).unwrap_or_default())
@@ -88,7 +88,7 @@ impl State {
             return;
         }
         self.close_menu();
-        let px = self.overflow_icon_px(&output);
+        let px = self.context_icon_px(&output);
         let mut waits = RowIcons::default();
         let items: Vec<MenuItem> = (rows.into_iter().enumerate())
             .map(|(n, (title, window))| {
@@ -117,7 +117,7 @@ impl State {
             return;
         }
         self.close_menu();
-        let px = self.overflow_icon_px(&output);
+        let px = self.context_icon_px(&output);
         let mut waits = RowIcons::default();
         let mut files = Vec::with_capacity(hidden.len());
         let mut items = Vec::with_capacity(hidden.len());
@@ -128,11 +128,6 @@ impl State {
         }
         let kind = MenuKind::QuickOverflow { bar: tree, files };
         self.push_overflow(output, more, items, kind, waits);
-    }
-
-    fn overflow_icon_px(&self, output: &Output) -> i32 {
-        let style = MenuStyle::context(&self.config.theme, ContextBitmaps::Icons);
-        style.icon_px() * self.draw_scale_at(Some(output)).max(1)
     }
 
     /// Opens `items` as a menu off the bar cell `cell` (bar coordinates) on `output`.

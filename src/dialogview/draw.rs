@@ -291,7 +291,7 @@ impl State {
     ) {
         let files: IconFiles = art.iter().map(|(f, px, _)| (f.clone(), *px)).collect();
         self.icons.put_files(art);
-        let Some(i) = self.dialogs.views.iter().position(|v| v.id == id) else {
+        let Some(i) = self.dialog_index(id) else {
             return;
         };
         let v = &mut self.dialogs.views[i];
@@ -310,7 +310,7 @@ impl State {
         let added = self
             .handle
             .insert_source(Timer::from_duration(wait), move |_, _, state| {
-                if let Some(i) = state.dialogs.views.iter().position(|v| v.id == id) {
+                if let Some(i) = state.dialog_index(id) {
                     state.dialogs.views[i].icons = None;
                     state.redraw_dialog(i);
                 }

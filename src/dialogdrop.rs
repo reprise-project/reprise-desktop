@@ -351,10 +351,6 @@ impl State {
         self.relayout_desktop();
         took
     }
-
-    fn dialog_index(&self, id: u64) -> Option<usize> {
-        self.dialogs.views.iter().position(|v| v.id == id)
-    }
 }
 
 #[cfg(test)]

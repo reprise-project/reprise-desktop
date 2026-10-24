@@ -134,8 +134,6 @@ pub fn setup(state: &mut State) {
     crate::fsjobs::setup(state);
 }
 
-/// The stack order after raising dialog `index`: its family (parent chain up to a root dialog, and
-/// everything opened over any of them) moves to the top in current order. `links` is `(id, parent)`, bottom first.
 /// Hide the underlines of every dialog but the one at stack index `keyboard`, which has the keyboard.
 /// Whether any were out.
 fn blur_cues_without_keyboard<'a>(
@@ -165,6 +163,8 @@ pub(crate) fn reader_focus(
     dialog.focus_at(layout, at.0, at.1, text, px) == Outcome::Redraw || cued
 }
 
+/// The stack order after raising dialog `index`: its family (parent chain up to a root dialog, and
+/// everything opened over any of them) moves to the top in current order. `links` is `(id, parent)`, bottom first.
 fn raise_order(links: &[(u64, Option<u64>)], index: usize) -> Vec<usize> {
     let parent = |i: usize| {
         links[i]
