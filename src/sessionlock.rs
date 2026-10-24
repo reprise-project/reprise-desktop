@@ -477,13 +477,16 @@ fn forget_dead_surfaces(state: &mut State) {
     let Some(c) = lock.active.as_mut().and_then(|l| l.client.as_mut()) else {
         return;
     };
+    let mut uncovered = Vec::new();
     c.surfaces.retain(|s| {
         let alive = s.surface.alive();
         if !alive {
+            uncovered.push(s.output.clone());
             scene.destroy(s.node);
         }
         alive
     });
+    crate::backend::schedule_on(state, &uncovered, crate::backend::Ask::Scene);
     ensure_keyboard(state);
 }
 
@@ -586,5 +589,25 @@ mod tests {
         w.forget(&"DP-2");
         assert!(w.done());
         assert!(CoverWait::<&str>::new(Vec::new()).done());
+    }
+
+    #[test]
+    fn a_destroyed_lock_surface_asks_its_output_for_a_frame() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let (_lock, surface) = h.map_lock_surface(&mut c);
+        assert!(client(&mut h.state).is_some_and(|c| c.surfaces.iter().any(|s| s.mapped)));
+        crate::backend::take_asks();
+        surface.destroy();
+        h.roundtrip(&mut c);
+        assert!(client(&mut h.state).is_some_and(|c| c.surfaces.is_empty()));
+        let asked = crate::backend::take_asks();
+        let scene: Vec<&str> = (asked.iter())
+            .filter(|(_, a)| *a == crate::backend::Ask::Scene)
+            .map(|(o, _)| o.as_str())
+            .collect();
+        assert_eq!(scene, ["TEST-1"], "{asked:?}");
     }
 }
