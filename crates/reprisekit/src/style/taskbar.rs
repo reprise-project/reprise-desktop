@@ -16,8 +16,8 @@ pub use buttons::{
 };
 use buttons::{
     PAGER_DIM, Span, Spot, draw_dimmed_number, draw_labelled, draw_slot_edges, draw_slot_light,
-    draw_slot_light_foot, draw_spot, draw_task_button, is_lit, label_pair, pager_tile_rect,
-    stacked,
+    draw_slot_light_foot, draw_spot, draw_task_button, is_lit, label_pair, lights_slots,
+    pager_tile_rect, stacked,
 };
 pub use start::draw_start_above;
 use start::{draw_orb, draw_start_pill};
@@ -89,6 +89,10 @@ pub fn draw_taskbar(
         }
     }
 
+    let popup_ink = |lit: Option<State>| {
+        lit.and_then(|st| style.text_color(Part::TaskButton, st))
+            .unwrap_or(style.bar_text)
+    };
     let mut fallback: Option<Canvas> = None;
     for (i, r) in layout.quick.iter().enumerate() {
         if state.quick_pressed == Some(i) {
@@ -96,26 +100,18 @@ pub fn draw_taskbar(
         } else if state.quick_hot == Some(i) {
             style.draw(canvas, *r, Part::TaskButton, State::Hot, s);
         }
-        let (ix, iy) = quick_icon_origin(*r, icon_px, s);
-        match state.quick_icons.get(i) {
-            Some(Some(ic)) => canvas.blit_canvas(ix, iy, ic),
-            _ => {
-                let fb = fallback.get_or_insert_with(|| icon::chrome_fallback(theme, icon_px));
-                canvas.blit_canvas(ix, iy, fb)
-            }
-        }
+        let at = quick_icon_origin(*r, icon_px, s);
+        let ic = state.quick_icons.get(i).and_then(Option::as_deref);
+        blit_icon(canvas, theme, ic, &mut fallback, icon_px, at);
     }
     if let Some(r) = layout.quick_more {
         let lit = popup_state(state.quick_more);
         if let Some(st) = lit {
             style.draw(canvas, r, Part::TaskButton, st, s);
         }
-        let ink = lit
-            .and_then(|st| style.text_color(Part::TaskButton, st))
-            .unwrap_or(style.bar_text);
-        crate::taskbar::draw_more(canvas, r, ink, s);
+        crate::taskbar::draw_more(canvas, r, popup_ink(lit), s);
     }
-    let lights = style.has_parts(&[Part::SlotEdge, Part::SlotLight]);
+    let lights = lights_slots(style);
     for (i, (r, b)) in layout.pager.iter().zip(&state.pager).enumerate() {
         let hot = state.pager_hot == Some(i);
         let label = (i + 1).to_string();
@@ -153,10 +149,7 @@ pub fn draw_taskbar(
                 if let Some(st) = lit {
                     style.draw(canvas, *r, Part::TaskButton, st, s);
                 }
-                let ink = lit
-                    .and_then(|st| style.text_color(Part::TaskButton, st))
-                    .unwrap_or(style.bar_text);
-                (ink, 0xFF)
+                (popup_ink(lit), 0xFF)
             }
         };
         if alpha == 0xFF {
@@ -225,14 +218,8 @@ pub fn draw_taskbar(
                 r.x + (r.width - task_px) / 2 + o,
                 r.y + (r.height - task_px) / 2 + o,
             );
-            match &task.icon {
-                Some(ic) => canvas.blit_canvas(at.0, at.1, ic),
-                None => {
-                    let fb =
-                        task_fallback.get_or_insert_with(|| icon::chrome_fallback(theme, task_px));
-                    canvas.blit_canvas(at.0, at.1, fb)
-                }
-            }
+            let ic = task.icon.as_deref();
+            blit_icon(canvas, theme, ic, &mut task_fallback, task_px, at);
             continue;
         }
         let button_state = states[i];
@@ -290,13 +277,9 @@ pub fn draw_taskbar(
             r.x + lb.icon_x * s + (lb.icon_box * s - task_px) / 2
         };
         let icon_at = (icon_x + o, r.y + (r.height - task_px) / 2 + o);
-        match &task.icon {
-            _ if narrow && r.width < task_px + 2 * o => {}
-            Some(ic) => canvas.blit_canvas(icon_at.0, icon_at.1, ic),
-            None => {
-                let fb = task_fallback.get_or_insert_with(|| icon::chrome_fallback(theme, task_px));
-                canvas.blit_canvas(icon_at.0, icon_at.1, fb)
-            }
+        if !(narrow && r.width < task_px + 2 * o) {
+            let ic = task.icon.as_deref();
+            blit_icon(canvas, theme, ic, &mut task_fallback, task_px, icon_at);
         }
         if layout.icons_only {
             continue;
@@ -317,10 +300,6 @@ pub fn draw_taskbar(
         text.draw(canvas, label, &title, false, ink, Align::Left, size);
     }
 
-    let popup_ink = |lit: Option<State>| {
-        lit.and_then(|st| style.text_color(Part::TaskButton, st))
-            .unwrap_or(style.bar_text)
-    };
     if let Some(r) = layout.more {
         let lit = popup_state(state.more);
         let st = lit.unwrap_or(State::Normal);
@@ -388,6 +367,20 @@ pub fn draw_taskbar(
             style.draw(canvas, r, Part::TaskButton, st, s);
         }
     }
+}
+
+/// Blits `image` at `at`, or the theme's chrome fallback at `px`, built once into `fallback`.
+fn blit_icon(
+    canvas: &mut Canvas,
+    theme: &Theme,
+    image: Option<&Canvas>,
+    fallback: &mut Option<Canvas>,
+    px: i32,
+    at: (i32, i32),
+) {
+    let ic =
+        image.unwrap_or_else(|| fallback.get_or_insert_with(|| icon::chrome_fallback(theme, px)));
+    canvas.blit_canvas(at.0, at.1, ic);
 }
 
 fn edge_state(style: &Style, button: State) -> State {
