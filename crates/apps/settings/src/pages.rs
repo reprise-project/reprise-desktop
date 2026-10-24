@@ -1,5 +1,5 @@
 //! The pages of the Reprise Settings sheet: pure geometry and the binding
-//! between a control and its [`Settings`] field. Nothing here reads a file or
+//! between a control and its [`Settings`](crate::model::Settings) field. Nothing here reads a file or
 //! talks to a compositor. Which pages exist, and their order, is `registry`'s.
 //!
 //! Each page is built for an [`Area`]: at its smallest, a 398x528 client with
@@ -32,9 +32,9 @@ pub use bind::{fill_layouts, follow, layout_selection, read_one, write, write_fo
 pub use desktop::{desktops, launcher, switcher, taskbar, windows};
 pub use input::{accessibility, keyboard, mouse, pointers, preview_size};
 pub use lists::{
-    draw_list, draw_shortcuts, fill_list, fill_locations, fill_shortcuts, fit_list_columns,
-    fit_location_columns, fit_shortcut_columns, list_key, new_list, new_location_list,
-    new_shortcut_list, show_locations_loading,
+    draw_list, fill_list, fill_locations, fill_shortcuts, fit_list_columns, fit_location_columns,
+    fit_shortcut_columns, list_key, new_list, new_location_list, new_shortcut_list,
+    show_locations_loading,
 };
 pub use system::{advanced, power, startup};
 

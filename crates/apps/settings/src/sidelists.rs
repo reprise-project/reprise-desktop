@@ -7,35 +7,40 @@ use reprisekit::classic::widgets::BarHit;
 use reprisekit::controls::form;
 use reprisekit::controls::listview::{self, ListView};
 use reprisekit::controls::metrics::ControlMetrics;
+use reprisekit::controls::propsheet::PropSheet;
 use reprisekit::raster::Rect;
 
+/// Give a side list the keyboard or take it away; the dotted rectangle goes with it.
+pub(crate) fn hand_focus(sheet: &mut PropSheet, list: &mut ListView, held: &mut bool, on: bool) {
+    *held = on;
+    list.focus_ring = on;
+    if on {
+        sheet.open_mut().set_focus(None);
+        sheet.tabs.focused = false;
+    }
+}
+
 impl SettingsApp {
-    /// Give the Startup list the keyboard or take it away; the dotted rectangle goes with it.
     pub(crate) fn focus_list(&mut self, on: bool) {
-        self.list_focus = on;
-        self.list.focus_ring = on;
-        if on {
-            self.sheet.open_mut().set_focus(None);
-            self.sheet.tabs.focused = false;
-        }
+        hand_focus(&mut self.sheet, &mut self.list, &mut self.list_focus, on);
     }
 
     pub(crate) fn focus_shortcuts(&mut self, on: bool) {
-        self.shortcuts_focus = on;
-        self.shortcuts.focus_ring = on;
-        if on {
-            self.sheet.open_mut().set_focus(None);
-            self.sheet.tabs.focused = false;
-        }
+        hand_focus(
+            &mut self.sheet,
+            &mut self.shortcuts,
+            &mut self.shortcuts_focus,
+            on,
+        );
     }
 
     pub(crate) fn focus_locations(&mut self, on: bool) {
-        self.locations_focus = on;
-        self.locations.focus_ring = on;
-        if on {
-            self.sheet.open_mut().set_focus(None);
-            self.sheet.tabs.focused = false;
-        }
+        hand_focus(
+            &mut self.sheet,
+            &mut self.locations,
+            &mut self.locations_focus,
+            on,
+        );
     }
 
     pub(crate) fn on_page(&self, r: Rect) -> Rect {

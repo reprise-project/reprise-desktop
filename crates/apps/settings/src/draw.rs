@@ -147,7 +147,7 @@ impl SettingsApp {
             }
             if open == Page::Keyboard.index() {
                 let r = self.on_page(pages::shortcuts(self.area()));
-                pages::draw_shortcuts(c, &ctx.text, &forms, &self.shortcuts, r, form_px, 1);
+                pages::draw_list(c, &ctx.text, &forms, &self.shortcuts, r, form_px, 1);
             }
             if open == Page::DefaultPrograms.index() {
                 let r = self.on_page(defaultspage::list(self.area()));

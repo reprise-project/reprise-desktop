@@ -1,5 +1,5 @@
 use crate::registry::Page;
-use crate::{Chooser, SettingsApp, defaultspage, filepick::Pick, pages, registry};
+use crate::{Chooser, SettingsApp, defaultspage, filepick::Pick, pages, registry, sidelists};
 use repriseapp::openwith::ChooserInput;
 use repriseapp::{Ctx, Event, Reply};
 use reprisekit::controls::form;
@@ -29,12 +29,7 @@ impl SettingsApp {
     }
 
     pub(crate) fn focus_types(&mut self, on: bool) {
-        self.types_focus = on;
-        self.types.focus_ring = on;
-        if on {
-            self.sheet.open_mut().set_focus(None);
-            self.sheet.tabs.focused = false;
-        }
+        sidelists::hand_focus(&mut self.sheet, &mut self.types, &mut self.types_focus, on);
     }
 
     pub(crate) fn defaults_changed(&mut self, id: &str) -> Reply {
