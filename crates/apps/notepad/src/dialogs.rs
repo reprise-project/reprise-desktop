@@ -125,6 +125,22 @@ pub(crate) fn form_event(
     }
 }
 
+/// A Notepad box with one OK button.
+pub(crate) fn ok_box(text: String, icon: Option<Canvas>) -> MsgBox {
+    MsgBox::new(
+        "Notepad",
+        msgbox::Fields {
+            text,
+            icon,
+            buttons: vec!["OK".into()],
+            default: 0,
+            min_text_h: None,
+            min_w: 0,
+            max_w: repriseapp::dialog_max_w(),
+        },
+    )
+}
+
 impl Notepad {
     pub(crate) fn go_to_line(&mut self, value: &str) -> bool {
         let Ok(n) = value.trim().parse::<usize>() else {
@@ -176,9 +192,7 @@ impl Notepad {
                     .map(|f| Notepad::field(f, GOTO_LINE))
                     .unwrap_or_default();
                 if self.go_to_line(&value) {
-                    let lay = self.edit_layout(ctx);
-                    self.view
-                        .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
+                    self.scroll_to_caret(ctx);
                     self.goto = None;
                 }
                 Reply::redraw_all()
@@ -188,27 +202,8 @@ impl Notepad {
         }
     }
 
-    pub(crate) fn checked(form: &Form, id: &str) -> bool {
-        match &form.item(id).expect("the field exists").control {
-            Control::Check { checked, .. } => *checked,
-            Control::Radio { checked, .. } => *checked,
-            other => panic!("{id} is {other:?}, not a check or radio"),
-        }
-    }
-
     pub(crate) fn error_box(&self, text: &str) -> MsgBox {
-        MsgBox::new(
-            "Notepad",
-            msgbox::Fields {
-                text: text.into(),
-                icon: self.warn_icon.clone(),
-                buttons: vec!["OK".into()],
-                default: 0,
-                min_text_h: None,
-                min_w: 0,
-                max_w: repriseapp::dialog_max_w(),
-            },
-        )
+        ok_box(text.into(), self.warn_icon.clone())
     }
 
     pub(crate) fn about_fields(&self) -> aboutbox::Fields {
@@ -235,7 +230,7 @@ impl Notepad {
         ))
     }
 
-    pub(crate) fn error_event(&mut self, ev: Event, _ctx: &mut Ctx) -> Reply {
+    pub(crate) fn error_event(&mut self, ev: Event) -> Reply {
         let Some(b) = &mut self.error else {
             return Reply::none();
         };
@@ -250,7 +245,7 @@ impl Notepad {
     }
 
     /// About's own loop.
-    pub(crate) fn about_event(&mut self, ev: Event, _ctx: &mut Ctx) -> Reply {
+    pub(crate) fn about_event(&mut self, ev: Event) -> Reply {
         let step = oneshot::event(&ev, &self.dialog_text, &self.forms, || self.about_form());
         match step {
             FormStep::Closed => {

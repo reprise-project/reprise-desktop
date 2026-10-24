@@ -2,7 +2,9 @@
 
 use super::*;
 
-fn set_actions_live(f: &mut Form, live: bool) {
+/// Find Next and the Replace buttons act only on a non-empty query.
+fn sync_actions(f: &mut Form) {
+    let live = !Notepad::field(f, finddlg::QUERY).is_empty();
     for id in [finddlg::FIND_NEXT, finddlg::REPLACE, finddlg::REPLACE_ALL] {
         if let Some(i) = f.index_of(id)
             && let Control::Button { enabled, .. } = &mut f.items[i].control
@@ -10,6 +12,23 @@ fn set_actions_live(f: &mut Form, live: bool) {
             *enabled = live;
         }
     }
+}
+
+fn checked(f: &Form, id: &str) -> bool {
+    f.checked(id).expect("a check box or radio")
+}
+
+/// Replace has no direction: it always searches down.
+fn replace_query(f: &Form) -> (String, multiedit::FindOpts) {
+    let match_case = checked(f, finddlg::MATCH_CASE);
+    let query = Notepad::field(f, finddlg::QUERY);
+    (
+        query,
+        multiedit::FindOpts {
+            match_case,
+            down: true,
+        },
+    )
 }
 
 impl Notepad {
@@ -98,18 +117,7 @@ impl Notepad {
     }
 
     pub(crate) fn notfound_box(&self, query: &str) -> MsgBox {
-        MsgBox::new(
-            "Notepad",
-            msgbox::Fields {
-                text: format!("Cannot find \"{query}\""),
-                icon: self.info_icon.clone(),
-                buttons: vec!["OK".into()],
-                default: 0,
-                min_text_h: None,
-                min_w: 0,
-                max_w: repriseapp::dialog_max_w(),
-            },
-        )
+        ok_box(format!("Cannot find \"{query}\""), self.info_icon.clone())
     }
 
     pub(crate) fn find_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
@@ -144,21 +152,18 @@ impl Notepad {
             form::Event::Default | form::Event::Pressed(finddlg::FIND_NEXT) => {
                 if let Some(f) = &self.find {
                     let query = Notepad::field(f, finddlg::QUERY);
-                    let match_case = Notepad::checked(f, finddlg::MATCH_CASE);
-                    let down = Notepad::checked(f, finddlg::DOWN);
+                    let match_case = checked(f, finddlg::MATCH_CASE);
+                    let down = checked(f, finddlg::DOWN);
                     self.last_query = Some((query, multiedit::FindOpts { match_case, down }));
                 }
                 if self.find_next() {
-                    let lay = self.edit_layout(ctx);
-                    self.view
-                        .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
+                    self.scroll_to_caret(ctx);
                 }
                 Reply::redraw_all()
             }
             form::Event::Changed(finddlg::QUERY) => {
                 if let Some(f) = &mut self.find {
-                    let live = !Notepad::field(f, finddlg::QUERY).is_empty();
-                    set_actions_live(f, live);
+                    sync_actions(f);
                 }
                 Reply::redraw_all()
             }
@@ -198,69 +203,43 @@ impl Notepad {
             }
             form::Event::Default | form::Event::Pressed(finddlg::FIND_NEXT) => {
                 if let Some(f) = &self.replace {
-                    let query = Notepad::field(f, finddlg::QUERY);
-                    let match_case = Notepad::checked(f, finddlg::MATCH_CASE);
-                    self.last_query = Some((
-                        query,
-                        multiedit::FindOpts {
-                            match_case,
-                            down: true,
-                        },
-                    ));
+                    self.last_query = Some(replace_query(f));
                 }
                 if self.find_next() {
-                    let lay = self.edit_layout(ctx);
-                    self.view
-                        .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
+                    self.scroll_to_caret(ctx);
                 }
                 Reply::redraw_all()
             }
             form::Event::Pressed(finddlg::REPLACE) => {
                 let mut hit = false;
                 if let Some(f) = &self.replace {
-                    let query = Notepad::field(f, finddlg::QUERY);
+                    let (query, opts) = replace_query(f);
                     let with = Notepad::field(f, finddlg::WITH);
-                    let match_case = Notepad::checked(f, finddlg::MATCH_CASE);
-                    self.last_query = Some((
-                        query.clone(),
-                        multiedit::FindOpts {
-                            match_case,
-                            down: true,
-                        },
-                    ));
+                    let match_case = opts.match_case;
+                    self.last_query = Some((query.clone(), opts));
                     hit = self.replace_once(&query, &with, match_case);
                 }
                 if hit {
-                    let lay = self.edit_layout(ctx);
-                    self.view
-                        .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
+                    self.scroll_to_caret(ctx);
                 }
                 Reply::redraw_all()
             }
             form::Event::Pressed(finddlg::REPLACE_ALL) => {
                 let mut hit = false;
                 if let Some(f) = &self.replace {
-                    let query = Notepad::field(f, finddlg::QUERY);
+                    let (query, opts) = replace_query(f);
                     let with = Notepad::field(f, finddlg::WITH);
-                    let match_case = Notepad::checked(f, finddlg::MATCH_CASE);
-                    let opts = multiedit::FindOpts {
-                        match_case,
-                        down: true,
-                    };
                     hit = self.replace_every(&query, &with, &opts) > 0;
                     self.last_query = Some((query, opts));
                 }
                 if hit {
-                    let lay = self.edit_layout(ctx);
-                    self.view
-                        .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
+                    self.scroll_to_caret(ctx);
                 }
                 Reply::redraw_all()
             }
             form::Event::Changed(finddlg::QUERY) => {
                 if let Some(f) = &mut self.replace {
-                    let live = !Notepad::field(f, finddlg::QUERY).is_empty();
-                    set_actions_live(f, live);
+                    sync_actions(f);
                 }
                 Reply::redraw_all()
             }
@@ -269,7 +248,7 @@ impl Notepad {
         }
     }
 
-    pub(crate) fn notfound_event(&mut self, ev: Event, _ctx: &mut Ctx) -> Reply {
+    pub(crate) fn notfound_event(&mut self, ev: Event) -> Reply {
         let Some(b) = &mut self.notfound else {
             return Reply::none();
         };

@@ -319,9 +319,7 @@ impl Notepad {
             Event::Pasted(text) => {
                 if self.edit.paste(&text) {
                     self.dirty = true;
-                    let lay = self.edit_layout(ctx);
-                    self.view
-                        .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
+                    self.scroll_to_caret(ctx);
                 }
                 Reply::redraw()
             }

@@ -106,11 +106,15 @@ impl Notepad {
         )
     }
 
-    pub(crate) fn edit_key(&mut self, key: MultiKey, ctx: &Ctx) -> bool {
-        let changed = self.edit.key(key, &self.mono, &self.metrics);
+    pub(crate) fn scroll_to_caret(&mut self, ctx: &Ctx) {
         let lay = self.edit_layout(ctx);
         self.view
             .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
+    }
+
+    pub(crate) fn edit_key(&mut self, key: MultiKey, ctx: &Ctx) -> bool {
+        let changed = self.edit.key(key, &self.mono, &self.metrics);
+        self.scroll_to_caret(ctx);
         if changed {
             self.dirty = true;
         }
@@ -125,9 +129,7 @@ impl Notepad {
         let stamp = local_stamp(now);
         self.edit.paste(&stamp);
         self.dirty = true;
-        let lay = self.edit_layout(ctx);
-        self.view
-            .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
+        self.scroll_to_caret(ctx);
     }
 
     pub(crate) fn scroll(&mut self, by: i64, ctx: &Ctx) -> bool {
@@ -137,15 +139,16 @@ impl Notepad {
 
     pub(crate) fn draw_main(&self, c: &mut Canvas, ctx: &Ctx) {
         let cs = &ctx.theme.colors;
+        let paint = Paint {
+            s: 1,
+            ..ctx.theme.paint()
+        };
         c.fill_rect(self.client(ctx), cs.button_face);
         let el = self.edit_layout(ctx);
         multiedit::draw(
             c,
             &self.mono,
-            &Paint {
-                s: 1,
-                ..ctx.theme.paint()
-            },
+            &paint,
             &self.metrics,
             &self.edit,
             self.view,
@@ -156,10 +159,7 @@ impl Notepad {
             multiedit::draw_drop_point(
                 c,
                 &self.mono,
-                &Paint {
-                    s: 1,
-                    ..ctx.theme.paint()
-                },
+                &paint,
                 &self.metrics,
                 &self.edit,
                 self.view,
@@ -168,28 +168,10 @@ impl Notepad {
             );
         }
         if let Some(corner) = el.corner().filter(|_| !ctx.maximized && !self.status_bar) {
-            draw_scroll_corner(
-                c,
-                &Paint {
-                    s: 1,
-                    ..ctx.theme.paint()
-                },
-                corner,
-                true,
-            );
+            draw_scroll_corner(c, &paint, corner, true);
         }
         if let Some((bar, r)) = self.status(ctx) {
-            statusbar::draw(
-                c,
-                &ctx.text,
-                &Paint {
-                    s: 1,
-                    ..ctx.theme.paint()
-                },
-                &bar,
-                r,
-                ctx.theme.fonts.size_px,
-            );
+            statusbar::draw(c, &ctx.text, &paint, &bar, r, ctx.theme.fonts.size_px);
         }
         let lay = self.bar_layout(ctx);
         self.bar.draw(c, &ctx.text, &ctx.theme, &lay);
