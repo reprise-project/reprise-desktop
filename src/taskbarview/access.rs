@@ -31,31 +31,24 @@ impl State {
 
     fn tray_cell_name(&self, bar: TreeId, i: usize) -> String {
         let revealed = self.bar(bar).map_or(0, |b| b.layout.tray_hidden);
-        match crate::tray::cell_at(self, bar, i) {
-            crate::tray::Cell::Hidden(_) => (self.tray.as_ref())
-                .and_then(|t| t.item_at(revealed, 0, i))
-                .map(|it| {
-                    if it.tooltip.is_empty() {
-                        it.title.clone()
-                    } else {
-                        it.tooltip.clone()
-                    }
-                })
-                .unwrap_or_default(),
-            crate::tray::Cell::Item(k) => (self.tray.as_ref())
-                .and_then(|t| t.items.get(k))
-                .map(|it| {
-                    if it.tooltip.is_empty() {
-                        it.title.clone()
-                    } else {
-                        it.tooltip.clone()
-                    }
-                })
-                .unwrap_or_default(),
-            crate::tray::Cell::Builtin(b) => (crate::tray::builtin::shown(self).get(b))
-                .and_then(|&b| crate::tray::builtin::label(self, b))
-                .unwrap_or_default(),
-        }
+        let tray = self.tray.as_ref();
+        let item = match crate::tray::cell_at(self, bar, i) {
+            crate::tray::Cell::Hidden(_) => tray.and_then(|t| t.item_at(revealed, 0, i)),
+            crate::tray::Cell::Item(k) => tray.and_then(|t| t.items.get(k)),
+            crate::tray::Cell::Builtin(b) => {
+                return (crate::tray::builtin::shown(self).get(b))
+                    .and_then(|&b| crate::tray::builtin::label(self, b))
+                    .unwrap_or_default();
+            }
+        };
+        item.map(|it| {
+            if it.tooltip.is_empty() {
+                it.title.clone()
+            } else {
+                it.tooltip.clone()
+            }
+        })
+        .unwrap_or_default()
     }
 
     pub(super) fn more_open(&self, tree: TreeId) -> bool {
