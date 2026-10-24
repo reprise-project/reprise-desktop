@@ -16,7 +16,7 @@ use crate::text::TextRenderer;
 use crate::trackbar;
 use accesskit::{NodeId, Role};
 
-use super::field::{masked, visible_from};
+use super::field::{as_shown, visible_from};
 use super::layout::{
     check_box, check_label_rect, glyph_dy, icon_list_layout, radio_box, radio_label_rect,
 };
@@ -152,11 +152,7 @@ impl Form {
                     enabled,
                 } => {
                     // A masked field reads out its bullets, never the value.
-                    let shown = if edit.is_secret() {
-                        masked(edit)
-                    } else {
-                        edit.clone()
-                    };
+                    let shown = as_shown(edit);
                     let from = visible_from(&shown, first);
                     let id = widgets::access_edit(
                         &shown,

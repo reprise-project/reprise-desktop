@@ -1,5 +1,6 @@
 //! Edit fields: the focused edit, paste, and text dragged onto a field.
 
+use std::borrow::Cow;
 use std::cell::Cell;
 use zeroize::Zeroize;
 
@@ -214,6 +215,15 @@ pub(super) fn masked(edit: &TextEdit) -> TextEdit {
     m.text.push_str(&BULLET.repeat(edit.text.chars().count()));
     m.set_selection(at(edit.anchor()), at(edit.caret()));
     m
+}
+
+/// What a field shows of `edit`: its bullets when masked ([`masked`]), else the value.
+pub(super) fn as_shown(edit: &TextEdit) -> Cow<'_, TextEdit> {
+    if edit.is_secret() {
+        Cow::Owned(masked(edit))
+    } else {
+        Cow::Borrowed(edit)
+    }
 }
 
 pub(super) fn unmasked_index(edit: &TextEdit, at: usize) -> usize {

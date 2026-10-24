@@ -97,7 +97,7 @@ impl Form {
         self.point = old.point;
         let id = old.tip.item.and_then(|i| old.items.get(i)).map(|it| it.id);
         self.tip = LabelTip {
-            item: id.and_then(|id| self.items.iter().position(|it| it.id == id)),
+            item: id.and_then(|id| self.index_of(id)),
             ticks: old.tip.ticks,
         };
     }
