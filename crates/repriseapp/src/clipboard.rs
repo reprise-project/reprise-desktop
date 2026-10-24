@@ -110,10 +110,7 @@ impl Host {
     }
 
     pub(crate) fn paste(&mut self, win: WinId) {
-        let Some(device) = &self.data_device else {
-            return;
-        };
-        let Some(offer) = device.data().selection_offer() else {
+        let Some(offer) = self.selection_offer() else {
             return;
         };
         let Some(mime) = offer.with_mime_types(text_mime) else {
