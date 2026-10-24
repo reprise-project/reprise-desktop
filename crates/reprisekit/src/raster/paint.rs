@@ -248,15 +248,8 @@ impl Canvas {
     /// colour.
     pub fn etched_frame_t(&mut self, r: Rect, cs: &ColorScheme, t: i32) {
         let t = t.max(1);
-        for (rect, tl, br) in [
-            (r, cs.button_shadow, cs.button_hilight),
-            (r.inset(t), cs.button_hilight, cs.button_shadow),
-        ] {
-            self.fill_rect(Rect::new(rect.x, rect.y, rect.width, t), tl);
-            self.fill_rect(Rect::new(rect.x, rect.y, t, rect.height), tl);
-            self.fill_rect(Rect::new(rect.x, rect.bottom() - t, rect.width, t), br);
-            self.fill_rect(Rect::new(rect.right() - t, rect.y, t, rect.height), br);
-        }
+        self.ring_t(r, cs.button_shadow, cs.button_hilight, t);
+        self.ring_t(r.inset(t), cs.button_hilight, cs.button_shadow, t);
     }
 
     /// Checkerboard of `t` x `t` logical cells of `a` and `b`, phase

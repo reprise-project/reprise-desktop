@@ -37,7 +37,7 @@ fn find_face(
     Some((path, index, family, info.style))
 }
 
-pub(super) fn load_face(
+fn load_face(
     lib: &Library,
     db: &Database,
     families: &[String],
@@ -63,6 +63,20 @@ pub(super) fn load_face(
             None
         }
     }
+}
+
+/// The (regular, bold) faces of `families`; the regular face again as bold when there is none.
+pub(super) fn load_faces(
+    lib: &Library,
+    db: &Database,
+    families: &[String],
+    generic: bool,
+    style: fontdb::Style,
+) -> (Option<LoadedFace>, Option<LoadedFace>) {
+    let regular = load_face(lib, db, families, generic, Weight::NORMAL, style);
+    let bold = load_face(lib, db, families, generic, Weight::BOLD, style)
+        .or_else(|| load_face(lib, db, families, generic, Weight::NORMAL, style));
+    (regular, bold)
 }
 
 /// Switch `lib`'s TrueType hinter to full mode (stems fit across as well as down in antialiased
@@ -177,11 +191,7 @@ pub(super) fn load_shell_dlg(spec: &str, cfg: &FontConfig) -> Option<TextRendere
     } else {
         let families = [spec.to_string()];
         let db = system_fonts(&families);
-        let normal = fontdb::Style::Normal;
-        let regular = load_face(&lib, &db, &families, false, Weight::NORMAL, normal);
-        let bold = load_face(&lib, &db, &families, false, Weight::BOLD, normal)
-            .or_else(|| load_face(&lib, &db, &families, false, Weight::NORMAL, normal));
-        (regular, bold)
+        load_faces(&lib, &db, &families, false, fontdb::Style::Normal)
     };
     if regular.is_none() {
         log::warn!("second dialog font {spec:?} not found; dialogs keep the UI font");

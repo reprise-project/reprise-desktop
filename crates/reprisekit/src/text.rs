@@ -7,7 +7,6 @@ use crate::fontfallback::{
 };
 use crate::raster::{Canvas, Rect};
 use crate::theme::{Color, FontConfig};
-use fontdb::Weight;
 use freetype::face::LoadFlag;
 use freetype::{Face, Library};
 use rustc_hash::FxHashMap;
@@ -21,7 +20,7 @@ mod wrap;
 
 pub(crate) use fonts::system_fonts;
 pub use fonts::test_tahoma;
-use fonts::{full_hinting, load_face, load_shell_dlg};
+use fonts::{full_hinting, load_faces, load_shell_dlg};
 pub use mnemonic::{access_key, escape_mnemonic, split_mnemonic};
 pub use wrap::{wrap, wrap_bold, wrap_chars};
 
@@ -113,6 +112,11 @@ pub(crate) fn fixed_sizes(f: &Face) -> &[freetype::ffi::FT_Bitmap_Size] {
     // SAFETY: FreeType keeps `num_fixed_sizes` entries at `available_sizes`
     // for the face's lifetime, which the borrow of `f` covers.
     unsafe { std::slice::from_raw_parts(raw.available_sizes, raw.num_fixed_sizes.max(0) as usize) }
+}
+
+/// A bitmap face's strikes as whole-pixel ppems.
+fn strike_ppems(f: &Face) -> impl Iterator<Item = u32> + '_ {
+    fixed_sizes(f).iter().map(|s| ((s.y_ppem + 32) >> 6) as u32)
 }
 
 #[derive(Clone)]
@@ -227,10 +231,7 @@ impl TextRenderer {
                     full_hinting(lib);
                 }
                 let db = system_fonts(&cfg.family);
-                let regular = load_face(lib, &db, &cfg.family, true, Weight::NORMAL, style);
-                let bold = load_face(lib, &db, &cfg.family, true, Weight::BOLD, style)
-                    .or_else(|| load_face(lib, &db, &cfg.family, true, Weight::NORMAL, style));
-                (regular, bold)
+                load_faces(lib, &db, &cfg.family, true, style)
             }
             None => (None, None),
         };
@@ -414,9 +415,7 @@ impl TextRenderer {
         if face.is_scalable() {
             return Some((face, None));
         }
-        let strike = fixed_sizes(face)
-            .iter()
-            .map(|s| ((s.y_ppem + 32) >> 6) as u32)
+        let strike = strike_ppems(face)
             .filter(|&p| p > 0 && size_px.is_multiple_of(p))
             .max();
         Some(match (strike, &self.line_faces) {
@@ -486,12 +485,7 @@ impl TextRenderer {
             Some(_) => None,
             None => {
                 let strike = self.fallback_face(ch, bold, true).and_then(|fb| {
-                    let p = fallback_strike(
-                        fixed_sizes(&fb)
-                            .iter()
-                            .map(|s| ((s.y_ppem + 32) >> 6) as u32),
-                        size_px,
-                    )?;
+                    let p = fallback_strike(strike_ppems(&fb), size_px)?;
                     Some((fb, p))
                 });
                 let outline = |px: u32| {
@@ -665,9 +659,7 @@ impl TextRenderer {
         let mut kept = String::new();
         let mut used = 0;
         for ch in text.chars() {
-            let adv = self
-                .with_glyph(ch, bold, size_px, 1, |g| g.advance)
-                .unwrap_or(0);
+            let adv = self.advance(ch, bold, size_px);
             if used + adv + dots > width {
                 break;
             }

@@ -176,38 +176,23 @@ impl Canvas {
             w * h,
             mask.len()
         );
-        let dst = Rect::new(x, y, w as i32, h as i32).intersect(&self.device_area(clip));
-        if dst.is_empty() {
-            return;
-        }
-        let (ox, oy) = ((dst.x - x) as usize, (dst.y - y) as usize);
-        let dw = self.device_size().0 as usize;
         let solid = color.argb();
-        for row in 0..dst.height as usize {
-            let d0 = (dst.y as usize + row) * dw + dst.x as usize;
-            let m0 = (oy + row) * w + ox;
-            let n = dst.width as usize;
-            let (drow, mrow) = (&mut self.pixels[d0..d0 + n], &mask[m0..m0 + n]);
-            for (d, &cov) in drow.iter_mut().zip(mrow) {
-                if cov == 0 {
-                    continue;
+        self.mask_pixels(x, y, w, h, mask, clip, |d, cov| {
+            if !antialias {
+                if cov >= 0x60 {
+                    *d = solid;
                 }
-                if !antialias {
-                    if cov >= 0x60 {
-                        *d = solid;
-                    }
-                    continue;
-                }
-                let dst = *d;
-                let lerp = |dc: u32, s: u8| -> u32 {
-                    ((dc * (255 - cov as u32) + s as u32 * cov as u32) / 255) & 0xFF
-                };
-                let r = lerp((dst >> 16) & 0xFF, color.r);
-                let g = lerp((dst >> 8) & 0xFF, color.g);
-                let b = lerp(dst & 0xFF, color.b);
-                *d = 0xFF00_0000 | r << 16 | g << 8 | b;
+                return;
             }
-        }
+            let dst = *d;
+            let lerp = |dc: u32, s: u8| -> u32 {
+                ((dc * (255 - cov as u32) + s as u32 * cov as u32) / 255) & 0xFF
+            };
+            let r = lerp((dst >> 16) & 0xFF, color.r);
+            let g = lerp((dst >> 8) & 0xFF, color.g);
+            let b = lerp(dst & 0xFF, color.b);
+            *d = 0xFF00_0000 | r << 16 | g << 8 | b;
+        });
     }
 
     /// [`Canvas::blit_mask`] for a translucent canvas: `color` at each
@@ -225,6 +210,29 @@ impl Canvas {
         clip: Rect,
     ) {
         assert!(mask.len() >= w * h, "blit_mask_over: {w}x{h} mask is short");
+        self.mask_pixels(x, y, w, h, mask, clip, |d, cov| {
+            let cov = cov as u32;
+            let ch = |shift: u32, s: u8| {
+                let dc = (*d >> shift) & 0xFF;
+                (dc * (255 - cov) + s as u32 * cov + 127) / 255
+            };
+            *d = ch(24, 255) << 24 | ch(16, color.r) << 16 | ch(8, color.g) << 8 | ch(0, color.b);
+        });
+    }
+
+    /// Run `f` on each device pixel under a `w` x `h` mask at device (x, y)
+    /// inside logical `clip` whose coverage is non-zero.
+    #[expect(clippy::too_many_arguments)]
+    fn mask_pixels(
+        &mut self,
+        x: i32,
+        y: i32,
+        w: usize,
+        h: usize,
+        mask: &[u8],
+        clip: Rect,
+        mut f: impl FnMut(&mut u32, u8),
+    ) {
         let dst = Rect::new(x, y, w as i32, h as i32).intersect(&self.device_area(clip));
         if dst.is_empty() {
             return;
@@ -237,18 +245,9 @@ impl Canvas {
             let n = dst.width as usize;
             let (drow, mrow) = (&mut self.pixels[d0..d0 + n], &mask[m0..m0 + n]);
             for (d, &cov) in drow.iter_mut().zip(mrow) {
-                if cov == 0 {
-                    continue;
+                if cov != 0 {
+                    f(d, cov);
                 }
-                let cov = cov as u32;
-                let ch = |shift: u32, s: u8| {
-                    let dc = (*d >> shift) & 0xFF;
-                    (dc * (255 - cov) + s as u32 * cov + 127) / 255
-                };
-                *d = ch(24, 255) << 24
-                    | ch(16, color.r) << 16
-                    | ch(8, color.g) << 8
-                    | ch(0, color.b);
             }
         }
     }

@@ -454,10 +454,6 @@ impl Canvas {
         Rect::new(0, 0, self.width as i32, self.height as i32)
     }
 
-    pub fn stride_bytes(&self) -> usize {
-        self.device_size().0 as usize * 4
-    }
-
     /// The canvas as a StatusNotifierItem `IconPixmap` buffer: ARGB32,
     /// big-endian per pixel, straight alpha, at its device size.
     pub fn to_argb_be(&self) -> Vec<u8> {
