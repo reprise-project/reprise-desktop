@@ -5,7 +5,9 @@ use crate::sizing::{
     at_pick, bounded, configured_size, held_size, opening_size, rebounded, regrown, sane_side,
     sane_size,
 };
-use crate::{Caption, Child, Event, Flyout, Host, MAIN, MIN_SIZE, Shell, Slot, WinId, access};
+use crate::{
+    Caption, Child, Event, Flyout, Host, MAIN, MIN_SIZE, Scaling, Shell, Slot, WinId, access,
+};
 use reprisekit::cues::Cues;
 use reprisekit::raster::{Canvas, Rect};
 use smithay_client_toolkit::reexports::protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_keyboard_shortcuts_inhibitor_v1;
@@ -100,6 +102,48 @@ impl Host {
         Some(Foreign { imported, dialog })
     }
 
+    fn new_slot(
+        &self,
+        id: WinId,
+        window: Shell,
+        scaling: Scaling,
+        title: String,
+        size: (i32, i32),
+        caption: Caption,
+    ) -> Slot {
+        Slot {
+            id,
+            window,
+            scaling,
+            buffers: [None, None],
+            attached: 0,
+            pool: None,
+            canvas: Canvas::new(0, 0),
+            title,
+            size,
+            origin: (0, 0),
+            maximized: false,
+            asked: (None, None),
+            own: false,
+            bounds: None,
+            wanted: size,
+            picked: size,
+            activated: true,
+            configured: false,
+            dirty: true,
+            frame_pending: false,
+            mapped: false,
+            modal: false,
+            caption,
+            access: access::SlotAccess::new(id, self.a11y_bus.then_some(&self.a11y)),
+            glass: None,
+            glass_top: (0, 0),
+            cues: Cues::opened(self.key_last),
+            parent: None,
+            spot: None,
+        }
+    }
+
     fn make_main(&mut self) {
         let ((w, h), min) = opening_size(&*self.app);
         let surface = self.compositor.create_surface(&self.qh);
@@ -120,40 +164,15 @@ impl Host {
         let caption = self.app.caption(MAIN);
         self.send_tag(&window, MAIN, caption);
         window.commit();
-        self.slots.insert(
-            0,
-            Slot {
-                id: MAIN,
-                window: Shell::Toplevel(window),
-                scaling,
-                buffers: [None, None],
-                attached: 0,
-                pool: None,
-                canvas: Canvas::new(0, 0),
-                title,
-                size: (w, h),
-                origin: (0, 0),
-                maximized: false,
-                asked: (None, None),
-                own: false,
-                bounds: None,
-                wanted: (w, h),
-                picked: (w, h),
-                activated: true,
-                configured: false,
-                dirty: true,
-                frame_pending: false,
-                mapped: false,
-                modal: false,
-                caption,
-                access: access::SlotAccess::new(MAIN, self.a11y_bus.then_some(&self.a11y)),
-                glass: None,
-                glass_top: (0, 0),
-                cues: Cues::opened(self.key_last),
-                parent: None,
-                spot: None,
-            },
+        let slot = self.new_slot(
+            MAIN,
+            Shell::Toplevel(window),
+            scaling,
+            title,
+            (w, h),
+            caption,
         );
+        self.slots.insert(0, slot);
     }
 
     pub(crate) fn sync_main(&mut self) {
@@ -333,37 +352,17 @@ impl Host {
             let caption = self.app.caption(c.id);
             self.send_tag(&window, c.id, caption);
             window.commit();
-            self.slots.push(Slot {
-                id: c.id,
-                window: Shell::Toplevel(window),
+            let mut slot = self.new_slot(
+                c.id,
+                Shell::Toplevel(window),
                 scaling,
-                buffers: [None, None],
-                attached: 0,
-                pool: None,
-                canvas: Canvas::new(0, 0),
-                title: c.title.clone(),
+                c.title.clone(),
                 size,
-                origin: (0, 0),
-                maximized: false,
-                asked: (None, None),
-                own: false,
-                bounds: None,
-                wanted: size,
-                picked: size,
-                activated: true,
-                configured: false,
-                dirty: true,
-                frame_pending: false,
-                mapped: false,
-                modal: c.modal,
                 caption,
-                access: access::SlotAccess::new(c.id, self.a11y_bus.then_some(&self.a11y)),
-                glass: None,
-                glass_top: (0, 0),
-                cues: Cues::opened(self.key_last),
-                parent: wanted,
-                spot: None,
-            });
+            );
+            slot.modal = c.modal;
+            slot.parent = wanted;
+            self.slots.push(slot);
         }
         let mut resized = Vec::new();
         for c in &want {
@@ -517,37 +516,16 @@ impl Host {
         layer.set_exclusive_zone(-1);
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         layer.commit();
-        self.slots.push(Slot {
-            id: f.id,
-            window: Shell::Layer(layer),
+        let mut slot = self.new_slot(
+            f.id,
+            Shell::Layer(layer),
             scaling,
-            buffers: [None, None],
-            attached: 0,
-            pool: None,
-            canvas: Canvas::new(0, 0),
-            title: f.title.into(),
-            size: (0, 0),
-            origin,
-            maximized: false,
-            asked: (None, None),
-            own: false,
-            bounds: None,
-            wanted: (0, 0),
-            picked: (0, 0),
-            activated: true,
-            configured: false,
-            dirty: true,
-            frame_pending: false,
-            mapped: false,
-            modal: false,
-            caption: Caption::Window,
-            access: access::SlotAccess::new(f.id, self.a11y_bus.then_some(&self.a11y)),
-            glass: None,
-            glass_top: (0, 0),
-            cues: Cues::opened(self.key_last),
-            parent: None,
-            spot: None,
-        });
+            f.title.into(),
+            (0, 0),
+            Caption::Window,
+        );
+        slot.origin = origin;
+        self.slots.push(slot);
     }
 
     fn configured(
