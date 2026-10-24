@@ -619,7 +619,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, m: &Mixer, lay: 
         c.etched_hline_t(r.x, r.right(), r.y, cs, 1);
     }
     if let Some(r) = lay.advanced {
-        let live = m.columns.first().is_some_and(|c| c.live);
+        let live = m.first_live();
         let focus = m.cues && m.focus == Focus::Advanced;
         draw_button(
             c,
@@ -866,7 +866,12 @@ impl Mixer {
     /// Whether the Advanced button shows and takes presses: Advanced
     /// Controls is on and the first column is live.
     fn advanced_live(&self) -> bool {
-        self.advanced && self.columns.first().is_some_and(|c| c.live)
+        self.advanced && self.first_live()
+    }
+
+    /// Whether the first column is live, which the Advanced button follows.
+    fn first_live(&self) -> bool {
+        self.columns.first().is_some_and(|c| c.live)
     }
 
     /// Whether a thumb is held.
@@ -1334,7 +1339,7 @@ impl Mixer {
             }
         }
         if let Some(r) = lay.advanced {
-            let live = self.columns.first().is_some_and(|c| c.live);
+            let live = self.first_live();
             let b = tree.push(parent, "advanced", access::button(r, ADVANCED, live, false));
             if self.focus == Focus::Advanced {
                 focus = b;
