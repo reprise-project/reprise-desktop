@@ -8,7 +8,7 @@ use crate::{compositor::State, config::OutputMode, output::ModeInfo};
 use super::outputs::mode_infos;
 use super::render::send_job;
 use super::steps::gated;
-use super::{CrtcNow, Work, commit, set_mode};
+use super::{CrtcNow, Work, commit, set_mode, surface_mut};
 
 /// DRM_MODE_LINK_STATUS_GOOD and _BAD.
 pub(super) const LINK_GOOD: u64 = 0;
@@ -134,11 +134,7 @@ pub(super) fn check_links(state: &mut State) {
             due.push(crtc);
             continue;
         }
-        if let Some(s) = state
-            .backend
-            .as_mut()
-            .and_then(|b| b.surfaces.get_mut(&crtc))
-        {
+        if let Some(s) = surface_mut(state, crtc) {
             s.hw.unlit = true;
         }
         state.update_layout();

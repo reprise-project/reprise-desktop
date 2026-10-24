@@ -9,8 +9,8 @@ use smithay::{
 
 use crate::compositor::State;
 
-use super::crtc_of;
 use super::render::render;
+use super::{crtc_of, surface_mut};
 
 pub fn schedule(state: &mut State, output: &Output) {
     request(state, output, Ask::Scene);
@@ -55,11 +55,7 @@ fn request(state: &mut State, output: &Output, ask: Ask) {
     let Some(crtc) = crtc_of(output) else {
         return;
     };
-    let Some(s) = state
-        .backend
-        .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&crtc))
-    else {
+    let Some(s) = surface_mut(state, crtc) else {
         return;
     };
     let mut asked = Asked {
@@ -89,11 +85,7 @@ pub(super) fn pointer_ask_renders(
 /// Render `crtc` from an idle callback, unless one is armed or a frame is in flight. A frame
 /// asked from an idle callback renders on the next turn (`State::insert_idle_woken`).
 pub(super) fn queue_render(state: &mut State, crtc: crtc::Handle) {
-    let Some(s) = state
-        .backend
-        .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&crtc))
-    else {
+    let Some(s) = surface_mut(state, crtc) else {
         return;
     };
     if !s.track.idle() || s.idle_scheduled {
@@ -101,11 +93,7 @@ pub(super) fn queue_render(state: &mut State, crtc: crtc::Handle) {
     }
     s.idle_scheduled = true;
     state.insert_idle_woken(move |state| {
-        if let Some(s) = state
-            .backend
-            .as_mut()
-            .and_then(|b| b.surfaces.get_mut(&crtc))
-        {
+        if let Some(s) = surface_mut(state, crtc) {
             s.idle_scheduled = false;
         }
         render(state, crtc);
@@ -119,11 +107,7 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
     let Some(crtc) = crtc_of(output) else {
         return;
     };
-    let Some(s) = state
-        .backend
-        .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&crtc))
-    else {
+    let Some(s) = surface_mut(state, crtc) else {
         return;
     };
     if s.step_timer.is_some() {
@@ -139,14 +123,10 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
     let token = state
         .handle
         .insert_source(Timer::from_duration(wait), move |_, _, state| {
-            let output = state
-                .backend
-                .as_mut()
-                .and_then(|b| b.surfaces.get_mut(&crtc))
-                .map(|s| {
-                    s.step_timer = None;
-                    s.output.clone()
-                });
+            let output = surface_mut(state, crtc).map(|s| {
+                s.step_timer = None;
+                s.output.clone()
+            });
             if let Some(output) = output {
                 request(state, &output, Ask::Content);
             }
@@ -154,11 +134,7 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
         });
     match token {
         Ok(t) => {
-            if let Some(s) = state
-                .backend
-                .as_mut()
-                .and_then(|b| b.surfaces.get_mut(&crtc))
-            {
+            if let Some(s) = surface_mut(state, crtc) {
                 s.step_timer = Some(t);
             }
         }

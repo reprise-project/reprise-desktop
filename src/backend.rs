@@ -585,11 +585,16 @@ fn is_master(dev: &impl std::os::fd::AsFd) -> bool {
     r == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EACCES)
 }
 
+/// The driven output on `crtc`, while the backend runs.
+fn surface_mut(state: &mut State, crtc: crtc::Handle) -> Option<&mut Surface> {
+    state.backend.as_mut()?.surfaces.get_mut(&crtc)
+}
+
 fn surface_of<'a>(
     state: &'a mut State,
     output: &Output,
 ) -> Option<(&'a mut Backend, crtc::Handle)> {
-    let crtc = output.user_data().get::<OutputCrtc>()?.0;
+    let crtc = crtc_of(output)?;
     let b = state.backend.as_mut()?;
     b.surfaces.contains_key(&crtc).then_some((b, crtc))
 }
