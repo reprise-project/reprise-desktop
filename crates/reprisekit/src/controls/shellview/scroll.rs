@@ -1,4 +1,4 @@
-use super::details::{details_listview, with_details};
+use super::details::{details_in, with_details};
 use super::{Layout, Mode, ShellView, list_cell};
 use crate::classic::widgets::{ScrollParts, scrollbar_parts, scrollbar_pos_at};
 use crate::controls::listview;
@@ -63,10 +63,7 @@ pub fn scroll(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
             let notches = by.signum() * (by.abs() / WHEEL_ROWS).max(1);
             hscroll(sv, notches * list_cell(lay.controls.text).w, lay)
         }
-        Mode::Details => with_details(sv, |lv| {
-            let lv_lay = listview::layout(lv, lay.frame, &lay.controls);
-            lv.scroll(by as i64, &lv_lay)
-        }),
+        Mode::Details => with_details(sv, lay, |lv, lv_lay| lv.scroll(by as i64, lv_lay)),
         _ => {
             let pitch = shellgrid::Grid::of(sv.mode, lay.controls.text).cell.1;
             let max = (lay.content.1 - lay.body.height).max(0) as i64;
@@ -82,8 +79,7 @@ pub fn scroll(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
 pub fn page(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
     match sv.mode {
         Mode::Details => {
-            let lv = details_listview(sv);
-            let rows = listview::layout(&lv, lay.frame, &lay.controls).rows.max(1) as i32;
+            let rows = details_in(sv, lay).1.rows.max(1) as i32;
             scroll(sv, by * rows, lay)
         }
         Mode::List => false,
@@ -126,10 +122,7 @@ pub fn hscroll(sv: &mut ShellView, by: i32, lay: &Layout) -> bool {
             sv.left = scrollbar::held(from + by, lay.body.width, lay.content.0);
             sv.left != from
         }
-        Mode::Details => with_details(sv, |lv| {
-            let lv_lay = listview::layout(lv, lay.frame, &lay.controls);
-            lv.hscroll(by, &lv_lay)
-        }),
+        Mode::Details => with_details(sv, lay, |lv, lv_lay| lv.hscroll(by, lv_lay)),
         _ => false,
     }
 }
@@ -164,9 +157,8 @@ pub fn drag_hthumb(sv: &mut ShellView, x: i32, grab: i32, lay: &Layout) -> bool 
             sv.left = left;
             changed
         }
-        Mode::Details => with_details(sv, |lv| {
-            let lv_lay = listview::layout(lv, lay.frame, &lay.controls);
-            let left = lv.left_at(&lv_lay, x, grab);
+        Mode::Details => with_details(sv, lay, |lv, lv_lay| {
+            let left = lv.left_at(lv_lay, x, grab);
             let changed = left != lv.left;
             lv.left = left;
             changed
@@ -193,9 +185,8 @@ pub(super) fn icon_vparts(sv: &ShellView, lay: &Layout, vb: Rect) -> ScrollParts
 pub fn drag_thumb(sv: &mut ShellView, y: i32, grab: i32, lay: &Layout) -> bool {
     match sv.mode {
         Mode::List => false,
-        Mode::Details => with_details(sv, |lv| {
-            let lv_lay = listview::layout(lv, lay.frame, &lay.controls);
-            let top = lv.top_at(&lv_lay, y, grab);
+        Mode::Details => with_details(sv, lay, |lv, lv_lay| {
+            let top = lv.top_at(lv_lay, y, grab);
             let changed = top != lv.top;
             lv.top = top;
             changed
