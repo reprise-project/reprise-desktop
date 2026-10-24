@@ -214,8 +214,7 @@ impl MultiEdit {
         }
         self.checkpoint(Edit::None);
         let n = replace_all(&mut self.lines, query, with, o);
-        self.edits += 1;
-        *self.widths.get_mut() = Widths::default();
+        self.replaced_lines();
         self.caret = self.clamp(self.caret);
         self.anchor = self.caret;
         self.goal_x = None;
@@ -302,6 +301,12 @@ impl MultiEdit {
             line,
             col: self.lines[line].len(),
         }
+    }
+
+    /// Every line may have changed: a change to report, and no width to trust.
+    fn replaced_lines(&mut self) {
+        self.edits += 1;
+        *self.widths.get_mut() = Widths::default();
     }
 
     fn forget_widths(&mut self, at: usize, old: usize, new: usize) {
@@ -625,8 +630,7 @@ impl MultiEdit {
                     .undo
                     .toggle(&mut self.lines, &mut self.caret, &mut self.anchor)
                 {
-                    self.edits += 1;
-                    *self.widths.get_mut() = Widths::default();
+                    self.replaced_lines();
                     self.caret = self.clamp(self.caret);
                     self.anchor = self.clamp(self.anchor);
                 }
@@ -1165,6 +1169,16 @@ impl View {
     }
 }
 
+/// The box the text draws in: 1 px (at scale `s`) inside the white box, unclamped.
+fn text_clip(inner: Rect, s: i32) -> Rect {
+    Rect::new(
+        inner.x + s,
+        inner.y + s,
+        inner.width - 2 * s,
+        inner.height - 2 * s,
+    )
+}
+
 fn printable(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
@@ -1297,12 +1311,7 @@ pub fn draw(
         None => edit.selection(),
     };
     let x0 = inner.x + s - view.left;
-    let clip = Rect::new(
-        inner.x + s,
-        inner.y + s,
-        inner.width - 2 * s,
-        inner.height - 2 * s,
-    );
+    let clip = text_clip(inner, s);
     let mut caret_bar = None;
     for row in 0..lay.rows {
         let li = view.top + row;
@@ -1438,12 +1447,7 @@ pub fn draw_drop_point(
         return;
     };
     let inner = lay.inner;
-    let clip = Rect::new(
-        inner.x + s,
-        inner.y + s,
-        inner.width - 2 * s,
-        inner.height - 2 * s,
-    );
+    let clip = text_clip(inner, s);
     let line_h = m.line_h * s;
     let x = inner.x + s - view.left + x_of(text, m, edit, at);
     let y = inner.y + s + row as i32 * line_h;

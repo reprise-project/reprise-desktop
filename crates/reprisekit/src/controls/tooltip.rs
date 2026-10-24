@@ -170,13 +170,7 @@ pub fn tip_size(text: &TextRenderer, theme: &Theme, label: &str) -> (i32, i32) {
 }
 
 pub fn draw_tip(theme: &Theme, text: &TextRenderer, label: &str) -> Canvas {
-    draw_box(
-        theme,
-        text,
-        &tip_lines(label),
-        (PAD, theme.fonts.size_px as i32),
-        1,
-    )
+    draw_tip_at(theme, text, label, 1)
 }
 
 pub fn draw_tip_at(theme: &Theme, text: &TextRenderer, label: &str, canvas_scale: i32) -> Canvas {
@@ -217,16 +211,25 @@ pub fn place_beside(
 ) -> (i32, i32) {
     let (w, h) = size;
     let x = if right { edge + 2 } else { edge - 2 - w };
-    let y = cursor.1 - h / 2;
+    keep_in(screen, (x, cursor.1 - h / 2), size)
+}
+
+/// `at` moved so a box of `size` stays inside `screen`, a pixel clear of its right edge.
+fn keep_in(screen: Rect, at: (i32, i32), (w, h): (i32, i32)) -> (i32, i32) {
     (
-        x.min(screen.right() - 1 - w).max(screen.x),
-        y.min(screen.bottom() - h).max(screen.y),
+        at.0.min(screen.right() - 1 - w).max(screen.x),
+        at.1.min(screen.bottom() - h).max(screen.y),
     )
 }
 
-fn info_lines(text: &TextRenderer, theme: &Theme, body: &str) -> Vec<String> {
+/// `body` wrapped at `width` design px.
+fn wrap_at(text: &TextRenderer, theme: &Theme, body: &str, width: i32) -> Vec<String> {
     let s = theme.scale.max(1);
-    wrap(text, body, INFO_TEXT_W * s, theme.fonts.size_px)
+    wrap(text, body, width * s, theme.fonts.size_px)
+}
+
+fn info_lines(text: &TextRenderer, theme: &Theme, body: &str) -> Vec<String> {
+    wrap_at(text, theme, body, INFO_TEXT_W)
 }
 
 pub fn info_size(text: &TextRenderer, theme: &Theme, body: &str) -> (i32, i32) {
@@ -252,15 +255,11 @@ pub fn draw_info_tip(theme: &Theme, text: &TextRenderer, body: &str) -> Canvas {
 }
 
 pub fn place_below(anchor: (i32, i32), size: (i32, i32), screen: Rect) -> (i32, i32) {
-    let (w, h) = size;
-    let x = anchor.0.min(screen.right() - 1 - w).max(screen.x);
-    let y = anchor.1.min(screen.bottom() - h).max(screen.y);
-    (x, y)
+    keep_in(screen, anchor, size)
 }
 
 fn balloon_lines(text: &TextRenderer, theme: &Theme, body: &str) -> Vec<String> {
-    let s = theme.scale.max(1);
-    wrap(text, body, BALLOON_TEXT_W * s, theme.fonts.size_px)
+    wrap_at(text, theme, body, BALLOON_TEXT_W)
 }
 
 /// Size of a balloon tip in `theme`'s units: the stem, then a bubble as wide as
@@ -382,13 +381,8 @@ pub fn draw_balloon_tip(theme: &Theme, text: &TextRenderer, title: &str, body: &
 }
 
 pub fn place_balloon(cursor: (i32, i32), size: (i32, i32), screen: Rect) -> (i32, i32) {
-    let (w, h) = size;
     let (dx, dy) = STEM_BELOW_POINTER;
-    let x = (cursor.0 + dx - STEM_X)
-        .min(screen.right() - 1 - w)
-        .max(screen.x);
-    let y = (cursor.1 + dy).min(screen.bottom() - h).max(screen.y);
-    (x, y)
+    keep_in(screen, (cursor.0 + dx - STEM_X, cursor.1 + dy), size)
 }
 
 /// The notification balloon's metrics (logical px): 300 px wide, 10 px
@@ -785,9 +779,8 @@ pub fn draw_notify_balloon(
                 down: top == 0,
             };
             styled::balloon::draw_bubble(b, &mut c, bubble, tail, s);
-            let close = Rect::new(lay.close.x, lay.close.y, lay.close.width, lay.close.height);
             let lit = hot == Some(NotifyHit::Close);
-            styled::balloon::draw_close(st, b, &mut c, close, lit, s);
+            styled::balloon::draw_close(st, b, &mut c, lay.close, lit, s);
             (b.title, b.text)
         }
         _ => {
