@@ -174,21 +174,7 @@ impl TrayCustomize {
                 px,
             );
         }
-        if let (Some((_, cl)), Some(open)) = (&lay.combo, self.combo.open) {
-            combo::draw_list(
-                c,
-                text,
-                p,
-                &self.combo.items,
-                Some(open),
-                self.combo.top,
-                self.combo.rows,
-                cl.list,
-                cl.scrollbar,
-                None,
-                px,
-            );
-        }
+        self.draw_open_list(c, text, p, lay, px);
     }
 
     /// Glass's page: white down to the band's rule, the heading, the text
@@ -246,21 +232,7 @@ impl TrayCustomize {
                 px,
             );
         }
-        if let (Some((_, cl)), Some(open)) = (&lay.combo, self.combo.open) {
-            combo::draw_list(
-                c,
-                text,
-                p,
-                &self.combo.items,
-                Some(open),
-                self.combo.top,
-                self.combo.rows,
-                cl.list,
-                cl.scrollbar,
-                None,
-                px,
-            );
-        }
+        self.draw_open_list(c, text, p, lay, px);
     }
 
     /// The page's parts above the band, in its view: the heading, the text, the list, the link
@@ -553,6 +525,32 @@ impl TrayCustomize {
             let label = w.label(w.choices()[w.index(e.behaviour, e.passive)]);
             let label = text.ellipsize(label, br.width, false, px);
             text.draw(c, br, &label, false, ink, Align::Left, px);
+        }
+    }
+
+    /// The selected row's combo list, while open, over everything else.
+    fn draw_open_list(
+        &self,
+        c: &mut Canvas,
+        text: &TextRenderer,
+        p: &Paint,
+        lay: &Layout,
+        px: u32,
+    ) {
+        if let (Some((_, cl)), Some(open)) = (&lay.combo, self.combo.open) {
+            combo::draw_list(
+                c,
+                text,
+                p,
+                &self.combo.items,
+                Some(open),
+                self.combo.top,
+                self.combo.rows,
+                cl.list,
+                cl.scrollbar,
+                None,
+                px,
+            );
         }
     }
 }
