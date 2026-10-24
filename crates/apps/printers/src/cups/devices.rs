@@ -14,6 +14,17 @@ pub struct Device {
 }
 
 impl Device {
+    /// A device from the `device-*` attributes `get` reads, by cupsd's names for them.
+    fn from_attrs(get: impl Fn(&str) -> String) -> Device {
+        Device {
+            uri: get("device-uri"),
+            info: get("device-info"),
+            make_model: get("device-make-and-model"),
+            class: get("device-class"),
+            device_id: get("device-id"),
+        }
+    }
+
     /// The maker the device ID names, else the first word of the make
     /// and model: what the driver search starts on.
     pub fn maker(&self) -> String {
@@ -83,13 +94,7 @@ pub fn devices(c: &Client, secs: i32, prompt: bool) -> Result<Vec<Device>> {
         );
     let peer = c.call("/admin/", req).map(|r| {
         r.groups(PRINTER)
-            .map(|g| Device {
-                uri: g.string("device-uri"),
-                info: g.string("device-info"),
-                make_model: g.string("device-make-and-model"),
-                class: g.string("device-class"),
-                device_id: g.string("device-id"),
-            })
+            .map(|g| Device::from_attrs(|k| g.string(k)))
             .collect()
     });
     devices_after(c, peer, secs, prompt)
@@ -108,16 +113,7 @@ pub(super) fn devices_after(
             let found = c.helper.devices(secs, &EXCLUDED_SCHEMES)?;
             pkhelper::devices_from(&found)
                 .iter()
-                .map(|d| {
-                    let get = |k: &str| d.get(k).cloned().unwrap_or_default();
-                    Device {
-                        uri: get("device-uri"),
-                        info: get("device-info"),
-                        make_model: get("device-make-and-model"),
-                        class: get("device-class"),
-                        device_id: get("device-id"),
-                    }
-                })
+                .map(|d| Device::from_attrs(|k| d.get(k).cloned().unwrap_or_default()))
                 .collect()
         }
         Err(Error::Denied) => return Err(Error::NeedsHelper),
