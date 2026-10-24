@@ -276,11 +276,7 @@ impl AttrConfirm {
 
 /// Properties sheet: OK/Enter/Apply ask the host to write; Change.../Advanced... open dialogs;
 /// Apply lights exactly while there is something to write.
-pub(super) fn props_event(
-    fd: &mut FormDialog,
-    _page: usize,
-    ev: reprisekit::controls::form::Event,
-) -> Outcome {
+pub(super) fn props_event(fd: &mut FormDialog, ev: reprisekit::controls::form::Event) -> Outcome {
     use reprisekit::controls::filesheet::{ADVANCED, CHANGE};
     use reprisekit::controls::form::Event;
     use reprisekit::controls::propsheet::{APPLY, CANCEL, OK};
@@ -344,11 +340,7 @@ pub(super) fn props_event(
 }
 
 /// Set Properties: as a file's, across the set.
-pub(super) fn set_event(
-    fd: &mut FormDialog,
-    _page: usize,
-    ev: reprisekit::controls::form::Event,
-) -> Outcome {
+pub(super) fn set_event(fd: &mut FormDialog, ev: reprisekit::controls::form::Event) -> Outcome {
     use reprisekit::controls::filesheet::{ADVANCED, Subject};
     use reprisekit::controls::form::Event;
     use reprisekit::controls::propsheet::{APPLY, CANCEL, OK};
