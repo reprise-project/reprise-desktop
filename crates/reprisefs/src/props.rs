@@ -421,32 +421,10 @@ fn fuseblk_mount(mountinfo: &str, major: u32, minor: u32) -> Option<(String, Str
         if head.get(2) != Some(&dev.as_str()) || fstype != "fuseblk" {
             return None;
         }
-        Some((
-            unescape_mountinfo(source)?,
-            unescape_mountinfo(head.get(4)?)?,
-        ))
+        let unescape =
+            |f: &str| String::from_utf8(crate::places::unescape_mount(f.as_bytes())).ok();
+        Some((unescape(source)?, unescape(head.get(4)?)?))
     })
-}
-
-/// mountinfo writes a space, tab, newline and backslash as a three-digit octal escape.
-fn unescape_mountinfo(s: &str) -> Option<String> {
-    let mut out = Vec::with_capacity(s.len());
-    let b = s.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'\\'
-            && let Some(code) = s
-                .get(i + 1..i + 4)
-                .and_then(|o| u8::from_str_radix(o, 8).ok())
-        {
-            out.push(code);
-            i += 4;
-        } else {
-            out.push(b[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8(out).ok()
 }
 
 /// Whether `args`, a process's command line, is an ntfs-3g mounting `source` on `target` with
@@ -1217,12 +1195,7 @@ fn ids_in_list(text: &str, group: &str, mime: &str) -> Vec<String> {
         if let Some((k, v)) = line.split_once('=')
             && k.trim().eq_ignore_ascii_case(mime)
         {
-            return v
-                .split(';')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .collect();
+            return apps::split_list(Some(v));
         }
     }
     Vec::new()
