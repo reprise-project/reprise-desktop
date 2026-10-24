@@ -13,13 +13,12 @@ use crate::text::TextRenderer;
 
 use super::layout::{Drawn, droplet_ends};
 use super::paint::{relative, sheet_icons};
-use super::{Balloon, NotifyView, sheets};
+use super::{Balloon, NotifyView, droplets};
 
 /// Once the loop is idle, sends each Droplet at rest to have its layers for its next move warmed
 /// off the loop's thread: under the lit rim while collapsed, the plain one while open.
 pub(super) fn warm_openings(state: &mut State) {
-    let droplets = sheets(state) && state.config.glass.notification.shape() == SheetShape::Droplet;
-    if !droplets || state.notify.warm_queued {
+    if !droplets(state) || state.notify.warm_queued {
         return;
     }
     state.notify.warm_queued = true;

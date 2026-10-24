@@ -1,8 +1,8 @@
 //! Drawing the stack and the chip into the scene.
 
 use reprisekit::controls::notifysheet::{
-    SheetIcons, SheetLayout, chip_layout, draw_chip, drip_bead, drip_bead_share, place_stack,
-    sheet_hit,
+    SheetIcons, SheetLayout, chip_layout, draw_chip, drip_bead, drip_bead_share, notify_look,
+    place_stack, sheet_hit,
 };
 use reprisekit::controls::tooltip::{draw_notify_balloon, place_notify};
 use reprisekit::taskbar::Edge;
@@ -13,7 +13,7 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use std::time::{Duration, Instant};
 
 use crate::caret::Editor;
-use crate::compositor::{SceneOwner, State};
+use crate::compositor::State;
 use crate::glass::Backdrop;
 use crate::output::upload_scaled;
 use crate::raster::{Canvas, Rect};
@@ -21,10 +21,10 @@ use crate::raster::{Canvas, Rect};
 use super::clock::{hold_clocks, rearm};
 use super::layout::{Drawn, Painted, lay_out_open, sheet_glass};
 use super::motion::{aim_open, arm_tick, clip_to, follow_slot, pose_balloon};
-use super::pointer::{hold_at, rehover};
+use super::pointer::{rehold, rehover};
 use super::stack::chip_count;
 use super::warm::warm_openings;
-use super::{AGE_TICK, Balloon, Bead, Chip, NotifyView, cap, replying};
+use super::{AGE_TICK, Balloon, Bead, Chip, NotifyView, cap, overlay_tree, replying};
 
 /// A sheet's app line time: "now", then minutes, then hours.
 pub(super) fn relative(d: Duration) -> String {
@@ -72,10 +72,7 @@ pub(super) fn paint(state: &mut State) {
     if !lay_stack(state, false) {
         return;
     }
-    let p = state.pointer_location();
-    if hold_at(&mut state.notify, p.x, p.y, Instant::now()) && hold_clocks(state) {
-        rearm(state);
-    }
+    rehold(state, Instant::now());
     if replying(&state.notify).is_none() {
         state.ime_field_drawn(Editor::NotifyReply, None, (0, 0), 1);
     }
@@ -303,7 +300,7 @@ fn paint_one(
                 }
                 canvas
             });
-            let look = theme.look.style().and_then(|st| st.notify);
+            let look = notify_look(&theme);
             let pane = look
                 .filter(|_| crate::glass::wanted(&state.config))
                 .map(|look| sheet_glass(lay, &look, scale));
@@ -334,7 +331,7 @@ fn paint_one(
         glass,
         ..
     } = state;
-    let bounds = notify.output.as_ref().and_then(reprisescene::output_rect);
+    let bounds = notify.bounds();
     let b = &mut notify.stack[i];
     b.opening = opening;
     b.glass = kept;
@@ -377,11 +374,8 @@ fn draw_chip_at(state: &mut State, more: usize, at: (i32, i32), size: (i32, i32)
     let c = match state.notify.chip.take() {
         Some(c) => c,
         None => {
-            let scene = &mut state.scene;
-            let tree = scene.tree_create(state.layers.overlay);
-            crate::glass::leave_out(scene, tree);
-            scene.set_data(tree, Some(SceneOwner::Notification));
-            let buffer = scene.buffer_create(tree);
+            let tree = overlay_tree(state);
+            let buffer = state.scene.buffer_create(tree);
             Chip {
                 tree,
                 buffer,
@@ -400,11 +394,7 @@ fn draw_chip_at(state: &mut State, more: usize, at: (i32, i32), size: (i32, i32)
     );
     upload_scaled(&mut state.scene, c.buffer, &canvas, scale);
     state.scene.set_position(c.tree, at.0, at.1);
-    let bounds = state
-        .notify
-        .output
-        .as_ref()
-        .and_then(reprisescene::output_rect);
+    let bounds = state.notify.bounds();
     state.scene.set_clip(c.tree, clip_to(bounds, at));
     state.notify.chip = Some(Chip {
         at,

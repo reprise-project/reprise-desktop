@@ -17,8 +17,8 @@ pub use opening::{
     SheetOpening, WarmJob, WarmLayers, build_warm, draw_sheet_opening, opening_shows_close,
 };
 pub use stack::{
-    Point, RISE, STACK_GAP, STACK_INSET, chip_label, chip_layout, draw_chip, drip_bead,
-    drip_bead_at, drip_bead_share, drip_corner, drip_ms, drip_pose, place_stack, pose,
+    Point, RISE, chip_label, chip_layout, draw_chip, drip_bead, drip_bead_at, drip_bead_share,
+    drip_corner, drip_ms, drip_pose, place_stack, pose,
 };
 
 use crate::access::Tree;
@@ -33,7 +33,7 @@ use super::tooltip::{
 };
 use draw::field_text;
 
-fn notify_look(theme: &Theme) -> Option<NotifyLook> {
+pub fn notify_look(theme: &Theme) -> Option<NotifyLook> {
     theme.look.style().and_then(|st| st.notify)
 }
 

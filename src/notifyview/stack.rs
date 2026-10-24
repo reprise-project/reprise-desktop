@@ -1,23 +1,23 @@
 //! The queue, the stack of shown balloons and bursts folding one program's notifications.
 
-use reprisekit::controls::notifysheet::{SheetGlass, SheetOpening};
+use reprisekit::controls::notifysheet::{SheetGlass, SheetOpening, has_sheets};
 use reprisekit::icon::IconSource;
 use reprisekit::style::SheetShape;
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use crate::compositor::{SceneOwner, State};
+use crate::compositor::State;
 use crate::theme::Theme;
 use crate::tray::Notification;
 use crate::tray::notify::Urgency;
 
-use super::clock::{Clock, restart};
+use super::clock::{held_clock, restart};
 use super::layout::sheet_tint;
 use super::motion::{Motion, destroy, drop_leaving, leave, restack};
 use super::paint::paint;
 use super::{
     BURST_AFTER, BURST_LINES, BURST_WINDOW, Balloon, DEFAULT_MS, MAX_QUEUED, NotifyView, OWN_ID,
-    REASON_EXPIRED, cap, close_transient, hovered, sheets, take_down, timeout_ms,
+    REASON_EXPIRED, cap, close_transient, droplets, overlay_tree, sheets, take_down, timeout_ms,
 };
 
 #[derive(Clone, Debug)]
@@ -77,6 +77,10 @@ impl Item {
 
     pub(super) fn is(&self, id: u32) -> bool {
         self.note().is_some_and(|n| n.id == id)
+    }
+
+    pub(super) fn burst_has(&self, id: u32) -> bool {
+        matches!(self, Item::Burst(b) if b.ids.contains(&id))
     }
 
     pub(super) fn burst_of(&self, app: &str) -> bool {
@@ -147,8 +151,7 @@ pub(super) fn foldable(n: &Notification) -> bool {
 }
 
 pub(super) fn in_burst(v: &NotifyView, id: u32) -> bool {
-    let has = |i: &Item| matches!(i, Item::Burst(b) if b.ids.contains(&id));
-    v.stack.iter().any(|b| has(&b.item)) || v.queue.iter().any(has)
+    v.stack.iter().any(|b| b.item.burst_has(id)) || v.queue.iter().any(|q| q.burst_has(id))
 }
 
 pub(super) fn arrived(recent: &mut VecDeque<(String, Instant)>, app: &str, at: Instant) -> bool {
@@ -300,10 +303,7 @@ pub(super) fn new_balloon(state: &mut State, item: Item) -> Option<Balloon> {
         Item::Burst(_) => Some(DEFAULT_MS),
     };
     let now = Instant::now();
-    let mut clock = Clock::start(ms, now);
-    if sheets(state) && hovered(&state.notify) {
-        clock.pause(now);
-    }
+    let clock = held_clock(&state.notify, ms, sheets(state), now);
     let e = &state.config.effects;
     let motion = match (sheets(state), state.config.glass.notification.shape()) {
         (false, _) => Motion::settled_at(now),
@@ -311,12 +311,9 @@ pub(super) fn new_balloon(state: &mut State, item: Item) -> Option<Balloon> {
         (true, SheetShape::Lozenge | SheetShape::Halo) => Motion::arrive(e, now),
     };
     let tint = sheet_tint(&state.config.theme, item.app_icon(), scale);
-    let scene = &mut state.scene;
-    let tree = scene.tree_create(state.layers.overlay);
-    crate::glass::leave_out(scene, tree);
-    scene.set_data(tree, Some(SceneOwner::Notification));
-    let glass_tree = scene.tree_create(tree);
-    let buffer = scene.buffer_create(tree);
+    let tree = overlay_tree(state);
+    let glass_tree = state.scene.tree_create(tree);
+    let buffer = state.scene.buffer_create(tree);
     state.notify.shown += 1;
     Some(Balloon {
         item,
@@ -388,8 +385,7 @@ pub fn reposition(state: &mut State) {
     }
     trim(state);
     retint(&mut state.notify.stack, &state.config.theme);
-    let sheets = sheets(state);
-    let droplets = sheets && state.config.glass.notification.shape() == SheetShape::Droplet;
+    let (sheets, droplets) = (sheets(state), droplets(state));
     shed(&mut state.notify.stack, sheets, droplets);
     for b in &mut state.notify.stack {
         b.painted = None;
@@ -418,7 +414,7 @@ pub fn output_removed(state: &mut State) {
 /// The look may have changed: a balloon shown under Classic or Blue takes its Glass tint. An icon
 /// is decoded only for a balloon not yet tinted, as autohide repositions often.
 pub(super) fn retint(stack: &mut [Balloon], theme: &Theme) {
-    let sheets = theme.look.style().and_then(|st| st.notify).is_some();
+    let sheets = has_sheets(theme);
     for b in stack {
         if !sheets || b.tint.is_none() {
             b.tint = sheet_tint(theme, b.item.app_icon(), b.scale);

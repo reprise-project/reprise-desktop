@@ -308,12 +308,7 @@ pub(super) fn relight(
         if state == was {
             continue;
         }
-        let area = r.intersect(&Rect::new(0, 0, parts.width as i32, parts.height as i32));
-        for y in area.y..area.bottom() {
-            for x in area.x..area.right() {
-                parts.put_raw(x, y, 0);
-            }
-        }
+        parts.clear_rect(r);
         draw_pill(parts, text, look, lay, r, &label, state, s);
     }
     if hot.is_some() {

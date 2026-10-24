@@ -45,8 +45,8 @@ pub fn draw_chip(theme: &Theme, text: &TextRenderer, more: usize, hot: bool) -> 
 /// A top-left, logical px.
 pub type Point = (i32, i32);
 
-pub const STACK_GAP: i32 = 8;
-pub const STACK_INSET: i32 = 8;
+const STACK_GAP: i32 = 8;
+const STACK_INSET: i32 = 8;
 
 /// Top-lefts for `footprints` (newest first, nearest the tray) and the `chip` past them, logical
 /// px, from `usable`'s corner by the tray along `edge`, kept inside it.
