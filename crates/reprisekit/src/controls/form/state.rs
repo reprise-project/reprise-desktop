@@ -13,7 +13,7 @@ impl Form {
         self.point = old.point;
         self.pointer = old.pointer.carry(|(i, light)| {
             let id = old.items.get(i)?.id;
-            let j = self.items.iter().position(|it| it.id == id)?;
+            let j = self.index_of(id)?;
             light
                 .offered_by(&self.items[j].control)
                 .then_some((j, light))
