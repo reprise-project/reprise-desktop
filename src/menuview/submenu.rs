@@ -10,7 +10,7 @@ use crate::{
     config::{MenuEntry, MenuTarget},
     desktopview::DesktopCommand,
     raster::Rect,
-    startmenu::{MenuItem, MenuLayout, MenuStyle, place_submenu_inset, submenu_max_rows},
+    startmenu::{MenuItem, MenuStyle, place_submenu_inset},
     taskbar::{JumpRow, TaskbarCommand, WindowListRow},
     window::WindowId,
     winmenu::WindowMenuRow,
@@ -357,20 +357,12 @@ impl State {
         let parent_inset = parent.layout.inset.right;
         let output = parent.output.clone();
         let usable = self.usable_area(Some(&output));
-        let m = &self.config.theme.metrics;
         let style = if context {
             MenuStyle::context_for(&self.config.theme, &items)
         } else {
             MenuStyle::submenu(&self.config.theme)
         };
-        let style = style.fit(
-            &self.text,
-            &items,
-            self.config.theme.fonts.size_px,
-            usable.width,
-        );
-        let max_rows = submenu_max_rows(m, usable.height);
-        let layout = MenuLayout::compute_styled(&style, &items, max_rows);
+        let layout = style.layout_in(&self.config.theme, &self.text, &items, usable);
         let (x, y) = place_submenu_inset(
             parent_rect,
             row_rect,
