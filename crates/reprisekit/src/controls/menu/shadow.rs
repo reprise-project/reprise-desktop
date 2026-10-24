@@ -59,9 +59,7 @@ pub fn level_shadow(theme: &Theme) -> i32 {
 
 pub fn shadow_reach(theme: &Theme) -> i32 {
     match menu_look(theme) {
-        Some(m) => m.shadow.map_or(0, |_| {
-            crate::style::DropShadow::N as i32 * theme.scale.max(1)
-        }),
+        Some(_) => level_shadow(theme) * theme.scale.max(1),
         None => theme.metrics.menu_shadow,
     }
 }

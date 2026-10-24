@@ -303,9 +303,25 @@ impl MenuLayout {
         size_px: u32,
         max_width: i32,
     ) -> i32 {
-        let longest = longest_row(text, items, size_px, self.right_pad, self.shortcut_pad);
-        let needed = self.band + self.inset.left + self.text_x + longest + self.inset.right;
-        (needed.min(max_width) - self.band).max(self.column_width)
+        self.style().fit(text, items, size_px, max_width).width - self.band
+    }
+
+    /// The style `compute_styled` laid this out from, at the current column width.
+    fn style(&self) -> MenuStyle {
+        MenuStyle {
+            width: self.band + self.column_width,
+            row_height: self.row_height,
+            band: self.band,
+            text_x: self.text_x,
+            icon_x: self.icon_x,
+            separator_h: self.separator_h,
+            right_pad: self.right_pad,
+            inset: self.inset,
+            separator_x: self.separator_x,
+            lit_arrow_menu_text: self.lit_arrow_menu_text,
+            shortcut_pad: self.shortcut_pad,
+            gutter: self.gutter,
+        }
     }
 
     /// Index of the entry under (x, y); separators and borders return None.
@@ -380,33 +396,7 @@ pub fn relist<K: PartialEq>(
         usize::MAX
     };
     layout.column_width = column_width;
-    let inner_w = layout.column_width - layout.inset.left - layout.inset.right;
-    let inset = layout.inset;
-    let mut rows = Vec::with_capacity(items.len());
-    let mut height = inset.top + inset.bottom;
-    let mut columns = 0;
-    for chunk in items.chunks(rows_per_col) {
-        let x = layout.band + inset.left + columns * layout.column_width;
-        columns += 1;
-        let mut y = inset.top;
-        for it in chunk {
-            let h = match it {
-                MenuItem::Entry { .. } => layout.row_height,
-                MenuItem::Separator => layout.separator_h,
-            };
-            rows.push(Rect::new(x, y, inner_w, h));
-            y += h;
-        }
-        height = height.max(y + inset.bottom);
-    }
-    layout.columns = (columns as usize).max(1);
-    layout.width = layout.band + layout.columns as i32 * layout.column_width;
-    layout.height = height;
-    layout.rows = rows;
-    layout.selectable = items
-        .iter()
-        .map(|it| matches!(it, MenuItem::Entry { .. }))
-        .collect();
+    *layout = MenuLayout::compute_styled(&layout.style(), items, rows_per_col);
 }
 
 pub fn submenu_max_rows(m: &Metrics, usable_height: i32) -> usize {

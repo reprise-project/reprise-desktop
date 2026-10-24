@@ -1,6 +1,6 @@
 //! Details' columns and fields, sorting by a column, and the transient `listview` Details runs through.
 
-use super::{Entry, ICON_PX, ShellView, list_icon, size_text};
+use super::{Entry, ICON_PX, Layout, ShellView, list_icon, size_text};
 use crate::controls::listview;
 use crate::raster::Canvas;
 use crate::selection::Selection;
@@ -197,11 +197,22 @@ pub(super) fn details_listview(sv: &ShellView) -> DetailsView<'_> {
     }
 }
 
-/// Run `f` on a Details `ListView` that owns `sv`'s columns, selection and
-/// rename for the call (moved out, not copied), then move changes back into `sv`.
+/// Details' transient view of `sv` and its layout in `lay`.
+pub(super) fn details_in<'a>(
+    sv: &'a ShellView,
+    lay: &Layout,
+) -> (DetailsView<'a>, listview::Layout) {
+    let lv = details_listview(sv);
+    let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
+    (lv, lv_lay)
+}
+
+/// Run `f` on a Details `ListView` that owns `sv`'s columns, selection and rename for the
+/// call (moved out, not copied) and on its layout in `lay`, then move changes back into `sv`.
 pub(super) fn with_details<T>(
     sv: &mut ShellView,
-    f: impl FnOnce(&mut listview::ListView<DetailsRows<'_>>) -> T,
+    lay: &Layout,
+    f: impl FnOnce(&mut listview::ListView<DetailsRows<'_>>, &listview::Layout) -> T,
 ) -> T {
     let ShellView {
         entries,
@@ -239,7 +250,8 @@ pub(super) fn with_details<T>(
         inactive: false,
         clicks: Default::default(),
     };
-    let out = f(&mut lv);
+    let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
+    let out = f(&mut lv, &lv_lay);
     *columns = lv.columns;
     *selection = lv.selection;
     *top = lv.top;

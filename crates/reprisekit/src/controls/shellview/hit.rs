@@ -1,4 +1,4 @@
-use super::details::details_listview;
+use super::details::details_in;
 use super::layout::label_rect;
 use super::scroll::{icon_vparts, list_hparts};
 use super::{Hit, Layout, Mode, ShellView};
@@ -11,8 +11,7 @@ use crate::text::TextRenderer;
 /// vertical scrollbar, then the cells, and report a group header as `Background`.
 pub fn hit(sv: &ShellView, lay: &Layout, x: i32, y: i32) -> Hit {
     if matches!(sv.mode, Mode::Details) {
-        let lv = details_listview(sv);
-        let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
+        let (lv, lv_lay) = details_in(sv, lay);
         return match lv.hit(&lv_lay, x, y) {
             listview::Hit::Row(i) => Hit::Entry(i),
             listview::Hit::Header(i) => Hit::Header(i),
@@ -58,8 +57,7 @@ pub fn name_hit(
     let named = match sv.mode {
         // The name as its column cuts it short, not the rename box's rect, which runs on for the whole name.
         Mode::Details => {
-            let lv = details_listview(sv);
-            let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
+            let (lv, lv_lay) = details_in(sv, lay);
             x < lv.name_rect(&lv_lay, i, text, px).right()
         }
         Mode::List => x < label_rect(sv, lay, i, text, px).right(),

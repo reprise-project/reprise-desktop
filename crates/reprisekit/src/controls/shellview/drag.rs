@@ -1,4 +1,4 @@
-use super::details::details_listview;
+use super::details::details_in;
 use super::draw::{ListRow, draw_list_row};
 use super::{Entry, ICON_PX, Layout, Mode, ShellView};
 use crate::controls::iconview;
@@ -32,8 +32,7 @@ pub fn drag_image(
     let (body, row_of): (Rect, Box<dyn Fn(Rect) -> Rect>) = match sv.mode {
         Mode::List => (lay.body, Box::new(|cell| cell)),
         Mode::Details => {
-            let lv = details_listview(sv);
-            let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
+            let (lv, lv_lay) = details_in(sv, lay);
             let x = lv_lay.body.x - lv.left_in(&lv_lay) + listview::ICON_X;
             let w = sv
                 .columns

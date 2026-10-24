@@ -2,7 +2,6 @@ use super::details::with_details;
 use super::scroll::ensure_visible;
 use super::{Layout, Mode, ShellView};
 use crate::controls::iconview::{self, IconMove};
-use crate::controls::listview;
 use crate::selection::Mods;
 
 /// Move the focus by `dir` (`iconview::move_selection`'s rule: the nearest
@@ -32,10 +31,7 @@ fn details_step(sv: &mut ShellView, dir: IconMove, lay: &Layout, mods: Mods) -> 
         IconMove::End => i64::MAX / 2,
         IconMove::Left | IconMove::Right => return false,
     };
-    with_details(sv, |lv| {
-        let lv_lay = listview::layout(lv, lay.frame, &lay.controls);
-        lv.step(row_step, &lv_lay, mods)
-    })
+    with_details(sv, lay, |lv, lv_lay| lv.step(row_step, lv_lay, mods))
 }
 
 /// Jump to the next entry whose name starts with `ch`, case-insensitively,

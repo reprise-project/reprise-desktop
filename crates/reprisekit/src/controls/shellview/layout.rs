@@ -1,4 +1,4 @@
-use super::details::details_listview;
+use super::details::{details_in, details_listview};
 use super::{Group, ICON_PX, Layout, Mode, ShellView, list_cell};
 use crate::classic::widgets::FIELD_PAD;
 use crate::controls::iconview;
@@ -27,8 +27,7 @@ fn rows_and_cols(sv: &ShellView, area: Rect, u: TextUnits) -> (usize, usize) {
 /// measuring every label per layout made a pointer move O(folder).
 pub fn label_rect(sv: &ShellView, lay: &Layout, i: usize, text: &TextRenderer, px: u32) -> Rect {
     if matches!(sv.mode, Mode::Details) {
-        let lv = details_listview(sv);
-        let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
+        let (lv, lv_lay) = details_in(sv, lay);
         return lv.edit_rect(&lv_lay, i, text, px);
     }
     let (Some(&cell), Some(e)) = (lay.cells.get(i), sv.entries.get(i)) else {
