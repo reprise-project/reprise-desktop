@@ -1,3 +1,5 @@
+use repriseconf::hz_string;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct OutputConfig {
     pub name: String,
@@ -120,11 +122,6 @@ impl std::fmt::Display for OutputMode {
             None => Ok(()),
         }
     }
-}
-
-pub fn hz_string(refresh_mhz: i32) -> String {
-    let hz = format!("{:.3}", refresh_mhz as f64 / 1000.0);
-    hz.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

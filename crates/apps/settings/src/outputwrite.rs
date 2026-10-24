@@ -1,8 +1,9 @@
-//! `[[outputs]]` entries of `config.toml` as Reprise Settings writes them; `toml_edit` leaves the rest of the file as it was. The keys are the ones `FileOutput` in `src/config.rs` reads, and `hz_string` is that file's. This crate cannot depend on the compositor, so they change together.
+//! `[[outputs]]` entries of `config.toml` as Reprise Settings writes them; `toml_edit` leaves the rest of the file as it was. The keys are the ones `FileOutput` in `src/config/file.rs` reads. This crate cannot depend on the compositor, so they change together.
 
 use std::path::Path;
 
 use repriseapp::heads::Transform;
+use repriseconf::hz_string;
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, TableLike, Value, value};
 
 /// What to record for one output; a None leaves that key as it is.
@@ -19,12 +20,6 @@ pub struct OutputKeys {
 
 /// How far from 0 the compositor takes a place (`MAX_POSITION` in `src/outputmgmt.rs`).
 const MAX_POSITION: i32 = 1 << 24;
-
-/// A refresh in Hz with the decimals it needs: `60`, `59.94`.
-pub fn hz_string(refresh_mhz: i32) -> String {
-    let hz = format!("{:.3}", refresh_mhz as f64 / 1000.0);
-    hz.trim_end_matches('0').trim_end_matches('.').to_string()
-}
 
 fn mode_text((w, h, mhz): (i32, i32, i32)) -> String {
     if mhz > 0 {

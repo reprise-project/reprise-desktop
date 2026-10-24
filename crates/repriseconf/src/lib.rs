@@ -282,6 +282,12 @@ fn thumbnail_cache_in(text: &str) -> ThumbnailCache {
     }
 }
 
+/// A refresh in Hz with the decimals it needs: `60`, `59.94`.
+pub fn hz_string(refresh_mhz: i32) -> String {
+    let hz = format!("{:.3}", refresh_mhz as f64 / 1000.0);
+    hz.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
 pub fn xdg_home(var: &str, fallback: &str) -> PathBuf {
     xdg_home_from(std::env::var_os(var), std::env::var_os("HOME"), fallback)
 }
