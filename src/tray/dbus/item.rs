@@ -1,11 +1,11 @@
 use super::{ITEM_IFACE, Icons, Sizes, lock, sizes_now, uncached_proxy};
-use crate::tray::{Orientation, TrayItem, clip, decode_named_at, item_pixmaps};
+use crate::tray::{TrayItem, clip, decode_named_at, item_pixmaps};
 use reprisekit::controls::tooltip::TIP_CHARS;
 use reprisekit::icon::IconSource;
 use std::path::PathBuf;
 use std::sync::Arc;
 use zbus::message::Body;
-use zbus::zvariant::{DeserializeValue, OwnedObjectPath, OwnedValue};
+use zbus::zvariant::{DeserializeValue, DynamicType, OwnedObjectPath, OwnedValue};
 use zbus::{Connection, Proxy};
 
 async fn prop<T>(proxy: &Proxy<'_>, name: &str) -> Option<T>
@@ -145,9 +145,12 @@ pub(super) async fn owner_pid(conn: &Connection, bus: &str) -> Option<i32> {
     i32::try_from(pid).ok()
 }
 
-pub(super) async fn call_item(conn: &Connection, item: &TrayItem, method: &str, x: i32, y: i32) {
+pub(super) async fn call_item<B>(conn: &Connection, item: &TrayItem, method: &str, body: &B)
+where
+    B: serde::Serialize + DynamicType,
+{
     if let Ok(proxy) = uncached_proxy(conn, &item.service, &item.path, ITEM_IFACE).await
-        && let Err(e) = proxy.call_method(method, &(x, y)).await
+        && let Err(e) = proxy.call_method(method, body).await
     {
         log::debug!("tray: {method} on {} failed: {e}", item.id);
     }
@@ -156,26 +159,5 @@ pub(super) async fn call_item(conn: &Connection, item: &TrayItem, method: &str, 
 /// Hand the item an xdg-activation token so the window its next `Activate`
 /// or menu row shows or raises can take focus. Items without the method ignore it.
 pub(super) async fn provide_token(conn: &Connection, item: &TrayItem, token: &str) {
-    if let Ok(proxy) = uncached_proxy(conn, &item.service, &item.path, ITEM_IFACE).await
-        && let Err(e) = proxy
-            .call_method("ProvideXdgActivationToken", &(token,))
-            .await
-    {
-        log::debug!("tray: ProvideXdgActivationToken on {} failed: {e}", item.id);
-    }
-}
-
-pub(super) async fn call_scroll(
-    conn: &Connection,
-    item: &TrayItem,
-    delta: i32,
-    orientation: Orientation,
-) {
-    if let Ok(proxy) = uncached_proxy(conn, &item.service, &item.path, ITEM_IFACE).await
-        && let Err(e) = proxy
-            .call_method("Scroll", &(delta, orientation.as_str()))
-            .await
-    {
-        log::debug!("tray: Scroll on {} failed: {e}", item.id);
-    }
+    call_item(conn, item, "ProvideXdgActivationToken", &(token,)).await;
 }

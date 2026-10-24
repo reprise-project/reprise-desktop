@@ -12,6 +12,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
+use zbus::object_server::InterfaceRef;
 use zbus::proxy::CacheProperties;
 use zbus::{Connection, Proxy};
 
@@ -22,9 +23,9 @@ mod notifications;
 mod tests;
 mod watcher;
 
-use item::{call_item, call_scroll, fetch_item, item_named, provide_token};
+use item::{call_item, fetch_item, item_named, provide_token};
 use menu::{get_layout, send_menu_event};
-use notifications::{Notifications, Senders, lock_senders};
+use notifications::{Notifications, Senders};
 use watcher::{Published, Watcher, split_service};
 
 const WATCHER_NAME: &str = "org.kde.StatusNotifierWatcher";
@@ -90,7 +91,7 @@ impl Shell {
     }
 
     async fn tablet_pads(&self) -> Vec<reprisebus::tray::PadWire> {
-        let pads = self.pads.lock().unwrap_or_else(|e| e.into_inner());
+        let pads = lock(&self.pads);
         pads.iter().map(reprisebus::tray::Pad::wire).collect()
     }
 }
@@ -114,15 +115,16 @@ async fn uncached_proxy(
 
 type Icons = Arc<Mutex<IconCache>>;
 
-fn lock(icons: &Icons) -> std::sync::MutexGuard<'_, IconCache> {
-    icons.lock().unwrap_or_else(|e| e.into_inner())
+/// `m` locked, even when a holder panicked: its value is still usable.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// The px item icons are drawn at, which [`TrayCommand::IconSizes`] sets.
 type Sizes = Arc<Mutex<Vec<i32>>>;
 
 fn sizes_now(sizes: &Sizes) -> Vec<i32> {
-    sizes.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    lock(sizes).clone()
 }
 
 enum Wake {
@@ -218,10 +220,7 @@ impl Loop {
         let Some(published) = &self.published else {
             return;
         };
-        published
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|p| p.key != key);
+        lock(published).retain(|p| p.key != key);
         if let Ok(iface) = self
             .conn
             .object_server()
@@ -230,6 +229,13 @@ impl Loop {
         {
             let _ = Watcher::status_notifier_item_unregistered(iface.signal_emitter(), key).await;
         }
+    }
+
+    async fn notifications(&self) -> zbus::Result<InterfaceRef<Notifications>> {
+        self.conn
+            .object_server()
+            .interface::<_, Notifications>(NOTIFY_PATH)
+            .await
     }
 
     /// Run `call` beside the loop, so a peer that never answers holds up only its own call.
@@ -357,7 +363,7 @@ impl Loop {
                         if let Some(token) = token {
                             provide_token(&conn, &p, &token).await;
                         }
-                        call_item(&conn, &p, kind.method(), x, y).await
+                        call_item(&conn, &p, kind.method(), &(x, y)).await
                     });
                 }
             }
@@ -368,7 +374,9 @@ impl Loop {
             } => {
                 if let Some(p) = peer(&id) {
                     let conn = self.conn.clone();
-                    self.spawn(async move { call_scroll(&conn, &p, delta, orientation).await });
+                    self.spawn(async move {
+                        call_item(&conn, &p, "Scroll", &(delta, orientation.as_str())).await
+                    });
                 }
             }
             TrayCommand::GetLayout { id, parent } => {
@@ -404,35 +412,20 @@ impl Loop {
                 }
             }
             TrayCommand::NotificationClosed { id, reason } => {
-                if let Ok(iface) = self
-                    .conn
-                    .object_server()
-                    .interface::<_, Notifications>(NOTIFY_PATH)
-                    .await
-                {
-                    lock_senders(&self.senders).0.remove(&id);
+                if let Ok(iface) = self.notifications().await {
+                    lock(&self.senders).0.remove(&id);
                     let _ = Notifications::notification_closed(iface.signal_emitter(), id, reason)
                         .await;
                 }
             }
             TrayCommand::Replied { id, text } => {
-                if let Ok(iface) = self
-                    .conn
-                    .object_server()
-                    .interface::<_, Notifications>(NOTIFY_PATH)
-                    .await
-                {
+                if let Ok(iface) = self.notifications().await {
                     let emitter = iface.signal_emitter();
                     let _ = Notifications::notification_replied(emitter, id, &text).await;
                 }
             }
             TrayCommand::ActionInvoked { id, key, token } => {
-                if let Ok(iface) = self
-                    .conn
-                    .object_server()
-                    .interface::<_, Notifications>(NOTIFY_PATH)
-                    .await
-                {
+                if let Ok(iface) = self.notifications().await {
                     let emitter = iface.signal_emitter();
                     if let Some(token) = token {
                         let _ = Notifications::activation_token(emitter, id, &token).await;
@@ -450,7 +443,7 @@ impl Loop {
 
     /// Reads every item again, for `IconPixmap` entries and named icons at `sizes`.
     fn resize_icons(&mut self, sizes: Vec<i32>) {
-        *self.sizes.lock().unwrap_or_else(|e| e.into_inner()) = sizes;
+        *lock(&self.sizes) = sizes;
         let keys: Vec<String> = self.items.keys().cloned().collect();
         for key in keys {
             self.refresh_item(&key);
@@ -491,7 +484,7 @@ impl Loop {
                 Wake::Owner { name, new_owner } => {
                     if new_owner.is_empty() {
                         self.remove_items_on(&name).await;
-                        if lock_senders(&self.senders).sent_by(&name) {
+                        if lock(&self.senders).sent_by(&name) {
                             self.emit(TrayEvent::NotifySenderGone(name.clone()));
                         }
                         let dropped = self.screensaver.update(|h| h.forget(&name));

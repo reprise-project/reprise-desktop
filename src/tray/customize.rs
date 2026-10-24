@@ -36,9 +36,7 @@ pub fn customize(state: &mut State) {
     let wording = traycustomize::Wording::of(theme);
     let mut keys = std::collections::HashSet::new();
     let current: Vec<Entry> = tray
-        .items
-        .iter()
-        .chain(&tray.hidden)
+        .all()
         .map(|i| {
             keys.insert(i.key.clone());
             // Glass names the item by its title and puts its tip under
@@ -141,7 +139,7 @@ pub fn apply_choices(state: &mut State, picked: Choices) {
     let Some(tray) = state.tray.as_mut() else {
         return;
     };
-    let current: Vec<&TrayItem> = tray.items.iter().chain(&tray.hidden).collect();
+    let current: Vec<&TrayItem> = tray.all().collect();
     let mut choices = tray.choices.clone();
     remember(&mut choices, &picked.behaviours, &current);
     if choices != tray.choices {

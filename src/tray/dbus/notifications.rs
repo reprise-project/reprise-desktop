@@ -45,10 +45,6 @@ impl Senders {
     }
 }
 
-pub(super) fn lock_senders(senders: &Mutex<Senders>) -> std::sync::MutexGuard<'_, Senders> {
-    senders.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 pub(super) struct Notifications {
     pub(super) events: Sender<TrayEvent>,
     pub(super) eventfd: RawFd,
@@ -83,7 +79,7 @@ impl Notifications {
         #[zbus(connection)] conn: &Connection,
     ) -> u32 {
         let sender = hdr.sender().map_or("", |s| s.as_str()).to_string();
-        let id = lock_senders(&self.senders).claim(
+        let id = lock(&self.senders).claim(
             &sender,
             &app_name,
             replaces_id,
@@ -134,7 +130,7 @@ impl Notifications {
 
     async fn close_notification(&self, id: u32, #[zbus(header)] hdr: Header<'_>) {
         let sender = hdr.sender().map_or("", |s| s.as_str());
-        if lock_senders(&self.senders).owns(id, sender) {
+        if lock(&self.senders).owns(id, sender) {
             emit(&self.events, self.eventfd, TrayEvent::CloseRequest(id));
         }
     }
