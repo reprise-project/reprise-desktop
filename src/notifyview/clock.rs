@@ -47,15 +47,19 @@ impl Clock {
 
 /// Balloon `i`'s clock runs `ms` from now, held while the pointer is on a stack of sheets.
 pub(super) fn restart(v: &mut NotifyView, i: usize, ms: Option<i32>, sheets: bool) {
-    let now = Instant::now();
-    let paused = sheets && hovered(v);
-    let Some(b) = v.stack.get_mut(i) else {
-        return;
-    };
-    b.clock = Clock::start(ms, now);
-    if paused {
-        b.clock.pause(now);
+    let clock = held_clock(v, ms, sheets, Instant::now());
+    if let Some(b) = v.stack.get_mut(i) {
+        b.clock = clock;
     }
+}
+
+/// A clock running `ms` from `now`, held while the pointer is on a stack of sheets.
+pub(super) fn held_clock(v: &NotifyView, ms: Option<i32>, sheets: bool, now: Instant) -> Clock {
+    let mut clock = Clock::start(ms, now);
+    if sheets && hovered(v) {
+        clock.pause(now);
+    }
+    clock
 }
 
 pub(super) fn reply_idle_ms() -> Option<i32> {

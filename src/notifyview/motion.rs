@@ -4,7 +4,6 @@ use reprisekit::anim::{Ease, Tween};
 use reprisekit::controls::notifysheet::{
     RISE, drip_bead_at, drip_bead_share, drip_corner, drip_ms, drip_pose, pose,
 };
-use reprisekit::style::SheetShape;
 use reprisekit::taskbar::Edge;
 use reprisescene::{Input, NodeId};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -17,12 +16,11 @@ use crate::config::EffectsConfig;
 use crate::glass::GlassCtx;
 use crate::raster::Rect;
 
-use super::clock::{hold_clocks, rearm};
 use super::layout::Drawn;
 use super::paint::{lay_stack, redraw};
-use super::pointer::{hold_at, rehover};
+use super::pointer::{rehold, rehover};
 use super::warm::warm_openings;
-use super::{Balloon, NOTIFY_TICK, NotifyView, sheets};
+use super::{Balloon, NOTIFY_TICK, NotifyView, droplets};
 
 /// A sheet's way in, out and between slots, and a Droplet's opening.
 #[derive(Clone, Copy, Debug)]
@@ -134,7 +132,7 @@ pub(super) fn follow_slot(
 
 /// Points each Droplet's opening at its [`open_target`]; true when one turned.
 pub(super) fn aim_open(state: &mut State) -> bool {
-    if !sheets(state) || state.config.glass.notification.shape() != SheetShape::Droplet {
+    if !droplets(state) {
         return false;
     }
     aim_stack(
@@ -290,10 +288,7 @@ pub(super) fn tick(state: &mut State) -> bool {
         .any(|b| b.motion.open.value(now) != b.open_drawn)
     {
         if lay_stack(state, true) {
-            let p = state.pointer_location();
-            if hold_at(&mut state.notify, p.x, p.y, now) && hold_clocks(state) {
-                rearm(state);
-            }
+            rehold(state, now);
         }
         if state
             .notify
@@ -311,7 +306,7 @@ pub(super) fn tick(state: &mut State) -> bool {
         glass,
         ..
     } = state;
-    let bounds = notify.output.as_ref().and_then(reprisescene::output_rect);
+    let bounds = notify.bounds();
     for b in notify.stack.iter_mut().chain(notify.leaving.iter_mut()) {
         pose_balloon(scene, glass, b, now, edge, scale_from, bounds);
     }
@@ -326,10 +321,7 @@ pub(super) fn tick(state: &mut State) -> bool {
     redraw(state);
     let settled = still(&state.notify, now);
     if settled {
-        let p = state.pointer_location();
-        if hold_at(&mut state.notify, p.x, p.y, now) && hold_clocks(state) {
-            rearm(state);
-        }
+        rehold(state, now);
         // A Droplet this opens moves on, and `paint` leaves the running tick armed.
         rehover(state);
     }

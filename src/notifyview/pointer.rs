@@ -223,6 +223,14 @@ pub(super) fn point_at(
     (dirty, touched)
 }
 
+/// [`hold_at`] for the pointer where it is now, the clocks following a change.
+pub(super) fn rehold(state: &mut State, now: Instant) {
+    let p = state.pointer_location();
+    if hold_at(&mut state.notify, p.x, p.y, now) && hold_clocks(state) {
+        rearm(state);
+    }
+}
+
 /// The still pointer at (`x`, `y`) holds the stack while a sheet is under it, drawn or at rest,
 /// or the chip, and lets it go otherwise; true on a change.
 pub(super) fn hold_at(v: &mut NotifyView, x: f64, y: f64, now: Instant) -> bool {
