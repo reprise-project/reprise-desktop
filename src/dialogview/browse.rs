@@ -123,7 +123,7 @@ impl State {
         generation: u64,
         done: Vec<crate::pickthumbs::Done>,
     ) {
-        let Some(i) = self.dialogs.views.iter().position(|v| v.id == id) else {
+        let Some(i) = self.dialog_index(id) else {
             return;
         };
         let Some(p) = self.dialogs.views[i].dialog.picker_mut() else {
@@ -136,7 +136,7 @@ impl State {
 
     /// A folder read for Browse dialog `id` is done; a pick acts as if the dialog were on top.
     fn picker_reply(&mut self, id: u64, reply: crate::filepick::Reply) {
-        let Some(i) = self.dialogs.views.iter().position(|v| v.id == id) else {
+        let Some(i) = self.dialog_index(id) else {
             return;
         };
         let scale = self.draw_scale_at(Some(&self.dialogs.views[i].output));

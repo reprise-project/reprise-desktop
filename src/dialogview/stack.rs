@@ -17,6 +17,10 @@ use crate::window::keep_inside;
 use super::*;
 
 impl State {
+    pub(crate) fn dialog_index(&self, id: u64) -> Option<usize> {
+        self.dialogs.views.iter().position(|v| v.id == id)
+    }
+
     /// Show `d`, placed per `d.placement` on the output under the pointer. A dialog with the same
     /// `identity` is raised instead of reopened, its cues out when a key asked ([`Cues::reopen`]).
     /// A Welcome panel takes the screen alone and closes the switchers; any other dialog opened
@@ -40,7 +44,7 @@ impl State {
                 let id = v.id;
                 let shown = v.cues.reopen(self.key_input.last_key_input);
                 self.raise_dialog(i);
-                if shown && let Some(j) = self.dialogs.views.iter().position(|v| v.id == id) {
+                if shown && let Some(j) = self.dialog_index(id) {
                     self.redraw_dialog(j);
                 }
             }
@@ -56,7 +60,7 @@ impl State {
 
     /// Show `d` as the child of `parent`, raised first; on its own when `parent` is closed or None.
     pub(super) fn open_dialog_over_id(&mut self, d: Dialog, parent: Option<u64>) {
-        match self.dialogs.views.iter().position(|v| Some(v.id) == parent) {
+        match parent.and_then(|id| self.dialog_index(id)) {
             Some(i) => {
                 self.raise_dialog(i);
                 self.open_view(d, parent);
@@ -243,7 +247,7 @@ impl State {
     /// Minimise windowed dialog `id`: its tree goes off and it drops to the bottom of the stack,
     /// so the keyboard passes to the dialog now on top or, with none shown, to the top window.
     pub fn minimize_dialog(&mut self, id: u64) {
-        let Some(i) = self.dialogs.views.iter().position(|v| v.id == id) else {
+        let Some(i) = self.dialog_index(id) else {
             return;
         };
         if self.dialogs.views[i].minimized || !self.dialogs.views[i].dialog.windowed() {
@@ -305,7 +309,7 @@ impl State {
 
     /// Raise dialog `id` and give it the keyboard, as its task button click does; no-op when closed.
     pub fn focus_dialog(&mut self, id: u64) {
-        if let Some(i) = self.dialogs.views.iter().position(|v| v.id == id) {
+        if let Some(i) = self.dialog_index(id) {
             self.raise_dialog(i);
         }
     }
@@ -351,7 +355,7 @@ impl State {
     pub(super) fn close_to_parent(&mut self) -> bool {
         let parent = self.dialogs.views.last().and_then(|v| v.parent);
         self.close_dialog();
-        match parent.and_then(|p| self.dialogs.views.iter().position(|v| v.id == p)) {
+        match parent.and_then(|p| self.dialog_index(p)) {
             Some(i) => {
                 self.raise_dialog(i);
                 true

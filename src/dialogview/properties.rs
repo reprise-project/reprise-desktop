@@ -32,7 +32,7 @@ impl State {
 
     /// A folder walk for sheet `id` is done; a sheet closed meanwhile drops the totals.
     fn folder_totals_in(&mut self, id: u64, totals: reprisefs::props::FolderTotals) {
-        let Some(i) = self.dialogs.views.iter().position(|v| v.id == id) else {
+        let Some(i) = self.dialog_index(id) else {
             return;
         };
         if self.dialogs.views[i].dialog.set_folder_totals(totals) {
@@ -63,7 +63,7 @@ impl State {
         if let Some(to) = &renamed {
             self.desktop_renamed(&path, to);
         }
-        let Some(i) = self.dialogs.views.iter().position(|v| Some(v.id) == sheet) else {
+        let Some(i) = sheet.and_then(|id| self.dialog_index(id)) else {
             return;
         };
         if close {
@@ -124,7 +124,7 @@ impl State {
             // A browsed program not made default runs by path with the file as its one argument.
             None if app.starts_with('/') => {
                 let argv = [std::ffi::OsStr::new(app), path.as_os_str()];
-                self.spawn_argv_from_dialog(&argv);
+                self.spawn_argv_activated(&argv);
             }
             None => {}
         }
@@ -355,7 +355,7 @@ impl State {
         for (from, to) in renames {
             self.desktop_renamed(from, to);
         }
-        let Some(i) = self.dialogs.views.iter().position(|v| Some(v.id) == sheet) else {
+        let Some(i) = sheet.and_then(|id| self.dialog_index(id)) else {
             return;
         };
         if close {
@@ -406,7 +406,7 @@ impl State {
 
     /// Ask Confirm Attribute Changes over sheet `sheet`, raised first; a closed sheet drops the change.
     fn confirm_attributes_over(&mut self, sheet: Option<u64>, c: dialog::AttrConfirm) {
-        let Some(i) = self.dialogs.views.iter().position(|v| Some(v.id) == sheet) else {
+        let Some(i) = sheet.and_then(|id| self.dialog_index(id)) else {
             return;
         };
         self.raise_dialog(i);
