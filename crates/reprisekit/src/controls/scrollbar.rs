@@ -106,6 +106,19 @@ pub fn held(pos: i32, visible: i32, total: i32) -> i32 {
     pos.clamp(0, (total - visible).max(0))
 }
 
+/// The parts of horizontal bar `hb` showing `visible` of `total` px from offset `left`.
+pub(crate) fn hparts(hb: Rect, left: i32, visible: i32, total: i32, thumb_min: i32) -> ScrollParts {
+    let (visible, total) = (visible.max(0) as usize, total.max(0) as usize);
+    scrollbar_parts(hb, 1, left as usize, visible, total, true, thumb_min)
+}
+
+/// The offset a thumb of horizontal bar `p`, grabbed `grab` px right of its left edge, scrolls to
+/// with the pointer at `x`.
+pub(crate) fn left_at(p: &ScrollParts, x: i32, grab: i32, visible: i32, total: i32) -> i32 {
+    let (visible, total) = (visible.max(0) as usize, total.max(0) as usize);
+    scrollbar_pos_at(p, x - grab, visible, total, true) as i32
+}
+
 /// The thumb the pointer holds, if any: which bar, and how far from the
 /// thumb's leading edge it was grabbed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
