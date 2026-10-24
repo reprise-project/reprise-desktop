@@ -123,11 +123,7 @@ impl State {
 
     pub(super) fn start_panel_show_results(&mut self) {
         crate::tooltip::hover_start_panel(self, None);
-        let Some(scale) = self
-            .start_panel
-            .as_ref()
-            .map(|v| self.draw_scale_at(Some(&v.output)).max(1))
-        else {
+        let Some(scale) = self.start_panel_scale() else {
             return;
         };
         let px = RESULT_ICON * scale;

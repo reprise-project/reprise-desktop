@@ -20,7 +20,8 @@ use crate::input::Interaction;
 use crate::output::upload_scaled;
 use crate::raster::Rect;
 use crate::snap::{ActiveLayout, Dir, KeyStep, Recents, Splits, Suggestion, Target, ZoneLayout};
-use crate::window::WindowId;
+use crate::theme::Metrics;
+use crate::window::{Window, WindowId};
 
 use groups::followed;
 use groups::partner_sides;
@@ -107,6 +108,12 @@ fn tiled(maximized: bool, fullscreen: bool, group: Option<u64>) -> bool {
     group.is_some() && !maximized && !fullscreen
 }
 
+/// The client size that makes `win`'s frame the size of `r`, within the client's limits.
+fn client_for(m: &Metrics, win: &Window, r: Rect) -> (i32, i32) {
+    let client = FrameGeometry::client_size_for_total(m, r.width, r.height, false, win.chrome());
+    crate::snap::commit_size(client, win.size_limits())
+}
+
 /// Five rects under `tree` for [`place_selection_box`], disabled until placed.
 pub(crate) fn selection_box_nodes(
     scene: &mut crate::compositor::DeskScene,
@@ -147,7 +154,7 @@ pub(crate) fn place_selection_box(
 impl State {
     /// Outline `target`, or clear for None. Runs on every settled motion; an unchanged target
     /// costs nothing.
-    pub fn show_snap_outline(&mut self, target: Option<Rect>) {
+    fn show_snap_outline(&mut self, target: Option<Rect>) {
         let Some(r) = target else {
             self.hide_snap_outline();
             return;
@@ -204,19 +211,11 @@ impl State {
 
     /// Fill `target` with `w`: the client size that makes the frame the zone's size, within the
     /// client's limits.
-    pub fn snap_commit(&mut self, w: WindowId, target: Rect) {
-        let m = &self.config.theme.metrics;
+    fn snap_commit(&mut self, w: WindowId, target: Rect) {
         let Some(win) = self.win(w) else {
             return;
         };
-        let client = FrameGeometry::client_size_for_total(
-            m,
-            target.width,
-            target.height,
-            false,
-            win.chrome(),
-        );
-        let (cw, ch) = crate::snap::commit_size(client, win.size_limits());
+        let (cw, ch) = client_for(&self.config.theme.metrics, win, target);
         let frame = win.frame_rect();
         if let Some(win) = self.win_mut(w)
             && win.snapped.is_none()
@@ -342,18 +341,10 @@ impl State {
         self.wm.snap.last = Some(r);
         for (window, start, sides) in partner_sides(&self.wm.snap.partners) {
             let (next, edges) = followed(start, &sides, r);
-            let m = &self.config.theme.metrics;
             let Some(win) = self.win(window) else {
                 continue;
             };
-            let client = FrameGeometry::client_size_for_total(
-                m,
-                next.width,
-                next.height,
-                false,
-                win.chrome(),
-            );
-            let (cw, ch) = crate::snap::commit_size(client, win.size_limits());
+            let (cw, ch) = client_for(&self.config.theme.metrics, win, next);
             let anchored = edges.intersects(Edges::LEFT | Edges::TOP);
             if let Some(win) = self.win_mut(window) {
                 win.resize_anchor = anchored.then_some(crate::window::ResizeAnchor {
@@ -374,18 +365,10 @@ impl State {
         self.wm.snap.last = None;
         for (window, start, _) in partner_sides(&partners) {
             self.set_resizing(window, false);
-            let m = &self.config.theme.metrics;
             let Some(win) = self.win(window) else {
                 continue;
             };
-            let client = FrameGeometry::client_size_for_total(
-                m,
-                start.width,
-                start.height,
-                false,
-                win.chrome(),
-            );
-            let (cw, ch) = crate::snap::commit_size(client, win.size_limits());
+            let (cw, ch) = client_for(&self.config.theme.metrics, win, start);
             self.move_to(window, start.x, start.y);
             self.request_size(window, cw, ch);
         }
@@ -440,7 +423,7 @@ impl State {
 
     /// The drop and outline rect a release of `w` at (`cx`, `cy`) makes; None unless drag
     /// snapping is on and `w` is snappable.
-    pub fn move_target(
+    fn move_target(
         &mut self,
         w: WindowId,
         cx: f64,
@@ -500,7 +483,7 @@ impl State {
 
     /// Let go of `w` on `target`: maximize, a quarter (becomes the active layout) or a zone of
     /// the active layout.
-    pub fn release_on(&mut self, w: WindowId, target: Target) {
+    fn release_on(&mut self, w: WindowId, target: Target) {
         let p = self.pointer_location();
         let Some(out) = self.output_exactly_at(p.x, p.y) else {
             return;
@@ -528,7 +511,7 @@ impl State {
     }
 
     /// `out`'s active zones over its usable area and whether a pick set them.
-    pub fn active_zones(&self, out: &Output) -> (Vec<Rect>, bool) {
+    fn active_zones(&self, out: &Output) -> (Vec<Rect>, bool) {
         let work = self.usable_area(Some(out));
         let live = self.snap_live();
         let live = |m| live.contains(&m);
