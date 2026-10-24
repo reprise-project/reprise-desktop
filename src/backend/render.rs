@@ -31,7 +31,9 @@ use super::links::retrain_link;
 use super::outputs::power_off;
 use super::schedule::queue_render;
 use super::steps::{on_quiet, watch};
-use super::{Flip, InFlight, Out, Surface, Work, commit, crtc_of, lock, schedule, schedule_step};
+use super::{
+    Flip, InFlight, Out, Surface, Work, commit, crtc_of, lock, schedule, schedule_step, surface_mut,
+};
 
 fn flip_time(
     state: &State,
@@ -49,11 +51,7 @@ fn flip_time(
 
 pub(super) fn vblank(state: &mut State, crtc: crtc::Handle, meta: Option<&DrmEventMetadata>) {
     let flip = flip_time(state, meta);
-    let Some(s) = state
-        .backend
-        .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&crtc))
-    else {
+    let Some(s) = surface_mut(state, crtc) else {
         return;
     };
     if let Some(flip) = s.track.vblank(flip) {
@@ -64,11 +62,7 @@ pub(super) fn vblank(state: &mut State, crtc: crtc::Handle, meta: Option<&DrmEve
 /// The frame queued on `crtc` reached the screen at `flip`.
 pub(super) fn flipped(state: &mut State, crtc: crtc::Handle, (time, seq, kind): Flip) {
     let counting = state.config.debug.overlay;
-    let Some(s) = state
-        .backend
-        .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&crtc))
-    else {
+    let Some(s) = surface_mut(state, crtc) else {
         return;
     };
     let submitted = lock(&s.compositor).frame_submitted();
@@ -107,11 +101,7 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
         return;
     }
     let started = std::time::Instant::now();
-    if let Some(s) = state
-        .backend
-        .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&crtc))
-    {
+    if let Some(s) = surface_mut(state, crtc) {
         s.needs_redraw = false;
         if std::mem::take(&mut s.pointer_only)
             && let Some(drawn) = pointer_frame(state, crtc, &output, started)
@@ -384,11 +374,7 @@ pub(super) fn retired(state: &mut State, crtc: crtc::Handle) {
 /// The commit thread finished `done` on `crtc`.
 pub(super) fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Done<Out>) {
     let overlay = state.config.debug.overlay;
-    let Some(s) = state
-        .backend
-        .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&crtc))
-    else {
+    let Some(s) = surface_mut(state, crtc) else {
         return;
     };
     let waited = s.track.waited(done.ended);
@@ -459,12 +445,7 @@ pub(super) fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Don
         power_off(state, crtc);
     }
     if let Some(f) = flight {
-        if ok
-            && let Some(s) = state
-                .backend
-                .as_mut()
-                .and_then(|b| b.surfaces.get_mut(&crtc))
-        {
+        if ok && let Some(s) = surface_mut(state, crtc) {
             count_frame(s, overlay, f.started, f.pointer);
         }
         finish(state, crtc, &output, ok, false, f.held, f.started);
@@ -513,11 +494,7 @@ fn finish(
     held: Option<Duration>,
     started: std::time::Instant,
 ) {
-    if let Some(s) = state
-        .backend
-        .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&crtc))
-    {
+    if let Some(s) = surface_mut(state, crtc) {
         let interval = crate::framepace::interval(output.current_mode().map_or(0, |m| m.refresh));
         s.pace.not_before = crate::framepace::next_render(drawn, s.needs_redraw, started, interval);
     }
@@ -556,11 +533,7 @@ fn held_back(state: &mut State, crtc: crtc::Handle) -> bool {
     let token = state
         .handle
         .insert_source(Timer::from_duration(wait), move |_, _, state| {
-            if let Some(s) = state
-                .backend
-                .as_mut()
-                .and_then(|b| b.surfaces.get_mut(&crtc))
-            {
+            if let Some(s) = surface_mut(state, crtc) {
                 s.render_timer = None;
             }
             render(state, crtc);
@@ -647,7 +620,7 @@ fn count_damage(
 
 pub fn take_stats(state: &mut State, output: &Output) -> Option<crate::debugview::FrameStats> {
     let crtc = crtc_of(output)?;
-    let s = state.backend.as_mut()?.surfaces.get_mut(&crtc)?;
+    let s = surface_mut(state, crtc)?;
     Some(s.stats.take())
 }
 
@@ -721,11 +694,7 @@ pub fn answer_frames(state: &mut State) {
 }
 
 fn callbacks_done(state: &mut State, crtc: crtc::Handle) {
-    let Some(s) = state
-        .backend
-        .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&crtc))
-    else {
+    let Some(s) = surface_mut(state, crtc) else {
         return;
     };
     s.pace.last_done = Some(std::time::Instant::now());
