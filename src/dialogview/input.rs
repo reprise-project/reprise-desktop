@@ -475,7 +475,7 @@ impl State {
         let added = self
             .handle
             .insert_source(Timer::from_duration(every), move |now, _, state| {
-                let Some(i) = state.dialogs.views.iter().position(|v| v.id == id) else {
+                let Some(i) = state.dialog_index(id) else {
                     return TimeoutAction::Drop;
                 };
                 let d = &mut state.dialogs.views[i].dialog;

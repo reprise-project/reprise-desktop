@@ -4,17 +4,6 @@ use crate::dialog::{self, Dialog, Outcome};
 use super::*;
 
 impl State {
-    fn spawn_from_dialog(&mut self, cmd: &str) {
-        self.spawn_activated(cmd);
-    }
-
-    pub(super) fn spawn_argv_from_dialog<S: AsRef<std::ffi::OsStr> + std::fmt::Debug>(
-        &mut self,
-        argv: &[S],
-    ) {
-        self.spawn_argv_activated(argv);
-    }
-
     pub(crate) fn apply_dialog(&mut self, outcome: Outcome) {
         self.run_picker_requests();
         match outcome {
@@ -41,7 +30,7 @@ impl State {
             Outcome::Close => self.close_dialog(),
             Outcome::Spawn(cmd) => {
                 self.close_dialog();
-                self.spawn_from_dialog(&cmd);
+                self.spawn_activated(&cmd);
             }
             Outcome::StandBy(cmd) => {
                 self.close_dialog();
@@ -183,7 +172,7 @@ impl State {
                 current,
                 launcher,
             } => self.open_change_icon(&name, current, launcher),
-            Outcome::FindTarget(program) => self.spawn_argv_from_dialog(&[
+            Outcome::FindTarget(program) => self.spawn_argv_activated(&[
                 std::ffi::OsStr::new("reprise-explorer"),
                 std::ffi::OsStr::new("--select"),
                 program.as_os_str(),
