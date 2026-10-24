@@ -292,6 +292,7 @@ impl State {
                     w.pressed = None;
                 }
                 self.redraw_frame(window);
+                self.redraw_window(window);
             }
             Interaction::TaskPress { .. }
             | Interaction::QuickPress { .. }

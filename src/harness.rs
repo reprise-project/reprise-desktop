@@ -13,11 +13,16 @@ use wayland_client::{
     self as wc, Connection, EventQueue, QueueHandle,
     protocol::{
         wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_data_device, wl_data_device_manager,
-        wl_data_offer, wl_data_source, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool,
-        wl_surface::WlSurface,
+        wl_data_offer, wl_data_source, wl_keyboard, wl_output::WlOutput, wl_registry, wl_seat,
+        wl_shm, wl_shm_pool, wl_surface::WlSurface,
     },
 };
 use wayland_protocols::{
+    ext::session_lock::v1::client::{
+        ext_session_lock_manager_v1::ExtSessionLockManagerV1,
+        ext_session_lock_surface_v1::{self, ExtSessionLockSurfaceV1},
+        ext_session_lock_v1::ExtSessionLockV1,
+    },
     wp::text_input::zv3::client::{
         zwp_text_input_manager_v3::ZwpTextInputManagerV3, zwp_text_input_v3::ZwpTextInputV3,
     },
@@ -345,6 +350,23 @@ impl Harness {
         self.roundtrip(c);
         surface
     }
+
+    /// A locker's lock from `c` with one lock surface on the client's first `wl_output`,
+    /// configured and mapped with its first buffer.
+    pub fn map_lock_surface(&mut self, c: &mut TestClient) -> (ExtSessionLockV1, WlSurface) {
+        let qh = c.qh();
+        let lock = (c.side.lock_manager.as_ref())
+            .expect("ext_session_lock_manager_v1")
+            .lock(&qh, ());
+        let surface = (c.side.compositor.as_ref())
+            .expect("wl_compositor")
+            .create_surface(&qh, ());
+        let output = c.side.outputs.first().expect("a wl_output");
+        lock.get_lock_surface(&surface, output, &qh, surface.clone());
+        self.roundtrip(c);
+        self.roundtrip(c);
+        (lock, surface)
+    }
 }
 
 /// A client's xdg popup.
@@ -410,6 +432,10 @@ impl TestClient {
                 "zwlr_layer_shell_v1" => {
                     self.side.layer_shell = Some(registry.bind(name, version.min(4), &qh, ()));
                 }
+                "ext_session_lock_manager_v1" => {
+                    self.side.lock_manager = Some(registry.bind(name, 1, &qh, ()));
+                }
+                "wl_output" => self.side.outputs.push(registry.bind(name, 1, &qh, ())),
                 _ => {}
             }
         }
@@ -660,6 +686,8 @@ pub struct ClientSide {
     layer_shell: Option<ZwlrLayerShellV1>,
     /// The layer surfaces the compositor closed, by their `wl_surface`.
     pub layers_closed: Vec<WlSurface>,
+    lock_manager: Option<ExtSessionLockManagerV1>,
+    outputs: Vec<WlOutput>,
 }
 
 impl ClientSide {
@@ -790,6 +818,28 @@ impl wc::Dispatch<ZwlrLayerSurfaceV1, WlSurface> for ClientSide {
     }
 }
 
+impl wc::Dispatch<ExtSessionLockSurfaceV1, WlSurface> for ClientSide {
+    fn event(
+        st: &mut Self,
+        lock_surface: &ExtSessionLockSurfaceV1,
+        ev: ext_session_lock_surface_v1::Event,
+        surface: &WlSurface,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let ext_session_lock_surface_v1::Event::Configure {
+            serial,
+            width,
+            height,
+        } = ev
+        {
+            lock_surface.ack_configure(serial);
+            let shm = st.shm.as_ref().expect("wl_shm");
+            attach(shm, qh, surface, width as i32, height as i32);
+        }
+    }
+}
+
 impl wc::Dispatch<wl_keyboard::WlKeyboard, ()> for ClientSide {
     fn event(
         st: &mut Self,
@@ -895,6 +945,9 @@ wc::delegate_noop!(ClientSide: ignore ZwpTextInputV3);
 wc::delegate_noop!(ClientSide: ignore ZwpVirtualKeyboardManagerV1);
 wc::delegate_noop!(ClientSide: ignore ZwpVirtualKeyboardV1);
 wc::delegate_noop!(ClientSide: ignore ZwlrLayerShellV1);
+wc::delegate_noop!(ClientSide: ignore ExtSessionLockManagerV1);
+wc::delegate_noop!(ClientSide: ignore ExtSessionLockV1);
+wc::delegate_noop!(ClientSide: ignore WlOutput);
 
 #[test]
 fn a_headless_state_maps_a_clients_toplevel_on_its_output() {

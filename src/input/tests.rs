@@ -339,3 +339,57 @@ fn resize_rect_right_edge_min_width_keeps_x() {
     assert_eq!(r.x, start.x);
     assert_eq!(r.width, 300 + 2 * m.frame_width);
 }
+
+/// A Classic window on TEST-1 of two outputs with its close button held down; the asks made so
+/// far are taken.
+fn held_close() -> (
+    crate::harness::Harness,
+    crate::harness::TestClient,
+    WindowId,
+) {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let w = h.state.win(t.id).expect("the window");
+    let b = w.geom.button_rect(CaptionButton::Close);
+    let (x, y) = (w.x + b.x + b.width / 2, w.y + b.y + b.height / 2);
+    h.pointer_to(f64::from(x), f64::from(y));
+    h.button(crate::harness::LEFT, true);
+    assert!(matches!(
+        h.state.interaction,
+        Interaction::PressButton {
+            button: CaptionButton::Close,
+            ..
+        }
+    ));
+    crate::backend::take_asks();
+    (h, c, t.id)
+}
+
+fn scene_asks(asked: &[(String, crate::backend::Ask)]) -> Vec<&str> {
+    (asked.iter())
+        .filter(|(_, a)| *a == crate::backend::Ask::Scene)
+        .map(|(o, _)| o.as_str())
+        .collect()
+}
+
+#[test]
+fn a_held_caption_button_left_by_the_pointer_asks_its_output_for_a_frame() {
+    let (mut h, _c, w) = held_close();
+    let r = h.state.win(w).expect("the window").frame_rect();
+    h.pointer_to(f64::from(r.x + r.width / 2), f64::from(r.y + r.height / 2));
+    assert_eq!(h.state.win(w).and_then(|w| w.pressed), None);
+    let asked = crate::backend::take_asks();
+    assert_eq!(scene_asks(&asked), ["TEST-1"], "{asked:?}");
+}
+
+#[test]
+fn a_cancelled_caption_press_asks_its_output_for_a_frame() {
+    let (mut h, _c, w) = held_close();
+    h.state.cancel_interaction();
+    assert_eq!(h.state.win(w).and_then(|w| w.pressed), None);
+    let asked = crate::backend::take_asks();
+    assert_eq!(scene_asks(&asked), ["TEST-1"], "{asked:?}");
+}

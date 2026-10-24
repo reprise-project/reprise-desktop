@@ -392,6 +392,7 @@ impl State {
                         w.pressed = held;
                     }
                     self.redraw_frame(window);
+                    self.redraw_window(window);
                 }
                 return;
             }
