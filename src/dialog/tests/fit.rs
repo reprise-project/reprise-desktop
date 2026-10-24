@@ -1,8 +1,5 @@
 use super::*;
 
-/// At 150% and 200% Run grows inside its frame: its lines sit a grown line apart and fit
-/// their rows, the field holds a grown line, its open list's rows grow, and the buttons sit
-/// inside the dialog under the field. 100% is Run as laid out.
 /// A dialog open when the text size changes lays out as one opened at the new size: the
 /// config reload refits every open dialog (`configwatch::retheme`).
 #[test]
@@ -461,6 +458,9 @@ fn every_dialog_fits_its_text_under_every_interface() {
     assert!(over.is_empty(), "{}", over.join("\n"));
 }
 
+/// At 150% and 200% Run grows inside its frame: its lines sit a grown line apart and fit
+/// their rows, the field holds a grown line, its open list's rows grow, and the buttons sit
+/// inside the dialog under the field. 100% is Run as laid out.
 #[test]
 fn run_grows_with_the_text_size() {
     let Some(text) = tahoma() else { return };

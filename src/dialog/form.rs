@@ -281,8 +281,8 @@ impl FormDialog {
         match self.kind {
             FormKind::RecycleBin(_) => crate::binprops::event(self, page, ev),
             FormKind::Attributes(_) => attr_event(self, page, ev),
-            FormKind::Properties(_) => props_event(self, page, ev),
-            FormKind::SetProperties(_) => set_event(self, page, ev),
+            FormKind::Properties(_) => props_event(self, ev),
+            FormKind::SetProperties(_) => set_event(self, ev),
             FormKind::Replace(_) => replace_event(self, ev),
             FormKind::EndSession => session_end_event(ev),
             FormKind::Location(ref id) => location_event(self, id.clone(), ev),
