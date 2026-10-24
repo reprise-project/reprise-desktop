@@ -1,5 +1,6 @@
 use crate::icon::premultiply;
 use crate::raster::Canvas;
+use std::borrow::Cow;
 use std::path::Path;
 
 /// Largest icon side accepted from a file or peer; bounds decode buffers at 4 MiB.
@@ -46,32 +47,38 @@ pub fn png_to_canvas(bytes: &[u8], max_side: u32) -> Result<Canvas, String> {
         .next_frame(&mut buf)
         .map_err(|e| format!("png data: {e}"))?;
     let (w, h) = (info.width, info.height);
-    // RGBA passes through; other layouts are widened into a copy.
-    let rgba: std::borrow::Cow<[u8]> = match info.color_type {
-        png::ColorType::Rgba => std::borrow::Cow::Borrowed(&buf[..info.buffer_size()]),
-        png::ColorType::Rgb => buf[..info.buffer_size()]
+    let rgba = png_rgba(&buf[..info.buffer_size()], info.color_type)
+        .ok_or("unsupported png color type")?;
+    canvas_from_rgba(w, h, &rgba).ok_or_else(|| "png data shorter than its header".into())
+}
+
+/// 8-bit PNG pixels of `color_type`, after `EXPAND`, as RGBA: RGBA passes through, other layouts
+/// are widened into a copy. None for indexed, which `EXPAND` has already widened.
+pub(crate) fn png_rgba(buf: &[u8], color_type: png::ColorType) -> Option<Cow<'_, [u8]>> {
+    use png::ColorType as C;
+    Some(match color_type {
+        C::Rgba => Cow::Borrowed(buf),
+        C::Rgb => buf
             .as_chunks::<3>()
             .0
             .iter()
             .flat_map(|p| [p[0], p[1], p[2], 255])
             .collect::<Vec<u8>>()
             .into(),
-        png::ColorType::GrayscaleAlpha => buf[..info.buffer_size()]
+        C::GrayscaleAlpha => buf
             .as_chunks::<2>()
             .0
             .iter()
             .flat_map(|p| [p[0], p[0], p[0], p[1]])
             .collect::<Vec<u8>>()
             .into(),
-        png::ColorType::Grayscale => buf[..info.buffer_size()]
+        C::Grayscale => buf
             .iter()
             .flat_map(|&g| [g, g, g, 255])
             .collect::<Vec<u8>>()
             .into(),
-        // EXPAND turns indexed into RGB/RGBA; anything else is unsupported.
-        png::ColorType::Indexed => return Err("unsupported png color type".into()),
-    };
-    canvas_from_rgba(w, h, &rgba).ok_or_else(|| "png data shorter than its header".into())
+        C::Indexed => return None,
+    })
 }
 
 fn decode_png(path: &Path, bytes: &[u8], px: u32) -> Option<Canvas> {

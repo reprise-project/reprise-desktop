@@ -97,7 +97,7 @@ impl Icon {
         let info = reader
             .next_frame(&mut buf)
             .unwrap_or_else(|e| fail(format!("png data: {e}")));
-        let rgba = to_rgba(&buf[..info.buffer_size()], info.color_type)
+        let rgba = crate::icontheme::png_rgba(&buf[..info.buffer_size()], info.color_type)
             .unwrap_or_else(|| fail(format!("{:?}: no RGBA reading", info.color_type)));
         let px = rgba
             .as_chunks::<4>()
@@ -115,24 +115,6 @@ impl Icon {
             px,
         }
     }
-}
-
-/// 8-bit pixels of `color_type` (after `EXPAND`) as RGBA.
-fn to_rgba(buf: &[u8], color_type: png::ColorType) -> Option<Vec<u8>> {
-    use png::ColorType as C;
-    Some(match color_type {
-        C::Rgba => buf.to_vec(),
-        C::Rgb => buf
-            .chunks(3)
-            .flat_map(|p| [p[0], p[1], p[2], 255])
-            .collect(),
-        C::GrayscaleAlpha => buf
-            .chunks(2)
-            .flat_map(|p| [p[0], p[0], p[0], p[1]])
-            .collect(),
-        C::Grayscale => buf.iter().flat_map(|&g| [g, g, g, 255]).collect(),
-        C::Indexed => return None,
-    })
 }
 
 macro_rules! icons {
