@@ -64,7 +64,7 @@ impl Notepad {
 
     /// Yes shows the copy as Untitled, so a save cannot write the replaced characters over the
     /// file.
-    pub(crate) fn lossy_event(&mut self, ev: Event, _ctx: &mut Ctx) -> Reply {
+    pub(crate) fn lossy_event(&mut self, ev: Event) -> Reply {
         let Some((b, _)) = &mut self.lossy else {
             return Reply::none();
         };
@@ -156,7 +156,7 @@ impl Notepad {
         }
     }
 
-    pub(crate) fn savechanges_event(&mut self, ev: Event, _ctx: &mut Ctx) -> Reply {
+    pub(crate) fn savechanges_event(&mut self, ev: Event) -> Reply {
         let mut fields = self.savechanges_fields();
         let step = oneshot::msgbox_event(
             &ev,

@@ -262,7 +262,7 @@ impl Notepad {
 
     /// The replace prompt's loop: Yes writes over the file, No (also the close box and Escape) goes back
     /// to Save As. Enter and Space press the focused button, which `msgbox_event` keeps across the per-event forms.
-    pub(crate) fn overwrite_event(&mut self, ev: Event, _ctx: &mut Ctx) -> Reply {
+    pub(crate) fn overwrite_event(&mut self, ev: Event) -> Reply {
         let Some(path) = self.overwrite.clone() else {
             return Reply::none();
         };

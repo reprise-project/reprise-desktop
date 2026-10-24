@@ -130,9 +130,7 @@ impl Notepad {
                 if self.last_query.is_none() {
                     self.open_find();
                 } else if self.find_next() {
-                    let lay = self.edit_layout(ctx);
-                    self.view
-                        .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
+                    self.scroll_to_caret(ctx);
                 }
             }
             (title::EDIT, row::SELECT_ALL) => self.edit.select_all(),

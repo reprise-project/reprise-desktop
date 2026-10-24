@@ -108,9 +108,7 @@ impl Notepad {
                         let at = self.drop_pos(x, y, ctx);
                         if self.edit.drop_text(at, &text) {
                             self.dirty = true;
-                            let lay = self.edit_layout(ctx);
-                            self.view
-                                .follow(&self.mono, &self.metrics, &self.edit, &lay, 1);
+                            self.scroll_to_caret(ctx);
                             self.sync_menus();
                         }
                         Reply::redraw()
