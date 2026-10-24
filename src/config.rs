@@ -195,34 +195,26 @@ impl Config {
         }
     }
 
+    fn output(&self, name: &str) -> Option<&OutputConfig> {
+        self.outputs.iter().find(|o| o.name == name)
+    }
+
     pub fn scale_for_output_name(&self, name: &str) -> f32 {
-        self.outputs
-            .iter()
-            .find(|o| o.name == name)
-            .map(|o| o.scale)
-            .unwrap_or(1.0)
+        self.output(name).map(|o| o.scale).unwrap_or(1.0)
     }
 
     pub fn mode_for_output_name(&self, name: &str) -> Option<OutputMode> {
-        self.outputs
-            .iter()
-            .find(|o| o.name == name)
-            .and_then(|o| o.mode)
+        self.output(name).and_then(|o| o.mode)
     }
 
     pub fn adaptive_sync_for_output_name(&self, name: &str) -> bool {
-        self.outputs
-            .iter()
-            .find(|o| o.name == name)
+        self.output(name)
             .and_then(|o| o.adaptive_sync)
             .unwrap_or(self.adaptive_sync)
     }
 
     pub fn position_for_output_name(&self, name: &str) -> Option<(i32, i32)> {
-        self.outputs
-            .iter()
-            .find(|o| o.name == name)
-            .and_then(|o| o.position)
+        self.output(name).and_then(|o| o.position)
     }
 
     pub fn primary_output_name(&self) -> Option<&str> {
@@ -233,11 +225,7 @@ impl Config {
     }
 
     pub fn transform_for_output_name(&self, name: &str) -> Transform {
-        self.outputs
-            .iter()
-            .find(|o| o.name == name)
-            .map(|o| o.transform)
-            .unwrap_or_default()
+        self.output(name).map(|o| o.transform).unwrap_or_default()
     }
 }
 

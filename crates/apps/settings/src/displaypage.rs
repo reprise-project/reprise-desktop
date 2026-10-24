@@ -13,7 +13,7 @@ use reprisekit::trackbar::{self, TrackBar};
 use crate::pages::Area;
 use crate::registry::Page;
 
-use crate::outputwrite::hz_string;
+use repriseconf::hz_string;
 
 /// How many rows the Scale combo has: 100% to 400% in quarter steps, the scales `[[outputs]] scale`
 /// takes.
