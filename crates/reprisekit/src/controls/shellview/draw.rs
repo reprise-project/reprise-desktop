@@ -1,4 +1,4 @@
-use super::details::details_listview;
+use super::details::details_in;
 use super::layout::label_rect;
 use super::rename::draw_rename;
 use super::scroll::list_left;
@@ -87,8 +87,7 @@ pub fn draw(
 ) {
     let Paint { cs, s, .. } = *p;
     if matches!(sv.mode, Mode::Details) {
-        let lv = details_listview(sv);
-        let lv_lay = listview::layout(&lv, lay.frame, &lay.controls);
+        let (lv, lv_lay) = details_in(sv, lay);
         listview::draw(c, text, p, &lv, &lv_lay, bars, px);
         return;
     }
