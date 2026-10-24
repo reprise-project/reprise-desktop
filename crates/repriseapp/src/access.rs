@@ -5,10 +5,10 @@
 //! `reprisekit::access::Handler` only posts a [`Msg`] to the event loop, where the program's state
 //! lives. Nothing is built until an assistive tool asks for the tree.
 
-use reprisekit::access::{Gesture, Handler, Published};
+use reprisekit::access::{Gesture, Handler, Published, Reveal, Route, Tree, accesskit};
 use smithay_client_toolkit::reexports::calloop::channel::Sender;
 
-use crate::{BTN_LEFT, BTN_RIGHT, DropForm, Mods, PointerInput, WinId};
+use crate::{BTN_LEFT, BTN_RIGHT, DropForm, Host, Mods, PointerInput, WinId};
 use reprisekit::controls::{
     form,
     propsheet::{self, PropSheet},
@@ -150,6 +150,131 @@ pub(crate) fn reader_input(g: Gesture, time: u32) -> Vec<PointerInput> {
             y: y as i32,
         }],
         Gesture::Focus(_) => Vec::new(),
+    }
+}
+
+impl Host {
+    pub(crate) fn publish(&mut self, id: WinId) {
+        let Some(i) = self.slots.iter().position(|s| s.id == id) else {
+            return;
+        };
+        let s = &mut self.slots[i];
+        if !s.access.state.dirty {
+            return;
+        }
+        s.access.state.dirty = false;
+        let title = if s.title.is_empty() {
+            self.app.title()
+        } else {
+            s.title.clone()
+        };
+        let (size, modal) = (s.size, s.modal);
+        self.ctx.aim(s);
+        let (app, ctx) = (&mut self.app, &self.ctx);
+        let menu = self.edit_menu.menu(id);
+        let acc = &mut self.slots[i].access;
+        let Some(adapter) = acc.adapter.as_mut() else {
+            return;
+        };
+        adapter.update_if_active(|| {
+            let mut tree = Tree::window(&title, size);
+            if modal && let Some(root) = tree.get_mut(reprisekit::access::ROOT) {
+                root.set_role(accesskit::Role::Dialog);
+                root.set_modal();
+            }
+            app.access(id, &mut tree, ctx);
+            if let Some(menu) = menu {
+                let node = menu.access(&mut tree, reprisekit::access::ROOT);
+                tree.set_focus(node);
+            }
+            acc.state.secret = tree
+                .get(tree.focus())
+                .is_some_and(|n| n.role() == accesskit::Role::PasswordInput);
+            acc.state.published.update(tree)
+        });
+    }
+
+    pub(crate) fn access_msg(&mut self, msg: Msg) {
+        match msg {
+            Msg::Activate(win) => {
+                if let Some(s) = self.slot_mut(win) {
+                    s.access.state.published.reset();
+                    s.access.state.dirty = true;
+                    s.access.state.active = true;
+                }
+                self.key_echo
+                    .get_or_insert_with(reprisebus::a11y::KeyEcho::spawn);
+                self.publish(win);
+            }
+            Msg::Deactivate(win) => {
+                if let Some(s) = self.slot_mut(win) {
+                    s.access.state.published.reset();
+                    s.access.state.active = false;
+                }
+            }
+            Msg::Act(win, req) => {
+                let target = match self.reader_route(win, req) {
+                    Route::Reveal { reveal, then } => {
+                        self.reader_reveal(win, reveal);
+                        if !then {
+                            return;
+                        }
+                        self.publish(win);
+                        match self.reader_route(win, req) {
+                            Route::Act(t) => t,
+                            _ => return,
+                        }
+                    }
+                    Route::Act(t) => t,
+                    Route::None => return,
+                };
+                let Some(g) = reprisekit::access::gesture(req.act, target) else {
+                    return;
+                };
+                if let Gesture::Focus(at) = g {
+                    self.reader_focus(win, at);
+                    return;
+                }
+                let apart = self.ctx.theme.metrics.double_click_ms.max(0) as u32 + 1000;
+                self.press_time = self.press_time.wrapping_add(apart);
+                for input in reader_input(g, self.press_time) {
+                    self.pointer(win, input);
+                }
+            }
+        }
+    }
+
+    /// How a reader's `req` in window `win` is carried out, on the tree last published there.
+    fn reader_route(&mut self, win: WinId, req: reprisekit::access::Request) -> Route {
+        (self.slot_mut(win))
+            .filter(|s| s.access.state.active)
+            .map_or(Route::None, |s| s.access.state.published.route(req))
+    }
+
+    /// Scroll the list in window `win` so the row `r` names shows.
+    fn reader_reveal(&mut self, win: WinId, r: Reveal) {
+        let at = (r.at.0 as i32, r.at.1 as i32);
+        self.reader_act(win, Reader::Reveal { at, row: r.row });
+    }
+
+    /// Give the keyboard to the control at `at` in window `win`, pressing nothing.
+    fn reader_focus(&mut self, win: WinId, at: (f64, f64)) {
+        self.reader_act(win, Reader::Focus((at.0 as i32, at.1 as i32)));
+    }
+
+    /// Hand `act` to the program ([`App::reader`](crate::App::reader)); when it reports a change
+    /// the window and its tree are drawn again.
+    fn reader_act(&mut self, win: WinId, act: Reader) {
+        let Some(s) = self.slots.iter().find(|s| s.id == win) else {
+            return;
+        };
+        self.ctx.aim(s);
+        if self.app.reader(win, act, &self.ctx)
+            && let Some(s) = self.slot_mut(win)
+        {
+            s.dirty = true;
+            s.access.state.dirty = true;
+        }
     }
 }
 

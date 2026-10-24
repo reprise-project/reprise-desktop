@@ -299,7 +299,7 @@ mod tests {
         let mut glass = 0;
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let theme = reprisekit::interfaces::theme_for(i);
-            crate::publish_theme(&theme);
+            crate::look::publish_theme(&theme);
             let b = MsgBox::new("User Accounts", short());
             let w = b.child("box", &text, &Theme::default()).size.0;
             let fit = reprisekit::look::caption_fit(
@@ -315,7 +315,7 @@ mod tests {
             assert_eq!(ok.x, (w - ok.width) / 2, "{i:?}: OK centres in the box");
             glass = w;
         }
-        crate::CAPTION_FIT.with_borrow_mut(|(_, out)| *out = Some(180));
+        crate::look::CAPTION_FIT.with_borrow_mut(|(_, out)| *out = Some(180));
         let b = MsgBox::new("User Accounts", short());
         assert_eq!(
             b.child("box", &text, &Theme::default()).size.0,
