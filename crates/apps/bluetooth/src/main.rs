@@ -1397,7 +1397,7 @@ mod tests {
         };
         let name = |a: &BtApp| {
             let p = a.props.as_ref().unwrap();
-            props::edit_text(p.sheet.open(), "name")
+            p.sheet.open().edit_text("name").to_string()
         };
         let copy = a.event(PROPS, ctrl(b'c'), &mut ctx).copy;
         assert_eq!(copy.as_deref(), Some("Cans"));

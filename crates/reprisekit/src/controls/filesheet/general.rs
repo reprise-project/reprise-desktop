@@ -291,10 +291,7 @@ pub fn general_page(
 }
 
 pub fn typed_name(page: &Form) -> &str {
-    match page.item(NAME).map(|i| &i.control) {
-        Some(Control::Edit { edit, .. }) => &edit.text,
-        _ => "",
-    }
+    page.edit_text(NAME)
 }
 
 pub fn read_only(page: &Form) -> CheckState {

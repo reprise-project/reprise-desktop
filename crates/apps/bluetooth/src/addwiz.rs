@@ -817,10 +817,7 @@ mod tests {
             let ev = w.page.form.key(form::Key::Char(ch));
             w.event(ev, &t.text, &t.forms);
         }
-        assert_eq!(
-            crate::props::edit_text(&w.page.form, passkey::CODE),
-            "123456"
-        );
+        assert_eq!(w.page.form.edit_text(passkey::CODE), "123456");
         w.event(form::Event::Default, &t.text, &t.forms);
         assert_eq!(wait.try_recv(), Ok(Answer::Passkey(123456)));
     }
