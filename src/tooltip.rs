@@ -438,41 +438,11 @@ pub(crate) fn label_for(state: &State, bar: TreeId, hit: TaskbarHit) -> Option<S
                 return None;
             }
             let rect = *b.layout.tasks.get(i)?;
-            let (title, bold) = task_button_title(state, bar, i)?;
+            let (title, bold) = state.task_button_name(b, i)?;
             let size = state.config.theme.fonts.size_px;
             task_tip(&state.text, size, &title, bold, rect.width)
         }
         TaskbarHit::Grip(_) | TaskbarHit::Resize | TaskbarHit::Nothing => None,
-    }
-}
-
-fn task_button_title(state: &State, bar: TreeId, i: usize) -> Option<(String, bool)> {
-    let b = state.bar(bar)?;
-    if let Some(id) = b.dialogs.get(i).copied().flatten() {
-        let v = state.dialogs.views.iter().find(|v| v.id == id)?;
-        return Some((v.dialog.title.clone(), state.active_dialog_id() == Some(id)));
-    }
-    let live = |w: &crate::window::Window| state.focused == Some(w.id) && !w.minimized;
-    let wins: Vec<&crate::window::Window> = b
-        .buttons
-        .get(i)?
-        .iter()
-        .filter_map(|&w| state.win(w))
-        .collect();
-    match wins.as_slice() {
-        [] => {
-            let k = b.pins.get(i).copied().flatten()?;
-            state
-                .quicklaunch
-                .get(k)
-                .map(|q| (q.entry.label.clone(), false))
-        }
-        [w] => Some((w.title(), live(w))),
-        many => {
-            let name = crate::taskbar::group_name(&many[0].app_id());
-            let active = many.iter().any(|w| live(w));
-            Some((format!("{name} ({})", many.len()), active))
-        }
     }
 }
 
