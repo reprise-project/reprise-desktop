@@ -197,6 +197,10 @@ fn check(id: &'static str, x: i32, y: i32, label: &str, state: CheckState) -> It
     check_enabled(id, x, y, label, state, true)
 }
 
+fn tick(on: bool) -> CheckState {
+    if on { CheckState::On } else { CheckState::Off }
+}
+
 fn check_enabled(
     id: &'static str,
     x: i32,
@@ -215,6 +219,32 @@ fn check_enabled(
             mixed: (state == CheckState::Mixed).then_some(true),
         },
     )
+}
+
+/// An etched line from `SEP_X` to `right` with its top at `y`.
+fn sep(id: &'static str, y: i32, right: i32) -> Item {
+    Item::new(
+        id,
+        Rect::new(SEP_X, y, right - SEP_X, 2),
+        Control::Separator,
+    )
+}
+
+/// The text in each of `ids`' fields, empty for one the page lacks.
+fn field_texts<const N: usize>(page: &Form, ids: [&str; N]) -> [String; N] {
+    ids.map(|id| match page.item(id).map(|i| &i.control) {
+        Some(Control::Edit { edit, .. }) => edit.text.clone(),
+        Some(Control::Memo(m)) => m.edit.text(),
+        _ => String::new(),
+    })
+}
+
+/// The fields of `now` that differ from `opened`, by index.
+fn moves<const N: usize>(now: [String; N], opened: &[String; N]) -> Vec<(usize, String)> {
+    now.into_iter()
+        .enumerate()
+        .filter(|(k, now)| *now != opened[*k])
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

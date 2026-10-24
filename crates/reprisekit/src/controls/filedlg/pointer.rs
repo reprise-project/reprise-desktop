@@ -327,8 +327,7 @@ impl FileDlg {
         self.focus = Focus::Shell;
         self.shell.selection.set_only(Some(i));
         if is_dir {
-            self.entering(&name);
-            return Event::NeedListing(id);
+            return self.enter(id, &name);
         }
         if self.fields.mode == DlgMode::Folder {
             return Event::Redraw;

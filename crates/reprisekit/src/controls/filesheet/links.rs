@@ -1,6 +1,6 @@
 //! The Shortcut page for launchers and symlinks, and the Web Document page.
 
-use super::{CHANGE_ICON, ICON_PX, LABEL_X, SEP_RIGHT, SEP_X, button};
+use super::{CHANGE_ICON, ICON_PX, LABEL_X, SEP_RIGHT, button, field_texts, moves, sep};
 use crate::classic::widgets::BUTTON_H;
 use crate::controls::form::{Control, Form, Item};
 use crate::raster::{Canvas, Rect};
@@ -59,13 +59,6 @@ pub fn shortcut_page(facts: &ShortcutFacts, icon: Option<Canvas>) -> Form {
         )
     };
     let own = !facts.symlink;
-    let sep = |id: &'static str, (y, right): (i32, i32)| {
-        Item::new(
-            id,
-            Rect::new(SEP_X, y, right - SEP_X, 2),
-            Control::Separator,
-        )
-    };
     let mut run = Item::combo(
         "sc_run",
         SC_VALUE_X,
@@ -96,7 +89,7 @@ pub fn shortcut_page(facts: &ShortcutFacts, icon: Option<Canvas>) -> Form {
             value_w,
             &escape_mnemonic(&facts.name),
         ),
-        sep("sc_sep0", SC_SEPS[0]),
+        sep("sc_sep0", SC_SEPS[0].0, SC_SEPS[0].1),
         Item::label_at("sc_type_l", LABEL_X, SC_ROWS[0], label_w, "Target type:"),
         Item::label_at(
             "sc_type",
@@ -121,7 +114,7 @@ pub fn shortcut_page(facts: &ShortcutFacts, icon: Option<Canvas>) -> Form {
         ),
         label("sc_target_l", 0, "&Target:"),
         edit(SHORTCUT_IDS[0], 0, target, true, true),
-        sep("sc_sep1", SC_SEPS[1]),
+        sep("sc_sep1", SC_SEPS[1].0, SC_SEPS[1].1),
         label("sc_start_l", 1, "&Start in:").enabled(own),
         edit(SHORTCUT_IDS[1], 1, start, false, own),
         label("sc_key_l", 2, "Shortcut &key:").enabled(false),
@@ -144,18 +137,11 @@ pub fn shortcut_page(facts: &ShortcutFacts, icon: Option<Canvas>) -> Form {
 }
 
 pub fn shortcut_values(page: &Form) -> [String; 3] {
-    SHORTCUT_IDS.map(|id| match page.item(id).map(|i| &i.control) {
-        Some(Control::Edit { edit, .. }) => edit.text.clone(),
-        _ => String::new(),
-    })
+    field_texts(page, SHORTCUT_IDS)
 }
 
 pub fn shortcut_moves(page: &Form, opened: &[String; 3]) -> Vec<(usize, String)> {
-    shortcut_values(page)
-        .into_iter()
-        .enumerate()
-        .filter(|(k, now)| *now != opened[*k])
-        .collect()
+    moves(shortcut_values(page), opened)
 }
 
 pub fn shortcut_of(pages: &[Form]) -> Option<&Form> {
@@ -188,13 +174,6 @@ pub fn web_page(facts: &WebFacts, icon: Option<Canvas>) -> Form {
     let label = |id: &'static str, k: usize, text: &str| {
         Item::label_at(id, LABEL_X, WD_FIELDS[k] + WD_LABEL_DY, label_w, text)
     };
-    let sep = |id: &'static str, y: i32| {
-        Item::new(
-            id,
-            Rect::new(SEP_X, y, SEP_RIGHT - SEP_X, 2),
-            Control::Separator,
-        )
-    };
     let mut form = Form::new(vec![
         Item::picture("icon", WD_ICON, icon),
         Item::label_at(
@@ -204,7 +183,7 @@ pub fn web_page(facts: &WebFacts, icon: Option<Canvas>) -> Form {
             SEP_RIGHT - WD_NAME.0,
             &escape_mnemonic(&facts.name),
         ),
-        sep("wd_sep0", WD_SEPS[0]),
+        sep("wd_sep0", WD_SEPS[0], SEP_RIGHT),
         label("wd_url_l", 0, "&URL:"),
         Item::new(
             SHORTCUT_IDS[0],
@@ -230,7 +209,7 @@ pub fn web_page(facts: &WebFacts, icon: Option<Canvas>) -> Form {
             SEP_RIGHT - WD_VALUE_X,
             "Unknown",
         ),
-        sep("wd_sep1", WD_SEPS[1]),
+        sep("wd_sep1", WD_SEPS[1], SEP_RIGHT),
         button(CHANGE_ICON, WD_CHANGE_ICON, "&Change Icon...", true),
     ]);
     form.focus_id(SHORTCUT_IDS[0]);
