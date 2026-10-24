@@ -131,12 +131,12 @@ type Rescale = Arc<dyn Fn(i32) -> Style + Send + Sync>;
 /// Paints a look's caption and ? buttons `side` design px square at the style's scale.
 type ButtonSide = Arc<dyn Fn(i32) -> Vec<(Part, PartImage)> + Send + Sync>;
 
-/// Paints the clock popup's analog clock at `time` (hour 0..23, minute, second), `side` design px
-/// square, at scale `d`.
 /// Draws a look's client glass edges ([`crate::glass::frame::client_glass_edges`]): canvas,
 /// band, client height, state, scale.
 pub(crate) type ClientGlassEdges = Arc<dyn Fn(&mut Canvas, Rect, i32, State, i32) + Send + Sync>;
 
+/// Paints the clock popup's analog clock at `time` (hour 0..23, minute, second), `side` design px
+/// square, at scale `d`.
 pub(crate) type ClockPainter = fn(time: (u32, u32, u32), side: i32, d: i32) -> Canvas;
 
 /// A part's art, painted the first time it is asked for; clones share it.

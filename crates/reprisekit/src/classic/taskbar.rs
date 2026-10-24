@@ -5,7 +5,9 @@ use crate::icon;
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::taskbar::{TaskbarHit, TaskbarLayout, TaskbarState, quick_icon_origin};
 use crate::text::{Align, TextRenderer};
-use crate::theme::Theme;
+use crate::theme::{ColorScheme, Theme};
+
+use super::widgets::draw_focus_ring;
 
 /// The dotted ring of a focused Start; it may reach past Start's cell.
 pub(crate) fn start_ring(
@@ -84,14 +86,7 @@ pub fn draw_taskbar(
     );
     if state.start_focus || state.focus == Some(crate::taskbar::TaskbarHit::Start) {
         let ring = start_ring(theme, text, layout, state.start_pressed);
-        for x in (ring.x..ring.right()).step_by(2 * s as usize) {
-            canvas.fill_rect(Rect::new(x, ring.y, s, s), cs.button_text);
-            canvas.fill_rect(Rect::new(x, ring.bottom() - s, s, s), cs.button_text);
-        }
-        for y in (ring.y..ring.bottom()).step_by(2 * s as usize) {
-            canvas.fill_rect(Rect::new(ring.x, y, s, s), cs.button_text);
-            canvas.fill_rect(Rect::new(ring.right() - s, y, s, s), cs.button_text);
-        }
+        draw_focus_ring(canvas, ring, s, cs.button_text);
     }
 
     for g in &layout.grips {
@@ -100,34 +95,21 @@ pub fn draw_taskbar(
 
     let mut fallback: Option<Canvas> = None;
     for (i, r) in layout.quick.iter().enumerate() {
-        let pressed = state.quick_pressed == Some(i);
-        if pressed {
-            canvas.edge_t(*r, EdgeStyle::ThinSunken, cs, s);
-        } else if state.quick_hot == Some(i) {
-            canvas.edge_t(*r, EdgeStyle::ThinRaised, cs, s);
-        }
-        let o = if pressed { s } else { 0 };
+        let o = thin_cell(
+            canvas,
+            cs,
+            *r,
+            state.quick_pressed == Some(i),
+            state.quick_hot == Some(i),
+            s,
+        );
         let (ix, iy) = quick_icon_origin(*r, icon_px, s);
-        let at = (ix + o, iy + o);
-        match state.quick_icons.get(i) {
-            Some(Some(ic)) => canvas.blit_canvas(at.0, at.1, ic),
-            _ => {
-                let fb = fallback.get_or_insert_with(|| icon::fallback(theme, icon_px));
-                canvas.blit_canvas(at.0, at.1, fb)
-            }
-        }
+        let icon = state.quick_icons.get(i).and_then(|ic| ic.as_deref());
+        blit_icon(canvas, theme, &mut fallback, (ix + o, iy + o), icon);
     }
     if let Some(r) = layout.quick_more {
         let cell = state.quick_more;
-        let o = if cell.open {
-            canvas.edge_t(r, EdgeStyle::ThinSunken, cs, s);
-            s
-        } else {
-            if cell.hot {
-                canvas.edge_t(r, EdgeStyle::ThinRaised, cs, s);
-            }
-            0
-        };
+        let o = thin_cell(canvas, cs, r, cell.open, cell.hot, s);
         let at = Rect::new(r.x + o, r.y + o, r.width, r.height);
         crate::taskbar::draw_more(canvas, at, cs.button_text, s);
     }
@@ -207,13 +189,7 @@ pub fn draw_taskbar(
                 r.x + (r.width - icon_px) / 2,
                 r.y + (r.height - icon_px) / 2,
             );
-            match &task.icon {
-                Some(ic) => canvas.blit_canvas(at.0, at.1, ic),
-                None => {
-                    let fb = fallback.get_or_insert_with(|| icon::fallback(theme, icon_px));
-                    canvas.blit_canvas(at.0, at.1, fb)
-                }
-            }
+            blit_icon(canvas, theme, &mut fallback, at, task.icon.as_deref());
             continue;
         }
         if task.active {
@@ -231,13 +207,7 @@ pub fn draw_taskbar(
         let pressed = task.active || task.attention;
         let o = if pressed { s } else { 0 };
         let icon_at = (r.x + 4 * s + o, r.y + (r.height - icon_px) / 2 + o);
-        match &task.icon {
-            Some(ic) => canvas.blit_canvas(icon_at.0, icon_at.1, ic),
-            None => {
-                let fb = fallback.get_or_insert_with(|| icon::fallback(theme, icon_px));
-                canvas.blit_canvas(icon_at.0, icon_at.1, fb)
-            }
-        }
+        blit_icon(canvas, theme, &mut fallback, icon_at, task.icon.as_deref());
         if layout.icons_only {
             continue;
         }
@@ -296,15 +266,7 @@ pub fn draw_taskbar(
                 });
             }
         } else {
-            let o = if state.chevron.open {
-                canvas.edge_t(r, EdgeStyle::ThinSunken, cs, s);
-                s
-            } else {
-                if state.chevron.hot {
-                    canvas.edge_t(r, EdgeStyle::ThinRaised, cs, s);
-                }
-                0
-            };
+            let o = thin_cell(canvas, cs, r, state.chevron.open, state.chevron.hot, s);
             let at = Rect::new(r.x + o, r.y + o, r.width, r.height);
             layout.edge.draw_art(canvas, at, |c, at| {
                 crate::taskbar::draw_chevron(c, at, ink, s)
@@ -336,6 +298,33 @@ pub fn draw_taskbar(
     if let Some(r) = layout.show_desktop {
         canvas.edge_t(r, EdgeStyle::ThinRaised, cs, s);
     }
+}
+
+/// A thin quick-launch or tray cell: sunken when `down`, else raised when `hot`. Returns how far
+/// its content moves right and down.
+fn thin_cell(c: &mut Canvas, cs: &ColorScheme, r: Rect, down: bool, hot: bool, s: i32) -> i32 {
+    if down {
+        c.edge_t(r, EdgeStyle::ThinSunken, cs, s);
+        s
+    } else {
+        if hot {
+            c.edge_t(r, EdgeStyle::ThinRaised, cs, s);
+        }
+        0
+    }
+}
+
+fn blit_icon(
+    c: &mut Canvas,
+    theme: &Theme,
+    fallback: &mut Option<Canvas>,
+    at: (i32, i32),
+    icon: Option<&Canvas>,
+) {
+    let icon = icon.unwrap_or_else(|| {
+        fallback.get_or_insert_with(|| icon::fallback(theme, theme.icon_size()))
+    });
+    c.blit_canvas(at.0, at.1, icon);
 }
 
 #[cfg(test)]
