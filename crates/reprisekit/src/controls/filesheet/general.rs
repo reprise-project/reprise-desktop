@@ -4,18 +4,14 @@ use super::{
     ADVANCED, APP_ICON_X, APP_NAME_X, CHANGE, CHECK_DY, CHECK_PITCH, CHECK_X, COUNT, EXECUTABLE,
     Executable, FIELD, FIELD_TO_SEP, FILE_ADVANCED_RIGHT, FILE_HIDDEN_X, Facts, HIDDEN, ICON_PX,
     ICON_Y, LABEL_X, NAME, NAME_FIELD, PAGE_BOTTOM, READ_ONLY, ROW_BUTTON_DY, ROW_BUTTON_RIGHT,
-    ROW_BUTTON_W, ROW_PITCH, Row, SEP_IDS, SEP_RIGHT, SEP_TO_ROW, SEP_X, SET_SHEET_H, SetFacts,
-    Subject, TAIL_INLINE, TAIL_STACKED, button, check, check_enabled,
+    ROW_BUTTON_W, ROW_PITCH, Row, SEP_IDS, SEP_RIGHT, SEP_TO_ROW, SET_SHEET_H, SetFacts, Subject,
+    TAIL_INLINE, TAIL_STACKED, button, check, check_enabled, sep, tick,
 };
 use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, CheckState};
 use crate::controls::form::{Control, Form, Item};
 use crate::raster::{Canvas, Rect};
 use crate::text::escape_mnemonic;
 use crate::textedit::TextEdit;
-
-fn tick(on: bool) -> CheckState {
-    if on { CheckState::On } else { CheckState::Off }
-}
 
 pub fn rows(facts: &Facts) -> Vec<Row> {
     let pair = |ids, label, value: String| Row::Pair {
@@ -188,11 +184,7 @@ pub fn general_page(
             Row::Separator => {
                 let id = SEP_IDS[seps.min(SEP_IDS.len() - 1)];
                 seps += 1;
-                items.push(Item::new(
-                    id,
-                    Rect::new(SEP_X, y, SEP_RIGHT - SEP_X, 2),
-                    Control::Separator,
-                ));
+                items.push(sep(id, y, SEP_RIGHT));
                 y += SEP_TO_ROW;
             }
             Row::Pair {

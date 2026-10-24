@@ -1,6 +1,8 @@
-use super::{HIDDEN, ICON_PX, LABEL_X, NAME, READ_ONLY, SEP_IDS, SEP_RIGHT, SEP_X, button};
+use super::{
+    HIDDEN, ICON_PX, LABEL_X, NAME, READ_ONLY, SEP_IDS, SEP_RIGHT, button, check_enabled, sep, tick,
+};
 use crate::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
-use crate::controls::form::{CHECK, Control, Form, Item};
+use crate::controls::form::{Form, Item};
 use crate::raster::{Canvas, Rect};
 use crate::text::escape_mnemonic;
 
@@ -51,11 +53,7 @@ pub fn bin_page(facts: &BinFacts, name: &str, icon: Option<Canvas>) -> Form {
         ),
     ];
     for (id, y) in SEP_IDS.iter().zip(BIN_SEPS) {
-        items.push(Item::new(
-            id,
-            Rect::new(SEP_X, y, SEP_RIGHT - SEP_X, 2),
-            Control::Separator,
-        ));
+        items.push(sep(id, y, SEP_RIGHT));
     }
     // A row that wraps holds two lines; Size keeps one.
     let mut row = |(l, v): (&'static str, &'static str), label, value: &str, x, y, wraps| {
@@ -113,16 +111,7 @@ pub fn bin_page(facts: &BinFacts, name: &str, icon: Option<Canvas>) -> Form {
         ("compress", left, BIN_CHECK_Y[2], "Co&mpressed", false),
         ("encrypt", left, BIN_CHECK_Y[3], "&Encrypt contents", false),
     ] {
-        items.push(Item::new(
-            id,
-            Rect::new(x, y, CHECK, CHECK),
-            Control::Check {
-                label: label.to_string(),
-                checked,
-                enabled: false,
-                mixed: None,
-            },
-        ));
+        items.push(check_enabled(id, x, y, label, tick(checked), false));
     }
     items.push(button(RESTORE, BIN_RESTORE, "Restore", true));
     Form::new(items)

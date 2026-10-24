@@ -143,8 +143,7 @@ impl FileDlg {
                 return Event::Accept(vec![entry.name.clone()]);
             }
             let (id, name) = (entry.id, entry.name.clone());
-            self.entering(&name);
-            return Event::NeedListing(id);
+            return self.enter(id, &name);
         }
         let names = split_names(&self.filename.text);
         if let [name] = &names[..]
@@ -160,8 +159,7 @@ impl FileDlg {
                 return Event::Accept(vec![entry.name.clone()]);
             }
             let (id, name) = (entry.id, entry.name.clone());
-            self.entering(&name);
-            return Event::NeedListing(id);
+            return self.enter(id, &name);
         }
         if self.fields.mode == DlgMode::Folder {
             return Event::Accept(vec![".".into()]);
