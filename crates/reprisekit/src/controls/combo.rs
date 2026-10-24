@@ -260,15 +260,21 @@ impl Combo {
             (0..cur).rev().find(|&i| !self.items[i].greyed)
         }
         .unwrap_or(cur);
+        self.move_to(next)
+    }
+
+    /// Move the open list's highlight to `i`, scrolled into view, or with the list closed pick `i`.
+    /// True when the pick changed.
+    fn move_to(&mut self, i: usize) -> bool {
         match self.open {
             Some(_) => {
-                self.open = Some(next);
-                self.keep_in_view(next);
+                self.open = Some(i);
+                self.keep_in_view(i);
                 false
             }
             None => {
-                let changed = next != self.selected;
-                self.selected = next;
+                let changed = i != self.selected;
+                self.selected = i;
                 changed
             }
         }
@@ -288,18 +294,7 @@ impl Combo {
         let Some(i) = i else {
             return false;
         };
-        match self.open {
-            Some(_) => {
-                self.open = Some(i);
-                self.keep_in_view(i);
-                false
-            }
-            None => {
-                let changed = i != self.selected;
-                self.selected = i;
-                changed
-            }
-        }
+        self.move_to(i)
     }
 
     pub fn hover(&mut self, i: usize) -> bool {
