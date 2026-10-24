@@ -12,7 +12,7 @@ use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::raster::Rect;
 
 /// The task manager, the switches with no page of their own, the location
-/// answers programs were given (a [`ListView`] the host draws over the page at
+/// answers programs were given (a [`ListView`](reprisekit::controls::listview::ListView) the host draws over the page at
 /// [`locations`]), the thumbnail cache and the config file itself. The terminal is picked on
 /// Default Programs. The list takes the page's extra height.
 pub fn advanced(a: Area) -> Form {
@@ -224,7 +224,7 @@ pub fn power(a: Area) -> Form {
     Form::new(items)
 }
 
-/// The Startup page: the autostart list (a [`ListView`] the host draws over
+/// The Startup page: the autostart list (a [`ListView`](reprisekit::controls::listview::ListView) the host draws over
 /// the page and routes the pointer to, see `main.rs`), its two buttons, and
 /// the Session group: what the next login gets back of this one, and what Log
 /// Off ends. The list takes the page's extra height.

@@ -302,6 +302,14 @@ fn hhmm(s: &str) -> (u32, u32) {
         .unwrap_or((0, 0))
 }
 
+/// Select the row showing `want`, adding it after the others when the list lacks it.
+fn select_text(c: &mut combo::Combo, want: &str) {
+    if !c.items.iter().any(|i| i.text == want) {
+        c.items.push(combo::ListItem::new(want));
+    }
+    c.selected = c.items.iter().position(|i| i.text == want).unwrap_or(0);
+}
+
 fn kelvin_pos(k: i64) -> usize {
     ((k.clamp(KELVIN_MIN, KELVIN_MAX) - KELVIN_MIN + KELVIN_STEP / 2) / KELVIN_STEP) as usize
 }
@@ -367,12 +375,8 @@ pub fn write_form(form: &mut Form, s: &Settings) {
             }
             (Bind::Flag(_, at), Control::Check { checked, .. }) => *checked = *at.get(s),
             (Bind::Choice(_, at), Control::Combo(c)) => {
-                let want = at.get(s).clone();
                 // A value the list does not offer (a theme that went away) joins it rather than being dropped.
-                if !c.items.iter().any(|i| i.text == want) {
-                    c.items.push(combo::ListItem::new(want.clone()));
-                }
-                c.selected = c.items.iter().position(|i| i.text == want).unwrap_or(0);
+                select_text(c, at.get(s));
             }
             (Bind::ChoiceOrDefault(_, at, fixed), Control::Combo(c)) => {
                 let v = at.get(s).as_str();
@@ -380,10 +384,7 @@ pub fn write_form(form: &mut Form, s: &Settings) {
                     .iter()
                     .find(|(f, _)| *f == v)
                     .map_or(v, |(_, row)| *row);
-                if !c.items.iter().any(|i| i.text == want) {
-                    c.items.push(combo::ListItem::new(want.to_string()));
-                }
-                c.selected = c.items.iter().position(|i| i.text == want).unwrap_or(0);
+                select_text(c, want);
             }
             (Bind::NamedNum(_, at, choices), Control::Combo(c)) => {
                 let want = *at.get(s);
@@ -450,10 +451,7 @@ pub fn write_form(form: &mut Form, s: &Settings) {
                     v => v,
                 };
                 // A name the list lacks (another interface's) shows as itself.
-                if !c.items.iter().any(|i| i.text == want) {
-                    c.items.push(combo::ListItem::new(want.to_string()));
-                }
-                c.selected = c.items.iter().position(|i| i.text == want).unwrap_or(0);
+                select_text(c, want);
             }
             (Bind::GlassColor(_, at), Control::Combo(c)) => {
                 c.selected = crate::appearancepage::glass_row(at.get(s), c.items.len());
