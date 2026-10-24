@@ -528,7 +528,7 @@ fn render_the_pages() {
             );
         }
         if p == Page::Keyboard {
-            draw_shortcuts(
+            draw_list(
                 &mut c,
                 &text,
                 &theme,

@@ -3,19 +3,30 @@
 use super::{COLUMNS, LOCATION_COLUMNS, SHORTCUT_COLUMNS};
 use crate::model::Settings;
 use reprisefs::autostart::Entry;
-use reprisekit::controls::form::{self};
+use reprisekit::controls::form;
 use reprisekit::controls::listview::{self, Column, ListView, Row};
 use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
 
+fn columns(cols: &[(&str, i32)]) -> Vec<Column> {
+    cols.iter()
+        .map(|(title, w)| Column::new(title, *w))
+        .collect()
+}
+
+/// Drop a selection the refilled rows no longer have and pull `top` back inside them.
+fn keep_in_rows(lv: &mut ListView) {
+    if lv.selection.focus.is_some_and(|i| i >= lv.rows.len()) {
+        lv.selection.set_only(None);
+    }
+    lv.top = lv.top.min(lv.rows.len().saturating_sub(1));
+}
+
 pub fn new_list() -> ListView {
     ListView {
-        columns: COLUMNS
-            .iter()
-            .map(|(title, w)| Column::new(title, *w))
-            .collect(),
+        columns: columns(&COLUMNS),
         checks: Some(Vec::new()),
         ..ListView::default()
     }
@@ -42,18 +53,12 @@ pub fn fill_list(lv: &mut ListView, entries: &[Entry], checks: &[bool]) {
         })
         .collect();
     lv.checks = Some(checks.to_vec());
-    if lv.selection.focus.is_some_and(|i| i >= lv.rows.len()) {
-        lv.selection.set_only(None);
-    }
-    lv.top = lv.top.min(lv.rows.len().saturating_sub(1));
+    keep_in_rows(lv);
 }
 
 pub fn new_shortcut_list() -> ListView {
     ListView {
-        columns: SHORTCUT_COLUMNS
-            .iter()
-            .map(|(title, w)| Column::new(title, *w))
-            .collect(),
+        columns: columns(&SHORTCUT_COLUMNS),
         ..ListView::default()
     }
 }
@@ -91,18 +96,12 @@ pub fn fill_shortcuts(lv: &mut ListView, s: &Settings, name: &dyn Fn(&str) -> St
     let denied =
         (s.denied.iter()).map(|app| row(String::new(), format!("{}: not allowed", name(app))));
     lv.rows = binds.chain(programs).chain(denied).collect();
-    if lv.selection.focus.is_some_and(|i| i >= lv.rows.len()) {
-        lv.selection.set_only(None);
-    }
-    lv.top = lv.top.min(lv.rows.len().saturating_sub(1));
+    keep_in_rows(lv);
 }
 
 pub fn new_location_list() -> ListView {
     ListView {
-        columns: LOCATION_COLUMNS
-            .iter()
-            .map(|(title, w)| Column::new(title, *w))
-            .collect(),
+        columns: columns(&LOCATION_COLUMNS),
         ..ListView::default()
     }
 }
@@ -126,10 +125,7 @@ pub fn fill_locations(lv: &mut ListView, answers: &[(String, bool)]) {
             ],
         })
         .collect();
-    if lv.selection.focus.is_some_and(|i| i >= lv.rows.len()) {
-        lv.selection.set_only(None);
-    }
-    lv.top = lv.top.min(lv.rows.len().saturating_sub(1));
+    keep_in_rows(lv);
 }
 
 /// The location list while it is read: one row saying so, nothing picked.
@@ -142,29 +138,9 @@ pub fn show_locations_loading(lv: &mut ListView) {
     lv.top = 0;
 }
 
-/// Draw the Shortcuts list over the Keyboard page; `rect` is [`shortcuts`] where the page sits now.
-pub fn draw_shortcuts(
-    c: &mut Canvas,
-    text: &TextRenderer,
-    theme: &Theme,
-    lv: &ListView,
-    rect: Rect,
-    px: u32,
-    s: i32,
-) {
-    listview::draw(
-        c,
-        text,
-        &Paint { s, ..theme.paint() },
-        lv,
-        &listview::layout(lv, rect, &theme.controls()),
-        None,
-        px,
-    );
-}
-
-/// Draw the Startup list (or the Advanced page's location answers) over the
-/// page the sheet already drew; `rect` is [`list`] (or [`locations`]) where the page sits now.
+/// Draw a side list (Startup, Shortcuts, the file types or the Advanced page's location answers)
+/// over the page the sheet already drew; `rect` is its [`list`](super::list),
+/// [`shortcuts`](super::shortcuts) or [`locations`](super::locations) where the page sits now.
 pub fn draw_list(
     c: &mut Canvas,
     text: &TextRenderer,
