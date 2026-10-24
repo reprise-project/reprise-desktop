@@ -760,13 +760,7 @@ pub fn split_list(v: Option<&str>) -> Vec<String> {
 }
 
 /// The MIME type of `path` for Open With: `inode/directory` for a folder,
-/// otherwise the shared-mime-info glob match on its name (the user's
-/// `~/.local/share/mime/globs2` first, then the system's), or None when
-/// nothing matches.
-pub fn mime_of(path: &Path) -> Option<String> {
-    mime_of_in(&mime_globs(), path)
-}
-
+/// otherwise `db`'s glob match on its name, or None when nothing matches.
 pub fn mime_of_in(db: &MimeDb, path: &Path) -> Option<String> {
     if path.is_dir() {
         return Some("inode/directory".into());

@@ -556,7 +556,7 @@ fn is_pseudo(basename: &str, fs: &str) -> bool {
 
 /// Undo `/proc/mounts`' octal escaping of space, tab, newline and backslash
 /// (`\040`, `\011`, `\012`, `\134`) in a device or mount point field.
-fn unescape_mount(bytes: &[u8]) -> Vec<u8> {
+pub(crate) fn unescape_mount(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {

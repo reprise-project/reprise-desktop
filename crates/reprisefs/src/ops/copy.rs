@@ -16,7 +16,7 @@ pub fn copy_dir_all(src: &Path, dest: &Path) -> io::Result<()> {
 
 /// [`copy_dir_all`], checking `stop` before each entry. Once it is set
 /// the copy fails with `Interrupted` and removes what it made of `dest`.
-pub(crate) fn copy_dir_until(src: &Path, dest: &Path, stop: &AtomicBool) -> io::Result<()> {
+pub(super) fn copy_dir_until(src: &Path, dest: &Path, stop: &AtomicBool) -> io::Result<()> {
     let entries = read_then_create(src, dest)?;
     // `dest` is ours from here on, so a failure may remove it.
     copy_entries(entries, dest, 0, stop).inspect_err(|_| {
