@@ -1,7 +1,7 @@
 //! Laying out a balloon or sheet and the glass under it.
 
 use reprisekit::controls::notifysheet::{
-    SheetContent, SheetLayout, open_layout, sheet_hit, sheet_layout,
+    SheetContent, SheetLayout, notify_look, open_layout, sheet_hit, sheet_layout,
 };
 use reprisekit::controls::tooltip::{
     NotifyHit, NotifyLayout, NotifyParts, NotifyReply, notify_hit, notify_layout,
@@ -229,6 +229,6 @@ pub(super) fn sheet_tint(
     app_icon: &[IconSource],
     scale: i32,
 ) -> Option<Option<Color>> {
-    let look = theme.look.style().and_then(|st| st.notify)?;
+    let look = notify_look(theme)?;
     Some(crate::tray::closest(app_icon, TINT_PX * scale).and_then(|icon| (look.colour)(&icon)))
 }

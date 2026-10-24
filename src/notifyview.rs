@@ -21,15 +21,17 @@ pub use stack::{output_removed, reposition};
 
 use reprisekit::controls::notifysheet::{SheetGlass, SheetOpening, WarmJob, has_sheets};
 use reprisekit::controls::tooltip::{NotifyHit, ReplyField};
+use reprisekit::style::SheetShape;
 use reprisekit::taskbar::Edge;
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
 use smithay::reexports::calloop::RegistrationToken;
+use smithay::utils::{Logical, Rectangle};
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
-use crate::compositor::State;
+use crate::compositor::{SceneOwner, State};
 use crate::glass::{Backdrop, Pane};
 use crate::notifylog::Log;
 use crate::raster::Rect;
@@ -71,12 +73,12 @@ pub const REASON_UNDEFINED: u32 = 4;
 
 /// Balloons waiting behind the ones shown; each holds the screen at least `MIN_MS`, so a flood must
 /// not park for hours.
-pub const MAX_QUEUED: usize = 8;
+const MAX_QUEUED: usize = 8;
 
 /// How many balloons one program raises within `BURST_WINDOW` before the next folds them into one
 /// "N new from App" balloon.
-pub const BURST_AFTER: usize = 3;
-pub const BURST_WINDOW: Duration = Duration::from_secs(10);
+const BURST_AFTER: usize = 3;
+const BURST_WINDOW: Duration = Duration::from_secs(10);
 const BURST_LINES: usize = 3;
 
 struct Balloon {
@@ -183,8 +185,15 @@ pub struct NotifyView {
     shown: u64,
 }
 
+impl NotifyView {
+    /// The layout rect of the output the stack is placed on; sheets and the chip clip to it.
+    fn bounds(&self) -> Option<Rectangle<i32, Logical>> {
+        self.output.as_ref().and_then(reprisescene::output_rect)
+    }
+}
+
 /// How many notifications show at once: a stack of sheets, else one balloon.
-pub fn visible_cap(sheets: bool) -> usize {
+fn visible_cap(sheets: bool) -> usize {
     if sheets { 3 } else { 1 }
 }
 
@@ -194,6 +203,18 @@ fn sheets(state: &State) -> bool {
 
 fn cap(state: &State) -> usize {
     visible_cap(sheets(state))
+}
+
+fn droplets(state: &State) -> bool {
+    sheets(state) && state.config.glass.notification.shape() == SheetShape::Droplet
+}
+
+/// A tree in the overlay for a balloon or the chip, left out of the glass.
+fn overlay_tree(state: &mut State) -> TreeId {
+    let tree = state.scene.tree_create(state.layers.overlay);
+    crate::glass::leave_out(&mut state.scene, tree);
+    state.scene.set_data(tree, Some(SceneOwner::Notification));
+    tree
 }
 
 /// The balloon with the reply row open; at most one has it.
@@ -390,8 +411,7 @@ fn drop_balloon(state: &mut State, id: u32) -> bool {
         display_next(state);
         return true;
     }
-    let holds = |b: &Balloon| matches!(&b.item, Item::Burst(b) if b.ids.contains(&id));
-    if let Some(i) = v.stack.iter().position(holds) {
+    if let Some(i) = v.stack.iter().position(|b| b.item.burst_has(id)) {
         let mut empty = false;
         if let Item::Burst(b) = &mut v.stack[i].item {
             b.ids.retain(|&i| i != id);
@@ -467,18 +487,20 @@ pub fn invoke(state: &mut State, id: u32, key: &str) {
 /// Clear All in the history: every notification in it still open is dismissed, and the history
 /// empties.
 pub fn clear_history(state: &mut State) {
-    for id in state.notify.log.clear() {
-        drop_balloon(state, id);
-        crate::tray::notification_closed(state, id, REASON_DISMISSED);
-    }
-    drop_leaving(state);
-    changed(state);
+    let ids = state.notify.log.clear();
+    dismiss_cleared(state, ids);
 }
 
 /// A group's Clear in the history: every notification from `app` leaves it, those still open
 /// dismissed.
 pub fn clear_app(state: &mut State, app: &str) {
-    for id in state.notify.log.clear_app(app) {
+    let ids = state.notify.log.clear_app(app);
+    dismiss_cleared(state, ids);
+}
+
+/// `ids` just left the history: their balloons go and those still open are dismissed.
+fn dismiss_cleared(state: &mut State, ids: Vec<u32>) {
+    for id in ids {
         drop_balloon(state, id);
         crate::tray::notification_closed(state, id, REASON_DISMISSED);
     }
