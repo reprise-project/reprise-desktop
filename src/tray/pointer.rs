@@ -1,7 +1,7 @@
-use super::{Cell, ClickKind, Orientation, TrayCommand, builtin, cell_at, leading, send};
+use super::menu::menu_open_for;
+use super::{Cell, ClickKind, Orientation, TrayCommand, builtin, cell_at, leading, revealed, send};
 use crate::compositor::State;
 use crate::input::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Hit};
-use crate::menuview::MenuKind;
 use crate::raster::Rect;
 use crate::taskbar::TaskbarHit;
 use reprisescene::TreeId;
@@ -34,7 +34,7 @@ pub fn click(state: &mut State, bar: TreeId, index: usize, button: u32) {
         return;
     };
     let leading = leading(state);
-    let revealed = state.bar(bar).map_or(0, |b| b.layout.tray_hidden);
+    let revealed = revealed(state, bar);
     if let Cell::Builtin(b) = cell_at(state, bar, index) {
         if let Some(&b) = builtin::shown(state).get(b) {
             let open_here = builtin::menu_open(state, b);
@@ -71,10 +71,7 @@ pub fn click_item(
     at: (i32, i32),
     button: u32,
 ) {
-    let open_here = matches!(
-        state.menus.first().map(|m| &m.kind),
-        Some(MenuKind::Tray { id: open, .. }) if *open == id
-    );
+    let open_here = menu_open_for(state, &id);
     if !state.menus.is_empty() {
         state.close_menu();
     }
@@ -148,7 +145,7 @@ pub fn scroll(
         return;
     }
     let leading = leading(state);
-    let revealed = state.bar(bar).map_or(0, |b| b.layout.tray_hidden);
+    let revealed = revealed(state, bar);
     let Some(tray) = state.tray.as_mut() else {
         return;
     };

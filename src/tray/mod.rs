@@ -28,11 +28,10 @@ pub(crate) use pointer::bar_cell;
 pub use pointer::{bell_cell, click, click_item, is_displays_cell, scroll_item, wheel_steps};
 
 use icons::drawn_sizes;
-use menu::open_layout;
+use menu::{menu_open_for, open_layout};
 use place::merge_item;
 
 use crate::compositor::State;
-use crate::menuview::MenuKind;
 use crate::raster::{Canvas, Rect};
 use reprisekit::icon::IconSource;
 use reprisescene::TreeId;
@@ -325,8 +324,13 @@ impl Tray {
         }
     }
 
+    /// Every item, those on the bar first.
+    fn all(&self) -> impl Iterator<Item = &TrayItem> {
+        self.items.iter().chain(&self.hidden)
+    }
+
     pub fn item(&self, id: &str) -> Option<&TrayItem> {
-        self.items.iter().chain(&self.hidden).find(|i| i.id == id)
+        self.all().find(|i| i.id == id)
     }
 
     pub fn item_at(&self, revealed: usize, leading: usize, index: usize) -> Option<&TrayItem> {
@@ -387,13 +391,18 @@ pub fn leading(state: &State) -> usize {
 
 /// The process owning the StatusNotifier item in bar `bar`'s tray cell `index`.
 pub fn item_pid(state: &State, bar: TreeId, index: usize) -> Option<i32> {
-    let revealed = state.bar(bar).map_or(0, |b| b.layout.tray_hidden);
     let tray = state.tray.as_ref()?;
-    tray.item_at(revealed, leading(state), index)?.pid
+    tray.item_at(revealed(state, bar), leading(state), index)?
+        .pid
+}
+
+/// How many hidden items bar `bar` shows in front of its icons.
+fn revealed(state: &State, bar: TreeId) -> usize {
+    state.bar(bar).map_or(0, |b| b.layout.tray_hidden)
 }
 
 pub fn cell_at(state: &State, bar: TreeId, index: usize) -> Cell {
-    let revealed = state.bar(bar).map_or(0, |b| b.layout.tray_hidden);
+    let revealed = revealed(state, bar);
     let items = state.tray.as_ref().map_or(0, |t| t.items.len());
     Cell::at(revealed, items, leading(state), index)
 }
@@ -425,15 +434,18 @@ fn tray_readable(state: &mut State, fd: BorrowedFd) {
     }
 }
 
-pub fn setup(state: &mut State) {
+fn new_eventfd() -> Option<OwnedFd> {
     // SAFETY: plain syscall, no pointers.
     let raw = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
-    if raw < 0 {
+    // SAFETY: `raw` is a fresh fd nothing else owns.
+    (raw >= 0).then(|| unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
+pub fn setup(state: &mut State) {
+    let Some(eventfd) = new_eventfd() else {
         log::warn!("tray: eventfd failed; tray disabled");
         return;
-    }
-    // SAFETY: `raw` is a fresh fd nothing else owns.
-    let eventfd = unsafe { OwnedFd::from_raw_fd(raw) };
+    };
     // The thread gets a dup of its own: each side closes its own number.
     let Ok(thread_fd) = eventfd.try_clone() else {
         log::warn!("tray: dup failed; tray disabled");
@@ -463,11 +475,7 @@ pub fn headless(
     OwnedFd,
     async_channel::Receiver<TrayCommand>,
 ) {
-    // SAFETY: plain syscall, no pointers.
-    let raw = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
-    assert!(raw >= 0, "eventfd");
-    // SAFETY: `raw` is a fresh fd nothing else owns.
-    let eventfd = unsafe { OwnedFd::from_raw_fd(raw) };
+    let eventfd = new_eventfd().expect("eventfd");
     let wake = eventfd.try_clone().expect("dup");
     let (tx, rx) = std::sync::mpsc::channel::<TrayEvent>();
     let (commands, heard) = async_channel::unbounded();
@@ -582,11 +590,7 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
                 tray.pending_menu = None;
             }
             tray.submenus.forget_item(&id);
-            let open_for_it = matches!(
-                state.menus.first().map(|m| &m.kind),
-                Some(MenuKind::Tray { id: open, .. }) if *open == id
-            );
-            if open_for_it {
+            if menu_open_for(state, &id) {
                 state.close_menu();
             }
             true
