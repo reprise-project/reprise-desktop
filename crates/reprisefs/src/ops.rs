@@ -7,7 +7,8 @@ mod mounts;
 mod put;
 
 pub use copy::copy_dir_all;
-pub(crate) use copy::{copy_dir_until, copy_new};
+use copy::copy_dir_until;
+pub(crate) use copy::copy_new;
 pub use erase::erase;
 pub(crate) use erase::{erase_counted, erase_stepped};
 pub(crate) use fileio::read_opened;

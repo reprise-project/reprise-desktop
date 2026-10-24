@@ -292,7 +292,7 @@ fn swap_in(new: &Path, dest: &Path, expect: (u64, u64)) -> Result<Swap, PutError
 /// Flush `path` to the disk, and everything under it when it is a folder
 /// (links are not followed): the step before a move to another drive
 /// removes the original.
-pub(crate) fn sync_tree(path: &Path) -> io::Result<()> {
+fn sync_tree(path: &Path) -> io::Result<()> {
     let meta = std::fs::symlink_metadata(path)?;
     if meta.is_dir() {
         for entry in std::fs::read_dir(path)? {
