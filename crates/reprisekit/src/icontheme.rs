@@ -9,6 +9,7 @@ mod listing;
 mod tests;
 
 pub use cache::{IconCache, grown_icon, load_icon};
+pub(crate) use decode::png_rgba;
 pub use decode::{MAX_ICON_DIMENSION, canvas_from_rgba, decode, decode_file, png_to_canvas};
 pub use index::{DirEntry, DirKind};
 pub use listing::{LISTING_PX, ListingIcons, ListingSizes, listing_px};
