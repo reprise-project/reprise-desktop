@@ -15,7 +15,7 @@ use crate::pointer::{Interaction, Lit, WHEEL_ROWS};
 use crate::text::TextRenderer;
 use crate::trackbar;
 
-use super::field::{masked, unmasked_index, visible_from};
+use super::field::{as_shown, unmasked_index, visible_from};
 use super::layout::{
     check_box, check_label_rect, glyph_dy, icon_list_layout, radio_box, radio_label_rect,
 };
@@ -372,15 +372,9 @@ impl Form {
                         // The pen starts FIELD_PAD inside the sunken frame
                         // and at the field's scroll offset, so the index is
                         // counted from there, not from the value's start.
-                        let hidden;
-                        let shown = if edit.is_secret() {
-                            hidden = masked(edit);
-                            &hidden
-                        } else {
-                            edit
-                        };
+                        let shown = as_shown(edit);
                         let inner_x = self.at(it).x + crate::classic::widgets::FIELD_PAD;
-                        let from = visible_from(shown, first);
+                        let from = visible_from(&shown, first);
                         let dx = (x - inner_x).max(0);
                         let at = crate::textedit::index_at(text, &shown.text[from..], dx, px);
                         // Through the bullets and back, so `click` places
