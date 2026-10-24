@@ -9,7 +9,7 @@ mod menu;
 mod pending;
 mod window;
 
-use dialogs::{FormStep, form_event, goto_form};
+use dialogs::{FormStep, form_event, goto_form, ok_box};
 use document::{has_crlf, load, open_failed_text, read_text, write_document};
 use drop::Hover;
 use menu::menus;
@@ -198,6 +198,24 @@ impl Notepad {
         self.metrics.line_h = px as i32;
     }
 
+    /// The Find or Replace form behind `win`.
+    fn find_form(&self, win: WinId) -> Option<&Form> {
+        match win {
+            FIND => self.find.as_ref(),
+            REPLACE_WIN => self.replace.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// The Open or Save As dialog behind `win`.
+    fn file_dlg(&self, win: WinId) -> Option<&FileDlg> {
+        match win {
+            OPEN => self.open.as_ref(),
+            SAVEAS => self.saveas.as_ref(),
+            _ => None,
+        }
+    }
+
     /// `IconCache::get` needs `&mut` and `App::draw` gets `&Ctx`, so icons are fetched here, during
     /// an event, and kept.
     fn prime(&mut self, ctx: &mut Ctx) {
@@ -238,11 +256,7 @@ impl App for Notepad {
     }
 
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
-        match win {
-            OPEN => self.open.as_ref().map(FileDlg::min_client),
-            SAVEAS => self.saveas.as_ref().map(FileDlg::min_client),
-            _ => None,
-        }
+        self.file_dlg(win).map(FileDlg::min_client)
     }
 
     fn children(&self) -> Vec<Child> {
@@ -352,12 +366,12 @@ impl App for Notepad {
             GOTO => self.goto_event(ev, ctx),
             FIND => self.find_event(ev, ctx),
             REPLACE_WIN => self.replace_event(ev, ctx),
-            NOTFOUND => self.notfound_event(ev, ctx),
-            ERRORBOX => self.error_event(ev, ctx),
-            ABOUT => self.about_event(ev, ctx),
-            SAVECHANGES => self.savechanges_event(ev, ctx),
-            OVERWRITE => self.overwrite_event(ev, ctx),
-            LOSSY => self.lossy_event(ev, ctx),
+            NOTFOUND => self.notfound_event(ev),
+            ERRORBOX => self.error_event(ev),
+            ABOUT => self.about_event(ev),
+            SAVECHANGES => self.savechanges_event(ev),
+            OVERWRITE => self.overwrite_event(ev),
+            LOSSY => self.lossy_event(ev),
             OPEN => self.open_event(ev, ctx),
             SAVEAS => self.saveas_event(ev, ctx),
             _ => self.main_event(ev, ctx),
@@ -424,25 +438,9 @@ impl App for Notepad {
                     );
                 }
             }
-            FIND => {
+            FIND | REPLACE_WIN => {
                 c.fill_rect(c.bounds(), cs.button_face);
-                if let Some(f) = &self.find {
-                    form::draw(
-                        c,
-                        &ctx.text,
-                        &Paint {
-                            s: 1,
-                            ..self.forms.paint()
-                        },
-                        f,
-                        true,
-                        self.forms.fonts.size_px,
-                    );
-                }
-            }
-            REPLACE_WIN => {
-                c.fill_rect(c.bounds(), cs.button_face);
-                if let Some(f) = &self.replace {
+                if let Some(f) = self.find_form(win) {
                     form::draw(
                         c,
                         &ctx.text,
@@ -508,22 +506,8 @@ impl App for Notepad {
                         .draw(c, &self.forms, &self.dialog_text, f);
                 }
             }
-            OPEN => {
-                if let Some(d) = &self.open {
-                    d.draw(
-                        c,
-                        &self.dialog_text,
-                        &Paint {
-                            s: 1,
-                            ..self.forms.paint()
-                        },
-                        Rect::new(0, 0, d.client().0, d.client().1),
-                        self.forms.fonts.size_px,
-                    );
-                }
-            }
-            SAVEAS => {
-                if let Some(d) = &self.saveas {
+            OPEN | SAVEAS => {
+                if let Some(d) = self.file_dlg(win) {
                     d.draw(
                         c,
                         &self.dialog_text,
@@ -554,13 +538,8 @@ impl App for Notepad {
                     oneshot::access_form(f, tree, &ctx.text, ctx.forms().fonts.size_px);
                 }
             }
-            FIND => {
-                if let Some(f) = &self.find {
-                    oneshot::access_form(f, tree, &ctx.text, fpx);
-                }
-            }
-            REPLACE_WIN => {
-                if let Some(f) = &self.replace {
+            FIND | REPLACE_WIN => {
+                if let Some(f) = self.find_form(win) {
                     oneshot::access_form(f, tree, &ctx.text, fpx);
                 }
             }
@@ -596,13 +575,8 @@ impl App for Notepad {
                     );
                 }
             }
-            OPEN => {
-                if let Some(d) = &self.open {
-                    d.access(tree, Rect::new(0, 0, d.client().0, d.client().1), dt, fpx);
-                }
-            }
-            SAVEAS => {
-                if let Some(d) = &self.saveas {
+            OPEN | SAVEAS => {
+                if let Some(d) = self.file_dlg(win) {
                     d.access(tree, Rect::new(0, 0, d.client().0, d.client().1), dt, fpx);
                 }
             }
