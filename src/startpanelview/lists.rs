@@ -208,11 +208,7 @@ impl State {
     }
 
     pub(super) fn list_start_programs(&mut self) {
-        let Some(scale) = self
-            .start_panel
-            .as_ref()
-            .map(|v| self.draw_scale_at(Some(&v.output)).max(1))
-        else {
+        let Some(scale) = self.start_panel_scale() else {
             return;
         };
         let State {
@@ -269,11 +265,7 @@ impl State {
     }
 
     pub(super) fn list_start_jump(&mut self, i: usize) {
-        let Some(scale) = self
-            .start_panel
-            .as_ref()
-            .map(|v| self.draw_scale_at(Some(&v.output)).max(1))
-        else {
+        let Some(scale) = self.start_panel_scale() else {
             return;
         };
         let px = RESULT_ICON * scale;
@@ -292,11 +284,7 @@ impl State {
     }
 
     pub(super) fn list_start_tree(&mut self) {
-        let Some(scale) = self
-            .start_panel
-            .as_ref()
-            .map(|v| self.draw_scale_at(Some(&v.output)).max(1))
-        else {
+        let Some(scale) = self.start_panel_scale() else {
             return;
         };
         let State {
@@ -324,11 +312,7 @@ impl State {
 
     /// Icon file `file` landed: the program, tree and search rows wearing it take it.
     pub(crate) fn start_panel_icon_landed(&mut self, file: &str) {
-        let Some(scale) = self
-            .start_panel
-            .as_ref()
-            .map(|v| self.draw_scale_at(Some(&v.output)).max(1))
-        else {
+        let Some(scale) = self.start_panel_scale() else {
             return;
         };
         let State {
@@ -393,11 +377,7 @@ impl State {
     /// Relists the open panel's jump lists from the last recent read and check, the one shown
     /// in place.
     pub(crate) fn relist_start_jumps(&mut self) {
-        let Some(scale) = self
-            .start_panel
-            .as_ref()
-            .map(|v| self.draw_scale_at(Some(&v.output)).max(1))
-        else {
+        let Some(scale) = self.start_panel_scale() else {
             return;
         };
         let State {
