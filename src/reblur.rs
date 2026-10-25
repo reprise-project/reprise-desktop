@@ -4,6 +4,7 @@
 
 use std::time::Duration;
 
+use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use smithay::output::Output;
@@ -38,27 +39,64 @@ pub fn catch_up(held: Option<Duration>, water_moves: bool) -> Option<Duration> {
     held.filter(|_| !water_moves)
 }
 
+/// A timer's slot in `State`: while armed, its token and the outputs it asks for.
+type Armed = Option<(RegistrationToken, Vec<Output>)>;
+
 impl State {
     /// Refresh the glass `output`'s held frame left stale after `wait` and ask the outputs that
     /// held since the timer was armed for a frame; an armed timer keeps its wait.
     pub fn arm_reblur(&mut self, output: &Output, wait: Duration) {
-        if let Some((_, held)) = &mut self.reblur {
-            if !held.contains(output) {
-                held.push(output.clone());
+        self.arm(
+            |s| &mut s.reblur,
+            output,
+            wait,
+            |state, held| {
+                if state.glass.refresh_stale() {
+                    crate::backend::schedule_on(state, &held, Ask::Scene);
+                }
+            },
+        );
+    }
+
+    /// After `wait`, ask a catch-up frame of the outputs whose glass still owes its own window's
+    /// program a blur (`GlassCtx::owes`): a frame that blurs anyway meanwhile settles it.
+    pub fn arm_catch_up(&mut self, output: &Output, wait: Duration) {
+        self.arm(
+            |s| &mut s.owed_reblur,
+            output,
+            wait,
+            |state, owed| {
+                let owed: Vec<Output> = owed
+                    .into_iter()
+                    .filter(|o| state.glass.take_owed(o))
+                    .collect();
+                crate::backend::schedule_on(state, &owed, Ask::CatchUp);
+            },
+        );
+    }
+
+    fn arm(
+        &mut self,
+        slot: fn(&mut State) -> &mut Armed,
+        output: &Output,
+        wait: Duration,
+        fire: fn(&mut State, Vec<Output>),
+    ) {
+        if let Some((_, outputs)) = slot(self) {
+            if !outputs.contains(output) {
+                outputs.push(output.clone());
             }
             return;
         }
         let token = self
             .handle
-            .insert_source(Timer::from_duration(wait), |_, _, state| {
-                let held = state.reblur.take().map(|(_, held)| held);
-                if state.glass.refresh_stale() {
-                    crate::backend::schedule_on(state, &held.unwrap_or_default(), Ask::Scene);
-                }
+            .insert_source(Timer::from_duration(wait), move |_, _, state| {
+                let outputs = slot(state).take().map(|(_, o)| o);
+                fire(state, outputs.unwrap_or_default());
                 TimeoutAction::Drop
             });
         match token {
-            Ok(t) => self.reblur = Some((t, vec![output.clone()])),
+            Ok(t) => *slot(self) = Some((t, vec![output.clone()])),
             Err(e) => log::warn!("glass: reblur timer: {}", e.error),
         }
     }

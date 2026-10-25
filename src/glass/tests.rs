@@ -943,6 +943,49 @@ fn a_frame_held_for_a_commit_in_a_glass_window_owes_a_blur_only_to_other_glass()
 }
 
 #[test]
+fn a_frame_held_for_a_commit_in_its_own_glass_owes_that_glass_a_catch_up() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        eprintln!("skipped: no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let mut scene = DeskScene::new();
+    let root = scene.root();
+    let desktop = scene.tree_create(root);
+    scene.rect_create(desktop, (320, 200), [1.0; 4]);
+    let windows = scene.tree_create(root);
+    let (video, _glass) = glass_window(&mut scene, &ctx, windows, (20, 20), (120, 80), None);
+    let output = test_output_of(320, 200);
+    let settings = Settings {
+        streaks: false,
+        ..Settings::default()
+    };
+    let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
+    let frame = |renderer: &mut GlesRenderer, hold: Hold| {
+        ctx.begin(&output, settings, Quality::Full, hold);
+        ctx.update_screen_backdrop(renderer, &scene, &output, clear, true);
+    };
+    let drawn = |x, y| Drawn {
+        r: Rectangle::new((x, y).into(), (80, 40).into()),
+        window: Some(video.into()),
+    };
+    frame(&mut renderer, Hold::No);
+    frame(&mut renderer, Hold::Keep(Under::Nothing));
+    assert!(!ctx.owes(&output), "the pointer alone owes nothing");
+    frame(&mut renderer, Hold::Keep(Under::Within(drawn(200, 150))));
+    assert!(!ctx.owes(&output), "pixels no glass reads owe nothing");
+    frame(&mut renderer, Hold::Keep(Under::Within(drawn(40, 40))));
+    assert!(ctx.owes(&output), "the window's own glass catches up");
+    assert!(!ctx.any_stale(), "with no reblur frame at once");
+    frame(&mut renderer, Hold::No);
+    assert!(!ctx.owes(&output), "a frame that blurs settles it");
+    frame(&mut renderer, Hold::Keep(Under::Within(drawn(40, 40))));
+    assert!(ctx.take_owed(&output));
+    assert!(!ctx.owes(&output), "the catch-up asked settles it");
+}
+
+#[test]
 fn glass_missing_from_the_elements_counts_as_shown() {
     let s = Scale::from(1.0);
     let glass = solid(10, 10, 100, 40, 0.5);

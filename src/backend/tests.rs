@@ -61,6 +61,16 @@ fn only_pointer_asks_make_a_pointer_only_frame() {
 }
 
 #[test]
+fn only_catch_up_asks_make_a_catch_up_frame() {
+    assert!(asked(&[Ask::CatchUp]).catch_up);
+    assert!(!asked(&[Ask::CatchUp, Ask::Pointer]).catch_up);
+    assert!(!asked(&[Ask::Content, Ask::CatchUp]).catch_up);
+    let a = asked(&[Ask::CatchUp]);
+    assert!(a.redraw && !a.scene && !a.pointer_only);
+    assert_eq!(a.backdrop, crate::glass::Under::Nothing);
+}
+
+#[test]
 fn only_scene_content_and_commit_asks_may_change_what_lies_under_glass() {
     use crate::glass::{Drawn, Under};
     use reprisescene::NodeId;

@@ -26,12 +26,17 @@ pub enum Ask {
     Pointer,
     /// A new cursor image: drawn over everything, so glass has nothing new under it.
     Cursor,
+    /// Glass a held frame left behind its own window's program (`GlassCtx::owes`): blurs at once
+    /// without moving `[glass] blur_rate`'s cap.
+    CatchUp,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Asked {
     pub(super) redraw: bool,
     pub(super) pointer_only: bool,
+    /// Only `Ask::CatchUp` asked.
+    pub(super) catch_up: bool,
     pub(super) scene: bool,
     /// Where the asks may have changed what glass shows: nowhere for the pointer and the cursor.
     pub(super) backdrop: Under,
@@ -40,12 +45,13 @@ pub(super) struct Asked {
 impl Asked {
     pub(super) fn add(&mut self, ask: Ask) {
         self.pointer_only = (self.pointer_only || !self.redraw) && ask == Ask::Pointer;
+        self.catch_up = (self.catch_up || !self.redraw) && ask == Ask::CatchUp;
         self.redraw = true;
         self.scene |= ask == Ask::Scene;
         self.backdrop = self.backdrop.and(match ask {
             Ask::Scene | Ask::Content => Under::Anywhere,
             Ask::Commit(d) => Under::Within(d),
-            Ask::Pointer | Ask::Cursor => Under::Nothing,
+            Ask::Pointer | Ask::Cursor | Ask::CatchUp => Under::Nothing,
         });
     }
 }
@@ -70,15 +76,20 @@ fn request(state: &mut State, output: &Output, ask: Ask) {
     let Some(s) = surface_mut(state, crtc) else {
         return;
     };
+    if !s.needs_redraw {
+        s.asked_at = Some(std::time::Instant::now());
+    }
     let mut asked = Asked {
         redraw: s.needs_redraw,
         pointer_only: s.pointer_only,
+        catch_up: s.catch_up,
         scene: s.scene_changed,
         backdrop: s.backdrop_changed,
     };
     asked.add(ask);
     s.needs_redraw = asked.redraw;
     s.pointer_only = asked.pointer_only;
+    s.catch_up = asked.catch_up;
     s.scene_changed = asked.scene;
     s.backdrop_changed = asked.backdrop;
     queue_render(state, crtc);
