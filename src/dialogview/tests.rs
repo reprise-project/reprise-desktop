@@ -364,3 +364,36 @@ fn a_write_of_the_execute_bit_or_launcher_keys_reads_the_sheet_again() {
         "Read-only changes no row"
     );
 }
+
+#[test]
+fn a_dialog_asks_for_frames_only_on_the_outputs_it_covers() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    h.pointer_to(500.0, 400.0);
+    h.state.open_dialog(Dialog::run(&[]));
+    let outputs = || {
+        let mut asked: Vec<String> = crate::backend::take_asks()
+            .into_iter()
+            .map(|(o, _)| o)
+            .collect();
+        asked.sort();
+        asked.dedup();
+        asked
+    };
+    outputs();
+    h.state.blink_dialog();
+    assert_eq!(outputs(), vec!["TEST-1"], "a caret blink");
+    h.state.redraw_dialog(0);
+    assert_eq!(outputs(), vec!["TEST-1"], "a redraw");
+    h.state.move_dialog(0, 1000, 300);
+    assert_eq!(
+        outputs(),
+        vec!["TEST-1", "TEST-2"],
+        "a move onto TEST-2's edge"
+    );
+    h.state.move_dialog(0, 1300, 300);
+    assert_eq!(outputs(), vec!["TEST-1", "TEST-2"], "a move off TEST-1");
+    h.state.blink_dialog();
+    assert_eq!(outputs(), vec!["TEST-2"], "a caret blink on TEST-2");
+}

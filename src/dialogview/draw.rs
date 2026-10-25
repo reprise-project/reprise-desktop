@@ -48,9 +48,9 @@ impl State {
                 true,
             );
         }
-        let buffer = v.buffer;
+        let (buffer, tree) = (v.buffer, v.tree);
         upload_scaled(&mut self.scene, buffer, &canvas, scale);
-        self.redraw_all();
+        self.redraw_nodes(Vec::new(), &[tree.into()]);
     }
 
     /// Recompute the top dialog's layout and redraw it; the open tab grows, so rects go stale on tab change.
@@ -100,6 +100,8 @@ impl State {
         let Some(v) = self.dialogs.views.get(index) else {
             return;
         };
+        let tree = v.tree;
+        let was = self.scene.outputs_of(tree);
         let output = v.output.clone();
         let base = self.config.theme.clone();
         let scale = self.draw_scale_at(Some(&output)).max(1);
@@ -255,7 +257,7 @@ impl State {
             Decode::Retry(wait) => self.relook_dialog_icons(id, wait),
             Decode::Wait => {}
         }
-        self.redraw_all();
+        self.redraw_nodes(was, &[tree.into()]);
         crate::access::touch(self);
     }
 

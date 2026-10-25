@@ -242,14 +242,14 @@ impl State {
             v.output = o;
         }
         let tree = v.tree;
-        self.scene.set_position(tree, x, y);
+        let outputs = self.scene.move_on_outputs(tree, x, y);
         if index + 1 == self.dialogs.views.len() {
             self.ime_field_moved(crate::caret::Editor::Dialog, (x, y));
         }
         if rescale {
             self.redraw_dialog(index);
         }
-        self.redraw_all();
+        self.redraw_nodes(outputs, &[]);
     }
 
     /// A thumb button pressed on dialog `index`: Back or Forward on a top Browse dialog, else ignored.
