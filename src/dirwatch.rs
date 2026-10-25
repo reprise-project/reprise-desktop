@@ -29,7 +29,22 @@ pub struct DirWatch {
     watched: Vec<Watched>,
     /// The merged want of the last [`DirWatch::plan`].
     want: Vec<Want>,
+    /// Events on descriptors not adopted yet, kept from [`DirWatch::hold`] to
+    /// [`DirWatch::replay`]; None when not holding.
+    held: Option<Vec<Event>>,
+    /// More events came while holding than [`HELD_MAX`].
+    held_over: bool,
 }
+
+/// An event as read, for [`DirWatch::replay`].
+struct Event {
+    wd: WatchDescriptor,
+    mask: EventMask,
+    name: Option<OsString>,
+}
+
+/// Held events past this count are lost as if the kernel queue overflowed.
+const HELD_MAX: usize = 4096;
 
 /// The directories a [`DirWatch::plan`] left to watch, with masks.
 pub struct Adds {
@@ -122,11 +137,14 @@ impl JobWatch {
     /// The next sync's job; None while one is out, and the next [`JobWatch::landed`] then asks
     /// for another.
     pub fn start(&mut self) -> Option<JobSync> {
-        let adder = self.watch.as_ref()?.adder();
+        let watch = self.watch.as_mut()?;
+        let adder = watch.adder();
         if self.syncing {
             self.again = true;
             return None;
         }
+        // The job's watches report before the loop adopts them.
+        watch.hold();
         self.syncing = true;
         let hit = std::mem::take(&mut self.hit);
         Some(JobSync { adder, hit })
@@ -136,15 +154,18 @@ impl JobWatch {
         self.syncing
     }
 
-    /// Takes the watches a sync's job added for `want`. True when another sync was asked for
-    /// meanwhile.
+    /// Takes the watches a sync's job added for `want` and counts the events they reported
+    /// meanwhile. True when another sync was asked for meanwhile or such an event counted.
     pub fn landed(&mut self, want: &[Want], added: Added) -> bool {
         self.syncing = false;
+        let mut hit = false;
         if let Some(w) = self.watch.as_mut() {
             w.plan(want);
             w.adopt(added);
+            hit = w.replay();
         }
-        std::mem::take(&mut self.again)
+        self.hit |= hit;
+        std::mem::take(&mut self.again) || hit
     }
 
     /// Whether the sync a [`JobWatch::landed`] asked for will report an event.
@@ -159,6 +180,8 @@ impl DirWatch {
             ino: Inotify::init()?,
             watched: Vec::new(),
             want: Vec::new(),
+            held: None,
+            held_over: false,
         })
     }
 
@@ -254,6 +277,30 @@ impl DirWatch {
         grew
     }
 
+    /// From now until [`DirWatch::replay`], keeps the events [`DirWatch::drain`] reads on
+    /// descriptors it does not know, so watches added on a thread lose nothing before
+    /// [`DirWatch::adopt`] takes them.
+    pub fn hold(&mut self) {
+        self.held.get_or_insert_with(Vec::new);
+    }
+
+    /// Counts the events kept since [`DirWatch::hold`] against the watches adopted since, and
+    /// stops keeping them. True when any calls for a rescan, as in [`DirWatch::drain`].
+    pub fn replay(&mut self) -> bool {
+        let held = self.held.take().unwrap_or_default();
+        if std::mem::take(&mut self.held_over) {
+            self.overflowed();
+            return true;
+        }
+        let mut gone = Vec::new();
+        let mut changed = false;
+        for ev in &held {
+            changed |= self.count(ev, &mut gone).unwrap_or(false);
+        }
+        self.forget(gone);
+        changed
+    }
+
     /// Read every pending event. True when any calls for a rescan: a change
     /// inside a watched directory, a watched directory going away (its
     /// watch is dropped, for `sync` to add again), or a queue overflow
@@ -271,40 +318,70 @@ impl DirWatch {
                     break;
                 }
             };
-            let mut any = false;
-            let mut gone = Vec::new();
-            for ev in events {
-                any = true;
-                if ev.mask.contains(EventMask::Q_OVERFLOW) {
-                    gone.extend(self.watched.iter().map(|w| w.wd.clone()));
-                    changed = true;
-                    continue;
-                }
-                let mut paths = self.watched.iter().filter(|w| w.wd == ev.wd).peekable();
-                if paths.peek().is_none() {
-                    continue;
-                }
-                if ev
-                    .mask
-                    .intersects(EventMask::DELETE_SELF | EventMask::MOVE_SELF | EventMask::IGNORED)
-                {
-                    gone.push(ev.wd.clone());
-                    changed = true;
-                } else if paths.any(|w| {
-                    w.only.is_empty() || w.only.iter().any(|n| ev.name == Some(n.as_os_str()))
-                }) {
-                    changed = true;
-                }
-            }
-            for wd in gone {
-                self.watched.retain(|w| w.wd != wd);
-                let _ = self.ino.watches().remove(wd);
-            }
-            if !any {
+            let events: Vec<Event> = (events.map(|ev| Event {
+                wd: ev.wd,
+                mask: ev.mask,
+                name: ev.name.map(OsString::from),
+            }))
+            .collect();
+            if events.is_empty() {
                 break;
             }
+            let mut gone = Vec::new();
+            for ev in events {
+                if ev.mask.contains(EventMask::Q_OVERFLOW) {
+                    gone.extend(self.watched.iter().map(|w| w.wd.clone()));
+                    self.held_over |= self.held.is_some();
+                    changed = true;
+                    continue;
+                }
+                match self.count(&ev, &mut gone) {
+                    Some(hit) => changed |= hit,
+                    None => self.keep(ev),
+                }
+            }
+            self.forget(gone);
         }
         changed
+    }
+
+    /// Whether `ev` calls for a rescan, with a directory that went away added to `gone`; None
+    /// when its descriptor is not watched.
+    fn count(&self, ev: &Event, gone: &mut Vec<WatchDescriptor>) -> Option<bool> {
+        let mut paths = self.watched.iter().filter(|w| w.wd == ev.wd).peekable();
+        paths.peek()?;
+        if ev
+            .mask
+            .intersects(EventMask::DELETE_SELF | EventMask::MOVE_SELF | EventMask::IGNORED)
+        {
+            gone.push(ev.wd.clone());
+            return Some(true);
+        }
+        Some(paths.any(|w| w.only.is_empty() || w.only.iter().any(|n| ev.name.as_ref() == Some(n))))
+    }
+
+    fn keep(&mut self, ev: Event) {
+        let Some(held) = self.held.as_mut() else {
+            return;
+        };
+        if held.len() < HELD_MAX {
+            held.push(ev);
+        } else {
+            self.held_over = true;
+        }
+    }
+
+    fn forget(&mut self, gone: Vec<WatchDescriptor>) {
+        for wd in gone {
+            self.watched.retain(|w| w.wd != wd);
+            let _ = self.ino.watches().remove(wd);
+        }
+    }
+
+    /// Events were lost: every watch is dropped for the next sync to add again.
+    fn overflowed(&mut self) {
+        let gone = self.watched.iter().map(|w| w.wd.clone()).collect();
+        self.forget(gone);
     }
 }
 
@@ -573,6 +650,47 @@ mod tests {
             "nothing asked meanwhile"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_event_on_a_watch_a_sync_added_before_the_loop_took_it_counts() {
+        let home =
+            std::env::temp_dir().join(format!("reprise-dirwatch-gap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        for d in ["conf", "gone"] {
+            std::fs::create_dir_all(home.join(d)).unwrap();
+        }
+        let want = |dir: &str| Want {
+            dir: home.join(dir),
+            mask: WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO,
+            only: vec!["config.toml".into()],
+        };
+        let want = [want("conf"), want("gone")];
+        let mut j = JobWatch {
+            watch: Some(DirWatch::new().unwrap()),
+            ..JobWatch::default()
+        };
+        let first = j.start().expect("a sync starts");
+        let added = first.adder.run(&want);
+        std::fs::write(home.join("conf/notes.txt"), "").unwrap();
+        std::fs::write(home.join("conf/config.toml"), "").unwrap();
+        std::fs::remove_dir(home.join("gone")).unwrap();
+        assert!(!j.drain(), "neither watch is taken yet");
+        assert!(
+            j.landed(&want, added),
+            "the write before the sync landed asks for another"
+        );
+        let next = j.start().expect("the next sync starts");
+        assert!(next.hit, "it reports the write");
+        let watched: Vec<_> = (j.watch.as_ref().unwrap().watched.iter())
+            .map(|w| w.dir.clone())
+            .collect();
+        assert_eq!(
+            watched,
+            [home.join("conf")],
+            "the folder deleted before the sync landed is not watched"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
