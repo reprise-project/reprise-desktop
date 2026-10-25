@@ -208,11 +208,7 @@ pub fn image_sources(img: &ImageData) -> Vec<IconSource> {
                 out.pixels[to..to + fw as usize]
                     .copy_from_slice(&img.pixels[from..from + fw as usize]);
             }
-            IconSource {
-                width: out.width,
-                height: out.height,
-                pixels: out.pixels,
-            }
+            IconSource::from(out)
         })
         .collect()
 }

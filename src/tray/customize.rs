@@ -197,10 +197,6 @@ pub(super) fn past_icon(icons: &mut IconCache, name: Option<&str>, list: i32) ->
     sizes
         .into_iter()
         .filter_map(|px| crate::icon::unread(icons, name, px))
-        .map(|c| IconSource {
-            width: c.width,
-            height: c.height,
-            pixels: c.pixels.clone(),
-        })
+        .map(|c| IconSource::from(std::sync::Arc::unwrap_or_clone(c)))
         .collect()
 }
