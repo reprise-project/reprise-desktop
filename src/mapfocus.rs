@@ -66,6 +66,10 @@ pub struct Arrival<'a> {
     /// connection is Xwayland's and shared by every X11 program.
     pub client: Option<usize>,
     pub lineage: &'a [i32],
+    /// The session its process is in. A program that double-forks its
+    /// children (a file manager opening a file) leaves them under init but
+    /// in its own session.
+    pub session: Option<i32>,
     pub launched: bool,
     /// It belongs to Reprise's portal or polkit agent: a prompt some other
     /// program asked for.
@@ -84,15 +88,18 @@ pub struct Holder {
 
 /// Whether a toplevel mapping while `focused` holds the keyboard takes it.
 /// `None` means no window has focus. A program owns the focused window when
-/// it shares its Wayland connection, or its process is the focused one's or
-/// descends from it (a dialog, a second window, a program it started). A
+/// it shares its Wayland connection, or its process is the focused one's,
+/// descends from it or sits in the session it leads (a dialog, a second
+/// window, a program it started). A
 /// window the focused one owns takes it too, whichever program draws it.
 pub fn takes_focus(new: &Arrival, focused: Option<Holder>) -> bool {
     let Some(f) = focused else {
         return true;
     };
     let same_client = new.client.is_some() && new.client == f.client;
-    let descends = f.pid.is_some_and(|p| new.lineage.contains(&p));
+    let descends = f
+        .pid
+        .is_some_and(|p| new.lineage.contains(&p) || new.session == Some(p));
     new.activated || new.launched || new.prompt || same_client || descends || f.owns
 }
 
@@ -283,6 +290,25 @@ mod tests {
             ..Arrival::default()
         };
         assert!(takes_focus(&new, editor_focused()), "expected focus");
+    }
+
+    #[test]
+    fn a_program_in_the_session_the_focused_one_leads_takes_focus() {
+        let orphan = Arrival {
+            client: Some(OTHER),
+            lineage: &[600],
+            session: Some(500),
+            ..Arrival::default()
+        };
+        assert!(takes_focus(&orphan, editor_focused()), "expected focus");
+        let stranger = Arrival {
+            session: Some(501),
+            ..orphan
+        };
+        assert!(
+            !takes_focus(&stranger, editor_focused()),
+            "expected no focus"
+        );
     }
 
     #[test]
