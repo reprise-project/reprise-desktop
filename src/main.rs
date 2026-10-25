@@ -155,6 +155,7 @@ mod magnifier;
 mod malloc;
 mod mapfocus;
 mod migrate;
+mod mutex;
 mod osdview;
 mod output;
 mod pickthumbs;

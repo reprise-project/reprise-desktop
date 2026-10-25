@@ -568,7 +568,7 @@ mod tests {
     impl SystemBin {
         fn new() -> SystemBin {
             static HELD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-            let held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+            let held = crate::mutex::lock(&HELD);
             let home =
                 std::env::temp_dir().join(format!("reprise-system-bin-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&home);

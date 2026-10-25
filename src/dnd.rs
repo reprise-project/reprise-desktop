@@ -2,6 +2,7 @@
 //! keyboard runs from an idle. A popup grab opened mid-drag would end the drag, so `XdgShellHandler::grab` hands it to the
 //! drag ([`Dnd::hold_popup_grab`]).
 
+use crate::mutex::lock;
 use std::{
     any::Any,
     os::fd::OwnedFd,
@@ -242,7 +243,7 @@ impl DragSource {
     }
 
     fn learnt(&self) -> MutexGuard<'_, Learnt> {
-        self.learnt.lock().unwrap_or_else(|e| e.into_inner())
+        lock(&self.learnt)
     }
 
     fn same_client_as(&self, surface: &WlSurface) -> bool {

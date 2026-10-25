@@ -2,6 +2,7 @@
 //! idle timer is paused. A cookie goes with `UnInhibit` from its peer, or when that peer leaves the bus.
 
 use super::TrayEvent;
+use crate::mutex::lock;
 use std::os::fd::RawFd;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -107,7 +108,7 @@ impl Shared {
     /// so two calls on different executor threads cannot report out of
     /// order.
     pub fn update<R>(&self, f: impl FnOnce(&mut Inhibits) -> R) -> R {
-        let mut held = self.inhibits.lock().unwrap_or_else(|e| e.into_inner());
+        let mut held = lock(&self.inhibits);
         let was = !held.is_empty();
         let r = f(&mut held);
         let now = !held.is_empty();

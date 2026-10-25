@@ -2,6 +2,7 @@
 //! Three namespaces are answered, everything else is NotFound (`reprise-portals.conf` names no other Settings backend): `org.freedesktop.appearance`, `org.reprise.appearance` (the whole look, for Reprise's programs) and `org.gnome.desktop.interface` (theme, icons, cursor, font, font smoothing and overlay scrolling for GTK3, and an empty `gtk-im-module` for GTK4, which the session points at the portal via `GTK_USE_PORTAL`).
 
 use crate::config::{Config, FontSmoothing};
+use crate::mutex::lock;
 use reprisebus::appearance as look;
 use reprisekit::blue::Variant;
 use reprisekit::interface::Interface;
@@ -280,11 +281,7 @@ impl Settings {
 
     fn read_all(&self, namespaces: Vec<String>) -> HashMap<String, HashMap<String, OwnedValue>> {
         let mut out: HashMap<String, HashMap<String, OwnedValue>> = HashMap::new();
-        let keys = self
-            .current
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .keys();
+        let keys = lock(&self.current).keys();
         for (namespace, key, value) in keys {
             if matches(&namespaces, namespace)
                 && let Ok(v) = value.try_to_owned()
@@ -322,12 +319,7 @@ impl Settings {
         if ![NAMESPACE, GNOME, look::NAMESPACE].contains(&namespace) {
             return Err(PortalError::NotFound(format!("namespace {namespace}")));
         }
-        match self
-            .current
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(namespace, key)
-        {
+        match lock(&self.current).get(namespace, key) {
             Some(v) => Ok(v.try_to_owned().map_err(zbus::Error::from)?),
             None => Err(PortalError::NotFound(format!("key {key}"))),
         }
@@ -337,10 +329,7 @@ impl Settings {
 /// Take `next` as the current appearance and signal every key whose
 /// value moved. Called on the D-Bus thread with the interface served.
 pub async fn update(conn: &zbus::Connection, current: &Mutex<Appearance>, next: Appearance) {
-    let prev = std::mem::replace(
-        &mut *current.lock().unwrap_or_else(|e| e.into_inner()),
-        next.clone(),
-    );
+    let prev = std::mem::replace(&mut *lock(current), next.clone());
     if prev == next {
         return;
     }

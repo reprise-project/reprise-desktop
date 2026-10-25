@@ -1,5 +1,6 @@
 //! Whether a toplevel takes the keyboard when it first maps: when it presents a trusted activation token, belongs to or is owned by the focused window's program, Reprise just started or clicked its program, is one of Reprise's own prompts, or nothing has focus. Any other window maps behind the focused one, so a background program cannot pop up mid-typing and read the keys.
 
+use crate::mutex::lock;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -21,7 +22,7 @@ pub fn grant(pid: i32) {
     if pid <= 0 {
         return;
     }
-    let mut v = LAUNCHES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut v = lock(&LAUNCHES);
     let now = Instant::now();
     v.retain(|l| now.duration_since(l.at) < LAUNCH_GRACE);
     v.push(Launch { pid, at: now });
@@ -43,7 +44,7 @@ pub fn take_launch(
 }
 
 pub fn take_recorded_launch(lineage: &[i32], session: Option<i32>) -> Option<Launch> {
-    let mut v = LAUNCHES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut v = lock(&LAUNCHES);
     take_launch(&mut v, lineage, session, Instant::now())
 }
 
@@ -52,7 +53,7 @@ pub fn take_recorded_launch(lineage: &[i32], session: Option<i32>) -> Option<Lau
 /// in its place. Many X11 toolkits map a first window, then unmap it and
 /// map the real one.
 pub fn give_back(launch: Launch) {
-    let mut v = LAUNCHES.lock().unwrap_or_else(|e| e.into_inner());
+    let mut v = lock(&LAUNCHES);
     if Instant::now().duration_since(launch.at) < LAUNCH_GRACE {
         v.push(launch);
     }

@@ -1,5 +1,6 @@
 //! Launch child processes with the compositor's display sockets exported.
 
+use crate::mutex::lock;
 use reprisebus::units::SESSION_TARGET;
 use std::os::unix::process::CommandExt;
 use std::sync::Mutex;
@@ -759,7 +760,7 @@ fn start_forked(
 fn started(what: &str, spawn: impl FnOnce() -> std::io::Result<u32>) -> std::io::Result<u32> {
     // Held across the spawn: a child started off the loop that exits at once is listed before
     // the loop's `reap_children` can look for it. Dropping a `Child` does not reap.
-    let mut children = CHILDREN.lock().unwrap_or_else(|e| e.into_inner());
+    let mut children = lock(&CHILDREN);
     let pid = spawn()?;
     children.push((pid as libc::pid_t, what.to_string()));
     drop(children);
@@ -899,7 +900,7 @@ pub(crate) fn detach(c: &mut std::process::Command) {
 /// Reap the children we spawned, when the SIGCHLD signalfd fires. Only our own pids: Xwayland
 /// is reaped through a pidfd, so `waitpid(-1, ..)` would steal its status.
 pub fn reap_children() {
-    let mut children = CHILDREN.lock().unwrap_or_else(|e| e.into_inner());
+    let mut children = lock(&CHILDREN);
     children.retain(|(pid, what)| {
         let mut status = 0;
         // SAFETY: `status` is a valid out-param; `pid` is a child we spawned.

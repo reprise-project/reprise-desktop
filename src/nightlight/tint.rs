@@ -4,6 +4,7 @@
 //! so screenshots and recordings of such an output carry the tint. Gains
 //! live in the output's user data, where `render` finds them.
 
+use crate::mutex::lock;
 use std::sync::Mutex;
 
 use smithay::{
@@ -33,7 +34,7 @@ fn with<T>(output: &Output, f: impl FnOnce(&mut Tint) -> T) -> T {
         })
     });
     let tint = data.get::<Mutex<Tint>>().expect("inserted above");
-    f(&mut tint.lock().unwrap_or_else(|e| e.into_inner()))
+    f(&mut lock(tint))
 }
 
 /// Tint `output` by `gains` (red, green, blue, 0 to 1), or stop with None. Returns whether anything changed.
@@ -52,7 +53,7 @@ pub fn set(output: &Output, gains: Option<[f32; 3]>) -> bool {
 pub fn element(output: &Output, origin: Point<i32, Physical>) -> Option<TintElement> {
     let tint = output.user_data().get::<Mutex<Tint>>()?;
     let (id, commit, gains) = {
-        let t = tint.lock().unwrap_or_else(|e| e.into_inner());
+        let t = lock(tint);
         (t.id.clone(), t.commit, t.gains?)
     };
     let size = output

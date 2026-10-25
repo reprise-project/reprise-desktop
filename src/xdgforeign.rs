@@ -1,6 +1,7 @@
 //! xdg-foreign v1 (zxdg_*_v1, still used by GTK 3 and older Qt), after Smithay's
 //! `src/wayland/xdg_foreign/handlers.rs` (MIT); Smithay serves v2.
 
+use crate::mutex::lock;
 use std::collections::HashMap;
 
 use smithay::{
@@ -79,7 +80,7 @@ impl State {
         let mut changed = false;
         compositor::with_states(child, |states| {
             if let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>() {
-                let mut role = data.lock().unwrap_or_else(|e| e.into_inner());
+                let mut role = lock(data);
                 let now = match parent {
                     Some(p) => Some(p.clone()),
                     None if role.parent.as_ref() == Some(of) => None,

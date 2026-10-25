@@ -2,6 +2,7 @@
 //! sit on a mount that never answers, so the bookmarks and what each path is come from file jobs:
 //! the loop shows what the last read and check found, a path not checked yet included.
 
+use crate::mutex::lock;
 use reprisefs::apps::AppEntry;
 use reprisefs::recent::{Bookmark, RecentFiles};
 use std::collections::{HashMap, HashSet};
@@ -90,7 +91,7 @@ impl RecentDocs {
 
     /// The newest `limit` bookmarks `keep` takes that were not found missing or a folder.
     fn pick(&self, limit: usize, keep: impl Fn(&Bookmark) -> bool) -> Vec<PathBuf> {
-        let found = self.found.lock().unwrap_or_else(|e| e.into_inner());
+        let found = lock(&self.found);
         self.marks
             .iter()
             .filter(|b| keep(b) && matches!(found.get(&b.path), None | Some(Found::File)))
