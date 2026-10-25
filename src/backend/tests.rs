@@ -1,7 +1,7 @@
 use super::gamma::{GammaStep, Lut, gamma_step, lut_from_blob};
 use super::links::{LINK_TRIES, LinkStep, link_mode, link_step};
 use super::outputs::asks_scan;
-use super::render::waits_for_frame;
+use super::render::{glass_hold, waits_for_frame};
 use super::schedule::{Asked, pointer_ask_renders};
 use super::steps::{Step, next_step};
 use super::{Ask, CrtcNow};
@@ -110,6 +110,21 @@ fn only_scene_content_and_commit_asks_may_change_what_lies_under_glass() {
     assert_eq!(under(&[Ask::Pointer]), Under::Nothing);
     let cursor = asked(&[Ask::Cursor, Ask::Pointer]);
     assert!(cursor.redraw && !cursor.pointer_only && cursor.backdrop == Under::Nothing);
+}
+
+#[test]
+fn a_held_frame_water_stepped_in_changed_what_lies_under_glass_anywhere() {
+    use crate::glass::{Hold, Under};
+    let wait = Some(std::time::Duration::from_millis(10));
+    assert_eq!(
+        glass_hold(wait, Under::Nothing, true),
+        Hold::Keep(Under::Anywhere)
+    );
+    assert_eq!(
+        glass_hold(wait, Under::Nothing, false),
+        Hold::Keep(Under::Nothing)
+    );
+    assert_eq!(glass_hold(None, Under::Nothing, true), Hold::No);
 }
 
 #[test]
