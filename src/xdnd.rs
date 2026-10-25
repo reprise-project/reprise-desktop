@@ -13,6 +13,7 @@
 //! [`PointerFocus::Reprise`], whose offer holds when Reprise takes the drop.
 //! An X11 drag over its own program's windows stays that program's.
 
+use crate::mutex::lock;
 use std::{
     borrow::Cow,
     fmt,
@@ -171,7 +172,7 @@ impl fmt::Debug for X11Offer {
 
 impl X11Offer {
     fn lock(&self) -> MutexGuard<'_, XwmOfferData<DragSource>> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
+        lock(&self.0)
     }
 
     /// Send `x` an `XdndPosition`, or keep `at` for when its `XdndStatus` comes.

@@ -4,6 +4,7 @@ use super::screensaver::{self, SCREENSAVER_NAME, SCREENSAVER_PATHS};
 use super::settings::{self, Appearance, SETTINGS_NAME, SETTINGS_PATH, Settings};
 use super::{TrayCommand, TrayEvent, TrayItem};
 use crate::icontheme::{IconCache, IconTheme};
+use crate::mutex::lock;
 use futures_util::stream::{BoxStream, SelectAll, StreamExt};
 use std::collections::HashMap;
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
@@ -114,11 +115,6 @@ async fn uncached_proxy(
 }
 
 type Icons = Arc<Mutex<IconCache>>;
-
-/// `m` locked, even when a holder panicked: its value is still usable.
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
-}
 
 /// The px item icons are drawn at, which [`TrayCommand::IconSizes`] sets.
 type Sizes = Arc<Mutex<Vec<i32>>>;

@@ -3,6 +3,7 @@
 //! screen (`backend`) and into capture buffers (`capture`). The clear
 //! colour shows only where no wallpaper buffer covers the output.
 
+use crate::mutex::lock;
 use std::sync::Mutex;
 
 use smithay::{
@@ -133,7 +134,7 @@ fn cursor_elements(
             let hotspot = with_states(surface, |s| {
                 s.data_map
                     .get::<Mutex<CursorImageAttributes>>()
-                    .map(|a| a.lock().unwrap_or_else(|e| e.into_inner()).hotspot)
+                    .map(|a| lock(a).hotspot)
                     .unwrap_or_default()
             });
             let hotspot = hotspot.to_f64().to_physical(scale);
