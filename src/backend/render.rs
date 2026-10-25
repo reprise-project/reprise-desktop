@@ -102,8 +102,10 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
         return;
     }
     let started = std::time::Instant::now();
+    let mut asked_at = None;
     if let Some(s) = surface_mut(state, crtc) {
         s.needs_redraw = false;
+        asked_at = s.asked_at.take();
         if std::mem::take(&mut s.pointer_only)
             && let Some(drawn) = pointer_frame(state, crtc, &output, started)
         {
@@ -150,20 +152,26 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
         reprisescene::output_rect(&output).is_some_and(|g| g.to_f64().contains(pointer));
     s.scene_seen = scene.changes();
     let now = std::time::Instant::now();
+    let at = asked_at.unwrap_or(now);
+    let cap = crate::reblur::cap(
+        config.glass.blur_rate,
+        crate::framepace::interval(output.current_mode().map_or(0, |m| m.refresh)),
+    );
+    let catch_up = std::mem::take(&mut s.catch_up);
     let reblur = crate::reblur::when(
-        !std::mem::take(&mut s.scene_changed),
-        s.last_blur.map(|t| now - t),
-        crate::reblur::cap(
-            config.glass.blur_rate,
-            crate::framepace::interval(output.current_mode().map_or(0, |m| m.refresh)),
-        ),
+        !std::mem::take(&mut s.scene_changed) && !catch_up,
+        s.last_blur.map(|t| at.saturating_duration_since(t)),
+        cap,
     );
     let hold = match reblur {
         Reblur::Now => {
-            s.last_blur = Some(now);
+            // A catch-up keeps the cap's phase: the program's next commit blurs on time.
+            if !catch_up {
+                s.last_blur = Some(at);
+            }
             None
         }
-        Reblur::Wait(wait) => Some(wait),
+        Reblur::Wait(wait) => Some(wait.saturating_sub(now - at)),
     };
     let backdrop_changed = std::mem::take(&mut s.backdrop_changed);
     let glass_hold = match hold {
@@ -255,7 +263,10 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
     if held.is_some() {
         s.held += 1;
     }
-    let held = crate::reblur::catch_up(held, water.next_step(&output).is_some());
+    let owed = cap.filter(|_| hold.is_some() && held.is_none() && glass.owes(&output));
+    let water_moves = water.next_step(&output).is_some();
+    let held = crate::reblur::catch_up(held, water_moves);
+    let owed = crate::reblur::catch_up(owed, water_moves);
     let flight = InFlight {
         started,
         held,
@@ -265,6 +276,9 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
     let flipping = drawn && send_flip(s, modeset, flight);
     if !flipping {
         finish(state, crtc, &output, false, empty, held, started);
+    }
+    if let Some(wait) = owed {
+        state.arm_catch_up(&output, wait);
     }
     if state.magnifier.panning(&output)
         || water_fell

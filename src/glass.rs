@@ -185,6 +185,9 @@ struct OutputBackdrop {
     look: Option<(Settings, Quality)>,
     /// A held frame left it as it was: what changed since waits for the next blur.
     skipped: bool,
+    /// A held frame left a window's own glass showing its program as it was: it blurs again
+    /// within a `[glass] blur_rate` interval (`reblur`).
+    owed: bool,
     /// The clear colour it was last drawn on: the tracker sees a change only when it draws.
     clear: Option<Color32F>,
 }
@@ -372,6 +375,7 @@ impl GlassCtx {
             let pass = self.pass.get();
             b.look = Some((pass.settings, pass.quality));
             b.skipped = false;
+            b.owed = false;
         }
         if self.pass.get().settings.blur_frames {
             self.update_beneath(renderer, scene, output, clear, &own);
@@ -685,12 +689,17 @@ impl GlassCtx {
             && (b.hidden || (pass.hold.keeps() && b.drawn && same(b)))
         {
             // A held blur shows the picture as it was, so its backdrops need no drawing either.
-            b.skipped |= !b.hidden
-                && match pass.hold {
-                    Hold::Keep(Under::Anywhere) => true,
-                    Hold::Keep(Under::Within(d)) => self.reads_within(scene, output, d),
-                    _ => false,
-                };
+            if let (false, Hold::Keep(under)) = (b.hidden, pass.hold) {
+                match under {
+                    Under::Anywhere => b.skipped = true,
+                    Under::Within(d) if self.reads_within(scene, output, d) => b.skipped = true,
+                    Under::Within(d) if d.window.is_some() => {
+                        let any = Drawn { window: None, ..d };
+                        b.owed |= self.reads_within(scene, output, any);
+                    }
+                    _ => {}
+                }
+            }
             *self.source.borrow_mut() = b.picture.source();
             let mut own = self.own.borrow_mut();
             for ((o, _), b) in self.beneath.borrow().iter() {
@@ -743,6 +752,20 @@ impl GlassCtx {
                 .iter()
                 .filter_map(Weak::upgrade)
                 .any(|g| g.is_stale())
+    }
+
+    /// Whether a held frame left `output`'s glass behind its own window's program.
+    pub fn owes(&self, output: &Output) -> bool {
+        (self.backdrops.borrow().get(&output.name())).is_some_and(|b| !b.hidden && b.owed)
+    }
+
+    /// As `owes`, settling the debt: the caller asks the frame that blurs.
+    pub fn take_owed(&self, output: &Output) -> bool {
+        let owes = self.owes(output);
+        if let Some(b) = self.backdrops.borrow_mut().get_mut(&output.name()) {
+            b.owed = false;
+        }
+        owes
     }
 
     pub fn refresh_stale(&self) -> bool {
@@ -877,6 +900,7 @@ impl OutputBackdrop {
             hidden: false,
             look: None,
             skipped: false,
+            owed: false,
             clear: None,
         })
     }

@@ -320,6 +320,12 @@ pub struct State {
         smithay::reexports::calloop::RegistrationToken,
         Vec<smithay::output::Output>,
     )>,
+    /// Asks for the frame that catches up glass a held frame left behind its own window's
+    /// program (`reblur`), while armed, and the outputs that owe since.
+    pub owed_reblur: Option<(
+        smithay::reexports::calloop::RegistrationToken,
+        Vec<smithay::output::Output>,
+    )>,
     /// The snap outline and grid, and each app's remembered frame
     /// (`placement`).
     pub wm: crate::placement::Wm,
@@ -660,6 +666,7 @@ impl State {
             glass: GlassCtx::new(),
             water: crate::waterview::WaterCtx::new(),
             reblur: None,
+            owed_reblur: None,
             wm: crate::placement::Wm::from_persisted(&persisted, session),
             tabs: Default::default(),
             dialogs: Default::default(),
