@@ -807,7 +807,7 @@ fn a_held_frame_leaves_the_backdrop_undrawn_until_the_next_blur() {
     };
     frame(&mut renderer, &scene, Hold::No);
     scene.set_enabled(spot, true);
-    frame(&mut renderer, &scene, Hold::Changed);
+    frame(&mut renderer, &scene, Hold::Keep(Under::Anywhere));
     assert!(
         backdrop_red(&mut renderer, &ctx, (70, 60)) > 230,
         "the held frame drew nothing into the backdrop"
@@ -842,7 +842,11 @@ fn a_frame_held_for_the_cursor_alone_leaves_nothing_to_blur_later() {
         ..Settings::default()
     };
     let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
-    for hold in [Hold::No, Hold::Unchanged, Hold::Unchanged] {
+    for hold in [
+        Hold::No,
+        Hold::Keep(Under::Nothing),
+        Hold::Keep(Under::Nothing),
+    ] {
         ctx.begin(&output, settings, Quality::Full, hold);
         ctx.update_screen_backdrop(&mut renderer, &scene, &output, clear, true);
     }
@@ -850,6 +854,42 @@ fn a_frame_held_for_the_cursor_alone_leaves_nothing_to_blur_later() {
         !ctx.any_stale(),
         "no reblur frame is owed for a change drawn over the glass"
     );
+}
+
+#[test]
+fn a_frame_held_for_a_commit_away_from_glass_leaves_nothing_to_blur_later() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        eprintln!("skipped: no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let mut scene = DeskScene::new();
+    let root = scene.root();
+    let desktop = scene.tree_create(root);
+    scene.rect_create(desktop, (320, 200), [1.0; 4]);
+    let windows = scene.tree_create(root);
+    let _glass = glass_window(&mut scene, &ctx, windows, (20, 20), (120, 80), None);
+    let output = test_output_of(320, 200);
+    let settings = Settings {
+        streaks: false,
+        ..Settings::default()
+    };
+    let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
+    let frame = |renderer: &mut GlesRenderer, hold: Hold| {
+        ctx.begin(&output, settings, Quality::Full, hold);
+        ctx.update_screen_backdrop(renderer, &scene, &output, clear, true);
+    };
+    frame(&mut renderer, Hold::No);
+    let away = Rectangle::new((250, 150).into(), (60, 40).into());
+    frame(&mut renderer, Hold::Keep(Under::Within(away)));
+    assert!(
+        !ctx.any_stale(),
+        "no reblur frame is owed for a commit outside every glass's reach"
+    );
+    let over = Rectangle::new((60, 60).into(), (20, 20).into());
+    frame(&mut renderer, Hold::Keep(Under::Within(over)));
+    assert!(ctx.any_stale(), "a commit under the glass waits for a blur");
 }
 
 #[test]

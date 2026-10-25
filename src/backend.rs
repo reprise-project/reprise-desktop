@@ -159,7 +159,7 @@ struct Surface {
     pointer_shown: bool,
     scene_seen: u64,
     scene_changed: bool,
-    backdrop_changed: bool,
+    backdrop_changed: crate::glass::Under,
     last_blur: Option<std::time::Instant>,
     idle_scheduled: bool,
     callback_timer: Option<RegistrationToken>,

@@ -788,15 +788,23 @@ impl State {
     }
 
     /// Ask the outputs `commit_outputs` names for a new frame for what `surface` drew, as
-    /// `redraw_content` does for every output; every output when nothing places it.
+    /// `redraw_content` does for every output; every output when nothing places it. `in_place`:
+    /// only the tree's pixels changed (`samepixels::Commit::in_place`).
     pub fn redraw_surface(
         &mut self,
         surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+        in_place: bool,
     ) {
         use crate::backend::Ask;
         let ask = match &self.cursor {
             CursorImageStatus::Surface(c) if c == surface => Ask::Cursor,
-            _ => Ask::Content,
+            _ => match in_place
+                .then(|| self.scene.surface_extents(surface))
+                .flatten()
+            {
+                Some(r) => Ask::Commit(r),
+                None => Ask::Content,
+            },
         };
         match self.commit_outputs(surface) {
             Some(outputs) => crate::backend::schedule_on(self, &outputs, ask),
@@ -1063,6 +1071,28 @@ mod tests {
     }
 
     #[test]
+    fn a_commit_that_only_redraws_a_window_asks_with_the_box_it_drew() {
+        let mut h = crate::harness::Harness::new();
+        let o = h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "video", 200, 100);
+        let client = h.state.win(t.id).expect("the window").surface;
+        let drawn = h.state.scene.extents(client).expect("the client's box");
+        crate::backend::take_asks();
+        h.draw_self(&mut c, t, 0xff40_4040);
+        assert_eq!(
+            crate::backend::take_asks(),
+            vec![(o.name(), crate::backend::Ask::Commit(drawn))]
+        );
+        h.resize_self(&mut c, t, 220, 100);
+        assert!(
+            (crate::backend::take_asks().iter())
+                .all(|(_, a)| !matches!(a, crate::backend::Ask::Commit(_))),
+            "a commit that resizes the window may change anything"
+        );
+    }
+
+    #[test]
     fn a_cursor_commit_asks_only_the_outputs_showing_the_cursor() {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
@@ -1086,7 +1116,7 @@ mod tests {
             "a zoom follows it"
         );
         crate::backend::take_asks();
-        h.state.redraw_surface(&cursor);
+        h.state.redraw_surface(&cursor, true);
         assert_eq!(
             crate::backend::take_asks(),
             vec![(b.name(), crate::backend::Ask::Cursor)],

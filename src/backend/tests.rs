@@ -61,13 +61,28 @@ fn only_pointer_asks_make_a_pointer_only_frame() {
 }
 
 #[test]
-fn only_scene_and_content_asks_may_change_what_lies_under_glass() {
-    assert!(asked(&[Ask::Content]).backdrop);
-    assert!(asked(&[Ask::Scene]).backdrop);
-    assert!(asked(&[Ask::Cursor, Ask::Content]).backdrop);
-    assert!(!asked(&[Ask::Pointer]).backdrop);
+fn only_scene_content_and_commit_asks_may_change_what_lies_under_glass() {
+    use crate::glass::Under;
+    use smithay::utils::Rectangle;
+    let drawn = Rectangle::new((10, 10).into(), (40, 30).into());
+    let under = |asks: &[Ask]| asked(asks).backdrop;
+    assert_eq!(under(&[Ask::Content]), Under::Anywhere);
+    assert_eq!(under(&[Ask::Scene]), Under::Anywhere);
+    assert_eq!(under(&[Ask::Cursor, Ask::Content]), Under::Anywhere);
+    assert_eq!(under(&[Ask::Commit(drawn), Ask::Content]), Under::Anywhere);
+    assert_eq!(
+        under(&[Ask::Pointer, Ask::Commit(drawn)]),
+        Under::Within(drawn)
+    );
+    let other = Rectangle::new((100, 50).into(), (10, 10).into());
+    assert_eq!(
+        under(&[Ask::Commit(drawn), Ask::Commit(other)]),
+        Under::Within(Rectangle::new((10, 10).into(), (100, 50).into())),
+        "two commits ask for the box around both"
+    );
+    assert_eq!(under(&[Ask::Pointer]), Under::Nothing);
     let cursor = asked(&[Ask::Cursor, Ask::Pointer]);
-    assert!(cursor.redraw && !cursor.pointer_only && !cursor.backdrop);
+    assert!(cursor.redraw && !cursor.pointer_only && cursor.backdrop == Under::Nothing);
 }
 
 #[test]

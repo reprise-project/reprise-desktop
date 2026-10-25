@@ -166,10 +166,9 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
         Reblur::Wait(wait) => Some(wait),
     };
     let backdrop_changed = std::mem::take(&mut s.backdrop_changed);
-    let glass_hold = match (hold, backdrop_changed) {
-        (None, _) => Hold::No,
-        (Some(_), true) => Hold::Changed,
-        (Some(_), false) => Hold::Unchanged,
+    let glass_hold = match hold {
+        None => Hold::No,
+        Some(_) => Hold::Keep(backdrop_changed),
     };
     glass.begin(
         &output,

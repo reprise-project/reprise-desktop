@@ -193,15 +193,34 @@ struct OutputBackdrop {
 pub enum Hold {
     #[default]
     No,
-    /// What asked for the frame may have changed what lies under glass: it waits for the next blur.
-    Changed,
-    /// Only the pointer or the cursor asked for it: nothing under glass changed.
-    Unchanged,
+    /// It keeps it; what the frame's asks changed under glass waits for the next blur.
+    Keep(Under),
 }
 
 impl Hold {
     pub fn keeps(self) -> bool {
         self != Hold::No
+    }
+}
+
+/// Where the asks for a frame may have changed what glass shows through it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Under {
+    /// Only the pointer or the cursor asked.
+    #[default]
+    Nothing,
+    /// Only a program's pixels within this box (layout) changed.
+    Within(Rectangle<i32, Logical>),
+    Anywhere,
+}
+
+impl Under {
+    pub fn and(self, other: Under) -> Under {
+        match (self, other) {
+            (Under::Nothing, u) | (u, Under::Nothing) => u,
+            (Under::Within(a), Under::Within(b)) => Under::Within(a.merge(b)),
+            _ => Under::Anywhere,
+        }
     }
 }
 
@@ -375,6 +394,22 @@ impl GlassCtx {
                 })
             })
             .collect()
+    }
+
+    /// Whether glass shown on `output` reads its backdrop within `r` (layout).
+    fn reads_within(&self, scene: &DeskScene, output: &Output, r: Rectangle<i32, Logical>) -> bool {
+        let (Some(area), Some(mode)) = (reprisescene::output_rect(output), output.current_mode())
+        else {
+            return true;
+        };
+        let Some(r) = r.intersection(area) else {
+            return false;
+        };
+        let seen = output.current_transform().transform_size(mode.size);
+        let scale = output.current_scale().fractional_scale();
+        let r = Rectangle::new(r.loc - area.loc, r.size).to_physical_precise_up(scale);
+        (self.reads_on(scene, area, seen, scale, &[]).iter())
+            .any(|reads| reads.reach.iter().any(|x| x.overlaps(r)))
     }
 
     /// The glass shown on the output at `area` that draws from a backdrop of its own, bottom
@@ -619,7 +654,12 @@ impl GlassCtx {
             && (b.hidden || (pass.hold.keeps() && b.drawn && same(b)))
         {
             // A held blur shows the picture as it was, so its backdrops need no drawing either.
-            b.skipped |= !b.hidden && pass.hold == Hold::Changed;
+            b.skipped |= !b.hidden
+                && match pass.hold {
+                    Hold::Keep(Under::Anywhere) => true,
+                    Hold::Keep(Under::Within(r)) => self.reads_within(scene, output, r),
+                    _ => false,
+                };
             *self.source.borrow_mut() = b.picture.source();
             let mut own = self.own.borrow_mut();
             for ((o, _), b) in self.beneath.borrow().iter() {

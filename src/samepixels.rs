@@ -185,7 +185,12 @@ pub struct Commit {
 
 impl Commit {
     pub fn shows_nothing_new(&self) -> bool {
-        self.pixels != Pixels::Changed && self.view_kept && self.tree_kept && self.window_kept
+        self.pixels != Pixels::Changed && self.in_place()
+    }
+
+    /// At most its pixels changed: the surface tree and its window kept their place and size.
+    pub fn in_place(&self) -> bool {
+        self.view_kept && self.tree_kept && self.window_kept
     }
 }
 
