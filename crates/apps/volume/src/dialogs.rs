@@ -278,6 +278,7 @@ mod tests {
                 key: "firefox".into(),
                 label: "Firefox".into(),
                 icon_hints: Vec::new(),
+                pids: Vec::new(),
                 binary: None,
                 streams: Vec::new(),
                 volume: 0.5,

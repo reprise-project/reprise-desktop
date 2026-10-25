@@ -91,6 +91,35 @@ impl Shell {
         Ok(())
     }
 
+    /// The icon of the window playing a sound stream; see [`crate::streamwindow`].
+    async fn window_icon(&self, pids: Vec<u32>, title: String) -> reprisebus::tray::WindowIconWire {
+        use crate::streamwindow::{lineage, read_proc};
+        let own = i32::try_from(std::process::id()).unwrap_or(0);
+        let session: Vec<i32> = lineage(own, &[], read_proc)
+            .iter()
+            .map(|s| s.host)
+            .collect();
+        let lineages = pids
+            .iter()
+            .filter_map(|&p| i32::try_from(p).ok())
+            .map(|p| lineage(p, &session, read_proc))
+            .collect();
+        let (reply, answer) = async_channel::bounded(1);
+        emit(
+            &self.events,
+            self.eventfd,
+            TrayEvent::WindowIcon {
+                lineages,
+                title,
+                reply,
+            },
+        );
+        answer
+            .recv()
+            .await
+            .unwrap_or_else(|_| reprisebus::tray::WindowIcon::wire(None))
+    }
+
     async fn tablet_pads(&self) -> Vec<reprisebus::tray::PadWire> {
         let pads = lock(&self.pads);
         pads.iter().map(reprisebus::tray::Pad::wire).collect()

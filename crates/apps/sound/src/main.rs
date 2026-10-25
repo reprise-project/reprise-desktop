@@ -433,9 +433,13 @@ impl Sound {
                 player = Some(p);
             }
         }
-        let resync = fresh.is_some() || player.is_some();
+        let landed = self.app_icons.take_landed();
+        let resync = fresh.is_some() || player.is_some() || landed;
         if let Some(p) = player {
             self.playing = p;
+        }
+        if landed && fresh.is_none() {
+            self.push_app_icons(ctx);
         }
         if let Some(snapshot) = fresh {
             self.snapshot = snapshot;
@@ -608,6 +612,7 @@ impl App for Sound {
 
     fn start(&mut self, waker: repriseapp::Waker) {
         self.waker = Some(waker.clone());
+        self.app_icons.set_waker(waker.clone());
         self.dialog_text = Some(repriseapp::start_text());
         self.asked = sheet::CLIENT;
         // The tray goes first: it takes the `reprise.sound` bus name and a
@@ -785,6 +790,7 @@ mod tests {
             key: key.into(),
             label: key.into(),
             icon_hints: vec![],
+            pids: Vec::new(),
             binary: None,
             streams: streams
                 .iter()

@@ -1,4 +1,4 @@
-//! The compositor's own tray calls on the session bus: Customize..., Identify, screen saver Preview, tablet pads, and reprise-power's critical battery turn-off.
+//! The compositor's own tray calls on the session bus: Customize..., Identify, screen saver Preview, tablet pads, the window icon a sound program borrows, and reprise-power's critical battery turn-off.
 
 pub const NAME: &str = "org.reprise.Tray";
 pub const PATH: &str = "/org/reprise/Tray";
@@ -73,6 +73,64 @@ pub fn identify(outputs: &[String]) -> zbus::Result<()> {
     Ok(())
 }
 
+/// The icon of the window a program plays sound from, as `WindowIcon` finds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WindowIcon {
+    /// A theme icon name, or an icon file's absolute path.
+    Named(String),
+    /// The window's own icon at its native size, rows of premultiplied ARGB.
+    Pixels {
+        width: u32,
+        height: u32,
+        pixels: Vec<u32>,
+    },
+}
+
+/// What `WindowIcon` answers: (name, width, height, pixels), a name for [`WindowIcon::Named`],
+/// else the pixels; all empty when no window matches.
+pub type WindowIconWire = (String, u32, u32, Vec<u32>);
+
+impl WindowIcon {
+    pub fn wire(found: Option<WindowIcon>) -> WindowIconWire {
+        match found {
+            None => (String::new(), 0, 0, Vec::new()),
+            Some(WindowIcon::Named(n)) => (n, 0, 0, Vec::new()),
+            Some(WindowIcon::Pixels {
+                width,
+                height,
+                pixels,
+            }) => (String::new(), width, height, pixels),
+        }
+    }
+
+    pub fn from_wire((name, width, height, pixels): WindowIconWire) -> Option<WindowIcon> {
+        if !name.is_empty() {
+            return Some(WindowIcon::Named(name));
+        }
+        let fits =
+            width > 0 && height > 0 && pixels.len() as u64 == u64::from(width) * u64::from(height);
+        fits.then_some(WindowIcon::Pixels {
+            width,
+            height,
+            pixels,
+        })
+    }
+}
+
+/// The icon of the window whose process is one of `pids` (host pids, best first) or an ancestor
+/// of one, else of the window titled `title`. Blocks for at most [`crate::METHOD_TIMEOUT`].
+pub fn window_icon(pids: &[u32], title: &str) -> zbus::Result<Option<WindowIcon>> {
+    let conn = crate::session()?;
+    let reply = conn.call_method(
+        Some(NAME),
+        PATH,
+        Some(INTERFACE),
+        "WindowIcon",
+        &(pids, title),
+    )?;
+    Ok(WindowIcon::from_wire(reply.body().deserialize()?))
+}
+
 /// Ask the compositor to show the screen saver `name` full screen until the next input. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn preview_screen_saver(name: &str) -> zbus::Result<()> {
     let conn = crate::session()?;
@@ -103,5 +161,26 @@ mod tests {
             keys: vec!["controlpanel".into(), "onscreen_keyboard".into()],
         };
         assert_eq!(Pad::from_wire(pad.wire()), pad);
+    }
+
+    #[test]
+    fn a_window_icon_crosses_the_bus_as_a_name_or_pixels() {
+        assert_eq!(WindowIconWire::SIGNATURE.to_string(), "(suuau)");
+        for icon in [
+            None,
+            Some(WindowIcon::Named("brave-origin".into())),
+            Some(WindowIcon::Pixels {
+                width: 2,
+                height: 1,
+                pixels: vec![0xff00_0000, 0x8080_8080],
+            }),
+        ] {
+            assert_eq!(WindowIcon::from_wire(WindowIcon::wire(icon.clone())), icon);
+        }
+        assert_eq!(
+            WindowIcon::from_wire((String::new(), 2, 2, vec![0])),
+            None,
+            "pixels short of width by height"
+        );
     }
 }

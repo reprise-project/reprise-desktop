@@ -22,6 +22,7 @@ use serde_json::Value;
 const NODE: &str = "PipeWire:Interface:Node";
 const METADATA: &str = "PipeWire:Interface:Metadata";
 const DEVICE: &str = "PipeWire:Interface:Device";
+const CLIENT: &str = "PipeWire:Interface:Client";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Device {
@@ -78,6 +79,9 @@ pub struct App {
     pub icon_hints: Vec<String>,
     /// `application.process.binary`, which a `.desktop` file's `Exec` may name when nothing else matches.
     pub binary: Option<String>,
+    /// Pids of the processes playing its streams, best first: each client's `pipewire.sec.pid`,
+    /// then `application.process.id`.
+    pub pids: Vec<u32>,
     pub streams: Vec<Stream>,
     pub volume: f64,
     pub mute: bool,
@@ -114,7 +118,7 @@ impl Store {
     }
 
     /// Apply one top-level array from `pw-dump -m`. Anything that is not an array of objects with an
-    /// `id` is ignored, as is any object that is not a node, device or metadata.
+    /// `id` is ignored, as is any object that is not a node, device, metadata or client.
     pub fn apply(&mut self, array: &Value) {
         let Some(items) = array.as_array() else {
             return;
@@ -136,7 +140,7 @@ impl Store {
                 Some(stored) => merge(stored, item),
                 None => {
                     let kind = item.get("type").and_then(Value::as_str);
-                    if matches!(kind, Some(NODE) | Some(METADATA) | Some(DEVICE)) {
+                    if matches!(kind, Some(NODE | METADATA | DEVICE | CLIENT)) {
                         self.objects.insert(id, item.clone());
                     }
                 }
@@ -174,7 +178,10 @@ impl Store {
                         Some("Audio/Sink") => &mut snap.sinks,
                         Some("Audio/Source") => &mut snap.sources,
                         Some("Stream/Output/Audio") => {
-                            add_stream(&mut snap.apps, id, object, self.shares(id));
+                            let client = number(&props["client.id"])
+                                .and_then(|c| self.objects.get(&c))
+                                .filter(|c| c["type"] == CLIENT);
+                            add_stream(&mut snap.apps, id, object, client, self.shares(id));
                             continue;
                         }
                         _ => continue,
@@ -345,7 +352,13 @@ fn device(id: u32, object: &Value) -> Device {
 }
 
 /// Fold playback stream `id` into its app. A peak meter's monitor stream is not a program and is left out.
-fn add_stream(apps: &mut Vec<App>, id: u32, object: &Value, shares: Vec<f64>) {
+fn add_stream(
+    apps: &mut Vec<App>,
+    id: u32,
+    object: &Value,
+    client: Option<&Value>,
+    shares: Vec<f64>,
+) {
     let props = &object["info"]["props"];
     let text = |key: &str| {
         props[key]
@@ -378,6 +391,7 @@ fn add_stream(apps: &mut Vec<App>, id: u32, object: &Value, shares: Vec<f64>) {
         ),
     }
     .to_lowercase();
+    let pids = stream_pids(props, client.map(|c| &c["info"]["props"]));
     let mut v = device(id, object);
     v.channels.shares = shares;
     match apps.iter_mut().find(|a| a.key == key) {
@@ -386,6 +400,11 @@ fn add_stream(apps: &mut Vec<App>, id: u32, object: &Value, shares: Vec<f64>) {
                 id,
                 channels: v.channels,
             });
+            for p in pids {
+                if !a.pids.contains(&p) {
+                    a.pids.push(p);
+                }
+            }
             a.volume = a.volume.max(v.volume);
             a.mute &= v.mute;
         }
@@ -407,6 +426,7 @@ fn add_stream(apps: &mut Vec<App>, id: u32, object: &Value, shares: Vec<f64>) {
                 key,
                 icon_hints,
                 binary,
+                pids,
                 volume: v.volume,
                 streams: vec![Stream {
                     id,
@@ -416,6 +436,26 @@ fn add_stream(apps: &mut Vec<App>, id: u32, object: &Value, shares: Vec<f64>) {
             });
         }
     }
+}
+
+/// `pipewire.sec.pid` is the socket's peer: the program for a native client, `pipewire-pulse`
+/// for a PulseAudio one. A sandboxed program reports its own pid inside the sandbox.
+fn stream_pids(props: &Value, client: Option<&Value>) -> Vec<u32> {
+    let reported = number(&props["application.process.id"])
+        .or_else(|| client.and_then(|c| number(&c["application.process.id"])));
+    let mut pids = Vec::new();
+    for p in [
+        client.and_then(|c| number(&c["pipewire.sec.pid"])),
+        reported,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if p > 0 && !pids.contains(&p) {
+            pids.push(p);
+        }
+    }
+    pids
 }
 
 fn card(id: u32, object: &Value) -> Card {
@@ -1102,20 +1142,19 @@ mod tests {
         assert_eq!(snap.default_source, None);
     }
 
-    /// Only nodes, devices and metadata are kept; the rest of the dump is never stored.
     #[test]
-    fn only_nodes_devices_and_metadata_are_stored() {
+    fn only_nodes_devices_metadata_and_clients_are_stored() {
         let store = loaded();
         assert_eq!(
             store.objects.len(),
-            5 + 4,
-            "the fixture's nodes and metadata"
+            5 + 4 + 5,
+            "the fixture's nodes, metadata and clients"
         );
         let mut store = loaded();
         store.apply(&json(
-            r#"[{"id": 900, "type": "PipeWire:Interface:Client", "info": {}}]"#,
+            r#"[{"id": 900, "type": "PipeWire:Interface:Port", "info": {}}]"#,
         ));
-        assert_eq!(store.objects.len(), 9, "a client arriving is not kept");
+        assert_eq!(store.objects.len(), 14, "a port arriving is not kept");
     }
 
     #[test]
@@ -1531,6 +1570,54 @@ mod tests {
         assert_eq!(mpv.icon_hints, ["io.mpv.Mpv", "mpv"]);
         assert_eq!(mpv.binary.as_deref(), Some("mpv"));
         assert!(mpv.mute);
+    }
+
+    fn client(id: u32, props: &str) -> String {
+        format!(
+            r#"{{ "id": {id}, "type": "PipeWire:Interface:Client", "info": {{ "props": {{ {props} }} }} }}"#
+        )
+    }
+
+    #[test]
+    fn a_stream_carries_its_clients_socket_pid_then_its_own() {
+        let mut store = Store::new();
+        store.apply(&json(&format!(
+            "[{}, {}, {}, {}, {}]",
+            client(
+                40,
+                r#""pipewire.sec.pid": 190459, "pipewire.sec.flatpak": true,
+                   "application.process.binary": "wine-preloader", "application.process.id": "327""#
+            ),
+            stream(
+                90,
+                r#""application.name": "World of Warcraft", "client.id": 40"#,
+                "[1.0]",
+                false
+            ),
+            client(41, r#""pipewire.sec.pid": 4200"#),
+            stream(
+                91,
+                r#""application.name": "Brave", "application.process.binary": "brave",
+                   "application.process.id": "4312", "client.id": "41""#,
+                "[1.0]",
+                false
+            ),
+            stream(92, r#""application.name": "Bare""#, "[1.0]", false),
+        )));
+        let pids: Vec<(String, Vec<u32>)> = store
+            .snapshot()
+            .apps
+            .into_iter()
+            .map(|a| (a.label, a.pids))
+            .collect();
+        assert_eq!(
+            pids,
+            [
+                ("Bare".into(), vec![]),
+                ("Brave".into(), vec![4200, 4312]),
+                ("World of Warcraft".into(), vec![190459, 327]),
+            ]
+        );
     }
 
     #[test]

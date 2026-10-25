@@ -100,6 +100,7 @@ mod shakeview;
 mod shmtex;
 mod shortcutinhibit;
 mod snapshot;
+mod streamwindow;
 mod surfaceproto;
 mod switcherview;
 mod tablet;

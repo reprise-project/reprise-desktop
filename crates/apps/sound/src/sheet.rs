@@ -1498,6 +1498,7 @@ mod tests {
             key: key.into(),
             label: label.into(),
             icon_hints: vec![key.into()],
+            pids: Vec::new(),
             binary: Some(key.into()),
             streams: streams
                 .iter()
