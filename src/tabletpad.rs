@@ -11,6 +11,7 @@
 //! a button bound to `mode`. The connected pads are listed in a `Shared`
 //! the settings sheet reads over D-Bus (`org.reprise.Tray.TabletPads`).
 
+use crate::mutex::lock;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -339,7 +340,7 @@ impl Pads {
 
     fn publish(&self) {
         let list = self.pads.iter().map(|p| p.info.clone()).collect();
-        *self.shared.lock().unwrap_or_else(|e| e.into_inner()) = list;
+        *lock(&self.shared) = list;
     }
 }
 
