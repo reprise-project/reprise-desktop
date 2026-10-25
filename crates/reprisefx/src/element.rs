@@ -263,6 +263,8 @@ pub struct GlassFrame<'a> {
     pub surface: Option<Surface>,
     /// The output's size in physical pixels and its scale (the streaks are fixed to it).
     pub output: Size<i32, Physical>,
+    /// Which output the frame is for: each output's damage tracker sees only that output's changes.
+    pub screen: u64,
     pub scale: f64,
     pub alpha: f32,
     pub quality: Quality,
@@ -283,15 +285,23 @@ pub struct GlassFrame<'a> {
 #[derive(Debug)]
 pub struct Glass {
     id: Id,
-    /// What changed in the element, local to its geometry: a new [`key`] or a refresh resets it (whole
-    /// element), a source's changes under the glass add to it.
-    damage: RefCell<DamageBag<i32, Physical>>,
+    /// Per [`GlassFrame::screen`]: glass on two outputs has a key on each.
+    screens: RefCell<Vec<Drawn>>,
     /// How far this glass caught up with each source's changes: the source's id and its commit.
     seen: RefCell<Vec<(u64, CommitCounter)>>,
-    key: Cell<Option<u64>>,
     stale: Rc<Cell<bool>>,
     /// [`Glass::refresh`] asked for a new blur: the next element does not hold.
     refresh: Cell<bool>,
+}
+
+/// The glass as last drawn on one output.
+#[derive(Debug)]
+struct Drawn {
+    screen: u64,
+    key: u64,
+    /// What changed in the element, local to its geometry: a new [`key`] or a refresh resets it (whole
+    /// element), a source's changes under the glass add to it.
+    damage: DamageBag<i32, Physical>,
 }
 
 impl Default for Glass {
@@ -304,9 +314,8 @@ impl Glass {
     pub fn new() -> Glass {
         Glass {
             id: Id::new(),
-            damage: RefCell::new(DamageBag::new(DAMAGE_AGE)),
+            screens: RefCell::new(Vec::new()),
             seen: RefCell::new(Vec::new()),
-            key: Cell::new(None),
             stale: Rc::new(Cell::new(false)),
             refresh: Cell::new(false),
         }
@@ -346,20 +355,31 @@ impl Glass {
         let drawn = key(f, area, plan, lift, &lenses, streaks);
         let hold = f.hold && !self.refresh.replace(false);
         let caught_up = f.source.map(|s| self.catch_up(s, area, k, bend));
-        if self.key.get() != Some(drawn) {
-            if self.key.get().is_some() {
-                self.bump();
+        let mut screens = self.screens.borrow_mut();
+        let at = match screens.iter().position(|d| d.screen == f.screen) {
+            Some(at) => at,
+            None => {
+                screens.push(Drawn {
+                    screen: f.screen,
+                    key: drawn,
+                    damage: DamageBag::new(DAMAGE_AGE),
+                });
+                screens.len() - 1
             }
-            self.key.set(Some(drawn));
+        };
+        let d = &mut screens[at];
+        if d.key != drawn {
+            d.damage.reset();
+            d.key = drawn;
         } else if let Some(Some(changed)) = caught_up {
-            self.damage.borrow_mut().add(changed);
+            d.damage.add(changed);
         } else if let Some(None) = caught_up {
-            self.bump();
+            d.damage.reset();
         }
         Some(GlassElement {
             fx: fx.clone(),
             id: self.id.clone(),
-            damage: self.damage.borrow().snapshot(),
+            damage: d.damage.snapshot(),
             key: drawn,
             geometry,
             downscale: k,
@@ -417,14 +437,12 @@ impl Glass {
         )
     }
 
-    fn bump(&self) {
-        self.damage.borrow_mut().reset();
-    }
-
     /// Blur again in the next frame, held or not: called when `blur_rate`'s cap lets a held glass catch
     /// up. Schedule a frame on the glass's outputs after it.
     pub fn refresh(&self) {
-        self.bump();
+        for d in self.screens.borrow_mut().iter_mut() {
+            d.damage.reset();
+        }
         self.refresh.set(true);
     }
 
