@@ -1162,7 +1162,12 @@ fn partial_damage_is_exact() {
         row_text(&t, 0) == "x" && cursor_row(&t) == 0
     });
     t.draw(MAIN, &mut c, &ctx);
-    assert_eq!(c.take_damage(), Some(vec![row(0)]), "only the changed row");
+    let gap = t.chrome_layout(&ctx).gap;
+    assert_eq!(
+        c.take_damage(),
+        Some(vec![row(0), gap]),
+        "only the changed row and the gap over it"
+    );
 
     t.w.tabs.current().unwrap().write(b"\n".as_slice().into());
     until("cat writes the line back", || {
@@ -1171,7 +1176,7 @@ fn partial_damage_is_exact() {
     t.draw(MAIN, &mut c, &ctx);
     assert_eq!(
         c.take_damage(),
-        Some(vec![row(0), row(1), row(2)]),
+        Some(vec![row(0), row(1), row(2), gap]),
         "the row the cursor left, the new line, the row it entered"
     );
 
@@ -1382,13 +1387,36 @@ fn release(x: i32, y: i32) -> Event {
 }
 
 #[test]
+fn the_grid_sits_a_gap_of_terminal_background_under_the_chrome_in_both_tab_modes() {
+    for caption in [false, true] {
+        let mut ctx = test_ctx();
+        let mut t = match caption {
+            true => captioned(&["cat"]),
+            false => terminal(&["cat"]),
+        };
+        t.follow_scale(MAIN, 1, &mut ctx);
+        let (w, h) = ctx.size;
+        let mut c = Canvas::new(w as u32, h as u32);
+        t.draw(MAIN, &mut c, &ctx);
+        let lay = t.chrome_layout(&ctx);
+        assert_eq!(lay.gap, Rect::new(0, lay.band, w, chrome::GRID_GAP));
+        assert_eq!(lay.grid.y, lay.gap.bottom(), "caption {caption}");
+        let bg = t.w.snap.bg;
+        let want = 0xFF00_0000 | u32::from(bg.r) << 16 | u32::from(bg.g) << 8 | u32::from(bg.b);
+        for y in lay.gap.y..lay.gap.bottom() {
+            assert_eq!(c.get(w / 2, y), want, "caption {caption}: gap row {y}");
+        }
+    }
+}
+
+#[test]
 fn in_caption_mode_the_toolbar_leads_with_new_tab_and_the_grid_takes_the_strip() {
     let mut ctx = test_ctx();
     let mut t = captioned(&["cat"]);
     t.follow_scale(MAIN, 1, &mut ctx);
     let lay = t.chrome_layout(&ctx);
     assert_eq!(lay.band, lay.toolbar.height, "no strip under the toolbar");
-    assert_eq!(lay.grid.y, lay.toolbar.height);
+    assert_eq!(lay.grid.y, lay.toolbar.height + chrome::GRID_GAP);
     assert!(matches!(
         t.w.chrome.bar.items[0],
         toolbar::Item::DropButton {

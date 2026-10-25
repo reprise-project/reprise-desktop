@@ -834,7 +834,11 @@ impl Terminal {
         let cursor = self.cursor(ctx, preedit.is_some());
         snapshot::move_cursor(&mut self.w.snap, self.w.shown, cursor);
         self.w.shown = cursor;
-        let rects = termgrid::draw(c, &self.font, &m, lay.grid, &self.w.snap, self.px);
+        let mut rects = termgrid::draw(c, &self.font, &m, lay.grid, &self.w.snap, self.px);
+        // The gap is drawn again with the first row, so it follows every alpha or scheme change.
+        if full || self.w.snap.dirty.first().copied().unwrap_or(false) {
+            rects.push(termgrid::draw_background(c, lay.gap, &self.w.snap));
+        }
         self.w.snap.dirty.fill(false);
         self.draw_menu(c, ctx);
         // No report damages the whole canvas, so an unchanged frame reports an empty rect.
@@ -884,8 +888,8 @@ impl App for Terminal {
     fn initial_size(&self) -> (i32, i32) {
         self.window.unwrap_or_else(|| {
             let m = self.metrics.1;
-            let band = chrome::band_height(&repriseapp::start_theme(), self.w.caption);
-            (OPEN_CELLS.0 * m.cell_w, OPEN_CELLS.1 * m.cell_h + band)
+            let top = chrome::grid_top(&repriseapp::start_theme(), self.w.caption);
+            (OPEN_CELLS.0 * m.cell_w, OPEN_CELLS.1 * m.cell_h + top)
         })
     }
 
