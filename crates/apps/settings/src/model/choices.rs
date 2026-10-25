@@ -185,6 +185,9 @@ pub const DRIVE_INSERTS: &Choices = &[
     ("nothing", "Do nothing"),
 ];
 
+/// Default Programs' script opening combo. Mirrors `ScriptOpen::parse` in `reprisefs::program`.
+pub const SCRIPT_OPENS: &Choices = &[("run", "Run it"), ("terminal", "Run it in the terminal")];
+
 /// Default Programs' script combo. Mirrors `ScriptEnd::parse` in `reprisefs::program`.
 pub const SCRIPT_ENDS: &Choices = &[
     ("stay", "Keep its window open"),

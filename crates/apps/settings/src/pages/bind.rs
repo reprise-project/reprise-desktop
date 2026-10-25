@@ -100,6 +100,11 @@ pub(super) fn binds() -> Vec<Bind> {
             crate::model::DRIVE_INSERTS,
         ),
         Bind::Named(
+            crate::defaultspage::SCRIPT_OPEN,
+            lens!(script_open),
+            crate::model::SCRIPT_OPENS,
+        ),
+        Bind::Named(
             crate::defaultspage::SCRIPT_END,
             lens!(script_terminal),
             crate::model::SCRIPT_ENDS,

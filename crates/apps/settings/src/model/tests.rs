@@ -602,6 +602,7 @@ fn save_round_trips_every_field() {
     let s = Settings {
         terminal: "kitty".into(),
         script_terminal: "close".into(),
+        script_open: "terminal".into(),
         task_manager: "htop".into(),
         startmenu_banner: "Reprise".into(),
         startmenu_style: "classic".into(),
@@ -1072,6 +1073,24 @@ fn the_desktop_extensions_round_trip_and_the_default_leaves_the_file() {
     let mut hide = load(&text);
     hide.desktop_extensions = "hide".into();
     assert_eq!(saved(&text, &hide), "", "the default removes the key");
+}
+
+#[test]
+fn the_script_open_round_trips_and_the_default_leaves_the_file() {
+    assert_eq!(load("").script_open, "run");
+    let foot = "terminal = \"foot\"\n";
+    let mut terminal = load(foot);
+    terminal.script_open = "terminal".into();
+    let text = saved(foot, &terminal);
+    assert_eq!(text, "terminal = \"foot\"\nscript_open = \"terminal\"\n");
+    assert_eq!(load(&text).script_open, "terminal");
+    let mut run = load(&text);
+    run.script_open = "run".into();
+    assert_eq!(
+        saved(&text, &run),
+        "terminal = \"foot\"\n",
+        "the default removes the key"
+    );
 }
 
 #[test]

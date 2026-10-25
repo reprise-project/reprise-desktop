@@ -1,5 +1,6 @@
 //! The Default Programs page: a combo per kind of program, the terminal's arguments, what a plugged-in drive does (`[drives] on_insert`),
-//! whether a script's terminal stays open when it ends (`script_terminal`),
+//! whether opening a script runs it bare or in the terminal (`script_open`), whether a script's
+//! terminal stays open when it ends (`script_terminal`),
 //! every file type with its program, a filter, and Change... and Restore Default. Defaults live in the mime-apps lists ([`reprisefs::props`]); edits wait in
 //! [`Defaults::edits`] until Apply and go to the user's `mimeapps.list`.
 
@@ -116,6 +117,8 @@ pub const TERMINAL_ARGS: &str = "dp_terminal_args";
 const TERMINAL_ARGS_LABEL: &str = "dp_terminal_args_label";
 pub const DRIVE_INSERT: &str = "dp_drive_insert";
 const DRIVE_INSERT_LABEL: &str = "dp_drive_insert_label";
+pub const SCRIPT_OPEN: &str = "dp_script_open";
+const SCRIPT_OPEN_LABEL: &str = "dp_script_open_label";
 pub const SCRIPT_END: &str = "dp_script_end";
 const SCRIPT_END_LABEL: &str = "dp_script_end_label";
 const DRIVE_LABEL_W: i32 = 140;
@@ -131,7 +134,7 @@ const LABEL_W: i32 = 96;
 const DROP_ROWS: usize = 12;
 
 pub fn list(a: Area) -> Rect {
-    Rect::new(X, 335, a.w, 105 + a.dh)
+    Rect::new(X, 358, a.w, 82 + a.dh)
 }
 pub const COLUMNS: [(&str, i32); 3] = [("Type", 90), ("Description", 140), ("Opens With", 108)];
 const RESTORE_W: i32 = 96;
@@ -191,6 +194,21 @@ pub fn page(a: Area) -> Form {
         y - 4,
         a.combo(Area::MIN.w - DRIVE_LABEL_W - 4),
         crate::model::DRIVE_INSERTS,
+    ));
+    let y = y + ROW_STEP;
+    items.push(Item::label_at(
+        SCRIPT_OPEN_LABEL,
+        X,
+        y,
+        DRIVE_LABEL_W,
+        "When a script is &opened:",
+    ));
+    items.push(crate::pages::choice(
+        SCRIPT_OPEN,
+        X + DRIVE_LABEL_W + 4,
+        y - 4,
+        a.combo(Area::MIN.w - DRIVE_LABEL_W - 4),
+        crate::model::SCRIPT_OPENS,
     ));
     let y = y + ROW_STEP;
     items.push(Item::label_at(
@@ -1052,10 +1070,12 @@ pub(crate) mod tests {
         assert_eq!(at(TERMINAL_ARGS), Rect::new(164, 228, 214, 20));
         assert_eq!(at(DRIVE_INSERT_LABEL), Rect::new(20, 255, 140, 13));
         assert_eq!(at(DRIVE_INSERT), Rect::new(164, 251, 214, 21));
-        assert_eq!(at(SCRIPT_END_LABEL), Rect::new(20, 278, 140, 13));
-        assert_eq!(at(SCRIPT_END), Rect::new(164, 274, 214, 21));
-        assert_eq!(at("dp_types_label"), Rect::new(20, 313, 120, 13));
-        assert_eq!(at(FILTER), Rect::new(228, 309, 150, 20));
+        assert_eq!(at(SCRIPT_OPEN_LABEL), Rect::new(20, 278, 140, 13));
+        assert_eq!(at(SCRIPT_OPEN), Rect::new(164, 274, 214, 21));
+        assert_eq!(at(SCRIPT_END_LABEL), Rect::new(20, 301, 140, 13));
+        assert_eq!(at(SCRIPT_END), Rect::new(164, 297, 214, 21));
+        assert_eq!(at("dp_types_label"), Rect::new(20, 336, 120, 13));
+        assert_eq!(at(FILTER), Rect::new(228, 332, 150, 20));
         assert_eq!(at(CHANGE), Rect::new(201, 446, 75, 23));
         assert_eq!(at(RESTORE), Rect::new(282, 446, 96, 23));
         assert_eq!(
@@ -1079,7 +1099,7 @@ pub(crate) mod tests {
                 (h ^ *p as u64).wrapping_mul(0x100000001b3)
             })
         }
-        let row = Rect::new(X, 274, 358, 21);
+        let row = Rect::new(X, 297, 358, 21);
         let mut got = Vec::new();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let theme = reprisekit::theme::Theme {
@@ -1121,7 +1141,7 @@ pub(crate) mod tests {
     fn the_page_draws_the_list_under_a_dropped_combo() {
         let cs = reprisekit::theme::Theme::default().colors;
         let (c, list, terminal) = drawn(false);
-        assert_eq!((list.x, list.y), (166, 335));
+        assert_eq!((list.x, list.y), (166, 358));
         let header = (list.x + 80, list.y + 6);
         let row = |r: i32| list.y + 2 + 17 + 17 * r + 8;
         let lit = |c: &reprisekit::raster::Canvas, y| {

@@ -33,7 +33,13 @@ impl SettingsApp {
     }
 
     pub(crate) fn defaults_changed(&mut self, id: &str) -> Reply {
-        if id == defaultspage::DRIVE_INSERT || id == defaultspage::SCRIPT_END {
+        if [
+            defaultspage::DRIVE_INSERT,
+            defaultspage::SCRIPT_OPEN,
+            defaultspage::SCRIPT_END,
+        ]
+        .contains(&id)
+        {
             pages::read_one(&self.sheet, id, &mut self.want);
             self.sync_apply();
             return Reply::redraw();
