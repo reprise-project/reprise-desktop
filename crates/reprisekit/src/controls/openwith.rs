@@ -3,10 +3,10 @@ use crate::access::{
     accesskit::{NodeId, Role},
 };
 use crate::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H, draw_focus_ring, draw_label};
-use crate::controls::form;
 use crate::controls::grouplist::{self, GroupList, Row};
 use crate::controls::metrics::ControlMetrics;
 use crate::controls::scrollbar::ThumbDrag;
+use crate::controls::{form, label_rect};
 use crate::cues::Cues;
 use crate::look::Paint;
 use crate::look::widgets::{
@@ -151,12 +151,6 @@ pub fn icon_name(row: &Row<Program>) -> Option<&str> {
         Row::Group(_) => Some(FOLDER_ICON),
         Row::Item { data, .. } => data.icon.as_deref(),
     }
-}
-
-/// The label's width was set at the device font size, so only its
-/// position and height scale.
-fn label_rect(r: Rect, s: i32) -> Rect {
-    Rect::new(r.x * s, r.y * s, r.width, r.height * s)
 }
 
 fn redraw_if(changed: bool) -> Event {

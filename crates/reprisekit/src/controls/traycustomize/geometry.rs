@@ -391,12 +391,6 @@ pub(super) fn rows_in(h: i32, line_h: i32) -> i32 {
     ((h + line_h / 2) / line_h).max(1)
 }
 
-/// A label's layout rect on the device: its width was measured at the
-/// device font size, so only the position and height scale.
-pub(super) fn label_rect(r: Rect, s: i32) -> Rect {
-    Rect::new(r.x * s, r.y * s, r.width, r.height * s)
-}
-
 impl TrayCustomize {
     /// Where the parts go, grown by `metrics.text`: Classic's after its intro's lines and
     /// Restore Defaults' label as [`TrayCustomize::fit`] wrapped and sized them.
