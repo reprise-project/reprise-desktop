@@ -403,7 +403,7 @@ impl State {
                     state
                         .scene
                         .set_opacity(node, (step as f32 / FADE_STEPS as f32).min(1.0));
-                    state.redraw_all();
+                    state.redraw_nodes(Vec::new(), &[node.into()]);
                     if step < FADE_STEPS {
                         return TimeoutAction::ToDuration(FADE_TICK);
                     }
@@ -441,8 +441,9 @@ impl State {
         }
         v.backdrop
             .set(&mut self.scene, &self.glass, v.glass_tree, None);
+        let was = self.scene.outputs_of(v.tree);
         self.scene.destroy(v.tree);
-        self.redraw_all();
+        self.redraw_nodes(was, &[]);
         crate::access::touch(self);
     }
 
