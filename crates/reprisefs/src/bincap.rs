@@ -1,6 +1,7 @@
 //! The Recycle Bin's settings (`[recycle_bin]` in `config.toml`): per-drive trash or
 //! remove-immediately, and the trash size cap.
 
+use reprisebus::mutex::lock;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -132,15 +133,11 @@ static CONFIG_PATH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(No
 
 #[doc(hidden)]
 pub fn set_config_path(path: Option<PathBuf>) {
-    *CONFIG_PATH.lock().unwrap_or_else(|e| e.into_inner()) = path;
+    *lock(&CONFIG_PATH) = path;
 }
 
 pub fn config_path() -> PathBuf {
-    if let Some(path) = CONFIG_PATH
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-    {
+    if let Some(path) = lock(&CONFIG_PATH).clone() {
         return path;
     }
     crate::autostart::config_home()
@@ -359,7 +356,7 @@ pub fn used(root: &Path) -> u64 {
     let Some(now) = stamp(root) else {
         return 0;
     };
-    let mut totals = TOTALS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut totals = lock(&TOTALS);
     if let Some(&(was, total)) = totals.get_or_insert_default().get(root)
         && was == now
     {
@@ -375,9 +372,7 @@ fn remember(root: &Path, total: u64) {
     let Some(now) = stamp(root) else {
         return;
     };
-    TOTALS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+    lock(&TOTALS)
         .get_or_insert_default()
         .insert(root.to_path_buf(), (now, total));
 }

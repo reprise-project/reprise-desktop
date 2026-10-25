@@ -10,6 +10,7 @@
 //! helper only on OK, with the password: hanging up at the password prompt (Cancel) fails PAM
 //! and pam_faillock counts it against the account.
 
+use reprisebus::mutex::lock;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -203,7 +204,7 @@ enum StopState {
 
 impl Stop {
     fn on_stop(&self, f: Box<dyn FnOnce() + Send>) {
-        let mut s = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut s = lock(&self.0);
         if matches!(*s, StopState::Fired) {
             drop(s);
             f();
@@ -213,17 +214,11 @@ impl Stop {
     }
 
     fn stopped(&self) -> bool {
-        matches!(
-            *self.0.lock().unwrap_or_else(|e| e.into_inner()),
-            StopState::Fired
-        )
+        matches!(*lock(&self.0), StopState::Fired)
     }
 
     fn fire(&self) {
-        let prev = std::mem::replace(
-            &mut *self.0.lock().unwrap_or_else(|e| e.into_inner()),
-            StopState::Fired,
-        );
+        let prev = std::mem::replace(&mut *lock(&self.0), StopState::Fired);
         if let StopState::Hooked(f) = prev {
             f();
         }

@@ -4,6 +4,7 @@
 //! names in its `uuid-...` or `label-...` tree, the rest in `root`. Numbers in both files are
 //! big-endian. Writes go through gvfsd-metadata on the session bus, which owns the files.
 
+use reprisebus::mutex::lock;
 use std::collections::{BTreeSet, HashMap};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
@@ -126,7 +127,7 @@ impl Changes {
             changed: Mutex::default(),
             wake: Box::new(wake),
         });
-        let mut all = LISTENERS.lock().unwrap_or_else(|e| e.into_inner());
+        let mut all = lock(&LISTENERS);
         all.retain(|w| w.strong_count() > 0);
         all.push(Arc::downgrade(&l));
         drop(all);
@@ -146,7 +147,7 @@ impl Changes {
     }
 
     pub fn take(&self) -> BTreeSet<PathBuf> {
-        std::mem::take(&mut self.0.changed.lock().unwrap_or_else(|e| e.into_inner()))
+        std::mem::take(&mut lock(&self.0.changed))
     }
 }
 
@@ -167,12 +168,12 @@ fn listen() -> zbus::Result<()> {
         let Some(file) = file_of(&tree, &path, home().as_deref(), &drive_mount) else {
             continue;
         };
-        let live: Vec<Arc<Listener>> = (LISTENERS.lock().unwrap_or_else(|e| e.into_inner()))
+        let live: Vec<Arc<Listener>> = (lock(&LISTENERS))
             .iter()
             .filter_map(std::sync::Weak::upgrade)
             .collect();
         for l in live {
-            let mut changed = l.changed.lock().unwrap_or_else(|e| e.into_inner());
+            let mut changed = lock(&l.changed);
             changed.insert(file.clone());
             drop(changed);
             (l.wake)();
@@ -304,14 +305,14 @@ static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
 
 /// Drops tree `tree`'s read, so the next lookup reads it again.
 fn forget(tree: &Path) {
-    if let Some(cache) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+    if let Some(cache) = lock(&CACHE).as_mut() {
         cache.remove(tree);
     }
 }
 
 /// Tree file `tree` and its journal, read again once [`FRESH`] has passed.
 fn load(tree: &Path) -> Option<Loaded> {
-    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cache = lock(&CACHE);
     let cache = cache.get_or_insert_with(HashMap::new);
     if let Some((at, db)) = cache.get(tree)
         && at.elapsed() < FRESH

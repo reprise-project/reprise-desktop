@@ -2,6 +2,7 @@
 //! never an answer. Unsandboxed clients send an empty app id and share the "" slot.
 
 use crate::wayland::Target;
+use reprisebus::mutex::lock;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -48,7 +49,7 @@ pub fn save(app_id: &str, t: &Target) {
 static SAVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn save_to(p: &Path, app_id: &str, t: &Target) {
-    let _held = SAVE.lock().unwrap_or_else(|e| e.into_inner());
+    let _held = lock(&SAVE);
     let mut map = read(p);
     map.insert(app_id.to_string(), encode(t));
     let text = match toml::to_string(&map) {

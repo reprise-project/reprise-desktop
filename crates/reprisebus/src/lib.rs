@@ -21,6 +21,7 @@
 //! The last six share a program's one blocking session bus connection
 //! ([`session`]), as does [`units`], which lists the programs the systemd user
 //! manager starts with the session.
+//! [`mutex`] locks a mutex even when its holder panicked.
 
 pub mod a11y;
 pub mod appearance;
@@ -29,12 +30,14 @@ pub mod fprint;
 pub mod instance;
 pub mod journal;
 pub mod launcher;
+pub mod mutex;
 pub mod notify;
 pub mod permissions;
 pub mod polkit;
 pub mod tray;
 pub mod units;
 
+use crate::mutex::lock;
 use futures_util::future::ready;
 use futures_util::stream::{BoxStream, SelectAll, StreamExt};
 use std::sync::Mutex;
@@ -49,7 +52,7 @@ pub const METHOD_TIMEOUT: Duration = Duration::from_secs(5);
 /// finds the bus.
 pub fn session() -> zbus::Result<zbus::blocking::Connection> {
     static SESSION: Mutex<Option<zbus::blocking::Connection>> = Mutex::new(None);
-    let mut conn = SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    let mut conn = lock(&SESSION);
     if let Some(c) = conn.as_ref() {
         return Ok(c.clone());
     }

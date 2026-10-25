@@ -1,6 +1,7 @@
 //! A folder listing read on a thread, so a mount that stopped answering hangs the read and never
 //! the program's loop. The loop waits a moment for it, else takes it once the thread wakes it.
 
+use reprisebus::mutex::lock;
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Mutex, MutexGuard};
@@ -97,7 +98,7 @@ impl Pool {
     }
 
     fn lock(&self) -> MutexGuard<'_, PoolState> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        lock(&self.state)
     }
 
     /// Another read may start now.

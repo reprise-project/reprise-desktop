@@ -8,6 +8,7 @@
 
 use crate::apps::MimeDb;
 use crate::{hidden, locale, places, props, recent};
+use reprisebus::mutex::lock;
 use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -108,7 +109,7 @@ struct Stuck {
 }
 
 fn stuck() -> MutexGuard<'static, Stuck> {
-    STUCK.lock().unwrap_or_else(|e| e.into_inner())
+    lock(&STUCK)
 }
 
 fn folder_of(link: &Path) -> PathBuf {
@@ -134,7 +135,7 @@ impl Relist {
             due: Mutex::default(),
             wake: Box::new(wake),
         });
-        let mut all = RELISTS.lock().unwrap_or_else(|e| e.into_inner());
+        let mut all = lock(&RELISTS);
         all.retain(|w| w.strong_count() > 0);
         all.push(Arc::downgrade(&l));
         Relist(l)
@@ -142,7 +143,7 @@ impl Relist {
 
     /// The folders due a fresh listing since the last take.
     pub fn take(&self) -> BTreeSet<PathBuf> {
-        std::mem::take(&mut self.0.due.lock().unwrap_or_else(|e| e.into_inner()))
+        std::mem::take(&mut lock(&self.0.due))
     }
 }
 
@@ -150,14 +151,12 @@ fn relist(dirs: BTreeSet<PathBuf>) {
     if dirs.is_empty() {
         return;
     }
-    let live: Vec<Arc<Listener>> = RELISTS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+    let live: Vec<Arc<Listener>> = lock(&RELISTS)
         .iter()
         .filter_map(std::sync::Weak::upgrade)
         .collect();
     for l in live {
-        let mut due = l.due.lock().unwrap_or_else(|e| e.into_inner());
+        let mut due = lock(&l.due);
         due.extend(dirs.iter().cloned());
         drop(due);
         (l.wake)();

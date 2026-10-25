@@ -1,6 +1,7 @@
 //! Files handed between programs through the document portal's FileTransfer, which is how a
 //! drag of files reaches a sandboxed (Flatpak) program.
 
+use crate::mutex::lock;
 use std::fs::{File, OpenOptions};
 use std::os::fd::OwnedFd;
 use std::os::unix::fs::OpenOptionsExt;
@@ -114,7 +115,7 @@ enum Link {
 static LINK: Mutex<Link> = Mutex::new(Link::Down(None));
 
 fn link() -> MutexGuard<'static, Link> {
-    LINK.lock().unwrap_or_else(|e| e.into_inner())
+    lock(&LINK)
 }
 
 fn ready() -> Option<FileTransfer> {
@@ -181,10 +182,6 @@ struct Sent {
     requests: usize,
     /// The drag ended: a key registered after this is stopped at once.
     closed: bool,
-}
-
-fn lock(sent: &Mutex<Sent>) -> MutexGuard<'_, Sent> {
-    sent.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 impl Transfers {
