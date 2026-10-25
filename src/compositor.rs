@@ -802,7 +802,11 @@ impl State {
                 .then(|| self.scene.surface_extents(surface))
                 .flatten()
             {
-                Some(r) => Ask::Commit(r),
+                Some(r) => Ask::Commit(crate::glass::Drawn {
+                    r,
+                    window: (self.scene.surface_node(surface))
+                        .and_then(|n| crate::glass::anchor(&self.scene, n.into())),
+                }),
                 None => Ask::Content,
             },
         };
@@ -1071,13 +1075,17 @@ mod tests {
     }
 
     #[test]
-    fn a_commit_that_only_redraws_a_window_asks_with_the_box_it_drew() {
+    fn a_commit_that_only_redraws_a_window_asks_with_the_box_it_drew_and_its_window() {
         let mut h = crate::harness::Harness::new();
         let o = h.output("TEST-1", 1024, 768);
         let mut c = h.connect();
         let t = h.map_toplevel(&mut c, "video", 200, 100);
-        let client = h.state.win(t.id).expect("the window").surface;
-        let drawn = h.state.scene.extents(client).expect("the client's box");
+        let w = h.state.win(t.id).expect("the window");
+        let (client, tree) = (w.surface, w.tree);
+        let drawn = crate::glass::Drawn {
+            r: h.state.scene.extents(client).expect("the client's box"),
+            window: Some(tree.into()),
+        };
         crate::backend::take_asks();
         h.draw_self(&mut c, t, 0xff40_4040);
         assert_eq!(

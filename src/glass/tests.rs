@@ -881,15 +881,65 @@ fn a_frame_held_for_a_commit_away_from_glass_leaves_nothing_to_blur_later() {
         ctx.update_screen_backdrop(renderer, &scene, &output, clear, true);
     };
     frame(&mut renderer, Hold::No);
-    let away = Rectangle::new((250, 150).into(), (60, 40).into());
+    let away = Drawn {
+        r: Rectangle::new((250, 150).into(), (60, 40).into()),
+        window: None,
+    };
     frame(&mut renderer, Hold::Keep(Under::Within(away)));
     assert!(
         !ctx.any_stale(),
         "no reblur frame is owed for a commit outside every glass's reach"
     );
-    let over = Rectangle::new((60, 60).into(), (20, 20).into());
+    let over = Drawn {
+        r: Rectangle::new((60, 60).into(), (20, 20).into()),
+        window: None,
+    };
     frame(&mut renderer, Hold::Keep(Under::Within(over)));
     assert!(ctx.any_stale(), "a commit under the glass waits for a blur");
+}
+
+#[test]
+fn a_frame_held_for_a_commit_in_a_glass_window_owes_a_blur_only_to_other_glass() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        eprintln!("skipped: no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let mut scene = DeskScene::new();
+    let root = scene.root();
+    let desktop = scene.tree_create(root);
+    scene.rect_create(desktop, (320, 200), [1.0; 4]);
+    let windows = scene.tree_create(root);
+    let (video, _glass) = glass_window(&mut scene, &ctx, windows, (20, 20), (120, 80), None);
+    let output = test_output_of(320, 200);
+    let settings = Settings {
+        streaks: false,
+        ..Settings::default()
+    };
+    let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
+    let frame = |renderer: &mut GlesRenderer, scene: &DeskScene, hold: Hold| {
+        ctx.begin(&output, settings, Quality::Full, hold);
+        ctx.update_screen_backdrop(renderer, scene, &output, clear, true);
+    };
+    let inside = Drawn {
+        r: Rectangle::new((40, 40).into(), (80, 40).into()),
+        window: Some(video.into()),
+    };
+    frame(&mut renderer, &scene, Hold::No);
+    frame(&mut renderer, &scene, Hold::Keep(Under::Within(inside)));
+    assert!(
+        !ctx.any_stale(),
+        "the window's own glass shows its program at the next blur"
+    );
+    let (_above, _glass_above) =
+        glass_window(&mut scene, &ctx, windows, (100, 30), (120, 80), None);
+    frame(&mut renderer, &scene, Hold::No);
+    frame(&mut renderer, &scene, Hold::Keep(Under::Within(inside)));
+    assert!(
+        ctx.any_stale(),
+        "glass of another window over the commit waits for a blur"
+    );
 }
 
 #[test]
