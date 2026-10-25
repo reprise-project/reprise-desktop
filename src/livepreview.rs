@@ -386,7 +386,12 @@ impl State {
                 transparency: false,
                 ..config.glass
             };
-            glass.begin(o, settings, reprisefx::Quality::default(), false);
+            glass.begin(
+                o,
+                settings,
+                reprisefx::Quality::default(),
+                crate::glass::Hold::No,
+            );
         }
         let mut drew = false;
         for sheet in live_previews.sheets.iter_mut() {

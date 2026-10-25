@@ -123,7 +123,12 @@ impl State {
                 transparency: false,
                 ..config.glass
             };
-            glass.begin(o, settings, reprisefx::Quality::default(), false);
+            glass.begin(
+                o,
+                settings,
+                reprisefx::Quality::default(),
+                crate::glass::Hold::No,
+            );
         }
         let view = View::new(
             Rectangle::new((rect.x, rect.y).into(), (rect.width, rect.height).into()),

@@ -61,6 +61,16 @@ fn only_pointer_asks_make_a_pointer_only_frame() {
 }
 
 #[test]
+fn only_scene_and_content_asks_may_change_what_lies_under_glass() {
+    assert!(asked(&[Ask::Content]).backdrop);
+    assert!(asked(&[Ask::Scene]).backdrop);
+    assert!(asked(&[Ask::Cursor, Ask::Content]).backdrop);
+    assert!(!asked(&[Ask::Pointer]).backdrop);
+    let cursor = asked(&[Ask::Cursor, Ask::Pointer]);
+    assert!(cursor.redraw && !cursor.pointer_only && !cursor.backdrop);
+}
+
+#[test]
 fn a_frame_resets_the_asks() {
     let mut a = asked(&[Ask::Content]);
     a.redraw = false;

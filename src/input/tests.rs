@@ -16,7 +16,7 @@ fn a_named_cursor_change_asks_only_the_outputs_showing_the_cursor() {
     h.state.set_cursor("move");
     assert_eq!(
         crate::backend::take_asks(),
-        vec![("TEST-2".to_string(), crate::backend::Ask::Content)],
+        vec![("TEST-2".to_string(), crate::backend::Ask::Cursor)],
         "only the zoomed TEST-2 follows the cursor; no output has drawn it yet"
     );
 }

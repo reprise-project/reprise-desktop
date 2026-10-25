@@ -787,10 +787,13 @@ impl State {
         &mut self,
         surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
     ) {
+        use crate::backend::Ask;
+        let ask = match &self.cursor {
+            CursorImageStatus::Surface(c) if c == surface => Ask::Cursor,
+            _ => Ask::Content,
+        };
         match self.commit_outputs(surface) {
-            Some(outputs) => {
-                crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Content)
-            }
+            Some(outputs) => crate::backend::schedule_on(self, &outputs, ask),
             None => self.redraw_content(),
         }
     }
@@ -815,7 +818,7 @@ impl State {
     /// Ask the outputs showing the cursor for a frame with its new image.
     pub fn redraw_cursor(&mut self) {
         let outputs = crate::backend::cursor_outputs(self);
-        crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Content);
+        crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Cursor);
     }
 
     /// Ask for a new frame for where the pointer went, when nothing else
@@ -1073,8 +1076,15 @@ mod tests {
         h.state.cursor = CursorImageStatus::Surface(cursor.clone());
         assert_eq!(
             h.state.commit_outputs(&cursor),
-            Some(vec![b]),
+            Some(vec![b.clone()]),
             "a zoom follows it"
+        );
+        crate::backend::take_asks();
+        h.state.redraw_surface(&cursor);
+        assert_eq!(
+            crate::backend::take_asks(),
+            vec![(b.name(), crate::backend::Ask::Cursor)],
+            "a new cursor image changes nothing under glass"
         );
         h.state.cursor = CursorImageStatus::default_named();
         smithay::wayland::compositor::give_role(&cursor, smithay::wayland::seat::CURSOR_IMAGE_ROLE)

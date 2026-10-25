@@ -22,6 +22,7 @@ use smithay::{
 use crate::{
     compositor::State,
     framepace::Done,
+    glass::Hold,
     reblur::Reblur,
     render::{OutputElement, Parts},
 };
@@ -164,11 +165,17 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
         }
         Reblur::Wait(wait) => Some(wait),
     };
+    let backdrop_changed = std::mem::take(&mut s.backdrop_changed);
+    let glass_hold = match (hold, backdrop_changed) {
+        (None, _) => Hold::No,
+        (Some(_), true) => Hold::Changed,
+        (Some(_), false) => Hold::Unchanged,
+    };
     glass.begin(
         &output,
         config.glass,
         crate::glass::quality(interaction, &config.glass),
-        hold.is_some(),
+        glass_hold,
     );
     let clear = crate::render::clear_color(&config.theme.colors);
     let filter = crate::magnifier::filter_matrix(&config.accessibility);
