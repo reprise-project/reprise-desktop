@@ -260,18 +260,7 @@ pub(crate) fn app_icon_waiting(
     app_id: &str,
     px: i32,
 ) -> (Option<Arc<Canvas>>, Option<String>) {
-    if app_id.is_empty() {
-        return (None, None);
-    }
-    // The app id is a client-chosen string used as a theme icon name; one
-    // with a path separator would be taken for a file path, so it only
-    // ever goes through the `.desktop` match below.
-    if !app_id.contains('/')
-        && let Some(c) = icons.get_shared(app_id, px)
-    {
-        return (Some(c), None);
-    }
-    let Some(name) = reprisefs::apps::icon_for_app_id(index, app_id) else {
+    let Some(name) = app_icon_name(icons, index, app_id, px) else {
         return (None, None);
     };
     match icons.get_unread(name, px) {
@@ -281,6 +270,25 @@ pub(crate) fn app_icon_waiting(
             Some(name.to_string()),
         ),
     }
+}
+
+/// The theme icon name or icon file [`app_icon`] draws for `app_id`.
+pub(crate) fn app_icon_name<'a>(
+    icons: &mut IconCache,
+    index: &'a [reprisefs::apps::AppEntry],
+    app_id: &'a str,
+    px: i32,
+) -> Option<&'a str> {
+    if app_id.is_empty() {
+        return None;
+    }
+    // The app id is a client-chosen string used as a theme icon name; one
+    // with a path separator would be taken for a file path, so it only
+    // ever goes through the `.desktop` match below.
+    if !app_id.contains('/') && icons.get_shared(app_id, px).is_some() {
+        return Some(app_id);
+    }
+    reprisefs::apps::icon_for_app_id(index, app_id)
 }
 
 /// A Quick Launch item's or pin's icon at `px`, its file never read on the loop.
