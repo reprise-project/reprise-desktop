@@ -1018,3 +1018,28 @@ fn a_keyboard_size_of_a_snapped_windows_outer_edge_takes_it_out_of_its_group() {
         "out of its group, as a pointer size of that edge"
     );
 }
+
+#[test]
+fn the_snap_outline_asks_for_frames_only_on_its_output() {
+    for look in ["classic", "glass"] {
+        let text = format!("[appearance]\ninterface = \"{look}\"\n");
+        let mut h =
+            crate::harness::Harness::with_config(crate::config::Config::parse(&text).unwrap());
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        for (what, target) in [
+            ("show", Some(Rect::new(0, 0, 512, 768))),
+            ("move", Some(Rect::new(512, 0, 512, 768))),
+            ("hide", None),
+        ] {
+            crate::backend::take_asks();
+            h.state.show_snap_outline(target);
+            let asked = crate::backend::take_asks();
+            assert!(!asked.is_empty(), "{look} {what}: a frame is asked");
+            assert!(
+                asked.iter().all(|(o, _)| o == "TEST-1"),
+                "{look} {what}: only TEST-1: {asked:?}"
+            );
+        }
+    }
+}
