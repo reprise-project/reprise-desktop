@@ -1,6 +1,7 @@
 //! The freedesktop trash: `$XDG_DATA_HOME/Trash` and per-drive `$topdir/.Trash/$uid` or
 //! `.Trash-$uid` ([`Bins`]). Per-drive rules and caps are [`crate::bincap`]'s.
 
+use reprisebus::mutex::lock;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::os::unix::ffi::OsStrExt;
@@ -159,7 +160,7 @@ static MOUNT_TABLE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(No
 /// at a temp dir: `/dev/null` keeps the real drives' trashes out.
 #[doc(hidden)]
 pub fn set_mount_table(table: Option<PathBuf>) {
-    *MOUNT_TABLE.lock().unwrap_or_else(|e| e.into_inner()) = table;
+    *lock(&MOUNT_TABLE) = table;
 }
 
 static HOME_TRASH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
@@ -168,18 +169,16 @@ static HOME_TRASH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(Non
 /// `$XDG_DATA_HOME` again), for tests that cannot change the environment.
 #[doc(hidden)]
 pub fn set_home_trash(root: Option<PathBuf>) {
-    *HOME_TRASH.lock().unwrap_or_else(|e| e.into_inner()) = root;
+    *lock(&HOME_TRASH) = root;
 }
 
 impl Bins {
     pub fn system() -> Option<Bins> {
-        let file = MOUNT_TABLE
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        let file = lock(&MOUNT_TABLE)
             .clone()
             .unwrap_or_else(|| PathBuf::from("/proc/self/mounts"));
         let table = std::fs::read(file).unwrap_or_default();
-        let home = HOME_TRASH.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let home = lock(&HOME_TRASH).clone();
         let mut bins = Bins::from_table(home.or_else(places::trash_root)?, &table);
         bins.policy = Policy::load();
         Some(bins)

@@ -28,6 +28,7 @@ mod shortcutconf;
 mod wayland;
 
 use cast::Cast;
+use reprisebus::mutex::lock;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -78,7 +79,7 @@ static CAST_TURN: Mutex<()> = Mutex::new(());
 /// that ends a cast comes through here so none of them stalls zbus.
 async fn stop_cast(c: Cast) {
     blocking::unblock(move || {
-        let _turn = CAST_TURN.lock().unwrap_or_else(|e| e.into_inner());
+        let _turn = lock(&CAST_TURN);
         c.stop()
     })
     .await;
@@ -468,7 +469,7 @@ pub(crate) async fn pick_and_cast(
     let mode = cursor_mode_for(cursor_mode, &target);
     let t2 = target.clone();
     let cast = match blocking::unblock(move || {
-        let _turn = CAST_TURN.lock().unwrap_or_else(|e| e.into_inner());
+        let _turn = lock(&CAST_TURN);
         Cast::start(t2, mode)
     })
     .await

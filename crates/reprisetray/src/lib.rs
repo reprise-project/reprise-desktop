@@ -5,6 +5,7 @@
 //! drains [`Msg`]s on every wake. Row meaning, icon art and click handling stay with the applet.
 
 use futures_util::stream::StreamExt;
+use reprisebus::mutex::lock;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -235,7 +236,7 @@ impl TrayHandle {
     /// What a second instance handed over before its raise, or a balloon click left, once; for the
     /// `Reply::activate` of the window the raise shows.
     pub fn take_handoff(&self) -> Option<Handoff> {
-        self.token.lock().unwrap_or_else(|e| e.into_inner()).take()
+        lock(&self.token).take()
     }
 
     /// The token [`TrayHandle::take_handoff`] would give, for a window another process opens.
@@ -297,14 +298,14 @@ impl Shared {
     }
 
     fn with<R>(&self, f: impl FnOnce(&State) -> R) -> R {
-        f(&self.state.lock().unwrap_or_else(|e| e.into_inner()))
+        f(&lock(&self.state))
     }
 }
 
 /// A token on its own (the tray host's `ProvideXdgActivationToken`, a balloon click) came from a
 /// pointer: it drops an earlier by-key mark.
 fn hand_token(handoff: &Token, token: String) {
-    *handoff.lock().unwrap_or_else(|e| e.into_inner()) = Some(Handoff {
+    *lock(handoff) = Some(Handoff {
         token: Some(token),
         by_key: false,
     });
@@ -316,8 +317,7 @@ struct Handoffs(Token);
 #[zbus::interface(name = "org.reprise.TrayItem")]
 impl Handoffs {
     fn provide_platform_data(&self, platform_data: HashMap<String, OwnedValue>) {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(Handoff::from_platform_data(&platform_data));
+        *lock(&self.0) = Some(Handoff::from_platform_data(&platform_data));
     }
 }
 
@@ -548,7 +548,7 @@ async fn activate_existing(conn: &Connection, config: &Config) {
 
 async fn publish(conn: &Connection, state: &Arc<Mutex<State>>) {
     let (revision, active) = {
-        let s = state.lock().unwrap_or_else(|e| e.into_inner());
+        let s = lock(state);
         (s.revision, s.shown.active)
     };
     if let Ok(item) = conn.object_server().interface::<_, Item>(ITEM_PATH).await {
@@ -753,7 +753,7 @@ async fn run(conn: Connection, shared: Shared, commands: async_channel::Receiver
         match wake {
             Wakeup::Cmd(Cmd::Set(shown)) => {
                 {
-                    let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut s = lock(&state);
                     s.shown = shown;
                     s.revision = s.revision.wrapping_add(1);
                 }

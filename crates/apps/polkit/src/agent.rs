@@ -4,6 +4,7 @@
 //! `CancelAuthentication` gets through. Dismissed prompts are kept for
 //! [`reprisebus::polkit::dismissed`] on the session bus.
 
+use reprisebus::mutex::lock;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -155,10 +156,6 @@ impl Dismissed {
 }
 
 type Dismissals = Arc<Mutex<Dismissed>>;
-
-fn lock(d: &Dismissals) -> std::sync::MutexGuard<'_, Dismissed> {
-    d.lock().unwrap_or_else(|e| e.into_inner())
-}
 
 struct Agent {
     tx: Sender<Msg>,

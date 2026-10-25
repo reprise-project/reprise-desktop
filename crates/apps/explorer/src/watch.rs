@@ -7,6 +7,7 @@
 
 use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask, Watches};
 use repriseapp::Waker;
+use reprisebus::mutex::lock;
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -154,13 +155,13 @@ impl Watch {
                 let mut buf = [0u8; 4096];
                 let mut last_wake: Option<Instant> = None;
                 let note = |events: inotify::Events| {
-                    let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut seen = lock(&seen);
                     events.fold(false, |any, e| seen.note(&e) | any)
                 };
                 loop {
                     #[cfg(test)]
                     {
-                        let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut seen = lock(&seen);
                         let fence = &mut seen.fence;
                         fence.passed |= std::mem::take(&mut fence.read);
                     }
@@ -202,7 +203,7 @@ impl Watch {
     }
 
     fn shared(&self) -> std::sync::MutexGuard<'_, Shared> {
-        self.shared.lock().unwrap_or_else(|e| e.into_inner())
+        lock(&self.shared)
     }
 
     /// Watch `dir` instead of whatever was being watched, and notice it or a folder above it

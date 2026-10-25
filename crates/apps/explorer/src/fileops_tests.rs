@@ -5,6 +5,7 @@ use crate::commands::Command;
 use crate::dialogs::Dialog;
 use crate::place::Place;
 use crate::tests::test_ctx;
+use reprisebus::mutex::lock;
 use reprisefs::apps::AppEntry;
 use reprisefs::sendto::SendToRow;
 use std::ffi::OsString;
@@ -144,7 +145,7 @@ impl Drop for DataHome {
 /// scratch home, no drives' trashes and default settings, whatever the developer's own are.
 #[test]
 fn a_test_without_a_data_home_gets_the_scratch_bin() {
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     test_ctx();
     let bins = reprisefs::trash::Bins::system().expect("a bin");
     let scratch =
@@ -174,7 +175,7 @@ impl Drop for Mode0700 {
 /// The tree menu's Delete, Cut and Copy take the node's folder, not the file selected in the view.
 #[test]
 fn the_tree_menus_file_rows_take_the_node() {
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::Builder::new()
         .prefix("treemenu")
         .tempdir()
@@ -209,7 +210,7 @@ fn the_tree_menus_file_rows_take_the_node() {
 #[test]
 fn a_delete_prompt_has_the_prompt_caption() {
     use repriseapp::Caption;
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(dir.path().join("a.txt"), "1").expect("write");
     let mut ctx = test_ctx();
@@ -248,7 +249,7 @@ fn enter() -> repriseapp::Event {
 /// Right moves the delete prompt's focus from Yes to No, and Enter presses No: the prompt closes, the file stays.
 #[test]
 fn an_arrow_moves_the_delete_prompt_s_focus_and_enter_presses_it() {
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(dir.path().join("a.txt"), "1").expect("write");
     let mut ctx = test_ctx();
@@ -295,7 +296,7 @@ fn the_tree_menus_file_rows_skip_a_drive() {
 
 #[test]
 fn delete_trashes_the_selection_and_undo_restores_it() {
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let _data_home = DataHome::set(home.path());
     let dir = home.path().join("folder");
@@ -336,7 +337,7 @@ fn delete_trashes_the_selection_and_undo_restores_it() {
 /// that item's Undo leaves the stack with it instead of failing on the erased one.
 #[test]
 fn a_delete_that_purges_the_bin_drops_the_purged_items_undo() {
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let data_home = DataHome::set(home.path());
     data_home.recycle_bin("max_percent = 1\n");
@@ -374,7 +375,7 @@ fn a_delete_that_purges_the_bin_drops_the_purged_items_undo() {
 #[test]
 fn an_item_too_big_for_the_bin_asks_to_be_deleted_for_good() {
     use reprisekit::controls::form;
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let data_home = DataHome::set(home.path());
     data_home.recycle_bin("max_percent = 1\n");
@@ -431,7 +432,7 @@ fn an_item_too_big_for_the_bin_asks_to_be_deleted_for_good() {
 /// A drive set to remove files immediately asks the plain delete question and erases; with confirmation off nothing asks.
 #[test]
 fn remove_immediately_erases_and_the_prompt_can_be_turned_off() {
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let data_home = DataHome::set(home.path());
     data_home.recycle_bin("remove_immediately = true\n");
@@ -463,7 +464,7 @@ fn remove_immediately_erases_and_the_prompt_can_be_turned_off() {
 #[test]
 fn undo_of_a_copy_on_a_remove_immediately_drive_asks_then_erases() {
     use reprisekit::controls::form;
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let data_home = DataHome::set(home.path());
     data_home.recycle_bin("remove_immediately = true\n");
@@ -504,7 +505,7 @@ fn undo_of_a_copy_on_a_remove_immediately_drive_asks_then_erases() {
 /// longer offers to restore what Restore already put back.
 #[test]
 fn restore_puts_the_selection_back_then_everything() {
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let _data_home = DataHome::set(home.path());
     let dir = home.path().join("folder");
@@ -560,7 +561,7 @@ fn restore_puts_the_selection_back_then_everything() {
 #[test]
 fn the_recycle_bin_holds_every_drives_trash() {
     use std::os::unix::fs::MetadataExt;
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let _data_home = DataHome::set(home.path());
     let (dir, drive) = (home.path().join("folder"), home.path().join("drive"));
@@ -617,7 +618,7 @@ fn the_recycle_bin_holds_every_drives_trash() {
 fn an_open_recycle_bin_lists_a_drives_trash_once_udisks_reports_it_mounted() {
     use reprisefs::udisks::{Snapshot, Volume};
     use std::os::unix::fs::MetadataExt;
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let _data_home = DataHome::set(home.path());
     let drive = home.path().join("stick");
@@ -674,7 +675,7 @@ fn an_open_recycle_bin_lists_a_drives_trash_once_udisks_reports_it_mounted() {
 #[test]
 fn delete_on_a_drive_with_no_recycle_bin_says_so() {
     use std::os::unix::fs::PermissionsExt;
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let _data_home = DataHome::set(home.path());
     let drive = home.path().join("drive");
@@ -712,7 +713,7 @@ fn delete_on_a_drive_with_no_recycle_bin_says_so() {
 #[test]
 fn the_bin_shows_origins_and_deletes_for_good() {
     use reprisekit::controls::{form, propsheet, shellview};
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let _data_home = DataHome::set(home.path());
     let dir = home.path().join("folder");
@@ -792,7 +793,7 @@ fn the_bin_shows_origins_and_deletes_for_good() {
 /// over the old one refuses, Restore on its sheet refuses, and the sheet closes on the next re-listing.
 #[test]
 fn the_bin_acts_only_on_the_item_it_listed() {
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let _data_home = DataHome::set(home.path());
     let (one, two) = (home.path().join("one"), home.path().join("two"));
@@ -835,7 +836,7 @@ fn the_bin_acts_only_on_the_item_it_listed() {
 /// Resizing a column or sorting in the Recycle Bin leaves the folder columns and sort settings alone; a folder still saves both.
 #[test]
 fn the_bins_columns_and_sort_are_not_saved_as_the_folders() {
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let _data_home = DataHome::set(home.path());
     let dir = home.path().join("folder");
@@ -879,7 +880,7 @@ fn the_bins_columns_and_sort_are_not_saved_as_the_folders() {
 #[test]
 fn emptying_the_bin_drops_only_the_trash_undos() {
     use std::os::unix::fs::PermissionsExt;
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let _data_home = DataHome::set(home.path());
     let dir = home.path().join("folder");
@@ -1329,7 +1330,7 @@ fn send_to_zip_packs_the_set_into_one_archive_named_after_the_focus() {
 
 #[test]
 fn send_to_a_folder_copies_on_a_job() {
-    let _guard = TRASH_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = lock(&TRASH_ENV);
     let home = tempfile::tempdir().expect("a temp dir");
     let _data_home = DataHome::set(home.path());
     let dir = tempfile::tempdir().expect("a temp dir");

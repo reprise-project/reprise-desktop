@@ -1,6 +1,7 @@
 //! Application entries from freedesktop .desktop files: the Start menu,
 //! Open With, and a window's icon by its app_id (the share picker).
 
+use reprisebus::mutex::lock;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -1039,7 +1040,7 @@ impl MimeDb {
     }
 
     pub fn description(&self, mime: &str) -> Option<String> {
-        let memo = || self.descriptions.lock().unwrap_or_else(|e| e.into_inner());
+        let memo = || lock(&self.descriptions);
         if let Some(d) = memo().get(mime) {
             return d.clone();
         }
