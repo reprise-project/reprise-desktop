@@ -2,7 +2,9 @@
 //! since editors and `reprise-settings` write a temp file and rename; a pure diff says what to redo.
 
 use std::os::fd::BorrowedFd;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use inotify::WatchMask;
 use smithay::reexports::calloop::{Interest, Mode, PostAction, generic::Generic};
@@ -190,7 +192,8 @@ fn wants(path: &Path) -> Vec<Want> {
     want
 }
 
-pub fn setup(state: &mut State) {
+/// `startup` is the file's [`stamp`] before the startup read.
+pub fn setup(state: &mut State, startup: Stamp) {
     let watch = match DirWatch::new() {
         Ok(w) => w,
         Err(e) => {
@@ -215,29 +218,42 @@ pub fn setup(state: &mut State) {
     log::info!("config watch: watching {}", state.config_path.display());
     state.config_watch.watch = Some(watch);
     let path = state.config_path.clone();
-    sync_with(state, move || {
-        let want = wants(&path);
-        // The directory need not exist yet: a first run with no
-        // `~/.config/reprise` still has to notice the file appearing, and
-        // inotify watches a directory, not a path that might turn up.
-        if let Some(first) = want.first()
-            && let Err(e) = std::fs::create_dir_all(&first.dir)
-        {
-            log::warn!("config watch: cannot create {}: {e}", first.dir.display());
-        }
-        want
-    });
+    sync_with(
+        state,
+        move || {
+            let want = wants(&path);
+            // The directory need not exist yet: a first run with no
+            // `~/.config/reprise` still has to notice the file appearing, and
+            // inotify watches a directory, not a path that might turn up.
+            if let Some(first) = want.first()
+                && let Err(e) = std::fs::create_dir_all(&first.dir)
+            {
+                log::warn!("config watch: cannot create {}: {e}", first.dir.display());
+            }
+            want
+        },
+        Some(startup),
+    );
+}
+
+/// The config file's inode, size and mtime, or None when it is missing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stamp(Option<(u64, u64, u64, Option<SystemTime>)>);
+
+/// Taken before the startup read, so a write the first watch was not up for differs from it.
+pub fn stamp(path: &Path) -> Stamp {
+    Stamp((std::fs::metadata(path).ok()).map(|m| (m.dev(), m.ino(), m.len(), m.modified().ok())))
 }
 
 fn sync(state: &mut State) {
     let path = state.config_path.clone();
-    sync_with(state, move || wants(&path));
+    sync_with(state, move || wants(&path), None);
 }
 
-/// Syncs the watch to what `find` returns and, after an event named the file, reads the config
-/// after it, all on a file job: a config directory on a mount that stopped answering holds the
-/// job, never the loop.
-fn sync_with<F>(state: &mut State, find: F)
+/// Syncs the watch to what `find` returns and, after an event named the file or when the file
+/// no longer matches `since`, reads the config after it, all on a file job: a config directory
+/// on a mount that stopped answering holds the job, never the loop.
+fn sync_with<F>(state: &mut State, find: F, since: Option<Stamp>)
 where
     F: FnOnce() -> Vec<Want> + Send + 'static,
 {
@@ -249,7 +265,11 @@ where
         let want = find();
         // Before the read, so a write between the two is not missed.
         let added = job.adder.run(&want);
-        let cfg = if job.hit { self::read(&path) } else { None };
+        let cfg = if job.hit || since.is_some_and(|s| stamp(&path) != s) {
+            self::read(&path)
+        } else {
+            None
+        };
         Box::new(move |state: &mut State| {
             if state.config_watch.landed(&want, added) {
                 // A later read follows; this one may be older than the file.
@@ -565,10 +585,14 @@ mod tests {
         let (answer, stalled) = std::sync::mpsc::channel::<()>();
         let started = Instant::now();
         let looked_up = path.clone();
-        sync_with(&mut h.state, move || {
-            let _ = stalled.recv_timeout(Duration::from_secs(5));
-            wants(&looked_up)
-        });
+        sync_with(
+            &mut h.state,
+            move || {
+                let _ = stalled.recv_timeout(Duration::from_secs(5));
+                wants(&looked_up)
+            },
+            None,
+        );
         h.run_for(50);
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -585,6 +609,46 @@ mod tests {
             h.run_for(10);
         }
         assert_eq!(h.state.config.window_snapping.distance, 15, "reloaded");
+    }
+
+    #[test]
+    fn the_first_sync_reads_a_config_written_since_the_startup_read_and_not_an_unchanged_one() {
+        let first = |write: bool| {
+            let mut h = crate::harness::Harness::new();
+            crate::fsjobs::setup(&mut h.state);
+            let path =
+                crate::harness::scratch().join(format!("configwatch-first-{write}/config.toml"));
+            let _ = std::fs::remove_dir_all(path.parent().unwrap());
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            if !write {
+                std::fs::write(&path, "[window_snapping]\ndistance = 15\n").unwrap();
+            }
+            let startup = stamp(&path);
+            h.state.config_path = path.clone();
+            h.state.config_watch.watch = Some(DirWatch::new().unwrap());
+            let written = path.clone();
+            sync_with(
+                &mut h.state,
+                move || {
+                    if write {
+                        std::fs::write(&written, "[window_snapping]\ndistance = 15\n").unwrap();
+                    }
+                    wants(&written)
+                },
+                Some(startup),
+            );
+            let end = Instant::now() + Duration::from_secs(5);
+            while h.state.config_watch.syncing() && Instant::now() < end {
+                h.run_for(10);
+            }
+            h.state.config.window_snapping.distance
+        };
+        assert_eq!(first(true), 15, "written before the watch: reloaded");
+        assert_ne!(
+            first(false),
+            15,
+            "unchanged since the startup read: not reread"
+        );
     }
 
     #[test]

@@ -228,12 +228,19 @@ fn main() {
         .clone()
         .unwrap_or_else(config::Config::default_path);
     migrate::run(&config_path, &state::path());
+    let config_stamp = configwatch::stamp(&config_path);
     let (config, config_notice) = config::Config::load(cli.config.as_deref());
     config.warn_retired();
     if let Some(notice) = &config_notice {
         log::warn!("{notice}");
     }
-    if let Err(e) = run(config, config_path, cli.startup.as_deref(), config_notice) {
+    if let Err(e) = run(
+        config,
+        config_path,
+        config_stamp,
+        cli.startup.as_deref(),
+        config_notice,
+    ) {
         log::error!("{e}");
         std::process::exit(1);
     }
@@ -244,6 +251,7 @@ fn main() {
 fn run(
     config: config::Config,
     config_path: PathBuf,
+    config_stamp: configwatch::Stamp,
     startup: Option<&str>,
     config_notice: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -264,7 +272,7 @@ fn run(
     toolkits::refresh(&mut state);
     tray::setup(&mut state);
     backend::init(&mut state)?;
-    configwatch::setup(&mut state);
+    configwatch::setup(&mut state, config_stamp);
     appindex::setup(&mut state);
     iconwatch::setup(&mut state);
     quickwatch::setup(&mut state);
