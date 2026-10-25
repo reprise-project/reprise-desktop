@@ -1,6 +1,7 @@
 //! A program's progress on its task button through `com.canonical.Unity.LauncherEntry`'s `Update`
 //! signal, with Reprise's own `progress-paused` key beside the convention's.
 
+use crate::mutex::lock;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Sender};
@@ -16,7 +17,7 @@ type Job = (String, Option<(f64, bool)>);
 /// it, `None` takes it away. Sent from a thread of its own, in order, so the caller never waits.
 pub fn update(app_id: &str, progress: Option<(f64, bool)>) {
     static WORKER: Mutex<Option<Sender<Job>>> = Mutex::new(None);
-    let mut worker = WORKER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut worker = lock(&WORKER);
     let mut job = (app_id.to_string(), progress);
     if let Some(tx) = worker.as_ref() {
         match tx.send(job) {

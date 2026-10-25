@@ -1,6 +1,7 @@
 //! cups-pk-helper, a system service that makes the admin requests as root once polkit says yes.
 //! cups.rs tries the socket's peer credentials first and comes here only when cupsd says no.
 
+use reprisebus::mutex::lock;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -116,7 +117,7 @@ pub struct Bus {
 
 impl Bus {
     fn conn(&self) -> Result<zbus::blocking::Connection> {
-        let mut c = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut c = lock(&self.conn);
         if let Some(c) = c.as_ref() {
             return Ok(c.clone());
         }

@@ -1,6 +1,7 @@
 //! What a program implements: the [`App`] trait and the windows it names.
 
 use crate::{Ctx, DropForm, Event, FileDrop, Reader, ReaderForm, Reply, Waker};
+use reprisebus::mutex::lock;
 use reprisekit::access::Tree;
 use reprisekit::controls::hosted::Hosted;
 use reprisekit::raster::{Canvas, Rect};
@@ -234,7 +235,7 @@ impl Flyout {
 pub fn window_id(n: usize) -> WinId {
     use std::sync::Mutex;
     static IDS: Mutex<Vec<WinId>> = Mutex::new(Vec::new());
-    let mut ids = IDS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut ids = lock(&IDS);
     while ids.len() <= n {
         let next = format!("window-{}", ids.len());
         ids.push(Box::leak(next.into_boxed_str()));

@@ -5,6 +5,7 @@
 //! platform data ([`Handoff`]), so the running copy can raise its window with
 //! them.
 
+use crate::mutex::lock;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -92,7 +93,7 @@ impl Requests {
     /// Call `wake` after each request from now on. One that came before
     /// waits in [`Requests::next`] without a call.
     pub fn wake_with(&self, wake: impl Fn() + Send + 'static) {
-        *self.wake.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(wake));
+        *lock(&self.wake) = Some(Box::new(wake));
     }
 
     pub fn next(&self) -> Option<Request> {
@@ -175,7 +176,7 @@ impl Application {
     fn send(&self, action: Option<(String, Vec<String>)>, data: &HashMap<String, OwnedValue>) {
         let handoff = Handoff::from_platform_data(data);
         if self.tx.send(Request { action, handoff }).is_ok()
-            && let Some(wake) = &*self.wake.lock().unwrap_or_else(|e| e.into_inner())
+            && let Some(wake) = &*lock(&self.wake)
         {
             wake();
         }
