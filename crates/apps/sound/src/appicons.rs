@@ -1,9 +1,13 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
+use reprisebus::tray::WindowIcon;
 use reprisefs::apps::{self, AppEntry};
 use reprisekit::controls::openwith::PROGRAM_ICON;
+use reprisekit::icon::IconSource;
 use reprisekit::icontheme::{IconCache, IconTheme};
 use reprisekit::raster::Canvas;
 
@@ -12,17 +16,41 @@ use crate::pipewire::App;
 /// A program installed a minute ago should still find its icon.
 const RESCAN_AFTER: Duration = Duration::from_secs(30);
 
+/// A program's window may map after its stream starts, so a window that was not found is asked
+/// for again after this.
+const WINDOW_RETRY: Duration = Duration::from_secs(5);
+
+/// Asks the compositor for the icon of the window playing (pids, title), off the UI thread.
+type Ask = Arc<dyn Fn(&[u32], &str) -> Option<WindowIcon> + Send + Sync>;
+
+/// A window lookup's answer for an `App::key`.
+type Landed = (String, Option<WindowIcon>);
+
+/// What the compositor said about a program's window.
+enum Looked {
+    Asking,
+    Landed(WindowIcon),
+    Found(AppIcon),
+    Missed(Instant),
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AppIcon {
     pub small: Option<Canvas>,
     pub large: Option<Canvas>,
 }
 
-/// Finds each playing program's icon. The tray runs for the whole session, so a program without
-/// one is looked up again against a fresh scan of the desktop entries and the icon theme.
+/// Finds each playing program's icon, first match wins: an icon hint that resolves, the icon of
+/// the window playing it, the name and executable heuristics of [`guessed_icon`]. The tray runs for
+/// the whole session, so a program without one is looked up again against a fresh scan of the
+/// desktop entries and the icon theme.
 pub struct Resolver {
-    /// Icon names found, by `App::key`. A program without one has no entry here.
+    /// Icon names its hints found, by `App::key`. A program without one has no entry here.
     names: HashMap<String, String>,
+    windows: HashMap<String, Looked>,
+    ask: Ask,
+    landed: (Sender<Landed>, Receiver<Landed>),
+    waker: Option<repriseapp::Waker>,
     scan: Option<Scan>,
     apps_dirs: Vec<PathBuf>,
     icon_roots: Vec<PathBuf>,
@@ -38,17 +66,90 @@ struct Scan {
 
 impl Default for Resolver {
     fn default() -> Self {
-        Resolver::with_dirs(apps::default_dirs(), IconTheme::default_roots())
+        let ask: Ask = Arc::new(
+            |pids, title| match reprisebus::tray::window_icon(pids, title) {
+                Ok(icon) => icon,
+                Err(e) => {
+                    log::debug!("sound: no window icon for {title:?}: {e}");
+                    None
+                }
+            },
+        );
+        Resolver::with_dirs(apps::default_dirs(), IconTheme::default_roots(), ask)
     }
 }
 
 impl Resolver {
-    fn with_dirs(apps_dirs: Vec<PathBuf>, icon_roots: Vec<PathBuf>) -> Resolver {
+    fn with_dirs(apps_dirs: Vec<PathBuf>, icon_roots: Vec<PathBuf>, ask: Ask) -> Resolver {
         Resolver {
             names: HashMap::new(),
+            windows: HashMap::new(),
+            ask,
+            landed: mpsc::channel(),
+            waker: None,
             scan: None,
             apps_dirs,
             icon_roots,
+        }
+    }
+
+    /// Wakes the program when a window icon lands, for [`Resolver::take_landed`].
+    pub fn set_waker(&mut self, waker: repriseapp::Waker) {
+        self.waker = Some(waker);
+    }
+
+    /// Takes the window icons the compositor answered with; true when one may change an icon.
+    pub fn take_landed(&mut self) -> bool {
+        let mut changed = false;
+        while let Ok((key, icon)) = self.landed.1.try_recv() {
+            changed |= self.land(key, icon);
+        }
+        changed
+    }
+
+    fn land(&mut self, key: String, icon: Option<WindowIcon>) -> bool {
+        let found = icon.is_some();
+        let looked = icon.map_or(Looked::Missed(Instant::now()), Looked::Landed);
+        self.windows.insert(key, looked);
+        found
+    }
+
+    /// Starts asking for `app`'s window unless an answer is pending or a miss is recent.
+    fn ask_window(&mut self, app: &App) {
+        let due = match self.windows.get(&app.key) {
+            None => true,
+            Some(Looked::Missed(at)) => at.elapsed() >= WINDOW_RETRY,
+            Some(_) => false,
+        };
+        if !due || (app.pids.is_empty() && app.label.is_empty()) {
+            return;
+        }
+        self.windows.insert(app.key.clone(), Looked::Asking);
+        let (ask, tx, waker) = (self.ask.clone(), self.landed.0.clone(), self.waker.clone());
+        let (key, pids, title) = (app.key.clone(), app.pids.clone(), app.label.clone());
+        std::thread::spawn(move || {
+            let icon = ask(&pids, &title);
+            if tx.send((key, icon)).is_ok()
+                && let Some(w) = waker
+            {
+                w.wake();
+            }
+        });
+    }
+
+    /// The window icon found for `key`, turning a landed answer into canvases once.
+    fn window_icon(&mut self, key: &str, icons: &mut IconCache) -> Option<AppIcon> {
+        let looked = self.windows.get_mut(key)?;
+        if let Looked::Landed(icon) = looked {
+            let found = window_canvases(icon, icons);
+            *looked = match found {
+                Some(f) => Looked::Found(f),
+                None => Looked::Missed(Instant::now()),
+            };
+        }
+        match looked {
+            Looked::Found(icon) => Some(icon.clone()),
+            _ => None,
         }
     }
 
@@ -62,8 +163,13 @@ impl Resolver {
         {
             self.scan = None;
             self.names.clear();
+            self.windows
+                .retain(|_, l| matches!(l, Looked::Asking | Looked::Missed(_)));
         }
-        let unknown = list.iter().any(|a| !self.names.contains_key(&a.key));
+        let unknown = list.iter().any(|a| {
+            !self.names.contains_key(&a.key)
+                && !matches!(self.windows.get(&a.key), Some(Looked::Found(_)))
+        });
         let old = self
             .scan
             .as_ref()
@@ -77,41 +183,83 @@ impl Resolver {
                 at: Instant::now(),
             });
         }
-        let Some(scan) = self.scan.as_mut() else {
+        let Some(mut scan) = self.scan.take() else {
             return BTreeMap::new();
         };
         let mut out = BTreeMap::new();
         for app in list {
-            let name = match self.names.get(&app.key) {
-                Some(n) => Some(n.clone()),
-                None => icon_name(app, &scan.entries, |n| scan.icons.has(n)),
-            };
-            let small = name.as_deref().and_then(|n| scan.icons.get(n, 16));
-            let large = name.as_deref().and_then(|n| scan.icons.get(n, 32));
-            // An entry may name an icon whose file is not in the theme yet: that is no find.
-            match name {
-                Some(n) if small.is_some() || large.is_some() => {
-                    self.names.insert(app.key.clone(), n);
-                }
-                _ => {
-                    self.names.remove(&app.key);
-                }
-            }
+            let icon = self.icon(app, &mut scan);
+            let generic = |s: &mut Scan, px| s.icons.get(PROGRAM_ICON, px);
             let icon = AppIcon {
-                small: small.or_else(|| scan.icons.get(PROGRAM_ICON, 16)),
-                large: large.or_else(|| scan.icons.get(PROGRAM_ICON, 32)),
+                small: icon.small.or_else(|| generic(&mut scan, 16)),
+                large: icon.large.or_else(|| generic(&mut scan, 32)),
             };
             out.insert(app.key.clone(), icon);
         }
+        self.scan = Some(scan);
         out
+    }
+
+    fn icon(&mut self, app: &App, scan: &mut Scan) -> AppIcon {
+        let named = |s: &mut Scan, n: &str| AppIcon {
+            small: s.icons.get(n, 16),
+            large: s.icons.get(n, 32),
+        };
+        let hinted = match self.names.get(&app.key) {
+            Some(n) => Some(n.clone()),
+            None => hint_icon(app, &scan.entries, |n| scan.icons.has(n)),
+        };
+        // An entry may name an icon whose file is not in the theme yet: that is no find.
+        if let Some(n) = hinted {
+            let icon = named(scan, &n);
+            if icon.small.is_some() || icon.large.is_some() {
+                self.names.insert(app.key.clone(), n);
+                return icon;
+            }
+        }
+        self.names.remove(&app.key);
+        self.ask_window(app);
+        if let Some(icon) = self.window_icon(&app.key, &mut scan.icons) {
+            return icon;
+        }
+        match guessed_icon(app, &scan.entries).map(str::to_string) {
+            Some(n) => named(scan, &n),
+            None => AppIcon::default(),
+        }
     }
 }
 
-/// The icon `app`'s hints, executable or name lead to, first match wins: each hint as a desktop
-/// entry id or `StartupWMClass`, then as a theme icon; then the entry whose `Name` is the
-/// program's; then the entry whose `Exec` runs the executable; then the one entry whose `Name`
-/// starts with the program's name as a word.
-pub fn icon_name(app: &App, entries: &[AppEntry], has: impl Fn(&str) -> bool) -> Option<String> {
+/// Canvases for a window icon at the cache's scale; None for a name the theme lacks.
+fn window_canvases(icon: &WindowIcon, icons: &mut IconCache) -> Option<AppIcon> {
+    let found = match icon {
+        WindowIcon::Named(n) => AppIcon {
+            small: icons.get(n, 16),
+            large: icons.get(n, 32),
+        },
+        WindowIcon::Pixels {
+            width,
+            height,
+            pixels,
+        } => {
+            let src = IconSource {
+                width: *width,
+                height: *height,
+                pixels: pixels.clone(),
+            };
+            let scale = icons.scale();
+            let at = |px: i32| Some(src.to_canvas(px * scale).at_scale(scale));
+            AppIcon {
+                small: at(16),
+                large: at(32),
+            }
+        }
+    };
+    (found.small.is_some() || found.large.is_some()).then_some(found)
+}
+
+/// The icon `app`'s hints name, first match wins: each hint as a desktop entry id or
+/// `StartupWMClass`, then as a theme icon.
+fn hint_icon(app: &App, entries: &[AppEntry], has: impl Fn(&str) -> bool) -> Option<String> {
     for hint in &app.icon_hints {
         if let Some(icon) = apps::icon_for_app_id(entries, hint) {
             return Some(icon.to_string());
@@ -123,10 +271,16 @@ pub fn icon_name(app: &App, entries: &[AppEntry], has: impl Fn(&str) -> bool) ->
             }
         }
     }
+    None
+}
+
+/// The icon `app`'s name or executable guess at, first match wins: the entry whose `Name` is the
+/// program's; then the entry whose `Exec` runs the executable; then the one entry whose `Name`
+/// starts with the program's name as a word.
+fn guessed_icon<'a>(app: &App, entries: &'a [AppEntry]) -> Option<&'a str> {
     by_name(entries, &app.label)
         .or_else(|| app.binary.as_deref().and_then(|b| by_exec(entries, b)))
         .or_else(|| by_name_prefix(entries, &app.label))
-        .map(str::to_string)
 }
 
 fn by_exec<'a>(entries: &'a [AppEntry], binary: &str) -> Option<&'a str> {
@@ -176,12 +330,14 @@ fn by_name_prefix<'a>(entries: &'a [AppEntry], name: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn app(hints: &[&str], binary: Option<&str>) -> App {
         App {
             key: "k".into(),
             label: hints.last().copied().unwrap_or("K").into(),
             icon_hints: hints.iter().map(|h| h.to_string()).collect(),
+            pids: Vec::new(),
             binary: binary.map(str::to_string),
             streams: Vec::new(),
             volume: 1.0,
@@ -218,6 +374,11 @@ mod tests {
                 None,
             ),
         ]
+    }
+
+    /// The icon `app`'s hints, executable or name lead to, without a window to ask.
+    fn icon_name(app: &App, entries: &[AppEntry], has: impl Fn(&str) -> bool) -> Option<String> {
+        hint_icon(app, entries, has).or_else(|| guessed_icon(app, entries).map(str::to_string))
     }
 
     fn name(app: &App, entries: &[AppEntry], has: impl Fn(&str) -> bool) -> String {
@@ -401,10 +562,99 @@ mod tests {
         .unwrap();
     }
 
+    fn resolver(d: &Dirs, ask: Ask) -> Resolver {
+        Resolver::with_dirs(vec![d.0.join("applications")], vec![d.0.join("icons")], ask)
+    }
+
+    /// Waits for the window lookup a call to `icons` started and takes its answer.
+    fn land(r: &mut Resolver) {
+        let (key, icon) = r.landed.1.recv_timeout(Duration::from_secs(5)).unwrap();
+        r.land(key, icon);
+    }
+
+    fn centre(c: &Option<Canvas>) -> Option<u32> {
+        let c = c.as_ref()?;
+        Some(c.pixels[(c.height / 2 * c.width + c.width / 2) as usize])
+    }
+
+    const RED: u32 = 0xffff_0000;
+    const BLUE: u32 = 0xff00_00ff;
+
+    fn counting(calls: &Arc<AtomicUsize>, icon: Option<WindowIcon>) -> Ask {
+        let calls = calls.clone();
+        Arc::new(move |pids, title| {
+            assert_eq!((pids, title), (&[4312][..], "Late"));
+            calls.fetch_add(1, Ordering::SeqCst);
+            icon.clone()
+        })
+    }
+
+    #[test]
+    fn the_window_icon_comes_after_the_hints_and_before_the_guesses() {
+        let d = dirs("order");
+        install(&d, "late-app");
+        let like = IconCache::new(IconTheme::load("hicolor", &[]));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let blue = WindowIcon::Pixels {
+            width: 1,
+            height: 1,
+            pixels: vec![BLUE],
+        };
+        let mut r = resolver(&d, counting(&calls, Some(blue)));
+        let mut hinted = app(&["late-app"], None);
+        hinted.pids = vec![4312];
+        let list = [hinted];
+        assert_eq!(centre(&r.icons(&list, &like)["k"].small), Some(RED));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "a hint that resolves asks for no window"
+        );
+
+        let mut guessed = app(&["Late"], None);
+        guessed.key = "g".into();
+        guessed.pids = vec![4312];
+        let list = [guessed];
+        assert_eq!(
+            centre(&r.icons(&list, &like)["g"].small),
+            Some(RED),
+            "the entry named Late stands in while the window is asked for"
+        );
+        land(&mut r);
+        let icon = &r.icons(&list, &like)["g"];
+        assert_eq!(centre(&icon.small), Some(BLUE));
+        assert_eq!(
+            icon.large.as_ref().map(|c| (c.width, c.height)),
+            Some((32, 32))
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_window_not_found_is_asked_for_again_after_window_retry() {
+        let d = dirs("retry");
+        let like = IconCache::new(IconTheme::load("hicolor", &[]));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut r = resolver(&d, counting(&calls, None));
+        let mut late = app(&["Late"], None);
+        late.pids = vec![4312];
+        let list = [late];
+        r.icons(&list, &like);
+        land(&mut r);
+        r.icons(&list, &like);
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "a recent miss stands");
+        if let Some(Looked::Missed(at)) = r.windows.get_mut("k") {
+            *at -= WINDOW_RETRY;
+        }
+        r.icons(&list, &like);
+        land(&mut r);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
     #[test]
     fn a_program_installed_after_the_first_scan_finds_its_icon() {
         let d = dirs("late");
-        let mut r = Resolver::with_dirs(vec![d.0.join("applications")], vec![d.0.join("icons")]);
+        let mut r = resolver(&d, Arc::new(|_, _| None));
         let like = IconCache::new(IconTheme::load("hicolor", &[]));
         let mut late = app(&["late-app"], Some("late-app"));
         late.key = "late-app".into();

@@ -108,6 +108,12 @@ pub enum TrayEvent {
     /// Whether any `org.freedesktop.ScreenSaver` cookie is held: the idle
     /// timer is paused while one is.
     ScreenSaverInhibited(bool),
+    /// `org.reprise.Tray.WindowIcon`, answered on `reply`.
+    WindowIcon {
+        lineages: Vec<Vec<crate::streamwindow::Step>>,
+        title: String,
+        reply: async_channel::Sender<reprisebus::tray::WindowIconWire>,
+    },
 }
 
 /// The balloon's title and body limits: what a peer sends past them is
@@ -657,6 +663,15 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
             log::debug!("tray: screensaver inhibited: {on}");
             state.idle.bus_inhibited = on;
             crate::idle::inhibition_changed(state);
+            false
+        }
+        TrayEvent::WindowIcon {
+            lineages,
+            title,
+            reply,
+        } => {
+            let found = crate::streamwindow::window_icon(state, &lineages, &title);
+            let _ = reply.try_send(reprisebus::tray::WindowIcon::wire(found));
             false
         }
     }
