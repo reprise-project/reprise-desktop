@@ -176,13 +176,7 @@ pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
     let names: Vec<String> = tray
         .hidden
         .iter()
-        .map(|i| {
-            if i.tooltip.is_empty() {
-                i.title.clone()
-            } else {
-                i.tooltip.clone()
-            }
-        })
+        .map(crate::tray::TrayItem::name)
         .collect();
     trayflyout::access(&v.layout, &names, &mut tree, ROOT);
     Some(tree)
