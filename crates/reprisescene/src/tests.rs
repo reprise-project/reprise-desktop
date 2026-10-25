@@ -14,6 +14,7 @@ use smithay::{
             element::{Element, Id, Kind, solid::SolidColorRenderElement},
             sync::SyncPoint,
             test::{DummyError, DummyFramebuffer},
+            utils::CommitCounter,
         },
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
@@ -1692,5 +1693,40 @@ fn an_opaque_node_hides_damage_beneath_it() {
     assert!(
         t.frame(&s).is_empty(),
         "an opaque rect above covers the change"
+    );
+}
+
+#[test]
+fn a_shared_buffer_draws_the_same_canvas_under_its_own_id_and_a_set_replaces_the_share() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let from = s.buffer_create(root);
+    s.buffer_set_canvas(from, &[0xff00_0000; 4 * 2], 4, 2);
+    let b = s.buffer_create(root);
+    s.buffer_share(b, from);
+    assert_eq!(s.buffer_size(b), Some((4, 2).into()));
+    let commits = |s: &TestScene| -> Vec<(Id, CommitCounter)> {
+        (s.render_elements(&mut TestRenderer, &view(100, 100)).iter())
+            .map(|e| (e.id().clone(), e.current_commit()))
+            .collect()
+    };
+    let before = commits(&s);
+    assert_eq!(before.len(), 2);
+    assert_ne!(before[0].0, before[1].0, "two Ids on one output");
+
+    s.buffer_set_canvas(from, &[0xffff_ffff; 4 * 2], 4, 2);
+    let changed = commits(&s);
+    assert_ne!(
+        changed[0].1, before[0].1,
+        "the share shows the change in place"
+    );
+    assert_ne!(changed[1].1, before[1].1);
+
+    s.buffer_set_canvas(b, &[0xff00_ff00; 4 * 2], 4, 2);
+    let after = commits(&s);
+    assert_eq!(after[1], changed[1], "the source keeps its pixels");
+    assert_ne!(
+        after[0].0, changed[0].0,
+        "the replaced share has the canvas's own Id"
     );
 }

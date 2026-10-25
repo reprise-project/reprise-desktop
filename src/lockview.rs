@@ -499,6 +499,22 @@ fn paint_wall(state: &mut State, output: &Output, tree: TreeId, wall: BufferId) 
             }
             Some(Picture::Texture(t))
         }
+        LockWall::Shared(from) => {
+            state.scene.buffer_share(wall, from);
+            state
+                .scene
+                .buffer_set_dest_size(wall, Some((b.width, b.height).into()));
+            match water {
+                true => (state
+                    .water_texture(output, Pane::Desktop)
+                    .map(Picture::Texture))
+                .or_else(|| {
+                    let scale = state.draw_scale_at(Some(output));
+                    state.wallpaper_canvas(output, scale).map(Picture::Canvas)
+                }),
+                false => None,
+            }
+        }
         LockWall::Composed(c) => {
             let scale = state.draw_scale_at(Some(output));
             crate::output::upload_scaled(&mut state.scene, wall, &c, scale);

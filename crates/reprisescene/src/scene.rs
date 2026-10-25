@@ -9,6 +9,7 @@ use smithay::{
         renderer::{
             Color32F, Renderer, Texture,
             element::{
+                Id,
                 memory::{MemoryBuffer, MemoryRenderBuffer},
                 solid::SolidColorBuffer,
                 texture::TextureRenderBuffer,
@@ -252,6 +253,7 @@ impl<R: Renderer, D> Scene<R, D> {
                 source: None,
                 dest_size: None,
                 opaque: Vec::new(),
+                shared: None,
             }),
         ))
     }
@@ -694,7 +696,7 @@ impl<R: Renderer, D> Scene<R, D> {
             return Rectangle::default();
         }
         let size = Size::<i32, BufferCoords>::from((width, height));
-        if let (Pixels::Canvas(m), true) = (&mut b.pixels, b.buffer_size == size) {
+        if let (Pixels::Canvas(m), true, None) = (&mut b.pixels, b.buffer_size == size, &b.shared) {
             let within = within
                 .intersection(Rectangle::from_size(size))
                 .unwrap_or_default();
@@ -710,6 +712,7 @@ impl<R: Renderer, D> Scene<R, D> {
             let p = Prepared::new(pixels, width, height);
             b.pixels = Pixels::Canvas(p.0);
             b.buffer_size = size;
+            b.shared = None;
             Rectangle::from_size(size)
         }
     }
@@ -719,6 +722,30 @@ impl<R: Renderer, D> Scene<R, D> {
         if let Some(b) = self.buffer_mut(buffer) {
             b.buffer_size = prepared.1;
             b.pixels = Pixels::Canvas(prepared.0);
+            b.shared = None;
+        }
+    }
+
+    /// Show `from`'s pixels in `buffer` without a copy: both draw the one canvas or texture, and
+    /// a change `from` makes in place shows in both. Anything set on `buffer` after replaces the
+    /// share. Nothing happens when `from` is no buffer.
+    pub fn buffer_share(&mut self, buffer: BufferId, from: BufferId)
+    where
+        R::TextureId: Clone,
+    {
+        let Some(src) = self.buffer_ref(from) else {
+            return;
+        };
+        let pixels = match &src.pixels {
+            Pixels::None => Pixels::None,
+            Pixels::Canvas(m) => Pixels::Canvas(m.clone()),
+            Pixels::Texture(t) => Pixels::Texture(t.clone()),
+        };
+        let size = src.buffer_size;
+        if let Some(b) = self.buffer_mut(buffer) {
+            b.pixels = pixels;
+            b.buffer_size = size;
+            b.shared = Some(Id::new());
         }
     }
 
@@ -728,7 +755,7 @@ impl<R: Renderer, D> Scene<R, D> {
         };
         let size = texture.size();
         match &mut b.pixels {
-            Pixels::Texture(t) => {
+            Pixels::Texture(t) if b.shared.is_none() => {
                 t.update_from_texture(renderer, texture, 1, Transform::Normal, None)
             }
             _ => {
@@ -742,6 +769,7 @@ impl<R: Renderer, D> Scene<R, D> {
             }
         }
         b.buffer_size = size;
+        b.shared = None;
     }
 
     /// Show a texture of the same size as the one shown, damaged only in
@@ -757,7 +785,7 @@ impl<R: Renderer, D> Scene<R, D> {
             return;
         };
         match &mut b.pixels {
-            Pixels::Texture(t) if b.buffer_size == texture.size() => {
+            Pixels::Texture(t) if b.buffer_size == texture.size() && b.shared.is_none() => {
                 let mut ctx = t.render();
                 let _ = ctx.draw(|tex| {
                     *tex = texture;
@@ -772,6 +800,7 @@ impl<R: Renderer, D> Scene<R, D> {
         if let Some(b) = self.buffer_mut(buffer) {
             b.pixels = Pixels::None;
             b.buffer_size = Size::default();
+            b.shared = None;
         }
     }
 

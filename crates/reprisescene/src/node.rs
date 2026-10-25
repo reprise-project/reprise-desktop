@@ -4,7 +4,7 @@ use smithay::{
     backend::renderer::{
         Renderer,
         element::{
-            RenderElement, memory::MemoryRenderBuffer, solid::SolidColorBuffer,
+            Id, RenderElement, memory::MemoryRenderBuffer, solid::SolidColorBuffer,
             texture::TextureRenderBuffer,
         },
     },
@@ -174,6 +174,9 @@ pub(crate) struct BufferNode<R: Renderer> {
     pub(crate) dest_size: Option<Size<i32, Logical>>,
     /// Node-local, logical: what the buffer covers with opaque pixels.
     pub(crate) opaque: Vec<Rectangle<i32, Logical>>,
+    /// The element Id while `pixels` are shared with another node's (`Scene::buffer_share`): one
+    /// output may show both, and its damage tracker tells elements apart by Id.
+    pub(crate) shared: Option<Id>,
 }
 
 impl<R: Renderer> BufferNode<R> {

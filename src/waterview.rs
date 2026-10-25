@@ -940,6 +940,15 @@ impl State {
         self.water.prepare(output, covered, Instant::now());
     }
 
+    /// The picture `pane` of `out` draws, once imported; None while another waits or a colour shows.
+    pub(crate) fn water_texture(&self, out: &Output, pane: Pane) -> Option<GlesTexture> {
+        let panes = self.water.panes.borrow();
+        let p = panes.get(&(out.name(), pane))?;
+        (p.pending.is_none() && p.solid.is_none())
+            .then(|| p.texture.clone())
+            .flatten()
+    }
+
     /// Hand `pane` of `out` the picture it draws, composed at the output's size (imported at its
     /// next step), or `texture` when the wallpaper already holds it as one. With `fading_in` the
     /// picture showing stays under it until `water_fade` reaches 1.
