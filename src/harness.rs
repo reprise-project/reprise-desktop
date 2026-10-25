@@ -106,6 +106,18 @@ impl Harness {
         self.state.turn_end();
     }
 
+    /// Runs `queue` from an idle callback, then one more turn with a 3 s poll: how long that
+    /// poll blocked. An idle that `queue` adds runs only after a poll returns.
+    pub fn after_idle(&mut self, queue: impl FnOnce(&mut State) + 'static) -> Duration {
+        self.state.handle.insert_idle(queue);
+        self.dispatch();
+        let started = std::time::Instant::now();
+        self.event_loop
+            .dispatch(Some(Duration::from_secs(3)), &mut self.state)
+            .expect("dispatch");
+        started.elapsed()
+    }
+
     /// Turns of the loop for `ms`, so timers that long fire.
     pub fn run_for(&mut self, ms: u64) {
         let end = std::time::Instant::now() + Duration::from_millis(ms);

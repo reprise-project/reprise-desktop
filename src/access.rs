@@ -272,7 +272,7 @@ pub fn touch(state: &mut State) {
         return;
     }
     a.queued = true;
-    state.handle.insert_idle(|state| {
+    state.insert_idle_woken(|state| {
         state.access.queued = false;
         sync(state);
     });
@@ -1109,6 +1109,18 @@ mod tests {
         assert_eq!(
             n.transform().map(|a| a.as_coeffs()),
             Some(Affine::translate((100.0, 740.0)).as_coeffs())
+        );
+    }
+
+    #[test]
+    fn a_touch_from_an_idle_syncs_the_tree_on_the_next_turn_with_nothing_else_ready() {
+        let mut h = crate::harness::Harness::new();
+        h.run_for(200);
+        let waited = h.after_idle(touch);
+        assert!(!h.state.access.queued, "the queued sync ran");
+        assert!(
+            waited < std::time::Duration::from_secs(1),
+            "the poll returned at once, not after its 3 s timeout"
         );
     }
 }

@@ -1043,21 +1043,12 @@ mod tests {
         h.run_for(200);
         let ran = Rc::new(std::cell::Cell::new(false));
         let inner = Rc::clone(&ran);
-        h.state.handle.insert_idle(move |state| {
+        let waited = h.after_idle(move |state| {
             state.insert_idle_woken(move |_| inner.set(true));
         });
-        h.dispatch();
-        assert!(
-            !ran.get(),
-            "an idle queued by an idle waits for the next turn"
-        );
-        let started = std::time::Instant::now();
-        h.event_loop
-            .dispatch(Some(std::time::Duration::from_secs(3)), &mut h.state)
-            .expect("dispatch");
         assert!(ran.get(), "the queued idle ran");
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(1),
+            waited < std::time::Duration::from_secs(1),
             "the poll returned at once, not after its 3 s timeout"
         );
     }

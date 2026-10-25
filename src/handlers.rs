@@ -190,7 +190,7 @@ impl SeatHandler for State {
         self.refresh_inhibitors(focused);
         self.ime_focus_changed(focused);
         // Checked once the focus change is done, outside the seat's locks.
-        self.handle.insert_idle(|state| state.refresh_constraint());
+        self.insert_idle_woken(|state| state.refresh_constraint());
     }
 }
 
