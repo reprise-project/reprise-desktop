@@ -353,11 +353,19 @@ mod tests {
 
     #[test]
     fn a_server_whose_client_runs_below_the_focused_process_serves_it() {
-        let sleep = || {
-            std::process::Command::new("sleep")
-                .arg("30")
-                .spawn()
-                .unwrap()
+        // A private copy, so no other test's child runs the same program.
+        let dir = std::env::temp_dir().join(format!("reprise-serves-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("server");
+        std::fs::copy("/bin/sleep", &exe).unwrap();
+        // Another test's fork may still hold the copy's write fd for a moment.
+        let sleep = || loop {
+            match std::process::Command::new(&exe).arg("30").spawn() {
+                Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10))
+                }
+                r => break r.unwrap(),
+            }
         };
         let (mut server, mut client) = (sleep(), sleep());
         let me = std::process::id() as i32;
@@ -371,6 +379,7 @@ mod tests {
         assert!(!serves(&lineage, me), "expected no tie without a client");
         server.kill().unwrap();
         server.wait().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
