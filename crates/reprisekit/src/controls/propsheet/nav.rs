@@ -26,18 +26,9 @@ pub enum StripKey {
 /// A tab opened with the focus on the strip keeps it there; one opened from the
 /// page focuses the new page's first tab stop. Everything else, Enter and Escape
 /// included, is [`StripKey::Pass`]: the page's default button or Cancel answers.
-pub fn strip_key(
-    tabs: &mut TabStrip,
-    pages: &mut [Form],
-    key: &form::Key,
-    ctrl_tab: Option<bool>,
-) -> StripKey {
-    nav_key(tabs, pages, key, ctrl_tab, false)
-}
-
-/// [`strip_key`] for either way of picking the page. With `list` the focused
-/// list takes Up, Down, Home and End ([`pagelist::target`]); Left and Right do
-/// nothing; Page Up and Down go to the page.
+///
+/// With `list` the focused list takes Up, Down, Home and End
+/// ([`pagelist::target`]); Left and Right do nothing; Page Up and Down go to the page.
 pub(super) fn nav_key(
     tabs: &mut TabStrip,
     pages: &mut [Form],
@@ -110,14 +101,9 @@ pub(super) fn nav_key(
     }
 }
 
-/// A press on tab `i`: a closed tab opens (see [`strip_key`]); the open one takes
-/// the focus onto the strip.
-pub fn tab_click(tabs: &mut TabStrip, pages: &mut [Form], i: usize) -> StripKey {
-    nav_click(tabs, pages, i, false)
-}
-
-/// [`tab_click`] for either way of picking the page. With `list`, a press on a
-/// closed page's row also focuses the list.
+/// A press on tab `i`: a closed tab opens (see [`nav_key`]); the open one takes
+/// the focus onto the strip. With `list`, a press on a closed page's row also
+/// focuses the list.
 pub(super) fn nav_click(tabs: &mut TabStrip, pages: &mut [Form], i: usize, list: bool) -> StripKey {
     if i >= tabs.labels.len() {
         return StripKey::None;
@@ -159,7 +145,7 @@ pub fn page_step(sym: u32, ctrl: bool, shift: bool) -> Option<bool> {
 
 /// After a press on the open `page`: a control that took the focus takes it from
 /// the strip.
-pub fn page_clicked(tabs: &mut TabStrip, page: &Form) {
+pub(super) fn page_clicked(tabs: &mut TabStrip, page: &Form) {
     if page.focus().is_some() {
         tabs.focused = false;
     }

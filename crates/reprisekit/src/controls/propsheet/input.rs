@@ -29,8 +29,8 @@ impl PropSheet {
         i != self.tabs.open && self.tab_click(i) == StripKey::Turned
     }
 
-    /// The strip's part of a key, before the open page's: see [`strip_key`], and in
-    /// list mode `nav_key`. For a host that routes the page's keys itself.
+    /// The strip's part of a key, before the open page's (see `nav_key`). For a host
+    /// that routes the page's keys itself.
     pub fn strip_key(&mut self, key: &form::Key, ctrl_tab: Option<bool>) -> StripKey {
         let list = self.is_list();
         let r = nav_key(&mut self.tabs, &mut self.pages, key, ctrl_tab, list);
@@ -58,7 +58,7 @@ impl PropSheet {
         page_clicked(&mut self.tabs, &self.pages[i]);
     }
 
-    /// A key for the sheet: the strip's keys ([`strip_key`]) first, the open page's
+    /// A key for the sheet: the strip's keys ([`PropSheet::strip_key`]) first, the open page's
     /// after. `ctrl_tab` is `Some(back)` for Ctrl+Tab and Ctrl+Shift+Tab, which turn
     /// the tabs; `key` is then ignored.
     pub fn key(&mut self, key: form::Key, ctrl_tab: Option<bool>) -> Event {
