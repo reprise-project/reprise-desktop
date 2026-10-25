@@ -188,12 +188,29 @@ struct OutputBackdrop {
     clear: Option<Color32F>,
 }
 
+/// Whether a frame keeps the last blur (`[glass] blur_rate`'s cap is not up).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Hold {
+    #[default]
+    No,
+    /// What asked for the frame may have changed what lies under glass: it waits for the next blur.
+    Changed,
+    /// Only the pointer or the cursor asked for it: nothing under glass changed.
+    Unchanged,
+}
+
+impl Hold {
+    pub fn keeps(self) -> bool {
+        self != Hold::No
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Pass {
     pub settings: Settings,
     pub output: Size<i32, Physical>,
     pub quality: Quality,
-    pub hold: bool,
+    pub hold: Hold,
 }
 
 impl GlassCtx {
@@ -240,7 +257,7 @@ impl GlassCtx {
         self.strokes.get()
     }
 
-    pub fn begin(&self, output: &Output, settings: Settings, quality: Quality, hold: bool) {
+    pub fn begin(&self, output: &Output, settings: Settings, quality: Quality, hold: Hold) {
         *self.source.borrow_mut() = None;
         self.own.borrow_mut().clear();
         self.made.borrow_mut().clear();
@@ -565,7 +582,7 @@ impl GlassCtx {
             quality: pass.quality,
             output: output.current_transform().transform_size(mode.size),
             scale: output.current_scale().fractional_scale(),
-            hold: pass.hold,
+            hold: pass.hold.keeps(),
             needed,
         };
         let view = Scale::from(f64::from_bits(b.key.1));
@@ -599,10 +616,10 @@ impl GlassCtx {
         };
         if wanted
             && let Some(b) = self.backdrops.borrow_mut().get_mut(&name)
-            && (b.hidden || (pass.hold && b.drawn && same(b)))
+            && (b.hidden || (pass.hold.keeps() && b.drawn && same(b)))
         {
             // A held blur shows the picture as it was, so its backdrops need no drawing either.
-            b.skipped |= !b.hidden;
+            b.skipped |= !b.hidden && pass.hold == Hold::Changed;
             *self.source.borrow_mut() = b.picture.source();
             let mut own = self.own.borrow_mut();
             for ((o, _), b) in self.beneath.borrow().iter() {
@@ -631,7 +648,7 @@ impl GlassCtx {
         b.hidden = !shown;
         if resumed {
             let mut pass = self.pass.get();
-            pass.hold = false;
+            pass.hold = Hold::No;
             self.pass.set(pass);
             self.made.borrow_mut().clear();
         }
@@ -1211,7 +1228,7 @@ impl CustomNode<GlesRenderer> for GlassNode {
                 scale: scale.x,
                 alpha,
                 quality: pass.quality,
-                hold: pass.hold,
+                hold: pass.hold.keeps(),
                 source,
                 downscale,
             },

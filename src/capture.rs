@@ -308,7 +308,7 @@ fn render_scene_into(
         output,
         config.glass,
         crate::glass::quality(interaction, &config.glass),
-        false,
+        crate::glass::Hold::No,
     );
     let renderer = &mut b.renderer;
     let clear = clear_color(&config.theme.colors);
