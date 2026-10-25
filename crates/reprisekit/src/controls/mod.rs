@@ -77,7 +77,7 @@ pub mod wizard;
 /// and controls also reach them here.
 pub use crate::metrics;
 
-/// A label's layout rect on the device: its width was measured at the
+/// A label's layout rect on the device: its width is set at the
 /// device font size, so only the position and height scale.
 pub(crate) fn label_rect(r: crate::raster::Rect, s: i32) -> crate::raster::Rect {
     crate::raster::Rect::new(r.x * s, r.y * s, r.width, r.height * s)
