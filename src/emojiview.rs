@@ -160,9 +160,8 @@ impl State {
         let Some(v) = self.panels.emojiview.take() else {
             return;
         };
-        self.scene.destroy(v.tree);
+        self.destroy_redrawn(v.tree);
         self.end_panel_caret();
-        self.redraw_all();
         crate::access::touch(self);
     }
 
@@ -283,6 +282,9 @@ impl State {
 
     /// Redraw the panel. The caret blink lands here too.
     pub fn redraw_emoji(&mut self) {
+        let was = (self.panels.emojiview.as_ref())
+            .map(|v| self.scene.outputs_of(v.tree))
+            .unwrap_or_default();
         let preedit = self.ime_field_preedit(crate::caret::Editor::EmojiView);
         let State {
             panels,
@@ -319,7 +321,9 @@ impl State {
         let (origin, scale) = ((v.origin.0 - m.left, v.origin.1 - m.top), v.scale);
         let spot = canvas.take_spot();
         self.ime_field_drawn(crate::caret::Editor::EmojiView, spot, origin, scale);
-        self.redraw_all();
+        if let Some(tree) = self.panels.emojiview.as_ref().map(|v| v.tree) {
+            self.redraw_nodes(was, &[tree.into()]);
+        }
         crate::access::touch(self);
     }
 

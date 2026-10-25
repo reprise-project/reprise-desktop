@@ -113,11 +113,10 @@ pub fn close(state: &mut State) {
     let Some(v) = state.tray.as_mut().and_then(|t| t.flyout.take()) else {
         return;
     };
-    state.scene.destroy(v.tree);
+    state.destroy_redrawn(v.tree);
     if let Some(bar) = bar_on(state, &v.output) {
         state.redraw_taskbar(bar);
     }
-    state.redraw_all();
     crate::access::touch(state);
     crate::autohideview::poke(state);
 }
@@ -216,9 +215,11 @@ fn redraw(state: &mut State) {
     let scene = &mut state.scene;
     upload_scaled(scene, v.buffer, &canvas, scale);
     glass::place_flyout(scene, v.buffer, &state.config.theme, size);
-    scene.set_position(v.tree, v.at.0, v.at.1);
+    let tree = v.tree;
+    let was = scene.outputs_of(tree);
+    scene.set_position(tree, v.at.0, v.at.1);
     v.glass.set(scene, &state.glass, v.glass_tree, pane);
-    state.redraw_all();
+    state.redraw_nodes(was, &[tree.into()]);
     crate::access::touch(state);
 }
 

@@ -239,8 +239,7 @@ fn take_down(state: &mut State) {
     }
     state.tooltip.pending = None;
     if let Some((_, tree)) = state.tooltip.shown.take() {
-        state.scene.destroy(tree);
-        state.redraw_all();
+        state.destroy_redrawn(tree);
     }
     arm(state, 0);
 }
@@ -345,7 +344,7 @@ fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, curso
     scene.set_position(tree, x, y);
     upload_scaled(scene, buffer, &canvas, scale);
     state.tooltip.shown = Some((target, tree));
-    state.redraw_all();
+    state.redraw_nodes(Vec::new(), &[tree.into()]);
 }
 
 fn menu_row_rect(state: &State, depth: usize, row: usize) -> Option<Rect> {
