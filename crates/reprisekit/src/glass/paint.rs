@@ -5,6 +5,7 @@
 //! (computed once per title and kept) and the colour a task button glows in.
 
 use crate::glass::{Settings, bar, orb, taskbutton};
+use crate::mutex::lock;
 use crate::raster::Canvas;
 use crate::style::{GlowMask, Part, PartImage, TaskGlow, TitleGlow};
 use crate::theme::Color;
@@ -209,25 +210,19 @@ fn box_radii(sigma: f32) -> [usize; 3] {
 /// a hover, press or move reuses it.
 pub fn title_glow(m: &GlowMask) -> Arc<[u8]> {
     static GLOWS: Mutex<GlowCache> = Mutex::new(GlowCache::new());
-    GLOWS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(m, |m| glow_alpha(&GLOW, m))
+    lock(&GLOWS).get(m, |m| glow_alpha(&GLOW, m))
 }
 
 /// [`TITLE_GLOW_DARK`]'s alpha for `m`, kept like [`title_glow`]'s.
 pub fn title_edge(m: &GlowMask) -> Arc<[u8]> {
     static EDGES: Mutex<GlowCache> = Mutex::new(GlowCache::new());
-    EDGES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(m, |m| glow_alpha(&EDGE, m))
+    lock(&EDGES).get(m, |m| glow_alpha(&EDGE, m))
 }
 
 /// [`LABEL_HALO_DARK`]'s alpha for `m`, kept like [`title_glow`]'s.
 pub fn label_halo(m: &GlowMask) -> Arc<[u8]> {
     static HALOS: Mutex<GlowCache> = Mutex::new(GlowCache::new());
-    HALOS.lock().unwrap_or_else(|e| e.into_inner()).get(m, |m| {
+    lock(&HALOS).get(m, |m| {
         let edge = glow_alpha(&EDGE, m);
         let mut cloud = glow_alpha(&HALO, m);
         for (c, e) in cloud.iter_mut().zip(edge) {
