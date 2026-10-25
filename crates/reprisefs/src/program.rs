@@ -61,8 +61,27 @@ impl ScriptEnd {
 
 /// Run by `sh -c` with the script's path as `$0`, so no path is ever part of the shell text.
 const STAY: &str = r#""$0"; s=$?; echo; [ "$s" -eq 0 ] || echo "The script ended with status $s."; printf 'Press Enter to close.'; read -r _"#;
-/// [`STAY`] that exits at once when the script succeeds, so a failure is never closed unread.
-const CLOSE: &str = r#""$0"; s=$?; [ "$s" -eq 0 ] && exit; echo; echo "The script ended with status $s."; printf 'Press Enter to close.'; read -r _"#;
+/// [`STAY`] that exits when the script succeeds, so a failure is never closed unread. The wrapper
+/// leads the terminal's session and its exit hangs up its process group (`$$`), so it first waits
+/// up to 2 s for the script's background children to leave the group, as `setsid cmd &` does.
+/// The scan reads `/proc` with builtins only: a forked check would itself be in the group.
+const CLOSE: &str = r#""$0"; s=$?
+if [ "$s" -eq 0 ]; then
+    read -r up _ < /proc/uptime
+    end=$((${up%.*} * 100 + 1${up#*.} - 100 + 200))
+    while :; do
+        n=0
+        for f in /proc/[0-9]*/stat; do
+            { read -r l < "$f"; } 2>/dev/null || continue
+            set -- ${l##*") "}
+            [ "$3" = "$$" ] && [ "$f" != "/proc/$$/stat" ] && [ "$1" != Z ] && n=1 && break
+        done
+        read -r up _ < /proc/uptime
+        [ "$n" = 0 ] || [ $((${up%.*} * 100 + 1${up#*.} - 100)) -ge "$end" ] && exit 0
+        sleep 0.05
+    done
+fi
+echo; echo "The script ended with status $s."; printf 'Press Enter to close.'; read -r _"#;
 
 /// The argument vector that runs the program at `path`, which must be absolute: a bare name
 /// would be looked up on `PATH`. A script runs in `terminal` (the `terminal` key), which `end`
@@ -259,6 +278,50 @@ mod tests {
             run("env.sh", b"#!/usr/bin/env no-such-interpreter-x\n").0,
             "\nThe script ended with status 127.\nPress Enter to close.",
             "a missing `env` interpreter"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_close_wrapper_outlasts_a_setsid_child_until_it_leaves_the_group() {
+        use std::os::unix::process::CommandExt;
+        let d = dir("close-group");
+        let pid_file = d.join("pid");
+        let body = format!(
+            "#!/bin/sh\nsleep 0.3 &\nsetsid sleep 30 >/dev/null 2>&1 &\necho $! > '{}'\n",
+            pid_file.display()
+        );
+        let script = file(&d, "bg.sh", body.as_bytes(), 0o755);
+        let start = std::time::Instant::now();
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", CLOSE])
+            .arg(&script)
+            .process_group(0)
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let group = child.id() as libc::pid_t;
+        assert!(child.wait().unwrap().success());
+        let took = start.elapsed();
+        // What a terminal's session leader exiting does to its process group.
+        // SAFETY: plain syscalls on pids this test started.
+        unsafe { libc::killpg(group, libc::SIGHUP) };
+        let pid: libc::pid_t = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // SAFETY: as above.
+        let alive = unsafe { libc::kill(pid, 0) == 0 && libc::kill(pid, libc::SIGKILL) == 0 };
+        assert!(alive, "the setsid child survives the hangup");
+        assert!(
+            took >= std::time::Duration::from_millis(300),
+            "the wrapper waits for the group's sleep 0.3, took {took:?}"
+        );
+        assert!(
+            took < std::time::Duration::from_secs(2),
+            "the wrapper ends once the group is empty, took {took:?}"
         );
         let _ = std::fs::remove_dir_all(&d);
     }
