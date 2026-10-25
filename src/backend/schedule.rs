@@ -21,6 +21,8 @@ pub enum Ask {
     Scene,
     Content,
     Pointer,
+    /// A new cursor image: drawn over everything, so glass has nothing new under it.
+    Cursor,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -28,6 +30,8 @@ pub(super) struct Asked {
     pub(super) redraw: bool,
     pub(super) pointer_only: bool,
     pub(super) scene: bool,
+    /// An ask whose change may lie under glass: anything but the pointer and the cursor.
+    pub(super) backdrop: bool,
 }
 
 impl Asked {
@@ -35,6 +39,7 @@ impl Asked {
         self.pointer_only = (self.pointer_only || !self.redraw) && ask == Ask::Pointer;
         self.redraw = true;
         self.scene |= ask == Ask::Scene;
+        self.backdrop |= matches!(ask, Ask::Scene | Ask::Content);
     }
 }
 
@@ -62,11 +67,13 @@ fn request(state: &mut State, output: &Output, ask: Ask) {
         redraw: s.needs_redraw,
         pointer_only: s.pointer_only,
         scene: s.scene_changed,
+        backdrop: s.backdrop_changed,
     };
     asked.add(ask);
     s.needs_redraw = asked.redraw;
     s.pointer_only = asked.pointer_only;
     s.scene_changed = asked.scene;
+    s.backdrop_changed = asked.backdrop;
     queue_render(state, crtc);
 }
 

@@ -36,7 +36,7 @@ impl State {
             .ok()?;
         let clear = crate::render::clear_color(&config.theme.colors);
         if let Some(o) = &output {
-            glass.begin(o, config.glass, quality, false);
+            glass.begin(o, config.glass, quality, crate::glass::Hold::No);
         }
         if let Some(o) = &whole {
             glass.update_backdrop(renderer, scene, o, clear, wanted);
