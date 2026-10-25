@@ -4,18 +4,8 @@ use crate::compositor::State;
 use crate::dirwatch::{DirWatch, Want};
 use inotify::WatchMask;
 use smithay::reexports::calloop::{Interest, Mode, PostAction, generic::Generic};
-use std::os::fd::{AsFd, BorrowedFd};
-use std::path::Path;
-
-struct Watch(DirWatch);
-
-impl AsFd for Watch {
-    fn as_fd(&self) -> BorrowedFd<'_> {
-        // SAFETY: the fd is the watch's inotify fd, open for as long as the
-        // watch, which outlives the borrow.
-        unsafe { BorrowedFd::borrow_raw(self.0.fd()) }
-    }
-}
+use std::os::fd::BorrowedFd;
+use std::path::{Path, PathBuf};
 
 fn wants(dir: &Path) -> Vec<Want> {
     vec![Want {
@@ -32,30 +22,48 @@ pub fn setup(state: &mut State) {
     let Some(dir) = reprisefs::quicklaunch::dir() else {
         return;
     };
-    let mut watch = match DirWatch::new() {
+    let watch = match DirWatch::new() {
         Ok(w) => w,
-        Err(e) => {
-            log::warn!("quick launch watch: inotify unavailable: {e}");
-            return;
-        }
+        Err(e) => return log::warn!("quick launch watch: inotify unavailable: {e}"),
     };
-    watch.sync(&wants(&dir));
-    let source = Generic::new(Watch(watch), Interest::READ, Mode::Level);
-    let added = state.handle.insert_source(source, move |_, watch, state| {
-        // SAFETY: the watch is not dropped here, only drained and
-        // resynced; the source keeps its fd registered for the watch's
-        // life.
-        let watch = unsafe { &mut watch.get_mut().0 };
-        let hit = watch.drain();
-        watch.sync(&wants(&dir));
-        if hit {
-            state.quick_reread(&dir);
-        }
+    // SAFETY: the fd is the watch's inotify fd, open for this call.
+    let fd = match unsafe { BorrowedFd::borrow_raw(watch.fd()) }.try_clone_to_owned() {
+        Ok(fd) => fd,
+        Err(e) => return log::warn!("quick launch watch: no fd: {e}"),
+    };
+    let source = Generic::new(fd, Interest::READ, Mode::Level);
+    let folder = dir.clone();
+    let added = state.handle.insert_source(source, move |_, _, state| {
+        state.quick_watch.drain();
+        sync(state, folder.clone());
         Ok(PostAction::Continue)
     });
     if let Err(e) = added {
-        log::warn!("quick launch watch: {}", e.error);
+        return log::warn!("quick launch watch: {}", e.error);
     }
+    state.quick_watch.watch = Some(watch);
+    sync(state, dir);
+}
+
+/// Watches `dir` again on a file job (the folder may sit on a mount that stopped answering),
+/// then reads it when an event came.
+fn sync(state: &mut State, dir: PathBuf) {
+    let Some(job) = state.quick_watch.start() else {
+        return;
+    };
+    let hit = job.hit;
+    state.spawn_fs_job(move || {
+        let want = wants(&dir);
+        let added = job.adder.run(&want);
+        Box::new(move |state: &mut State| {
+            if state.quick_watch.landed(&want, added) {
+                sync(state, dir.clone());
+            }
+            if hit {
+                state.quick_reread(&dir);
+            }
+        })
+    });
 }
 
 #[cfg(test)]

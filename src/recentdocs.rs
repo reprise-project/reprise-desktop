@@ -58,6 +58,8 @@ pub struct RecentDocs {
     pub(crate) folder_watch: Option<crate::dirwatch::DirWatch>,
     /// The folders a file job is adding to `folder_watch`.
     pub(crate) folder_adds: HashSet<PathBuf>,
+    /// Wakes for `recently-used.xbel` being replaced (`recentwatch`).
+    pub(crate) xbel_watch: crate::dirwatch::JobWatch,
 }
 
 impl Default for RecentDocs {
@@ -81,6 +83,7 @@ impl RecentDocs {
             dirs: Vec::new(),
             folder_watch: None,
             folder_adds: HashSet::new(),
+            xbel_watch: Default::default(),
         }
     }
 

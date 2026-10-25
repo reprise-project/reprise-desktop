@@ -1,7 +1,7 @@
 //! Re-reads `config.toml` when it changes: inotify watches on the file's directory (and a symlink's target's),
 //! since editors and `reprise-settings` write a temp file and rename; a pure diff says what to redo.
 
-use std::os::fd::{AsFd, BorrowedFd};
+use std::os::fd::BorrowedFd;
 use std::path::{Path, PathBuf};
 
 use inotify::WatchMask;
@@ -190,50 +190,80 @@ fn wants(path: &Path) -> Vec<Want> {
     want
 }
 
-struct Watch(DirWatch);
-
-impl AsFd for Watch {
-    fn as_fd(&self) -> BorrowedFd<'_> {
-        // SAFETY: the fd is the watch's inotify fd, open for as long as the
-        // watch, which outlives the borrow.
-        unsafe { BorrowedFd::borrow_raw(self.0.fd()) }
-    }
-}
-
 pub fn setup(state: &mut State) {
-    let want = wants(&state.config_path);
-    let Some(first) = want.first() else { return };
-    // The directory need not exist yet: a first run with no
-    // `~/.config/reprise` still has to notice the file appearing, and
-    // inotify watches a directory, not a path that might turn up.
-    if let Err(e) = std::fs::create_dir_all(&first.dir) {
-        log::warn!("config watch: cannot create {}: {e}", first.dir.display());
-    }
-    let mut watch = match DirWatch::new() {
+    let watch = match DirWatch::new() {
         Ok(w) => w,
         Err(e) => {
             log::warn!("config watch: inotify unavailable: {e}");
             return;
         }
     };
-    watch.sync(&want);
-    let source = Generic::new(Watch(watch), Interest::READ, Mode::Level);
-    let added = state.handle.insert_source(source, |_, watch, state| {
-        // SAFETY: the watch is not dropped here, only read and resynced;
-        // the source keeps its fd registered for the watch's life.
-        let watch = unsafe { &mut watch.get_mut().0 };
-        let hit = watch.drain();
-        // Before the read, so a write between the two is not missed.
-        watch.sync(&wants(&state.config_path));
-        if hit && let Some(cfg) = read(&state.config_path) {
-            reload(state, cfg);
-        }
+    // SAFETY: the fd is the watch's inotify fd, open for this call.
+    let fd = match unsafe { BorrowedFd::borrow_raw(watch.fd()) }.try_clone_to_owned() {
+        Ok(fd) => fd,
+        Err(e) => return log::warn!("config watch: no watch fd: {e}"),
+    };
+    let source = Generic::new(fd, Interest::READ, Mode::Level);
+    let added = state.handle.insert_source(source, |_, _, state| {
+        state.config_watch.drain();
+        sync(state);
         Ok(PostAction::Continue)
     });
-    match added {
-        Ok(_) => log::info!("config watch: watching {}", state.config_path.display()),
-        Err(e) => log::warn!("config watch: {}", e.error),
+    if let Err(e) = added {
+        return log::warn!("config watch: {}", e.error);
     }
+    log::info!("config watch: watching {}", state.config_path.display());
+    state.config_watch.watch = Some(watch);
+    let path = state.config_path.clone();
+    sync_with(state, move || {
+        let want = wants(&path);
+        // The directory need not exist yet: a first run with no
+        // `~/.config/reprise` still has to notice the file appearing, and
+        // inotify watches a directory, not a path that might turn up.
+        if let Some(first) = want.first()
+            && let Err(e) = std::fs::create_dir_all(&first.dir)
+        {
+            log::warn!("config watch: cannot create {}: {e}", first.dir.display());
+        }
+        want
+    });
+}
+
+fn sync(state: &mut State) {
+    let path = state.config_path.clone();
+    sync_with(state, move || wants(&path));
+}
+
+/// Syncs the watch to what `find` returns and, after an event named the file, reads the config
+/// after it, all on a file job: a config directory on a mount that stopped answering holds the
+/// job, never the loop.
+fn sync_with<F>(state: &mut State, find: F)
+where
+    F: FnOnce() -> Vec<Want> + Send + 'static,
+{
+    let Some(job) = state.config_watch.start() else {
+        return;
+    };
+    let path = state.config_path.clone();
+    state.spawn_fs_job(move || {
+        let want = find();
+        // Before the read, so a write between the two is not missed.
+        let added = job.adder.run(&want);
+        let cfg = if job.hit { self::read(&path) } else { None };
+        Box::new(move |state: &mut State| {
+            if state.config_watch.landed(&want, added) {
+                // A later read follows; this one may be older than the file.
+                let newer = state.config_watch.hit_pending();
+                sync(state);
+                if newer {
+                    return;
+                }
+            }
+            if let Some(cfg) = cfg {
+                reload(state, cfg);
+            }
+        })
+    });
 }
 
 fn read(path: &Path) -> Option<Config> {
@@ -515,6 +545,47 @@ pub fn redraw_for_scale(state: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
+
+    /// The config directory's lookups stand in for a stat on a mount that stopped answering:
+    /// the loop turns while they hang, and the read after them reloads once they answer.
+    #[test]
+    fn a_sync_whose_lookups_hang_leaves_the_loop_turning_and_reloads_after() {
+        let mut h = crate::harness::Harness::new();
+        crate::fsjobs::setup(&mut h.state);
+        let path = crate::harness::scratch().join("configwatch-stall/config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        h.state.config_path = path.clone();
+        let mut watch = DirWatch::new().unwrap();
+        watch.sync(&wants(&path));
+        h.state.config_watch.watch = Some(watch);
+        std::fs::write(&path, "[window_snapping]\ndistance = 15\n").unwrap();
+        assert!(h.state.config_watch.drain(), "the write counts");
+
+        let (answer, stalled) = std::sync::mpsc::channel::<()>();
+        let started = Instant::now();
+        let looked_up = path.clone();
+        sync_with(&mut h.state, move || {
+            let _ = stalled.recv_timeout(Duration::from_secs(5));
+            wants(&looked_up)
+        });
+        h.run_for(50);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the loop turned while the lookups hung"
+        );
+        assert_ne!(
+            h.state.config.window_snapping.distance, 15,
+            "not reloaded yet"
+        );
+
+        answer.send(()).unwrap();
+        let end = Instant::now() + Duration::from_secs(5);
+        while h.state.config_watch.syncing() && Instant::now() < end {
+            h.run_for(10);
+        }
+        assert_eq!(h.state.config.window_snapping.distance, 15, "reloaded");
+    }
 
     #[test]
     fn a_reload_redraws_the_layout_for_output_keys_alone_and_nothing_for_an_identical_config() {
