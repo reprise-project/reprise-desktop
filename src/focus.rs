@@ -172,6 +172,7 @@ impl State {
             activated,
             client: client(self, w),
             lineage: &lineage,
+            session,
             launched: launch.is_some(),
             prompt: new_pid.is_some_and(mapfocus::is_prompt),
         };
