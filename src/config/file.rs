@@ -706,6 +706,7 @@ pub(super) struct FileScreensaver {
 pub(super) struct FileConfig {
     pub(super) terminal: Option<String>,
     pub(super) script_terminal: Option<String>,
+    pub(super) script_open: Option<String>,
     pub(super) task_manager: Option<String>,
     /// Retired, as `FileOutput::hdr`.
     pub(super) renderer: Option<serde::de::IgnoredAny>,

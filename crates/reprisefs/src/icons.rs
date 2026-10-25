@@ -116,7 +116,7 @@ pub fn item_icon_with(
         }
         return it.drive.map_or("folder", |k| k.icon()).to_string();
     }
-    if it.program {
+    if it.program.is_some() {
         return pick_program_icon(it.mime.as_deref(), &it.path, has);
     }
     pick_icon(it.mime.as_deref(), &it.path, has)
@@ -194,7 +194,7 @@ mod tests {
             is_dir,
             is_link: false,
             exec: false,
-            program: false,
+            program: None,
             hidden: false,
             size: 0,
             modified: None,
@@ -219,7 +219,7 @@ mod tests {
         assert_eq!(icon(&item(false, None, Some("text/plain"))), "text-plain");
         assert_eq!(icon(&item(false, None, None)), "text-x-generic");
         let program = Item {
-            program: true,
+            program: Some(crate::program::Program::Script),
             ..item(false, None, Some("application/x-shellscript"))
         };
         assert_eq!(icon(&program), "application-x-executable");
@@ -239,7 +239,7 @@ mod tests {
             is_dir: true,
             is_link: false,
             exec: false,
-            program: false,
+            program: None,
             hidden: false,
             size: 0,
             modified: None,
@@ -269,7 +269,7 @@ mod tests {
             is_dir: true,
             is_link: false,
             exec: false,
-            program: false,
+            program: None,
             hidden: false,
             size: 0,
             modified: None,
@@ -294,7 +294,7 @@ mod tests {
             is_dir: true,
             is_link: false,
             exec: false,
-            program: false,
+            program: None,
             hidden: false,
             size: 0,
             modified: None,
@@ -322,7 +322,7 @@ mod tests {
             is_dir: false,
             is_link: false,
             exec: false,
-            program: false,
+            program: None,
             hidden: false,
             size: 0,
             modified: None,

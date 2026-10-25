@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use reprisefs::apps;
+use reprisefs::program::{Program, ScriptOpen};
 
 use crate::{
     compositor::State,
@@ -146,10 +147,12 @@ pub struct IconMenu {
     pub allow_launching: bool,
     pub launcher: bool,
     pub in_set: bool,
+    /// An executable script, which runs as this default when opened.
+    pub script: Option<ScriptOpen>,
 }
 
-/// A file's or folder's context menu. A file gets its verbs (`print`, `edit`) and
-/// Open With, and Allow Launching with `allow_launching`. A launcher gets a greyed
+/// A file's or folder's context menu. A script has Run and Run in terminal in place of
+/// Open. A file gets its verbs (`print`, `edit`) and Open With, and Allow Launching with `allow_launching`. A launcher gets a greyed
 /// Run as... under Open (a program runs in the session of the logged-in user and
 /// another user's program cannot reach its display), no Open With, and Paste under
 /// Copy. A folder gets Explore, the greyed Sharing and Security... (no sheet behind
@@ -159,7 +162,16 @@ pub struct IconMenu {
 /// and Properties.
 pub fn icon_menu(m: IconMenu) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     use DesktopCommand::*;
-    let mut rows = vec![(entry("&Open").bold(true), Some(Open))];
+    let script = m
+        .script
+        .and_then(|open| reprisefs::program::run_rows(Program::Script, open));
+    let mut rows = match script {
+        Some(runs) => runs
+            .iter()
+            .map(|&(o, default)| (entry(o.label()).bold(default), Some(Run(o))))
+            .collect(),
+        None => vec![(entry("&Open").bold(true), Some(Open))],
+    };
     if m.is_dir {
         rows.push((entry("E&xplore"), Some(Explore)));
         if !m.in_set {
@@ -326,6 +338,8 @@ impl State {
                     allow_launching: entry.allow_launching,
                     launcher: matches!(entry.target, Target::Launch(_)),
                     in_set: self.selection_around(index).len() > 1,
+                    script: matches!(entry.target, Target::Run(_, Program::Script))
+                        .then_some(self.config.script_open),
                 })
             }
         })
