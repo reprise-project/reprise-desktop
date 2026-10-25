@@ -189,7 +189,7 @@ pub fn poke(state: &mut State) {
         return;
     }
     state.bar_hide.queued = true;
-    state.handle.insert_idle(|state| {
+    state.insert_idle_woken(|state| {
         state.bar_hide.queued = false;
         refresh(state);
     });
@@ -580,6 +580,20 @@ mod tests {
         assert!(
             hide.tray_press.is_none(),
             "past its window the press is gone"
+        );
+    }
+
+    #[test]
+    fn a_poke_from_an_idle_steps_the_bars_on_the_next_turn_with_nothing_else_ready() {
+        let mut config = crate::config::Config::default();
+        config.taskbar.auto_hide = true;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.run_for(200);
+        let waited = h.after_idle(poke);
+        assert!(!h.state.bar_hide.queued, "the queued step ran");
+        assert!(
+            waited < std::time::Duration::from_secs(1),
+            "the poll returned at once, not after its 3 s timeout"
         );
     }
 }

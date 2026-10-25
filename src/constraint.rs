@@ -338,4 +338,25 @@ mod tests {
         assert!(!inside(&r, p(1.0, 1.0)));
         assert!(inside(&r, p(7.0, 7.0)));
     }
+
+    #[test]
+    fn a_focus_change_from_an_idle_rechecks_the_constraint_without_waiting_for_an_event() {
+        use smithay::input::SeatHandler;
+        let mut h = crate::harness::Harness::new();
+        let mut c = h.connect();
+        h.state.pointers.constrained = Some(h.bare_surface(&mut c));
+        h.run_for(200);
+        let waited = h.after_idle(|state| {
+            let seat = state.seat.clone();
+            state.focus_changed(&seat, None);
+        });
+        assert_eq!(
+            h.state.pointers.constrained, None,
+            "nothing under the pointer wants it, so the check released it"
+        );
+        assert!(
+            waited < std::time::Duration::from_secs(1),
+            "the poll returned at once, not after its 3 s timeout"
+        );
+    }
 }
