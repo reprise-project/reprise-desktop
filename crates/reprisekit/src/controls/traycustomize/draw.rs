@@ -16,10 +16,11 @@ use crate::textedit::Caret;
 use super::geometry::{
     CELL_X, GLASS, GROUP_TEXT_X, HEADER_TEXT_X, HEADING_SCALE, HIGHLIGHT_X, ICON_PX, ICON_X,
     NAME_X, PAGE_HEADING_LINE_H, PAGE_ICON_X, PAGE_NAME, PAGE_RULE_INSET, PAGE_RULE_Y, PAGE_TIP,
-    PAGE_TITLE_X, label_rect, rows_in,
+    PAGE_TITLE_X, rows_in,
 };
 use super::layout::Layout;
 use super::{ALL_ICONS, CURRENT, Focus, PAST, Slot, TrayCustomize, Wording};
+use crate::controls::label_rect;
 
 /// `sources` drawn `px` square: the smallest at least that big, else the largest.
 pub(super) fn icon_at(sources: &[IconSource], px: i32) -> Option<Canvas> {
