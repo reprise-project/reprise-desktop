@@ -156,11 +156,15 @@ struct Surface {
     commit_times: Vec<commit::Times>,
     needs_redraw: bool,
     pointer_only: bool,
+    catch_up: bool,
     pointer_shown: bool,
     scene_seen: u64,
     scene_changed: bool,
     backdrop_changed: crate::glass::Under,
     last_blur: Option<std::time::Instant>,
+    /// When the next frame was first asked for: `[glass] blur_rate`'s cap counts from it, so a
+    /// frame that waited for a flip does not hold the one after.
+    asked_at: Option<std::time::Instant>,
     idle_scheduled: bool,
     callback_timer: Option<RegistrationToken>,
     render_timer: Option<RegistrationToken>,
