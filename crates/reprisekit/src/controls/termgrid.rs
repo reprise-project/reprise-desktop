@@ -251,6 +251,18 @@ pub fn draw(
     drawn
 }
 
+/// Fill `area` (logical px) with `snap`'s default background at its alpha, as the grid's own
+/// margins are; returns the rect to report as damage.
+pub fn draw_background(c: &mut Canvas, area: Rect, snap: &Snapshot) -> Rect {
+    let s = c.scale();
+    let (dw, dh) = c.device_size();
+    let r = area
+        .scaled(s)
+        .intersect(&Rect::new(0, 0, dw as i32, dh as i32));
+    c.in_device_px(|c| fill(c, r, r, premul(snap.bg, snap.alpha)));
+    logical(r, s)
+}
+
 /// The logical rect covering device rect `r` at `s`.
 fn logical(r: Rect, s: i32) -> Rect {
     let (x0, y0) = (r.x.div_euclid(s), r.y.div_euclid(s));
@@ -672,6 +684,20 @@ mod tests {
             drawn,
             vec![Rect::new(0, 0, 40, 16), Rect::new(0, 16, 40, 24)]
         );
+    }
+
+    #[test]
+    fn a_background_rect_takes_the_default_background_at_its_alpha_in_device_px() {
+        let mut snap = Snapshot::new(1, 1, FG, Color::rgb(0x20, 0x40, 0x60));
+        snap.alpha = 128;
+        let mut c = Canvas::with_scale(10, 10, 2);
+        let damage = draw_background(&mut c, Rect::new(1, 2, 5, 3), &snap);
+        assert_eq!(damage, Rect::new(1, 2, 5, 3));
+        let want = premul(snap.bg, 128);
+        assert_eq!(px(&c, 2, 4), want, "first device px");
+        assert_eq!(px(&c, 11, 9), want, "last device px");
+        assert_eq!(px(&c, 1, 4), 0, "left of the rect");
+        assert_eq!(px(&c, 2, 10), 0, "under the rect");
     }
 
     #[test]
