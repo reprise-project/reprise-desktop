@@ -225,12 +225,27 @@ pub fn script_terminal() -> reprisefs::program::ScriptEnd {
 }
 
 fn script_terminal_in(text: &str) -> reprisefs::program::ScriptEnd {
+    top_parsed(
+        text,
+        "script_terminal",
+        reprisefs::program::ScriptEnd::parse,
+    )
+}
+
+/// The top-level `script_open`, read now: "run" when unset or invalid.
+pub fn script_open() -> reprisefs::program::ScriptOpen {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    script_open_in(&text)
+}
+
+fn script_open_in(text: &str) -> reprisefs::program::ScriptOpen {
+    top_parsed(text, "script_open", reprisefs::program::ScriptOpen::parse)
+}
+
+/// The top-level string `name` read by `parse`, its default when unset or invalid.
+fn top_parsed<T: Default>(text: &str, name: &'static str, parse: fn(&str) -> Option<T>) -> T {
     parsed(text)
-        .and_then(|d| {
-            get(&d, &key("", "script_terminal"))?
-                .as_str()
-                .and_then(reprisefs::program::ScriptEnd::parse)
-        })
+        .and_then(|d| get(&d, &key("", name))?.as_str().and_then(parse))
         .unwrap_or_default()
 }
 
@@ -749,6 +764,17 @@ mod tests {
             script_terminal_in("script_terminal = \"later\"\n"),
             ScriptEnd::Stay
         );
+    }
+
+    #[test]
+    fn a_script_runs_bare_unless_script_open_says_terminal() {
+        use reprisefs::program::ScriptOpen;
+        assert_eq!(script_open_in(""), ScriptOpen::Run);
+        assert_eq!(
+            script_open_in("script_open = \"terminal\"\n"),
+            ScriptOpen::Terminal
+        );
+        assert_eq!(script_open_in("script_open = \"x\"\n"), ScriptOpen::Run);
     }
 
     #[test]

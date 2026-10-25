@@ -2,6 +2,7 @@
 //! names and clipboard rules. The grid, the cell drawing and the rename box
 
 use reprisefs::apps::{self, AppEntry};
+use reprisefs::program::Program;
 use reprisefs::{icons, names, places};
 pub use reprisekit::controls::iconview::*;
 use std::path::{Path, PathBuf};
@@ -12,8 +13,8 @@ pub const DRAG_PX: i32 = 4;
 pub enum Target {
     Launch(AppEntry),
     Open(PathBuf),
-    /// A program file ([`reprisefs::program::is_program`]): opening runs it in its own folder.
-    Run(PathBuf),
+    /// A program file ([`reprisefs::program::program`]): opening runs it in its own folder.
+    Run(PathBuf, Program),
     Uri(String),
 }
 
@@ -182,7 +183,7 @@ impl DesktopEntry {
         match self.target {
             Target::Launch(_) => true,
             Target::Uri(_) => self.kind == Kind::File,
-            Target::Open(_) | Target::Run(_) => false,
+            Target::Open(_) | Target::Run(..) => false,
         }
     }
 
@@ -258,7 +259,7 @@ pub fn place_argv(entry: &DesktopEntry) -> Option<Vec<String>> {
         (_, Kind::RecycleBin) => explorer("Recycle Bin"),
         (_, Kind::Place(Place::Computer)) => explorer("Computer"),
         (Target::Open(path), _) => explorer(path.to_str()?),
-        (Target::Run(path), _) => vec![path.to_str()?.to_string()],
+        (Target::Run(path, _), _) => vec![path.to_str()?.to_string()],
         (Target::Uri(uri), _) => vec!["xdg-open".to_string(), uri.clone()],
     })
 }
@@ -373,10 +374,9 @@ pub fn file_target(path: &Path) -> Target {
 
 /// What opening a file that is no shortcut does: runs a program, opens anything else.
 fn plain_target(path: &Path, meta: &std::fs::Metadata) -> Target {
-    if reprisefs::program::is_program(path, meta) {
-        Target::Run(path.to_path_buf())
-    } else {
-        Target::Open(path.to_path_buf())
+    match reprisefs::program::program(path, meta) {
+        Some(program) => Target::Run(path.to_path_buf(), program),
+        None => Target::Open(path.to_path_buf()),
     }
 }
 
@@ -388,7 +388,7 @@ fn shortcut_target(sc: apps::Shortcut) -> Target {
 }
 
 /// The argument vector that opens a file's `target`, run with no shell. A program's is its bare
-/// path: hosts start a [`Target::Run`] through `run_program`, which puts a script in a terminal.
+/// path: hosts start a [`Target::Run`] through `run_program`, which may put a script in a terminal.
 pub fn open_argv(
     target: &Target,
     mime: &apps::MimeDb,
@@ -398,7 +398,7 @@ pub fn open_argv(
     match target {
         Target::Launch(app) => apps::launch_argv(app, terminal),
         Target::Open(path) => reprisefs::props::open_in(path, mime, programs, terminal).argv,
-        Target::Run(path) => vec![path.into()],
+        Target::Run(path, _) => vec![path.into()],
         Target::Uri(uri) => vec!["xdg-open".into(), uri.into()],
     }
 }
@@ -612,7 +612,9 @@ pub fn wear_file_icons(
     has: &dyn Fn(&str) -> bool,
 ) {
     for e in entries {
-        if e.kind == Kind::File && !e.is_dir && matches!(e.target, Target::Open(_) | Target::Run(_))
+        if e.kind == Kind::File
+            && !e.is_dir
+            && matches!(e.target, Target::Open(_) | Target::Run(..))
         {
             e.icon = file_icon(
                 globs.mime_of_name(&e.name).as_deref(),
@@ -632,7 +634,7 @@ fn file_icon(
     has: &dyn Fn(&str) -> bool,
 ) -> String {
     match target {
-        Target::Run(_) => icons::pick_program_icon(mime, path, has),
+        Target::Run(..) => icons::pick_program_icon(mime, path, has),
         _ => icons::pick_icon(mime, path, has),
     }
 }
@@ -1489,8 +1491,11 @@ mod tests {
         let globs = reprisefs::apps::MimeDb::parse(["50:image/png:*.png\n"]);
         let list = scan(&dir, &globs, names::Extensions::Hide);
         let target = |n: &str| list.iter().find(|e| e.name == n).unwrap().target.clone();
-        assert_eq!(target("hi.sh"), Target::Run(script.clone()));
-        assert_eq!(target("tool"), Target::Run(elf.clone()));
+        assert_eq!(
+            target("hi.sh"),
+            Target::Run(script.clone(), Program::Script)
+        );
+        assert_eq!(target("tool"), Target::Run(elf.clone(), Program::Binary));
         assert_eq!(target("photo.png"), Target::Open(photo.clone()));
         assert_eq!(target("plain.sh"), Target::Open(plain.clone()));
         assert_eq!(target("Photos"), Target::Open(dir.join("Photos")));

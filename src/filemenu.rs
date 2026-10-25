@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use reprisefs::apps;
+use reprisefs::program::{Program, ScriptOpen};
 use reprisefs::props::Opening;
 use reprisekit::controls::menu::MenuItem;
 
@@ -40,7 +41,7 @@ pub fn file_menu(m: IconMenu, mime: Option<&str>) -> (Vec<MenuItem>, Vec<Option<
 
 /// The launcher rows of a found path from its `facts`: Allow Launching for an untrusted
 /// application `.desktop` file, Run as... for a trusted one.
-fn found_menu(facts: &desktop::FileFacts) -> IconMenu {
+fn found_menu(facts: &desktop::FileFacts, script_open: ScriptOpen) -> IconMenu {
     if facts.is_dir {
         return IconMenu {
             is_dir: true,
@@ -50,6 +51,7 @@ fn found_menu(facts: &desktop::FileFacts) -> IconMenu {
     IconMenu {
         allow_launching: facts.allow_launching,
         launcher: matches!(facts.target, Target::Launch(_)),
+        script: matches!(facts.target, Target::Run(_, Program::Script)).then_some(script_open),
         ..IconMenu::default()
     }
 }
@@ -65,7 +67,7 @@ impl State {
             .then(|| path.file_name())
             .flatten()
             .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
-        file_menu(found_menu(facts), mime.as_deref())
+        file_menu(found_menu(facts, self.config.script_open), mime.as_deref())
     }
 
     /// How a found `path` opens, from its `facts`: as its icon on the desktop would.
@@ -95,8 +97,13 @@ impl State {
     /// Open a found `path` as its `facts` say: a program runs, anything else opens as
     /// [`Self::found_opening`] says.
     pub(crate) fn open_found(&mut self, path: &Path, facts: &desktop::FileFacts) {
+        self.open_found_as(path, facts, self.config.script_open);
+    }
+
+    /// [`Self::open_found`], a script running as `open` says.
+    fn open_found_as(&mut self, path: &Path, facts: &desktop::FileFacts, open: ScriptOpen) {
         match &facts.target {
-            Target::Run(file) => self.run_program(file),
+            Target::Run(file, _) => self.run_program(file, open),
             _ => {
                 let open = self.found_opening(path, facts);
                 self.spawn_opening_activated(&open);
@@ -115,6 +122,7 @@ impl State {
         let source = || vec![DragSource::file(path.clone())];
         match cmd {
             Dc::Open | Dc::Explore => self.open_found(&path, facts),
+            Dc::Run(open) => self.open_found_as(&path, facts, open),
             Dc::AllowLaunching => {
                 if facts.allow_launching {
                     self.allow_launching(&[path]);
@@ -230,7 +238,8 @@ mod tests {
     #[test]
     fn a_found_paths_menu_comes_from_its_facts() {
         let gone = Path::new("/nonexistent/reprise-found/tool.desktop");
-        let rows = |facts: &desktop::FileFacts| file_menu(found_menu(facts), None).1;
+        let rows =
+            |facts: &desktop::FileFacts| file_menu(found_menu(facts, ScriptOpen::Run), None).1;
         let folder = desktop::FileFacts {
             is_dir: true,
             ..desktop::FileFacts::plain(gone)
@@ -243,6 +252,21 @@ mod tests {
         assert!(rows(&untrusted).contains(&Some(DesktopCommand::AllowLaunching)));
         assert!(
             !rows(&desktop::FileFacts::plain(gone)).contains(&Some(DesktopCommand::AllowLaunching))
+        );
+        let script = |program| desktop::FileFacts {
+            target: Target::Run(gone.to_path_buf(), program),
+            ..desktop::FileFacts::plain(gone)
+        };
+        assert_eq!(
+            rows(&script(Program::Script))[..2],
+            [
+                Some(DesktopCommand::Run(ScriptOpen::Run)),
+                Some(DesktopCommand::Run(ScriptOpen::Terminal))
+            ]
+        );
+        assert_eq!(
+            rows(&script(Program::Binary))[0],
+            Some(DesktopCommand::Open)
         );
     }
 
@@ -336,7 +360,10 @@ mod tests {
         )
         .unwrap();
         let rows = |path: &Path| {
-            let (items, commands) = file_menu(found_menu(&desktop::file_facts(path)), None);
+            let (items, commands) = file_menu(
+                found_menu(&desktop::file_facts(path), ScriptOpen::Run),
+                None,
+            );
             (labels(&items), commands)
         };
         let (items, commands) = rows(&path);

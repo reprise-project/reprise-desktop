@@ -4,20 +4,36 @@ use std::ffi::OsString;
 use std::io;
 use std::path::Path;
 
-/// Whether `head`, a file's first bytes, starts a script (`#!`) or an ELF binary.
-pub fn is_program_header(head: &[u8]) -> bool {
-    head.starts_with(b"#!") || head.starts_with(b"\x7fELF")
+/// What a program file holds ([`program`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Program {
+    /// Starts with `#!`.
+    Script,
+    Binary,
 }
 
 /// Whether opening `path` runs it: a regular file with the owner's execute bit that holds a script
 /// or an ELF binary. A `.desktop` file never is; it opens as a launcher or a plain file. `meta`
 /// follows a symlink. Reads the file's first bytes, so a host asks it off its event loop.
 pub fn is_program(path: &Path, meta: &std::fs::Metadata) -> bool {
+    program(path, meta).is_some()
+}
+
+/// [`is_program`], telling a script from a binary.
+pub fn program(path: &Path, meta: &std::fs::Metadata) -> Option<Program> {
     use std::os::unix::fs::PermissionsExt;
-    meta.is_file()
-        && meta.permissions().mode() & 0o100 != 0
-        && path.extension().is_none_or(|e| e != "desktop")
-        && head(path, 4).is_ok_and(|h| is_program_header(&h))
+    if !meta.is_file()
+        || meta.permissions().mode() & 0o100 == 0
+        || path.extension().is_some_and(|e| e == "desktop")
+    {
+        return None;
+    }
+    let head = head(path, 4).ok()?;
+    if head.starts_with(b"#!") {
+        Some(Program::Script)
+    } else {
+        head.starts_with(b"\x7fELF").then_some(Program::Binary)
+    }
 }
 
 /// Up to the first `n` bytes of the regular file at `path`; the open does not block on a FIFO.
@@ -83,14 +99,59 @@ if [ "$s" -eq 0 ]; then
 fi
 echo; echo "The script ended with status $s."; printf 'Press Enter to close.'; read -r _"#;
 
+/// How opening a script runs it: the `script_open` key.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScriptOpen {
+    /// As a program of its own, with no window.
+    #[default]
+    Run,
+    /// In `terminal`, which [`ScriptEnd`] keeps open after it.
+    Terminal,
+}
+
+impl ScriptOpen {
+    pub fn parse(s: &str) -> Option<ScriptOpen> {
+        match s {
+            "run" => Some(ScriptOpen::Run),
+            "terminal" => Some(ScriptOpen::Terminal),
+            _ => None,
+        }
+    }
+
+    /// Its row in a script's context menu, which stands in for Open.
+    pub fn label(self) -> &'static str {
+        match self {
+            ScriptOpen::Run => "R&un",
+            ScriptOpen::Terminal => "Run in termina&l",
+        }
+    }
+}
+
+/// The rows a program file's context menu shows in place of Open, each with whether it is the
+/// default (bold) one: Run and Run in terminal for a script, with `open` the default; `None`
+/// (plain Open) for a binary, which always runs bare.
+pub fn run_rows(program: Program, open: ScriptOpen) -> Option<[(ScriptOpen, bool); 2]> {
+    let both = [ScriptOpen::Run, ScriptOpen::Terminal];
+    (program == Program::Script).then(|| both.map(|o| (o, o == open)))
+}
+
 /// The argument vector that runs the program at `path`, which must be absolute: a bare name
-/// would be looked up on `PATH`. A script runs in `terminal` (the `terminal` key), which `end`
-/// keeps open after it; a binary runs bare. A script that cannot start (no execute permission,
-/// a noexec mount, a missing interpreter) is an error here, since the terminal would start
-/// anyway. Reads the file's first line.
-pub fn run_argv(path: &Path, terminal: &str, end: ScriptEnd) -> io::Result<Vec<OsString>> {
+/// would be looked up on `PATH`. A binary, and a script `open` runs bare, is its own path. A
+/// script `open` puts in `terminal` (the `terminal` key) runs there, which `end` keeps open
+/// after it; one that cannot start (no execute permission, a noexec mount, a missing
+/// interpreter) is an error here, since the terminal would start anyway. Reads the file's first
+/// line.
+pub fn run_argv(
+    path: &Path,
+    open: ScriptOpen,
+    terminal: &str,
+    end: ScriptEnd,
+) -> io::Result<Vec<OsString>> {
     let line = head(path, 128)?;
-    let Some(rest) = line.strip_prefix(b"#!") else {
+    let Some(rest) = line
+        .strip_prefix(b"#!")
+        .filter(|_| open == ScriptOpen::Terminal)
+    else {
         return Ok(vec![path.into()]);
     };
     executable(path)?;
@@ -154,8 +215,8 @@ mod tests {
         p
     }
 
-    fn runs(path: &Path) -> bool {
-        is_program(path, &std::fs::metadata(path).unwrap())
+    fn runs(path: &Path) -> Option<Program> {
+        program(path, &std::fs::metadata(path).unwrap())
     }
 
     #[test]
@@ -169,17 +230,33 @@ mod tests {
         let launcher = file(&d, "app.desktop", b"#!/usr/bin/env xdg-open\n", 0o755);
         let empty = file(&d, "empty", b"", 0o755);
         std::fs::create_dir(d.join("folder")).unwrap();
-        assert!(runs(&script), "a +x script with #! runs");
-        assert!(runs(&elf), "a +x ELF file runs");
-        assert!(!runs(&photo), "a +x picture opens in its program");
+        assert_eq!(
+            runs(&script),
+            Some(Program::Script),
+            "a +x script with #! runs"
+        );
+        assert_eq!(runs(&elf), Some(Program::Binary), "a +x ELF file runs");
+        assert!(runs(&photo).is_none(), "a +x picture opens in its program");
         assert!(
-            !runs(&plain),
+            runs(&plain).is_none(),
             "a script without the execute bit opens in its program"
         );
-        assert!(!runs(&group_only), "only the owner's execute bit counts");
-        assert!(!runs(&launcher), "a .desktop file keeps its launcher rules");
-        assert!(!runs(&empty), "an empty +x file opens in its program");
-        assert!(!runs(&d.join("folder")), "a folder opens in Explorer");
+        assert!(
+            runs(&group_only).is_none(),
+            "only the owner's execute bit counts"
+        );
+        assert!(
+            runs(&launcher).is_none(),
+            "a .desktop file keeps its launcher rules"
+        );
+        assert!(
+            runs(&empty).is_none(),
+            "an empty +x file opens in its program"
+        );
+        assert!(
+            runs(&d.join("folder")).is_none(),
+            "a folder opens in Explorer"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -191,7 +268,8 @@ mod tests {
         let elf = file(&d, "tool", b"\x7fELF\x02\x01\x01\0", 0o755);
         let os = |v: &[&str]| -> Vec<OsString> { v.iter().map(OsString::from).collect() };
         let p = script.to_str().unwrap();
-        let argv = |path: &Path, end| run_argv(path, "foot --title x", end).unwrap();
+        let argv =
+            |path: &Path, end| run_argv(path, ScriptOpen::Terminal, "foot --title x", end).unwrap();
         assert_eq!(
             argv(&script, ScriptEnd::Close),
             os(&["foot", "--title", "x", "-e", "sh", "-c", CLOSE, p])
@@ -202,8 +280,13 @@ mod tests {
             "the path is an argument, never shell text"
         );
         assert_eq!(argv(&elf, ScriptEnd::Stay), os(&[elf.to_str().unwrap()]));
+        assert_eq!(
+            run_argv(&script, ScriptOpen::Run, "foot", ScriptEnd::Stay).unwrap(),
+            os(&[p]),
+            "Run starts the script bare"
+        );
         let lost = file(&d, "lost.sh", b"#! /no/such/shell -e\n", 0o755);
-        let e = run_argv(&lost, "foot", ScriptEnd::Stay).unwrap_err();
+        let e = run_argv(&lost, ScriptOpen::Terminal, "foot", ScriptEnd::Stay).unwrap_err();
         assert_eq!(
             e.raw_os_error(),
             Some(libc::ENOENT),
@@ -324,6 +407,24 @@ mod tests {
             "the wrapper ends once the group is empty, took {took:?}"
         );
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_script_menu_offers_run_and_run_in_terminal_with_the_default_bold() {
+        use ScriptOpen::{Run, Terminal};
+        assert_eq!(
+            run_rows(Program::Script, Run),
+            Some([(Run, true), (Terminal, false)])
+        );
+        assert_eq!(
+            run_rows(Program::Script, Terminal),
+            Some([(Run, false), (Terminal, true)])
+        );
+        assert_eq!(run_rows(Program::Binary, Run), None, "a binary keeps Open");
+        assert_eq!(ScriptOpen::parse("run"), Some(Run));
+        assert_eq!(ScriptOpen::parse("terminal"), Some(Terminal));
+        assert_eq!(ScriptOpen::parse("Run"), None);
+        assert_eq!(ScriptOpen::default(), Run);
     }
 
     #[test]

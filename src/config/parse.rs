@@ -117,6 +117,10 @@ impl Config {
             cfg.script_terminal = reprisefs::program::ScriptEnd::parse(&v)
                 .ok_or_else(|| format!("script_terminal = {v:?} is not stay or close"))?;
         }
+        if let Some(v) = file.script_open {
+            cfg.script_open = reprisefs::program::ScriptOpen::parse(&v)
+                .ok_or_else(|| format!("script_open = {v:?} is not run or terminal"))?;
+        }
         cfg.task_manager = file.task_manager;
         if file.renderer.is_some() {
             cfg.retired.push("renderer".into());

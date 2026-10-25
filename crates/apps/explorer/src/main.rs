@@ -46,6 +46,7 @@ use repriseapp::{
 };
 use reprisefs::history::History;
 use reprisefs::listing::Item;
+use reprisefs::program::ScriptOpen;
 use reprisekit::controls::addressbar::{self, AddressBar};
 use reprisekit::controls::combo::{self, ListItem};
 use reprisekit::controls::explorerbar::ExplorerBar;
@@ -1160,6 +1161,11 @@ impl Explorer {
     /// In the Recycle Bin an item opens its Properties (its menu's default
     /// row): a deleted file is not opened until restored.
     pub fn open_selected(&mut self, ctx: &mut Ctx) -> Reply {
+        self.open_selected_as(repriseconf::script_open(), ctx)
+    }
+
+    /// [`Explorer::open_selected`], a script running as `open` says.
+    pub fn open_selected_as(&mut self, open: ScriptOpen, ctx: &mut Ctx) -> Reply {
         let Some(i) = self.sv.selection.single() else {
             return Reply::none();
         };
@@ -1184,14 +1190,14 @@ impl Explorer {
                 ..Default::default()
             };
         }
-        self.open_file(&it.path, it.exec, ctx)
+        self.open_file(&it.path, it.exec, open, ctx)
     }
 
     /// Runs the program file at `path` in its own folder and an app scope named after it, or
     /// opens a file that is no program in its program. Telling a program (its first bytes), the
     /// run and the opening (whether it is a folder) read the file, so they go on a listing
     /// thread; a later answer (a dead mount) lands on a wake ([`Explorer::take_opened`]).
-    fn open_file(&mut self, path: &Path, exec: bool, ctx: &mut Ctx) -> Reply {
+    fn open_file(&mut self, path: &Path, exec: bool, open: ScriptOpen, ctx: &mut Ctx) -> Reply {
         let (globs, apps) = (self.globs.clone(), self.app_index.clone());
         let (terminal, end) = (repriseconf::terminal(), repriseconf::script_terminal());
         let path = path.to_path_buf();
@@ -1204,7 +1210,7 @@ impl Explorer {
                 return Opened::Open(reprisefs::props::open_in(&path, &globs, &apps, &terminal));
             }
             let scope = path.file_name().map(|n| n.to_string_lossy());
-            let argv = reprisefs::program::run_argv(&path, &terminal, end);
+            let argv = reprisefs::program::run_argv(&path, open, &terminal, end);
             Opened::Ran(
                 argv.and_then(|argv| repriseapp::spawn_in(&argv, path.parent(), scope.as_deref())),
             )
