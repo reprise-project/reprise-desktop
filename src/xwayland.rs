@@ -404,6 +404,11 @@ fn start_helper(state: &mut State, display: u32) -> Option<helper::Helper> {
 
 /// Whether an X11 window's Motif hints leave the frame to us: a window
 /// that drops the border or the title draws its own chrome.
+/// Whether `x`'s client marks it urgent: WM_HINTS' UrgencyHint or `_NET_WM_STATE_DEMANDS_ATTENTION`.
+fn urgent(x: &X11Surface) -> bool {
+    x.hints().is_some_and(|h| h.urgent) || x.demands_attention()
+}
+
 pub fn decorated(hints: &MwmHints) -> bool {
     hints.decorations.is_none_or(|d| {
         d.contains(MwmDecorationsHint::ALL)
@@ -456,6 +461,16 @@ impl State {
             .iter()
             .find(|w| w.x11().is_some_and(|x| x.window_id() == id))
             .map(|w| w.id)
+    }
+
+    /// `x` sets or clears `_NET_WM_STATE_DEMANDS_ATTENTION`.
+    fn x11_demands_attention(&mut self, x: &X11Surface, demands: bool) {
+        if let Err(e) = x.set_demands_attention(demands) {
+            log::debug!("set demands-attention of {:?}: {e}", x.window_id());
+        }
+        if let Some(w) = self.window_for_x11(x) {
+            self.x11_urgency(w, urgent(x));
+        }
     }
 
     fn mapped_x11(&self, x: &X11Surface) -> Option<WindowId> {
@@ -874,11 +889,20 @@ impl XwmHandler for State {
                     self.redraw_all();
                 }
             }
+            WmWindowProperty::Hints => self.x11_urgency(w, urgent(&window)),
             WmWindowProperty::Other(atom) => self
                 .xwayland
                 .send(helper::Req::Property(window.window_id(), atom)),
             _ => {}
         }
+    }
+
+    fn demands_attention_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        self.x11_demands_attention(&window, true);
+    }
+
+    fn undemands_attention_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        self.x11_demands_attention(&window, false);
     }
 
     fn maximize_request(&mut self, _xwm: XwmId, window: X11Surface) {

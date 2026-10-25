@@ -93,6 +93,10 @@ fn main() {
             &format!("reprisekit-gallery-task-progress@{}.png", n.max(1)),
         );
         write_preview(
+            &render_task_attention(n.max(1)),
+            &format!("reprisekit-gallery-task-attention@{}.png", n.max(1)),
+        );
+        write_preview(
             &render_termgrid(n.max(1)),
             &format!("reprisekit-gallery-termgrid@{}.png", n.max(1)),
         );
@@ -213,6 +217,10 @@ fn main() {
     write_preview(
         &render_task_progress(1),
         "reprisekit-gallery-task-progress.png",
+    );
+    write_preview(
+        &render_task_attention(1),
+        "reprisekit-gallery-task-attention.png",
     );
     write_preview(
         &render_stats_panel(with_blue),
@@ -1511,7 +1519,7 @@ fn render_task_progress(scale: i32) -> Canvas {
             let task = |title: &str| TaskEntry {
                 title: title.into(),
                 active: false,
-                attention: false,
+                attention: reprisekit::taskbar::Attention::None,
                 icon: None,
                 glow: None,
             };
@@ -1544,6 +1552,111 @@ fn render_task_progress(scale: i32) -> Canvas {
             bar
         })
         .collect();
+    let height = rows
+        .iter()
+        .map(|r| r.height as i32 + gap * scale)
+        .sum::<i32>()
+        + gap * scale;
+    let mut c = Canvas::new(((w + 2 * gap) * scale) as u32, height as u32);
+    c.fill_rect(c.bounds(), Color::rgb(58, 110, 165));
+    let mut y = gap * scale;
+    for r in &rows {
+        c.blit_over(gap * scale, y, r);
+        y += r.height as i32 + gap * scale;
+    }
+    c
+}
+
+/// Task buttons wanting attention on each interface's bar: at rest, lit (a flash's lit half, or
+/// steady), a flash's dark half, and active; Glass also as icon buttons.
+fn render_task_attention(scale: i32) -> Canvas {
+    use reprisekit::taskbar::{
+        Attention, TaskEntry, TaskRow, TaskbarCounts, TaskbarLayout, TaskbarState,
+    };
+    let text = TextRenderer::load(&FontConfig::default());
+    let glass_with = |s: reprisekit::glass::Settings| {
+        cued(interfaces::theme_with(
+            Interface::Glass,
+            reprisekit::blue::Variant::default(),
+            &s,
+        ))
+    };
+    let mut themes: Vec<_> = vec![cued(interfaces::theme_for(Interface::Classic))];
+    themes.extend(
+        reprisekit::blue::Variant::ALL
+            .into_iter()
+            .map(|v| cued(interfaces::blue_theme(v))),
+    );
+    themes.extend([
+        glass_with(Default::default()),
+        glass_with(reprisekit::glass::Settings {
+            mode: reprisekit::glass::Mode::Dark,
+            ..Default::default()
+        }),
+        glass_with(reprisekit::glass::Settings {
+            material: reprisekit::glass::Material::Smoked,
+            ..Default::default()
+        }),
+        glass_with(reprisekit::glass::Settings {
+            material: reprisekit::glass::Material::Molten,
+            ..Default::default()
+        }),
+    ]);
+    let (w, gap) = (640, 10);
+    let mut rows: Vec<Canvas> = Vec::new();
+    for theme in &themes {
+        let start_text = match theme.look.style() {
+            Some(s) => TextRenderer::load(&s.start_text.font()),
+            None => TextRenderer::load(&FontConfig::default()),
+        };
+        let glass = theme.look.style().is_some_and(|s| s.glass.is_some());
+        for icons in [false, true].into_iter().filter(|&i| !i || glass) {
+            let counts = TaskbarCounts {
+                tasks: 4,
+                ..TaskbarCounts::default()
+            };
+            let shape = theme.taskbar_shape();
+            let mut layout = TaskbarLayout::compute(
+                &theme.metrics,
+                &shape,
+                w,
+                true,
+                counts,
+                text.measure("3:45 PM", false, theme.fonts.size_px),
+            );
+            if icons {
+                layout.lay_tasks(&theme.metrics, &shape, &[1; 4], TaskRow::Icons);
+            }
+            let task = |title: &str, active: bool, attention| TaskEntry {
+                title: title.into(),
+                active,
+                attention,
+                icon: Some(indicator::draw_record(theme.icon_size()).into()),
+                glow: None,
+            };
+            let state = TaskbarState {
+                tasks: vec![
+                    task("Notepad", false, Attention::None),
+                    task("Chat", false, Attention::Steady),
+                    task("Mail", false, Attention::FlashOff),
+                    task("Paint", true, Attention::None),
+                ],
+                clock: "3:45 PM".into(),
+                ..TaskbarState::default()
+            };
+            let scaled = theme.scaled(scale);
+            let mut bar = Canvas::new((w * scale) as u32, (layout.height * scale) as u32);
+            look::draw_taskbar(
+                &mut bar,
+                &scaled,
+                &text,
+                &start_text,
+                &layout.scaled(scale),
+                &state,
+            );
+            rows.push(bar);
+        }
+    }
     let height = rows
         .iter()
         .map(|r| r.height as i32 + gap * scale)
@@ -1601,7 +1714,7 @@ fn render_taskbar_top() -> Canvas {
         let task = |title: &str, active: bool, icon: Canvas| TaskEntry {
             title: title.into(),
             active,
-            attention: false,
+            attention: reprisekit::taskbar::Attention::None,
             icon: Some(icon.into()),
             glow: None,
         };
@@ -1675,7 +1788,7 @@ fn render_taskbar_edges() -> Canvas {
     let task = |title: &str, active: bool, icon: Canvas| TaskEntry {
         title: title.into(),
         active,
-        attention: false,
+        attention: reprisekit::taskbar::Attention::None,
         icon: Some(icon.into()),
         glow: None,
     };
@@ -1878,7 +1991,7 @@ fn render_taskbar_cells() -> Canvas {
             .map(|i| TaskEntry {
                 title: "Untitled - Notepad".into(),
                 active: i == 0,
-                attention: false,
+                attention: reprisekit::taskbar::Attention::None,
                 icon: Some(indicator::draw_record(icon_px).into()),
                 glow: None,
             })
@@ -2465,7 +2578,7 @@ fn render_taskbar_keys() -> Canvas {
                     .map(|t| TaskEntry {
                         title: "Untitled - Notepad".into(),
                         active: t == 0,
-                        attention: false,
+                        attention: reprisekit::taskbar::Attention::None,
                         icon: Some(indicator::draw_record(icon_px).into()),
                         glow: None,
                     })
@@ -4887,21 +5000,21 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             TaskEntry {
                 title: "Notepad".into(),
                 active: true,
-                attention: false,
+                attention: reprisekit::taskbar::Attention::None,
                 icon: None,
                 glow: None,
             },
             TaskEntry {
                 title: "A window with a title too long for its button".into(),
                 active: false,
-                attention: false,
+                attention: reprisekit::taskbar::Attention::None,
                 icon: None,
                 glow: None,
             },
             TaskEntry {
                 title: "Explorer".into(),
                 active: false,
-                attention: false,
+                attention: reprisekit::taskbar::Attention::None,
                 icon: None,
                 glow: None,
             },
@@ -6168,7 +6281,7 @@ fn glass_scale2_bars(c: &mut Canvas, rows: &[reprisekit::glass::Settings], top: 
         let task = |title: &str, active: bool, icon: Canvas| TaskEntry {
             title: title.into(),
             active,
-            attention: false,
+            attention: reprisekit::taskbar::Attention::None,
             glow: Some(Color::rgb(0xD0, 0x40, 0x30)),
             icon: Some(icon.into()),
         };
@@ -6266,7 +6379,7 @@ fn render_glass_dark_bar(theme: &Theme) -> Canvas {
     let entry = |title: &str, active: bool| TaskEntry {
         title: title.into(),
         active,
-        attention: false,
+        attention: reprisekit::taskbar::Attention::None,
         icon: None,
         glow: None,
     };
@@ -8353,7 +8466,7 @@ fn render_glass_frames() -> Canvas {
             let entry = |title: &str, active: bool| TaskEntry {
                 title: title.into(),
                 active,
-                attention: false,
+                attention: reprisekit::taskbar::Attention::None,
                 icon: None,
                 glow: None,
             };
@@ -8701,7 +8814,7 @@ fn render_glass_task_rows() -> Canvas {
             .map(|(i, t)| TaskEntry {
                 title: (*t).into(),
                 active: i == active,
-                attention: false,
+                attention: reprisekit::taskbar::Attention::None,
                 icon: Some(if i % 2 == 0 {
                     indicator::draw_record(16).into()
                 } else {
@@ -8831,7 +8944,7 @@ fn render_glass_spots() -> Canvas {
                         String::new()
                     },
                     active: Some(i) == active,
-                    attention: false,
+                    attention: reprisekit::taskbar::Attention::None,
                     icon: Some(icon.clone().into()),
                     glow: glow(icon),
                 }

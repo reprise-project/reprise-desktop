@@ -775,7 +775,7 @@ mod tests {
                 .map(|t| TaskEntry {
                     title: t.into(),
                     active: t == "Files",
-                    attention: false,
+                    attention: crate::taskbar::Attention::None,
                     icon: None,
                     glow: None,
                 })

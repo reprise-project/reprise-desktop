@@ -172,6 +172,8 @@ pub enum State {
     Default,
     Focused,
     BarHot,
+    /// A task button whose window wants attention, in a lit phase.
+    Attention,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

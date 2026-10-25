@@ -190,6 +190,11 @@ fn build(v: Variant, scale: i32) -> Style {
     .with_text_color(Part::TaskButton, State::Checked, inks.task_checked)
     .with_text_color(Part::TaskButton, State::CheckedHot, inks.task_checked_hot)
     .with_text_color(Part::TaskButton, State::Pressed, inks.task_pressed)
+    .with_text_color(
+        Part::TaskButton,
+        State::Attention,
+        scheme::TASK_ATTENTION_INK,
+    )
     .with_painted(Part::Caption, move || frame::caption(v.scheme(), scale))
     .with_painted(Part::MaxCaption, move || {
         frame::max_caption(v.scheme(), scale)

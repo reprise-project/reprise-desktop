@@ -1,6 +1,6 @@
 use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Instant};
 
-use reprisekit::taskbar::{BarSpan, ClockText};
+use reprisekit::taskbar::{Attention, BarSpan, ClockText};
 use reprisescene::{Input, NodeId, TreeId};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
@@ -209,6 +209,8 @@ impl State {
             time
         };
         let mode = self.config.taskbar.buttons;
+        let flash_for = std::time::Duration::from_secs(self.config.taskbar.attention_flash.into());
+        let now = Instant::now();
         let dialog_tasks: Vec<crate::taskbar::DialogTask> = dialogs
             .iter()
             .map(|d| crate::taskbar::DialogTask {
@@ -239,7 +241,6 @@ impl State {
         let wins = &self.windows;
         let win = |i: usize| wins.iter().find(|w| w.id == windows[i]);
         let live = |i: &usize| win(*i).is_some_and(|w| focused == Some(w.id) && !w.minimized);
-        let asks = |i: &usize| win(*i).is_some_and(|w| w.attention);
         let entries: Vec<TaskEntry> = slots
             .iter()
             .map(|slot| {
@@ -260,7 +261,7 @@ impl State {
                     return TaskEntry {
                         title: String::new(),
                         active: false,
-                        attention: false,
+                        attention: Attention::None,
                         icon: name.and_then(|n| crate::icon::unread(icons, &n, task_px)),
                         glow: None,
                     };
@@ -278,7 +279,12 @@ impl State {
                 TaskEntry {
                     title,
                     active: group.iter().any(live),
-                    attention: group.iter().any(asks),
+                    attention: (group.iter().filter_map(|&i| win(i)))
+                        .filter(|w| w.attention.is_some())
+                        .max_by_key(|w| w.attention)
+                        .map_or(Attention::None, |w| {
+                            crate::attention::phase(w.attention, now, flash_for)
+                        }),
                     glow: glow_of(&icon),
                     icon,
                 }

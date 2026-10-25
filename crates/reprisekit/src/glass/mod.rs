@@ -456,7 +456,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     .with_painted(Part::StartAbove, lazy(paint::start_above))
     .with_painted(
         Part::TaskButton,
-        lazy(|s, d| taskbutton::buttons(s, BUTTON, d)),
+        lazy(|s, d| taskbutton::buttons_with_attention(s, BUTTON, d)),
     )
     .with_painted(
         Part::TaskStack,
@@ -468,11 +468,11 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     )
     .with_painted(
         Part::TaskLabel,
-        lazy(|s, d| taskbutton::label(s, BAR_HEIGHT, d)),
+        lazy(|s, d| taskbutton::label_with_attention(s, BAR_HEIGHT, d)),
     )
     .with_painted(
         Part::TaskLabelEdge,
-        lazy(|s, d| taskbutton::label_edges(s, BAR_HEIGHT, d)),
+        lazy(|s, d| taskbutton::label_edges_with_attention(s, BAR_HEIGHT, d)),
     )
     .with_painted(
         Part::SlotEdge,

@@ -672,6 +672,7 @@ pub(super) struct FileTaskbar {
     pub(super) reveal_on_edge: Option<bool>,
     pub(super) reveal_on_keys: Option<bool>,
     pub(super) reveal_on_attention: Option<bool>,
+    pub(super) attention_flash: Option<i64>,
     pub(super) side_width: Option<i64>,
 }
 
