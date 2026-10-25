@@ -185,6 +185,46 @@ pub fn lineage(pid: i32) -> (Vec<i32>, Option<i32>) {
     (chain, first.map(|(_, sid)| sid))
 }
 
+/// Whether the root of `lineage`, a server detached under init, runs the
+/// same program as a process below `focused`: a terminal multiplexer whose
+/// client sits in the focused terminal, so a program started in one of its
+/// panes was started from that terminal. Scans `/proc`, so a host asks it
+/// only once every cheaper check has failed.
+pub fn serves(lineage: &[i32], focused: i32) -> bool {
+    let exe = |p: i32| std::fs::read_link(format!("/proc/{p}/exe")).ok();
+    let Some(&root) = lineage.last().filter(|_| lineage.len() < MAX_LINEAGE) else {
+        return false;
+    };
+    let Some(server) = exe(root) else {
+        return false;
+    };
+    descendants(focused)
+        .into_iter()
+        .any(|p| p != root && exe(p).as_ref() == Some(&server))
+}
+
+/// Every process below `pid`, read from `/proc`.
+fn descendants(pid: i32) -> Vec<i32> {
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let parents: Vec<(i32, i32)> = dir
+        .filter_map(|e| e.ok()?.file_name().to_str()?.parse::<i32>().ok())
+        .filter_map(|p| {
+            let stat = std::fs::read_to_string(format!("/proc/{p}/stat")).ok()?;
+            Some((p, parse_stat(&stat)?.0))
+        })
+        .collect();
+    let mut found = vec![pid];
+    let mut i = 0;
+    while let Some(&p) = found.get(i) {
+        found.extend(parents.iter().filter(|(_, pp)| *pp == p).map(|(c, _)| *c));
+        i += 1;
+    }
+    found.remove(0);
+    found
+}
+
 /// The installed programs whose windows are prompts other programs, or a
 /// drive the user just plugged in, asked for: the portal's pickers, the
 /// polkit agent's password box and the drives applet's passphrase box.
@@ -309,6 +349,37 @@ mod tests {
             !takes_focus(&stranger, editor_focused()),
             "expected no focus"
         );
+    }
+
+    #[test]
+    fn a_server_whose_client_runs_below_the_focused_process_serves_it() {
+        // A private copy, so no other test's child runs the same program.
+        let dir = std::env::temp_dir().join(format!("reprise-serves-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("server");
+        std::fs::copy("/bin/sleep", &exe).unwrap();
+        // Another test's fork may still hold the copy's write fd for a moment.
+        let sleep = || loop {
+            match std::process::Command::new(&exe).arg("30").spawn() {
+                Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10))
+                }
+                r => break r.unwrap(),
+            }
+        };
+        let (mut server, mut client) = (sleep(), sleep());
+        let me = std::process::id() as i32;
+        let lineage = [12345, server.id() as i32];
+        assert!(
+            serves(&lineage, me),
+            "expected the client to tie the server to us"
+        );
+        client.kill().unwrap();
+        client.wait().unwrap();
+        assert!(!serves(&lineage, me), "expected no tie without a client");
+        server.kill().unwrap();
+        server.wait().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
