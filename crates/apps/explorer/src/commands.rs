@@ -11,6 +11,8 @@ use reprisekit::textedit::keysym::{self, F2, F5, MENU};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     Open,
+    /// Run or Run in terminal on a script, standing in for Open.
+    Run(reprisefs::program::ScriptOpen),
     OpenWith(usize),
     ChooseProgram,
     Explore,
@@ -255,6 +257,7 @@ impl Explorer {
             Command::Navigate(text) => self.navigate(&text, |d| d.is_dir(), ctx),
             Command::Refresh => self.refresh(ctx),
             Command::Open => self.open_selected(ctx),
+            Command::Run(open) => self.open_selected_as(open, ctx),
             Command::Explore => {
                 if let Some(v) = self.selected_unmounted() {
                     return self.mount_and_open(v, ctx);

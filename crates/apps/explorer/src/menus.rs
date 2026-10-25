@@ -9,6 +9,7 @@
 use crate::commands::{Command, Menu};
 use crate::place::Place;
 use reprisefs::ops::DropOp;
+use reprisefs::program::{Program, ScriptOpen};
 use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::menubar::Bar;
 use reprisekit::controls::shellview::Mode;
@@ -380,12 +381,20 @@ pub fn views_menu(mode: Mode) -> Menu {
 pub enum ItemKind {
     Folder,
     File,
+    /// An executable script, whose menu runs it as its default ([`ScriptOpen`]) says.
+    Script(ScriptOpen),
     /// A trusted program launcher (`reprisefs::apps::Shortcut::App`).
     Launcher,
 }
 
-/// The right-click menu of an entry in the view. "Run as..." sits greyed under
-/// Open for every file. A folder has Paste under Copy, into it. A launcher has
+impl ItemKind {
+    pub(crate) fn is_file(self) -> bool {
+        matches!(self, ItemKind::File | ItemKind::Script(_))
+    }
+}
+
+/// The right-click menu of an entry in the view. A script has Run and Run in terminal in place
+/// of Open. "Run as..." sits greyed under them for every file. A folder has Paste under Copy, into it. A launcher has
 /// no Open With and has Paste under Copy, opening the clipboard's files in its
 /// program. `eject` adds Eject, in a group above Cut and Copy, for a removable drive.
 pub fn item_menu(
@@ -400,14 +409,29 @@ pub fn item_menu(
     }
     let writable = !state.read_only;
     let mut m = Menu::default();
-    m.row(bold("&Open", true), Command::Open);
+    match kind {
+        ItemKind::Script(open) => {
+            for (o, default) in reprisefs::program::run_rows(Program::Script, open).unwrap() {
+                let label = o.label();
+                m.row(
+                    if default {
+                        bold(label, true)
+                    } else {
+                        row(label, true)
+                    },
+                    Command::Run(o),
+                );
+            }
+        }
+        _ => m.row(bold("&Open", true), Command::Open),
+    }
     if kind == ItemKind::Folder {
         m.row(row("E&xplore", true), Command::Explore);
         m.row(row("Sharing and Security...", false), Command::Nothing);
     } else {
         m.row(row("Run &as...", false), Command::Nothing);
         m.sep();
-        if kind == ItemKind::File {
+        if kind.is_file() {
             m.sub(row("Open Wit&h", true), open_with_menu(open_with));
         }
     }
@@ -428,7 +452,7 @@ pub fn item_menu(
             Command::PasteOnItem,
         ),
         ItemKind::Launcher => m.row(row("&Paste", state.can_paste), Command::PasteOnItem),
-        ItemKind::File => {}
+        ItemKind::File | ItemKind::Script(_) => {}
     }
     m.sep();
     m.row(row("Create &Shortcut", writable), Command::CreateShortcut);

@@ -611,3 +611,26 @@ fn the_recycle_bin_deletes_for_good_and_copies_nothing() {
         ]
     );
 }
+
+#[test]
+fn a_scripts_menu_runs_it_in_place_of_open_with_the_default_bold() {
+    use reprisefs::program::ScriptOpen::{Run, Terminal};
+    let bold =
+        |items: &[MenuItem], i: usize| matches!(&items[i], MenuItem::Entry { bold: true, .. });
+    let s = MenuState::default();
+    let m = item_menu(&s, ItemKind::Script(Terminal), false, &[], &[]);
+    assert_eq!(label(m.items(), 0), "Run");
+    assert_eq!(label(m.items(), 1), "Run in terminal");
+    assert_eq!(m.command(&[0]), Command::Run(Run));
+    assert_eq!(m.command(&[1]), Command::Run(Terminal));
+    assert!(!bold(m.items(), 0) && bold(m.items(), 1));
+    assert_eq!(label(m.items(), 4), "Open With", "a script is still a file");
+    let m = item_menu(&s, ItemKind::Script(Run), false, &[], &[]);
+    assert!(bold(m.items(), 0) && !bold(m.items(), 1));
+    let m = item_menu(&s, ItemKind::File, false, &[], &[]);
+    assert_eq!(
+        label(m.items(), 0),
+        "Open",
+        "a binary or document keeps Open"
+    );
+}

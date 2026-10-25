@@ -433,18 +433,20 @@ impl Explorer {
         }
         use crate::fileops::PasteTo;
         use crate::menus::ItemKind;
+        use reprisefs::program::Program;
         let item = self.items.get(i);
         self.menu_paste = item.and_then(|it| match it.shortcut.as_deref() {
             _ if it.is_dir => Some(PasteTo::Folder(it.path.clone())),
             Some(reprisefs::apps::Shortcut::App(app)) => Some(PasteTo::App(app.clone())),
             _ => None,
         });
-        let kind = match self.menu_paste {
-            Some(PasteTo::Folder(_)) => ItemKind::Folder,
-            Some(PasteTo::App(_)) => ItemKind::Launcher,
+        let kind = match (&self.menu_paste, item.and_then(|it| it.program)) {
+            (Some(PasteTo::Folder(_)), _) => ItemKind::Folder,
+            (Some(PasteTo::App(_)), _) => ItemKind::Launcher,
+            (_, Some(Program::Script)) => ItemKind::Script(repriseconf::script_open()),
             _ => ItemKind::File,
         };
-        let open_with = if kind == ItemKind::File {
+        let open_with = if kind.is_file() {
             self.build_open_with(i, ctx)
         } else {
             Vec::new()

@@ -142,6 +142,8 @@ pub enum DesktopCommand {
     NewTextDocument,
     Settings,
     Open,
+    /// Run or Run in terminal on a script, standing in for Open.
+    Run(reprisefs::program::ScriptOpen),
     Trash,
     Rename,
     AllowLaunching,

@@ -36,6 +36,7 @@ use reprisekit::interface::Interface;
 pub struct Config {
     pub terminal: String,
     pub script_terminal: reprisefs::program::ScriptEnd,
+    pub script_open: reprisefs::program::ScriptOpen,
     pub task_manager: Option<String>,
     /// Retired keys (`renderer`, `outputs.<name>.hdr`, `.color_profile`), kept so
     /// an older file loads; [`Config::warn_retired`] names them.
@@ -105,6 +106,7 @@ impl Default for Config {
         Config {
             terminal: reprisefs::apps::DEFAULT_TERMINAL.into(),
             script_terminal: reprisefs::program::ScriptEnd::Stay,
+            script_open: reprisefs::program::ScriptOpen::Run,
             task_manager: None,
             retired: Vec::new(),
             theme: Theme::default(),

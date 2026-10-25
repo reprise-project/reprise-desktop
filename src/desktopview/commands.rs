@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use reprisefs::program::ScriptOpen;
 use reprisefs::{apps, names, ops};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
@@ -126,6 +127,11 @@ impl State {
     }
 
     pub fn open_icon(&mut self, index: usize) {
+        self.open_icon_as(index, self.config.script_open);
+    }
+
+    /// [`Self::open_icon`], a script running as `open` says.
+    fn open_icon_as(&mut self, index: usize, open: ScriptOpen) {
         let Some(view) = self.desktop.as_ref() else {
             return;
         };
@@ -143,9 +149,9 @@ impl State {
                 Some(argv) => argv.into_iter().map(Into::into).collect(),
                 None => return,
             },
-            Target::Run(file) => {
+            Target::Run(file, _) => {
                 let file = file.clone();
-                return self.run_program(&file);
+                return self.run_program(&file, open);
             }
             // No stat: the file or folder may be on a mount that does not answer.
             Target::Open(dir) if entry.is_dir => apps::open_folder_argv(dir),
@@ -161,19 +167,20 @@ impl State {
         self.spawn_argv_activated(&argv);
     }
 
-    /// Run the program file at `path` in its own folder and an app scope named after it, a script in
-    /// the terminal. The exec waits on the file's mount, so it runs off the loop; a program that does
-    /// not start gets an error box.
-    pub(crate) fn run_program(&mut self, path: &Path) {
+    /// Run the program file at `path` in its own folder and an app scope named after it, a script
+    /// bare or in the terminal as `open` says. The exec waits on the file's mount, so it runs off the
+    /// loop; a program that does not start gets an error box.
+    pub(crate) fn run_program(&mut self, path: &Path, open: ScriptOpen) {
         let launch = self.new_launch();
         let env = self.env.clone();
         let path = path.to_path_buf();
         let (terminal, end) = (self.config.terminal.clone(), self.config.script_terminal);
         self.spawn_job(move || {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
-            let started = reprisefs::program::run_argv(&path, &terminal, end).and_then(|argv| {
-                crate::spawn::try_spawn_held(&argv, &name, path.parent(), &env, Some(&launch))
-            });
+            let started =
+                reprisefs::program::run_argv(&path, open, &terminal, end).and_then(|argv| {
+                    crate::spawn::try_spawn_held(&argv, &name, path.parent(), &env, Some(&launch))
+                });
             Box::new(move |state: &mut State| {
                 // A child that exited before its pid was recorded left a SIGCHLD that found nothing.
                 crate::spawn::reap_children();
@@ -188,8 +195,13 @@ impl State {
     }
 
     pub(crate) fn open_selection(&mut self, index: usize) {
+        self.open_selection_as(index, self.config.script_open);
+    }
+
+    /// Opens every icon of the selection around `index`, a script running as `open` says.
+    pub(crate) fn open_selection_as(&mut self, index: usize, open: ScriptOpen) {
         for i in self.selection_around(index) {
-            self.open_icon(i);
+            self.open_icon_as(i, open);
         }
     }
 
@@ -314,6 +326,11 @@ impl State {
             Dc::Open => {
                 if let Some(i) = target {
                     self.open_selection(i);
+                }
+            }
+            Dc::Run(open) => {
+                if let Some(i) = target {
+                    self.open_selection_as(i, open);
                 }
             }
             Dc::Explore => {

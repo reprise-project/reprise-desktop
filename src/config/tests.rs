@@ -990,6 +990,15 @@ fn script_terminal_defaults_to_stay_and_reads_close() {
 }
 
 #[test]
+fn script_open_defaults_to_run_and_reads_terminal() {
+    use reprisefs::program::ScriptOpen;
+    assert_eq!(Config::default().script_open, ScriptOpen::Run);
+    let c = Config::parse("script_open = \"terminal\"\n").unwrap();
+    assert_eq!(c.script_open, ScriptOpen::Terminal);
+    assert!(Config::parse("script_open = \"stay\"\n").is_err());
+}
+
+#[test]
 fn desktop_extensions_default_to_hide_and_read_each_mode() {
     use reprisefs::names::Extensions;
     assert_eq!(Config::default().desktop_extensions, Extensions::Hide);

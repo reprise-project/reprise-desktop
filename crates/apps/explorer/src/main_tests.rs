@@ -540,7 +540,7 @@ fn item(name: &str, is_dir: bool, size: u64, kind: &str, modified: Option<i64>) 
         is_dir,
         is_link: false,
         exec: false,
-        program: false,
+        program: None,
         hidden: false,
         size,
         modified,
@@ -2952,21 +2952,32 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
     let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     let names: Vec<&str> = ex.sv.entries.iter().map(|e| e.name.as_str()).collect();
     assert_eq!(names, ["a.sh", "b.sh", "c.png", "d.sh"]);
-    let mut open = |i: usize, ex: &mut Explorer| {
+    let mut open_as = |i: usize, how, ex: &mut Explorer| {
         ex.sv.selection.set_only(Some(i));
-        ex.open_selected(&mut ctx)
+        ex.open_selected_as(how, &mut ctx)
+    };
+    let marker = dir.path().join("ran");
+    let ran = || {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !marker.exists() {
+            assert!(
+                std::time::Instant::now() < end,
+                "the script ran in its folder"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        std::fs::remove_file(&marker).unwrap();
     };
 
+    assert!(
+        open_as(0, ScriptOpen::Run, &mut ex).spawn.is_empty(),
+        "run, not opened"
+    );
+    ran();
+    assert!(ex.dialog.is_none());
+    let mut open = |i: usize, ex: &mut Explorer| open_as(i, ScriptOpen::Terminal, ex);
     assert!(open(0, &mut ex).spawn.is_empty(), "run, not opened");
-    let marker = dir.path().join("ran");
-    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !marker.exists() {
-        assert!(
-            std::time::Instant::now() < end,
-            "the script ran in its folder"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    ran();
     assert!(ex.dialog.is_none());
     let state = std::env::temp_dir().join(format!("reprise-explorer-tests-{}", std::process::id()));
     let term_argv = std::fs::read_to_string(state.join("term-argv")).expect("the terminal ran");

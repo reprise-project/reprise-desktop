@@ -224,10 +224,13 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   its restored size.
 - **Programs and scripts.** A file with its Executable box ticked
   (Properties) that holds a script (`#!`) or a binary runs when you open it,
-  in its own folder, here and in Explorer. A script runs in your terminal,
-  which waits for Enter after it ends unless `script_terminal = "close"`
-  (Settings > Default Programs) and the script succeeded; a binary runs on
-  its own. Edit and Open With still open it in an editor; any other
+  in its own folder, here and in Explorer. A script runs on its own, or in
+  your terminal with `script_open = "terminal"` (Settings > Default
+  Programs); its menu has Run and Run in terminal in place of Open, the
+  default in bold. The terminal waits for Enter after the script ends unless
+  `script_terminal = "close"` and the script succeeded; a closing terminal
+  first gives the children the script started with `setsid` up to 2 s to
+  leave it. A binary runs on its own. Edit and Open With still open it in an editor; any other
   executable file opens as usual. Its Properties sheet has no Opens with row
   and shows its name as the Description.
 - **Wallpaper** centred, tiled or stretched, or a slideshow of a folder that

@@ -11,6 +11,7 @@ use super::*;
 use crate::desktop::Target;
 use crate::dirwatch::Want;
 use crate::startmenu::MenuItem;
+use reprisefs::program::ScriptOpen;
 
 /// A home trash made after the watch started is seen through the data
 /// folder, as is one moved away and back, and a file landing in it.
@@ -894,6 +895,28 @@ fn a_folder_offers_paste_and_a_launcher_a_greyed_run_as() {
     // A file's menu has no Paste.
     let (_, commands) = icon_menu(IconMenu::default());
     assert!(!commands.contains(&Some(PasteInto)));
+    // A script has Run and Run in terminal in place of Open, its default bold.
+    for open in [ScriptOpen::Run, ScriptOpen::Terminal] {
+        let (items, commands) = icon_menu(IconMenu {
+            script: Some(open),
+            ..Default::default()
+        });
+        assert_eq!(label(&items, 0), ("Run".into(), true));
+        assert_eq!(label(&items, 1), ("Run in terminal".into(), true));
+        assert_eq!(
+            &commands[..3],
+            &[
+                Some(Run(ScriptOpen::Run)),
+                Some(Run(ScriptOpen::Terminal)),
+                Some(OpenWith)
+            ]
+        );
+        let bold = |i: usize| matches!(&items[i], MenuItem::Entry { bold: true, .. });
+        assert_eq!(
+            (bold(0), bold(1)),
+            (open == ScriptOpen::Run, open == ScriptOpen::Terminal)
+        );
+    }
     // A launcher's Run as... is greyed under Open; a document has none.
     let (items, commands) = icon_menu(IconMenu {
         launcher: true,

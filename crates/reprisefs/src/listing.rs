@@ -25,8 +25,8 @@ pub struct Item {
     pub is_dir: bool,
     pub is_link: bool,
     pub exec: bool,
-    /// Runs when opened ([`crate::program::is_program`]), so it wears a program's icon.
-    pub program: bool,
+    /// Runs when opened ([`crate::program::program`]), so it wears a program's icon.
+    pub program: Option<crate::program::Program>,
     pub hidden: bool,
     /// Bytes and the modification time; a symlink's are its own, not
     /// its target's.
@@ -364,7 +364,7 @@ pub fn item_at(path: &Path, globs: &MimeDb) -> Item {
 struct Target {
     mount: Option<MountStat>,
     meta: Option<std::fs::Metadata>,
-    program: bool,
+    program: Option<crate::program::Program>,
     shortcut: Option<crate::apps::Shortcut>,
     followed: bool,
 }
@@ -377,9 +377,10 @@ fn target_of(p: &Path) -> Target {
         Some(_) => None,
         None => std::fs::metadata(p).ok(),
     };
-    let program = meta.as_ref().is_some_and(|m| {
-        m.is_file() && m.permissions().mode() & 0o111 != 0 && crate::program::is_program(p, m)
-    });
+    let program = meta
+        .as_ref()
+        .filter(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .and_then(|m| crate::program::program(p, m));
     let shortcut = meta.as_ref().and_then(|m| crate::apps::shortcut_at(p, m));
     Target {
         mount,
@@ -1092,17 +1093,18 @@ mod tests {
         put("photo.png", b"\x89PNG", 0o755);
         put("plain.sh", b"#!/bin/sh\n", 0o644);
         put("run.sh", b"#!/bin/sh\n", 0o755);
-        let program: Vec<(String, bool)> = read_dir(t.path(), &MimeDb::empty())
+        use crate::program::Program;
+        let program: Vec<(String, Option<Program>)> = read_dir(t.path(), &MimeDb::empty())
             .into_iter()
             .map(|i| (i.name, i.program))
             .collect();
         assert_eq!(
             program,
             [
-                ("elf".into(), true),
-                ("photo.png".into(), false),
-                ("plain.sh".into(), false),
-                ("run.sh".into(), true),
+                ("elf".into(), Some(Program::Binary)),
+                ("photo.png".into(), None),
+                ("plain.sh".into(), None),
+                ("run.sh".into(), Some(Program::Script)),
             ]
         );
     }
