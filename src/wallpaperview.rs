@@ -177,7 +177,7 @@ impl Wallpaper {
         match node {
             Some(n) if n.fit == Some(fit) => match &n.texture {
                 Some(t) => LockSource::Shown(t.clone()),
-                None => LockSource::Here,
+                None => LockSource::Buffer(n.buffer),
             },
             // A refit composes it on a job, whose landing repaints the lock screen.
             _ if self.image.is_some() => LockSource::Composing,
@@ -197,6 +197,7 @@ impl Wallpaper {
 
 enum LockSource {
     Shown(GlesTexture),
+    Buffer(BufferId),
     Composing,
     Here,
 }
@@ -205,9 +206,12 @@ enum LockSource {
 pub enum LockWall {
     /// The staged texture the desktop shows on the output.
     Shown(GlesTexture),
+    /// The desktop's buffer on the output, whose pixels are in memory: a built-in, or a picture
+    /// staged in pixel memory.
+    Shared(BufferId),
     /// A job is composing the picture; until it lands the lock screen keeps what it shows.
     Composing,
-    /// Composed on the loop: a built-in, or a picture with no texture to share.
+    /// Composed on the loop: a built-in the desktop shows at another fit.
     Composed(Canvas),
     None,
 }
@@ -875,6 +879,7 @@ impl State {
         };
         match w.lock_source(out, fit) {
             LockSource::Shown(t) => LockWall::Shown(t),
+            LockSource::Buffer(b) => LockWall::Shared(b),
             LockSource::Composing => LockWall::Composing,
             LockSource::Here => self
                 .wallpaper_canvas(out, scale)
@@ -1140,9 +1145,45 @@ mod tests {
             "an output showing an older fit waits for its job"
         );
         w.nodes[0].1.shown(fit(1920), None);
+        let desktop = w.nodes[0].1.buffer;
+        assert!(
+            matches!(w.lock_source(&out, fit(1920)), LockSource::Buffer(b) if b == desktop),
+            "a picture staged in pixel memory shares the desktop's buffer"
+        );
+    }
+
+    #[test]
+    fn the_lock_screen_shares_the_buffer_of_a_built_in_shown_at_its_fit() {
+        let mut scene = crate::compositor::DeskScene::new();
+        let root = scene.root();
+        let fit = |width| Fit {
+            rect: Rect::new(0, 0, width, 1080),
+            scale: 1,
+            position: Position::Stretch,
+            bg: Color::rgb(0, 0, 0),
+        };
+        let out = output("A-1");
+        let mut w = Wallpaper::new(Path::new("reprise:tarn/blue"));
+        assert!(matches!(w.lock_source(&out, fit(1920)), LockSource::Here));
+        let desktop = scene.buffer_create(root);
+        w.nodes = vec![(
+            out.clone(),
+            WallpaperNode {
+                buffer: desktop,
+                fit: Some(fit(1280)),
+                placed: Some(fit(1280).rect),
+                composing: None,
+                texture: None,
+            },
+        )];
         assert!(
             matches!(w.lock_source(&out, fit(1920)), LockSource::Here),
-            "a picture staged in pixel memory has no texture to share"
+            "the desktop shows another fit"
+        );
+        w.nodes[0].1.shown(fit(1920), None);
+        assert!(
+            matches!(w.lock_source(&out, fit(1920)), LockSource::Buffer(b) if b == desktop),
+            "a built-in with no staged texture shares the desktop's buffer"
         );
     }
 

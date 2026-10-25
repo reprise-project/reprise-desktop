@@ -106,11 +106,13 @@ type Clip = Option<Rectangle<i32, Logical>>;
 pub struct BufferElement<E> {
     inner: E,
     opaque: Vec<Rectangle<i32, Physical>>,
+    /// Stands for `inner`'s Id when the node shares its pixels.
+    id: Option<Id>,
 }
 
 impl<E: Element> Element for BufferElement<E> {
     fn id(&self) -> &Id {
-        self.inner.id()
+        self.id.as_ref().unwrap_or_else(|| self.inner.id())
     }
     fn current_commit(&self) -> CommitCounter {
         self.inner.current_commit()
@@ -707,7 +709,11 @@ where
                 Some(size),
                 Kind::Unspecified,
             ) {
-                Ok(inner) => Some(SceneElement::Canvas(BufferElement { inner, opaque })),
+                Ok(inner) => Some(SceneElement::Canvas(BufferElement {
+                    inner,
+                    opaque,
+                    id: b.shared.clone(),
+                })),
                 Err(e) => {
                     log::warn!("scene: canvas upload failed: {e}");
                     None
@@ -724,6 +730,7 @@ where
                 Kind::Unspecified,
             ),
             opaque,
+            id: b.shared.clone(),
         })),
     }
 }
