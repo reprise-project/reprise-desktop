@@ -254,6 +254,8 @@ pub struct State {
     pub captures: Captures,
     pub desktops: crate::desktops::Desktops,
     pub workspaces: crate::workspaces::Workspaces,
+    /// reprise_tabs_v1, advertised while `[windows] tabs` is on.
+    pub tabs_global: Option<smithay::reexports::wayland_server::backend::GlobalId>,
     /// What the record dot and the microphone and camera indicators show
     /// (`privacy`).
     pub privacy: crate::privacy::Privacy,
@@ -537,7 +539,7 @@ impl State {
         };
 
         let ime = crate::textinput::Ime::new(&dh, &seat);
-        crate::tabsproto::init(&dh);
+        let tabs_global = crate::tabsproto::advertise(&dh, config.window_tabs, None);
         let clip = crate::clipboard::Clip::new(&dh);
 
         Ok(State {
@@ -609,6 +611,7 @@ impl State {
             pointers: crate::pointers::Pointers::new(&dh),
             captures: Captures::default(),
             desktops: crate::desktops::Desktops::new(config.workspaces),
+            tabs_global,
             workspaces: crate::workspaces::Workspaces::new(
                 &dh,
                 crate::desktops::Desktops::new(config.workspaces),

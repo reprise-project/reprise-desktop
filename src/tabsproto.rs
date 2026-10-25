@@ -3,7 +3,8 @@
 
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::XdgToplevel;
 use smithay::reexports::wayland_server::{
-    Client, DataInit, DisplayHandle, New, Resource, backend::ClientId,
+    Client, DataInit, DisplayHandle, New, Resource,
+    backend::{ClientId, GlobalId},
 };
 use smithay::wayland::{Dispatch2, GlobalDispatch2};
 
@@ -41,8 +42,17 @@ pub mod proto {
 
 const VERSION: u32 = 1;
 
-pub fn init(dh: &DisplayHandle) {
-    dh.create_global::<State, RepriseTabsV1, _>(VERSION, TabsGlobal);
+/// The global while `on`, created or removed from `global`: a client that finds none keeps its
+/// tabs to itself, since joins would be ignored.
+pub fn advertise(dh: &DisplayHandle, on: bool, global: Option<GlobalId>) -> Option<GlobalId> {
+    match (on, global) {
+        (true, None) => Some(dh.create_global::<State, RepriseTabsV1, _>(VERSION, TabsGlobal)),
+        (false, Some(g)) => {
+            dh.remove_global::<State>(g);
+            None
+        }
+        (_, g) => g,
+    }
 }
 
 pub struct TabsGlobal;
@@ -116,7 +126,30 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-    use super::joinable;
+    use super::{advertise, joinable};
+    use smithay::reexports::wayland_server::Display;
+
+    #[test]
+    fn the_global_is_there_only_while_window_tabs_are_on() {
+        let display: Display<crate::compositor::State> = Display::new().expect("display");
+        let dh = display.handle();
+        assert_eq!(
+            advertise(&dh, false, None),
+            None,
+            "no tab groups, no global"
+        );
+        let g = advertise(&dh, true, None).expect("tab groups on make the global");
+        assert_eq!(
+            advertise(&dh, true, Some(g.clone())),
+            Some(g.clone()),
+            "kept"
+        );
+        assert_eq!(
+            advertise(&dh, false, Some(g)),
+            None,
+            "turned off removes it"
+        );
+    }
 
     #[test]
     fn only_two_windows_of_the_asking_client_join() {
