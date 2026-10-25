@@ -34,8 +34,8 @@
 //!
 //! The buttons are items on each page's [`Form`], so they get its Tab order and
 //! access keys: Tab runs off the page's last control onto OK, Cancel and a live
-//! Apply, then onto the tab strip and back into the page ([`strip_key`]). Alt+A
-//! presses Apply.
+//! Apply, then onto the tab strip and back into the page
+//! ([`PropSheet::strip_key`]). Alt+A presses Apply.
 
 use crate::classic::widgets::{BUTTON_H, BUTTON_W, BarHit};
 use crate::controls::form::{self, Control, Form, Item};
@@ -51,7 +51,7 @@ mod input;
 mod layout;
 mod nav;
 pub use draw::{draw, draw_popups};
-pub use nav::{StripKey, page_clicked, page_step, strip_key, tab_click};
+pub use nav::{StripKey, page_step};
 
 pub const OK: &str = "ok";
 pub const CANCEL: &str = "cancel";
