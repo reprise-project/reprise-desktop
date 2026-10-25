@@ -314,8 +314,7 @@ pub fn hide(state: &mut State) {
     let Some(p) = state.snap_picker.shown.take() else {
         return;
     };
-    state.scene.destroy(p.tree);
-    state.redraw_all();
+    state.destroy_redrawn(p.tree);
     crate::access::touch(state);
 }
 
@@ -367,7 +366,8 @@ fn redraw(state: &mut State) {
     let scene = &mut state.scene;
     upload_scaled(scene, p.buffer, &canvas, scale);
     p.glass.set(scene, &state.glass, p.glass_tree, pane);
-    state.redraw_all();
+    let tree = p.tree;
+    state.redraw_nodes(Vec::new(), &[tree.into()]);
     crate::access::touch(state);
 }
 
