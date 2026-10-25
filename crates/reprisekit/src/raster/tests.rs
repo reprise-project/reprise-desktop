@@ -20,6 +20,18 @@ fn canvas_damage_collects_rects() {
 }
 
 #[test]
+fn ink_coverage_is_full_under_the_ink_and_clear_elsewhere_per_device_pixel() {
+    let coverage = Canvas::with_scale(3, 2, 2).ink_coverage(|c, ink| {
+        c.fill_rect(Rect::new(1, 0, 1, 1), ink);
+    });
+    let mut want = vec![0u8; 6 * 4];
+    for i in [2, 3, 8, 9] {
+        want[i] = 0xFF;
+    }
+    assert_eq!(coverage, want);
+}
+
+#[test]
 fn rects_sharing_only_an_edge_do_not_intersect() {
     let a = Rect::new(9, 0, 50, 25);
     assert!(!a.intersects(Rect::new(0, 25, 360, 80)));

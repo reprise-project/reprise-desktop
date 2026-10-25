@@ -152,6 +152,13 @@ impl Canvas {
         c
     }
 
+    /// The coverage of what `draw` inks into this clear canvas in the colour it is handed, one
+    /// byte per device pixel: drawn white, read back from the red channel.
+    pub fn ink_coverage(mut self, draw: impl FnOnce(&mut Canvas, Color)) -> Vec<u8> {
+        draw(&mut self, Color::rgb(0xFF, 0xFF, 0xFF));
+        self.pixels.iter().map(|&p| (p >> 16) as u8).collect()
+    }
+
     pub fn set_preedit(&mut self, preedit: Option<Preedit>) {
         self.preedit = preedit.map(Box::new);
     }

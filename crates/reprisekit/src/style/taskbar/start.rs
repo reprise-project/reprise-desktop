@@ -51,22 +51,13 @@ pub(super) fn draw_start_pill(
     if at.intersect(&canvas.bounds()).is_empty() {
         return;
     }
-    let mut scratch = canvas.scratch(at.width as u32, at.height as u32);
-    let inner = Rect::new(reach, reach, label.width, label.height);
-    // White ink over clear: its colour channels carry the coverage.
-    let white = Color::rgb(0xFF, 0xFF, 0xFF);
-    start_text.draw(
-        &mut scratch,
-        inner,
-        "start",
-        spec.bold,
-        white,
-        Align::Left,
-        start_size,
-    );
-    let mut coverage: Vec<u8> = scratch.pixels.iter().map(|&p| (p >> 16) as u8).collect();
-    spec.weigh(&mut coverage);
+    let scratch = canvas.scratch(at.width as u32, at.height as u32);
     let (w, h) = scratch.device_size();
+    let inner = Rect::new(reach, reach, label.width, label.height);
+    let mut coverage = scratch.ink_coverage(|c, white| {
+        start_text.draw(c, inner, "start", spec.bold, white, Align::Left, start_size);
+    });
+    spec.weigh(&mut coverage);
     let (w, h) = (w as usize, h as usize);
     let cs = canvas.scale();
     let (x, y) = (at.x * cs, at.y * cs);

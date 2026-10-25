@@ -280,25 +280,16 @@ pub(super) fn draw_dimmed_number(
     alpha: u32,
     size: u32,
 ) {
-    let mut scratch = canvas.scratch(r.width.max(0) as u32, r.height.max(0) as u32);
-    // White ink over clear: its red channel is the coverage.
-    let white = Color::rgb(0xFF, 0xFF, 0xFF);
-    let local = Rect::new(0, 0, r.width, r.height);
-    text.draw(
-        &mut scratch,
-        local,
-        label,
-        false,
-        white,
-        Align::Center,
-        size,
-    );
-    let coverage: Vec<u8> = scratch
-        .pixels
-        .iter()
-        .map(|&p| (((p >> 16) & 0xFF) * alpha / 255) as u8)
-        .collect();
+    let scratch = canvas.scratch(r.width.max(0) as u32, r.height.max(0) as u32);
     let (w, h) = scratch.device_size();
+    let local = Rect::new(0, 0, r.width, r.height);
+    let coverage: Vec<u8> = scratch
+        .ink_coverage(|c, white| {
+            text.draw(c, local, label, false, white, Align::Center, size);
+        })
+        .into_iter()
+        .map(|c| (u32::from(c) * alpha / 255) as u8)
+        .collect();
     let cs = canvas.scale();
     let all = canvas.bounds();
     canvas.blit_mask_over(

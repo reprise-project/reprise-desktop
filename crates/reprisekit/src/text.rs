@@ -754,20 +754,20 @@ impl TextRenderer {
         if clip.width <= 0 || clip.height <= 0 {
             return;
         }
-        let mut ink = Canvas::new(clip.width as u32, clip.height as u32);
         let local = Rect::new(0, 0, clip.width, clip.height);
-        let white = Color::rgb(0xFF, 0xFF, 0xFF);
-        self.draw_run(
-            &mut ink,
-            pen - clip.x,
-            baseline - clip.y,
-            local,
-            text,
-            bold,
-            white,
-            size_px,
-        );
-        let coverage: Vec<u8> = ink.pixels.iter().map(|&p| (p >> 16) as u8).collect();
+        let ink = Canvas::new(clip.width as u32, clip.height as u32);
+        let coverage = ink.ink_coverage(|c, white| {
+            self.draw_run(
+                c,
+                pen - clip.x,
+                baseline - clip.y,
+                local,
+                text,
+                bold,
+                white,
+                size_px,
+            );
+        });
         let all = canvas.bounds();
         canvas.blit_mask_over(
             clip.x,
