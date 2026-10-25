@@ -62,23 +62,40 @@ fn only_pointer_asks_make_a_pointer_only_frame() {
 
 #[test]
 fn only_scene_content_and_commit_asks_may_change_what_lies_under_glass() {
-    use crate::glass::Under;
+    use crate::glass::{Drawn, Under};
+    use reprisescene::NodeId;
     use smithay::utils::Rectangle;
-    let drawn = Rectangle::new((10, 10).into(), (40, 30).into());
+    let mut scene = crate::compositor::DeskScene::new();
+    let (a, b): (NodeId, NodeId) = (
+        scene.tree_create(scene.root()).into(),
+        scene.tree_create(scene.root()).into(),
+    );
+    let drawn = |x, y, w, h, window| Drawn {
+        r: Rectangle::new((x, y).into(), (w, h).into()),
+        window: Some(window),
+    };
     let under = |asks: &[Ask]| asked(asks).backdrop;
+    let first = drawn(10, 10, 40, 30, a);
     assert_eq!(under(&[Ask::Content]), Under::Anywhere);
     assert_eq!(under(&[Ask::Scene]), Under::Anywhere);
     assert_eq!(under(&[Ask::Cursor, Ask::Content]), Under::Anywhere);
-    assert_eq!(under(&[Ask::Commit(drawn), Ask::Content]), Under::Anywhere);
+    assert_eq!(under(&[Ask::Commit(first), Ask::Content]), Under::Anywhere);
     assert_eq!(
-        under(&[Ask::Pointer, Ask::Commit(drawn)]),
-        Under::Within(drawn)
+        under(&[Ask::Pointer, Ask::Commit(first)]),
+        Under::Within(first)
     );
-    let other = Rectangle::new((100, 50).into(), (10, 10).into());
     assert_eq!(
-        under(&[Ask::Commit(drawn), Ask::Commit(other)]),
-        Under::Within(Rectangle::new((10, 10).into(), (100, 50).into())),
+        under(&[Ask::Commit(first), Ask::Commit(drawn(100, 50, 10, 10, a))]),
+        Under::Within(drawn(10, 10, 100, 50, a)),
         "two commits ask for the box around both"
+    );
+    assert_eq!(
+        under(&[Ask::Commit(first), Ask::Commit(drawn(100, 50, 10, 10, b))]),
+        Under::Within(Drawn {
+            window: None,
+            ..drawn(10, 10, 100, 50, a)
+        }),
+        "commits in two windows lie in neither alone"
     );
     assert_eq!(under(&[Ask::Pointer]), Under::Nothing);
     let cursor = asked(&[Ask::Cursor, Ask::Pointer]);
