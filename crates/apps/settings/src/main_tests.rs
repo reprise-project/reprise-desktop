@@ -440,6 +440,35 @@ fn a_picture_added_to_the_slideshow_folder_becomes_the_monitors_first_slide() {
 }
 
 #[test]
+fn the_script_open_combo_shows_and_writes_script_open() {
+    let dir = tmp("script-open");
+    let path = dir.join("config.toml");
+    std::fs::write(&path, "terminal = \"foot\"\n").unwrap();
+    let mut a = SettingsApp::open(path.clone());
+    let dp = Page::DefaultPrograms.index();
+    let combo = |a: &SettingsApp| a.sheet.pages[dp].combo_selected(defaultspage::SCRIPT_OPEN);
+    assert_eq!(combo(&a), Some(0), "Run it");
+    let pick = |a: &mut SettingsApp, row| {
+        a.sheet.pages[dp].set_combo(defaultspage::SCRIPT_OPEN, row);
+        a.sheet_event(propsheet::Event::Page(
+            dp,
+            form::Event::Changed(defaultspage::SCRIPT_OPEN),
+        ));
+        assert!(a.apply());
+        std::fs::read_to_string(&path).unwrap()
+    };
+    assert_eq!(
+        pick(&mut a, 1),
+        "terminal = \"foot\"\nscript_open = \"terminal\"\n"
+    );
+    assert_eq!(
+        pick(&mut a, 0),
+        "terminal = \"foot\"\n",
+        "Run it is the default and removes the key"
+    );
+}
+
+#[test]
 fn the_script_combo_shows_and_writes_script_terminal() {
     let dir = tmp("script-end");
     let path = dir.join("config.toml");

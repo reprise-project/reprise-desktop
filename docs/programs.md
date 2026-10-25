@@ -135,7 +135,8 @@ One window, 23 pages, four headings. Only one runs at a time.
   - **Startup:** autostart entries and session restore.
   - **Default Programs:** browser, mail, music, video, photos, text editor,
     file manager, terminal and its arguments, what a plugged-in drive does,
-    whether a script's window stays open when it ends, and the program for
+    whether opening a script runs it on its own or in the terminal, whether
+    a script's window stays open when it ends, and the program for
     every file type, which Browse... can pick by its file when it has no
     desktop entry.
   - **Advanced:** clipboard history, screenshots, recent files, location,
