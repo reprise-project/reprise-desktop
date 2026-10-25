@@ -26,6 +26,8 @@ pub struct Settings {
     pub terminal: String,
     /// `script_terminal`: one of [`SCRIPT_ENDS`]' values.
     pub script_terminal: String,
+    /// `script_open`: one of [`SCRIPT_OPENS`]' values.
+    pub script_open: String,
     pub task_manager: String,
     pub startmenu_banner: String,
     /// `startmenu_style`: one of [`STARTMENU_STYLES`]' values. Glass under
@@ -321,6 +323,7 @@ impl Default for Settings {
         Settings {
             terminal: reprisefs::apps::DEFAULT_TERMINAL.into(),
             script_terminal: "stay".into(),
+            script_open: "run".into(),
             task_manager: String::new(),
             startmenu_banner: "Reprise Desktop".into(),
             startmenu_style: "classic".into(),
