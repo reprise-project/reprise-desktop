@@ -456,8 +456,7 @@ impl State {
         for id in sw.thumb.into_iter().chain(sw.thumbs.into_iter().flatten()) {
             self.thumb_drop(id);
         }
-        self.scene.destroy(sw.tree);
-        self.redraw_all();
+        self.destroy_redrawn(sw.tree);
         crate::access::touch(self);
         crate::autohideview::poke(self);
     }
@@ -535,6 +534,8 @@ impl State {
     }
 
     pub fn redraw_switcher(&mut self) {
+        let tree = self.switcher.panel.as_ref().map(|sw| sw.tree);
+        let was = tree.map_or_else(Vec::new, |t| self.scene.outputs_of(t));
         match self.switcher.panel.as_ref() {
             // A look's icon grid draws as its thumbnail panel, without
             // pictures.
@@ -544,6 +545,8 @@ impl State {
             Some(_) => self.redraw_switcher_icons(),
             None => {}
         }
+        let nodes: Vec<_> = tree.into_iter().map(Into::into).collect();
+        self.redraw_nodes(was, &nodes);
         crate::access::touch(self);
     }
 
@@ -599,7 +602,6 @@ impl State {
             well_icon.as_ref(),
         );
         upload_scaled(&mut self.scene, buffer, &canvas, scale);
-        self.redraw_all();
     }
 
     fn redraw_switcher_thumbnails(&mut self) {
@@ -712,7 +714,6 @@ impl State {
             upload_scaled(&mut self.scene, badges, &over, scale);
             self.scene.raise_to_top(badges);
         }
-        self.redraw_all();
     }
 
     fn place_switcher_thumb(&mut self, window: Option<WindowId>, scale: i32) {
@@ -816,6 +817,44 @@ impl State {
                 .and_then(|v| v.dialog.icon.clone())
                 .and_then(|name| self.icons.get(&name, px)),
             Entry::Desktop => self.icons.get("user-desktop", px),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::harness::Harness;
+
+    type Step = fn(&mut crate::compositor::State);
+
+    #[test]
+    fn the_switcher_asks_for_frames_only_on_its_output() {
+        for look in ["classic", "glass"] {
+            let text = format!("[appearance]\ninterface = \"{look}\"\n[switcher]\npeek = false\n");
+            let mut h = Harness::with_config(crate::config::Config::parse(&text).unwrap());
+            h.output("TEST-1", 1024, 768);
+            h.output("TEST-2", 1024, 768);
+            let mut c = h.connect();
+            for app in ["one", "two", "three"] {
+                h.map_toplevel(&mut c, app, 300, 200);
+            }
+            h.pointer_to(500.0, 400.0);
+            let steps: [(&str, Step); 4] = [
+                ("open", |s| s.open_switcher(crate::keys::MOD_ALT)),
+                ("step", |s| s.switcher_step(false)),
+                ("hover", |s| s.switcher_hover(Some(0))),
+                ("cancel", |s| s.switcher_cancel()),
+            ];
+            for (what, step) in steps {
+                crate::backend::take_asks();
+                step(&mut h.state);
+                let asked = crate::backend::take_asks();
+                assert!(!asked.is_empty(), "{look} {what}: a frame is asked");
+                assert!(
+                    asked.iter().all(|(o, _)| o == "TEST-1"),
+                    "{look} {what}: only TEST-1, the switcher's output: {asked:?}"
+                );
+            }
         }
     }
 }
