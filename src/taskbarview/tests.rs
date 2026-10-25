@@ -90,3 +90,29 @@ fn a_bar_moved_under_a_still_pointer_lights_only_the_cell_under_it() {
         "Start moved in under the still pointer"
     );
 }
+
+#[test]
+fn redrawing_the_taskbars_asks_only_the_outputs_whose_bar_changed() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    h.state.redraw_taskbars();
+    crate::backend::take_asks();
+    h.state.redraw_taskbars();
+    assert_eq!(
+        crate::backend::take_asks(),
+        vec![],
+        "no bar changed, so no output is asked"
+    );
+    let first = (h.state.bars.iter_mut())
+        .find(|b| b.output.name() == "TEST-1")
+        .expect("TEST-1's bar");
+    first.start_pressed = true;
+    h.state.redraw_taskbars();
+    let asked = crate::backend::take_asks();
+    assert!(!asked.is_empty(), "the pressed Start asks for a frame");
+    assert!(
+        asked.iter().all(|(o, _)| o == "TEST-1"),
+        "only TEST-1, the pressed bar's output: {asked:?}"
+    );
+}

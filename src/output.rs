@@ -37,11 +37,13 @@ pub(crate) fn draw_scale(scale: f32) -> i32 {
     }
 }
 
-pub fn upload_scaled(scene: &mut DeskScene, sb: BufferId, canvas: &Canvas, scale: i32) {
+/// Show `canvas` in `sb` at `scale`; whether any of its pixels differ from those shown before.
+pub fn upload_scaled(scene: &mut DeskScene, sb: BufferId, canvas: &Canvas, scale: i32) -> bool {
     let scale = scale.max(1);
     let (w, h) = (canvas.width as i32, canvas.height as i32);
-    scene.buffer_set_canvas(sb, &canvas.pixels, w, h);
+    let changed = scene.buffer_set_canvas(sb, &canvas.pixels, w, h);
     scene.buffer_set_dest_size(sb, Some((w / scale, h / scale).into()));
+    !changed.is_empty()
 }
 
 /// Where output management placed an output, in its user data; None when automatic.

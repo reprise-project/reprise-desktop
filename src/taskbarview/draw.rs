@@ -1,7 +1,7 @@
 use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Instant};
 
 use reprisekit::taskbar::{BarSpan, ClockText};
-use reprisescene::{Input, TreeId};
+use reprisescene::{Input, NodeId, TreeId};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use super::{
@@ -9,7 +9,7 @@ use super::{
     quick_icon, stands_over_menu, start_icon,
 };
 use crate::{
-    compositor::State,
+    compositor::{DeskScene, State},
     glass::{self, Pane, PaneShape},
     input::Interaction,
     output::upload_scaled,
@@ -85,13 +85,15 @@ impl State {
         (self.bar_hit(bar, p.x, p.y) == TaskbarHit::Task(i)).then_some(i)
     }
 
-    /// An output out of the layout has an empty box: its bar hides and forgets
-    /// its buttons, so neither a stale bar nor a closed window can be hit.
-    pub(super) fn redraw_taskbar_with(&mut self, bar: &mut Bar, tasks: &TaskWindows) {
+    /// Draw `bar` without asking for a frame; whether anything it shows changed. An output out
+    /// of the layout has an empty box: its bar hides and forgets its buttons, so neither a stale
+    /// bar nor a closed window can be hit.
+    pub(super) fn redraw_taskbar_with(&mut self, bar: &mut Bar, tasks: &TaskWindows) -> bool {
         #[cfg(test)]
         {
             bar.draws += 1;
         }
+        let before = BarLook::of(&self.scene, bar);
         let b = self.layout_box(Some(&bar.output));
         if b.width <= 0 {
             self.scene.set_enabled(bar.tree, false);
@@ -106,7 +108,7 @@ impl State {
             bar.drawn = None;
             bar.orb_up = None;
             bar.layout = empty_layout();
-            return;
+            return BarLook::of(&self.scene, bar) != before;
         }
         let scale = self.draw_scale_at(Some(&bar.output));
         let p = self.bar_placement(&bar.output);
@@ -399,7 +401,7 @@ impl State {
         let draw = |state: &TaskbarState| (draw_bar(state), draw_orb(state));
         let held = state.start_pressed;
         let fading = !bar.start_glow.settled(Instant::now()) && base.look.style().is_some();
-        if fading {
+        let painted = if fading {
             let mut state = state;
             state.start_hot = false;
             let dark = draw(&state);
@@ -415,6 +417,7 @@ impl State {
             });
             bar.drawn = None;
             self.redraw_start(bar);
+            true
         } else {
             bar.start_mix = None;
             let canvas = match bar.drawn.take() {
@@ -438,21 +441,31 @@ impl State {
                 _ => draw_bar(&state),
             };
             let orb = draw_orb(&state);
-            bar.orb_up = self.upload_bar(bar, &canvas, orb, held, scale);
+            let up = self.upload_bar(bar, &canvas, orb, held, scale);
+            bar.orb_up = up.orb_up;
             bar.drawn = Some(DrawnBar {
                 state,
                 layout,
                 scale,
                 canvas,
             });
-        }
+            up.painted
+        };
         crate::trayreveal::follow_layout(self, bar, now);
         bar.tray_reveal_drawn = bar.tray_reveal.x(now);
         self.scene.set_enabled(bar.tree, true);
-        self.place_bar(bar);
+        self.lay_bar(bar);
+        painted || BarLook::of(&self.scene, bar) != before
     }
 
+    /// `lay_bar`, then a frame on the bar's output.
     pub(crate) fn place_bar(&mut self, bar: &mut Bar) {
+        self.lay_bar(bar);
+        crate::backend::schedule(self, &bar.output);
+    }
+
+    /// Place `bar`'s nodes and glass for its slide and hide state.
+    fn lay_bar(&mut self, bar: &mut Bar) {
         let p = self.bar_drawn(&bar.output);
         let rows = crate::barplace::on_output(&p, self.layout_box(Some(&bar.output)));
         let orb = crate::barplace::orb_opacity(self.bar_hide.drawn(&bar.output));
@@ -493,7 +506,6 @@ impl State {
             .set_surface(reprisekit::glass::tint::Surface::Taskbar);
         bar.glass
             .set(&mut self.scene, &self.glass, bar.glass_tree, pane);
-        crate::backend::schedule(self, &bar.output);
     }
 
     fn redraw_start(&mut self, bar: &mut Bar) {
@@ -508,7 +520,7 @@ impl State {
             c
         });
         let (held, scale) = (m.held, m.scale);
-        bar.orb_up = self.upload_bar(bar, &canvas, orb, held, scale);
+        bar.orb_up = self.upload_bar(bar, &canvas, orb, held, scale).orb_up;
         self.place_bar(bar);
         if bar.start_glow.settled(now) {
             bar.start_mix = None;
@@ -530,10 +542,10 @@ impl State {
         orb: Option<Canvas>,
         held: bool,
         scale: i32,
-    ) -> Option<bool> {
+    ) -> Upload {
         let covered = self.under_fullscreen(bar);
         let scene = &mut self.scene;
-        upload_scaled(scene, bar.buffer, canvas, scale);
+        let mut painted = upload_scaled(scene, bar.buffer, canvas, scale);
         bar.buffer_scale = scale;
         let l = &bar.layout;
         let over_menu = stands_over_menu(l, held, covered);
@@ -544,7 +556,7 @@ impl State {
         let pictured = l.start_orb(held).is_some() && orb.is_some();
         match (l.start_orb(held), orb) {
             (Some(r), Some(c)) => {
-                upload_scaled(scene, bar.start_above, &c, scale);
+                painted |= upload_scaled(scene, bar.start_above, &c, scale);
                 scene.set_position(bar.start_above, r.x, r.y);
                 scene.set_enabled(bar.start_above, true);
                 // Only Start takes the pointer, so a click beside the disc or on its
@@ -561,6 +573,55 @@ impl State {
             _ => scene.set_enabled(bar.start_above, false),
         }
         scene.set_enabled(bar.orb_tree, over_menu);
-        pictured.then_some(over_menu)
+        Upload {
+            orb_up: pictured.then_some(over_menu),
+            painted,
+        }
+    }
+}
+
+/// What `upload_bar` did: where the orb went (`Bar::orb_up`) and whether the bar's or the
+/// orb's pixels changed.
+struct Upload {
+    orb_up: Option<bool>,
+    painted: bool,
+}
+
+/// What a bar's nodes show apart from their pixels: places, flags, opacity, the orb's parent,
+/// the buffer's size and scale, and the glass node. The glass pane is the buffer's rows.
+#[derive(PartialEq)]
+struct BarLook {
+    nodes: Vec<NodeLook>,
+    orb_parent: Option<TreeId>,
+    sizes: [Option<(i32, i32)>; 2],
+    buffer_scale: i32,
+    glass: Vec<NodeId>,
+}
+
+/// A node's place, enabled flag and opacity.
+type NodeLook = (Option<(i32, i32)>, bool, Option<f32>);
+
+impl BarLook {
+    fn of(scene: &DeskScene, bar: &Bar) -> BarLook {
+        let nodes: [NodeId; 5] = [
+            bar.tree.into(),
+            bar.orb_tree.into(),
+            bar.glass_tree.into(),
+            bar.buffer.into(),
+            bar.start_above.into(),
+        ];
+        let size = |b| scene.buffer_size(b).map(|s| (s.w, s.h));
+        BarLook {
+            nodes: (nodes.iter())
+                .map(|&n| {
+                    let at = scene.position(n).map(|p| (p.x, p.y));
+                    (at, scene.enabled(n), scene.opacity(n))
+                })
+                .collect(),
+            orb_parent: scene.parent(bar.start_above),
+            sizes: [size(bar.buffer), size(bar.start_above)],
+            buffer_scale: bar.buffer_scale,
+            glass: scene.children(bar.glass_tree).to_vec(),
+        }
     }
 }
