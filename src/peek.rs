@@ -53,6 +53,8 @@ pub struct Peek {
     running: Option<PeekTarget>,
     hidden: Vec<(WindowId, bool)>,
     shown: Option<WindowId>,
+    /// The trees `hoist` drew above every window.
+    hoisted: Vec<NodeId>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -221,7 +223,8 @@ fn hide_all(state: &mut State) {
 
 /// Draw a running peek's target, and the menus and tooltips that go with it,
 /// above every other window (`Scene::set_hoist` into the top of `layers.on_top`).
-/// A fullscreen target stays in its own layer.
+/// A fullscreen target stays in its own layer. A change asks the outputs of the trees
+/// hoisted before and after.
 fn hoist(state: &mut State) {
     let mut nodes = Vec::new();
     if let Some(PeekTarget::Window(t)) = state.peek.running {
@@ -233,8 +236,14 @@ fn hoist(state: &mut State) {
             nodes.extend((state.scene.children(layer).iter()).filter(|n| wanted.contains(n)));
         }
     }
+    if nodes == state.peek.hoisted {
+        return;
+    }
+    let was = state.outputs_of_nodes(&state.peek.hoisted);
     let on_top = state.layers.on_top;
-    state.scene.set_hoist(on_top, nodes);
+    state.scene.set_hoist(on_top, nodes.clone());
+    state.redraw_nodes(was, &nodes);
+    state.peek.hoisted = nodes;
 }
 
 fn show_target(state: &mut State) {
@@ -247,7 +256,7 @@ fn show_target(state: &mut State) {
     if state.on_current_desktop(t) && state.minimized_along_chain(t) {
         state.scene.set_enabled(tree, true);
         state.peek.shown = Some(t);
-        state.redraw_all();
+        state.redraw_nodes(Vec::new(), &[tree.into()]);
     }
 }
 
@@ -258,7 +267,11 @@ fn stays_hidden(state: &State, w: WindowId) -> bool {
 }
 
 fn hide_one(state: &mut State, w: WindowId) {
-    let Some(content) = state.win(w).filter(|x| x.mapped).map(|x| x.content) else {
+    let Some((tree, content)) = state
+        .win(w)
+        .filter(|x| x.mapped)
+        .map(|x| (x.tree, x.content))
+    else {
         return;
     };
     if state.minimized_along_chain(w) {
@@ -271,13 +284,14 @@ fn hide_one(state: &mut State, w: WindowId) {
         _ => false,
     };
     if state.peek.hide(w, enabled, |_| goes) {
+        let was = state.scene.outputs_of(tree);
         state.scene.set_enabled(content, false);
         // A sheet the switch from another target left (`put_back`) is
         // drawn already.
         if state.is_sheet(w) && !state.win(w).is_some_and(|x| x.sheeted) {
             state.redraw_frame(w);
         }
-        state.redraw_all();
+        state.redraw_nodes(was, &[tree.into()]);
     }
 }
 
@@ -307,8 +321,9 @@ fn apply(state: &mut State, undo: Undo) {
         && state.minimized_along_chain(t)
         && let Some(tree) = state.win(t).map(|x| x.tree)
     {
+        let was = state.scene.outputs_of(tree);
         state.scene.set_enabled(tree, false);
-        state.redraw_all();
+        state.redraw_nodes(was, &[]);
     }
     hoist(state);
 }
@@ -318,15 +333,14 @@ fn apply(state: &mut State, undo: Undo) {
 /// keeps it a sheet: `hide_all` turns its content off again next.
 fn put_back(state: &mut State, restore: &[(WindowId, bool)]) {
     for &(w, enabled) in restore {
-        if let Some(content) = state.win(w).map(|x| x.content) {
+        if let Some((tree, content)) = state.win(w).map(|x| (x.tree, x.content)) {
+            let was = state.scene.outputs_of(tree);
             state.scene.set_enabled(content, enabled);
+            state.redraw_nodes(was, &[tree.into()]);
         }
         if state.win(w).is_some_and(|x| x.sheeted) && !stays_hidden(state, w) {
             state.redraw_frame(w);
         }
-    }
-    if !restore.is_empty() {
-        state.redraw_all();
     }
 }
 
@@ -374,6 +388,39 @@ mod tests {
     /// A window that belongs with no other.
     fn alone(_: WindowId) -> bool {
         false
+    }
+
+    #[test]
+    fn a_peek_asks_only_the_outputs_of_the_windows_it_hides_and_hoists() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "a", 300, 200);
+        let b = h.map_toplevel(&mut c, "b", 300, 200);
+        for t in [a.id, b.id] {
+            let tree = h.state.win(t).expect("the window").tree;
+            let on: Vec<String> = (h.state.scene.outputs_of(tree).iter())
+                .map(|o| o.name())
+                .collect();
+            assert_eq!(on, ["TEST-1"], "both windows lie on TEST-1");
+        }
+        let asked_on = || {
+            let asked = crate::backend::take_asks();
+            assert!(!asked.is_empty(), "the peek asks for a frame");
+            (asked.into_iter()).all(|(o, _)| o == "TEST-1")
+        };
+        crate::backend::take_asks();
+        arm(&mut h.state, PeekTarget::Window(a.id));
+        h.run_for(PEEK_MS + 100);
+        assert!(h.state.peek.hides(b.id), "the peek at a runs");
+        assert!(asked_on(), "the peek starting asks only TEST-1");
+        arm(&mut h.state, PeekTarget::Window(b.id));
+        assert!(h.state.peek.hides(a.id), "the peek moved to b");
+        assert!(asked_on(), "the peek moving asks only TEST-1");
+        leave(&mut h.state);
+        assert!(!h.state.peek.active());
+        assert!(asked_on(), "the peek ending asks only TEST-1");
     }
 
     #[test]
