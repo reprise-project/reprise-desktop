@@ -138,6 +138,7 @@ Pictures when left out) and `photo_seconds` tune them.
 | `reveal_on_edge` | the pointer resting on, clicking or dragging onto the 2 px line brings it back | `true` |
 | `reveal_on_keys` | the Start key, Ctrl+Esc and Alt+Tab bring it back | `true` |
 | `reveal_on_attention` | a window asking for attention or a new balloon brings it back | `true` |
+| `attention_flash` | seconds a window's button flashes when it asks for attention before it stays lit until the window is focused; 0 lights it at once | 30 |
 
 The button modes:
 

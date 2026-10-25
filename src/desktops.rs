@@ -263,7 +263,7 @@ impl State {
         let asks = self
             .windows
             .iter()
-            .filter(|w| w.mapped && w.attention)
+            .filter(|w| w.mapped && w.attention.is_some())
             .map(|w| (self.desktop_of(w.id), true));
         attention(d.count, d.current, asks)
             .into_iter()

@@ -55,14 +55,14 @@ fn drawing_basics() {
             TaskEntry {
                 title: "One".into(),
                 active: true,
-                attention: false,
+                attention: crate::taskbar::Attention::None,
                 icon: None,
                 glow: None,
             },
             TaskEntry {
                 title: "Two".into(),
                 active: false,
-                attention: false,
+                attention: crate::taskbar::Attention::None,
                 icon: None,
                 glow: None,
             },
@@ -144,7 +144,7 @@ fn a_150_percent_bar_grows_around_its_titles_and_clock() {
         tasks: vec![TaskEntry {
             title: "Notepad".into(),
             active: false,
-            attention: false,
+            attention: crate::taskbar::Attention::None,
             icon: None,
             glow: None,
         }],
@@ -221,7 +221,7 @@ fn drawing_at_scale_two_is_twice_the_pixels() {
         tasks: vec![TaskEntry {
             title: "One".into(),
             active: true,
-            attention: false,
+            attention: crate::taskbar::Attention::None,
             icon: None,
             glow: None,
         }],
@@ -276,7 +276,7 @@ fn a_pinned_app_without_windows_is_a_bare_icon() {
     let entry = |title: &str| TaskEntry {
         title: title.into(),
         active: false,
-        attention: false,
+        attention: crate::taskbar::Attention::None,
         icon: None,
         glow: None,
     };
@@ -328,7 +328,7 @@ fn a_pinned_app_without_windows_is_a_bare_icon() {
 }
 
 #[test]
-fn attention_button_is_sunken_without_dither() {
+fn an_attention_button_is_pushed_in_the_selection_colours_while_lit() {
     let theme = Theme::default();
     let cs = &theme.colors;
     let text = TextRenderer::load(&FontConfig::default());
@@ -341,7 +341,7 @@ fn attention_button_is_sunken_without_dither() {
         counts(0, 1, 0),
         clock_w,
     );
-    let state = TaskbarState {
+    let state = |attention| TaskbarState {
         start_pressed: false,
         start_focus: false,
         focus: None,
@@ -368,23 +368,50 @@ fn attention_button_is_sunken_without_dither() {
         tasks: vec![TaskEntry {
             title: "Ping".into(),
             active: false,
-            attention: true,
+            attention,
             icon: None,
             glow: None,
         }],
         tray_icons: vec![],
         clock: "00:00".into(),
     };
-    let mut c = Canvas::new(800, 30);
-    draw_taskbar(&mut c, &theme, &text, &l, &state);
+    use crate::taskbar::Attention;
+    let drawn = |a| {
+        let mut c = Canvas::new(800, 30);
+        draw_taskbar(&mut c, &theme, &text, &l, &state(a));
+        c
+    };
     let t0 = l.tasks[0];
-    assert_eq!(c.get(t0.x, t0.y + 10), cs.button_dk_shadow.argb());
-    let interior = Rect::new(t0.x + 22, t0.y + 2, 4, 4);
-    for x in interior.x..interior.right() {
-        for y in interior.y..interior.bottom() {
-            assert_eq!(c.get(x, y), cs.button_face.argb(), "dither at {x},{y}");
+    let interior = Rect::new(t0.x + t0.width - 10, t0.y + 4, 4, 4);
+    for a in [Attention::FlashOn, Attention::Steady] {
+        let c = drawn(a);
+        assert_eq!(
+            c.get(t0.x, t0.y + 10),
+            cs.button_dk_shadow.argb(),
+            "{a:?} pushed"
+        );
+        for x in interior.x..interior.right() {
+            for y in interior.y..interior.bottom() {
+                assert_eq!(c.get(x, y), cs.hilight.argb(), "{a:?} fill at {x},{y}");
+            }
         }
+        let label = Rect::new(t0.x + 24, t0.y, 40, t0.height);
+        let inked = (label.y..label.bottom())
+            .flat_map(|y| (label.x..label.right()).map(move |x| (x, y)))
+            .any(|(x, y)| c.get(x, y) == cs.hilight_text.argb());
+        assert!(inked, "{a:?} label in the selection text colour");
     }
+    let rest = drawn(Attention::None);
+    assert_eq!(
+        drawn(Attention::FlashOff).pixels,
+        rest.pixels,
+        "the dark half of a flash is the button at rest"
+    );
+    assert_eq!(
+        rest.get(t0.x, t0.y + 10),
+        cs.button_hilight.argb(),
+        "raised at rest"
+    );
 }
 
 #[test]
@@ -828,7 +855,7 @@ fn the_show_desktop_strip_is_a_thin_raised_button_after_the_clock() {
             tasks: vec![TaskEntry {
                 title: "One".into(),
                 active: false,
-                attention: false,
+                attention: crate::taskbar::Attention::None,
                 icon: None,
                 glow: None,
             }],
@@ -900,7 +927,7 @@ fn classic_row(
             .map(|t| TaskEntry {
                 title: (*t).into(),
                 active: false,
-                attention: false,
+                attention: crate::taskbar::Attention::None,
                 icon: None,
                 glow: None,
             })
@@ -964,7 +991,7 @@ fn classic_bar_on(edge: Edge, chevron: bool) -> (Canvas, TaskbarLayout) {
     let entry = |title: &str, active| TaskEntry {
         title: title.into(),
         active,
-        attention: false,
+        attention: crate::taskbar::Attention::None,
         icon: None,
         glow: None,
     };
@@ -1246,7 +1273,7 @@ fn classic_side_with(
     let entry = |title: &str, active| TaskEntry {
         title: title.into(),
         active,
-        attention: false,
+        attention: crate::taskbar::Attention::None,
         icon: None,
         glow: None,
     };
@@ -1478,7 +1505,7 @@ fn classic_popup_cells(
             .map(|_| TaskEntry {
                 title: String::new(),
                 active: false,
-                attention: false,
+                attention: crate::taskbar::Attention::None,
                 icon: None,
                 glow: None,
             })

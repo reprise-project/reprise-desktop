@@ -284,6 +284,7 @@ fn taskbar_defaults_follow_the_interface() {
             reveal_on_edge: true,
             reveal_on_keys: true,
             reveal_on_attention: true,
+            attention_flash: 30,
             side_width: 0,
         }
     );
@@ -876,4 +877,25 @@ fn screensaver_keys() {
     assert_eq!(c.folder, Some(PathBuf::from("/srv/pics")));
     assert!(Config::parse("[screensaver]\nname = \"toasters\"\n").is_err());
     assert!(Config::parse("[screensaver]\nspeed = 11\n").is_err());
+}
+
+#[test]
+fn attention_flash_defaults_to_30_seconds_and_takes_its_key() {
+    for i in ["classic", "blue", "glass"] {
+        let c = Config::parse(&format!("[appearance]\ninterface = \"{i}\"\n")).unwrap();
+        assert_eq!(c.taskbar.attention_flash, 30, "{i} flashes for 30 s");
+    }
+    for v in [0, 5, 3600] {
+        let c = Config::parse(&format!("[taskbar]\nattention_flash = {v}\n")).unwrap();
+        assert_eq!(c.taskbar.attention_flash, v);
+    }
+    for bad in ["-1", "3601", "\"long\""] {
+        let err = Config::parse(&format!("[taskbar]\nattention_flash = {bad}\n"));
+        assert!(err.is_err(), "{bad} is refused");
+    }
+    let err = Config::parse("[taskbar]\nattention_flash = 4000\n").unwrap_err();
+    assert!(
+        err.contains("4000") && err.contains("3600"),
+        "the error names the range: {err}"
+    );
 }

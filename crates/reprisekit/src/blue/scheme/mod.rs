@@ -71,6 +71,38 @@ pub struct Face {
     pub mark: Option<Color>,
 }
 
+/// A task button whose window wants attention, in every scheme: orange, a light band under its top
+/// rim and a light left column, deepening to a burnt rim at its foot and right side.
+pub const TASK_ATTENTION: Face = Face {
+    rim: Color::rgb(0xA4, 0x4E, 0x08),
+    inner: Color::rgb(0xFF, 0xB8, 0x66),
+    halo: None,
+    down: &[
+        (0.02, Color::rgb(0xB8, 0x5A, 0x0C)),
+        (0.06, Color::rgb(0xFF, 0xC8, 0x7C)),
+        (0.10, Color::rgb(0xFF, 0xAE, 0x4C)),
+        (0.18, Color::rgb(0xFA, 0x9A, 0x2E)),
+        (0.26, Color::rgb(0xF6, 0x90, 0x20)),
+        (0.86, Color::rgb(0xF2, 0x88, 0x1A)),
+        (0.94, Color::rgb(0xDE, 0x72, 0x10)),
+        (0.98, Color::rgb(0xA4, 0x4E, 0x08)),
+    ],
+    across: &[
+        (0.0278, Color::rgb(0xB8, 0x5A, 0x0C)),
+        (0.0833, Color::rgb(0xFF, 0xBA, 0x68)),
+        (0.1389, Color::rgb(0xFA, 0x9E, 0x36)),
+        (0.1944, Color::rgb(0xF6, 0x94, 0x22)),
+        (0.6944, Color::rgb(0xF6, 0x94, 0x22)),
+        (0.8611, Color::rgb(0xF2, 0x8C, 0x1C)),
+        (0.9167, Color::rgb(0xE2, 0x7A, 0x14)),
+        (0.9722, Color::rgb(0xA0, 0x4C, 0x0A)),
+    ],
+    mark: None,
+};
+
+/// The title on a [`TASK_ATTENTION`] button.
+pub const TASK_ATTENTION_INK: Color = Color::rgb(0xFF, 0xFF, 0xFF);
+
 /// The frame pixel a dialog's thinner frame leaves out, per border: `left`
 /// counts outside in, `right` inside out, `bottom` and `caption` top down.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

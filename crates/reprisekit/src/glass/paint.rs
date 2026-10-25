@@ -80,7 +80,10 @@ pub fn small_bar(s: &Settings, scale: i32) -> [(Part, PartImage); 11] {
         (Part::Taskbar, bar::taskbar(s, h, scale)),
         (Part::StartButton, orb::orb(s, orb::Bar::Small, scale)),
         (Part::StartAbove, small_orb_above(s, scale)),
-        (Part::TaskButton, taskbutton::buttons(s, button, scale)),
+        (
+            Part::TaskButton,
+            taskbutton::buttons_with_attention(s, button, scale),
+        ),
         (Part::TaskStack, taskbutton::stacks(s, button, false, scale)),
         (Part::TrayArea, bar::tray_area(s, h, scale)),
         (Part::ShowDesktop, bar::show_desktop(s, h, scale)),
@@ -941,7 +944,10 @@ mod tests {
             (Part::Taskbar, (vec![n], 106u32, 30u32)),
             (Part::StartButton, (vec![n, h, p], 54, 90)),
             (Part::StartAbove, (vec![n, h, p], 54, 39)),
-            (Part::TaskButton, (vec![n, h, c, ch, p], 44, 150)),
+            (
+                Part::TaskButton,
+                (vec![n, h, c, ch, p, State::Attention], 44, 180),
+            ),
             (Part::TaskStack, (vec![n, n, c, c], 16, 30)),
             (Part::TrayArea, (vec![n], bar::TRAY_RAMP as u32 + 2, 30)),
             (Part::ShowDesktop, (vec![n, h], 15, 60)),

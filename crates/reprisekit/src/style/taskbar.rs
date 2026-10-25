@@ -165,7 +165,7 @@ pub fn draw_taskbar(
     let float = state.task_float.filter(|&(i, _)| i < count);
     let floated = |i: usize| float.is_some_and(|(f, _)| f == i);
     let shift = |i: usize| state.task_shift.get(i).copied().unwrap_or(0);
-    let states: Vec<State> = (0..count).map(|i| task_state(state, i)).collect();
+    let states: Vec<State> = (0..count).map(|i| task_state(style, state, i)).collect();
     let fronts: Vec<(Rect, Vec<Rect>)> = (0..count)
         .map(|i| {
             let slot = layout.tasks[i];
@@ -267,7 +267,10 @@ pub fn draw_taskbar(
             let art = paint(&pr, &theme.colors, r.width / s, r.height / s, s);
             canvas.blit_over(r.x, r.y, &art);
         }
-        let pushed = matches!(button_state, State::Checked | State::CheckedHot) && style.task_nudge;
+        let pushed = matches!(
+            button_state,
+            State::Checked | State::CheckedHot | State::Attention
+        ) && style.task_nudge;
         let o = if pushed || held { s } else { 0 };
         let lb = style.taskbar.labelled;
         let narrow = r.width < (lb.icon_x + lb.icon_box) * s;
@@ -392,7 +395,7 @@ fn edge_state(style: &Style, button: State) -> State {
     let order: &[State] = match button {
         State::Pressed => &[State::Pressed, State::CheckedHot, State::Checked],
         State::CheckedHot => &[State::CheckedHot, State::Checked],
-        State::Checked => &[State::Checked],
+        State::Checked | State::Attention => &[State::Checked],
         State::Hot => &[State::Hot],
         _ => &[],
     };
@@ -403,19 +406,33 @@ fn edge_state(style: &Style, button: State) -> State {
         .unwrap_or(State::Normal)
 }
 
-fn task_state(state: &TaskbarState, i: usize) -> State {
+fn task_state(style: &Style, state: &TaskbarState, i: usize) -> State {
     let hot = state.task_hot == Some(i) || state.task_float.is_some_and(|(f, _)| f == i);
     let task = &state.tasks[i];
     if state.task_pressed == Some(i) {
         State::Pressed
     } else if task.active && hot {
         State::CheckedHot
-    } else if task.active || task.attention {
+    } else if task.active {
         State::Checked
+    } else if task.attention.lit() {
+        attention_state(style)
     } else if hot {
         State::Hot
     } else {
         State::Normal
+    }
+}
+
+/// A lit attention button's state: [`State::Attention`] where the look draws one, else checked.
+fn attention_state(style: &Style) -> State {
+    let has = style
+        .part(Part::TaskButton)
+        .is_some_and(|p| p.states.contains(&State::Attention));
+    if has {
+        State::Attention
+    } else {
+        State::Checked
     }
 }
 

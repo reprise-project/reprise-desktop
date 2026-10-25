@@ -240,6 +240,17 @@ impl Config {
                     *at = v;
                 }
             }
+            if let Some(f) = t.attention_flash {
+                use super::appearance::ATTENTION_FLASH_MAX;
+                cfg.taskbar.attention_flash = u32::try_from(f)
+                    .ok()
+                    .filter(|f| *f <= ATTENTION_FLASH_MAX)
+                    .ok_or_else(|| {
+                        format!(
+                            "[taskbar] attention_flash must be between 0 and {ATTENTION_FLASH_MAX} seconds, got {f}"
+                        )
+                    })?;
+            }
             if let Some(w) = t.side_width {
                 cfg.taskbar.side_width =
                     i32::try_from(w).ok().filter(|w| *w >= 0).ok_or_else(|| {

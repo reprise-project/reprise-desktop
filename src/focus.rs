@@ -104,9 +104,7 @@ impl State {
         {
             self.show_desktop(d);
         }
-        if let Some(win) = self.win_mut(owner) {
-            win.attention = false;
-        }
+        self.clear_attention(owner);
         let w = self.modal_target(owner);
         if w != owner {
             if let Some(tree) = self.win(owner).map(|x| x.tree) {

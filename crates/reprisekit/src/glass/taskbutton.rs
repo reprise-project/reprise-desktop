@@ -869,6 +869,126 @@ pub fn glowing_label_edge(edges: &PartImage, state: State, n: usize, c: Color) -
     image.sizing(edges.sizing)
 }
 
+/// The amber a task button glows in while its window wants attention.
+const AMBER: [f64; 3] = [255.0, 162.0, 42.0];
+
+/// The amber's share of full alpha at the middle of the frame's foot and along its top.
+const AMBER_FOOT: f64 = 0.78;
+const AMBER_TOP: f64 = 0.30;
+
+/// The share of the middle's amber left at the frame's left and right ends.
+const AMBER_ENDS: f64 = 0.55;
+
+/// How much more amber a bar that lets everything through takes than an opaque one, so the glow
+/// reads alike over clear and dense glass.
+const AMBER_CLEAR: f64 = 0.25;
+
+/// `d`'s resting frame `w` x `h` with amber laid over everything inside its outline: strongest at
+/// the middle of its foot, rising toward the foot and fading toward the ends.
+fn asking(bar: &Bar, d: &Design, w: i32, h: i32, open: bool, n: i32) -> Drawn {
+    let mut f = draw(bar, d, Lit::Rest, w, h, open, n);
+    let lift = 1.0 + AMBER_CLEAR * (1.0 - bar.density());
+    let (wf, hf) = (f64::from(w), f64::from(h));
+    for y in 0..f.h {
+        let v = ((centre(y, n) + 0.5) / hf).clamp(0.0, 1.0);
+        let along = AMBER_TOP + (AMBER_FOOT - AMBER_TOP) * v * v;
+        for x in 0..f.w {
+            let u = ((centre(x, n) + 0.5) / wf * 2.0 - 1.0).abs();
+            let across = 1.0 - (1.0 - AMBER_ENDS) * u * u;
+            let cover = if n == 1 {
+                f64::from(u8::from(!matches!(
+                    ring(x, y, w, h, open),
+                    Ring::Off | Ring::Outline
+                )))
+            } else {
+                rings_at(x, y, w, h, open, n)[1]
+            };
+            let a = (along * across * lift).min(1.0) * cover;
+            let i = (y * f.w + x) as usize;
+            let amber = (255.0 * a, AMBER.map(|c| c * a));
+            f.px[i] = pack(over(amber, split(f.px[i])));
+        }
+    }
+    f
+}
+
+/// `p` with `extra` frames, each the size of `p`'s, laid after its own as `state`.
+fn with_frames(mut p: PartImage, state: State, extra: &[Drawn]) -> PartImage {
+    let f = p.frame(p.states[0]);
+    let (w, h) = (p.atlas.width as i32, p.atlas.height as i32);
+    let k = extra.len() as i32;
+    let (aw, ah) = match p.layout {
+        Layout::Vertical => (w, h + k * f.height),
+        Layout::Horizontal => (w + k * f.width, h),
+    };
+    let mut c = Canvas::new(aw as u32, ah as u32);
+    for y in 0..h {
+        for x in 0..w {
+            c.put_raw(x, y, p.atlas.get(x, y));
+        }
+    }
+    for (i, e) in (0..).zip(extra) {
+        let (x0, y0) = match p.layout {
+            Layout::Vertical => (0, h + i * f.height),
+            Layout::Horizontal => (w + i * f.width, 0),
+        };
+        for y in 0..e.h {
+            for x in 0..e.w {
+                c.put_raw(x0 + x, y0 + y, e.at(x, y).0);
+            }
+        }
+    }
+    p.atlas = c;
+    p.states.extend(extra.iter().map(|_| state));
+    p
+}
+
+/// [`buttons`] and a [`State::Attention`] frame after them: the resting frame glowing amber ([`asking`]).
+pub fn buttons_with_attention(s: &Settings, (w, h): (i32, i32), n: i32) -> PartImage {
+    let extra = asking(&Bar::new(s), &ICONS, w, h, false, n);
+    with_frames(buttons(s, (w, h), n), State::Attention, &[extra])
+}
+
+/// [`label`] and a [`State::Attention`] frame after them, glowing as [`buttons_with_attention`]' does.
+pub fn label_with_attention(s: &Settings, h: i32, n: i32) -> PartImage {
+    let extra = asking(&Bar::new(s), &LABELS, LABEL_WIDTH, h, true, n);
+    with_frames(label(s, h, n), State::Attention, &[extra])
+}
+
+/// [`label_edges`] and the [`EDGE_LEFT`] and [`EDGE_RIGHT`] pairs of a [`label_with_attention`]
+/// button after them, as [`State::Attention`].
+pub fn label_edges_with_attention(s: &Settings, h: i32, n: i32) -> PartImage {
+    let bar = Bar::new(s);
+    let w = LABEL_WIDTH;
+    let (closed, open) = (
+        asking(&bar, &LABELS, w, h, false, n),
+        asking(&bar, &LABELS, w, h, true, n),
+    );
+    let pair = |right: bool| {
+        let (mut px, mut gain) = (Vec::new(), Vec::new());
+        for y in 0..closed.h {
+            for x in 0..3 * n {
+                let (col, sub) = (x / n, x % n);
+                let p = match (right, col) {
+                    (false, _) => closed.at((1 + col) * n + sub, y).0,
+                    (true, 2) => shared(&closed, &open, sub, y, n),
+                    (true, _) => closed.at((w - 4 + col) * n + sub, y).0,
+                };
+                px.push(p);
+                gain.push(0);
+            }
+        }
+        Drawn {
+            w: 3 * n,
+            h: closed.h,
+            px,
+            gain,
+        }
+    };
+    let pairs = [pair(false), pair(true)];
+    with_frames(label_edges(s, h, n), State::Attention, &pairs)
+}
+
 /// The 40 px bar's lit task buttons: [`SPOT`] over the frames of [`buttons`],
 /// [`label`] and [`stacks`] without the spot. Held is the active, lit frame.
 pub fn task_spot(s: &Settings, n: i32) -> TaskSpot {
@@ -1021,14 +1141,15 @@ mod tests {
     }
 
     fn fnv(img: &PartImage) -> u64 {
-        img.atlas
-            .pixels
-            .iter()
-            .fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
-                p.to_le_bytes().iter().fold(h, |h, &b| {
-                    (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-                })
+        fnv_pixels(&img.atlas.pixels)
+    }
+
+    fn fnv_pixels(pixels: &[u32]) -> u64 {
+        pixels.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
+            p.to_le_bytes().iter().fold(h, |h, &b| {
+                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
             })
+        })
     }
 
     #[test]
@@ -1705,8 +1826,8 @@ mod tests {
         let s = Settings::default();
         let r = 4;
         for (name, img) in [
-            ("buttons", buttons(&s, BUTTON, 2)),
-            ("small buttons", buttons(&s, SMALL, 2)),
+            ("buttons", buttons_with_attention(&s, BUTTON, 2)),
+            ("small buttons", buttons_with_attention(&s, SMALL, 2)),
             ("pager tiles", pager_tiles(&s, BUTTON, 2)),
         ] {
             for &st in &img.states {
@@ -1748,5 +1869,149 @@ mod tests {
         let one = buttons(&s, BUTTON, 1);
         assert_eq!(one.atlas.get(0, 0), 0, "scale 1: the corner pixel cut");
         assert_ne!(one.atlas.get(1, 0), 0, "and the next one whole");
+    }
+
+    fn attention_parts(s: &Settings, n: i32) -> Vec<(&'static str, PartImage)> {
+        vec![
+            ("buttons", buttons_with_attention(s, BUTTON, n)),
+            ("small buttons", buttons_with_attention(s, SMALL, n)),
+            ("label", label_with_attention(s, 40, n)),
+            ("label edges", label_edges_with_attention(s, 40, n)),
+        ]
+    }
+
+    fn frame_pixels(img: &PartImage, state: State, k: usize) -> Vec<u32> {
+        let f = img.frame_nth(state, k);
+        (f.y..f.bottom())
+            .flat_map(|y| (f.x..f.right()).map(move |x| img.atlas.get(x, y)))
+            .collect()
+    }
+
+    #[test]
+    fn attention_frames_pin_at_scale_1_and_2() {
+        let mut got = Vec::new();
+        for s in settings() {
+            for n in [1, 2] {
+                for (name, img) in attention_parts(&s, n) {
+                    let at = |k| frame_pixels(&img, State::Attention, k);
+                    let px: Vec<u32> = if name == "label edges" {
+                        [at(0), at(1)].concat()
+                    } else {
+                        at(0)
+                    };
+                    let key = format!("{:?} {:?} {} {name} {n}", s.color, s.material, s.intensity);
+                    got.push((key, fnv_pixels(&px)));
+                }
+            }
+        }
+        crate::pins::check("glass/task_attention", &got);
+    }
+
+    #[test]
+    fn the_attention_frames_leave_the_others_as_they_are() {
+        let s = Settings::default();
+        for n in [1, 2] {
+            for (plain, asking) in [
+                (
+                    buttons(&s, BUTTON, n),
+                    buttons_with_attention(&s, BUTTON, n),
+                ),
+                (label(&s, 40, n), label_with_attention(&s, 40, n)),
+                (
+                    label_edges(&s, 40, n),
+                    label_edges_with_attention(&s, 40, n),
+                ),
+            ] {
+                assert_eq!(asking.states[..plain.states.len()], plain.states[..]);
+                let k = |st: State| plain.states.iter().filter(|&&x| x == st).count();
+                for &st in &plain.states {
+                    for i in 0..k(st) {
+                        assert_eq!(frame_pixels(&asking, st, i), frame_pixels(&plain, st, i));
+                    }
+                }
+                assert_eq!(
+                    asking.sizing, plain.sizing,
+                    "the same nine-grid insets at {n}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_attention_frame_glows_amber_strongest_at_its_foot() {
+        let unpremul = |px: u32| {
+            let a = (px >> 24).max(1) as f64;
+            [16, 8, 0].map(|sh| f64::from((px >> sh) & 0xFF) * 255.0 / a)
+        };
+        for s in settings() {
+            for n in [1, 2] {
+                let b = buttons_with_attention(&s, BUTTON, n);
+                let at = |st, x: i32, y: i32| {
+                    let f = b.frame(st);
+                    b.atlas.get(f.x + x * n, f.y + y * n)
+                };
+                let foot = unpremul(at(State::Attention, 30, 36));
+                let rest = unpremul(at(State::Normal, 30, 36));
+                assert!(
+                    foot[0] > foot[1] + 40.0 && foot[1] > foot[2] + 40.0,
+                    "{:?} {:?}: amber at the foot, {foot:?} at {n}",
+                    s.color,
+                    s.material
+                );
+                assert!(
+                    foot[0] - foot[2] > rest[0] - rest[2] + 60.0,
+                    "warmer than at rest"
+                );
+                let top = unpremul(at(State::Attention, 30, 3));
+                assert!(
+                    foot[0] - foot[2] > top[0] - top[2],
+                    "stronger at the foot than the top"
+                );
+                for st in [State::Normal, State::Checked] {
+                    assert_ne!(
+                        frame_pixels(&b, State::Attention, 0),
+                        frame_pixels(&b, st, 0)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn clearer_glass_takes_more_amber() {
+        let alpha_gain = |s: &Settings| {
+            let b = buttons_with_attention(s, BUTTON, 1);
+            let a = |st| at(&b, st, 0, 30, 30) >> 24;
+            a(State::Attention) - a(State::Normal)
+        };
+        let dense = Settings {
+            intensity: 100,
+            ..Settings::default()
+        };
+        let clear = Settings {
+            intensity: 0,
+            ..Settings::default()
+        };
+        assert!(Bar::new(&clear).density() < Bar::new(&dense).density());
+        assert!(alpha_gain(&clear) > alpha_gain(&dense));
+    }
+
+    #[test]
+    fn a_labelled_attention_buttons_end_pairs_glow_with_it() {
+        let s = Settings::default();
+        let e = label_edges_with_attention(&s, 40, 1);
+        for k in [EDGE_LEFT, EDGE_RIGHT] {
+            assert_ne!(
+                frame_pixels(&e, State::Attention, k),
+                frame_pixels(&e, State::Normal, k),
+                "pair {k}"
+            );
+        }
+        let f = e.frame_nth(State::Attention, EDGE_LEFT);
+        let p = e.atlas.get(f.x + 2, f.y + 30);
+        assert!(
+            (p >> 16 & 0xFF) > (p & 0xFF) + 40,
+            "amber in the left pair: {p:08x}"
+        );
     }
 }

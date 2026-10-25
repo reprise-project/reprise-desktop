@@ -2,7 +2,7 @@
 //! Top/bottom rings take the `down` profile, side rings the `across` profile; the fill shifts by `across`.
 
 use crate::blue::Variant;
-use crate::blue::scheme::{Face, Grad};
+use crate::blue::scheme::{Face, Grad, TASK_ATTENTION};
 use crate::raster::Insets;
 use crate::shape::{self, Px, Stops};
 use crate::style::{Layout, PartImage, State};
@@ -16,12 +16,13 @@ const RADIUS: f64 = 2.0;
 const GLOSS_INSET: [i32; 4] = [1, 1, 1, 0];
 
 /// The frames in atlas order; a held button draws its checked face.
-const STATES: [State; 5] = [
+const STATES: [State; 6] = [
     State::Normal,
     State::Hot,
     State::Checked,
     State::CheckedHot,
     State::Pressed,
+    State::Attention,
 ];
 
 /// Luminance of a premultiplied opaque colour, plus a floor that keeps a
@@ -97,7 +98,14 @@ pub fn task_button(v: Variant, d: i32) -> PartImage {
     let m = s.metrics;
     let f = &s.task_button;
     let (w, h) = (m.task_left + 1 + m.task_right, m.task_height);
-    let faces = [&f.normal, &f.hot, &f.checked, &f.checked_hot, &f.checked];
+    let faces = [
+        &f.normal,
+        &f.hot,
+        &f.checked,
+        &f.checked_hot,
+        &f.checked,
+        &TASK_ATTENTION,
+    ];
     let frames: Vec<Vec<Px>> = faces
         .iter()
         .map(|face| frame(face, w, h, m.task_left, inset(v), d))
@@ -135,13 +143,67 @@ mod tests {
             .collect()
     }
 
+    /// The atlas cut to its frames for `states`, which lead it in atlas order.
+    fn leading(img: &PartImage, states: &[State]) -> PartImage {
+        let f = img.frame(State::Normal);
+        let h = f.height * states.len() as i32;
+        let mut c = crate::raster::Canvas::new(f.width as u32, h as u32);
+        for y in 0..h {
+            for x in 0..f.width {
+                c.put_raw(x, y, img.atlas.get(x, y));
+            }
+        }
+        PartImage::new(c, states, Layout::Vertical)
+    }
+
     #[test]
     fn task_button_pins_at_scale_1_and_2() {
         let got: Vec<_> = Variant::ALL
             .into_iter()
-            .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&task_button(v, d)))))
+            .flat_map(|v| {
+                [1, 2].map(|d| {
+                    let b = leading(&task_button(v, d), &STATES[..5]);
+                    (format!("{v:?} {d}"), fnv(&b))
+                })
+            })
             .collect();
         crate::pins::check("blue/task_button", &got);
+    }
+
+    #[test]
+    fn task_attention_pins_at_scale_1_and_2() {
+        let got: Vec<_> = Variant::ALL
+            .into_iter()
+            .flat_map(|v| {
+                [1, 2].map(|d| {
+                    let b = task_button(v, d);
+                    let f = b.frame(State::Attention);
+                    let mut c = crate::raster::Canvas::new(f.width as u32, f.height as u32);
+                    for y in 0..f.height {
+                        for x in 0..f.width {
+                            c.put_raw(x, y, b.atlas.get(f.x + x, f.y + y));
+                        }
+                    }
+                    let one = PartImage::new(c, &[State::Attention], Layout::Vertical);
+                    (format!("{v:?} {d}"), fnv(&one))
+                })
+            })
+            .collect();
+        crate::pins::check("blue/task_attention", &got);
+    }
+
+    #[test]
+    fn task_attention_is_orange_in_every_scheme() {
+        for v in Variant::ALL {
+            let b = task_button(v, 1);
+            let f = b.frame(State::Attention);
+            let p = b.atlas.get(f.x + 13, f.y + 12);
+            let (r, g, bl) = ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF);
+            assert!(
+                r > 0xD0 && g > 0x60 && g < 0xB0 && bl < 0x50,
+                "{v:?} middle {p:08x}"
+            );
+        }
     }
 
     #[test]
@@ -174,7 +236,13 @@ mod tests {
         for v in Variant::ALL {
             for d in [1, 2] {
                 let b = task_button(v, d);
-                let lit = [State::Normal, State::Hot, State::Checked, State::CheckedHot];
+                let lit = [
+                    State::Normal,
+                    State::Hot,
+                    State::Checked,
+                    State::CheckedHot,
+                    State::Attention,
+                ];
                 for (i, &a) in lit.iter().enumerate() {
                     for &c in &lit[i + 1..] {
                         assert_ne!(pixels(&b, a), pixels(&b, c), "{v:?} {a:?} vs {c:?} at {d}");

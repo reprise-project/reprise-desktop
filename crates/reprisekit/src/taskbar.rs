@@ -7,11 +7,13 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 mod access;
+mod attention;
 mod draw;
 mod hit;
 mod layout;
 
 pub use access::{ATTENTION, QUICK_MORE_NAME, TaskbarNames, access};
+pub use attention::{Attention, FLASH_HALF};
 pub use draw::{
     draw_chevron, draw_clock_lines, draw_more, draw_tray_arrow, draw_tray_arrow_side,
     quick_icon_origin,
@@ -35,8 +37,7 @@ pub type ProgressPainter =
 pub struct TaskEntry {
     pub title: String,
     pub active: bool,
-    /// Set when an xdg-activation request could not focus the window; drawn like the active button until focused.
-    pub attention: bool,
+    pub attention: Attention,
     pub icon: Option<Arc<Canvas>>,
     /// None for an icon without a hue.
     pub glow: Option<Color>,

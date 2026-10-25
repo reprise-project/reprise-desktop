@@ -57,7 +57,7 @@ fn state_with_tasks(titles: &[&str]) -> TaskbarState {
             .map(|t| TaskEntry {
                 title: (*t).to_string(),
                 active: false,
-                attention: false,
+                attention: crate::taskbar::Attention::None,
                 icon: None,
                 glow: None,
             })
@@ -264,5 +264,52 @@ impl Hover {
             Hover::Hot => (Some(0), None),
             Hover::Held => (None, Some(0)),
         }
+    }
+}
+
+#[test]
+fn a_lit_attention_button_takes_its_attention_frame_and_a_dark_half_its_rest() {
+    use crate::taskbar::Attention;
+    for interface in [Interface::Blue, Interface::Glass] {
+        let theme = theme_for(interface);
+        let s = theme.look.style().unwrap();
+        let text = TextRenderer::load(&FontConfig::default());
+        let start = TextRenderer::load(&s.start_text.font());
+        let draw = |attention, active| {
+            let mut st = state_with_tasks(&["One", "Two"]);
+            st.tasks[0].attention = attention;
+            st.tasks[0].active = active;
+            let counts = TaskbarCounts {
+                tasks: 2,
+                ..TaskbarCounts::default()
+            };
+            let layout = TaskbarLayout::compute(&theme.metrics, &s.taskbar, 1280, true, counts, 60);
+            let mut c = Canvas::new(1280, theme.metrics.taskbar_height as u32);
+            draw_taskbar(&mut c, s, &theme, &text, &start, &layout, &st);
+            c.pixels
+        };
+        let rest = draw(Attention::None, false);
+        let lit = draw(Attention::FlashOn, false);
+        assert_eq!(
+            draw(Attention::FlashOff, false),
+            rest,
+            "{interface:?} dark half"
+        );
+        assert_eq!(
+            draw(Attention::Steady, false),
+            lit,
+            "{interface:?} steady is lit"
+        );
+        assert_ne!(lit, rest, "{interface:?} lit differs from rest");
+        assert_ne!(
+            lit,
+            draw(Attention::None, true),
+            "{interface:?} lit differs from active"
+        );
+        assert_eq!(
+            draw(Attention::Steady, true),
+            draw(Attention::None, true),
+            "{interface:?} the focused window's button draws active"
+        );
     }
 }

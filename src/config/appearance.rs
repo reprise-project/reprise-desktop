@@ -170,6 +170,10 @@ impl StartMenuStyle {
     }
 }
 
+/// `[taskbar] attention_flash`'s default, in seconds, and its largest value.
+pub const ATTENTION_FLASH: u32 = 30;
+pub const ATTENTION_FLASH_MAX: u32 = 3600;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskbarConfig {
     pub position: reprisekit::taskbar::Edge,
@@ -183,6 +187,8 @@ pub struct TaskbarConfig {
     pub reveal_on_edge: bool,
     pub reveal_on_keys: bool,
     pub reveal_on_attention: bool,
+    /// Seconds a task button whose window wants attention flashes before it stays lit.
+    pub attention_flash: u32,
     /// 0 takes the look's own; clamped where used (`barplace::thickness`).
     pub side_width: i32,
 }
@@ -208,6 +214,7 @@ impl TaskbarConfig {
             reveal_on_edge: true,
             reveal_on_keys: true,
             reveal_on_attention: true,
+            attention_flash: ATTENTION_FLASH,
             side_width: 0,
         }
     }

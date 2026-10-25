@@ -36,6 +36,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   keep updating, and an idle window costs nothing.
 - **Peek.** Rest on a preview, or on the Show desktop strip, and every other
   window fades down to its frame.
+- **Attention.** A window that asks for attention (an activation it may not
+  take focus for, X11 urgency, or a window opening behind the one you use)
+  flashes its task button for 30 s (`[taskbar] attention_flash`), then keeps
+  it lit until you focus the window.
 - **Progress on the button.** A program that reports its progress (Explorer
   copying or deleting, any program using the LauncherEntry convention) fills
   its task button as it goes: a soft green fill in Glass, a thin bar along the

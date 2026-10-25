@@ -149,15 +149,25 @@ pub(super) fn draw_labelled(
     let part = Part::TaskLabel;
     draw_task_button(canvas, style, task, part, frame, state, span, s);
     let rest = state == State::Normal;
+    let edges_have = |st| {
+        style
+            .part(Part::TaskLabelEdge)
+            .is_some_and(|p| p.states.contains(&st))
+    };
+    let own = if state == State::Attention && !edges_have(state) {
+        State::Checked
+    } else {
+        state
+    };
     let left = match prev {
         None => (State::Normal, EDGE_ROW_START),
         Some(p) if rest && is_lit(p) => (p, EDGE_NEXT_LEFT),
-        Some(_) => (state, EDGE_LEFT),
+        Some(_) => (own, EDGE_LEFT),
     };
     let right = match next {
         None => (State::Normal, EDGE_ROW_END),
         Some(n) if rest && is_lit(n) => (n, EDGE_PREV_RIGHT),
-        Some(_) => (state, EDGE_RIGHT),
+        Some(_) => (own, EDGE_RIGHT),
     };
     let glowing = (style.task_glow.and_then(|g| g.label_edges))
         .zip(style.part(Part::TaskLabelEdge))

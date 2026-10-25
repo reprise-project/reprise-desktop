@@ -3,6 +3,7 @@ use reprisekit::{icontheme, raster, text, textedit, theme};
 mod access;
 mod activation;
 mod appindex;
+mod attention;
 mod autohideview;
 mod autostart;
 mod backend;

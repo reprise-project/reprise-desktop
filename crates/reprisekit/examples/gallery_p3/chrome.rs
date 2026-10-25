@@ -57,7 +57,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
     let entry = |title: &str, active: bool| TaskEntry {
         title: title.into(),
         active,
-        attention: false,
+        attention: reprisekit::taskbar::Attention::None,
         icon: None,
         glow: None,
     };

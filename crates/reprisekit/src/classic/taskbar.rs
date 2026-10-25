@@ -192,10 +192,12 @@ pub fn draw_taskbar(
             blit_icon(canvas, theme, &mut fallback, at, task.icon.as_deref());
             continue;
         }
+        let asks = task.attention.lit() && !task.active;
         if task.active {
             canvas.dither_rect_t(r.inset(2 * s), cs.button_hilight, cs.button_face, s);
             canvas.edge_t(*r, EdgeStyle::ButtonPushed, cs, s);
-        } else if task.attention {
+        } else if asks {
+            canvas.fill_rect(r.inset(2 * s), cs.hilight);
             canvas.edge_t(*r, EdgeStyle::ButtonPushed, cs, s);
         } else {
             canvas.edge_t(*r, EdgeStyle::ButtonRaised, cs, s);
@@ -204,7 +206,7 @@ pub fn draw_taskbar(
             let art = crate::classic::taskprogress::paint(&pr, cs, r.width / s, r.height / s, s);
             canvas.blit_over(r.x, r.y, &art);
         }
-        let pressed = task.active || task.attention;
+        let pressed = task.active || asks;
         let o = if pressed { s } else { 0 };
         let icon_at = (r.x + 4 * s + o, r.y + (r.height - icon_px) / 2 + o);
         blit_icon(canvas, theme, &mut fallback, icon_at, task.icon.as_deref());
@@ -223,7 +225,11 @@ pub fn draw_taskbar(
             label,
             &title,
             pressed,
-            cs.button_text,
+            if asks {
+                cs.hilight_text
+            } else {
+                cs.button_text
+            },
             Align::Left,
             size,
         );

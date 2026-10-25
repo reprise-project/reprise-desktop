@@ -120,7 +120,7 @@ fn attention_on(state: &State, out: &Output) -> bool {
     state.windows.iter().any(|w| {
         let r = w.frame_rect();
         let centre = (f64::from(r.x + r.width / 2), f64::from(r.y + r.height / 2));
-        w.attention
+        w.attention.is_some()
             && w.mapped
             && state.on_current_desktop(w.id)
             && state.output_at(centre.0, centre.1).as_ref() == Some(out)

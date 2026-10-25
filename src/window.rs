@@ -186,7 +186,10 @@ pub struct Window {
     pub icon_pending: bool,
     pub app_seen: String,
     pub titles: crate::retitle::WindowTitles,
-    pub attention: bool,
+    /// When it began asking for attention (`attention`); None while it does not.
+    pub attention: Option<std::time::Instant>,
+    /// Whether an X11 window's client marks it urgent, as last seen.
+    pub urgent: bool,
     pub activate_on_map: bool,
     /// The launch that let this window take focus at map, returned if it withdraws still focused.
     pub launch: Option<crate::mapfocus::Launch>,

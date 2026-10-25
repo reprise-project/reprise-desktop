@@ -106,7 +106,8 @@ impl State {
             icon_pending: false,
             app_seen: String::new(),
             titles: Default::default(),
-            attention: false,
+            attention: None,
+            urgent: false,
             activate_on_map: false,
             launch: None,
             desktop: 0,
@@ -410,13 +411,16 @@ impl State {
                 // Its desktop's pager button asks for attention instead, unless a rule sent it
                 // there.
                 let ruled = want.as_ref().is_some_and(|x| x.desktop.is_some());
-                if let Some(win) = self.win_mut(w) {
-                    win.attention = !ruled;
+                if !ruled {
+                    self.ask_attention(w);
                 }
                 self.place_behind_focus(w);
             }
             OnMap::Focus => self.focus_window(w),
-            OnMap::Behind => self.place_behind_focus(w),
+            OnMap::Behind => {
+                self.ask_attention(w);
+                self.place_behind_focus(w);
+            }
             OnMap::Attention => self.map_under_bar_keys(w),
         }
         // Pre-map state: the client's request (xdg pending / X11 `_NET_WM_STATE`) or the first

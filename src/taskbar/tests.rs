@@ -1000,7 +1000,7 @@ fn a_dialogs_button_draws_as_a_task_button() {
     let window = || TaskEntry {
         title: "Hang".into(),
         active: false,
-        attention: false,
+        attention: reprisekit::taskbar::Attention::None,
         icon: None,
         glow: None,
     };

@@ -386,7 +386,7 @@ pub fn dialog_entry(title: &str, active: bool) -> TaskEntry {
     TaskEntry {
         title: title.to_string(),
         active,
-        attention: false,
+        attention: reprisekit::taskbar::Attention::None,
         icon: None,
         glow: None,
     }

@@ -121,6 +121,11 @@ impl Bar {
         (a + (255.0 - a) * self.shade(k), p)
     }
 
+    /// How much of what lies behind the plain bar it covers, 0 (clear) to 1 (opaque).
+    pub(super) fn density(&self) -> f64 {
+        self.plain.0 / 255.0
+    }
+
     pub(super) fn veil(&self, k: f64) -> Px {
         self.veil_over(0.0, k)
     }
