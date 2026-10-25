@@ -22,7 +22,7 @@ use smithay::{
 use crate::{
     compositor::State,
     framepace::Done,
-    glass::Hold,
+    glass::{Hold, Under},
     reblur::Reblur,
     render::{OutputElement, Parts},
 };
@@ -173,11 +173,8 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
         }
         Reblur::Wait(wait) => Some(wait.saturating_sub(now - at)),
     };
-    let backdrop_changed = std::mem::take(&mut s.backdrop_changed);
-    let glass_hold = match hold {
-        None => Hold::No,
-        Some(_) => Hold::Keep(backdrop_changed),
-    };
+    let stepped = water.step(&mut b.renderer, &output);
+    let glass_hold = glass_hold(hold, std::mem::take(&mut s.backdrop_changed), stepped.moved);
     glass.begin(
         &output,
         config.glass,
@@ -187,7 +184,6 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
     let clear = crate::render::clear_color(&config.theme.colors);
     let filter = crate::magnifier::filter_matrix(&config.accessibility);
     let wanted = crate::glass::wanted(config);
-    let water_fell = water.step(&mut b.renderer, &output);
     glass.update_screen_backdrop(&mut b.renderer, scene, &output, clear, wanted);
     let mut build = |renderer: &mut GlesRenderer| {
         crate::magnifier::output_elements(
@@ -281,7 +277,7 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
         state.arm_catch_up(&output, wait);
     }
     if state.magnifier.panning(&output)
-        || water_fell
+        || stepped.fell
         || fade_next == crate::sessionfade::Next::Frame
     {
         schedule(state, &output);
@@ -499,6 +495,16 @@ pub(super) fn render_waiting(state: &mut State) {
         .collect();
     for c in waiting {
         queue_render(state, c);
+    }
+}
+
+/// What a frame `hold`ing for a wait keeps of the last blur, its asks having changed what lies
+/// under glass at `asked`: water that `stepped` this frame changed it anywhere, whatever asked.
+pub(super) fn glass_hold(hold: Option<Duration>, asked: Under, stepped: bool) -> Hold {
+    match hold {
+        None => Hold::No,
+        Some(_) if stepped => Hold::Keep(Under::Anywhere),
+        Some(_) => Hold::Keep(asked),
     }
 }
 

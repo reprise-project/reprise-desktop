@@ -177,6 +177,15 @@ impl PaneState {
         self.wall_commit.increment();
     }
 
+    /// Changes whenever what the pane's elements draw does.
+    fn shown(&self) -> (CommitCounter, CommitCounter) {
+        let field = match &self.sim {
+            Sim::Ripples(pool) => pool.commit(),
+            Sim::Fluid { pool, .. } => pool.commit(),
+        };
+        (field, self.wall_commit)
+    }
+
     fn import_pending(&mut self, r: &mut GlesRenderer) -> Result<(), GlesError> {
         if let Some(picture) = self.pending.take() {
             self.texture = Some(match picture {
@@ -625,12 +634,11 @@ impl WaterCtx {
             .min()
     }
 
-    /// Step `output`'s fields for the frame about to be built. True when a pane failed: its node
-    /// draws nothing from now on.
-    pub fn step(&self, renderer: &mut GlesRenderer, output: &Output) -> bool {
+    /// Step `output`'s fields for the frame about to be built.
+    pub fn step(&self, renderer: &mut GlesRenderer, output: &Output) -> Stepped {
         let style = self.style.get();
         if style == Water::Off {
-            return false;
+            return Stepped::default();
         }
         let size = output
             .current_mode()
@@ -644,10 +652,12 @@ impl WaterCtx {
         let fx = self.fx.borrow();
         let fluid_fx = self.fluid_fx.borrow();
         let mut fell = false;
+        let mut moved = false;
         for ((n, pane), p) in self.panes.borrow_mut().iter_mut() {
             if *n != name || p.failed {
                 continue;
             }
+            let shown = p.shown();
             p.size = size;
             p.hz = hz;
             let done = match (&p.sim, style.fluid(), self.preset_for(*pane)) {
@@ -670,12 +680,22 @@ impl WaterCtx {
                 p.failed = true;
                 fell = true;
             }
+            moved |= p.shown() != shown;
         }
         if fell {
             self.fell.set(true);
         }
-        fell
+        Stepped { fell, moved }
     }
+}
+
+/// What `WaterCtx::step` did to an output's panes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stepped {
+    /// A pane failed: its node draws nothing from now on.
+    pub fell: bool,
+    /// What a pane draws changed: a frame that blurs glass anyway shows it.
+    pub moved: bool,
 }
 
 /// A pane's scene node: the wallpaper through its field, sized to the output, never taking the
@@ -1521,6 +1541,39 @@ mod tests {
         ctx.configure(Water::Off, std::iter::empty());
         assert!(ctx.pane_keys().is_empty());
         assert_eq!(wants(&ctx, false), None, "nothing left to step");
+    }
+
+    #[test]
+    fn a_step_says_whether_it_moved_what_the_pane_draws() {
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let ctx = ctx_with(&["DP-1"]);
+        ctx.set_renderer(&mut renderer);
+        let output = Output::new(
+            "DP-1".into(),
+            smithay::output::PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: smithay::output::Subpixel::Unknown,
+                make: "Reprise".into(),
+                model: "test".into(),
+                serial_number: String::new(),
+            },
+        );
+        let mode = smithay::output::Mode {
+            size: (160, 100).into(),
+            refresh: 60_000,
+        };
+        output.change_current_state(Some(mode), None, None, None);
+        ctx.step(&mut renderer, &output);
+        assert_eq!(ctx.step(&mut renderer, &output), Stepped::default());
+        ctx.splash("DP-1", Pane::Desktop, Splash::disc((10.0, 10.0), 4.0, -0.5));
+        for p in ctx.panes.borrow_mut().values_mut() {
+            p.last = Some(Instant::now() - Duration::from_millis(100));
+        }
+        let stepped = ctx.step(&mut renderer, &output);
+        assert!(stepped.moved && !stepped.fell, "{stepped:?}");
     }
 
     #[test]
