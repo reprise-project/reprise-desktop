@@ -55,13 +55,6 @@ pub struct PropsSheet {
     pending: Settings,
 }
 
-pub(crate) fn edit_text(form: &Form, id: &str) -> String {
-    match form.item(id).map(|i| &i.control) {
-        Some(Control::Edit { edit, .. }) => edit.text.clone(),
-        _ => String::new(),
-    }
-}
-
 pub(crate) fn set_edit(form: &mut Form, id: &str, s: &str) {
     if let Some(Control::Edit { edit, .. }) = form.item_mut(id).map(|i| &mut i.control) {
         *edit = TextEdit::new(s, false);
@@ -196,7 +189,7 @@ impl PropsSheet {
     fn read(&mut self, id: &str) {
         let page = &self.sheet.pages[0];
         match id {
-            NAME => self.pending.alias = edit_text(page, NAME),
+            NAME => self.pending.alias = page.edit_text(NAME).to_string(),
             AUTO => self.pending.trusted = page.checked(AUTO).unwrap_or(false),
             _ => {}
         }
@@ -339,7 +332,7 @@ mod tests {
         set_edit(&mut p.sheet.pages[0], NAME, "Bu");
         p.event(propsheet::Event::Page(0, form::Event::Changed(NAME)));
         p.refresh(&cans());
-        assert_eq!(edit_text(&p.sheet.pages[0], NAME), "Bu");
+        assert_eq!(p.sheet.pages[0].edit_text(NAME), "Bu");
     }
 
     #[test]
@@ -358,7 +351,7 @@ mod tests {
                 trusted: Some(false)
             })
         );
-        assert_eq!(edit_text(&p.sheet.pages[0], NAME), "Buds");
+        assert_eq!(p.sheet.pages[0].edit_text(NAME), "Buds");
     }
 
     #[test]
@@ -370,7 +363,7 @@ mod tests {
             battery: Some(70),
             ..cans()
         });
-        assert_eq!(edit_text(&p.sheet.pages[0], NAME), "Cans ");
+        assert_eq!(p.sheet.pages[0].edit_text(NAME), "Cans ");
     }
 
     #[test]

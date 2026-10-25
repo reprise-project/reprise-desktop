@@ -105,13 +105,6 @@ fn para(id: &'static str, y: i32, s: &str) -> Item {
     Item::label_at(id, B.x, y, B.width, s)
 }
 
-fn edit_text(form: &Form, id: &str) -> String {
-    match form.item(id).map(|i| &i.control) {
-        Some(Control::Edit { edit, .. }) => edit.text.clone(),
-        _ => String::new(),
-    }
-}
-
 fn list_selected(form: &Form, id: &str) -> Option<usize> {
     match form.item(id).map(|i| &i.control) {
         Some(Control::ListBox { list, .. }) => list.selected,
@@ -630,12 +623,12 @@ impl AddWizard {
                 self.set_typed(false);
             }
             ADDRESS => {
-                self.address = edit_text(f, ADDRESS);
+                self.address = f.edit_text(ADDRESS).to_string();
                 let typed = !self.address.trim().is_empty() || self.typed;
                 self.set_typed(typed);
             }
             SEARCH => {
-                self.search = edit_text(f, SEARCH);
+                self.search = f.edit_text(SEARCH).to_string();
                 self.filter();
                 let (rows, at) = self.driver_rows();
                 if let Some(Control::ListBox { list, .. }) =
@@ -654,8 +647,8 @@ impl AddWizard {
                     self.page.form.set_text(STATUS, "");
                 }
             }
-            NAME => self.name = edit_text(f, NAME),
-            LOCATION => self.location = edit_text(f, LOCATION),
+            NAME => self.name = f.edit_text(NAME).to_string(),
+            LOCATION => self.location = f.edit_text(LOCATION).to_string(),
             DEFAULT => self.make_default = f.checked(DEFAULT).unwrap_or(false),
             TEST => self.test_page = f.checked(TEST).unwrap_or(false),
             _ => {}
@@ -1025,7 +1018,7 @@ mod tests {
             w.name, "Hall",
             "a typed name stays while the pick is the same"
         );
-        assert_eq!(edit_text(&w.page.form, NAME), "Hall");
+        assert_eq!(w.page.form.edit_text(NAME), "Hall");
 
         w.event(form::Event::Pressed(wizard::BACK), &s);
         type_into(&mut w, ADDRESS, "attic.lan", &s);
@@ -1063,7 +1056,7 @@ mod tests {
             w.search, "laserjet",
             "a typed search stays while the pick is the same"
         );
-        assert_eq!(edit_text(&w.page.form, SEARCH), "laserjet");
+        assert_eq!(w.page.form.edit_text(SEARCH), "laserjet");
 
         w.event(form::Event::Pressed(wizard::BACK), &s);
         pick_device(&mut w, 1, &s);

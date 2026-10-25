@@ -83,13 +83,6 @@ fn edit(id: &'static str, x: i32, y: i32, w: i32, text: &str, secret: bool) -> I
     )
 }
 
-pub fn text_of<'a>(f: &'a Form, id: &str) -> &'a str {
-    match f.item(id).map(|i| &i.control) {
-        Some(Control::Edit { edit, .. }) => &edit.text,
-        _ => "",
-    }
-}
-
 /// Put `s` in edit field `id`, the caret at its end; a secret field is
 /// wiped first.
 fn set_field(f: &mut Form, id: &str, s: &str) {
@@ -345,7 +338,7 @@ impl WgSheet {
         } else {
             format!(
                 "{} Properties",
-                text_of(&self.sheet.pages[TAB_IFACE], "name")
+                self.sheet.pages[TAB_IFACE].edit_text("name")
             )
         }
     }
@@ -400,16 +393,16 @@ impl WgSheet {
             return;
         };
         let f = &self.sheet.pages[TAB_PEERS];
-        let keepalive = text_of(f, "keepalive").trim();
-        let public_key = text_of(f, "pk").trim().to_string();
+        let keepalive = f.edit_text("keepalive").trim();
+        let public_key = f.edit_text("pk").trim().to_string();
         // A stored preshared key belongs to the public key it was saved with.
         let stored_psk = self.peers[i].stored_psk && self.peers[i].public_key == public_key;
         let peer = wg::Peer {
             public_key,
             stored_psk,
-            preshared_key: Psk::new(text_of(f, "psk").trim()),
-            endpoint: text_of(f, "endpoint").trim().to_string(),
-            allowed_ips: wg::split(text_of(f, "allowed")),
+            preshared_key: Psk::new(f.edit_text("psk").trim()),
+            endpoint: f.edit_text("endpoint").trim().to_string(),
+            allowed_ips: wg::split(f.edit_text("allowed")),
             // Anything but a number reads as none; the field is narrow
             // enough that a typo shows.
             keepalive: keepalive.parse::<u16>().ok().filter(|&k| k != 0),
@@ -422,13 +415,13 @@ impl WgSheet {
 
     pub fn config(&self) -> wg::Config {
         let f = &self.sheet.pages[TAB_IFACE];
-        let port = text_of(f, "port").trim();
+        let port = f.edit_text("port").trim();
         wg::Config {
-            name: text_of(f, "name").trim().to_string(),
-            iface: text_of(f, "iface").trim().to_string(),
-            private_key: Psk::new(text_of(f, "key").trim()),
-            addresses: wg::split(text_of(f, "addr")),
-            dns: wg::split(text_of(f, "dns")),
+            name: f.edit_text("name").trim().to_string(),
+            iface: f.edit_text("iface").trim().to_string(),
+            private_key: Psk::new(f.edit_text("key").trim()),
+            addresses: wg::split(f.edit_text("addr")),
+            dns: wg::split(f.edit_text("dns")),
             listen_port: port.parse::<u16>().ok().filter(|&p| p != 0),
             mtu: self.mtu,
             peers: self.peers.clone(),
@@ -484,12 +477,12 @@ impl WgSheet {
                 if let Some(k) = wg::generate_key() {
                     set_field(f, "key", &k);
                 }
-                let public = wg::public_key(text_of(f, "key")).unwrap_or_default();
+                let public = wg::public_key(f.edit_text("key")).unwrap_or_default();
                 f.set_lines("pub", &key_lines(&public));
                 Outcome::Redraw
             }
             form::Event::Changed("key") => {
-                let public = wg::public_key(text_of(f, "key")).unwrap_or_default();
+                let public = wg::public_key(f.edit_text("key")).unwrap_or_default();
                 f.set_lines("pub", &key_lines(&public));
                 Outcome::Redraw
             }
@@ -616,13 +609,13 @@ impl PluginSheet {
     }
 
     pub fn window_title(&self) -> String {
-        format!("{} Properties", text_of(&self.sheet.pages[0], "name"))
+        format!("{} Properties", self.sheet.pages[0].edit_text("name"))
     }
 
     pub fn event(&mut self, ev: propsheet::Event) -> Outcome {
         let f = &self.sheet.pages[0];
         let save = || {
-            let name = text_of(f, "name").trim().to_string();
+            let name = f.edit_text("name").trim().to_string();
             if name.is_empty() {
                 return Outcome::Problem("Type a name for the connection.".into());
             }
@@ -805,7 +798,7 @@ impl OvpnSheet {
     pub fn window_title(&self) -> String {
         format!(
             "{} Properties",
-            text_of(&self.sheet.pages[TAB_GENERAL], "name")
+            self.sheet.pages[TAB_GENERAL].edit_text("name")
         )
     }
 
@@ -856,17 +849,17 @@ impl OvpnSheet {
     pub fn config(&self) -> ovpn::Config {
         let g = &self.sheet.pages[TAB_GENERAL];
         let p = &self.sheet.pages[TAB_AUTH];
-        let t = |f: &Form, id| text_of(f, id).trim().to_string();
+        let t = |f: &Form, id| f.edit_text(id).trim().to_string();
         ovpn::Config {
             name: t(g, "name"),
             gateway: t(g, "gateway"),
             auth: self.auth(),
             user: t(g, "user"),
-            password: Psk::new(text_of(g, "password")),
+            password: Psk::new(g.edit_text("password")),
             ca: t(p, "ca"),
             cert: t(p, "cert"),
             key: t(p, "key"),
-            cert_pass: Psk::new(text_of(p, "keypass")),
+            cert_pass: Psk::new(p.edit_text("keypass")),
             static_key: t(p, "static"),
             direction: p.combo_selected("direction").unwrap_or(0),
             local_ip: t(p, "local"),
@@ -877,7 +870,7 @@ impl OvpnSheet {
 
     /// The file field `id` names, if it names one.
     pub fn path_of(&self, id: &str) -> Option<std::path::PathBuf> {
-        let t = text_of(&self.sheet.pages[TAB_AUTH], id).trim();
+        let t = self.sheet.pages[TAB_AUTH].edit_text(id).trim();
         (!t.is_empty()).then(|| t.into())
     }
 
@@ -1100,7 +1093,7 @@ mod tests {
             TAB_IFACE,
             form::Event::Pressed("generate"),
         ));
-        let key = text_of(&s.sheet.pages[TAB_IFACE], "key").to_string();
+        let key = s.sheet.pages[TAB_IFACE].edit_text("key").to_string();
         assert_ne!(key, KEY_A);
         assert_eq!(Some(shown_key(&s).concat()), wg::public_key(&key));
     }
@@ -1136,7 +1129,7 @@ mod tests {
         s.show_peer(Some(0));
         page(&mut s, form::Event::Pressed("remove"));
         assert_eq!(s.peers.len(), 1);
-        assert_eq!(text_of(&s.sheet.pages[TAB_PEERS], "pk"), KEY_A);
+        assert_eq!(s.sheet.pages[TAB_PEERS].edit_text("pk"), KEY_A);
         page(&mut s, form::Event::Pressed("remove"));
         assert!(s.peers.is_empty());
         assert!(matches!(
