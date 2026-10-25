@@ -673,7 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn the_parts_sit_at_their_measured_rects() {
+    fn the_parts_sit_at_their_rects() {
         let d = sample();
         let lay = d.layout(&text(), 11, &ControlMetrics::CLASSIC);
         assert_eq!(lay.tree.frame, Rect::new(17, 60, 286, 208), "tree frame");
