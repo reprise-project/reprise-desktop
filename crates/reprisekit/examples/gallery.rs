@@ -7160,11 +7160,7 @@ fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
         c.blit_over(x * s, y * s, &draw_chip(theme, &text, 2, false));
     }
 
-    let look = theme
-        .look
-        .style()
-        .and_then(|st| st.notify)
-        .expect("Glass draws sheets");
+    let look = notifysheet::notify_look(theme).expect("Glass draws sheets");
     let icon_in = |colour: Color| {
         let mut icon = Canvas::new(slot as u32, slot as u32);
         icon.blit_mask_over(0, 0, slot as usize, slot as usize, &mask, colour, clip);
