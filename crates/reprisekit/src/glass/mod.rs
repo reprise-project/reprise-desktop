@@ -45,6 +45,7 @@ mod toolbar;
 #[cfg(test)]
 mod twice;
 
+use crate::mutex::lock;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::metrics::{ControlMetrics, PlacesMetrics, RebarMetrics};
@@ -275,10 +276,7 @@ const STYLES_KEPT: usize = 8;
 fn cached(s: &Settings, small_bar: bool) -> Arc<Style> {
     type Styles = Kept<(Settings, bool), Arc<Style>>;
     static STYLES: OnceLock<Mutex<Styles>> = OnceLock::new();
-    let mut styles = STYLES
-        .get_or_init(|| Mutex::new(Kept::new(STYLES_KEPT)))
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut styles = lock(STYLES.get_or_init(|| Mutex::new(Kept::new(STYLES_KEPT))));
     let key = Settings {
         blur: Settings::default().blur,
         streaks: Settings::default().streaks,

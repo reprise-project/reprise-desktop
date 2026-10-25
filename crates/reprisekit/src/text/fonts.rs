@@ -1,9 +1,10 @@
 use super::{LoadedFace, TextRenderer};
+use crate::mutex::lock;
 use crate::theme::FontConfig;
 use fontdb::{Database, Family, Query, Weight};
 use freetype::{Face, Library};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock};
 
 fn find_face(
     db: &Database,
@@ -103,7 +104,7 @@ pub(super) fn full_hinting(lib: &Library) {
 /// read again when it lacks the preferred family.
 pub(crate) fn system_fonts(families: &[String]) -> Arc<Database> {
     static FONTS: Mutex<Option<Arc<Database>>> = Mutex::new(None);
-    let mut fonts = FONTS.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut fonts = lock(&FONTS);
     if let Some(db) = fonts.as_ref().filter(|db| !needs_scan(db, families)) {
         return db.clone();
     }
