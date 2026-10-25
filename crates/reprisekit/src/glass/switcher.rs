@@ -285,20 +285,20 @@ pub(super) fn draw_title(
     let reach = glow.map_or(0, |g| (g.reach)(s));
     let x = band.x + (band.width - w) / 2;
     let (mw, mh) = ((w + 2 * reach) as usize, band.height as usize);
-    // White ink over clear: its red channel is the coverage.
-    let mut scratch = Canvas::new(mw as u32, mh as u32);
+    let scratch = Canvas::new(mw as u32, mh as u32);
     let clip = scratch.bounds();
-    text.draw_run(
-        &mut scratch,
-        reach,
-        baseline - band.y,
-        clip,
-        &title,
-        spec.bold,
-        Color::rgb(0xFF, 0xFF, 0xFF),
-        size,
-    );
-    let coverage: Vec<u8> = scratch.pixels.iter().map(|&p| (p >> 16) as u8).collect();
+    let coverage = scratch.ink_coverage(|c, white| {
+        text.draw_run(
+            c,
+            reach,
+            baseline - band.y,
+            clip,
+            &title,
+            spec.bold,
+            white,
+            size,
+        );
+    });
     let (mx, my) = (x - reach, band.y);
     if let Some(glow) = glow {
         let alpha = (glow.alpha)(&GlowMask {
