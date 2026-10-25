@@ -780,6 +780,42 @@ impl State {
         crate::backend::schedule_all(self, crate::backend::Ask::Scene);
     }
 
+    /// Ask for a new frame for a change on the scene confined to `nodes`: on `was`, the outputs
+    /// they overlapped before it (`Scene::outputs_of`), and on those they overlap now.
+    pub fn redraw_nodes(
+        &mut self,
+        mut was: Vec<smithay::output::Output>,
+        nodes: &[reprisescene::NodeId],
+    ) {
+        for o in self.outputs_of_nodes(nodes) {
+            if !was.contains(&o) {
+                was.push(o);
+            }
+        }
+        crate::backend::schedule_on(self, &was, crate::backend::Ask::Scene);
+    }
+
+    /// Destroy `node` and ask for a new frame on the outputs it covered.
+    pub fn destroy_redrawn(&mut self, node: impl Into<reprisescene::NodeId>) {
+        let node = node.into();
+        let was = self.scene.outputs_of(node);
+        self.scene.destroy(node);
+        self.redraw_nodes(was, &[]);
+    }
+
+    /// The outputs `nodes` overlap, for `redraw_nodes`'s `was`.
+    pub fn outputs_of_nodes(&self, nodes: &[reprisescene::NodeId]) -> Vec<smithay::output::Output> {
+        let mut out = Vec::new();
+        for &n in nodes {
+            for o in self.scene.outputs_of(n) {
+                if !out.contains(&o) {
+                    out.push(o);
+                }
+            }
+        }
+        out
+    }
+
     /// Ask every output for a new frame for what clients drew: nothing on
     /// the scene moved, so glass may keep its blur for `[glass]
     /// blur_rate` (`reblur`).
