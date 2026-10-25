@@ -41,14 +41,7 @@ impl State {
                     .unwrap_or_default();
             }
         };
-        item.map(|it| {
-            if it.tooltip.is_empty() {
-                it.title.clone()
-            } else {
-                it.tooltip.clone()
-            }
-        })
-        .unwrap_or_default()
+        item.map(crate::tray::TrayItem::name).unwrap_or_default()
     }
 
     pub(super) fn more_open(&self, tree: TreeId) -> bool {
