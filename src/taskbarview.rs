@@ -7,7 +7,7 @@ use std::{
 };
 
 use reprisekit::{anim::HoverFade, icontheme::IconCache, style::TaskGlow};
-use reprisescene::{BufferId, TreeId};
+use reprisescene::{BufferId, NodeId, TreeId};
 use smithay::{
     output::Output,
     reexports::calloop::timer::{TimeoutAction, Timer},
@@ -424,6 +424,18 @@ impl State {
         }
     }
 
+    /// The outputs bar `tree` draws on: its own and any its trees reach.
+    fn bar_outputs(&self, tree: TreeId) -> Vec<Output> {
+        let Some(b) = self.bar(tree) else {
+            return Vec::new();
+        };
+        let mut out = self.outputs_of_nodes(&[b.tree.into(), b.orb_tree.into()]);
+        if !out.contains(&b.output) {
+            out.push(b.output.clone());
+        }
+        out
+    }
+
     pub fn bar(&self, tree: TreeId) -> Option<&Bar> {
         self.bars.iter().find(|b| b.tree == tree)
     }
@@ -480,11 +492,16 @@ impl State {
     }
 
     pub fn redraw_taskbar(&mut self, tree: TreeId) {
+        let was = self.bar_outputs(tree);
         let tasks = TaskWindows::gather(self);
         self.with_bar(tree, |s, bar| s.redraw_taskbar_with(bar, &tasks));
         let output = self.bar(tree).map(|b| b.output.clone());
         crate::trayflyout::bar_redrawn(self, output.as_ref());
-        self.redraw_all();
+        let nodes: Vec<NodeId> = self
+            .bar(tree)
+            .map(|b| vec![b.tree.into(), b.orb_tree.into()])
+            .unwrap_or_default();
+        self.redraw_nodes(was, &nodes);
         crate::access::touch(self);
         crate::autohideview::poke(self);
     }

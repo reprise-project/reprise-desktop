@@ -225,7 +225,7 @@ impl State {
         v.backdrop
             .set(&mut self.scene, &self.glass, v.glass_tree, None);
         self.start_backdrop = Some(v.backdrop);
-        self.scene.destroy(v.tree);
+        self.destroy_redrawn(v.tree);
         if let Some(b) = self.bar_mut(v.bar) {
             b.start_pressed = false;
         }

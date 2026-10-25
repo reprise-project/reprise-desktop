@@ -367,9 +367,10 @@ impl State {
                     self.quick_ghost_start(&output, index);
                 }
                 if let Some(ghost) = self.bar_shared.quick_ghost {
-                    self.scene
-                        .set_position(ghost, p.x as i32 - grab.0, p.y as i32 - grab.1);
-                    self.redraw_all();
+                    let outputs =
+                        self.scene
+                            .move_on_outputs(ghost, p.x as i32 - grab.0, p.y as i32 - grab.1);
+                    self.redraw_nodes(outputs, &[]);
                 }
                 let Some(b) = self.bar_mut(tree) else { return };
                 if b.quick_pressed.is_some() || b.quick_drop != Some(slot) || b.quick_hot.is_some()
@@ -665,8 +666,7 @@ impl State {
 
     fn quick_ghost_end(&mut self) {
         if let Some(b) = self.bar_shared.quick_ghost.take() {
-            self.scene.destroy(b);
-            self.redraw_all();
+            self.destroy_redrawn(b);
         }
     }
 

@@ -957,3 +957,24 @@ fn opening_and_closing_start_redraws_only_starts_part_of_the_bar() {
         }
     }
 }
+
+#[test]
+fn opening_and_closing_start_asks_only_its_output_for_frames() {
+    let mut config = crate::config::Config::default();
+    config.startmenu_style = crate::config::StartMenuStyle::Glass;
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    let own = h.state.bars[0].tree;
+    for open in [true, false] {
+        crate::backend::take_asks();
+        h.state.toggle_start(own);
+        assert_eq!(h.state.start_panel.is_some(), open);
+        let asked = crate::backend::take_asks();
+        assert!(!asked.is_empty(), "open {open}: Start asks for a frame");
+        assert!(
+            asked.iter().all(|(o, _)| o == "TEST-1"),
+            "open {open}: only TEST-1, Start's output: {asked:?}"
+        );
+    }
+}
