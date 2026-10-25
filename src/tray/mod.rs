@@ -72,6 +72,17 @@ pub struct TrayItem {
     pub pid: Option<i32>,
 }
 
+impl TrayItem {
+    /// What the item is spoken as: its tooltip, else its title.
+    pub fn name(&self) -> String {
+        if self.tooltip.is_empty() {
+            self.title.clone()
+        } else {
+            self.tooltip.clone()
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum TrayEvent {
     Added(TrayItem),
