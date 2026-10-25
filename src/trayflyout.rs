@@ -213,10 +213,10 @@ fn redraw(state: &mut State) {
         v.link_hot,
     );
     let scene = &mut state.scene;
-    upload_scaled(scene, v.buffer, &canvas, scale);
-    glass::place_flyout(scene, v.buffer, &state.config.theme, size);
     let tree = v.tree;
     let was = scene.outputs_of(tree);
+    upload_scaled(scene, v.buffer, &canvas, scale);
+    glass::place_flyout(scene, v.buffer, &state.config.theme, size);
     scene.set_position(tree, v.at.0, v.at.1);
     v.glass.set(scene, &state.glass, v.glass_tree, pane);
     state.redraw_nodes(was, &[tree.into()]);
@@ -347,5 +347,68 @@ mod tests {
         let usable = barplace::usable(screen, &left);
         let cell = Rect::new(2, 900, 16, 16);
         assert_eq!(place(cell, (104, 56), &left, usable), (60, 880));
+    }
+
+    #[test]
+    fn a_shrinking_flyout_asks_the_output_its_old_shadow_covered() {
+        use crate::tray::{TrayEvent, TrayItem};
+        use std::os::fd::AsRawFd;
+        let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        let top = h.output("TEST-1", 1024, 768);
+        let below = h.output("TEST-2", 1024, 768);
+        below.change_current_state(None, None, None, Some((0, 768).into()));
+        let (tx, wake, _heard) = crate::tray::headless(&mut h.state);
+        for id in ["a", "b", "c", "d", "e"] {
+            let item = TrayItem {
+                id: id.into(),
+                key: id.into(),
+                service: id.into(),
+                path: "/StatusNotifierItem".into(),
+                title: id.into(),
+                tooltip: String::new(),
+                icon_name: None,
+                icon_theme_path: None,
+                pixmaps: Arc::from([]),
+                named: Arc::from([]),
+                menu_path: None,
+                passive: true,
+                pid: None,
+            };
+            tx.send(TrayEvent::Added(item)).expect("send");
+        }
+        // SAFETY: `wake` is an open eventfd and the buffer a live 8-byte local.
+        let wrote = unsafe { libc::write(wake.as_raw_fd(), (&1u64 as *const u64).cast(), 8) };
+        assert_eq!(wrote, 8);
+        h.dispatch();
+        open(&mut h.state, top);
+        let theme = h.state.config.theme.clone();
+        let two_rows = FlyoutLayout::compute(&theme, 5);
+        let at = (400, 768 - two_rows.height);
+        let v = view(&mut h.state).expect("the flyout is open");
+        (v.layout, v.at) = (two_rows, at);
+        redraw(&mut h.state);
+        let v = view(&mut h.state).expect("the flyout is open");
+        let tree = v.tree;
+        assert_eq!(
+            h.state.scene.outputs_of(tree).len(),
+            2,
+            "the flyout's shadow below its bottom edge reaches TEST-2"
+        );
+
+        let v = view(&mut h.state).expect("the flyout is open");
+        v.layout = FlyoutLayout::compute(&theme, 1);
+        crate::backend::take_asks();
+        redraw(&mut h.state);
+        let asked = crate::backend::take_asks();
+        assert_eq!(
+            h.state.scene.outputs_of(tree).len(),
+            1,
+            "one row shorter, the flyout and its shadow stay on TEST-1"
+        );
+        assert!(
+            asked.iter().any(|(o, _)| o == "TEST-2"),
+            "TEST-2 is asked to take the old shadow away: {asked:?}"
+        );
     }
 }
