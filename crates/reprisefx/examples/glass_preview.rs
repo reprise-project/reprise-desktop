@@ -127,6 +127,7 @@ fn main() {
             settings: &s,
             surface: Some(surface),
             output: (W, H).into(),
+            screen: 0,
             scale: 1.0,
             alpha: 1.0,
             quality: Quality::Full,

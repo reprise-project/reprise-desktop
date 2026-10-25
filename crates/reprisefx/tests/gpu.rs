@@ -12,15 +12,15 @@ use reprisekit::glass::tint::{self, Surface};
 use reprisekit::glass::{Material, Settings};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::damage::OutputDamageTracker;
-use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::element::texture::{TextureBuffer, TextureRenderElement};
 use smithay::backend::renderer::element::utils::{
     CropRenderElement, Relocate, RelocateRenderElement,
 };
+use smithay::backend::renderer::element::{Element, Kind};
 use smithay::backend::renderer::gles::{GlesFrame, GlesRenderer, GlesTexture, ffi};
 use smithay::backend::renderer::{Bind, Color32F, ExportMem, Frame, ImportMem, Offscreen};
 use smithay::render_elements;
-use smithay::utils::{Physical, Point, Rectangle, Size, Transform};
+use smithay::utils::{Physical, Point, Rectangle, Scale, Size, Transform};
 
 render_elements! {
     El<=GlesRenderer>;
@@ -177,6 +177,7 @@ impl Rig {
             settings: s,
             surface: Some(Surface::Active),
             output: self.size,
+            screen: 0,
             scale: 1.0,
             alpha: 1.0,
             quality: Quality::Full,
@@ -760,6 +761,7 @@ fn a_picture_redrawn_where_it_changed_is_the_picture_drawn_whole() {
             settings: &s,
             surface: Some(Surface::Active),
             output,
+            screen: 0,
             scale: 1.0,
             alpha: 1.0,
             quality,
@@ -1022,6 +1024,57 @@ fn a_held_blur_waits_for_a_refresh() {
 }
 
 #[test]
+fn glass_on_two_outputs_keeps_each_outputs_damage() {
+    let Some(mut r) = rig(160, 120) else { return };
+    let s = plain(Material::Frosted);
+    let glass = Glass::new();
+    let shapes = [Shape::rect(rect(30, 30, 100, 60))];
+    let grey = half_backdrop(&mut r, |_, _| [128; 3]);
+    let (mut left, mut right) = (Picture::new(), Picture::new());
+    let mut sources = [
+        blur_into(&mut r, &mut left, &grey, &[], &s, Quality::Full, false),
+        blur_into(&mut r, &mut right, &grey, &[], &s, Quality::Full, false),
+    ];
+    let one = Scale::from(1.0);
+    let mut seen = [None, None];
+    let mut damage = |r: &Rig, sources: &[Source; 2], screen: usize| {
+        let f = GlassFrame {
+            screen: screen as u64,
+            source: Some(&sources[screen]),
+            ..r.frame(&shapes, &[], &s)
+        };
+        let e = glass.element(&r.fx, &f).unwrap();
+        let since = seen[screen].replace(e.current_commit());
+        since.map(|c| e.damage_since(one, Some(c)).to_vec())
+    };
+    for round in 0..3 {
+        for screen in [0, 1] {
+            let d = damage(&r, &sources, screen);
+            if round > 0 {
+                assert_eq!(
+                    d,
+                    Some(Vec::new()),
+                    "output {screen}, round {round}: nothing changed, nothing to redraw"
+                );
+            }
+        }
+    }
+
+    let white = half_backdrop(&mut r, |_, _| [255; 3]);
+    let spot = [rect(60, 50, 10, 10)];
+    sources[0] = blur_into(&mut r, &mut left, &white, &spot, &s, Quality::Full, false);
+    assert!(
+        damage(&r, &sources, 0).is_some_and(|d| !d.is_empty()),
+        "a change under the glass on output 0 redraws it there"
+    );
+    assert_eq!(
+        damage(&r, &sources, 1),
+        Some(Vec::new()),
+        "and leaves output 1's glass alone"
+    );
+}
+
+#[test]
 fn only_frosted_glass_shows_the_streaks() {
     let Some(mut r) = rig(640, 360) else { return };
     let black = r.backdrop(|_, _| [0; 3]);
@@ -1199,6 +1252,7 @@ fn turned_glass(
                 settings: s,
                 surface,
                 output: size,
+                screen: 0,
                 scale: 1.0,
                 alpha: 1.0,
                 quality: Quality::Full,
