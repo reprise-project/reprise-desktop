@@ -6,7 +6,7 @@ use smithay::output::Output;
 use crate::{
     compositor::State,
     raster::Rect,
-    startmenu::{ContextBitmaps, MenuItem, MenuLayout, MenuStyle, place_popup, submenu_max_rows},
+    startmenu::{ContextBitmaps, MenuItem, MenuStyle, place_popup},
     taskbar::WindowListRow,
     window::WindowId,
 };
@@ -46,14 +46,7 @@ impl State {
             })
             .collect();
         let usable = self.usable_area(Some(&output));
-        let style = style.fit(
-            &self.text,
-            &items,
-            self.config.theme.fonts.size_px,
-            usable.width,
-        );
-        let max_rows = submenu_max_rows(&self.config.theme.metrics, usable.height);
-        let layout = MenuLayout::compute_styled(&style, &items, max_rows);
+        let layout = style.layout_in(&self.config.theme, &self.text, &items, usable);
         let p = self.bar_placement(&output);
         let at = p.anchor_point(Rect::new(
             p.shown.x + btn.x,
@@ -141,14 +134,7 @@ impl State {
     ) {
         let style = MenuStyle::context(&self.config.theme, ContextBitmaps::Icons);
         let usable = self.usable_area(Some(&output));
-        let style = style.fit(
-            &self.text,
-            &items,
-            self.config.theme.fonts.size_px,
-            usable.width,
-        );
-        let max_rows = submenu_max_rows(&self.config.theme.metrics, usable.height);
-        let layout = MenuLayout::compute_styled(&style, &items, max_rows);
+        let layout = style.layout_in(&self.config.theme, &self.text, &items, usable);
         let p = self.bar_placement(&output);
         let cell = Rect::new(
             p.shown.x + cell.x,

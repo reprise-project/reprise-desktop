@@ -182,6 +182,23 @@ impl MenuStyle {
             ..self
         }
     }
+
+    /// `items` fitted into `usable`: [`MenuStyle::fit`] to its width at the theme's text size,
+    /// then split into columns of the rows its height holds.
+    pub fn layout_in(
+        self,
+        theme: &Theme,
+        text: &TextRenderer,
+        items: &[MenuItem],
+        usable: Rect,
+    ) -> MenuLayout {
+        let style = self.fit(text, items, theme.fonts.size_px, usable.width);
+        MenuLayout::compute_styled(
+            &style,
+            items,
+            submenu_max_rows(&theme.metrics, usable.height),
+        )
+    }
 }
 
 /// The widest row of `items` from its text's start to the menu's inner right edge.

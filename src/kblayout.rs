@@ -11,7 +11,7 @@ use smithay::output::Output;
 use crate::compositor::State;
 use crate::menuview::{MenuFrom, MenuKind};
 use crate::raster::Rect;
-use crate::startmenu::{MenuItem, MenuLayout, MenuStyle, submenu_max_rows};
+use crate::startmenu::{MenuItem, MenuStyle};
 
 #[derive(Debug, Default)]
 pub struct Layouts {
@@ -128,14 +128,12 @@ impl State {
             .map(|(i, d)| MenuItem::entry(&d.description).checked(i as u32 == layouts.current))
             .collect();
         let usable = self.usable_area(Some(output));
-        let m = &self.config.theme.metrics;
-        let style = MenuStyle::context_for(&self.config.theme, &items).fit(
+        let layout = MenuStyle::context_for(&self.config.theme, &items).layout_in(
+            &self.config.theme,
             &self.text,
             &items,
-            self.config.theme.fonts.size_px,
-            usable.width,
+            usable,
         );
-        let layout = MenuLayout::compute_styled(&style, &items, submenu_max_rows(m, usable.height));
         let (x, y) = crate::barplace::bar_popup(
             &self.bar_placement(output),
             cell,
