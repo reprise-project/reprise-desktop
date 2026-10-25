@@ -480,13 +480,19 @@ impl State {
             return;
         }
         let tasks = TaskWindows::gather(self);
+        let was: Vec<Vec<Output>> = self.bars.iter().map(|b| self.bar_outputs(b.tree)).collect();
         let mut bars = std::mem::take(&mut self.bars);
-        for bar in &mut bars {
-            self.redraw_taskbar_with(bar, &tasks);
+        let mut asks: Vec<(Vec<Output>, [NodeId; 2])> = Vec::new();
+        for (bar, was) in bars.iter_mut().zip(was) {
+            if self.redraw_taskbar_with(bar, &tasks) {
+                asks.push((was, [bar.tree.into(), bar.orb_tree.into()]));
+            }
         }
         self.bars = bars;
         crate::trayflyout::bar_redrawn(self, None);
-        self.redraw_all();
+        for (was, nodes) in asks {
+            self.redraw_nodes(was, &nodes);
+        }
         crate::access::touch(self);
         crate::autohideview::poke(self);
     }
@@ -494,7 +500,9 @@ impl State {
     pub fn redraw_taskbar(&mut self, tree: TreeId) {
         let was = self.bar_outputs(tree);
         let tasks = TaskWindows::gather(self);
-        self.with_bar(tree, |s, bar| s.redraw_taskbar_with(bar, &tasks));
+        self.with_bar(tree, |s, bar| {
+            s.redraw_taskbar_with(bar, &tasks);
+        });
         let output = self.bar(tree).map(|b| b.output.clone());
         crate::trayflyout::bar_redrawn(self, output.as_ref());
         let nodes: Vec<NodeId> = self
