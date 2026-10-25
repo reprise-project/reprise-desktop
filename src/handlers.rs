@@ -119,7 +119,7 @@ impl CompositorHandler for State {
         if commit.shows_nothing_new() {
             crate::backend::answer_frames(self);
         } else {
-            self.redraw_surface(&top);
+            self.redraw_surface(&top, commit.in_place());
         }
     }
 

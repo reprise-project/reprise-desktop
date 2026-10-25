@@ -281,6 +281,15 @@ impl Harness {
         self.roundtrip(c);
     }
 
+    /// `t`'s client commits a new buffer of its size, every pixel `argb`, as a video does.
+    pub fn draw_self(&mut self, c: &mut TestClient, t: Toplevel, argb: u32) {
+        let (w, h) = c.side.shells[t.shell].size;
+        let surface = c.side.shells[t.shell].surface.clone();
+        let shm = c.side.shm.as_ref().expect("wl_shm");
+        attach_filled(shm, &c.qh(), &surface, w, h, argb);
+        self.roundtrip(c);
+    }
+
     /// A `w`x`h` xdg popup on toplevel `t`, mapped with its first buffer, that asks for the
     /// seat's grab under the last keyboard enter's serial, as a menu does.
     pub fn map_popup(&mut self, c: &mut TestClient, t: Toplevel, w: i32, h: i32) -> Popup {
@@ -605,6 +614,17 @@ impl TestClient {
 
 /// Attach a `w`x`h` buffer to `surface` and commit it.
 fn attach(shm: &wl_shm::WlShm, qh: &QueueHandle<ClientSide>, surface: &WlSurface, w: i32, h: i32) {
+    attach_filled(shm, qh, surface, w, h, 0);
+}
+
+fn attach_filled(
+    shm: &wl_shm::WlShm,
+    qh: &QueueHandle<ClientSide>,
+    surface: &WlSurface,
+    w: i32,
+    h: i32,
+    argb: u32,
+) {
     let size = w * h * 4;
     // SAFETY: plain syscall; the name is a valid C string.
     let raw = unsafe { libc::memfd_create(c"reprise-test".as_ptr(), libc::MFD_CLOEXEC) };
@@ -613,6 +633,10 @@ fn attach(shm: &wl_shm::WlShm, qh: &QueueHandle<ClientSide>, surface: &WlSurface
     let fd = unsafe { <std::os::fd::OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(raw) };
     let file = std::fs::File::from(fd);
     file.set_len(size as u64).expect("memfd size");
+    if argb != 0 {
+        let px: Vec<u8> = (0..w * h).flat_map(|_| argb.to_le_bytes()).collect();
+        std::io::Write::write_all(&mut &file, &px).expect("memfd pixels");
+    }
     let pool = shm.create_pool(file.as_fd(), size, qh, ());
     let buffer = pool.create_buffer(0, w, h, w * 4, wl_shm::Format::Argb8888, qh, ());
     pool.destroy();

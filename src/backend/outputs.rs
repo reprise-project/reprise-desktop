@@ -332,7 +332,7 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             commit_times: Vec::new(),
             needs_redraw: true,
             scene_changed: true,
-            backdrop_changed: true,
+            backdrop_changed: crate::glass::Under::Anywhere,
             pointer_only: false,
             pointer_shown: false,
             scene_seen: 0,

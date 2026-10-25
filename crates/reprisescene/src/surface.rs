@@ -16,6 +16,7 @@ use smithay::{
     },
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
+    utils::{Logical, Rectangle},
     wayland::{compositor::send_surface_state, fractional_scale::with_fractional_scale},
 };
 
@@ -85,6 +86,14 @@ impl<R: Renderer, D> Scene<R, D> {
             }
         }
         found.then_some(out)
+    }
+
+    /// The box around everything the nodes showing `surface` show; `None` when none is shown.
+    pub fn surface_extents(&self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {
+        (self.live())
+            .filter(|(_, n)| matches!(&n.content, Content::Surface(s) if s.surface == *surface))
+            .filter_map(|(id, _)| self.extents(id))
+            .reduce(|a, b| a.merge(b))
     }
 
     fn surfaces_on(&self, output: &Output) -> Vec<(WlSurface, Option<Output>)> {
