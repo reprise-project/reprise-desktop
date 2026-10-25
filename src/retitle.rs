@@ -218,9 +218,9 @@ impl State {
         if bars {
             self.redraw_taskbars();
         } else if drawn {
-            // A task button's accessible name is the title, drawn or not.
+            // A task button's accessible name is the title, drawn or not. A caption asks its
+            // window's outputs itself (`redraw_caption`).
             crate::access::touch(self);
-            self.redraw_all();
         }
         if let Some(t) = self.titles.timer.take() {
             self.handle.remove(t);
@@ -400,6 +400,40 @@ mod tests {
                 app_id: false,
                 icon: true
             }
+        );
+    }
+
+    #[test]
+    fn a_caption_retitled_asks_for_frames_only_on_its_windows_output() {
+        let config = crate::config::Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "foot", 300, 200);
+        let tree = h.state.win(t.id).unwrap().tree;
+        let on: Vec<String> = h
+            .state
+            .scene
+            .outputs_of(tree)
+            .iter()
+            .map(|o| o.name())
+            .collect();
+        assert_eq!(on, ["TEST-1"]);
+        assert_eq!(
+            h.state.task_label(t.id),
+            TaskLabel::Untitled,
+            "Glass bars draw no title"
+        );
+        h.run_for(MIN_INTERVAL.as_millis() as u64 + 20);
+        crate::backend::take_asks();
+        h.state.retitled(t.id, TITLE);
+        h.dispatch();
+        let asked = crate::backend::take_asks();
+        assert!(!asked.is_empty(), "the caption asks for a frame");
+        assert!(
+            asked.iter().all(|(o, _)| o == "TEST-1"),
+            "only TEST-1: {asked:?}"
         );
     }
 }
