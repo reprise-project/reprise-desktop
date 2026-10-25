@@ -27,6 +27,16 @@ pub struct IconSource {
     pub pixels: Vec<u32>,
 }
 
+impl From<Canvas> for IconSource {
+    fn from(c: Canvas) -> IconSource {
+        IconSource {
+            width: c.width,
+            height: c.height,
+            pixels: c.pixels,
+        }
+    }
+}
+
 impl IconSource {
     pub fn to_canvas(&self, size: i32) -> Canvas {
         let size = size.max(1) as u32;
