@@ -388,6 +388,7 @@ pub struct State {
     pub snap_bar: crate::snapbarview::SnapBarView,
     /// Each bar's auto-hide (`autohideview`).
     pub bar_hide: crate::autohideview::BarHide,
+    pub attention_flash: crate::attention::Flash,
     pub peek: crate::peek::Peek,
     pub titles: crate::retitle::Flush,
     /// Dead keys and the Compose key for the lock's password field; None
@@ -711,6 +712,7 @@ impl State {
             snap_picker: Default::default(),
             snap_bar: Default::default(),
             bar_hide: Default::default(),
+            attention_flash: Default::default(),
             peek: Default::default(),
             titles: Default::default(),
             compose: crate::compose::Compose::from_locale(),

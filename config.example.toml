@@ -153,6 +153,9 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # reveal_on_keys = true      # ... for the Start key, Ctrl+Esc and Alt+Tab
 # reveal_on_attention = true # ... while a window asks for attention, and for
 #                            # a new balloon
+# attention_flash = 30       # seconds a window's button flashes when it asks
+#                            # for attention, then it stays lit until the
+#                            # window is focused; 0: lit at once, no flashing
 
 [keyboard]                   # xkb rules/model/layout/variant/options
 # rules = ""                 # empty means the system default

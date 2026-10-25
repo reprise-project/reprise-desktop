@@ -101,9 +101,7 @@ impl XdgActivationHandler for State {
                 self.focus_window(w);
             }
         } else if !focused {
-            if let Some(win) = self.win_mut(w) {
-                win.attention = true;
-            }
+            self.ask_attention(w);
             self.redraw_taskbars();
             self.redraw_all();
         }

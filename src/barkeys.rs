@@ -142,9 +142,7 @@ impl State {
         };
         self.scene.raise_to_top(tree);
         self.raise_children(w);
-        if let Some(win) = self.win_mut(w) {
-            win.attention = true;
-        }
+        self.ask_attention(w);
         let back = self.bar_shared.keys.map(|k| k.back);
         let order = &mut self.focus_order;
         order.retain(|p| *p != w);

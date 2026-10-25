@@ -71,7 +71,7 @@ impl State {
             attention: (0..l.tasks.len())
                 .map(|i| {
                     (bar.buttons.get(i).into_iter().flatten())
-                        .any(|&w| self.win(w).is_some_and(|w| w.attention))
+                        .any(|&w| self.win(w).is_some_and(|w| w.attention.is_some()))
                 })
                 .collect(),
             focus: self.bar_focus(bar),
