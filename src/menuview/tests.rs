@@ -513,3 +513,31 @@ fn beside_a_side_bar_the_start_menu_hangs_level_with_start() {
         2
     );
 }
+
+#[test]
+fn a_menu_asks_for_frames_only_on_the_outputs_it_draws_on() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    let hover_asks = |h: &mut crate::harness::Harness, at: (i32, i32)| {
+        h.state.open_desktop_menu(at);
+        h.run_for(400);
+        crate::backend::take_asks();
+        h.state.menu_hover(0, Some(0));
+        let mut asked: Vec<String> = crate::backend::take_asks()
+            .into_iter()
+            .map(|(o, _)| o)
+            .collect();
+        asked.dedup();
+        h.state.close_menu();
+        asked
+    };
+    assert_eq!(hover_asks(&mut h, (300, 300)), vec!["TEST-1"]);
+    let mut beside = hover_asks(&mut h, (1023, 300));
+    beside.sort();
+    assert_eq!(
+        beside,
+        vec!["TEST-1", "TEST-2"],
+        "a menu at TEST-1's right edge casts its shadow onto TEST-2"
+    );
+}
