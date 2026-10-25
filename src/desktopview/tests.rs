@@ -1108,3 +1108,52 @@ fn a_drag_carries_the_grabbed_icon_first_then_its_set() {
         .collect();
     assert_eq!(sources, ["b.txt", "a.txt", "c.txt"]);
 }
+
+#[test]
+fn a_marquee_asks_for_frames_only_on_the_outputs_its_band_covers_or_covered() {
+    for look in ["classic", "glass"] {
+        let text = format!("[appearance]\ninterface = \"{look}\"\n");
+        let mut h =
+            crate::harness::Harness::with_config(crate::config::Config::parse(&text).unwrap());
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        create(
+            &mut h.state,
+            "/home/u/Desktop".into(),
+            Default::default(),
+            None,
+        );
+        h.state
+            .desktop_press(None, (500, 400), 0, reprisekit::selection::Mods::default());
+        let mut drag = |to: (f64, f64)| {
+            crate::backend::take_asks();
+            h.state.drag_marquee(to.0, to.1);
+            let mut asked: Vec<String> = crate::backend::take_asks()
+                .into_iter()
+                .map(|(o, _)| o)
+                .collect();
+            asked.dedup();
+            asked
+        };
+        assert_eq!(drag((600.0, 500.0)), ["TEST-1"], "{look}: a band on TEST-1");
+        assert_eq!(
+            drag((1100.0, 500.0)),
+            ["TEST-1", "TEST-2"],
+            "{look}: a band reaching TEST-2"
+        );
+        assert_eq!(
+            drag((700.0, 450.0)),
+            ["TEST-1", "TEST-2"],
+            "{look}: TEST-2 loses the band"
+        );
+        assert_eq!(drag((650.0, 450.0)), ["TEST-1"], "{look}: back on TEST-1");
+        crate::backend::take_asks();
+        h.state.end_marquee();
+        let asked = crate::backend::take_asks();
+        assert!(!asked.is_empty(), "{look}: the band's end asks for a frame");
+        assert!(
+            asked.iter().all(|(o, _)| o == "TEST-1"),
+            "{look}: only TEST-1: {asked:?}"
+        );
+    }
+}

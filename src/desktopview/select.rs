@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use reprisekit::selection::{self, Mods};
+use reprisescene::NodeId;
 use smithay::utils::Rectangle;
 
 use crate::{
@@ -193,11 +194,29 @@ impl State {
         }
     }
 
+    /// Place `band` (`place_band`) and ask for frames on the outputs it covered or covers.
+    fn draw_band(&mut self, band: Option<Rect>) {
+        let was = self.outputs_of_nodes(&self.band_node_ids());
+        self.place_band(band);
+        let nodes = self.band_node_ids();
+        self.redraw_nodes(was, &nodes);
+    }
+
+    fn band_node_ids(&self) -> Vec<NodeId> {
+        let Some(view) = self.desktop.as_ref() else {
+            return Vec::new();
+        };
+        let edges = view.band_nodes.iter().map(|&n| n.into());
+        edges
+            .chain(view.band_box.iter().flatten().map(|&r| r.into()))
+            .collect()
+    }
+
     /// Show `band`'s four dotted edges, or hide them on `None`. The dots are the
     /// desktop colour's inverse; each edge crops one of two cached strips, so a
     /// pointer step draws nothing. A look with a selection box (Glass) shows that
     /// box instead.
-    fn draw_band(&mut self, band: Option<Rect>) {
+    fn place_band(&mut self, band: Option<Rect>) {
         let out = self.first_output();
         let (scale, screen) = match &out {
             Some(o) => (self.draw_scale_at(Some(o)).max(1), self.layout_box(Some(o))),
@@ -221,7 +240,6 @@ impl State {
             for n in nodes {
                 self.scene.set_enabled(n, false);
             }
-            self.redraw_all();
             return;
         };
         if let Some(sel) = boxed {
@@ -233,7 +251,6 @@ impl State {
                 .band_box
                 .get_or_insert_with(|| crate::snapview::selection_box_nodes(&mut self.scene, tree));
             crate::snapview::place_selection_box(&mut self.scene, &rects, sel, b);
-            self.redraw_all();
             return;
         }
         // One logical px of slack for the phase shift in `band_crop`.
@@ -270,7 +287,6 @@ impl State {
             self.scene.raise_to_top(n);
             self.scene.set_enabled(n, true);
         }
-        self.redraw_all();
     }
 
     pub fn drag_sources(&self, index: usize) -> Vec<crate::dragview::DragSource> {

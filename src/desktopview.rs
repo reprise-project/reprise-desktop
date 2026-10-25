@@ -196,15 +196,6 @@ pub fn setup(state: &mut State) {
         log::info!("desktop icons: no home directory; disabled");
         return;
     };
-    let persisted = crate::state::load();
-    let tree = state.scene.tree_create(state.layers.background);
-    state.scene.set_data(tree, Some(SceneOwner::Desktop));
-    let band_nodes = std::array::from_fn(|_| {
-        let n = state.scene.buffer_create(tree);
-        state.scene.set_input(n, Input::Passthrough);
-        state.scene.set_enabled(n, false);
-        n
-    });
     // The watches themselves are added by the rescan, and again whenever a
     // watched folder is deleted and made anew.
     let watch = match DirWatch::new() {
@@ -219,6 +210,26 @@ pub fn setup(state: &mut State) {
             None
         }
     };
+    create(state, dir, crate::state::load(), watch);
+    state.rescan_desktop();
+    state.scan_drives();
+}
+
+/// The desktop's tree and view of `dir`, with no icons listed yet.
+fn create(
+    state: &mut State,
+    dir: PathBuf,
+    persisted: crate::state::Persisted,
+    watch: Option<DirWatch>,
+) {
+    let tree = state.scene.tree_create(state.layers.background);
+    state.scene.set_data(tree, Some(SceneOwner::Desktop));
+    let band_nodes = std::array::from_fn(|_| {
+        let n = state.scene.buffer_create(tree);
+        state.scene.set_input(n, Input::Passthrough);
+        state.scene.set_enabled(n, false);
+        n
+    });
     state.desktop = Some(DesktopView {
         dir,
         entries: Vec::new(),
@@ -254,8 +265,6 @@ pub fn setup(state: &mut State) {
         drives: sendto::Drives::new(places::MountedDrives::new()),
         bins: DriveBins::default(),
     });
-    state.rescan_desktop();
-    state.scan_drives();
 }
 
 /// Poll `watch`'s fd on the loop through a copy of it, which shares the queue.
