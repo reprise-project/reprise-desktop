@@ -88,6 +88,14 @@ impl Form {
         }
     }
 
+    /// The text in edit `id`, or "" when `id` is missing or not an edit.
+    pub fn edit_text(&self, id: &str) -> &str {
+        match self.item(id).map(|i| &i.control) {
+            Some(Control::Edit { edit, .. }) => &edit.text,
+            _ => "",
+        }
+    }
+
     /// Put `s` in label `id`, or make it note `id`'s one line.
     pub fn set_text(&mut self, id: &str, s: &str) {
         match self.item_mut(id).map(|i| &mut i.control) {

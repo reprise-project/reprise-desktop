@@ -221,10 +221,7 @@ impl Unlock {
     }
 
     fn passphrase(&self) -> &str {
-        match self.form.item("passphrase").map(|i| &i.control) {
-            Some(Control::Edit { edit, .. }) => &edit.text,
-            _ => "",
-        }
+        self.form.edit_text("passphrase")
     }
 
     fn can_submit(&self) -> bool {

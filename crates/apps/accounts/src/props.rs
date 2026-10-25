@@ -225,13 +225,6 @@ fn password_page(user: &User) -> Form {
     ])
 }
 
-fn edit_text<'a>(form: &'a Form, id: &str) -> &'a str {
-    match form.item(id).map(|i| &i.control) {
-        Some(Control::Edit { edit, .. }) => &edit.text,
-        _ => "",
-    }
-}
-
 fn wipe(form: &mut Form, id: &str) {
     if let Some(Control::Edit { edit, .. }) = form.item_mut(id).map(|i| &mut i.control) {
         edit.wipe();
@@ -288,7 +281,8 @@ impl Props {
     }
 
     fn pending_name(&self) -> String {
-        edit_text(&self.sheet.pages[TAB_GENERAL], NAME)
+        self.sheet.pages[TAB_GENERAL]
+            .edit_text(NAME)
             .trim()
             .to_string()
     }
@@ -303,7 +297,7 @@ impl Props {
         let page = &self.sheet.pages[TAB_PASSWORD];
         [CURRENT, NEW, CONFIRM]
             .iter()
-            .any(|id| !edit_text(page, id).is_empty())
+            .any(|id| !page.edit_text(id).is_empty())
             || page.checked(AT_LOGIN) == Some(true)
     }
 
@@ -333,10 +327,10 @@ impl Props {
         let path = self.user.path.clone();
         let page = &self.sheet.pages[TAB_PASSWORD];
         if self.password_typed() {
-            let new = edit_text(page, NEW);
+            let new = page.edit_text(NEW);
             let at_login = page.checked(AT_LOGIN) == Some(true);
             if self.user.you {
-                let current = edit_text(page, CURRENT);
+                let current = page.edit_text(CURRENT);
                 if current.is_empty() {
                     return Err("Type your current password first.".into());
                 }
@@ -346,7 +340,7 @@ impl Props {
             } else if !at_login && new.is_empty() {
                 return Err("Type a new password.".into());
             }
-            if !at_login && new != edit_text(page, CONFIRM) {
+            if !at_login && new != page.edit_text(CONFIRM) {
                 return Err("The new passwords do not match. Type them again.".into());
             }
         }
@@ -374,10 +368,10 @@ impl Props {
             });
         }
         if self.password_typed() {
-            let new = edit_text(page, NEW).to_string();
+            let new = page.edit_text(NEW).to_string();
             ops.push(if self.user.you {
                 Op::OwnPassword {
-                    current: edit_text(page, CURRENT).to_string(),
+                    current: page.edit_text(CURRENT).to_string(),
                     new,
                 }
             } else if page.checked(AT_LOGIN) == Some(true) {
@@ -769,7 +763,7 @@ mod tests {
             }])
         );
         p.unapplied();
-        assert_eq!(edit_text(&p.sheet.pages[TAB_PASSWORD], CURRENT), "");
+        assert_eq!(p.sheet.pages[TAB_PASSWORD].edit_text(CURRENT), "");
         assert!(!p.dirty());
     }
 

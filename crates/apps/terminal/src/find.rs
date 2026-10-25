@@ -166,16 +166,9 @@ fn view_end<T>(term: &Term<T>) -> Point {
     )
 }
 
-fn field(form: &Form, id: &str) -> String {
-    match form.item(id).map(|i| &i.control) {
-        Some(Control::Edit { edit, .. }) => edit.text.clone(),
-        _ => String::new(),
-    }
-}
-
 fn read(form: &Form) -> Query {
     Query {
-        text: field(form, finddlg::QUERY),
+        text: form.edit_text(finddlg::QUERY).to_string(),
         match_case: form.checked(finddlg::MATCH_CASE).unwrap_or(false),
         up: form.checked(finddlg::UP).unwrap_or(false),
     }
@@ -266,7 +259,7 @@ impl Terminal {
             form::Event::Cancel | form::Event::Pressed(finddlg::CANCEL) => self.close_find(),
             form::Event::Default | form::Event::Pressed(finddlg::FIND_NEXT) => self.find_next(ctx),
             form::Event::Changed(finddlg::QUERY) => {
-                set_live(form, !field(form, finddlg::QUERY).is_empty());
+                set_live(form, !form.edit_text(finddlg::QUERY).is_empty());
                 Reply::redraw()
             }
             form::Event::None => Reply::none(),

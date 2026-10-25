@@ -259,10 +259,7 @@ impl RunAs {
     }
 
     pub fn password(&self) -> &str {
-        match self.form.item("password").map(|i| &i.control) {
-            Some(Control::Edit { edit, .. }) => &edit.text,
-            _ => "",
-        }
+        self.form.edit_text("password")
     }
 
     fn can_submit(&self) -> bool {

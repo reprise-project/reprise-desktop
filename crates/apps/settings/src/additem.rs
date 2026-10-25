@@ -179,10 +179,7 @@ impl AddItemDialog {
     }
 
     fn field(&self, id: &str) -> &str {
-        match self.form.item(id).map(|i| &i.control) {
-            Some(Control::Edit { edit, .. }) => &edit.text,
-            _ => "",
-        }
+        self.form.edit_text(id)
     }
 
     fn set_field(&mut self, id: &str, text: &str) {

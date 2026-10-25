@@ -11,6 +11,15 @@ fn typing_reaches_a_focused_edit_instead_of_an_access_key() {
 }
 
 #[test]
+fn edit_text_reads_an_edit_and_is_empty_for_anything_else() {
+    let mut f = edit_form();
+    f.key(Key::Char('o'));
+    assert_eq!(f.edit_text("find"), "o");
+    assert_eq!(f.edit_text("lbl"), "", "a label is not an edit");
+    assert_eq!(f.edit_text("missing"), "");
+}
+
+#[test]
 fn a_paste_into_a_field_takes_its_first_line_only() {
     let mut f = edit_form();
     assert_eq!(f.paste("pw\nsecond".into()), Event::Changed("find"));

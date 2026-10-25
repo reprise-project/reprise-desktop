@@ -253,10 +253,7 @@ fn profile_line(p: &Profile) -> String {
 }
 
 fn edit_text(page: &Form, id: &str) -> String {
-    match page.item(id).map(|i| &i.control) {
-        Some(Control::Edit { edit, .. }) => edit.text.trim().to_owned(),
-        _ => String::new(),
-    }
+    page.edit_text(id).trim().to_owned()
 }
 
 fn number(page: &Form, id: &str) -> i32 {

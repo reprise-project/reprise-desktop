@@ -4,7 +4,6 @@ use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
 
 use crate::nm::{Band, Psk};
-use crate::vpnsheet::text_of;
 
 pub const CLIENT: (i32, i32) = (360, 214);
 
@@ -103,11 +102,11 @@ impl HotspotDialog {
     }
 
     fn ssid(&self) -> &str {
-        text_of(&self.form, "ssid")
+        self.form.edit_text("ssid")
     }
 
     fn password(&self) -> &str {
-        text_of(&self.form, "password")
+        self.form.edit_text("password")
     }
 
     fn sync_button(&mut self) {

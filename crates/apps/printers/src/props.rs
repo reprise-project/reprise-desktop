@@ -75,13 +75,6 @@ pub struct PropsSheet {
     options: Option<Options>,
 }
 
-fn edit_text(form: &Form, id: &str) -> String {
-    match form.item(id).map(|i| &i.control) {
-        Some(Control::Edit { edit, .. }) => edit.text.clone(),
-        _ => String::new(),
-    }
-}
-
 fn set_edit(form: &mut Form, id: &str, s: &str) {
     if let Some(Control::Edit { edit, .. }) = form.item_mut(id).map(|i| &mut i.control) {
         *edit = TextEdit::new(s, false);
@@ -485,10 +478,10 @@ impl PropsSheet {
         let pages = &self.sheet.pages;
         let o = self.options.clone().unwrap_or_default();
         match id {
-            NAME => self.pending.name = edit_text(&pages[GENERAL], NAME),
-            LOCATION => self.pending.location = edit_text(&pages[GENERAL], LOCATION),
-            COMMENT => self.pending.comment = edit_text(&pages[GENERAL], COMMENT),
-            URI => self.pending.uri = edit_text(&pages[PORTS], URI),
+            NAME => self.pending.name = pages[GENERAL].edit_text(NAME).to_string(),
+            LOCATION => self.pending.location = pages[GENERAL].edit_text(LOCATION).to_string(),
+            COMMENT => self.pending.comment = pages[GENERAL].edit_text(COMMENT).to_string(),
+            URI => self.pending.uri = pages[PORTS].edit_text(URI).to_string(),
             SHARE | NOSHARE => self.pending.shared = pages[SHARING].checked(SHARE).unwrap_or(false),
             MEDIA => self.pending.media = picked(&pages[DEVICE], MEDIA, &o.media),
             SIDES => self.pending.sides = picked(&pages[DEVICE], SIDES, &o.sides),
@@ -607,10 +600,10 @@ mod tests {
     #[test]
     fn the_fields_open_on_the_printer_and_apply_starts_greyed() {
         let p = PropsSheet::new(&laser(), None);
-        assert_eq!(edit_text(&p.sheet.pages[GENERAL], NAME), "Laser");
-        assert_eq!(edit_text(&p.sheet.pages[GENERAL], COMMENT), "Hall");
+        assert_eq!(p.sheet.pages[GENERAL].edit_text(NAME), "Laser");
+        assert_eq!(p.sheet.pages[GENERAL].edit_text(COMMENT), "Hall");
         assert_eq!(
-            edit_text(&p.sheet.pages[PORTS], URI),
+            p.sheet.pages[PORTS].edit_text(URI),
             "socket://10.0.0.9:9100"
         );
         assert_eq!(p.sheet.pages[SHARING].checked(NOSHARE), Some(true));
@@ -720,8 +713,8 @@ mod tests {
         moved.info = "Theirs".into();
         moved.location = "Basement".into();
         p.refresh(&moved, false);
-        assert_eq!(edit_text(&p.sheet.pages[GENERAL], COMMENT), "Mine");
-        assert_eq!(edit_text(&p.sheet.pages[GENERAL], LOCATION), "Basement");
+        assert_eq!(p.sheet.pages[GENERAL].edit_text(COMMENT), "Mine");
+        assert_eq!(p.sheet.pages[GENERAL].edit_text(LOCATION), "Basement");
     }
 
     #[test]

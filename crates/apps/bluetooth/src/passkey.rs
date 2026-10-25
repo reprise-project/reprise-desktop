@@ -8,7 +8,6 @@ use reprisekit::text::{TextRenderer, wrap};
 use reprisekit::theme::Theme;
 
 use crate::bz::{Answer, Ask};
-use crate::props::edit_text;
 
 pub const CODE: &str = "code";
 pub const YES: &str = "yes";
@@ -107,8 +106,8 @@ pub fn ready(ask: &Ask, form: &Form) -> bool {
 
 pub fn answer(ask: &Ask, form: &Form) -> Option<Answer> {
     match ask {
-        Ask::PinCode => pin(&edit_text(form, CODE)).map(Answer::Pin),
-        Ask::Passkey => passkey(&edit_text(form, CODE)).map(Answer::Passkey),
+        Ask::PinCode => pin(form.edit_text(CODE)).map(Answer::Pin),
+        Ask::Passkey => passkey(form.edit_text(CODE)).map(Answer::Passkey),
         Ask::Confirm(_) | Ask::Authorize => Some(if form.checked(YES) == Some(true) {
             Answer::Accept
         } else {
