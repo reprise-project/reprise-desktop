@@ -8,7 +8,7 @@ use smithay::{
 };
 
 use crate::compositor::State;
-use crate::glass::Under;
+use crate::glass::{Drawn, Under};
 
 use super::render::render;
 use super::{crtc_of, surface_mut};
@@ -21,8 +21,8 @@ pub fn schedule(state: &mut State, output: &Output) {
 pub enum Ask {
     Scene,
     Content,
-    /// A program's commit that changed only pixels within this box (layout).
-    Commit(Rectangle<i32, Logical>),
+    /// A program's commit that changed only pixels.
+    Commit(Drawn),
     Pointer,
     /// A new cursor image: drawn over everything, so glass has nothing new under it.
     Cursor,
@@ -44,7 +44,7 @@ impl Asked {
         self.scene |= ask == Ask::Scene;
         self.backdrop = self.backdrop.and(match ask {
             Ask::Scene | Ask::Content => Under::Anywhere,
-            Ask::Commit(r) => Under::Within(r),
+            Ask::Commit(d) => Under::Within(d),
             Ask::Pointer | Ask::Cursor => Under::Nothing,
         });
     }

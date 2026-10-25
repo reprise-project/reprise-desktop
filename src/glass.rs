@@ -209,16 +209,27 @@ pub enum Under {
     /// Only the pointer or the cursor asked.
     #[default]
     Nothing,
-    /// Only a program's pixels within this box (layout) changed.
-    Within(Rectangle<i32, Logical>),
+    /// Only a program's pixels within a box changed.
+    Within(Drawn),
     Anywhere,
+}
+
+/// A program's commit that changed only pixels: the box they lie in (layout) and the layer
+/// entry (window) showing them, if all of them lie in one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Drawn {
+    pub r: Rectangle<i32, Logical>,
+    pub window: Option<NodeId>,
 }
 
 impl Under {
     pub fn and(self, other: Under) -> Under {
         match (self, other) {
             (Under::Nothing, u) | (u, Under::Nothing) => u,
-            (Under::Within(a), Under::Within(b)) => Under::Within(a.merge(b)),
+            (Under::Within(a), Under::Within(b)) => Under::Within(Drawn {
+                r: a.r.merge(b.r),
+                window: a.window.filter(|_| a.window == b.window),
+            }),
             _ => Under::Anywhere,
         }
     }
@@ -374,15 +385,27 @@ impl GlassCtx {
         scale: f64,
         own: &[Stacked],
     ) -> Vec<Reads> {
+        self.reads_where(scene, area, seen, scale, |n| {
+            !own.iter()
+                .any(|o| Weak::as_ptr(&n.glass) == Rc::as_ptr(&o.glass))
+        })
+    }
+
+    /// What the glass shown on the output at `area` that `keep` picks reads from its picture.
+    fn reads_where(
+        &self,
+        scene: &DeskScene,
+        area: Rectangle<i32, Logical>,
+        seen: Size<i32, Physical>,
+        scale: f64,
+        keep: impl Fn(&Placed) -> bool,
+    ) -> Vec<Reads> {
         let pass = self.pass.get();
         self.nodes
             .borrow()
             .iter()
             .filter(|n| n.glass.strong_count() > 0 && scene.is_alive(n.node))
-            .filter(|n| {
-                !own.iter()
-                    .any(|o| Weak::as_ptr(&n.glass) == Rc::as_ptr(&o.glass))
-            })
+            .filter(|n| keep(n))
             .filter_map(|n| {
                 let Some((at, true)) = scene.coords(n.node) else {
                     return None;
@@ -396,19 +419,21 @@ impl GlassCtx {
             .collect()
     }
 
-    /// Whether glass shown on `output` reads its backdrop within `r` (layout).
-    fn reads_within(&self, scene: &DeskScene, output: &Output, r: Rectangle<i32, Logical>) -> bool {
+    /// Whether glass shown on `output` reads its backdrop where `d` drew. The drawing window's
+    /// own glass is left out: it may show its program a blur interval late.
+    fn reads_within(&self, scene: &DeskScene, output: &Output, d: Drawn) -> bool {
         let (Some(area), Some(mode)) = (reprisescene::output_rect(output), output.current_mode())
         else {
             return true;
         };
-        let Some(r) = r.intersection(area) else {
+        let Some(r) = d.r.intersection(area) else {
             return false;
         };
         let seen = output.current_transform().transform_size(mode.size);
         let scale = output.current_scale().fractional_scale();
         let r = Rectangle::new(r.loc - area.loc, r.size).to_physical_precise_up(scale);
-        (self.reads_on(scene, area, seen, scale, &[]).iter())
+        let others = |n: &Placed| d.window.is_none() || anchor(scene, n.node.into()) != d.window;
+        (self.reads_where(scene, area, seen, scale, others).iter())
             .any(|reads| reads.reach.iter().any(|x| x.overlaps(r)))
     }
 
@@ -657,7 +682,7 @@ impl GlassCtx {
             b.skipped |= !b.hidden
                 && match pass.hold {
                     Hold::Keep(Under::Anywhere) => true,
-                    Hold::Keep(Under::Within(r)) => self.reads_within(scene, output, r),
+                    Hold::Keep(Under::Within(d)) => self.reads_within(scene, output, d),
                     _ => false,
                 };
             *self.source.borrow_mut() = b.picture.source();
@@ -926,7 +951,7 @@ fn layout(
 
 /// The layer entry `node` belongs to: its ancestor right under a layer tree; None for a node under
 /// no layer.
-fn anchor(scene: &DeskScene, node: NodeId) -> Option<NodeId> {
+pub fn anchor(scene: &DeskScene, node: NodeId) -> Option<NodeId> {
     let root = scene.root();
     let mut id = node;
     loop {
