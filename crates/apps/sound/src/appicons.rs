@@ -41,7 +41,7 @@ pub struct AppIcon {
 }
 
 /// Finds each playing program's icon, first match wins: an icon hint that resolves, the icon of
-/// the window playing it, the name and executable heuristics of [`icon_name`]. The tray runs for
+/// the window playing it, the name and executable heuristics of [`guessed_icon`]. The tray runs for
 /// the whole session, so a program without one is looked up again against a fresh scan of the
 /// desktop entries and the icon theme.
 pub struct Resolver {
@@ -229,11 +229,6 @@ impl Resolver {
     }
 }
 
-/// The icon `app`'s hints, executable or name lead to: [`hint_icon`], then [`guessed_icon`].
-pub fn icon_name(app: &App, entries: &[AppEntry], has: impl Fn(&str) -> bool) -> Option<String> {
-    hint_icon(app, entries, has).or_else(|| guessed_icon(app, entries).map(str::to_string))
-}
-
 /// Canvases for a window icon at the cache's scale; None for a name the theme lacks.
 fn window_canvases(icon: &WindowIcon, icons: &mut IconCache) -> Option<AppIcon> {
     let found = match icon {
@@ -379,6 +374,11 @@ mod tests {
                 None,
             ),
         ]
+    }
+
+    /// The icon `app`'s hints, executable or name lead to, without a window to ask.
+    fn icon_name(app: &App, entries: &[AppEntry], has: impl Fn(&str) -> bool) -> Option<String> {
+        hint_icon(app, entries, has).or_else(|| guessed_icon(app, entries).map(str::to_string))
     }
 
     fn name(app: &App, entries: &[AppEntry], has: impl Fn(&str) -> bool) -> String {
