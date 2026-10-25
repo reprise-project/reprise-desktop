@@ -296,7 +296,7 @@ fn resolve_expands_the_home_folder() {
 }
 
 #[test]
-fn a_typed_path_that_does_not_answer_is_probed_once() {
+fn a_typed_path_that_does_not_answer_is_checked_once() {
     let t = tmp("dead");
     let mut h = host_in(&t);
     let (answer, gate) = std::sync::mpsc::channel::<()>();
