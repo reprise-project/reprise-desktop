@@ -39,8 +39,8 @@ impl State {
         if let Some(m) = self.menus.first_mut() {
             (m.x, m.y) = (x, y);
         }
-        self.scene.set_position(tree, x, y);
-        self.redraw_all();
+        let outputs = self.scene.move_on_outputs(tree, x, y);
+        self.redraw_nodes(outputs, &[]);
     }
 
     fn push_start_popup(

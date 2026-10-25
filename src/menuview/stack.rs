@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Instant};
 
 use reprisekit::anim::{Unroll, UnrollFrom};
-use reprisescene::{Input, TreeId};
+use reprisescene::{Input, NodeId, TreeId};
 use smithay::{
     output::Output,
     reexports::calloop::timer::{TimeoutAction, Timer},
@@ -188,6 +188,8 @@ impl State {
         let Some(m) = self.menus.get(depth) else {
             return;
         };
+        let tree = m.tree;
+        let was = self.scene.outputs_of(tree);
         let scale = self.draw_scale_at(Some(&m.output));
         let theme = self.config.theme.scaled(scale);
         let theme = if m.options_look {
@@ -218,7 +220,7 @@ impl State {
             upload_scaled(&mut self.scene, shadow_buffer, &drawn, scale);
             self.menus[depth].shadow_drawn = Some(shadow_key);
         }
-        self.redraw_all();
+        self.redraw_nodes(was, &[tree.into()]);
         crate::access::touch(self);
     }
 
@@ -399,10 +401,9 @@ impl State {
         }
         while self.menus.len() > depth + 1 {
             if let Some(m) = self.menus.pop() {
-                self.scene.destroy(m.tree);
+                self.destroy_redrawn(m.tree);
             }
         }
-        self.redraw_all();
         crate::access::touch(self);
     }
 
@@ -427,7 +428,7 @@ impl State {
         let Some(m) = self.menus.pop() else {
             return;
         };
-        self.scene.destroy(m.tree);
+        self.destroy_redrawn(m.tree);
         if self.menus.is_empty() {
             crate::tray::menus_closed(self);
             crate::tooltip::menus_closed(self);
@@ -436,7 +437,6 @@ impl State {
             crate::recentwatch::lists_closed(self);
             crate::tray::menus_closed_above(self, self.menus.len() - 1);
             crate::tooltip::menus_closed_above(self, self.menus.len() - 1);
-            self.redraw_all();
             crate::access::touch(self);
         }
     }
@@ -562,6 +562,8 @@ impl State {
     fn menu_fade_tick(&mut self) -> TimeoutAction {
         let ms = self.config.theme.metrics.menu_fade_ms.max(1) as f32;
         let mut done = true;
+        let trees: Vec<NodeId> = self.menus.iter().map(|m| m.tree.into()).collect();
+        let was = self.outputs_of_nodes(&trees);
         for idx in 0..self.menus.len() {
             if self.menus[idx].opening.is_none() {
                 continue;
@@ -570,7 +572,7 @@ impl State {
             self.open_menu_frame(idx, t);
             done &= t >= 1.0;
         }
-        self.redraw_all();
+        self.redraw_nodes(was, &trees);
         if done {
             self.menu_fade_timer = None;
             TimeoutAction::Drop
