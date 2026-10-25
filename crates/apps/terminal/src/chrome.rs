@@ -28,6 +28,8 @@ pub const SETTINGS: &str = "settings";
 pub const BTN_MIDDLE: u32 = 0x112;
 /// How far a held tab moves before it is dragged, logical px.
 const DRAG_PX: i32 = 4;
+/// The terminal background between the chrome and the first row, logical px.
+pub const GRID_GAP: i32 = 4;
 
 pub struct Chrome {
     pub bar: ToolBar,
@@ -98,7 +100,10 @@ pub struct Layout {
     pub toolbar: Rect,
     pub buttons: Vec<Rect>,
     pub strip: DocLayout,
+    /// The cells, [`GRID_GAP`] under the band.
     pub grid: Rect,
+    /// The terminal background between the band and the grid.
+    pub gap: Rect,
     /// The chrome's height: the toolbar and the strip.
     pub band: i32,
 }
@@ -163,11 +168,16 @@ pub fn band_height(theme: &Theme, caption: bool) -> i32 {
     tb + st
 }
 
-/// Where the cells go: the client under the chrome.
+/// Where the first row starts: the chrome's height and the gap under it.
+pub fn grid_top(theme: &Theme, caption: bool) -> i32 {
+    band_height(theme, caption) + GRID_GAP
+}
+
+/// Where the cells go: the client under the chrome and the gap.
 pub fn grid_rect(ctx: &Ctx, caption: bool) -> Rect {
-    let (tb, st) = heights(&ctx.theme, caption);
+    let top = grid_top(&ctx.theme, caption);
     let (w, h) = ctx.size;
-    Rect::new(0, tb + st, w, (h - tb - st).max(0))
+    Rect::new(0, top, w, (h - top).max(0))
 }
 
 pub fn layout(bar: &ToolBar, strip: &TabStrip, caption: bool, ctx: &Ctx) -> Layout {
@@ -186,6 +196,7 @@ pub fn layout(bar: &ToolBar, strip: &TabStrip, caption: bool, ctx: &Ctx) -> Layo
         buttons,
         strip: tabstrip::doc_layout(&ctx.text, px, strip, area, ctx.theme.text),
         grid: grid_rect(ctx, caption),
+        gap: Rect::new(0, tb + st, w, GRID_GAP.min((ctx.size.1 - tb - st).max(0))),
         band: tb + st,
     }
 }
