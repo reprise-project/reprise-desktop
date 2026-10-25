@@ -311,22 +311,21 @@ impl TitleMask {
         if shown <= 0 || r.height <= 0 || r.intersect(&canvas.bounds()).is_empty() {
             return None;
         }
-        let mut scratch = Canvas::with_scale(r.width as u32, r.height as u32, cs);
-        let clip = Rect::new(reach, run.clip.y - top, run.clip.width, run.clip.height);
-        run.text.draw_run(
-            &mut scratch,
-            reach,
-            run.baseline - top,
-            clip,
-            run.title,
-            run.bold,
-            Color::rgb(0xFF, 0xFF, 0xFF),
-            run.size,
-        );
-        // White ink over clear: every inked pixel is opaque and its colour
-        // channels carry the coverage (red read here).
-        let coverage: Vec<u8> = scratch.pixels.iter().map(|&p| (p >> 16) as u8).collect();
+        let scratch = Canvas::with_scale(r.width as u32, r.height as u32, cs);
         let (width, height) = scratch.device_size();
+        let clip = Rect::new(reach, run.clip.y - top, run.clip.width, run.clip.height);
+        let coverage = scratch.ink_coverage(|c, white| {
+            run.text.draw_run(
+                c,
+                reach,
+                run.baseline - top,
+                clip,
+                run.title,
+                run.bold,
+                white,
+                run.size,
+            );
+        });
         let (width, height) = (width as usize, height as usize);
         let d = s * cs;
         let (above, below) = glow.map_or((0, 0), |g| g.rows[m]);
