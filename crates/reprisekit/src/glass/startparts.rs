@@ -2,6 +2,7 @@
 //! Pieces on the panel's glass are fixed layers the glass shows through; the picture frame is glass of its own ([`Glass::at`]);
 //! pieces on the white pane are the same in every colour. Each piece is painted at `d` pixels per design pixel.
 
+use crate::mutex::lock;
 use std::sync::{Mutex, OnceLock};
 
 use super::Settings;
@@ -677,7 +678,7 @@ const BLACK: [(i32, Ink); 1] = [(0, (255.0, 0x000000))];
 pub(super) fn parts(s: &Settings, d: i32) -> Vec<(Part, PartImage)> {
     type Fixed = Vec<(i32, Vec<(Part, PartImage)>)>;
     static FIXED: Mutex<Fixed> = Mutex::new(Vec::new());
-    let mut fixed = FIXED.lock().unwrap_or_else(|e| e.into_inner());
+    let mut fixed = lock(&FIXED);
     let mut parts = match fixed.iter().find(|(k, _)| *k == d) {
         Some((_, p)) => p.clone(),
         None => {

@@ -1,3 +1,4 @@
+use crate::mutex::lock;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -229,7 +230,7 @@ impl Style {
         if close.frame(State::Normal).height / close.scale == side {
             return None;
         }
-        let mut kept = self.sided.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut kept = lock(&self.sided.0);
         if let Some((_, st)) = kept.iter().find(|(k, _)| *k == side) {
             return Some(st.clone());
         }
@@ -248,7 +249,7 @@ impl Style {
     /// own, not built yet. Reads no art, so the host may ask on its loop.
     fn builds_side(&self, side: i32) -> bool {
         self.button_side.is_some() && side != crate::frame::button_side(&self.metrics) && {
-            let kept = self.sided.0.lock().unwrap_or_else(|e| e.into_inner());
+            let kept = lock(&self.sided.0);
             !kept.iter().any(|(k, _)| *k == side)
         }
     }
@@ -257,7 +258,7 @@ impl Style {
         let Some(build) = self.rescale.as_ref().filter(|_| n > 1) else {
             return self.clone();
         };
-        let mut kept = self.rescaled.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut kept = lock(&self.rescaled.0);
         if let Some((_, st)) = kept.iter().find(|(k, _)| *k == n) {
             return st.clone();
         }
@@ -275,7 +276,7 @@ impl Style {
             return None;
         }
         let kept: Vec<Arc<Style>> = {
-            let kept = self.rescaled.0.lock().unwrap_or_else(|e| e.into_inner());
+            let kept = lock(&self.rescaled.0);
             kept.iter().map(|(_, st)| st.clone()).collect()
         };
         let drawn = |part: &Part| {
@@ -356,7 +357,7 @@ impl Style {
 
     /// Drops the styles [`Style::at_scale`] kept for the scales `keep` turns down.
     pub fn keep_scales(&self, keep: impl Fn(i32) -> bool) {
-        let mut kept = self.rescaled.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut kept = lock(&self.rescaled.0);
         kept.retain(|(n, _)| keep(*n));
     }
 
@@ -566,7 +567,7 @@ impl Style {
         parts.iter().fold(self, |st, &part| {
             let group = group.clone();
             st.with_painted(part, move || {
-                let mut painted = group.lock().unwrap_or_else(|e| e.into_inner());
+                let mut painted = lock(&group);
                 painted
                     .remove(&part)
                     .unwrap_or_else(|| panic!("the group's painter yields no {part:?}"))

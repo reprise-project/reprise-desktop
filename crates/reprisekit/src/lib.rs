@@ -59,6 +59,7 @@ pub mod interface;
 pub mod interfaces;
 pub mod look;
 pub mod metrics;
+mod mutex;
 pub mod overview;
 pub mod paint;
 #[cfg(test)]

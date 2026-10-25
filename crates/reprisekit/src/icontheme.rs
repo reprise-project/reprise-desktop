@@ -14,6 +14,7 @@ pub use decode::{MAX_ICON_DIMENSION, canvas_from_rgba, decode, decode_file, png_
 pub use index::{DirEntry, DirKind};
 pub use listing::{LISTING_PX, ListingIcons, ListingSizes, listing_px};
 
+use crate::mutex::lock;
 use crate::themecache::{self, ThemeCache};
 use index::parse_index;
 use std::collections::{HashMap, HashSet};
@@ -115,7 +116,7 @@ impl Home {
         {
             return Listing::Names(list_files(dir));
         }
-        let mut entries = entries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut entries = lock(entries);
         let mut parent = PathBuf::new();
         for part in rel.iter() {
             let names = entries
@@ -151,7 +152,7 @@ impl Home {
         if let Some(i) = cache.dir(rel.to_str()?) {
             return Some(Listing::Cached(i));
         }
-        let mut unchanged = unchanged.lock().unwrap_or_else(|e| e.into_inner());
+        let mut unchanged = lock(unchanged);
         for parent in rel
             .ancestors()
             .skip(1)
@@ -403,7 +404,7 @@ impl IconTheme {
     /// inherited exact one. After the exact sizes comes the closest, but a bigger icon
     /// scaled down beats a smaller one scaled up: upscaled bitmaps blur.
     fn order(&self, size: i32, scale: i32) -> DirOrder {
-        let mut orders = self.orders.lock().unwrap_or_else(|e| e.into_inner());
+        let mut orders = lock(&self.orders);
         let order = orders.entry((size, scale)).or_insert_with(|| {
             let mut all = Vec::with_capacity(self.dirs.len());
             for group in &self.groups {

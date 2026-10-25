@@ -3,6 +3,7 @@
 //! round it. Each bloom is painted once per icon, scale, state and strength and kept here. It sits in
 //! `style` because core cannot reach the looks that paint it.
 
+use crate::mutex::lock;
 use std::sync::{Arc, Mutex};
 
 use crate::raster::Canvas;
@@ -69,7 +70,7 @@ impl StartBloom {
         icon: impl FnOnce() -> Canvas,
     ) -> Arc<Bloom> {
         let key = (key, d, state, strength);
-        let mut kept = self.kept.lock().unwrap_or_else(|e| e.into_inner());
+        let mut kept = lock(&self.kept);
         let entry = match kept.iter().position(|(k, _)| *k == key) {
             Some(i) => kept.remove(i),
             None => {
@@ -86,7 +87,7 @@ impl StartBloom {
 
     /// The state and strength of each kept bloom, of any icon at any scale.
     pub(crate) fn states(&self) -> Vec<(State, u8)> {
-        let kept = self.kept.lock().unwrap_or_else(|e| e.into_inner());
+        let kept = lock(&self.kept);
         (kept.iter())
             .map(|&((_, _, state, strength), _)| (state, strength))
             .collect()
@@ -94,7 +95,7 @@ impl StartBloom {
 
     /// Whether the bloom of `key` at scale `d` in `state` at `strength` is kept.
     pub(crate) fn keeps(&self, key: IconKey, d: i32, state: State, strength: u8) -> bool {
-        let kept = self.kept.lock().unwrap_or_else(|e| e.into_inner());
+        let kept = lock(&self.kept);
         kept.iter().any(|(k, _)| *k == (key, d, state, strength))
     }
 }

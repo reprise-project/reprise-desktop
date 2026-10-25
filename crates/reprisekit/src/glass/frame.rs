@@ -23,6 +23,7 @@
 //!
 //! [`DENSE_CEILING`]: super::panel::DENSE_CEILING
 
+use crate::mutex::lock;
 use std::ops::Range;
 use std::sync::Mutex;
 
@@ -550,7 +551,7 @@ pub fn client_glass_edges(s: &Settings) -> impl Fn(&mut Canvas, Rect, i32, State
         let (o, fade) = (CLIENT_EDGES * d, (EDGE_FADE * f64::from(d)) as i32);
         let left = -o..fade.min(band.width);
         let right = (band.width - fade).max(fade)..band.width + o;
-        let mut kept = kept.lock().unwrap_or_else(|e| e.into_inner());
+        let mut kept = lock(&kept);
         let at = match kept.iter().position(|(k, _)| *k == key) {
             Some(i) => i,
             None => {
