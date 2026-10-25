@@ -41,8 +41,8 @@ pub struct Wallpaper {
     loading: Option<Cut>,
     /// A built-in and its pictures, one per output device size.
     builtin: Option<(Builtin, Drawn)>,
-    /// Built-in pictures made ready for the scene on the drawing thread; every output of a
-    /// picture's size shows it, and a refit drops the ones it showed.
+    /// Built-in pictures made ready for the scene on the drawing thread, one per size an output
+    /// shows; every refit of that size shows it again.
     staged: Vec<Staged>,
     nodes: Vec<(Output, WallpaperNode)>,
     /// The picture this one replaces, still on screen under it until this
@@ -268,7 +268,7 @@ impl WallpaperNode {
     }
 }
 
-/// The staged picture of `size`, left for the other outputs of that size.
+/// The staged picture of `size`, kept for the other outputs and later refits of that size.
 fn staged_of(staged: &[Staged], size: (u32, u32)) -> Option<Staged> {
     staged.iter().find(|p| staged_size(p) == size).cloned()
 }
@@ -679,7 +679,6 @@ impl State {
         let mut changed = false;
         let mut fade_in = false;
         let mut compose = Vec::new();
-        let mut taken = Vec::new();
         for (out, b, scale, size) in shown {
             let (source, opaque) = match &w.builtin {
                 _ if !ready => (None, None),
@@ -758,11 +757,7 @@ impl State {
                 scale as f32,
                 opaque,
             );
-            let staged = staged_of(&w.staged, size);
-            if staged.is_some() {
-                taken.push(size);
-            }
-            let texture = match staged {
+            let texture = match staged_of(&w.staged, size) {
                 // Borrowed: the picture is shown as drawn, so what was staged is the canvas.
                 Some(p) if matches!(canvas, Cow::Borrowed(_)) => {
                     let renderer = self.backend.as_mut().map(|b| &mut b.renderer);
@@ -778,7 +773,6 @@ impl State {
             let out = w.nodes[i].0.clone();
             self.water_wallpaper(&out, Pane::Desktop, &canvas, texture, fresh);
         }
-        w.staged.retain(|p| !taken.contains(&staged_size(p)));
         let compose: Vec<_> = (compose.into_iter())
             .map(|(i, fit, size, image, fading_in)| {
                 (w.nodes[i].0.clone(), fit, size, image, fading_in)
@@ -986,6 +980,44 @@ mod tests {
             );
         }
         assert!(staged_of(&staged, (1280, 1024)).is_none());
+    }
+
+    #[test]
+    fn a_built_in_refit_at_a_new_background_shows_its_staged_picture_again() {
+        let mut h = crate::harness::Harness::new();
+        h.output("A-1", 320, 200);
+        h.state.set_wallpaper(Some(Path::new("reprise:tarn/blue")));
+        let staged = |h: &crate::harness::Harness| {
+            let w = h.state.wallpaper.as_ref().expect("a wallpaper");
+            (
+                w.staged.iter().map(staged_size).collect::<Vec<_>>(),
+                w.nodes.len(),
+            )
+        };
+        for _ in 0..200 {
+            if staged(&h).1 == 1 {
+                break;
+            }
+            h.run_for(10);
+        }
+        assert_eq!(
+            staged(&h),
+            (vec![(320, 200)], 1),
+            "the landed picture shows and stays staged"
+        );
+        h.state.config.theme.colors.background = Color::rgb(32, 64, 96);
+        h.state.refit_wallpaper();
+        let w = h.state.wallpaper.as_ref().expect("a wallpaper");
+        let node = &w.nodes[0].1;
+        assert!(
+            node.fit.is_some_and(|f| f.bg == Color::rgb(32, 64, 96)),
+            "the refit shows the new background's fit"
+        );
+        assert_eq!(
+            staged(&h).0,
+            vec![(320, 200)],
+            "the staged picture is kept for the next refit"
+        );
     }
 
     #[test]
