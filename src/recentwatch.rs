@@ -8,18 +8,8 @@ use crate::menuview::MenuKind;
 use crate::taskbar::JumpRow;
 use inotify::WatchMask;
 use smithay::reexports::calloop::{Interest, Mode, PostAction, generic::Generic};
-use std::os::fd::{AsFd, BorrowedFd};
+use std::os::fd::BorrowedFd;
 use std::path::{Path, PathBuf};
-
-struct Watch(DirWatch);
-
-impl AsFd for Watch {
-    fn as_fd(&self) -> BorrowedFd<'_> {
-        // SAFETY: the fd is the watch's inotify fd, open for as long as the
-        // watch, which outlives the borrow.
-        unsafe { BorrowedFd::borrow_raw(self.0.fd()) }
-    }
-}
 
 /// The file's directory, waking only for the file: GLib and KDE replace the xbel by a rename.
 fn wants(file: &Path) -> Vec<Want> {
@@ -61,7 +51,7 @@ fn document_wants(user_dirs: &Path, dirs: &[PathBuf]) -> Vec<Want> {
 
 pub fn setup(state: &mut State) {
     if let Some(xbel) = reprisefs::recent::xbel_path() {
-        watch(state, "recent files", wants(&xbel), State::read_recent);
+        watch_xbel(state, xbel);
     }
     let watch = match DirWatch::new() {
         Ok(w) => w,
@@ -171,32 +161,50 @@ fn file_wants(files: &[PathBuf]) -> Vec<Want> {
         .collect()
 }
 
-/// Runs `hit` on the loop whenever an event `want` asks for arrives.
-fn watch(state: &mut State, what: &str, want: Vec<Want>, hit: fn(&mut State)) {
-    let mut watch = match DirWatch::new() {
+/// Reads the recent files again whenever the xbel at `xbel` is replaced.
+fn watch_xbel(state: &mut State, xbel: PathBuf) {
+    let watch = match DirWatch::new() {
         Ok(w) => w,
-        Err(e) => {
-            log::warn!("{what} watch: inotify unavailable: {e}");
-            return;
-        }
+        Err(e) => return log::warn!("recent files watch: inotify unavailable: {e}"),
     };
-    watch.sync(&want);
-    let source = Generic::new(Watch(watch), Interest::READ, Mode::Level);
-    let added = state.handle.insert_source(source, move |_, watch, state| {
-        // SAFETY: the watch is not dropped here, only drained and
-        // resynced; the source keeps its fd registered for the watch's
-        // life.
-        let watch = unsafe { &mut watch.get_mut().0 };
-        let changed = watch.drain();
-        watch.sync(&want);
-        if changed {
-            hit(state);
-        }
+    // SAFETY: the fd is the watch's inotify fd, open for this call.
+    let fd = match unsafe { BorrowedFd::borrow_raw(watch.fd()) }.try_clone_to_owned() {
+        Ok(fd) => fd,
+        Err(e) => return log::warn!("recent files watch: no fd: {e}"),
+    };
+    let source = Generic::new(fd, Interest::READ, Mode::Level);
+    let file = xbel.clone();
+    let added = state.handle.insert_source(source, move |_, _, state| {
+        state.recent.xbel_watch.drain();
+        sync_xbel(state, file.clone());
         Ok(PostAction::Continue)
     });
     if let Err(e) = added {
-        log::warn!("{what} watch: {}", e.error);
+        return log::warn!("recent files watch: {}", e.error);
     }
+    state.recent.xbel_watch.watch = Some(watch);
+    sync_xbel(state, xbel);
+}
+
+/// Watches the xbel's folder again on a file job (it may sit on a mount that stopped
+/// answering), then reads the recent files when an event came.
+fn sync_xbel(state: &mut State, xbel: PathBuf) {
+    let Some(job) = state.recent.xbel_watch.start() else {
+        return;
+    };
+    let hit = job.hit;
+    state.spawn_fs_job(move || {
+        let want = wants(&xbel);
+        let added = job.adder.run(&want);
+        Box::new(move |state: &mut State| {
+            if state.recent.xbel_watch.landed(&want, added) {
+                sync_xbel(state, xbel);
+            }
+            if hit {
+                state.read_recent();
+            }
+        })
+    });
 }
 
 #[cfg(test)]

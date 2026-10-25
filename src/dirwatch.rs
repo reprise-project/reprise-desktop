@@ -1,5 +1,5 @@
 //! A set of inotify watches on directories that may come and go; a watch whose directory is deleted or moved away
-//! is dropped and the next [`DirWatch::sync`] adds it again.
+//! is dropped and the next sync ([`DirWatch::plan`], then [`DirWatch::adopt`]) adds it again.
 
 use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask, Watches};
 use std::ffi::OsString;
@@ -94,6 +94,65 @@ impl Adds {
     }
 }
 
+/// A [`DirWatch`] synced on file jobs, one sync out at a time: the job works out the want and
+/// runs an [`Adder`], the loop takes what it added.
+#[derive(Default)]
+pub struct JobWatch {
+    pub watch: Option<DirWatch>,
+    syncing: bool,
+    again: bool,
+    /// An event counted since the last sync started.
+    hit: bool,
+}
+
+/// A sync's job: its adder, and whether an event counted before it started.
+pub struct JobSync {
+    pub adder: Adder,
+    pub hit: bool,
+}
+
+impl JobWatch {
+    /// [`DirWatch::drain`], remembered for the next sync.
+    pub fn drain(&mut self) -> bool {
+        let hit = self.watch.as_mut().is_some_and(DirWatch::drain);
+        self.hit |= hit;
+        hit
+    }
+
+    /// The next sync's job; None while one is out, and the next [`JobWatch::landed`] then asks
+    /// for another.
+    pub fn start(&mut self) -> Option<JobSync> {
+        let adder = self.watch.as_ref()?.adder();
+        if self.syncing {
+            self.again = true;
+            return None;
+        }
+        self.syncing = true;
+        let hit = std::mem::take(&mut self.hit);
+        Some(JobSync { adder, hit })
+    }
+
+    pub fn syncing(&self) -> bool {
+        self.syncing
+    }
+
+    /// Takes the watches a sync's job added for `want`. True when another sync was asked for
+    /// meanwhile.
+    pub fn landed(&mut self, want: &[Want], added: Added) -> bool {
+        self.syncing = false;
+        if let Some(w) = self.watch.as_mut() {
+            w.plan(want);
+            w.adopt(added);
+        }
+        std::mem::take(&mut self.again)
+    }
+
+    /// Whether the sync a [`JobWatch::landed`] asked for will report an event.
+    pub fn hit_pending(&self) -> bool {
+        self.hit
+    }
+}
+
 impl DirWatch {
     pub fn new() -> io::Result<DirWatch> {
         Ok(DirWatch {
@@ -112,13 +171,14 @@ impl DirWatch {
     /// and is not watched yet or for less than its mask. Wants naming the same path are merged;
     /// two paths naming one directory share its watch. `DELETE_SELF | MOVE_SELF` is added to
     /// each mask so the watch notices its directory leaving.
+    #[cfg(test)]
     pub fn sync(&mut self, want: &[Want]) {
         let adds = self.plan(want);
         let added = adds.run();
         self.adopt(added);
     }
 
-    /// [`DirWatch::sync`] without looking up a path: drops and updates the watches, and returns
+    /// A sync without looking up a path: drops and updates the watches, and returns
     /// the directories still to watch or to watch for a wider mask, for [`Adds::run`] on a thread (a directory on a mount
     /// that stopped answering blocks it) and [`DirWatch::adopt`] after.
     pub fn plan(&mut self, want: &[Want]) -> Adds {
@@ -484,6 +544,35 @@ mod tests {
             "a second add of Music lands on the same watch"
         );
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_job_watch_starts_one_sync_at_a_time_and_one_asked_meanwhile_follows() {
+        let dir = std::env::temp_dir().join(format!("reprise-dirwatch-job-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let want = [Want {
+            dir: dir.clone(),
+            mask: WatchMask::CREATE,
+            only: Vec::new(),
+        }];
+        let mut j = JobWatch::default();
+        assert!(j.start().is_none(), "no watch: no sync");
+        j.watch = Some(DirWatch::new().unwrap());
+        let first = j.start().expect("a sync starts");
+        assert!(!first.hit);
+        assert!(j.start().is_none(), "one sync out at a time");
+        let added = first.adder.run(&want);
+        assert!(j.landed(&want, added), "the one asked meanwhile follows");
+        std::fs::write(dir.join("a"), "").unwrap();
+        assert!(j.drain(), "the directory is watched");
+        let next = j.start().expect("the next sync starts");
+        assert!(next.hit, "it reports the event");
+        assert!(
+            !j.landed(&want, next.adder.run(&want)),
+            "nothing asked meanwhile"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
