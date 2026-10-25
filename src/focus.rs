@@ -186,7 +186,10 @@ impl State {
             });
         let reprise = self.dialogs.active || self.bar_shared.keys.is_some();
         let holder = mapfocus::holder(reprise, window);
-        let takes = mapfocus::takes_focus(&new, holder);
+        let takes = mapfocus::takes_focus(&new, holder)
+            || holder
+                .and_then(|h| h.pid)
+                .is_some_and(|f| mapfocus::serves(&lineage, f));
         if !takes {
             log::info!(
                 "window {w:?} ({:?}, pid {new_pid:?}) maps behind the focused one",
