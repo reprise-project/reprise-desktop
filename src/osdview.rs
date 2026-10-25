@@ -214,7 +214,7 @@ impl State {
         if restart_timer || self.osd.timer.is_none() {
             self.restart_osd_timer();
         }
-        self.redraw_all();
+        self.redraw_nodes(Vec::new(), &[tree.into()]);
         true
     }
 
@@ -240,20 +240,17 @@ impl State {
             self.handle.remove(t);
         }
         self.osd.showing = None;
-        if self.drop_panel() {
-            self.redraw_all();
-        }
+        self.drop_panel();
     }
 
-    /// Take the panel off the scene, leaving the timer; whether there was one.
-    fn drop_panel(&mut self) -> bool {
+    /// Take the panel off the scene, leaving the timer.
+    fn drop_panel(&mut self) {
         let Some(mut p) = self.osd.panel.take() else {
-            return false;
+            return;
         };
         p.backdrop
             .set(&mut self.scene, &self.glass, p.glass_tree, None);
-        self.scene.destroy(p.tree);
-        true
+        self.destroy_redrawn(p.tree);
     }
 }
 

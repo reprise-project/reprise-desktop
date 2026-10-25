@@ -103,8 +103,7 @@ pub fn close(state: &mut State) {
     let Some(v) = state.notify.center.take() else {
         return;
     };
-    state.scene.destroy(v.tree);
-    state.redraw_all();
+    state.destroy_redrawn(v.tree);
     crate::autohideview::poke(state);
     crate::access::touch(state);
 }
@@ -147,6 +146,8 @@ fn redraw(state: &mut State) {
     let Some(v) = state.notify.center.as_ref() else {
         return;
     };
+    let tree = v.tree;
+    let was = state.scene.outputs_of(tree);
     let theme = state.config.theme.scaled(v.scale);
     let canvas = notifyhistory::draw(&theme, state.text.for_output(theme.scale), &v.model);
     let cm = state.config.theme.look.controls();
@@ -159,7 +160,7 @@ fn redraw(state: &mut State) {
     upload_scaled(scene, v.buffer, &canvas, v.scale);
     glass::place_flyout(scene, v.buffer, &state.config.theme, size);
     v.glass.set(scene, &state.glass, v.glass_tree, pane);
-    state.redraw_all();
+    state.redraw_nodes(was, &[tree.into()]);
     crate::access::touch(state);
 }
 

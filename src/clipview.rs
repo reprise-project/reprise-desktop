@@ -128,9 +128,8 @@ impl State {
         let Some(v) = self.panels.clipview.take() else {
             return;
         };
-        self.scene.destroy(v.tree);
+        self.destroy_redrawn(v.tree);
         self.end_panel_caret();
-        self.redraw_all();
         crate::access::touch(self);
     }
 
@@ -291,6 +290,9 @@ impl State {
     }
 
     pub fn redraw_clipview(&mut self) {
+        let was = (self.panels.clipview.as_ref())
+            .map(|v| self.scene.outputs_of(v.tree))
+            .unwrap_or_default();
         let preedit = self.ime_field_preedit(crate::caret::Editor::ClipView);
         let State {
             panels,
@@ -324,7 +326,9 @@ impl State {
         let (origin, scale) = ((v.origin.0 - m.left, v.origin.1 - m.top), v.scale);
         let spot = canvas.take_spot();
         self.ime_field_drawn(crate::caret::Editor::ClipView, spot, origin, scale);
-        self.redraw_all();
+        if let Some(tree) = self.panels.clipview.as_ref().map(|v| v.tree) {
+            self.redraw_nodes(was, &[tree.into()]);
+        }
         crate::access::touch(self);
     }
 

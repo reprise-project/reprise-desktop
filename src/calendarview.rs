@@ -231,8 +231,7 @@ pub fn close(state: &mut State) {
     if let Some(t) = v.tick {
         state.handle.remove(t);
     }
-    state.scene.destroy(v.tree);
-    state.redraw_all();
+    state.destroy_redrawn(v.tree);
     crate::access::touch(state);
     crate::autohideview::poke(state);
 }
@@ -278,6 +277,8 @@ fn redraw(state: &mut State) {
     let Some(v) = state.calendar.view.as_ref() else {
         return;
     };
+    let tree = v.tree;
+    let was = state.scene.outputs_of(tree);
     let scale = state.draw_scale_at(Some(&v.output)).max(1);
     let theme = state.config.theme.scaled(scale);
     let base =
@@ -296,7 +297,7 @@ fn redraw(state: &mut State) {
     v.drawn = Some(Drawn { shown, base, scale });
     glass::place_flyout(scene, v.buffer, &state.config.theme, size);
     v.glass.set(scene, &state.glass, v.glass_tree, pane);
-    state.redraw_all();
+    state.redraw_nodes(was, &[tree.into()]);
     crate::access::touch(state);
 }
 

@@ -106,14 +106,13 @@ impl State {
         v.search.stop(&self.handle);
         v.backdrop
             .set(&mut self.scene, &self.glass, v.glass_tree, None);
-        self.scene.destroy(v.tree);
+        self.destroy_redrawn(v.tree);
         // A dialog's field under it gets the blink back.
         if self.editor().is_some() {
             self.restart_caret();
         } else {
             self.stop_caret();
         }
-        self.redraw_all();
         crate::access::touch(self);
     }
 
@@ -450,6 +449,8 @@ impl State {
         let Some(v) = self.launcher.as_ref() else {
             return;
         };
+        let tree = v.tree;
+        let was = self.scene.outputs_of(tree);
         let lay = launcher::layout(&v.model, &self.config.theme);
         let at = panel_origin(v.area, (lay.width, lay.height));
         let out = self.output_at(
@@ -534,7 +535,7 @@ impl State {
         let spot = canvas.take_spot();
         let origin = (at.0 - m.left, at.1 - m.top);
         self.ime_field_drawn(crate::caret::Editor::Launcher, spot, origin, scale);
-        self.redraw_all();
+        self.redraw_nodes(was, &[tree.into()]);
         crate::access::touch(self);
     }
 
@@ -608,5 +609,28 @@ mod tests {
         );
         let small = Rect::new(10, 20, 300, 100);
         assert_eq!(panel_origin(small, (420, 400)), (10, 20));
+    }
+
+    #[test]
+    fn the_launcher_asks_for_frames_only_on_its_output() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.output("TEST-2", 1024, 768);
+        h.pointer_to(500.0, 400.0);
+        h.state.toggle_launcher();
+        assert!(h.state.launcher.is_some());
+        for step in ["redraw", "close"] {
+            crate::backend::take_asks();
+            match step {
+                "redraw" => h.state.redraw_launcher(),
+                _ => h.state.close_launcher(),
+            }
+            let asked = crate::backend::take_asks();
+            assert!(!asked.is_empty(), "{step}: the launcher asks for a frame");
+            assert!(
+                asked.iter().all(|(o, _)| o == "TEST-1"),
+                "{step}: only TEST-1, the launcher's output: {asked:?}"
+            );
+        }
     }
 }

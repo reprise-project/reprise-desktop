@@ -178,8 +178,7 @@ pub fn hide(state: &mut State) {
     for id in p.thumbs.into_iter().flatten() {
         state.thumb_drop(id);
     }
-    state.scene.destroy(p.tree);
-    state.redraw_all();
+    state.destroy_redrawn(p.tree);
     crate::access::touch(state);
     crate::autohideview::poke(state);
 }
@@ -315,7 +314,8 @@ fn redraw(state: &mut State) {
     let theme = state.config.theme.scaled(scale);
     let windows = p.windows.clone();
     let has_thumb: Vec<bool> = p.thumbs.iter().map(Option::is_some).collect();
-    let (layout, hot, buffer) = (p.layout.scaled(scale), p.hot, p.buffer);
+    let (layout, hot, buffer, tree) = (p.layout.scaled(scale), p.hot, p.buffer, p.tree);
+    let was = state.scene.outputs_of(tree);
     let mut titles = Vec::new();
     let mut app_ids = Vec::new();
     let mut active = Vec::new();
@@ -365,7 +365,7 @@ fn redraw(state: &mut State) {
         hot,
     );
     upload_scaled(&mut state.scene, buffer, &canvas, scale);
-    state.redraw_all();
+    state.redraw_nodes(was, &[tree.into()]);
     crate::access::touch(state);
 }
 
