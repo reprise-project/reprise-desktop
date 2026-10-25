@@ -84,11 +84,7 @@ pub fn decode_named_at(
     sizes
         .iter()
         .filter_map(|&px| icons.get_with_extra(name, px, extra))
-        .map(|c| IconSource {
-            width: c.width,
-            height: c.height,
-            pixels: c.pixels,
-        })
+        .map(IconSource::from)
         .collect()
 }
 
