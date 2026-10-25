@@ -285,6 +285,10 @@ pub struct State {
     pub launches: crate::launches::Launches,
     /// Keeps `app_index` current as programs come and go (`appindex`).
     pub apps_watch: crate::appindex::AppIndexWatch,
+    /// Reloads `config.toml` when it changes (`configwatch`).
+    pub config_watch: crate::dirwatch::JobWatch,
+    /// Reads the Quick Launch folder again when it changes (`quickwatch`).
+    pub quick_watch: crate::dirwatch::JobWatch,
     pub start_text: TextRenderer,
     pub start_panel_text: TextRenderer,
     pub quicklaunch: Vec<QuickItem>,
@@ -639,6 +643,8 @@ impl State {
                 recent: persisted.launches.clone(),
             },
             apps_watch: Default::default(),
+            config_watch: Default::default(),
+            quick_watch: Default::default(),
             icon_watch: Default::default(),
             start_text,
             start_panel_text,
