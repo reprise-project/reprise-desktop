@@ -2,7 +2,7 @@ use super::{ClickKind, TrayCommand, send};
 use crate::compositor::State;
 use crate::menuview::{MenuFrom, MenuKind};
 use crate::raster::Rect;
-use crate::startmenu::{MenuItem, MenuLayout, MenuStyle, place_submenu, submenu_max_rows};
+use crate::startmenu::{MenuItem, MenuStyle, place_submenu};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuNode {
@@ -162,7 +162,12 @@ pub(super) fn open_layout(state: &mut State, id: String, parent: i32, nodes: Vec
             return;
         }
         let usable = state.usable_area(Some(&output));
-        let layout = layout_for(state, &items, usable);
+        let layout = MenuStyle::context_for(&state.config.theme, &items).layout_in(
+            &state.config.theme,
+            &state.text,
+            &items,
+            usable,
+        );
         let (x, y) = crate::barplace::bar_popup(
             &state.bar_placement(&output),
             icon,
@@ -212,7 +217,12 @@ pub(super) fn open_layout(state: &mut State, id: String, parent: i32, nodes: Vec
     );
     let output = parent_menu.output.clone();
     let usable = state.usable_area(Some(&output));
-    let layout = layout_for(state, &items, usable);
+    let layout = MenuStyle::context_for(&state.config.theme, &items).layout_in(
+        &state.config.theme,
+        &state.text,
+        &items,
+        usable,
+    );
     let (x, y) = place_submenu(parent_rect, row_rect, (layout.width, layout.height), usable);
     state.close_menus_above(depth);
     state.push_menu(
@@ -239,18 +249,6 @@ pub(super) fn menu_open_for(state: &State, id: &str) -> bool {
         state.menus.first().map(|m| &m.kind),
         Some(MenuKind::Tray { id: open, .. }) if *open == id
     )
-}
-
-/// A tray menu of `items` fitted to `usable`.
-fn layout_for(state: &State, items: &[MenuItem], usable: Rect) -> MenuLayout {
-    let m = &state.config.theme.metrics;
-    let style = MenuStyle::context_for(&state.config.theme, items).fit(
-        &state.text,
-        items,
-        state.config.theme.fonts.size_px,
-        usable.width,
-    );
-    MenuLayout::compute_styled(&style, items, submenu_max_rows(m, usable.height))
 }
 
 pub fn menu_hover(state: &mut State, depth: usize, idx: Option<usize>) {

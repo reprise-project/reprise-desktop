@@ -17,7 +17,7 @@ use crate::config::{NightLightConfig, NightSchedule};
 use crate::gammacontrol::{GammaControlHandler, GammaControlState};
 use crate::menuview::{MenuFrom, MenuKind};
 use crate::raster::Rect;
-use crate::startmenu::{MenuItem, MenuLayout, MenuStyle, submenu_max_rows};
+use crate::startmenu::{MenuItem, MenuStyle};
 use schedule::{LocalClock, Plan};
 
 pub use color::NEUTRAL;
@@ -410,14 +410,12 @@ pub fn open_menu(state: &mut State, output: &Output, cell: Rect) {
         )
     };
     let usable = state.usable_area(Some(output));
-    let m = &state.config.theme.metrics;
-    let style = MenuStyle::context_for(&state.config.theme, &items).fit(
+    let layout = MenuStyle::context_for(&state.config.theme, &items).layout_in(
+        &state.config.theme,
         &state.text,
         &items,
-        state.config.theme.fonts.size_px,
-        usable.width,
+        usable,
     );
-    let layout = MenuLayout::compute_styled(&style, &items, submenu_max_rows(m, usable.height));
     let (x, y) = crate::barplace::bar_popup(
         &state.bar_placement(output),
         cell,
