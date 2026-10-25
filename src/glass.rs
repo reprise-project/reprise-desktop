@@ -9,6 +9,7 @@ mod tests;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::rc::{Rc, Weak};
 
 use reprisefx::{Glass, GlassFrame, GlassFx, Lens, Picture, Quality, Shape, Source, Update};
@@ -239,6 +240,8 @@ impl Under {
 pub struct Pass {
     pub settings: Settings,
     pub output: Size<i32, Physical>,
+    /// The output's name, hashed: glass keeps its damage per output ([`GlassFrame::screen`]).
+    pub screen: u64,
     pub quality: Quality,
     pub hold: Hold,
 }
@@ -295,9 +298,12 @@ impl GlassCtx {
             .current_mode()
             .map(|m| output.current_transform().transform_size(m.size))
             .unwrap_or_default();
+        let mut screen = std::hash::DefaultHasher::new();
+        output.name().hash(&mut screen);
         self.pass.set(Pass {
             settings,
             output: size,
+            screen: screen.finish(),
             quality,
             hold,
         });
@@ -1290,6 +1296,7 @@ impl CustomNode<GlesRenderer> for GlassNode {
                 settings: &pass.settings,
                 surface: Some(self.surface.get()),
                 output: pass.output,
+                screen: pass.screen,
                 scale: scale.x,
                 alpha,
                 quality: pass.quality,
