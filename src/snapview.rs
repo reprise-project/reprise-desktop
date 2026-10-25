@@ -165,7 +165,8 @@ impl State {
         self.hide_snap_outline();
         self.wm.snap.tree = self.outline_tree(r, reprisekit::classic::snapframe::BAND);
         self.wm.snap.shown = Some(r);
-        self.redraw_all();
+        let nodes: Vec<_> = self.wm.snap.tree.into_iter().map(Into::into).collect();
+        self.redraw_nodes(Vec::new(), &nodes);
     }
 
     /// A tree on the overlay layer at `r` holding the outline `band` px wide, or the selection
@@ -203,8 +204,7 @@ impl State {
 
     pub fn hide_snap_outline(&mut self) {
         if let Some(tree) = self.wm.snap.tree.take() {
-            self.scene.destroy(tree);
-            self.redraw_all();
+            self.destroy_redrawn(tree);
         }
         self.wm.snap.shown = None;
     }
