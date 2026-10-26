@@ -918,3 +918,142 @@ fn a_window_flickering_between_null_and_real_buffers_keeps_its_frame_and_writes_
     h.state.save_remembered();
     assert_eq!(queued(), before + 1, "one write for all twenty");
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shown {
+    Normal,
+    Maximized,
+    Fullscreen,
+    Snapped,
+    Minimized,
+}
+
+const SHOWN: [Shown; 5] = [
+    Shown::Normal,
+    Shown::Maximized,
+    Shown::Fullscreen,
+    Shown::Snapped,
+    Shown::Minimized,
+];
+
+/// Drive `w` into `to` the way the compositor does; Normal leaves `from`.
+fn drive(h: &mut crate::harness::Harness, w: super::WindowId, from: Shown, to: Shown) {
+    let s = &mut h.state;
+    match (from, to) {
+        (Shown::Normal, Shown::Normal) => {}
+        (Shown::Maximized, Shown::Normal) => s.set_maximized(w, false),
+        (Shown::Fullscreen, Shown::Normal) => s.set_fullscreen(w, false),
+        (Shown::Minimized, Shown::Normal) => s.set_minimized(w, false),
+        (Shown::Snapped, Shown::Normal) => s.key_snap(crate::snap::Dir::Down),
+        (_, Shown::Maximized) => s.set_maximized(w, true),
+        (_, Shown::Fullscreen) => s.set_fullscreen(w, true),
+        (_, Shown::Minimized) => s.set_minimized(w, true),
+        (_, Shown::Snapped) => {
+            let a = s.usable_area_for_window(w);
+            let half = crate::raster::Rect::new(a.x, a.y, a.width / 2, a.height);
+            s.snap_to_zone(w, half);
+        }
+    }
+}
+
+fn shows(win: &super::Window, s: Shown) -> bool {
+    match s {
+        Shown::Normal => {
+            !win.maximized && !win.fullscreen && !win.minimized && win.snapped.is_none()
+        }
+        Shown::Maximized => win.maximized,
+        Shown::Fullscreen => win.fullscreen,
+        Shown::Snapped => win.snapped.is_some(),
+        Shown::Minimized => win.minimized,
+    }
+}
+
+/// What disagrees among `w`'s state fields, its frame, the scene, the focus and the client's
+/// pending xdg state.
+fn state_faults(h: &crate::harness::Harness, w: super::WindowId) -> Vec<&'static str> {
+    use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as Xdg;
+    let s = &h.state;
+    let win = s.win(w).unwrap();
+    let (max, full) = win.xdg().unwrap().with_pending_state(|p| {
+        (
+            p.states.contains(Xdg::Maximized),
+            p.states.contains(Xdg::Fullscreen),
+        )
+    });
+    let frame = win.frame_rect();
+    [
+        (
+            win.fullscreen && win.snapped.is_some(),
+            "a fullscreen window is not snapped",
+        ),
+        (
+            win.maximized != win.saved.is_some(),
+            "a maximized window, and only it, keeps a frame to restore",
+        ),
+        (
+            (win.fullscreen && !win.maximized) != win.saved_fullscreen.is_some(),
+            "a fullscreen window over a normal one, and only it, keeps that frame",
+        ),
+        (max != win.maximized, "the client hears maximized as it is"),
+        (
+            full != win.fullscreen,
+            "the client hears fullscreen as it is",
+        ),
+        (
+            win.minimized == s.scene.enabled(win.tree),
+            "only a minimized window is hidden",
+        ),
+        (
+            win.minimized && s.focused == Some(w),
+            "a minimized window has no focus",
+        ),
+        (
+            win.fullscreen && frame != s.output_box_for_window(w),
+            "a fullscreen frame fills its output",
+        ),
+        (
+            win.maximized && !win.fullscreen && frame != s.usable_area_for_window(w),
+            "a maximized frame fills the usable area",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(broken, rule)| broken.then_some(rule))
+    .collect()
+}
+
+#[test]
+fn every_pair_of_window_states_keeps_the_state_invariants() {
+    for from in SHOWN {
+        for to in SHOWN {
+            let mut h = crate::harness::Harness::new();
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+            h.state.move_to(t.id, 200, 150);
+            h.roundtrip(&mut c);
+            let normal = h.state.win(t.id).unwrap().frame_rect();
+            for (a, b) in [(Shown::Normal, from), (from, to)] {
+                drive(&mut h, t.id, a, b);
+                h.roundtrip(&mut c);
+                let faults = state_faults(&h, t.id);
+                assert!(
+                    faults.is_empty(),
+                    "{from:?} -> {to:?}, at {b:?}: {faults:?}"
+                );
+            }
+            let win = h.state.win(t.id).unwrap();
+            // Fullscreen owns the geometry: it refuses a maximize and a snap until it ends.
+            let refused =
+                from == Shown::Fullscreen && matches!(to, Shown::Maximized | Shown::Snapped);
+            let want = if refused { from } else { to };
+            assert!(shows(win, want), "{from:?} -> {to:?} shows {want:?}");
+            if to == Shown::Normal {
+                assert_eq!(
+                    win.frame_rect(),
+                    normal,
+                    "{from:?} -> Normal restores the frame"
+                );
+            }
+        }
+    }
+}
