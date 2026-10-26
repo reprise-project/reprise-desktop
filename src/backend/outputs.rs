@@ -8,13 +8,13 @@ use std::{
 use smithay::{
     backend::{
         allocator::Modifier,
-        drm::{DrmDevice, VrrSupport},
+        drm::{DrmDevice, DrmNode, VrrSupport},
         session::Session,
     },
     output::{Mode as WlMode, Output, PhysicalProperties},
     reexports::{
         calloop::timer::{TimeoutAction, Timer},
-        drm::control::{ModeTypeFlags, connector, crtc},
+        drm::control::{ModeTypeFlags, connector},
     },
 };
 use smithay_drm_extras::{display_info, drm_scanner::DrmScanEvent};
@@ -25,11 +25,11 @@ use super::gamma::{find_gamma, flush_gamma, read_lut};
 use super::render::send_job;
 use super::steps::{gated, watch};
 use super::{
-    Backend, COLOR_FORMATS, Compositor, Hw, Kms, OutputCrtc, Parked, Scanout, Surface, Work,
-    commit, crtc_of, lock, schedule, surface_of,
+    Backend, COLOR_FORMATS, Compositor, Head, Hw, Kms, OutputHead, Parked, Scanout, Surface, Work,
+    commit, head_of, lock, schedule, surface_of,
 };
 
-pub struct Head {
+pub struct HeadState {
     pub output: Output,
     pub enabled: bool,
     pub modes: Vec<ModeInfo>,
@@ -49,17 +49,21 @@ pub(super) fn asks_scan(hotplug: Option<&OsStr>) -> bool {
 /// now.
 pub(super) fn scan_connectors(
     state: &mut State,
+    node: DrmNode,
     probed: &HashMap<connector::Handle, connector::Info>,
 ) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
     gated(b, "connector scan");
+    let Some(d) = b.devices.get_mut(node) else {
+        return;
+    };
     let dev = Probed {
-        drm: &b.drm,
+        drm: &d.drm,
         infos: probed,
     };
-    let events = match b.scanner.scan_connectors(&dev) {
+    let events = match d.scanner.scan_connectors(&dev) {
         Ok(events) => events,
         Err(e) => {
             log::warn!("connector scan: {e}");
@@ -73,15 +77,15 @@ pub(super) fn scan_connectors(
             DrmScanEvent::Disconnected { connector, crtc } => (Scan::Disconnected, connector, crtc),
         };
         match crtc {
-            Some(crtc) => apply_scan(state, scan, connector, crtc),
+            Some(crtc) => apply_scan(state, scan, connector, Head { node, crtc }),
             None if scan == Scan::Connected => {
                 log::warn!("{}: no free CRTC", connector_name(&connector));
             }
             None => {}
         }
     }
-    for (connector, crtc) in unheld(state) {
-        apply_scan(state, Scan::Connected, connector, crtc);
+    for (connector, head) in unheld(state, node) {
+        apply_scan(state, Scan::Connected, connector, head);
     }
 }
 
@@ -120,41 +124,45 @@ pub(super) fn scan_action(driven: bool, parked: bool, scan: Scan, modes: bool) -
     }
 }
 
-fn apply_scan(state: &mut State, scan: Scan, connector: connector::Info, crtc: crtc::Handle) {
+fn apply_scan(state: &mut State, scan: Scan, connector: connector::Info, head: Head) {
     let Some(b) = state.backend.as_ref() else {
         return;
     };
-    let driven = b.surfaces.contains_key(&crtc);
-    let parked = b.parked.contains_key(&crtc);
+    let driven = b.surfaces.contains_key(&head);
+    let parked = b.parked.contains_key(&head);
     match scan_action(driven, parked, scan, !connector.modes().is_empty()) {
-        ScanAction::Connect => connector_connected(state, connector, crtc, true),
-        ScanAction::Park => connector_connected(state, connector, crtc, false),
-        ScanAction::Refresh => connector_changed(state, connector, crtc),
-        ScanAction::Disconnect => connector_disconnected(state, crtc),
+        ScanAction::Connect => connector_connected(state, connector, head, true),
+        ScanAction::Park => connector_connected(state, connector, head, false),
+        ScanAction::Refresh => connector_changed(state, connector, head),
+        ScanAction::Disconnect => connector_disconnected(state, head),
         ScanAction::Ignore => {}
     }
 }
 
 /// Connected connectors with a CRTC that no output holds: one whose CRTC another output freed
 /// after it was first seen, which brings no new scan event.
-fn unheld(state: &State) -> Vec<(connector::Info, crtc::Handle)> {
+fn unheld(state: &State, node: DrmNode) -> Vec<(connector::Info, Head)> {
     let Some(b) = state.backend.as_ref() else {
         return Vec::new();
     };
-    let held = |c: connector::Handle| {
-        (b.surfaces.values().map(|s| &s.connector))
-            .chain(b.parked.values().map(|p| &p.connector))
-            .any(|i| i.handle() == c)
+    let Some(d) = b.devices.get(node) else {
+        return Vec::new();
     };
-    b.scanner
+    let held = |c: connector::Handle| {
+        let surfaces = b.surfaces.iter().map(|(h, s)| (h, &s.connector));
+        (surfaces.chain(b.parked.iter().map(|(h, p)| (h, &p.connector))))
+            .any(|(h, i)| h.node == node && i.handle() == c)
+    };
+    let head = |crtc| Head { node, crtc };
+    d.scanner
         .connectors()
         .iter()
         .filter(|(_, info)| info.state() == connector::State::Connected)
-        .filter_map(|(&handle, info)| Some((info, b.scanner.crtc_for_connector(&handle)?)))
-        .filter(|(info, crtc)| {
-            !b.surfaces.contains_key(crtc) && !b.parked.contains_key(crtc) && !held(info.handle())
+        .filter_map(|(&handle, info)| Some((info, head(d.scanner.crtc_for_connector(&handle)?))))
+        .filter(|(info, head)| {
+            !b.surfaces.contains_key(head) && !b.parked.contains_key(head) && !held(info.handle())
         })
-        .map(|(info, crtc)| (info.clone(), crtc))
+        .map(|(info, head)| (info.clone(), head))
         .collect()
 }
 
@@ -208,11 +216,11 @@ pub(super) fn mode_infos(connector: &connector::Info) -> Vec<ModeInfo> {
         .collect()
 }
 
-/// Park a new output for `connector` on `crtc`, and put it into the layout when `into_layout`.
+/// Park a new output for `connector` on `head`, and put it into the layout when `into_layout`.
 fn connector_connected(
     state: &mut State,
     connector: connector::Info,
-    crtc: crtc::Handle,
+    head: Head,
     into_layout: bool,
 ) {
     let name = connector_name(&connector);
@@ -220,7 +228,10 @@ fn connector_connected(
         return;
     };
     gated(b, "EDID read");
-    let info = display_info::for_connector(&b.drm, connector.handle());
+    let Some(d) = b.devices.of(head) else {
+        return;
+    };
+    let info = display_info::for_connector(&d.drm, connector.handle());
     let field = |f: Option<String>| f.unwrap_or_else(|| "Unknown".into());
     let (w_mm, h_mm) = connector.size().unwrap_or((0, 0));
     let output = Output::new(
@@ -234,9 +245,9 @@ fn connector_connected(
         },
     );
     set_preferred(&output, &connector);
-    output.user_data().insert_if_missing(|| OutputCrtc(crtc));
+    output.user_data().insert_if_missing(|| OutputHead(head));
     b.parked.insert(
-        crtc,
+        head,
         Parked {
             output: output.clone(),
             connector,
@@ -257,14 +268,14 @@ fn set_preferred(output: &Output, connector: &connector::Info) {
     }
 }
 
-/// Give the output holding `crtc` the connector's new mode list. A driven output whose mode is
+/// Give the output holding `head` the connector's new mode list. A driven output whose mode is
 /// gone takes another (`link_mode`); a parked one that had no modes is connected afresh, which
 /// also reads the EDID its first probe lacked.
-fn connector_changed(state: &mut State, connector: connector::Info, crtc: crtc::Handle) {
+fn connector_changed(state: &mut State, connector: connector::Info, head: Head) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
-    if let Some(s) = b.surfaces.get_mut(&crtc) {
+    if let Some(s) = b.surfaces.get_mut(&head) {
         let output = s.output.clone();
         log::info!("{}: mode list changed", output.name());
         set_preferred(&output, &connector);
@@ -297,36 +308,36 @@ fn connector_changed(state: &mut State, connector: connector::Info, crtc: crtc::
         crate::outputmgmt::publish(state);
         return;
     }
-    if let Some(p) = b.parked.get_mut(&crtc) {
+    if let Some(p) = b.parked.get_mut(&head) {
         if !p.connector.modes().is_empty() {
             set_preferred(&p.output, &connector);
             p.connector = connector;
             crate::outputmgmt::publish(state);
             return;
         }
-        b.parked.remove(&crtc);
+        b.parked.remove(&head);
     }
     let into_layout = !connector.modes().is_empty();
-    connector_connected(state, connector, crtc, into_layout);
+    connector_connected(state, connector, head, into_layout);
 }
 
-fn connector_disconnected(state: &mut State, crtc: crtc::Handle) {
+fn connector_disconnected(state: &mut State, head: Head) {
     let Some(b) = state.backend.as_ref() else {
         return;
     };
-    let driven = b.surfaces.get(&crtc).map(|s| s.output.clone());
+    let driven = b.surfaces.get(&head).map(|s| s.output.clone());
     if let Some(output) = driven {
         log::info!("output {} gone", output.name());
         state.leave_layout(&output);
     }
     if let Some(b) = state.backend.as_mut()
-        && b.parked.remove(&crtc).is_some()
+        && b.parked.remove(&head).is_some()
     {
         crate::outputmgmt::publish(state);
     }
 }
 
-pub fn heads(state: &State) -> Vec<Head> {
+pub fn heads(state: &State) -> Vec<HeadState> {
     let Some(b) = state.backend.as_ref() else {
         return Vec::new();
     };
@@ -337,10 +348,10 @@ pub fn heads(state: &State) -> Vec<Head> {
             .iter()
             .position(|m| WlMode::from(*m) == mode)
     };
-    let mut heads: Vec<Head> = b
+    let mut heads: Vec<HeadState> = b
         .surfaces
         .values()
-        .map(|s| Head {
+        .map(|s| HeadState {
             output: s.output.clone(),
             enabled: true,
             modes: mode_infos(&s.connector),
@@ -348,7 +359,7 @@ pub fn heads(state: &State) -> Vec<Head> {
             vrr_capable: s.vrr_capable,
             vrr_on: s.vrr_on,
         })
-        .chain(b.parked.values().map(|p| Head {
+        .chain(b.parked.values().map(|p| HeadState {
             output: p.output.clone(),
             enabled: false,
             modes: mode_infos(&p.connector),
@@ -362,29 +373,29 @@ pub fn heads(state: &State) -> Vec<Head> {
 }
 
 pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
-    let Some(crtc) = crtc_of(output) else {
+    let Some(head) = head_of(output) else {
         return false;
     };
     let Some(b) = state.backend.as_mut() else {
         return false;
     };
-    let Some(p) = b.parked.get(&crtc) else {
+    let Some(p) = b.parked.get(&head) else {
         return false;
     };
     let Some(&drm_mode) = p.connector.modes().get(index) else {
         return false;
     };
-    if b.retiring.contains_key(&crtc) {
+    if b.retiring.contains_key(&head) {
         log::warn!(
             "{}: its last commit has not returned; enabling it once it does",
             output.name()
         );
-        b.reenable.insert(crtc);
+        b.reenable.insert(head);
         return false;
     }
     if !b.quiet() {
         log::warn!("{}: display busy; enabling it once quiet", output.name());
-        b.reenable.insert(crtc);
+        b.reenable.insert(head);
         return false;
     }
     gated(b, "output enable");
@@ -393,7 +404,7 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
     let mode = WlMode::from(drm_mode);
     let old = output.current_mode();
     output.change_current_state(Some(mode), None, None, None);
-    let compositor = match new_compositor(b, crtc, drm_mode, connector, output) {
+    let compositor = match new_compositor(b, head, drm_mode, connector, output) {
         Ok(c) => c,
         Err(e) => {
             log::warn!(
@@ -423,14 +434,17 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             commit::Delay::VAR
         );
     }
+    let Some(d) = b.devices.of(head) else {
+        return false;
+    };
     let kms = Kms {
         compositor: Arc::clone(&compositor),
-        fd: b.drm.device_fd().clone(),
-        crtc,
+        fd: d.drm.device_fd().clone(),
+        crtc: head.crtc,
     };
-    let gamma = find_gamma(&b.drm, crtc);
-    let lut = gamma.and_then(|g| read_lut(&b.drm, crtc, &g, None));
-    let thread = match commit::Thread::spawn(&name, crtc, kms, delay, b.replies.clone()) {
+    let gamma = find_gamma(&d.drm, head.crtc);
+    let lut = gamma.and_then(|g| read_lut(&d.drm, head.crtc, &g, None));
+    let thread = match commit::Thread::spawn(&name, head, kms, delay, b.replies.clone()) {
         Ok(t) => t,
         Err(e) => {
             log::warn!("{name}: no commit thread: {e}");
@@ -440,7 +454,7 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             return false;
         }
     };
-    let Some(p) = b.parked.remove(&crtc) else {
+    let Some(p) = b.parked.remove(&head) else {
         return false;
     };
     let global = output.create_global::<State>(&state.dh);
@@ -453,7 +467,7 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
         output.current_transform()
     );
     b.surfaces.insert(
-        crtc,
+        head,
         Surface {
             output: output.clone(),
             connector: p.connector,
@@ -501,19 +515,20 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
     true
 }
 
-/// A compositor for `crtc` at `mode`, retried with implicit modifiers when the explicit ones
+/// A compositor for `head` at `mode`, retried with implicit modifiers when the explicit ones
 /// leave no working primary plane. Its first frame commits the modeset.
 fn new_compositor(
     b: &mut Backend,
-    crtc: crtc::Handle,
+    head: Head,
     mode: smithay::reexports::drm::control::Mode,
     connector: connector::Handle,
     output: &Output,
 ) -> Result<Compositor, String> {
+    let d = b.devices.get_mut(head.node).ok_or("its GPU is gone")?;
     let mut new = |implicit: bool| {
-        let surface = b
+        let surface = d
             .drm
-            .create_surface(crtc, mode, &[connector])
+            .create_surface(head.crtc, mode, &[connector])
             .map_err(|e| e.to_string())?;
         let formats = b
             .render_formats
@@ -524,12 +539,12 @@ fn new_compositor(
             output,
             surface,
             None,
-            b.allocator.clone(),
-            b.exporter.clone(),
+            d.allocator.clone(),
+            d.exporter.clone(),
             COLOR_FORMATS,
             formats,
-            b.drm.cursor_size(),
-            Some(b.gbm.clone()),
+            d.drm.cursor_size(),
+            Some(d.gbm.clone()),
         )
         .map_err(|e| e.to_string())
     };
@@ -540,13 +555,13 @@ fn new_compositor(
 }
 
 pub fn disable(state: &mut State, output: &Output) -> bool {
-    let Some(crtc) = crtc_of(output) else {
+    let Some(head) = head_of(output) else {
         return false;
     };
     let Some(b) = state.backend.as_mut() else {
         return false;
     };
-    let Some(s) = b.surfaces.remove(&crtc) else {
+    let Some(s) = b.surfaces.remove(&head) else {
         return false;
     };
     let Surface {
@@ -571,10 +586,10 @@ pub fn disable(state: &mut State, output: &Output) -> bool {
     // The thread then holds the last reference: it drops the compositor (a blocking clear).
     drop(compositor);
     if let Some(h) = thread.exit() {
-        b.retiring.insert(crtc, h);
+        b.retiring.insert(head, h);
     }
     b.parked.insert(
-        crtc,
+        head,
         Parked {
             output: output.clone(),
             connector,
@@ -606,14 +621,14 @@ pub fn disable(state: &mut State, output: &Output) -> bool {
 }
 
 pub fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
-    let Some(crtc) = crtc_of(output) else {
+    let Some(head) = head_of(output) else {
         return false;
     };
     let Some(b) = state.backend.as_mut() else {
         return false;
     };
     let quiet = b.quiet();
-    let Some(s) = b.surfaces.get_mut(&crtc) else {
+    let Some(s) = b.surfaces.get_mut(&head) else {
         return false;
     };
     let Some(&drm_mode) = s.connector.modes().get(index) else {
@@ -651,14 +666,14 @@ pub fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
 }
 
 pub fn set_vrr(state: &mut State, output: &Output, on: bool) -> bool {
-    let Some(crtc) = crtc_of(output) else {
+    let Some(head) = head_of(output) else {
         return false;
     };
     let Some(b) = state.backend.as_mut() else {
         return false;
     };
     let quiet = b.quiet();
-    let Some(s) = b.surfaces.get_mut(&crtc) else {
+    let Some(s) = b.surfaces.get_mut(&head) else {
         return false;
     };
     if s.vrr_on == on {
@@ -692,10 +707,10 @@ pub fn set_vrr(state: &mut State, output: &Output, on: bool) -> bool {
 }
 
 pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {
-    let Some((b, crtc)) = surface_of(state, output) else {
+    let Some((b, head)) = surface_of(state, output) else {
         return false;
     };
-    let Some(s) = b.surfaces.get_mut(&crtc) else {
+    let Some(s) = b.surfaces.get_mut(&head) else {
         return false;
     };
     if s.hw.off != on {
@@ -707,7 +722,7 @@ pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {
         s.hw.unlit = true;
         s.hw.link_tries = 0;
         log::info!("{}: power on", output.name());
-        flush_gamma(state, crtc);
+        flush_gamma(state, head);
         schedule(state, output);
         return true;
     }
@@ -716,20 +731,21 @@ pub fn set_output_power(state: &mut State, output: &Output, on: bool) -> bool {
         log::info!("{}: power off once its commit is done", output.name());
         return true;
     }
-    let off = power_off(state, crtc);
+    let off = power_off(state, head);
     watch(state);
     off
 }
 
-/// Mark `crtc` off and, when the session is ours and no device reset is out, have its thread
+/// Mark `head` off and, when the session is ours and no device reset is out, have its thread
 /// clear the CRTC.
-pub(super) fn power_off(state: &mut State, crtc: crtc::Handle) -> bool {
+pub(super) fn power_off(state: &mut State, head: Head) -> bool {
     let Some(b) = state.backend.as_mut() else {
         return false;
     };
     // During the device reset, `device_reset_done` clears an output the reset left lit.
-    let active = b.session.is_active() && !b.device.track.busy();
-    let Some(s) = b.surfaces.get_mut(&crtc) else {
+    let resetting = b.devices.of(head).is_some_and(|d| d.reset.track.busy());
+    let active = b.session.is_active() && !resetting;
+    let Some(s) = b.surfaces.get_mut(&head) else {
         return false;
     };
     if active {
@@ -745,7 +761,7 @@ pub(super) fn power_off(state: &mut State, crtc: crtc::Handle) -> bool {
 }
 
 pub fn output_power(state: &State, output: &Output) -> Option<bool> {
-    let crtc = output.user_data().get::<OutputCrtc>()?.0;
-    let s = state.backend.as_ref()?.surfaces.get(&crtc)?;
+    let head = output.user_data().get::<OutputHead>()?.0;
+    let s = state.backend.as_ref()?.surfaces.get(&head)?;
     Some(!s.hw.off)
 }
