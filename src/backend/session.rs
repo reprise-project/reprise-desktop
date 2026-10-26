@@ -35,7 +35,7 @@ pub fn on_input(state: &mut State, mut event: InputEvent<LibinputInputBackend>) 
     state.process_input(event)
 }
 
-pub(super) fn pause(state: &mut State) {
+pub(crate) fn pause(state: &mut State) {
     state.cancel_drag();
     state.release_all_buttons(InputTime::now());
     let Some(b) = state.backend.as_mut() else {

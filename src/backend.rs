@@ -20,6 +20,9 @@ mod steps;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use session::pause as pause_session;
+
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError},
