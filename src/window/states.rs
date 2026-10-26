@@ -103,6 +103,7 @@ impl State {
             return;
         }
         self.cancel_interaction_for(w);
+        self.toplevels.dirty = true;
         let Some(win) = self.win_mut(w) else {
             return;
         };
@@ -179,6 +180,7 @@ impl State {
             return;
         }
         self.cancel_interaction_for(w);
+        self.toplevels.dirty = true;
         let Some(win) = self.win_mut(w) else {
             return;
         };
@@ -200,6 +202,7 @@ impl State {
     pub fn set_minimized(&mut self, w: WindowId, on: bool) {
         let w = if on { self.tabs.groups.shown_of(w) } else { w };
         let shown = self.ripple_frame(w);
+        self.toplevels.dirty = true;
         let Some(win) = self.win_mut(w) else {
             return;
         };
@@ -223,6 +226,7 @@ impl State {
             self.set_activated(w, false);
             if self.focused == Some(w) {
                 self.focused = None;
+                self.toplevels.dirty = true;
                 self.focus_top();
             }
         } else {
@@ -262,6 +266,7 @@ impl State {
     /// Drop minimized/maximized/fullscreen/snapped state on unmap. An xdg toplevel takes the
     /// cleared state with its next initial configure; X11's `_NET_WM_STATE` clears at once.
     pub(super) fn reset_state(&mut self, w: WindowId) {
+        self.toplevels.dirty = true;
         let Some(win) = self.win_mut(w) else {
             return;
         };

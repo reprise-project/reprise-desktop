@@ -45,6 +45,10 @@ use wayland_protocols_misc::{
     },
 };
 
+use wayland_protocols_wlr::foreign_toplevel::v1::client::{
+    zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
+    zwlr_foreign_toplevel_manager_v1::{self, ZwlrForeignToplevelManagerV1},
+};
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{self, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{self, ZwlrLayerSurfaceV1},
@@ -461,6 +465,20 @@ pub struct TestClient {
 impl TestClient {
     pub fn qh(&self) -> QueueHandle<ClientSide> {
         self.queue.handle()
+    }
+
+    /// Bind the wlr foreign-toplevel manager, as a bar or dock does.
+    pub fn watch_toplevels(&self) -> ZwlrForeignToplevelManagerV1 {
+        let (name, version) = (self.side.globals.iter())
+            .find(|(_, i, _)| i == "zwlr_foreign_toplevel_manager_v1")
+            .map(|(n, _, v)| (*n, *v))
+            .expect("zwlr_foreign_toplevel_manager_v1");
+        (self.side.registry.as_ref()).expect("wl_registry").bind(
+            name,
+            version.min(3),
+            &self.qh(),
+            (),
+        )
     }
 
     fn bind_globals(&mut self) {
@@ -1081,6 +1099,23 @@ impl wc::Dispatch<wl_data_device::WlDataDevice, ()> for ClientSide {
     ]);
 }
 
+impl wc::Dispatch<ZwlrForeignToplevelManagerV1, ()> for ClientSide {
+    fn event(
+        _: &mut Self,
+        _: &ZwlrForeignToplevelManagerV1,
+        _: zwlr_foreign_toplevel_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+
+    wc::event_created_child!(ClientSide, ZwlrForeignToplevelManagerV1, [
+        zwlr_foreign_toplevel_manager_v1::EVT_TOPLEVEL_OPCODE => (ZwlrForeignToplevelHandleV1, ()),
+    ]);
+}
+
+wc::delegate_noop!(ClientSide: ignore ZwlrForeignToplevelHandleV1);
 wc::delegate_noop!(ClientSide: ignore WlCompositor);
 wc::delegate_noop!(ClientSide: ignore wl_data_device_manager::WlDataDeviceManager);
 impl wc::Dispatch<wl_data_offer::WlDataOffer, ()> for ClientSide {
