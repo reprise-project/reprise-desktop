@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// The most scrollback lines a tab keeps.
+pub const SCROLLBACK_MAX: usize = 100_000;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Cursor {
@@ -83,7 +86,12 @@ pub fn path() -> PathBuf {
 /// does not parse.
 pub fn try_load(path: &Path) -> Result<Settings, String> {
     match std::fs::read_to_string(path) {
-        Ok(text) => toml::from_str(&text).map_err(|e| e.to_string()),
+        Ok(text) => toml::from_str(&text)
+            .map(|s: Settings| Settings {
+                scrollback: s.scrollback.min(SCROLLBACK_MAX),
+                ..s
+            })
+            .map_err(|e| e.to_string()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Settings::default()),
         Err(e) => Err(e.to_string()),
     }
@@ -167,6 +175,14 @@ mod tests {
         let s = load(&p);
         assert_eq!(s.scrollback, 500);
         assert_eq!(s.size_px, 13, "keys the file leaves out keep their default");
+    }
+
+    #[test]
+    fn scrollback_is_capped() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("terminal.toml");
+        std::fs::write(&p, "scrollback = 999999999\n").unwrap();
+        assert_eq!(load(&p).scrollback, SCROLLBACK_MAX);
     }
 
     #[test]
