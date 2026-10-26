@@ -165,10 +165,13 @@ pub fn hints(mut raw: HashMap<String, Hint<'_>>) -> Hints<'_> {
     }
 }
 
-/// Notification pictures show at most 96 px a side.
-const MAX_IMAGE_SIDE: i32 = 1024;
-/// Bytes a picture file's decoder may allocate: a 1024 px square of 16-bit RGBA, twice.
-const MAX_PICTURE_ALLOC: u64 = 2 * 8 * 1024 * 1024;
+/// Notification pictures show at most 96 px a side and are scaled down to it. `image-data`'s
+/// bytes are already in memory, so only its arithmetic needs bounding.
+const MAX_IMAGE_SIDE: i32 = 8192;
+/// A picture file's side; its decoder's memory is bounded by [`MAX_PICTURE_ALLOC`].
+const MAX_PICTURE_SIDE: u32 = 4096;
+/// Bytes a picture file's decoder may allocate: a 2048 px square of 8-bit RGBA.
+const MAX_PICTURE_ALLOC: u64 = 2048 * 2048 * 4;
 
 /// `image-data` decoded at each of [`super::NOTIFY_SIZES`], fitted inside
 /// a square canvas with its aspect kept and the rest clear.
@@ -235,7 +238,7 @@ pub fn picture_file_sources(path: &Path) -> Vec<IconSource> {
 }
 
 fn decode_picture(path: &Path) -> image::ImageResult<image::DynamicImage> {
-    crate::wallpaper::decode_with(path, MAX_IMAGE_SIDE as u32, Some(MAX_PICTURE_ALLOC))
+    crate::wallpaper::decode_with(path, MAX_PICTURE_SIDE, Some(MAX_PICTURE_ALLOC))
 }
 
 pub fn desktop_id(hint: &str) -> Option<String> {
@@ -342,7 +345,7 @@ mod tests {
     #[test]
     fn a_picture_file_past_the_side_cap_is_refused_from_its_header() {
         let path = std::env::temp_dir().join(format!("reprise-notify-{}.png", std::process::id()));
-        std::fs::write(&path, png_header(4096, 4096)).unwrap();
+        std::fs::write(&path, png_header(4097, 4097)).unwrap();
         let got = decode_picture(&path);
         std::fs::remove_file(&path).unwrap();
         assert!(
@@ -512,6 +515,28 @@ mod tests {
             image_sources(&img(2, 2, 6, 3)).len(),
             crate::tray::NOTIFY_SIZES.len(),
             "RGB rows of 6"
+        );
+    }
+
+    #[test]
+    fn a_picture_file_larger_than_it_shows_is_scaled_to_each_size() {
+        let dir = crate::harness::scratch();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("notify-picture-2048.png");
+        image::RgbaImage::from_pixel(2048, 1024, image::Rgba([0x20, 0x40, 0x80, 0xFF]))
+            .save(&path)
+            .unwrap();
+        let sources = picture_file_sources(&path);
+        assert_eq!(sources.len(), crate::tray::NOTIFY_SIZES.len());
+        let large = sources.last().unwrap();
+        assert_eq!((large.width, large.height), (96, 96));
+        assert_ne!(large.pixels[48 * 96 + 48], 0, "the picture is drawn");
+        let big = image::RgbaImage::new(1, 5000);
+        let tall = dir.join("notify-picture-tall.png");
+        big.save(&tall).unwrap();
+        assert!(
+            picture_file_sources(&tall).is_empty(),
+            "a side past 4096 is refused"
         );
     }
 
