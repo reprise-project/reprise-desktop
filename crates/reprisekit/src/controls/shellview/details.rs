@@ -75,6 +75,24 @@ pub fn bin_fields() -> Vec<Field> {
     ]
 }
 
+/// Search results' five columns: Name 178, In Folder 180, Size 94 (right-aligned), Type 118,
+/// Date Modified 120.
+pub fn search_columns() -> Vec<listview::Column> {
+    let mut cols = details_columns();
+    cols.insert(1, listview::Column::new("In Folder", 180));
+    cols
+}
+
+pub fn search_fields() -> Vec<Field> {
+    vec![
+        Field::Name,
+        Field::Folder,
+        Field::Size,
+        Field::Kind,
+        Field::Modified,
+    ]
+}
+
 /// The same column again flips its direction, another sorts ascending. Then [`sort`].
 pub fn sort_by_column(sv: &mut ShellView, col: usize) {
     let asc = match sv.sort {

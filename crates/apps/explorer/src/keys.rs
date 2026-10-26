@@ -111,6 +111,29 @@ impl Explorer {
             }
         }
 
+        // Search field: Enter searches, Escape stops a search and leaves the field.
+        if self.focus == Focus::Search && !k.mods.alt {
+            if matches!(k.sym, keysym::RETURN | keysym::KP_ENTER) {
+                return self.run_search(ctx);
+            }
+            if k.sym == keysym::ESCAPE {
+                self.focus = Focus::View;
+                return self.cancel_search(ctx).unwrap_or_else(Reply::redraw);
+            }
+            if let Some(ek) = k.edit.clone() {
+                self.search_field.key(ek);
+                return Reply::redraw();
+            }
+        }
+
+        // Escape over search results goes back to the folder's own listing.
+        if k.sym == keysym::ESCAPE
+            && !self.bar.is_active()
+            && let Some(reply) = self.cancel_search(ctx)
+        {
+            return reply;
+        }
+
         if let Some(reply) = self.bar_key(&k, ctx) {
             return reply;
         }
@@ -127,7 +150,7 @@ impl Explorer {
         match self.focus {
             Focus::Tree => self.tree_key(k, ctx),
             Focus::View => self.view_key(k, ctx),
-            Focus::Address => Reply::none(),
+            Focus::Address | Focus::Search => Reply::none(),
         }
     }
 
@@ -171,6 +194,8 @@ impl Explorer {
             (Focus::Address, true) => Focus::View,
             (Focus::Tree, true) => Focus::Address,
             (Focus::View, true) => bar.unwrap_or(Focus::Address),
+            (Focus::Search, false) => Focus::View,
+            (Focus::Search, true) => Focus::Address,
         }
     }
 

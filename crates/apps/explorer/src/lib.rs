@@ -23,6 +23,7 @@ mod props_dialog;
 mod props_host;
 mod removing;
 mod rename;
+mod search;
 mod sendreads;
 mod settings;
 mod tree;
@@ -53,6 +54,7 @@ use reprisekit::controls::explorerbar::ExplorerBar;
 use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::menubar::{self, Bar, Key};
 use reprisekit::controls::scrollbar::ThumbDrag;
+use reprisekit::controls::searchfield::SearchField;
 use reprisekit::controls::shellview::{self, Entry, Field, Group, LayoutCache, ShellView};
 use reprisekit::controls::statusbar::{self, StatusBar};
 use reprisekit::controls::taskpane::TaskPane;
@@ -81,6 +83,7 @@ const DRAG_SLOP: i32 = 4;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
     Address,
+    Search,
     Tree,
     View,
 }
@@ -187,6 +190,13 @@ pub struct Explorer {
     pub toolbar: ToolBar,
     pub address: AddressBar,
     pub address_places: Vec<Place>,
+    /// The toolbar's Search field ([`search`]).
+    pub search_field: SearchField,
+    pub(crate) search: search::Search,
+    /// A search still running after [`LIST_WAIT`] ([`Explorer::take_search`]).
+    pub(crate) search_job: Option<Job<search::Found>>,
+    /// The tool behind a search: [`reprisefs::search::run`], or a test's own.
+    pub(crate) search_run: search::Runner,
     pub explorer_bar: ExplorerBar,
     pub taskpane: TaskPane,
     pub pane_cmds: Vec<Vec<commands::Command>>,
@@ -444,6 +454,10 @@ impl Explorer {
             },
             address: AddressBar::new(vec![ListItem::new("")], 0, None),
             address_places: Vec::new(),
+            search_field: SearchField::default(),
+            search: search::Search::default(),
+            search_job: None,
+            search_run: reprisefs::search::run,
             explorer_bar: ExplorerBar {
                 title: "Folders".to_string(),
                 width: settings.bar_width,
@@ -767,6 +781,9 @@ impl Explorer {
     /// Re-list the current place, keeping the selection by path and leaving the
     /// history alone: F5, View > Refresh, and Enter on the address already shown.
     pub fn refresh(&mut self, ctx: &mut Ctx) -> Reply {
+        if let Some(reply) = self.search_again(ctx) {
+            return reply;
+        }
         if self.reading.as_ref().is_some_and(|r| r.key.0 != self.place) {
             // The place being read is newer than the listing shown.
             return Reply::none();
@@ -811,6 +828,8 @@ impl Explorer {
     /// lands later through [`Explorer::take_read`], the window showing the listing before
     /// until then.
     pub fn show(&mut self, place: Place, ctx: &mut Ctx) -> Reply {
+        self.search.cancel();
+        self.search_job = None;
         if !self.sync_drives(ctx) && place == Place::Computer {
             self.sync_volumes();
         }
@@ -927,6 +946,7 @@ impl Explorer {
         } = read;
         self.set_columns(&place);
         let is_12h = reprisefs::locale::is_12h();
+        let searched = self.search.shown().is_some();
         read_icons.put(&mut ctx.icons);
         let drawn = shellview::drawn_sizes(self.sv.mode, list);
         let first = drawn.iter().position(|&d| d).unwrap_or(0);
@@ -980,14 +1000,12 @@ impl Explorer {
                         .unwrap_or_default(),
                     mtime: it.modified,
                     detail: Vec::new(),
-                    folder: if let Some(t) = &it.trashed {
-                        t.original
-                            .parent()
-                            .map(|d| d.display().to_string())
-                            .unwrap_or_default()
-                    } else {
-                        String::new()
-                    },
+                    folder: match &it.trashed {
+                        Some(t) => t.original.parent(),
+                        None => it.path.parent().filter(|_| searched),
+                    }
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_default(),
                     deleted: it
                         .trashed
                         .as_ref()
@@ -1073,8 +1091,11 @@ impl Explorer {
     /// touching the saved sort.
     fn set_columns(&mut self, place: &Place) {
         let bin = *place == Place::RecycleBin;
+        let searched = self.search.shown().is_some();
         let want = if bin {
             shellview::bin_fields()
+        } else if searched {
+            shellview::search_fields()
         } else {
             shellview::details_fields()
         };
@@ -1084,6 +1105,12 @@ impl Explorer {
         if bin {
             self.sv.columns = shellview::bin_columns();
             self.sv.sort = Some((0, true));
+        } else if searched {
+            self.sv.columns = shellview::search_columns();
+            let (col, asc) = self.settings.sort;
+            let field = shellview::details_fields().get(col).copied();
+            let col = want.iter().position(|f| Some(*f) == field).unwrap_or(0);
+            self.sv.sort = Some((col, asc));
         } else {
             self.sv.columns = shellview::details_columns();
             for (col, w) in self.sv.columns.iter_mut().zip(&self.settings.columns) {
@@ -1381,7 +1408,7 @@ struct Lazy {
 impl App for Lazy {
     fn title(&self) -> String {
         match &self.inner {
-            Some(ex) => ex.place.title(),
+            Some(ex) => ex.search.caption().unwrap_or_else(|| ex.place.title()),
             None => self.start.place.title(),
         }
     }
@@ -1489,9 +1516,9 @@ impl App for Lazy {
             Event::Wake => ex.wake(ctx),
             Event::Blink => {
                 ex.flush_settings();
-                // The address field's caret is the one thing in the window that blinks.
+                // The Address and Search fields' carets are the only things in the window that blink.
                 Reply {
-                    redraw: ex.focus == Focus::Address,
+                    redraw: matches!(ex.focus, Focus::Address | Focus::Search),
                     ..Reply::none()
                 }
             }

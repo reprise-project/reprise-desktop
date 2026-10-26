@@ -13,6 +13,7 @@ use reprisekit::controls::explorerbar;
 use reprisekit::controls::menu::MenuAction;
 use reprisekit::controls::menubar::Action;
 use reprisekit::controls::scrollbar::Press;
+use reprisekit::controls::searchfield;
 use reprisekit::controls::shellview;
 use reprisekit::controls::statusbar;
 use reprisekit::controls::taskpane;
@@ -202,6 +203,14 @@ impl Explorer {
             && statusbar::hit_grip(&self.status, r, x, y)
         {
             return Reply::resize();
+        }
+
+        if let Some(f) = crate::window::search_field(self, ctx)
+            && searchfield::hit(f, x, y)
+        {
+            self.focus = Focus::Search;
+            self.search_field.click(f, x, &ctx.text, px, 1);
+            return Reply::redraw();
         }
 
         if let Some(r) = lay.toolbar {

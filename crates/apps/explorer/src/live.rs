@@ -118,7 +118,7 @@ impl Explorer {
         })
     }
 
-    /// `Event::Wake`: a put, job, tip walk, late listing, drive scan, clash check or Folders node read finished, thumbnails arrived, or
+    /// `Event::Wake`: a put, job, tip walk, late listing or search, drive scan, clash check or Folders node read finished, thumbnails arrived, or
     /// the watch or UDisks2 saw a change (which re-lists), or the folder left (which follows it). A closing window quits here
     /// once its work is done.
     pub fn wake(&mut self, ctx: &mut Ctx) -> Reply {
@@ -165,6 +165,7 @@ impl Explorer {
             removed,
             put,
             self.take_read(ctx),
+            self.take_search(ctx),
             self.take_checked(ctx),
             opened,
             self.take_gone(ctx),
