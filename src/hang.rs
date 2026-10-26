@@ -29,9 +29,12 @@ pub const PING_EVERY: Duration = Duration::from_secs(2);
 /// and a close asked of it opens End Program.
 pub const PING_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// How often programs with a window are checked for [`dying`], for one whose kill nothing else
-/// reports: no ping out, no watched thread left to exit.
+/// How often programs with a window are checked for [`dying`] while a kill is suspected (a
+/// thread left, a ping timed out, End Now), for one whose kill nothing else reports.
 const DYING_EVERY: Duration = Duration::from_secs(2);
+
+/// How long the [`dying`] check runs after the last suspicion that armed it.
+const DYING_FOR: Duration = Duration::from_secs(30);
 
 /// How long a program found [`killed`] when a thread left has to finish exiting before its
 /// connections are dropped. `exit_group` also leaves SIGKILL pending on the threads it ends, and a
@@ -198,8 +201,17 @@ fn thread_pidfds(pid: i32, known: &[i32], n: usize) -> Vec<(i32, OwnedFd)> {
 }
 
 fn thread_pidfd(tid: i32) -> std::io::Result<OwnedFd> {
-    // SAFETY: pidfd_open takes a tid and flags, no pointers.
-    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, tid, libc::PIDFD_THREAD) };
+    pidfd(tid, libc::PIDFD_THREAD)
+}
+
+/// A pidfd that turns readable once every thread of process `pid` has exited.
+fn process_pidfd(pid: i32) -> std::io::Result<OwnedFd> {
+    pidfd(pid, 0)
+}
+
+fn pidfd(pid: i32, flags: libc::c_uint) -> std::io::Result<OwnedFd> {
+    // SAFETY: pidfd_open takes a pid and flags, no pointers.
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, flags) };
     if fd < 0 {
         return Err(std::io::Error::last_os_error());
     }
@@ -229,8 +241,9 @@ pub struct Hang {
     pings: HashMap<Target, RegistrationToken>,
     /// The threads watched per client pid with a window.
     threads: HashMap<i32, Threads>,
-    /// The timer of the periodic [`dying`] check, while a pid in `threads` is not yet dropped.
-    dying_check: Option<RegistrationToken>,
+    /// The timer of the [`dying`] check and when it stops, while a kill is suspected and a pid in
+    /// `threads` is not yet dropped.
+    dying_check: Option<(RegistrationToken, Instant)>,
     next_key: u64,
 }
 
@@ -264,6 +277,8 @@ struct ClientKey(u64);
 struct Threads {
     /// The pidfd source per watched tid still running.
     watched: Vec<(i32, RegistrationToken)>,
+    /// The process pidfd source, until the program exits.
+    exit: Option<RegistrationToken>,
     /// Its connections were dropped when the first thread left on the kill.
     dropped: bool,
 }
@@ -445,6 +460,7 @@ impl State {
     /// Its windows are hung until it answers a ping or commits a frame.
     fn ping_timed_out(&mut self, target: Target) {
         self.hang.pings.remove(&target);
+        self.arm_dying_check();
         let ws = self.windows_of(target);
         if ws.first().is_some_and(|&w| self.drop_exited(w)) {
             return;
@@ -466,12 +482,16 @@ impl State {
 
     /// Watch threads of window `w`'s program (`thread_pidfds`), up to `WATCHED_THREADS` running,
     /// so a kill that leaves a thread stuck is known when the others exit rather than when a ping
-    /// times out. Called at map and again at each ping for threads started since.
+    /// times out, and the program's own exit (`process_pidfd`) for a socket another process
+    /// still holds. Called at map and again at each ping for threads started since.
     pub fn watch_threads(&mut self, w: WindowId) {
         let Some(pid) = self.client_pid(w).filter(|&p| self.may_end(p)) else {
             return;
         };
         let mut threads = self.hang.threads.remove(&pid).unwrap_or_default();
+        if threads.exit.is_none() && !threads.dropped {
+            threads.exit = self.watch_exit(pid);
+        }
         let known: Vec<i32> = threads.watched.iter().map(|&(t, _)| t).collect();
         let n = WATCHED_THREADS.saturating_sub(known.len());
         let fresh = if threads.dropped || n == 0 {
@@ -490,11 +510,35 @@ impl State {
             }
         }
         self.hang.threads.insert(pid, threads);
-        self.arm_dying_check();
     }
 
+    /// A source that drops `pid`'s connections once it has exited, after `KILL_SETTLE` so the
+    /// last requests of a socket it shared with a child are still read.
+    fn watch_exit(&mut self, pid: i32) -> Option<RegistrationToken> {
+        let fd = process_pidfd(pid)
+            .inspect_err(|e| log::debug!("pidfd_open {pid}: {e}"))
+            .ok()?;
+        let source = Generic::new(fd, Interest::READ, Mode::Level);
+        self.handle
+            .insert_source(source, move |_, _, state| {
+                if let Some(t) = state.hang.threads.get_mut(&pid) {
+                    t.exit = None;
+                }
+                state.settle_then_drop(pid, "exited", |_| true);
+                Ok(PostAction::Remove)
+            })
+            .inspect_err(|e| log::warn!("pidfd source: {}", e.error))
+            .ok()
+    }
+
+    /// Check for [`dying`] programs every `DYING_EVERY` for the next `DYING_FOR`.
     fn arm_dying_check(&mut self) {
-        if self.hang.dying_check.is_some() || dying_scan(&self.hang.threads).is_empty() {
+        let until = Instant::now() + DYING_FOR;
+        if let Some((_, u)) = self.hang.dying_check.as_mut() {
+            *u = until;
+            return;
+        }
+        if dying_scan(&self.hang.threads).is_empty() {
             return;
         }
         let timer = self
@@ -503,12 +547,13 @@ impl State {
                 state.dying_check()
             });
         match timer {
-            Ok(t) => self.hang.dying_check = Some(t),
+            Ok(t) => self.hang.dying_check = Some((t, until)),
             Err(e) => log::warn!("dying check timer: {}", e.error),
         }
     }
 
-    /// Drops each program with a window found [`dying`]; the timer ends once none is left to read.
+    /// Drops each program with a window found [`dying`]; the timer ends once none is left to read
+    /// or `DYING_FOR` passed.
     fn dying_check(&mut self) -> TimeoutAction {
         for pid in dying_scan(&self.hang.threads) {
             if dying(pid) {
@@ -516,7 +561,8 @@ impl State {
                 self.drop_program(pid);
             }
         }
-        if dying_scan(&self.hang.threads).is_empty() {
+        let until = self.hang.dying_check.map(|(_, u)| u);
+        if dying_scan(&self.hang.threads).is_empty() || until.is_none_or(|u| Instant::now() >= u) {
             self.hang.dying_check = None;
             TimeoutAction::Drop
         } else {
@@ -534,11 +580,18 @@ impl State {
         if threads.dropped || !killed(pid) {
             return;
         }
+        self.arm_dying_check();
+        self.settle_then_drop(pid, &format!("killed, thread {tid} exited"), killed);
+    }
+
+    /// After `KILL_SETTLE`, drop `pid`'s connections if it still has some and `still(pid)`.
+    fn settle_then_drop(&mut self, pid: i32, why: &str, still: fn(i32) -> bool) {
+        let why = why.to_string();
         let timer =
             self.handle
                 .insert_source(Timer::from_duration(KILL_SETTLE), move |_, _, state| {
-                    if state.hang.threads.get(&pid).is_some_and(|t| !t.dropped) && killed(pid) {
-                        log::info!("pid {pid}: killed, thread {tid} exited");
+                    if state.hang.threads.get(&pid).is_some_and(|t| !t.dropped) && still(pid) {
+                        log::info!("pid {pid}: {why}");
                         state.drop_program(pid);
                     }
                     TimeoutAction::Drop
@@ -637,12 +690,18 @@ impl State {
             .filter(|p| !live.contains(p))
             .collect();
         for pid in gone {
-            for (_, t) in self.hang.threads.remove(&pid).unwrap_or_default().watched {
+            let threads = self.hang.threads.remove(&pid).unwrap_or_default();
+            for t in threads
+                .watched
+                .into_iter()
+                .map(|(_, t)| t)
+                .chain(threads.exit)
+            {
                 self.handle.remove(t);
             }
         }
         if dying_scan(&self.hang.threads).is_empty()
-            && let Some(t) = self.hang.dying_check.take()
+            && let Some((t, _)) = self.hang.dying_check.take()
         {
             self.handle.remove(t);
         }
@@ -676,6 +735,7 @@ impl State {
             return;
         }
         log::info!("end program: killing pid {pid}");
+        self.arm_dying_check();
         // SAFETY: plain syscall on a pid, no pointers.
         if unsafe { libc::kill(pid, libc::SIGKILL) } != 0 {
             log::warn!(
@@ -904,6 +964,19 @@ mod tests {
     }
 
     #[test]
+    fn a_process_pidfd_fires_once_the_program_exits() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let fd = process_pidfd(child.id() as i32).unwrap();
+        assert!(!readable(&fd, 0), "a running program");
+        child.kill().unwrap();
+        assert!(readable(&fd, 5000), "an exited program");
+        child.wait().unwrap();
+    }
+
+    #[test]
     fn a_thread_pidfd_fires_when_its_thread_exits_and_a_lone_exit_is_no_kill() {
         extern "C" fn sleeper(_: *mut libc::c_void) -> *mut libc::c_void {
             // SAFETY: plain libc calls in the forked child.
@@ -1011,6 +1084,29 @@ mod tests {
         assert!(
             dying_scan(&HashMap::new()).is_empty(),
             "no program with a window: no timer"
+        );
+    }
+
+    #[test]
+    fn the_dying_check_runs_only_once_a_ping_timed_out() {
+        const PID: i32 = i32::MAX - 811;
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut c = h.connect_as(PID);
+        let t = h.map_toplevel(&mut c, "app", 200, 100);
+        assert!(
+            h.state.hang.threads.contains_key(&PID),
+            "the map watches the program"
+        );
+        assert!(
+            h.state.hang.dying_check.is_none(),
+            "a mapped window polls nothing"
+        );
+        let target = h.state.ping_target(t.id).expect("ping target");
+        h.state.ping_timed_out(target);
+        assert!(
+            h.state.hang.dying_check.is_some(),
+            "a timed-out ping arms the check"
         );
     }
 
