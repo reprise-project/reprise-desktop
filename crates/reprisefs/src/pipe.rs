@@ -1,10 +1,9 @@
-//! Writing a clipboard answer into a pipe the receiving client owns, on its own
-//! thread with a bounded wait, since the receiver picks the pipe size and
-//! whether it ever reads.
+//! Writing a clipboard answer into a pipe the receiving client owns, off the
+//! caller's thread with a bounded wait, since the receiver picks the pipe size
+//! and whether it ever reads.
 
 use std::os::fd::{AsRawFd, OwnedFd};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 use zeroize::Zeroize;
 
@@ -85,141 +84,162 @@ impl Drop for PasteBuf {
     }
 }
 
-pub const MAX_WRITERS: usize = 16;
-
-static WRITERS: Gate = Gate::new(MAX_WRITERS);
-
-struct Gate {
-    live: AtomicUsize,
-    max: usize,
+struct Job {
+    fd: OwnedFd,
+    bytes: Arc<[u8]>,
+    sent: usize,
+    deadline: Instant,
 }
 
-impl Gate {
-    const fn new(max: usize) -> Self {
-        Gate {
-            live: AtomicUsize::new(0),
-            max,
-        }
-    }
-
-    fn enter(&'static self) -> Option<Slot> {
-        self.live
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-                (n < self.max).then_some(n + 1)
-            })
-            .ok()
-            .map(|_| Slot(self))
-    }
+struct Writer {
+    jobs: Mutex<mpsc::Sender<Job>>,
+    wake: OwnedFd,
 }
 
-struct Slot(&'static Gate);
+static WRITER: OnceLock<Option<Writer>> = OnceLock::new();
 
-impl Drop for Slot {
-    fn drop(&mut self) {
-        self.0.live.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
+/// Hands `bytes` to the one writer thread, which drops `fd` once all went out,
+/// the reader left, or [`WRITE_TIMEOUT`] passed. A stalled reader holds back
+/// no other.
 pub fn write_detached(fd: OwnedFd, bytes: Arc<[u8]>) {
-    spawn_writer(&WRITERS, fd, bytes, WRITE_TIMEOUT);
+    submit(fd, bytes, WRITE_TIMEOUT);
 }
 
-fn spawn_writer(gate: &'static Gate, fd: OwnedFd, bytes: Arc<[u8]>, timeout: Duration) -> bool {
-    let Some(slot) = gate.enter() else {
-        log::debug!("pipe write: {} writers busy, dropping", gate.max);
-        return false;
+fn submit(fd: OwnedFd, bytes: Arc<[u8]>, timeout: Duration) {
+    if let Err(e) = set_nonblocking(&fd) {
+        log::debug!("pipe write: {e}");
+        return;
+    }
+    let Some(writer) = WRITER.get_or_init(start_writer) else {
+        return;
     };
+    let job = Job {
+        fd,
+        bytes,
+        sent: 0,
+        deadline: Instant::now() + timeout,
+    };
+    if writer.jobs.lock().unwrap().send(job).is_err() {
+        return;
+    }
+    // SAFETY: one readable byte, and `wake` is open for the program's life.
+    unsafe { libc::write(writer.wake.as_raw_fd(), [1u8].as_ptr().cast(), 1) };
+}
+
+fn start_writer() -> Option<Writer> {
+    let (woken, wake) = match std::io::pipe() {
+        Ok((r, w)) => (OwnedFd::from(r), OwnedFd::from(w)),
+        Err(e) => {
+            log::warn!("pipe write: {e}");
+            return None;
+        }
+    };
+    if let Err(e) = set_nonblocking(&woken).and_then(|_| set_nonblocking(&wake)) {
+        log::warn!("pipe write: {e}");
+        return None;
+    }
+    let (tx, rx) = mpsc::channel();
     let spawned = std::thread::Builder::new()
         .name("pipe-write".into())
-        .spawn(move || {
-            // Locals drop in reverse, so the fd closes before the slot frees.
-            let _slot = slot;
-            let (fd, bytes) = (fd, bytes);
-            if let Err(e) = write_bounded(&fd, &bytes, timeout) {
-                log::debug!("pipe write: {e}");
-            }
-        });
-    if let Err(e) = &spawned {
+        .spawn(move || run_writer(&woken, &rx));
+    if let Err(e) = spawned {
         log::warn!("pipe write: cannot spawn: {e}");
+        return None;
     }
-    spawned.is_ok()
+    Some(Writer {
+        jobs: Mutex::new(tx),
+        wake,
+    })
 }
 
-pub fn write_bounded(fd: &OwnedFd, bytes: &[u8], timeout: Duration) -> std::io::Result<()> {
-    // SAFETY: F_GETFL and F_SETFL take no pointers, and `fd` is open while
-    // borrowed.
-    let nonblocking = unsafe {
-        let flags = libc::fcntl(fd.as_raw_fd(), libc::F_GETFL);
-        flags >= 0 && libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) >= 0
-    };
-    if !nonblocking {
-        return Err(std::io::Error::last_os_error());
-    }
-    let deadline = Instant::now() + timeout;
-    let mut rest = bytes;
-    while !rest.is_empty() {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "reader stalled",
-            ));
+fn run_writer(woken: &OwnedFd, rx: &mpsc::Receiver<Job>) {
+    let mut jobs: Vec<Job> = Vec::new();
+    let mut pfds: Vec<libc::pollfd> = Vec::new();
+    let mut drain = [0u8; 64];
+    loop {
+        // SAFETY: `drain` is `drain.len()` writable bytes, and `woken` is open.
+        while unsafe { libc::read(woken.as_raw_fd(), drain.as_mut_ptr().cast(), drain.len()) } > 0 {
         }
-        let mut pfd = libc::pollfd {
-            fd: fd.as_raw_fd(),
+        jobs.extend(rx.try_iter());
+        let now = Instant::now();
+        jobs.retain(|j| {
+            let live = j.deadline > now;
+            if !live {
+                log::debug!("pipe write: reader stalled");
+            }
+            live
+        });
+        let next = jobs.iter().map(|j| j.deadline).min();
+        let ms = next.map_or(-1, |d| {
+            // Rounded up, so a deadline under a millisecond away does not spin.
+            (d.saturating_duration_since(now).as_millis() + 1).min(i32::MAX as u128) as i32
+        });
+        pfds.clear();
+        pfds.push(libc::pollfd {
+            fd: woken.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        });
+        pfds.extend(jobs.iter().map(|j| libc::pollfd {
+            fd: j.fd.as_raw_fd(),
             events: libc::POLLOUT,
             revents: 0,
-        };
-        let ms = left.as_millis().min(i32::MAX as u128) as i32;
-        // SAFETY: `pfd` is one live `pollfd`, matching the count of 1.
-        let n = unsafe { libc::poll(&mut pfd, 1, ms) };
-        if n < 0 {
-            let e = std::io::Error::last_os_error();
-            if e.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(e);
-        }
-        if n == 0 {
+        }));
+        // SAFETY: `pfds` is `pfds.len()` live `pollfd`s.
+        let n = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, ms) };
+        if n <= 0 {
             continue;
         }
-        if pfd.revents & (libc::POLLERR | libc::POLLHUP) != 0 && pfd.revents & libc::POLLOUT == 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "reader gone",
-            ));
-        }
-        // SAFETY: `rest` is `rest.len()` readable bytes, and `fd` is open
-        // while borrowed.
-        let w = unsafe {
-            libc::write(
-                fd.as_raw_fd(),
-                rest.as_ptr() as *const libc::c_void,
-                rest.len(),
-            )
-        };
+        let mut ready = pfds[1..].iter().map(|p| p.revents);
+        jobs.retain_mut(|j| {
+            let revents = ready.next().unwrap_or(0);
+            revents == 0 || step(j, revents)
+        });
+    }
+}
+
+/// Writes what the pipe takes; false once the job is over.
+fn step(job: &mut Job, revents: libc::c_short) -> bool {
+    if revents & libc::POLLOUT == 0 {
+        log::debug!("pipe write: reader gone");
+        return false;
+    }
+    while job.sent < job.bytes.len() {
+        let rest = &job.bytes[job.sent..];
+        // SAFETY: `rest` is `rest.len()` readable bytes, and `job.fd` is open.
+        let w = unsafe { libc::write(job.fd.as_raw_fd(), rest.as_ptr().cast(), rest.len()) };
         if w < 0 {
             let e = std::io::Error::last_os_error();
             match e.kind() {
-                std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock => continue,
-                _ => return Err(e),
+                std::io::ErrorKind::Interrupted => continue,
+                std::io::ErrorKind::WouldBlock => return true,
+                _ => {
+                    log::debug!("pipe write: {e}");
+                    return false;
+                }
             }
         }
-        rest = &rest[w as usize..];
+        job.sent += w as usize;
     }
-    Ok(())
+    false
 }
 
-pub fn read_bounded(fd: &OwnedFd, max: usize, timeout: Duration) -> std::io::Result<Vec<u8>> {
+fn set_nonblocking(fd: &OwnedFd) -> std::io::Result<()> {
     // SAFETY: F_GETFL and F_SETFL take no pointers, and `fd` is open while
     // borrowed.
-    let nonblocking = unsafe {
+    let ok = unsafe {
         let flags = libc::fcntl(fd.as_raw_fd(), libc::F_GETFL);
         flags >= 0 && libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) >= 0
     };
-    if !nonblocking {
-        return Err(std::io::Error::last_os_error());
+    if ok {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
+}
+
+pub fn read_bounded(fd: &OwnedFd, max: usize, timeout: Duration) -> std::io::Result<Vec<u8>> {
+    set_nonblocking(fd)?;
     let deadline = Instant::now() + timeout;
     let mut out = Vec::new();
     let mut chunk = [0u8; 4096];
@@ -316,14 +336,10 @@ mod tests {
         assert_eq!(err.kind(), std::io::ErrorKind::FileTooLarge);
     }
 
-    #[test]
-    fn a_stalled_reader_times_out() {
-        let (_read, write) = pipe();
-        let big = vec![b'x'; 1 << 20];
-        let t = Instant::now();
-        let err = write_bounded(&write, &big, Duration::from_millis(100)).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
-        assert!(t.elapsed() < Duration::from_secs(5));
+    fn read_all(read: OwnedFd) -> Vec<u8> {
+        let mut got = Vec::new();
+        std::fs::File::from(read).read_to_end(&mut got).unwrap();
+        got
     }
 
     #[test]
@@ -331,54 +347,54 @@ mod tests {
         let (read, write) = pipe();
         let big: Arc<[u8]> = vec![b'y'; 1 << 20].into();
         write_detached(write, big.clone());
-        let mut got = Vec::new();
-        std::fs::File::from(read).read_to_end(&mut got).unwrap();
-        assert_eq!(got, &big[..]);
+        assert_eq!(read_all(read), &big[..]);
     }
 
-    fn wait_for(what: &str, done: impl Fn() -> bool) {
-        let t = Instant::now();
-        while !done() {
-            assert!(t.elapsed() < Duration::from_secs(5), "{what}");
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-
-    /// The gate admits two writers, closes the third fd unwritten, and admits
-    /// again after a writer ends. Non-timeout writers wait far longer than the test.
     #[test]
-    fn writers_past_the_cap_are_refused_until_one_ends() {
-        static GATE: Gate = Gate::new(2);
-        let live = || GATE.live.load(Ordering::Acquire);
+    fn seventeen_stalled_readers_hold_back_neither_the_last_nor_another() {
         let big: Arc<[u8]> = vec![b'z'; 1 << 20].into();
-        let never = Duration::from_secs(60);
+        let stalled: Vec<OwnedFd> = (0..17)
+            .map(|_| {
+                let (read, write) = pipe();
+                write_detached(write, big.clone());
+                read
+            })
+            .collect();
+        let (other, write) = pipe();
+        write_detached(write, big.clone());
+        assert_eq!(
+            read_all(other).len(),
+            big.len(),
+            "another reader gets it all"
+        );
+        let last = stalled.into_iter().last().unwrap();
+        assert_eq!(
+            read_all(last).len(),
+            big.len(),
+            "the 17th reader gets it all"
+        );
+    }
 
-        let (stalled, w1) = pipe();
-        let (gone, w2) = pipe();
-        assert!(spawn_writer(&GATE, w1, big.clone(), never));
-        assert!(spawn_writer(&GATE, w2, big.clone(), never));
-        assert_eq!(live(), 2);
+    #[test]
+    fn a_stalled_reader_is_cut_off_at_its_deadline() {
+        let (read, write) = pipe();
+        let big: Arc<[u8]> = vec![b'x'; 1 << 20].into();
+        let t = Instant::now();
+        submit(write, big.clone(), Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(300));
+        let got = read_all(read);
+        assert!(got.len() < big.len(), "the fd closes with the rest unsent");
+        assert!(t.elapsed() < Duration::from_secs(5));
+    }
 
-        let (refused, w3) = pipe();
-        assert!(!spawn_writer(&GATE, w3, big.clone(), never));
-        let mut got = Vec::new();
-        std::fs::File::from(refused).read_to_end(&mut got).unwrap();
-        assert!(got.is_empty(), "a refused receive reads EOF with no bytes");
-
-        drop(gone);
-        wait_for("the broken pipe frees its slot", || live() == 1);
-
-        let (_again, w4) = pipe();
-        assert!(spawn_writer(
-            &GATE,
-            w4,
-            big.clone(),
-            Duration::from_millis(100)
-        ));
-        wait_for("the timed-out writer frees its slot", || live() == 1);
-
-        drop(stalled);
-        wait_for("the last writer frees its slot", || live() == 0);
+    #[test]
+    fn a_closed_reader_ends_its_write_and_not_the_next() {
+        let (read, write) = pipe();
+        drop(read);
+        write_detached(write, b"hello"[..].into());
+        let (read, write) = pipe();
+        write_detached(write, b"again"[..].into());
+        assert_eq!(read_all(read), b"again");
     }
 
     #[test]
@@ -386,13 +402,5 @@ mod tests {
         assert!(paste_fits(MAX_PASTE_BYTES - 1, 1));
         assert!(!paste_fits(MAX_PASTE_BYTES, 1));
         assert!(!paste_fits(usize::MAX, 1));
-    }
-
-    #[test]
-    fn a_closed_reader_is_an_error() {
-        let (read, write) = pipe();
-        drop(read);
-        let err = write_bounded(&write, b"hello", Duration::from_secs(1)).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
     }
 }
