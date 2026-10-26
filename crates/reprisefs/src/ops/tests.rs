@@ -1172,14 +1172,41 @@ fn mount_under_finds_a_folder_on_another_device_and_skips_links() {
     std::os::unix::fs::symlink(&mounted, linked.join("to mount")).unwrap();
     let dev_of = |p: &Path| Ok(if p.starts_with(&mounted) { 2 } else { 1 });
 
-    assert_eq!(mount_under(&root, &dev_of).unwrap(), Some(mounted.clone()));
-    assert_eq!(mount_under(&linked, &dev_of).unwrap(), None);
-    assert_eq!(mount_under(&root.join("a.txt"), &dev_of).unwrap(), None);
-    let one = |_: &Path| Ok(1);
-    assert_eq!(mount_under(&root, &one).unwrap(), None);
+    let walk = |root: &Path, dev_of: &dyn Fn(&Path) -> std::io::Result<u64>| {
+        mount_under(root, Some(dev_of), &[]).unwrap()
+    };
+    assert_eq!(walk(&root, &dev_of), Some(mounted.clone()));
+    assert_eq!(walk(&linked, &dev_of), None);
+    assert_eq!(walk(&root.join("a.txt"), &dev_of), None);
+    assert_eq!(walk(&root, &|_: &Path| Ok(1)), None);
     assert!(
         refuse_holding_mount(&root).is_ok(),
         "a real tree holds no mount"
+    );
+}
+
+/// A bind mount on the same drive shows only in the mount table: a table entry at or under the
+/// folder is found with no device walk, and one beside it is not.
+#[test]
+fn mount_under_finds_a_mount_table_entry_at_or_under_the_folder() {
+    let t = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(t.path()).unwrap().join("Public");
+    fs::create_dir_all(root.join("inner")).unwrap();
+    let table = |entries: &[PathBuf]| mount_under(&root, None, entries).unwrap();
+
+    assert_eq!(
+        table(&[PathBuf::from("/"), root.join("inner")]),
+        Some(root.join("inner"))
+    );
+    assert_eq!(table(std::slice::from_ref(&root)), Some(root.clone()));
+    assert_eq!(table(&[root.with_file_name("Public2")]), None);
+    assert_eq!(table(&[]), None);
+    let linked = t.path().join("link");
+    std::os::unix::fs::symlink(&root, &linked).unwrap();
+    assert_eq!(
+        mount_under(&linked, None, &[root.join("inner")]).unwrap(),
+        None,
+        "a link holds nothing"
     );
 }
 
