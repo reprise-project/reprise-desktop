@@ -2,6 +2,7 @@
 members = [
     "crates/reprisekit",
     "crates/reprisekit-pins",
+    "crates/repriseapp-pins",
     "crates/repriseapp",
     "crates/reprisefs",
     "crates/reprisetray",
@@ -107,6 +108,7 @@ gbm-sys = "0.4"
 # types cross between the two connections, so both versions build.
 x11rb = { version = "0.14", default-features = false, features = ["res"] }
 reprisekit = { path = "crates/reprisekit" }
+repriseapp-pins = { path = "crates/repriseapp-pins" }
 reprisescene = { path = "crates/reprisescene" }
 reprisefx = { path = "crates/reprisefx" }
 reprisefs = { path = "crates/reprisefs" }
