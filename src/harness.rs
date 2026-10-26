@@ -233,6 +233,26 @@ impl Harness {
         c
     }
 
+    /// What client `c` reads as `mime` from the clipboard selection it last heard, turning the
+    /// loop while the owner writes.
+    pub fn paste(&mut self, c: &mut TestClient, mime: &str) -> Vec<u8> {
+        let offer = c.side.selection.clone().expect("a clipboard selection");
+        let (mut read, write) = std::io::pipe().expect("pipe");
+        offer.receive(mime.into(), write.as_fd());
+        c.queue.flush().expect("client flush");
+        drop(write);
+        let reader = std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut read, &mut bytes).map(|_| bytes)
+        });
+        let end = std::time::Instant::now() + Duration::from_secs(3);
+        while !reader.is_finished() {
+            assert!(std::time::Instant::now() < end, "the paste never ended");
+            self.run_for(5);
+        }
+        reader.join().expect("reader").expect("read")
+    }
+
     /// Requests and events back and forth until both sides have nothing left.
     pub fn roundtrip(&mut self, c: &mut TestClient) {
         for _ in 0..4 {
@@ -520,19 +540,36 @@ impl TestClient {
     }
 
     /// A clipboard selection offering `mimes`, set while the client has the keyboard. The source
-    /// answers every read with nothing.
-    pub fn copy(&mut self, mimes: &[&str]) -> wl_data_source::WlDataSource {
-        let qh = self.qh();
-        let manager = self
-            .side
-            .data_manager
-            .as_ref()
-            .expect("wl_data_device_manager");
-        let seat = self.side.seat.as_ref().expect("wl_seat");
-        let device = manager.get_data_device(seat, &qh, ());
-        let source = self.data_source(mimes, b"");
+    /// answers every read with `bytes`.
+    pub fn copy(&mut self, mimes: &[&str], bytes: &[u8]) -> wl_data_source::WlDataSource {
+        let device = self.data_device();
+        let source = self.data_source(mimes, bytes);
         device.set_selection(Some(&source), 0);
         source
+    }
+
+    /// The client's data device, made on first use. The selection it hears lands in
+    /// [`ClientSide::selection`].
+    pub fn data_device(&mut self) -> wl_data_device::WlDataDevice {
+        if let Some(d) = &self.side.data_device {
+            return d.clone();
+        }
+        let qh = self.qh();
+        let manager = (self.side.data_manager.as_ref()).expect("wl_data_device_manager");
+        let device = manager.get_data_device(self.seat(), &qh, ());
+        self.side.data_device = Some(device.clone());
+        device
+    }
+
+    /// The types the clipboard selection this client last heard offers.
+    pub fn selection_mimes(&self) -> Vec<String> {
+        let Some(offer) = &self.side.selection else {
+            return Vec::new();
+        };
+        (self.side.offers.iter())
+            .find(|(o, _)| o == offer)
+            .map(|(_, m)| m.clone())
+            .unwrap_or_default()
     }
 
     /// A data source offering `mimes`, answering every read with `bytes`. The `target` events it
@@ -769,6 +806,11 @@ pub struct ClientSide {
     outputs: Vec<WlOutput>,
     /// Each `wl_data_source.target` a source heard: the type a drop target accepts, or none.
     pub source_targets: Vec<Option<String>>,
+    data_device: Option<wl_data_device::WlDataDevice>,
+    /// Every offer the data device made, with the types it named.
+    offers: Vec<(wl_data_offer::WlDataOffer, Vec<String>)>,
+    /// The clipboard selection's offer, while there is one.
+    pub selection: Option<wl_data_offer::WlDataOffer>,
 }
 
 impl ClientSide {
@@ -1010,13 +1052,18 @@ impl wc::Dispatch<ZwpInputMethodKeyboardGrabV2, usize> for ClientSide {
 
 impl wc::Dispatch<wl_data_device::WlDataDevice, ()> for ClientSide {
     fn event(
-        _: &mut Self,
+        st: &mut Self,
         _: &wl_data_device::WlDataDevice,
-        _: wl_data_device::Event,
+        ev: wl_data_device::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        match ev {
+            wl_data_device::Event::DataOffer { id } => st.offers.push((id, Vec::new())),
+            wl_data_device::Event::Selection { id } => st.selection = id,
+            _ => {}
+        }
     }
 
     wc::event_created_child!(ClientSide, wl_data_device::WlDataDevice, [
@@ -1026,7 +1073,22 @@ impl wc::Dispatch<wl_data_device::WlDataDevice, ()> for ClientSide {
 
 wc::delegate_noop!(ClientSide: ignore WlCompositor);
 wc::delegate_noop!(ClientSide: ignore wl_data_device_manager::WlDataDeviceManager);
-wc::delegate_noop!(ClientSide: ignore wl_data_offer::WlDataOffer);
+impl wc::Dispatch<wl_data_offer::WlDataOffer, ()> for ClientSide {
+    fn event(
+        st: &mut Self,
+        offer: &wl_data_offer::WlDataOffer,
+        ev: wl_data_offer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_data_offer::Event::Offer { mime_type } = ev
+            && let Some((_, mimes)) = st.offers.iter_mut().find(|(o, _)| o == offer)
+        {
+            mimes.push(mime_type);
+        }
+    }
+}
 impl wc::Dispatch<wl_data_source::WlDataSource, Arc<[u8]>> for ClientSide {
     fn event(
         st: &mut Self,

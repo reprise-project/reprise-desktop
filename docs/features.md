@@ -251,7 +251,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Clipboard history.** Super+V lists the last 25 things you copied, text
   and images. Type to filter, Del forgets one, Enter pastes it (with
   Ctrl+Shift+V in terminals). Password managers' copies are left out, and
-  it lives in memory only.
+  it lives in memory only. The last copy stays on the clipboard after the
+  program that made it quits.
 - **Emoji picker.** Super+. opens a grid of emoji at the text caret. Search
   by name or shortcode, and Enter types it without touching the clipboard.
   It wants a colour emoji font.

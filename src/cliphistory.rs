@@ -252,6 +252,8 @@ impl Got {
 #[derive(Default)]
 pub struct Recorder {
     pub history: History,
+    /// The entry the seat's clipboard was recorded as, which outlives its owner.
+    live: Option<u64>,
     capture: Option<Capture>,
     /// Bumped by every capture, so a watch or timer of an abandoned one
     /// that still fires finds nothing to act on.
@@ -279,6 +281,7 @@ enum Read {
 impl State {
     pub fn record_selection(&mut self) {
         self.abandon_history_read();
+        self.panels.history.live = None;
         if !self.config.clipboard.history {
             self.panels.history.history.clear();
             return;
@@ -312,6 +315,33 @@ impl State {
             got: Got::default(),
         });
         self.next_history_step();
+    }
+
+    /// Put entry `id` back on the clipboard, held by Reprise. False when the entry is gone.
+    pub(crate) fn clip_offer_entry(&mut self, id: u64) -> bool {
+        let Some(offers) = self
+            .panels
+            .history
+            .history
+            .get(id)
+            .map(|e| e.offers.clone())
+        else {
+            return false;
+        };
+        self.clip_offer_each(offers);
+        true
+    }
+
+    /// The client holding the clipboard destroyed its source without a new selection, which
+    /// Smithay tells no handler: the copy recorded of it stays on the clipboard.
+    pub(crate) fn clip_keep_orphaned(&mut self) {
+        if self.clip.offered.is_empty() || self.clipboard_held() {
+            return;
+        }
+        self.clip.offered.clear();
+        if let Some(id) = self.panels.history.live {
+            self.clip_offer_entry(id);
+        }
     }
 
     pub fn clear_history(&mut self) {
@@ -454,11 +484,12 @@ impl State {
             .iter()
             .find(|(m, _)| m == PNG)
             .map(|(_, b)| b.clone());
-        let history = &mut self.panels.history.history;
-        let Some(id) = history.push(kind, primary, offers) else {
+        let r = &mut self.panels.history;
+        let Some(id) = r.history.push(kind, primary, offers) else {
             return;
         };
-        let needs_thumb = history
+        r.live = Some(id);
+        let needs_thumb = (r.history)
             .get(id)
             .is_some_and(|e| matches!(e.kind, Kind::Image { .. }) && e.thumb.is_none());
         let Some(png) = png.filter(|_| needs_thumb) else {
