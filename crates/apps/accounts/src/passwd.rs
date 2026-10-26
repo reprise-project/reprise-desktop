@@ -3,12 +3,14 @@
 //! checks the current password itself; AccountsService would want an
 //! administrator's).
 
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+use zeroize::Zeroizing;
 
 #[link(name = "crypt")]
 unsafe extern "C" {
@@ -27,7 +29,12 @@ unsafe extern "C" {
 }
 
 pub fn crypt(password: &str) -> Result<String, String> {
-    let phrase = CString::new(password).map_err(|_| "The password holds a NUL.".to_string())?;
+    if password.contains('\0') {
+        return Err("The password holds a NUL.".into());
+    }
+    let mut phrase = Zeroizing::new(Vec::with_capacity(password.len() + 1));
+    phrase.extend_from_slice(password.as_bytes());
+    phrase.push(0);
     // SAFETY: a null prefix picks the default method and null random
     // bytes make libcrypt draw its own; the result is malloc'd (or null)
     // and freed below.
@@ -39,7 +46,7 @@ pub fn crypt(password: &str) -> Result<String, String> {
     let mut size: libc::c_int = 0;
     // SAFETY: both strings are NUL-terminated and live across the call;
     // crypt_ra allocates `data`, which holds the result until freed.
-    let out = unsafe { crypt_ra(phrase.as_ptr(), setting, &mut data, &mut size) };
+    let out = unsafe { crypt_ra(phrase.as_ptr().cast(), setting, &mut data, &mut size) };
     let hash = if out.is_null() {
         None
     } else {
@@ -47,9 +54,13 @@ pub fn crypt(password: &str) -> Result<String, String> {
         let s = unsafe { CStr::from_ptr(out) };
         Some(s.to_string_lossy().into_owned())
     };
-    // SAFETY: both were allocated by libcrypt with malloc.
+    // SAFETY: both were allocated by libcrypt with malloc; `data` is `size` bytes, its work
+    // area holding state derived from the phrase.
     unsafe {
         libc::free(setting.cast());
+        if !data.is_null() {
+            libc::explicit_bzero(data, size.max(0) as usize);
+        }
         libc::free(data);
     }
     match hash {
@@ -200,8 +211,10 @@ fn talk(mut cmd: Command, current: &str, new: &str) -> Result<(), String> {
         match talk.feed(&String::from_utf8_lossy(&buf[..read])) {
             Step::Wait => {}
             Step::Answer(i) => {
-                let line = format!("{}\n", answers[i]);
-                if file.write_all(line.as_bytes()).is_err() {
+                let mut line = Zeroizing::new(Vec::with_capacity(answers[i].len() + 1));
+                line.extend_from_slice(answers[i].as_bytes());
+                line.push(b'\n');
+                if file.write_all(&line).is_err() {
                     break None;
                 }
             }

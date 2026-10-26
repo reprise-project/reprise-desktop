@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+use zeroize::Zeroizing;
 
 use crate::passwd;
 
@@ -74,20 +75,20 @@ pub enum Op {
     },
     Password {
         path: String,
-        password: String,
+        password: Zeroizing<String>,
     },
     PasswordAtLogin {
         path: String,
     },
     OwnPassword {
-        current: String,
-        new: String,
+        current: Zeroizing<String>,
+        new: Zeroizing<String>,
     },
     Create {
         login: String,
         real_name: String,
         admin: bool,
-        password: Option<String>,
+        password: Option<Zeroizing<String>>,
     },
     Delete {
         uid: u32,
