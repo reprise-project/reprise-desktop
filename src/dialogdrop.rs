@@ -38,6 +38,15 @@ enum Field {
     Rename(usize),
 }
 
+/// The types of `offered` a field reads `source`'s drag as: a sandboxed program's URI list
+/// names paths inside its sandbox.
+fn readable(source: &SeatSource, mut offered: Vec<String>) -> Vec<String> {
+    if source.sandboxed() {
+        offered.retain(|m| m != dropdata::URI_LIST);
+    }
+    offered
+}
+
 /// The mime a field reads a drag offering `offered` as: a file manager's URI list (its paths),
 /// else UTF-8 text (a browser's link drops its text).
 pub fn field_mime<S: AsRef<str>>(offered: &[S]) -> Option<&'static str> {
@@ -117,7 +126,7 @@ impl State {
             return None;
         }
         let meta = source.metadata()?;
-        let mime = field_mime(&crate::dnddrop::readable(source, meta.mime_types))?;
+        let mime = field_mime(&readable(source, meta.mime_types))?;
         let allowed = crate::dnddrop::source_actions(&meta.dnd_actions);
         if !allowed.contains(WlDndAction::Copy) {
             return None;
