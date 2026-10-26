@@ -828,3 +828,13 @@ fn a_window_that_sized_itself_keeps_that_size_when_restored() {
         "minimize and restore keep the size the program took"
     );
 }
+
+#[test]
+fn a_client_name_is_read_up_to_1024_chars() {
+    use super::{NAME_CAP, capped};
+    assert_eq!(NAME_CAP, 1024);
+    let long: String = "中".repeat(3000);
+    assert_eq!(capped(long).chars().count(), 1024);
+    assert_eq!(capped("Notepad".into()), "Notepad");
+    assert_eq!(capped("a".repeat(1024)).len(), 1024);
+}

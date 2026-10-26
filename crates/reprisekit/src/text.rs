@@ -4,6 +4,7 @@
 
 use crate::fontfallback::{
     FaceFile, FallbackCache, FallbackDraw, fallback_draw, fallback_strike, fontconfig_face_for,
+    no_fallback,
 };
 use crate::raster::{Canvas, Rect};
 use crate::theme::{Color, FontConfig};
@@ -483,6 +484,7 @@ impl TextRenderer {
         // face smoothed (an outline CJK face in mono ink at 11 px loses its strokes).
         let fallback = match index {
             Some(_) => None,
+            None if no_fallback(ch) => None,
             None => {
                 let strike = self.fallback_face(ch, bold, true).and_then(|fb| {
                     let p = fallback_strike(strike_ppems(&fb), size_px)?;

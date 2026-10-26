@@ -2447,6 +2447,7 @@ dependencies = [
  "rustybuzz",
  "serde",
  "syn 3.0.9",
+ "unicode-properties",
  "yeslogic-fontconfig-sys",
  "zeroize",
 ]
