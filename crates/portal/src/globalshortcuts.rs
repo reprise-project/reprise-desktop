@@ -28,6 +28,7 @@ pub struct GlobalShortcuts {
     /// None when the compositor offered no `reprise_input_v1`; sessions
     /// then fail, as they do on a compositor without `create_shortcuts`.
     pub link: Option<Link>,
+    pub frontend: crate::Frontend,
 }
 
 fn string_opt(opts: &HashMap<String, OwnedValue>, key: &str) -> String {
@@ -141,6 +142,7 @@ impl GlobalShortcuts {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, Results)> {
+        self.frontend.check(&hdr)?;
         crate::check_session(&session_handle)?;
         // Bindings are kept per app id; a program without one has nowhere
         // to keep them.
@@ -206,8 +208,10 @@ impl GlobalShortcuts {
     /// the user; a Deny is kept, and later binds answer Cancelled without
     /// asking. A prompt closed without an answer asks again next time. A
     /// first bind of no shortcuts answers OK with none and asks nothing.
+    #[allow(clippy::too_many_arguments)]
     async fn bind_shortcuts(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         shortcuts: Shortcuts,
@@ -215,6 +219,7 @@ impl GlobalShortcuts {
         _options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, Results)> {
+        self.frontend.check(&hdr)?;
         let key = session_handle.as_str();
         let Some((app, _)) = session_of(&self.sessions, key) else {
             return Ok((RESPONSE_OTHER, Results::new()));
@@ -235,7 +240,7 @@ impl GlobalShortcuts {
             // The Request object lets the frontend cancel the prompt; a
             // Session.Close while it is up cancels it too.
             let cancel = Arc::new(AtomicBool::new(false));
-            crate::export_request(server, &handle, cancel.clone()).await?;
+            crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
             if let Some(s) = self.sessions.lock().unwrap().get_mut(key) {
                 s.picking = Some(cancel.clone());
             }
@@ -289,9 +294,11 @@ impl GlobalShortcuts {
 
     async fn list_shortcuts(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
     ) -> zbus::fdo::Result<(u32, Results)> {
+        self.frontend.check(&hdr)?;
         match session_of(&self.sessions, session_handle.as_str()) {
             Some((app, ids)) if ids.is_empty() => Ok((
                 RESPONSE_OK,
@@ -307,7 +314,9 @@ impl GlobalShortcuts {
         _session_handle: ObjectPath<'_>,
         _parent_window: String,
         _options: HashMap<String, Value<'_>>,
-    ) {
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        self.frontend.check(&hdr)?;
         match std::process::Command::new("reprise-settings")
             .args(["--page", "keyboard"])
             .spawn()
@@ -316,6 +325,7 @@ impl GlobalShortcuts {
             Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
             Err(e) => log::warn!("GlobalShortcuts: reprise-settings: {e}"),
         }
+        Ok(())
     }
 
     #[zbus(signal)]

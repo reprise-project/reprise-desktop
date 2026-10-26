@@ -34,6 +34,7 @@ pub struct RemoteDesktop {
     /// None when the compositor offered no `reprise_input_v1`; every method then fails rather than
     /// pretending to grant.
     pub link: Option<Link>,
+    pub frontend: crate::Frontend,
 }
 
 #[derive(SerializeDict, Type)]
@@ -67,6 +68,7 @@ impl RemoteDesktop {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         crate::check_session(&session_handle)?;
         if live(&self.link).is_none() {
             return Ok((RESPONSE_OTHER, HashMap::new()));
@@ -101,11 +103,13 @@ impl RemoteDesktop {
 
     async fn select_devices(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         _app_id: String,
         options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         if live(&self.link).is_none() {
             return Ok((RESPONSE_OTHER, HashMap::new()));
         }
@@ -142,6 +146,7 @@ impl RemoteDesktop {
     #[allow(clippy::too_many_arguments)]
     async fn start(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         app_id: String,
@@ -150,6 +155,7 @@ impl RemoteDesktop {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, StartResults)> {
+        self.frontend.check(&hdr)?;
         if live(&self.link).is_none() {
             return Ok((RESPONSE_OTHER, empty()));
         }
@@ -171,7 +177,7 @@ impl RemoteDesktop {
         let mut remember = restored;
         if !restored {
             let cancel = Arc::new(AtomicBool::new(false));
-            crate::export_request(server, &handle, cancel.clone()).await?;
+            crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
             if let Some(s) = self.sessions.lock().unwrap().get_mut(&key) {
                 s.picking = Some(cancel.clone());
             }
@@ -214,6 +220,7 @@ impl RemoteDesktop {
             Some(_) => {
                 match crate::pick_and_cast(
                     &self.sessions,
+                    &self.frontend,
                     server,
                     conn,
                     &handle,
@@ -265,10 +272,12 @@ impl RemoteDesktop {
     #[zbus(name = "ConnectToEIS")]
     async fn connect_to_eis(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         app_id: String,
         _options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<zbus::zvariant::OwnedFd> {
+        self.frontend.check(&hdr)?;
         let Some(link) = live(&self.link) else {
             return Err(zbus::fdo::Error::Failed("no input link".into()));
         };
@@ -334,20 +343,24 @@ impl RemoteDesktop {
     }
     async fn notify_keyboard_keycode(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         _o: HashMap<String, Value<'_>>,
         keycode: i32,
         state: u32,
     ) -> zbus::fdo::Result<()> {
+        self.frontend.check(&hdr)?;
         self.with_keys(&session_handle, |k| k.key(keycode as u32, state != 0))
     }
     async fn notify_keyboard_keysym(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         _o: HashMap<String, Value<'_>>,
         keysym: i32,
         state: u32,
     ) -> zbus::fdo::Result<()> {
+        self.frontend.check(&hdr)?;
         self.with_keys(&session_handle, |k| k.keysym(keysym as u32, state != 0))
     }
     async fn notify_touch_down(
