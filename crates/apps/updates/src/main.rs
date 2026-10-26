@@ -407,9 +407,7 @@ impl UpdatesApp {
 }
 
 fn main() {
-    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    let tray_only = std::env::args().any(|a| a == "--tray");
-    repriseapp::run(Box::new(UpdatesApp::new(tray_only)));
+    repriseapp::applet_main(UpdatesApp::new);
 }
 
 #[cfg(test)]
@@ -580,7 +578,8 @@ mod tests {
             ..UpdatesApp::new(true)
         };
         assert_eq!(app.wake().activate, None);
-        tx.send(reprisetray::Msg::Clicked(tray::ID_OPEN)).unwrap();
+        tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::Open))
+            .unwrap();
         assert_eq!(app.wake().activate, Some((repriseapp::MAIN, handoff)));
     }
 }

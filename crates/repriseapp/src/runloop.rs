@@ -52,6 +52,14 @@ use wayland_client::{Connection, QueueHandle, globals::registry_queue_init};
 
 const BLINK_MS: u64 = 530;
 
+/// A tray applet's `main`: the journal logger, then the program `app` makes from whether `--tray`
+/// (start with the window hidden) was given.
+pub fn applet_main<A: App + 'static>(app: impl FnOnce(bool) -> A) {
+    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
+    let tray_only = std::env::args().any(|a| a == "--tray");
+    run(Box::new(app(tray_only)));
+}
+
 pub fn run(app: Box<dyn App>) {
     filedlg::remember_views();
     let conn = Connection::connect_to_env().expect("WAYLAND_DISPLAY");

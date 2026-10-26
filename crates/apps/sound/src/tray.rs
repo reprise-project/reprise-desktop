@@ -6,19 +6,12 @@
 use std::time::{Duration, Instant};
 
 use reprisekit::pointer::DOUBLE_CLICK_SLOP;
-use reprisetray::{Config, Icon, Msg, Node, Raise, Shown};
+use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 pub const BUS_NAME: &str = "reprise.sound";
 
-/// Menu row ids, as they travel in `GetLayout` and come back in `Event`.
-pub const ID_PROPERTIES: i32 = 1;
-pub const ID_MUTE: i32 = 2;
-pub const ID_SEPARATOR: i32 = 3;
-pub const ID_EXIT: i32 = 4;
-pub const ID_VOLUME_CONTROL: i32 = 5;
-
 /// What the tray asks the app to do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum TrayMsg {
     /// Left click at its click point (`Msg::Activate`): the volume popup,
     /// or with a second one the sheet.
@@ -41,27 +34,33 @@ const WHEEL_MAX: i32 = 20;
 pub fn translate(msg: Msg) -> Option<TrayMsg> {
     Some(match msg {
         Msg::Activate(x, y) => TrayMsg::Activate(x, y),
-        Msg::Clicked(ID_PROPERTIES) => TrayMsg::Properties,
-        Msg::Clicked(ID_VOLUME_CONTROL) => TrayMsg::VolumeControl,
-        Msg::SecondaryActivate | Msg::Clicked(ID_MUTE) => TrayMsg::ToggleMute,
+        Msg::SecondaryActivate => TrayMsg::ToggleMute,
         // Any bus peer can send a delta; a full sweep of the slider is
         // twenty 5 % steps, so nothing past that means anything.
         Msg::Scroll(delta) => TrayMsg::Scroll(delta.clamp(-WHEEL_MAX, WHEEL_MAX)),
-        Msg::Clicked(ID_EXIT) => TrayMsg::Exit,
-        Msg::Clicked(_) | Msg::BalloonClicked(_) | Msg::BalloonButton(..) => return None,
+        Msg::Clicked(_) => return menu(false).translate(msg),
+        Msg::BalloonClicked(_) | Msg::BalloonButton(..) => return None,
     })
 }
 
 /// The tray menu: the mixer window, the bold default, then the
 /// properties sheet, the mute toggle and Exit.
+pub fn menu(muted: bool) -> Rows<TrayMsg> {
+    let mut rows = Rows::default();
+    rows.add(TrayMsg::VolumeControl, |id| {
+        Node::row(id, "Open Volume Control").as_default()
+    })
+    .add(TrayMsg::Properties, |id| {
+        Node::row(id, "Adjust Audio Properties")
+    })
+    .add(TrayMsg::ToggleMute, |id| Node::toggle(id, "Mute", muted))
+    .separator()
+    .add(TrayMsg::Exit, |id| Node::row(id, "Exit"));
+    rows
+}
+
 pub fn menu_nodes(muted: bool) -> Vec<Node> {
-    vec![
-        Node::row(ID_VOLUME_CONTROL, "Open Volume Control").as_default(),
-        Node::row(ID_PROPERTIES, "Adjust Audio Properties"),
-        Node::toggle(ID_MUTE, "Mute", muted),
-        Node::separator(ID_SEPARATOR),
-        Node::row(ID_EXIT, "Exit"),
-    ]
+    menu(muted).into_nodes()
 }
 
 /// The one line the host shows when the pointer rests on the icon.
@@ -138,7 +137,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
         notify_icon: "audio-volume-high",
         // A second instance raises the sheet through the Properties row:
         // Activate would wait out a double click and open the popup.
-        raise: Raise::MenuRow(ID_PROPERTIES),
+        raise: Raise::MenuRow(Rows::id(&TrayMsg::Properties)),
     };
     reprisetray::start(
         config,
@@ -155,18 +154,17 @@ mod tests {
     fn menu_has_five_rows() {
         let nodes = menu_nodes(false);
         assert_eq!(nodes.len(), 5);
-        assert_eq!(nodes[0].id, 5);
+        assert_eq!(nodes[0].id, Rows::id(&TrayMsg::VolumeControl));
         assert_eq!(nodes[0].label, "Open Volume Control");
         assert!(nodes[0].default, "Open Volume Control is the bold default");
         assert_eq!(nodes.iter().filter(|n| n.default).count(), 1);
-        assert_eq!(nodes[1].id, 1);
+        assert_eq!(nodes[1].id, Rows::id(&TrayMsg::Properties));
         assert_eq!(nodes[1].label, "Adjust Audio Properties");
-        assert_eq!(nodes[2].id, 2);
+        assert_eq!(nodes[2].id, Rows::id(&TrayMsg::ToggleMute));
         assert_eq!(nodes[2].label, "Mute");
         assert_eq!(nodes[2].toggle, Some(false));
-        assert_eq!(nodes[3].id, 3);
         assert!(nodes[3].separator);
-        assert_eq!(nodes[4].id, 4);
+        assert_eq!(nodes[4].id, Rows::id(&TrayMsg::Exit));
         assert_eq!(nodes[4].label, "Exit");
     }
 
@@ -183,17 +181,23 @@ mod tests {
             Some(TrayMsg::Activate(3, 4))
         );
         assert_eq!(
-            translate(Msg::Clicked(ID_PROPERTIES)),
+            translate(Rows::clicked(&TrayMsg::Properties)),
             Some(TrayMsg::Properties)
         );
         assert_eq!(
-            translate(Msg::Clicked(ID_VOLUME_CONTROL)),
+            translate(Rows::clicked(&TrayMsg::VolumeControl)),
             Some(TrayMsg::VolumeControl)
         );
         assert_eq!(translate(Msg::SecondaryActivate), Some(TrayMsg::ToggleMute));
-        assert_eq!(translate(Msg::Clicked(ID_MUTE)), Some(TrayMsg::ToggleMute));
-        assert_eq!(translate(Msg::Clicked(ID_EXIT)), Some(TrayMsg::Exit));
-        assert_eq!(translate(Msg::Clicked(ID_SEPARATOR)), None);
+        assert_eq!(
+            translate(Rows::clicked(&TrayMsg::ToggleMute)),
+            Some(TrayMsg::ToggleMute)
+        );
+        assert_eq!(
+            translate(Rows::clicked(&TrayMsg::Exit)),
+            Some(TrayMsg::Exit)
+        );
+        assert_eq!(translate(Msg::Clicked(menu_nodes(false)[3].id)), None);
         assert_eq!(translate(Msg::Scroll(-1)), Some(TrayMsg::Scroll(-1)));
         // A peer's absurd delta is a full sweep, not an overflow later.
         assert_eq!(translate(Msg::Scroll(i32::MAX)), Some(TrayMsg::Scroll(20)));

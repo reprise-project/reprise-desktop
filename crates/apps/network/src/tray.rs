@@ -2,29 +2,16 @@
 //! tooltip and device-shaped menu, the balloons a link change sends, and what a
 //! click means. It turns a snapshot into those; the D-Bus side is `reprisetray`'s.
 
-use reprisetray::{Config, Icon, Msg, Node, Raise, Shown};
+use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 use crate::nm;
 use reprisekit::art::neticon::{NetIcon, bars};
 
 pub const BUS_NAME: &str = "reprise.network";
 
-pub const ID_DISABLE: i32 = 1;
-pub const ID_STATUS: i32 = 2;
-pub const ID_REPAIR: i32 = 3;
-pub const ID_SEP1: i32 = 4;
-pub const ID_WIRELESS: i32 = 5;
-pub const ID_SEP2: i32 = 6;
-pub const ID_FOLDER: i32 = 7;
-pub const ID_SEP3: i32 = 8;
-pub const ID_EXIT: i32 = 9;
-pub const ID_HOTSPOT: i32 = 10;
-pub const ID_SEP4: i32 = 11;
-pub const ID_VPN: i32 = 100;
-
 pub const TAG_PORTAL: u32 = 1;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum TrayMsg {
     /// A VPN's row, by its index in the snapshot: connect, or disconnect when up.
     Vpn(usize),
@@ -39,21 +26,13 @@ pub enum TrayMsg {
     Exit,
 }
 
-pub fn translate(msg: Msg) -> Option<TrayMsg> {
-    Some(match msg {
-        Msg::Activate(..) | Msg::SecondaryActivate | Msg::Clicked(ID_STATUS) => TrayMsg::Status,
-        Msg::Clicked(ID_DISABLE) => TrayMsg::Toggle,
-        Msg::Clicked(ID_REPAIR) => TrayMsg::Repair,
-        Msg::Clicked(ID_WIRELESS) => TrayMsg::Wireless,
-        Msg::Clicked(ID_FOLDER) => TrayMsg::Folder,
-        Msg::Clicked(ID_EXIT) => TrayMsg::Exit,
-        Msg::Clicked(ID_HOTSPOT) => TrayMsg::Hotspot,
-        Msg::Clicked(id) if id >= ID_VPN => TrayMsg::Vpn((id - ID_VPN) as usize),
-        Msg::BalloonClicked(TAG_PORTAL) => TrayMsg::SignIn,
-        Msg::Clicked(_) | Msg::Scroll(_) | Msg::BalloonClicked(_) | Msg::BalloonButton(..) => {
-            return None;
-        }
-    })
+/// What `msg` means while the menu has `shape`.
+pub fn translate(msg: Msg, shape: &MenuShape) -> Option<TrayMsg> {
+    match msg {
+        Msg::Activate(..) | Msg::SecondaryActivate => Some(TrayMsg::Status),
+        Msg::BalloonClicked(TAG_PORTAL) => Some(TrayMsg::SignIn),
+        msg => menu(shape).translate(msg),
+    }
 }
 
 /// What the rows depend on: the first row's wording, whether there is anything
@@ -84,38 +63,39 @@ impl Default for MenuShape {
 /// The tray menu: Disable, Status, Repair, the wireless list and hotspot, the
 /// saved VPNs as check rows, the folder and Exit. Rows and their separators go
 /// together, so two separators never meet.
-pub fn menu_nodes(shape: &MenuShape) -> Vec<Node> {
-    let row = Node::row;
-    let separator = Node::separator;
-    let mut nodes = vec![];
+pub fn menu(shape: &MenuShape) -> Rows<TrayMsg> {
+    let mut rows = Rows::default();
+    let row = |label: &'static str| move |id| Node::row(id, label);
     if shape.has_device {
-        nodes.push(row(ID_DISABLE, shape.enabled_label));
-        nodes.push(row(ID_STATUS, "Status"));
-        nodes.push(row(ID_REPAIR, "Repair"));
-        nodes.push(separator(ID_SEP1));
+        rows.add(TrayMsg::Toggle, row(shape.enabled_label))
+            .add(TrayMsg::Status, row("Status"))
+            .add(TrayMsg::Repair, row("Repair"))
+            .separator();
     }
     if shape.has_wifi {
-        nodes.push(row(ID_WIRELESS, "View Available Wireless Networks"));
-        nodes.push(row(
-            ID_HOTSPOT,
-            if shape.hotspot_on {
-                "Stop Hotspot"
-            } else {
-                "Create Hotspot..."
-            },
-        ));
-        nodes.push(separator(ID_SEP2));
+        let hotspot = if shape.hotspot_on {
+            "Stop Hotspot"
+        } else {
+            "Create Hotspot..."
+        };
+        rows.add(TrayMsg::Wireless, row("View Available Wireless Networks"))
+            .add(TrayMsg::Hotspot, row(hotspot))
+            .separator();
     }
     if !shape.vpns.is_empty() {
         for (i, (name, up)) in shape.vpns.iter().enumerate() {
-            nodes.push(Node::toggle(ID_VPN + i as i32, name.clone(), *up));
+            rows.add(TrayMsg::Vpn(i), |id| Node::toggle(id, name.clone(), *up));
         }
-        nodes.push(separator(ID_SEP4));
+        rows.separator();
     }
-    nodes.push(row(ID_FOLDER, "Open Network Connections"));
-    nodes.push(separator(ID_SEP3));
-    nodes.push(row(ID_EXIT, "Exit"));
-    nodes
+    rows.add(TrayMsg::Folder, row("Open Network Connections"))
+        .separator()
+        .add(TrayMsg::Exit, row("Exit"));
+    rows
+}
+
+pub fn menu_nodes(shape: &MenuShape) -> Vec<Node> {
+    menu(shape).into_nodes()
 }
 
 /// The menu a snapshot asks for: the first row reads off the primary device's
@@ -397,7 +377,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
         id: "reprise-network",
         title: "Network",
         notify_icon: "network-wired",
-        raise: Raise::MenuRow(ID_FOLDER),
+        raise: Raise::MenuRow(Rows::id(&TrayMsg::Folder)),
     };
     let initial = shown(
         reprisekit::art::neticon::draw(NetIcon::WiredUnplugged, false).to_argb_be(),
@@ -586,27 +566,60 @@ mod tests {
         assert_eq!(signal_word(0), "Very Low");
     }
 
-    fn rows(shape: MenuShape) -> Vec<(i32, String, bool)> {
-        menu_nodes(&shape)
-            .into_iter()
-            .map(|n| (n.id, n.label, n.separator))
+    fn rows(shape: MenuShape) -> Vec<(Option<TrayMsg>, String, bool)> {
+        let menu = menu(&shape);
+        menu.nodes()
+            .iter()
+            .map(|n| {
+                (
+                    menu.translate(Msg::Clicked(n.id)),
+                    n.label.clone(),
+                    n.separator,
+                )
+            })
             .collect()
+    }
+
+    /// A menu with every row, VPNs included.
+    fn full() -> MenuShape {
+        MenuShape {
+            has_wifi: true,
+            has_device: true,
+            vpns: vec![("Away".into(), true), ("Work".into(), false)],
+            ..MenuShape::default()
+        }
+    }
+
+    fn translate_full(msg: Msg) -> Option<TrayMsg> {
+        translate(msg, &full())
     }
 
     #[test]
     fn clicks_map_to_the_rows() {
-        assert_eq!(translate(Msg::Activate(0, 0)), Some(TrayMsg::Status));
-        assert_eq!(translate(Msg::Clicked(ID_DISABLE)), Some(TrayMsg::Toggle));
-        assert_eq!(translate(Msg::Clicked(ID_FOLDER)), Some(TrayMsg::Folder));
-        assert_eq!(translate(Msg::Clicked(ID_EXIT)), Some(TrayMsg::Exit));
-        assert_eq!(translate(Msg::Clicked(ID_SEP1)), None);
-        assert_eq!(translate(Msg::Scroll(1)), None);
+        assert_eq!(translate_full(Msg::Activate(0, 0)), Some(TrayMsg::Status));
+        assert_eq!(
+            translate_full(Rows::clicked(&TrayMsg::Toggle)),
+            Some(TrayMsg::Toggle)
+        );
+        assert_eq!(
+            translate_full(Rows::clicked(&TrayMsg::Folder)),
+            Some(TrayMsg::Folder)
+        );
+        assert_eq!(
+            translate_full(Rows::clicked(&TrayMsg::Exit)),
+            Some(TrayMsg::Exit)
+        );
+        assert_eq!(
+            translate_full(Msg::Clicked(menu_nodes(&full())[3].id)),
+            None
+        );
+        assert_eq!(translate_full(Msg::Scroll(1)), None);
     }
 
     #[test]
     fn menu_nodes_shape() {
-        let row = |id, label: &str| (id, label.to_string(), false);
-        let sep = |id| (id, String::new(), true);
+        let row = |row, label: &str| (Some(row), label.to_string(), false);
+        let sep = || (None, String::new(), true);
         assert_eq!(
             rows(MenuShape {
                 enabled_label: "Disable",
@@ -615,16 +628,16 @@ mod tests {
                 ..MenuShape::default()
             }),
             vec![
-                row(ID_DISABLE, "Disable"),
-                row(ID_STATUS, "Status"),
-                row(ID_REPAIR, "Repair"),
-                sep(ID_SEP1),
-                row(ID_WIRELESS, "View Available Wireless Networks"),
-                row(ID_HOTSPOT, "Create Hotspot..."),
-                sep(ID_SEP2),
-                row(ID_FOLDER, "Open Network Connections"),
-                sep(ID_SEP3),
-                row(ID_EXIT, "Exit"),
+                row(TrayMsg::Toggle, "Disable"),
+                row(TrayMsg::Status, "Status"),
+                row(TrayMsg::Repair, "Repair"),
+                sep(),
+                row(TrayMsg::Wireless, "View Available Wireless Networks"),
+                row(TrayMsg::Hotspot, "Create Hotspot..."),
+                sep(),
+                row(TrayMsg::Folder, "Open Network Connections"),
+                sep(),
+                row(TrayMsg::Exit, "Exit"),
             ]
         );
         // No radio: the wireless row and its separator both go, so two
@@ -637,29 +650,29 @@ mod tests {
                 ..MenuShape::default()
             }),
             vec![
-                row(ID_DISABLE, "Enable"),
-                row(ID_STATUS, "Status"),
-                row(ID_REPAIR, "Repair"),
-                sep(ID_SEP1),
-                row(ID_FOLDER, "Open Network Connections"),
-                sep(ID_SEP3),
-                row(ID_EXIT, "Exit"),
+                row(TrayMsg::Toggle, "Enable"),
+                row(TrayMsg::Status, "Status"),
+                row(TrayMsg::Repair, "Repair"),
+                sep(),
+                row(TrayMsg::Folder, "Open Network Connections"),
+                sep(),
+                row(TrayMsg::Exit, "Exit"),
             ]
         );
         assert_eq!(
             rows(MenuShape::default()),
             vec![
-                row(ID_FOLDER, "Open Network Connections"),
-                sep(ID_SEP3),
-                row(ID_EXIT, "Exit"),
+                row(TrayMsg::Folder, "Open Network Connections"),
+                sep(),
+                row(TrayMsg::Exit, "Exit"),
             ]
         );
     }
 
     #[test]
     fn the_menu_lists_the_hotspot_and_every_saved_vpn() {
-        let row = |id, label: &str| (id, label.to_string(), false);
-        let sep = |id| (id, String::new(), true);
+        let row = |row, label: &str| (Some(row), label.to_string(), false);
+        let sep = || (None, String::new(), true);
         let shape = MenuShape {
             has_wifi: true,
             hotspot_on: true,
@@ -669,20 +682,25 @@ mod tests {
         assert_eq!(
             rows(shape.clone()),
             vec![
-                row(ID_WIRELESS, "View Available Wireless Networks"),
-                row(ID_HOTSPOT, "Stop Hotspot"),
-                sep(ID_SEP2),
-                row(ID_VPN, "Away"),
-                row(ID_VPN + 1, "Work"),
-                sep(ID_SEP4),
-                row(ID_FOLDER, "Open Network Connections"),
-                sep(ID_SEP3),
-                row(ID_EXIT, "Exit"),
+                row(TrayMsg::Wireless, "View Available Wireless Networks"),
+                row(TrayMsg::Hotspot, "Stop Hotspot"),
+                sep(),
+                row(TrayMsg::Vpn(0), "Away"),
+                row(TrayMsg::Vpn(1), "Work"),
+                sep(),
+                row(TrayMsg::Folder, "Open Network Connections"),
+                sep(),
+                row(TrayMsg::Exit, "Exit"),
             ]
         );
         let toggles: Vec<Option<bool>> = menu_nodes(&shape)
             .iter()
-            .filter(|n| n.id >= ID_VPN)
+            .filter(|n| {
+                matches!(
+                    menu(&shape).translate(Msg::Clicked(n.id)),
+                    Some(TrayMsg::Vpn(_))
+                )
+            })
             .map(|n| n.toggle)
             .collect();
         assert_eq!(
@@ -690,10 +708,16 @@ mod tests {
             [Some(true), Some(false)],
             "a VPN that is up is ticked"
         );
-        assert_eq!(translate(Msg::Clicked(ID_VPN + 1)), Some(TrayMsg::Vpn(1)));
-        assert_eq!(translate(Msg::Clicked(ID_HOTSPOT)), Some(TrayMsg::Hotspot));
         assert_eq!(
-            translate(Msg::BalloonClicked(TAG_PORTAL)),
+            translate_full(Rows::clicked(&TrayMsg::Vpn(1))),
+            Some(TrayMsg::Vpn(1))
+        );
+        assert_eq!(
+            translate_full(Rows::clicked(&TrayMsg::Hotspot)),
+            Some(TrayMsg::Hotspot)
+        );
+        assert_eq!(
+            translate_full(Msg::BalloonClicked(TAG_PORTAL)),
             Some(TrayMsg::SignIn)
         );
         let mut s = snap(vec![wifi(nm::State::Connected, Some("Desk"), 0)]);
