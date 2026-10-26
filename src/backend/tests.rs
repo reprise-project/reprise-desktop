@@ -3,7 +3,7 @@ use super::links::{LINK_TRIES, LinkStep, link_mode, link_step};
 use super::outputs::{Scan, ScanAction, asks_scan, scan_action};
 use super::render::{glass_hold, waits_for_frame};
 use super::schedule::{Asked, pointer_ask_renders};
-use super::steps::{Step, next_step};
+use super::steps::{MODE_TRIES, PendingMode, Step, next_step};
 use super::{Ask, CrtcNow, pick_gpu};
 use crate::config::OutputMode;
 use crate::output::ModeInfo;
@@ -261,9 +261,10 @@ fn deferred_work_runs_one_step_at_a_time_reset_probes_scan_enables_config() {
     let mut rescan = true;
     let mut unprobed: Option<usize> = None;
     let mut reenable = 2;
+    let mut mode = true;
     let mut config = true;
     let mut steps = Vec::new();
-    while let Some(step) = next_step(reset, rescan, unprobed, reenable > 0, config) {
+    while let Some(step) = next_step(reset, rescan, unprobed, reenable > 0, mode, config) {
         steps.push(step);
         match step {
             Step::Reset => reset = false,
@@ -271,6 +272,7 @@ fn deferred_work_runs_one_step_at_a_time_reset_probes_scan_enables_config() {
             Step::Probe => unprobed = unprobed.map(|n| n - 1),
             Step::Scan => unprobed = None,
             Step::Reenable => reenable -= 1,
+            Step::Mode => mode = false,
             Step::Config => config = false,
         }
         assert!(steps.len() < 20, "never ends: {steps:?}");
@@ -278,15 +280,41 @@ fn deferred_work_runs_one_step_at_a_time_reset_probes_scan_enables_config() {
     use Step::*;
     assert_eq!(
         steps,
-        [Reset, Probe, Probe, Probe, Scan, Reenable, Reenable, Config],
+        [
+            Reset, Probe, Probe, Probe, Scan, Reenable, Reenable, Mode, Config
+        ],
         "the first probe step lists three connectors and probes one"
     );
     assert_eq!(
-        next_step(false, true, Some(1), true, true),
+        next_step(false, true, Some(1), true, true, true),
         Some(Probe),
         "a new uevent starts the scan over"
     );
-    assert_eq!(next_step(false, false, Some(0), true, true), Some(Scan));
+    assert_eq!(
+        next_step(false, false, Some(0), true, true, true),
+        Some(Scan)
+    );
+}
+
+#[test]
+fn a_refused_mode_is_due_at_once_then_backs_off_and_gives_up() {
+    let t0 = std::time::Instant::now();
+    let secs = std::time::Duration::from_secs;
+    let mut p = PendingMode::new(7);
+    assert!(p.due(t0), "the first try goes once the display is idle");
+    assert_eq!(p.waits_until(t0), None);
+    let mut now = t0;
+    let mut waits = Vec::new();
+    while let Some((next, wait)) = p.refused(now) {
+        assert!(!next.due(now), "a refusal waits before the next try");
+        assert_eq!(next.waits_until(now), Some(now + wait));
+        assert!(next.due(now + wait));
+        assert_eq!(next.mode, 7);
+        waits.push(wait.as_secs());
+        (p, now) = (next, now + wait + secs(1));
+        assert!(waits.len() < 20, "never gives up");
+    }
+    assert_eq!(waits, [1, 2, 4, 8, 16], "{MODE_TRIES} tries in all");
 }
 
 #[test]

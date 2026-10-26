@@ -199,6 +199,9 @@ struct Surface {
     stats: crate::debugview::FrameStats,
     damage_seen: Option<CommitCounter>,
     hw: Hw,
+    /// The mode the connector's new list wants, refused while the display was busy
+    /// (`Step::Mode`).
+    pending_mode: Option<steps::PendingMode<smithay::reexports::drm::control::Mode>>,
 }
 
 /// A frame sent to the commit thread, finished on its `Done`.
