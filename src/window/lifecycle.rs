@@ -300,12 +300,14 @@ impl State {
         let m = self.config.theme.metrics.clone();
         // The wanted frame size, so a window that maps maximized keeps it to restore to.
         let mut size = None;
-        // A remap goes back where the window was unless a rule places it.
+        // A remap keeps its size, and goes back where the window was while that is on an output,
+        // unless a rule places it.
         let remap = last.filter(|_| !matches!(position, Some(Position::At(..))));
         if let Some(l) = remap {
             size = Some((l.normal.width, l.normal.height));
         }
-        let kept = (self.file_dialog_position(w)).or(remap.map(|l| (l.normal.x, l.normal.y)));
+        let back = remap.filter(|l| self.centre_on_an_output(l.normal));
+        let kept = (self.file_dialog_position(w)).or(back.map(|l| (l.normal.x, l.normal.y)));
         let (mut x, mut y) = match (owner, position, kept) {
             (_, _, Some(at)) => at,
             (Some(p), _, None) => {
