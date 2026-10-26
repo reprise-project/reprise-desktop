@@ -103,7 +103,7 @@ pub fn parse_line(raw: &str) -> Option<Line> {
 const SOCKET: &str = "/run/polkit/agent-helper.socket";
 const SETUID_HELPER: &str = "/usr/lib/polkit-1/polkit-agent-helper-1";
 /// How long a helper may stay silent (socket) or run (spawned) while we wait on it, so a wedged
-/// helper cannot hold the thread. Time waiting for the user's typing does not count.
+/// helper cannot hold the thread. Time waiting for the user's typing or finger does not count.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// How one attempt ended.
@@ -123,44 +123,52 @@ pub enum Verdict {
 pub enum Report {
     Info(String),
     Error(String),
-    /// The helper asks for the password and waits for
-    /// [`Session::answer`]. Text before this belonged to an earlier step
-    /// of the PAM stack (the fingerprint reader's, say).
-    Prompt,
+    /// The helper asks a hidden question (the password, then any second factor), whose text
+    /// this is, and waits for [`Session::answer`]. Text before the first belonged to an earlier
+    /// step of the PAM stack (the fingerprint reader's, say).
+    Prompt(String),
     Done(Verdict),
 }
 
 /// Run one PAM conversation over an open transport whose header lines
-/// (user, cookie) have been written. The first hidden prompt reports
-/// [`Report::Prompt`] and takes its answer from `password`, which blocks
-/// until the dialog has one; a later hidden prompt gets the same answer.
-/// The user name answers a shown prompt. `password` returning None, or
-/// a line outside the protocol, ends the conversation. The password is
-/// wiped before this returns.
+/// (user, cookie) have been written. Each hidden prompt reports
+/// [`Report::Prompt`] and takes a fresh answer from `password`, which
+/// blocks until the dialog has one. The user name answers a shown prompt.
+/// `password` returning None, or a line outside the protocol, ends the
+/// conversation. Each answer is wiped once written. `deadline` hears
+/// whether the next read waits on the helper (true) or on the user's
+/// finger (false): an info line before any hidden prompt is the
+/// fingerprint reader's.
 pub fn converse<R: BufRead, W: Write>(
     mut reader: R,
     mut writer: W,
     user: &str,
     password: &mut dyn FnMut() -> Option<Zeroizing<String>>,
+    deadline: &mut dyn FnMut(bool),
     report: &mut dyn FnMut(Report),
 ) {
     let mut line = String::new();
-    let mut answer: Option<Zeroizing<String>> = None;
+    let mut answered = false;
+    let mut timed = true;
     let verdict = loop {
         line.clear();
         match reader.read_line(&mut line) {
             Ok(0) | Err(_) => break None,
             Ok(_) => {}
         }
-        match parse_line(&line) {
-            Some(Line::PromptEchoOff(_)) => {
-                if answer.is_none() {
-                    report(Report::Prompt);
-                    answer = password();
-                }
-                let Some(p) = answer.as_ref() else {
+        let parsed = parse_line(&line);
+        let on = !(matches!(parsed, Some(Line::Info(_))) && !answered);
+        if on != timed {
+            timed = on;
+            deadline(on);
+        }
+        match parsed {
+            Some(Line::PromptEchoOff(t)) => {
+                report(Report::Prompt(t.trim_end().to_string()));
+                let Some(p) = password() else {
                     break None;
                 };
+                answered = true;
                 if writer.write_all(p.as_bytes()).is_err() || writer.write_all(b"\n").is_err() {
                     break None;
                 }
@@ -179,12 +187,11 @@ pub fn converse<R: BufRead, W: Write>(
         }
     };
     // A hang-up after the password went out judged it, as far as we can tell.
-    let verdict = verdict.unwrap_or(if answer.is_some() {
+    let verdict = verdict.unwrap_or(if answered {
         Verdict::Failed
     } else {
         Verdict::Unreachable
     });
-    drop(answer);
     report(Report::Done(verdict));
 }
 
@@ -234,7 +241,7 @@ pub struct Session {
 }
 
 impl Session {
-    /// Hand over the password, for the prompt that came or the one to
+    /// Hand over the answer for the hidden prompt that came or the one to
     /// come. False when the conversation is already over.
     pub fn answer(&self, password: Zeroizing<String>) -> bool {
         self.password.send(password).is_ok()
@@ -364,11 +371,15 @@ fn converse_child(
             let _ = watch_tx.send(Watch::Resume);
             p
         };
+        let mut deadline = |on: bool| {
+            let _ = watch_tx.send(if on { Watch::Resume } else { Watch::Pause });
+        };
         converse(
             BufReader::new(stdout),
             stdin,
             user,
             &mut paused_password,
+            &mut deadline,
             report,
         );
         drop(watch_tx);
@@ -486,7 +497,13 @@ fn run(
             stop.on_stop(Box::new(move || {
                 let _ = hangup.shutdown(std::net::Shutdown::Both);
             }));
-            converse(reader, s, user, &mut password, report);
+            let timer = s.try_clone().ok();
+            let mut deadline = |on: bool| {
+                if let Some(t) = &timer {
+                    let _ = t.set_read_timeout(on.then_some(HELPER_TIMEOUT));
+                }
+            };
+            converse(reader, s, user, &mut password, &mut deadline, report);
         }
         Ok(Transport::Child(child)) => {
             converse_child(child, user, &mut password, HELPER_TIMEOUT, stop, report);
@@ -599,6 +616,7 @@ mod tests {
             w,
             "alice",
             &mut answers("hunter2", &mut asked),
+            &mut |_| {},
             &mut |r| reports.push(r),
         );
         assert_eq!(
@@ -609,7 +627,7 @@ mod tests {
             reports,
             [
                 Report::Info("hi".into()),
-                Report::Prompt,
+                Report::Prompt("Password:".into()),
                 Report::Done(Verdict::Success)
             ]
         );
@@ -625,9 +643,14 @@ mod tests {
         let mut w = ours;
         w.write_all(b"bob\nc\n").unwrap();
         let mut asked = 0;
-        converse(reader, w, "bob", &mut answers("x", &mut asked), &mut |r| {
-            reports.push(r)
-        });
+        converse(
+            reader,
+            w,
+            "bob",
+            &mut answers("x", &mut asked),
+            &mut |_| {},
+            &mut |r| reports.push(r),
+        );
         helper.join().unwrap();
         assert_eq!(reports.last(), Some(&Report::Done(Verdict::Failed)));
 
@@ -647,10 +670,17 @@ mod tests {
             ours,
             "bob",
             &mut answers("x", &mut asked),
+            &mut |_| {},
             &mut |r| reports.push(r),
         );
         helper.join().unwrap();
-        assert_eq!(reports, [Report::Prompt, Report::Done(Verdict::Failed)]);
+        assert_eq!(
+            reports,
+            [
+                Report::Prompt("Password:".into()),
+                Report::Done(Verdict::Failed)
+            ]
+        );
     }
 
     /// With `pam_fprintd` ahead of the password, a finger ends the
@@ -671,6 +701,7 @@ mod tests {
             ours,
             "alice",
             &mut answers("unused", &mut asked),
+            &mut |_| {},
             &mut |r| reports.push(r),
         );
         helper.join().unwrap();
@@ -684,17 +715,17 @@ mod tests {
         );
     }
 
-    /// A second hidden prompt in the same stack gets the same password
-    /// without asking the dialog again.
+    /// A second hidden prompt (a second factor) asks the dialog again, with its own text, and
+    /// gets the new answer rather than the password.
     #[test]
-    fn a_second_prompt_reuses_the_password() {
+    fn a_second_prompt_gets_a_fresh_answer() {
         let (ours, theirs) = UnixStream::pair().unwrap();
         let helper = std::thread::spawn(move || {
             let mut r = BufReader::new(theirs.try_clone().unwrap());
             let mut w = theirs;
             let mut got = Vec::new();
-            for _ in 0..2 {
-                w.write_all(b"PAM_PROMPT_ECHO_OFF Password: \n").unwrap();
+            for prompt in ["Password: ", "Verification code: "] {
+                writeln!(w, "PAM_PROMPT_ECHO_OFF {prompt}").unwrap();
                 let mut line = String::new();
                 r.read_line(&mut line).unwrap();
                 got.push(line.trim_end().to_string());
@@ -703,17 +734,57 @@ mod tests {
             got
         });
         let mut reports = Vec::new();
+        let mut given = ["hunter2", "123456"].into_iter();
+        converse(
+            BufReader::new(ours.try_clone().unwrap()),
+            ours,
+            "alice",
+            &mut || given.next().map(|a| Zeroizing::new(a.to_string())),
+            &mut |_| {},
+            &mut |r| reports.push(r),
+        );
+        assert_eq!(helper.join().unwrap(), ["hunter2", "123456"]);
+        assert_eq!(
+            reports,
+            [
+                Report::Prompt("Password:".into()),
+                Report::Prompt("Verification code:".into()),
+                Report::Done(Verdict::Success)
+            ]
+        );
+    }
+
+    /// The reader's info line before any prompt lifts the deadline; the next line puts it back.
+    #[test]
+    fn the_deadline_rests_while_the_reader_waits() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let helper = std::thread::spawn(move || {
+            let mut r = BufReader::new(theirs.try_clone().unwrap());
+            let mut w = theirs;
+            w.write_all(b"PAM_TEXT_INFO Place your finger on the fingerprint reader\n")
+                .unwrap();
+            w.write_all(b"PAM_PROMPT_ECHO_OFF Password: \n").unwrap();
+            let mut line = String::new();
+            r.read_line(&mut line).unwrap();
+            w.write_all(b"PAM_TEXT_INFO Account expires soon\nSUCCESS\n")
+                .unwrap();
+        });
+        let mut deadlines = Vec::new();
         let mut asked = 0;
         converse(
             BufReader::new(ours.try_clone().unwrap()),
             ours,
             "alice",
             &mut answers("hunter2", &mut asked),
-            &mut |r| reports.push(r),
+            &mut |on| deadlines.push(on),
+            &mut |_| {},
         );
-        assert_eq!(helper.join().unwrap(), ["hunter2", "hunter2"]);
-        assert_eq!(asked, 1);
-        assert_eq!(reports, [Report::Prompt, Report::Done(Verdict::Success)]);
+        helper.join().unwrap();
+        assert_eq!(
+            deadlines,
+            [false, true],
+            "an info line after the password waits on the helper"
+        );
     }
 
     /// A hang-up before any password judged nothing, and no password
@@ -729,6 +800,7 @@ mod tests {
             ours,
             "bob",
             &mut answers("x", &mut asked),
+            &mut |_| {},
             &mut |r| reports.push(r),
         );
         assert_eq!(reports, [Report::Done(Verdict::Unreachable)]);
@@ -742,11 +814,15 @@ mod tests {
             ours,
             "bob",
             &mut || None,
+            &mut |_| {},
             &mut |r| reports.push(r),
         );
         assert_eq!(
             reports,
-            [Report::Prompt, Report::Done(Verdict::Unreachable)]
+            [
+                Report::Prompt("Password:".into()),
+                Report::Done(Verdict::Unreachable)
+            ]
         );
     }
 
@@ -871,7 +947,13 @@ mod tests {
         let reports: Vec<Report> = (0..2)
             .map(|_| rx.recv_timeout(Duration::from_secs(5)).unwrap())
             .collect();
-        assert_eq!(reports, [Report::Prompt, Report::Done(Verdict::Success)]);
+        assert_eq!(
+            reports,
+            [
+                Report::Prompt("Password:".into()),
+                Report::Done(Verdict::Success)
+            ]
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1048,7 +1130,48 @@ mod tests {
             &Stop::default(),
             &mut |r| reports.push(r),
         );
-        assert_eq!(reports, [Report::Prompt, Report::Done(Verdict::Success)]);
+        assert_eq!(
+            reports,
+            [
+                Report::Prompt("Password:".into()),
+                Report::Done(Verdict::Success)
+            ]
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A spawned helper waiting on the fingerprint reader past the deadline is not killed.
+    #[test]
+    fn waiting_on_the_reader_does_not_kill_the_spawned_helper() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("finger");
+        let helper = dir.join("helper");
+        std::fs::write(
+            &helper,
+            "#!/bin/sh\nread c\necho 'PAM_TEXT_INFO Place your finger on the reader'\n\
+             sleep 0.6\necho SUCCESS\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let Transport::Child(child) = spawn_helper(&dir, &helper, "bob", "c-9").unwrap() else {
+            panic!("expected the spawned helper");
+        };
+        let mut reports = Vec::new();
+        converse_child(
+            child,
+            "bob",
+            &mut || None,
+            Duration::from_millis(200),
+            &Stop::default(),
+            &mut |r| reports.push(r),
+        );
+        assert_eq!(
+            reports,
+            [
+                Report::Info("Place your finger on the reader".into()),
+                Report::Done(Verdict::Success)
+            ]
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
