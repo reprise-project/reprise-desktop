@@ -1,13 +1,20 @@
 //! Hangs up the Wayland connection before the process ends: a thread blocked on a dead mount keeps
 //! the fd table past exit, and with it the socket and the program's windows.
 
-use std::os::fd::{AsRawFd, BorrowedFd};
+use smithay_client_toolkit::reexports::calloop::{
+    Interest, LoopHandle, Mode, PostAction, generic::Generic,
+};
+use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::sync::atomic::{AtomicI32, Ordering};
 
 static SOCKET: AtomicI32 = AtomicI32::new(-1);
+/// The write end of the pipe that hands an ending signal to the run loop, or -1.
+static WAKE: AtomicI32 = AtomicI32::new(-1);
+/// The signal handed to the run loop, or 0 while none was.
+static PENDING: AtomicI32 = AtomicI32::new(0);
 
-/// The signals another process ends a program with; their handler hangs up, then ends it as the
-/// default action would. SIGKILL can't be caught: End Program drops the connection itself.
+/// The signals another process ends a program with. SIGKILL can't be caught: End Program drops
+/// the connection itself.
 const ENDING: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
 
 /// Hangs up `socket` if the program is ended by a signal. A signal it started with ignored
@@ -26,7 +33,6 @@ pub(crate) fn on_signals(socket: BorrowedFd) {
             }
             let mut sa: libc::sigaction = std::mem::zeroed();
             sa.sa_sigaction = on_ending as *const () as libc::sighandler_t;
-            sa.sa_flags = libc::SA_RESETHAND;
             libc::sigemptyset(&mut sa.sa_mask);
             if libc::sigaction(sig, &sa, std::ptr::null_mut()) != 0 {
                 log::warn!(
@@ -38,6 +44,36 @@ pub(crate) fn on_signals(socket: BorrowedFd) {
     }
 }
 
+/// Hands the first ending signal to `handle`'s loop, which runs `rescue` and then ends the
+/// program by that signal. A second signal ends it at once, as without a loop.
+pub(crate) fn route_to<D>(handle: &LoopHandle<'_, D>, mut rescue: impl FnMut(&mut D) + 'static) {
+    let mut fds = [-1; 2];
+    // SAFETY: pipe2 fills `fds` on success.
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0 {
+        log::warn!("no signal pipe: {}", std::io::Error::last_os_error());
+        return;
+    }
+    // SAFETY: both fds were just opened and are owned here alone.
+    let (read, write) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+    let source = Generic::new(read, Interest::READ, Mode::Level);
+    let inserted = handle.insert_source(source, move |_, _, data: &mut D| {
+        let sig = PENDING.load(Ordering::Acquire);
+        if sig == 0 {
+            return Ok(PostAction::Continue);
+        }
+        rescue(data);
+        end_by(sig);
+        Ok(PostAction::Remove)
+    });
+    match inserted {
+        Ok(_) => WAKE.store(
+            std::os::fd::IntoRawFd::into_raw_fd(write),
+            Ordering::Release,
+        ),
+        Err(e) => log::warn!("no signal source: {e}"),
+    }
+}
+
 /// Hangs up `socket` whoever else holds it: the compositor reads the end of the connection.
 pub(crate) fn hang_up(socket: BorrowedFd) {
     SOCKET.store(-1, Ordering::Release);
@@ -46,13 +82,30 @@ pub(crate) fn hang_up(socket: BorrowedFd) {
 }
 
 extern "C" fn on_ending(sig: libc::c_int) {
+    let wake = WAKE.load(Ordering::Acquire);
+    if wake >= 0
+        && PENDING
+            .compare_exchange(0, sig, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    {
+        // SAFETY: write is async-signal-safe; the pipe is non-blocking.
+        unsafe { libc::write(wake, [1u8].as_ptr().cast(), 1) };
+        return;
+    }
+    end_by(sig);
+}
+
+/// Hangs up and ends the program as `sig`'s default action would. Async-signal-safe.
+fn end_by(sig: libc::c_int) {
     let fd = SOCKET.load(Ordering::Acquire);
-    // SAFETY: shutdown and raise are async-signal-safe. SA_RESETHAND restored the default action,
-    // which the raise takes once this handler returns.
+    // SAFETY: shutdown, sigaction and raise are async-signal-safe; the struct is zeroed, which is
+    // SIG_DFL with an empty mask. In the handler the raise lands once it returns.
     unsafe {
         if fd >= 0 {
             libc::shutdown(fd, libc::SHUT_RDWR);
         }
+        let dfl: libc::sigaction = std::mem::zeroed();
+        libc::sigaction(sig, &dfl, std::ptr::null_mut());
         libc::raise(sig);
     }
 }
@@ -105,6 +158,54 @@ mod tests {
             "the peer reads the end while this process still holds the child's socket"
         );
         drop(ours);
+    }
+
+    const CHILD: &str = "REPRISE_HANGUP_CHILD";
+
+    #[test]
+    fn a_sigterm_runs_the_rescue_on_the_loop_then_ends_the_program_by_it() {
+        use smithay_client_toolkit::reexports::calloop::EventLoop;
+        if std::env::var_os(CHILD).is_some() {
+            let (ours, _peer) = UnixStream::pair().unwrap();
+            let mut event_loop: EventLoop<Vec<&str>> = EventLoop::try_new().unwrap();
+            on_signals(ours.as_fd());
+            route_to(&event_loop.handle(), |saved: &mut Vec<&str>| {
+                saved.push("rescued");
+                println!("RESCUED {saved:?}");
+            });
+            let mut saved = vec!["typed"];
+            // SAFETY: raise on this process.
+            unsafe { libc::raise(libc::SIGTERM) };
+            for _ in 0..50 {
+                event_loop
+                    .dispatch(Duration::from_millis(20), &mut saved)
+                    .unwrap();
+            }
+            println!("SURVIVED");
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "hangup::tests::a_sigterm_runs_the_rescue_on_the_loop_then_ends_the_program_by_it",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains(r#"RESCUED ["typed", "rescued"]"#),
+            "the rescue runs with the loop's data: {stdout}"
+        );
+        assert!(!stdout.contains("SURVIVED"), "the program ends: {stdout}");
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(
+            out.status.signal(),
+            Some(libc::SIGTERM),
+            "the program ends by SIGTERM: {:?}",
+            out.status
+        );
     }
 
     #[test]
