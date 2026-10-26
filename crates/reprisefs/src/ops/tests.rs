@@ -1246,3 +1246,125 @@ fn modifier_op_takes_ctrl_shift_and_alt() {
     assert_eq!(modifier_op(true, true, false), Some(DropOp::Shortcut));
     assert_eq!(modifier_op(true, false, true), Some(DropOp::Shortcut));
 }
+
+/// Set `user.test=1` on `path`; false (said on stderr) where the file
+/// system takes no `user.*` xattrs.
+fn set_user_test(path: &Path) -> bool {
+    let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+    // SAFETY: both strings are NUL-terminated and the value is one byte.
+    let rc = unsafe {
+        libc::setxattr(
+            c.as_ptr(),
+            c"user.test".as_ptr(),
+            c"1".as_ptr().cast(),
+            1,
+            0,
+        )
+    };
+    if rc != 0 {
+        eprintln!(
+            "SKIPPED xattr check: {} takes no user xattrs ({})",
+            path.display(),
+            io::Error::last_os_error()
+        );
+    }
+    rc == 0
+}
+
+fn user_test(path: &Path) -> Option<Vec<u8>> {
+    let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+    let mut buf = [0u8; 8];
+    // SAFETY: both strings are NUL-terminated and `buf` is writable for its length.
+    let n = unsafe {
+        libc::getxattr(
+            c.as_ptr(),
+            c"user.test".as_ptr(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+        )
+    };
+    usize::try_from(n).ok().map(|n| buf[..n].to_vec())
+}
+
+fn an_hour_ago() -> std::time::SystemTime {
+    std::time::SystemTime::now() - std::time::Duration::from_secs(3600)
+}
+
+fn set_mtime(path: &Path, t: std::time::SystemTime) {
+    fs::File::open(path)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(t))
+        .unwrap();
+}
+
+#[test]
+fn copy_new_keeps_the_mtime_and_xattrs() {
+    let t = tempfile::tempdir().unwrap();
+    let from = t.path().join("photo.jpg");
+    fs::write(&from, "jpeg").unwrap();
+    let xattr = set_user_test(&from);
+    set_mtime(&from, an_hour_ago());
+    let to = t.path().join("copy.jpg");
+
+    copy_new(&from, &to).unwrap();
+
+    let modified = |p: &Path| fs::metadata(p).unwrap().modified().unwrap();
+    assert_eq!(modified(&to), modified(&from), "the copy keeps the mtime");
+    if xattr {
+        assert_eq!(
+            user_test(&to).as_deref(),
+            Some(&b"1"[..]),
+            "user.test=1 kept"
+        );
+    }
+}
+
+#[test]
+fn copy_dir_all_keeps_folder_modes_and_mtimes() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().unwrap();
+    let src = t.path().join("private");
+    let inner = src.join("inner");
+    fs::create_dir_all(&inner).unwrap();
+    fs::write(inner.join("a.txt"), "a").unwrap();
+    fs::set_permissions(&inner, fs::Permissions::from_mode(0o2750)).unwrap();
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o700)).unwrap();
+    set_mtime(&inner, an_hour_ago());
+    set_mtime(&src, an_hour_ago());
+    let dest = t.path().join("copy");
+
+    copy_dir_all(&src, &dest).unwrap();
+
+    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o7777;
+    assert_eq!(mode(&dest), 0o700, "the top folder stays 0700");
+    assert_eq!(
+        mode(&dest.join("inner")),
+        0o2750,
+        "a subfolder keeps setgid"
+    );
+    let modified = |p: &Path| fs::metadata(p).unwrap().modified().unwrap();
+    assert_eq!(modified(&dest), modified(&src));
+    assert_eq!(modified(&dest.join("inner")), modified(&inner));
+}
+
+#[test]
+fn copy_new_keeps_a_read_only_launcher_trusted() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().unwrap();
+    let from = t.path().join("app.desktop");
+    fs::write(&from, "[Desktop Entry]\nType=Application\nExec=true\n").unwrap();
+    if let Err(e) = crate::apps::set_trusted(&from) {
+        eprintln!("SKIPPED: {} takes no user xattrs ({e})", t.path().display());
+        return;
+    }
+    fs::set_permissions(&from, fs::Permissions::from_mode(0o555)).unwrap();
+    let to = t.path().join("copy.desktop");
+
+    copy_new(&from, &to).unwrap();
+
+    assert!(crate::apps::is_trusted(&to), "the copy is trusted");
+    assert_eq!(
+        fs::metadata(&to).unwrap().permissions().mode() & 0o7777,
+        0o555
+    );
+}

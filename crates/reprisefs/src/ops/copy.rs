@@ -19,9 +19,18 @@ pub fn copy_dir_all(src: &Path, dest: &Path) -> io::Result<()> {
 pub(super) fn copy_dir_until(src: &Path, dest: &Path, stop: &AtomicBool) -> io::Result<()> {
     let entries = read_then_create(src, dest)?;
     // `dest` is ours from here on, so a failure may remove it.
-    copy_entries(entries, dest, 0, stop).inspect_err(|_| {
-        let _ = std::fs::remove_dir_all(dest);
-    })
+    copy_entries(entries, dest, 0, stop)
+        .and_then(|()| copy_dir_meta(src, dest))
+        .inspect_err(|_| {
+            let _ = std::fs::remove_dir_all(dest);
+        })
+}
+
+/// Give the folder `to` the mode, xattrs and times of `from`, once its
+/// entries have landed: each one landing moves the folder's mtime.
+fn copy_dir_meta(from: &Path, to: &Path) -> io::Result<()> {
+    let meta = std::fs::metadata(from)?;
+    super::fileio::copy_meta(from, &meta, &std::fs::File::open(to)?, true)
 }
 
 /// The entries of `src`, read before `dest` is created.
@@ -60,6 +69,7 @@ fn copy_entries(
                 ));
             }
             copy_entries(read_then_create(&from, &to)?, &to, depth + 1, stop)?;
+            copy_dir_meta(&from, &to)?;
         } else if kind.is_file() {
             copy_new(&from, &to)?;
         }
@@ -69,8 +79,8 @@ fn copy_entries(
 
 /// `fs::copy`, except that an existing `to` is an `AlreadyExists` error
 /// instead of being overwritten: the name was picked as free a moment
-/// ago and nothing else may have taken it since. Keeps `from`'s mode
-/// and its launcher trust marker. A copy that fails after `to` was
+/// ago and nothing else may have taken it since. Keeps `from`'s mode,
+/// xattrs (the launcher trust marker among them) and times. A copy that fails after `to` was
 /// created removes it, so no truncated file is left behind.
 ///
 /// `from` must be a regular file (a link to one is followed): anything
@@ -103,11 +113,8 @@ pub(crate) fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
                 io::copy(&mut src, &mut dst)?;
             }
         }
-        dst.set_permissions(src.metadata()?.permissions())?;
-        if crate::apps::is_trusted(from) {
-            crate::apps::set_trusted_fd(&dst)?;
-        }
-        Ok(())
+        // The launcher trust marker is a `user.*` xattr, so `copy_meta` carries it.
+        super::fileio::copy_meta(from, &src.metadata()?, &dst, false)
     })()
     .inspect_err(|_| {
         let _ = std::fs::remove_file(to);
