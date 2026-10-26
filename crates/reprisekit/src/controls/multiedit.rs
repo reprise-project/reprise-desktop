@@ -1457,8 +1457,12 @@ pub fn draw_drop_point(
     );
 }
 
-/// The edit's `access` part: a multi-line text input, one text run per line (each but the last
-/// ending in its line break) at the rect the line is drawn in, with the caret and the selection.
+/// A document past this many bytes gives its node only the text in view as its value.
+const FULL_VALUE_MAX: usize = 1 << 20;
+
+/// The edit's `access` part: a multi-line text input, one text run per line in view and for the
+/// caret's and the anchor's lines (each but the document's last ending in its line break) at the
+/// rect the line is drawn in, with the caret, the selection and the scroll position in px.
 #[allow(clippy::too_many_arguments)]
 pub fn access(
     edit: &MultiEdit,
@@ -1470,21 +1474,31 @@ pub fn access(
     parent: NodeId,
     key: impl std::hash::Hash,
 ) -> NodeId {
+    let count = edit.lines.len();
+    let shown = view.top.min(count)..(view.top + lay.rows).min(count);
     let mut n = access::node(Role::MultilineTextInput, lay.frame);
     access::focusable(&mut n, true);
+    let line_h = f64::from(m.line_h);
+    n.set_scroll_y(view.top as f64 * line_h);
+    n.set_scroll_y_min(0.0);
+    n.set_scroll_y_max(count.saturating_sub(lay.rows) as f64 * line_h);
+    let bytes = edit.lines.iter().map(|l| l.len() + 1).sum::<usize>();
+    n.set_value(if bytes <= FULL_VALUE_MAX {
+        edit.text()
+    } else {
+        edit.lines[shown.clone()].join("\n")
+    });
     let id = tree.push(parent, key, n);
     let x0 = lay.inner.x + 1 - view.left;
-    let mut starts = Vec::with_capacity(edit.lines.len());
+    let last = count.saturating_sub(1);
+    let wanted = |i: usize| shown.contains(&i) || i == edit.caret.line || i == edit.anchor.line;
+    let end = shown.end.max(edit.caret.line + 1).max(edit.anchor.line + 1);
+    let mut starts = Vec::with_capacity(end.min(count));
+    let mut lines = Vec::with_capacity(shown.len() + 2);
     let mut at = 0;
-    let last = edit.lines.len().saturating_sub(1);
-    let lines: Vec<access::Line> = edit
-        .lines
-        .iter()
-        .enumerate()
-        .map(|(i, line)| {
-            starts.push(at);
-            let start = at;
-            at += line.len() + 1;
+    for (i, line) in edit.lines.iter().enumerate().take(end) {
+        starts.push(at);
+        if wanted(i) {
             let y = lay.inner.y + 1 + (i as i32 - view.top as i32) * m.line_h;
             let w = x_of(
                 text,
@@ -1495,14 +1509,15 @@ pub fn access(
                     col: line.len(),
                 },
             );
-            access::Line {
+            lines.push(access::Line {
                 text: line,
-                start,
+                start: at,
                 rect: Rect::new(x0, y, w.max(1), m.line_h),
                 hard_break: i < last,
-            }
-        })
-        .collect();
+            });
+        }
+        at += line.len() + 1;
+    }
     let offset = |p: Pos| starts.get(p.line).map_or(0, |s| s + p.col);
     access::text_runs(
         tree,
