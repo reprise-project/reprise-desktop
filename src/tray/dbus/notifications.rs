@@ -14,35 +14,70 @@ use zbus::Connection;
 use zbus::message::Header;
 use zbus::object_server::SignalEmitter;
 
-/// Connection and app name per open notification. A replace is honoured from either (`notify-send
-/// -r` is a new connection each time), a close only from the connection.
+/// Connection, app name and PID per open notification. A replace is honoured from the connection,
+/// or under the same app name from its process or once it left the bus (`notify-send -r` is a new
+/// process each time); a close only from the connection.
 #[derive(Default)]
-pub(super) struct Senders(pub(super) HashMap<u32, (String, String)>);
+pub(super) struct Senders(pub(super) HashMap<u32, (String, String, Option<i32>)>);
 
 impl Senders {
+    /// The connection that sent `id` when `sender`, another process under the same app name,
+    /// asks to replace it: the replace waits on whether that connection is still on the bus.
+    pub(super) fn other_sender(
+        &self,
+        id: u32,
+        sender: &str,
+        pid: Option<i32>,
+        app: &str,
+    ) -> Option<String> {
+        let (s, a, p) = self.0.get(&id)?;
+        let other = s != sender && !app.is_empty() && a == app && (pid.is_none() || *p != pid);
+        other.then(|| s.clone())
+    }
+
+    /// The id for a notification from `sender`: `replaces` when it may replace it (`left` says
+    /// the [`Senders::other_sender`] has left the bus), else `fresh()`.
     pub(super) fn claim(
         &mut self,
         sender: &str,
+        pid: Option<i32>,
         app: &str,
         replaces: u32,
+        left: bool,
         fresh: impl FnOnce() -> u32,
     ) -> u32 {
-        let replaceable = self
-            .0
-            .get(&replaces)
-            .is_some_and(|(s, a)| s == sender || (!app.is_empty() && a == app));
-        let id = if replaceable { replaces } else { fresh() };
-        self.0.insert(id, (sender.to_string(), app.to_string()));
+        let id = match self.0.get(&replaces) {
+            Some((s, _, _)) if s == sender => replaces,
+            Some((_, a, p))
+                if !app.is_empty() && a == app && ((pid.is_some() && *p == pid) || left) =>
+            {
+                return replaces;
+            }
+            _ => fresh(),
+        };
+        self.0
+            .insert(id, (sender.to_string(), app.to_string(), pid));
         id
     }
 
     pub(super) fn owns(&self, id: u32, sender: &str) -> bool {
-        self.0.get(&id).is_some_and(|(s, _)| s == sender)
+        self.0.get(&id).is_some_and(|(s, _, _)| s == sender)
     }
 
     pub(super) fn sent_by(&self, sender: &str) -> bool {
-        self.0.values().any(|(s, _)| s == sender)
+        self.0.values().any(|(s, _, _)| s == sender)
     }
+}
+
+/// Whether `name` has an owner on the bus; true when the bus cannot say.
+async fn on_bus(conn: &Connection, name: &str) -> bool {
+    let Ok(dbus) = zbus::fdo::DBusProxy::new(conn).await else {
+        return true;
+    };
+    let Ok(name) = zbus::names::BusName::try_from(name) else {
+        return false;
+    };
+    dbus.name_has_owner(name).await.unwrap_or(true)
 }
 
 pub(super) struct Notifications {
@@ -79,14 +114,21 @@ impl Notifications {
         #[zbus(connection)] conn: &Connection,
     ) -> u32 {
         let sender = hdr.sender().map_or("", |s| s.as_str()).to_string();
+        let pid = owner_pid(conn, &sender).await;
+        let other = lock(&self.senders).other_sender(replaces_id, &sender, pid, &app_name);
+        let left = match other {
+            Some(other) => !on_bus(conn, &other).await,
+            None => false,
+        };
         let id = lock(&self.senders).claim(
             &sender,
+            pid,
             &app_name,
             replaces_id,
+            left,
             // Ids start at 1; 0 is "none" in the protocol.
             || self.next_id.fetch_add(1, Ordering::Relaxed).max(1),
         );
-        let pid = owner_pid(conn, &sender).await;
         let hints = notify::hints(hints);
         let entry = hints.desktop_entry.as_deref().and_then(desktop_entry);
         let (app_icon, image) = notification_icons(&self.icons, &hints, app_icon, entry.as_ref());
