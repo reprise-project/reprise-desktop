@@ -35,10 +35,8 @@ jobs:
             /home/builder/.cargo/registry
             /home/builder/.cargo/git
             /home/builder/makepkg/build/reprise/src/target
-          key: nightly-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
-          restore-keys: |
-            nightly-${{ hashFiles('Cargo.lock') }}-
-            nightly-
+          key: nightly-${{ hashFiles('Cargo.lock') }}
+          restore-keys: nightly-
       # checkout and caches come back owned by root.
       - run: chown -R builder "$GITHUB_WORKSPACE" /home/builder
       - name: Build package
