@@ -169,7 +169,7 @@ pub fn copy_xattrs(from: &Path, to: &std::fs::File) {
         });
         let Some(value) = value else { continue };
         if name.as_c_str() == crate::apps::TRUST_XATTR {
-            if std::fs::symlink_metadata(from).is_ok_and(|m| crate::apps::verifies(&value, &m)) {
+            if crate::apps::verifies(&value, from) {
                 let _ = crate::apps::set_trusted_fd(to);
             }
             continue;
