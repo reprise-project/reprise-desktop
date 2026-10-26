@@ -1331,6 +1331,24 @@ fn super_shift_escape_suspends_a_shortcuts_inhibitor() {
     assert_eq!(r(&captured, &chord), KeyRoute::CaptureEscape);
 }
 
+#[test]
+fn an_inhibiting_client_leaves_the_lock_the_magnifier_and_screenshots_to_reprise() {
+    let m = Modes {
+        shortcuts_inhibited: true,
+        ..Modes::default()
+    };
+    let ri = |k: &KeyPress| route(&m, k, &menu_binds(), &[]).route;
+    assert_eq!(
+        ri(&press(KEY_l, MOD_LOGO)),
+        KeyRoute::Binds(vec![Action::Lock])
+    );
+    assert_eq!(
+        ri(&press(KEY_Print, 0)),
+        KeyRoute::Binds(vec![Action::Screenshot])
+    );
+    assert_eq!(ri(&press(KEY_d, MOD_LOGO)), KeyRoute::Client);
+}
+
 /// Keycodes for the chord tests: the left and right Alt and Shift,
 /// Ctrl, Tab and a letter.
 const ALT: u32 = 64;
