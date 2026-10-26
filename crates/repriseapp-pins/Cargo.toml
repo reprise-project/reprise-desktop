@@ -3,9 +3,9 @@ name = "repriseapp-pins"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 repository.workspace = true
 description = "No code: turns on, for every build, the union of features the workspace asks of the stack the programs and the compositor share outside reprisekit."
-publish = false
 
 # Keeps `cargo build/test -p <program>` on the zbus, wayland and rustix units
 # `--workspace` builds. After a dependency change, rerun `scripts/kit-units`.

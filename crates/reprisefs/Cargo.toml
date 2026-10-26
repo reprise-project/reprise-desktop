@@ -3,6 +3,7 @@ name = "reprisefs"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 repository.workspace = true
 description = "The file-system side of the shell: .desktop entries and MIME, naming rules, copy/move/shortcut, freedesktop trash, folder listings, the freedesktop thumbnail cache. No display dependency. UDisks2 over zbus for drives."
 

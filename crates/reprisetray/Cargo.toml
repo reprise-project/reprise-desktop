@@ -3,6 +3,7 @@ name = "reprisetray"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 repository.workspace = true
 description = "A StatusNotifierItem with a dbusmenu on its own D-Bus thread, for the applets"
 

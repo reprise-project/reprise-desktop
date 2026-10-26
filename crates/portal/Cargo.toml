@@ -3,6 +3,7 @@ name = "reprise-portal"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 repository.workspace = true
 description = "Reprise's xdg-desktop-portal backend: ScreenCast and Screenshot over ext-image-copy-capture and PipeWire, RemoteDesktop and InputCapture over libei, GlobalShortcuts kept in config.toml, the Access prompt, the file and app choosers, and Notification and Inhibit passed on to the compositor"
 

@@ -3,6 +3,7 @@ name = "repriseapp"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+publish.workspace = true
 repository.workspace = true
 description = "Run a reprisekit-drawn program as a Wayland client: an shm-backed xdg toplevel, keys and pointer events mapped to the toolkit's, the caret blink, the clipboard, drag and drop."
 

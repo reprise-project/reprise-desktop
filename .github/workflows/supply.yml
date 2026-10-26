@@ -1,0 +1,22 @@
+name: supply
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Advisories land without a commit of ours.
+  schedule:
+    - cron: "17 5 * * 1"
+concurrency:
+  group: supply-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  deny:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install cargo-deny
+        run: pacman -Syu --noconfirm --needed rust cargo-deny
+      - uses: actions/checkout@v7
+      - run: cargo deny --locked check
