@@ -1,5 +1,5 @@
 use super::{ITEM_IFACE, Icons, Sizes, lock, sizes_now, uncached_proxy};
-use crate::tray::{TrayItem, clip, decode_named_at, item_pixmaps};
+use crate::tray::{ItemIcon, TrayItem, clip, decode_named_at, item_pixmaps};
 use reprisekit::controls::tooltip::TIP_CHARS;
 use reprisekit::icon::IconSource;
 use std::path::PathBuf;
@@ -37,19 +37,58 @@ async fn prop_body(proxy: &Proxy<'_>, name: &str) -> Option<Body> {
     Some(reply.body())
 }
 
-pub(super) fn item_named(icons: &Icons, item: &TrayItem, sizes: &[i32]) -> Arc<[IconSource]> {
-    match item.icon_name.as_deref() {
-        Some(name) if item.pixmaps.is_empty() => {
-            let extra: Vec<PathBuf> = item.icon_theme_path.iter().cloned().collect();
+/// `name` from the theme (and the item's `IconThemePath`) at `sizes`, unless `pixmaps` stand in.
+fn named(
+    icons: &Icons,
+    name: Option<&str>,
+    pixmaps: &[IconSource],
+    theme_path: Option<&PathBuf>,
+    sizes: &[i32],
+) -> Arc<[IconSource]> {
+    match name {
+        Some(name) if pixmaps.is_empty() => {
+            let extra: Vec<PathBuf> = theme_path.into_iter().cloned().collect();
             decode_named_at(&mut lock(icons), name, &extra, sizes).into()
         }
         _ => Arc::from([]),
     }
 }
 
+/// Decode the item's icon, attention icon and overlay names at `sizes`; true when any changed.
+pub(super) fn decode_names(icons: &Icons, item: &mut TrayItem, sizes: &[i32]) -> bool {
+    let theme = item.icon_theme_path.clone();
+    let main = named(
+        icons,
+        item.icon_name.as_deref(),
+        &item.pixmaps,
+        theme.as_ref(),
+        sizes,
+    );
+    let mut changed = main != item.named;
+    item.named = main;
+    for icon in [&mut item.attention, &mut item.overlay] {
+        let n = named(
+            icons,
+            icon.name.as_deref(),
+            &icon.pixmaps,
+            theme.as_ref(),
+            sizes,
+        );
+        changed |= n != icon.named;
+        icon.named = n;
+    }
+    changed
+}
+
 /// The name keys the icon cache, so the `PATH_MAX` cap bounds it.
 pub(super) fn icon_ref(name: Option<String>) -> Option<String> {
     name.filter(|s| !s.is_empty() && s.len() <= libc::PATH_MAX as usize)
+}
+
+fn pixmaps_of(body: &Option<Body>) -> Option<Pixmaps<'_>> {
+    body.as_ref()
+        .and_then(|b| b.deserialize::<DeserializeValue<Pixmaps>>().ok())
+        .map(|v| v.0)
 }
 
 pub(super) fn item_texts(title: Option<String>, tip: Option<ToolTip>) -> (String, String) {
@@ -70,7 +109,20 @@ pub(super) async fn fetch_item(
 ) -> Option<TrayItem> {
     let proxy = uncached_proxy(conn, bus, path, ITEM_IFACE).await.ok()?;
     // Concurrent, so a silent peer costs one METHOD_TIMEOUT, not one per property.
-    let (sni_id, title, icon_name, theme_path, pixmaps, menu, status, tip, pid) = futures_util::join!(
+    let (
+        sni_id,
+        title,
+        icon_name,
+        theme_path,
+        pixmaps,
+        menu,
+        status,
+        tip,
+        pid,
+        attention_name,
+        attention_pixmaps,
+        overlay_name,
+    ) = futures_util::join!(
         prop::<String>(&proxy, "Id"),
         prop::<String>(&proxy, "Title"),
         prop::<String>(&proxy, "IconName"),
@@ -80,11 +132,11 @@ pub(super) async fn fetch_item(
         prop::<String>(&proxy, "Status"),
         prop_body(&proxy, "ToolTip"),
         owner_pid(conn, bus),
+        prop::<String>(&proxy, "AttentionIconName"),
+        prop_body(&proxy, "AttentionIconPixmap"),
+        prop::<String>(&proxy, "OverlayIconName"),
     );
-    let pixmaps = pixmaps
-        .as_ref()
-        .and_then(|b| b.deserialize::<DeserializeValue<Pixmaps>>().ok())
-        .map(|v| v.0);
+    let pixmaps = pixmaps_of(&pixmaps);
     let tip = tip
         .as_ref()
         .and_then(|b| b.deserialize::<DeserializeValue<ToolTip>>().ok())
@@ -115,10 +167,23 @@ pub(super) async fn fetch_item(
         pixmaps: item_pixmaps(&pixmaps.unwrap_or_default(), &sizes).into(),
         named: Arc::from([]),
         menu_path: menu.map(|p| p.as_str().to_string()).filter(|p| p != "/"),
-        passive: status.is_some_and(|s| s.eq_ignore_ascii_case("Passive")),
+        passive: status
+            .as_deref()
+            .is_some_and(|s| s.eq_ignore_ascii_case("Passive")),
         pid,
+        needs_attention: status.is_some_and(|s| s.eq_ignore_ascii_case("NeedsAttention")),
+        attention: ItemIcon {
+            name: icon_ref(attention_name),
+            pixmaps: item_pixmaps(&pixmaps_of(&attention_pixmaps).unwrap_or_default(), &sizes)
+                .into(),
+            named: Arc::from([]),
+        },
+        overlay: ItemIcon {
+            name: icon_ref(overlay_name),
+            ..ItemIcon::default()
+        },
     };
-    item.named = item_named(icons, &item, &sizes);
+    decode_names(icons, &mut item, &sizes);
     Some(item)
 }
 
