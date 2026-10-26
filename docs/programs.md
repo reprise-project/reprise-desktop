@@ -198,6 +198,20 @@ tunnel with its own key generator, or import a VPN file. When NetworkManager
 won't show a saved WireGuard key, its field is empty and keeps the key as long
 as no other key is changed.
 
+An enterprise (802.1X) network, the kind campuses and offices run, asks for
+its login when you pick it: PEAP, TTLS or TLS, an anonymous identity, the
+CA certificate (or "No CA certificate is required", which warns that a rogue
+network could pose as yours), the inner method (MSCHAPv2, PAP or GTC),
+username and password, or for TLS your certificate, private key and its
+password. The login is saved in the network's NetworkManager profile, so
+the next join needs nothing typed. WEP networks still need NetworkManager's
+own editor.
+
+The last row of the wireless list, "Connect to a hidden network...", joins
+a network that doesn't broadcast its name: type the name, pick Open,
+WPA-PSK (and type the key) or Enterprise (which goes on to the login
+above). Its profile is marked hidden so NetworkManager looks for it by name.
+
 ## Bluetooth Devices
 
 Pair with the Add Bluetooth Device Wizard, connect and disconnect, rename a
