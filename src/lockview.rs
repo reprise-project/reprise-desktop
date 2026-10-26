@@ -1,8 +1,9 @@
 //! The lock screen on the scene: one opaque cover, the wallpaper over it with `[wallpaper] lock_screen`,
-//! one dialog per output in `layers.lock`, key and pointer routing while locked, the pipe the PAM thread
-//! answers through, and the fingerprint conversation's child. Pure state lives in `lock.rs` and `lockfinger.rs`.
+//! one dialog per output in `layers.lock`, key and pointer routing while locked, and the password's and
+//! fingerprint's PAM conversation children. Pure state lives in `lock.rs` and `lockfinger.rs`.
 
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::fd::BorrowedFd;
+use std::process::Command;
 
 use smithay::{
     backend::input::InputTime,
@@ -22,7 +23,7 @@ use crate::compositor::State;
 use crate::editkeys::KeyText;
 use crate::input::{BTN_LEFT, Interaction};
 use crate::keys;
-use crate::lock::{self, LockButton, LockKey, LockState, PamVerifier};
+use crate::lock::{self, LockButton, LockKey, LockState};
 use crate::lockfinger;
 use crate::raster::Rect;
 use crate::sessionlock::{ClientLock, SessionLock};
@@ -34,6 +35,7 @@ use crate::window::WindowId;
 pub struct LockScreen {
     pub session: SessionLock,
     pub active: Option<Lock>,
+    pub helpers: Helpers,
 }
 
 impl LockScreen {
@@ -41,6 +43,22 @@ impl LockScreen {
         LockScreen {
             session: SessionLock::new(dh),
             active: None,
+            helpers: Helpers::default(),
+        }
+    }
+}
+
+/// The commands the PAM conversations run, for a user; tests put scripts in their place.
+pub struct Helpers {
+    pub password: fn(&str) -> Command,
+    pub finger: fn(&str) -> Option<Command>,
+}
+
+impl Default for Helpers {
+    fn default() -> Helpers {
+        Helpers {
+            password: lockfinger::password_command,
+            finger: lockfinger::finger_command,
         }
     }
 }
@@ -69,7 +87,7 @@ pub struct Lock {
     pub user: String,
     pub outputs: Vec<LockOutput>,
     pub pending: Option<Pending>,
-    pub finger: Option<Finger>,
+    pub finger: Option<Helper>,
     /// The window focused when the lock engaged; refocused on unlock if it still exists and is mapped.
     pub prev_focus: Option<WindowId>,
     /// The layer surface holding the keyboard when the lock engaged; restored in preference to
@@ -101,7 +119,7 @@ pub struct Source {
 }
 
 impl Source {
-    fn disarm(mut self) {
+    fn disarm(&mut self) {
         self.token = None;
     }
 }
@@ -114,29 +132,25 @@ impl Drop for Source {
     }
 }
 
-/// The source polling one attempt's result pipe. The verifier thread owns the write end, so EOF means the thread is gone.
-pub struct Pending(Source);
-
-/// One lock's fingerprint conversation (see `lockfinger`) and the source watching its stdout. Dropping
-/// it removes the source, then ends the child, which releases the reader.
-pub struct Finger {
+/// A PAM conversation's child (see `lockfinger`) and the source watching its stdout. Dropping it removes
+/// the source, then ends the child, which releases what it holds (the fingerprint reader).
+pub struct Helper {
     source: Source,
     conversation: lockfinger::Conversation,
 }
 
-/// Start the fingerprint conversation for `user`. None when the PAM service is not installed or the
-/// child or its loop source cannot be had; the password still unlocks.
-fn start_finger(state: &State, user: &str) -> Option<Finger> {
-    if !lockfinger::service_installed() {
-        return None;
-    }
-    let conversation = match lockfinger::Conversation::start(user) {
-        Ok(c) => c,
-        Err(e) => {
-            log::warn!("lock: cannot start the fingerprint conversation: {e}");
-            return None;
-        }
-    };
+/// One password check in flight: its conversation and the notices it sent so far.
+pub struct Pending {
+    helper: Helper,
+    answer: lockfinger::PasswordAnswer,
+}
+
+/// Watch `conversation`'s stdout with `on_read`. None when the loop refuses the source; the child ends.
+fn watch(
+    state: &State,
+    conversation: lockfinger::Conversation,
+    on_read: fn(&mut State) -> PostAction,
+) -> Option<Helper> {
     // SAFETY: the conversation's stdout is open for as long as the conversation, which outlives this borrow.
     let fd = unsafe { BorrowedFd::borrow_raw(conversation.fd()) }.try_clone_to_owned();
     let token = fd.ok().and_then(|fd| {
@@ -144,21 +158,34 @@ fn start_finger(state: &State, user: &str) -> Option<Finger> {
             .handle
             .insert_source(
                 Generic::new(fd, Interest::READ, Mode::Level),
-                |_, _, state| Ok(on_finger(state)),
+                move |_, _, state| Ok(on_read(state)),
             )
             .ok()
     });
     let Some(token) = token else {
-        log::warn!("lock: cannot watch the fingerprint conversation");
+        log::warn!("lock: cannot watch a PAM conversation");
         return None;
     };
-    Some(Finger {
+    Some(Helper {
         source: Source {
             token: Some(token),
             handle: state.handle.clone(),
         },
         conversation,
     })
+}
+
+/// Start the fingerprint conversation for `user`. None when the PAM service is not installed or the
+/// child or its loop source cannot be had; the password still unlocks.
+fn start_finger(state: &State, user: &str) -> Option<Helper> {
+    let command = (state.lock.helpers.finger)(user)?;
+    match lockfinger::Conversation::start(command) {
+        Ok(c) => watch(state, c, on_finger),
+        Err(e) => {
+            log::warn!("lock: cannot start the fingerprint conversation: {e}");
+            None
+        }
+    }
 }
 
 /// What the fingerprint conversation said since the last wake. Its PAM success unlocks; its end drops it.
@@ -178,7 +205,7 @@ fn on_finger(state: &mut State) -> PostAction {
     let accepted = lines.into_iter().any(|line| l.state.finger(line));
     if accepted || eof {
         // This callback's Remove takes the source down; the child is reaped here.
-        if let Some(f) = l.finger.take() {
+        if let Some(mut f) = l.finger.take() {
             f.source.disarm();
         }
     }
@@ -198,52 +225,45 @@ fn on_finger(state: &mut State) -> PostAction {
     }
 }
 
-/// Never leave the dialog stuck on "Verifying...": clear it, show `message` and redraw.
+/// Never leave the dialog stuck on "Verifying...": end the check, show `message` and redraw.
 fn abort_verification(state: &mut State, message: &str) {
     if let Some(l) = state.lock.active.as_mut() {
-        if let Some(p) = l.pending.take() {
-            p.0.disarm();
-        }
+        l.pending = None;
         l.state.fail_with(message);
     }
     redraw(state);
 }
 
-/// The verifier thread's verdict (see `lock::decode_verdict`). The read end is non-blocking; the write
-/// end is not, so its single write of at most `PIPE_BUF` bytes is all-or-nothing and one read takes it whole.
-fn on_result(state: &mut State, fd: BorrowedFd<'_>) -> PostAction {
-    let mut b = [0u8; libc::PIPE_BUF];
-    // SAFETY: `b` has room for the `b.len()` bytes requested.
-    let n = unsafe { libc::read(fd.as_raw_fd(), b.as_mut_ptr().cast(), b.len()) };
-    if n >= 0 {
-        match lock::decode_verdict(&b[..n as usize]) {
-            Some(Ok(())) => {
-                if let Some(l) = state.lock.active.as_mut() {
-                    if let Some(p) = l.pending.take() {
-                        p.0.disarm();
-                    }
-                    l.state.verifying = false;
-                }
-                unlock(state);
-            }
-            Some(Err(notices)) => abort_verification(state, &lock::failure_text(&notices)),
-            None => {
-                // The thread died (or never spawned) without writing; `verifying` must not stick.
-                log::error!("lock: verifier thread ended without a result");
-                abort_verification(state, lock::INCORRECT);
-            }
-        }
+/// What the password conversation said since the last wake: its verdict unlocks or shows why not; an
+/// end without one reads as "could not be checked", never as accepted.
+fn on_result(state: &mut State) -> PostAction {
+    let Some(l) = state.lock.active.as_mut() else {
         return PostAction::Remove;
+    };
+    let Some(p) = l.pending.as_mut() else {
+        return PostAction::Remove;
+    };
+    let (lines, eof) = p.helper.conversation.read();
+    let verdict = lines.into_iter().find_map(|line| p.answer.line(line));
+    if verdict.is_none() && !eof {
+        return PostAction::Continue;
     }
-    let err = std::io::Error::last_os_error();
-    match err.raw_os_error() {
-        Some(libc::EAGAIN) | Some(libc::EINTR) => PostAction::Continue,
-        _ => {
-            log::error!("lock: result pipe read failed: {err}");
-            abort_verification(state, lock::INCORRECT);
-            PostAction::Remove
+    // This callback's Remove takes the source down.
+    if let Some(mut p) = l.pending.take() {
+        p.helper.source.disarm();
+    }
+    match verdict {
+        Some(Ok(())) => {
+            l.state.verifying = false;
+            unlock(state);
+        }
+        Some(Err(notices)) => abort_verification(state, &lock::failure_text(&notices)),
+        None => {
+            log::error!("lock: the password conversation ended without a result");
+            abort_verification(state, lock::UNAVAILABLE);
         }
     }
+    PostAction::Remove
 }
 
 /// Lock the session, then start `[power] locker` if one is set. No-op when already locked.
@@ -687,66 +707,33 @@ fn button_at<'a>(
 }
 
 fn submit(state: &mut State) {
-    let pipe = result_pipe(state);
     let Some(l) = state.lock.active.as_mut() else {
         return;
     };
     l.state.verifying = true;
     l.state.message = None;
     let password = l.state.take_input();
-    let user = l.user.clone();
-    match pipe {
-        Some((pending, write)) => {
-            l.pending = Some(pending);
-            if !lock::verify_async(Box::new(PamVerifier), user, password, write) {
-                // Dropping `pending` unwatches the pipe before its EOF could read as a wrong password.
-                l.pending = None;
-                l.state.fail_with(lock::UNAVAILABLE);
-            }
+    let command = (state.lock.helpers.password)(&l.user);
+    let helper = match lockfinger::Conversation::start_password(command, password.as_bytes()) {
+        Ok(c) => watch(state, c, on_result),
+        Err(e) => {
+            log::error!("lock: cannot start the password conversation: {e}");
+            None
         }
-        None => l.state.fail(),
+    };
+    drop(password);
+    if let Some(l) = state.lock.active.as_mut() {
+        match helper {
+            Some(helper) => {
+                l.pending = Some(Pending {
+                    helper,
+                    answer: Default::default(),
+                })
+            }
+            None => l.state.fail_with(lock::UNAVAILABLE),
+        }
     }
     redraw(state);
-}
-
-/// One attempt's result pipe: the read end, non-blocking and watched by `on_result`, and the write end,
-/// blocking for the verifier thread's single unretried write.
-fn result_pipe(state: &State) -> Option<(Pending, OwnedFd)> {
-    let mut fds = [0i32; 2];
-    // SAFETY: `fds` has room for the two descriptors pipe2 writes.
-    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
-        log::error!("lock: pipe2 failed: {}", std::io::Error::last_os_error());
-        return None;
-    }
-    // SAFETY: pipe2 succeeded, so both fds are open and owned by nothing else.
-    let (read, write) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
-    // SAFETY: `read` is an open fd.
-    let nonblocking = unsafe {
-        let flags = libc::fcntl(read.as_raw_fd(), libc::F_GETFL);
-        flags != -1 && libc::fcntl(read.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) != -1
-    };
-    if !nonblocking {
-        log::error!(
-            "lock: cannot make result pipe non-blocking: {}",
-            std::io::Error::last_os_error()
-        );
-        return None;
-    }
-    let token = state
-        .handle
-        .insert_source(
-            Generic::new(read, Interest::READ, Mode::Level),
-            |_, fd, state| Ok(on_result(state, fd.as_fd())),
-        )
-        .map_err(|e| log::error!("lock: cannot watch the result pipe: {}", e.error))
-        .ok()?;
-    Some((
-        Pending(Source {
-            token: Some(token),
-            handle: state.handle.clone(),
-        }),
-        write,
-    ))
 }
 
 /// A key while locked, from the keyboard filter. Returns whether it goes on to the focused surface: a
@@ -857,6 +844,66 @@ mod tests {
 
     fn buttons(ok: Rect, cancel: Rect) -> Buttons {
         Buttons { ok, cancel }
+    }
+
+    fn sh(script: &str) -> Command {
+        let mut c = Command::new("sh");
+        c.arg("-c").arg(script);
+        c
+    }
+
+    /// A harness locked behind the dialog, no fingerprint conversation, `password` as the password's.
+    fn locked(password: fn(&str) -> Command) -> crate::harness::Harness {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.lock.helpers = Helpers {
+            password,
+            finger: |_| None,
+        };
+        lock(&mut h.state);
+        h
+    }
+
+    /// Type `password`, submit it and turn the loop until the check ends (or 5 s pass).
+    fn check(h: &mut crate::harness::Harness, password: &str) {
+        let l = h.state.lock.active.as_mut().expect("locked");
+        l.state.input.push_str(password);
+        submit(&mut h.state);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while (h.state.lock.active.as_ref()).is_some_and(|l| l.state.verifying) {
+            assert!(std::time::Instant::now() < end, "the check ends");
+            h.run_for(5);
+        }
+    }
+
+    fn message(h: &crate::harness::Harness) -> Option<String> {
+        h.state.lock.active.as_ref()?.state.message.clone()
+    }
+
+    #[test]
+    fn the_password_conversation_unlocks_on_its_success_only() {
+        let mut h = locked(|_| sh(r#"[ "$(cat)" = hunter2 ] && echo '= 0' || echo '= 7'"#));
+        check(&mut h, "hunter1");
+        assert!(h.state.is_locked());
+        assert_eq!(message(&h).as_deref(), Some(lock::INCORRECT));
+        check(&mut h, "hunter2");
+        assert!(!h.state.is_locked());
+    }
+
+    #[test]
+    fn a_rejection_shows_the_conversations_text() {
+        let mut h = locked(|_| sh("cat >/dev/null; echo 'E Account locked.'; echo '= 7'"));
+        check(&mut h, "hunter2");
+        assert!(h.state.is_locked());
+        assert_eq!(message(&h).as_deref(), Some("Account locked."));
+    }
+
+    #[test]
+    fn a_conversation_that_ends_without_a_result_reads_as_unavailable() {
+        let mut h = locked(|_| sh("exit 0"));
+        check(&mut h, "hunter2");
+        assert!(h.state.is_locked());
+        assert_eq!(message(&h).as_deref(), Some(lock::UNAVAILABLE));
     }
 
     #[test]
