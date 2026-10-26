@@ -220,9 +220,13 @@ fn pidfd(pid: i32, flags: libc::c_uint) -> std::io::Result<OwnedFd> {
 }
 
 fn program_name(pid: i32) -> Option<String> {
-    std::fs::read_link(format!("/proc/{pid}/exe"))
-        .ok()
-        .and_then(|exe| exe_name(&exe.to_string_lossy()))
+    reprisefs::multicall::program_of(pid)
+        .map(str::to_string)
+        .or_else(|| {
+            std::fs::read_link(format!("/proc/{pid}/exe"))
+                .ok()
+                .and_then(|exe| exe_name(&exe.to_string_lossy()))
+        })
         .or_else(|| {
             let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
             Some(comm.trim_end().to_string()).filter(|c| !c.is_empty())

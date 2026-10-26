@@ -102,6 +102,19 @@ pub fn is_installed_exe(exe: &[u8], program: &str) -> bool {
     })
 }
 
+/// Whether process `pid` runs the installed `program`: its own binary, or the installed
+/// multi-call binary started as `program`.
+pub fn runs_installed(pid: i32, program: &str) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(exe) = std::fs::read_link(format!("/proc/{pid}/exe")) else {
+        return false;
+    };
+    let exe = exe.as_os_str().as_bytes();
+    is_installed_exe(exe, program)
+        || (is_installed_exe(exe, reprisefs::multicall::BINARY)
+            && reprisefs::multicall::program_of(pid) == Some(program))
+}
+
 pub struct InputGlobal;
 
 pub struct InputData;
