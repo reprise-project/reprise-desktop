@@ -24,11 +24,11 @@ impl Notepad {
         let dlg = self.host.open(
             &dir,
             Fields {
-                title: "Open".into(),
-                accept_label: "Open".into(),
+                title: tr!("title-open"),
+                accept_label: tr!("open-button"),
                 mode: DlgMode::Open,
                 multiple: false,
-                filters: vec!["Text Documents (*.txt)".into(), "All Files (*.*)".into()],
+                filters: vec![tr!("filter-text"), tr!("filter-all")],
             },
             self.forms.text,
         );
@@ -40,11 +40,11 @@ impl Notepad {
         let dlg = self.host.open(
             &dir,
             Fields {
-                title: "Save As".into(),
-                accept_label: "Save".into(),
+                title: tr!("title-save-as"),
+                accept_label: tr!("save-button"),
                 mode: DlgMode::Save,
                 multiple: false,
-                filters: vec!["Text Documents (*.txt)".into(), "All Files (*.*)".into()],
+                filters: vec![tr!("filter-text"), tr!("filter-all")],
             },
             self.forms.text,
         );
@@ -250,12 +250,12 @@ impl Notepad {
     /// neither carrying an access key; the default follows the focus Tab and the arrows move.
     pub(crate) fn overwrite_fields(&self, path: &Path) -> msgbox::Fields {
         msgbox::Fields {
-            text: format!(
-                "{} already exists.\nDo you want to replace it?",
-                path.display()
-            ),
+            text: tr!("overwrite", path = path.display().to_string()),
             icon: self.warn_icon.clone(),
-            buttons: vec!["Yes".into(), "No".into()],
+            buttons: vec![
+                reprisekit::kit_tr!("yes-bare"),
+                reprisekit::kit_tr!("no-bare"),
+            ],
             default: self.overwrite_focus,
             min_text_h: None,
             min_w: 0,

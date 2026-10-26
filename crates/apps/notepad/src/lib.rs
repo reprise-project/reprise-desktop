@@ -9,6 +9,8 @@ mod menu;
 mod pending;
 mod window;
 
+reprisekit::strings!("notepad");
+
 use dialogs::{FormStep, form_event, goto_form, ok_box};
 use document::{
     Stamp, has_crlf, load, open_failed_text, read_text, recovered_in, recovery_dir, write_document,
@@ -47,6 +49,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::{EditKey, TextEdit, keysym};
 use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use window::{EDIT_PX, edit_font};
@@ -207,8 +210,8 @@ impl Notepad {
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled".into());
-        format!("{name} - Notepad")
+            .unwrap_or_else(|| tr!("untitled"));
+        tr!("window-title", name = name)
     }
 
     fn follow(&mut self, ctx: &Ctx) {
@@ -292,7 +295,7 @@ impl App for Notepad {
         if self.goto.is_some() {
             kids.push(Child {
                 id: GOTO,
-                title: "Goto line".into(),
+                title: tr!("title-go-to"),
                 size: self.forms.text.size(GOTO_CLIENT),
                 fixed: true,
                 modal: true,
@@ -301,7 +304,7 @@ impl App for Notepad {
         if self.find.is_some() {
             kids.push(Child {
                 id: FIND,
-                title: "Find".into(),
+                title: tr!("title-find"),
                 size: self.forms.text.size(finddlg::FIND_CLIENT),
                 fixed: true,
                 modal: false,
@@ -310,7 +313,7 @@ impl App for Notepad {
         if self.replace.is_some() {
             kids.push(Child {
                 id: REPLACE_WIN,
-                title: "Replace".into(),
+                title: tr!("title-replace"),
                 size: self.forms.text.size(finddlg::REPLACE_CLIENT),
                 fixed: true,
                 modal: false,
@@ -325,7 +328,7 @@ impl App for Notepad {
         if self.about {
             kids.push(Child {
                 id: ABOUT,
-                title: "About Notepad".into(),
+                title: tr!("title-about"),
                 size: self.forms.text.size(aboutbox::CLIENT),
                 fixed: true,
                 modal: true,
@@ -335,7 +338,7 @@ impl App for Notepad {
             let fields = self.savechanges_fields();
             kids.push(Child {
                 id: SAVECHANGES,
-                title: "Notepad".into(),
+                title: tr!("name"),
                 size: self.msgbox_size(&fields),
                 fixed: true,
                 modal: true,
@@ -344,7 +347,7 @@ impl App for Notepad {
         if self.open.is_some() {
             kids.push(Child {
                 id: OPEN,
-                title: "Open".into(),
+                title: tr!("title-open"),
                 size: self.open.as_ref().map_or(CLIENT, FileDlg::client),
                 fixed: false,
                 modal: true,
@@ -353,7 +356,7 @@ impl App for Notepad {
         if self.saveas.is_some() {
             kids.push(Child {
                 id: SAVEAS,
-                title: "Save As".into(),
+                title: tr!("title-save-as"),
                 size: self.saveas.as_ref().map_or(CLIENT, FileDlg::client),
                 fixed: false,
                 modal: true,
@@ -372,7 +375,7 @@ impl App for Notepad {
             let fields = self.overwrite_fields(path);
             kids.push(Child {
                 id: OVERWRITE,
-                title: "Save As".into(),
+                title: tr!("title-save-as"),
                 size: self.msgbox_size(&fields),
                 fixed: true,
                 modal: true,

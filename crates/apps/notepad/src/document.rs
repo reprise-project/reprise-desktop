@@ -1,5 +1,6 @@
 //! Notepad file I/O: reading, atomic writing, line-ending detection.
 
+use reprisekit::tr;
 use std::path::{Path, PathBuf};
 
 /// Write so a crash or full disk never leaves the file truncated: temp file,
@@ -183,21 +184,13 @@ pub(crate) fn load(path: &Path) -> std::io::Result<String> {
 
 pub(crate) fn open_failed_text(path: &Path, e: &std::io::Error) -> String {
     use std::io::ErrorKind;
-    let path = path.display();
+    let path = path.display().to_string();
     match e.kind() {
-        ErrorKind::NotFound => {
-            format!("{path}\nFile not found.\nPlease verify the correct file name was given.")
-        }
-        ErrorKind::FileTooLarge => {
-            format!(
-                "The file {path} is too large for Notepad.\nUse another editor to edit the file."
-            )
-        }
-        ErrorKind::InvalidInput | ErrorKind::IsADirectory => {
-            format!("Cannot open {path}.\nIt is not a file.")
-        }
-        ErrorKind::PermissionDenied => format!("Cannot open {path}.\nAccess is denied."),
-        _ => format!("Cannot open {path}.\n{e}"),
+        ErrorKind::NotFound => tr!("open-not-found", path = path),
+        ErrorKind::FileTooLarge => tr!("open-too-large", path = path),
+        ErrorKind::InvalidInput | ErrorKind::IsADirectory => tr!("open-not-a-file", path = path),
+        ErrorKind::PermissionDenied => tr!("open-denied", path = path),
+        _ => tr!("open-failed", path = path, error = e.to_string()),
     }
 }
 
