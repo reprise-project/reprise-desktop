@@ -110,7 +110,9 @@ it holds.
 
 When `/etc/pam.d/reprise-fingerprint` is installed, a second helper runs
 the fingerprint conversation while the dialog shows. Either one succeeding
-unlocks.
+unlocks. A fingerprint conversation that ends without success (too many
+fingers that did not match) starts again after 2 s, the wait doubling up to
+30 s; one that finds no reader or no enrolled finger does not.
 
 `[power] locker` runs an external locker (swaylock, hyprlock, gtklock)
 instead of the dialog. The lock stays Reprise's: the screens are covered and

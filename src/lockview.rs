@@ -53,12 +53,13 @@ impl LockScreen {
     }
 }
 
-/// The commands the PAM conversations run, for a user, and how long a password check may take; tests
-/// put scripts in their place.
+/// The commands the PAM conversations run, for a user, how long a password check may take, and the
+/// first wait before a failed fingerprint conversation starts again; tests put scripts in their place.
 pub struct Helpers {
     pub password: fn(&str) -> Command,
     pub finger: fn(&str) -> Option<Command>,
     pub verify_timeout: Duration,
+    pub finger_retry: Duration,
 }
 
 impl Default for Helpers {
@@ -67,9 +68,13 @@ impl Default for Helpers {
             password: lockfinger::password_command,
             finger: lockfinger::finger_command,
             verify_timeout: Duration::from_secs(90),
+            finger_retry: Duration::from_secs(2),
         }
     }
 }
+
+/// The longest wait before a failed fingerprint conversation starts again; each failure doubles it.
+const FINGER_RETRY_MAX: Duration = Duration::from_secs(30);
 
 /// The OK and Cancel button rects of one output's dialog, in layout coordinates, for hit testing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -96,6 +101,10 @@ pub struct Lock {
     pub outputs: Vec<LockOutput>,
     pub pending: Option<Pending>,
     pub finger: Option<Helper>,
+    /// Starts the fingerprint conversation again after one ended without success.
+    pub finger_retry: Option<Source>,
+    /// The wait before the next fingerprint retry.
+    pub finger_delay: Duration,
     /// The window focused when the lock engaged; refocused on unlock if it still exists and is mapped.
     pub prev_focus: Option<WindowId>,
     /// The layer surface holding the keyboard when the lock engaged; restored in preference to
@@ -238,7 +247,8 @@ fn start_finger(state: &State, user: &str) -> Option<Helper> {
     }
 }
 
-/// What the fingerprint conversation said since the last wake. Its PAM success unlocks; its end drops it.
+/// What the fingerprint conversation said since the last wake. Its PAM success unlocks; any other end
+/// drops it and starts it again later, unless PAM said there is no reader or finger to verify.
 fn on_finger(state: &mut State) -> PostAction {
     let Some(l) = state.lock.active.as_mut() else {
         return PostAction::Remove;
@@ -247,13 +257,16 @@ fn on_finger(state: &mut State) -> PostAction {
         return PostAction::Remove;
     };
     let (lines, eof) = f.conversation.read();
+    let mut result = None;
     for line in &lines {
         if let lockfinger::Line::Result(rc) = line {
             log::info!("lock: the fingerprint conversation ended with PAM code {rc}");
+            result = Some(*rc);
         }
     }
+    let ended = eof || result.is_some();
     let accepted = lines.into_iter().any(|line| l.state.finger(line));
-    if accepted || eof {
+    if accepted || ended {
         // This callback's Remove takes the source down; the child is reaped here.
         if let Some(mut f) = l.finger.take() {
             f.source.disarm();
@@ -264,15 +277,52 @@ fn on_finger(state: &mut State) -> PostAction {
         unlock(state);
         return PostAction::Remove;
     }
-    if eof {
+    if ended {
         l.state.finger = None;
+        if result != Some(lock::ffi::PAM_AUTHINFO_UNAVAIL) {
+            arm_finger_retry(state);
+        }
     }
     redraw(state);
-    if eof {
+    if ended {
         PostAction::Remove
     } else {
         PostAction::Continue
     }
+}
+
+/// Start the fingerprint conversation again after the lock's `finger_delay`, which then doubles up to
+/// `FINGER_RETRY_MAX`. The start is skipped while a locker holds the lock.
+fn arm_finger_retry(state: &mut State) {
+    let Some(l) = state.lock.active.as_mut() else {
+        return;
+    };
+    let delay = l.finger_delay;
+    l.finger_delay = (delay * 2).min(FINGER_RETRY_MAX);
+    let armed = state
+        .handle
+        .insert_source(Timer::from_duration(delay), |_, _, state| {
+            if let Some(mut t) = state
+                .lock
+                .active
+                .as_mut()
+                .and_then(|l| l.finger_retry.take())
+            {
+                t.disarm();
+            }
+            start_dialog_finger(state);
+            TimeoutAction::Drop
+        });
+    l.finger_retry = match armed {
+        Ok(token) => Some(Source {
+            token: Some(token),
+            handle: state.handle.clone(),
+        }),
+        Err(e) => {
+            log::warn!("lock: cannot time the fingerprint retry: {}", e.error);
+            None
+        }
+    };
 }
 
 /// Never leave the dialog stuck on "Verifying...": end the check, show `message` and redraw.
@@ -411,6 +461,8 @@ pub fn engage(state: &mut State) {
         outputs: Vec::new(),
         pending: None,
         finger: None,
+        finger_retry: None,
+        finger_delay: state.lock.helpers.finger_retry,
         prev_focus,
         prev_focused_layer,
         prev_desktop,
@@ -1177,6 +1229,43 @@ mod tests {
         let mut c = h.connect();
         let (_lock, _surface) = h.map_lock_surface(&mut c);
         assert!(!finger(&h), "a locker taking over the dialog ends it");
+    }
+
+    #[test]
+    fn a_failed_fingerprint_conversation_starts_again_with_a_growing_wait() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static STARTS: AtomicUsize = AtomicUsize::new(0);
+        let mut h = locked(|_| sh("exit 0"));
+        h.state.lock.helpers.finger = |_| {
+            STARTS.fetch_add(1, Ordering::SeqCst);
+            Some(sh("echo 'E Failed to match fingerprint'; exit 1"))
+        };
+        h.state.lock.active.as_mut().unwrap().finger_delay = Duration::from_millis(20);
+        start_dialog_finger(&mut h.state);
+        let end = Instant::now() + Duration::from_secs(5);
+        while STARTS.load(Ordering::SeqCst) < 3 {
+            assert!(Instant::now() < end, "the conversation starts again");
+            h.run_for(5);
+        }
+        let l = h.state.lock.active.as_ref().unwrap();
+        assert_eq!(
+            l.state.message.as_deref(),
+            Some("Failed to match fingerprint")
+        );
+        assert!(
+            l.finger_delay >= Duration::from_millis(80),
+            "each retry doubles the wait"
+        );
+        unlock(&mut h.state);
+    }
+
+    #[test]
+    fn a_fingerprint_conversation_without_a_reader_is_not_started_again() {
+        let mut h = locked(|_| sh("exit 0"));
+        h.state.lock.helpers.finger = |_| Some(sh("echo '= 9'"));
+        start_dialog_finger(&mut h.state);
+        turn_until(&mut h, "the conversation ends", |l| l.finger.is_none());
+        assert!(h.state.lock.active.as_ref().unwrap().finger_retry.is_none());
     }
 
     #[test]
