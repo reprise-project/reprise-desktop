@@ -1,3 +1,5 @@
+pub mod eap;
+
 use std::cell::Cell;
 
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W};

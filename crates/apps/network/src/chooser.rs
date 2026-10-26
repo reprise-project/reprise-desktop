@@ -142,14 +142,15 @@ fn tag(row: &NetRow, state: nm::State, connecting: &Option<nm::Ssid>) -> &'stati
 }
 
 /// The second line of a row: what it says about the network's
-/// security. Enterprise and WEP need a profile this applet cannot build,
-/// so they send the user to NetworkManager's own editor.
+/// security. WEP needs a profile this applet cannot build, so it sends the
+/// user to NetworkManager's own editor.
 pub fn caption(sec: nm::Security) -> &'static str {
     match sec {
         nm::Security::Open => "Unsecured wireless network",
         nm::Security::Psk => "Security-enabled wireless network (WPA2)",
         nm::Security::Sae => "Security-enabled wireless network (WPA3)",
-        nm::Security::Enterprise => "This network requires configuration",
+        nm::Security::Enterprise => "Security-enabled wireless network (802.1X)",
+        nm::Security::Wep => "This network requires configuration",
     }
 }
 
@@ -350,15 +351,14 @@ impl Chooser {
         if row.active {
             return Outcome::Disconnect;
         }
-        if row.security == nm::Security::Enterprise {
+        if row.security == nm::Security::Wep {
             return Outcome::None;
         }
         Outcome::Connect {
             ap: row.ap.clone(),
             ssid: row.ssid.clone(),
             security: row.security,
-            needs_key: matches!(row.security, nm::Security::Psk | nm::Security::Sae)
-                && (!row.known || row.keyless),
+            needs_key: row.security != nm::Security::Open && (!row.known || row.keyless),
         }
     }
 
@@ -366,7 +366,7 @@ impl Chooser {
     /// network needing a profile this applet cannot build, greys it.
     fn sync_button(&mut self) {
         let row = self.selected();
-        let live = row.is_some_and(|r| r.security != nm::Security::Enterprise);
+        let live = row.is_some_and(|r| r.security != nm::Security::Wep);
         let word = if row.is_some_and(|r| r.active) {
             "&Disconnect"
         } else {
@@ -506,7 +506,7 @@ pub fn draw_row(c: &mut Canvas, ctx: &Ctx, r: Rect, row: &NetRow, selected: bool
     let u = ctx.theme.text;
     let (name_y, caption_y, line_h) = (r.y + u.len(NAME_Y), r.y + u.len(CAPTION_Y), u.len(LINE_H));
     let lift = (line_h - LINE_H) / 2;
-    let greyed = row.security == nm::Security::Enterprise;
+    let greyed = row.security == nm::Security::Wep;
     let ink = match (selected, greyed) {
         (true, _) => cs.hilight_text,
         (false, true) => cs.gray_text,
@@ -653,7 +653,7 @@ mod tests {
                 },
                 nm::AccessPoint {
                     known: true,
-                    ..ap("/ap/4", "Work", 10, nm::Security::Enterprise)
+                    ..ap("/ap/4", "Work", 10, nm::Security::Wep)
                 },
                 ap("/ap/5", "Neighbour", 50, nm::Security::Psk),
             ],
@@ -750,6 +750,10 @@ mod tests {
         );
         assert_eq!(
             caption(nm::Security::Enterprise),
+            "Security-enabled wireless network (802.1X)"
+        );
+        assert_eq!(
+            caption(nm::Security::Wep),
             "This network requires configuration"
         );
     }
@@ -869,6 +873,48 @@ mod tests {
         let (x, y) = slot_point(&ctx, &c, 2);
         c.press(one(x, y), BTN_LEFT, &ctx);
         assert_eq!(c.list.selected_row(), Some(2));
+    }
+
+    /// An unsaved 802.1X network asks for its login; a saved one dials as it is.
+    #[test]
+    fn an_enterprise_network_asks_for_its_login_until_saved() {
+        let ctx = ctx();
+        let mut d = device();
+        d.wifi = Some(nm::Wifi {
+            active_ssid: None,
+            strength: 0,
+            aps: vec![
+                ap("/ap/8", "eduroam", 60, nm::Security::Enterprise),
+                nm::AccessPoint {
+                    known: true,
+                    ..ap("/ap/9", "Office", 40, nm::Security::Enterprise)
+                },
+            ],
+        });
+        let mut c = Chooser::new(&d, TextUnits::ONE);
+        assert_eq!(ssids(&c), ["Office", "eduroam"]);
+        let (x, y) = slot_point(&ctx, &c, 1);
+        c.press(one(x, y), BTN_LEFT, &ctx);
+        assert_eq!(
+            c.press(two(x, y), BTN_LEFT, &ctx),
+            Outcome::Connect {
+                ap: "/ap/8".into(),
+                ssid: "eduroam".into(),
+                security: nm::Security::Enterprise,
+                needs_key: true,
+            }
+        );
+        let (x, y) = slot_point(&ctx, &c, 0);
+        c.press(one(x, y), BTN_LEFT, &ctx);
+        assert_eq!(
+            c.press(two(x, y), BTN_LEFT, &ctx),
+            Outcome::Connect {
+                ap: "/ap/9".into(),
+                ssid: "Office".into(),
+                security: nm::Security::Enterprise,
+                needs_key: false,
+            }
+        );
     }
 
     #[test]
