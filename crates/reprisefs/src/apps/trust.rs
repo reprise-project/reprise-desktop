@@ -1,5 +1,6 @@
 //! The launcher trust marker: `user.reprise.trusted` holding HMAC-SHA256 of the file's
-//! `dev:ino` under a per-user key, so an archive or another user's copy cannot carry it.
+//! filesystem id and inode under a per-user key, so an archive or another user's copy cannot
+//! carry it.
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::io;
@@ -10,23 +11,53 @@ pub(crate) const TRUST_XATTR: &std::ffi::CStr = c"user.reprise.trusted";
 const KEY_LEN: usize = 32;
 type Key = [u8; KEY_LEN];
 
-fn mac(key: &Key, meta: &std::fs::Metadata) -> Hmac<Sha256> {
+/// A file's `(f_fsid, inode)`. st_dev is left out: btrfs subvolumes and NVMe or dm devices
+/// can get another number at each boot, while f_fsid follows the filesystem's UUID.
+type Ident = (libc::c_ulong, u64);
+
+fn mac(key: &Key, (fsid, ino): Ident) -> Hmac<Sha256> {
     let mut m = Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes any key length");
-    m.update(format!("{}:{}", meta.dev(), meta.ino()).as_bytes());
+    m.update(format!("{fsid:x}:{ino}").as_bytes());
     m
 }
 
-fn value(key: &Key, meta: &std::fs::Metadata) -> Vec<u8> {
-    mac(key, meta).finalize().into_bytes().to_vec()
+fn fsid_of(rc: libc::c_int, buf: &libc::statvfs) -> io::Result<libc::c_ulong> {
+    if rc == 0 {
+        Ok(buf.f_fsid)
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }
 
-/// Whether `value` is the marker for the file `meta` describes.
-pub(crate) fn verifies(value: &[u8], meta: &std::fs::Metadata) -> bool {
-    key().is_ok_and(|k| verifies_with(&k, value, meta))
+fn ident(path: &Path) -> io::Result<Ident> {
+    let c = cpath(path)?;
+    // SAFETY: an all-zero statvfs is a valid value of a plain C struct.
+    let mut buf: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: `c` is NUL-terminated and `buf` is writable, both live across the call.
+    let rc = unsafe { libc::statvfs(c.as_ptr(), &mut buf) };
+    Ok((fsid_of(rc, &buf)?, std::fs::metadata(path)?.ino()))
 }
 
-fn verifies_with(key: &Key, value: &[u8], meta: &std::fs::Metadata) -> bool {
-    mac(key, meta).verify_slice(value).is_ok()
+fn ident_fd(file: &std::fs::File) -> io::Result<Ident> {
+    use std::os::fd::AsRawFd;
+    // SAFETY: an all-zero statvfs is a valid value of a plain C struct.
+    let mut buf: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: the fd is open and `buf` is writable across the call.
+    let rc = unsafe { libc::fstatvfs(file.as_raw_fd(), &mut buf) };
+    Ok((fsid_of(rc, &buf)?, file.metadata()?.ino()))
+}
+
+fn value(key: &Key, id: Ident) -> Vec<u8> {
+    mac(key, id).finalize().into_bytes().to_vec()
+}
+
+/// Whether `value` is the marker for the file at `path`.
+pub(crate) fn verifies(value: &[u8], path: &Path) -> bool {
+    key().is_ok_and(|k| ident(path).is_ok_and(|id| verifies_with(&k, value, id)))
+}
+
+fn verifies_with(key: &Key, value: &[u8], id: Ident) -> bool {
+    mac(key, id).verify_slice(value).is_ok()
 }
 
 /// `$XDG_STATE_HOME/reprise/trust.key`, else `~/.local/state/reprise/trust.key`.
@@ -112,7 +143,7 @@ pub fn is_trusted(path: &Path) -> bool {
 }
 
 fn is_trusted_with(key: &Key, path: &Path) -> bool {
-    let (Ok(c), Ok(meta)) = (cpath(path), std::fs::metadata(path)) else {
+    let (Ok(c), Ok(id)) = (cpath(path), ident(path)) else {
         return false;
     };
     let mut buf = [0u8; 64];
@@ -126,12 +157,12 @@ fn is_trusted_with(key: &Key, path: &Path) -> bool {
             buf.len(),
         )
     };
-    usize::try_from(n).is_ok_and(|n| verifies_with(key, &buf[..n], &meta))
+    usize::try_from(n).is_ok_and(|n| verifies_with(key, &buf[..n], id))
 }
 
 pub fn set_trusted(path: &Path) -> io::Result<()> {
     let c = cpath(path)?;
-    let v = value(&key()?, &std::fs::metadata(path)?);
+    let v = value(&key()?, ident(path)?);
     // SAFETY: `c` and the name are NUL-terminated and the value is
     // readable for its length, all live across the call.
     let rc = unsafe {
@@ -159,7 +190,7 @@ pub fn allow_launching(path: &Path) -> io::Result<()> {
 
 pub(crate) fn set_trusted_fd(file: &std::fs::File) -> io::Result<()> {
     use std::os::fd::AsRawFd;
-    let v = value(&key()?, &file.metadata()?);
+    let v = value(&key()?, ident_fd(file)?);
     // SAFETY: the fd is open for the call, the name is NUL-terminated and
     // the value is readable for its length.
     let rc = unsafe {
@@ -246,6 +277,24 @@ mod tests {
         std::fs::write(&other, "x").unwrap();
         put_raw(&other, &raw(&path));
         assert!(!is_trusted(&other));
+    }
+
+    #[test]
+    fn the_marker_covers_the_filesystem_id_and_inode_alone() {
+        let k = key().unwrap();
+        let v = value(&k, (0x1234_5678_9abc_def0, 42));
+        assert!(verifies_with(&k, &v, (0x1234_5678_9abc_def0, 42)));
+        assert!(!verifies_with(&k, &v, (0x1234_5678_9abc_def1, 42)));
+        assert!(!verifies_with(&k, &v, (0x1234_5678_9abc_def0, 43)));
+    }
+
+    #[test]
+    fn a_marked_file_verifies_through_its_path_and_its_fd() {
+        let t = tempfile::tempdir().unwrap();
+        let Some(path) = marked(t.path()) else { return };
+        let file = std::fs::File::open(&path).unwrap();
+        assert_eq!(ident(&path).unwrap(), ident_fd(&file).unwrap());
+        assert!(verifies(&raw(&path), &path));
     }
 
     #[test]
