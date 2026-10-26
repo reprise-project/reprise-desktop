@@ -62,6 +62,9 @@ pub struct Clip {
     /// Read through [`State::clip_offered`].
     pub(crate) offered: Vec<String>,
     paste: Option<Paste>,
+    dirty: bool,
+    #[cfg(test)]
+    relayouts: usize,
 }
 
 impl Clip {
@@ -70,6 +73,9 @@ impl Clip {
             primary: PrimarySelectionState::new::<State>(dh),
             offered: Vec::new(),
             paste: None,
+            dirty: false,
+            #[cfg(test)]
+            relayouts: 0,
         }
     }
 }
@@ -226,11 +232,21 @@ impl State {
     }
 
     /// Someone else's selection or a new one of Reprise's. Smithay tells
-    /// `new_selection` before the seat holds the new source, so the history
-    /// record waits for the next idle pass.
+    /// `new_selection` before the seat holds the new source, so the relayout and
+    /// the history record wait for the next idle pass, once for every change before it.
     pub(crate) fn clipboard_changed(&mut self) {
-        self.relayout_desktop();
-        self.handle.insert_idle(|state| state.record_selection());
+        if std::mem::replace(&mut self.clip.dirty, true) {
+            return;
+        }
+        self.handle.insert_idle(|state| {
+            state.clip.dirty = false;
+            #[cfg(test)]
+            {
+                state.clip.relayouts += 1;
+            }
+            state.relayout_desktop();
+            state.record_selection();
+        });
     }
 
     /// The types a client's clipboard offers. Smithay drops a destroyed source (its client
@@ -593,6 +609,29 @@ mod tests {
         h.run_for(50);
         assert!(!h.state.clip_has_files(), "a gone client offers no files");
         assert!(!h.state.clip_has_text(), "nor the older recorded text");
+    }
+
+    #[test]
+    fn a_thousand_copies_in_one_roundtrip_relayout_and_record_once() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.run_for(20);
+        let before = h.state.clip.relayouts;
+        let _sources: Vec<_> = (0..1000)
+            .map(|i| c.copy(&["text/plain"], format!("copy {i}").as_bytes()))
+            .collect();
+        h.roundtrip(&mut c);
+        recorded(&mut h, 1);
+        h.run_for(50);
+        assert_eq!(h.state.clip.relayouts - before, 1, "one relayout");
+        let entries: Vec<_> = h.state.panels.history.history.entries().collect();
+        assert_eq!(entries.len(), 1, "one history entry");
+        assert_eq!(
+            answer(&entries[0].offers, "text/plain").map(|b| &b[..]),
+            Some(&b"copy 999"[..])
+        );
     }
 
     #[test]
