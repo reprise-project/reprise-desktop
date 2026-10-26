@@ -1000,13 +1000,62 @@ fn a_long_tree_publishes_the_rows_in_view_under_their_ancestors() {
     assert_eq!(first.label(), Some("b100"));
     assert_eq!(
         (first.position_in_set(), first.size_of_set()),
-        (Some(102), Some(10_001))
+        (Some(101), Some(10_000))
     );
+    assert_eq!(first.row_index(), Some(101));
     let picked = *items.last().unwrap();
     assert_eq!(t.get(picked).unwrap().label(), Some("b9000"));
     let mut p = Published::default();
     p.update(t);
     assert_eq!(p.reveal(picked).map(|r| r.row), Some(9_001));
+}
+
+#[test]
+fn a_tree_item_counts_among_its_siblings_and_reveals_by_its_visible_row() {
+    use crate::access::{Published, ROOT, Tree};
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut b = Node::new("B", true);
+    b.expanded = true;
+    b.children = (0..50).map(|k| Node::new(&format!("c{k}"), true)).collect();
+    b.children[10].expanded = true;
+    b.children[10].children = (0..30)
+        .map(|k| Node::new(&format!("g{k}"), false))
+        .collect();
+    let mut tv = TreeView::new(vec![Node::new("A", false), b], Style::Explorer);
+    tv.selected = Some(vec![1, 10, 20]);
+    let lay = layout(
+        &tv,
+        &text,
+        11,
+        Rect::new(0, 0, 200, 120),
+        &ControlMetrics::CLASSIC,
+    );
+    let mut t = Tree::window("", (200, 120));
+    access(&tv, &lay, &text, 11, &mut t, ROOT, "tree");
+    let list = t.get(ROOT).unwrap().children()[0];
+    let roots = t.get(list).unwrap().children().to_vec();
+    let b = t.get(roots[1]).unwrap();
+    assert_eq!((b.position_in_set(), b.size_of_set()), (Some(2), Some(2)));
+    let c10 = *b.children().last().unwrap();
+    let c = t.get(c10).unwrap();
+    assert_eq!(c.label(), Some("c10"));
+    assert_eq!((c.position_in_set(), c.size_of_set()), (Some(11), Some(50)));
+    let g20 = c.children()[0];
+    let g = t.get(g20).unwrap();
+    assert_eq!(g.label(), Some("g20"));
+    assert_eq!(g.level(), Some(3));
+    assert_eq!(
+        (g.position_in_set(), g.size_of_set()),
+        (Some(21), Some(30)),
+        "the 21st of c10's 30 children"
+    );
+    let mut p = Published::default();
+    p.update(t);
+    assert_eq!(
+        p.reveal(g20).map(|r| r.row),
+        Some(33),
+        "A, B, c0..c10, then g0..g20 in the visible order"
+    );
 }
 
 /// A hot label is drawn in `hot_light` and underlined 2 px below its ink's lowest row, as wide as its text; on the selection's band the underline takes the band's ink.

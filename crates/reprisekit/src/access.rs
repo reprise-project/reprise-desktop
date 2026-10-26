@@ -183,13 +183,20 @@ impl Published {
     }
 
     /// What a reader's ScrollIntoView on node `id` scrolls: a row lying outside its list's
-    /// bounds ([`Published::scrolled_out`]), counted by its position in set when it has one (a
-    /// list publishing only the rows near its view), else among the list's rows; in a scroll
-    /// view, the row is its child holding the node. None for a row in view, or a node that is
-    /// not a row of a list.
+    /// bounds ([`Published::scrolled_out`]), counted by its row index or else its position in
+    /// set when it has one (a list publishing only the rows near its view; a tree's position
+    /// counts among siblings, so it carries the row index), else among the list's rows; in a
+    /// scroll view, the row is its child holding the node. None for a row in view, or a node
+    /// that is not a row of a list.
     pub fn reveal(&self, id: NodeId) -> Option<Reveal> {
         let list = self.scrolled_out(id)?;
         let node = self.nodes.get(&id)?;
+        if let Some(row) = node.row_index() {
+            return Some(Reveal {
+                at: self.middle(list)?,
+                row,
+            });
+        }
         if let Some(pos) = node.position_in_set() {
             return Some(Reveal {
                 at: self.middle(list)?,
