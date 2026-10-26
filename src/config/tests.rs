@@ -404,7 +404,7 @@ fn load_unreadable_file_gives_defaults_and_a_notice() {
 
 /// An unknown key or bad value costs only its own top-level key at login; `Config::parse` refuses the same file whole.
 #[test]
-fn load_drops_only_the_sections_that_fail() {
+fn load_drops_only_the_keys_that_fail() {
     let text = "terminal = \"foot\"\n\
                 future_key = 1\n\
                 [idle]\nlock_after = 0\n\
@@ -414,11 +414,15 @@ fn load_drops_only_the_sections_that_fail() {
     assert!(Config::parse(text).is_err());
     let (c, dropped) = Config::parse_lenient(text).unwrap();
     let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
-    assert_eq!(keys, ["future_key", "keybinds", "power"]);
+    assert_eq!(keys, ["future_key", "keybinds", "power.newer_key"]);
     assert_eq!(c.terminal, "foot");
     assert_eq!(c.idle.lock_after, 0);
     assert_eq!(c.outputs.len(), 1, "outputs keeps Virtual-1");
-    assert_eq!(c.power, Config::default().power, "power is at its defaults");
+    assert_eq!(
+        c.power.lid_close,
+        PowerAction::Standby,
+        "power keeps the keys that parse"
+    );
     assert_eq!(
         c.keybinds,
         Config::default().keybinds,
@@ -432,7 +436,10 @@ fn load_drops_only_the_sections_that_fail() {
     std::fs::remove_file(&path).unwrap();
     assert_eq!(loaded, c);
     let notice = notice.expect("dropped keys get a notice");
-    assert!(notice.contains("future_key, keybinds, power"), "{notice}");
+    assert!(
+        notice.contains("future_key, keybinds, power.newer_key"),
+        "{notice}"
+    );
 }
 
 #[test]

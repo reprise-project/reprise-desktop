@@ -107,7 +107,7 @@ impl Config {
         Ok(cfg)
     }
 
-    /// Load for startup. A top-level key that does not parse is dropped to its
+    /// Load for startup. A key that does not parse is dropped to its
     /// default and a non-TOML file yields all defaults. Returns a notice when anything was dropped.
     pub fn load(path: Option<&Path>) -> (Config, Option<String>) {
         let path = path
