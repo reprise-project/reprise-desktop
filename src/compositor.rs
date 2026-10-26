@@ -242,6 +242,8 @@ pub struct State {
     /// The pointer at the last button press.
     pub press_at: (f64, f64),
     pub buttons_down: u32,
+    /// The buttons the seat was told went down and not yet up.
+    pub seat_buttons: Vec<u32>,
     pub popups: PopupManager,
     /// What the pointer shows: a client's surface, a named cursor or nothing.
     pub cursor: CursorImageStatus,
@@ -606,6 +608,7 @@ impl State {
             caption_clicks: DoubleClick::default(),
             press_at: (0.0, 0.0),
             buttons_down: 0,
+            seat_buttons: Vec::new(),
             popups: PopupManager::default(),
             cursor: CursorImageStatus::default_named(),
             cursors,

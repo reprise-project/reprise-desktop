@@ -87,6 +87,11 @@ impl State {
         let theirs = state == ButtonState::Released
             && (self.switcher_release(button) | self.overview_release(button));
         if !theirs {
+            if state == ButtonState::Pressed {
+                self.seat_buttons.push(button);
+            } else {
+                self.seat_buttons.retain(|&b| b != button);
+            }
             pointer.button(
                 self,
                 &ButtonEvent {
@@ -109,6 +114,20 @@ impl State {
             self.repoint(pos, time);
         }
         self.redraw_all();
+    }
+
+    /// Let go of every held button when the seat loses the device (a session
+    /// pause, the lock): the gesture they hold is cancelled, not finished, and
+    /// the client under the pointer hears each release.
+    pub(crate) fn release_all_buttons(&mut self, time: InputTime) {
+        if self.interaction != Interaction::Idle {
+            self.cancel_interaction();
+        }
+        for button in self.seat_buttons.clone() {
+            self.handle_button(button, ButtonState::Released, time);
+        }
+        self.buttons_down = 0;
+        self.seat_buttons.clear();
     }
 
     /// Whether `pos` is on an X11 program's surface, where Xwayland gets the press itself.
