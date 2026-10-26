@@ -555,6 +555,15 @@ impl Config {
                     })?;
             }
         }
+        if let Some(gpu) = file.display.and_then(|d| d.gpu) {
+            let path = std::path::PathBuf::from(&gpu);
+            if !path.is_absolute() {
+                return Err(format!(
+                    "display.gpu {gpu:?} is not a path like \"/dev/dri/card1\""
+                ));
+            }
+            cfg.gpu = Some(path);
+        }
         if let Some(v) = file.screenshot.and_then(|s| s.save) {
             cfg.screenshot.save = v;
         }

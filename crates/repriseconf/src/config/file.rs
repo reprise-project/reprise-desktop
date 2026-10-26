@@ -175,6 +175,12 @@ pub struct FileSnapping {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub struct FileDisplay {
+    pub gpu: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FileScreenshot {
     pub save: Option<bool>,
 }
@@ -604,6 +610,7 @@ pub struct FileConfig {
     pub system_icons: Option<Vec<String>>,
     pub wallpaper: Option<FileWallpaper>,
     pub screensaver: Option<FileScreensaver>,
+    pub display: Option<FileDisplay>,
     pub outputs: Option<Vec<FileOutput>>,
     pub adaptive_sync: Option<bool>,
     pub window_snapping: Option<FileSnapping>,

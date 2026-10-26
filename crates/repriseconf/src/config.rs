@@ -56,6 +56,8 @@ pub struct Config {
     pub system_icons: Vec<String>,
     pub wallpaper: WallpaperConfig,
     pub screensaver: ScreensaverConfig,
+    /// `[display] gpu`: the DRM device whose connectors are driven, read once at startup.
+    pub gpu: Option<std::path::PathBuf>,
     pub outputs: Vec<OutputConfig>,
     pub adaptive_sync: bool,
     pub window_snapping: SnapConfig,
@@ -119,6 +121,7 @@ impl Default for Config {
                 .collect(),
             wallpaper: WallpaperConfig::default(),
             screensaver: ScreensaverConfig::default(),
+            gpu: None,
             outputs: Vec::new(),
             adaptive_sync: false,
             window_snapping: SnapConfig::default(),

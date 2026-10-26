@@ -1,4 +1,5 @@
-//! The DRM backend: a libseat session, the primary GPU via udev, one KMS output
+//! The DRM backend: a libseat session, one GPU via udev (`[display] gpu`, else the seat's
+//! primary), one KMS output
 //! per connected connector with hotplug, a GLES renderer and libinput. A frame is
 //! drawn only when asked for (`schedule`), at most one per vblank. Which connectors
 //! are driven (`Backend::surfaces`) or parked (`Backend::parked`) is `output`'s call;
@@ -36,7 +37,7 @@ use smithay::{
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
         },
         drm::{
-            DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, compositor::DrmCompositor,
+            DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, NodeType, compositor::DrmCompositor,
             exporter::gbm::GbmFramebufferExporter,
         },
         egl::{EGLContext, EGLDevice, EGLDisplay},
@@ -309,10 +310,23 @@ fn crtc_of(output: &Output) -> Option<crtc::Handle> {
 pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
     let (mut session, notifier) = LibSeatSession::new()?;
     let seat = session.seat();
-    let path = primary_gpu(&seat)?
-        .or_else(|| all_gpus(&seat).ok()?.into_iter().next())
-        .ok_or("no GPU found")?;
-    let node = DrmNode::from_path(&path)?;
+    let seat_gpus: Vec<DrmNode> = all_gpus(&seat)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|p| DrmNode::from_path(p).ok())
+        .collect();
+    let primary = primary_gpu(&seat)?.and_then(|p| DrmNode::from_path(p).ok());
+    let wanted = state.config.gpu.as_deref().and_then(card_node);
+    let node = pick_gpu(wanted, primary, &seat_gpus).ok_or("no GPU found")?;
+    if let Some(gpu) = &state.config.gpu
+        && Some(node) != wanted
+    {
+        log::warn!(
+            "[display] gpu = {:?} is not a GPU of seat {seat}; using {node}",
+            gpu.display()
+        );
+    }
+    let path = node.dev_path().ok_or("no device file for the GPU")?;
     log::info!("GPU {}", path.display());
 
     let fd = session.open(
@@ -468,7 +482,7 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
                             .is_some_and(|n| n.to_string_lossy().starts_with("card")) =>
                     {
                         log::info!(
-                            "GPU {} added; only the primary one is driven",
+                            "GPU {} added; only {node} is driven",
                             event.syspath().display()
                         )
                     }
@@ -516,6 +530,23 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         log::warn!("no connected output on {}", path.display());
     }
     Ok(())
+}
+
+/// The primary node of the device at `path`, which may name a card, its render node or a
+/// `/dev/dri/by-path` link.
+fn card_node(path: &std::path::Path) -> Option<DrmNode> {
+    let node = DrmNode::from_path(path)
+        .inspect_err(|e| log::warn!("[display] gpu = {:?}: {e}", path.display()))
+        .ok()?;
+    node.node_with_type(NodeType::Primary)?.ok()
+}
+
+/// The GPU to drive: `wanted` when the seat has it, else the seat's primary, else its first.
+fn pick_gpu<T: Copy + PartialEq>(wanted: Option<T>, primary: Option<T>, seat: &[T]) -> Option<T> {
+    wanted
+        .filter(|w| seat.contains(w))
+        .or(primary)
+        .or_else(|| seat.first().copied())
 }
 
 /// Read errors in a row on the DRM fd after which the device counts as gone: its fd stays

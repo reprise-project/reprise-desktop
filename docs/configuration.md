@@ -41,6 +41,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[[keybinds]]` | shortcuts, layered over the defaults; `action = "none"` unbinds a chord |
 | `[[startmenu]]`, `startmenu_style` | the Classic Start menu's rows, and which Start menu you get |
 | `[[outputs]]` | per-monitor mode, scale, rotation and position |
+| `[display]` | `gpu`: which GPU draws and drives the monitors, read when Reprise starts |
 | `terminal`, `script_open`, `script_terminal`, `confirm_scripts` | the terminal, and how opening a script runs it and whether it asks first |
 
 ## Wallpaper

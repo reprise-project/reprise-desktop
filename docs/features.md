@@ -533,7 +533,9 @@ dialogs. [More in programs.md](programs.md#explorer).
 
 ## Not yet
 
-- One GPU at a time. No multi-GPU setups and no DRM leases for VR headsets.
+- One GPU at a time: the seat's primary, or the one `[display] gpu` names.
+  Monitors on another GPU stay dark, and there are no DRM leases for VR
+  headsets.
 - No HDR or colour management.
 - X11 programs draw at scale 1 and are scaled up on HiDPI screens.
 - No help viewer. The ? buttons are there for decoration.
