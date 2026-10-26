@@ -322,12 +322,7 @@ impl State {
     /// and whether it is maximized. A snapped window's frame is its zone.
     pub fn frame_of(&self, w: WindowId) -> Option<Remembered> {
         let win = self.win(w)?;
-        let normal = match (win.fullscreen, win.maximized) {
-            (true, false) => win.saved_fullscreen,
-            (_, true) => win.saved,
-            _ => None,
-        }
-        .unwrap_or(win.frame_rect());
+        let normal = win.normal_frame();
         let (cx, cy) = (normal.x + normal.width / 2, normal.y + normal.height / 2);
         let out = self.output_at(cx as f64, cy as f64)?;
         let b = self.layout_box(Some(&out));
