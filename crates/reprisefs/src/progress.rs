@@ -3,7 +3,7 @@
 
 use std::cell::RefCell;
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -50,6 +50,9 @@ pub struct Meter {
     flush_waits: AtomicU32,
     /// The index of the item the job is on.
     at: AtomicUsize,
+    /// Trees [`walk`] found holding no other device, which
+    /// [`crate::ops::refuse_holding_mount`] need not walk again.
+    clear: Mutex<Vec<PathBuf>>,
 }
 
 /// A file this large is flushed in windows as it is written ([`Writeback`]).
@@ -169,6 +172,11 @@ impl Meter {
     pub(crate) fn wrote(&self, n: u64) -> std::io::Result<()> {
         self.bytes.fetch_add(n, Ordering::Relaxed);
         self.hold()
+    }
+
+    /// Whether [`walk`] went through `root` and met no folder on another device.
+    pub(crate) fn walked_clear(&self, root: &Path) -> bool {
+        self.clear.lock().is_ok_and(|c| c.iter().any(|p| p == root))
     }
 
     /// Wait out a pause; `Interrupted` once cancelled.
@@ -328,8 +336,26 @@ impl std::ops::Add for Totals {
 
 /// The bytes and files under `src` a copy writes: a link is one item of no bytes, a top-level
 /// link is followed (a copy follows it), and what is neither file, folder nor link is skipped as
-/// the copy skips it. `None` once `m` is cancelled.
+/// the copy skips it. `None` once `m` is cancelled. A tree with no folder on another device
+/// than its parent's is noted on `m` ([`Meter::walked_clear`]).
 pub(crate) fn walk(src: &Path, follow: bool, m: &Meter) -> Option<Totals> {
+    let mut mount = false;
+    let t = walk_in(src, follow, None, m, &mut mount)?;
+    if !mount && let Ok(mut c) = m.clear.lock() {
+        c.push(src.to_path_buf());
+    }
+    Some(t)
+}
+
+/// [`walk`] of `src`, inside a folder on `parent_dev`; sets `mount` on meeting a mount root.
+fn walk_in(
+    src: &Path,
+    follow: bool,
+    parent_dev: Option<u64>,
+    m: &Meter,
+    mount: &mut bool,
+) -> Option<Totals> {
+    use std::os::unix::fs::MetadataExt;
     let meta = if follow {
         std::fs::metadata(src)
     } else {
@@ -351,13 +377,14 @@ pub(crate) fn walk(src: &Path, follow: bool, m: &Meter) -> Option<Totals> {
             items: u64::from(link),
         });
     }
+    *mount |= parent_dev.is_some_and(|d| crate::ops::mount_root(meta.dev(), d));
     let mut sum = Totals::default();
     for entry in std::fs::read_dir(src).into_iter().flatten().flatten() {
         if m.cancelled() {
             return None;
         }
         m.stir();
-        sum = sum + walk(&entry.path(), false, m)?;
+        sum = sum + walk_in(&entry.path(), false, Some(meta.dev()), m, mount)?;
     }
     Some(sum)
 }
