@@ -1,0 +1,86 @@
+#!/usr/bin/env -S python3 -I
+"""Usage: scripts/i18n-check [TREE]   (default: the checkout holding this script)
+
+Lists every tr!("id") and kit_tr!("id") in the workspace and checks them against the
+.ftl files: an id a crate uses must be in its locale/en.ftl, every id there must be
+used, and a translation (data/locale/<lang>/<domain>.ftl) may only hold English ids.
+Exit 0 when all hold, 1 otherwise. reprisekit's tests run it."""
+import pathlib
+import re
+import sys
+
+TREE = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else pathlib.Path(__file__).resolve().parent.parent)
+SKIP = {"target", "tmp", ".git", "node_modules"}
+DOMAIN = re.compile(r'\bstrings!\(\s*"([\w-]+)"\s*\)|\bStrings::new\(\s*"([\w-]+)"')
+TR = re.compile(r'(?<![\w:])(?:\$?crate::|reprisekit::)?(kit_)?tr!\(\s*"([^"]*)"')
+MESSAGE = re.compile(r"^([A-Za-z][\w-]*)\s*=", re.M)
+
+
+def ftl_ids(path):
+    return set(MESSAGE.findall(path.read_text())) if path.is_file() else set()
+
+
+def crate_dirs():
+    for toml in TREE.rglob("Cargo.toml"):
+        if not SKIP.intersection(toml.relative_to(TREE).parts) and (toml.parent / "src").is_dir():
+            yield toml.parent
+
+
+def sources(crate, crates):
+    """The crate's own .rs files: nested crate dirs belong to their own crate."""
+    nested = [c for c in crates if c != crate and crate in c.parents]
+    for rs in (crate / "src").rglob("*.rs"):
+        if not any(n in rs.parents for n in nested):
+            yield rs
+
+
+def main():
+    problems = []
+    crates = sorted(crate_dirs())
+    domains = {}
+    used = {}
+    for crate in crates:
+        name = None
+        ids = []
+        for rs in sources(crate, crates):
+            lines = rs.read_text().splitlines()
+            text = "\n".join("" if l.lstrip().startswith("//") else l for l in lines)
+            for m in DOMAIN.finditer(text):
+                name = m.group(1) or m.group(2)
+            for m in TR.finditer(text):
+                n = text.count("\n", 0, m.start()) + 1
+                ids.append(("reprisekit" if m.group(1) else None, m.group(2), f"{rs.relative_to(TREE)}:{n}"))
+        if name:
+            domains[name] = crate
+        for domain, ident, at in ids:
+            domain = domain or name
+            if domain is None:
+                problems.append(f"{at}: tr!(\"{ident}\") in a crate without reprisekit::strings!")
+                continue
+            used.setdefault(domain, {}).setdefault(ident, at)
+    for domain, crate in sorted(domains.items()):
+        en_path = crate / "locale" / "en.ftl"
+        en = ftl_ids(en_path)
+        if not en_path.is_file():
+            problems.append(f"{en_path.relative_to(TREE)}: missing")
+        ids = used.get(domain, {})
+        for ident, at in sorted(ids.items()):
+            if ident not in en:
+                problems.append(f"{at}: \"{ident}\" is not in {en_path.relative_to(TREE)}")
+        for ident in sorted(en - set(ids)):
+            problems.append(f"{en_path.relative_to(TREE)}: \"{ident}\" is never used")
+    for ftl in sorted((TREE / "data" / "locale").glob("*/*.ftl")):
+        rel = ftl.relative_to(TREE)
+        crate = domains.get(ftl.stem)
+        if crate is None:
+            problems.append(f"{rel}: no crate declares the domain \"{ftl.stem}\"")
+            continue
+        for ident in sorted(ftl_ids(ftl) - ftl_ids(crate / "locale" / "en.ftl")):
+            problems.append(f"{rel}: \"{ident}\" is not an English id")
+    for p in problems:
+        print(p)
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
