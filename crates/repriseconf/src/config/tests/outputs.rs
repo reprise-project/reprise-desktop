@@ -11,6 +11,34 @@ fn touchscreen_output_parses() {
 }
 
 #[test]
+fn tablets_parse_in_order_and_the_first_match_maps() {
+    assert!(Config::default().tablets.is_empty());
+    let c = Config::parse(
+        "[[tablets]]\nname = \"Wacom Intuos*\"\noutput = \"DP-2\"\nkeep_aspect = true\n\n[[tablets]]\noutput = \"\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        c.tablets,
+        [
+            TabletConfig {
+                name: "Wacom Intuos*".into(),
+                output: Some("DP-2".into()),
+                keep_aspect: true,
+            },
+            TabletConfig {
+                name: "*".into(),
+                output: None,
+                keep_aspect: false,
+            },
+        ]
+    );
+    let entry = |name| find_tablet(&c.tablets, name).map(|t| t.output.as_deref());
+    assert_eq!(entry("Wacom Intuos S Pen"), Some(Some("DP-2")));
+    assert_eq!(entry("Huion Tablet"), Some(None), "the catch-all entry");
+    assert!(Config::parse("[[tablets]]\nmap = \"DP-2\"\n").is_err());
+}
+
+#[test]
 fn outputs_section_parses_and_validates_scale() {
     let c = Config::parse(
         "[[outputs]]\nname = \"DP-1\"\nscale = 2\n\n[[outputs]]\nname = \"HDMI-A-1\"\nscale = 1\n",

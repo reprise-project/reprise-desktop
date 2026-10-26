@@ -200,6 +200,11 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 [touchscreen]                # a finger on an app that takes touch is touch; anywhere else it clicks and drags
 # output = "eDP-1"           # the output it covers; default: what udev says, else the laptop's own panel
 
+# [[tablets]]                # a drawing tablet: the first entry whose name matches a tablet maps it
+# name = "Wacom Intuos*"     # a glob over the device name (* and ?); left out, every tablet
+# output = "DP-2"            # the output it covers; default: the only output, else the whole layout
+# keep_aspect = true         # keep the tablet's shape, leaving bands of the output out; default false
+
 # [[tablet_pads]]            # a drawing tablet's pad: the first entry whose name matches a pad maps it
 # name = "Wacom Intuos* Pad" # glob over the device name (* and ?); left out, every pad
 # buttons = { 1 = "zoom-in", 2 = "ctrl+z", 3 = "mode" }  # 1 is the first button

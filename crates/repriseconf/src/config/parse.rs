@@ -5,8 +5,8 @@ use super::{
     CURSOR_SIZE_MAX, Config, EFFECTS_MS_MAX, EffectsConfig, FontSmoothing, HotCorner,
     IdleOverrides, MAX_POSITION, MenuAnimation, OutputConfig, OutputMode, PREVIEW_FPS_MAX,
     PointerConfig, PowerAction, SNAP_DISTANCE_MAX, SWITCH_MS_MAX, StartMenuStyle, SwitchStyle,
-    SwitcherConfig, TaskbarButtons, TaskbarConfig, Transform, WORKSPACES_MAX, quarter_scale,
-    switcher_size,
+    SwitcherConfig, TabletConfig, TaskbarButtons, TaskbarConfig, Transform, WORKSPACES_MAX,
+    quarter_scale, switcher_size,
 };
 use reprisekit::interface::Interface;
 use reprisekit::theme::{Color, FontConfig};
@@ -951,6 +951,16 @@ impl Config {
         }
         if let Some(t) = file.touchscreen {
             cfg.touchscreen.output = t.output.filter(|o| !o.is_empty());
+        }
+        if let Some(list) = file.tablets {
+            cfg.tablets = list
+                .into_iter()
+                .map(|t| TabletConfig {
+                    name: t.name.unwrap_or_else(|| "*".into()),
+                    output: t.output.filter(|o| !o.is_empty()),
+                    keep_aspect: t.keep_aspect.unwrap_or(false),
+                })
+                .collect();
         }
         if let Some(p) = file.power {
             if let Some(v) = p.standby {

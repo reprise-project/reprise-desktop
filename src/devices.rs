@@ -33,6 +33,7 @@ impl State {
         let name = device.name();
         if device.has_capability(DeviceCapability::TabletTool) {
             log::info!("new tablet {name}");
+            self.tablet_added(device);
             let dh = self.dh.clone();
             self.seat
                 .tablet_seat()
@@ -49,7 +50,7 @@ impl State {
 
     pub fn device_removed(&mut self, device: &impl Device) {
         if device.has_capability(DeviceCapability::TabletTool) {
-            self.tablet_removed(&TabletDescriptor::from(device));
+            self.tablet_removed(device, &TabletDescriptor::from(device));
         }
         if device.has_capability(DeviceCapability::Touch) {
             self.touch_removed(device);

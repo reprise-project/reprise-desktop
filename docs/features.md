@@ -385,7 +385,8 @@ are.
   and the speed of a flick.
 - **Touchscreens.** A program that takes touch gets touch; anywhere else a
   finger clicks and drags. Each touchscreen can be mapped to its screen.
-- **Drawing tablets** with pressure, tilt and the pen's buttons. The pad's
+- **Drawing tablets** with pressure, tilt and the pen's buttons, each mappable
+  to one screen with its shape kept. The pad's
   buttons, keys, rings, strips and dials run desktop actions or send key
   chords, set per pad in Reprise Settings.
 - **Global shortcuts for programs.** A voice chat's push-to-talk works while
