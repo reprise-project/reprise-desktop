@@ -2171,6 +2171,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "reprise-apps"
+version = "0.1.0"
+dependencies = [
+ "reprise-about",
+ "reprise-accounts",
+ "reprise-bluetooth",
+ "reprise-datetime",
+ "reprise-drives",
+ "reprise-explorer",
+ "reprise-network",
+ "reprise-notepad",
+ "reprise-polkit",
+ "reprise-power",
+ "reprise-printers",
+ "reprise-settings",
+ "reprise-sound",
+ "reprise-terminal",
+ "reprise-updates",
+ "reprise-volume",
+ "reprisefs",
+]
+
+[[package]]
 name = "reprise-bluetooth"
 version = "0.1.0"
 dependencies = [

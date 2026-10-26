@@ -1322,10 +1322,11 @@ fn mtime(path: &std::path::Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-fn main() {
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
     let settings = settings::load(&settings::path());
-    let cmd = command(std::env::args_os().skip(1));
+    let cmd = command(args.into_iter());
     repriseapp::run(Box::new(Terminal::new(settings, cmd)));
 }
 

@@ -1071,8 +1071,9 @@ impl App for PrintersApp {
     }
 }
 
-fn main() {
-    repriseapp::applet_main(PrintersApp::new);
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(args: Vec<std::ffi::OsString>) {
+    repriseapp::applet_main(&args, PrintersApp::new);
 }
 
 #[cfg(test)]

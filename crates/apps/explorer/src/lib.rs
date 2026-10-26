@@ -1705,10 +1705,11 @@ fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> Start {
     Start { place, dir, select }
 }
 
-fn main() {
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    if std::env::args_os()
-        .nth(1)
+    if args
+        .first()
         .is_some_and(|a| a == reprisefs::thumbpipe::FLAG)
     {
         if let Err(e) = thumbs::serve_stdio() {
@@ -1717,7 +1718,7 @@ fn main() {
         return;
     }
     repriseapp::run(Box::new(Lazy {
-        start: parse_args(std::env::args_os().skip(1)),
+        start: parse_args(args),
         inner: None,
         units: repriseapp::start_forms().text,
     }));

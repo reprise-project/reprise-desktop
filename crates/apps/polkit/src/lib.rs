@@ -434,7 +434,8 @@ impl App for PolkitApp {
     }
 }
 
-fn main() {
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(_args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
     repriseapp::run(Box::new(PolkitApp::default()));
 }

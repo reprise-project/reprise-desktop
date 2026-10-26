@@ -1,0 +1,29 @@
+[package]
+name = "reprise-apps"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Every Reprise program in one binary, picked by the name it is started under"
+
+[lints]
+workspace = true
+
+[dependencies]
+reprisefs = { path = "../../reprisefs" }
+reprise-about = { path = "../about" }
+reprise-accounts = { path = "../accounts" }
+reprise-bluetooth = { path = "../bluetooth" }
+reprise-datetime = { path = "../datetime" }
+reprise-drives = { path = "../drives" }
+reprise-explorer = { path = "../explorer" }
+reprise-network = { path = "../network" }
+reprise-notepad = { path = "../notepad" }
+reprise-polkit = { path = "../polkit" }
+reprise-power = { path = "../power" }
+reprise-printers = { path = "../printers" }
+reprise-settings = { path = "../settings" }
+reprise-sound = { path = "../sound" }
+reprise-terminal = { path = "../terminal" }
+reprise-updates = { path = "../updates" }
+reprise-volume = { path = "../volume" }

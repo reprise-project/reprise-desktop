@@ -641,9 +641,10 @@ impl App for Notepad {
     }
 }
 
-fn main() {
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    let path = std::env::args_os().nth(1).map(std::path::PathBuf::from);
+    let path = args.into_iter().next().map(std::path::PathBuf::from);
     let mut notepad = Notepad::new(path);
     notepad.forms = repriseapp::start_forms();
     notepad.offer_recovered();
