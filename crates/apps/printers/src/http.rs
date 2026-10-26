@@ -106,7 +106,8 @@ pub fn get(server: &Server, resource: &str, user: &str) -> Result<Reply, Error> 
 fn read_reply(s: &mut dyn Stream) -> Result<Reply, Error> {
     let mut raw = Vec::new();
     let mut buf = [0u8; 16 * 1024];
-    while !whole(&raw) {
+    let mut progress = Progress::default();
+    while !progress.whole(&raw) {
         match s.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => raw.extend_from_slice(&buf[..n]),
@@ -179,21 +180,69 @@ fn reply_head(raw: &[u8]) -> Option<Head> {
     })
 }
 
-/// Whether `raw` holds a whole response: the head, and a body of the stated length or up to the last chunk (else to stream end).
-fn whole(raw: &[u8]) -> bool {
-    match reply_head(raw) {
-        Some(h) if h.chunked => dechunk(&raw[h.end..]).is_some(),
-        Some(h) => h.length.is_some_and(|n| raw.len() >= h.end + n),
-        None => false,
+/// How far a reply being read has got, so each read scans only the bytes the last one did not.
+#[derive(Default)]
+struct Progress {
+    head: Option<Head>,
+    /// Bytes searched for the head's end so far.
+    scanned: usize,
+    /// Where the next chunk's size line starts.
+    chunk: usize,
+}
+
+impl Progress {
+    /// Whether `raw`, the reply read so far (only ever grown), is whole: the head, and a body of
+    /// the stated length or up to the last chunk (else to stream end). A bad chunk size ends it
+    /// too, for `parse_reply` to refuse.
+    fn whole(&mut self, raw: &[u8]) -> bool {
+        if self.head.is_none() {
+            let from = self.scanned.saturating_sub(3);
+            self.scanned = raw.len();
+            if !raw[from..].windows(4).any(|w| w == b"\r\n\r\n") {
+                return false;
+            }
+            self.head = reply_head(raw);
+            self.chunk = self.head.as_ref().map_or(0, |h| h.end);
+        }
+        match &self.head {
+            Some(h) if h.chunked => self.last_chunk_in(raw),
+            Some(h) => h.length.is_some_and(|n| raw.len() >= h.end + n),
+            None => false,
+        }
     }
+
+    fn last_chunk_in(&mut self, raw: &[u8]) -> bool {
+        loop {
+            let b = &raw[self.chunk..];
+            let Some(eol) = b.windows(2).position(|w| w == b"\r\n") else {
+                return false;
+            };
+            let Some(size) = chunk_size(&b[..eol]) else {
+                return true;
+            };
+            if size == 0 {
+                return true;
+            }
+            let next = eol + 2 + size + 2;
+            if b.len() < next {
+                return false;
+            }
+            self.chunk += next;
+        }
+    }
+}
+
+/// A chunk's size line, its extensions dropped.
+fn chunk_size(line: &[u8]) -> Option<usize> {
+    let s = std::str::from_utf8(line).ok()?;
+    usize::from_str_radix(s.split(';').next()?.trim(), 16).ok()
 }
 
 fn dechunk(mut b: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     loop {
         let eol = b.windows(2).position(|w| w == b"\r\n")?;
-        let size_s = std::str::from_utf8(&b[..eol]).ok()?;
-        let size = usize::from_str_radix(size_s.split(';').next()?.trim(), 16).ok()?;
+        let size = chunk_size(&b[..eol])?;
         b = &b[eol + 2..];
         if size == 0 {
             return Some(out);
@@ -233,6 +282,61 @@ mod tests {
         assert!(h.ends_with("\r\n\r\n"));
         let tcp = Server::Tcp("localhost:631".into());
         assert!(!head("POST", "/", Some(3), &tcp, "ann").contains("Authorization"));
+    }
+
+    fn whole(raw: &[u8]) -> bool {
+        Progress::default().whole(raw)
+    }
+
+    /// Hands out its reply `step` bytes per read.
+    struct Trickle {
+        reply: Vec<u8>,
+        at: usize,
+        step: usize,
+    }
+
+    impl Read for Trickle {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.step.min(buf.len()).min(self.reply.len() - self.at);
+            buf[..n].copy_from_slice(&self.reply[self.at..self.at + n]);
+            self.at += n;
+            Ok(n)
+        }
+    }
+
+    impl Write for Trickle {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_reply_read_a_byte_at_a_time_is_the_reply_read_whole() {
+        let body: Vec<u8> = (0..50_000u32).map(|i| (i % 251) as u8).collect();
+        let mut chunked = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+        for part in body.chunks(7000) {
+            chunked.extend_from_slice(format!("{:x};ext=1\r\n", part.len()).as_bytes());
+            chunked.extend_from_slice(part);
+            chunked.extend_from_slice(b"\r\n");
+        }
+        chunked.extend_from_slice(b"0\r\n\r\n");
+        let mut sized =
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+        sized.extend_from_slice(&body);
+        for reply in [chunked, sized] {
+            for step in [1, reply.len()] {
+                let mut s = Trickle {
+                    reply: reply.clone(),
+                    at: 0,
+                    step,
+                };
+                let got = read_reply(&mut s).ok().map(|r| r.body);
+                assert_eq!(got.as_deref(), Some(body.as_slice()), "{step} bytes a read");
+            }
+        }
     }
 
     #[test]
