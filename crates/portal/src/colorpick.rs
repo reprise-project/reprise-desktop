@@ -21,9 +21,9 @@ use wayland_client::protocol::wl_shm::Format;
 const FLYOUT: WinId = "pickcolor";
 const TITLE: &str = "Pick a colour";
 
-struct Output {
-    layout: Rect,
-    still: Still,
+pub(crate) struct Output {
+    pub(crate) layout: Rect,
+    pub(crate) still: Still,
 }
 
 /// Ask the user for a colour on screen. Blocks the calling thread; None
@@ -46,7 +46,7 @@ fn answer(argb: u32) -> String {
 }
 
 pub fn run_dialog() {
-    let stills = match capture() {
+    let stills = match capture(false) {
         Ok(s) if !s.is_empty() => s,
         Ok(_) => return log::warn!("PickColor: no output to capture"),
         Err(e) => return log::warn!("PickColor: {e}"),
@@ -64,39 +64,53 @@ pub fn run_dialog() {
     }
 }
 
-fn capture() -> Result<Vec<Output>, String> {
+/// A still of every output with its place in the layout; `cursor` paints
+/// the pointer into them.
+pub(crate) fn capture(cursor: bool) -> Result<Vec<Output>, String> {
     let mut wl = Wayland::connect()?;
     let mut stills = Vec::new();
     for out in wl.outputs() {
-        let session = wl.open_session(&Target::Output(out.name.clone()), false)?;
-        let c = wl.constraints();
-        let format = c.pick_format().ok_or("no 32 bpp shm format")?;
-        let buf = wl.shm_buffer(c.width, c.height, format)?;
-        wl.capture(&session, &buf, std::time::Duration::from_secs(2))
-            .map_err(|e| format!("capture of {} failed: {e:?}", out.name))?;
-        let bytes = buf.read()?;
-        let row = buf.stride as usize;
-        let mut pixels = Vec::with_capacity((c.width * c.height) as usize);
-        for y in 0..c.height as usize {
-            let (words, _) = bytes[y * row..].as_chunks::<4>();
-            pixels.extend(
-                words[..c.width as usize]
-                    .iter()
-                    .map(|&w| to_argb(w, format)),
-            );
-        }
+        let still = grab(&mut wl, &Target::Output(out.name.clone()), cursor)
+            .map_err(|e| format!("{}: {e}", out.name))?;
         stills.push(Output {
             layout: Rect::new(out.x, out.y, out.width, out.height),
             still: Still {
                 logical: (out.width, out.height),
-                width: c.width,
-                height: c.height,
-                pixels,
+                ..still
             },
         });
-        drop(session);
     }
     Ok(stills)
+}
+
+/// One frame of `target` as ARGB at its buffer size; `logical` is left
+/// at the buffer size for the caller to set.
+pub(crate) fn grab(wl: &mut Wayland, target: &Target, cursor: bool) -> Result<Still, String> {
+    let session = wl.open_session(target, cursor)?;
+    let c = wl.constraints();
+    let format = c.pick_format().ok_or("no 32 bpp shm format")?;
+    let buf = wl.shm_buffer(c.width, c.height, format)?;
+    // A source always has a first frame to give; two seconds is for a
+    // compositor busy with something else.
+    wl.capture(&session, &buf, std::time::Duration::from_secs(2))
+        .map_err(|e| format!("capture failed: {e:?}"))?;
+    let bytes = buf.read()?;
+    let row = buf.stride as usize;
+    let mut pixels = Vec::with_capacity((c.width * c.height) as usize);
+    for y in 0..c.height as usize {
+        let (words, _) = bytes[y * row..].as_chunks::<4>();
+        pixels.extend(
+            words[..c.width as usize]
+                .iter()
+                .map(|&w| to_argb(w, format)),
+        );
+    }
+    Ok(Still {
+        logical: (c.width as i32, c.height as i32),
+        width: c.width,
+        height: c.height,
+        pixels,
+    })
 }
 
 fn to_argb(px: [u8; 4], format: Format) -> u32 {

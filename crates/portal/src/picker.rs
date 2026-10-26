@@ -28,9 +28,48 @@ const HEADER_ICON: &str = "preferences-desktop-display";
 pub const SCREEN_ICON: &str = "computer";
 const FALLBACK_ICON: &str = "application-x-executable";
 
+/// What the picked screen or window is for, which words the dialog.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Purpose {
+    #[default]
+    Share,
+    Screenshot,
+}
+
+impl Purpose {
+    fn title(self) -> &'static str {
+        match self {
+            Purpose::Share => "Share your screen",
+            Purpose::Screenshot => "Screenshot",
+        }
+    }
+
+    fn prompt(self, who: &str) -> String {
+        match self {
+            Purpose::Share => format!("{who} wants to see your screen or a window."),
+            Purpose::Screenshot => format!("{who} wants a picture of a screen or a window."),
+        }
+    }
+
+    fn note(self) -> &'static str {
+        match self {
+            Purpose::Share => "Choose one to share. It will see everything shown on it.",
+            Purpose::Screenshot => "Choose one. It will get a copy of what it shows.",
+        }
+    }
+
+    fn accept(self) -> &'static str {
+        match self {
+            Purpose::Share => "&Share",
+            Purpose::Screenshot => "&Take",
+        }
+    }
+}
+
 /// Show the dialog, modal on `parent`; returns the chosen target and whether
 /// Remember was ticked, or None on Cancel or a frontend `Close`. Blocks.
 pub fn pick(
+    purpose: Purpose,
     app: &str,
     entries: Vec<Entry>,
     preselect: Option<usize>,
@@ -39,6 +78,7 @@ pub fn pick(
     cancel: Arc<AtomicBool>,
 ) -> Option<(Target, bool)> {
     let input = Input {
+        purpose,
         parent,
         app: app.replace('\n', " "),
         preselect,
@@ -73,6 +113,8 @@ struct Row {
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 struct Input {
+    #[serde(default)]
+    purpose: Purpose,
     parent: Option<String>,
     app: String,
     preselect: Option<usize>,
@@ -88,6 +130,7 @@ pub fn run_dialog() {
         return;
     }
     let Input {
+        purpose,
         parent,
         app,
         preselect,
@@ -96,11 +139,23 @@ pub fn run_dialog() {
     } = input;
     let chosen: Arc<Mutex<Option<(usize, bool)>>> = Arc::new(Mutex::new(None));
     let mut icons = dialog::icons();
-    let form = build_form(&rows, preselect, offer_remember, app.trim(), |name| {
-        icons.get(name, 16)
-    });
+    let form = build_form(
+        purpose,
+        &rows,
+        preselect,
+        offer_remember,
+        app.trim(),
+        |name| icons.get(name, 16),
+    );
     let icon = icons.get(HEADER_ICON, dialog::ICON_PX);
-    repriseapp::run(Box::new(prompt(rows, form, icon, parent, chosen.clone())));
+    repriseapp::run(Box::new(prompt(
+        purpose,
+        rows,
+        form,
+        icon,
+        parent,
+        chosen.clone(),
+    )));
     let picked = *chosen.lock().unwrap();
     match picked {
         Some((i, false)) => println!("{i}"),
@@ -148,6 +203,7 @@ fn build_tree(
 }
 
 fn build_form(
+    purpose: Purpose,
     rows: &[Row],
     preselect: Option<usize>,
     offer_remember: bool,
@@ -163,11 +219,8 @@ fn build_form(
     tree.select(start, &lay);
     let mut items = Vec::from(dialog::header(
         w,
-        format!(
-            "{} wants to see your screen or a window.",
-            crate::permit::who(app)
-        ),
-        "Choose one to share. It will see everything shown on it.".into(),
+        purpose.prompt(&crate::permit::who(app)),
+        purpose.note().into(),
     ));
     items.extend([
         Item::new("group", GROUP, Control::Group("Sources".into())),
@@ -188,7 +241,7 @@ fn build_form(
     items.extend(dialog::buttons(
         GROUP.right() - 11,
         BUTTON_Y,
-        ("share", "&Share"),
+        ("share", purpose.accept()),
         ("cancel", "Cancel"),
     ));
     let mut f = Form::new(items);
@@ -197,6 +250,7 @@ fn build_form(
 }
 
 fn prompt(
+    purpose: Purpose,
     rows: Vec<Row>,
     form: Form,
     icon: Option<Canvas>,
@@ -207,7 +261,7 @@ fn prompt(
         parent,
         modal: true,
         on_cancel: Box::new(|_, _| {}),
-        title: "Share your screen".into(),
+        title: purpose.title().into(),
         size: CLIENT,
         form,
         icon,
@@ -272,6 +326,7 @@ mod tests {
     #[test]
     fn pick_input_survives_the_pipe() {
         let input = Input {
+            purpose: Purpose::Screenshot,
             parent: Some("h".into()),
             app: "Chromium".into(),
             preselect: Some(1),
@@ -350,10 +405,12 @@ mod tests {
 
     #[test]
     fn the_picker_fits_its_text() {
-        let over = crate::dialog::overflows(|_, _| {
-            build_form(&rows(), Some(1), true, "Chromium", |_| None)
-        });
-        assert!(over.is_empty(), "{}", over.join("\n"));
+        for purpose in [Purpose::Share, Purpose::Screenshot] {
+            let over = crate::dialog::overflows(|_, _| {
+                build_form(purpose, &rows(), Some(1), true, "Chromium", |_| None)
+            });
+            assert!(over.is_empty(), "{purpose:?}: {}", over.join("\n"));
+        }
     }
 
     #[test]
@@ -365,7 +422,7 @@ mod tests {
             ..Theme::default()
         };
         let text = reprisekit::text::TextRenderer::load(&FontConfig::default());
-        let form = build_form(&rows(), Some(1), true, "Chromium", |_| None);
+        let form = build_form(Purpose::Share, &rows(), Some(1), true, "Chromium", |_| None);
         let mut c = Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32);
         c.fill_rect(c.bounds(), theme.colors.button_face);
         form::draw(
@@ -382,11 +439,11 @@ mod tests {
     #[test]
     fn remember_is_offered_only_when_asked_and_starts_off() {
         assert_eq!(
-            build_form(&rows(), None, false, "", |_| None).checked("remember"),
+            build_form(Purpose::Share, &rows(), None, false, "", |_| None).checked("remember"),
             None
         );
         assert_eq!(
-            build_form(&rows(), None, true, "", |_| None).checked("remember"),
+            build_form(Purpose::Share, &rows(), None, true, "", |_| None).checked("remember"),
             Some(false)
         );
     }
@@ -400,7 +457,7 @@ mod tests {
 
     #[test]
     fn the_prompt_names_the_app() {
-        let f = build_form(&rows(), None, false, "Chromium", |_| None);
+        let f = build_form(Purpose::Share, &rows(), None, false, "Chromium", |_| None);
         let Some(Control::Label { text, .. }) = f.item("prompt").map(|i| &i.control) else {
             panic!("prompt label");
         };
@@ -413,8 +470,10 @@ mod tests {
     #[test]
     fn enter_on_the_preselected_tree_shares_nothing() {
         let chosen = Arc::new(Mutex::new(None));
-        let form = build_form(&rows(), Some(1), false, "Chromium", |_| None);
-        let mut p = prompt(rows(), form, None, None, chosen.clone());
+        let form = build_form(Purpose::Share, &rows(), Some(1), false, "Chromium", |_| {
+            None
+        });
+        let mut p = prompt(Purpose::Share, rows(), form, None, None, chosen.clone());
         assert_eq!(
             selection(&rows(), &p.form),
             Some(1),

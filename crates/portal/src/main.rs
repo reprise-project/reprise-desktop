@@ -780,9 +780,37 @@ fn choose(
             return Ok(Some((t, info, true)));
         }
     }
+    let entries = share_entries(types, &outputs, &toplevels);
+    if entries.is_empty() {
+        return Err("nothing to share".into());
+    }
+    let last = lastpick::load(app_id);
+    let preselect = last.and_then(|t| entries.iter().position(|e| e.target == t));
+    let Some((t, remember)) = picker::pick(
+        picker::Purpose::Share,
+        &crate::remotedesktop::display_name(app_id),
+        entries,
+        preselect,
+        offer_remember,
+        parent,
+        cancel,
+    ) else {
+        return Ok(None);
+    };
+    lastpick::save(app_id, &t);
+    let info = info_for(&t);
+    Ok(Some((t, info, remember)))
+}
+
+/// The share dialog's rows: the outputs and the windows `types` asks for.
+pub(crate) fn share_entries(
+    types: u32,
+    outputs: &[wayland::OutputInfo],
+    toplevels: &[wayland::ToplevelInfo],
+) -> Vec<picker::Entry> {
     let mut entries = Vec::new();
     if types & SOURCE_MONITOR != 0 {
-        for o in &outputs {
+        for o in outputs {
             entries.push(picker::Entry {
                 label: if o.description.is_empty() {
                     format!("Screen {} ({}x{})", o.name, o.width, o.height)
@@ -797,7 +825,7 @@ fn choose(
     }
     if types & SOURCE_WINDOW != 0 {
         let apps = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
-        for w in &toplevels {
+        for w in toplevels {
             // A toplevel with no title is a hidden helper surface (the
             // gtk portal keeps one), and our own dialogs are not on offer.
             if w.identifier.is_empty()
@@ -816,24 +844,7 @@ fn choose(
             });
         }
     }
-    if entries.is_empty() {
-        return Err("nothing to share".into());
-    }
-    let last = lastpick::load(app_id);
-    let preselect = last.and_then(|t| entries.iter().position(|e| e.target == t));
-    let Some((t, remember)) = picker::pick(
-        &crate::remotedesktop::display_name(app_id),
-        entries,
-        preselect,
-        offer_remember,
-        parent,
-        cancel,
-    ) else {
-        return Ok(None);
-    };
-    lastpick::save(app_id, &t);
-    let info = info_for(&t);
-    Ok(Some((t, info, remember)))
+    entries
 }
 
 struct Request {
