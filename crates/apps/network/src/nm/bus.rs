@@ -833,11 +833,12 @@ async fn activate(
     .map(|_| ())
 }
 
-/// A fresh Wi-Fi profile for `ssid`, with `key_mgmt` security when a passphrase was typed. With an
-/// `owner` it is that login's own profile (`settings.modify.own`), else system-wide.
+/// A fresh Wi-Fi profile for `ssid`, secured by `key` when one was typed: `key_mgmt` for a
+/// passphrase, `wpa-eap` for an 802.1X login. With an `owner` it is that login's own profile
+/// (`settings.modify.own`), else system-wide.
 fn wifi_settings<'a>(
     ssid: &Ssid,
-    psk: Option<&'a str>,
+    key: Option<&'a Key>,
     key_mgmt: &'static str,
     owner: Option<&str>,
 ) -> HashMap<String, HashMap<String, Value<'a>>> {
@@ -860,15 +861,96 @@ fn wifi_settings<'a>(
             ("mode".to_string(), Value::from("infrastructure")),
         ]),
     );
-    if let Some(psk) = psk {
-        out.insert(
-            "802-11-wireless-security".into(),
-            HashMap::from([
-                ("key-mgmt".to_string(), Value::from(key_mgmt)),
-                ("psk".to_string(), Value::from(psk)),
-            ]),
-        );
+    if let Some(key) = key {
+        secure(&mut out, key, key_mgmt);
     }
+    out
+}
+
+/// Put `key` into `settings`' security groups: a passphrase under `key_mgmt`, or an 802.1X
+/// login as `wpa-eap` with its own `802-1x` group.
+fn secure<'a>(
+    settings: &mut HashMap<String, HashMap<String, Value<'a>>>,
+    key: &'a Key,
+    key_mgmt: &str,
+) {
+    let security = settings
+        .entry("802-11-wireless-security".into())
+        .or_default();
+    match key {
+        Key::Psk(psk) => {
+            security.insert("key-mgmt".into(), Value::from(key_mgmt.to_string()));
+            security.insert("psk".into(), Value::from(&**psk));
+            security.insert("psk-flags".into(), Value::from(0u32));
+        }
+        Key::Enterprise(e) => {
+            security.insert("key-mgmt".into(), Value::from("wpa-eap"));
+            security.remove("psk");
+            security.remove("psk-flags");
+            settings.insert("802-1x".into(), dot1x(e));
+        }
+    }
+}
+
+/// The `802-1x` group for `e`. Secrets carry flags 0 so NetworkManager stores them in the
+/// profile; an empty private-key password is marked not required (0x4), as an unencrypted key
+/// needs none.
+fn dot1x(e: &Enterprise) -> HashMap<String, Value<'_>> {
+    let mut g = HashMap::from([
+        (
+            "eap".to_string(),
+            Value::from(vec![e.eap.label().to_lowercase()]),
+        ),
+        ("identity".to_string(), Value::from(e.identity.as_str())),
+    ]);
+    if let Some(ca) = &e.ca_cert {
+        g.insert("ca-cert".into(), Value::from(cert_path(ca)));
+    }
+    match e.eap {
+        Eap::Peap | Eap::Ttls => {
+            if !e.anonymous_identity.is_empty() {
+                g.insert(
+                    "anonymous-identity".into(),
+                    Value::from(e.anonymous_identity.as_str()),
+                );
+            }
+            // TTLS names an inner EAP method (GTC) apart from its plain ones.
+            let phase2 = match (e.eap, e.inner) {
+                (Eap::Ttls, Inner::Gtc) => "phase2-autheap",
+                _ => "phase2-auth",
+            };
+            g.insert(phase2.into(), Value::from(e.inner.label().to_lowercase()));
+            g.insert("password".into(), Value::from(&*e.password));
+            g.insert("password-flags".into(), Value::from(0u32));
+        }
+        Eap::Tls => {
+            if let Some(cert) = &e.client_cert {
+                g.insert("client-cert".into(), Value::from(cert_path(cert)));
+            }
+            if let Some(key) = &e.private_key {
+                g.insert("private-key".into(), Value::from(cert_path(key)));
+            }
+            if e.private_key_password.is_empty() {
+                g.insert("private-key-password-flags".into(), Value::from(4u32));
+            } else {
+                g.insert(
+                    "private-key-password".into(),
+                    Value::from(&*e.private_key_password),
+                );
+                g.insert("private-key-password-flags".into(), Value::from(0u32));
+            }
+        }
+    }
+    g
+}
+
+/// A certificate or key by path as NetworkManager's D-Bus API takes it: the bytes of
+/// `file://` and the absolute path, ending in a NUL.
+fn cert_path(path: &std::path::Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut out = b"file://".to_vec();
+    out.extend_from_slice(path.as_os_str().as_bytes());
+    out.push(0);
     out
 }
 
@@ -953,24 +1035,35 @@ async fn connection_for(conn: &Connection, ssid: &Ssid) -> Option<String> {
         .map(|(path, _)| path)
 }
 
-/// Write a new passphrase into a saved connection. `GetSettings` omits secrets and `Update`
-/// replaces the whole profile, so the map sent back is everything else plus the passphrase;
-/// `psk-flags` goes to 0 so NM stores the key. A PSK profile holds nothing else secret.
+/// Write a new key into a saved connection. `GetSettings` omits secrets and `Update` replaces
+/// the whole profile, so the map sent back is everything else plus the key.
 async fn rekey(
     conn: &Connection,
     conn_path: &str,
-    psk: &str,
+    key: &Key,
     offered: &'static str,
 ) -> Result<(), Failure> {
     let p = proxy(conn, conn_path, CONNECTION_IFACE).await?;
     let reply = p.call_method("GetSettings", &()).await.map_err(clean)?;
     let current: HashMap<String, Props> = reply.body().deserialize().map_err(clean)?;
+    call_auth::<_, ()>(&p, "Update", &(rekeyed(current, key, offered),))
+        .await
+        .map(|_| ())
+}
+
+/// `current` with `key` in place of its key. A passphrase keeps a PSK profile's own
+/// `key-mgmt`, else takes `offered`; an 802.1X login replaces the whole `802-1x` group.
+fn rekeyed<'a>(
+    current: HashMap<String, Props>,
+    key: &'a Key,
+    offered: &'static str,
+) -> HashMap<String, HashMap<String, Value<'a>>> {
     let key_mgmt = current
         .get("802-11-wireless-security")
         .map(|s| text(s, "key-mgmt"))
         .unwrap_or_default();
     let key_mgmt = rekey_mgmt(&key_mgmt, offered).to_string();
-    let mut settings: HashMap<String, HashMap<String, Value>> = current
+    let mut settings: HashMap<String, HashMap<String, Value<'a>>> = current
         .into_iter()
         .map(|(group, entries)| {
             let entries = entries
@@ -980,15 +1073,8 @@ async fn rekey(
             (group, entries)
         })
         .collect();
-    let security = settings
-        .entry("802-11-wireless-security".into())
-        .or_default();
-    security.insert("key-mgmt".into(), Value::from(key_mgmt));
-    security.insert("psk".into(), Value::from(psk));
-    security.insert("psk-flags".into(), Value::from(0u32));
-    call_auth::<_, ()>(&p, "Update", &(settings,))
-        .await
-        .map(|_| ())
+    secure(&mut settings, key, &key_mgmt);
+    settings
 }
 
 /// `Device.Disconnect`; Disable and Repair only log its error, since a device already down refuses
@@ -1177,17 +1263,17 @@ async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
             device,
             ap,
             ssid,
-            psk,
+            key,
         } => {
             let known = connection_for(conn, ssid).await;
-            match connect_plan(known.as_deref(), psk.as_ref()) {
+            match connect_plan(known.as_deref(), key.as_ref()) {
                 ConnectPlan::Activate(connection) => activate(conn, &connection, device, ap).await,
-                ConnectPlan::Rekey { conn_path, psk } => {
+                ConnectPlan::Rekey { conn_path, key } => {
                     let offered = ap_key_mgmt(conn, ap).await;
-                    rekey(conn, &conn_path, psk, offered).await?;
+                    rekey(conn, &conn_path, key, offered).await?;
                     activate(conn, &conn_path, device, ap).await
                 }
-                ConnectPlan::Add { psk } => {
+                ConnectPlan::Add { key } => {
                     let owner = new_profile_owner(conn).await;
                     let key_mgmt = ap_key_mgmt(conn, ap).await;
                     let manager = proxy(conn, MANAGER_PATH, NAME).await?;
@@ -1201,7 +1287,7 @@ async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
                         &manager,
                         "AddAndActivateConnection",
                         &(
-                            wifi_settings(ssid, psk.map(|p| &**p), key_mgmt, owner.as_deref()),
+                            wifi_settings(ssid, key, key_mgmt, owner.as_deref()),
                             opath(device)?,
                             opath(ap)?,
                         ),
@@ -1368,7 +1454,7 @@ mod tests {
             device: "/org/freedesktop/NetworkManager/Devices/10".into(),
             ap: "/".into(),
             ssid: "Net".into(),
-            psk: None,
+            key: None,
         }
     }
 
@@ -1700,7 +1786,8 @@ mod tests {
 
     #[test]
     fn an_owned_wifi_profile_carries_a_user_permission() {
-        let owned = wifi_settings(&"Home".into(), Some("hunter22"), "wpa-psk", Some("alice"));
+        let key = psk("hunter22");
+        let owned = wifi_settings(&"Home".into(), Some(&key), "wpa-psk", Some("alice"));
         assert_eq!(
             owned["connection"].get("permissions"),
             Some(&Value::from(vec!["user:alice".to_string()])),
@@ -1719,11 +1806,178 @@ mod tests {
         assert_eq!(key_mgmt_for(0, 0x100 | 0x400), "wpa-psk", "a mixed network");
         assert_eq!(key_mgmt_for(0x100, 0x400), "wpa-psk", "WPA1 PSK beside SAE");
         assert_eq!(key_mgmt_for(0, 0x100), "wpa-psk");
-        let sae = wifi_settings(&"Home".into(), Some("hunter22"), "sae", None);
+        let key = psk("hunter22");
+        let sae = wifi_settings(&"Home".into(), Some(&key), "sae", None);
         assert_eq!(
             sae["802-11-wireless-security"].get("key-mgmt"),
             Some(&Value::from("sae")),
             "key-mgmt is sae"
+        );
+    }
+
+    fn psk(s: &str) -> Key {
+        Key::Psk(Psk::new(s))
+    }
+
+    fn campus(e: Enterprise) -> HashMap<String, HashMap<String, Value<'static>>> {
+        let key = Key::Enterprise(Box::new(e));
+        wifi_settings(&"campus".into(), Some(&key), "wpa-psk", None)
+            .into_iter()
+            .map(|(g, entries)| {
+                let entries = entries
+                    .into_iter()
+                    .map(|(k, v)| (k, v.try_to_owned().unwrap().into()))
+                    .collect();
+                (g, entries)
+            })
+            .collect()
+    }
+
+    fn file(path: &str) -> Value<'static> {
+        Value::from([b"file://", path.as_bytes(), b"\0"].concat())
+    }
+
+    #[test]
+    fn a_peap_profile_logs_in_with_mschapv2_inside_the_tunnel() {
+        let s = campus(Enterprise {
+            eap: Eap::Peap,
+            anonymous_identity: "anonymous@uni.example".into(),
+            ca_cert: Some("/etc/ssl/certs/uni.pem".into()),
+            inner: Inner::Mschapv2,
+            identity: "alice@uni.example".into(),
+            password: Psk::new("hunter22"),
+            ..Enterprise::default()
+        });
+        assert_eq!(
+            s["802-11-wireless-security"],
+            HashMap::from([("key-mgmt".to_string(), Value::from("wpa-eap"))]),
+            "key-mgmt is wpa-eap and nothing else"
+        );
+        assert_eq!(
+            s["802-1x"],
+            HashMap::from([
+                ("eap".to_string(), Value::from(vec!["peap".to_string()])),
+                ("identity".to_string(), Value::from("alice@uni.example")),
+                (
+                    "anonymous-identity".to_string(),
+                    Value::from("anonymous@uni.example")
+                ),
+                ("ca-cert".to_string(), file("/etc/ssl/certs/uni.pem")),
+                ("phase2-auth".to_string(), Value::from("mschapv2")),
+                ("password".to_string(), Value::from("hunter22")),
+                ("password-flags".to_string(), Value::from(0u32)),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_ttls_profile_with_no_ca_logs_in_with_pap() {
+        let s = campus(Enterprise {
+            eap: Eap::Ttls,
+            ca_cert: None,
+            inner: Inner::Pap,
+            identity: "bob".into(),
+            password: Psk::new("hunter22"),
+            ..Enterprise::default()
+        });
+        assert_eq!(
+            s["802-1x"],
+            HashMap::from([
+                ("eap".to_string(), Value::from(vec!["ttls".to_string()])),
+                ("identity".to_string(), Value::from("bob")),
+                ("phase2-auth".to_string(), Value::from("pap")),
+                ("password".to_string(), Value::from("hunter22")),
+                ("password-flags".to_string(), Value::from(0u32)),
+            ]),
+            "no ca-cert and no empty anonymous-identity"
+        );
+        let gtc = campus(Enterprise {
+            eap: Eap::Ttls,
+            inner: Inner::Gtc,
+            ..Enterprise::default()
+        });
+        assert_eq!(gtc["802-1x"]["phase2-autheap"], Value::from("gtc"));
+        assert!(
+            !gtc["802-1x"].contains_key("phase2-auth"),
+            "TTLS takes GTC as an inner EAP method only"
+        );
+    }
+
+    #[test]
+    fn a_tls_profile_carries_its_certificate_and_key() {
+        let tls = Enterprise {
+            eap: Eap::Tls,
+            ca_cert: Some("/home/alice/ca.pem".into()),
+            identity: "alice".into(),
+            password: Psk::new("unused"),
+            client_cert: Some("/home/alice/alice.crt".into()),
+            private_key: Some("/home/alice/alice.key".into()),
+            private_key_password: Psk::new("swordfish"),
+            ..Enterprise::default()
+        };
+        let s = campus(tls.clone());
+        assert_eq!(
+            s["802-1x"],
+            HashMap::from([
+                ("eap".to_string(), Value::from(vec!["tls".to_string()])),
+                ("identity".to_string(), Value::from("alice")),
+                ("ca-cert".to_string(), file("/home/alice/ca.pem")),
+                ("client-cert".to_string(), file("/home/alice/alice.crt")),
+                ("private-key".to_string(), file("/home/alice/alice.key")),
+                ("private-key-password".to_string(), Value::from("swordfish")),
+                ("private-key-password-flags".to_string(), Value::from(0u32)),
+            ]),
+            "no password or phase 2 for TLS"
+        );
+        let bare = campus(Enterprise {
+            private_key_password: Psk::default(),
+            ..tls
+        });
+        assert_eq!(
+            bare["802-1x"]["private-key-password-flags"],
+            Value::from(4u32),
+            "an unencrypted key needs no password"
+        );
+        assert!(!bare["802-1x"].contains_key("private-key-password"));
+    }
+
+    #[test]
+    fn an_enterprise_login_rewrites_a_saved_profile_as_wpa_eap() {
+        let current = HashMap::from([
+            (
+                "connection".to_string(),
+                props(vec![("uuid", Value::from("u-1"))]),
+            ),
+            (
+                "802-11-wireless-security".to_string(),
+                props(vec![
+                    ("key-mgmt", Value::from("wpa-psk")),
+                    ("psk-flags", Value::from(1u32)),
+                ]),
+            ),
+        ]);
+        let key = Key::Enterprise(Box::new(Enterprise {
+            identity: "alice".into(),
+            password: Psk::new("hunter22"),
+            ..Enterprise::default()
+        }));
+        let s = rekeyed(current.clone(), &key, "wpa-psk");
+        assert_eq!(
+            s["802-11-wireless-security"],
+            HashMap::from([("key-mgmt".to_string(), Value::from("wpa-eap"))])
+        );
+        assert_eq!(s["802-1x"]["identity"], Value::from("alice"));
+        assert_eq!(s["connection"]["uuid"], Value::from("u-1"));
+        let key = psk("hunter22");
+        let s = rekeyed(current, &key, "sae");
+        assert_eq!(
+            s["802-11-wireless-security"],
+            HashMap::from([
+                ("key-mgmt".to_string(), Value::from("wpa-psk")),
+                ("psk".to_string(), Value::from("hunter22")),
+                ("psk-flags".to_string(), Value::from(0u32)),
+            ]),
+            "a passphrase keeps the profile's own key-mgmt"
         );
     }
 
@@ -1922,7 +2176,7 @@ mod tests {
                 device: DEV.into(),
                 ap: "/".into(),
                 ssid: ssid.into(),
-                psk: Some(Psk::new("new key")),
+                key: Some(Key::Psk(Psk::new("new key"))),
             };
             act(&client, &connect("Home")).await.unwrap();
             act(&client, &connect("Cafe")).await.unwrap();
