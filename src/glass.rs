@@ -327,6 +327,9 @@ impl GlassCtx {
             self.beneath.borrow_mut().clear();
             return;
         }
+        self.nodes
+            .borrow_mut()
+            .retain(|n| n.glass.strong_count() > 0 && scene.is_alive(n.node));
         let (Some(area), Some(mode)) = (reprisescene::output_rect(output), output.current_mode())
         else {
             return;
@@ -457,8 +460,7 @@ impl GlassCtx {
         scale: f64,
     ) -> Vec<Stacked> {
         let pass = self.pass.get();
-        let mut nodes = self.nodes.borrow_mut();
-        nodes.retain(|n| n.glass.strong_count() > 0 && scene.is_alive(n.node));
+        let nodes = self.nodes.borrow();
         let shown = scene.leaves_in(area);
         let mut stacked: Vec<(usize, &Placed)> = nodes
             .iter()
