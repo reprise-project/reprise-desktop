@@ -155,7 +155,13 @@ impl InputCapture {
             log::info!("InputCapture.CreateSession for {app_id:?} denied");
             return Ok((crate::RESPONSE_CANCELLED, HashMap::new()));
         }
-        let capture = link.create_capture();
+        let Some(capture) = link.create_capture() else {
+            log::warn!(
+                "InputCapture.CreateSession for {app_id:?}: {} captures are live already",
+                crate::inputlink::MAX_CAPTURES
+            );
+            return Ok((RESPONSE_OTHER, HashMap::new()));
+        };
         let events = capture.events();
         let path: OwnedObjectPath = session_handle.clone().into();
         // Relay the compositor's events as portal signals for as long as

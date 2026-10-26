@@ -62,6 +62,10 @@ pub enum CaptureEvent {
 /// and InputCapture down too, so the two must stay equal (or this lower).
 pub const MAX_SHORTCUTS: usize = 16;
 
+/// The `reprise_input_capture_v1` objects the link holds at once; like `MAX_SHORTCUTS`, it must stay equal
+/// to the compositor's `inputcapture::MAX_CAPTURES_PER_CLIENT` (or lower).
+pub const MAX_CAPTURES: usize = 8;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ShortcutEvent {
     Activated { id: String, time: u32 },
@@ -98,8 +102,9 @@ pub struct Link {
     wake: Arc<UnixStream>,
     shared: Arc<Mutex<Shared>>,
     next_id: Arc<AtomicU32>,
-    /// Set by the thread when the connection is lost; nothing reconnects.
+    /// Set by the thread when the connection is lost.
     dead: Arc<AtomicBool>,
+    live_captures: Arc<AtomicUsize>,
     shortcuts: bool,
     live_shortcuts: Arc<AtomicUsize>,
     keys: bool,
@@ -160,6 +165,7 @@ impl CaptureHandle {
 impl Drop for CaptureHandle {
     fn drop(&mut self) {
         self.link.send(Cmd::DestroyCapture(self.id));
+        self.link.live_captures.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -210,10 +216,11 @@ impl Drop for KeysHandle {
 impl Link {
     pub fn start() -> Result<Link, String> {
         let conn = Connection::connect_to_env().map_err(|e| format!("wayland: {e}"))?;
-        Link::start_on(conn)
+        Link::start_on(conn, true)
     }
 
-    fn start_on(conn: Connection) -> Result<Link, String> {
+    /// With `exit_when_lost`, a lost connection ends the process so its unit restarts it with a fresh link.
+    fn start_on(conn: Connection, exit_when_lost: bool) -> Result<Link, String> {
         let (globals, mut queue) =
             registry_queue_init::<State>(&conn).map_err(|e| format!("registry: {e}"))?;
         let qh = queue.handle();
@@ -260,6 +267,7 @@ impl Link {
             shared,
             next_id: Arc::new(AtomicU32::new(1)),
             dead: Arc::new(AtomicBool::new(false)),
+            live_captures: Arc::new(AtomicUsize::new(0)),
             shortcuts,
             live_shortcuts: Arc::new(AtomicUsize::new(0)),
             keys,
@@ -270,6 +278,10 @@ impl Link {
             .spawn(move || {
                 run(conn, queue, state, rx, r);
                 dead.store(true, Ordering::Relaxed);
+                if exit_when_lost {
+                    log::error!("input link: connection lost; exiting for a restart");
+                    std::process::exit(1);
+                }
             })
             .map_err(|e| format!("thread: {e}"))?;
         Ok(link)
@@ -290,15 +302,21 @@ impl Link {
         }
     }
 
-    pub fn create_capture(&self) -> CaptureHandle {
+    /// A capture object, or None while `MAX_CAPTURES` are live.
+    pub fn create_capture(&self) -> Option<CaptureHandle> {
+        self.live_captures
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n < MAX_CAPTURES).then_some(n + 1)
+            })
+            .ok()?;
         let id = self.alloc();
         let (tx, rx) = async_channel::unbounded();
         self.send(Cmd::CreateCapture(id, tx));
-        CaptureHandle {
+        Some(CaptureHandle {
             link: self.clone(),
             id,
             events: rx,
-        }
+        })
     }
 
     pub fn has_shortcuts(&self) -> bool {
@@ -607,7 +625,7 @@ fn run(
             drop(guard);
         }
     }
-    log::warn!("input link: connection lost; RemoteDesktop and InputCapture refuse until restart");
+    log::warn!("input link: connection lost");
     drop(conn);
 }
 
@@ -837,7 +855,7 @@ mod tests {
             fake_compositor(&mut theirs, 2, version);
             let _ = hang_up_rx.recv();
         });
-        let link = Link::start_on(Connection::from_socket(ours).unwrap()).unwrap();
+        let link = Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap();
         (link, hang_up, compositor)
     }
 
@@ -885,6 +903,27 @@ mod tests {
         );
     }
 
+    /// Past `MAX_CAPTURES` live objects the link makes no more, so the compositor never ends it with `too_many`; a dropped one frees a place.
+    #[test]
+    fn the_link_keeps_no_more_capture_objects_than_the_compositor_takes() {
+        let (link, _hang_up, _fake) = start_with_fake(2);
+        let mut held: Vec<CaptureHandle> = (0..MAX_CAPTURES)
+            .map(|i| {
+                link.create_capture()
+                    .unwrap_or_else(|| panic!("capture {i} is made"))
+            })
+            .collect();
+        assert!(
+            link.create_capture().is_none(),
+            "one past {MAX_CAPTURES} is refused"
+        );
+        held.pop();
+        assert!(
+            link.create_capture().is_some(),
+            "a dropped capture frees its place"
+        );
+    }
+
     #[test]
     fn a_shortcuts_object_reports_its_events_and_dies_with_its_handle() {
         let (ours, mut theirs) = UnixStream::pair().unwrap();
@@ -911,7 +950,7 @@ mod tests {
                 .any(|(object, opcode, _)| (object, opcode) == (shortcuts, 0));
             (app_id, destroyed)
         });
-        let link = Link::start_on(Connection::from_socket(ours).unwrap()).unwrap();
+        let link = Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap();
         let handle = link.create_shortcuts("org.example.Player").unwrap();
         let events = handle.events();
         let mut got = Vec::new();
@@ -966,9 +1005,9 @@ mod tests {
             }
             (sent_shortcuts, theirs)
         });
-        let link = Link::start_on(Connection::from_socket(ours).unwrap()).unwrap();
+        let link = Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap();
         let handle = link.create_shortcuts("org.example.Player").unwrap();
-        let capture = link.create_capture();
+        let capture = link.create_capture().unwrap();
         let (sent_shortcuts, _theirs) = compositor.join().unwrap();
         assert!(!sent_shortcuts, "a v2 compositor gets no create_shortcuts");
         assert!(
@@ -999,7 +1038,7 @@ mod tests {
 
     #[test]
     fn requests_held_by_a_full_socket_go_out_when_it_drains() {
-        const CAPTURES: usize = 100;
+        const REQUESTS: usize = 100;
         let (ours, mut theirs) = UnixStream::pair().unwrap();
         // The kernel raises this to its minimum send buffer, which a handful of one-request writes fill.
         let size: libc::c_int = 1;
@@ -1016,31 +1055,31 @@ mod tests {
         assert_eq!(set, 0, "SO_SNDBUF is set");
         let (drain, drain_rx) = channel::<()>();
         let compositor = std::thread::spawn(move || {
-            fake_compositor(&mut theirs, 2, 2);
+            fake_compositor(&mut theirs, 2, 4);
             drain_rx.recv().unwrap();
             theirs
                 .set_read_timeout(Some(Duration::from_secs(2)))
                 .unwrap();
             let mut received = 0;
-            while received < CAPTURES && request(&mut theirs).is_ok() {
+            while received < REQUESTS && request(&mut theirs).is_ok() {
                 received += 1;
             }
             received
         });
-        let link = Link::start_on(Connection::from_socket(ours).unwrap()).unwrap();
-        let captures: Vec<CaptureHandle> = (0..CAPTURES)
+        let link = Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap();
+        let keys: Vec<KeysHandle> = (0..REQUESTS)
             .map(|_| {
-                let c = link.create_capture();
+                let k = link.create_keys().unwrap();
                 std::thread::sleep(Duration::from_millis(1));
-                c
+                k
             })
             .collect();
         drain.send(()).unwrap();
         assert_eq!(
             compositor.join().unwrap(),
-            CAPTURES,
-            "every create_capture reaches the compositor once it reads"
+            REQUESTS,
+            "every create_keys reaches the compositor once it reads"
         );
-        drop(captures);
+        drop(keys);
     }
 }
