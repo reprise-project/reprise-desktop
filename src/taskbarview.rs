@@ -216,12 +216,7 @@ fn stands_over_menu(l: &TaskbarLayout, held: bool, covered: bool) -> bool {
 }
 
 fn to_next_minute() -> Duration {
-    // SAFETY: `time` accepts a null out-pointer.
-    let now = unsafe { libc::time(std::ptr::null_mut()) };
-    // SAFETY: `libc::tm` is a plain C struct; all-zeroes is valid.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    // SAFETY: both pointers are to live locals.
-    unsafe { libc::localtime_r(&now, &mut tm) };
+    let tm = reprisefs::locale::localtime(crate::taskbar::clock_now());
     Duration::from_millis(((60 - tm.tm_sec.clamp(0, 60)) * 1000 + 100) as u64)
 }
 
