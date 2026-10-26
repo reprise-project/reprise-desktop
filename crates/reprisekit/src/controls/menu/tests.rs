@@ -1918,3 +1918,58 @@ fn a_flat_menu_doubles_at_scale_2() {
         90, 110, draw
     ));
 }
+
+#[test]
+fn a_level_taller_than_the_screen_wraps_into_columns_inside_it() {
+    let text = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let cx = MenuCtx {
+        within: Rect::new(0, 0, 800, 300),
+        ..nested_ctx(&theme, &text)
+    };
+    let t = MenuTree::flat(
+        (0..40)
+            .map(|i| MenuItem::entry(format!("Window {i}")))
+            .collect(),
+    );
+    let mut p = PopupMenu::open(&t, (10, 200), &cx, true);
+    let level = &p.levels()[0];
+    let rect = level.rect();
+    assert!(rect.height <= 300, "the level is {} px tall", rect.height);
+    assert!(
+        rect.y >= 0 && rect.bottom() <= 300,
+        "the level lies inside within"
+    );
+    assert!(
+        level.layout.columns >= 2,
+        "40 rows take more than one column"
+    );
+    for (i, r) in level.layout.rows.iter().enumerate() {
+        let abs = Rect::new(rect.x + r.x, rect.y + r.y, r.width, r.height);
+        assert!(
+            rect.x <= abs.x
+                && abs.right() <= rect.right()
+                && rect.y <= abs.y
+                && abs.bottom() <= rect.bottom(),
+            "row {i} at {abs:?} lies inside {rect:?}"
+        );
+    }
+    let per_col = level
+        .layout
+        .rows
+        .iter()
+        .filter(|r| r.x == level.layout.rows[0].x)
+        .count();
+    assert_eq!(p.hovered(), Some(0));
+    for _ in 0..per_col {
+        p.key(&t, MenuKey::Down, &cx);
+    }
+    let first_of_second = p.levels()[0].layout.rows[per_col];
+    assert_eq!(p.hovered(), Some(per_col), "Down from column 1's last row");
+    assert_eq!(
+        first_of_second.y,
+        p.levels()[0].layout.rows[0].y,
+        "lands on column 2's top row"
+    );
+    assert!(first_of_second.x > p.levels()[0].layout.rows[0].x);
+}
