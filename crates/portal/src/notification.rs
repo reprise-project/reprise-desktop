@@ -167,7 +167,17 @@ impl Notification {
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<()> {
         self.frontend.check(&hdr)?;
-        let p = parse(&notification);
+        // An icon file may sit on a slow or hung mount, and a large picture
+        // takes a while to decode: neither may hold up the bus thread.
+        let (p, image) = blocking::unblock(move || {
+            let p = parse(&notification);
+            let image = match &p.icon {
+                Icon::Bytes(bytes) => image_data(bytes),
+                _ => None,
+            };
+            (p, image)
+        })
+        .await;
         let replaces = self
             .book
             .lock()
@@ -176,10 +186,12 @@ impl Notification {
             .get(&(app_id.clone(), id.clone()))
             .copied()
             .unwrap_or(0);
-        let server_id = notify(conn, &app_id, replaces, &p).await.map_err(|e| {
-            log::warn!("Notification {app_id:?}/{id:?}: {e}");
-            zbus::fdo::Error::Failed(format!("{SERVER}: {e}"))
-        })?;
+        let server_id = notify(conn, &app_id, replaces, &p, image)
+            .await
+            .map_err(|e| {
+                log::warn!("Notification {app_id:?}/{id:?}: {e}");
+                zbus::fdo::Error::Failed(format!("{SERVER}: {e}"))
+            })?;
         self.book.lock().unwrap().insert(
             server_id,
             Shown {
@@ -315,12 +327,22 @@ fn parse_icon(v: &OwnedValue) -> Icon {
     }
 }
 
+/// The file behind an icon's descriptor; an error unless it is a regular
+/// file, as a pipe or socket could keep a read waiting forever.
+fn icon_file(fd: std::os::fd::BorrowedFd<'_>) -> std::io::Result<std::fs::File> {
+    let file = std::fs::File::from(fd.try_clone_to_owned()?);
+    if !file.metadata()?.file_type().is_file() {
+        return Err(std::io::Error::other("icon is not a regular file"));
+    }
+    Ok(file)
+}
+
 /// The whole file behind an icon's descriptor, read from its start
 /// whatever its offset; an error for one over `MAX_ICON_BYTES`.
 fn read_icon(fd: &zbus::zvariant::Fd<'_>) -> std::io::Result<Vec<u8>> {
     use std::os::fd::AsFd;
     use std::os::unix::fs::FileExt;
-    let file = std::fs::File::from(fd.as_fd().try_clone_to_owned()?);
+    let file = icon_file(fd.as_fd())?;
     let mut out = Vec::new();
     let mut chunk = vec![0u8; 64 << 10];
     loop {
@@ -390,6 +412,7 @@ async fn notify(
     app_id: &str,
     replaces: u32,
     p: &Parsed,
+    image: Option<ImageData>,
 ) -> zbus::Result<u32> {
     let mut hints: HashMap<&str, Value<'_>> = HashMap::new();
     hints.insert("urgency", Value::U8(p.urgency));
@@ -400,14 +423,11 @@ async fn notify(
         hints.insert("desktop-entry", Value::from(app_id));
     }
     let mut app_icon = String::new();
-    match &p.icon {
-        Icon::Themed(names) => app_icon = names.first().cloned().unwrap_or_default(),
-        Icon::Bytes(bytes) => {
-            if let Some(data) = image_data(bytes) {
-                hints.insert("image-data", Value::from(data));
-            }
-        }
-        Icon::None => {}
+    if let Icon::Themed(names) = &p.icon {
+        app_icon = names.first().cloned().unwrap_or_default();
+    }
+    if let Some(data) = image {
+        hints.insert("image-data", Value::from(data));
     }
     let reply = conn
         .call_method(
@@ -784,6 +804,17 @@ mod tests {
             owned(("file-descriptor", Value::Fd(fd))),
         );
         assert_eq!(parse(&n).icon, Icon::Bytes(b"picture".to_vec()));
+    }
+
+    #[test]
+    fn only_a_regular_file_is_read_as_an_icon() {
+        use std::os::fd::AsFd;
+        let file = tempfile::tempfile().unwrap();
+        assert!(icon_file(file.as_fd()).is_ok());
+        let (reader, _writer) = std::io::pipe().unwrap();
+        assert!(icon_file(reader.as_fd()).is_err(), "a pipe is refused");
+        let dir = std::fs::File::open(std::env::temp_dir()).unwrap();
+        assert!(icon_file(dir.as_fd()).is_err(), "a directory is refused");
     }
 
     #[test]
