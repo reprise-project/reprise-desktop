@@ -257,6 +257,7 @@ suspend_after = 0            # run [power] standby
 
 # [display]                  # read when Reprise starts
 # gpu = "/dev/dri/card1"     # the GPU that draws and whose connectors light up; the seat's primary GPU when left out. On a laptop whose HDMI port hangs off the discrete GPU, name that one: the screens on the other GPU then stay dark. A /dev/dri/by-path/ link keeps its name across boots, a cardN may not
+# all_gpus = false           # true: also open the other GPUs and track their monitors. Only the GPU above draws, so monitors on the others stay dark (and go dark at login); an open discrete GPU cannot power down, which costs battery
 
 # [[outputs]]                # per-output settings, matched by connector name; the Display page of Reprise Settings writes mode, transform, scale, position and adaptive_sync here after you keep the change
 # name = "DP-1"

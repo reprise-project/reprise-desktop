@@ -177,6 +177,7 @@ pub struct FileSnapping {
 #[serde(deny_unknown_fields)]
 pub struct FileDisplay {
     pub gpu: Option<String>,
+    pub all_gpus: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

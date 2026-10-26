@@ -555,7 +555,11 @@ impl Config {
                     })?;
             }
         }
-        if let Some(gpu) = file.display.and_then(|d| d.gpu) {
+        let display = file.display.unwrap_or_default();
+        if let Some(all) = display.all_gpus {
+            cfg.all_gpus = all;
+        }
+        if let Some(gpu) = display.gpu {
             let path = std::path::PathBuf::from(&gpu);
             if !path.is_absolute() {
                 return Err(format!(
