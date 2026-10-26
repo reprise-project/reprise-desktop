@@ -50,7 +50,7 @@ dependencies = [
  "futures-lite",
  "futures-util",
  "serde",
- "zbus",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -326,7 +326,7 @@ dependencies = [
  "enumflags2",
  "serde",
  "static_assertions",
- "zbus",
+ "zbus 5.19.0",
  "zbus-lockstep",
  "zbus-lockstep-macros",
  "zbus_names",
@@ -341,7 +341,7 @@ checksum = "2230e48787ed3eb4088996eab66a32ca20c0b67bbd4fd6cdfe79f04f1f04c9fc"
 dependencies = [
  "atspi-common",
  "serde",
- "zbus",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -2206,7 +2206,7 @@ dependencies = [
  "wayland-server",
  "x11rb 0.14.0",
  "xcursor",
- "zbus",
+ "zbus 5.19.0",
  "zeroize",
 ]
 
@@ -2231,7 +2231,7 @@ dependencies = [
  "reprisefs",
  "reprisekit",
  "serde",
- "zbus",
+ "zbus 5.19.0",
  "zeroize",
 ]
 
@@ -2270,7 +2270,7 @@ dependencies = [
  "repriseconf",
  "reprisekit",
  "reprisetray",
- "zbus",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -2283,7 +2283,7 @@ dependencies = [
  "reprisefs",
  "reprisekit",
  "serde",
- "zbus",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -2296,7 +2296,7 @@ dependencies = [
  "reprisefs",
  "reprisekit",
  "reprisetray",
- "zbus",
+ "zbus 5.19.0",
  "zeroize",
 ]
 
@@ -2330,7 +2330,7 @@ dependencies = [
  "reprisefs",
  "reprisekit",
  "reprisetray",
- "zbus",
+ "zbus 5.19.0",
  "zeroize",
 ]
 
@@ -2357,7 +2357,7 @@ dependencies = [
  "repriseapp",
  "reprisebus",
  "reprisekit",
- "zbus",
+ "zbus 5.19.0",
  "zbus_polkit",
  "zeroize",
 ]
@@ -2389,7 +2389,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-scanner",
- "zbus",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -2404,7 +2404,7 @@ dependencies = [
  "reprisekit",
  "reprisetray",
  "toml_edit",
- "zbus",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -2420,7 +2420,7 @@ dependencies = [
  "reprisekit",
  "reprisetray",
  "serde",
- "zbus",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -2453,7 +2453,7 @@ dependencies = [
  "reprisekit",
  "reprisetray",
  "serde_json",
- "zbus",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -2488,7 +2488,7 @@ dependencies = [
  "reprisekit",
  "reprisetray",
  "toml",
- "zbus",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -2544,7 +2544,7 @@ dependencies = [
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "wayland-server",
- "zbus",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -2565,7 +2565,7 @@ dependencies = [
  "libc",
  "log",
  "tempfile",
- "zbus",
+ "zbus 5.19.0",
  "zeroize",
 ]
 
@@ -2600,7 +2600,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "toml_edit",
- "zbus",
+ "zbus 5.19.0",
  "zeroize",
 ]
 
@@ -2679,7 +2679,7 @@ dependencies = [
  "futures-util",
  "log",
  "reprisebus",
- "zbus",
+ "zbus 5.19.0",
 ]
 
 [[package]]
@@ -3041,6 +3041,16 @@ source = "git+https://github.com/reprise-project/smithay.git?rev=e29c11db4cfd82c
 dependencies = [
  "drm",
  "libdisplay-info",
+]
+
+[[package]]
+name = "socket2"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3924,9 +3934,36 @@ dependencies = [
  "uuid",
  "windows-sys 0.61.2",
  "winnow",
- "zbus_macros",
+ "zbus_macros 5.19.0",
  "zbus_names",
  "zvariant",
+]
+
+[[package]]
+name = "zbus"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcff5faa63a63d5b81051740f7382017f10b3440b3f401d97f0cf0b3b39c62d9"
+dependencies = [
+ "async-trait",
+ "bitflags 2.13.2",
+ "endi",
+ "futures-core",
+ "hex",
+ "libc",
+ "ordered-stream",
+ "rustix 1.1.5",
+ "serde",
+ "serde_repr",
+ "socket2",
+ "uds_windows",
+ "uuid",
+ "windows-sys 0.61.2",
+ "winnow",
+ "zbus_macros 6.1.0",
+ "zbus_utils",
+ "zcheapstr",
+ "zruntime",
 ]
 
 [[package]]
@@ -3969,6 +4006,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "zbus_macros"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5bba6e2bfe19571dc81b3e0be9f8daec6e5422db3e2eea2e766a859553e7bd37"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+ "zbus_utils",
+]
+
+[[package]]
 name = "zbus_names"
 version = "4.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3981,15 +4030,28 @@ dependencies = [
 
 [[package]]
 name = "zbus_polkit"
-version = "5.1.0"
+version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "283d50dac36a7fee0d9c2e6b9c71253326c1f863a9d350342d338637aa3019ae"
+checksum = "493c2474ae7bd12adcda9daabda8b7db0a8c95b4563876edf0f34afaf5f9e74e"
 dependencies = [
- "enumflags2",
+ "bitflags 2.13.2",
  "serde",
  "serde_repr",
  "static_assertions",
- "zbus",
+ "zbus 6.1.0",
+]
+
+[[package]]
+name = "zbus_utils"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c27a055b114bd9fc3686e90f62bd1fe612d523fc5f620bac3b1d2f42d3f6cab8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde",
+ "syn 3.0.9",
+ "winnow",
 ]
 
 [[package]]
@@ -4066,6 +4128,19 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zruntime"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfc035df602243402949ddf3dcc5bcfad7edeb732dd49ec6e605431c4eca54ce"
+dependencies = [
+ "futures-core",
+ "futures-io",
+ "rustix 1.1.5",
+ "socket2",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "zune-core"
