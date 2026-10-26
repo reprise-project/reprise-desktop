@@ -20,6 +20,8 @@ fontconfig-parser = "0.5"
 freetype-rs = "0.38"
 # The fallback face for a char the UI face lacks (e.g. CJK).
 yeslogic-fontconfig-sys = "6"
+# Which chars the fallback lookup skips; rustybuzz already builds it with this feature.
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 png.workspace = true
 # No svgz: a gzipped file would inflate past the decoder's SVG byte cap.
 resvg = { version = "0.48", default-features = false }

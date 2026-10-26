@@ -248,7 +248,7 @@ impl Window {
     }
 
     pub fn title(&self) -> String {
-        match &self.kind {
+        capped(match &self.kind {
             Kind::Xdg(_) => with_states(self.wl_surface(), |s| {
                 s.data_map
                     .get::<XdgToplevelSurfaceData>()
@@ -256,11 +256,11 @@ impl Window {
             })
             .unwrap_or_default(),
             Kind::X11(x) => x.title(),
-        }
+        })
     }
 
     pub fn app_id(&self) -> String {
-        match &self.kind {
+        capped(match &self.kind {
             Kind::Xdg(_) => with_states(self.wl_surface(), |s| {
                 s.data_map
                     .get::<XdgToplevelSurfaceData>()
@@ -275,7 +275,7 @@ impl Window {
                     class
                 }
             }
-        }
+        })
     }
 
     pub fn own_icon(&self, px: i32) -> Option<Arc<Canvas>> {
@@ -474,4 +474,14 @@ impl State {
             self.on_parent_changed(w);
         }
     }
+}
+
+/// The most chars of a client's title or app id Reprise reads: text is measured char by char.
+const NAME_CAP: usize = 1024;
+
+fn capped(mut name: String) -> String {
+    if let Some((end, _)) = name.char_indices().nth(NAME_CAP) {
+        name.truncate(end);
+    }
+    name
 }

@@ -645,6 +645,23 @@ fn missing_chars_share_one_notdef_entry() {
 }
 
 #[test]
+fn a_title_of_private_use_or_unassigned_chars_asks_fontconfig_a_handful_of_times() {
+    let r = renderer();
+    let asked = || crate::fontfallback::FONTCONFIG_ASKS.get();
+    let text = |from: u32| -> String { (from..).filter_map(char::from_u32).take(300).collect() };
+    let before = asked();
+    r.measure(&text(0x10_0000), false, 11);
+    assert!(
+        asked() - before <= 12,
+        "at most two asks per block, three blocks, two fallback caches; asked {}",
+        asked() - before
+    );
+    let before = asked();
+    r.measure(&text(0x4_0000), false, 11);
+    assert_eq!(asked(), before, "unassigned chars ask nothing");
+}
+
+#[test]
 fn glyph_cache_never_exceeds_its_cap() {
     let r = renderer();
     let face = r.face(false).expect("a face");
