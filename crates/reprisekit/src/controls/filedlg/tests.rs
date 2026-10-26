@@ -2337,3 +2337,32 @@ fn a_long_accept_label_widens_both_buttons_and_narrows_the_fields() {
     assert_eq!(lay.accept.right(), CLIENT.0 - MARGIN);
     assert_eq!(lay.filename.right(), lay.accept.x - FIELD_BUTTON_GAP);
 }
+
+#[test]
+fn hits_on_an_unchanged_dialog_lay_the_shell_view_out_once() {
+    let t = text();
+    let px = Theme::default().fonts.size_px;
+    let mut d = sample();
+    d.set_listing(folder(
+        1,
+        None,
+        (0..20_000).map(|i| file(&format!("f{i}.txt"))).collect(),
+    ));
+    let before = shellview::LAYOUTS.get();
+    let body = d.shell_layout(R, &ControlMetrics::CLASSIC).body;
+    for i in 0..100 {
+        d.hit(&t, px, R, body.x + i % body.width, body.y + body.height / 2);
+    }
+    assert_eq!(
+        shellview::LAYOUTS.get() - before,
+        1,
+        "100 hits lay the view out once"
+    );
+    d.shell.top = 1;
+    d.hit(&t, px, R, body.x, body.y);
+    assert_eq!(
+        shellview::LAYOUTS.get() - before,
+        2,
+        "a scroll lays it out again"
+    );
+}

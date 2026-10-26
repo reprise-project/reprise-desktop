@@ -17,6 +17,7 @@ use crate::raster::Rect;
 use crate::text::{TextRenderer, access_key, split_mnemonic};
 use crate::theme::{TextUnits, Theme};
 use std::borrow::Cow;
+use std::rc::Rc;
 
 /// Moves `lay`'s open list and its scroll bar so the list's corner is at `to`.
 fn move_list(lay: &mut combo::Layout, to: (i32, i32)) {
@@ -178,14 +179,14 @@ impl FileDlg {
         }
     }
 
-    pub(super) fn shell_layout(&self, r: Rect, cm: &ControlMetrics) -> shellview::Layout {
+    pub(super) fn shell_layout(&self, r: Rect, cm: &ControlMetrics) -> Rc<shellview::Layout> {
         let dy = self.grow(r, cm);
         let r = rows(r, cm);
         let u = |v: i32| cm.text.len(v);
         let shell_w = (r.width - u(SHELL_X) - u(MARGIN)).max(0);
         let shell_h = u(SHELL_Y + SHELL_H) - u(SHELL_Y) + dy;
         let shell = Rect::new(r.x + u(SHELL_X), r.y + u(SHELL_Y), shell_w, shell_h);
-        shellview::layout(&self.shell, shell, cm)
+        self.drawn.2.get(&self.shell, shell, cm)
     }
 
     pub(super) fn views_menu_items(&self) -> Vec<MenuItem> {
