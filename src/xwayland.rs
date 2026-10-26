@@ -1,10 +1,10 @@
 //! X11 programs through Xwayland: the X server, Reprise as its window
 //! manager, and the clipboard between X11 and Wayland.
 //!
-//! Follows cosmic-comp's `src/xwayland.rs` (GPL-3.0): Smithay's
-//! in-process `X11Wm`, started once Xwayland reports ready, so Reprise
-//! keeps the X stacking order, override-redirect menus and icons in its
-//! own hands. A managed X11 window becomes a `window::Window` of
+//! Reprise runs Smithay's `X11Wm` in-process, like other Smithay
+//! compositors do, started once Xwayland reports ready, so Reprise keeps
+//! the X stacking order, override-redirect menus and icons in its own
+//! hands. A managed X11 window becomes a `window::Window` of
 //! `Kind::X11` when Xwayland ties a `wl_surface` to it
 //! (`surface_associated`), maps on that surface's first buffer like an xdg
 //! toplevel, and goes when the X window unmaps. Menus and tooltips
