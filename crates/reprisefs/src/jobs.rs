@@ -5,7 +5,7 @@
 
 use crate::deadline::ACTION_DEADLINE;
 use crate::ops::{self, DropOp};
-use crate::progress::{self, Meter, Phase, Snapshot, Totals};
+use crate::progress::{self, Decision, Meter, Phase, Snapshot, Totals};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -68,14 +68,17 @@ impl PutJob {
         Self::start_past(items, dir, Vec::new(), wake)
     }
 
-    /// [`Self::start`], failing after `deadline` without headway instead of [`ACTION_DEADLINE`].
-    pub fn start_within(
+    /// [`Self::start`], failing after `deadline` without headway instead of [`ACTION_DEADLINE`],
+    /// and holding a failed item for the host's [`Decision`] ([`Meter::decide`]).
+    pub fn start_asking(
         items: Vec<PutItem>,
         dir: PathBuf,
         deadline: Duration,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> PutJob {
-        Self::start_until(items, dir, Vec::new(), Arc::default(), deadline, wake)
+        let meter = Arc::new(Meter::default());
+        meter.ask_on_failure();
+        Self::start_until(items, dir, Vec::new(), meter, deadline, wake)
     }
 
     /// [`Self::start`], with `taken` counted among `dir`'s names when a copy or shortcut is named.
@@ -151,7 +154,8 @@ impl PutJob {
                 let mut ours = std::collections::HashSet::new();
                 let mut done = Totals::default();
                 let mut wrote = false;
-                for (index, it) in items.iter().enumerate() {
+                let mut index = 0;
+                while let Some(it) = items.get(index) {
                     if m.hold().is_err() {
                         break;
                     }
@@ -194,14 +198,25 @@ impl PutJob {
                         Err(error) => PutEvent::Failed { index, error },
                     };
                     let failed = matches!(ev, PutEvent::Failed { .. });
+                    if failed {
+                        m.ask();
+                    }
                     if tx.send(ev).is_err() {
                         ended.store(true, Ordering::Release);
                         return;
                     }
                     (*wake)();
                     if failed {
-                        break;
+                        match m.decision() {
+                            Decision::Retry => continue,
+                            Decision::Skip => {
+                                done = done + sizes[index];
+                                m.settle(done);
+                            }
+                            Decision::Pending | Decision::Abort => break,
+                        }
                     }
+                    index += 1;
                 }
                 if wrote && !m.cancelled() {
                     m.set_phase(Phase::Finishing);
@@ -431,6 +446,97 @@ mod tests {
         assert!(matches!(got[0], PutEvent::Failed { index: 0, .. }));
         assert!(matches!(got[1], PutEvent::Finished));
         assert!(!dest.join("ok.txt").exists());
+    }
+
+    /// The events of `job` with `pick` answered on each failure.
+    fn run_deciding(mut job: PutJob, woke: Receiver<()>, pick: Decision) -> Vec<PutEvent> {
+        let mut all = Vec::new();
+        while !job.is_finished() {
+            woke.recv_timeout(Duration::from_secs(5)).expect("a wake");
+            for ev in job.poll() {
+                if matches!(ev, PutEvent::Failed { .. }) {
+                    job.meter().decide(pick);
+                }
+                all.push(ev);
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn a_skipped_failure_goes_on_to_the_next_item() {
+        let t = tempfile::tempdir().unwrap();
+        let dest = t.path().join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(t.path().join("ok.txt"), "ok").unwrap();
+        let (wtx, woke) = channel();
+        let job = PutJob::start_asking(
+            vec![
+                item(t.path().join("missing.txt"), DropOp::Copy),
+                item(t.path().join("ok.txt"), DropOp::Copy),
+            ],
+            dest.clone(),
+            ACTION_DEADLINE,
+            move || {
+                let _ = wtx.send(());
+            },
+        );
+        let got = run_deciding(job, woke, Decision::Skip);
+        assert!(
+            matches!(
+                got.as_slice(),
+                [
+                    PutEvent::Failed { index: 0, .. },
+                    PutEvent::Landed { index: 1, .. },
+                    PutEvent::Finished,
+                ]
+            ),
+            "the first fails, the second lands: {got:?}"
+        );
+        assert!(dest.join("ok.txt").exists());
+    }
+
+    #[test]
+    fn a_retried_failure_runs_the_same_item_again() {
+        let t = tempfile::tempdir().unwrap();
+        let dest = t.path().join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        let late = t.path().join("late.txt");
+        let (wtx, woke) = channel();
+        let mut job = PutJob::start_asking(
+            vec![item(late.clone(), DropOp::Copy)],
+            dest.clone(),
+            ACTION_DEADLINE,
+            move || {
+                let _ = wtx.send(());
+            },
+        );
+        let mut got = Vec::new();
+        while !job.is_finished() {
+            woke.recv_timeout(Duration::from_secs(5)).expect("a wake");
+            for ev in job.poll() {
+                if matches!(ev, PutEvent::Failed { .. }) {
+                    std::fs::write(&late, "now").unwrap();
+                    job.meter().decide(Decision::Retry);
+                }
+                got.push(ev);
+            }
+        }
+        assert!(
+            matches!(
+                got.as_slice(),
+                [
+                    PutEvent::Failed { index: 0, .. },
+                    PutEvent::Landed { index: 0, .. },
+                    PutEvent::Finished,
+                ]
+            ),
+            "{got:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dest.join("late.txt")).unwrap(),
+            "now"
+        );
     }
 
     #[test]

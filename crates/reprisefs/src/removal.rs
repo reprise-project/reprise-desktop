@@ -5,7 +5,7 @@
 
 use crate::bincap::Measured;
 use crate::deadline::ACTION_DEADLINE;
-use crate::progress::{self, Meter, Phase, Snapshot, Totals};
+use crate::progress::{self, Decision, Meter, Phase, Snapshot, Totals};
 use crate::trash::{self, Bins, Trashed};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -143,6 +143,18 @@ impl RemoveJob {
         )
     }
 
+    /// [`Self::start`], holding a failed item for the host's [`Decision`] ([`Meter::decide`])
+    /// instead of stopping.
+    pub fn start_asking(
+        items: Vec<Removal>,
+        bins: Option<Bins>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> RemoveJob {
+        let meter = Arc::new(Meter::default());
+        meter.ask_on_failure();
+        Self::start_metered(items, bins, meter, ACTION_DEADLINE, wake)
+    }
+
     /// [`Self::start`], counting on `meter` and failing after `deadline` without headway, so a test
     /// can pause it before the thread runs or wait less.
     fn start_metered(
@@ -191,33 +203,38 @@ impl RemoveJob {
                 };
                 m.set_phase(Phase::Copying);
                 let mut done = Totals::default();
-                for (index, it) in items.iter().enumerate() {
+                let mut index = 0;
+                while let Some(it) = items.get(index) {
                     if m.hold().is_err() {
                         break;
                     }
                     m.set_at(index);
                     m.set_current(it.name());
                     let r = progress::metered(&m, || it.run(bins.as_ref(), &m));
-                    done = done + sizes[index];
-                    m.settle(done);
-                    let stop = match &r {
-                        Err(_) if m.cancelled() => true,
-                        Err(_) => !matches!(it, Removal::Empty(_)),
-                        Ok(_) => false,
-                    };
+                    let stop = r.is_err() && !matches!(it, Removal::Empty(_));
                     let ev = match r {
                         Ok(removed) => RemoveEvent::Done { index, removed },
                         Err(_) if m.cancelled() => break,
                         Err(error) => RemoveEvent::Failed { index, error },
                     };
+                    if stop {
+                        m.ask();
+                    }
                     if tx.send(ev).is_err() {
                         ended.store(true, Ordering::Release);
                         return;
                     }
                     (*wake)();
                     if stop {
-                        break;
+                        match m.decision() {
+                            Decision::Retry => continue,
+                            Decision::Skip => {}
+                            Decision::Pending | Decision::Abort => break,
+                        }
                     }
+                    done = done + sizes[index];
+                    m.settle(done);
+                    index += 1;
                 }
                 finish();
             });

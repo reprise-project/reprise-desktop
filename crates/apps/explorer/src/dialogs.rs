@@ -58,12 +58,19 @@ pub struct Confirm {
     /// The question before running the script `paths[0]` (`confirm_scripts`): Run runs it as
     /// this says, Open in Notepad opens it there.
     pub script: Option<reprisefs::program::ScriptOpen>,
+    /// An item of the job counting on this meter failed and the job holds for the answer:
+    /// Skip, Retry or Cancel ([`reprisefs::progress::Decision`]).
+    pub job: Option<std::sync::Arc<reprisefs::progress::Meter>>,
 }
+
+/// The buttons of the box a failed item raises, in [`Explorer::ask_failed`]'s order.
+pub(crate) const FAILED_BUTTONS: [&str; 3] = ["&Skip", "&Retry", "Cancel"];
 
 impl Confirm {
     pub(crate) fn buttons(&self) -> Vec<String> {
         let labels: &[&str] = match &self.too_big {
             _ if self.script.is_some() => &reprisefs::program::ASK_BUTTONS,
+            _ if self.job.is_some() => &FAILED_BUTTONS,
             Some(q) if q.many() => &["&Yes", "Yes to &All", "&No", "Cancel"],
             _ => &["&Yes", "&No"],
         };
@@ -197,7 +204,8 @@ impl Explorer {
         if matches!(
             self.dialog,
             Some(Dialog::Replace(_) | Dialog::Message { .. })
-        ) {
+        ) || self.holds_a_job()
+        {
             self.messages_waiting.push_back((title.to_string(), text));
             return Reply::none();
         }
@@ -289,8 +297,79 @@ impl Explorer {
             too_big: None,
             undo_erase: false,
             script: None,
+            job: None,
         }));
         Reply::redraw_all()
+    }
+
+    /// Whether the box up is [`Explorer::ask_failed`]'s, which a job waits on.
+    pub(crate) fn holds_a_job(&self) -> bool {
+        matches!(&self.dialog, Some(Dialog::Confirm(c)) if c.job.is_some())
+    }
+
+    /// Ask what the job counting on `meter`, held on a failed item, does next: Skip goes on with
+    /// the rest, Retry runs the item again, Cancel ends the job. While another box is up it
+    /// waits for it (`failed_waiting`).
+    pub(crate) fn ask_failed(
+        &mut self,
+        meter: std::sync::Arc<reprisefs::progress::Meter>,
+        title: &'static str,
+        text: String,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        if self.closing {
+            meter.decide(reprisefs::progress::Decision::Abort);
+            return Reply::none();
+        }
+        if self.dialog.is_some() {
+            self.failed_waiting.push_back((meter, title, text));
+            return Reply::none();
+        }
+        if self.error_icon.is_none() {
+            self.error_icon = crate::chrome_icon(ctx, &["dialog-error", "dialog-warning"], 32);
+        }
+        self.dialog = Some(Dialog::Confirm(Confirm {
+            title,
+            text,
+            min_text_h: None,
+            template: Template::MessageBox,
+            icon: self.error_icon.clone(),
+            paths: Vec::new(),
+            erase: false,
+            empty_bin: false,
+            bin: None,
+            focus: None,
+            too_big: None,
+            undo_erase: false,
+            script: None,
+            job: Some(meter),
+        }));
+        Reply::redraw_all()
+    }
+
+    /// The answer to [`Explorer::ask_failed`], by the button `out` pressed.
+    fn failed_answered(&mut self, out: form::Event, ctx: &mut Ctx) -> Reply {
+        use reprisefs::progress::Decision;
+        let decision = match out {
+            form::Event::Default => Decision::Skip,
+            form::Event::Cancel => Decision::Abort,
+            form::Event::Pressed(id) => match dlgtemplate::BUTTON_IDS.iter().position(|&b| b == id)
+            {
+                Some(0) => Decision::Skip,
+                Some(1) => Decision::Retry,
+                Some(_) => Decision::Abort,
+                None => return Reply::redraw(),
+            },
+            form::Event::None => return Reply::none(),
+            _ => return Reply::redraw(),
+        };
+        if let Some(Dialog::Confirm(Confirm { job: Some(m), .. })) = self.dialog.take() {
+            m.decide(decision);
+        }
+        Reply {
+            redraw_all: true,
+            ..self.show_waiting(ctx)
+        }
     }
 
     /// Ask whether to run the script at `path` (as `open` says) or open it in Notepad.
@@ -300,6 +379,9 @@ impl Explorer {
         open: reprisefs::program::ScriptOpen,
         ctx: &mut Ctx,
     ) -> Reply {
+        if self.holds_a_job() {
+            return Reply::none();
+        }
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         self.dialog = Some(Dialog::Confirm(Confirm {
             title: reprisefs::program::ASK_TITLE,
@@ -315,6 +397,7 @@ impl Explorer {
             too_big: None,
             undo_erase: false,
             script: Some(open),
+            job: None,
         }));
         Reply::redraw_all()
     }
@@ -750,6 +833,11 @@ impl Explorer {
             return self.script_answered(out, ctx);
         }
         if let Dialog::Confirm(c) = d
+            && c.job.is_some()
+        {
+            return self.failed_answered(out, ctx);
+        }
+        if let Dialog::Confirm(c) = d
             && c.too_big.is_some()
         {
             return match c.too_big_answer(&out) {
@@ -896,7 +984,9 @@ impl Explorer {
     /// batch's prompt first, then the error boxes, one at a time.
     pub(crate) fn show_waiting(&mut self, ctx: &mut Ctx) -> Reply {
         while self.dialog.is_none() && self.asking.is_none() {
-            if let Some((pending, asker)) = self.replace_waiting.pop_front() {
+            if let Some((meter, title, text)) = self.failed_waiting.pop_front() {
+                self.ask_failed(meter, title, text, ctx);
+            } else if let Some((pending, asker)) = self.replace_waiting.pop_front() {
                 self.ask_replace(pending, asker, ctx);
             } else if let Some((title, text)) = self.messages_waiting.pop_front() {
                 self.message_box(&title, text, ctx);

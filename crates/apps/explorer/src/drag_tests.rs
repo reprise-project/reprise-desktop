@@ -414,17 +414,15 @@ fn dropping_a_folder_into_its_own_subtree_is_refused() {
 
     ex.finish_puts(&mut ctx);
 
-    match ex.dialog.as_ref().expect("the error box is up") {
-        crate::dialogs::Dialog::Message { title, text } => {
-            assert_eq!(title, "Error Moving File or Folder");
-            assert_eq!(
-                text,
-                "Cannot move Box: The destination folder is a subfolder of \
-                 the source folder."
-            );
-        }
-        _ => panic!("the refusal raises a message box"),
-    }
+    let (title, text) = ex
+        .answer_failed(reprisefs::progress::Decision::Abort, &mut ctx)
+        .expect("the refusal raises the failure box");
+    assert_eq!(title, "Error Moving File or Folder");
+    assert_eq!(
+        text,
+        "Cannot move Box: The destination folder is a subfolder of the source folder."
+    );
+    assert!(ex.dialog.is_none(), "Cancel ends the job");
     assert!(box_.is_dir() && !inner.join("Box").exists());
 }
 

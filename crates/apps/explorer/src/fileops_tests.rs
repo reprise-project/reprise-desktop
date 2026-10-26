@@ -817,10 +817,10 @@ fn the_bin_acts_only_on_the_item_it_listed() {
     ex.finish_puts(&mut ctx);
     assert!(listed.files.exists(), "the new item stays");
     assert!(
-        matches!(ex.dialog, Some(Dialog::Message { .. })),
-        "an error box says why"
+        ex.answer_failed(reprisefs::progress::Decision::Abort, &mut ctx)
+            .is_some(),
+        "the failure box says why"
     );
-    ex.dialog = None;
 
     assert!(ex.props.is_none(), "the sheet went with its item");
     let stale = crate::fileops::BinItem {
@@ -830,7 +830,10 @@ fn the_bin_acts_only_on_the_item_it_listed() {
     ex.restore_items(vec![stale], &mut ctx);
     ex.finish_puts(&mut ctx);
     assert!(listed.files.exists() && !two.join("a.txt").exists());
-    assert!(matches!(ex.dialog, Some(Dialog::Message { .. })));
+    assert!(
+        ex.answer_failed(reprisefs::progress::Decision::Abort, &mut ctx)
+            .is_some()
+    );
 }
 
 /// Resizing a column or sorting in the Recycle Bin leaves the folder columns and sort settings alone; a folder still saves both.
@@ -1106,17 +1109,14 @@ fn pasting_a_folder_into_itself_is_refused_with_an_error_box() {
     );
     ex.finish_puts(&mut ctx);
 
-    match ex.dialog.as_ref().expect("the error box is up") {
-        crate::dialogs::Dialog::Message { title, text } => {
-            assert_eq!(title, "Error Copying File or Folder");
-            assert_eq!(
-                text,
-                "Cannot copy Reports: The destination folder is a subfolder of \
-                 the source folder."
-            );
-        }
-        _ => panic!("the refusal raises a message box"),
-    }
+    let (title, text) = ex
+        .answer_failed(reprisefs::progress::Decision::Abort, &mut ctx)
+        .expect("the refusal raises the failure box");
+    assert_eq!(title, "Error Copying File or Folder");
+    assert_eq!(
+        text,
+        "Cannot copy Reports: The destination folder is a subfolder of the source folder."
+    );
     assert_eq!(
         std::fs::read_dir(&reports).expect("read").count(),
         1,
@@ -1124,8 +1124,8 @@ fn pasting_a_folder_into_itself_is_refused_with_an_error_box() {
     );
 }
 
-/// A cut of two files pasted where the second is gone: the first moves, the second fails with an error
-/// box, and the one undo holds only the move that happened.
+/// A cut of two files pasted where the second is gone: the first moves, the second fails with the
+/// Skip / Retry / Cancel box, and the one undo holds only the move that happened.
 #[test]
 fn a_paste_whose_second_file_fails_keeps_the_first_and_names_the_second() {
     let home = tempfile::tempdir().expect("a temp dir");
@@ -1148,17 +1148,45 @@ fn a_paste_whose_second_file_fails_keeps_the_first_and_names_the_second() {
     ex.finish_puts(&mut ctx);
 
     assert!(dir.join("a.txt").is_file() && !from.join("a.txt").exists());
-    match ex.dialog.as_ref().expect("the error box is up") {
-        Dialog::Message { title, text } => {
-            assert_eq!(title, "Error Moving File or Folder");
-            assert!(text.starts_with("Cannot move gone.txt: "), "{text}");
-        }
-        _ => panic!("the failure raises a message box"),
-    }
+    let (title, text) = ex
+        .answer_failed(reprisefs::progress::Decision::Abort, &mut ctx)
+        .expect("the failure raises the failure box");
+    assert_eq!(title, "Error Moving File or Folder");
+    assert!(text.starts_with("Cannot move gone.txt: "), "{text}");
     assert_eq!(ex.undo, Some("Move"));
     ex.run(Command::Undo, &mut ctx);
     assert!(from.join("a.txt").is_file(), "the one move is undone");
     assert_eq!(ex.undo, None, "and that was the whole batch");
+}
+
+/// A paste whose first file is gone holds on the failure box: Skip goes on and the second lands.
+#[test]
+fn skipping_a_failed_file_pastes_the_rest() {
+    let home = tempfile::tempdir().expect("a temp dir");
+    let (from, dir) = (home.path().join("from"), home.path().join("to"));
+    std::fs::create_dir_all(&from).expect("mkdir");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(from.join("b.txt"), "b").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.clone()), &mut ctx);
+
+    ex.run(Command::Paste, &mut ctx);
+    ex.pasted(
+        FileClip {
+            cut: false,
+            paths: vec![from.join("gone.txt"), from.join("b.txt")],
+        },
+        &mut ctx,
+    );
+    ex.finish_puts(&mut ctx);
+
+    assert!(!dir.join("b.txt").exists(), "the job holds on the failure");
+    let (_, text) = ex
+        .answer_failed(reprisefs::progress::Decision::Skip, &mut ctx)
+        .expect("the failure box is up");
+    assert!(text.starts_with("Cannot copy gone.txt: "), "{text}");
+    assert!(dir.join("b.txt").is_file(), "Skip goes on to the next file");
+    assert!(ex.dialog.is_none(), "and no error box follows");
 }
 
 #[test]
