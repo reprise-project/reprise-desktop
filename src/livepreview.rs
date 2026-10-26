@@ -39,7 +39,7 @@ use smithay::{
     backend::renderer::{
         Renderer,
         element::{Element, Id, Kind, RenderElement, UnderlyingStorage, utils::CropRenderElement},
-        gles::{GlesRenderer, GlesTexture},
+        gles::{GlesRenderer, GlesTexture, ffi},
         utils::{CommitCounter, DamageSet, OpaqueRegions, with_renderer_surface_state},
     },
     output::Output,
@@ -73,6 +73,8 @@ pub struct LivePreviews {
     timer: Option<RegistrationToken>,
     /// When the marked thumbs were last drawn.
     drawn: Option<Instant>,
+    /// The widest and tallest a sheet's texture grows, read from the renderer once.
+    sheet_cap: Option<i32>,
 }
 
 /// One live picture: where it shows and the texture behind.
@@ -87,25 +89,27 @@ struct Thumb {
     mode: (i32, i32, i32, i32),
     /// The window committed since the last draw.
     marked: bool,
-    /// The shared texture the picture is a cell of, and the cell's
-    /// top-left there (None until laid out). `target` stays None.
+    /// The shared texture the picture is a cell of, and the cell's page
+    /// and top-left there (None until laid out). `target` stays None.
     sheet: Option<u64>,
-    cell: Option<Point<i32, Physical>>,
+    cell: Option<(usize, Point<i32, Physical>)>,
 }
 
-/// One texture shared by well thumbs made together: one render, one GPU
-/// submit, draws them all.
+/// Textures shared by well thumbs made together: one render per page, one
+/// GPU submit, draws them all.
 struct Sheet {
     id: u64,
-    /// None until the first draw or after one failed.
-    target: Option<Target>,
+    /// Empty until the first draw or after one failed.
+    pages: Vec<Target>,
 }
 
 /// Device pixels left clear between two cells of a sheet, so a filtered
 /// draw of one cell never samples its neighbour.
 const SHEET_GAP: i32 = 2;
-/// The widest a sheet grows before its cells start a new row.
-const SHEET_WIDTH: i32 = 4096;
+/// The widest a sheet page grows before its cells start a new row, and the
+/// tallest before they start a new page, unless the renderer's
+/// `GL_MAX_TEXTURE_SIZE` is smaller.
+const SHEET_MAX: i32 = 4096;
 
 /// What a thumb pictures and where the picture goes.
 enum Show {
@@ -179,7 +183,7 @@ impl State {
         self.live_previews.next += 1;
         self.live_previews.sheets.push(Sheet {
             id: sheet,
-            target: None,
+            pages: Vec::new(),
         });
         let mut seen = Vec::new();
         let ids: Vec<Option<ThumbId>> = wants
@@ -375,6 +379,9 @@ impl State {
         if crate::gpufence::ready(renderer).is_err() {
             return;
         }
+        let cap = *live_previews
+            .sheet_cap
+            .get_or_insert_with(|| sheet_cap(renderer));
         // No glass in a whole-window picture: it would blur the
         // transparency it is drawn over. The next screen frame begins its
         // own pass.
@@ -401,7 +408,14 @@ impl State {
                 .map(|(i, shot)| (*i, shot))
                 .collect();
             if !cells.is_empty() {
-                drew |= draw_sheet(renderer, scene, sheet, &mut live_previews.thumbs, &cells);
+                drew |= draw_sheet(
+                    renderer,
+                    scene,
+                    sheet,
+                    &mut live_previews.thumbs,
+                    &cells,
+                    cap,
+                );
             }
         }
         for (i, shot) in jobs {
@@ -577,8 +591,8 @@ fn fit_shot(t: &Thumb, shot: &Shot) -> Option<Fit> {
     })
 }
 
-/// Render the `cells` (thumb index, shot) of `sheet` into its texture in
-/// one pass and show each cell in its thumb's buffer. A new size of any
+/// Render the `cells` (thumb index, shot) of `sheet` into its pages, one
+/// pass each, and show each cell in its thumb's buffer. A new size of any
 /// cell lays the sheet out again. True when what shows changed.
 fn draw_sheet(
     renderer: &mut GlesRenderer,
@@ -586,28 +600,34 @@ fn draw_sheet(
     sheet: &mut Sheet,
     thumbs: &mut [Thumb],
     cells: &[(usize, &Shot)],
+    cap: i32,
 ) -> bool {
     let fits: Vec<Option<Fit>> = cells
         .iter()
         .map(|(i, shot)| fit_shot(&thumbs[*i], shot))
         .collect();
-    let fresh = sheet.target.is_none()
+    let fresh = sheet.pages.is_empty()
         || cells.iter().zip(&fits).any(|((i, _), f)| {
             f.is_some_and(|f| f.mode != thumbs[*i].mode || thumbs[*i].cell.is_none())
         });
     if fresh {
         let sizes: Vec<(i32, i32)> = fits.iter().map(|f| f.map_or((0, 0), |f| f.size)).collect();
-        let (at, size) = pack(&sizes);
-        sheet.target = match Target::new(renderer, size.into(), 1.0) {
-            Ok(target) => Some(target),
+        let (at, pages) = pack(&sizes, cap);
+        let made: Result<Vec<Target>, _> = (pages.iter())
+            .map(|&size| Target::new(renderer, size.into(), 1.0))
+            .collect();
+        sheet.pages = match made {
+            Ok(made) => made,
             Err(e) => {
-                log::warn!("live preview: could not size the sheet to {size:?}: {e}");
-                None
+                log::warn!("live preview: could not size the sheet to {pages:?}: {e}");
+                Vec::new()
             }
         };
-        for (((i, _), f), at) in cells.iter().zip(&fits).zip(at) {
+        for (((i, _), f), (page, at)) in cells.iter().zip(&fits).zip(at) {
             let t = &mut thumbs[*i];
-            t.cell = f.map(|_| at.into());
+            t.cell = f
+                .filter(|_| !sheet.pages.is_empty())
+                .map(|_| (page, at.into()));
             let (Some(f), Show::Well { buffer, .. }) = (f, &t.show) else {
                 continue;
             };
@@ -618,14 +638,36 @@ fn draw_sheet(
             }
         }
     }
-    let Some(target) = sheet.target.as_mut() else {
-        return false;
-    };
-    let mut elements = Vec::new();
-    for ((i, shot), f) in cells.iter().zip(&fits) {
-        let (Some(f), Some(cell)) = (f, thumbs[*i].cell) else {
+    let mut changed = false;
+    for (page, target) in sheet.pages.iter_mut().enumerate() {
+        let on_page: Vec<(usize, &Shot, Fit, Point<i32, Physical>)> = cells
+            .iter()
+            .zip(&fits)
+            .filter_map(|((i, shot), f)| match (f, thumbs[*i].cell) {
+                (Some(f), Some((p, cell))) if p == page => Some((*i, *shot, *f, cell)),
+                _ => None,
+            })
+            .collect();
+        if on_page.is_empty() {
             continue;
-        };
+        }
+        changed |= draw_page(renderer, scene, target, thumbs, &on_page, fresh);
+    }
+    changed
+}
+
+/// Render the cells (thumb index, shot, fit, top-left) of one sheet page into
+/// `target` and show each in its thumb's buffer. True when what shows changed.
+fn draw_page(
+    renderer: &mut GlesRenderer,
+    scene: &mut crate::compositor::DeskScene,
+    target: &mut Target,
+    thumbs: &[Thumb],
+    cells: &[(usize, &Shot, Fit, Point<i32, Physical>)],
+    fresh: bool,
+) -> bool {
+    let mut elements = Vec::new();
+    for &(_, shot, f, cell) in cells {
         let Some((origin, _)) = scene.coords(shot.tree) else {
             continue;
         };
@@ -654,9 +696,8 @@ fn draw_sheet(
         }
     };
     let mut changed = false;
-    for ((i, _), f) in cells.iter().zip(&fits) {
-        let t = &thumbs[*i];
-        let (Some(f), Some(cell), Show::Well { buffer, .. }) = (f, t.cell, &t.show) else {
+    for &(i, _, f, cell) in cells {
+        let Show::Well { buffer, .. } = &thumbs[i].show else {
             continue;
         };
         let rect = Rectangle::<i32, Buffer>::new((cell.x, cell.y).into(), f.size.into());
@@ -675,28 +716,52 @@ fn draw_sheet(
     changed
 }
 
-/// The top-left of a cell for each picture of `sizes` (device pixels) on
-/// one sheet, in rows left to right, and the sheet's size. An empty size
-/// takes no room.
-fn pack(sizes: &[(i32, i32)]) -> (Vec<(i32, i32)>, (i32, i32)) {
-    let (mut x, mut y, mut row, mut width) = (0, 0, 0, 1);
+/// The largest sheet page side: `SHEET_MAX`, or the renderer's texture limit when smaller.
+fn sheet_cap(renderer: &mut GlesRenderer) -> i32 {
+    let max = renderer.with_context(|gl| {
+        let mut max = 0;
+        // SAFETY: the context is current and `max` outlives the call.
+        unsafe { gl.GetIntegerv(ffi::MAX_TEXTURE_SIZE, &mut max) };
+        max
+    });
+    match max {
+        Ok(max) if max > 0 => max.min(SHEET_MAX),
+        _ => SHEET_MAX,
+    }
+}
+
+/// A cell's page and top-left on it.
+type Cell = (usize, (i32, i32));
+
+/// The page and top-left of a cell for each picture of `sizes` (device
+/// pixels), in rows left to right on pages no wider or taller than `cap`, and
+/// each page's size. An empty size takes no room.
+fn pack(sizes: &[(i32, i32)], cap: i32) -> (Vec<Cell>, Vec<(i32, i32)>) {
+    let mut pages = vec![(1, 1)];
+    let (mut x, mut y, mut row) = (0, 0, 0);
     let at = sizes
         .iter()
         .map(|&(w, h)| {
             if w <= 0 || h <= 0 {
-                return (0, 0);
+                return (0, (0, 0));
             }
-            if x > 0 && x + w > SHEET_WIDTH {
+            if x > 0 && x + w > cap {
                 (x, y, row) = (0, y + row + SHEET_GAP, 0);
             }
+            if y > 0 && y + h > cap {
+                (x, y, row) = (0, 0, 0);
+                pages.push((1, 1));
+            }
+            let page = pages.len() - 1;
             let at = (x, y);
-            width = width.max(x + w);
             row = row.max(h);
+            let size = &mut pages[page];
+            *size = (size.0.max(x + w), size.1.max(y + row));
             x += w + SHEET_GAP;
-            at
+            (page, at)
         })
         .collect();
-    (at, (width, (y + row).max(1)))
+    (at, pages)
 }
 
 /// An element drawn at its own `scale` and moved by `offset`, at whatever
@@ -804,14 +869,46 @@ mod tests {
 
     #[test]
     fn cells_of_a_sheet_lie_apart_in_rows_no_wider_than_the_sheet() {
-        let (at, size) = pack(&[(2000, 100), (2000, 150), (0, 0), (2000, 80), (50, 50)]);
+        let sizes = [(2000, 100), (2000, 150), (0, 0), (2000, 80), (50, 50)];
+        let (at, pages) = pack(&sizes, SHEET_MAX);
         assert_eq!(
             at,
-            vec![(0, 0), (2002, 0), (0, 0), (0, 152), (2002, 152)],
+            vec![
+                (0, (0, 0)),
+                (0, (2002, 0)),
+                (0, (0, 0)),
+                (0, (0, 152)),
+                (0, (2002, 152))
+            ],
             "two 2000 wide per row, 2 apart; the empty one takes no room"
         );
-        assert_eq!(size, (4002, 232));
-        assert_eq!(pack(&[]).1, (1, 1), "an empty sheet is still a texture");
+        assert_eq!(pages, vec![(4002, 232)]);
+        assert_eq!(
+            pack(&[], SHEET_MAX).1,
+            vec![(1, 1)],
+            "an empty sheet is still a texture"
+        );
+    }
+
+    #[test]
+    fn a_sheet_taller_than_its_cap_goes_on_to_another_page() {
+        for (cell, cap) in [((180, 135), 1024), ((360, 270), SHEET_MAX)] {
+            let (at, pages) = pack(&[cell; 200], cap);
+            assert!(
+                pages.len() > 1,
+                "200 {cell:?} cells overflow one {cap} page"
+            );
+            for &(w, h) in &pages {
+                assert!(w <= cap && h <= cap, "page {w}x{h} within {cap}");
+            }
+            for &(page, (x, y)) in &at {
+                let (w, h) = pages[page];
+                assert!(
+                    x + cell.0 <= w && y + cell.1 <= h,
+                    "cell at ({x}, {y}) on its page"
+                );
+            }
+        }
     }
 
     #[test]
