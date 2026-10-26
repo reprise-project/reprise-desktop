@@ -17,6 +17,15 @@ use wayland_client::{
 };
 use zeroize::Zeroize;
 
+thread_local! {
+    static CAPS_LOCK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether Caps Lock is on, as the compositor last said. A change redraws every window.
+pub fn caps_lock() -> bool {
+    CAPS_LOCK.with(|c| c.get())
+}
+
 impl Host {
     fn key_input(&self, event: &KeyEvent) -> KeyInput {
         let sym = event.keysym.raw();
@@ -395,6 +404,11 @@ impl KeyboardHandler for Host {
         _: RawModifiers,
         _: u32,
     ) {
+        if CAPS_LOCK.with(|c| c.replace(modifiers.caps_lock)) != modifiers.caps_lock {
+            for s in self.slots.iter_mut() {
+                s.dirty = true;
+            }
+        }
         self.mods = modifiers;
     }
 }
