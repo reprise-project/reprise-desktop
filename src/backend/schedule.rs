@@ -1,9 +1,6 @@
 use smithay::{
     output::Output,
-    reexports::{
-        calloop::timer::{TimeoutAction, Timer},
-        drm::control::crtc,
-    },
+    reexports::calloop::timer::{TimeoutAction, Timer},
     utils::{Logical, Point, Rectangle},
 };
 
@@ -11,7 +8,7 @@ use crate::compositor::State;
 use crate::glass::{Drawn, Under};
 
 use super::render::render;
-use super::{crtc_of, surface_mut};
+use super::{Head, head_of, surface_mut};
 
 pub fn schedule(state: &mut State, output: &Output) {
     state.toplevels.dirty = true;
@@ -71,10 +68,10 @@ pub fn take_asks() -> Vec<(String, Ask)> {
 fn request(state: &mut State, output: &Output, ask: Ask) {
     #[cfg(test)]
     ASKED.with_borrow_mut(|a| a.push((output.name(), ask)));
-    let Some(crtc) = crtc_of(output) else {
+    let Some(head) = head_of(output) else {
         return;
     };
-    let Some(s) = surface_mut(state, crtc) else {
+    let Some(s) = surface_mut(state, head) else {
         return;
     };
     if !s.needs_redraw {
@@ -93,7 +90,7 @@ fn request(state: &mut State, output: &Output, ask: Ask) {
     s.catch_up = asked.catch_up;
     s.scene_changed = asked.scene;
     s.backdrop_changed = asked.backdrop;
-    queue_render(state, crtc);
+    queue_render(state, head);
 }
 
 /// Whether a pointer ask needs a render on the output at `geo`: `pointer` is on it or its last
@@ -108,10 +105,10 @@ pub(super) fn pointer_ask_renders(
     shows || zooms || geo.is_some_and(|g| g.to_f64().contains(pointer))
 }
 
-/// Render `crtc` from an idle callback, unless one is armed or a frame is in flight. A frame
+/// Render `head` from an idle callback, unless one is armed or a frame is in flight. A frame
 /// asked from an idle callback renders on the next turn (`State::insert_idle_woken`).
-pub(super) fn queue_render(state: &mut State, crtc: crtc::Handle) {
-    let Some(s) = surface_mut(state, crtc) else {
+pub(super) fn queue_render(state: &mut State, head: Head) {
+    let Some(s) = surface_mut(state, head) else {
         return;
     };
     if !s.track.idle() || s.idle_scheduled {
@@ -119,10 +116,10 @@ pub(super) fn queue_render(state: &mut State, crtc: crtc::Handle) {
     }
     s.idle_scheduled = true;
     state.insert_idle_woken(move |state| {
-        if let Some(s) = surface_mut(state, crtc) {
+        if let Some(s) = surface_mut(state, head) {
             s.idle_scheduled = false;
         }
-        render(state, crtc);
+        render(state, head);
     });
 }
 
@@ -130,10 +127,10 @@ pub(super) fn queue_render(state: &mut State, crtc: crtc::Handle) {
 /// (`framepace::ask_at`). A wait already armed stands. Glass re-blurs the moving water at
 /// `[glass] blur_rate`, like a program's content.
 pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant) {
-    let Some(crtc) = crtc_of(output) else {
+    let Some(head) = head_of(output) else {
         return;
     };
-    let Some(s) = surface_mut(state, crtc) else {
+    let Some(s) = surface_mut(state, head) else {
         return;
     };
     if s.step_timer.is_some() {
@@ -149,7 +146,7 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
     let token = state
         .handle
         .insert_source(Timer::from_duration(wait), move |_, _, state| {
-            let output = surface_mut(state, crtc).map(|s| {
+            let output = surface_mut(state, head).map(|s| {
                 s.step_timer = None;
                 s.output.clone()
             });
@@ -160,7 +157,7 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
         });
     match token {
         Ok(t) => {
-            if let Some(s) = surface_mut(state, crtc) {
+            if let Some(s) = surface_mut(state, head) {
                 s.step_timer = Some(t);
             }
         }
@@ -177,8 +174,8 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
 pub fn schedule_pointer(state: &mut State, pointer: Point<f64, Logical>) {
     let outputs: Vec<Output> = state.scene.outputs().to_vec();
     for o in &outputs {
-        let wanted = crtc_of(o)
-            .and_then(|crtc| state.backend.as_ref()?.surfaces.get(&crtc))
+        let wanted = head_of(o)
+            .and_then(|head| state.backend.as_ref()?.surfaces.get(&head))
             .is_some_and(|s| {
                 pointer_ask_renders(
                     reprisescene::output_rect(o),
@@ -200,8 +197,8 @@ pub fn schedule_pointer(state: &mut State, pointer: Point<f64, Logical>) {
 pub fn cursor_outputs(state: &State) -> Vec<Output> {
     let backend = state.backend.as_ref();
     let shown = |o: &Output| {
-        crtc_of(o)
-            .and_then(|crtc| backend?.surfaces.get(&crtc))
+        head_of(o)
+            .and_then(|head| backend?.surfaces.get(&head))
             .is_some_and(|s| s.pointer_shown)
     };
     let outputs = state.scene.outputs().iter();

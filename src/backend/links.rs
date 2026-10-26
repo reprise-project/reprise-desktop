@@ -1,14 +1,11 @@
-use smithay::{
-    backend::drm::DrmDevice,
-    reexports::drm::control::{connector, crtc},
-};
+use smithay::{backend::drm::DrmDevice, reexports::drm::control::connector};
 
 use crate::{compositor::State, config::OutputMode, output::ModeInfo};
 
 use super::outputs::mode_infos;
 use super::render::send_job;
 use super::steps::gated;
-use super::{CrtcNow, Work, commit, set_mode, surface_mut};
+use super::{CrtcNow, Head, Work, commit, set_mode, surface_mut};
 
 /// DRM_MODE_LINK_STATUS_GOOD and _BAD.
 pub(super) const LINK_GOOD: u64 = 0;
@@ -81,11 +78,13 @@ pub(super) fn check_links(state: &mut State) {
         return;
     };
     gated(b, "link-status read");
-    let dev = &b.drm;
     let mut due = Vec::new();
     let mut switch = Vec::new();
-    for (&crtc, s) in b.surfaces.iter_mut() {
-        let status = link_status(dev, s.connector.handle()).map(|(_, v)| v);
+    for (&head, s) in b.surfaces.iter_mut() {
+        let Some(d) = b.devices.of(head) else {
+            continue;
+        };
+        let status = link_status(&d.drm, s.connector.handle()).map(|(_, v)| v);
         log::debug!("{}: link-status {status:?}", s.output.name());
         match link_step(status == Some(LINK_BAD), s.hw.link_tries) {
             LinkStep::Good => {
@@ -95,7 +94,7 @@ pub(super) fn check_links(state: &mut State) {
             LinkStep::Retrain => {
                 log::warn!("{}: link-status BAD; retraining", s.output.name());
                 s.hw.retrain = true;
-                let fresh = b.scanner.connectors().get(&s.connector.handle());
+                let fresh = d.scanner.connectors().get(&s.connector.handle());
                 let want = state.config.mode_for_output_name(&s.output.name());
                 let mode = fresh.zip(s.output.current_mode()).and_then(|(info, m)| {
                     let current = ModeInfo {
@@ -109,9 +108,9 @@ pub(super) fn check_links(state: &mut State) {
                 match (fresh, mode) {
                     (Some(info), Some(i)) => {
                         s.connector = info.clone();
-                        switch.push((crtc, s.output.clone(), i));
+                        switch.push((head, s.output.clone(), i));
                     }
-                    _ => due.push(crtc),
+                    _ => due.push(head),
                 }
             }
             LinkStep::GiveUp => {
@@ -125,34 +124,36 @@ pub(super) fn check_links(state: &mut State) {
             LinkStep::GaveUp => s.hw.retrain = false,
         }
     }
-    for (crtc, output, i) in switch {
+    for (head, output, i) in switch {
         log::warn!(
             "{}: its mode is gone from the connector; taking another",
             output.name()
         );
         if !set_mode(state, &output, i) {
-            due.push(crtc);
+            due.push(head);
             continue;
         }
-        if let Some(s) = surface_mut(state, crtc) {
+        if let Some(s) = surface_mut(state, head) {
             s.hw.unlit = true;
         }
         state.update_layout();
     }
-    for crtc in due {
-        retrain_link(state, crtc);
+    for head in due {
+        retrain_link(state, head);
     }
 }
 
 /// Set a BAD link-status GOOD once the CRTC is ready: a blocking modeset with the current mode.
-pub(super) fn retrain_link(state: &mut State, crtc: crtc::Handle) {
+pub(super) fn retrain_link(state: &mut State, head: Head) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
     let active = b.settled();
     let quiet = b.quiet();
-    let dev = &b.drm;
-    let Some(s) = b.surfaces.get_mut(&crtc) else {
+    let Some(d) = b.devices.of(head) else {
+        return;
+    };
+    let Some(s) = b.surfaces.get_mut(&head) else {
         return;
     };
     // Reading link-status takes every modeset lock: it waits for quiet (`on_quiet`).
@@ -161,7 +162,7 @@ pub(super) fn retrain_link(state: &mut State, crtc: crtc::Handle) {
     }
     s.hw.retrain = false;
     let conn = s.connector.handle();
-    let Some((prop, LINK_BAD)) = link_status(dev, conn) else {
+    let Some((prop, LINK_BAD)) = link_status(&d.drm, conn) else {
         return;
     };
     s.hw.link_tries += 1;

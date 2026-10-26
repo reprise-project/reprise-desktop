@@ -8,7 +8,7 @@ use crate::compositor::State;
 
 use super::render::send_job;
 use super::steps::watch;
-use super::{CrtcNow, OutputCrtc, Surface, Work, commit, surface_of};
+use super::{CrtcNow, Head, OutputHead, Surface, Work, commit, surface_of};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Lut {
@@ -157,9 +157,9 @@ fn lut_bytes(ramp: &[u16], size: usize) -> Vec<u8> {
 }
 
 pub fn gamma_size(state: &State, output: &Output) -> Option<usize> {
-    let crtc = output.user_data().get::<OutputCrtc>()?.0;
+    let head = output.user_data().get::<OutputHead>()?.0;
     let b = state.backend.as_ref()?;
-    let s = b.surfaces.get(&crtc)?;
+    let s = b.surfaces.get(&head)?;
     s.hw.gamma.map(|g| g.size() as usize)
 }
 
@@ -167,11 +167,11 @@ pub fn gamma_size(state: &State, output: &Output) -> Option<usize> {
 /// False when the output has no gamma table; a ramp the kernel refuses later goes to
 /// `nightlight::gamma_failed`.
 pub fn set_gamma(state: &mut State, output: &Output, ramp: Option<&[u16]>) -> bool {
-    let Some((b, crtc)) = surface_of(state, output) else {
+    let Some((b, head)) = surface_of(state, output) else {
         return false;
     };
     let active = b.settled();
-    let Some(s) = b.surfaces.get_mut(&crtc) else {
+    let Some(s) = b.surfaces.get_mut(&head) else {
         return false;
     };
     let Some(g) = s.hw.gamma else {
@@ -201,12 +201,12 @@ pub fn set_gamma(state: &mut State, output: &Output, ramp: Option<&[u16]>) -> bo
 }
 
 /// Put a ramp that waited on the CRTC if it can take it now (`gamma_step`).
-pub(super) fn flush_gamma(state: &mut State, crtc: crtc::Handle) {
+pub(super) fn flush_gamma(state: &mut State, head: Head) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
     let active = b.settled();
-    let Some(s) = b.surfaces.get_mut(&crtc) else {
+    let Some(s) = b.surfaces.get_mut(&head) else {
         return;
     };
     let Some(wanted) = s.hw.wanted_lut.take() else {

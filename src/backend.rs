@@ -9,6 +9,7 @@
 //! commit thread (`commit`) runs its KMS commits and drops its compositor.
 
 mod commit;
+mod devices;
 mod gamma;
 mod inputfds;
 mod links;
@@ -71,6 +72,7 @@ use smithay_drm_extras::drm_scanner::DrmScanner;
 
 use crate::compositor::State;
 
+use devices::{DeviceSet, Head, pick_gpu};
 use gamma::{Gamma, Lut, write_gamma};
 pub use gamma::{gamma_size, set_gamma};
 use links::LINK_GOOD;
@@ -106,43 +108,48 @@ pub struct Backend {
     input_back: Option<RegistrationToken>,
     pub renderer: GlesRenderer,
     pub render_node: DrmNode,
-    drm: DrmDevice,
-    allocator: Allocator,
-    exporter: Exporter,
-    gbm: GbmDevice<DrmDeviceFd>,
+    devices: DeviceSet<Device>,
     render_formats: Vec<DrmFormat>,
-    replies: Sender<(crtc::Handle, commit::Reply<Out>)>,
-    /// The DRM device's event source, removed once the device is gone (`drm_error`).
-    drm_events: Option<RegistrationToken>,
-    /// The device is gone: nothing renders while the session ends.
-    dead: bool,
+    replies: Sender<(Head, commit::Reply<Out>)>,
     /// Disabled outputs whose threads still hold their compositors.
-    retiring: HashMap<crtc::Handle, std::thread::JoinHandle<()>>,
-    /// CRTCs refused while retiring or not quiet, enabled again once quiet (`on_quiet`).
-    reenable: std::collections::HashSet<crtc::Handle>,
+    retiring: HashMap<Head, std::thread::JoinHandle<()>>,
+    /// Heads refused while retiring or not quiet, enabled again once quiet (`on_quiet`).
+    reenable: std::collections::HashSet<Head>,
     /// `REPRISE_COMMIT_DELAY` as the session started.
     delay: Option<String>,
-    /// The session came back: reset the device once no commit is out (`reset_device`).
-    back: reset::Return,
-    /// The `commit-device` thread, which runs the reset's commit.
-    device: DeviceThread,
-    /// A hotplug uevent asked for a connector scan, run once quiet; one that came while the
-    /// session was away runs on its return.
-    rescan: bool,
-    /// The scan under way: its connectors are probed one per loop turn (`on_quiet`).
-    probe: Option<Probe>,
     /// Runs the next step of the deferred work (`on_quiet`).
     step: Option<RegistrationToken>,
     /// The config before a reload whose output changes wait for quiet.
     config_from: Option<Box<crate::config::Config>>,
     /// Checks for stalled outputs while any has a job or flip out (`watch`).
     watch: Option<RegistrationToken>,
-    scanner: DrmScanner,
-    surfaces: HashMap<crtc::Handle, Surface>,
-    parked: HashMap<crtc::Handle, Parked>,
+    surfaces: HashMap<Head, Surface>,
+    parked: HashMap<Head, Parked>,
     pub dmabuf: Option<(DmabufState, DmabufGlobal)>,
     pub shm_textures: crate::shmtex::ShmTextures,
     pub uploads: crate::dmaupload::Uploads,
+}
+
+/// One open GPU: its KMS device, buffers, connector scan and the thread that resets it.
+struct Device {
+    drm: DrmDevice,
+    allocator: Allocator,
+    exporter: Exporter,
+    gbm: GbmDevice<DrmDeviceFd>,
+    scanner: DrmScanner,
+    /// The DRM device's event source, removed once the device is gone (`drm_error`).
+    events: Option<RegistrationToken>,
+    /// The device is gone: nothing renders on it.
+    dead: bool,
+    /// The session came back: reset the device once no commit is out (`reset_device`).
+    back: reset::Return,
+    /// The `commit-device` thread, which runs the reset's commit.
+    reset: DeviceThread,
+    /// A hotplug uevent asked for a connector scan, run once quiet; one that came while the
+    /// session was away runs on its return.
+    rescan: bool,
+    /// The scan under way: its connectors are probed one per loop turn (`on_quiet`).
+    probe: Option<Probe>,
 }
 
 struct Surface {
@@ -301,10 +308,10 @@ struct Parked {
     vrr_capable: bool,
 }
 
-struct OutputCrtc(crtc::Handle);
+struct OutputHead(Head);
 
-fn crtc_of(output: &Output) -> Option<crtc::Handle> {
-    output.user_data().get::<OutputCrtc>().map(|c| c.0)
+fn head_of(output: &Output) -> Option<Head> {
+    output.user_data().get::<OutputHead>().map(|h| h.0)
 }
 
 pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -424,37 +431,40 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
             .insert_source(drm_notifier, move |event, meta, state| match event {
                 DrmEvent::VBlank(crtc) => {
                     errors.set(0);
-                    vblank(state, crtc, meta.as_ref());
+                    vblank(state, Head { node, crtc }, meta.as_ref());
                 }
                 DrmEvent::Error(e) => {
-                    let token = state.backend.as_ref().and_then(|b| b.drm_events);
+                    let token = state
+                        .backend
+                        .as_ref()
+                        .and_then(|b| b.devices.primary().events);
                     drm_error(state, &errors, token, &e);
                 }
             })?;
-    let (replies, done) = channel::<(crtc::Handle, commit::Reply<Out>)>();
+    let (replies, done) = channel::<(Head, commit::Reply<Out>)>();
     state
         .handle
         .insert_source(done, |event, _, state| match event {
-            ChannelEvent::Msg((crtc, commit::Reply::Done(done))) => committed(state, crtc, done),
-            ChannelEvent::Msg((crtc, commit::Reply::Exited)) => retired(state, crtc),
+            ChannelEvent::Msg((head, commit::Reply::Done(done))) => committed(state, head, done),
+            ChannelEvent::Msg((head, commit::Reply::Exited)) => retired(state, head),
             ChannelEvent::Closed => {}
         })
         .map_err(|e| e.error)?;
-    let (device_replies, device_done) = channel::<((), commit::Reply<Vec<crtc::Handle>>)>();
+    let (device_replies, device_done) = channel::<(DrmNode, commit::Reply<Vec<crtc::Handle>>)>();
     state
         .handle
         .insert_source(device_done, |event, _, state| {
-            if let ChannelEvent::Msg(((), commit::Reply::Done(done))) = event {
-                device_reset_done(state, done);
+            if let ChannelEvent::Msg((node, commit::Reply::Done(done))) = event {
+                device_reset_done(state, node, done);
             }
         })
         .map_err(|e| e.error)?;
-    let device = reset::Device {
+    let reset = reset::Device {
         fd: drm.device_fd().clone(),
         atomic: drm.is_atomic(),
     };
-    let device = DeviceThread {
-        thread: commit::Thread::spawn("device", (), device, None, device_replies)?,
+    let reset = DeviceThread {
+        thread: commit::Thread::spawn("device", node, reset, None, device_replies)?,
         track: commit::Track::default(),
     };
     let udev = MonitorBuilder::new()?.match_subsystem("drm")?.listen()?;
@@ -463,15 +473,18 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         move |_, udev, state| {
             for event in udev.iter() {
                 match event.event_type() {
-                    EventType::Change
-                        if event.devnum() == Some(node.dev_id())
-                            && asks_scan(event.property_value("HOTPLUG")) =>
-                    {
-                        if let Some(b) = state.backend.as_mut() {
-                            b.rescan = true;
-                            if !b.quiet() {
-                                log::info!("display busy: the connector scan waits for it");
-                            }
+                    EventType::Change if asks_scan(event.property_value("HOTPLUG")) => {
+                        let Some(b) = state.backend.as_mut() else {
+                            continue;
+                        };
+                        let Some(node) = event.devnum().and_then(|n| b.devices.by_devnum(n)) else {
+                            continue;
+                        };
+                        if let Some(d) = b.devices.get_mut(node) {
+                            d.rescan = true;
+                        }
+                        if !b.quiet() {
+                            log::info!("display busy: the connector scan waits for it");
                         }
                         on_quiet(state);
                     }
@@ -500,32 +513,37 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         input_back: None,
         renderer,
         render_node,
-        drm,
-        allocator,
-        exporter,
-        gbm,
+        devices: DeviceSet::new(
+            node,
+            Device {
+                drm,
+                allocator,
+                exporter,
+                gbm,
+                scanner: DrmScanner::new(),
+                events: Some(drm_events),
+                dead: false,
+                back: reset::Return::default(),
+                reset,
+                rescan: false,
+                probe: None,
+            },
+        ),
         render_formats,
         replies,
-        drm_events: Some(drm_events),
-        dead: false,
         retiring: HashMap::new(),
         reenable: Default::default(),
         delay: std::env::var(commit::Delay::VAR).ok(),
-        back: reset::Return::default(),
-        device,
-        rescan: false,
-        probe: None,
         step: None,
         config_from: None,
         watch: None,
-        scanner: DrmScanner::new(),
         surfaces: HashMap::new(),
         parked: HashMap::new(),
         dmabuf: Some((dmabuf_state, dmabuf_global)),
         shm_textures,
         uploads,
     });
-    scan_connectors(state, &HashMap::new());
+    scan_connectors(state, node, &HashMap::new());
     if state.scene.outputs().is_empty() {
         log::warn!("no connected output on {}", path.display());
     }
@@ -539,14 +557,6 @@ fn card_node(path: &std::path::Path) -> Option<DrmNode> {
         .inspect_err(|e| log::warn!("[display] gpu = {:?}: {e}", path.display()))
         .ok()?;
     node.node_with_type(NodeType::Primary)?.ok()
-}
-
-/// The GPU to drive: `wanted` when the seat has it, else the seat's primary, else its first.
-fn pick_gpu<T: Copy + PartialEq>(wanted: Option<T>, primary: Option<T>, seat: &[T]) -> Option<T> {
-    wanted
-        .filter(|w| seat.contains(w))
-        .or(primary)
-        .or_else(|| seat.first().copied())
 }
 
 /// Read errors in a row on the DRM fd after which the device counts as gone: its fd stays
@@ -575,8 +585,9 @@ fn drm_error(
         state.handle.remove(token);
     }
     if let Some(b) = state.backend.as_mut() {
-        b.drm_events = None;
-        b.dead = true;
+        let d = b.devices.primary_mut();
+        d.events = None;
+        d.dead = true;
     }
     crate::sessionfade::out(state, Box::new(|state| state.signal.stop()));
 }
@@ -597,7 +608,9 @@ impl Drop for Backend {
             drop(compositor);
             threads.extend(thread.exit());
         }
-        threads.extend(self.device.thread.exit());
+        for (_, d) in self.devices.iter_mut() {
+            threads.extend(d.reset.thread.exit());
+        }
         let left = commit::join_until(threads, EXIT_WAIT);
         if left > 0 {
             log::warn!("{left} output(s) still in a commit at exit; leaving them to the kernel");
@@ -670,16 +683,13 @@ fn is_master(dev: &impl std::os::fd::AsFd) -> bool {
     r == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EACCES)
 }
 
-/// The driven output on `crtc`, while the backend runs.
-fn surface_mut(state: &mut State, crtc: crtc::Handle) -> Option<&mut Surface> {
-    state.backend.as_mut()?.surfaces.get_mut(&crtc)
+/// The driven output on `head`, while the backend runs.
+fn surface_mut(state: &mut State, head: Head) -> Option<&mut Surface> {
+    state.backend.as_mut()?.surfaces.get_mut(&head)
 }
 
-fn surface_of<'a>(
-    state: &'a mut State,
-    output: &Output,
-) -> Option<(&'a mut Backend, crtc::Handle)> {
-    let crtc = crtc_of(output)?;
+fn surface_of<'a>(state: &'a mut State, output: &Output) -> Option<(&'a mut Backend, Head)> {
+    let head = head_of(output)?;
     let b = state.backend.as_mut()?;
-    b.surfaces.contains_key(&crtc).then_some((b, crtc))
+    b.surfaces.contains_key(&head).then_some((b, head))
 }
