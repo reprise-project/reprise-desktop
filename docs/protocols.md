@@ -29,7 +29,8 @@ don't see the privileged protocols: layer-shell, session lock,
 foreign-toplevel, workspaces, output management, gamma, screen capture,
 data control, virtual input and input methods. A Flatpak you trust can be
 given the clipboard protocols with `[clipboard] trusted_apps`; see
-[flatpak-clipboard.md](flatpak-clipboard.md).
+[flatpak-clipboard.md](flatpak-clipboard.md). [security.md](security.md)
+says what each privileged protocol lets a program do.
 
 A virtual keyboard's keys go where the keyboard's would: they fire key
 binds, open and drive menus and dialogs, and a screen saver Preview takes
