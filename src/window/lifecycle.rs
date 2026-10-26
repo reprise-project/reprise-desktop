@@ -20,7 +20,7 @@ use crate::raster::Rect;
 use crate::windowrules::{Position, Want, WindowState};
 
 use super::{
-    DialogTag, Kind, Window, WindowId, anchor_done, anchored_position, cascade_from,
+    DialogTag, Kind, LastFrame, Window, WindowId, anchor_done, anchored_position, cascade_from,
     cascade_position, centre_on, fit_size, keep_inside,
 };
 
@@ -91,6 +91,7 @@ impl State {
             saved: None,
             saved_fullscreen: None,
             snapped: None,
+            last_frame: None,
             resize_anchor: None,
             size_serial: None,
             pressed: None,
@@ -251,6 +252,7 @@ impl State {
         };
         win.mapped = true;
         win.desktop = current;
+        let last = win.last_frame.take();
         // A client can gain an owner between first configure and map.
         let placeable = win.placeable();
         let mut want = win.placement.take().filter(|_| placeable);
@@ -296,7 +298,12 @@ impl State {
         let m = self.config.theme.metrics.clone();
         // The wanted frame size, so a window that maps maximized keeps it to restore to.
         let mut size = None;
-        let kept = self.file_dialog_position(w);
+        // A remap goes back where the window was unless a rule places it.
+        let remap = last.filter(|_| !matches!(position, Some(Position::At(..))));
+        if let Some(l) = remap {
+            size = Some((l.normal.width, l.normal.height));
+        }
+        let kept = (self.file_dialog_position(w)).or(remap.map(|l| (l.normal.x, l.normal.y)));
         let (mut x, mut y) = match (owner, position, kept) {
             (_, _, Some(at)) => at,
             (Some(p), _, None) => {
@@ -353,6 +360,7 @@ impl State {
         // An X11 client that placed itself away from the origin keeps that place unless a rule
         // places it.
         if position.is_none()
+            && remap.is_none()
             && let Some(at) = x11_at
             && let Some(win) = self.win(w)
         {
@@ -445,7 +453,11 @@ impl State {
         let (asked_maximized, asked_fullscreen) = asked.unwrap_or_default();
         let state = want.as_ref().and_then(|x| x.state);
         // Maximize before fullscreen, which would refuse it, so leaving fullscreen lands maximized.
-        if state.map_or(asked_maximized, |s| s == WindowState::Maximized) {
+        let (was_maximized, was_fullscreen) =
+            last.map_or((false, false), |l| (l.maximized, l.fullscreen));
+        if state.map_or(asked_maximized || was_maximized, |s| {
+            s == WindowState::Maximized
+        }) {
             self.set_maximized(w, true);
             if let Some(win) = self.win_mut(w)
                 && win.maximized
@@ -454,7 +466,9 @@ impl State {
                 win.saved = Some(Rect::new(x, y, s.0, s.1));
             }
         }
-        if state.map_or(asked_fullscreen, |s| s == WindowState::Fullscreen) {
+        if state.map_or(asked_fullscreen || was_fullscreen, |s| {
+            s == WindowState::Fullscreen
+        }) {
             self.set_fullscreen(w, true);
             if let Some(win) = self.win_mut(w)
                 && !win.maximized
@@ -559,6 +573,13 @@ impl State {
         // Before anything hides it: its still is taken as it shows.
         self.window_closing(w);
         let was_focused = self.focused == Some(w);
+        if let Some(win) = self.win_mut(w) {
+            win.last_frame = Some(LastFrame {
+                normal: win.normal_frame(),
+                maximized: win.maximized,
+                fullscreen: win.fullscreen,
+            });
+        }
         self.remember_window(w, true);
         self.remember_file_dialog(w);
         self.forget_window(w);
