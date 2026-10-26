@@ -22,6 +22,8 @@ use zeroize::{Zeroize, Zeroizing};
 pub const INCORRECT: &str = "The password is incorrect. Please retry.";
 /// Shown when the password could not be checked at all (the helper did not start, died or hung).
 pub const UNAVAILABLE: &str = "The password could not be checked. Please retry.";
+/// Shown on the message area's first line while Caps Lock is on.
+pub const CAPS_LOCK: &str = "Caps Lock is on.";
 /// Shown when the fingerprint conversation ended with PAM_MAXTRIES: too
 /// many fingers did not match.
 pub const FINGER_TOO_MANY: &str = "Too many fingerprint attempts. Type your password to unlock.";
@@ -57,7 +59,7 @@ pub enum LockButton {
 /// helper is busy. `prompt` is a further PAM prompt (a one-time code) the
 /// field answers in place of the password. `finger` is the fingerprint
 /// conversation's standing prompt (its last PAM info text) while it runs,
-/// shown when there is no message.
+/// shown when there is no message. `caps_lock` mirrors the keyboard's.
 #[derive(Default)]
 pub struct LockState {
     pub input: String,
@@ -65,6 +67,7 @@ pub struct LockState {
     pub verifying: bool,
     pub prompt: Option<Prompt>,
     pub finger: Option<String>,
+    pub caps_lock: bool,
 }
 
 /// A PAM prompt after the password: its text labels the field, and `echo`
@@ -88,6 +91,7 @@ impl std::fmt::Debug for LockState {
             .field("verifying", &self.verifying)
             .field("prompt", &self.prompt)
             .field("finger", &self.finger)
+            .field("caps_lock", &self.caps_lock)
             .finish()
     }
 }
@@ -818,18 +822,26 @@ fn draw_body(
             .or(prompt.map(|p| p.text.as_str()))
             .or(state.finger.as_deref())
     };
+    let mut lines = Vec::new();
+    if state.caps_lock {
+        lines.push(
+            text.ellipsize(CAPS_LOCK, l.message.width, false, px)
+                .into_owned(),
+        );
+    }
     if let Some(msg) = msg {
-        let lines = message_lines(text, msg, l.message.width, px);
-        for (i, line) in lines.iter().enumerate() {
-            let line_h = at(LINE_H);
-            let r = Rect::new(
-                l.message.x,
-                l.message.y + i as i32 * line_h,
-                l.message.width,
-                line_h,
-            );
-            text.draw(c, r, line, false, cs.button_text, Align::Left, px);
-        }
+        let room = MESSAGE_LINES - lines.len();
+        lines.extend(message_lines(text, msg, l.message.width, px, room));
+    }
+    for (i, line) in lines.iter().enumerate() {
+        let line_h = at(LINE_H);
+        let r = Rect::new(
+            l.message.x,
+            l.message.y + i as i32 * line_h,
+            l.message.width,
+            line_h,
+        );
+        text.draw(c, r, line, false, cs.button_text, Align::Left, px);
     }
 
     for (r, caption) in [(l.ok, "OK"), (l.cancel, "Cancel")] {
@@ -848,13 +860,15 @@ fn draw_body(
     }
 }
 
-/// `msg` wrapped to `width`, cut to `MESSAGE_LINES`, with "..." closing
-/// the last line when text was cut and on any line still too wide.
-fn message_lines(text: &TextRenderer, msg: &str, width: i32, px: u32) -> Vec<String> {
+/// `msg` wrapped to `width`, cut to `room` lines, with "..." closing the
+/// last line when text was cut and on any line still too wide.
+fn message_lines(text: &TextRenderer, msg: &str, width: i32, px: u32, room: usize) -> Vec<String> {
     let mut lines = crate::text::wrap(text, msg, width, px);
-    if lines.len() > MESSAGE_LINES {
-        lines.truncate(MESSAGE_LINES);
-        let last = &mut lines[MESSAGE_LINES - 1];
+    if lines.len() > room {
+        lines.truncate(room);
+        let Some(last) = lines.last_mut() else {
+            return lines;
+        };
         while text.measure(&format!("{last}..."), false, px) > width && last.pop().is_some() {}
         last.truncate(last.trim_end().len());
         last.push_str("...");
@@ -1266,10 +1280,10 @@ mod tests {
     fn a_long_message_is_cut_to_two_lines_that_fit_the_area() {
         let text = TextRenderer::load(&FontConfig::default());
         let w = dialog_layout(&Theme::default()).message.width;
-        let one = message_lines(&text, INCORRECT, w, 11);
+        let one = message_lines(&text, INCORRECT, w, 11, MESSAGE_LINES);
         assert_eq!(one, [INCORRECT]);
         let long = format!("{}\n{}", "word ".repeat(40), "y".repeat(NOTICE_CHARS));
-        let lines = message_lines(&text, &long, w, 11);
+        let lines = message_lines(&text, &long, w, 11, MESSAGE_LINES);
         assert_eq!(lines.len(), MESSAGE_LINES);
         assert!(lines[1].ends_with("..."), "{lines:?}");
         assert!(
@@ -1365,6 +1379,59 @@ mod tests {
         s.fail_with(INCORRECT);
         assert_eq!(s.prompt, None, "a verdict ends the prompt");
     }
+
+    fn fnv(c: &Canvas) -> u64 {
+        [c.width, c.height].iter().chain(c.pixels.iter()).fold(
+            0xcbf2_9ce4_8422_2325_u64,
+            |h, &p| {
+                p.to_le_bytes().iter().fold(h, |h, &b| {
+                    (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+                })
+            },
+        )
+    }
+
+    /// Caps Lock puts its notice on the message area's first line, under
+    /// the field, and leaves one line to the message.
+    #[test]
+    fn caps_lock_shows_a_notice_under_the_field() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let l = dialog_layout(&theme);
+        let bg = theme.colors.button_face.argb();
+        let line_h = LINE_H;
+        let first = Rect::new(l.message.x, l.message.y, l.message.width, line_h);
+        let second = Rect::new(l.message.x, l.message.y + line_h, l.message.width, line_h);
+        let mut s = LockState::new();
+        s.caps_lock = true;
+        let c = draw_dialog(&theme, &text, None, "someone", &s);
+        assert!(has_ink(&c, first, bg) && !has_ink(&c, second, bg));
+        s.fail_with(&format!("{}\n{}", "word ".repeat(40), "more"));
+        let c = draw_dialog(&theme, &text, None, "someone", &s);
+        assert!(has_ink(&c, second, bg), "the message keeps the second line");
+        let lines = message_lines(&text, s.message.as_deref().unwrap(), l.message.width, 11, 1);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].ends_with("..."), "{lines:?}");
+    }
+
+    #[test]
+    fn caps_lock_dialog_pins_at_scale_1_and_2() {
+        let got = CAPS_PINS.map(|(scale, _)| {
+            let theme = Theme::default().scaled(scale);
+            let text = TextRenderer::load(&theme.fonts);
+            let mut s = LockState::new();
+            s.caps_lock = true;
+            s.key(LockKey::Text("abc"));
+            (scale, fnv(&draw_dialog(&theme, &text, None, "someone", &s)))
+        });
+        assert!(
+            got == CAPS_PINS,
+            "pins changed; now:\n{}",
+            got.map(|(s, h)| format!("({s}, {h:#018x}),")).join("\n")
+        );
+    }
+
+    const CAPS_PINS: [(i32, u64); 2] = [(1, 0x57f830b0b53ffdfc), (2, 0x68c13bf424ad086b)];
 
     fn blue() -> Theme {
         reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue)
@@ -1492,8 +1559,11 @@ mod tests {
             let mut failed = LockState::new();
             failed.key(LockKey::Text("secret"));
             failed.fail_with(INCORRECT);
+            let mut caps = LockState::new();
+            caps.caps_lock = true;
+            caps.fail_with(INCORRECT);
             let empty = LockState::new();
-            let canvases: Vec<Canvas> = [(1, &empty), (1, &failed), (2, &empty)]
+            let canvases: Vec<Canvas> = [(1, &empty), (1, &failed), (1, &caps), (2, &empty)]
                 .into_iter()
                 .map(|(scale, state)| {
                     let t = theme.scaled(scale);

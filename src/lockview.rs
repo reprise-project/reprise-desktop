@@ -694,9 +694,20 @@ pub fn refit(state: &mut State) {
     state.redraw_all();
 }
 
+fn caps_lock(state: &State) -> bool {
+    state
+        .seat
+        .get_keyboard()
+        .is_some_and(|k| k.modifier_state().caps_lock)
+}
+
 pub fn redraw(state: &mut State) {
-    let outputs: Vec<Output> = match state.lock.active.as_ref() {
-        Some(l) => l.outputs.iter().map(|lo| lo.output.clone()).collect(),
+    let caps = caps_lock(state);
+    let outputs: Vec<Output> = match state.lock.active.as_mut() {
+        Some(l) => {
+            l.state.caps_lock = caps;
+            l.outputs.iter().map(|lo| lo.output.clone()).collect()
+        }
         None => return,
     };
     for o in &outputs {
@@ -864,6 +875,15 @@ pub fn key(state: &mut State, pressed: bool, handle: &KeysymHandle<'_>) -> bool 
         }
     }
     let shown = state.lock.active.as_ref().is_some_and(Lock::dialog_shown);
+    if shown
+        && state
+            .lock
+            .active
+            .as_ref()
+            .is_some_and(|l| l.state.caps_lock != caps_lock(state))
+    {
+        redraw(state);
+    }
     if !pressed || !shown {
         return false;
     }
@@ -1083,6 +1103,21 @@ mod tests {
             h.state.lock.active.as_ref().unwrap().state.prompt.is_some(),
             "the next password starts a new conversation"
         );
+    }
+
+    #[test]
+    fn caps_lock_shows_its_notice_while_on() {
+        const KEY_CAPSLOCK: u32 = 58;
+        let mut h = locked(|_| sh("exit 0"));
+        let caps =
+            |h: &crate::harness::Harness| h.state.lock.active.as_ref().unwrap().state.caps_lock;
+        assert!(!caps(&h));
+        h.key(KEY_CAPSLOCK, true);
+        h.key(KEY_CAPSLOCK, false);
+        assert!(caps(&h), "the dialog redraws with the notice");
+        h.key(KEY_CAPSLOCK, true);
+        h.key(KEY_CAPSLOCK, false);
+        assert!(!caps(&h));
     }
 
     #[test]
