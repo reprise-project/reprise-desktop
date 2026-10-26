@@ -385,6 +385,16 @@ impl Harness {
     /// A flyout as `repriseapp` opens one: an overlay layer surface over the whole output that
     /// holds the keyboard outright, configured and mapped with its first buffer.
     pub fn map_flyout(&mut self, c: &mut TestClient) -> WlSurface {
+        self.map_exclusive_layer(c, zwlr_layer_shell_v1::Layer::Overlay)
+    }
+
+    /// A full-output surface on `layer` asking for the keyboard outright, configured and
+    /// mapped with its first buffer.
+    pub fn map_exclusive_layer(
+        &mut self,
+        c: &mut TestClient,
+        layer: zwlr_layer_shell_v1::Layer,
+    ) -> WlSurface {
         let qh = c.qh();
         let surface = (c.side.compositor.as_ref())
             .expect("wl_compositor")
@@ -394,7 +404,7 @@ impl Harness {
             .get_layer_surface(
                 &surface,
                 None,
-                zwlr_layer_shell_v1::Layer::Overlay,
+                layer,
                 "test.flyout".into(),
                 &qh,
                 surface.clone(),
