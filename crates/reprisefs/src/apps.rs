@@ -565,80 +565,6 @@ pub fn program_entry_in(
     ))
 }
 
-/// The xattr marking a `.desktop` file as one the user allowed to run.
-/// Extraction does not restore `user.` xattrs by default, so an archive can
-/// set a launcher's execute bit but not this.
-const TRUST_XATTR: &std::ffi::CStr = c"user.reprise.trusted";
-const TRUST_VALUE: &[u8] = b"true";
-
-pub fn is_trusted(path: &Path) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-    let Ok(c) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
-        return false;
-    };
-    let mut buf = [0u8; TRUST_VALUE.len()];
-    // SAFETY: `c` and the attribute name are NUL-terminated and `buf` is
-    // writable for its length, all live across the call.
-    let n = unsafe {
-        libc::getxattr(
-            c.as_ptr(),
-            TRUST_XATTR.as_ptr(),
-            buf.as_mut_ptr().cast(),
-            buf.len(),
-        )
-    };
-    n == TRUST_VALUE.len() as isize && buf == TRUST_VALUE
-}
-
-pub fn set_trusted(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::ffi::OsStrExt;
-    let c = std::ffi::CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path holds a NUL"))?;
-    // SAFETY: `c` and the name are NUL-terminated and the value is
-    // readable for its length, all live across the call.
-    let rc = unsafe {
-        libc::setxattr(
-            c.as_ptr(),
-            TRUST_XATTR.as_ptr(),
-            TRUST_VALUE.as_ptr().cast(),
-            TRUST_VALUE.len(),
-            0,
-        )
-    };
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
-}
-
-pub fn allow_launching(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = std::fs::metadata(path)?.permissions().mode();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode | 0o111))?;
-    set_trusted(path)
-}
-
-pub(crate) fn set_trusted_fd(file: &std::fs::File) -> std::io::Result<()> {
-    use std::os::fd::AsRawFd;
-    // SAFETY: the fd is open for the call, the name is NUL-terminated and
-    // the value is readable for its length.
-    let rc = unsafe {
-        libc::fsetxattr(
-            file.as_raw_fd(),
-            TRUST_XATTR.as_ptr(),
-            TRUST_VALUE.as_ptr().cast(),
-            TRUST_VALUE.len(),
-            0,
-        )
-    };
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
-}
-
 pub(crate) fn label_value(v: &str) -> String {
     escape_value(&v.replace(char::is_control, ""))
 }
@@ -1301,6 +1227,10 @@ pub fn entry_for_app_id<'a>(
         })
     })
 }
+
+mod trust;
+pub(crate) use trust::{TRUST_XATTR, set_trusted_fd, verifies};
+pub use trust::{allow_launching, is_trusted, set_trusted};
 
 #[cfg(test)]
 mod tests;
