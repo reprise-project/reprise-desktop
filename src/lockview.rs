@@ -322,6 +322,23 @@ pub fn lock(state: &mut State) {
     }
     engage(state);
     crate::sessionlock::start_locker(state);
+    start_dialog_finger(state);
+}
+
+/// Start the fingerprint conversation if the built-in dialog shows and none runs. Never under a locker,
+/// which may claim the reader through its own pam_fprintd, and fprintd lets one claim it.
+pub fn start_dialog_finger(state: &mut State) {
+    let Some(l) = state.lock.active.as_ref() else {
+        return;
+    };
+    if !l.dialog_shown() || l.finger.is_some() || l.user.is_empty() {
+        return;
+    }
+    let user = l.user.clone();
+    let finger = start_finger(state, &user);
+    if let Some(l) = state.lock.active.as_mut() {
+        l.finger = finger;
+    }
 }
 
 /// Engage the lock: cover every output, clear client focus, route input to the dialog. No-op when
@@ -374,17 +391,12 @@ pub fn engage(state: &mut State) {
         let uid = unsafe { libc::getuid() };
         log::error!("lock: no login name for uid {uid}; the password cannot be checked");
     }
-    let finger = if user.is_empty() {
-        None
-    } else {
-        start_finger(state, &user)
-    };
     state.lock.active = Some(Lock {
         state: LockState::new(),
         user,
         outputs: Vec::new(),
         pending: None,
-        finger,
+        finger: None,
         prev_focus,
         prev_focused_layer,
         prev_desktop,
@@ -1000,6 +1012,33 @@ mod tests {
             h.run_for(20);
         }
         assert!(start.elapsed() >= lockfinger::RELEASE_GRACE);
+    }
+
+    #[test]
+    fn only_the_dialog_runs_the_fingerprint_conversation() {
+        let mut h = locked(|_| sh("exit 0"));
+        let finger =
+            |h: &crate::harness::Harness| h.state.lock.active.as_ref().unwrap().finger.is_some();
+        assert!(!finger(&h));
+        unlock(&mut h.state);
+        h.state.lock.helpers.finger = |_| Some(sh("echo 'I ready'; exec sleep 60"));
+        let mut c = h.connect();
+        let (_lock, _surface) = h.map_lock_surface(&mut c);
+        assert!(h.state.is_locked());
+        assert!(!finger(&h), "a locker's lock starts none");
+        drop(c);
+        h.run_for(50);
+        assert!(h.state.lock.active.as_ref().unwrap().dialog_shown());
+        assert!(
+            finger(&h),
+            "the dialog that replaces a gone locker starts one"
+        );
+        unlock(&mut h.state);
+        lock(&mut h.state);
+        assert!(finger(&h), "the dialog's own lock starts one");
+        let mut c = h.connect();
+        let (_lock, _surface) = h.map_lock_surface(&mut c);
+        assert!(!finger(&h), "a locker taking over the dialog ends it");
     }
 
     #[test]
