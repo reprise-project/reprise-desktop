@@ -22,6 +22,7 @@ use smithay::{
 use crate::{
     compositor::State,
     config::Action,
+    heldkeys::{HeldKeys, Owner},
     input::Interaction,
     keyroute::{ChordState, GlobalBind, GlobalHit, KeyPress, KeyRoute, Modes},
     keys,
@@ -35,27 +36,14 @@ pub struct KeyInput {
     /// A Super key went down on its own and nothing else has been pressed
     /// since; releasing it now toggles the Start menu (the Super key tap).
     pub super_tap_armed: bool,
-    /// The keys (xkb keycodes) whose releases go to no client: those
-    /// pressed during a drag and still held after it (no client heard
-    /// their presses), and those held when a click closed the Alt+Tab
-    /// panel on the same client. A key leaves on its next release or
-    /// press.
-    pub drag_keys: Vec<u32>,
-    /// Keys whose press fired a global shortcut, by xkb keycode: their
-    /// release sends deactivated and reaches no client.
-    pub shortcut_keys: Vec<(u32, GlobalHit)>,
+    /// Where each held key's press went, so its release goes there too.
+    pub held: HeldKeys,
     /// Whether the last input was a keystroke rather than a click. A
     /// dialog opens with its focus rectangles showing only when it was.
     /// Pointer motion on its own does not count.
     pub last_key_input: bool,
     /// The modifier-only chords (`[[keybinds]]` on a modifier key).
     pub chord: ChordState,
-    /// Keys (xkb keycodes) whose press went to no client, so their
-    /// release goes to none either.
-    taken: Vec<u32>,
-    /// Keys (xkb keycodes) whose press went to the input method for
-    /// Reprise's own field, so their release goes there too.
-    ime_keys: Vec<u32>,
     /// StickyKeys and SlowKeys.
     pub aids: crate::keyfilter::KeyAids,
     /// MouseKeys: the keypad driving the pointer.
@@ -74,12 +62,9 @@ impl KeyInput {
     pub fn new(dh: &DisplayHandle) -> KeyInput {
         KeyInput {
             super_tap_armed: false,
-            drag_keys: Vec::new(),
-            shortcut_keys: Vec::new(),
+            held: HeldKeys::default(),
             last_key_input: false,
             chord: ChordState::default(),
-            taken: Vec::new(),
-            ime_keys: Vec::new(),
             aids: Default::default(),
             mouse_keys: Default::default(),
             layouts: Default::default(),
@@ -168,25 +153,23 @@ impl State {
         if k.pressed && self.edit_menu_key(&routed.route, &k.syms, k.mods) {
             routed.route = KeyRoute::Swallow;
         }
-        // The release of a key pressed during a drag: its press reached
-        // no client, so neither does the release.
-        if let Some(i) = self.key_input.drag_keys.iter().position(|&c| c == keycode) {
-            self.key_input.drag_keys.swap_remove(i);
-            if !k.pressed {
-                routed.route = KeyRoute::Swallow;
-            }
-        }
-        // The release of a key that fired a global shortcut: its program
-        // hears deactivated, whatever the modifiers are by now, and no
-        // client hears the key.
-        if !k.pressed {
-            let held: Vec<GlobalHit> = take_held(&mut self.key_input.shortcut_keys, keycode);
-            if !held.is_empty() {
-                for h in &held {
+        // A release goes where its press went. A held-back key's reaches
+        // no client; a global shortcut's program hears deactivated,
+        // whatever the modifiers are by now, and no client hears the key.
+        let released = if pressed {
+            None
+        } else {
+            self.key_input.held.release(keycode)
+        };
+        match &released {
+            Some(Owner::Drag) => routed.route = KeyRoute::Swallow,
+            Some(Owner::Global(hits)) => {
+                for h in hits {
                     self.global_shortcut(h, false, time.millis());
                 }
                 routed.route = KeyRoute::Swallow;
             }
+            _ => {}
         }
         let chord = self
             .key_input
@@ -229,31 +212,15 @@ impl State {
         // lock, `lockview::key` decides each key: a locker's own surface
         // takes it through the seat, else the lock dialog's field does.
         let forward = match routed.route {
-            KeyRoute::Client => {
-                let taken = self.key_input.taken.iter().position(|&c| c == keycode);
-                match (pressed, taken) {
-                    (true, Some(i)) => {
-                        self.key_input.taken.swap_remove(i);
-                        true
-                    }
-                    (false, Some(i)) => {
-                        self.key_input.taken.swap_remove(i);
-                        false
-                    }
-                    (_, None) => true,
-                }
-            }
+            KeyRoute::Client => pressed || released.is_none(),
             // An X11 program ends its own side of its drag on Escape.
             KeyRoute::DragCancel if self.x11_drag_running() => true,
-            _ => {
-                if pressed && !self.key_input.taken.contains(&keycode) {
-                    self.key_input.taken.push(keycode);
-                } else if !pressed {
-                    self.key_input.taken.retain(|&c| c != keycode);
-                }
-                false
-            }
+            _ => false,
         };
+        if pressed {
+            let owner = if forward { Owner::Client } else { Owner::Taken };
+            self.key_input.held.press(keycode, owner);
+        }
         let serial = SERIAL_COUNTER.next_serial();
         let state = if pressed {
             KeyState::Pressed
@@ -271,13 +238,11 @@ impl State {
                 && crate::imefield::field_route(&routed.route)
                 && self.ime_takes_field_keys();
             if to {
-                self.key_input.ime_keys.push(keycode);
+                self.key_input.held.press(keycode, Owner::Ime);
             }
             to
         } else {
-            let held = self.key_input.ime_keys.iter().position(|&c| c == keycode);
-            held.map(|i| self.key_input.ime_keys.swap_remove(i))
-                .is_some()
+            released == Some(Owner::Ime)
         };
         if to_ime {
             routed.route = KeyRoute::Swallow;
@@ -445,10 +410,10 @@ impl State {
                 }
             }
             KeyRoute::Global(hits) => {
-                for h in hits {
-                    self.global_shortcut(&h, true, time.millis());
-                    self.key_input.shortcut_keys.push((keycode, h));
+                for h in &hits {
+                    self.global_shortcut(h, true, time.millis());
                 }
+                self.key_input.held.press(keycode, Owner::Global(hits));
             }
             KeyRoute::Client => {
                 if pressed && let Some(w) = self.focused {
@@ -1090,13 +1055,6 @@ impl State {
     }
 }
 
-/// Take every global shortcut keycode `code` fired out of `held`.
-fn take_held(held: &mut Vec<(u32, GlobalHit)>, code: u32) -> Vec<GlobalHit> {
-    let (gone, kept) = std::mem::take(held).into_iter().partition(|h| h.0 == code);
-    *held = kept;
-    gone.into_iter().map(|h: (u32, GlobalHit)| h.1).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1164,18 +1122,6 @@ mod tests {
         assert!(size(Some(r)).is_keyboard());
         assert!(!size(None).is_keyboard());
         assert!(!Interaction::Idle.is_keyboard());
-    }
-
-    #[test]
-    fn a_release_takes_only_its_own_global_shortcuts() {
-        let hit = |id: &str| GlobalHit {
-            app: "talk".into(),
-            id: id.into(),
-        };
-        let mut held = vec![(40, hit("mute")), (41, hit("deafen")), (40, hit("ptt"))];
-        assert_eq!(take_held(&mut held, 40), vec![hit("mute"), hit("ptt")]);
-        assert_eq!(held, vec![(41, hit("deafen"))]);
-        assert!(take_held(&mut held, 40).is_empty());
     }
 
     const KEY_A: u32 = 30;
@@ -1253,10 +1199,7 @@ mod tests {
             h.state.win(t.id).is_some_and(|w| w.snapped.is_some()),
             "the bind snapped the window"
         );
-        assert!(
-            h.state.key_input.taken.is_empty(),
-            "every taken key came up"
-        );
+        assert!(h.state.key_input.held.is_empty(), "every taken key came up");
     }
 
     #[test]

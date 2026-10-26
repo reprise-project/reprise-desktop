@@ -45,6 +45,7 @@ mod gpufence;
 mod handlers;
 #[cfg(test)]
 mod harness;
+mod heldkeys;
 mod hoverfade;
 mod icon;
 mod iconedit;
