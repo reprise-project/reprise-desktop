@@ -19,7 +19,8 @@ impl Config {
         repriseconf::config_path()
     }
 
-    /// The whole file or an error: what a live reload and a config write check against.
+    /// The whole file or an error.
+    #[cfg(test)]
     pub fn parse(text: &str) -> Result<Config, String> {
         Config::from_file(toml::from_str(text).map_err(|e| e.to_string())?)
     }
@@ -133,13 +134,7 @@ impl Config {
                 for (key, e) in &dropped {
                     log::warn!("config {}: {key}: {e}; using its defaults", path.display());
                 }
-                let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
-                let notice = format!(
-                    "Reprise ignored {} in config.toml and used the defaults there. \
-                     `journalctl --user -t reprise` names the errors.",
-                    keys.join(", ")
-                );
-                (c, Some(notice))
+                (c, Some(dropped_notice(&dropped)))
             }
             Err(e) => {
                 log::error!("config {}: {e}; using defaults", path.display());
@@ -270,4 +265,14 @@ fn window_rule(f: FileWindowRule, at: &str) -> Result<WindowRule, String> {
         sticky: f.sticky,
         tab_group: f.tab_group,
     })
+}
+
+/// The notice naming the keys `Config::parse_lenient` left at their defaults.
+pub(crate) fn dropped_notice(dropped: &[(String, String)]) -> String {
+    let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
+    format!(
+        "Reprise ignored {} in config.toml and used the defaults there. \
+         `journalctl --user -t reprise` names the errors.",
+        keys.join(", ")
+    )
 }
