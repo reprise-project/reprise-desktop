@@ -1,4 +1,7 @@
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use smithay::{
     backend::session::Session,
@@ -9,7 +12,7 @@ use smithay::{
 use crate::compositor::State;
 
 use super::links::{check_links, retrain_link};
-use super::outputs::{Probe, scan_connectors};
+use super::outputs::{Probe, scan_connectors, set_mode};
 use super::render::{callbacks_after_a_frame, render_waiting};
 use super::session::reset_device;
 use super::{Backend, Flip, Head, commit, head_of, is_master};
@@ -90,24 +93,28 @@ pub fn stalled(state: &State, output: &Output) -> bool {
 }
 
 /// Deferred work, in the order it runs: the device reset before the scan reads connectors
-/// again, each connector's probe, the scan of what they read, outputs enabled again, then the
-/// reloaded config's output changes and the held output management applies.
+/// again, each connector's probe, the scan of what they read, outputs enabled again, modes a
+/// changed connector list asked for while the display was busy, then the reloaded config's
+/// output changes and the held output management applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Step {
     Reset,
     Probe,
     Scan,
     Reenable,
+    Mode,
     Config,
 }
 
 /// The next step. `rescan` asks for a new scan, which starts over at the first probe;
-/// `unprobed` counts the connectors left to probe while one is under way.
+/// `unprobed` counts the connectors left to probe while one is under way; `mode` says a
+/// `PendingMode` is due.
 pub(super) fn next_step(
     reset: bool,
     rescan: bool,
     unprobed: Option<usize>,
     reenable: bool,
+    mode: bool,
     config: bool,
 ) -> Option<Step> {
     match unprobed {
@@ -116,8 +123,56 @@ pub(super) fn next_step(
         Some(0) => Some(Step::Scan),
         Some(_) => Some(Step::Probe),
         None if reenable => Some(Step::Reenable),
+        None if mode => Some(Step::Mode),
         None if config => Some(Step::Config),
         None => None,
+    }
+}
+
+/// Tries of a `PendingMode` before the output keeps its unlisted mode.
+pub(super) const MODE_TRIES: u32 = 6;
+
+/// A mode `set_mode` refused, tried again by `Step::Mode` once modes settle. A refusal there
+/// backs the next try off like a failed modeset (`commit::backoff_after`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PendingMode<M> {
+    pub mode: M,
+    tries: u32,
+    at: Option<Instant>,
+}
+
+impl<M> PendingMode<M> {
+    pub fn new(mode: M) -> Self {
+        PendingMode {
+            mode,
+            tries: 0,
+            at: None,
+        }
+    }
+
+    /// The next try may go at `now`.
+    pub fn due(&self, now: Instant) -> bool {
+        self.at.is_none_or(|at| now >= at)
+    }
+
+    /// When a backed-off try may go, while it waits.
+    pub fn waits_until(&self, now: Instant) -> Option<Instant> {
+        self.at.filter(|&at| at > now)
+    }
+
+    /// The try at `now` was refused: the next one and its wait, or None after `MODE_TRIES`.
+    pub fn refused(self, now: Instant) -> Option<(Self, Duration)> {
+        let tries = self.tries + 1;
+        if tries >= MODE_TRIES {
+            return None;
+        }
+        let wait = commit::backoff_after(self.tries);
+        let next = PendingMode {
+            tries,
+            at: Some(now + wait),
+            ..self
+        };
+        Some((next, wait))
     }
 }
 
@@ -137,14 +192,31 @@ impl Backend {
             devices().any(|d| d.rescan),
             unprobed,
             self.reenable.iter().any(|c| !self.retiring.contains_key(c)),
+            self.mode_due(Instant::now()).is_some(),
             self.config_from.is_some() || outman,
         )?;
         match step {
-            Step::Config => self.modes_settle(),
+            Step::Mode | Step::Config => self.modes_settle(),
             Step::Reset => !self.surfaces.values().any(|s| s.track.busy()),
             _ => true,
         }
         .then_some(step)
+    }
+
+    /// An output whose `PendingMode` may be tried at `now`.
+    fn mode_due(&self, now: Instant) -> Option<crtc::Handle> {
+        self.surfaces
+            .iter()
+            .find(|(_, s)| s.pending_mode.is_some_and(|p| p.due(now)))
+            .map(|(c, _)| *c)
+    }
+
+    /// The soonest a backed-off `PendingMode` may be tried.
+    fn mode_waits_until(&self, now: Instant) -> Option<Instant> {
+        self.surfaces
+            .values()
+            .filter_map(|s| s.pending_mode?.waits_until(now))
+            .min()
     }
 }
 
@@ -156,8 +228,12 @@ pub(super) fn on_quiet(state: &mut State) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
-    if b.step.is_none() && b.step_due(outman).is_some() {
-        step_after(state, Timer::immediate());
+    if b.step.is_none() {
+        if b.step_due(outman).is_some() {
+            step_after(state, Timer::immediate());
+        } else if let Some(at) = b.mode_waits_until(Instant::now()) {
+            step_after(state, Timer::from_deadline(at));
+        }
     }
     let Some(b) = state.backend.as_mut() else {
         return;
@@ -266,6 +342,48 @@ fn quiet_step(state: &mut State) {
             b.reenable.remove(&head);
             if let Some(output) = b.parked.get(&head).map(|p| p.output.clone()) {
                 state.set_in_layout(&output, true);
+            }
+        }
+        Step::Mode => {
+            let now = Instant::now();
+            let Some(crtc) = b.mode_due(now) else {
+                return;
+            };
+            let Some(s) = b.surfaces.get_mut(&crtc) else {
+                return;
+            };
+            let Some(pending) = s.pending_mode.take() else {
+                return;
+            };
+            let output = s.output.clone();
+            let Some(i) = s.connector.modes().iter().position(|m| *m == pending.mode) else {
+                return;
+            };
+            if set_mode(state, &output, i) {
+                state.update_layout();
+                crate::outputmgmt::publish(state);
+                return;
+            }
+            let Some(s) = state
+                .backend
+                .as_mut()
+                .and_then(|b| b.surfaces.get_mut(&crtc))
+            else {
+                return;
+            };
+            match pending.refused(now) {
+                Some((next, wait)) => {
+                    log::warn!(
+                        "{}: mode change tried again in {} s",
+                        output.name(),
+                        wait.as_secs()
+                    );
+                    s.pending_mode = Some(next);
+                }
+                None => log::warn!(
+                    "{}: keeps a mode its connector no longer lists",
+                    output.name()
+                ),
             }
         }
         Step::Config => {

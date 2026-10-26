@@ -23,7 +23,7 @@ use crate::{compositor::State, output::ModeInfo};
 
 use super::gamma::{find_gamma, flush_gamma, read_lut};
 use super::render::send_job;
-use super::steps::{gated, watch};
+use super::steps::{PendingMode, gated, on_quiet, watch};
 use super::{
     Backend, COLOR_FORMATS, Compositor, Head, Hw, Kms, OutputHead, Parked, Scanout, Surface, Work,
     commit, head_of, lock, schedule, surface_of,
@@ -297,6 +297,7 @@ fn connector_changed(state: &mut State, connector: connector::Info, head: Head) 
             };
             super::links::link_mode(&modes, &current, want.as_ref())
         });
+        s.pending_mode = None;
         if let Some(i) = switch {
             log::warn!(
                 "{}: its mode is gone from the connector; taking another",
@@ -304,11 +305,17 @@ fn connector_changed(state: &mut State, connector: connector::Info, head: Head) 
             );
             if set_mode(state, &output, i) {
                 state.update_layout();
-            } else {
+            } else if let Some(s) = state
+                .backend
+                .as_mut()
+                .and_then(|b| b.surfaces.get_mut(&crtc))
+            {
                 log::warn!(
-                    "{}: keeps a mode its connector no longer lists",
+                    "{}: keeps a mode its connector no longer lists until the display is idle",
                     output.name()
                 );
+                s.pending_mode = Some(PendingMode::new(s.connector.modes()[i]));
+                on_quiet(state);
             }
         }
         crate::outputmgmt::publish(state);
@@ -522,6 +529,7 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
                 lut,
                 ..Hw::default()
             },
+            pending_mode: None,
         },
     );
     state.scene.add_output(output);
@@ -650,6 +658,7 @@ pub fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
     };
     let mode = WlMode::from(drm_mode);
     if output.current_mode() == Some(mode) {
+        s.pending_mode = None;
         return true;
     }
     if !quiet || s.track.busy() {
@@ -666,6 +675,7 @@ pub fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
         );
         return false;
     }
+    s.pending_mode = None;
     output.change_current_state(Some(mode), None, None, None);
     log::info!(
         "output {} now {}x{}@{:.3}",
