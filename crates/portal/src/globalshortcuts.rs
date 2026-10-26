@@ -142,7 +142,7 @@ impl GlobalShortcuts {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, Results)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         crate::check_session(&session_handle)?;
         // Bindings are kept per app id; a program without one has nowhere
         // to keep them.
@@ -219,7 +219,7 @@ impl GlobalShortcuts {
         _options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, Results)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         let key = session_handle.as_str();
         let Some((app, _)) = session_of(&self.sessions, key) else {
             return Ok((RESPONSE_OTHER, Results::new()));
@@ -298,7 +298,7 @@ impl GlobalShortcuts {
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
     ) -> zbus::fdo::Result<(u32, Results)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         match session_of(&self.sessions, session_handle.as_str()) {
             Some((app, ids)) if ids.is_empty() => Ok((
                 RESPONSE_OK,
@@ -316,7 +316,7 @@ impl GlobalShortcuts {
         _options: HashMap<String, Value<'_>>,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         match std::process::Command::new("reprise-settings")
             .args(["--page", "keyboard"])
             .spawn()

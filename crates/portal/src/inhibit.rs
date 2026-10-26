@@ -203,7 +203,7 @@ impl Inhibit {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<()> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         crate::check_handle(&handle, crate::REQUEST_PREFIX)?;
         let reason = match options.get("reason") {
             Some(Value::Str(s)) => clip(s.as_str()),
@@ -271,7 +271,7 @@ impl Inhibit {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<u32> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         crate::check_session(&session_handle)?;
         log::info!("Inhibit monitor {} for {app_id:?}", session_handle.as_str());
         self.shared

@@ -166,7 +166,7 @@ impl Notification {
         notification: HashMap<String, OwnedValue>,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<()> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         // An icon file may sit on a slow or hung mount, and a large picture
         // takes a while to decode: neither may hold up the bus thread.
         let (p, image) = blocking::unblock(move || {
@@ -212,7 +212,7 @@ impl Notification {
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         let Some(server_id) = self.book.lock().unwrap().take_key(&app_id, &id) else {
             return Ok(());
         };

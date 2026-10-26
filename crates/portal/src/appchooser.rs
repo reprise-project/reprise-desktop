@@ -61,7 +61,7 @@ impl AppChooser {
         options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         if choices.is_empty() {
             log::warn!("AppChooser for {app_id:?}: no choices");
             return Ok((crate::RESPONSE_OTHER, HashMap::new()));
@@ -89,7 +89,7 @@ impl AppChooser {
         choices: Vec<String>,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         let Some(tx) = self.live.lock().unwrap().get(handle.as_str()).cloned() else {
             log::info!("UpdateChoices for {handle}: no chooser up");
             return Ok(());

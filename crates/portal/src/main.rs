@@ -96,19 +96,50 @@ pub(crate) fn sender(hdr: &zbus::message::Header<'_>) -> String {
 
 /// The unique name that owns `FRONTEND`, kept current by `watch_frontends`.
 #[derive(Clone, Default)]
-pub(crate) struct Frontend(Arc<Mutex<Option<String>>>);
+pub(crate) struct Frontend {
+    owner: Arc<Mutex<Option<String>>>,
+    conn: Arc<std::sync::OnceLock<zbus::Connection>>,
+}
 
 impl Frontend {
     fn set(&self, owner: Option<String>) {
-        *lock(&self.0) = owner;
+        *lock(&self.owner) = owner;
     }
 
     /// AccessDenied unless the call came from xdg-desktop-portal: app ids,
     /// restore data and handles are taken on its word only.
-    pub(crate) fn check(&self, hdr: &zbus::message::Header<'_>) -> zbus::fdo::Result<()> {
-        let owner = lock(&self.0).clone();
-        check_owner(hdr, owner.as_deref())
+    pub(crate) async fn check(&self, hdr: &zbus::message::Header<'_>) -> zbus::fdo::Result<()> {
+        let cached = lock(&self.owner).clone();
+        let sender = hdr.sender().map(|s| s.as_str());
+        let conn = self.conn.get();
+        let (owner, verdict) = check_refreshing(sender, cached.clone(), || async {
+            match conn {
+                Some(c) => reprisebus::name_owner(c, FRONTEND).await,
+                None => None,
+            }
+        })
+        .await;
+        if owner != cached {
+            self.set(owner);
+        }
+        verdict
     }
+}
+
+/// `check_frontend` against `cached`, then once more against the owner `refresh` reads off the
+/// bus: the frontend's NameOwnerChanged is not ordered against its first call. Returns the
+/// owner the verdict used.
+async fn check_refreshing<F: std::future::Future<Output = Option<String>>>(
+    sender: Option<&str>,
+    cached: Option<String>,
+    refresh: impl FnOnce() -> F,
+) -> (Option<String>, zbus::fdo::Result<()>) {
+    if check_frontend(sender, cached.as_deref()).is_ok() {
+        return (cached, Ok(()));
+    }
+    let owner = refresh().await;
+    let verdict = check_frontend(sender, owner.as_deref());
+    (owner, verdict)
 }
 
 /// AccessDenied unless the call came from `owner`.
@@ -375,7 +406,7 @@ impl ScreenCast {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, Results)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         check_session(&session_handle)?;
         log::info!("CreateSession {} for {app_id:?}", session_handle.as_str());
         let key = session_handle.to_string();
@@ -412,7 +443,7 @@ impl ScreenCast {
         app_id: String,
         options: SelectSourcesOptions,
     ) -> zbus::fdo::Result<(u32, Results)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         let mut sessions = self.sessions.lock().unwrap();
         let Some(s) = sessions
             .get_mut(session_handle.as_str())
@@ -449,7 +480,7 @@ impl ScreenCast {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, StartResults)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         let key = session_handle.to_string();
         let parent = dialog::parent_handle(&parent_window);
         match pick_and_cast(
@@ -811,8 +842,8 @@ struct Request {
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Request")]
 impl Request {
-    fn close(&self, #[zbus(header)] hdr: zbus::message::Header<'_>) -> zbus::fdo::Result<()> {
-        self.frontend.check(&hdr)?;
+    async fn close(&self, #[zbus(header)] hdr: zbus::message::Header<'_>) -> zbus::fdo::Result<()> {
+        self.frontend.check(&hdr).await?;
         log::info!("Request {} closed", self.path);
         self.cancel.store(true, Ordering::SeqCst);
         Ok(())
@@ -1107,9 +1138,8 @@ fn main() {
         )
         .await
         .unwrap_or_else(|e| fail(e));
-        // The frontend's calls wait in the bus until BUS_NAME is ours, so its
-        // owner is known before the first one arrives.
         let changes = owner_changes(&conn).await.unwrap_or_else(|e| fail(e));
+        let _ = frontend.conn.set(conn.clone());
         frontend.set(reprisebus::name_owner(&conn, FRONTEND).await);
         conn.request_name(BUS_NAME)
             .await
@@ -1182,6 +1212,42 @@ mod tests {
         );
         let remote = restore_data("org.example.A", "remote-desktop:3;output:DP-1");
         assert_eq!(restore_target(&remote, "org.example.A"), Some(screen));
+    }
+
+    #[test]
+    fn a_sender_other_than_the_known_owner_is_checked_against_the_bus_once() {
+        use futures_lite::future::block_on;
+        let asked = std::cell::Cell::new(0);
+        let refresh = |owner: Option<&'static str>| {
+            let asked = &asked;
+            move || {
+                asked.set(asked.get() + 1);
+                async move { owner.map(String::from) }
+            }
+        };
+        let (owner, verdict) = block_on(check_refreshing(
+            Some(":1.42"),
+            None,
+            refresh(Some(":1.42")),
+        ));
+        assert!(verdict.is_ok(), "the owner arrived after the cache");
+        assert_eq!(owner.as_deref(), Some(":1.42"));
+        assert_eq!(asked.get(), 1);
+        let (_, verdict) = block_on(check_refreshing(
+            Some(":1.42"),
+            Some(":1.42".into()),
+            refresh(None),
+        ));
+        assert!(verdict.is_ok());
+        assert_eq!(asked.get(), 1, "a known owner asks the bus nothing");
+        let (owner, verdict) = block_on(check_refreshing(
+            Some(":1.7"),
+            Some(":1.42".into()),
+            refresh(Some(":1.42")),
+        ));
+        assert!(verdict.is_err(), "another peer is still refused");
+        assert_eq!(owner.as_deref(), Some(":1.42"));
+        assert_eq!(asked.get(), 2);
     }
 
     #[test]

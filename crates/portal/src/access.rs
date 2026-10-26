@@ -48,7 +48,7 @@ impl Access {
         options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         let input = Input::from_call(&parent_window, title, subtitle, body, &options);
         // The Request object lets the frontend cancel the prompt.
         let cancel = Arc::new(AtomicBool::new(false));

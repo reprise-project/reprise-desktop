@@ -28,7 +28,7 @@ impl Screenshot {
         options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         log::info!("Screenshot for {app_id:?}");
         if needs_consent(&options) {
             let cancel = Arc::new(AtomicBool::new(false));
@@ -79,7 +79,7 @@ impl Screenshot {
         _options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         log::info!("PickColor for {app_id:?}");
         let cancel = Arc::new(AtomicBool::new(false));
         crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
