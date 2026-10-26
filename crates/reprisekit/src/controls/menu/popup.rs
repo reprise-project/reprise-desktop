@@ -165,9 +165,13 @@ pub struct PopupMenu {
     hosted: bool,
 }
 
+/// A level taller than `within` wraps into columns, so every row stays on screen.
 fn level_layout(items: &[MenuItem], cx: &MenuCtx) -> MenuLayout {
     let style = MenuStyle::context_for(cx.theme, items).fit(cx.text, items, cx.px, cx.within.width);
-    MenuLayout::compute_styled(&style, items, usize::MAX)
+    let usable = cx.within.height - style.inset.top - style.inset.bottom;
+    let tallest = style.row_height.max(style.separator_h).max(1);
+    let max_rows = (usable / tallest).max(1) as usize;
+    MenuLayout::compute_styled(&style, items, max_rows)
 }
 
 impl PopupMenu {
