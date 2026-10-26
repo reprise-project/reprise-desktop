@@ -342,6 +342,15 @@ fn items(mime: &str, bytes: &[u8]) -> std::io::Result<Vec<Dropped>> {
     Ok(files.into_iter().map(Dropped::File).collect())
 }
 
+/// The types of `offered` Reprise reads `source`'s drop as: a sandboxed program's URI list
+/// names paths inside its sandbox, so its files come only through the portal key.
+pub(crate) fn readable(source: &SeatSource, mut offered: Vec<String>) -> Vec<String> {
+    if source.sandboxed() {
+        offered.retain(|m| m != dropdata::URI_LIST);
+    }
+    offered
+}
+
 /// The error box's title for a drop given up before its op was settled.
 fn give_up_title(plan: Plan) -> &'static str {
     match plan {
@@ -382,7 +391,7 @@ impl State {
             return None;
         };
         let meta = source.metadata().unwrap_or_default();
-        let mime = dropdata::pick_mime(&meta.mime_types);
+        let mime = dropdata::pick_mime(&readable(source, meta.mime_types));
         let allowed = read_as(source_actions(&meta.dnd_actions), mime);
         let mods = self.drag_mods();
         let left = self.drag_button() == Some(BTN_LEFT);
@@ -994,6 +1003,92 @@ mod tests {
         );
         assert_eq!(heard(uris, None), (None, NONE));
         assert_eq!(heard(None, a(COPY)), (None, NONE));
+    }
+
+    #[test]
+    fn a_sandboxed_programs_uri_list_is_refused_on_the_desktop_and_its_portal_key_taken() {
+        use smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource;
+        use wayland_client::{Proxy, protocol::wl_data_device_manager::DndAction as WcAction};
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let dir = crate::harness::scratch().join("sandboxed-drop");
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::desktopview::create(&mut h.state, dir, Default::default(), None);
+        let mut c = h.connect_sandboxed();
+        let mut drag_over = |mimes: &[&str]| {
+            let theirs = c.data_source(mimes, b"file:///home/u/.ssh/id_ed25519\r\n");
+            theirs.set_actions(WcAction::Copy | WcAction::Move);
+            h.roundtrip(&mut c);
+            let ours: WlDataSource = (c.server)
+                .object_from_protocol_id(&h.state.dh, theirs.id().protocol_id())
+                .expect("the server's source");
+            let source = SeatSource::new(crate::dnd::Origin::Client(ours));
+            h.state.dnd.drops.over = None;
+            c.side.source_targets.clear();
+            h.state.drop_over(&source, (600.0, 400.0).into());
+            h.roundtrip(&mut c);
+            let over = h.state.dnd.drops.over.as_ref().expect("over the desktop");
+            assert!(matches!(over.target, DropTarget::Desktop(_)), "{mimes:?}");
+            (over.answer.is_some(), c.side.source_targets.clone())
+        };
+        assert_eq!(drag_over(&[dropdata::URI_LIST]), (false, vec![None]));
+        assert_eq!(
+            drag_over(&[dropdata::FILE_TRANSFER, dropdata::URI_LIST]),
+            (true, vec![Some(dropdata::FILE_TRANSFER.to_string())])
+        );
+        assert_eq!(
+            drag_over(&[dropdata::MOZ_URL, dropdata::URI_LIST]),
+            (true, vec![Some(dropdata::MOZ_URL.to_string())]),
+            "a link"
+        );
+    }
+
+    #[test]
+    fn a_sandboxed_programs_link_drops_its_text_in_a_dialog_field() {
+        use smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource;
+        use wayland_client::{Proxy, protocol::wl_data_device_manager::DndAction as WcAction};
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        crate::fsjobs::setup(&mut h.state);
+        h.pointer_to(500.0, 400.0);
+        h.state.open_dialog(crate::dialog::Dialog::run(&[]));
+        let mut c = h.connect_sandboxed();
+        let theirs = c.data_source(&[dropdata::URI_LIST, "text/plain"], b"https://a.test/");
+        theirs.set_actions(WcAction::Copy);
+        h.roundtrip(&mut c);
+        let ours: WlDataSource = (c.server)
+            .object_from_protocol_id(&h.state.dh, theirs.id().protocol_id())
+            .expect("the server's source");
+        let source = SeatSource::new(crate::dnd::Origin::Client(ours));
+        let v = &h.state.dialogs.views[0];
+        let r = v.layout.field.expect("the Run field");
+        let at = (
+            (v.x + r.x + r.width / 2) as f64,
+            (v.y + r.y + r.height / 2) as f64,
+        );
+        assert!(
+            h.state.drop_over(&source, at.into()).is_some(),
+            "the field takes it"
+        );
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.source_targets, [Some("text/plain".to_string())]);
+        assert!(h.state.field_drag_ended(&source, true));
+        let text = |h: &crate::harness::Harness| {
+            let d = &h.state.dialogs.views[0].dialog;
+            d.field
+                .as_ref()
+                .expect("the Run field")
+                .combo
+                .text()
+                .to_string()
+        };
+        let end = std::time::Instant::now() + Duration::from_secs(3);
+        while text(&h).is_empty() {
+            assert!(std::time::Instant::now() < end, "the text never landed");
+            h.roundtrip(&mut c);
+            h.run_for(5);
+        }
+        assert_eq!(text(&h), "https://a.test/");
     }
 
     /// A drag source that takes the drop's pipe and never writes, as a drop onto a folder on a

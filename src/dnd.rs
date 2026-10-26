@@ -278,6 +278,14 @@ impl DragSource {
         matches!(self.origin, Origin::X11(_))
     }
 
+    /// Whether a sandboxed client started the drag, so its URI list names paths inside the sandbox.
+    pub(crate) fn sandboxed(&self) -> bool {
+        match &self.origin {
+            Origin::Client(s) => crate::sandbox::resource_sandboxed(s),
+            Origin::Local(_) | Origin::Own(_) | Origin::X11(_) => false,
+        }
+    }
+
     /// Cancel the source, even one whose drop Reprise took: the drop it
     /// reads (`dnddrop`) came to nothing.
     pub(crate) fn refuse(&self) {

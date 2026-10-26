@@ -194,19 +194,25 @@ impl Harness {
 
     /// A client on one end of a socket pair, its registry read.
     pub fn connect(&mut self) -> TestClient {
-        self.connect_with(None)
+        self.connect_with(None, false)
+    }
+
+    /// A client in a Flatpak sandbox.
+    pub fn connect_sandboxed(&mut self) -> TestClient {
+        self.connect_with(None, true)
     }
 
     /// A client [`State::client_pid`] takes for process `pid`; pick one above the kernel's
     /// pid limit so no real process answers to it.
     pub fn connect_as(&mut self, pid: i32) -> TestClient {
-        self.connect_with(Some(pid))
+        self.connect_with(Some(pid), false)
     }
 
-    fn connect_with(&mut self, pid: Option<i32>) -> TestClient {
+    fn connect_with(&mut self, pid: Option<i32>, flatpak: bool) -> TestClient {
         let (server, client) = UnixStream::pair().expect("socket pair");
         let mut data = ClientState::of_stream(&server, None);
         data.pid = pid;
+        data.sandbox.flatpak = flatpak;
         let server = self
             .state
             .dh
@@ -514,7 +520,7 @@ impl TestClient {
     }
 
     /// A clipboard selection offering `mimes`, set while the client has the keyboard. The source
-    /// answers no reads.
+    /// answers every read with nothing.
     pub fn copy(&mut self, mimes: &[&str]) -> wl_data_source::WlDataSource {
         let qh = self.qh();
         let manager = self
@@ -524,11 +530,20 @@ impl TestClient {
             .expect("wl_data_device_manager");
         let seat = self.side.seat.as_ref().expect("wl_seat");
         let device = manager.get_data_device(seat, &qh, ());
-        let source = manager.create_data_source(&qh, ());
+        let source = self.data_source(mimes, b"");
+        device.set_selection(Some(&source), 0);
+        source
+    }
+
+    /// A data source offering `mimes`, answering every read with `bytes`. The `target` events it
+    /// hears land in [`ClientSide::source_targets`].
+    pub fn data_source(&mut self, mimes: &[&str], bytes: &[u8]) -> wl_data_source::WlDataSource {
+        let qh = self.qh();
+        let manager = (self.side.data_manager.as_ref()).expect("wl_data_device_manager");
+        let source = manager.create_data_source(&qh, Arc::from(bytes));
         for m in mimes {
             source.offer(m.to_string());
         }
-        device.set_selection(Some(&source), 0);
         source
     }
 
@@ -752,6 +767,8 @@ pub struct ClientSide {
     pub layers_closed: Vec<WlSurface>,
     lock_manager: Option<ExtSessionLockManagerV1>,
     outputs: Vec<WlOutput>,
+    /// Each `wl_data_source.target` a source heard: the type a drop target accepts, or none.
+    pub source_targets: Vec<Option<String>>,
 }
 
 impl ClientSide {
@@ -1010,7 +1027,26 @@ impl wc::Dispatch<wl_data_device::WlDataDevice, ()> for ClientSide {
 wc::delegate_noop!(ClientSide: ignore WlCompositor);
 wc::delegate_noop!(ClientSide: ignore wl_data_device_manager::WlDataDeviceManager);
 wc::delegate_noop!(ClientSide: ignore wl_data_offer::WlDataOffer);
-wc::delegate_noop!(ClientSide: ignore wl_data_source::WlDataSource);
+impl wc::Dispatch<wl_data_source::WlDataSource, Arc<[u8]>> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &wl_data_source::WlDataSource,
+        ev: wl_data_source::Event,
+        bytes: &Arc<[u8]>,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match ev {
+            wl_data_source::Event::Target { mime_type } => st.source_targets.push(mime_type),
+            wl_data_source::Event::Send { fd, .. } => {
+                use std::io::Write;
+                let _ = std::fs::File::from(fd).write_all(bytes);
+            }
+            _ => {}
+        }
+    }
+}
+
 wc::delegate_noop!(ClientSide: ignore WlSurface);
 wc::delegate_noop!(ClientSide: ignore wl_shm::WlShm);
 wc::delegate_noop!(ClientSide: ignore wl_shm_pool::WlShmPool);

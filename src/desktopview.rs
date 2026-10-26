@@ -218,7 +218,7 @@ pub fn setup(state: &mut State) {
 }
 
 /// The desktop's tree and view of `dir`, with no icons listed yet.
-fn create(
+pub(crate) fn create(
     state: &mut State,
     dir: PathBuf,
     persisted: crate::state::Persisted,

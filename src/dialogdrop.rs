@@ -117,7 +117,7 @@ impl State {
             return None;
         }
         let meta = source.metadata()?;
-        let mime = field_mime(&meta.mime_types)?;
+        let mime = field_mime(&crate::dnddrop::readable(source, meta.mime_types))?;
         let allowed = crate::dnddrop::source_actions(&meta.dnd_actions);
         if !allowed.contains(WlDndAction::Copy) {
             return None;
