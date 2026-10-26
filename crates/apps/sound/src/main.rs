@@ -610,7 +610,7 @@ impl App for Sound {
         })
     }
 
-    fn start(&mut self, waker: repriseapp::Waker) {
+    fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.waker = Some(waker.clone());
         self.app_icons.set_waker(waker.clone());
         self.dialog_text = Some(repriseapp::start_text());
@@ -618,24 +618,17 @@ impl App for Sound {
         // The tray goes first: it takes the `reprise.sound` bus name and a
         // second instance exits here once it has raised the first. Spawning
         // `pw-dump` before that would leave the loser's child behind.
-        match tray::start(waker.clone()) {
-            reprisetray::Started::Running(tray, msgs) => {
+        match tray::start(waker.clone()).or_exit(self.tray_only) {
+            Ok(Some((tray, msgs))) => {
                 self.tray = Some(tray);
                 self.msgs = Some(msgs);
             }
-            reprisetray::Started::AlreadyRunning => std::process::exit(0),
-            // Under `--tray` the window starts hidden, so without the item
-            // nothing would be on screen to bring it back.
-            reprisetray::Started::Unavailable if self.tray_only => {
-                log::error!(
-                    "--tray was given but the tray item could not start (no session bus?); exiting"
-                );
-                std::process::exit(1);
-            }
-            reprisetray::Started::Unavailable => {}
+            Ok(None) => {}
+            Err(code) => return repriseapp::Start::Exit(code),
         }
         self.players = Some(mpris::watch(waker.clone()));
         self.snapshots = Some(pipewire::watch(move || waker.wake()));
+        repriseapp::Start::Continue
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {

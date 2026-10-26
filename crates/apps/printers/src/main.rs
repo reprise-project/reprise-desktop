@@ -886,28 +886,23 @@ impl App for PrintersApp {
         out
     }
 
-    fn start(&mut self, waker: repriseapp::Waker) {
+    fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.fonts();
         let first = tray::shown(&self.snapshot, &self.user);
-        match tray::start(waker.clone(), first.clone()) {
-            reprisetray::Started::Running(t, msgs) => {
+        match tray::start(waker.clone(), first.clone()).or_exit(self.tray_only) {
+            Ok(Some((t, msgs))) => {
                 self.tray = Some(t);
                 self.msgs = Some(msgs);
                 self.tray_state = Some(first);
             }
-            reprisetray::Started::AlreadyRunning => std::process::exit(0),
-            reprisetray::Started::Unavailable if self.tray_only => {
-                log::error!(
-                    "--tray was given but the tray item could not start (no session bus?); exiting"
-                );
-                std::process::exit(1);
-            }
-            reprisetray::Started::Unavailable => {}
+            Ok(None) => {}
+            Err(code) => return repriseapp::Start::Exit(code),
         }
         let (rx, handle) = worker::start(waker);
         self.rx = Some(rx);
         self.worker = Some(handle);
         self.sync_watching();
+        repriseapp::Start::Continue
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {

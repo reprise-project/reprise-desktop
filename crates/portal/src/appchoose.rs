@@ -192,9 +192,9 @@ impl App for Choose {
         repriseapp::Caption::Help
     }
 
-    fn start(&mut self, waker: Waker) {
+    fn start(&mut self, waker: Waker) -> repriseapp::Start {
         let Some(rx) = self.updates.take() else {
-            return;
+            return repriseapp::Start::Continue;
         };
         let pending = self.pending.clone();
         std::thread::spawn(move || {
@@ -203,6 +203,7 @@ impl App for Choose {
                 waker.wake();
             }
         });
+        repriseapp::Start::Continue
     }
 
     /// The parent's updates, then the input as every chooser host reads

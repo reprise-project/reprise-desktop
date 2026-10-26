@@ -285,7 +285,10 @@ pub fn run(app: Box<dyn App>) {
         let _ = look_tx.send((key.to_string(), value));
     });
     let waker = host.ctx.wake.clone();
-    host.app.start(waker);
+    if let crate::Start::Exit(code) = host.app.start(waker) {
+        shut_down(&conn);
+        std::process::exit(code);
+    }
     if no_outputs {
         host.send(MAIN, Event::Heads(Vec::new()));
     }
@@ -339,8 +342,7 @@ pub fn run(app: Box<dyn App>) {
         match step {
             Ok(false) => {}
             Ok(true) => {
-                let _ = conn.flush();
-                hangup::hang_up(conn.backend().poll_fd());
+                shut_down(&conn);
                 break;
             }
             Err(e) => {
@@ -350,6 +352,11 @@ pub fn run(app: Box<dyn App>) {
             }
         }
     }
+}
+
+fn shut_down(conn: &Connection) {
+    let _ = conn.flush();
+    hangup::hang_up(conn.backend().poll_fd());
 }
 
 /// Runs `step` on `data`. When it panics, `rescue` gets `data` once the unwinding has released

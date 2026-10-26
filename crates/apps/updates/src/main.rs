@@ -309,30 +309,23 @@ impl App for UpdatesApp {
         self.hidden
     }
 
-    fn start(&mut self, waker: repriseapp::Waker) {
+    fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         // The tray goes first: it takes the `reprise.updates` bus name, and a second instance
         // exits here once it has raised the first.
         let first = model::tray_look(&self.phase, &self.updates);
-        match tray::start(waker.clone(), &first) {
-            reprisetray::Started::Running(t, msgs) => {
+        match tray::start(waker.clone(), &first).or_exit(self.tray_only) {
+            Ok(Some((t, msgs))) => {
                 self.tray = Some(t);
                 self.msgs = Some(msgs);
                 self.tray_state = Some(first);
             }
-            reprisetray::Started::AlreadyRunning => std::process::exit(0),
-            // Under `--tray` the window starts hidden, so without the item
-            // nothing would be on screen to bring it back.
-            reprisetray::Started::Unavailable if self.tray_only => {
-                log::error!(
-                    "--tray was given but the tray item could not start (no session bus?); exiting"
-                );
-                std::process::exit(1);
-            }
-            reprisetray::Started::Unavailable => {}
+            Ok(None) => {}
+            Err(code) => return repriseapp::Start::Exit(code),
         }
         let (rx, jobs) = worker::start(waker, !self.tray_only);
         self.worker = Some(rx);
         self.jobs = Some(jobs);
+        repriseapp::Start::Continue
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
