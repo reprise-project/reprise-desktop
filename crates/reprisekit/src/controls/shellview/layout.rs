@@ -59,6 +59,8 @@ pub fn label_rect(sv: &ShellView, lay: &Layout, i: usize, text: &TextRenderer, p
 /// `listview::layout` and reports its rows as `cells`; `body` spans the header
 /// and rows together, so a cell's `y` sits the header height below `body.y`.
 pub fn layout(sv: &ShellView, r: Rect, cm: &ControlMetrics) -> Layout {
+    #[cfg(test)]
+    LAYOUTS.set(LAYOUTS.get() + 1);
     let frame = r;
     match sv.mode {
         Mode::List => {
@@ -159,13 +161,19 @@ pub fn layout(sv: &ShellView, r: Rect, cm: &ControlMetrics) -> Layout {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Calls to [`layout`] on this thread.
+    pub(crate) static LAYOUTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The last `layout` a host asked for, handed out again while nothing it
 /// reads has changed, so layout on every pointer motion and paint builds the cells once per change.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct LayoutCache(RefCell<Option<(LayoutKey, Rc<Layout>)>>);
 
 /// Everything `layout` reads: rect, the look's sizes, mode, entry count, both scroll offsets, groups and Details columns.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct LayoutKey {
     r: Rect,
     cm: ControlMetrics,
