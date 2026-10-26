@@ -32,6 +32,7 @@ use smithay::{
 use crate::{
     compositor::State,
     input::{BTN_LEFT, Hit, Interaction},
+    popups::Popup,
     power::is_internal_output,
     window::WindowId,
 };
@@ -342,22 +343,13 @@ impl State {
     }
 
     /// Whether a finger may go to a client now: not under the lock, nor
-    /// while Reprise has the pointer (a move, a size, a menu, a panel, a
-    /// popup grab, a held button's grab).
+    /// while Reprise has the pointer (a move, a size, one of its popups,
+    /// the region overlay, a popup grab, a held button's grab).
     pub fn clients_may_have_touch(&self) -> bool {
         !self.is_locked()
             && self.interaction == Interaction::Idle
-            && self.menus.is_empty()
-            && self.launcher.is_none()
-            && self.start_panel.is_none()
-            && self.panels.clipview.is_none()
-            && self.panels.emojiview.is_none()
+            && Popup::open(self).next().is_none()
             && self.panels.region.is_none()
-            && !crate::calendarview::is_open(self)
-            && !crate::displaysview::is_open(self)
-            && !crate::notifycenter::is_open(self)
-            && crate::trayflyout::open_on(self).is_none()
-            && !self.switcher.is_open()
             && !self.seat.get_pointer().is_some_and(|p| p.is_grabbed())
     }
 
