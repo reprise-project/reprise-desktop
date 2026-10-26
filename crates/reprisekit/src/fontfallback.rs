@@ -93,8 +93,7 @@ pub(crate) type FaceFile = (PathBuf, u32);
 /// start.
 pub(crate) fn fontconfig_face_for(ch: char, bold: bool, bitmap: bool) -> Option<FaceFile> {
     use fontconfig_sys::constants::{
-        FC_CHARSET, FC_COLOR, FC_FAMILY, FC_FILE, FC_INDEX, FC_SCALABLE, FC_WEIGHT, FC_WEIGHT_BOLD,
-        FC_WEIGHT_REGULAR,
+        FC_CHARSET, FC_FAMILY, FC_WEIGHT, FC_WEIGHT_BOLD, FC_WEIGHT_REGULAR,
     };
     use fontconfig_sys::*;
     use std::ptr::null_mut;
@@ -117,6 +116,10 @@ pub(crate) fn fontconfig_face_for(ch: char, bold: bool, bitmap: bool) -> Option<
         };
         FcPatternAddInteger(pat, FC_WEIGHT.as_ptr(), weight);
         let want = FcCharSetCreate();
+        if want.is_null() {
+            FcPatternDestroy(pat);
+            return None;
+        }
         FcCharSetAddChar(want, ch as FcChar32);
         FcPatternAddCharSet(pat, FC_CHARSET.as_ptr(), want);
         FcConfigSubstitute(null_mut(), pat, FcMatchPattern);
@@ -125,27 +128,10 @@ pub(crate) fn fontconfig_face_for(ch: char, bold: bool, bitmap: bool) -> Option<
         let set = FcFontSort(null_mut(), pat, 1, null_mut(), &mut result);
         let mut out = None;
         if !set.is_null() {
-            let fonts = std::slice::from_raw_parts((*set).fonts, (*set).nfont.max(0) as usize);
-            for &font in fonts {
-                let mut cs = null_mut();
-                let has = FcPatternGetCharSet(font, FC_CHARSET.as_ptr(), 0, &mut cs) == 0
-                    && FcCharSetHasChar(cs, ch as FcChar32) != 0;
-                let flag = |name: &CStr| {
-                    let mut b = 0;
-                    FcPatternGetBool(font, name.as_ptr(), 0, &mut b) == 0 && b != 0
-                };
-                if !has || flag(FC_SCALABLE) == bitmap || flag(FC_COLOR) {
-                    continue;
-                }
-                let mut file = null_mut();
-                if FcPatternGetString(font, FC_FILE.as_ptr(), 0, &mut file) != 0 {
-                    continue;
-                }
-                let mut index = 0;
-                FcPatternGetInteger(font, FC_INDEX.as_ptr(), 0, &mut index);
-                let path = CStr::from_ptr(file.cast()).to_string_lossy().into_owned();
-                out = Some((PathBuf::from(path), index.max(0) as u32));
-                break;
+            let (fonts, n) = ((*set).fonts, (*set).nfont);
+            // An empty set may hold a null `fonts`.
+            if n > 0 && !fonts.is_null() {
+                out = first_with(std::slice::from_raw_parts(fonts, n as usize), ch, bitmap);
             }
             FcFontSetDestroy(set);
         }
@@ -153,6 +139,46 @@ pub(crate) fn fontconfig_face_for(ch: char, bold: bool, bitmap: bool) -> Option<
         FcPatternDestroy(pat);
         out
     }
+}
+
+/// The file of the first of `fonts` (fontconfig's sorted patterns) that has `ch` and is an
+/// outline face, or a bitmap face with `bitmap`, and not a colour face.
+///
+/// # Safety
+/// Every pattern in `fonts` is live for the call.
+unsafe fn first_with(
+    fonts: &[*mut fontconfig_sys::FcPattern],
+    ch: char,
+    bitmap: bool,
+) -> Option<FaceFile> {
+    use fontconfig_sys::constants::{FC_CHARSET, FC_COLOR, FC_FILE, FC_INDEX, FC_SCALABLE};
+    use fontconfig_sys::*;
+    use std::ptr::null_mut;
+    for &font in fonts {
+        // SAFETY: `font` is live (the caller's contract); the charset and file string it hands
+        // out are owned by it and read before the return.
+        unsafe {
+            let mut cs = null_mut();
+            let has = FcPatternGetCharSet(font, FC_CHARSET.as_ptr(), 0, &mut cs) == 0
+                && FcCharSetHasChar(cs, ch as FcChar32) != 0;
+            let flag = |name: &CStr| {
+                let mut b = 0;
+                FcPatternGetBool(font, name.as_ptr(), 0, &mut b) == 0 && b != 0
+            };
+            if !has || flag(FC_SCALABLE) == bitmap || flag(FC_COLOR) {
+                continue;
+            }
+            let mut file = null_mut();
+            if FcPatternGetString(font, FC_FILE.as_ptr(), 0, &mut file) != 0 {
+                continue;
+            }
+            let mut index = 0;
+            FcPatternGetInteger(font, FC_INDEX.as_ptr(), 0, &mut index);
+            let path = CStr::from_ptr(file.cast()).to_string_lossy().into_owned();
+            return Some((PathBuf::from(path), index.max(0) as u32));
+        }
+    }
+    None
 }
 
 /// The strike (ppem) of a bitmap fallback face that stands in for UI text
@@ -280,6 +306,12 @@ mod tests {
         assert_eq!(fallback_draw(Some(12), 11, 3), FallbackDraw::Outline(36));
         assert_eq!(fallback_draw(None, 11, 1), FallbackDraw::Outline(11));
         assert_eq!(fallback_draw(None, 11, 2), FallbackDraw::Outline(22));
+    }
+
+    #[test]
+    fn an_empty_sorted_set_names_no_face() {
+        // SAFETY: no patterns to read.
+        assert_eq!(unsafe { first_with(&[], '中', false) }, None);
     }
 
     #[test]
