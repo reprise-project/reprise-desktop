@@ -80,7 +80,7 @@ fn copy_entries(
 /// `fs::copy`, except that an existing `to` is an `AlreadyExists` error
 /// instead of being overwritten: the name was picked as free a moment
 /// ago and nothing else may have taken it since. Keeps `from`'s mode,
-/// xattrs (the launcher trust marker among them) and times. A copy that fails after `to` was
+/// xattrs (the launcher trust marker re-made for the copy) and times. A copy that fails after `to` was
 /// created removes it, so no truncated file is left behind.
 ///
 /// `from` must be a regular file (a link to one is followed): anything
@@ -113,7 +113,6 @@ pub(crate) fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
                 io::copy(&mut src, &mut dst)?;
             }
         }
-        // The launcher trust marker is a `user.*` xattr, so `copy_meta` carries it.
         super::fileio::copy_meta(from, &src.metadata()?, &dst, false)
     })()
     .inspect_err(|_| {
