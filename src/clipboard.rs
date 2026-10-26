@@ -57,14 +57,20 @@ impl Owner {
     }
 }
 
+/// What a paste does with the clipboard's files once they are in.
+type FilesDone = Box<dyn FnOnce(&mut State, FileClip)>;
+
 pub struct Clip {
     pub primary: PrimarySelectionState,
     /// Read through [`State::clip_offered`].
     pub(crate) offered: Vec<String>,
+    /// Whether a sandboxed client set the clipboard.
+    sandboxed: bool,
     paste: Option<Paste>,
     dirty: bool,
     #[cfg(test)]
     relayouts: usize,
+    portal_paste: Option<FilesDone>,
 }
 
 impl Clip {
@@ -72,10 +78,12 @@ impl Clip {
         Clip {
             primary: PrimarySelectionState::new::<State>(dh),
             offered: Vec::new(),
+            sandboxed: false,
             paste: None,
             dirty: false,
             #[cfg(test)]
             relayouts: 0,
+            portal_paste: None,
         }
     }
 }
@@ -99,6 +107,24 @@ pub fn file_offers(clip: &FileClip) -> Option<Vec<Offer>> {
             .map(|(m, b)| (m.to_string(), Arc::from(b)))
             .collect(),
     )
+}
+
+/// Where a paste reads the selection's files from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Files {
+    List(fileclip::Source),
+    Portal,
+}
+
+/// A sandboxed program's file lists name paths inside its sandbox, so its files come only
+/// through a document portal key.
+fn files_from(offered: &[String], sandboxed: bool) -> Option<Files> {
+    if !sandboxed {
+        return fileclip::source(offered).map(Files::List);
+    }
+    (offered.iter())
+        .any(|m| m == reprisefs::dropdata::FILE_TRANSFER)
+        .then_some(Files::Portal)
 }
 
 pub fn own_files(offers: &[Offer]) -> Option<FileClip> {
@@ -163,6 +189,10 @@ impl SelectionHandler for State {
         let mimes = source.map(|s| s.mime_types());
         if ty == SelectionTarget::Clipboard {
             self.clip.offered = mimes.clone().unwrap_or_default();
+            // Smithay takes a data device selection only from the client holding the keyboard.
+            let focus = self.seat.get_keyboard().and_then(|k| k.current_focus());
+            self.clip.sandboxed =
+                mimes.is_some() && focus.is_some_and(|f| crate::sandbox::resource_sandboxed(&f));
         }
         self.wayland_selection_to_x11(ty, mimes);
         if ty == SelectionTarget::Clipboard {
@@ -281,7 +311,7 @@ impl State {
         match self.own_offers() {
             // No stat: a file gone since is skipped by the paste.
             Some(offers) => own_files(&offers).is_some_and(|c| !c.paths.is_empty()),
-            None => fileclip::source(self.clip_offered()).is_some(),
+            None => files_from(self.clip_offered(), self.clip.sandboxed).is_some(),
         }
     }
 
@@ -294,9 +324,13 @@ impl State {
             }
             return;
         }
-        let Some(source) = fileclip::source(self.clip_offered()) else {
-            log::debug!("paste: the clipboard offers no files");
-            return;
+        let source = match files_from(self.clip_offered(), self.clip.sandboxed) {
+            Some(Files::List(source)) => source,
+            Some(Files::Portal) => return self.clip_portal_files(done),
+            None => {
+                log::debug!("paste: the clipboard offers no files");
+                return;
+            }
         };
         let read_files = move |state: &mut State, kde_cut: bool| {
             state.clip_read(source.files, move |state, buf| {
@@ -312,6 +346,26 @@ impl State {
         } else {
             read_files(self, false);
         }
+    }
+
+    /// Trade the clipboard's document portal key for its files off the loop. The portal lends
+    /// them read-only, so they are only ever copied.
+    fn clip_portal_files(&mut self, done: impl FnOnce(&mut State, FileClip) + 'static) {
+        self.clip.portal_paste = Some(Box::new(done));
+        self.clip_read(reprisefs::dropdata::FILE_TRANSFER, |state, buf| {
+            let bytes = buf.bytes().to_vec();
+            state.spawn_fs_job(move || {
+                let got = crate::dnddrop::portal_files(&bytes);
+                Box::new(move |state| match got {
+                    Ok(paths) => {
+                        if let Some(done) = state.clip.portal_paste.take() {
+                            done(state, FileClip { paths, cut: false });
+                        }
+                    }
+                    Err(e) => log::warn!("paste: {e}"),
+                })
+            });
+        });
     }
 
     pub fn own_offers(&self) -> Option<Offers> {
@@ -631,6 +685,50 @@ mod tests {
         assert_eq!(
             answer(&entries[0].offers, "text/plain").map(|b| &b[..]),
             Some(&b"copy 999"[..])
+        );
+    }
+
+    #[test]
+    fn a_sandboxed_programs_file_lists_are_refused_on_paste_and_its_portal_key_taken() {
+        use reprisefs::dropdata::{FILE_TRANSFER, URI_LIST};
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let root = crate::harness::scratch().join("sandboxed-paste");
+        let desk = root.join("Desktop");
+        std::fs::create_dir_all(&desk).unwrap();
+        let host = root.join("thesis.odt");
+        std::fs::write(&host, "host").unwrap();
+        crate::desktopview::create(&mut h.state, desk.clone(), Default::default(), None);
+        let mut c = h.connect_sandboxed();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        let uri = format!("file://{}", host.display());
+        let lists = [
+            (vec![GNOME_FILES], format!("cut\n{uri}")),
+            (vec![URI_LIST, KDE_CUT], format!("{uri}\r\n")),
+        ];
+        for (mimes, body) in &lists {
+            c.copy(mimes, body.as_bytes());
+            h.roundtrip(&mut c);
+            assert!(!h.state.clip_has_files(), "{mimes:?} offers no files");
+            h.state.paste_on_desktop(None, false);
+            h.run_for(100);
+            assert!(host.exists(), "{mimes:?} leaves the host file where it is");
+            assert_eq!(std::fs::read_dir(&desk).unwrap().count(), 0, "{mimes:?}");
+        }
+        c.copy(&[FILE_TRANSFER, URI_LIST], uri.as_bytes());
+        h.roundtrip(&mut c);
+        assert!(h.state.clip_has_files(), "the portal key is pastable");
+        assert_eq!(
+            files_from(h.state.clip_offered(), h.state.clip.sandboxed),
+            Some(Files::Portal)
+        );
+        let mut host_client = h.connect();
+        h.map_toplevel(&mut host_client, "host.app", 300, 200);
+        host_client.copy(&[URI_LIST], uri.as_bytes());
+        h.roundtrip(&mut host_client);
+        assert!(
+            h.state.clip_has_files(),
+            "a host program's list is pastable"
         );
     }
 

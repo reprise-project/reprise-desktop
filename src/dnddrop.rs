@@ -326,6 +326,14 @@ fn items(mime: &str, bytes: &[u8]) -> std::io::Result<Vec<Dropped>> {
     if mime != dropdata::FILE_TRANSFER {
         return Ok(dropdata::decode(mime, bytes));
     }
+    Ok(portal_files(bytes)?
+        .into_iter()
+        .map(Dropped::File)
+        .collect())
+}
+
+/// The files a document portal key in `bytes` stands for; blocks on the bus.
+pub(crate) fn portal_files(bytes: &[u8]) -> std::io::Result<Vec<std::path::PathBuf>> {
     use reprisebus::filetransfer;
     let key = filetransfer::decode_key(bytes)
         .ok_or_else(|| std::io::Error::other("no file transfer key"))?;
@@ -339,7 +347,7 @@ fn items(mime: &str, bytes: &[u8]) -> std::io::Result<Vec<Dropped>> {
             "file transfer {key}: no files"
         )));
     }
-    Ok(files.into_iter().map(Dropped::File).collect())
+    Ok(files)
 }
 
 /// The types of `offered` Reprise reads `source`'s drop as: a sandboxed program's URI list
