@@ -2,6 +2,40 @@
 //! and what Accept and Cancel do to the document. The dialog itself is `reprisekit::controls::filedlg`; nothing here draws.
 
 use super::*;
+use reprisekit::controls::combo::{self, Combo};
+use reprisekit::controls::filedlg;
+
+const ENCODING: &str = "encoding";
+/// The Encoding row with 8 px under it, as above it.
+const ENCODING_ROW_H: i32 = combo::COMBO_H + 8;
+/// The Encoding label sits as far below its combo's top as the Files of type label does.
+const ENCODING_LABEL_DY: i32 = 3;
+
+/// Save As's Encoding row: its label under Files of type's, its combo under that field, on `format`'s row.
+fn encoding_row(format: Format) -> Form {
+    let names = ENCODINGS.map(|(name, _, _)| name);
+    let field = Rect::new(
+        filedlg::FIELD_X,
+        filedlg::EXTRA_Y,
+        filedlg::field_w(CLIENT.0),
+        combo::COMBO_H,
+    );
+    let combo = Item::new(
+        ENCODING,
+        field,
+        Control::Combo(Combo::new(&names, format.encoding_row(), names.len())),
+    );
+    Form::new(vec![
+        Item::label_at(
+            "encoding-label",
+            filedlg::ROW_LABEL_X,
+            filedlg::EXTRA_Y + ENCODING_LABEL_DY,
+            filedlg::FIELD_X - filedlg::ROW_LABEL_X,
+            &tr!("encoding-label"),
+        ),
+        combo,
+    ])
+}
 
 /// Where a fresh dialog starts when there is no current path: the process's working directory, or `/` if that fails.
 pub(crate) fn default_dir() -> PathBuf {
@@ -37,7 +71,7 @@ impl Notepad {
 
     pub(crate) fn saveas_dialog(&mut self) {
         let dir = self.start_dir();
-        let dlg = self.host.open(
+        let mut dlg = self.host.open(
             &dir,
             Fields {
                 title: tr!("title-save-as"),
@@ -47,6 +81,11 @@ impl Notepad {
                 filters: vec![tr!("filter-text"), tr!("filter-all")],
             },
             self.forms.text,
+        );
+        dlg.set_extra(
+            encoding_row(self.format),
+            ENCODING_ROW_H,
+            &self.forms.look.controls(),
         );
         self.saveas = Some(dlg);
     }
@@ -125,16 +164,16 @@ impl Notepad {
             }
         };
         match read_text(&path) {
-            Ok(text) => self.show_document(&text, Some(path)),
+            Ok((text, format)) => self.show_document(&text, format, Some(path)),
             Err(e) => self.open_failed(&path, &e),
         }
         Reply::redraw_all()
     }
 
     /// Replace the buffer with `text`, saved as `path` (`None` is Untitled), and close the Open dialog if it is up.
-    pub(crate) fn show_document(&mut self, text: &str, path: Option<PathBuf>) {
-        self.edit = MultiEdit::new(text);
-        self.crlf = has_crlf(text);
+    pub(crate) fn show_document(&mut self, text: &str, format: Format, path: Option<PathBuf>) {
+        self.edit = MultiEdit::new(&format.line_end.to_edit(text));
+        self.format = format;
         self.view = View::default();
         self.stamp = path.as_deref().and_then(Stamp::of);
         self.path = path;
@@ -225,10 +264,16 @@ impl Notepad {
         self.saveas_write(path)
     }
 
-    /// Write the document to `path` and adopt it: Save As's accept once nothing stands in its way.
+    /// Write the document to `path` in the encoding picked in Save As and adopt both: Save As's
+    /// accept once nothing stands in its way.
     pub(crate) fn saveas_write(&mut self, path: PathBuf) -> Reply {
-        match self.write_to(&path) {
+        let picked = (self.saveas.as_ref())
+            .and_then(FileDlg::extra)
+            .and_then(|f| f.combo_selected(ENCODING));
+        let format = picked.map_or(self.format, |row| self.format.with_encoding_row(row));
+        match self.write_to(&path, format) {
             Ok(()) => {
+                self.format = format;
                 self.stamp = Stamp::of(&path);
                 self.path = Some(path);
                 self.dirty = false;

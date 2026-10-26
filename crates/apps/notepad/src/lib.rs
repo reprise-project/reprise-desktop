@@ -13,8 +13,8 @@ reprisekit::strings!("notepad");
 
 use dialogs::{FormStep, form_event, goto_form, ok_box};
 use document::{
-    Stamp, has_crlf, load, open_failed_text, read_text, recovered_in, recovery_dir, write_document,
-    write_recovery,
+    ENCODINGS, Format, Stamp, Undecodable, encoding_name, load, open_failed_text, read_text,
+    recovered_in, recovery_dir, write_document, write_recovery,
 };
 use drop::Hover;
 use menu::menus;
@@ -81,8 +81,8 @@ struct Notepad {
     stamp: Option<Stamp>,
     /// The prompt a save raises when the file changed on disk.
     changed: Option<MsgBox>,
-    /// The file had a CRLF break, so every break saves as CRLF, a mixed file's LF ones too.
-    crlf: bool,
+    /// The encoding, BOM and line end the file was opened or last saved with; a save writes them.
+    format: Format,
     /// Where the held selection drag's pointer last was; ticks scroll from there.
     dragging: Option<(i32, i32)>,
     thumb: ThumbDrag,
@@ -138,21 +138,21 @@ struct Notepad {
 impl Notepad {
     fn new(path: Option<PathBuf>) -> Notepad {
         let mut failed = None;
-        let (text, path) = match path {
-            None => (String::new(), None),
+        let ((text, format), path) = match path {
+            None => (Default::default(), None),
             Some(p) => match load(&p) {
-                Ok(text) => (text, Some(p)),
+                Ok(read) => (read, Some(p)),
                 Err(e) => {
                     failed = Some((p, e));
-                    (String::new(), None)
+                    (Default::default(), None)
                 }
             },
         };
         let mono = edit_font();
         let bar = Bar::new(menus());
         let mut np = Notepad {
-            edit: MultiEdit::new(&text),
-            crlf: has_crlf(&text),
+            edit: MultiEdit::new(&format.line_end.to_edit(&text)),
+            format,
             view: View::default(),
             metrics: Metrics::default(),
             mono,

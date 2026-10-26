@@ -161,7 +161,7 @@ fn key_around<'a>(label: impl Into<Cow<'a, str>>, taken: &[char]) -> Cow<'a, str
 
 /// Label text x: "Look in:" at 55, "File name:" and "Files of type:" at 102.
 const LOOKIN_LABEL_X: i32 = 55;
-const ROW_LABEL_X: i32 = 102;
+pub const ROW_LABEL_X: i32 = 102;
 /// How far the File name label's text box sits below its field's top;
 /// the Look in and Files of type labels sit 1 and 2 px higher.
 const LABEL_DY: i32 = 5;
@@ -564,6 +564,10 @@ impl FileDlg {
 
     pub fn extra(&self) -> Option<&form::Form> {
         self.extra.as_ref().map(|(f, _)| f)
+    }
+
+    pub fn extra_mut(&mut self) -> Option<&mut form::Form> {
+        self.extra.as_mut().map(|(f, _)| f)
     }
 
     /// The client size the dialog opens at and a host's window minimum:

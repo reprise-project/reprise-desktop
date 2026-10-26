@@ -3,10 +3,9 @@
 use super::*;
 
 impl Notepad {
-    /// The edit keeps LF, so a CRLF file gets its breaks back here.
-    pub(crate) fn write_to(&self, path: &Path) -> std::io::Result<()> {
-        let sep = if self.crlf { "\r\n" } else { "\n" };
-        write_document(path, self.edit.lines(), sep)
+    /// The edit keeps LF, so a CRLF or CR file gets its breaks back here.
+    pub(crate) fn write_to(&self, path: &Path, format: Format) -> std::io::Result<()> {
+        write_document(path, self.edit.lines(), format)
     }
 
     /// False when there is nowhere to write yet (the caller opens Save As), when the write failed,
@@ -69,7 +68,7 @@ impl Notepad {
         let Some(p) = self.path.clone() else {
             return false;
         };
-        match self.write_to(&p) {
+        match self.write_to(&p, self.format) {
             Ok(()) => {
                 self.stamp = Stamp::of(&p);
                 self.dirty = false;
@@ -92,13 +91,17 @@ impl Notepad {
         log::warn!("open {}: {e}", path.display());
         if let Some(bad) = e
             .get_ref()
-            .and_then(|inner| inner.downcast_ref::<std::string::FromUtf8Error>())
+            .and_then(|inner| inner.downcast_ref::<Undecodable>())
         {
-            let text = String::from_utf8_lossy(bad.as_bytes()).into_owned();
+            let text = bad.lossy.clone();
             let prompt = MsgBox::new(
                 tr!("name"),
                 msgbox::Fields {
-                    text: tr!("not-utf8", path = path.display().to_string()),
+                    text: tr!(
+                        "undecodable",
+                        path = path.display().to_string(),
+                        encoding = encoding_name(bad.encoding)
+                    ),
                     icon: self.warn_icon.clone(),
                     buttons: vec![
                         reprisekit::kit_tr!("yes-bare"),
@@ -126,7 +129,12 @@ impl Notepad {
             oneshot::Outcome::Closed(answer) => {
                 let (_, text) = self.lossy.take().expect("checked above");
                 if answer == Some(0) {
-                    self.show_document(&text, None);
+                    let line_end = document::LineEnd::of(&text);
+                    let format = Format {
+                        line_end,
+                        ..Format::default()
+                    };
+                    self.show_document(&text, format, None);
                 }
                 Reply::redraw_all()
             }
@@ -146,8 +154,13 @@ impl Notepad {
             .and_then(|p| p.file_stem())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| tr!("untitled"));
-        let sep = if self.crlf { "\r\n" } else { "\n" };
-        match write_recovery(dir, std::process::id(), &stem, self.edit.lines(), sep) {
+        match write_recovery(
+            dir,
+            std::process::id(),
+            &stem,
+            self.edit.lines(),
+            self.format,
+        ) {
             Ok(kept) => {
                 log::error!("unsaved text kept in {}", kept.display());
                 if self.rescued.as_ref().is_some_and(|old| *old != kept) {
@@ -204,8 +217,8 @@ impl Notepad {
                     Some(0) => {
                         self.recover_queue.clear();
                         match read_text(&file) {
-                            Ok(text) => {
-                                self.show_document(&text, None);
+                            Ok((text, format)) => {
+                                self.show_document(&text, format, None);
                                 self.dirty = true;
                                 self.rescued = Some(file);
                             }
@@ -278,7 +291,7 @@ impl Notepad {
             },
             PendingAction::New => {
                 self.edit = MultiEdit::new("");
-                self.crlf = false;
+                self.format = Format::default();
                 self.view = View::default();
                 self.path = None;
                 self.dirty = false;
@@ -290,7 +303,7 @@ impl Notepad {
             }
             PendingAction::OpenFile(path) => {
                 match load(&path) {
-                    Ok(text) => self.show_document(&text, Some(path)),
+                    Ok((text, format)) => self.show_document(&text, format, Some(path)),
                     Err(e) => self.open_failed(&path, &e),
                 }
                 Reply::redraw_all()
