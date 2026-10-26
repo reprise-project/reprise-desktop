@@ -172,7 +172,8 @@ fn reap_later(handle: &LoopHandle<'static, State>) {
 }
 
 /// One password check in flight: its conversation, the notices it sent so far, and the timer that ends
-/// a PAM stack that hangs (a dead network login server, a wedged keyring daemon).
+/// a PAM stack that hangs (a dead network login server, a wedged keyring daemon). The timer is off
+/// while a further prompt waits for the user.
 pub struct Pending {
     helper: Helper,
     answer: lockfinger::PasswordAnswer,
@@ -283,8 +284,9 @@ fn abort_verification(state: &mut State, message: &str) {
     redraw(state);
 }
 
-/// What the password conversation said since the last wake: its verdict unlocks or shows why not; an
-/// end without one reads as "could not be checked", never as accepted.
+/// What the password conversation said since the last wake: a further prompt relabels the field for
+/// its answer; its verdict unlocks or shows why not; an end without one reads as "could not be
+/// checked", never as accepted.
 fn on_result(state: &mut State) -> PostAction {
     let Some(l) = state.lock.active.as_mut() else {
         return PostAction::Remove;
@@ -293,8 +295,20 @@ fn on_result(state: &mut State) -> PostAction {
         return PostAction::Remove;
     };
     let (lines, eof) = p.helper.conversation.read();
-    let verdict = lines.into_iter().find_map(|line| p.answer.line(line));
+    let mut prompt = None;
+    let verdict = lines.into_iter().find_map(|line| match line {
+        lockfinger::Line::Prompt(q) => {
+            prompt = Some(q);
+            None
+        }
+        line => p.answer.line(line),
+    });
     if verdict.is_none() && !eof {
+        if let Some(q) = prompt {
+            p.timer = None;
+            l.state.ask(q);
+            redraw(state);
+        }
         return PostAction::Continue;
     }
     // This callback's Remove takes the source down.
@@ -768,6 +782,24 @@ fn button_at<'a>(
     None
 }
 
+/// End the check before `verify_timeout`, or None when the loop refuses the timer.
+fn verify_timer(state: &State) -> Option<Source> {
+    state
+        .handle
+        .insert_source(
+            Timer::from_duration(state.lock.helpers.verify_timeout),
+            |_, _, state| verify_timed_out(state),
+        )
+        .map_err(|e| log::warn!("lock: cannot time the password check: {}", e.error))
+        .ok()
+        .map(|token| Source {
+            token: Some(token),
+            handle: state.handle.clone(),
+        })
+}
+
+/// Hand the field to PAM: the password starts a conversation; under a further prompt the field is
+/// that prompt's answer to the waiting one.
 fn submit(state: &mut State) {
     let Some(l) = state.lock.active.as_mut() else {
         return;
@@ -775,6 +807,20 @@ fn submit(state: &mut State) {
     l.state.verifying = true;
     l.state.message = None;
     let password = l.state.take_input();
+    if let Some(p) = l.pending.as_mut() {
+        if let Err(e) = p.helper.conversation.answer(password.as_bytes()) {
+            log::error!("lock: cannot answer the password conversation's prompt: {e}");
+            abort_verification(state, lock::UNAVAILABLE);
+            return;
+        }
+        drop(password);
+        let timer = verify_timer(state);
+        if let Some(p) = state.lock.active.as_mut().and_then(|l| l.pending.as_mut()) {
+            p.timer = timer;
+        }
+        redraw(state);
+        return;
+    }
     let command = (state.lock.helpers.password)(&l.user);
     let helper = match lockfinger::Conversation::start_password(command, password.as_bytes()) {
         Ok(c) => watch(state, c, on_result),
@@ -784,21 +830,10 @@ fn submit(state: &mut State) {
         }
     };
     drop(password);
+    let timer = helper.as_ref().and_then(|_| verify_timer(state));
     if let Some(l) = state.lock.active.as_mut() {
         match helper {
             Some(helper) => {
-                let timer = state
-                    .handle
-                    .insert_source(
-                        Timer::from_duration(state.lock.helpers.verify_timeout),
-                        |_, _, state| verify_timed_out(state),
-                    )
-                    .map_err(|e| log::warn!("lock: cannot time the password check: {}", e.error))
-                    .ok()
-                    .map(|token| Source {
-                        token: Some(token),
-                        handle: state.handle.clone(),
-                    });
                 l.pending = Some(Pending {
                     helper,
                     answer: Default::default(),
@@ -809,6 +844,14 @@ fn submit(state: &mut State) {
         }
     }
     redraw(state);
+}
+
+/// Escape or Cancel under a further prompt drops it: its conversation ends and the field takes a
+/// password again.
+fn end_abandoned_prompt(l: &mut Lock) {
+    if l.state.prompt.is_none() && !l.state.verifying {
+        l.pending = None;
+    }
 }
 
 /// A key while locked, from the keyboard filter. Returns whether it goes on to the focused surface: a
@@ -870,7 +913,11 @@ pub fn key(state: &mut State, pressed: bool, handle: &KeysymHandle<'_>) -> bool 
         return false;
     }
     let should_submit = match state.lock.active.as_mut() {
-        Some(l) => l.state.key(key),
+        Some(l) => {
+            let submit = l.state.key(key);
+            end_abandoned_prompt(l);
+            submit
+        }
         None => return false,
     };
     if should_submit {
@@ -896,7 +943,9 @@ pub fn button(state: &mut State, button: u32, pos: Point<f64, Logical>) {
         let Some(b) = hit(l, pos.x, pos.y) else {
             return;
         };
-        l.state.button(b)
+        let submit = l.state.button(b);
+        end_abandoned_prompt(l);
+        submit
     };
     if should_submit {
         submit(state);
@@ -958,7 +1007,7 @@ mod tests {
 
     #[test]
     fn the_password_conversation_unlocks_on_its_success_only() {
-        let mut h = locked(|_| sh(r#"[ "$(cat)" = hunter2 ] && echo '= 0' || echo '= 7'"#));
+        let mut h = locked(|_| sh(r#"read p; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#));
         check(&mut h, "hunter1");
         assert!(h.state.is_locked());
         assert_eq!(message(&h).as_deref(), Some(lock::INCORRECT));
@@ -968,7 +1017,7 @@ mod tests {
 
     #[test]
     fn a_rejection_shows_the_conversations_text() {
-        let mut h = locked(|_| sh("cat >/dev/null; echo 'E Account locked.'; echo '= 7'"));
+        let mut h = locked(|_| sh("read p; echo 'E Account locked.'; echo '= 7'"));
         check(&mut h, "hunter2");
         assert!(h.state.is_locked());
         assert_eq!(message(&h).as_deref(), Some("Account locked."));
@@ -980,6 +1029,60 @@ mod tests {
         check(&mut h, "hunter2");
         assert!(h.state.is_locked());
         assert_eq!(message(&h).as_deref(), Some(lock::UNAVAILABLE));
+    }
+
+    /// Turn the loop until `done` holds (or 5 s pass).
+    fn turn_until(h: &mut crate::harness::Harness, what: &str, done: impl Fn(&Lock) -> bool) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !h.state.lock.active.as_ref().is_some_and(&done) {
+            assert!(std::time::Instant::now() < end, "{what}");
+            h.run_for(5);
+        }
+    }
+
+    #[test]
+    fn a_second_prompt_relabels_the_field_and_its_answer_unlocks() {
+        let mut h = locked(|_| {
+            sh(
+                r#"read p; echo '?? Verification code:'; read c; [ "$p $c" = "hunter2 123456" ] && echo '= 0' || echo '= 7'"#,
+            )
+        });
+        let l = h.state.lock.active.as_mut().expect("locked");
+        l.state.input.push_str("hunter2");
+        submit(&mut h.state);
+        turn_until(&mut h, "the prompt arrives", |l| l.state.prompt.is_some());
+        let l = h.state.lock.active.as_ref().unwrap();
+        assert_eq!(
+            l.state.prompt,
+            Some(lock::Prompt {
+                text: "Verification code:".into(),
+                echo: true
+            })
+        );
+        assert!(!l.state.verifying);
+        assert_eq!(l.state.input, "", "the field is cleared for the answer");
+        assert!(l.pending.as_ref().unwrap().timer.is_none());
+        check(&mut h, "123456");
+        assert!(!h.state.is_locked());
+    }
+
+    #[test]
+    fn escape_under_a_second_prompt_ends_its_conversation() {
+        let mut h = locked(|_| sh("read p; echo '? One-time code:'; exec sleep 60"));
+        let l = h.state.lock.active.as_mut().expect("locked");
+        l.state.input.push_str("hunter2");
+        submit(&mut h.state);
+        turn_until(&mut h, "the prompt arrives", |l| l.state.prompt.is_some());
+        let l = h.state.lock.active.as_mut().unwrap();
+        l.state.key(LockKey::Escape);
+        end_abandoned_prompt(l);
+        assert!(l.pending.is_none());
+        assert_eq!(l.state.prompt, None);
+        check(&mut h, "hunter2");
+        assert!(
+            h.state.lock.active.as_ref().unwrap().state.prompt.is_some(),
+            "the next password starts a new conversation"
+        );
     }
 
     #[test]
