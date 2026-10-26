@@ -254,6 +254,7 @@ pub struct FileLauncher {
 pub struct FileNotifications {
     pub sound: Option<bool>,
     pub sound_theme: Option<String>,
+    pub quiet_hours: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Default)]

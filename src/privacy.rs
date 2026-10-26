@@ -167,6 +167,7 @@ fn refresh(state: &mut State) {
         p.sharing = true;
         log::info!("screen sharing indicator on");
         state.redraw_taskbars();
+        crate::notifyview::suppress_changed(state);
     }
 }
 
@@ -197,6 +198,7 @@ fn hold_fired(state: &mut State) -> TimeoutAction {
         p.sharing = false;
         log::info!("screen sharing indicator off");
         state.redraw_taskbars();
+        crate::notifyview::suppress_changed(state);
     }
     TimeoutAction::Drop
 }

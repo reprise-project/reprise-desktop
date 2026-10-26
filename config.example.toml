@@ -312,6 +312,9 @@ suspend_after = 0            # run [power] standby
 #                            # hint and Do Not Disturb keep it silent
 # sound_theme = "freedesktop" # an XDG sound theme under /usr/share/sounds or
 #                            # ~/.local/share/sounds; a name it lacks comes from freedesktop
+# quiet_hours = []           # ["22:00", "07:00"] holds balloons back from 22:00 until 07:00.
+#                            # They also wait while a full-screen window has focus and while
+#                            # the screen is shared, then show; critical ones always show
 
 # [privacy]
 # recent_files = true        # false hides the recently used files GTK and KDE apps record
