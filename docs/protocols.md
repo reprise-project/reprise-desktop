@@ -93,6 +93,8 @@ confinement holds, every motion goes through as it comes.
   place the last Open or Save As dialog was left in
 - **Notification**
 - **Inhibit:** idle, suspend and log off
+- **Background:** which apps run without a window, the prompt asking
+  whether one may, and the autostart entries Flatpak apps ask for
 
 The compositor serves **Settings** (the light or dark look, contrast, fonts
 and icons). `reprise-portals.conf` hands **Secret** to gnome-keyring,
