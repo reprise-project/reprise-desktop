@@ -87,6 +87,14 @@ pub fn chrome_for(owned: bool, resizable: bool, decorated: bool, tag: DialogTag)
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LastFrame {
+    /// The frame it restores to: the frame itself unless maximized or fullscreen.
+    pub normal: Rect,
+    pub maximized: bool,
+    pub fullscreen: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WindowId(u64);
 
@@ -165,6 +173,8 @@ pub struct Window {
     pub saved: Option<Rect>,
     pub saved_fullscreen: Option<Rect>,
     pub snapped: Option<Rect>,
+    /// Where it was as it last unmapped; the next map goes back there.
+    pub last_frame: Option<LastFrame>,
     pub resize_anchor: Option<ResizeAnchor>,
     pub size_serial: Option<Serial>,
     pub pressed: Option<CaptionButton>,
@@ -219,6 +229,16 @@ impl Window {
 
     pub fn frame_rect(&self) -> Rect {
         Rect::new(self.x, self.y, self.geom.total.0, self.geom.total.1)
+    }
+
+    /// The frame it restores to; a snapped window's is its zone.
+    pub fn normal_frame(&self) -> Rect {
+        match (self.fullscreen, self.maximized) {
+            (true, false) => self.saved_fullscreen,
+            (_, true) => self.saved,
+            _ => None,
+        }
+        .unwrap_or(self.frame_rect())
     }
 
     pub fn hit_at(&self, lx: f64, ly: f64, m: &Metrics) -> FrameHit {

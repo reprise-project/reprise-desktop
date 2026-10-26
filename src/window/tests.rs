@@ -838,3 +838,57 @@ fn a_client_name_is_read_up_to_1024_chars() {
     assert_eq!(capped("Notepad".into()), "Notepad");
     assert_eq!(capped("a".repeat(1024)).len(), 1024);
 }
+
+#[expect(clippy::field_reassign_with_default)]
+fn forgetful() -> crate::harness::Harness {
+    let mut config = crate::config::Config::default();
+    config.remember_windows = false;
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h
+}
+
+fn unmap_self(
+    h: &mut crate::harness::Harness,
+    c: &mut crate::harness::TestClient,
+    t: crate::harness::Toplevel,
+) {
+    let surface = c.side.shells[t.shell].surface.clone();
+    surface.attach(None, 0, 0);
+    surface.commit();
+    h.roundtrip(c);
+    c.side.shells[t.shell].size = (0, 0);
+    surface.commit();
+    h.roundtrip(c);
+}
+
+#[test]
+fn a_window_that_hides_and_shows_again_comes_back_where_it_was() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    h.state.move_to(t.id, 317, 211);
+    unmap_self(&mut h, &mut c, t);
+    assert!(!h.state.win(t.id).unwrap().mapped, "a null buffer unmaps");
+    h.resize_self(&mut c, t, 300, 200);
+    let win = h.state.win(t.id).unwrap();
+    assert!(win.mapped);
+    assert_eq!((win.x, win.y), (317, 211), "the frame keeps its place");
+}
+
+#[test]
+fn a_maximized_window_that_hides_and_shows_again_comes_back_maximized() {
+    let mut h = forgetful();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    h.state.move_to(t.id, 317, 211);
+    let normal = h.state.win(t.id).unwrap().frame_rect();
+    h.state.set_maximized(t.id, true);
+    h.roundtrip(&mut c);
+    unmap_self(&mut h, &mut c, t);
+    h.resize_self(&mut c, t, 300, 200);
+    h.roundtrip(&mut c);
+    let win = h.state.win(t.id).unwrap();
+    assert!(win.maximized, "the window maps maximized again");
+    assert_eq!(win.saved, Some(normal), "and restores to its old frame");
+}
