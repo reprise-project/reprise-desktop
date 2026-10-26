@@ -1,13 +1,14 @@
 //! "Allow this program to ...?": the RemoteDesktop, Screenshot,
-//! InputCapture, GlobalShortcuts and Background prompt, run as our own child
+//! InputCapture, GlobalShortcuts, Background and Wallpaper prompt, run as our own child
 //! (`--permit <kind>`, see `dialog`). The parent writes an `Input` on stdin
 //! (the asking window, the app's display name, whether to offer Remember,
 //! the lines to list) and reads `yes` (or `yes remember`) on stdout for
 //! Allow, `no` for Deny, and nothing when the prompt closed unanswered.
 
 use crate::dialog::{self, Prompt, TEXT_X};
+use reprisekit::classic::assets::MONITOR_SIZE;
 use reprisekit::classic::widgets::LINE_H;
-use reprisekit::controls::form::{Control, Form, Item};
+use reprisekit::controls::form::{Control, Form, Item, Screen};
 use reprisekit::raster::{Canvas, Rect};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -23,6 +24,9 @@ const MAX_ITEMS: usize = 6;
 /// The first listed line: 8 px under the prompt's row, leaving 8 px over
 /// the moved note.
 const ITEMS_Y: i32 = 12 + LINE_H + 8;
+/// The space a preview takes: the monitor and a line's gap under it.
+const PREVIEW_H: i32 = MONITOR_SIZE.1 + LINE_H;
+const PREVIEW_MAX: (u32, u32) = (304, 224);
 const ITEM_IDS: [&str; MAX_ITEMS + 1] = [
     "item0", "item1", "item2", "item3", "item4", "item5", "item6",
 ];
@@ -35,6 +39,10 @@ pub enum Kind {
     InputCapture(Devices),
     Shortcuts,
     Background,
+    /// A new desktop picture, also behind the lock screen when `lock_screen`.
+    Wallpaper {
+        lock_screen: bool,
+    },
 }
 
 /// Which input devices a RemoteControl or InputCapture grant covers, so the
@@ -69,7 +77,7 @@ impl Devices {
 }
 
 impl Kind {
-    const ALL: [Kind; 9] = [
+    const ALL: [Kind; 11] = [
         Kind::RemoteControl(Devices::Keyboard),
         Kind::RemoteControl(Devices::Pointer),
         Kind::RemoteControl(Devices::Both),
@@ -79,6 +87,8 @@ impl Kind {
         Kind::InputCapture(Devices::Both),
         Kind::Shortcuts,
         Kind::Background,
+        Kind::Wallpaper { lock_screen: false },
+        Kind::Wallpaper { lock_screen: true },
     ];
 
     fn arg(self) -> &'static str {
@@ -92,6 +102,8 @@ impl Kind {
             Kind::InputCapture(Devices::Both) => "capture",
             Kind::Shortcuts => "shortcuts",
             Kind::Background => "background",
+            Kind::Wallpaper { lock_screen: false } => "wallpaper",
+            Kind::Wallpaper { lock_screen: true } => "wallpaper-lock",
         }
     }
 
@@ -106,6 +118,7 @@ impl Kind {
             Kind::InputCapture(_) => "Input capture",
             Kind::Shortcuts => "Keyboard shortcuts",
             Kind::Background => "Running in the background",
+            Kind::Wallpaper { .. } => "Desktop background",
         }
     }
 
@@ -116,6 +129,7 @@ impl Kind {
             Kind::InputCapture(_) => "input-mouse",
             Kind::Shortcuts => "input-keyboard",
             Kind::Background => "system-run",
+            Kind::Wallpaper { .. } => "preferences-desktop-wallpaper",
         }
     }
 
@@ -126,6 +140,7 @@ impl Kind {
             Kind::InputCapture(d) => format!("{who} wants to capture your {}.", d.noun()),
             Kind::Shortcuts => format!("{who} wants to use keyboard shortcuts."),
             Kind::Background => format!("{who} is running in the background."),
+            Kind::Wallpaper { .. } => format!("{who} wants to change your desktop background."),
         }
     }
 
@@ -143,6 +158,10 @@ impl Kind {
             Kind::InputCapture(_) => "At a screen edge it takes it. Super+Shift+Esc ends it.",
             Kind::Shortcuts => "Change the keys on Reprise Settings' Keyboard page.",
             Kind::Background => "It has no open window. Deny closes it.",
+            Kind::Wallpaper { lock_screen: false } => "The picture goes behind the desktop icons.",
+            Kind::Wallpaper { lock_screen: true } => {
+                "The picture goes on the desktop and the lock screen."
+            }
         }
     }
 }
@@ -192,6 +211,7 @@ pub fn ask(
         app: crate::remotedesktop::display_name(app_id),
         offer_remember,
         items,
+        preview: None,
     };
     ask_with(kind, input, &cancel)
 }
@@ -206,7 +226,7 @@ pub fn ask_with(kind: Kind, mut input: Input, cancel: &AtomicBool) -> Answer {
 }
 
 /// What the parent tells the prompt, as TOML on stdin.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct Input {
     pub parent: Option<String>,
     pub app: String,
@@ -214,6 +234,9 @@ pub struct Input {
     /// Lines listed under the prompt, such as the shortcuts asked for.
     #[serde(default)]
     pub items: Vec<String>,
+    /// A picture file shown on a monitor under the listed lines.
+    #[serde(default)]
+    pub preview: Option<String>,
 }
 
 /// The child's side; the argument after `--permit` names the kind.
@@ -228,7 +251,14 @@ pub fn run_dialog() {
     };
     let answer = Arc::new(Mutex::new(Answer::Dismissed));
     let icon = dialog::icons().get(kind.icon(), dialog::ICON_PX);
-    let form = build_form(kind, &input);
+    let mut form = build_form(kind, &input);
+    if let Some(path) = &input.preview
+        && let Some(Control::Monitor(screen)) = form.item_mut("preview").map(|i| &mut i.control)
+        && let Some(d) = repriseapp::decode::Decoders::default_set()
+            .decode_file(std::path::Path::new(path), PREVIEW_MAX)
+    {
+        *screen = Screen::Picture(d.canvas);
+    }
     let size = client_size(&input);
     repriseapp::run(Box::new(prompt(
         kind,
@@ -274,16 +304,26 @@ fn list_h(input: &Input) -> i32 {
     listed(&input.items).len() as i32 * ITEM_H
 }
 
-fn client_size(input: &Input) -> (i32, i32) {
-    (CLIENT.0, CLIENT.1 + list_h(input))
+/// How far the rows under the prompt move down: the listed lines and the preview.
+fn grown_h(input: &Input) -> i32 {
+    list_h(input)
+        + if input.preview.is_some() {
+            PREVIEW_H
+        } else {
+            0
+        }
 }
 
-/// The dialog's controls: who is asking, the listed lines, what it gets,
-/// the Remember check box when offered, Allow and Deny. Deny is the default
+fn client_size(input: &Input) -> (i32, i32) {
+    (CLIENT.0, CLIENT.1 + grown_h(input))
+}
+
+/// The dialog's controls: who is asking, the listed lines, the preview
+/// (black until the child decodes the picture), what it gets, the Remember check box when offered, Allow and Deny. Deny is the default
 /// button, so Enter never grants by accident, and Remember starts off.
 fn build_form(kind: Kind, input: &Input) -> Form {
     let (w, _) = CLIENT;
-    let dy = list_h(input);
+    let dy = grown_h(input);
     let [prompt, mut note] =
         dialog::header(w, kind.prompt(&who(input.app.trim())), kind.note().into());
     note.rect.y += dy;
@@ -292,6 +332,11 @@ fn build_form(kind: Kind, input: &Input) -> Form {
         let y = ITEMS_Y + i as i32 * ITEM_H;
         let line = reprisekit::text::escape_mnemonic(&line);
         items.push(Item::label_at(id, TEXT_X, y, w - TEXT_X - 11, &line));
+    }
+    if input.preview.is_some() {
+        let (mw, mh) = MONITOR_SIZE;
+        let at = Rect::new(TEXT_X, ITEMS_Y + list_h(input), mw, mh);
+        items.push(Item::new("preview", at, Control::Monitor(Screen::Black)));
     }
     items.push(note);
     if input.offer_remember {
@@ -364,6 +409,7 @@ mod tests {
             app: "Chromium".into(),
             offer_remember: true,
             items: vec!["Mute: Ctrl+M".into(), "Push to talk: Ctrl+Space".into()],
+            preview: None,
         };
         for kind in Kind::ALL {
             let over = crate::dialog::overflows(|_, _| build_form(kind, &input));
@@ -379,6 +425,7 @@ mod tests {
                 app: "Line\none".into(),
                 offer_remember: true,
                 items: vec!["Mute: Ctrl+M".into()],
+                preview: None,
             };
             let back: Input = toml::from_str(&toml::to_string(&input).unwrap()).unwrap();
             assert_eq!(back, input);
@@ -392,8 +439,33 @@ mod tests {
             app: "Deskflow".into(),
             offer_remember,
             items: Vec::new(),
+            preview: None,
         };
         build_form(Kind::RemoteControl(Devices::Both), &input)
+    }
+
+    #[test]
+    fn a_preview_puts_a_monitor_under_the_file_name_and_moves_the_rows_under_it() {
+        let input = Input {
+            app: "Wallpapers".into(),
+            items: vec!["dunes.jpg".into()],
+            preview: Some("/pictures/dunes.jpg".into()),
+            ..Default::default()
+        };
+        let kind = Kind::Wallpaper { lock_screen: false };
+        let f = build_form(kind, &input);
+        let monitor = f.item("preview").unwrap();
+        assert_eq!(monitor.control, Control::Monitor(Screen::Black));
+        assert_eq!(monitor.rect, Rect::new(TEXT_X, ITEMS_Y + ITEM_H, 191, 168));
+        let dy = ITEM_H + PREVIEW_H;
+        assert_eq!(f.item("allow").unwrap().rect.y, BUTTON_Y + dy);
+        assert_eq!(client_size(&input), (CLIENT.0, CLIENT.1 + dy));
+        let bare = Input {
+            preview: None,
+            ..input
+        };
+        assert!(build_form(kind, &bare).item("preview").is_none());
+        assert_eq!(client_size(&bare), (CLIENT.0, CLIENT.1 + ITEM_H));
     }
 
     #[test]
@@ -473,6 +545,7 @@ mod tests {
             app: "Taltos".into(),
             offer_remember: false,
             items: vec!["Hold to talk: Pause".into(), "Mute: no key".into()],
+            preview: None,
         }
     }
 
