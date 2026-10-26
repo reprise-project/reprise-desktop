@@ -23,6 +23,16 @@ Bugs in Smithay, PipeWire, NetworkManager, PAM or other dependencies belong
 upstream. If Reprise uses one of them in a way that opens a hole, that's
 in scope.
 
+## What is and is not a vulnerability
+
+[docs/security.md](docs/security.md) describes the boundaries Reprise draws:
+what an unsandboxed program, a Flatpak and an X11 program can each reach,
+the lock screen, focus and the portal's consent prompts. A way across one of
+those boundaries is a vulnerability. What that page lists as trusted or as a
+known gap (an unsandboxed program capturing the screen, X11 programs reading
+each other's keys, code running as you tampering with Reprise's processes)
+is not, though a proposal to close a gap is welcome as an issue.
+
 ## What to include
 
 - the commit or package version you tested
