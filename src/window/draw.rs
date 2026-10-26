@@ -165,12 +165,15 @@ impl State {
             Rect::new(0, fh - e, fw, e),
         ];
         let whole = |at: (i32, i32)| Rect::new(-at.0, -at.1, fw * scale, fh * scale);
+        let layout = self.layout_box(None);
+        let limit = (layout.width * scale, layout.height * scale);
         for (sb, r) in frame.into_iter().zip(pieces) {
             if r.is_empty() {
                 self.scene.set_enabled(sb, false);
                 continue;
             }
-            let mut c = Canvas::new((r.width * scale) as u32, (r.height * scale) as u32);
+            let (cw, ch) = frame_canvas_size((r.width * scale, r.height * scale), limit);
+            let mut c = Canvas::new(cw, ch);
             reprisekit::look::draw_sheet(&mut c, &theme, whole((r.x * scale, r.y * scale)));
             upload_scaled(&mut self.scene, sb, &c, scale);
             self.scene.set_position(sb, r.x, r.y);
@@ -403,12 +406,16 @@ impl State {
             ..self.config.theme.scaled(scale)
         };
         let opens = reprisekit::look::client_glass(&theme, active).is_some();
+        let layout = self.layout_box(None);
         let State { scene, windows, .. } = self;
         let Some(win) = windows.iter_mut().find(|x| x.id == w) else {
             return;
         };
         let rects: Vec<Rect> = match opens {
-            true if win.has_frame() && !sheet => win.blur.clone(),
+            true if win.has_frame() && !sheet => {
+                let size = (win.geom.client.width, win.geom.client.height);
+                client_glass_rects(size, &win.blur, (layout.width, layout.height))
+            }
             _ => Vec::new(),
         };
         while win.client_glass.len() > rects.len() {
@@ -537,9 +544,19 @@ impl State {
     }
 }
 
-/// Stack the shadow pieces just under the glass `backdrop` or (`over`) just above it, frame strips
-/// on top. Molten's lens reads past the frame edge, so a shadow under the glass bends into the
-/// caption as a dark line.
+/// The `blur` rects (client coordinates) the frame's glass draws under a client of `size`: each
+/// clipped to the client and capped at `limit` so a client's own geometry cannot size a canvas.
+pub(super) fn client_glass_rects(size: (i32, i32), blur: &[Rect], limit: (i32, i32)) -> Vec<Rect> {
+    let client = Rect::new(0, 0, size.0, size.1);
+    blur.iter()
+        .map(|b| {
+            let r = b.intersect(&client);
+            Rect::new(r.x, r.y, r.width.min(limit.0), r.height.min(limit.1))
+        })
+        .filter(|r| !r.is_empty())
+        .collect()
+}
+
 /// The parts of `client` (frame coordinates) the frame's glass leaves clear: all of it but the
 /// `blur` rects (client coordinates).
 pub(super) fn client_holes(client: Rect, blur: &[Rect]) -> Vec<Rect> {
@@ -554,6 +571,9 @@ pub(super) fn client_holes(client: Rect, blur: &[Rect]) -> Vec<Rect> {
         .collect()
 }
 
+/// Stack the shadow pieces just under the glass `backdrop` or (`over`) just above it, frame strips
+/// on top. Molten's lens reads past the frame edge, so a shadow under the glass bends into the
+/// caption as a dark line.
 pub(super) fn stack_shadow(
     scene: &mut DeskScene,
     shadow: &[BufferId; 8],

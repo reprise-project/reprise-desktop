@@ -169,7 +169,7 @@ fn client_limits_keep_zero_max_unbounded_and_cap_at_32767() {
     );
 }
 
-use super::draw::client_holes;
+use super::draw::{client_glass_rects, client_holes};
 use super::owners::{modal_end, owner_chain_has, walk_owned};
 use super::place::{grown_back_inside, retheme_back_inside};
 use super::*;
@@ -189,6 +189,27 @@ fn the_frames_glass_leaves_clear_only_the_client_outside_its_blur_region() {
     assert_eq!(holes, vec![Rect::new(8, 108, 400, 222)], "below the band");
     let holes = client_holes(client, &[Rect::new(0, 0, 400, 300)]);
     assert!(holes.is_empty(), "a region over all of it: {holes:?}");
+}
+
+#[test]
+fn a_huge_clients_full_blur_region_draws_glass_no_larger_than_the_layout() {
+    let client = (32767, 32767);
+    let rects = client_glass_rects(client, &[Rect::new(0, 0, 32767, 32767)], (1920, 1080));
+    assert_eq!(rects, vec![Rect::new(0, 0, 1920, 1080)]);
+    let rects = client_glass_rects(
+        (400, 300),
+        &[
+            Rect::new(0, 0, 400, 78),
+            Rect::new(390, 290, 50, 50),
+            Rect::new(500, 0, 10, 10),
+        ],
+        (1920, 1080),
+    );
+    assert_eq!(
+        rects,
+        vec![Rect::new(0, 0, 400, 78), Rect::new(390, 290, 10, 10)],
+        "clipped to the client, the rect outside it dropped"
+    );
 }
 
 #[test]
