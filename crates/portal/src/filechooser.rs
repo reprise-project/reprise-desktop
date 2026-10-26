@@ -289,7 +289,7 @@ impl FileChooser {
         options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         log::info!("OpenFile for {app_id:?}");
         self.run(
             server,
@@ -311,7 +311,7 @@ impl FileChooser {
         options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         log::info!("SaveFile for {app_id:?}");
         let mut input = base_input(Kind::Save, &parent_window, title, &options);
         (input.name, input.name_raw) = start_name(&options);
@@ -330,7 +330,7 @@ impl FileChooser {
         options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         log::info!("SaveFiles for {app_id:?}");
         let mut input = base_input(Kind::SaveFiles, &parent_window, title, &options);
         let files: Vec<Vec<u8>> = match options.get("files") {

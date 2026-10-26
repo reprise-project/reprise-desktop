@@ -126,7 +126,7 @@ impl InputCapture {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         crate::check_session(&session_handle)?;
         let Some(link) = live(&self.link) else {
             return Ok((RESPONSE_OTHER, HashMap::new()));
@@ -210,7 +210,7 @@ impl InputCapture {
         _app_id: String,
         _options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         let Some(link) = live(&self.link) else {
             return Ok((RESPONSE_OTHER, HashMap::new()));
         };
@@ -257,7 +257,7 @@ impl InputCapture {
         barriers: Vec<HashMap<String, Value<'_>>>,
         zone_set: u32,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         let Some(link) = live(&self.link) else {
             return Ok((RESPONSE_OTHER, HashMap::new()));
         };
@@ -309,7 +309,7 @@ impl InputCapture {
         _app_id: String,
         _options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         log::info!("InputCapture.Enable {}", session_handle.as_str());
         self.with_capture(&session_handle, |c| c.enable())
     }
@@ -321,7 +321,7 @@ impl InputCapture {
         _app_id: String,
         _options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         log::info!("InputCapture.Disable {}", session_handle.as_str());
         self.with_capture(&session_handle, |c| c.disable())
     }
@@ -333,7 +333,7 @@ impl InputCapture {
         _app_id: String,
         options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         let id = options
             .get("activation_id")
             .and_then(|v| u32::try_from(v).ok());
@@ -356,7 +356,7 @@ impl InputCapture {
         app_id: String,
         _options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<zbus::zvariant::OwnedFd> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         if live(&self.link).is_none() {
             return Err(zbus::fdo::Error::Failed("no input link".into()));
         }
