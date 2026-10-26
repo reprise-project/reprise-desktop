@@ -877,6 +877,27 @@ fn a_window_that_hides_and_shows_again_comes_back_where_it_was() {
 }
 
 #[test]
+fn a_window_hidden_on_an_output_that_goes_comes_back_on_one_that_stays() {
+    let mut h = forgetful();
+    let two = h.output("TEST-2", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let b = h.state.layout_box(Some(&two));
+    h.state.move_to(t.id, b.x + 400, b.y + 300);
+    unmap_self(&mut h, &mut c, t);
+    h.state.scene.remove_output(&two);
+    h.state.output_removed(&two);
+    h.resize_self(&mut c, t, 300, 200);
+    let one = h.state.scene.outputs()[0].clone();
+    let area = h.state.usable_area(Some(&one));
+    let r = h.state.win(t.id).unwrap().frame_rect();
+    assert!(
+        area.contains(r.x + r.width / 2, r.y + r.height / 2),
+        "the frame {r:?} lands inside TEST-1's {area:?}"
+    );
+}
+
+#[test]
 fn a_maximized_window_that_hides_and_shows_again_comes_back_maximized() {
     let mut h = forgetful();
     let mut c = h.connect();

@@ -663,26 +663,22 @@ impl State {
         let Some(target) = self.output_at(pos.x, pos.y) else {
             return;
         };
-        let rects: Vec<Rect> = self
-            .scene
-            .outputs()
-            .iter()
-            .map(|o| self.layout_box(Some(o)))
-            .collect();
         let lost: Vec<WindowId> = self
             .windows
             .iter()
             .filter(|w| w.mapped && !w.maximized && !w.fullscreen && !w.override_redirect)
-            .filter(|w| {
-                let r = w.frame_rect();
-                let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
-                !rects.iter().any(|o| o.contains(cx, cy))
-            })
+            .filter(|w| !self.centre_on_an_output(w.frame_rect()))
             .map(|w| w.id)
             .collect();
         for w in lost {
             self.centre_window(w, Some(&target));
         }
+    }
+
+    /// Whether the centre of `r` lies on an output.
+    pub fn centre_on_an_output(&self, r: Rect) -> bool {
+        let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
+        (self.scene.outputs().iter()).any(|o| self.layout_box(Some(o)).contains(cx, cy))
     }
 
     /// Box of one output in layout coordinates, or of the whole layout for None.
