@@ -22,6 +22,7 @@ pub mod listing;
 pub mod locale;
 pub mod meta;
 pub mod mimetree;
+pub mod multicall;
 pub mod names;
 pub mod ops;
 pub mod pictures;

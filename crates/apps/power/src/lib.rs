@@ -488,8 +488,9 @@ impl PowerApp {
     }
 }
 
-fn main() {
-    repriseapp::applet_main(|tray_only| PowerApp {
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(args: Vec<std::ffi::OsString>) {
+    repriseapp::applet_main(&args, |tray_only| PowerApp {
         hidden: tray_only,
         tray_only,
         path: repriseconf::config_path(),

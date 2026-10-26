@@ -11,7 +11,8 @@ workspace = true
 
 [[bin]]
 name = "reprise-drives"
-path = "src/main.rs"
+path = "src/bin/reprise-drives.rs"
+test = false
 
 [dependencies]
 repriseapp = { path = "../../repriseapp" }

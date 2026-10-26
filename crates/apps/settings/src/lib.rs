@@ -874,9 +874,10 @@ impl App for SettingsApp {
     }
 }
 
-fn main() {
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    let page = page_arg(std::env::args().skip(1));
+    let page = page_arg(args.into_iter().map(|a| a.to_string_lossy().into_owned()));
     let action = page.as_ref().map(|(p, focus)| {
         let params = std::iter::once(p.slug()).chain(focus.clone()).collect();
         (PAGE_ACTION.to_string(), params)

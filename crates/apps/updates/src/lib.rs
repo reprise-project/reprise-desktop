@@ -406,8 +406,9 @@ impl UpdatesApp {
     }
 }
 
-fn main() {
-    repriseapp::applet_main(UpdatesApp::new);
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(args: Vec<std::ffi::OsString>) {
+    repriseapp::applet_main(&args, UpdatesApp::new);
 }
 
 #[cfg(test)]
