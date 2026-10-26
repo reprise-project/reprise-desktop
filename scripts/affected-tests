@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Usage: scripts/affected-tests [--dry-run] [BASE] [nextest args...]
+# Runs the tests of every workspace member that the changes since
+# merge-base(BASE, HEAD) can affect (default BASE: origin/main; the working
+# tree and untracked files count): each changed member plus its reverse
+# dependencies. A change outside the members' directories runs everything.
+# --dry-run prints the crate set and the command instead of running it.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+dry=
+if [ "${1:-}" = --dry-run ]; then dry=1; shift; fi
+base=${1:-origin/main}
+shift || true
+
+mb=$(git merge-base "$base" HEAD)
+files=$( { git diff --name-only "$mb"; git ls-files -o --exclude-standard; } | sort -u)
+
+# Prints "ALL" or "<changed members>\t<changed members and their reverse deps>".
+sets=$(cargo metadata --format-version 1 --no-deps --locked | FILES=$files python3 -I -c '
+import json, os, sys
+
+meta = json.load(sys.stdin)
+root = meta["workspace_root"]
+names = {p["name"] for p in meta["packages"]}
+dirs = {}
+for p in meta["packages"]:
+    d = os.path.relpath(os.path.dirname(p["manifest_path"]), root)
+    dirs[d] = p["name"]
+root_name = dirs.pop(".", None)
+
+# Read by tests or include_str! across crates, or configure every build.
+everything = ("Cargo.toml", "Cargo.lock", ".config/", "data/", "protocols/", "scripts/",
+              "config.example.toml", ".github/workflows/ci.yml")
+inert = ("docs/", "packaging/", ".github/", "README.md", "CONTRIBUTING.md", "SECURITY.md",
+         "LICENSE", ".gitignore")
+root_paths = ("src/", "tests/", "examples/", "benches/", "build.rs")
+
+changed = set()
+for f in os.environ["FILES"].split("\n"):
+    if not f:
+        continue
+    if f.startswith(everything):
+        print("ALL")
+        sys.exit()
+    hit = [d for d in dirs if f.startswith(d + "/")]
+    if hit:
+        changed.add(dirs[max(hit, key=len)])
+    elif root_name and f.startswith(root_paths):
+        changed.add(root_name)
+    elif f.startswith(inert) or f.endswith(".local.md"):
+        continue
+    else:
+        print("ALL")
+        sys.exit()
+
+users = {n: set() for n in names}
+for p in meta["packages"]:
+    for dep in p["dependencies"]:
+        if dep.get("path") is not None and dep["name"] in names:
+            users[dep["name"]].add(p["name"])
+affected = set(changed)
+todo = list(changed)
+while todo:
+    for u in users[todo.pop()]:
+        if u not in affected:
+            affected.add(u)
+            todo.append(u)
+if affected == names:
+    print("ALL")
+else:
+    print(" ".join(sorted(changed)) + "\t" + " ".join(sorted(affected)))
+')
+
+cmd=(cargo nextest run --workspace --locked)
+case $sets in
+  ALL) crates="(whole workspace)" ;;
+  $'\t') echo "affected-tests: no crate changed since $base"; exit 0 ;;
+  *)
+    crates=${sets#*$'\t'}
+    expr=
+    for c in ${sets%%$'\t'*}; do expr+="${expr:+ | }rdeps(=$c)"; done
+    cmd+=(-E "$expr")
+    ;;
+esac
+cmd+=("$@")
+
+if [ -n "$dry" ]; then
+  echo "crates: $crates"
+  printf 'command:'; printf ' %q' "${cmd[@]}"; echo
+  exit 0
+fi
+exec "${cmd[@]}"

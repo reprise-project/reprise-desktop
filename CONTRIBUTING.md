@@ -18,6 +18,8 @@ and run Reprise, nested in your current session or from a login manager.
 every test in its own process across all test binaries at once and reads
 `.config/nextest.toml`. Without it, `cargo test --workspace` runs the same
 tests.
+`scripts/affected-tests [BASE]` runs only the tests of the crates changed
+since BASE (default `origin/main`) and the crates that depend on them.
 
 CI runs the same three commands in an `archlinux:latest` container as an
 unprivileged user (`.github/workflows/ci.yml` installs the packages). Run
