@@ -13,7 +13,8 @@
 //! front to back, and Smithay's `OutputDamageTracker` works out the damage
 //! from their Ids, commit counters and geometry. After the output renders,
 //! [`Scene::update_surfaces`], [`Scene::send_frames`] and
-//! [`Scene::take_presentation_feedback`] serve the client surfaces on it.
+//! [`Scene::take_presentation_feedback`] serve the client surfaces on it,
+//! from one [`Scene::surface_pass`].
 //!
 //! Occlusion in the primary output uses the largest overlap of the node's
 //! box, not of its visible part.
@@ -31,6 +32,7 @@ pub use node::{
 pub use query::{Hit, output_rect};
 pub use render::{BufferElement, SceneElement, View};
 pub use scene::{Prepared, Scene};
+pub use surface::SurfacePass;
 
 #[cfg(test)]
 mod tests;

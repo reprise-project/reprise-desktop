@@ -284,8 +284,10 @@ impl World {
 
     fn rendered(&mut self, scene: &mut Scene<DummyRenderer>) -> Vec<String> {
         let none = RenderElementStates::default();
-        scene.update_surfaces(&self.left, &none);
-        scene.update_surfaces(&self.right, &none);
+        let pass = scene.surface_pass(&self.left);
+        scene.update_surfaces(&pass, &none);
+        let pass = scene.surface_pass(&self.right);
+        scene.update_surfaces(&pass, &none);
         self.events()
     }
 
@@ -435,20 +437,36 @@ fn frames_come_from_the_primary_output_only() {
     scene.set_position(s, 70, 10);
     assert_eq!(scene.primary_output(s), Some(w.left.clone()));
     w.rendered(&mut scene);
-    scene.send_frames(&w.right, Duration::from_millis(16), None);
+    scene.send_frames(
+        &scene.surface_pass(&w.right),
+        Duration::from_millis(16),
+        None,
+    );
     assert_eq!(
         w.events(),
         [] as [String; 0],
         "the right output is not primary"
     );
-    scene.send_frames(&w.left, Duration::from_millis(16), None);
+    scene.send_frames(
+        &scene.surface_pass(&w.left),
+        Duration::from_millis(16),
+        None,
+    );
     assert_eq!(w.events(), ["frame"]);
     w.request_frame();
     scene.set_enabled(s, false);
-    scene.send_frames(&w.left, Duration::from_millis(32), None);
+    scene.send_frames(
+        &scene.surface_pass(&w.left),
+        Duration::from_millis(32),
+        None,
+    );
     assert_eq!(w.events(), [] as [String; 0]);
     scene.set_enabled(s, true);
-    scene.send_frames(&w.left, Duration::from_millis(48), None);
+    scene.send_frames(
+        &scene.surface_pass(&w.left),
+        Duration::from_millis(48),
+        None,
+    );
     assert_eq!(w.events(), ["frame"]);
     let view = View::of(&w.left).unwrap();
     assert_eq!(view.area.size, (100, 100).into());
