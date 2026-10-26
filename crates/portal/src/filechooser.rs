@@ -7,7 +7,7 @@ use crate::filters::{self, Filter};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -69,6 +69,24 @@ pub fn uri(path: &Path) -> String {
     s
 }
 
+/// The folders a call asks to start in, most specific first:
+/// `current_file`'s folder, then `current_folder`.
+fn asked_folders(o: &HashMap<String, Value<'_>>) -> Vec<PathBuf> {
+    let current_file_dir =
+        opt_bytes(o, "current_file").and_then(|b| bytes_path(&b).parent().map(Path::to_path_buf));
+    let current_folder = opt_bytes(o, "current_folder").map(|b| bytes_path(&b));
+    current_file_dir.into_iter().chain(current_folder).collect()
+}
+
+/// The first of `asked`, Documents and home that is a folder. Blocking:
+/// a caller's path may sit on a hung mount.
+fn start_in(asked: Vec<PathBuf>) -> PathBuf {
+    let mut candidates: Vec<Option<PathBuf>> = asked.into_iter().map(Some).collect();
+    candidates.push(reprisefs::places::user_dir("DOCUMENTS", "Documents"));
+    candidates.push(std::env::var_os("HOME").map(PathBuf::from));
+    start_folder(&candidates)
+}
+
 pub fn start_folder(candidates: &[Option<PathBuf>]) -> PathBuf {
     candidates
         .iter()
@@ -83,21 +101,12 @@ pub fn start_folder(candidates: &[Option<PathBuf>]) -> PathBuf {
 /// empty, `.`, `..`, or has a `/` or a NUL: it would leave the folder the
 /// user picked.
 pub fn save_files_paths(dir: &Path, files: &[Vec<u8>]) -> Option<Vec<PathBuf>> {
+    if !save_files_names_ok(files) {
+        return None;
+    }
     let mut out: Vec<PathBuf> = Vec::new();
     for f in files {
         let name = f.strip_suffix(b"\0").unwrap_or(f);
-        if name.is_empty()
-            || name == b"."
-            || name == b".."
-            || name.contains(&b'/')
-            || name.contains(&0)
-        {
-            log::warn!(
-                "SaveFiles: refused the name {:?}",
-                String::from_utf8_lossy(name)
-            );
-            return None;
-        }
         // Taken on disk (a dangling symlink too) or already handed out
         // for an earlier name of this call.
         let free = reprisefs::names::first_free(OsStr::from_bytes(name), |c| {
@@ -107,6 +116,24 @@ pub fn save_files_paths(dir: &Path, files: &[Vec<u8>]) -> Option<Vec<PathBuf>> {
         out.push(dir.join(free));
     }
     Some(out)
+}
+
+fn save_files_names_ok(files: &[Vec<u8>]) -> bool {
+    files.iter().all(|f| {
+        let name = f.strip_suffix(b"\0").unwrap_or(f);
+        let ok = !(name.is_empty()
+            || name == b"."
+            || name == b".."
+            || name.contains(&b'/')
+            || name.contains(&0));
+        if !ok {
+            log::warn!(
+                "SaveFiles: refused the name {:?}",
+                String::from_utf8_lossy(name)
+            );
+        }
+        ok
+    })
 }
 
 fn reply(out: &Output, filters: &[Filter]) -> (u32, HashMap<String, OwnedValue>) {
@@ -200,12 +227,6 @@ fn base_input(
             .unwrap_or_default(),
         o.get("current_filter").and_then(filters::parse_filter),
     );
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let docs = reprisefs::places::user_dir("DOCUMENTS", "Documents");
-    let current_folder = opt_bytes(o, "current_folder").map(|b| bytes_path(&b));
-    let current_file_dir =
-        opt_bytes(o, "current_file").and_then(|b| bytes_path(&b).parent().map(Path::to_path_buf));
-    let start = start_folder(&[current_file_dir, current_folder, docs, home]);
     Input {
         parent: dialog::parent_handle(parent_window),
         modal: opt_bool(o, "modal").unwrap_or(true),
@@ -217,7 +238,7 @@ fn base_input(
             .map_or(default_label.to_string(), |l| dialog::mnemonic(&l)),
         filters: if folder_mode { Vec::new() } else { filters },
         filter,
-        start: start.as_os_str().as_bytes().to_vec(),
+        start: Vec::new(),
         name: String::new(),
         name_raw: None,
         files: Vec::new(),
@@ -233,12 +254,14 @@ impl FileChooser {
         &self,
         server: &zbus::ObjectServer,
         handle: &ObjectPath<'_>,
-        input: Input,
+        mut input: Input,
+        asked: Vec<PathBuf>,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
         let cancel = Arc::new(AtomicBool::new(false));
         crate::export_request(server, handle, cancel.clone(), &self.frontend).await?;
         let filters = input.filters.clone();
         let out: Output = blocking::unblock(move || {
+            input.start = start_in(asked).into_os_string().into_vec();
             dialog::run_toml(&["--file"], &input, &cancel)
                 .and_then(|s| {
                     toml::from_str(&s)
@@ -272,6 +295,7 @@ impl FileChooser {
             server,
             &handle,
             base_input(Kind::Open, &parent_window, title, &options),
+            asked_folders(&options),
         )
         .await
     }
@@ -291,7 +315,8 @@ impl FileChooser {
         log::info!("SaveFile for {app_id:?}");
         let mut input = base_input(Kind::Save, &parent_window, title, &options);
         (input.name, input.name_raw) = start_name(&options);
-        self.run(server, &handle, input).await
+        self.run(server, &handle, input, asked_folders(&options))
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -326,11 +351,12 @@ impl FileChooser {
                 .collect(),
             _ => Vec::new(),
         };
-        if save_files_paths(Path::new("/"), &files).is_none() {
+        if !save_files_names_ok(&files) {
             return Ok((crate::RESPONSE_OTHER, HashMap::new()));
         }
         input.files = files;
-        self.run(server, &handle, input).await
+        self.run(server, &handle, input, asked_folders(&options))
+            .await
     }
 }
 
@@ -405,6 +431,18 @@ mod tests {
         let t = std::env::temp_dir();
         let missing = t.join("reprise-no-such-folder");
         assert_eq!(start_folder(&[Some(missing), None, Some(t.clone())]), t);
+    }
+
+    #[test]
+    fn the_current_files_folder_is_asked_before_the_current_folder() {
+        let mut o: HashMap<String, Value<'_>> = HashMap::new();
+        o.insert("current_folder".into(), Value::new(b"/srv\0".to_vec()));
+        o.insert("current_file".into(), Value::new(b"/tmp/a.txt\0".to_vec()));
+        assert_eq!(
+            asked_folders(&o),
+            [PathBuf::from("/tmp"), PathBuf::from("/srv")]
+        );
+        assert!(asked_folders(&HashMap::new()).is_empty());
     }
 
     #[test]
