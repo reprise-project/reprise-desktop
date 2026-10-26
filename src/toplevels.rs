@@ -2,8 +2,8 @@
 //! capture windows and a bar can show them. The handle closes when the window unmaps.
 //!
 //! wlr-foreign-toplevel-management: the same windows with state and output, for docks and
-//! task switchers. `State::refresh_toplevels` brings every handle up to date once per loop
-//! iteration. Adapted from niri's `src/protocols/foreign_toplevel.rs` (GPL-3.0-or-later).
+//! task switchers. `State::refresh_toplevels` brings every handle up to date at the end of a
+//! loop iteration that set `Toplevels::dirty`. Adapted from niri's `src/protocols/foreign_toplevel.rs` (GPL-3.0-or-later).
 
 use std::collections::HashMap;
 
@@ -35,6 +35,11 @@ pub struct Toplevels {
     handles: HashMap<WindowId, ForeignToplevelHandle>,
     pub capture: ToplevelCaptureSourceState,
     wlr: Wlr,
+    /// A window's title, app id, state, focus or output may have changed since the last
+    /// `refresh_toplevels`; set by every scene redraw ask, focus change and retitle.
+    pub dirty: bool,
+    #[cfg(test)]
+    refreshes: u32,
 }
 
 impl Toplevels {
@@ -50,6 +55,9 @@ impl Toplevels {
                 crate::sandbox::filter("ext_foreign_toplevel_image_capture_source_manager_v1"),
             ),
             wlr: Wlr::new(dh),
+            dirty: true,
+            #[cfg(test)]
+            refreshes: 0,
         }
     }
 
@@ -76,6 +84,7 @@ impl State {
         };
         let (title, app_id) = (win.title(), win.app_id());
         let t = &mut self.toplevels;
+        t.dirty = true;
         match t.handles.get(&w) {
             Some(h) => {
                 if h.title() != title || h.app_id() != app_id {
@@ -249,6 +258,13 @@ impl State {
         if self.toplevels.wlr.managers.is_empty() && self.toplevels.wlr.windows.is_empty() {
             return;
         }
+        if !std::mem::take(&mut self.toplevels.dirty) {
+            return;
+        }
+        #[cfg(test)]
+        {
+            self.toplevels.refreshes += 1;
+        }
         let mut now: Vec<(WindowId, Shown)> = self
             .windows
             .iter()
@@ -349,6 +365,7 @@ impl GlobalDispatch2<ZwlrForeignToplevelManagerV1, State> for WlrGlobal {
         data_init: &mut DataInit<'_, State>,
     ) {
         let manager = data_init.init(resource, WlrGlobal);
+        state.toplevels.dirty = true;
         let wlr = &mut state.toplevels.wlr;
         for (w, data) in &mut wlr.windows {
             data.add_handle(dh, &manager, *w);
@@ -427,6 +444,32 @@ mod tests {
         assert_eq!(
             wlr_states(false, true, false, true),
             vec![S::Minimized as u32, S::Fullscreen as u32]
+        );
+    }
+
+    #[test]
+    fn idle_turns_with_a_manager_bound_do_no_refresh_work() {
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "app", 200, 100);
+        let _manager = c.watch_toplevels();
+        h.roundtrip(&mut c);
+        assert!(
+            h.state.toplevels.wlr.windows.contains_key(&t.id),
+            "the bound manager hears of the window"
+        );
+        h.state.toplevels.refreshes = 0;
+        for _ in 0..10 {
+            h.dispatch();
+        }
+        assert_eq!(h.state.toplevels.refreshes, 0, "idle turns refresh nothing");
+        h.state.set_maximized(t.id, true);
+        h.dispatch();
+        assert_eq!(h.state.toplevels.refreshes, 1, "a maximize refreshes once");
+        assert_eq!(
+            h.state.toplevels.wlr.windows[&t.id].shown.states,
+            vec![S::Maximized as u32, S::Activated as u32]
         );
     }
 }

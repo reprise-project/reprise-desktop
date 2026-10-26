@@ -545,6 +545,7 @@ impl State {
         let launch = self.win_mut(w).and_then(|x| x.launch.take());
         if self.focused == Some(w) {
             self.focused = None;
+            self.toplevels.dirty = true;
             if let Some(l) = launch {
                 crate::mapfocus::give_back(l);
             }
