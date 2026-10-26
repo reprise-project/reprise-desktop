@@ -5,9 +5,10 @@
 
 use crate::inputlink::{Link, live};
 use crate::inputproto::reprise_input_v1::Device;
+use crate::wayland::Target;
 use crate::{
-    CastState, RESPONSE_CANCELLED, RESPONSE_OK, RESPONSE_OTHER, RESTORE_VENDOR, RESTORE_VERSION,
-    Request, SessionData, SessionKind, Sessions,
+    CastState, RESPONSE_CANCELLED, RESPONSE_OK, RESPONSE_OTHER, Request, SessionData, SessionKind,
+    Sessions,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -106,7 +107,7 @@ impl RemoteDesktop {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
-        _app_id: String,
+        app_id: String,
         options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
         self.frontend.check(&hdr)?;
@@ -129,7 +130,7 @@ impl RemoteDesktop {
         {
             s.persist = p;
         }
-        let restored = options.get("restore_data").and_then(our_grant);
+        let restored = (options.get("restore_data")).and_then(|v| our_grant(v, &app_id));
         if let Some(granted) = restored {
             s.devices &= granted;
         }
@@ -214,6 +215,7 @@ impl RemoteDesktop {
             .and_then(SessionData::remote_mut)
             .map(|s| s.screencast.types);
         let mut streams = Vec::new();
+        let mut kept = None;
         match types {
             None => return Ok((RESPONSE_CANCELLED, empty())),
             Some(0) => {}
@@ -230,7 +232,10 @@ impl RemoteDesktop {
                 )
                 .await
                 {
-                    Ok(st) => streams.push(st.stream),
+                    Ok(st) => {
+                        streams.push(st.stream);
+                        kept = (st.persist_mode > 0).then_some(st.target);
+                    }
                     Err(code) => return Ok((code, empty())),
                 }
             }
@@ -248,15 +253,8 @@ impl RemoteDesktop {
             }
             None => return Ok((RESPONSE_CANCELLED, empty())),
         }
-        let restore_data = (persist > 0).then(|| {
-            (
-                RESTORE_VENDOR.to_string(),
-                RESTORE_VERSION,
-                Value::from(restore_payload(devices))
-                    .try_to_owned()
-                    .expect("string"),
-            )
-        });
+        let restore_data =
+            (persist > 0).then(|| crate::restore_data(&app_id, &grant(devices, kept.as_ref())));
         Ok((
             RESPONSE_OK,
             StartResults {
@@ -435,29 +433,29 @@ fn empty() -> StartResults {
     }
 }
 
-fn restore_payload(devices: u32) -> String {
-    format!("{RESTORE_TAG}:{devices}")
+/// The grant a RemoteDesktop token carries: the devices, and the picture
+/// when the user also ticked Remember in the share picker.
+fn grant(devices: u32, target: Option<&Target>) -> String {
+    match target {
+        Some(t) => format!("{RESTORE_TAG}:{devices};{}", crate::lastpick::encode(t)),
+        None => format!("{RESTORE_TAG}:{devices}"),
+    }
 }
 
-fn our_grant(v: &Value<'_>) -> Option<u32> {
-    let owned = v.try_to_owned().ok()?;
-    let (vendor, version, payload) = <(String, u32, OwnedValue)>::try_from(owned).ok()?;
-    if vendor != RESTORE_VENDOR || version != RESTORE_VERSION {
-        return None;
-    }
-    let payload = as_str(&payload)?;
-    let mask = payload.strip_prefix(RESTORE_TAG)?.strip_prefix(':')?;
-    mask.parse::<u32>()
-        .ok()
-        .map(|m| m & (DEVICE_KEYBOARD | DEVICE_POINTER))
+/// The devices and picture of a RemoteDesktop grant; None for any other.
+pub(crate) fn parse_grant(grant: &str) -> Option<(u32, Option<Target>)> {
+    let rest = grant.strip_prefix(RESTORE_TAG)?.strip_prefix(':')?;
+    let (mask, target) = match rest.split_once(';') {
+        Some((mask, t)) => (mask, Some(crate::lastpick::decode(t)?)),
+        None => (rest, None),
+    };
+    let mask = mask.parse::<u32>().ok()? & (DEVICE_KEYBOARD | DEVICE_POINTER);
+    Some((mask, target))
 }
 
-fn as_str<'a>(v: &'a Value<'a>) -> Option<&'a str> {
-    match v {
-        Value::Str(s) => Some(s.as_str()),
-        Value::Value(inner) => as_str(inner),
-        _ => None,
-    }
+fn our_grant(v: &Value<'_>, app_id: &str) -> Option<u32> {
+    let data = <(String, u32, OwnedValue)>::try_from(v.try_to_owned().ok()?).ok()?;
+    parse_grant(crate::restored_grant(&data, app_id)?).map(|(mask, _)| mask)
 }
 
 pub(crate) fn display_name(app_id: &str) -> String {
@@ -474,36 +472,56 @@ pub(crate) fn display_name(app_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{RESTORE_VENDOR, restore_data};
+
+    const APP: &str = "org.example.Remote";
+
+    fn token(app_id: &str, grant: &str) -> Value<'static> {
+        Value::from(restore_data(app_id, grant))
+    }
 
     #[test]
     fn only_our_own_restore_data_skips_the_dialog() {
-        let ours = Value::from((
-            RESTORE_VENDOR.to_string(),
-            RESTORE_VERSION,
-            Value::from(restore_payload(DEVICE_POINTER))
-                .try_to_owned()
-                .unwrap(),
-        ));
-        assert_eq!(our_grant(&ours), Some(DEVICE_POINTER));
+        let ours = token(APP, &grant(DEVICE_POINTER, None));
+        assert_eq!(our_grant(&ours, APP), Some(DEVICE_POINTER));
         let unasked = Value::from((
             RESTORE_VENDOR.to_string(),
-            1u32,
-            Value::from(restore_payload(DEVICE_POINTER))
+            2u32,
+            Value::from(format!("{RESTORE_TAG}:{DEVICE_POINTER}"))
                 .try_to_owned()
                 .unwrap(),
         ));
-        assert_eq!(our_grant(&unasked), None);
+        assert_eq!(our_grant(&unasked, APP), None);
         let theirs = Value::from((
             "someone-else".to_string(),
-            RESTORE_VERSION,
+            crate::RESTORE_VERSION,
             Value::from(RESTORE_TAG).try_to_owned().unwrap(),
         ));
-        assert_eq!(our_grant(&theirs), None);
-        let cast = Value::from((
-            RESTORE_VENDOR.to_string(),
-            RESTORE_VERSION,
-            Value::from("output:Virtual-1").try_to_owned().unwrap(),
-        ));
-        assert_eq!(our_grant(&cast), None);
+        assert_eq!(our_grant(&theirs, APP), None);
+        assert_eq!(our_grant(&token(APP, "output:Virtual-1"), APP), None);
+    }
+
+    #[test]
+    fn a_grant_restores_only_for_the_app_it_was_issued_to() {
+        let ours = token(APP, &grant(DEVICE_KEYBOARD, None));
+        assert_eq!(our_grant(&ours, APP), Some(DEVICE_KEYBOARD));
+        assert_eq!(our_grant(&ours, "org.example.Other"), None);
+        assert_eq!(our_grant(&ours, ""), None);
+    }
+
+    #[test]
+    fn a_grant_carries_the_picture_it_was_remembered_with() {
+        let screen = Target::Output("DP-1".into());
+        let both = grant(DEVICE_KEYBOARD | DEVICE_POINTER, Some(&screen));
+        assert_eq!(
+            parse_grant(&both),
+            Some((DEVICE_KEYBOARD | DEVICE_POINTER, Some(screen)))
+        );
+        assert_eq!(
+            parse_grant(&grant(DEVICE_POINTER, None)),
+            Some((DEVICE_POINTER, None))
+        );
+        assert_eq!(parse_grant("output:DP-1"), None);
+        assert_eq!(parse_grant("remote-desktop:3;junk"), None);
     }
 }
