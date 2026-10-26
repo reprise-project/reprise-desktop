@@ -615,6 +615,7 @@ mod tests {
             secret: false,
             multiline: false,
             can_undo: false,
+            can_redo: false,
             selected: false,
             digits: false,
         }

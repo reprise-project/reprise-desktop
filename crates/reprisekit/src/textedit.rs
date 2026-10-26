@@ -14,7 +14,7 @@ pub struct TextEdit {
     pub text: String,
     caret: usize,
     anchor: usize,
-    undo: Undo<String, usize>,
+    undo: Undo<usize>,
     secret: bool,
     cue: String,
 }
@@ -52,35 +52,212 @@ pub(crate) enum Edit {
     Deleting,
 }
 
-/// Single-level undo shared by the single- and multi-line edits: the state before the last run of edits; Ctrl+Z again puts it back. `T` is the text, `P` a caret position.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub(crate) struct Undo<T, P> {
-    saved: Option<(T, P, P)>,
+/// A text position an undo log can step over inserted text with.
+pub(crate) trait Spot: Copy + Eq {
+    /// Where `s` ends when it starts here.
+    fn after(self, s: &str) -> Self;
+}
+
+impl Spot for usize {
+    fn after(self, s: &str) -> usize {
+        self + s.len()
+    }
+}
+
+/// The text an undo log replays its ops on.
+pub(crate) trait Doc<P> {
+    fn put(&mut self, at: P, s: &str);
+    /// Remove `s`, which starts at `at`.
+    fn cut(&mut self, at: P, s: &str);
+}
+
+impl Doc<usize> for String {
+    fn put(&mut self, at: usize, s: &str) {
+        self.insert_str(at, s);
+    }
+
+    fn cut(&mut self, at: usize, s: &str) {
+        self.replace_range(at..at + s.len(), "");
+    }
+}
+
+/// One change to the text, holding only the text it put in or took out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Op<P> {
+    Insert { at: P, text: String },
+    Delete { at: P, text: String },
+}
+
+impl<P> Op<P> {
+    fn text(&self) -> &str {
+        match self {
+            Op::Insert { text, .. } | Op::Delete { text, .. } => text,
+        }
+    }
+}
+
+/// One undo step: its ops in order, and the caret and anchor before the first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Step<P> {
+    ops: Vec<Op<P>>,
+    caret: P,
+    anchor: P,
+}
+
+impl<P> Step<P> {
+    fn bytes(&self) -> usize {
+        self.ops.iter().map(|op| op.text().len()).sum()
+    }
+}
+
+/// Most undo steps kept; the oldest go first.
+const UNDO_STEPS: usize = 1000;
+/// Most text the undo steps hold, in bytes. The newest step stays whatever its size.
+const UNDO_BYTES: usize = 8 << 20;
+
+/// Undo and redo for the single- and multi-line edits: a log of the [`Op`]s each step made, so a
+/// step holds the text it changed and never a copy of the document.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Undo<P> {
+    done: std::collections::VecDeque<Step<P>>,
+    undone: Vec<Step<P>>,
+    /// Text held by `done`, in bytes.
+    bytes: usize,
+    /// The caret and anchor a fresh step starts from, set by a checkpoint that begins one.
+    fresh: Option<(P, P)>,
     pub last: Edit,
 }
 
-impl<T: Clone, P: Copy> Undo<T, P> {
-    pub fn checkpoint(&mut self, kind: Edit, text: &T, caret: P, anchor: P) {
-        if kind == Edit::None || kind != self.last {
-            self.saved = Some((text.clone(), caret, anchor));
+impl<P> Default for Undo<P> {
+    fn default() -> Self {
+        Undo {
+            done: Default::default(),
+            undone: Vec::new(),
+            bytes: 0,
+            fresh: None,
+            last: Edit::None,
+        }
+    }
+}
+
+impl<P: Spot> Undo<P> {
+    /// Before an edit of `kind`: anything but a continued run of typing or deleting starts a
+    /// new step, which opens with the next recorded op.
+    pub fn checkpoint(&mut self, kind: Edit, caret: P, anchor: P) {
+        if kind == Edit::None || kind != self.last || self.done.is_empty() {
+            self.fresh = Some((caret, anchor));
         }
         self.last = kind;
     }
 
-    pub fn can_undo(&self) -> bool {
-        self.saved.is_some()
+    /// Log an op the edit just made; a new edit drops whatever was undone.
+    pub fn record(&mut self, op: Op<P>) {
+        if op.text().is_empty() {
+            return;
+        }
+        self.undone.clear();
+        self.bytes += op.text().len();
+        let step = match (self.fresh.take(), self.done.back_mut()) {
+            (None, Some(step)) => step,
+            (fresh, _) => {
+                let (caret, anchor) = fresh.unwrap_or(match &op {
+                    Op::Insert { at, .. } | Op::Delete { at, .. } => (*at, *at),
+                });
+                self.done.push_back(Step {
+                    ops: Vec::new(),
+                    caret,
+                    anchor,
+                });
+                self.done.back_mut().expect("just pushed")
+            }
+        };
+        match (step.ops.last_mut(), op) {
+            (Some(Op::Insert { at, text }), Op::Insert { at: next, text: t })
+                if at.after(text) == next =>
+            {
+                text.push_str(&t);
+            }
+            (Some(Op::Delete { at, text }), Op::Delete { at: next, text: t })
+                if next.after(&t) == *at =>
+            {
+                text.insert_str(0, &t);
+                *at = next;
+            }
+            (Some(Op::Delete { at, text }), Op::Delete { at: next, text: t }) if next == *at => {
+                text.push_str(&t);
+            }
+            (_, op) => step.ops.push(op),
+        }
+        while self.done.len() > 1 && (self.done.len() > UNDO_STEPS || self.bytes > UNDO_BYTES) {
+            let old = self.done.pop_front().expect("more than one step");
+            self.bytes -= old.bytes();
+        }
     }
 
-    /// Ctrl+Z: swap the saved state with the current one; false when nothing to undo. The caller clamps the positions it gets back.
-    pub fn toggle(&mut self, text: &mut T, caret: &mut P, anchor: &mut P) -> bool {
-        let Some((t, c, a)) = self.saved.take() else {
-            return false;
-        };
-        self.saved = Some((std::mem::replace(text, t), *caret, *anchor));
-        *caret = c;
-        *anchor = a;
+    pub fn can_undo(&self) -> bool {
+        !self.done.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.undone.is_empty()
+    }
+
+    /// Ctrl+Z: take the last step back out of `doc`, returning the caret and anchor it started
+    /// from; `None` with nothing to undo.
+    pub fn undo(&mut self, doc: &mut impl Doc<P>) -> Option<(P, P)> {
+        let step = self.done.pop_back()?;
+        self.bytes -= step.bytes();
+        for op in step.ops.iter().rev() {
+            match op {
+                Op::Insert { at, text } => doc.cut(*at, text),
+                Op::Delete { at, text } => doc.put(*at, text),
+            }
+        }
+        let back = (step.caret, step.anchor);
+        self.undone.push(step);
+        self.fresh = None;
         self.last = Edit::None;
-        true
+        Some(back)
+    }
+
+    /// Ctrl+Y: make the last undone step again, returning where the caret ends up.
+    pub fn redo(&mut self, doc: &mut impl Doc<P>) -> Option<P> {
+        let step = self.undone.pop()?;
+        let mut caret = step.caret;
+        for op in &step.ops {
+            caret = match op {
+                Op::Insert { at, text } => {
+                    doc.put(*at, text);
+                    at.after(text)
+                }
+                Op::Delete { at, text } => {
+                    doc.cut(*at, text);
+                    *at
+                }
+            };
+        }
+        self.bytes += step.bytes();
+        self.done.push_back(step);
+        self.fresh = None;
+        self.last = Edit::None;
+        Some(caret)
+    }
+
+    /// Forget every step, zeroizing the text they held.
+    pub fn clear(&mut self) {
+        for step in self.done.iter_mut().chain(self.undone.iter_mut()) {
+            for op in &mut step.ops {
+                match op {
+                    Op::Insert { text, .. } | Op::Delete { text, .. } => text.zeroize(),
+                }
+            }
+        }
+        *self = Undo::default();
+    }
+
+    #[cfg(test)]
+    pub fn held(&self) -> (usize, usize) {
+        (self.done.iter().map(|s| s.ops.len()).sum(), self.bytes)
     }
 }
 
@@ -171,6 +348,8 @@ pub enum EditKey {
     Cut,
     Paste,
     Undo,
+    /// Ctrl+Y or Ctrl+Shift+Z: make the last undone step again.
+    Redo,
     /// An input method's delete: `before` bytes just before the selection and `after` just after it (text-input-v3 counts bytes).
     DeleteSurrounding {
         before: usize,
@@ -294,6 +473,8 @@ pub struct TextSpot {
     pub multiline: bool,
     /// The edit has a step to undo, for its edit menu's Undo.
     pub can_undo: bool,
+    /// The edit has an undone step to make again, for its edit menu's Redo.
+    pub can_redo: bool,
     pub selected: bool,
     /// A digits-only field (a spin box): no input method turns on over it, so its keys type
     /// the digits themselves.
@@ -381,8 +562,7 @@ impl TextEdit {
 
     fn checkpoint(&mut self, kind: Edit) {
         if !self.secret {
-            self.undo
-                .checkpoint(kind, &self.text, self.caret, self.anchor);
+            self.undo.checkpoint(kind, self.caret, self.anchor);
         }
     }
 
@@ -394,14 +574,10 @@ impl TextEdit {
         self.cue = cue;
     }
 
-    /// Zeroize the text and undo snapshot in place and leave the field empty. The buffer is kept, so a secret field's reservation outlives a retry.
+    /// Zeroize the text and undo log in place and leave the field empty. The buffer is kept, so a secret field's reservation outlives a retry.
     pub fn wipe(&mut self) {
         self.text.zeroize();
-        if let Some((saved, ..)) = self.undo.saved.as_mut() {
-            saved.zeroize();
-        }
-        self.undo.saved = None;
-        self.undo.last = Edit::None;
+        self.undo.clear();
         self.caret = 0;
         self.anchor = 0;
     }
@@ -416,6 +592,10 @@ impl TextEdit {
 
     pub fn can_undo(&self) -> bool {
         self.undo.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.undo.can_redo()
     }
 
     /// A right press at byte `index`: inside the selection it stays for the edit menu to act
@@ -455,7 +635,7 @@ impl TextEdit {
                     } else {
                         self.checkpoint(Edit::None);
                     }
-                    self.splice(sel.clone(), &s);
+                    self.replace(sel.clone(), &s);
                     self.caret = sel.start + s.len();
                     self.anchor = self.caret;
                     if single {
@@ -479,7 +659,7 @@ impl TextEdit {
                     } else {
                         words::prev_char(&self.text, self.caret)
                     };
-                    self.splice(from..self.caret, "");
+                    self.replace(from..self.caret, "");
                     self.caret = from;
                     self.anchor = from;
                     edited = true;
@@ -497,7 +677,7 @@ impl TextEdit {
                     } else {
                         words::next_char(&self.text, self.caret)
                     };
-                    self.splice(self.caret..to, "");
+                    self.replace(self.caret..to, "");
                     self.anchor = self.caret;
                     edited = true;
                 }
@@ -535,12 +715,16 @@ impl TextEdit {
             }
             EditKey::Copy | EditKey::Paste => {}
             EditKey::Undo => {
-                if self
-                    .undo
-                    .toggle(&mut self.text, &mut self.caret, &mut self.anchor)
-                {
-                    self.caret = self.caret.min(self.text.len());
-                    self.anchor = self.anchor.min(self.text.len());
+                if let Some((caret, anchor)) = self.undo.undo(&mut self.text) {
+                    self.caret = self.text.floor_char_boundary(caret);
+                    self.anchor = self.text.floor_char_boundary(anchor);
+                    edited = true;
+                }
+            }
+            EditKey::Redo => {
+                if let Some(caret) = self.undo.redo(&mut self.text) {
+                    self.caret = self.text.floor_char_boundary(caret);
+                    self.anchor = self.caret;
                     edited = true;
                 }
             }
@@ -554,8 +738,8 @@ impl TextEdit {
                     .ceil_char_boundary(sel.end.saturating_add(after).min(self.text.len()));
                 if (from, to) != (sel.start, sel.end) {
                     self.checkpoint(Edit::None);
-                    self.splice(sel.end..to, "");
-                    self.splice(from..sel.start, "");
+                    self.replace(sel.end..to, "");
+                    self.replace(from..sel.start, "");
                     self.caret -= sel.start - from;
                     self.anchor -= sel.start - from;
                     edited = true;
@@ -584,6 +768,7 @@ impl TextEdit {
             secret: self.secret,
             multiline: false,
             can_undo: self.can_undo(),
+            can_redo: self.can_redo(),
             selected: self.has_selection(),
             digits: false,
         }
@@ -657,6 +842,22 @@ impl TextEdit {
         true
     }
 
+    /// [`TextEdit::splice`], logged for undo unless the field is secret.
+    fn replace(&mut self, range: std::ops::Range<usize>, s: &str) {
+        if !self.secret {
+            let at = range.start;
+            self.undo.record(Op::Delete {
+                at,
+                text: self.text[range.clone()].to_string(),
+            });
+            self.undo.record(Op::Insert {
+                at,
+                text: s.to_string(),
+            });
+        }
+        self.splice(range, s);
+    }
+
     /// `replace_range`, except that a secret field outgrowing its buffer moves to a bigger one by hand and zeroizes the old.
     fn splice(&mut self, range: std::ops::Range<usize>, s: &str) {
         let need = self.text.len() - range.len() + s.len();
@@ -670,7 +871,7 @@ impl TextEdit {
 
     fn delete_selection(&mut self) {
         let sel = self.selection();
-        self.splice(sel.clone(), "");
+        self.replace(sel.clone(), "");
         self.caret = sel.start;
         self.anchor = sel.start;
     }
@@ -721,7 +922,7 @@ pub mod keysym {
     pub const ISO_LEFT_TAB: u32 = 0xfe20;
 }
 
-/// The editing key a press stands for, modifiers folded in. Ctrl+A / C / X / V / Z are commands, Shift extends, Ctrl steps words, other printable input is an insert. None for keys an edit has no use for.
+/// The editing key a press stands for, modifiers folded in. Ctrl+A / C / X / V / Y / Z (Shift+Z redoes) are commands, Shift extends, Ctrl steps words, other printable input is an insert. None for keys an edit has no use for.
 pub fn key_for(sym: u32, ctrl: bool, shift: bool, utf8: Option<&str>) -> Option<EditKey> {
     use keysym::*;
     let (select, word) = (shift, ctrl);
@@ -742,6 +943,8 @@ pub fn key_for(sym: u32, ctrl: bool, shift: bool, utf8: Option<&str>) -> Option<
             0x63 => Some(EditKey::Copy),
             0x78 => Some(EditKey::Cut),
             0x76 => Some(EditKey::Paste),
+            0x79 => Some(EditKey::Redo),
+            0x7a if shift => Some(EditKey::Redo),
             0x7a => Some(EditKey::Undo),
             _ => None,
         },
@@ -1136,7 +1339,7 @@ mod tests {
     }
 
     #[test]
-    fn undo_takes_back_a_run_of_typing_and_toggles() {
+    fn undo_takes_back_a_run_of_typing_and_redo_makes_it_again() {
         let mut t = TextEdit::new("notepad", true);
         t.key(EditKey::Insert("c".into()));
         t.key(EditKey::Insert("a".into()));
@@ -1145,8 +1348,11 @@ mod tests {
         assert!(t.key(EditKey::Undo));
         assert_eq!(t.text, "notepad");
         assert!(t.all_selected());
-        assert!(t.key(EditKey::Undo));
-        assert_eq!(t.text, "cal");
+        assert!(!t.key(EditKey::Undo), "one step back is all there is");
+        assert!(t.can_redo());
+        assert!(t.key(EditKey::Redo));
+        assert_eq!((t.text.as_str(), t.caret, t.anchor), ("cal", 3, 3));
+        assert!(!t.key(EditKey::Redo));
         t.key(EditKey::Home { select: false });
         t.key(EditKey::End { select: false });
         t.key(EditKey::Insert("c".into()));
@@ -1165,10 +1371,8 @@ mod tests {
     }
 
     #[test]
-    fn wipe_clears_the_field_and_its_undo_snapshot() {
+    fn wipe_clears_the_field_and_its_undo_log() {
         let mut t = e("secret");
-        // Insert then delete populates `undo.saved` with a copy of the
-        // text as it was before the deleting run started.
         t.key(EditKey::Insert("!".into()));
         t.key(EditKey::Backspace { word: false });
         t.wipe();
@@ -1177,6 +1381,72 @@ mod tests {
         assert_eq!(t.anchor, 0);
         assert!(!t.key(EditKey::Undo));
         assert_eq!(t.text, "");
+    }
+
+    #[test]
+    fn undo_and_redo_walk_steps_one_at_a_time() {
+        let mut t = e("");
+        for c in ["a", "b"] {
+            t.key(EditKey::Insert(c.into()));
+        }
+        t.paste("XY", &[]);
+        t.key(EditKey::Backspace { word: false });
+        t.key(EditKey::Backspace { word: false });
+        assert_eq!(t.text, "ab");
+        assert_eq!(t.undo.held().0, 3, "typing, the paste and the deleting run");
+        t.key(EditKey::Undo);
+        assert_eq!((t.text.as_str(), t.caret), ("abXY", 4));
+        t.key(EditKey::Undo);
+        assert_eq!((t.text.as_str(), t.caret), ("ab", 2));
+        t.key(EditKey::Undo);
+        assert_eq!(t.text, "");
+        t.key(EditKey::Redo);
+        t.key(EditKey::Redo);
+        assert_eq!((t.text.as_str(), t.caret), ("abXY", 4));
+        t.key(EditKey::Insert("z".into()));
+        assert!(!t.can_redo(), "a new edit drops the undone steps");
+        assert!(!t.key(EditKey::Redo));
+    }
+
+    #[test]
+    fn a_secret_field_logs_nothing_to_undo() {
+        let mut t = TextEdit::secret();
+        t.paste("hunter2", &[]);
+        t.key(EditKey::Backspace { word: false });
+        assert_eq!(t.undo.held(), (0, 0));
+        assert!(!t.key(EditKey::Undo));
+    }
+
+    #[test]
+    fn the_undo_log_drops_its_oldest_steps_past_its_bound() {
+        let mut u = Undo::<usize>::default();
+        let mut doc = String::new();
+        for i in 0..UNDO_STEPS + 5 {
+            u.checkpoint(Edit::None, i, i);
+            doc.push('x');
+            u.record(Op::Insert {
+                at: i,
+                text: "x".into(),
+            });
+        }
+        assert_eq!(u.held(), (UNDO_STEPS, UNDO_STEPS));
+        while u.undo(&mut doc).is_some() {}
+        assert_eq!(doc, "xxxxx", "the five oldest steps are gone");
+
+        let mut u = Undo::<usize>::default();
+        let big = "y".repeat(UNDO_BYTES / 2 + 1);
+        for at in [0, big.len()] {
+            u.checkpoint(Edit::None, at, at);
+            u.record(Op::Insert {
+                at,
+                text: big.clone(),
+            });
+        }
+        assert_eq!(
+            u.held(),
+            (1, big.len()),
+            "over the byte bound the newest step stays"
+        );
     }
 
     #[test]
@@ -1204,6 +1474,8 @@ mod tests {
         );
         assert_eq!(key_for(0x41, true, true, None), Some(EditKey::SelectAll));
         assert_eq!(key_for(0x7a, true, false, None), Some(EditKey::Undo));
+        assert_eq!(key_for(0x79, true, false, None), Some(EditKey::Redo));
+        assert_eq!(key_for(0x5a, true, true, None), Some(EditKey::Redo));
         assert_eq!(
             key_for(LEFT, true, true, None),
             Some(EditKey::Left {

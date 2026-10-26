@@ -257,7 +257,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   It wants a colour emoji font.
 - **Clipboard managers work,** and so does middle-click paste.
 - **Edit menu.** A right-click in a text field, Shift+F10 or the Menu key
-  opens Undo, Cut, Copy, Paste, Delete and Select All: in Run and the other
+  opens Undo, Redo, Cut, Copy, Paste, Delete and Select All: in Run and the other
   dialogs, the Start menu's search, the launcher, the clipboard history, the
   emoji picker, a notification's reply field, the desktop's rename box, the
   file dialogs' File name, Settings and its dialogs, Explorer's address bar

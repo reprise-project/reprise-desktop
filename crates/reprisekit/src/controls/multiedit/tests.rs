@@ -792,9 +792,92 @@ fn replace_all_leaves_a_valid_caret_and_one_undo_step() {
     k(&mut t, MultiKey::Edit(EditKey::Undo));
     assert_eq!(
         t.text(),
-        "xc c c",
-        "a Replace All that matched nothing keeps the undo state"
+        "cat cat cat",
+        "a Replace All that matched nothing adds no step"
     );
+    k(&mut t, MultiKey::Edit(EditKey::Redo));
+    k(&mut t, MultiKey::Edit(EditKey::Redo));
+    assert_eq!(t.text(), "xc c c", "Ctrl+Y makes the Replace All again");
+}
+
+fn typed(t: &mut MultiEdit, s: &str) {
+    for c in s.chars() {
+        k(t, MultiKey::Edit(EditKey::Insert(c.into())));
+    }
+}
+
+#[test]
+fn ctrl_z_walks_back_a_step_at_a_time_and_ctrl_y_forward() {
+    let mut t = e("");
+    typed(&mut t, "abc");
+    k(&mut t, MultiKey::Enter);
+    typed(&mut t, "def");
+    assert_eq!(t.undo.held().0, 3, "a typing run is one op");
+    let undo = |t: &mut MultiEdit| k(t, MultiKey::Edit(EditKey::Undo));
+    let redo = |t: &mut MultiEdit| k(t, MultiKey::Edit(EditKey::Redo));
+    assert!(undo(&mut t));
+    assert_eq!((t.text().as_str(), t.caret), ("abc\n", p(1, 0)));
+    assert!(undo(&mut t));
+    assert_eq!((t.text().as_str(), t.caret), ("abc", p(0, 3)));
+    assert!(undo(&mut t));
+    assert_eq!((t.text().as_str(), t.caret), ("", p(0, 0)));
+    assert!(!undo(&mut t), "nothing older");
+    assert!(redo(&mut t));
+    assert_eq!(t.text(), "abc");
+    assert!(redo(&mut t));
+    assert_eq!((t.text().as_str(), t.caret), ("abc\n", p(1, 0)));
+    assert!(redo(&mut t));
+    assert_eq!((t.text().as_str(), t.caret), ("abc\ndef", p(1, 3)));
+    assert!(!redo(&mut t));
+}
+
+#[test]
+fn undo_takes_a_paste_back_to_the_exact_text_and_caret() {
+    let mut t = e("one two\nthree");
+    t.place(p(0, 4), false);
+    t.place(p(1, 2), true);
+    assert!(t.paste("big\r\nred\nfat "));
+    assert_eq!(t.text(), "one big\nred\nfat ree");
+    assert!(k(&mut t, MultiKey::Edit(EditKey::Undo)));
+    assert_eq!(t.text(), "one two\nthree");
+    assert_eq!((t.anchor, t.caret), (p(0, 4), p(1, 2)));
+    assert!(k(&mut t, MultiKey::Edit(EditKey::Redo)));
+    assert_eq!(
+        (t.text().as_str(), t.caret),
+        ("one big\nred\nfat ree", p(2, 4))
+    );
+}
+
+#[test]
+fn deleting_across_lines_is_one_step_and_comes_back_whole() {
+    let mut t = e("ab\ncd");
+    t.place(p(1, 1), false);
+    for _ in 0..3 {
+        k(&mut t, MultiKey::Edit(EditKey::Backspace { word: false }));
+    }
+    assert_eq!(t.text(), "ad");
+    assert_eq!(t.undo.held(), (1, 3), "one op holding b, the break and c");
+    k(&mut t, MultiKey::Edit(EditKey::Undo));
+    assert_eq!((t.text().as_str(), t.caret), ("ab\ncd", p(1, 1)));
+}
+
+#[test]
+fn the_undo_log_holds_what_changed_never_the_document() {
+    let doc: String = (0..5000).map(|i| format!("line {i}\n")).collect();
+    let mut t = e(&doc);
+    for _ in 0..50 {
+        k(&mut t, MultiKey::Enter);
+        typed(&mut t, "xy");
+    }
+    assert_eq!(
+        t.undo.held(),
+        (100, 150),
+        "an Enter and two chars per round"
+    );
+    for _ in 0..100 {
+        k(&mut t, MultiKey::Edit(EditKey::Undo));
+    }
+    assert_eq!(t.text(), doc);
 }
 
 #[test]
