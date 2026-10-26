@@ -19,13 +19,17 @@
 //! its check box ticked, into the file. geoclue lets programs outside a
 //! sandbox through without asking the agent.
 //!
+//! Only geoclue's current owner is heard: an `AuthorizeApp` or a property
+//! change from any other peer is ignored. One prompt shows at a time; a
+//! second program asking meanwhile is refused.
+//!
 //! The pin shows while geoclue's `InUse` is true. Its tooltip names the
 //! programs from the `DesktopId` and `Active` changes geoclue's clients
 //! announce, when the bus delivers them; else it names no one.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::stream::{BoxStream, SelectAll, StreamExt};
@@ -166,6 +170,25 @@ fn known_answer(enabled: bool, remembered: Option<bool>) -> Option<bool> {
     remembered
 }
 
+/// Where a new ask about a program goes among the pending prompts.
+#[derive(Debug, PartialEq)]
+enum Slot {
+    /// That program's prompt is open: wait on it.
+    Join(usize),
+    /// Nothing is asked yet: open a prompt.
+    Open,
+    /// Another program's prompt is open: refuse.
+    Busy,
+}
+
+fn slot<T>(pending: &[(String, T)], desktop_id: &str) -> Slot {
+    match pending.iter().position(|(id, _)| id == desktop_id) {
+        Some(at) => Slot::Join(at),
+        None if pending.is_empty() => Slot::Open,
+        None => Slot::Busy,
+    }
+}
+
 /// A program asked: answer from the switch or the remembered answers, or
 /// open the prompt (a second ask for a program already prompted waits on
 /// the same prompt).
@@ -180,14 +203,17 @@ fn asked(state: &mut State, ask: Ask) {
     // A prompt closed some other way left its callers; they are refused.
     let open: Vec<String> = prompts(state).into_iter().map(|(_, id)| id).collect();
     state.location.pending.retain(|(id, _)| open.contains(id));
-    if let Some((_, replies)) = state
-        .location
-        .pending
-        .iter_mut()
-        .find(|(id, _)| *id == desktop_id)
-    {
-        replies.push(reply);
-        return;
+    match slot(&state.location.pending, &desktop_id) {
+        Slot::Join(at) => {
+            state.location.pending[at].1.push(reply);
+            return;
+        }
+        Slot::Busy => {
+            log::info!("location for {desktop_id:?}: refused, another prompt is open");
+            let _ = reply.try_send(false);
+            return;
+        }
+        Slot::Open => {}
     }
     log::info!("location: asking about {desktop_id:?}");
     let program = app_name(state, &desktop_id);
@@ -284,13 +310,25 @@ async fn answer_within(answer: &async_channel::Receiver<bool>, limit: Duration) 
 struct Agent {
     tx: Sender<FromAgent>,
     max: Arc<AtomicU32>,
+    /// geoclue's unique name, None while it is not running.
+    geoclue: Arc<Mutex<Option<String>>>,
 }
 
 #[zbus::interface(name = "org.freedesktop.GeoClue2.Agent")]
 impl Agent {
     /// geoclue asks whether `desktop_id` may have the location; the
     /// accuracy it asked for is what it gets.
-    async fn authorize_app(&self, desktop_id: String, req_accuracy_level: u32) -> (bool, u32) {
+    async fn authorize_app(
+        &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        desktop_id: String,
+        req_accuracy_level: u32,
+    ) -> (bool, u32) {
+        let sender = hdr.sender().map(|s| s.as_str());
+        if !reprisebus::sent_by(sender, reprisebus::mutex::lock(&self.geoclue).as_deref()) {
+            log::warn!("location: AuthorizeApp({desktop_id:?}) from {sender:?}, not geoclue");
+            return (false, 0);
+        }
         let (reply, answer) = async_channel::bounded(1);
         let ask = Ask {
             desktop_id: desktop_id.clone(),
@@ -317,9 +355,8 @@ impl Agent {
 }
 
 enum Wake {
-    Geoclue(bool),
+    Geoclue(reprisebus::Signal),
     Enabled(bool),
-    Changed(zbus::Message),
     Tick,
 }
 
@@ -343,39 +380,32 @@ async fn follow(
     enabled: &async_channel::Receiver<bool>,
     max: &Arc<AtomicU32>,
 ) -> zbus::Result<()> {
+    let geoclue = Arc::new(Mutex::new(None));
     let conn = zbus::connection::Builder::system()?
         .serve_at(
             AGENT_PATH,
             Agent {
                 tx: tx.clone(),
                 max: max.clone(),
+                geoclue: geoclue.clone(),
             },
         )?
         .build()
         .await?;
-    let dbus = zbus::fdo::DBusProxy::new(&conn).await?;
-    let owners = dbus
-        .receive_name_owner_changed_with_args(&[(0, GEOCLUE)])
-        .await?
-        .map(|s| Wake::Geoclue(s.args().is_ok_and(|a| a.new_owner().is_some())));
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .interface("org.freedesktop.DBus.Properties")?
         .member("PropertiesChanged")?
         .path_namespace("/org/freedesktop/GeoClue2")?
         .build();
-    let changes = zbus::MessageStream::for_match_rule(rule, &conn, None)
-        .await?
-        .filter_map(|m| std::future::ready(m.ok().map(Wake::Changed)));
+    let signals = reprisebus::signals(&conn, GEOCLUE, vec![rule.into()]).await;
     let mut wakes: SelectAll<BoxStream<'static, Wake>> = SelectAll::new();
-    wakes.push(owners.boxed());
-    wakes.push(changes.boxed());
+    wakes.push(signals.map(Wake::Geoclue).boxed());
     wakes.push(enabled.clone().map(Wake::Enabled).boxed());
     wakes.push(async_io::Timer::interval(RETRY).map(|_| Wake::Tick).boxed());
 
-    let name = zbus::names::BusName::try_from(GEOCLUE)?;
     let mut clients = Clients::default();
-    let mut present = dbus.name_has_owner(name).await.unwrap_or(false);
+    let mut present = follow_owner(&conn, &geoclue).await;
     if present {
         register(&conn).await;
         clients.in_use = in_use(&conn).await;
@@ -383,7 +413,8 @@ async fn follow(
     }
     while let Some(w) = wakes.next().await {
         match w {
-            Wake::Geoclue(up) => {
+            Wake::Geoclue(reprisebus::Signal::OwnerChanged) => {
+                let up = follow_owner(&conn, &geoclue).await;
                 present = up;
                 if up {
                     // The first client's changes may have come in already;
@@ -408,7 +439,7 @@ async fn follow(
                     .await?;
                 log::info!("location: turned {}", if on { "on" } else { "off" });
             }
-            Wake::Changed(msg) => {
+            Wake::Geoclue(reprisebus::Signal::Message(msg)) => {
                 if clients.changed(&msg) {
                     clients.report(tx);
                 }
@@ -425,6 +456,14 @@ async fn follow(
         }
     }
     Ok(())
+}
+
+/// Read geoclue's unique name into `owner`; true when it is running.
+async fn follow_owner(conn: &zbus::Connection, owner: &Mutex<Option<String>>) -> bool {
+    let now = reprisebus::name_owner(conn, GEOCLUE).await;
+    let up = now.is_some();
+    *reprisebus::mutex::lock(owner) = now;
+    up
 }
 
 /// Register the agent with geoclue's manager. Refused when `reprise` is
@@ -476,7 +515,8 @@ struct Clients {
 }
 
 impl Clients {
-    /// Take in one `PropertiesChanged`; true when the pin's state moved.
+    /// Take in one `PropertiesChanged` from geoclue; true when the pin's
+    /// state moved.
     fn changed(&mut self, msg: &zbus::Message) -> bool {
         let Some(path) = msg.header().path().map(|p| p.to_string()) else {
             return false;
@@ -589,6 +629,15 @@ mod tests {
         assert_eq!(known_answer(true, Some(true)), Some(true));
         assert_eq!(known_answer(true, Some(false)), Some(false));
         assert_eq!(known_answer(true, None), None, "nothing known asks");
+    }
+
+    #[test]
+    fn one_prompt_shows_at_a_time() {
+        let none: Vec<(String, ())> = Vec::new();
+        assert_eq!(slot(&none, "org.gnome.Maps"), Slot::Open);
+        let one = vec![("org.gnome.Maps".to_string(), ())];
+        assert_eq!(slot(&one, "org.gnome.Maps"), Slot::Join(0));
+        assert_eq!(slot(&one, "org.mozilla.firefox"), Slot::Busy);
     }
 
     #[test]
