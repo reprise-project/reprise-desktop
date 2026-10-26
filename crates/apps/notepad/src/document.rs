@@ -61,6 +61,30 @@ pub(crate) fn write_document(
     Ok(())
 }
 
+/// What a save checks its file against: any field that differs means another program wrote it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Stamp {
+    mtime: i64,
+    mtime_nsec: i64,
+    len: u64,
+    ino: u64,
+}
+
+impl Stamp {
+    /// The file `path` names, through a symlink, whose own times stay put when its target is
+    /// rewritten. `None` when there is no file.
+    pub(crate) fn of(path: &Path) -> Option<Stamp> {
+        use std::os::unix::fs::MetadataExt;
+        let m = std::fs::metadata(path).ok()?;
+        Some(Stamp {
+            mtime: m.mtime(),
+            mtime_nsec: m.mtime_nsec(),
+            len: m.len(),
+            ino: m.ino(),
+        })
+    }
+}
+
 fn write_lines(
     out: impl std::io::Write,
     lines: &[impl AsRef<str>],

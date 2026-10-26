@@ -11,7 +11,7 @@ mod window;
 
 use dialogs::{FormStep, form_event, goto_form, ok_box};
 use document::{
-    has_crlf, load, open_failed_text, read_text, recovered_in, recovery_dir, write_document,
+    Stamp, has_crlf, load, open_failed_text, read_text, recovered_in, recovery_dir, write_document,
     write_recovery,
 };
 use drop::Hover;
@@ -63,6 +63,7 @@ const SAVECHANGES: WinId = "savechanges";
 const OVERWRITE: WinId = "overwrite";
 const LOSSY: WinId = "lossy";
 const RECOVERED: WinId = "recovered";
+const CHANGED: WinId = "changed";
 const OPEN: WinId = "open";
 const SAVEAS: WinId = "saveas";
 
@@ -73,6 +74,10 @@ struct Notepad {
     mono: TextRenderer,
     bar: Bar,
     path: Option<std::path::PathBuf>,
+    /// `path` as it was opened or last saved; a save asks first when the file no longer matches.
+    stamp: Option<Stamp>,
+    /// The prompt a save raises when the file changed on disk.
+    changed: Option<MsgBox>,
     /// The file had a CRLF break, so every break saves as CRLF, a mixed file's LF ones too.
     crlf: bool,
     /// Where the held selection drag's pointer last was; ticks scroll from there.
@@ -149,6 +154,8 @@ impl Notepad {
             metrics: Metrics::default(),
             mono,
             bar,
+            stamp: path.as_deref().and_then(Stamp::of),
+            changed: None,
             path,
             dragging: None,
             thumb: ThumbDrag::default(),
@@ -248,7 +255,8 @@ impl Notepad {
             .error
             .iter_mut()
             .chain(self.lossy.iter_mut().map(|(b, _)| b))
-            .chain(self.recovered.iter_mut().map(|(b, _)| b));
+            .chain(self.recovered.iter_mut().map(|(b, _)| b))
+            .chain(self.changed.iter_mut());
         for b in raised.filter(|b| b.fields.icon.is_none()) {
             b.fields.icon = self.warn_icon.clone();
         }
@@ -357,6 +365,9 @@ impl App for Notepad {
         if let Some((b, _)) = &self.recovered {
             kids.push(b.child(RECOVERED, &self.dialog_text, &self.forms));
         }
+        if let Some(b) = &self.changed {
+            kids.push(b.child(CHANGED, &self.dialog_text, &self.forms));
+        }
         if let Some(path) = &self.overwrite {
             let fields = self.overwrite_fields(path);
             kids.push(Child {
@@ -396,6 +407,7 @@ impl App for Notepad {
             OVERWRITE => self.overwrite_event(ev),
             LOSSY => self.lossy_event(ev),
             RECOVERED => self.recovered_event(ev),
+            CHANGED => self.changed_event(ev),
             OPEN => self.open_event(ev, ctx),
             SAVEAS => self.saveas_event(ev, ctx),
             _ => self.main_event(ev, ctx),
@@ -498,6 +510,11 @@ impl App for Notepad {
                     b.draw(c, &self.forms, &self.dialog_text);
                 }
             }
+            CHANGED => {
+                if let Some(b) = &self.changed {
+                    b.draw(c, &self.forms, &self.dialog_text);
+                }
+            }
             ABOUT => {
                 c.fill_rect(c.bounds(), cs.button_face);
                 let f = self.about_form();
@@ -589,6 +606,11 @@ impl App for Notepad {
             }
             RECOVERED => {
                 if let Some((b, _)) = &self.recovered {
+                    b.access(tree, dt, forms);
+                }
+            }
+            CHANGED => {
+                if let Some(b) = &self.changed {
                     b.access(tree, dt, forms);
                 }
             }

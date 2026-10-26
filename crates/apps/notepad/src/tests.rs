@@ -1864,3 +1864,33 @@ fn declining_a_recovered_document_deletes_it_and_offers_the_next() {
     );
     assert_eq!(np.edit.text(), "");
 }
+
+#[test]
+fn a_save_over_a_file_changed_on_disk_asks_first() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("notes.txt");
+    std::fs::write(&path, "mine").expect("write");
+    let mut np = Notepad::new(Some(path.clone()));
+    std::fs::write(&path, "theirs").expect("write");
+    let f = std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .expect("open");
+    f.set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1))
+        .expect("set mtime");
+    np.edit = MultiEdit::new("edited");
+    np.dirty = true;
+
+    assert!(!np.save());
+    assert_eq!(np.children().last().expect("the prompt").id, CHANGED);
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "theirs");
+    assert!(np.dirty);
+
+    let mut ctx = test_ctx();
+    np.changed.as_mut().expect("the prompt").fields.default = 0;
+    np.event(CHANGED, typed(keysym::RETURN, None, false), &mut ctx);
+    assert!(np.changed.is_none(), "Yes closed the prompt");
+    assert_eq!(std::fs::read_to_string(&path).expect("read"), "edited");
+    assert!(!np.dirty);
+    assert!(np.save(), "the save took the file's new stamp");
+}
