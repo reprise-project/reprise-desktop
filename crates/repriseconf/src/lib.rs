@@ -1,5 +1,6 @@
-//! Editing `config.toml` in place: `toml_edit` keeps comments, key order and unknown tables, so a
-//! program editing a few keys leaves the rest of the file byte-identical.
+//! `config.toml`: [`config`] reads and validates it with every default, and the rest edits it in
+//! place: `toml_edit` keeps comments, key order and unknown tables, so a program editing a few keys
+//! leaves the rest of the file byte-identical.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -201,8 +202,11 @@ fn drives_on_insert_in(text: &str) -> String {
                 .and_then(Item::as_str)
                 .map(String::from)
         })
-        .unwrap_or_else(|| "ask".into())
+        .unwrap_or_else(|| DRIVES_ON_INSERT.into())
 }
+
+/// `[drives] on_insert`'s default.
+pub const DRIVES_ON_INSERT: &str = "ask";
 
 /// The top-level `terminal`, read now: the command a program in a terminal runs under.
 pub fn terminal() -> String {
@@ -578,6 +582,7 @@ pub fn set(doc: &mut DocumentMut, key: &Key, value: Value) -> Result<(), SetErro
     Ok(())
 }
 
+pub mod config;
 pub mod filedialog;
 pub mod glob;
 pub mod keybind;

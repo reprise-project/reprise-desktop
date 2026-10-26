@@ -40,7 +40,7 @@ pub enum Row {
 }
 
 /// The compositor's action names, `spawn` first since it is the one with
-/// a command. Mirrors `Action::name` in `src/config.rs`.
+/// a command. Mirrors `Action::name` in `src/config/keybinds.rs`.
 pub const ACTIONS: [&str; 60] = [
     "spawn",
     "terminal",

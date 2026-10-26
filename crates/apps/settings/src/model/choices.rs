@@ -3,7 +3,7 @@
 pub type Choices = [(&'static str, &'static str)];
 
 /// The taskbar button modes. Mirrors `TaskbarButtons::parse` in
-/// `src/config.rs`.
+/// `repriseconf::config`.
 pub const TASKBAR_BUTTONS: &Choices = &[
     ("combine", "Combine, icons only"),
     ("when_full", "Combine when the taskbar is full"),
@@ -11,7 +11,7 @@ pub const TASKBAR_BUTTONS: &Choices = &[
     ("group", "Group, never combine"),
 ];
 
-/// The Start menu styles. Mirrors `StartMenuStyle::parse` in `src/config.rs`.
+/// The Start menu styles. Mirrors `StartMenuStyle::parse` in `repriseconf::config`.
 pub const STARTMENU_STYLES: &Choices = &[("glass", "Glass"), ("classic", "Classic")];
 
 /// The edges the taskbar can sit on. Mirrors `Edge::name` in
@@ -33,7 +33,7 @@ pub const SWITCHER_SIZES: &Choices = &[
 ];
 
 /// The overview's hot corner combo. Mirrors `HotCorner::name` in
-/// `src/config.rs`.
+/// `repriseconf::config`.
 pub const HOT_CORNERS: &Choices = &[
     ("none", "None"),
     ("top-left", "Top left"),
@@ -43,7 +43,7 @@ pub const HOT_CORNERS: &Choices = &[
 ];
 
 /// The desktop switch animations. Mirrors `SwitchStyle::name` in
-/// `src/config.rs`.
+/// `repriseconf::config`.
 pub const SWITCH_ANIMATIONS: &Choices = &[
     ("none", "None"),
     ("slide", "Slide"),
@@ -53,7 +53,7 @@ pub const SWITCH_ANIMATIONS: &Choices = &[
     ("wipe", "Wipe"),
 ];
 
-/// How menus open. Mirrors `MenuAnimation::name` in `src/config.rs`.
+/// How menus open. Mirrors `MenuAnimation::name` in `repriseconf::config`.
 pub const MENU_ANIMATIONS: &Choices = &[("fade", "Fade"), ("slide", "Slide"), ("none", "None")];
 
 /// How the Glass taskbar marks the current desktop. Mirrors
@@ -61,7 +61,7 @@ pub const MENU_ANIMATIONS: &Choices = &[("fade", "Fade"), ("slide", "Slide"), ("
 pub const PAGER_MARKS: &Choices = &[("light", "Light under its number"), ("tile", "Glass tile")];
 
 /// The text sizes `[accessibility] text_size` takes. Mirrors
-/// `TEXT_SIZE` in `src/config.rs`.
+/// `TEXT_SIZE` in `repriseconf::config`.
 pub const TEXT_SIZES: &[(i64, &str)] = &[
     (100, "100%"),
     (125, "125%"),
@@ -79,13 +79,7 @@ pub const CURSOR_SIZES: &[(i64, &str)] = &[
     (96, "96 px"),
 ];
 
-/// The value of a `[toolkits]` key that follows the look in force.
-/// Mirrors `TOOLKIT_AUTO` in `src/config.rs`.
-pub const TOOLKIT_AUTO: &str = "auto";
-
-/// The value of a `[toolkits]` key that recolours GTK or Qt programs in
-/// the look's own colours. Mirrors `TOOLKIT_REPRISE` in `src/config.rs`.
-pub const TOOLKIT_REPRISE: &str = "reprise";
+pub use repriseconf::config::{TOOLKIT_AUTO, TOOLKIT_REPRISE};
 
 pub const REPRISE_TOOLKIT_ROW: &str = "Reprise (follows the look)";
 
@@ -103,7 +97,7 @@ pub const QT_PLATFORM_THEMES: &Choices = &[
 ];
 
 /// `[toolkits] font_smoothing`: how GTK and the browsers smooth their
-/// text. Mirrors `FontSmoothing::parse` in `src/config.rs`.
+/// text. Mirrors `FontSmoothing::parse` in `repriseconf::config`.
 pub const FONT_SMOOTHINGS: &Choices = &[
     ("grayscale", "Grayscale"),
     ("subpixel", "Subpixel (RGB)"),
@@ -194,11 +188,7 @@ pub const SCRIPT_ENDS: &Choices = &[
     ("close", "Close its window"),
 ];
 
-/// The system icons the Background page ticks, in the desktop's order,
-/// and the Recycle Bin, which always follows them. Mirror
-/// `Config::default`'s `system_icons`.
-pub const SYSTEM_ICONS: [&str; 3] = ["documents", "computer", "home"];
-
+/// The Recycle Bin, which always follows the other system icons.
 pub const RECYCLE_BIN: &str = "recycle-bin";
 
 /// `icons` with `name` ticked or not, in the order the file had: an
@@ -224,23 +214,14 @@ pub fn glass_swatch(v: &str) -> Option<&'static str> {
         .and_then(reprisekit::glass::swatch_name)
 }
 
-/// `[workspaces] count`'s default and ceiling. Mirror `Config::default`
-/// and `WORKSPACES_MAX` in `src/config.rs`.
-pub const DESKTOPS_DEFAULT: i64 = 4;
+pub const DESKTOPS_DEFAULT: i64 = repriseconf::config::WORKSPACES_DEFAULT as i64;
 
-pub const DESKTOPS_MAX: i64 = 16;
+pub const DESKTOPS_MAX: i64 = repriseconf::config::WORKSPACES_MAX as i64;
 
-/// `[window_snapping] distance`'s default and ceiling. Mirror `snap::BAND` and
-/// `SNAP_DISTANCE_MAX` in `src/config.rs`.
-pub const SNAP_DISTANCE_DEFAULT: i64 = 30;
+pub const SNAP_DISTANCE_MAX: i64 = repriseconf::config::SNAP_DISTANCE_MAX as i64;
 
-pub const SNAP_DISTANCE_MAX: i64 = 100;
+pub const SWITCH_MS_MAX: i64 = repriseconf::config::SWITCH_MS_MAX as i64;
 
-/// Longest `[workspaces] animation_ms`. Mirrors `SWITCH_MS_MAX`.
-pub const SWITCH_MS_MAX: i64 = 2000;
+pub const EFFECTS_MS_MAX: i64 = repriseconf::config::EFFECTS_MS_MAX as i64;
 
-/// Longest `[effects]` duration. Mirrors `EFFECTS_MS_MAX`.
-pub const EFFECTS_MS_MAX: i64 = 2000;
-
-/// Most `[previews] fps`. Mirrors `PREVIEW_FPS_MAX`.
-pub const PREVIEW_FPS_MAX: i64 = 60;
+pub const PREVIEW_FPS_MAX: i64 = repriseconf::config::PREVIEW_FPS_MAX as i64;

@@ -1,5 +1,5 @@
-use super::file::FileGlobalShortcut;
 use crate::keys::{MOD_ALT, MOD_CTRL, MOD_LOGO, MOD_SHIFT};
+use repriseconf::config::file::FileGlobalShortcut;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {

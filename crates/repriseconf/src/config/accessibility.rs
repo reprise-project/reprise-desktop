@@ -16,6 +16,21 @@ pub enum NightSchedule {
     Fixed,
 }
 
+impl NightSchedule {
+    pub fn name(self) -> &'static str {
+        match self {
+            NightSchedule::Sun => "sun",
+            NightSchedule::Fixed => "fixed",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<NightSchedule> {
+        [NightSchedule::Sun, NightSchedule::Fixed]
+            .into_iter()
+            .find(|n| n.name() == s)
+    }
+}
+
 impl Default for NightLightConfig {
     fn default() -> Self {
         NightLightConfig {
@@ -33,7 +48,7 @@ impl Default for NightLightConfig {
 pub struct AccessibilityConfig {
     pub color_filter: reprisekit::colorfilter::Filter,
     pub color_filter_intensity: u8,
-    pub magnifier_follow: crate::magnifier::Follow,
+    pub magnifier_follow: Follow,
     pub sticky_keys: bool,
     pub sticky_lock: bool,
     pub sticky_two_keys_off: bool,
@@ -54,7 +69,7 @@ impl Default for AccessibilityConfig {
         AccessibilityConfig {
             color_filter: reprisekit::colorfilter::Filter::None,
             color_filter_intensity: 100,
-            magnifier_follow: crate::magnifier::Follow::default(),
+            magnifier_follow: Follow::default(),
             sticky_keys: false,
             sticky_lock: true,
             sticky_two_keys_off: true,
@@ -95,4 +110,31 @@ pub fn parse_hhmm(s: &str) -> Option<u32> {
     }
     let (h, m): (u32, u32) = (h.parse().ok()?, m.parse().ok()?);
     (h < 24 && m < 60).then_some(h * 60 + m)
+}
+
+/// What the magnifier's view follows: `[accessibility] magnifier_follow`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Follow {
+    Pointer,
+    #[default]
+    PointerAndFocus,
+}
+
+impl Follow {
+    pub fn name(self) -> &'static str {
+        match self {
+            Follow::Pointer => "pointer",
+            Follow::PointerAndFocus => "pointer+focus",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Follow> {
+        [Follow::Pointer, Follow::PointerAndFocus]
+            .into_iter()
+            .find(|f| f.name() == name)
+    }
+
+    pub fn focus(self) -> bool {
+        self == Follow::PointerAndFocus
+    }
 }

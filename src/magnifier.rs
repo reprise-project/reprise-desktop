@@ -42,32 +42,6 @@ pub enum ZoomStep {
     Reset,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Follow {
-    Pointer,
-    #[default]
-    PointerAndFocus,
-}
-
-impl Follow {
-    pub fn name(self) -> &'static str {
-        match self {
-            Follow::Pointer => "pointer",
-            Follow::PointerAndFocus => "pointer+focus",
-        }
-    }
-
-    pub fn parse(name: &str) -> Option<Follow> {
-        [Follow::Pointer, Follow::PointerAndFocus]
-            .into_iter()
-            .find(|f| f.name() == name)
-    }
-
-    pub fn focus(self) -> bool {
-        self == Follow::PointerAndFocus
-    }
-}
-
 /// Levels in half steps: 2 is 1x, 16 is 8x.
 const MIN_HALVES: u32 = 2;
 const MAX_HALVES: u32 = 16;
@@ -803,15 +777,6 @@ mod tests {
             "3x: 10 px in the view is 30 on screen"
         );
         assert_eq!(z.at_screen((30.0, 30.0)), (110.0, 60.0));
-    }
-
-    #[test]
-    fn follow_names_round_trip() {
-        for f in [Follow::Pointer, Follow::PointerAndFocus] {
-            assert_eq!(Follow::parse(f.name()), Some(f));
-        }
-        assert_eq!(Follow::parse("caret"), None);
-        assert!(!Follow::Pointer.focus() && Follow::PointerAndFocus.focus());
     }
 
     /// A 4x view of 480x270 at 400,200: margin 60 across and 33.75 down.

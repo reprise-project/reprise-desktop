@@ -485,7 +485,11 @@ impl State {
         let mut seat = seat_state.new_wl_seat(&dh, "seat0");
         let kb = &config.keyboard;
         if seat
-            .add_keyboard(kb.xkb_config(), kb.repeat_delay, kb.repeat_rate)
+            .add_keyboard(
+                crate::config::xkb_config(kb),
+                kb.repeat_delay,
+                kb.repeat_rate,
+            )
             .is_err()
         {
             log::warn!(

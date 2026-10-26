@@ -88,7 +88,7 @@ fn a_layout_with_no_member_on_screen_is_not_active() {
         s.outlined_target(
             "DP-1",
             WORK,
-            crate::snap::BAND,
+            repriseconf::config::SNAP_DISTANCE_DEFAULT,
             true,
             None,
             crate::snap::EVERY_SIDE,
@@ -104,7 +104,7 @@ fn a_layout_with_no_member_on_screen_is_not_active() {
         (s.outlined_target(
             "DP-1",
             WORK,
-            crate::snap::BAND,
+            repriseconf::config::SNAP_DISTANCE_DEFAULT,
             true,
             None,
             crate::snap::EVERY_SIDE,
@@ -284,7 +284,7 @@ fn a_corner_drop_outlines_where_it_lands_with_two_groups() {
         .outlined_target(
             "DP-1",
             WORK,
-            crate::snap::BAND,
+            repriseconf::config::SNAP_DISTANCE_DEFAULT,
             true,
             None,
             crate::snap::EVERY_SIDE,

@@ -1,5 +1,3 @@
-use smithay::input::keyboard::XkbConfig;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyboardConfig {
     pub rules: String,
@@ -66,16 +64,4 @@ impl Default for TouchpadConfig {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TouchscreenConfig {
     pub output: Option<String>,
-}
-
-impl KeyboardConfig {
-    pub fn xkb_config(&self) -> XkbConfig<'_> {
-        XkbConfig {
-            rules: &self.rules,
-            model: &self.model,
-            layout: &self.layout,
-            variant: &self.variant,
-            options: Some(self.options.clone()).filter(|o| !o.is_empty()),
-        }
-    }
 }

@@ -19,22 +19,21 @@ pub struct Settings {
     pub always_show_icon: bool,
 }
 
-// These defaults mirror the compositor's `IdleConfig` and `PowerConfig`
-// (src/config.rs); the two must change together.
 impl Default for Settings {
     fn default() -> Self {
+        let c = repriseconf::config::Config::default();
         Settings {
-            screen_off_after: 900,
-            suspend_after: 0,
-            battery_screen_off_after: None,
-            battery_suspend_after: None,
-            battery_low: 10,
-            battery_critical: 3,
-            critical_action: "hibernate".into(),
-            lid_close: "standby".into(),
-            power_button: "ask".into(),
-            sleep_button: "standby".into(),
-            always_show_icon: false,
+            screen_off_after: c.idle.screen_off_after.into(),
+            suspend_after: c.idle.suspend_after.into(),
+            battery_screen_off_after: c.idle_battery.screen_off_after.map(i64::from),
+            battery_suspend_after: c.idle_battery.suspend_after.map(i64::from),
+            battery_low: c.power.battery_low.into(),
+            battery_critical: c.power.battery_critical.into(),
+            critical_action: c.power.critical_action.name().into(),
+            lid_close: c.power.lid_close.name().into(),
+            power_button: c.power.power_button.name().into(),
+            sleep_button: c.power.sleep_button.name().into(),
+            always_show_icon: c.power.always_show_icon,
         }
     }
 }

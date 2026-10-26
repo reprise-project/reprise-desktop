@@ -1,7 +1,7 @@
 use crate::window::{SizeLimits, WindowId};
 use reprisekit::classic::frame::Edges;
 use reprisekit::raster::Rect;
-pub use reprisekit::snaplayouts::{ZONE_MAX, ZoneLayout};
+pub use reprisekit::snaplayouts::ZoneLayout;
 use std::collections::VecDeque;
 
 const SIDES: [Edges; 4] = [Edges::LEFT, Edges::RIGHT, Edges::TOP, Edges::BOTTOM];
@@ -157,10 +157,6 @@ fn layouts_of(work: Rect, specs: &[&str]) -> Vec<ZoneLayout> {
         .filter_map(|s| ZoneLayout::parse(&s).ok())
         .collect()
 }
-
-/// `[window_snapping] distance`'s default: how far in from the usable area's edges a
-/// title-bar drag snaps.
-pub const BAND: i32 = 30;
 
 /// Zone order: top-left, bottom-left, top-right, bottom-right.
 pub fn quarters() -> ZoneLayout {
@@ -609,6 +605,7 @@ impl Suggestion {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use repriseconf::config::SNAP_DISTANCE_DEFAULT as BAND;
 
     #[test]
     fn a_drag_of_a_side_no_member_follows_takes_the_window_off_its_zone() {

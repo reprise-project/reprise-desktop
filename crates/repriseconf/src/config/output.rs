@@ -1,4 +1,4 @@
-use repriseconf::hz_string;
+use crate::hz_string;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct OutputConfig {
@@ -130,4 +130,18 @@ pub struct OfferedMode {
     pub height: i32,
     pub refresh_mhz: i32,
     pub preferred: bool,
+}
+
+/// How far from the origin a head may sit: the layout's arithmetic is i32, and
+/// 2^24 leaves room for size and neighbours.
+pub const MAX_POSITION: i32 = 1 << 24;
+
+/// An output scale as the compositor runs it: the nearest quarter step,
+/// clamped to 1..=4, 1 for anything that is not a number.
+pub fn quarter_scale(scale: f32) -> f32 {
+    if scale.is_finite() {
+        ((scale * 4.0).round() / 4.0).clamp(1.0, 4.0)
+    } else {
+        1.0
+    }
 }

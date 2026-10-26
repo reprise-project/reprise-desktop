@@ -377,56 +377,6 @@ fn auto_hide_and_its_triggers_take_their_keys() {
 }
 
 #[test]
-fn small_icons_shrinks_the_glass_bar_and_the_usable_area() {
-    let full = |b: bool| {
-        Config::parse(&format!(
-            "[appearance]\ninterface = \"glass\"\n[taskbar]\nsmall_icons = {b}\n"
-        ))
-        .unwrap()
-        .theme
-        .metrics
-        .taskbar_height
-    };
-    assert_eq!(full(false), 40, "Glass's own bar height, unshrunk");
-    assert_eq!(full(true), reprisekit::glass::SMALL_TASKBAR_HEIGHT);
-
-    let screen = reprisekit::raster::Rect::new(0, 0, 1920, 1080);
-    let usable = |h| {
-        let p = crate::barplace::place(screen, reprisekit::taskbar::Edge::Bottom, h);
-        crate::barplace::usable(screen, &p)
-    };
-    let usable_off = usable(full(false));
-    let usable_on = usable(full(true));
-    assert_eq!(usable_off.height, 1040);
-    assert_eq!(usable_on.height, 1050, "10 px taller, the bar's own shrink");
-
-    let classic = |b: bool| {
-        Config::parse(&format!("[taskbar]\nsmall_icons = {b}\n"))
-            .unwrap()
-            .theme
-            .metrics
-            .taskbar_height
-    };
-    assert_eq!(classic(false), classic(true), "Classic ignores the key");
-    let blue = |b: bool| {
-        Config::parse(&format!(
-            "[appearance]\ninterface = \"blue\"\n[taskbar]\nsmall_icons = {b}\n"
-        ))
-        .unwrap()
-        .theme
-        .metrics
-        .taskbar_height
-    };
-    assert_eq!(blue(false), blue(true), "Blue ignores the key");
-
-    let c = Config::parse(
-        "[appearance]\ninterface = \"glass\"\n[taskbar]\nsmall_icons = true\n[metrics]\ntaskbar_height = 36\n",
-    )
-    .unwrap();
-    assert_eq!(c.theme.metrics.taskbar_height, 36);
-}
-
-#[test]
 fn small_icons_under_glass_take_the_small_bars_style() {
     let glass = |b: bool| {
         Config::parse(&format!(
@@ -673,14 +623,17 @@ fn metrics_are_range_checked_at_parse() {
 fn wallpaper_reads_image_and_position() {
     let c = Config::parse("[wallpaper]\nimage = \"/w/a.jpg\"\nposition = \"tile\"\n").unwrap();
     assert_eq!(c.wallpaper.image.as_deref(), Some(Path::new("/w/a.jpg")));
-    assert_eq!(c.wallpaper.position, crate::wallpaper::Position::Tile);
+    assert_eq!(c.wallpaper.position, reprisekit::wallpaper::Position::Tile);
 }
 
 #[test]
 fn wallpaper_defaults_to_none_stretched() {
     let c = Config::default();
     assert_eq!(c.wallpaper.image, None);
-    assert_eq!(c.wallpaper.position, crate::wallpaper::Position::Stretch);
+    assert_eq!(
+        c.wallpaper.position,
+        reprisekit::wallpaper::Position::Stretch
+    );
 }
 
 #[test]
@@ -691,7 +644,10 @@ fn wallpaper_reads_a_builtin_and_fills_the_screen_with_it() {
         c.wallpaper.image.as_deref(),
         Some(Path::new("reprise:terraces/frost"))
     );
-    assert_eq!(c.wallpaper.position, crate::wallpaper::Position::Stretch);
+    assert_eq!(
+        c.wallpaper.position,
+        reprisekit::wallpaper::Position::Stretch
+    );
     let c = Config::parse("[wallpaper]\nimage = \"reprise:reeded/hue-30-dark\"\n").unwrap();
     assert_eq!(
         c.wallpaper.image.as_deref(),

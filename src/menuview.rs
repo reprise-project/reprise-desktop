@@ -495,7 +495,7 @@ impl Menu {
         from: MenuFrom,
     ) -> Menu {
         let tree = scene.tree_create(scene.root());
-        let theme = crate::config::Config::default().theme;
+        let theme = repriseconf::config::Config::default().theme;
         Menu {
             tree,
             buffer: scene.buffer_create(tree),
