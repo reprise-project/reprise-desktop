@@ -26,7 +26,7 @@ use smithay::{
         TouchInnerHandle, UpEvent,
     },
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
-    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial},
+    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Transform},
 };
 
 use crate::{
@@ -321,18 +321,24 @@ impl State {
             .iter()
             .find(|(d, _)| *d == id)
             .and_then(|(_, o)| o.as_deref());
-        let outputs: Vec<(String, Rectangle<i32, Logical>)> = self
+        let outputs: Vec<(String, Transform, Rectangle<i32, Logical>)> = self
             .scene
             .outputs()
             .iter()
-            .filter_map(|o| reprisescene::output_rect(o).map(|r| (o.name(), r)))
+            .filter_map(|o| {
+                reprisescene::output_rect(o).map(|r| (o.name(), o.current_transform(), r))
+            })
             .collect();
-        let names: Vec<&str> = outputs.iter().map(|(n, _)| n.as_str()).collect();
+        let names: Vec<&str> = outputs.iter().map(|(n, ..)| n.as_str()).collect();
         let configured = self.config.touchscreen.output.as_deref();
-        let area = target_output(configured, tagged, &names)
-            .and_then(|t| outputs.iter().find(|(n, _)| n == t))
-            .map_or_else(|| self.output_area(), |(_, r)| *r);
-        self.zoom_absolute(ev.position_transformed(area.size) + area.loc.to_f64())
+        let (transform, area) = target_output(configured, tagged, &names)
+            .and_then(|t| outputs.iter().find(|(n, ..)| n == t))
+            .map_or_else(
+                || (Transform::Normal, self.output_area()),
+                |(_, t, r)| (*t, *r),
+            );
+        let norm = ev.position_transformed((1, 1).into());
+        self.zoom_absolute(place(transform, (norm.x, norm.y), area))
     }
 
     /// Whether a finger may go to a client now: not under the lock, nor
@@ -692,6 +698,19 @@ impl State {
     }
 }
 
+/// The point in `area` that a device's 0..1 position `norm` stands for on an
+/// output with `transform`. The device reports in the panel's native axes, which
+/// the transform turns into the output's logical ones.
+pub(crate) fn place(
+    transform: Transform,
+    norm: (f64, f64),
+    area: Rectangle<i32, Logical>,
+) -> Point<f64, Logical> {
+    let p = transform.transform_point_in(Point::<f64, Logical>::from(norm), &(1.0, 1.0).into());
+    let size = area.size.to_f64();
+    Point::from((p.x * size.w, p.y * size.h)) + area.loc.to_f64()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -704,6 +723,20 @@ mod tests {
         Route::Client {
             at: Point::from((x, 5.0)),
         }
+    }
+
+    #[test]
+    fn a_device_position_lands_in_the_output_logical_axes() {
+        let area = Rectangle::new((1920, 0).into(), (1080, 1920).into());
+        let at = |t, norm| {
+            let p = place(t, norm, area);
+            (p.x, p.y)
+        };
+        assert_eq!(at(Transform::Normal, (0.25, 0.1)), (2190.0, 192.0));
+        // The panel's native top-left is where a 90 output draws its logical top-right.
+        assert_eq!(at(Transform::_90, (0.0, 0.0)), (3000.0, 0.0));
+        assert_eq!(at(Transform::_90, (0.25, 0.1)), (2892.0, 480.0));
+        assert_eq!(at(Transform::Flipped180, (0.25, 0.1)), (2190.0, 1728.0));
     }
 
     #[test]
