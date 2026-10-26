@@ -340,7 +340,7 @@ impl DrivesApp {
             }
         }
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
-            match tray::translate(raw) {
+            match tray::translate(raw, &self.entries) {
                 Some(tray::TrayMsg::Open(x, y)) if !self.entries.is_empty() => {
                     let entries = self.entries.clone();
                     let tree = MenuTree::flat(
@@ -601,8 +601,7 @@ impl App for DrivesApp {
 }
 
 fn main() {
-    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    repriseapp::run(Box::new(DrivesApp::default()));
+    repriseapp::applet_main(|_| DrivesApp::default());
 }
 
 #[cfg(test)]

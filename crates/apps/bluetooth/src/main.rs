@@ -282,7 +282,7 @@ impl BtApp {
         let mut shown = None;
         let mut raised = false;
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
-            let Some(msg) = tray::translate(raw) else {
+            let Some(msg) = tray::translate(raw, &self.snapshot) else {
                 continue;
             };
             raised = true;
@@ -1026,9 +1026,7 @@ impl App for BtApp {
 }
 
 fn main() {
-    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    let tray_only = std::env::args().any(|a| a == "--tray");
-    repriseapp::run(Box::new(BtApp::new(tray_only)));
+    repriseapp::applet_main(BtApp::new);
 }
 
 #[cfg(test)]
@@ -1593,7 +1591,8 @@ mod tests {
         let mut a = app();
         a.snapshot_in(snap(true));
         let (handoff, tx) = holding_tray(&mut a);
-        tx.send(reprisetray::Msg::Clicked(tray::ID_ADD)).unwrap();
+        tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::Add))
+            .unwrap();
         assert_eq!(a.wake().activate, Some((WIZARD, handoff)));
     }
 
@@ -1602,7 +1601,8 @@ mod tests {
         let mut a = app();
         a.snapshot_in(snap(true));
         let (_, tx) = holding_tray(&mut a);
-        tx.send(reprisetray::Msg::Clicked(tray::ID_POWER)).unwrap();
+        tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::TogglePower))
+            .unwrap();
         assert_eq!(a.wake().activate, None);
         assert_eq!(a.tray.as_ref().unwrap().take_handoff(), None);
     }

@@ -3,20 +3,13 @@
 //! adapter. The D-Bus side is `reprisetray`'s.
 
 use reprisekit::art::bticon;
-use reprisetray::{Config, Icon, Msg, Node, Raise, Shown};
+use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 use crate::bz::Snapshot;
 
 pub const BUS_NAME: &str = "reprise.bluetooth";
 
-pub const ID_SHOW: i32 = 1;
-pub const ID_ADD: i32 = 2;
-const ID_SEP: i32 = 3;
-pub const ID_POWER: i32 = 4;
-const ID_SEP2: i32 = 5;
-pub const ID_EXIT: i32 = 6;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum TrayMsg {
     Show,
     Add,
@@ -24,35 +17,38 @@ pub enum TrayMsg {
     Exit,
 }
 
-pub fn translate(msg: Msg) -> Option<TrayMsg> {
-    Some(match msg {
-        Msg::Activate(..) | Msg::Clicked(ID_SHOW) => TrayMsg::Show,
-        Msg::Clicked(ID_ADD) => TrayMsg::Add,
-        Msg::Clicked(ID_POWER) => TrayMsg::TogglePower,
-        Msg::Clicked(ID_EXIT) => TrayMsg::Exit,
-        _ => return None,
-    })
+/// What `msg` means while the menu shows `s`'s rows.
+pub fn translate(msg: Msg, s: &Snapshot) -> Option<TrayMsg> {
+    match msg {
+        Msg::Activate(..) => Some(TrayMsg::Show),
+        msg => menu(s).translate(msg),
+    }
 }
 
 /// Show and Exit always; Add while the radio is on; the power row while
 /// there is a radio to turn.
-pub fn menu_nodes(s: &Snapshot) -> Vec<Node> {
-    let mut out = vec![Node::row(ID_SHOW, "Show Bluetooth Devices")];
+pub fn menu(s: &Snapshot) -> Rows<TrayMsg> {
+    let mut rows = Rows::default();
+    rows.add(TrayMsg::Show, |id| Node::row(id, "Show Bluetooth Devices"));
     if let Some(a) = &s.adapter {
         if a.powered {
-            out.push(Node::row(ID_ADD, "Add a Bluetooth Device"));
+            rows.add(TrayMsg::Add, |id| Node::row(id, "Add a Bluetooth Device"));
         }
-        out.push(Node::separator(ID_SEP));
         let word = if a.powered {
             "Turn Bluetooth Off"
         } else {
             "Turn Bluetooth On"
         };
-        out.push(Node::row(ID_POWER, word));
+        rows.separator()
+            .add(TrayMsg::TogglePower, |id| Node::row(id, word));
     }
-    out.push(Node::separator(ID_SEP2));
-    out.push(Node::row(ID_EXIT, "Exit"));
-    out
+    rows.separator()
+        .add(TrayMsg::Exit, |id| Node::row(id, "Exit"));
+    rows
+}
+
+pub fn menu_nodes(s: &Snapshot) -> Vec<Node> {
+    menu(s).into_nodes()
 }
 
 pub fn tooltip(s: &Snapshot) -> String {
@@ -87,7 +83,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
         id: "reprise-bluetooth",
         title: "Bluetooth",
         notify_icon: "bluetooth",
-        raise: Raise::MenuRow(ID_SHOW),
+        raise: Raise::MenuRow(Rows::id(&TrayMsg::Show)),
     };
     reprisetray::start(
         config,
@@ -163,14 +159,13 @@ mod tests {
 
     #[test]
     fn clicks_map_to_the_rows_and_no_adapter_hides_the_icon() {
-        assert_eq!(translate(Msg::Activate(0, 0)), Some(TrayMsg::Show));
-        assert_eq!(translate(Msg::Clicked(ID_ADD)), Some(TrayMsg::Add));
-        assert_eq!(
-            translate(Msg::Clicked(ID_POWER)),
-            Some(TrayMsg::TogglePower)
-        );
-        assert_eq!(translate(Msg::Clicked(ID_EXIT)), Some(TrayMsg::Exit));
-        assert_eq!(translate(Msg::Scroll(1)), None);
+        let on = snap(true, 0);
+        let click = |row| translate(Rows::clicked(&row), &on);
+        assert_eq!(translate(Msg::Activate(0, 0), &on), Some(TrayMsg::Show));
+        assert_eq!(click(TrayMsg::Add), Some(TrayMsg::Add));
+        assert_eq!(click(TrayMsg::TogglePower), Some(TrayMsg::TogglePower));
+        assert_eq!(click(TrayMsg::Exit), Some(TrayMsg::Exit));
+        assert_eq!(translate(Msg::Scroll(1), &on), None);
         assert!(!shown(&Snapshot::default()).active);
         assert!(shown(&snap(false, 0)).active);
     }

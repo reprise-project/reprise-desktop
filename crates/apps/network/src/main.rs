@@ -531,7 +531,7 @@ impl NetApp {
         let mut shown = None;
         let mut raised = false;
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
-            let Some(msg) = tray::translate(raw) else {
+            let Some(msg) = tray::translate(raw, &tray::menu_shape(&self.snapshot)) else {
                 continue;
             };
             raised = true;
@@ -1380,14 +1380,12 @@ fn hotspot_clients(d: &nm::Device) -> Option<usize> {
 }
 
 fn main() {
-    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    let tray_only = std::env::args().any(|a| a == "--tray");
-    repriseapp::run(Box::new(NetApp {
+    repriseapp::applet_main(|tray_only| NetApp {
         hidden: tray_only,
         tray_only,
         forms: repriseapp::start_forms(),
         ..NetApp::default()
-    }));
+    });
 }
 
 #[cfg(test)]
@@ -1494,7 +1492,8 @@ mod tests {
             ..NetApp::default()
         };
         assert_eq!(app.wake().activate, None);
-        tx.send(reprisetray::Msg::Clicked(tray::ID_FOLDER)).unwrap();
+        tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::Folder))
+            .unwrap();
         assert_eq!(app.wake().activate, Some((repriseapp::MAIN, handoff)));
     }
 
@@ -1521,7 +1520,8 @@ mod tests {
             },
             ..NetApp::default()
         };
-        tx.send(reprisetray::Msg::Clicked(tray::ID_STATUS)).unwrap();
+        tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::Status))
+            .unwrap();
         assert_eq!(app.wake().activate, Some((STATUS, handoff)));
     }
 
@@ -1536,9 +1536,20 @@ mod tests {
             tray: Some(tray),
             msgs: Some(rx),
             hidden: true,
+            snapshot: nm::Snapshot {
+                devices: vec![nm::Device {
+                    path: "/dev/1".into(),
+                    kind: nm::Kind::Wired,
+                    state: nm::State::Connected,
+                    managed: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
             ..NetApp::default()
         };
-        tx.send(reprisetray::Msg::Clicked(tray::ID_REPAIR)).unwrap();
+        tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::Repair))
+            .unwrap();
         assert_eq!(app.wake().activate, None);
         assert_eq!(app.tray.as_ref().unwrap().take_handoff(), None);
     }

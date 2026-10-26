@@ -292,7 +292,7 @@ impl PrintersApp {
         let mut shown = None;
         let mut raised = false;
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
-            let Some(msg) = tray::translate(raw) else {
+            let Some(msg) = tray::translate(raw, &self.snapshot, &self.user) else {
                 continue;
             };
             raised = true;
@@ -1072,9 +1072,7 @@ impl App for PrintersApp {
 }
 
 fn main() {
-    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    let tray_only = std::env::args().any(|a| a == "--tray");
-    repriseapp::run(Box::new(PrintersApp::new(tray_only)));
+    repriseapp::applet_main(PrintersApp::new);
 }
 
 #[cfg(test)]

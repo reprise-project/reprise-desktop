@@ -1,22 +1,14 @@
 //! The battery in the notification area: what reprise-power shows on its `reprisetray` item (icon,
 //! tooltip, menu rows) and what a click on it means. The D-Bus side is `reprisetray`'s.
 
-use reprisetray::{Config, Icon, Msg, Node, Raise, Shown};
+use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 use crate::profiles::{self, Profiles};
 use crate::upower::{Power, State};
 
 pub const BUS_NAME: &str = "reprise.power";
 
-pub const ID_METER: i32 = 1;
-pub const ID_PROPERTIES: i32 = 2;
-pub const ID_SEPARATOR: i32 = 3;
-pub const ID_EXIT: i32 = 4;
-pub const ID_PROFILES_SEPARATOR: i32 = 5;
-/// The first power profile row; the rest follow in the daemon's order.
-pub const ID_PROFILE: i32 = 16;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum TrayMsg {
     OpenMeter,
     OpenProperties,
@@ -24,43 +16,37 @@ pub enum TrayMsg {
     Profile(usize),
 }
 
-pub fn translate(msg: Msg) -> Option<TrayMsg> {
-    Some(match msg {
-        Msg::Activate(..) | Msg::SecondaryActivate | Msg::Clicked(ID_METER) => TrayMsg::OpenMeter,
-        Msg::Clicked(ID_PROPERTIES) => TrayMsg::OpenProperties,
-        Msg::Clicked(ID_EXIT) => TrayMsg::Exit,
-        Msg::Clicked(id) if id >= ID_PROFILE => TrayMsg::Profile((id - ID_PROFILE) as usize),
-        Msg::Clicked(_) | Msg::Scroll(_) | Msg::BalloonClicked(_) | Msg::BalloonButton(..) => {
-            return None;
-        }
-    })
+/// What `msg` means while the menu shows `p`'s profiles.
+pub fn translate(msg: Msg, p: &Profiles) -> Option<TrayMsg> {
+    match msg {
+        Msg::Activate(..) | Msg::SecondaryActivate => Some(TrayMsg::OpenMeter),
+        msg => menu(p).translate(msg),
+    }
 }
 
 /// The tray menu's rows: one radio row per power profile the daemon offers, the active one on, and a
 /// separator under them (none while the daemon is missing); then Open Power Meter, Adjust Power Properties, and Exit.
-pub fn menu_nodes(p: &Profiles) -> Vec<Node> {
-    let mut nodes: Vec<Node> = p
-        .available
-        .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            Node::radio(
-                ID_PROFILE + i as i32,
-                profiles::label(name),
-                *name == p.active,
-            )
-        })
-        .collect();
-    if !nodes.is_empty() {
-        nodes.push(Node::separator(ID_PROFILES_SEPARATOR));
+pub fn menu(p: &Profiles) -> Rows<TrayMsg> {
+    let mut rows = Rows::default();
+    for (i, name) in p.available.iter().enumerate() {
+        rows.add(TrayMsg::Profile(i), |id| {
+            Node::radio(id, profiles::label(name), *name == p.active)
+        });
     }
-    nodes.extend([
-        Node::row(ID_METER, "Open Power Meter"),
-        Node::row(ID_PROPERTIES, "Adjust Power Properties"),
-        Node::separator(ID_SEPARATOR),
-        Node::row(ID_EXIT, "Exit"),
-    ]);
-    nodes
+    if !p.available.is_empty() {
+        rows.separator();
+    }
+    rows.add(TrayMsg::OpenMeter, |id| Node::row(id, "Open Power Meter"))
+        .add(TrayMsg::OpenProperties, |id| {
+            Node::row(id, "Adjust Power Properties")
+        })
+        .separator()
+        .add(TrayMsg::Exit, |id| Node::row(id, "Exit"));
+    rows
+}
+
+pub fn menu_nodes(p: &Profiles) -> Vec<Node> {
+    menu(p).into_nodes()
 }
 
 pub fn clock(seconds: u64) -> String {
@@ -106,7 +92,7 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
         title: "Power",
         notify_icon: "battery-caution",
         // A second instance raises the sheet on its first tab; Activate would open the Power Meter tab instead.
-        raise: Raise::MenuRow(ID_PROPERTIES),
+        raise: Raise::MenuRow(Rows::id(&TrayMsg::OpenProperties)),
     };
     let initial = shown(
         reprisekit::art::powericon::draw(reprisekit::art::powericon::Source::Ac).to_argb_be(),
@@ -211,20 +197,27 @@ mod tests {
         unique.dedup();
         assert_eq!(unique.len(), ids.len(), "every row has its own id");
         assert_eq!(
-            translate(Msg::Clicked(nodes[1].id)),
+            translate(Msg::Clicked(nodes[1].id), &p),
             Some(TrayMsg::Profile(1))
         );
     }
 
     #[test]
     fn clicks_map_to_the_rows() {
+        let translate = |msg| translate(msg, &Profiles::default());
         assert_eq!(translate(Msg::Activate(0, 0)), Some(TrayMsg::OpenMeter));
-        assert_eq!(translate(Msg::Clicked(ID_METER)), Some(TrayMsg::OpenMeter));
         assert_eq!(
-            translate(Msg::Clicked(ID_PROPERTIES)),
+            translate(Rows::clicked(&TrayMsg::OpenMeter)),
+            Some(TrayMsg::OpenMeter)
+        );
+        assert_eq!(
+            translate(Rows::clicked(&TrayMsg::OpenProperties)),
             Some(TrayMsg::OpenProperties)
         );
-        assert_eq!(translate(Msg::Clicked(ID_EXIT)), Some(TrayMsg::Exit));
+        assert_eq!(
+            translate(Rows::clicked(&TrayMsg::Exit)),
+            Some(TrayMsg::Exit)
+        );
         assert_eq!(translate(Msg::Scroll(1)), None);
     }
 }

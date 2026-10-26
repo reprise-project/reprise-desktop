@@ -752,13 +752,11 @@ impl Sound {
 }
 
 fn main() {
-    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    let tray_only = std::env::args().any(|a| a == "--tray");
-    repriseapp::run(Box::new(Sound {
+    repriseapp::applet_main(|tray_only| Sound {
         hidden: tray_only,
         tray_only,
         ..Sound::default()
-    }));
+    });
 }
 
 #[cfg(test)]
@@ -1005,7 +1003,7 @@ mod tests {
         };
         let mut ctx = test_ctx();
         assert_eq!(app.wake(&mut ctx).activate, None);
-        tx.send(reprisetray::Msg::Clicked(tray::ID_PROPERTIES))
+        tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::Properties))
             .unwrap();
         assert_eq!(
             app.wake(&mut ctx).activate,

@@ -102,7 +102,7 @@ pub use reply::{Reply, spawn_in};
 pub use reprisefs::dropdata::{GNOME_FILES, URI_LIST};
 pub use reprisefs::fileclip::FileClip;
 pub use reprisekit;
-pub use runloop::run;
+pub use runloop::{applet_main, run};
 pub use sizing::MIN_SIZE;
 pub use windows::tab_groups;
 

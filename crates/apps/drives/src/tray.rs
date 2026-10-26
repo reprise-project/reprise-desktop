@@ -3,14 +3,14 @@
 //! flyout; a right click gets the same rows through the dbusmenu. Up only while a
 //! removable drive is mounted.
 
-use reprisetray::{Config, Icon, Msg, Node, Raise, Shown};
+use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 use crate::model::Entry;
 
 pub const BUS_NAME: &str = "reprise.drives";
 pub const TIP: &str = "Safely Remove Hardware";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum TrayMsg {
     /// Left click at its click point (`Msg::Activate`): the menu.
     Open(i32, i32),
@@ -22,22 +22,22 @@ pub enum TrayMsg {
     Button(u32, usize),
 }
 
-/// Row ids are the entry's index plus one; 0 is the dbusmenu's root.
-pub fn nodes(entries: &[Entry]) -> Vec<Node> {
-    entries
-        .iter()
-        .enumerate()
-        .map(|(i, e)| Node::row(i as i32 + 1, e.label.clone()))
-        .collect()
+pub fn rows(entries: &[Entry]) -> Rows<TrayMsg> {
+    let mut rows = Rows::default();
+    for (i, e) in entries.iter().enumerate() {
+        rows.add(TrayMsg::Remove(i), |id| Node::row(id, e.label.clone()));
+    }
+    rows
 }
 
-pub fn translate(msg: Msg) -> Option<TrayMsg> {
+/// What `msg` means while the menu shows `entries`.
+pub fn translate(msg: Msg, entries: &[Entry]) -> Option<TrayMsg> {
     Some(match msg {
         Msg::Activate(x, y) => TrayMsg::Open(x, y),
-        Msg::Clicked(id) if id > 0 => TrayMsg::Remove(id as usize - 1),
+        Msg::Clicked(_) => return rows(entries).translate(msg),
         Msg::BalloonClicked(tag) => TrayMsg::Balloon(tag),
         Msg::BalloonButton(tag, i) => TrayMsg::Button(tag, i),
-        Msg::Clicked(_) | Msg::SecondaryActivate | Msg::Scroll(_) => return None,
+        Msg::SecondaryActivate | Msg::Scroll(_) => return None,
     })
 }
 
@@ -46,7 +46,7 @@ pub fn shown(entries: &[Entry]) -> Shown {
         icon: Icon::Name("media-eject".into()),
         tip: TIP.into(),
         active: !entries.is_empty(),
-        nodes: nodes(entries),
+        nodes: rows(entries).into_nodes(),
     }
 }
 
@@ -83,10 +83,10 @@ mod tests {
                 label: "Safely remove B - Y".into(),
             },
         ];
-        let n = nodes(&entries);
-        assert_eq!(n[1].id, 2);
+        let n = rows(&entries).into_nodes();
         assert_eq!(n[1].label, "Safely remove B - Y");
-        assert_eq!(translate(Msg::Clicked(2)), Some(TrayMsg::Remove(1)));
+        let translate = |msg| translate(msg, &entries);
+        assert_eq!(translate(Msg::Clicked(n[1].id)), Some(TrayMsg::Remove(1)));
         assert_eq!(translate(Msg::Clicked(0)), None);
         assert_eq!(translate(Msg::Activate(5, 6)), Some(TrayMsg::Open(5, 6)));
         assert_eq!(translate(Msg::BalloonClicked(3)), Some(TrayMsg::Balloon(3)));

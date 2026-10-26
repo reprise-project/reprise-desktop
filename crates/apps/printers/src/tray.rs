@@ -1,7 +1,7 @@
 //! The printer icon in the notification area, shown while the user has
 //! documents waiting, printing or aborted and kept by CUPS.
 
-use reprisetray::{Config, Icon, Msg, Node, Raise, Shown};
+use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 use crate::cups::{Job, JobState, Snapshot};
 
@@ -10,12 +10,7 @@ pub const TITLE: &str = "Printers";
 const ICON: &str = "printer";
 const ERROR_ICON: &str = "printer-error";
 
-/// Menu row ids: Printers, then one per printer from `QUEUE_BASE`.
-const ID_FOLDER: i32 = 1;
-const ID_SEP: i32 = 2;
-const QUEUE_BASE: i32 = 100;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum TrayMsg {
     Folder,
     Open,
@@ -23,15 +18,13 @@ pub enum TrayMsg {
     Balloon(u32),
 }
 
-pub fn translate(msg: Msg) -> Option<TrayMsg> {
+/// What `msg` means while the menu shows `user`'s printers in `s`.
+pub fn translate(msg: Msg, s: &Snapshot, user: &str) -> Option<TrayMsg> {
     Some(match msg {
         Msg::Activate(..) => TrayMsg::Open,
-        Msg::Clicked(ID_FOLDER) => TrayMsg::Folder,
-        Msg::Clicked(id) if id >= QUEUE_BASE => TrayMsg::Queue((id - QUEUE_BASE) as usize),
+        Msg::Clicked(_) => return menu(s, user).translate(msg),
         Msg::BalloonClicked(tag) => TrayMsg::Balloon(tag),
-        Msg::Clicked(_) | Msg::SecondaryActivate | Msg::Scroll(_) | Msg::BalloonButton(..) => {
-            return None;
-        }
+        Msg::SecondaryActivate | Msg::Scroll(_) | Msg::BalloonButton(..) => return None,
     })
 }
 
@@ -69,20 +62,24 @@ pub fn tip(s: &Snapshot, user: &str) -> String {
     }
 }
 
-pub fn shown(s: &Snapshot, user: &str) -> Shown {
+/// The printers holding `user`'s documents, the first the bold default, then Printers.
+pub fn menu(s: &Snapshot, user: &str) -> Rows<TrayMsg> {
+    let mut rows = Rows::default();
     let busy = busy_printers(s, user);
-    let mut nodes: Vec<Node> = busy
-        .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            let n = Node::row(QUEUE_BASE + i as i32, p.clone());
+    for (i, p) in busy.iter().enumerate() {
+        rows.add(TrayMsg::Queue(i), |id| {
+            let n = Node::row(id, p.clone());
             if i == 0 { n.as_default() } else { n }
-        })
-        .collect();
-    if !nodes.is_empty() {
-        nodes.push(Node::separator(ID_SEP));
+        });
     }
-    nodes.push(Node::row(ID_FOLDER, TITLE));
+    if !busy.is_empty() {
+        rows.separator();
+    }
+    rows.add(TrayMsg::Folder, |id| Node::row(id, TITLE));
+    rows
+}
+
+pub fn shown(s: &Snapshot, user: &str) -> Shown {
     let icon = if failed(s, user).next().is_some() {
         ERROR_ICON
     } else {
@@ -91,8 +88,8 @@ pub fn shown(s: &Snapshot, user: &str) -> Shown {
     Shown {
         icon: Icon::Name(icon.into()),
         tip: tip(s, user),
-        active: !busy.is_empty(),
-        nodes,
+        active: !busy_printers(s, user).is_empty(),
+        nodes: menu(s, user).into_nodes(),
     }
 }
 
@@ -104,7 +101,7 @@ pub fn start(waker: repriseapp::Waker, first: Shown) -> reprisetray::Started {
             id: "reprise-printers",
             title: TITLE,
             notify_icon: ICON,
-            raise: Raise::MenuRow(ID_FOLDER),
+            raise: Raise::MenuRow(Rows::id(&TrayMsg::Folder)),
         },
         first,
         std::sync::Arc::new(move || waker.wake()),
@@ -186,10 +183,15 @@ mod tests {
 
     #[test]
     fn clicks_map_to_rows() {
+        let s = snap();
+        let translate = |msg| translate(msg, &s, "ann");
         assert_eq!(translate(Msg::Activate(0, 0)), Some(TrayMsg::Open));
-        assert_eq!(translate(Msg::Clicked(ID_FOLDER)), Some(TrayMsg::Folder));
         assert_eq!(
-            translate(Msg::Clicked(QUEUE_BASE + 1)),
+            translate(Rows::clicked(&TrayMsg::Folder)),
+            Some(TrayMsg::Folder)
+        );
+        assert_eq!(
+            translate(Rows::clicked(&TrayMsg::Queue(1))),
             Some(TrayMsg::Queue(1))
         );
         assert_eq!(translate(Msg::BalloonClicked(4)), Some(TrayMsg::Balloon(4)));
