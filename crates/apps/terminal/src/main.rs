@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::term::TermMode;
 use repriseapp::keys::{form_clipboard, form_input, sheet_input};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{App, Child, Ctx, Event, KeyInput, MAIN, Reply, WinId};
@@ -58,13 +59,30 @@ const PROFILE: WinId = "profile";
 const FIND: WinId = "find";
 const NOTFOUND: WinId = "notfound";
 
-/// What a confirm box is asking to close.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Closing {
-    /// The tab whose program has this pid.
+/// What a confirm box is asking about.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Asking {
+    /// Closing the tab whose program has this pid.
     Tab(u32),
     Window(WinId),
+    /// A multi-line paste into the tab whose program has this pid.
+    Paste {
+        pid: u32,
+        text: String,
+    },
 }
+
+impl Asking {
+    fn pid(&self) -> Option<u32> {
+        match *self {
+            Asking::Tab(pid) | Asking::Paste { pid, .. } => Some(pid),
+            Asking::Window(_) => None,
+        }
+    }
+}
+
+/// How many of a paste's lines its question shows, and how many chars of each.
+const PASTE_SHOWN: (usize, usize) = (5, 60);
 
 /// One window's own state: its tabs, its chrome and what it last drew.
 struct Pane {
@@ -129,7 +147,7 @@ struct Terminal {
     order: Vec<WinId>,
     /// The compositor joins windows into caption tab groups (`repriseapp::tab_groups`).
     tab_groups: bool,
-    confirm: Option<(Closing, MsgBox)>,
+    confirm: Option<(Asking, MsgBox)>,
     /// The last event's text and form theme, which the confirm box is sized with.
     forms: Option<(Rc<TextRenderer>, Theme)>,
     options: Option<Options>,
@@ -180,6 +198,31 @@ fn load_font(s: &Settings) -> TextRenderer {
 }
 
 /// `s` with its text size inside the zoom range.
+/// The question a multi-line paste asks, with its first lines as they would arrive.
+fn paste_question(text: &str) -> String {
+    let clean = keys::pasteable(text)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let lines: Vec<&str> = clean.lines().collect();
+    let (rows, width) = PASTE_SHOWN;
+    let mut shown: Vec<String> = lines
+        .iter()
+        .take(rows)
+        .map(|l| match l.char_indices().nth(width) {
+            Some((i, _)) => format!("{}...", &l[..i]),
+            None => (*l).to_owned(),
+        })
+        .collect();
+    if lines.len() > rows {
+        shown.push("...".into());
+    }
+    format!(
+        "The text you are pasting holds line ends, so the program may run each line as it \
+         arrives:\n\n{}\n\nPaste it anyway?",
+        shown.join("\n")
+    )
+}
+
 fn in_range(s: Settings) -> Settings {
     Settings {
         size_px: s.size_px.clamp(ZOOM.0, ZOOM.1),
@@ -482,9 +525,9 @@ impl Terminal {
         if self.find_on == gone {
             (self.find, self.notfound, self.find_on) = (None, None, next);
         }
-        let asked = match self.confirm {
-            Some((Closing::Window(w), _)) => w != gone,
-            Some((Closing::Tab(pid), _)) => self.pane_of_pid(pid).is_some(),
+        let asked = match &self.confirm {
+            Some((Asking::Window(w), _)) => *w != gone,
+            Some((what, _)) => what.pid().and_then(|p| self.pane_of_pid(p)).is_some(),
             None => true,
         };
         if !asked {
@@ -546,7 +589,7 @@ impl Terminal {
         };
         if t.busy() {
             let text = "A program is still running in this tab.\nClose the tab anyway?";
-            self.ask(Closing::Tab(t.pid()), text, ctx);
+            self.ask(Asking::Tab(t.pid()), text, "&Close", ctx);
             return Reply::redraw();
         }
         self.close_tab(i)
@@ -563,7 +606,7 @@ impl Terminal {
     fn close_window(&mut self, ctx: &mut Ctx) -> Reply {
         if self.w.tabs.list.iter().any(Tab::busy) {
             let text = "Programs are still running in this window.\nClose the window anyway?";
-            self.ask(Closing::Window(self.cur), text, ctx);
+            self.ask(Asking::Window(self.cur), text, "&Close", ctx);
             return Reply::redraw();
         }
         self.close_pane()
@@ -579,15 +622,16 @@ impl Terminal {
         self.w.tabs.strip.hot_adder = None;
     }
 
-    /// Ask about `what`, unless a box is already up: the first question stands.
-    fn ask(&mut self, what: Closing, text: &str, ctx: &mut Ctx) {
+    /// Ask about `what` with `yes` beside Cancel, unless a box is already up: the first question
+    /// stands.
+    fn ask(&mut self, what: Asking, text: &str, yes: &str, ctx: &mut Ctx) {
         if self.confirm.is_some() {
             return;
         }
         let fields = Fields {
             text: text.into(),
             icon: ctx.icons.get("dialog-warning", 32),
-            buttons: vec!["&Close".into(), "Cancel".into()],
+            buttons: vec![yes.into(), "Cancel".into()],
             default: 0,
             min_text_h: None,
             min_w: 0,
@@ -597,18 +641,29 @@ impl Terminal {
     }
 
     fn confirm_event(&mut self, ev: Event) -> Reply {
-        let (Some((what, b)), Some((text, forms))) = (&mut self.confirm, &self.forms) else {
+        let (Some((_, b)), Some((text, forms))) = (&mut self.confirm, &self.forms) else {
             return Reply::none();
         };
         match b.event(&ev, text, forms) {
             oneshot::Outcome::None => Reply::none(),
             oneshot::Outcome::Redraw => Reply::redraw(),
             oneshot::Outcome::Closed(button) => {
-                let what = *what;
-                self.confirm = None;
+                let Some((what, _)) = self.confirm.take() else {
+                    return Reply::none();
+                };
                 let reply = match (button, what) {
-                    (Some(0), Closing::Window(w)) if self.enter(w) => self.close_pane(),
-                    (Some(0), Closing::Tab(pid)) => {
+                    (Some(0), Asking::Window(w)) if self.enter(w) => self.close_pane(),
+                    (Some(0), Asking::Paste { pid, text }) => {
+                        let w = self.pane_of_pid(pid).filter(|&w| self.enter(w));
+                        if let Some(tab) =
+                            w.and_then(|_| self.w.tabs.list.iter().find(|t| t.pid() == pid))
+                        {
+                            tab.scroll(Scroll::Bottom);
+                            tab.write(keys::bracket_paste(&text, tab.mode()).into());
+                        }
+                        Reply::none()
+                    }
+                    (Some(0), Asking::Tab(pid)) => {
                         let w = self.pane_of_pid(pid).filter(|&w| self.enter(w));
                         match w.and_then(|_| self.w.tabs.list.iter().position(|t| t.pid() == pid)) {
                             Some(i) => self.close_tab(i),
@@ -681,12 +736,29 @@ impl Terminal {
                 self.w.chrome.dirty = true;
             }
         }
-        if let Some((Closing::Tab(pid), _)) = self.confirm
+        if let Some(pid) = self.confirm.as_ref().and_then(|(what, _)| what.pid())
             && self.pane_of_pid(pid).is_none()
         {
             self.confirm = None;
         }
         out
+    }
+
+    /// Paste `text` into the open tab; one holding a line end asks first while the program has
+    /// bracketed paste off, since each line would run as it arrives.
+    fn paste_text(&mut self, text: String, ctx: &mut Ctx) -> Reply {
+        let Some(tab) = self.w.tabs.current() else {
+            return Reply::none();
+        };
+        let bracketed = tab.mode().contains(TermMode::BRACKETED_PASTE);
+        if self.settings.confirm_multiline_paste && !bracketed && text.contains(['\n', '\r']) {
+            let (pid, question) = (tab.pid(), paste_question(&text));
+            self.ask(Asking::Paste { pid, text }, &question, "&Paste", ctx);
+            return Reply::redraw();
+        }
+        tab.scroll(Scroll::Bottom);
+        tab.write(keys::bracket_paste(&text, tab.mode()).into());
+        Reply::redraw()
     }
 
     fn key(&mut self, k: &KeyInput, ctx: &mut Ctx) -> Reply {
@@ -955,9 +1027,12 @@ impl App for Terminal {
         match win {
             FIND | NOTFOUND => Some(self.find_on),
             OPTIONS | PROFILE => Some(self.options_on),
-            CONFIRM => match self.confirm {
-                Some((Closing::Window(w), _)) => Some(w),
-                Some((Closing::Tab(pid), _)) => self.pane_of_pid(pid).or(Some(self.cur)),
+            CONFIRM => match &self.confirm {
+                Some((Asking::Window(w), _)) => Some(*w),
+                Some((what, _)) => what
+                    .pid()
+                    .and_then(|p| self.pane_of_pid(p))
+                    .or(Some(self.cur)),
                 None => Some(self.cur),
             },
             _ if self.order.contains(&win) => None,
@@ -1115,13 +1190,7 @@ impl Terminal {
         match ev {
             Event::Key(k) => self.key(&k, ctx),
             Event::Pointer(p) => self.pointer(p, ctx),
-            Event::Pasted(text) | Event::PastedPrimary(text) => {
-                if let Some(tab) = self.w.tabs.current() {
-                    tab.scroll(Scroll::Bottom);
-                    tab.write(keys::bracket_paste(&text, tab.mode()).into());
-                }
-                Reply::redraw()
-            }
+            Event::Pasted(text) | Event::PastedPrimary(text) => self.paste_text(text, ctx),
             Event::Focus(f) => {
                 self.w.focused = f;
                 self.chrome_changed()

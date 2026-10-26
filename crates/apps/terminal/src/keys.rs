@@ -87,9 +87,12 @@ pub fn encode(k: &KeyInput, mode: TermMode) -> Option<Vec<u8>> {
     })
 }
 
-/// `text` as a paste: wrapped in the bracketed-paste marks when the program asked for them, with
-/// any marks inside cut so the paste cannot end itself; otherwise with each line ended by CR.
+/// `text` as a paste, its control characters but tab and line ends dropped: wrapped in the
+/// bracketed-paste marks when the program asked for them, with any marks inside cut so the paste
+/// cannot end itself; otherwise with each line ended by CR.
 pub fn bracket_paste(text: &str, mode: TermMode) -> Vec<u8> {
+    let clean = pasteable(text);
+    let text = clean.as_ref();
     if mode.contains(TermMode::BRACKETED_PASTE) {
         let inner = match text.contains('\x1b') {
             true => text
@@ -112,6 +115,20 @@ pub fn bracket_paste(text: &str, mode: TermMode) -> Vec<u8> {
     }
     out.extend_from_slice(rest.as_bytes());
     out
+}
+
+/// `text` without the C0, DEL and C1 controls, which could start an escape sequence or act as a
+/// key in a program that reads the paste as typed input.
+pub fn pasteable(text: &str) -> std::borrow::Cow<'_, str> {
+    let drop = |c: char| c.is_control() && !matches!(c, '\t' | '\n' | '\r');
+    match text.contains(drop) {
+        true => text
+            .chars()
+            .filter(|&c| !drop(c))
+            .collect::<String>()
+            .into(),
+        false => text.into(),
+    }
 }
 
 const BACKSPACE: u32 = 0xff08;
@@ -352,11 +369,26 @@ mod tests {
         let text = "a\x1b[201~b\nc";
         assert_eq!(
             bracket_paste(text, TermMode::BRACKETED_PASTE),
-            b"\x1b[200~ab\nc\x1b[201~".to_vec()
+            b"\x1b[200~a[201~b\nc\x1b[201~".to_vec(),
+            "an end mark inside loses its ESC and cannot end the paste"
         );
         assert_eq!(
             bracket_paste("a\nb\r\nc\r\r\n", none()),
             b"a\rb\rc\r\r".to_vec()
+        );
+    }
+
+    #[test]
+    fn a_paste_loses_its_control_characters() {
+        assert_eq!(bracket_paste("a\x1bb\x07c", none()), b"abc".to_vec());
+        assert_eq!(
+            bracket_paste("a\x1bb\x07c\u{9b}d\x7f\te", TermMode::BRACKETED_PASTE),
+            b"\x1b[200~abcd\te\x1b[201~".to_vec()
+        );
+        assert_eq!(
+            bracket_paste("ls\x1b[2K\rrm -rf ~\r", none()),
+            b"ls[2K\rrm -rf ~\r".to_vec(),
+            "an erase-line cannot hide the second command"
         );
     }
 
