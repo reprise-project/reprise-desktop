@@ -1,4 +1,8 @@
 use std::collections::BTreeMap;
+use std::time::Duration;
+
+use smithay::reexports::calloop::RegistrationToken;
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
@@ -14,7 +18,12 @@ pub struct Wm {
     pub snap: crate::snapview::Snapping,
     pub shake: crate::shakeview::Shaking,
     pub file_dialog: crate::filedlggeom::Kept,
+    /// Armed while `remembered` has changes not yet queued for the state file.
+    save: Option<RegistrationToken>,
 }
+
+/// How long changes to the remembered frames gather before they are written.
+const SAVE_DELAY: Duration = Duration::from_secs(3);
 
 impl Wm {
     /// `p`'s remembered frames; the file dialogs' kept place is read only for a `session`.
@@ -32,6 +41,7 @@ impl Wm {
             snap: Default::default(),
             shake: Default::default(),
             file_dialog,
+            save: None,
         }
     }
 }
@@ -305,7 +315,7 @@ impl State {
         }
     }
 
-    /// Oldest first, so each app keeps its newest.
+    /// Oldest first, so each app keeps its newest; the write is queued at once.
     pub fn remember_open_windows(&mut self) {
         let open: Vec<WindowId> = self
             .windows
@@ -316,6 +326,7 @@ impl State {
         for w in open {
             self.remember_window(w, false);
         }
+        self.save_remembered();
     }
 
     /// Where `w` is: its normal frame rect relative to the output under it,
@@ -355,6 +366,30 @@ impl State {
         if self.wm.remembered.get(&app_id) != Some(&entry) {
             log::info!("window {app_id:?}: remembered {entry:?}");
             self.wm.remembered.insert(app_id, entry);
+            self.save_remembered_soon();
+        }
+    }
+
+    fn save_remembered_soon(&mut self) {
+        if self.wm.save.is_some() {
+            return;
+        }
+        let timer = Timer::from_duration(SAVE_DELAY);
+        let armed = self.handle.insert_source(timer, |_, _, state| {
+            state.wm.save = None;
+            crate::state::save_window_geometry(&state.wm.remembered);
+            TimeoutAction::Drop
+        });
+        match armed {
+            Ok(t) => self.wm.save = Some(t),
+            Err(_) => crate::state::save_window_geometry(&self.wm.remembered),
+        }
+    }
+
+    /// Queue the remembered frames' write now if changes wait for it: before the compositor exits.
+    pub fn save_remembered(&mut self) {
+        if let Some(t) = self.wm.save.take() {
+            self.handle.remove(t);
             crate::state::save_window_geometry(&self.wm.remembered);
         }
     }

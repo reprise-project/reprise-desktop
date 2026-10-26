@@ -358,7 +358,15 @@ static WRITER: OnceLock<Option<Sender<Job>>> = OnceLock::new();
 /// Run `work` (a small file write that fsyncs) on the writer thread, after the work queued before
 /// it, so it does not stall the event loop.
 pub fn run_in_order(work: impl FnOnce() + Send + 'static) {
+    #[cfg(test)]
+    QUEUED.with(|n| n.set(n.get() + 1));
     queue(Job::Run(Box::new(work)));
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Writes this test thread queued.
+    pub(crate) static QUEUED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Block until every write queued so far is on disk: before the compositor exits.
