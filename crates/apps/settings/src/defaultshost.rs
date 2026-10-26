@@ -37,6 +37,7 @@ impl SettingsApp {
             defaultspage::DRIVE_INSERT,
             defaultspage::SCRIPT_OPEN,
             defaultspage::SCRIPT_END,
+            defaultspage::CONFIRM_SCRIPTS,
         ]
         .contains(&id)
         {

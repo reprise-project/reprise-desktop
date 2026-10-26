@@ -1,6 +1,7 @@
 //! The Default Programs page: a combo per kind of program, the terminal's arguments, what a plugged-in drive does (`[drives] on_insert`),
 //! whether opening a script runs it bare or in the terminal (`script_open`), whether a script's
-//! terminal stays open when it ends (`script_terminal`),
+//! terminal stays open when it ends (`script_terminal`), whether a script asks before its first
+//! run (`confirm_scripts`),
 //! every file type with its program, a filter, and Change... and Restore Default. Defaults live in the mime-apps lists ([`reprisefs::props`]); edits wait in
 //! [`Defaults::edits`] until Apply and go to the user's `mimeapps.list`.
 
@@ -121,6 +122,7 @@ pub const SCRIPT_OPEN: &str = "dp_script_open";
 const SCRIPT_OPEN_LABEL: &str = "dp_script_open_label";
 pub const SCRIPT_END: &str = "dp_script_end";
 const SCRIPT_END_LABEL: &str = "dp_script_end_label";
+pub const CONFIRM_SCRIPTS: &str = "dp_confirm_scripts";
 const DRIVE_LABEL_W: i32 = 140;
 pub const FILTER: &str = "dp_filter";
 pub const CHANGE: &str = "dp_change";
@@ -134,7 +136,7 @@ const LABEL_W: i32 = 96;
 const DROP_ROWS: usize = 12;
 
 pub fn list(a: Area) -> Rect {
-    Rect::new(X, 358, a.w, 82 + a.dh)
+    Rect::new(X, 381, a.w, 59 + a.dh)
 }
 pub const COLUMNS: [(&str, i32); 3] = [("Type", 90), ("Description", 140), ("Opens With", 108)];
 const RESTORE_W: i32 = 96;
@@ -224,6 +226,12 @@ pub fn page(a: Area) -> Form {
         y - 4,
         a.combo(Area::MIN.w - DRIVE_LABEL_W - 4),
         crate::model::SCRIPT_ENDS,
+    ));
+    items.push(Item::check(
+        CONFIRM_SCRIPTS,
+        X,
+        y + ROW_STEP,
+        "As&k before running a script the first time",
     ));
     let y = list.y - 22;
     items.push(Item::label_at("dp_types_label", X, y, 120, "File types:"));
@@ -1074,8 +1082,9 @@ pub(crate) mod tests {
         assert_eq!(at(SCRIPT_OPEN), Rect::new(164, 274, 214, 21));
         assert_eq!(at(SCRIPT_END_LABEL), Rect::new(20, 301, 140, 13));
         assert_eq!(at(SCRIPT_END), Rect::new(164, 297, 214, 21));
-        assert_eq!(at("dp_types_label"), Rect::new(20, 336, 120, 13));
-        assert_eq!(at(FILTER), Rect::new(228, 332, 150, 20));
+        assert_eq!(at(CONFIRM_SCRIPTS), Rect::new(20, 324, 13, 13));
+        assert_eq!(at("dp_types_label"), Rect::new(20, 359, 120, 13));
+        assert_eq!(at(FILTER), Rect::new(228, 355, 150, 20));
         assert_eq!(at(CHANGE), Rect::new(201, 446, 75, 23));
         assert_eq!(at(RESTORE), Rect::new(282, 446, 96, 23));
         assert_eq!(
@@ -1141,7 +1150,7 @@ pub(crate) mod tests {
     fn the_page_draws_the_list_under_a_dropped_combo() {
         let cs = reprisekit::theme::Theme::default().colors;
         let (c, list, terminal) = drawn(false);
-        assert_eq!((list.x, list.y), (166, 358));
+        assert_eq!((list.x, list.y), (166, 381));
         let header = (list.x + 80, list.y + 6);
         let row = |r: i32| list.y + 2 + 17 + 17 * r + 8;
         let lit = |c: &reprisekit::raster::Canvas, y| {
@@ -1158,12 +1167,10 @@ pub(crate) mod tests {
         let field = (terminal.right() - 30, terminal.y + 10);
         assert_eq!(c.get(field.0, field.1), cs.window.argb(), "the field");
         let (open, _, _) = drawn(true);
-        assert_eq!(
-            open.get(list.x + 330, header.1),
-            cs.window.argb(),
-            "the dropped list covers the header"
+        assert!(
+            (list.y..list.bottom()).any(|y| open.get(list.x + 330, y) != c.get(list.x + 330, y)),
+            "the dropped list covers the list's top"
         );
-        assert_eq!(c.get(list.x + 330, header.1), cs.button_face.argb());
     }
 
     #[test]

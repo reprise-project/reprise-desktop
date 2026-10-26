@@ -3013,6 +3013,68 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
     }
 }
 
+/// Opening an executable script asks Run / Open in Notepad / Cancel before anything runs; Run
+/// runs it and is remembered, Open in Notepad opens it there, and a binary never asks.
+#[test]
+fn opening_an_executable_script_asks_before_it_runs() {
+    use reprisekit::controls::{dlgtemplate::BUTTON_IDS, form::Event};
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let script = dir.path().join("a.sh");
+    std::fs::write(&script, b"#!/bin/sh\ntouch ran\n").expect("write");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let marker = dir.path().join("ran");
+    let asked = |ex: &crate::Explorer| match &ex.dialog {
+        Some(crate::dialogs::Dialog::Confirm(c)) => {
+            assert_eq!(c.title, "Open File");
+            assert_eq!(c.buttons(), ["&Run", "Open in &Notepad", "Cancel"]);
+            c.script.is_some()
+        }
+        _ => false,
+    };
+
+    ex.sv.selection.set_only(Some(0));
+    let reply = ex.open_selected(&mut ctx);
+    assert!(reply.spawn.is_empty(), "nothing spawns before the answer");
+    assert!(asked(&ex), "the question is up");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(!marker.exists(), "the script did not run");
+
+    let reply = ex.dialog_outcome(Event::Pressed(BUTTON_IDS[1]), &mut ctx);
+    assert!(ex.dialog.is_none());
+    assert_eq!(
+        reply.spawn,
+        [vec![
+            std::ffi::OsString::from("reprise-notepad"),
+            script.clone().into_os_string()
+        ]],
+        "Open in Notepad"
+    );
+    assert!(!marker.exists());
+
+    ex.open_selected(&mut ctx);
+    assert!(asked(&ex), "Notepad is not remembered");
+    ex.dialog_outcome(Event::Pressed(BUTTON_IDS[2]), &mut ctx);
+    assert!(ex.dialog.is_none(), "Cancel closes it");
+
+    ex.open_selected(&mut ctx);
+    let reply = ex.dialog_outcome(Event::Default, &mut ctx);
+    assert!(reply.spawn.is_empty(), "Run runs it, not an opener");
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !marker.exists() {
+        assert!(std::time::Instant::now() < end, "Run ran the script");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    std::fs::remove_file(&marker).unwrap();
+
+    if reprisefs::apps::is_trusted(&script) {
+        ex.open_selected(&mut ctx);
+        assert!(ex.dialog.is_none(), "Run is remembered for the file");
+    }
+}
+
 /// Opening a program file reads it on a listing thread: on a dead mount the window goes on at
 /// once, and a run that fails raises its box on the wake after the answer.
 #[test]
@@ -3034,7 +3096,10 @@ fn a_program_that_answers_late_raises_its_box_on_a_later_wake() {
     let gate = Arc::new(std::sync::RwLock::new(()));
     let closed = gate.write().expect("lock");
     ex.held = Some(gate.clone());
-    assert_eq!(ex.open_selected(&mut ctx), Reply::none());
+    assert_eq!(
+        ex.open_selected_as(ScriptOpen::Run, &mut ctx),
+        Reply::none()
+    );
     assert!(ex.dialog.is_none(), "no box before the answer");
 
     drop(closed);

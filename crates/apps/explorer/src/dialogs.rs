@@ -55,11 +55,15 @@ pub struct Confirm {
     /// Undo stopped at an item its Recycle Bin refuses: Yes undoes again, erasing it
     /// ([`reprisefs::undo::UndoStack::undo_erasing`]).
     pub undo_erase: bool,
+    /// The question before running the script `paths[0]` (`confirm_scripts`): Run runs it as
+    /// this says, Open in Notepad opens it there.
+    pub script: Option<reprisefs::program::ScriptOpen>,
 }
 
 impl Confirm {
     pub(crate) fn buttons(&self) -> Vec<String> {
         let labels: &[&str] = match &self.too_big {
+            _ if self.script.is_some() => &reprisefs::program::ASK_BUTTONS,
             Some(q) if q.many() => &["&Yes", "Yes to &All", "&No", "Cancel"],
             _ => &["&Yes", "&No"],
         };
@@ -284,8 +288,75 @@ impl Explorer {
             focus: None,
             too_big: None,
             undo_erase: false,
+            script: None,
         }));
         Reply::redraw_all()
+    }
+
+    /// Ask whether to run the script at `path` (as `open` says) or open it in Notepad.
+    pub(crate) fn ask_run(
+        &mut self,
+        path: &std::path::Path,
+        open: reprisefs::program::ScriptOpen,
+        ctx: &mut Ctx,
+    ) -> Reply {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        self.dialog = Some(Dialog::Confirm(Confirm {
+            title: reprisefs::program::ASK_TITLE,
+            text: reprisefs::program::ask_text(&name),
+            min_text_h: None,
+            template: Template::MessageBox,
+            icon: crate::chrome_icon(ctx, &["dialog-warning", "dialog-question"], 32),
+            paths: vec![path.to_path_buf()],
+            erase: false,
+            empty_bin: false,
+            bin: None,
+            focus: None,
+            too_big: None,
+            undo_erase: false,
+            script: Some(open),
+        }));
+        Reply::redraw_all()
+    }
+
+    /// The answer to [`Explorer::ask_run`]: the button `out` pressed, by its place in
+    /// [`reprisefs::program::ASK_BUTTONS`].
+    fn script_answered(&mut self, out: form::Event, ctx: &mut Ctx) -> Reply {
+        let pick = match out {
+            form::Event::Default => 0,
+            form::Event::Cancel => 2,
+            form::Event::Pressed(id) => match dlgtemplate::BUTTON_IDS.iter().position(|&b| b == id)
+            {
+                Some(i) => i,
+                None => return Reply::redraw(),
+            },
+            form::Event::None => return Reply::none(),
+            _ => return Reply::redraw(),
+        };
+        let Some(Dialog::Confirm(Confirm {
+            script: Some(open),
+            mut paths,
+            ..
+        })) = self.dialog.take()
+        else {
+            return Reply::none();
+        };
+        let Some(path) = paths.pop() else {
+            return Reply::redraw_all();
+        };
+        let reply = match pick {
+            0 => self.open_file(&path, true, open, reprisefs::program::Confirm::Allow, ctx),
+            1 => Reply {
+                spawn: vec![reprisefs::program::notepad_argv(&path)],
+                spawn_app: Some("reprise-notepad".into()),
+                ..Reply::default()
+            },
+            _ => self.show_waiting(ctx),
+        };
+        Reply {
+            redraw_all: true,
+            ..reply
+        }
     }
 
     fn box_fields(&self) -> Option<msgbox::Fields> {
@@ -673,6 +744,11 @@ impl Explorer {
         let Some(d) = &self.dialog else {
             return Reply::none();
         };
+        if let Dialog::Confirm(c) = d
+            && c.script.is_some()
+        {
+            return self.script_answered(out, ctx);
+        }
         if let Dialog::Confirm(c) = d
             && c.too_big.is_some()
         {

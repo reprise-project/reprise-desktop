@@ -1,5 +1,6 @@
 use crate::compositor::State;
 use crate::dialog::{self, Dialog, Outcome};
+use reprisefs::program::{Confirm, Program};
 
 use super::*;
 
@@ -199,6 +200,13 @@ impl State {
             Outcome::EndProgram(pid) => {
                 self.close_dialog();
                 self.end_program(pid);
+            }
+            Outcome::Script { path, run } => {
+                self.close_dialog();
+                match run {
+                    Some(open) => self.run_program(&path, Program::Script, open, Confirm::Allow),
+                    None => self.spawn_argv_activated(&reprisefs::program::notepad_argv(&path)),
+                }
             }
             Outcome::TurnOn(aid) => {
                 self.close_dialog();

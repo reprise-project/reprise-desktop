@@ -135,6 +135,61 @@ pub fn run_rows(program: Program, open: ScriptOpen) -> Option<[(ScriptOpen, bool
     (program == Program::Script).then(|| both.map(|o| (o, o == open)))
 }
 
+/// How opening a program file treats the `confirm_scripts` question
+/// (Run / Open in Notepad / Cancel), which only a script is asked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Confirm {
+    /// Ask unless Run was picked for this file before.
+    Ask,
+    /// Run without asking: a Run row of the file's menu, or `confirm_scripts = false`.
+    Skip,
+    /// Run and remember the pick: the question's Run.
+    Allow,
+}
+
+impl Confirm {
+    /// How opening a file runs it when `confirm_scripts` is `confirm`.
+    pub fn on_open(confirm: bool) -> Self {
+        if confirm { Confirm::Ask } else { Confirm::Skip }
+    }
+}
+
+/// Whether opening the `program` at `path` asks first, as `how` says. [`Confirm::Allow`] marks
+/// the file ([`crate::apps::set_trusted`]) so it runs bare from then on; a file system without
+/// `user.` xattrs asks again next time. Reads and writes an xattr, so a host calls it off its
+/// event loop.
+pub fn asks_first(path: &Path, program: Program, how: Confirm) -> bool {
+    match how {
+        Confirm::Skip => false,
+        Confirm::Allow => {
+            if let Err(e) = crate::apps::set_trusted(path) {
+                log::warn!("remember running {}: {e}", path.display());
+            }
+            false
+        }
+        Confirm::Ask => program == Program::Script && !crate::apps::is_trusted(path),
+    }
+}
+
+/// The question's caption.
+pub const ASK_TITLE: &str = "Open File";
+
+/// The question's buttons, Run first and the default.
+pub const ASK_BUTTONS: [&str; 3] = ["&Run", "Open in &Notepad", "Cancel"];
+
+/// The question's text for the script `name`.
+pub fn ask_text(name: &str) -> String {
+    format!(
+        "\"{name}\" is a script. Running it can change or delete your files.\n\n\
+         Do you want to run it, or open it in Notepad to read it first?"
+    )
+}
+
+/// The argument vector that opens the file at `path` in Notepad, the question's second button.
+pub fn notepad_argv(path: &Path) -> Vec<OsString> {
+    vec!["reprise-notepad".into(), path.into()]
+}
+
 /// The argument vector that runs the program at `path`, which must be absolute: a bare name
 /// would be looked up on `PATH`. A binary, and a script `open` runs bare, is its own path. A
 /// script `open` puts in `terminal` (the `terminal` key) runs there, which `end` keeps open
@@ -450,5 +505,22 @@ mod tests {
             run_failed_text("tool", &e(libc::ENOEXEC)),
             "Cannot run tool: It is not a program this computer can run."
         );
+    }
+
+    #[test]
+    fn a_script_asks_until_run_is_picked_and_a_binary_never_asks() {
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("a.sh");
+        std::fs::write(&path, "#!/bin/sh\n").unwrap();
+        assert!(asks_first(&path, Program::Script, Confirm::Ask));
+        assert!(!asks_first(&path, Program::Binary, Confirm::Ask));
+        assert!(!asks_first(&path, Program::Script, Confirm::Skip));
+        assert!(!asks_first(&path, Program::Script, Confirm::Allow));
+        if crate::apps::is_trusted(&path) {
+            assert!(
+                !asks_first(&path, Program::Script, Confirm::Ask),
+                "Run is remembered"
+            );
+        }
     }
 }

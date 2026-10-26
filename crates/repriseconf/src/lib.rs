@@ -246,6 +246,18 @@ fn script_open_in(text: &str) -> reprisefs::program::ScriptOpen {
     top_parsed(text, "script_open", reprisefs::program::ScriptOpen::parse)
 }
 
+/// The top-level `confirm_scripts`, read now: true unless `false`.
+pub fn confirm_scripts() -> bool {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    confirm_scripts_in(&text)
+}
+
+fn confirm_scripts_in(text: &str) -> bool {
+    parsed(text)
+        .and_then(|d| get(&d, &key("", "confirm_scripts"))?.as_bool())
+        .unwrap_or(true)
+}
+
 /// The top-level string `name` read by `parse`, its default when unset or invalid.
 fn top_parsed<T: Default>(text: &str, name: &'static str, parse: fn(&str) -> Option<T>) -> T {
     parsed(text)
@@ -780,6 +792,13 @@ mod tests {
             ScriptOpen::Terminal
         );
         assert_eq!(script_open_in("script_open = \"x\"\n"), ScriptOpen::Run);
+    }
+
+    #[test]
+    fn scripts_ask_first_unless_confirm_scripts_is_false() {
+        assert!(confirm_scripts_in(""));
+        assert!(!confirm_scripts_in("confirm_scripts = false\n"));
+        assert!(confirm_scripts_in("confirm_scripts = \"no\"\n"));
     }
 
     #[test]

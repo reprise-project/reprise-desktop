@@ -555,6 +555,16 @@ fn script_open_defaults_to_run_and_reads_terminal() {
 }
 
 #[test]
+fn confirm_scripts_defaults_to_true() {
+    assert!(Config::default().confirm_scripts);
+    assert!(
+        !Config::parse("confirm_scripts = false\n")
+            .unwrap()
+            .confirm_scripts
+    );
+}
+
+#[test]
 fn desktop_extensions_default_to_hide_and_read_each_mode() {
     use reprisefs::names::Extensions;
     assert_eq!(Config::default().desktop_extensions, Extensions::Hide);

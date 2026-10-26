@@ -46,7 +46,7 @@ use repriseapp::{
 };
 use reprisefs::history::History;
 use reprisefs::listing::Item;
-use reprisefs::program::ScriptOpen;
+use reprisefs::program::{Confirm, ScriptOpen};
 use reprisekit::controls::addressbar::{self, AddressBar};
 use reprisekit::controls::combo::{self, ListItem};
 use reprisekit::controls::explorerbar::ExplorerBar;
@@ -108,6 +108,8 @@ pub struct Tip {
 /// What opening a file came to: a program run, or the opening of a file in its program.
 pub(crate) enum Opened {
     Ran(std::io::Result<()>),
+    /// A script `confirm_scripts` asks about first; it runs as this says once Run is picked.
+    Ask(ScriptOpen),
     Open(reprisefs::props::Opening),
 }
 
@@ -1161,11 +1163,16 @@ impl Explorer {
     /// In the Recycle Bin an item opens its Properties (its menu's default
     /// row): a deleted file is not opened until restored.
     pub fn open_selected(&mut self, ctx: &mut Ctx) -> Reply {
-        self.open_selected_as(repriseconf::script_open(), ctx)
+        let how = Confirm::on_open(repriseconf::confirm_scripts());
+        self.open_selected_with(repriseconf::script_open(), how, ctx)
     }
 
-    /// [`Explorer::open_selected`], a script running as `open` says.
+    /// [`Explorer::open_selected`] from a Run row: a script runs as `open` says, unasked.
     pub fn open_selected_as(&mut self, open: ScriptOpen, ctx: &mut Ctx) -> Reply {
+        self.open_selected_with(open, Confirm::Skip, ctx)
+    }
+
+    fn open_selected_with(&mut self, open: ScriptOpen, how: Confirm, ctx: &mut Ctx) -> Reply {
         let Some(i) = self.sv.selection.single() else {
             return Reply::none();
         };
@@ -1190,24 +1197,36 @@ impl Explorer {
                 ..Default::default()
             };
         }
-        self.open_file(&it.path, it.exec, open, ctx)
+        self.open_file(&it.path, it.exec, open, how, ctx)
     }
 
-    /// Runs the program file at `path` in its own folder and an app scope named after it, or
+    /// Runs the program file at `path` in its own folder and an app scope named after it (a
+    /// script `how` asks about first raises [`Explorer::ask_run`] instead), or
     /// opens a file that is no program in its program. Telling a program (its first bytes), the
     /// run and the opening (whether it is a folder) read the file, so they go on a listing
     /// thread; a later answer (a dead mount) lands on a wake ([`Explorer::take_opened`]).
-    fn open_file(&mut self, path: &Path, exec: bool, open: ScriptOpen, ctx: &mut Ctx) -> Reply {
+    pub(crate) fn open_file(
+        &mut self,
+        path: &Path,
+        exec: bool,
+        open: ScriptOpen,
+        how: Confirm,
+        ctx: &mut Ctx,
+    ) -> Reply {
         let (globs, apps) = (self.globs.clone(), self.app_index.clone());
         let (terminal, end) = (repriseconf::terminal(), repriseconf::script_terminal());
         let path = path.to_path_buf();
         let at = path.clone();
         let read = move || {
             let program = exec
-                && std::fs::metadata(&path)
-                    .is_ok_and(|m| reprisefs::program::is_program(&path, &m));
-            if !program {
+                .then(|| std::fs::metadata(&path).ok())
+                .flatten()
+                .and_then(|m| reprisefs::program::program(&path, &m));
+            let Some(program) = program else {
                 return Opened::Open(reprisefs::props::open_in(&path, &globs, &apps, &terminal));
+            };
+            if reprisefs::program::asks_first(&path, program, how) {
+                return Opened::Ask(open);
             }
             let scope = path.file_name().map(|n| n.to_string_lossy());
             let argv = reprisefs::program::run_argv(&path, open, &terminal, end);
@@ -1261,6 +1280,7 @@ impl Explorer {
                 ..Default::default()
             },
             Opened::Ran(Ok(())) => Reply::redraw(),
+            Opened::Ask(open) => self.ask_run(path, open, ctx),
             Opened::Ran(Err(e)) => {
                 log::warn!("run {}: {e}", path.display());
                 let name = path.file_name().unwrap_or_default().to_string_lossy();

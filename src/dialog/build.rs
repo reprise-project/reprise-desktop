@@ -755,6 +755,42 @@ impl Dialog {
         }
     }
 
+    /// The question before the script at `path` runs (`confirm_scripts`): Run runs it as `open`
+    /// says and remembers the pick, Open in Notepad opens it there, Cancel leaves it.
+    pub fn ask_script(path: std::path::PathBuf, open: reprisefs::program::ScriptOpen) -> Dialog {
+        use reprisefs::program::{ASK_BUTTONS, ASK_TITLE, ask_text};
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        Dialog {
+            icon: Some("dialog-warning".into()),
+            text: ask_text(&name),
+            buttons: vec![
+                button(
+                    ASK_BUTTONS[0],
+                    DialogAction::Script {
+                        path: path.clone(),
+                        run: Some(open),
+                    },
+                    true,
+                ),
+                button(
+                    ASK_BUTTONS[1],
+                    DialogAction::Script { path, run: None },
+                    false,
+                ),
+                button(ASK_BUTTONS[2], DialogAction::Cancel, false),
+            ],
+            ..Dialog::new(
+                ASK_TITLE,
+                Style::Classic {
+                    template: Template::MessageBox,
+                    text_h: None,
+                    delete_badge: false,
+                },
+                Placement::Center,
+            )
+        }
+    }
+
     /// Message box with the error icon and OK.
     pub fn error(title: &str, text: String) -> Dialog {
         Dialog {
