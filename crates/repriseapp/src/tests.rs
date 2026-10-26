@@ -1,6 +1,6 @@
 use super::*;
 use crate::clipboard::{TEXT_MIME, pasted_text, read_capped, text_mime};
-use crate::deliver::{blink_target, input_blocked, modal_over, root_of, top_modal};
+use crate::deliver::{blink_target, input_blocked, modal_over, redraws, root_of, top_modal};
 use crate::draw::{buffer_damage, copy_pixels, next_buffer, surface_damage};
 use crate::reply::spawn_then;
 use crate::runloop::turn;
@@ -414,6 +414,26 @@ fn a_modal_child_gates_input_but_not_the_flyout() {
     );
     assert!(!input_blocked(&Event::Resized, Some("error"), MAIN, false));
     assert!(!input_blocked(&key, None, MAIN, false));
+}
+
+#[test]
+fn only_the_windows_a_reply_draws_again_are_read_again() {
+    let none = Reply::none();
+    assert!(!redraws(&none, MAIN, MAIN), "a reply that draws nothing");
+    let own = Reply::redraw();
+    assert!(redraws(&own, "dlg", "dlg"));
+    assert!(!redraws(&own, "dlg", MAIN), "another window");
+    let named = Reply {
+        redraw_wins: vec![MAIN],
+        ..Reply::none()
+    };
+    assert!(redraws(&named, "dlg", MAIN));
+    assert!(!redraws(&named, "dlg", "dlg"));
+    let all = Reply {
+        redraw_all: true,
+        ..Reply::none()
+    };
+    assert!(redraws(&all, "dlg", MAIN));
 }
 
 #[test]
