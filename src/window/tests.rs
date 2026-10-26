@@ -922,7 +922,9 @@ fn a_window_flickering_between_null_and_real_buffers_keeps_its_frame_and_writes_
     let t = h.map_toplevel(&mut c, "test.app", 300, 200);
     let focused = h.state.focused;
     let queued = || crate::state::QUEUED.with(|n| n.get());
+    let weighed = || crate::focus::WEIGHED.with(|n| n.get());
     let before = queued();
+    let weighed_before = weighed();
     for i in 0..20 {
         h.state.move_to(t.id, 100 + i, 120 + i);
         unmap_self(&mut h, &mut c, t);
@@ -935,6 +937,7 @@ fn a_window_flickering_between_null_and_real_buffers_keeps_its_frame_and_writes_
         );
     }
     assert_eq!(h.state.focused, focused, "the focus stays where it was");
+    assert_eq!(weighed(), weighed_before, "no remap weighs the focus again");
     assert_eq!(queued(), before, "no write while the frames gather");
     h.state.save_remembered();
     assert_eq!(queued(), before + 1, "one write for all twenty");
