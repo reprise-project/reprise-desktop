@@ -125,6 +125,9 @@ impl CompositorHandler for State {
 
     fn destroyed(&mut self, surface: &WlSurface) {
         self.closing_destroy(surface);
+        if let Some(b) = self.backend.as_mut() {
+            b.shm_textures.surface_gone(&surface.id());
+        }
     }
 }
 
