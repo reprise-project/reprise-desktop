@@ -438,14 +438,15 @@ pub fn end_session_env(env: &SessionEnv, end_processes: bool) {
 
 /// The command that stops the app scopes a previous session left behind when it crashed, before
 /// this one starts any. None when nested (the scopes are the parent's), with `end_processes` off
-/// (they were left on purpose), or while `another_running` (the user manager's scopes are that
-/// session's).
+/// (they were left on purpose), while `another_running` (the user manager's scopes are that
+/// session's), or `after_crash`: the programs that outlived the crash keep running.
 pub fn stale_scopes_command(
     env: &SessionEnv,
     end_processes: bool,
     another_running: bool,
+    after_crash: bool,
 ) -> Option<Vec<String>> {
-    (end_processes && env.parent.is_empty() && !another_running).then(|| {
+    (end_processes && env.parent.is_empty() && !another_running && !after_crash).then(|| {
         [
             "systemctl",
             "--user",
@@ -459,11 +460,17 @@ pub fn stale_scopes_command(
 }
 
 /// Run `stale_scopes_command`, waited on so its pattern matches only scopes that existed before.
-pub fn stop_stale_scopes(env: &SessionEnv, end_processes: bool, another_running: bool) {
+pub fn stop_stale_scopes(
+    env: &SessionEnv,
+    end_processes: bool,
+    another_running: bool,
+    after_crash: bool,
+) {
     run_waited(Vec::from_iter(stale_scopes_command(
         env,
         end_processes,
         another_running,
+        after_crash,
     )));
 }
 
@@ -928,6 +935,17 @@ pub fn adopt(pid: libc::pid_t, what: &str) {
     lock(&CHILDREN).push((pid, what.to_string()));
 }
 
+/// Leave the children the crashed image of this process started, still ours after the restart's
+/// exec, to `reap_children`, and reap the ones already gone: their `SIGCHLD` went before the exec.
+pub fn adopt_orphans() {
+    let path = format!("/proc/self/task/{}/children", std::process::id());
+    let children = std::fs::read_to_string(&path).unwrap_or_default();
+    for pid in children.split_whitespace().filter_map(|p| p.parse().ok()) {
+        adopt(pid, "started before the crash");
+    }
+    reap_children();
+}
+
 /// Reap the children we spawned, when the SIGCHLD signalfd fires. Only our own pids: Xwayland
 /// is reaped through a pidfd, so `waitpid(-1, ..)` would steal its status.
 pub fn reap_children() {
@@ -1229,7 +1247,7 @@ mod tests {
                 "xdg-desktop-portal.service",
             ]))
         );
-        assert_eq!(stale_scopes_command(&e, false, false), None);
+        assert_eq!(stale_scopes_command(&e, false, false, false), None);
     }
 
     /// Scopes a crashed session left are stopped before the next one starts
@@ -1237,7 +1255,7 @@ mod tests {
     #[test]
     fn a_session_starts_by_stopping_app_scopes_left_by_the_last() {
         assert_eq!(
-            stale_scopes_command(&env(None), true, false),
+            stale_scopes_command(&env(None), true, false, false),
             Some(argv(&[
                 "systemctl",
                 "--user",
@@ -1250,7 +1268,7 @@ mod tests {
             parent: vec![("WAYLAND_DISPLAY", "wayland-0".into())],
             ..env(None)
         };
-        assert_eq!(stale_scopes_command(&nested, true, false), None);
+        assert_eq!(stale_scopes_command(&nested, true, false, false), None);
         assert!(
             !end_commands(&nested, true)
                 .concat()
@@ -1260,7 +1278,12 @@ mod tests {
 
     #[test]
     fn a_second_session_leaves_the_running_ones_scopes() {
-        assert_eq!(stale_scopes_command(&env(None), true, true), None);
+        assert_eq!(stale_scopes_command(&env(None), true, true, false), None);
+    }
+
+    #[test]
+    fn a_restart_after_a_crash_leaves_the_scopes_running() {
+        assert_eq!(stale_scopes_command(&env(None), true, false, true), None);
     }
 
     /// A nested run puts the parent session's values back, unsets what the

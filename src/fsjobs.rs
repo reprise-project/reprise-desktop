@@ -65,7 +65,7 @@ pub fn setup(state: &mut State) {
 
 /// Run one finished job under a guard, so a panic leaves later jobs to run.
 fn run_one(run: OnLoop, state: &mut State) {
-    let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(state)));
+    let ran = crate::crash::guarded(|| run(state));
     if ran.is_err() {
         log::error!("fsjobs: a job panicked");
     }

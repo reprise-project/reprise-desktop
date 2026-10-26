@@ -340,6 +340,16 @@ are.
   Windows that don't come back within two minutes are left out.
 - **XDG autostart,** with a Startup page in Reprise Settings to turn entries
   on and off.
+- **Crash recovery.** When Reprise panics it starts again in place: the
+  same binary, with the same arguments and environment, runs a new session
+  on the same seat and opens a new display socket. Programs with windows
+  don't survive it, as their connection to the display goes with the crash;
+  session restore starts them again from a list at most 5 seconds old, and
+  autostart runs again. Programs without a window keep running, in their
+  app scopes. A notice says it restarted. A second crash within a minute
+  of a restart ends the session and the login manager shows its greeter;
+  the log counts the crashes and keeps each backtrace. A crash by a
+  signal, such as a segfault, ends the session without a restart.
 
 ## Displays
 
