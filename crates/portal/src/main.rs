@@ -55,12 +55,13 @@ const CURSOR_HIDDEN: u32 = 1;
 const CURSOR_EMBEDDED: u32 = 2;
 const CURSOR_METADATA: u32 = 4;
 
-/// The vendor tag in `restore_data`: ("reprise", 2, "output:<name>" or
-/// "toplevel:<identifier>"). Version 2 tokens exist only for a grant the
-/// user ticked Remember on; a version 1 token was issued without asking
-/// and restores nothing.
+/// The vendor tag in `restore_data`: ("reprise", 3, "<app id>:<grant>"),
+/// the grant being "output:<name>", "toplevel:<identifier>" or
+/// "remote-desktop:<devices>[;<output or toplevel>]". A token restores only
+/// for the app it was issued to, and only for a grant the user ticked
+/// Remember on; tokens of earlier versions restore nothing.
 const RESTORE_VENDOR: &str = "reprise";
-const RESTORE_VERSION: u32 = 2;
+const RESTORE_VERSION: u32 = 3;
 
 /// Applications whose windows the picker never lists: the portals' own
 /// surfaces, including this program's dialog.
@@ -408,7 +409,7 @@ impl ScreenCast {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
-        _app_id: String,
+        app_id: String,
         options: SelectSourcesOptions,
     ) -> zbus::fdo::Result<(u32, Results)> {
         self.frontend.check(&hdr)?;
@@ -422,7 +423,7 @@ impl ScreenCast {
         s.types = options.types.unwrap_or(SOURCE_MONITOR) & self.source_types;
         s.cursor_mode = options.cursor_mode.unwrap_or(CURSOR_HIDDEN);
         s.persist_mode = options.persist_mode.unwrap_or(0);
-        s.restore = options.restore_data.as_ref().and_then(restore_target);
+        s.restore = (options.restore_data.as_ref()).and_then(|d| restore_target(d, &app_id));
         log::info!(
             "SelectSources types={} cursor={} persist={} restore={:?}",
             s.types,
@@ -484,6 +485,7 @@ pub(crate) fn granted_persist(requested: u32, remember: bool) -> u32 {
 
 pub(crate) struct Started {
     pub(crate) stream: (u32, StreamProps),
+    pub(crate) target: Target,
     pub(crate) persist_mode: u32,
     pub(crate) restore_data: Option<(String, u32, OwnedValue)>,
 }
@@ -576,7 +578,7 @@ pub(crate) async fn pick_and_cast(
     );
     log::info!("Start: node {} for {:?}", cast.node_id, target);
     let persist_mode = granted_persist(persist_mode, remember);
-    let restore_data = (persist_mode > 0).then(|| restore_value(&target));
+    let restore_data = (persist_mode > 0).then(|| restore_data(app_id, &lastpick::encode(&target)));
     let mut cast = cast;
     let ended = cast.take_ended();
     let node_id = cast.node_id;
@@ -617,6 +619,7 @@ pub(crate) async fn pick_and_cast(
     }
     Ok(Started {
         stream,
+        target,
         persist_mode,
         restore_data,
     })
@@ -674,21 +677,44 @@ fn empty_start() -> StartResults {
     }
 }
 
-fn restore_target(data: &(String, u32, OwnedValue)) -> Option<Target> {
-    if data.0 != RESTORE_VENDOR || data.1 != RESTORE_VERSION {
-        return None;
+/// The output or window a restore token names, for `app_id` only.
+fn restore_target(data: &(String, u32, OwnedValue), app_id: &str) -> Option<Target> {
+    let grant = restored_grant(data, app_id)?;
+    match remotedesktop::parse_grant(grant) {
+        Some((_, target)) => target,
+        None => lastpick::decode(grant),
     }
-    let s: String = <String>::try_from(data.2.clone()).ok()?;
-    lastpick::decode(&s)
 }
 
-fn restore_value(t: &Target) -> (String, u32, OwnedValue) {
-    let s = lastpick::encode(t);
+pub(crate) fn restore_data(app_id: &str, grant: &str) -> (String, u32, OwnedValue) {
     (
         RESTORE_VENDOR.to_string(),
         RESTORE_VERSION,
-        Value::from(s).try_to_owned().expect("string"),
+        Value::from(format!("{app_id}:{grant}"))
+            .try_to_owned()
+            .expect("string"),
     )
+}
+
+/// The grant in one of our current tokens issued to `app_id`. An app id
+/// holds no `:`, so the first one ends it.
+pub(crate) fn restored_grant<'a>(
+    data: &'a (String, u32, OwnedValue),
+    app_id: &str,
+) -> Option<&'a str> {
+    if data.0 != RESTORE_VENDOR || data.1 != RESTORE_VERSION {
+        return None;
+    }
+    let (app, grant) = as_str(&data.2)?.split_once(':')?;
+    (app == app_id).then_some(grant)
+}
+
+fn as_str<'a>(v: &'a Value<'a>) -> Option<&'a str> {
+    match v {
+        Value::Str(s) => Some(s.as_str()),
+        Value::Value(inner) => as_str(inner),
+        _ => None,
+    }
 }
 
 /// Pick what to capture and whether to remember it: a remembered target
@@ -1132,6 +1158,30 @@ mod tests {
         assert!(check_session(&path(PATH)).is_err());
         assert!(check_session(&path("/org/freedesktop/portal/desktop/session")).is_err());
         assert!(check_session(&path("/org/freedesktop/portal/desktop/sessions/x")).is_err());
+    }
+
+    #[test]
+    fn a_restore_token_restores_only_for_its_app() {
+        let screen = Target::Output("DP-1".into());
+        let token = restore_data("org.example.A", &lastpick::encode(&screen));
+        assert_eq!(
+            restore_target(&token, "org.example.A"),
+            Some(screen.clone())
+        );
+        assert_eq!(restore_target(&token, "org.example.B"), None);
+        assert_eq!(restore_target(&token, ""), None);
+        let unbound = (
+            RESTORE_VENDOR.to_string(),
+            2,
+            Value::from("output:DP-1").try_to_owned().unwrap(),
+        );
+        assert_eq!(
+            restore_target(&unbound, "output"),
+            None,
+            "an older token re-asks"
+        );
+        let remote = restore_data("org.example.A", "remote-desktop:3;output:DP-1");
+        assert_eq!(restore_target(&remote, "org.example.A"), Some(screen));
     }
 
     #[test]
