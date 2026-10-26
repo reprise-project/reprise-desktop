@@ -28,12 +28,19 @@ pub enum Kind {
     Empty,
     /// Out of the Recycle Bin back where it came from.
     Restore,
+    /// Out of an archive into a folder.
+    Extract,
 }
 
 impl Kind {
     /// Whether the job is measured in items rather than bytes: a delete, Empty or Restore.
     pub fn by_items(self) -> bool {
         !matches!(self, Kind::Copy | Kind::Move)
+    }
+
+    /// Whether the job names where its items go as well as where they come from.
+    fn has_dest(self) -> bool {
+        matches!(self, Kind::Copy | Kind::Move | Kind::Extract)
     }
 }
 
@@ -131,6 +138,7 @@ impl CopyProgress {
             Kind::Delete | Kind::Erase => "Deleting...",
             Kind::Empty => "Emptying the Recycle Bin...",
             Kind::Restore => "Restoring...",
+            Kind::Extract => "Extracting...",
         }
     }
 
@@ -259,6 +267,7 @@ impl CopyProgress {
             Kind::Delete | Kind::Erase => "Deleting",
             Kind::Empty => "Emptying",
             Kind::Restore => "Restoring",
+            Kind::Extract => "Extracting",
         }
     }
 
@@ -272,7 +281,7 @@ impl CopyProgress {
         Flight {
             ms: self.anim_ms,
             fraction: self.fraction(),
-            moving: self.kind != Kind::Copy,
+            moving: !matches!(self.kind, Kind::Copy | Kind::Extract),
             stage: match self.status.phase {
                 Phase::Preparing => Stage::Preparing,
                 Phase::Copying => Stage::Flying,
@@ -283,7 +292,7 @@ impl CopyProgress {
                 _ => End::Folder,
             },
             to: match self.kind {
-                Kind::Copy | Kind::Move | Kind::Restore => End::Folder,
+                Kind::Copy | Kind::Move | Kind::Restore | Kind::Extract => End::Folder,
                 Kind::Delete => End::Bin,
                 Kind::Erase | Kind::Empty => End::Gone,
             },
@@ -406,6 +415,7 @@ impl CopyProgress {
             Kind::Move => ("Moved", format!("to {}", self.to)),
             Kind::Delete | Kind::Erase => ("Deleted", format!("from {}", self.from)),
             Kind::Restore => ("Restored", format!("from {}", self.from)),
+            Kind::Extract => ("Extracted", format!("to {}", self.to)),
             Kind::Empty => {
                 return (
                     "Emptied the Recycle Bin".into(),
@@ -438,6 +448,7 @@ impl CopyProgress {
             (Phase::Preparing, Kind::Copy) => "Preparing to copy...".to_string(),
             (Phase::Preparing, Kind::Move) => "Preparing to move...".to_string(),
             (Phase::Preparing, Kind::Restore) => "Preparing to restore...".to_string(),
+            (Phase::Preparing, Kind::Extract) => "Preparing to extract...".to_string(),
             (Phase::Preparing, _) => "Preparing to delete...".to_string(),
             _ => self.status.current.clone(),
         };
@@ -453,10 +464,10 @@ impl CopyProgress {
             px,
         );
         let r = line(FROM_Y);
-        let from_to = if self.kind.by_items() {
-            format!("From '{}'", self.from)
-        } else {
+        let from_to = if self.kind.has_dest() {
             format!("From '{}' to '{}'", self.from, self.to)
+        } else {
+            format!("From '{}'", self.from)
         };
         text.draw(
             c,
@@ -627,7 +638,7 @@ impl CopyProgress {
                 bytes_text(self.status.total_bytes)
             ),
         };
-        let to = if self.kind.by_items() { "" } else { " to " };
+        let to = if self.kind.has_dest() { " to " } else { "" };
         let fixed = text.measure(&lead, false, px) + text.measure(to, false, px);
         let each = if to.is_empty() {
             (r.width - fixed).max(0)
@@ -891,6 +902,21 @@ mod tests {
                 "Deleted 2 items from Downloads".to_string()
             )
         );
+    }
+
+    #[test]
+    fn an_extraction_counts_items_and_names_where_they_go() {
+        let cp = CopyProgress::new(Kind::Extract, "pack.zip", "Downloads", SKY);
+        assert!(Kind::Extract.by_items());
+        assert_eq!(cp.title(), "Extracting...");
+        assert_eq!(
+            cp.ended_note(3),
+            (
+                "Extracted 3 items".to_string(),
+                "Extracted 3 items to Downloads".to_string()
+            )
+        );
+        assert!(!cp.flight().moving, "the archive stays where it is");
     }
 
     fn fnv(c: &Canvas) -> u64 {

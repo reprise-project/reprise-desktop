@@ -1,4 +1,5 @@
-//! The progress dialogs' host half, for a put (copy, move) and a removal (delete, Empty, Restore):
+//! The progress dialogs' host half, for a put (copy, move), a removal (delete, Empty, Restore) and an
+//! extraction:
 //! when each comes up, its window and events, Pause and Cancel on its job, the task button's
 //! progress for all of them together, and the balloon for a job that ends while its dialog is not looked at.
 
@@ -13,6 +14,7 @@ use std::time::Instant;
 
 pub const COPY: WinId = "copy progress";
 pub const REMOVE: WinId = "remove progress";
+pub const EXTRACT: WinId = "extract progress";
 /// The desktop file a task button's progress is sent for.
 pub(crate) const DESKTOP_ID: &str = "reprise-explorer";
 
@@ -123,6 +125,7 @@ impl Explorer {
         match win {
             COPY => self.put.as_ref().map(|p| &p.progress),
             REMOVE => self.removing.as_ref().map(|r| &r.progress),
+            EXTRACT => self.extracting.as_ref().map(|e| &e.progress),
             _ => None,
         }
     }
@@ -131,6 +134,7 @@ impl Explorer {
         match win {
             COPY => self.put.as_mut().map(|p| &mut p.progress),
             REMOVE => self.removing.as_mut().map(|r| &mut r.progress),
+            EXTRACT => self.extracting.as_mut().map(|e| &mut e.progress),
             _ => None,
         }
     }
@@ -138,6 +142,7 @@ impl Explorer {
     fn waiting(&self, win: WinId) -> usize {
         match win {
             COPY => self.put_queue.len(),
+            EXTRACT => self.extract_queue.len(),
             _ => self.remove_queue.len(),
         }
     }
@@ -145,14 +150,14 @@ impl Explorer {
     /// Bring up the dialog of each job running past [`SHOW_AFTER`].
     pub(crate) fn show_progress_dialogs(&mut self) -> bool {
         let mut shown = false;
-        for win in [COPY, REMOVE] {
+        for win in [COPY, REMOVE, EXTRACT] {
             shown |= self.progress_mut(win).is_some_and(Progress::show);
         }
         shown
     }
 
     pub(crate) fn progress_children(&self) -> Vec<Child> {
-        [COPY, REMOVE]
+        [COPY, REMOVE, EXTRACT]
             .into_iter()
             .filter_map(|win| {
                 let shown = self.progress(win)?.shown.as_ref()?;
@@ -177,7 +182,7 @@ impl Explorer {
     /// Put the jobs' [`combined`] progress on the task button when its whole percent or paused
     /// state changes. Both jobs share one app id, so one value covers them.
     pub(crate) fn publish_task_progress(&mut self) {
-        let jobs: Vec<_> = [COPY, REMOVE]
+        let jobs: Vec<_> = [COPY, REMOVE, EXTRACT]
             .into_iter()
             .filter_map(|win| self.progress(win)?.task_state())
             .collect();
@@ -193,6 +198,7 @@ impl Explorer {
         let text = self.forms.text;
         let shown = match win {
             COPY => self.put.as_mut().and_then(|p| p.progress.shown.as_mut()),
+            EXTRACT => (self.extracting.as_mut()).and_then(|e| e.progress.shown.as_mut()),
             _ => self
                 .removing
                 .as_mut()
@@ -251,6 +257,7 @@ impl Explorer {
             Outcome::Cancel => {
                 match win {
                     COPY => self.cancel_puts(),
+                    EXTRACT => self.cancel_extracts(),
                     _ => self.cancel_removals(),
                 }
                 Reply::redraw()
@@ -286,6 +293,7 @@ impl Explorer {
         let text = &self.dialog_text;
         let shown = match win {
             COPY => self.put.as_mut().and_then(|p| p.progress.shown.as_mut()),
+            EXTRACT => (self.extracting.as_mut()).and_then(|e| e.progress.shown.as_mut()),
             _ => self
                 .removing
                 .as_mut()

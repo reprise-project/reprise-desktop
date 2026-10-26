@@ -176,8 +176,8 @@ desktop and stays out of the way when it's missing.
   `antialias = false`
 - A colour emoji font such as Noto Color Emoji, for the emoji picker
 - shared-mime-info, for file types and icons
-- xdg-utils and libarchive, for opening files, zipping from Explorer and
-  opening a network's sign-in page
+- xdg-utils and libarchive, for opening files, zipping and extracting
+  archives in Explorer and opening a network's sign-in page
 - plocate with its database, or fd, for files in the launcher and Explorer's Search
 
 ## Fonts
