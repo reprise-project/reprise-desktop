@@ -97,6 +97,14 @@ pub struct FileTouchscreen {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub struct FileTablet {
+    pub name: Option<String>,
+    pub output: Option<String>,
+    pub keep_aspect: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FileIdle {
     pub lock_after: Option<i64>,
     pub screen_off_after: Option<i64>,
@@ -603,6 +611,7 @@ pub struct FileConfig {
     pub mouse: Option<FileMouse>,
     pub touchpad: Option<FileTouchpad>,
     pub touchscreen: Option<FileTouchscreen>,
+    pub tablets: Option<Vec<FileTablet>>,
     pub idle: Option<FileIdle>,
     pub power: Option<FilePower>,
     pub desktop_icons: Option<bool>,
