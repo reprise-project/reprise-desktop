@@ -109,10 +109,21 @@ pub struct Fields {
 pub const CLIENT: (i32, i32) = (555, 451);
 
 const MARGIN: i32 = 6;
-const LOOKIN_LABEL: &str = "Look &in:";
-const FILENAME_LABEL: &str = "File &name:";
-const FILETYPE_LABEL: &str = "Files of &type:";
-const CANCEL: &str = "Cancel";
+fn lookin_label() -> String {
+    tr!("filedlg-look-in")
+}
+
+fn filename_label() -> String {
+    tr!("filedlg-file-name")
+}
+
+fn filetype_label() -> String {
+    tr!("filedlg-file-type")
+}
+
+fn cancel_label() -> String {
+    tr!("cancel")
+}
 /// [`FileDlg::labels`]: each label's text with its access key.
 struct Labels<'a> {
     lookin: Cow<'static, str>,
@@ -218,13 +229,13 @@ fn lookin_icon(field: Rect, u: TextUnits) -> Rect {
     Rect::new(field.x + u.len(LOOKIN_ICON_X), y, side, side)
 }
 
-fn views_items() -> [(&'static str, Mode); 5] {
+fn views_items() -> [(String, Mode); 5] {
     [
-        ("Thumbnails", Mode::Thumbnails),
-        ("Tiles", Mode::Tiles),
-        ("Icons", Mode::Icons),
-        ("List", Mode::List),
-        ("Details", Mode::Details),
+        (tr!("filedlg-view-thumbnails"), Mode::Thumbnails),
+        (tr!("filedlg-view-tiles"), Mode::Tiles),
+        (tr!("filedlg-view-icons"), Mode::Icons),
+        (tr!("filedlg-view-list"), Mode::List),
+        (tr!("filedlg-view-details"), Mode::Details),
     ]
 }
 

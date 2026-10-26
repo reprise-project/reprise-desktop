@@ -243,7 +243,7 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32) -> Form {
     items.push(Item::button(
         OK,
         Rect::new(OK_X, OK_Y, BUTTON_W, BUTTON_H),
-        "OK",
+        &tr!("ok"),
         true,
         true,
     ));
@@ -387,14 +387,14 @@ pub fn system_form(s: &System, text: &TextRenderer, px: u32, u: TextUnits) -> Fo
     items.push(Item::button(
         COPY,
         Rect::new(ok_x - BUTTON_SPACE - BUTTON_W, by, BUTTON_W, BUTTON_H),
-        "&Copy",
+        &tr!("about-copy"),
         true,
         false,
     ));
     items.push(Item::button(
         OK,
         Rect::new(ok_x, by, BUTTON_W, BUTTON_H),
-        "OK",
+        &tr!("ok"),
         true,
         true,
     ));

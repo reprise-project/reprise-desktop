@@ -59,17 +59,29 @@ impl Live {
 }
 
 /// The rows top to bottom, `None` a separator.
-const ROWS: [Option<(&str, Command)>; 9] = [
-    Some(("&Undo", Command::Undo)),
-    Some(("&Redo", Command::Redo)),
+const ROWS: [Option<Command>; 9] = [
+    Some(Command::Undo),
+    Some(Command::Redo),
     None,
-    Some(("Cu&t", Command::Cut)),
-    Some(("&Copy", Command::Copy)),
-    Some(("&Paste", Command::Paste)),
-    Some(("&Delete", Command::Delete)),
+    Some(Command::Cut),
+    Some(Command::Copy),
+    Some(Command::Paste),
+    Some(Command::Delete),
     None,
-    Some(("Select &All", Command::SelectAll)),
+    Some(Command::SelectAll),
 ];
+
+fn label(cmd: Command) -> String {
+    match cmd {
+        Command::Undo => tr!("edit-undo"),
+        Command::Redo => tr!("edit-redo"),
+        Command::Cut => tr!("edit-cut"),
+        Command::Copy => tr!("edit-copy"),
+        Command::Paste => tr!("edit-paste"),
+        Command::Delete => tr!("edit-delete"),
+        Command::SelectAll => tr!("edit-select-all"),
+    }
+}
 
 pub fn tree(live: Live) -> MenuTree {
     MenuTree::flat(items(live))
@@ -80,7 +92,7 @@ pub fn items(live: Live) -> Vec<MenuItem> {
     ROWS.iter()
         .map(|row| match row {
             None => MenuItem::Separator,
-            Some((label, cmd)) => MenuItem::item(label).enabled(match cmd {
+            Some(cmd) => MenuItem::item(&label(*cmd)).enabled(match cmd {
                 Command::Undo => live.undo,
                 Command::Redo => live.redo,
                 Command::Cut | Command::Copy => live.selection && !live.secret,
@@ -95,7 +107,7 @@ pub fn items(live: Live) -> Vec<MenuItem> {
 /// The command a chosen path (`MenuAction::Chosen`) names.
 pub fn command(path: &[usize]) -> Option<Command> {
     match path {
-        [i] => ROWS.get(*i).copied().flatten().map(|(_, cmd)| cmd),
+        [i] => ROWS.get(*i).copied().flatten(),
         _ => None,
     }
 }

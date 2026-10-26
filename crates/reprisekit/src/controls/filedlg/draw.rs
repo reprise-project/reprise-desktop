@@ -1,4 +1,4 @@
-use super::{CANCEL, CLIENT, FileDlg, Focus, MARGIN, lookin_icon};
+use super::{CLIENT, FileDlg, Focus, MARGIN, cancel_label, lookin_icon};
 use crate::classic::widgets::{self, draw_edit, edit_first_visible};
 use crate::controls::combo;
 use crate::controls::form;
@@ -148,7 +148,7 @@ impl FileDlg {
             text,
             p,
             lay.cancel.scaled(s),
-            CANCEL,
+            &cancel_label(),
             false,
             Interaction::Idle,
             true,
@@ -246,7 +246,7 @@ impl FileDlg {
         }
         let button = |label: &str, r: Rect| width(label) - (r.width - u.len(6));
         put("accept", button(&self.accept_label(), lay.accept));
-        put("cancel", button(CANCEL, lay.cancel));
+        put("cancel", button(&cancel_label(), lay.cancel));
         put(
             "places",
             placesbar::overflow(&self.places, text, lay.places, &cm.places, px),

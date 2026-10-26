@@ -680,7 +680,7 @@ fn chosen(title: usize, path: Vec<usize>) -> Action {
 }
 
 impl Bar {
-    pub fn new(entries: Vec<(&str, Vec<crate::controls::menu::MenuItem>)>) -> Bar {
+    pub fn new<S: AsRef<str>>(entries: Vec<(S, Vec<crate::controls::menu::MenuItem>)>) -> Bar {
         Bar::with_trees(
             entries
                 .into_iter()
@@ -689,9 +689,12 @@ impl Bar {
         )
     }
 
-    pub fn with_trees(entries: Vec<(&str, crate::controls::menu::MenuTree)>) -> Bar {
+    pub fn with_trees<S: AsRef<str>>(entries: Vec<(S, crate::controls::menu::MenuTree)>) -> Bar {
         Bar {
-            titles: entries.iter().map(|(t, _)| Title::new(t)).collect(),
+            titles: entries
+                .iter()
+                .map(|(t, _)| Title::new(t.as_ref()))
+                .collect(),
             menus: entries.into_iter().map(|(_, m)| m).collect(),
             open: None,
             active: None,

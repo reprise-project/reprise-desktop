@@ -1,4 +1,4 @@
-use super::{CANCEL, FileDlg, Focus};
+use super::{FileDlg, Focus, cancel_label};
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{self, edit_first_visible};
 use crate::controls::combo;
@@ -86,7 +86,7 @@ impl FileDlg {
         let cancel = tree.push(
             root,
             "cancel",
-            access::button(lay.cancel, CANCEL, true, false),
+            access::button(lay.cancel, &cancel_label(), true, false),
         );
         let extra = self
             .extra
