@@ -1,5 +1,6 @@
 //! The lock screen's PAM conversations, each in a child of the compositor binary so no PAM module runs in the compositor and the lock can end one at any time: the fingerprint's (`--fingerprint-conversation USER`) and the password's (`--password-conversation USER`, the password on stdin).
 //! A child writes `I <info>` and `E <error>` lines and `= <pam_authenticate rc>` last; only `= 0` unlocks.
+//! The password's child asks a further prompt with `? <text>` (blind) or `?? <text>` (echoed) and reads its answer as the next line of stdin, which stays open until the conversation ends.
 
 use crate::lock::{self, Verdict, Verifier, ffi};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
@@ -7,7 +8,7 @@ use std::io::{Read, Write};
 use std::os::fd::{AsFd, AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -29,11 +30,22 @@ pub fn service_installed() -> bool {
 pub enum Line {
     Info(String),
     Error(String),
+    Prompt(lock::Prompt),
     Result(c_int),
 }
 
 pub fn parse(line: &str) -> Option<Line> {
-    if let Some(t) = line.strip_prefix("I ") {
+    let prompt = |text: &str, echo| {
+        Line::Prompt(lock::Prompt {
+            text: text.to_string(),
+            echo,
+        })
+    };
+    if let Some(t) = line.strip_prefix("?? ") {
+        Some(prompt(t, true))
+    } else if let Some(t) = line.strip_prefix("? ") {
+        Some(prompt(t, false))
+    } else if let Some(t) = line.strip_prefix("I ") {
         Some(Line::Info(t.to_string()))
     } else if let Some(t) = line.strip_prefix("E ") {
         Some(Line::Error(t.to_string()))
@@ -74,6 +86,7 @@ impl PasswordAnswer {
                 lock::add_notice(&mut self.notices, &t);
                 None
             }
+            Line::Prompt(_) => None,
             Line::Result(ffi::PAM_SUCCESS) => Some(Ok(())),
             Line::Result(_) => Some(Err(std::mem::take(&mut self.notices))),
         }
@@ -82,28 +95,37 @@ impl PasswordAnswer {
 
 pub struct Conversation {
     child: Child,
+    stdin: Option<ChildStdin>,
     stdout: ChildStdout,
     buf: Vec<u8>,
 }
 
 impl Conversation {
     pub fn start(c: Command) -> std::io::Result<Conversation> {
-        Conversation::spawn(c, None)
+        Conversation::spawn(c, false)
     }
 
-    /// Start `c` and hand it `password` on stdin, which then closes: never in argv or the environment.
+    /// Start `c` and hand it `password` as the first line of stdin, never in argv or the environment.
     pub fn start_password(c: Command, password: &[u8]) -> std::io::Result<Conversation> {
-        Conversation::spawn(c, Some(password))
+        let mut c = Conversation::spawn(c, true)?;
+        if let Err(e) = c.answer(password) {
+            log::warn!("lock: cannot hand the password to its conversation: {e}");
+        }
+        Ok(c)
     }
 
-    /// Spawn `c` as the child: stdout piped, stdin piped for `input` or else /dev/null, empty signal mask, SIGINT at its default action (an ignored SIGINT survives exec) and SIGKILL when the compositor dies, so a crash never leaves the reader claimed.
-    fn spawn(mut c: Command, input: Option<&[u8]>) -> std::io::Result<Conversation> {
-        c.stdin(if input.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped());
+    /// Write `line` and a newline to the child's stdin. A blocking write that cannot block: a pipe
+    /// holds far more than `lock::INPUT_CAPACITY`, and the child reads each line before it asks again.
+    pub fn answer(&mut self, line: &[u8]) -> std::io::Result<()> {
+        let stdin = self.stdin.as_mut().ok_or(std::io::ErrorKind::BrokenPipe)?;
+        stdin.write_all(line)?;
+        stdin.write_all(b"\n")
+    }
+
+    /// Spawn `c` as the child: stdout piped, stdin piped with `input` or else /dev/null, empty signal mask, SIGINT at its default action (an ignored SIGINT survives exec) and SIGKILL when the compositor dies, so a crash never leaves the reader claimed.
+    fn spawn(mut c: Command, input: bool) -> std::io::Result<Conversation> {
+        c.stdin(if input { Stdio::piped() } else { Stdio::null() })
+            .stdout(Stdio::piped());
         // SAFETY: the closure runs between fork and exec; sigemptyset,
         // pthread_sigmask, signal and prctl are async-signal-safe and
         // nothing allocates.
@@ -123,13 +145,7 @@ impl Conversation {
             let _ = child.wait();
             return Err(std::io::ErrorKind::BrokenPipe.into());
         };
-        if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-            // A blocking write that cannot block: a fresh pipe holds far more than
-            // `lock::INPUT_CAPACITY`. Dropping `stdin` closes it, which ends the child's read.
-            if let Err(e) = stdin.write_all(input) {
-                log::warn!("lock: cannot hand the password to its conversation: {e}");
-            }
-        }
+        let stdin = child.stdin.take();
         // SAFETY: `stdout` is an open pipe we own; F_GETFL/F_SETFL take no
         // pointers.
         unsafe {
@@ -139,6 +155,7 @@ impl Conversation {
         }
         Ok(Conversation {
             child,
+            stdin,
             stdout,
             buf: Vec::new(),
         })
@@ -223,7 +240,7 @@ pub fn reap_ended(now: Instant) -> Option<Instant> {
     ending.iter().map(|&(_, d)| d).min()
 }
 
-/// The password conversation's child: the password from stdin, `lock::PamVerifier`, and the verdict as lines on stdout.
+/// The password conversation's child: the password and further answers from stdin, `lock::PamVerifier`, and its prompts and verdict as lines on stdout.
 pub fn password_main(user: &str) -> i32 {
     log::set_max_level(log::LevelFilter::Warn);
     // SAFETY: no other thread exists yet; the sigset is a zeroed local. `main` blocked SIGINT,
@@ -256,21 +273,21 @@ pub fn password_main(user: &str) -> i32 {
     0
 }
 
-/// Read the password (at most `lock::INPUT_CAPACITY` bytes, until EOF) into a buffer zeroed on drop, verify it with `v` and write the verdict's lines to `out`.
+/// Read the password, verify it with `v` and write the verdict's lines to `out`. A further prompt goes
+/// out as a `?` or `??` line and its answer is the next line of `input`; at EOF the prompt has none.
 fn password_conversation(v: &dyn Verifier, user: &str, mut input: impl Read, mut out: impl Write) {
-    let mut buf = zeroize::Zeroizing::new([0u8; lock::INPUT_CAPACITY]);
-    let mut n = 0;
-    while n < buf.len() {
-        match input.read(&mut buf[n..]) {
-            Ok(0) => break,
-            Ok(k) => n += k,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(_) => break,
+    let verdict = match read_answer(&mut input) {
+        Some(password) => {
+            let mut ask = |text: &str, echo: bool| {
+                let text = lock::clean_notice(text).join(" ");
+                let tag = if echo { "??" } else { "?" };
+                out.write_all(format!("{tag} {text}\n").as_bytes()).ok()?;
+                out.flush().ok()?;
+                read_answer(&mut input)
+            };
+            v.verify(user, &password, &mut ask)
         }
-    }
-    let verdict = match std::str::from_utf8(&buf[..n]) {
-        Ok(password) => v.verify(user, password),
-        Err(_) => Err(Vec::new()),
+        None => Err(Vec::new()),
     };
     let mut lines = String::new();
     match &verdict {
@@ -284,6 +301,33 @@ fn password_conversation(v: &dyn Verifier, user: &str, mut input: impl Read, mut
     }
     let _ = out.write_all(lines.as_bytes());
     let _ = out.flush();
+}
+
+/// One line of `input` (at most `lock::INPUT_CAPACITY` bytes, up to a newline or EOF), read a byte at a
+/// time so nothing past it is taken, into a string zeroed on drop. None at EOF before any byte, or for
+/// a line that is not UTF-8.
+fn read_answer(input: &mut impl Read) -> Option<zeroize::Zeroizing<String>> {
+    let mut buf = zeroize::Zeroizing::new([0u8; lock::INPUT_CAPACITY]);
+    let mut n = 0;
+    let mut ended = false;
+    while n < buf.len() {
+        match input.read(&mut buf[n..=n]) {
+            Ok(0) => break,
+            Ok(_) if buf[n] == b'\n' => {
+                ended = true;
+                break;
+            }
+            Ok(_) => n += 1,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+    if n == 0 && !ended {
+        return None;
+    }
+    let mut s = zeroize::Zeroizing::new(String::with_capacity(n));
+    s.push_str(std::str::from_utf8(&buf[..n]).ok()?);
+    Some(s)
 }
 
 pub fn child_main(user: &str) -> i32 {
@@ -411,6 +455,18 @@ pub(crate) mod tests {
         assert_eq!(parse("= ok"), None);
         assert_eq!(parse("OK"), None);
         assert_eq!(parse("I"), None, "a text line needs its space");
+        let prompt = |text: &str, echo| {
+            Some(Line::Prompt(lock::Prompt {
+                text: text.into(),
+                echo,
+            }))
+        };
+        assert_eq!(parse("? One-time code:"), prompt("One-time code:", false));
+        assert_eq!(
+            parse("?? Verification code:"),
+            prompt("Verification code:", true)
+        );
+        assert_eq!(parse("?Code:"), None, "a prompt needs its space");
     }
 
     fn sh(script: &str) -> Conversation {
@@ -421,7 +477,7 @@ pub(crate) mod tests {
 
     struct FakeVerifier(Verdict);
     impl Verifier for FakeVerifier {
-        fn verify(&self, user: &str, password: &str) -> Verdict {
+        fn verify(&self, user: &str, password: &str, _: &mut lock::Ask<'_>) -> Verdict {
             assert_eq!(user, "someone");
             assert_eq!(password, "hunter2");
             self.0.clone()
@@ -436,7 +492,7 @@ pub(crate) mod tests {
             password_conversation(
                 &FakeVerifier(expected.clone()),
                 "someone",
-                &b"hunter2"[..],
+                &b"hunter2\n"[..],
                 &mut out,
             );
             let mut answer = PasswordAnswer::default();
@@ -450,12 +506,67 @@ pub(crate) mod tests {
         }
     }
 
+    /// Asks the password, then two prompts, and accepts only "hunter2", "123456" and "4321".
+    struct TwoPrompts;
+    impl Verifier for TwoPrompts {
+        fn verify(&self, user: &str, password: &str, ask: &mut lock::Ask<'_>) -> Verdict {
+            assert_eq!(user, "someone");
+            let code = ask("Verification code:", true);
+            let pin = ask("PIN:", false);
+            match (
+                password,
+                code.as_deref().map(String::as_str),
+                pin.as_deref().map(String::as_str),
+            ) {
+                ("hunter2", Some("123456"), Some("4321")) => Ok(()),
+                _ => Err(Vec::new()),
+            }
+        }
+    }
+
     #[test]
-    fn the_password_goes_in_on_stdin_and_stdin_closes() {
+    fn each_further_prompt_goes_out_and_takes_the_next_line_as_its_answer() {
+        let mut out = Vec::new();
+        password_conversation(
+            &TwoPrompts,
+            "someone",
+            &b"hunter2\n123456\n4321\n"[..],
+            &mut out,
+        );
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "?? Verification code:\n? PIN:\n= 0\n"
+        );
+        let mut out = Vec::new();
+        password_conversation(&TwoPrompts, "someone", &b"hunter2\n123456\n"[..], &mut out);
+        assert!(
+            String::from_utf8(out).unwrap().ends_with("? PIN:\n= 7\n"),
+            "a prompt past the end of stdin has no answer"
+        );
+    }
+
+    #[test]
+    fn a_prompt_waits_on_stdin_for_the_next_answer() {
         let mut c = Command::new("sh");
-        c.arg("-c")
-            .arg(r#"p=$(cat); [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#);
+        c.arg("-c").arg(
+            r#"read p; echo '? One-time code:'; read o; [ "$p $o" = "hunter2 123456" ] && echo '= 0' || echo '= 7'"#,
+        );
         let mut c = Conversation::start_password(c, b"hunter2").expect("sh starts");
+        let end = Instant::now() + Duration::from_secs(5);
+        let mut lines = Vec::new();
+        while lines.is_empty() {
+            assert!(Instant::now() < end, "the prompt arrives");
+            lines = c.read().0;
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            lines,
+            [Line::Prompt(lock::Prompt {
+                text: "One-time code:".into(),
+                echo: false
+            })]
+        );
+        c.answer(b"123456").expect("the child reads on");
         assert_eq!(read_all(&mut c), [Line::Result(0)]);
     }
 

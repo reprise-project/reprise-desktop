@@ -102,8 +102,10 @@ process: the compositor starts itself again as `reprise
 --password-conversation=USER` and writes the password to its stdin, never
 to argv or the environment. The helper runs PAM's `reprise` service
 (`/etc/pam.d/reprise`, or `login` when that file is missing) and reports
-the verdict on stdout; only a success unlocks. A helper that hangs is given
-up after 90 s and the dialog asks again. Reprise zeroes the password copies
+the verdict on stdout; only a success unlocks. A further prompt from the
+stack (a one-time code, a security key PIN) relabels the field, and its
+answer goes to the same helper's stdin. A helper that hangs is given up
+after 90 s and the dialog asks again. Reprise zeroes the password copies
 it holds.
 
 When `/etc/pam.d/reprise-fingerprint` is installed, a second helper runs
