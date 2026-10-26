@@ -331,6 +331,7 @@ fn run(
     if let Some(cmd) = startup {
         spawn::spawn(cmd, &state.env, None);
     }
+    state.config_notice = config_notice.clone();
     if let Some(body) = config_notice {
         event_loop.handle().insert_idle(move |state| {
             notifyview::notice(state, "Configuration", &body);

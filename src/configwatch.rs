@@ -277,14 +277,22 @@ where
                     return;
                 }
             }
-            if let Some(cfg) = cfg {
+            if let Some((cfg, notice)) = cfg {
+                if notice != state.config_notice {
+                    if let Some(body) = &notice {
+                        crate::notifyview::notice(state, "Configuration", body);
+                    }
+                    state.config_notice = notice;
+                }
                 reload(state, cfg);
             }
         })
     });
 }
 
-fn read(path: &Path) -> Option<Config> {
+/// The config at `path` with the keys that fail left at their defaults, as at startup, and the
+/// notice naming them; None when the file cannot be read or parsed at all.
+pub(crate) fn read(path: &Path) -> Option<(Config, Option<String>)> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) => {
@@ -292,10 +300,14 @@ fn read(path: &Path) -> Option<Config> {
             return None;
         }
     };
-    match Config::parse(&text) {
-        Ok(cfg) => {
+    match Config::parse_lenient(&text) {
+        Ok((cfg, dropped)) => {
             log::info!("config {} changed; reloading", path.display());
-            Some(cfg)
+            for (key, e) in &dropped {
+                log::warn!("config {}: {key}: {e}; using its defaults", path.display());
+            }
+            let notice = (!dropped.is_empty()).then(|| crate::config::dropped_notice(&dropped));
+            Some((cfg, notice))
         }
         Err(e) => {
             log::error!("config: {e}; keeping the old one");
@@ -772,7 +784,7 @@ mod tests {
              [[keybinds]]\nkeys = \"Super+q\"\naction = \"none\"\n",
         )
         .unwrap();
-        let cfg = read(&path).expect("the file parses");
+        let (cfg, _) = read(&path).expect("the file parses");
         std::fs::remove_file(&path).unwrap();
         let on = |keys: &str| {
             let (mods, keysym) = crate::config::parse_keybind(keys).unwrap();
