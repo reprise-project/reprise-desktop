@@ -460,6 +460,7 @@ impl State {
             move |_, _, state| {
                 d.borrow_mut().dispatch_clients(state)?;
                 state.ime_sync_grab();
+                state.clip_keep_orphaned();
                 Ok(PostAction::Continue)
             },
         )?;
@@ -474,6 +475,7 @@ impl State {
                     .dispatch_single_client(state, id);
             }
             state.ime_sync_grab();
+            state.clip_keep_orphaned();
         })?;
         let (idle_wake, woken) = make_ping()?;
         handle.insert_source(woken, |_, _, _| {})?;

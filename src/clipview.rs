@@ -219,17 +219,9 @@ impl State {
     /// window. The selection change records it again, which moves it to
     /// the top.
     fn pick_clip(&mut self, id: u64) {
-        let Some(offers) = self
-            .panels
-            .history
-            .history
-            .get(id)
-            .map(|e| e.offers.clone())
-        else {
-            return;
-        };
-        self.clip_offer_each(offers);
-        self.send_paste();
+        if self.clip_offer_entry(id) {
+            self.send_paste();
+        }
     }
 
     fn focused_is_terminal(&self) -> bool {
