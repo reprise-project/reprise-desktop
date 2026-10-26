@@ -139,6 +139,7 @@ pub type Shared = Arc<Mutex<Book>>;
 
 pub struct Notification {
     pub book: Shared,
+    pub frontend: crate::Frontend,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Notification")]
@@ -159,11 +160,13 @@ impl Notification {
 
     async fn add_notification(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         app_id: String,
         id: String,
         notification: HashMap<String, OwnedValue>,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<()> {
+        self.frontend.check(&hdr)?;
         let p = parse(&notification);
         let replaces = self
             .book
@@ -195,9 +198,11 @@ impl Notification {
         app_id: String,
         id: String,
         #[zbus(connection)] conn: &zbus::Connection,
-    ) {
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        self.frontend.check(&hdr)?;
         let Some(server_id) = self.book.lock().unwrap().take_key(&app_id, &id) else {
-            return;
+            return Ok(());
         };
         let _ = conn
             .call_method(
@@ -208,6 +213,7 @@ impl Notification {
                 &(server_id,),
             )
             .await;
+        Ok(())
     }
 
     #[zbus(signal)]
@@ -724,6 +730,7 @@ mod tests {
     fn the_reply_field_is_advertised() {
         let opts = Notification {
             book: Shared::default(),
+            frontend: crate::Frontend::default(),
         }
         .supported_options();
         let list = |k: &str| Vec::<String>::try_from(opts[k].clone()).unwrap();
@@ -905,9 +912,18 @@ mod tests {
                 .await
                 .unwrap();
             let book = Shared::default();
+            let client = zbus::Connection::session().await.unwrap();
+            let frontend = crate::Frontend::default();
+            frontend.set(client.unique_name().map(|n| n.to_string()));
             let portal = zbus::connection::Builder::session()
                 .unwrap()
-                .serve_at(crate::PATH, Notification { book: book.clone() })
+                .serve_at(
+                    crate::PATH,
+                    Notification {
+                        book: book.clone(),
+                        frontend,
+                    },
+                )
                 .unwrap()
                 .build()
                 .await
@@ -916,7 +932,6 @@ mod tests {
                 .executor()
                 .spawn(watch(portal.clone(), book.clone()), "watch")
                 .detach();
-            let client = zbus::Connection::session().await.unwrap();
             let dest = portal.unique_name().unwrap().to_string();
             let mut invoked = zbus::MessageStream::for_match_rule(
                 zbus::MatchRule::builder()

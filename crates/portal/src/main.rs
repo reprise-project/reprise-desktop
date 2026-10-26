@@ -39,6 +39,8 @@ use zbus::zvariant::{
 };
 
 const BUS_NAME: &str = "org.freedesktop.impl.portal.desktop.reprise";
+/// xdg-desktop-portal: the one peer that may call this backend.
+const FRONTEND: &str = "org.freedesktop.portal.Desktop";
 pub(crate) const PATH: &str = "/org/freedesktop/portal/desktop";
 const SESSION_PREFIX: &str = "/org/freedesktop/portal/desktop/session/";
 const REQUEST_PREFIX: &str = "/org/freedesktop/portal/desktop/request/";
@@ -91,6 +93,42 @@ pub(crate) fn sender(hdr: &zbus::message::Header<'_>) -> String {
     hdr.sender().map(|s| s.to_string()).unwrap_or_default()
 }
 
+/// The unique name that owns `FRONTEND`, kept current by `watch_frontends`.
+#[derive(Clone, Default)]
+pub(crate) struct Frontend(Arc<Mutex<Option<String>>>);
+
+impl Frontend {
+    fn set(&self, owner: Option<String>) {
+        *lock(&self.0) = owner;
+    }
+
+    /// AccessDenied unless the call came from xdg-desktop-portal: app ids,
+    /// restore data and handles are taken on its word only.
+    pub(crate) fn check(&self, hdr: &zbus::message::Header<'_>) -> zbus::fdo::Result<()> {
+        let owner = lock(&self.0).clone();
+        check_owner(hdr, owner.as_deref())
+    }
+}
+
+/// AccessDenied unless the call came from `owner`.
+pub(crate) fn check_owner(
+    hdr: &zbus::message::Header<'_>,
+    owner: Option<&str>,
+) -> zbus::fdo::Result<()> {
+    check_frontend(hdr.sender().map(|s| s.as_str()), owner)
+}
+
+fn check_frontend(sender: Option<&str>, owner: Option<&str>) -> zbus::fdo::Result<()> {
+    if reprisebus::sent_by(sender, owner) {
+        Ok(())
+    } else {
+        Err(zbus::fdo::Error::AccessDenied(format!(
+            "{} may not call {BUS_NAME}",
+            sender.unwrap_or("a peer without a name")
+        )))
+    }
+}
+
 /// End a session already taken out of the map: cancel its dialog, stop
 /// its cast, signal `Closed` and take its object off the bus. The EIS
 /// client and the capture object go with `data`.
@@ -116,24 +154,29 @@ fn take_owned_by(
     sessions.extract_if(|_, s| s.owner == owner).collect()
 }
 
-/// End every session and inhibition of a frontend that left the bus
-/// (xdg-desktop-portal restarted or crashed), since nothing else would
-/// ever close them.
-async fn watch_frontends(conn: zbus::Connection, sessions: Sessions, inhibits: inhibit::Shared) {
+async fn owner_changes(conn: &zbus::Connection) -> zbus::Result<zbus::fdo::NameOwnerChangedStream> {
+    zbus::fdo::DBusProxy::new(conn)
+        .await?
+        .receive_name_owner_changed()
+        .await
+}
+
+/// Follow `FRONTEND` to its owner, and end every session and inhibition of
+/// a frontend that left the bus (xdg-desktop-portal restarted or crashed),
+/// since nothing else would ever close them.
+async fn watch_frontends(
+    conn: zbus::Connection,
+    mut changes: zbus::fdo::NameOwnerChangedStream,
+    frontend: Frontend,
+    sessions: Sessions,
+    inhibits: inhibit::Shared,
+) {
     use futures_lite::StreamExt;
-    let changes = match zbus::fdo::DBusProxy::new(&conn).await {
-        Ok(p) => p.receive_name_owner_changed().await,
-        Err(e) => Err(e),
-    };
-    let mut changes = match changes {
-        Ok(c) => c,
-        Err(e) => {
-            log::warn!("NameOwnerChanged: {e}; sessions outlive their frontend");
-            return;
-        }
-    };
     while let Some(sig) = changes.next().await {
         let Ok(args) = sig.args() else { continue };
+        if args.name() == FRONTEND {
+            frontend.set(args.new_owner().as_ref().map(|o| o.to_string()));
+        }
         if args.new_owner().is_some() {
             continue;
         }
@@ -168,11 +211,13 @@ pub(crate) async fn export_request(
     server: &zbus::ObjectServer,
     handle: &ObjectPath<'_>,
     cancel: Arc<AtomicBool>,
+    frontend: &Frontend,
 ) -> zbus::fdo::Result<()> {
     check_handle(handle, REQUEST_PREFIX)?;
     let request = Request {
         cancel,
         path: handle.to_string(),
+        frontend: frontend.clone(),
     };
     server.at(handle.clone(), request).await?;
     Ok(())
@@ -300,6 +345,7 @@ type Sessions = Arc<Mutex<HashMap<String, SessionData>>>;
 struct ScreenCast {
     sessions: Sessions,
     source_types: u32,
+    frontend: Frontend,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.ScreenCast")]
@@ -328,6 +374,7 @@ impl ScreenCast {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, Results)> {
+        self.frontend.check(&hdr)?;
         check_session(&session_handle)?;
         log::info!("CreateSession {} for {app_id:?}", session_handle.as_str());
         let key = session_handle.to_string();
@@ -358,11 +405,13 @@ impl ScreenCast {
 
     async fn select_sources(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         _app_id: String,
         options: SelectSourcesOptions,
     ) -> zbus::fdo::Result<(u32, Results)> {
+        self.frontend.check(&hdr)?;
         let mut sessions = self.sessions.lock().unwrap();
         let Some(s) = sessions
             .get_mut(session_handle.as_str())
@@ -390,6 +439,7 @@ impl ScreenCast {
     #[allow(clippy::too_many_arguments)]
     async fn start(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         app_id: String,
@@ -398,9 +448,21 @@ impl ScreenCast {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, StartResults)> {
+        self.frontend.check(&hdr)?;
         let key = session_handle.to_string();
         let parent = dialog::parent_handle(&parent_window);
-        match pick_and_cast(&self.sessions, server, conn, &handle, &key, &app_id, parent).await {
+        match pick_and_cast(
+            &self.sessions,
+            &self.frontend,
+            server,
+            conn,
+            &handle,
+            &key,
+            &app_id,
+            parent,
+        )
+        .await
+        {
             Ok(st) => Ok((
                 RESPONSE_OK,
                 StartResults {
@@ -426,8 +488,10 @@ pub(crate) struct Started {
     pub(crate) restore_data: Option<(String, u32, OwnedValue)>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn pick_and_cast(
     sessions: &Sessions,
+    frontend: &Frontend,
     server: &zbus::ObjectServer,
     conn: &zbus::Connection,
     handle: &ObjectPath<'_>,
@@ -443,7 +507,7 @@ pub(crate) async fn pick_and_cast(
         (s.types, s.cursor_mode, s.persist_mode, s.restore.clone())
     };
     let cancel = Arc::new(AtomicBool::new(false));
-    if let Err(e) = export_request(server, handle, cancel.clone()).await {
+    if let Err(e) = export_request(server, handle, cancel.clone(), frontend).await {
         log::warn!("Start: {e}");
         return Err(RESPONSE_OTHER);
     }
@@ -716,13 +780,16 @@ fn choose(
 struct Request {
     cancel: Arc<AtomicBool>,
     path: String,
+    frontend: Frontend,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Request")]
 impl Request {
-    fn close(&self) {
+    fn close(&self, #[zbus(header)] hdr: zbus::message::Header<'_>) -> zbus::fdo::Result<()> {
+        self.frontend.check(&hdr)?;
         log::info!("Request {} closed", self.path);
         self.cancel.store(true, Ordering::SeqCst);
+        Ok(())
     }
 }
 
@@ -733,9 +800,18 @@ struct Session {
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Session")]
 impl Session {
-    async fn close(&self, #[zbus(connection)] conn: &zbus::Connection) -> zbus::fdo::Result<()> {
+    async fn close(
+        &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> zbus::fdo::Result<()> {
+        let data = {
+            let mut sessions = self.sessions.lock().unwrap();
+            let owner = sessions.get(self.path.as_str()).map(|s| s.owner.as_str());
+            check_owner(&hdr, owner)?;
+            sessions.remove(self.path.as_str())
+        };
         log::info!("Session {} closed", self.path.as_str());
-        let data = self.sessions.lock().unwrap().remove(self.path.as_str());
         end_session(conn, self.path.as_str(), data).await;
         Ok(())
     }
@@ -799,28 +875,38 @@ fn probe_dmabuf(mut wl: Wayland) -> Result<(), String> {
     Ok(())
 }
 
+/// Serve every interface on a new session-bus connection; `BUS_NAME` is
+/// requested once `frontend` is known.
 async fn serve(
     sessions: Sessions,
     source_types: u32,
     link: Option<inputlink::Link>,
     notes: notification::Shared,
     inhibits: inhibit::Shared,
+    frontend: &Frontend,
 ) -> zbus::Result<zbus::Connection> {
+    let frontend = || frontend.clone();
     zbus::connection::Builder::session()?
-        .name(BUS_NAME)?
         .serve_at(
             PATH,
             ScreenCast {
                 sessions: sessions.clone(),
                 source_types,
+                frontend: frontend(),
             },
         )?
-        .serve_at(PATH, screenshot::Screenshot)?
+        .serve_at(
+            PATH,
+            screenshot::Screenshot {
+                frontend: frontend(),
+            },
+        )?
         .serve_at(
             PATH,
             remotedesktop::RemoteDesktop {
                 sessions: sessions.clone(),
                 link: link.clone(),
+                frontend: frontend(),
             },
         )?
         .serve_at(
@@ -828,17 +914,42 @@ async fn serve(
             globalshortcuts::GlobalShortcuts {
                 sessions: sessions.clone(),
                 link: link.clone(),
+                frontend: frontend(),
             },
         )?
-        .serve_at(PATH, inputcapture::InputCapture { sessions, link })?
-        .serve_at(PATH, access::Access)?
-        .serve_at(PATH, filechooser::FileChooser)?
-        .serve_at(PATH, appchooser::AppChooser::default())?
-        .serve_at(PATH, notification::Notification { book: notes })?
+        .serve_at(
+            PATH,
+            inputcapture::InputCapture {
+                sessions,
+                link,
+                frontend: frontend(),
+            },
+        )?
+        .serve_at(
+            PATH,
+            access::Access {
+                frontend: frontend(),
+            },
+        )?
+        .serve_at(
+            PATH,
+            filechooser::FileChooser {
+                frontend: frontend(),
+            },
+        )?
+        .serve_at(PATH, appchooser::AppChooser::new(frontend()))?
+        .serve_at(
+            PATH,
+            notification::Notification {
+                book: notes,
+                frontend: frontend(),
+            },
+        )?
         .serve_at(
             PATH,
             inhibit::Inhibit {
                 shared: inhibits.clone(),
+                frontend: frontend(),
             },
         )?
         .serve_at(PATH, inhibit::SessionEnd { shared: inhibits })?
@@ -955,18 +1066,28 @@ fn main() {
     zbus::block_on(async move {
         let notes = notification::Shared::default();
         let (inhibits, idle) = inhibit::shared();
+        let frontend = Frontend::default();
+        let fail = |e: zbus::Error| -> ! {
+            log::error!("could not serve {BUS_NAME}: {e}");
+            std::process::exit(1);
+        };
         let conn = serve(
             sessions.clone(),
             source_types,
             link,
             notes.clone(),
             inhibits.clone(),
+            &frontend,
         )
         .await
-        .unwrap_or_else(|e| {
-            log::error!("could not serve {BUS_NAME}: {e}");
-            std::process::exit(1);
-        });
+        .unwrap_or_else(|e| fail(e));
+        // The frontend's calls wait in the bus until BUS_NAME is ours, so its
+        // owner is known before the first one arrives.
+        let changes = owner_changes(&conn).await.unwrap_or_else(|e| fail(e));
+        frontend.set(reprisebus::name_owner(&conn, FRONTEND).await);
+        conn.request_name(BUS_NAME)
+            .await
+            .unwrap_or_else(|e| fail(e));
         conn.executor()
             .spawn(notification::watch(conn.clone(), notes), "notifications")
             .detach();
@@ -980,7 +1101,7 @@ fn main() {
             )
             .detach();
         owner::exit_with(compositor);
-        watch_frontends(conn, sessions, inhibits).await;
+        watch_frontends(conn, changes, frontend, sessions, inhibits).await;
         std::future::pending::<()>().await;
     });
 }
@@ -1011,6 +1132,21 @@ mod tests {
         assert!(check_session(&path(PATH)).is_err());
         assert!(check_session(&path("/org/freedesktop/portal/desktop/session")).is_err());
         assert!(check_session(&path("/org/freedesktop/portal/desktop/sessions/x")).is_err());
+    }
+
+    #[test]
+    fn only_the_frontends_unique_name_may_call() {
+        assert!(check_frontend(Some(":1.42"), Some(":1.42")).is_ok());
+        for (sender, owner) in [
+            (Some(":1.43"), Some(":1.42")),
+            (Some(":1.42"), None),
+            (None, Some(":1.42")),
+        ] {
+            assert!(matches!(
+                check_frontend(sender, owner),
+                Err(zbus::fdo::Error::AccessDenied(_))
+            ));
+        }
     }
 
     #[test]

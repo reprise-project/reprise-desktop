@@ -29,13 +29,16 @@ const SUBTITLE_LINES: usize = 4;
 const BODY_LINES: usize = 12;
 const FALLBACK_ICON: &str = "dialog-question";
 
-pub struct Access;
+pub struct Access {
+    pub frontend: crate::Frontend,
+}
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Access")]
 impl Access {
     #[allow(clippy::too_many_arguments)]
     async fn access_dialog(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         handle: ObjectPath<'_>,
         app_id: String,
         parent_window: String,
@@ -45,10 +48,11 @@ impl Access {
         options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         let input = Input::from_call(&parent_window, title, subtitle, body, &options);
         // The Request object lets the frontend cancel the prompt.
         let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, &handle, cancel.clone()).await?;
+        crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
         let out = blocking::unblock(move || ask(&input, cancel)).await;
         let _ = server.remove::<crate::Request, _>(handle.clone()).await;
         log::info!(

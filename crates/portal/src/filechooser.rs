@@ -137,7 +137,9 @@ fn reply(out: &Output, filters: &[Filter]) -> (u32, HashMap<String, OwnedValue>)
     (crate::RESPONSE_OK, r)
 }
 
-pub struct FileChooser;
+pub struct FileChooser {
+    pub frontend: crate::Frontend,
+}
 
 /// SaveFile's starting name: `current_file`'s file name, else
 /// `current_name`; and the real bytes when the name is not UTF-8, so a
@@ -228,12 +230,13 @@ fn base_input(
 
 impl FileChooser {
     async fn run(
+        &self,
         server: &zbus::ObjectServer,
         handle: &ObjectPath<'_>,
         input: Input,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
         let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, handle, cancel.clone()).await?;
+        crate::export_request(server, handle, cancel.clone(), &self.frontend).await?;
         let filters = input.filters.clone();
         let out: Output = blocking::unblock(move || {
             dialog::run_toml(&["--file"], &input, &cancel)
@@ -255,6 +258,7 @@ impl FileChooser {
     #[allow(clippy::too_many_arguments)]
     async fn open_file(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         handle: ObjectPath<'_>,
         app_id: String,
         parent_window: String,
@@ -262,8 +266,9 @@ impl FileChooser {
         options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         log::info!("OpenFile for {app_id:?}");
-        Self::run(
+        self.run(
             server,
             &handle,
             base_input(Kind::Open, &parent_window, title, &options),
@@ -274,6 +279,7 @@ impl FileChooser {
     #[allow(clippy::too_many_arguments)]
     async fn save_file(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         handle: ObjectPath<'_>,
         app_id: String,
         parent_window: String,
@@ -281,15 +287,17 @@ impl FileChooser {
         options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         log::info!("SaveFile for {app_id:?}");
         let mut input = base_input(Kind::Save, &parent_window, title, &options);
         (input.name, input.name_raw) = start_name(&options);
-        Self::run(server, &handle, input).await
+        self.run(server, &handle, input).await
     }
 
     #[allow(clippy::too_many_arguments)]
     async fn save_files(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         handle: ObjectPath<'_>,
         app_id: String,
         parent_window: String,
@@ -297,6 +305,7 @@ impl FileChooser {
         options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         log::info!("SaveFiles for {app_id:?}");
         let mut input = base_input(Kind::SaveFiles, &parent_window, title, &options);
         let files: Vec<Vec<u8>> = match options.get("files") {
@@ -321,7 +330,7 @@ impl FileChooser {
             return Ok((crate::RESPONSE_OTHER, HashMap::new()));
         }
         input.files = files;
-        Self::run(server, &handle, input).await
+        self.run(server, &handle, input).await
     }
 }
 

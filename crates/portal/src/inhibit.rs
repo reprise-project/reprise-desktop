@@ -187,6 +187,7 @@ pub async fn run_idle(conn: zbus::Connection, rx: async_channel::Receiver<IdleMs
 
 pub struct Inhibit {
     pub shared: Shared,
+    pub frontend: crate::Frontend,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Inhibit")]
@@ -202,6 +203,7 @@ impl Inhibit {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<()> {
+        self.frontend.check(&hdr)?;
         crate::check_handle(&handle, crate::REQUEST_PREFIX)?;
         let reason = match options.get("reason") {
             Some(Value::Str(s)) => clip(s.as_str()),
@@ -269,6 +271,7 @@ impl Inhibit {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<u32> {
+        self.frontend.check(&hdr)?;
         crate::check_session(&session_handle)?;
         log::info!("Inhibit monitor {} for {app_id:?}", session_handle.as_str());
         self.shared
@@ -572,13 +575,20 @@ struct InhibitRequest {
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Request")]
 impl InhibitRequest {
-    async fn close(&self, #[zbus(object_server)] server: &zbus::ObjectServer) {
+    async fn close(
+        &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(object_server)] server: &zbus::ObjectServer,
+    ) -> zbus::fdo::Result<()> {
+        let owner = (self.shared.held.lock().unwrap().get(&self.path)).map(|h| h.owner.clone());
+        crate::check_owner(&hdr, owner.as_deref())?;
         log::info!("Inhibit {} closed", self.path);
         let held = self.shared.held.lock().unwrap().remove(&self.path);
         if let Some(h) = held {
             self.shared.release(h);
         }
         let _ = server.remove::<InhibitRequest, _>(self.path.as_str()).await;
+        Ok(())
     }
 }
 
@@ -591,9 +601,14 @@ struct Monitor {
 impl Monitor {
     async fn close(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
-    ) {
+    ) -> zbus::fdo::Result<()> {
+        let owner = (self.shared.monitors.lock().unwrap())
+            .get(self.path.as_str())
+            .cloned();
+        crate::check_owner(&hdr, owner.as_deref())?;
         log::info!("Inhibit monitor {} closed", self.path.as_str());
         self.shared
             .monitors
@@ -602,6 +617,7 @@ impl Monitor {
             .remove(self.path.as_str());
         let _ = Monitor::closed(&emitter).await;
         let _ = server.remove::<Monitor, _>(self.path.as_str()).await;
+        Ok(())
     }
 
     #[zbus(signal)]
@@ -761,12 +777,16 @@ mod tests {
                 .await
                 .unwrap();
             let (shared, rx) = super::shared();
+            let client = zbus::Connection::session().await.unwrap();
+            let frontend = crate::Frontend::default();
+            frontend.set(client.unique_name().map(|n| n.to_string()));
             let portal = zbus::connection::Builder::session()
                 .unwrap()
                 .serve_at(
                     crate::PATH,
                     Inhibit {
                         shared: shared.clone(),
+                        frontend,
                     },
                 )
                 .unwrap()
@@ -777,7 +797,6 @@ mod tests {
                 .executor()
                 .spawn(run_idle(portal.clone(), rx), "idle")
                 .detach();
-            let client = zbus::Connection::session().await.unwrap();
             let dest = portal.unique_name().unwrap().to_string();
             let handles = [
                 "/org/freedesktop/portal/desktop/request/1_1/a",
@@ -850,14 +869,22 @@ mod tests {
         use futures_lite::StreamExt;
         zbus::block_on(async {
             let (shared, _rx) = super::shared();
+            let client = zbus::Connection::session().await.unwrap();
+            let frontend = crate::Frontend::default();
+            frontend.set(client.unique_name().map(|n| n.to_string()));
             let portal = zbus::connection::Builder::session()
                 .unwrap()
-                .serve_at(crate::PATH, Inhibit { shared })
+                .serve_at(
+                    crate::PATH,
+                    Inhibit {
+                        shared: shared.clone(),
+                        frontend,
+                    },
+                )
                 .unwrap()
                 .build()
                 .await
                 .unwrap();
-            let client = zbus::Connection::session().await.unwrap();
             let mut states = zbus::MessageStream::for_match_rule(
                 zbus::MatchRule::builder()
                     .msg_type(zbus::message::Type::Signal)
@@ -872,6 +899,42 @@ mod tests {
             .await
             .unwrap();
             let session = "/org/freedesktop/portal/desktop/session/1_1/m";
+            let monitor = |caller: zbus::Connection| {
+                let dest = portal.unique_name().unwrap().to_string();
+                async move {
+                    caller
+                        .call_method(
+                            Some(dest.as_str()),
+                            crate::PATH,
+                            Some("org.freedesktop.impl.portal.Inhibit"),
+                            "CreateMonitor",
+                            &(
+                                ObjectPath::try_from(
+                                    "/org/freedesktop/portal/desktop/request/1_1/r",
+                                )
+                                .unwrap(),
+                                ObjectPath::try_from(session).unwrap(),
+                                "org.example.App",
+                                "",
+                            ),
+                        )
+                        .await
+                }
+            };
+            let stranger = zbus::connection::Builder::session()
+                .unwrap()
+                .build()
+                .await
+                .unwrap();
+            let refused = monitor(stranger).await.unwrap_err();
+            assert!(
+                matches!(
+                    zbus::fdo::Error::from(refused),
+                    zbus::fdo::Error::AccessDenied(_)
+                ),
+                "a peer other than the frontend is refused"
+            );
+            assert!(shared.monitors.lock().unwrap().is_empty());
             let reply = client
                 .call_method(
                     Some(portal.unique_name().unwrap().as_str()),
