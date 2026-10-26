@@ -14,6 +14,7 @@ use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::TextEdit;
 use reprisekit::theme::TextUnits;
+use zeroize::Zeroizing;
 
 use crate::acct::{Op, User};
 use crate::picture::Source;
@@ -368,10 +369,10 @@ impl Props {
             });
         }
         if self.password_typed() {
-            let new = page.edit_text(NEW).to_string();
+            let new = Zeroizing::new(page.edit_text(NEW).to_string());
             ops.push(if self.user.you {
                 Op::OwnPassword {
-                    current: page.edit_text(CURRENT).to_string(),
+                    current: Zeroizing::new(page.edit_text(CURRENT).to_string()),
                     new,
                 }
             } else if page.checked(AT_LOGIN) == Some(true) {
@@ -758,8 +759,8 @@ mod tests {
         assert_eq!(
             p.event(propsheet::Event::Ok, no_file),
             Outcome::ApplyAndClose(vec![Op::OwnPassword {
-                current: "old".into(),
-                new: "newpass1".into()
+                current: Zeroizing::new("old".into()),
+                new: Zeroizing::new("newpass1".into())
             }])
         );
         p.unapplied();
