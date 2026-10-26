@@ -234,7 +234,8 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
             if let PrimaryPlaneElement::Swapchain(e) = &r.primary_element {
                 crate::gpufence::issued(&b.renderer, &e.sync);
             }
-            scene.update_surfaces(&output, &r.states);
+            let pass = scene.surface_pass(&output);
+            scene.update_surfaces(&pass, &r.states);
             if r.is_empty {
                 empty = true;
                 false
@@ -244,7 +245,7 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
                 {
                     count_damage(s, &e.damage, &output);
                 }
-                feedback = Some(scene.take_presentation_feedback(&output, &r.states));
+                feedback = Some(scene.take_presentation_feedback(&pass, &r.states));
                 true
             }
         }
@@ -735,9 +736,8 @@ fn callbacks_done(state: &mut State, crtc: crtc::Handle) {
 
 fn send_frame_callbacks(state: &mut State, output: &Output) {
     let now = state.now();
-    state
-        .scene
-        .send_frames(output, now, Some(Duration::from_secs(1)));
+    let pass = state.scene.surface_pass(output);
+    (state.scene).send_frames(&pass, now, Some(Duration::from_secs(1)));
     if let smithay::input::pointer::CursorImageStatus::Surface(s) = &state.cursor {
         smithay::desktop::utils::send_frames_surface_tree(
             s,

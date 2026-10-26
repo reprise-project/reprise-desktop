@@ -180,7 +180,11 @@ impl<R: Renderer, D> Scene<R, D> {
 
     /// The output showing the largest part of `node`, ties to the first added; `None` if none shows it.
     pub fn primary_output(&self, node: impl Into<NodeId>) -> Option<Output> {
-        let e = self.extents(node)?;
+        self.primary_in(self.extents(node)?)
+    }
+
+    /// The output showing the largest part of `e` (layout), ties to the first added.
+    pub(crate) fn primary_in(&self, e: Rectangle<i32, Logical>) -> Option<Output> {
         let mut best: Option<(i64, &Output)> = None;
         for o in &self.outputs {
             let Some(i) = output_rect(o).and_then(|r| r.intersection(e)) else {

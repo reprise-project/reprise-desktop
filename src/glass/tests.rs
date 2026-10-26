@@ -417,6 +417,54 @@ fn closed_glass_leaves_the_placed_list_with_blur_frames_off() {
     assert_eq!(ctx.nodes.borrow().len(), 0);
 }
 
+/// A wallpaper-like node that counts the walks asking for its elements.
+struct Counted(Rc<Cell<u32>>);
+
+impl CustomNode<GlesRenderer> for Counted {
+    fn size(&self) -> Size<i32, Logical> {
+        (320, 200).into()
+    }
+    fn in_backdrop(&self) -> bool {
+        true
+    }
+    fn elements(
+        &self,
+        _renderer: &mut GlesRenderer,
+        _location: Point<f64, Physical>,
+        _scale: Scale<f64>,
+        _alpha: f32,
+    ) -> Vec<CustomElement<GlesRenderer>> {
+        self.0.set(self.0.get() + 1);
+        Vec::new()
+    }
+}
+
+#[test]
+fn the_outputs_backdrop_walks_the_scene_once_for_pieces_apart() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        eprintln!("skipped: no renderer");
+        return;
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let mut scene = DeskScene::new();
+    let root = scene.root();
+    let walks = Rc::new(Cell::new(0));
+    scene.custom_create(root, Box::new(Counted(walks.clone())));
+    let windows = scene.tree_create(root);
+    let _left = glass_window(&mut scene, &ctx, windows, (0, 0), (40, 30), None);
+    let _right = glass_window(&mut scene, &ctx, windows, (260, 160), (40, 30), None);
+    let output = test_output_of(320, 200);
+    ctx.begin(&output, Settings::default(), Quality::Full, Hold::No);
+    let (area, seen) = (Rectangle::from_size((320, 200).into()), (320, 200).into());
+    let reads = ctx.reads_on(&scene, area, seen, 1.0, &[]);
+    let cuts = pieces(reads.iter().filter_map(|r| r.feed).map(|f| shrunk(f, 2)));
+    assert_eq!(cuts.len(), 2, "the two glasses read apart: {cuts:?}");
+    let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
+    ctx.update_backdrop(&mut renderer, &scene, &output, clear, true);
+    assert_eq!(walks.get(), 1);
+}
+
 fn test_output_of(w: i32, h: i32) -> Output {
     let o = test_output();
     let mode = smithay::output::Mode {
