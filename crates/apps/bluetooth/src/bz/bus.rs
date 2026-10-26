@@ -50,25 +50,12 @@ impl BzHandle {
     }
 }
 
-#[derive(Clone)]
-pub(super) struct Poster {
-    tx: Sender<BzMsg>,
-    waker: repriseapp::Waker,
-}
-
-impl Poster {
-    pub(super) fn post(&self, m: BzMsg) {
-        if self.tx.send(m).is_ok() {
-            self.waker.wake();
-        }
-    }
-}
+pub(super) type Poster = repriseapp::Poster<BzMsg>;
 
 pub fn watch(waker: repriseapp::Waker) -> (Receiver<BzMsg>, BzHandle) {
-    let (tx, rx) = channel();
     let (done_tx, done_rx) = channel();
     let (cmd_tx, cmd_rx) = async_channel::unbounded::<Cmd>();
-    let poster = Poster { tx, waker };
+    let (poster, rx) = Poster::channel(waker);
     if let Err(e) = std::thread::Builder::new()
         .name("reprise-bluetooth-bz".into())
         .spawn(move || zbus::block_on(run(poster, cmd_rx, done_tx)))

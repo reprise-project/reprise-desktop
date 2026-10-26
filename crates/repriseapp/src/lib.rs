@@ -92,7 +92,7 @@ pub use app::{
 pub use clipboard::{
     clipboard_has_files, clipboard_has_text, fake_clipboard_files, fake_clipboard_text,
 };
-pub use ctx::{Ctx, Waker};
+pub use ctx::{Ctx, Poster, Waker};
 pub use deliver::TICK_MS;
 pub use dnd::{Accept, Actions, DragAction, DragOut, DropKind, Dropped, Offered, Uri};
 pub use event::{BTN_LEFT, BTN_RIGHT, Event, KeyInput, Mods, PointerInput};

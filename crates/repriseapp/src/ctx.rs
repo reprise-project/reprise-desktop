@@ -9,6 +9,7 @@ use reprisekit::theme::Theme;
 use smithay_client_toolkit::reexports::calloop::ping::{Ping, make_ping};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 pub struct Ctx {
     /// The look's theme. Its text stays at 100% unless the program is
@@ -121,5 +122,35 @@ impl Waker {
     pub fn noop() -> Waker {
         let (ping, _source) = make_ping().expect("ping");
         Waker(Arc::new(ping))
+    }
+}
+
+/// A worker thread's end of a channel to the program: each message sent wakes the event loop,
+/// which drains the [`Receiver`] on `Event::Wake`.
+pub struct Poster<M> {
+    tx: Sender<M>,
+    waker: Waker,
+}
+
+impl<M> Clone for Poster<M> {
+    fn clone(&self) -> Self {
+        Poster {
+            tx: self.tx.clone(),
+            waker: self.waker.clone(),
+        }
+    }
+}
+
+impl<M> Poster<M> {
+    pub fn channel(waker: Waker) -> (Poster<M>, Receiver<M>) {
+        let (tx, rx) = channel();
+        (Poster { tx, waker }, rx)
+    }
+
+    /// Sends `m` and wakes the loop; a program that has dropped its receiver gets neither.
+    pub fn post(&self, m: M) {
+        if self.tx.send(m).is_ok() {
+            self.waker.wake();
+        }
     }
 }
