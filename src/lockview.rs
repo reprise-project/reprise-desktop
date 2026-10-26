@@ -416,6 +416,7 @@ pub fn unlock(state: &mut State) {
             None => state.focus_top(),
         }
     }
+    state.ime_sync_grab();
     crate::autohideview::poke(state);
     let p = state.pointer_location();
     state.repoint(p, InputTime::now());

@@ -688,7 +688,7 @@ impl KeyboardGrab<State> for SplitGrab {
         serial: Serial,
         time: smithay::backend::input::InputTime,
     ) {
-        let grab = self.handle.keyboard_grabbed();
+        let grab = self.handle.keyboard_grabbed() && !keys_shut(data);
         let pressed = key_state == KeyState::Pressed;
         if !data.ime.vk_key && self.split.goes_to_grab(keycode.raw(), pressed, grab) {
             self.im
@@ -740,6 +740,10 @@ pub fn ime_holds_keyboard(kb: &smithay::input::keyboard::KeyboardHandle<State>) 
 
 impl State {
     pub fn ime_sync_grab(&mut self) {
+        if self.is_locked() {
+            self.ime_park_grab();
+            return;
+        }
         self.ime_return_popup_grab();
         let handle = self.seat.input_method().clone();
         if !handle.keyboard_grabbed() {
@@ -777,6 +781,25 @@ impl State {
         kb.set_grab(self, grab, SERIAL_COUNTER.next_serial());
         if regained {
             self.ime_grab_modifiers();
+        }
+    }
+
+    /// Smithay installs an input method's grab whenever it asks, the lock
+    /// notwithstanding: it comes off the keyboard and goes back on unlock.
+    fn ime_park_grab(&mut self) {
+        let Some(kb) = self.seat.get_keyboard() else {
+            return;
+        };
+        let held = kb
+            .with_grab(|_, g| {
+                g.downcast_ref::<InputMethodKeyboardGrab>()
+                    .cloned()
+                    .or_else(|| g.downcast_ref::<SplitGrab>().map(|s| s.im.clone()))
+            })
+            .flatten();
+        if let Some(im) = held {
+            self.ime.grab = Some(im);
+            kb.unset_grab(self);
         }
     }
 
@@ -1515,6 +1538,64 @@ mod harness_tests {
         h.key(KEY_LEFTSHIFT, false);
         h.roundtrip(&mut m);
         assert_eq!(m.side.ims[0].grab_mods, [0], "Shift up");
+    }
+
+    #[test]
+    fn keys_under_a_locker_reach_its_surface_and_never_the_input_methods_grab() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut l = h.connect();
+        let (_lock, surface) = h.map_lock_surface(&mut l);
+        let mut m = input_method(&mut h, false);
+        m.grab_keyboard(0);
+        h.roundtrip(&mut m);
+        assert!(!ime_holds_keyboard(&h.state.seat.get_keyboard().unwrap()));
+        l.side.keys.clear();
+        tap(&mut h, KEY_A);
+        h.roundtrip(&mut m);
+        h.roundtrip(&mut l);
+        assert_eq!(l.side.keyboard_focus.as_ref(), Some(&surface));
+        assert_eq!(
+            l.side.keys,
+            [(KEY_A, true), (KEY_A, false)],
+            "the locker hears the key"
+        );
+        assert!(
+            m.side.ims[0].grab_keys.is_empty(),
+            "the grab heard {:?}",
+            m.side.ims[0].grab_keys
+        );
+    }
+
+    #[test]
+    fn the_input_methods_grab_waits_out_the_lock() {
+        let (mut h, _c, _) = focused_client();
+        let mut m = input_method(&mut h, true);
+        let mut l = h.connect();
+        h.map_lock_surface(&mut l);
+        h.roundtrip(&mut m);
+        m.side.ims[0].grab_keys.clear();
+        tap(&mut h, KEY_A);
+        h.roundtrip(&mut m);
+        h.roundtrip(&mut l);
+        assert!(
+            m.side.ims[0].grab_keys.is_empty(),
+            "the grab heard {:?}",
+            m.side.ims[0].grab_keys
+        );
+        assert_eq!(
+            l.side.keys,
+            [(KEY_A, true), (KEY_A, false)],
+            "the locker hears the key"
+        );
+        crate::lockview::unlock(&mut h.state);
+        assert!(
+            ime_holds_keyboard(&h.state.seat.get_keyboard().unwrap()),
+            "the grab is back"
+        );
+        tap(&mut h, KEY_B);
+        h.roundtrip(&mut m);
+        assert_eq!(m.side.ims[0].grab_keys, [(KEY_B, true), (KEY_B, false)]);
     }
 
     #[test]
