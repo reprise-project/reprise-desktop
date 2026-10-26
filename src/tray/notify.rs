@@ -165,7 +165,10 @@ pub fn hints(mut raw: HashMap<String, Hint<'_>>) -> Hints<'_> {
     }
 }
 
-const MAX_IMAGE_SIDE: i32 = 8192;
+/// Notification pictures show at most 96 px a side.
+const MAX_IMAGE_SIDE: i32 = 1024;
+/// Bytes a picture file's decoder may allocate: a 1024 px square of 16-bit RGBA, twice.
+const MAX_PICTURE_ALLOC: u64 = 2 * 8 * 1024 * 1024;
 
 /// `image-data` decoded at each of [`super::NOTIFY_SIZES`], fitted inside
 /// a square canvas with its aspect kept and the rest clear.
@@ -215,7 +218,7 @@ pub fn image_sources(img: &ImageData) -> Vec<IconSource> {
 
 /// A picture file the icon loader leaves alone, a JPEG cover say, as [`image_sources`] gives.
 pub fn picture_file_sources(path: &Path) -> Vec<IconSource> {
-    let Ok(img) = crate::wallpaper::decode(path) else {
+    let Ok(img) = decode_picture(path) else {
         return Vec::new();
     };
     let rgba = img.into_rgba8();
@@ -229,6 +232,10 @@ pub fn picture_file_sources(path: &Path) -> Vec<IconSource> {
         channels: 4,
         data: rgba.as_raw(),
     })
+}
+
+fn decode_picture(path: &Path) -> image::ImageResult<image::DynamicImage> {
+    crate::wallpaper::decode_with(path, MAX_IMAGE_SIDE as u32, Some(MAX_PICTURE_ALLOC))
 }
 
 pub fn desktop_id(hint: &str) -> Option<String> {
@@ -304,6 +311,45 @@ fn attribute(tag: &str, name: &str) -> Option<String> {
 mod tests {
     use super::*;
     use zbus::zvariant::{LE, Value, serialized::Context, to_bytes};
+
+    /// A PNG of `w` x `h` with no image data: a decoder that reads past the header fails on it.
+    fn png_header(w: u32, h: u32) -> Vec<u8> {
+        fn crc(bytes: &[u8]) -> u32 {
+            let mut c = !0u32;
+            for &b in bytes {
+                c ^= u32::from(b);
+                for _ in 0..8 {
+                    c = if c & 1 != 0 {
+                        0xEDB8_8320 ^ (c >> 1)
+                    } else {
+                        c >> 1
+                    };
+                }
+            }
+            !c
+        }
+        let mut chunk = b"IHDR".to_vec();
+        chunk.extend(w.to_be_bytes());
+        chunk.extend(h.to_be_bytes());
+        chunk.extend([8, 6, 0, 0, 0]);
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend(13u32.to_be_bytes());
+        png.extend(&chunk);
+        png.extend(crc(&chunk).to_be_bytes());
+        png
+    }
+
+    #[test]
+    fn a_picture_file_past_the_side_cap_is_refused_from_its_header() {
+        let path = std::env::temp_dir().join(format!("reprise-notify-{}.png", std::process::id()));
+        std::fs::write(&path, png_header(4096, 4096)).unwrap();
+        let got = decode_picture(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            matches!(got, Err(image::ImageError::Limits(_))),
+            "refused for its size: {got:?}"
+        );
+    }
 
     #[test]
     fn markup_becomes_plain_text() {
