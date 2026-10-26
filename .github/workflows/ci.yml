@@ -18,6 +18,8 @@ jobs:
       # Where rust-cache looks for the registry; the builds run as builder.
       CARGO_HOME: /home/builder/.cargo
       ARCH_ARCHIVE: 2026/10/25
+      # A font-gated test fails instead of skipping; see CONTRIBUTING.md.
+      REPRISE_TEST_STRICT: 1
     steps:
       # git before the checkout, so it clones instead of downloading the tree: the licence
       # test lists tracked files. The action pins the mirror again; the second sync is a no-op.
@@ -38,6 +40,7 @@ jobs:
     env:
       CARGO_INCREMENTAL: 0
       CARGO_HOME: /home/builder/.cargo
+      REPRISE_TEST_STRICT: 1
     steps:
       - run: pacman -Syu --noconfirm --needed git
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

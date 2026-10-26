@@ -1092,7 +1092,7 @@ mod tests {
             .iter()
             .any(|f| text.has_face(f));
         if !found {
-            eprintln!("skipped: none of Segoe UI, Noto Sans or DejaVu Sans is installed");
+            crate::pins::skipped("none of Segoe UI, Noto Sans or DejaVu Sans is installed");
         }
         found
     }
@@ -1721,8 +1721,7 @@ mod tests {
     fn the_faces_capitals_stand_9_and_11_rows_tall() {
         let text = TextRenderer::load(&font());
         if !text.has_face("Segoe UI") {
-            eprintln!("skipped: Segoe UI is not installed");
-            return;
+            crate::pins::skip!(face "Segoe UI");
         }
         let rows = |px: u32| {
             let mut c = Canvas::new(40, 40);

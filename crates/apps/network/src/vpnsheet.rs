@@ -1049,6 +1049,7 @@ mod tests {
             ..Default::default()
         });
         if !text.has_face("DejaVu Sans") {
+            reprisekit::pins::skipped("DejaVu Sans is not installed");
             return;
         }
         let mut s = WgSheet::new(&cfg(), None);

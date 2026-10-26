@@ -149,10 +149,11 @@ pub(super) fn needs_scan(db: &Database, families: &[String]) -> bool {
 }
 
 /// Whether the default UI face is the Tahoma `REPRISE_TEST_FONTS` supplies, which the pixel tests
-/// are pinned to; they skip without it. Cached.
+/// are pinned to; they skip without it, which fails under `REPRISE_TEST_STRICT`. Cached.
+#[track_caller]
 pub fn test_tahoma() -> bool {
     static FOUND: OnceLock<bool> = OnceLock::new();
-    *FOUND.get_or_init(|| {
+    let found = *FOUND.get_or_init(|| {
         let Some(dir) = test_fonts_dir() else {
             return false;
         };
@@ -162,7 +163,11 @@ pub fn test_tahoma() -> bool {
         families.first().is_some_and(|f| f == "Tahoma")
             && find_face(&db, &families, false, Weight::NORMAL, fontdb::Style::Normal)
                 .is_some_and(|(path, _, family, _)| family == "Tahoma" && path.starts_with(&dir))
-    })
+    });
+    if !found {
+        crate::pins::skipped("REPRISE_TEST_FONTS holds no Tahoma");
+    }
+    found
 }
 
 /// The second dialog font `spec` names, a family (exact match) or an absolute font file path;

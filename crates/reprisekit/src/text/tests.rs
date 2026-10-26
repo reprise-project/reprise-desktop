@@ -333,7 +333,7 @@ fn italic_is_the_families_slanted_face_when_installed() {
     };
     let t = TextRenderer::load(&cfg);
     if !t.has_face("DejaVu Sans") {
-        return;
+        crate::pins::skip!("DejaVu Sans is not installed");
     }
     let slanted = t.italic();
     assert!(slanted.is_italic(), "DejaVu Sans Oblique");
