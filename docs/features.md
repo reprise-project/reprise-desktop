@@ -322,8 +322,10 @@ are.
   computer stays up.
   End Now overrides the inhibitors the list showed, which usually asks for
   a password; a critical battery overrides them too.
-- **Session restore.** `[session] restore = true` starts the programs you
-  left open again at the next login, on the desktops they were on. Tab
+- **Session restore.** The programs you left open start again at the next
+  login, on the desktops they were on; `[session] restore = false` turns it
+  off. The list is taken at Log Off, Turn Off and Restart, and every 5
+  seconds while the session runs, so a crash leaves a fresh one. Tab
   groups come back in their tab order with the same tab shown, each where
   it was: same screen, size and maximized state, on the primary screen
   when its screen is gone. A window that opens with the title it had goes

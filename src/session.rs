@@ -4,9 +4,9 @@
 //! memory's job (`windowrules::Remembered`).
 //!
 //! The list is taken when Log Off, Turn Off or Restart starts, before the
-//! windows are asked to close (`sessionend`), or when the loop stops for a
-//! signal. It lives in the state file and is kept after the login that
-//! restores it, so a crashed session gets the last clean one back.
+//! windows are asked to close (`sessionend`), when the loop stops for a
+//! signal, and every `SAVE_EVERY` while the session runs, so a crash leaves
+//! a fresh one. It lives in the state file.
 //!
 //! Tab groups come back too: each saved group's windows, matched by app id
 //! (and title, when a window maps with the one it had) as they map, join in their old tab order on the group's desktop and in
@@ -37,6 +37,9 @@ pub const RESTART_SETTLE: Duration = Duration::from_secs(4);
 /// How long after a window takes a tab slot by map order alone a title it
 /// takes can still move it.
 const GUESS_SETTLE: Duration = Duration::from_secs(10);
+
+/// How often the running session's list is taken again, written only when it changed.
+pub const SAVE_EVERY: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedApp {
@@ -200,6 +203,11 @@ impl Pending {
     /// `app_id`'s first window has mapped: its next ones open as usual.
     pub fn mapped(&mut self, app_id: &str) {
         self.desktops.retain(|(a, _)| a != app_id);
+    }
+
+    /// Whether a restored app's first window is still awaited at `now`.
+    pub fn waiting(&self, now: Instant) -> bool {
+        self.until.is_some_and(|u| now <= u) && !self.desktops.is_empty()
     }
 }
 
@@ -656,12 +664,12 @@ pub fn save(state: &mut State) {
     } else {
         (Vec::new(), Vec::new())
     };
-    log::info!(
-        "session: saved {:?}, tabs {:?}",
-        saved.iter().map(|s| &s.app_id).collect::<Vec<_>>(),
-        tabs.iter().map(|t| &t.apps).collect::<Vec<_>>()
-    );
     if state.session.apps != saved || state.session.tabs != tabs {
+        log::info!(
+            "session: saved {:?}, tabs {:?}",
+            saved.iter().map(|s| &s.app_id).collect::<Vec<_>>(),
+            tabs.iter().map(|t| &t.apps).collect::<Vec<_>>()
+        );
         crate::state::save_session(&saved, &tabs);
         state.session.apps = saved;
         state.session.tabs = tabs;
@@ -680,8 +688,30 @@ pub fn end(state: &mut State) {
     crate::state::flush();
 }
 
-/// Start the apps the last session ended with, after autostart (which started `autostarted`).
+/// Take the list again every `every` while the session runs. A tick passes while restored apps'
+/// first windows are still awaited, which would drop them, and once `end` kept the session.
+pub fn save_every(state: &mut State, every: Duration) {
+    let armed = state
+        .handle
+        .insert_source(Timer::from_duration(every), move |_, _, state| {
+            if !state.session.kept && !state.session.restoring.waiting(Instant::now()) {
+                save(state);
+            }
+            TimeoutAction::ToDuration(every)
+        });
+    if let Err(e) = armed {
+        log::warn!("session: no save timer: {e}; the list is taken at the session's end only");
+    }
+}
+
+/// Start the apps the last session ended with, after autostart (which started `autostarted`),
+/// then keep the list fresh (`save_every`).
 pub fn restore(state: &mut State, autostarted: &[Entry]) {
+    restore_now(state, autostarted);
+    save_every(state, SAVE_EVERY);
+}
+
+fn restore_now(state: &mut State, autostarted: &[Entry]) {
     if !state.config.session.restore {
         return;
     }
@@ -1390,5 +1420,33 @@ mod tests {
         let old: Wrap =
             toml::from_str("[[session]]\napp_id = \"foot\"\nentry = \"foot.desktop\"\n").unwrap();
         assert_eq!(old.session[0].desktop, 0);
+    }
+
+    #[test]
+    fn the_running_sessions_list_is_saved_on_the_timer_once_restored_windows_are_back() {
+        let mut h = crate::harness::Harness::new();
+        assert!(h.state.config.session.restore, "restore is on by default");
+        h.state.app_index = vec![app("foot", "foot", None)];
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "foot", 300, 200);
+        let foot = saved("foot", "foot.desktop", 0);
+        h.state.session.restoring = Pending::new(&[&foot], Instant::now());
+        save_every(&mut h.state, Duration::from_millis(20));
+        h.run_for(100);
+        assert!(
+            h.state.session.apps.is_empty(),
+            "nothing is saved while foot is awaited"
+        );
+
+        h.state.session.restoring.mapped("foot");
+        let queued = crate::state::QUEUED.with(|n| n.get());
+        h.run_for(100);
+        assert_eq!(h.state.session.apps, vec![foot]);
+        assert_eq!(
+            crate::state::QUEUED.with(|n| n.get()),
+            queued + 1,
+            "one write, the unchanged ticks after it write nothing"
+        );
     }
 }

@@ -191,9 +191,6 @@ auto_hide = true
 
 [wallpaper]
 water = "rain"
-
-[session]
-restore = true
 ```
 
 Save, and watch it happen.
