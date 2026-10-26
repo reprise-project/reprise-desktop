@@ -77,6 +77,29 @@ impl Confirm {
         labels.iter().map(|s| s.to_string()).collect()
     }
 
+    /// The box's client layout for text `text` sets at `px`, which grows by `u`.
+    pub(crate) fn layout(
+        &self,
+        text: &reprisekit::text::TextRenderer,
+        px: u32,
+        u: reprisekit::theme::TextUnits,
+    ) -> dlgtemplate::Layout {
+        dlgtemplate::layout(
+            self.template,
+            text,
+            px,
+            &dlgtemplate::Fields {
+                text: &self.text,
+                icon: true,
+                field: false,
+                buttons: &self.buttons(),
+                text_h: self.min_text_h,
+            },
+            u,
+        )
+        .client()
+    }
+
     /// The answer button `id` gives the question about an item too big
     /// for its Recycle Bin; Escape and the close box cancel the batch.
     fn too_big_answer(&self, out: &form::Event) -> Option<reprisefs::replace::Answer> {
@@ -481,20 +504,7 @@ impl Explorer {
         let Some(Dialog::Confirm(c)) = &self.dialog else {
             return None;
         };
-        let lay = dlgtemplate::layout(
-            c.template,
-            &self.dialog_text,
-            self.forms.fonts.size_px,
-            &dlgtemplate::Fields {
-                text: &c.text,
-                icon: true,
-                field: false,
-                buttons: c.buttons().len(),
-                text_h: c.min_text_h,
-            },
-            self.forms.text,
-        );
-        Some(lay.client())
+        Some(c.layout(&self.dialog_text, self.forms.fonts.size_px, self.forms.text))
     }
 
     /// The form of whichever text box is up, focus on the button the keys left it on.
