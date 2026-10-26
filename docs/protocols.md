@@ -95,6 +95,10 @@ confinement holds, every motion goes through as it comes.
 - **Inhibit:** idle, suspend and log off
 - **Background:** which apps run without a window, the prompt asking
   whether one may, and the autostart entries Flatpak apps ask for
+- **Wallpaper:** after a prompt showing the picture, a copy of it in
+  `~/.local/share/reprise/wallpapers` becomes `[wallpaper] image`, and with
+  `set-on` both also turns `lock_screen` on. The lock screen alone is
+  refused, since it shows the desktop's picture or none
 
 The compositor serves **Settings** (the light or dark look, contrast, fonts
 and icons). `reprise-portals.conf` hands **Secret** to gnome-keyring,

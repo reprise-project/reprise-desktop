@@ -73,6 +73,7 @@ impl Background {
                 app,
                 offer_remember: true,
                 items: Vec::new(),
+                preview: None,
             };
             crate::permit::ask_with(crate::permit::Kind::Background, input, &cancel)
         })
