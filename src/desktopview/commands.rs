@@ -298,6 +298,7 @@ impl State {
         for path in paths {
             let argv = apps::open_argv(&app, &self.config.terminal, &path);
             self.spawn_app_activated(&argv, &app.id);
+            self.record_recent(path, Some(app.clone()));
         }
     }
 

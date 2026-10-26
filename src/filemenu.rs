@@ -114,6 +114,13 @@ impl State {
             _ => {
                 let open = self.found_opening(path, facts);
                 self.spawn_opening_activated(&open);
+                if let Target::Open(file) = &facts.target
+                    && !facts.is_dir
+                {
+                    let app = (open.app.as_deref())
+                        .and_then(|id| self.app_index.iter().find(|a| a.id == id).cloned());
+                    self.record_recent(file.clone(), app);
+                }
             }
         }
     }
