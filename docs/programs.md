@@ -27,9 +27,12 @@ The file manager, and the default for folders.
   longer than half a second shows its progress with Pause and Cancel, on the
   desktop too. Cut, Copy, Paste (with Yes to All), Paste Shortcut, New Folder,
   rename with F2, Move To, Copy To, Open With, and Send To a zip file, the
-  desktop, a mail or a removable drive. Ctrl+Z undoes the last one; undoing a
-  copy its Recycle Bin can't take (a drive set to remove files immediately,
-  or too big) asks before deleting it permanently.
+  desktop, a mail or a removable drive. An archive (zip, 7z, tar plain or
+  compressed) has Extract Here, which writes over nothing already there, and
+  Extract to, into a new folder named after it; an archive with an entry
+  that would land outside that folder is refused. Ctrl+Z undoes the last
+  one; undoing a copy its Recycle Bin can't take (a drive set to remove files
+  immediately, or too big) asks before deleting it permanently.
 - **Drag and drop** between Explorer windows, the desktop and other
   programs, Flatpaks included. A right-drag asks whether to copy, move or
   make a shortcut. Drop a link from a browser and you get a link file.

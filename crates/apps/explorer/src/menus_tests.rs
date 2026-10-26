@@ -338,6 +338,31 @@ fn a_folders_menu_explores_and_a_files_opens_with() {
 }
 
 #[test]
+fn an_archives_menu_extracts_here_or_into_its_folder() {
+    let s = MenuState::default();
+    let plain = item_menu(&s, ItemKind::File, false, &[], &[]);
+    let rows = |m: &Menu| {
+        (0..m.items().len())
+            .map(|i| label(m.items(), i).to_string())
+            .collect::<Vec<_>>()
+    };
+    assert!(!rows(&plain).iter().any(|r| r.starts_with("Extract")));
+    let s = MenuState {
+        extract: Some("pack/".into()),
+        ..MenuState::default()
+    };
+    let m = item_menu(&s, ItemKind::File, false, &[], &[]);
+    let at = rows(&m)
+        .iter()
+        .position(|r| r == "Extract Here")
+        .expect("Extract Here");
+    assert_eq!(label(m.items(), at - 1), "Open With", "under Open With");
+    assert_eq!(m.command(&[at]), Command::Extract { here: true });
+    assert_eq!(label(m.items(), at + 1), "Extract to pack/");
+    assert_eq!(m.command(&[at + 1]), Command::Extract { here: false });
+}
+
+#[test]
 fn a_launcher_has_paste_under_copy_and_no_open_with() {
     let s = MenuState {
         selection: 1,
@@ -588,7 +613,10 @@ fn the_recycle_bin_deletes_for_good_and_copies_nothing() {
         !enabled(&file, 2) && !enabled(&file, 4),
         "Create Shortcut and Rename grey"
     );
-    let none = MenuState { selection: 0, ..s };
+    let none = MenuState {
+        selection: 0,
+        ..s.clone()
+    };
     assert!(!enabled(&bar_rows(&none, 0), 3), "nothing to delete");
 
     let edit = bar_rows(&s, 1);

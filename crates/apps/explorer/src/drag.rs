@@ -453,7 +453,11 @@ impl Explorer {
         };
         let send_to = self.build_send_to(ctx);
         let eject = self.ejectable(i);
-        let menu = crate::menus::item_menu(&self.menu_state(), kind, eject, &open_with, &send_to);
+        let state = crate::menus::MenuState {
+            extract: self.extract_label(),
+            ..self.menu_state()
+        };
+        let menu = crate::menus::item_menu(&state, kind, eject, &open_with, &send_to);
         self.popup = Some(Popup::new(at, menu, ctx, by_keyboard));
         Reply::redraw()
     }

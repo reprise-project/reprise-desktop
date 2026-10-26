@@ -102,6 +102,10 @@ impl Meter {
         self.paused.store(on, Ordering::Relaxed);
     }
 
+    pub(crate) fn paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
     pub fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
     }

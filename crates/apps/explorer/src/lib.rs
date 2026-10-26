@@ -9,6 +9,7 @@ mod commands;
 mod copydlg;
 mod dialogs;
 mod drag;
+mod extracting;
 mod fileops;
 mod foldertree;
 mod icons;
@@ -277,6 +278,9 @@ pub struct Explorer {
     pub(crate) clashing: std::collections::VecDeque<fileops::Clashing>,
     pub(crate) removing: Option<removing::Removing>,
     pub(crate) remove_queue: std::collections::VecDeque<removing::PendingRemoval>,
+    pub(crate) extracting: Option<extracting::Extracting>,
+    /// Extractions asked for while one runs, oldest first.
+    pub(crate) extract_queue: std::collections::VecDeque<Vec<reprisefs::extract::Archive>>,
     /// The whole percent and paused state last put on the task button.
     pub(crate) task_progress: Option<(u32, bool)>,
     /// While a replace prompt is up: the batches whose prompts come next, and
@@ -514,6 +518,8 @@ impl Explorer {
             clashing: std::collections::VecDeque::new(),
             removing: None,
             remove_queue: std::collections::VecDeque::new(),
+            extracting: None,
+            extract_queue: std::collections::VecDeque::new(),
             task_progress: None,
             replace_waiting: std::collections::VecDeque::new(),
             messages_waiting: std::collections::VecDeque::new(),
@@ -642,6 +648,7 @@ impl Explorer {
             bin: (self.place == Place::RecycleBin).then_some(self.items.len()),
             can_back: self.history.can_back(),
             can_forward: self.history.can_forward(),
+            extract: None,
         }
     }
 
@@ -1483,7 +1490,7 @@ impl App for Lazy {
         if win == PROPS {
             return ex.props_event(ev, ctx);
         }
-        if win == copydlg::COPY || win == copydlg::REMOVE {
+        if [copydlg::COPY, copydlg::REMOVE, copydlg::EXTRACT].contains(&win) {
             return ex.progress_event(win, ev, ctx);
         }
         let reply = match ev {
@@ -1654,7 +1661,7 @@ impl App for Lazy {
             ex.draw_props(c, ctx);
             return;
         }
-        if win == copydlg::COPY || win == copydlg::REMOVE {
+        if [copydlg::COPY, copydlg::REMOVE, copydlg::EXTRACT].contains(&win) {
             ex.draw_progress(win, c);
             return;
         }
@@ -1673,7 +1680,7 @@ impl App for Lazy {
         ex.follow_forms(ctx);
         match win {
             DIALOG => ex.access_dialog(tree, ctx),
-            copydlg::COPY | copydlg::REMOVE => ex.access_progress(win, tree),
+            copydlg::COPY | copydlg::REMOVE | copydlg::EXTRACT => ex.access_progress(win, tree),
             PROGRAM_BROWSE => ex.access_program_browse(tree),
             browse::ERROR => ex.access_browse_error(tree),
             PROPS => {

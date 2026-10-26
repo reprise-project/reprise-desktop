@@ -33,6 +33,10 @@ pub enum Command {
     NewTextDocument,
     CreateShortcut,
     SendTo(usize),
+    /// Extract Here (`here`) or Extract to on the selected archives.
+    Extract {
+        here: bool,
+    },
     MoveTo,
     CopyTo,
     Drop(reprisefs::ops::DropOp),
@@ -410,6 +414,7 @@ impl Explorer {
             Command::NewTextDocument => self.new_item(false, ctx),
             Command::CreateShortcut => self.create_shortcut(ctx),
             Command::SendTo(i) => self.send_to(i, ctx),
+            Command::Extract { here } => self.extract(here, ctx),
             Command::MoveTo => self.open_browse(true, ctx),
             Command::CopyTo => self.open_browse(false, ctx),
             Command::Drop(op) => self.drop_pending(op, ctx),

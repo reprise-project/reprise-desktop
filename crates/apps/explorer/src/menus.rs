@@ -34,6 +34,8 @@ pub struct MenuState {
     pub bin: Option<usize>,
     pub can_back: bool,
     pub can_forward: bool,
+    /// The selection is archives: the item menu's Extract to row names this folder.
+    pub extract: Option<String>,
 }
 
 impl Default for MenuState {
@@ -51,6 +53,7 @@ impl Default for MenuState {
             bin: None,
             can_back: false,
             can_forward: false,
+            extract: None,
         }
     }
 }
@@ -433,6 +436,13 @@ pub fn item_menu(
         m.sep();
         if kind.is_file() {
             m.sub(row("Open Wit&h", true), open_with_menu(open_with));
+        }
+        if let Some(to) = &state.extract {
+            m.row(row("Extract &Here", true), Command::Extract { here: true });
+            m.row(
+                row(&format!("Extract &to {to}"), true),
+                Command::Extract { here: false },
+            );
         }
     }
     m.sub(

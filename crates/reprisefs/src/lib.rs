@@ -9,6 +9,7 @@ pub mod deadline;
 pub mod dirchange;
 pub mod drawncache;
 pub mod dropdata;
+pub mod extract;
 pub mod fileclip;
 pub mod folders;
 pub mod gvfsmeta;
