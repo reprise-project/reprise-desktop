@@ -13,10 +13,20 @@ const MAX_SIDE: u32 = 16384;
 
 /// `path` decoded by its content, refused past `MAX_SIDE` a side before it is read whole.
 pub fn decode(path: &Path) -> image::ImageResult<image::DynamicImage> {
+    decode_with(path, MAX_SIDE, image::Limits::default().max_alloc)
+}
+
+/// `decode` refusing past `max_side` a side and `max_alloc` bytes of decoder memory.
+pub fn decode_with(
+    path: &Path,
+    max_side: u32,
+    max_alloc: Option<u64>,
+) -> image::ImageResult<image::DynamicImage> {
     let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
     let mut limits = image::Limits::default();
-    limits.max_image_width = Some(MAX_SIDE);
-    limits.max_image_height = Some(MAX_SIDE);
+    limits.max_image_width = Some(max_side);
+    limits.max_image_height = Some(max_side);
+    limits.max_alloc = max_alloc;
     reader.limits(limits);
     reader.decode()
 }
