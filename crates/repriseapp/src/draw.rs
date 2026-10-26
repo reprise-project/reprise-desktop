@@ -100,6 +100,12 @@ impl Host {
     }
 
     pub(crate) fn draw(&mut self, id: WinId, qh: &QueueHandle<Host>) {
+        self.draw_frame(id, qh, false);
+    }
+
+    /// Draws window `id`; a `blink_only` frame answers a caret blink and nothing else
+    /// ([`Canvas::blink_only`]).
+    pub(crate) fn draw_frame(&mut self, id: WinId, qh: &QueueHandle<Host>, blink_only: bool) {
         let Some(i) = self.slots.iter().position(|s| s.id == id) else {
             return;
         };
@@ -143,19 +149,25 @@ impl Host {
             .filter(|t| t.entered == Some(id))
             .and_then(|t| t.preedit().cloned());
         canvas.set_preedit(preedit);
+        canvas.set_blink_only(blink_only);
         filedlg::follow_scale(&mut *self.app, id, scale, &mut self.ctx);
         self.app.follow_scale(id, scale, &mut self.ctx);
         let paste = self.edit_menu.is_pending(id) && self.clipboard_text();
         let within = self.menu_within((w, h));
         let app = &mut self.app;
         let menu = &mut self.edit_menu;
+        let last_tip = &mut self.slots[i].tip;
         let spot = self.ctx.at_scale(scale, |ctx| {
             app.draw(id, &mut canvas, ctx);
             // A form's label tip goes over everything; a kept canvas would keep its pixels.
             if app.keeps_canvas(id) {
                 canvas.take_tip();
-            } else if let Some(r) = form::draw_tip(&mut canvas, &ctx.text, &ctx.forms()) {
-                canvas.widen_damage(r);
+            } else {
+                let tip = form::draw_tip(&mut canvas, &ctx.text, &ctx.forms());
+                for r in tip.iter().chain(last_tip.iter()) {
+                    canvas.widen_damage(*r);
+                }
+                *last_tip = tip;
             }
             let spot = canvas.take_spot();
             let cx = MenuCtx {
@@ -168,6 +180,9 @@ impl Host {
             spot
         });
         self.slots[i].spot = spot.clone();
+        if spot.is_some() {
+            self.arm_blink();
+        }
         // The window's draw follows its model; so do its menu's popups.
         self.menu_changed(id);
         let glass_top = canvas.take_glass_top();
@@ -179,6 +194,7 @@ impl Host {
         self.ctx.theme.access_keys = false;
         self.set_glass_top(i, (w, glass_top), qh);
         let damage = canvas.take_damage();
+        canvas.set_blink_only(false);
         if let Some(t) = self.text_input.as_mut() {
             t.sync(id, spot);
         }
@@ -216,8 +232,8 @@ impl Host {
             Some(v) => v.set_destination(w, h),
             None => surface.set_buffer_scale(scale),
         }
-        let keeps = self.app.keeps_canvas(id);
-        for (x, y, w, h) in surface_damage(damage, fresh, keeps, scale, (bw, bh)) {
+        let partial = blink_only || self.app.keeps_canvas(id);
+        for (x, y, w, h) in surface_damage(damage, fresh, partial, scale, (bw, bh)) {
             surface.damage_buffer(x, y, w, h);
         }
         surface.frame(qh, FrameCallbackData(surface.clone()));
@@ -256,16 +272,16 @@ pub(crate) fn buffer_damage(rects: &[Rect], scale: i32) -> Vec<(i32, i32, i32, i
         .collect()
 }
 
-/// The buffer-px rects to damage: the reported ones only when the canvas kept last frame's pixels
-/// (`fresh` and the app `keeps` it), else the whole `buffer`.
+/// The buffer-px rects to damage: the reported ones only for a `partial` frame (the app keeps its
+/// canvas, or the frame only flipped the caret) on a `fresh` canvas, else the whole `buffer`.
 pub(crate) fn surface_damage(
     damage: Option<Vec<Rect>>,
     fresh: bool,
-    keeps: bool,
+    partial: bool,
     scale: i32,
     buffer: (i32, i32),
 ) -> Vec<(i32, i32, i32, i32)> {
-    match (fresh && keeps).then_some(damage).flatten() {
+    match (fresh && partial).then_some(damage).flatten() {
         Some(rects) => buffer_damage(&rects, scale),
         None => vec![(0, 0, buffer.0, buffer.1)],
     }

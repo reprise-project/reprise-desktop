@@ -101,6 +101,17 @@ thread_local! {
     /// The clipboard half [`form_input`] and [`sheet_input`] read off the event being handled;
     /// the runtime adds it to the program's reply ([`take_clipboard`]).
     static CLIP: std::cell::RefCell<Reply> = std::cell::RefCell::new(Reply::none());
+    /// A form or sheet fed the event being handled waits to show a label tip
+    /// ([`Form::tip_waiting`]): its window keeps getting blinks.
+    static TIP_WAITS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn note_tip(waits: bool) {
+    TIP_WAITS.set(TIP_WAITS.get() || waits);
+}
+
+pub(crate) fn take_tip_waits() -> bool {
+    TIP_WAITS.take()
 }
 
 /// Notes `ev`'s clipboard half for the focused edit `focused`, read before the key edits it.
@@ -130,6 +141,7 @@ pub fn sheet_input(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<props
     if sheet.ticking() {
         ctx.want_tick.set(true);
     }
+    note_tip(sheet.open().tip_waiting());
     out
 }
 
@@ -206,6 +218,12 @@ pub fn hotkey_input(form: &mut Form, k: &KeyInput, down: bool) -> Option<form::E
 /// the keys first ([`hotkey_input`]), and is blurred when the window loses the
 /// keyboard or the compositor takes its shortcuts back.
 pub fn form_input(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event> {
+    let out = form_event(form, ev, ctx);
+    note_tip(form.tip_waiting());
+    out
+}
+
+fn form_event(form: &mut Form, ev: &Event, ctx: &Ctx) -> Option<form::Event> {
     let px = form.units().px(ctx.base_px());
     Some(match ev {
         Event::Focus(false) | Event::ShortcutsInactive => {

@@ -44,6 +44,8 @@ pub struct Canvas {
     glass_top: i32,
     /// What the frame changed ([`Canvas::report_damage`]); `None` is the whole canvas.
     damage: Option<Vec<Rect>>,
+    /// The frame answers a caret blink and nothing else ([`Canvas::blink_only`]).
+    blink_only: bool,
 }
 
 /// One premultiplied pixel with all four channels scaled by `num / den`.
@@ -122,6 +124,7 @@ impl Canvas {
             tip: None,
             glass_top: 0,
             damage: None,
+            blink_only: false,
         }
     }
 
@@ -140,6 +143,7 @@ impl Canvas {
             tip: None,
             glass_top: 0,
             damage: None,
+            blink_only: false,
         }
     }
 
@@ -197,8 +201,9 @@ impl Canvas {
         std::mem::take(&mut self.glass_top)
     }
 
-    /// An app that keeps its canvas between frames reports each logical-px rect it redrew;
-    /// a frame with no report changed the whole canvas.
+    /// An app that keeps its canvas between frames, or a control on a [`Canvas::blink_only`]
+    /// frame, reports each logical-px rect it redrew; a frame with no report changed the whole
+    /// canvas.
     pub fn report_damage(&mut self, r: Rect) {
         self.damage.get_or_insert_with(Vec::new).push(r);
     }
@@ -208,6 +213,16 @@ impl Canvas {
         if let Some(d) = self.damage.as_mut() {
             d.push(r);
         }
+    }
+
+    /// Whether the host draws this frame only to flip the caret: an edit whose caret is the one
+    /// thing that changed reports its caret bar as the frame's damage.
+    pub fn blink_only(&self) -> bool {
+        self.blink_only
+    }
+
+    pub fn set_blink_only(&mut self, on: bool) {
+        self.blink_only = on;
     }
 
     pub fn take_damage(&mut self) -> Option<Vec<Rect>> {
