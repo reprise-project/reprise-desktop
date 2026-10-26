@@ -15,6 +15,7 @@ use reprisekit::fluid::Source;
 
 use crate::{
     compositor::{SceneOwner, State},
+    popups::Popup,
     taskbar::TaskbarHit,
 };
 
@@ -85,14 +86,14 @@ impl State {
     }
 
     /// Whether the pointer moves nothing but itself: no interaction,
-    /// grab, drag, lock, region overlay or Alt+Tab panel holds it.
+    /// grab, drag, lock, region overlay or popup that owns the pointer
+    /// (`Popup::owns_pointer`) holds it.
     pub(crate) fn pointer_free(&self) -> bool {
         matches!(self.interaction, Interaction::Idle)
             && !self.is_locked()
             && !self.drag_running()
             && self.panels.region.is_none()
-            && !self.switcher.is_open()
-            && self.overview.view.is_none()
+            && !Popup::open(self).any(Popup::owns_pointer)
             && self.seat.get_pointer().is_some_and(|p| !p.is_grabbed())
     }
 
@@ -497,11 +498,6 @@ impl State {
         if !matches!(hit, Hit::Frame { .. }) {
             self.frame_hover(None, FrameHit::Outside);
         }
-        // The snap layout picker stays while the pointer crosses from the
-        // maximize button onto it.
-        if !matches!(hit, Hit::Frame { .. } | Hit::SnapPicker { .. }) {
-            crate::snappickerview::leave(self);
-        }
         let over_caption = match hit {
             Hit::Frame {
                 window,
@@ -510,46 +506,25 @@ impl State {
             _ => None,
         };
         self.tab_hover(over_caption, pos.x, pos.y);
-        // The preview panel stays while the pointer crosses from its
-        // button onto it.
-        if !matches!(hit, Hit::Taskbar { .. } | Hit::TaskPreview { .. }) {
-            crate::taskpreview::hide(self);
-        }
         if !matches!(hit, Hit::Taskbar { .. }) {
             self.taskbar_hover(None, TaskbarHit::Nothing);
-        }
-        if !matches!(hit, Hit::Menu { .. }) {
-            self.clear_menu_hover();
         }
         if !matches!(hit, Hit::Dialog { .. }) {
             self.dialog_hover_caption(None);
             self.dialog_hover(None);
         }
-        if !matches!(hit, Hit::Switcher { .. }) {
-            self.switcher_hover(None);
+        for p in Popup::ALL {
+            if !p.hit_is(&hit) && !p.hover_keeps_on(&hit) {
+                p.unhover(self);
+            }
         }
-        if !matches!(hit, Hit::Overview { .. }) {
-            self.overview_hover(None);
-        }
-        if !matches!(hit, Hit::StartPanel { .. }) {
-            self.start_panel_pointer(None);
+        match hit {
+            Hit::TrayFlyout { cell } => crate::trayflyout::hover(self, cell),
+            Hit::Calendar { hit } => crate::calendarview::hover(self, Some(hit)),
+            Hit::Displays { hit } => crate::displaysview::hover(self, Some(hit)),
+            _ => {}
         }
         crate::notifyview::hover(self, pos.x, pos.y, matches!(hit, Hit::Notification));
-        let flyout_cell = match hit {
-            Hit::TrayFlyout { cell } => cell,
-            _ => None,
-        };
-        crate::trayflyout::hover(self, flyout_cell);
-        let calendar_hit = match hit {
-            Hit::Calendar { hit } => Some(hit),
-            _ => None,
-        };
-        crate::calendarview::hover(self, calendar_hit);
-        let displays_hit = match hit {
-            Hit::Displays { hit } => Some(hit),
-            _ => None,
-        };
-        crate::displaysview::hover(self, displays_hit);
         // The Alt+Tab panel owns the pointer while it is up: what lies
         // around it gets neither focus nor hover.
         let owned = (self.switcher.is_open() && !matches!(hit, Hit::Switcher { .. }))
