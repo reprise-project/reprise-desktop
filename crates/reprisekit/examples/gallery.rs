@@ -4770,6 +4770,26 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
                 px,
             );
         }
+
+        use reprisekit::controls::searchfield::{self, SearchField};
+        let mut typed = SearchField::default();
+        typed.key(reprisekit::textedit::EditKey::Insert("report".into()));
+        for (k, (sf, focused)) in [(SearchField::default(), false), (typed, true)]
+            .iter()
+            .enumerate()
+        {
+            let field = Rect::new(734, 5734 + 26 * k as i32, 180, 22);
+            searchfield::draw(
+                &mut c,
+                &text,
+                &Paint { s, ..theme.paint() },
+                sf,
+                field,
+                *focused,
+                Caret::new(*focused, true),
+                px,
+            );
+        }
     }
 
     c.blit_canvas(

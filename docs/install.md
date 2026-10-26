@@ -178,7 +178,7 @@ desktop and stays out of the way when it's missing.
 - shared-mime-info, for file types and icons
 - xdg-utils and libarchive, for opening files, zipping from Explorer and
   opening a network's sign-in page
-- plocate with its database, or fd, for files in the launcher
+- plocate with its database, or fd, for files in the launcher and Explorer's Search
 
 ## Fonts
 

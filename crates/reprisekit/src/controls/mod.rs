@@ -51,6 +51,7 @@ pub mod rebar;
 pub mod regionselect;
 pub mod replacebox;
 pub mod scrollbar;
+pub mod searchfield;
 mod shellgrid;
 pub mod shellview;
 pub mod snapassist;

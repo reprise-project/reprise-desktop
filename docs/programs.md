@@ -13,6 +13,10 @@ The file manager, and the default for folders.
   size, type or date. A folder tree or a task pane down the side, Back and
   Forward with their history, Up and an address bar (Alt+D). It remembers
   your view and window size.
+- **Search** (Ctrl+F or F3): the box at the toolbar's right end finds files
+  by name anywhere under the folder shown, through plocate or fd, and lists
+  them in the view with an In Folder column. The usual right-click menu works
+  on them. Escape, or going to another folder, brings the folder back.
 - **Places:** Desktop, Documents, Home, Computer and the Recycle Bin.
   Computer lists your drives, unmounted and locked removable ones included:
   open one to mount it (a locked one asks for its passphrase first), Eject to

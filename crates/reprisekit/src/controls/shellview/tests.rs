@@ -527,6 +527,37 @@ fn bin_columns_show_where_and_when_an_item_was_deleted() {
 }
 
 /// Clicking a row reports its index and a column header reports that column,
+#[test]
+fn search_columns_show_the_folder_each_result_is_in() {
+    let cols = search_columns();
+    let shape: Vec<(&str, i32, bool)> = cols
+        .iter()
+        .map(|c| (c.title.as_str(), c.width, c.right))
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            ("Name", 178, false),
+            ("In Folder", 180, false),
+            ("Size", 94, true),
+            ("Type", 118, false),
+            ("Date Modified", 120, false),
+        ]
+    );
+    let entries = vec![Entry {
+        name: "notes.txt".into(),
+        folder: "/home/u/Documents/2026".into(),
+        size: 4096,
+        ..Default::default()
+    }];
+    use listview::Rows;
+    let fields = search_fields();
+    assert_eq!(fields.len(), cols.len());
+    let rows = DetailsRows(&entries, &fields);
+    assert_eq!(rows.cell(0, 1), "/home/u/Documents/2026");
+    assert_eq!(rows.cell(0, 2), "4 KB");
+}
+
 /// straight off the transient `ListView`; stepping Down moves the selection as `listview::ListView::step` would.
 #[test]
 fn details_hit_and_step_delegate_to_listview() {

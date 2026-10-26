@@ -90,6 +90,78 @@ fn a_rebuilt_address_drop_names_the_place_shown() {
     assert_eq!(ex.address.text(), place.address());
 }
 
+/// A search through `find`, which every system has, in place of plocate or fd.
+fn find_search(
+    q: &reprisefs::search::Query,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Vec<PathBuf> {
+    let mut find = std::process::Command::new("find");
+    find.arg(&q.root);
+    reprisefs::search::collect(find, q, cancel)
+}
+
+fn press(ex: &mut Explorer, sym: u32, ctx: &mut Ctx) -> Reply {
+    ex.key(
+        repriseapp::KeyInput {
+            sym,
+            utf8: None,
+            mods: repriseapp::Mods::default(),
+            edit: reprisekit::textedit::key_for(sym, false, false, None),
+        },
+        ctx,
+    )
+}
+
+#[test]
+fn a_search_lists_matches_below_the_folder_until_escape_or_a_navigation() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let deep = dir.path().join("a").join("b");
+    std::fs::create_dir_all(&deep).expect("mkdir");
+    std::fs::write(deep.join("report.txt"), "x").expect("write");
+    std::fs::write(dir.path().join("Report-old.md"), "x").expect("write");
+    std::fs::write(dir.path().join("other.txt"), "x").expect("write");
+    let mut ctx = test_ctx();
+    let place = Place::Folder(dir.path().to_path_buf());
+    let mut ex = test_explorer(place.clone(), &mut ctx);
+    ex.search_run = find_search;
+    let names = |ex: &Explorer| {
+        let mut n: Vec<String> = ex.items.iter().map(|it| it.name.clone()).collect();
+        n.sort();
+        n
+    };
+    assert_eq!(names(&ex), ["Report-old.md", "a", "other.txt"]);
+
+    ex.run(Command::SearchFocus, &mut ctx);
+    assert_eq!(ex.focus, Focus::Search);
+    ex.search_field
+        .key(reprisekit::textedit::EditKey::Insert("report".into()));
+    press(&mut ex, keysym::RETURN, &mut ctx);
+    assert_eq!(names(&ex), ["Report-old.md", "report.txt"]);
+    assert_eq!(ex.focus, Focus::View, "the results take the keyboard");
+    assert_eq!(ex.place, place, "the window stays in the folder");
+    let title = format!("Search results in {}", place.title());
+    assert_eq!(ex.search.caption(), Some(title));
+    let deep_entry = ex.sv.entries.iter().find(|e| e.name == "report.txt");
+    assert_eq!(
+        deep_entry.map(|e| e.folder.clone()),
+        Some(deep.display().to_string()),
+        "In Folder names where it was found"
+    );
+    assert_eq!(ex.sv.fields, shellview::search_fields());
+
+    press(&mut ex, keysym::ESCAPE, &mut ctx);
+    assert_eq!(ex.search.caption(), None);
+    assert_eq!(names(&ex), ["Report-old.md", "a", "other.txt"]);
+    assert_eq!(ex.sv.fields, shellview::details_fields());
+
+    ex.run(Command::SearchFocus, &mut ctx);
+    press(&mut ex, keysym::RETURN, &mut ctx);
+    assert_eq!(names(&ex).len(), 2, "the field kept its text");
+    ex.run(Command::GoTo(Place::Folder(dir.path().join("a"))), &mut ctx);
+    assert_eq!(ex.search.caption(), None, "a navigation ends the search");
+    assert_eq!(names(&ex), ["b"]);
+}
+
 #[test]
 fn navigating_to_the_current_address_re_lists_the_folder() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -2804,7 +2876,13 @@ fn under_glass_the_rebar_is_clear_over_the_frames_glass() {
     assert_eq!(c.take_glass_top(), 78, "the drawn rebar reports its rows");
     let gap = lay.menu.bottom();
     assert_eq!(c.get(400, gap) >> 24, 0, "the rows between bands are clear");
-    assert_eq!(c.get(780, 40) >> 24, 0, "the toolbar band past its buttons");
+    assert_eq!(c.get(500, 40) >> 24, 0, "the toolbar band past its buttons");
+    let search = window::search_field(&ex, &ctx).expect("the search field");
+    assert_eq!(
+        c.get(search.x + search.width / 2, search.y + search.height / 2) >> 24,
+        0xFF,
+        "the search field stays opaque"
+    );
     let field = lay.address.expect("the address bar");
     assert_eq!(
         c.get(field.x + field.width / 2, field.y + field.height / 2) >> 24,
