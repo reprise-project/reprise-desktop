@@ -12,6 +12,8 @@ workspace = true
 [dependencies]
 async-io = "2"
 futures-util.workspace = true
+# The launcher trust marker is an HMAC-SHA256 of the inode.
+hmac = "0.13"
 libc.workspace = true
 log.workspace = true
 # The thumbnail cache: entry names are the MD5 of a file URI, and
@@ -21,6 +23,7 @@ png.workspace = true
 reprisebus = { path = "../reprisebus" }
 rustc-hash = "2"
 serde.workspace = true
+sha2 = "0.11"
 # `[recycle_bin]` in config.toml, which every host's Delete reads.
 toml_edit.workspace = true
 zbus.workspace = true

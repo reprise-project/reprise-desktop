@@ -143,6 +143,7 @@ pub(crate) fn copy_meta(
 /// onto `to`: POSIX ACLs, `user.*` and `security.*` labels. Best effort:
 /// one the file system or the process cannot read or set is skipped. File
 /// capabilities are never copied, since they were granted to the old bytes.
+/// The launcher trust marker names the inode, so a valid one is made anew for `to`.
 pub fn copy_xattrs(from: &Path, to: &std::fs::File) {
     use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStrExt;
@@ -166,19 +167,24 @@ pub fn copy_xattrs(from: &Path, to: &std::fs::File) {
         let value = read_sized(|buf, len| unsafe {
             libc::lgetxattr(src.as_ptr(), name.as_ptr(), buf.cast(), len)
         });
-        if let Some(value) = value {
-            // SAFETY: the fd is open, `name` is NUL-terminated and `value`
-            // is readable for its length.
-            unsafe {
-                libc::fsetxattr(
-                    to.as_raw_fd(),
-                    name.as_ptr(),
-                    value.as_ptr().cast(),
-                    value.len(),
-                    0,
-                )
-            };
+        let Some(value) = value else { continue };
+        if name.as_c_str() == crate::apps::TRUST_XATTR {
+            if std::fs::symlink_metadata(from).is_ok_and(|m| crate::apps::verifies(&value, &m)) {
+                let _ = crate::apps::set_trusted_fd(to);
+            }
+            continue;
         }
+        // SAFETY: the fd is open, `name` is NUL-terminated and `value`
+        // is readable for its length.
+        unsafe {
+            libc::fsetxattr(
+                to.as_raw_fd(),
+                name.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+            )
+        };
     }
 }
 
