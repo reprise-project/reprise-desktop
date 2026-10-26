@@ -1,5 +1,5 @@
 //! The `org.freedesktop.impl.portal.Settings` backend, served from the compositor's bus connection so GTK, Qt and browsers learn through xdg-desktop-portal whether the look is dark and what its accent is.
-//! Three namespaces are answered, everything else is NotFound (`reprise-portals.conf` names no other Settings backend): `org.freedesktop.appearance`, `org.reprise.appearance` (the whole look, for Reprise's programs) and `org.gnome.desktop.interface` (theme, icons, cursor, font, font smoothing and overlay scrolling for GTK3, and an empty `gtk-im-module` for GTK4, which the session points at the portal via `GTK_USE_PORTAL`).
+//! Four namespaces are answered, everything else is NotFound (`reprise-portals.conf` names no other Settings backend): `org.freedesktop.appearance`, `org.reprise.appearance` (the whole look, for Reprise's programs), `org.gnome.desktop.interface` (theme, icons, cursor, font, font smoothing and overlay scrolling for GTK3, and an empty `gtk-im-module` for GTK4, which the session points at the portal via `GTK_USE_PORTAL`) and `button-layout` of `org.gnome.desktop.wm.preferences` for client-drawn captions.
 
 use crate::config::{Config, FontSmoothing};
 use crate::mutex::lock;
@@ -15,8 +15,9 @@ pub const SETTINGS_NAME: &str = "org.freedesktop.impl.portal.desktop.reprise-set
 pub const SETTINGS_PATH: &str = "/org/freedesktop/portal/desktop";
 const NAMESPACE: &str = "org.freedesktop.appearance";
 const GNOME: &str = "org.gnome.desktop.interface";
+const GNOME_WM: &str = "org.gnome.desktop.wm.preferences";
 
-/// What the three namespaces say about the look. The freedesktop one is
+/// What the four namespaces say about the look. The freedesktop one is
 /// in the portal's own units: `color_scheme` 1 prefer dark / 2 prefer
 /// light, `contrast` 1 for the High Contrast schemes, `accent` sRGB in
 /// 0..1. The Reprise one is the look as the environment hands it to a
@@ -223,6 +224,13 @@ impl Appearance {
             // GTK4 falls back to its simple module when the namespace lacks
             // this key; empty lets it pick text-input-v3 (input methods).
             (GNOME, "gtk-im-module", Value::from("")),
+            // GTK's fallback is close only, which client-drawn captions
+            // (Chromium, libadwaita) then show.
+            (
+                GNOME_WM,
+                "button-layout",
+                Value::from(":minimize,maximize,close"),
+            ),
         ]
     }
 
@@ -316,7 +324,7 @@ impl Settings {
 
 impl Settings {
     fn lookup(&self, namespace: &str, key: &str) -> Result<OwnedValue, PortalError> {
-        if ![NAMESPACE, GNOME, look::NAMESPACE].contains(&namespace) {
+        if ![NAMESPACE, GNOME, GNOME_WM, look::NAMESPACE].contains(&namespace) {
             return Err(PortalError::NotFound(format!("namespace {namespace}")));
         }
         match lock(&self.current).get(namespace, key) {
@@ -424,7 +432,9 @@ mod tests {
         let all = s.read_all(vec![]);
         assert_eq!(all[NAMESPACE].len(), 3);
         let gnome = s.read_all(vec!["org.gnome.*".into()]);
-        assert_eq!(gnome.keys().collect::<Vec<_>>(), [GNOME]);
+        let mut namespaces = gnome.keys().collect::<Vec<_>>();
+        namespaces.sort();
+        assert_eq!(namespaces, [GNOME, GNOME_WM]);
         assert!(s.lookup(NAMESPACE, "color-scheme").is_ok());
         assert!(s.lookup(NAMESPACE, "font").is_err());
         assert!(s.lookup("org.gnome.desktop", "color-scheme").is_err());
@@ -549,7 +559,7 @@ mod tests {
             light
                 .lookup("org.gnome.desktop.wm.preferences", "theme")
                 .is_err(),
-            "other GNOME namespaces stay NotFound"
+            "other GNOME keys stay NotFound"
         );
     }
 
@@ -584,6 +594,19 @@ mod tests {
     fn gtk_is_told_to_pick_its_input_method_module_itself() {
         let a = Appearance::of(&crate::config::Config::default());
         assert_eq!(a.get(GNOME, "gtk-im-module"), Some(Value::from("")));
+    }
+
+    #[test]
+    fn client_captions_get_minimize_maximize_and_close() {
+        let a = Appearance::of(&crate::config::Config::default());
+        assert_eq!(
+            a.get(GNOME_WM, "button-layout"),
+            Some(Value::from(":minimize,maximize,close"))
+        );
+        let s = Settings {
+            current: Arc::new(Mutex::new(a)),
+        };
+        assert!(s.lookup(GNOME_WM, "button-layout").is_ok());
     }
 
     #[test]
