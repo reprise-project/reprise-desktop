@@ -1,9 +1,9 @@
 use super::{
-    CANCEL, CANCEL_DY, FIELD_BUTTON_GAP, FIELD_X, FILENAME_H, FILENAME_LABEL, FILENAME_Y,
-    FILETYPE_H, FILETYPE_LABEL, FILETYPE_Y, FileDlg, GRIP, LABEL_DY, LOOKIN_H, LOOKIN_ICON_GAP,
-    LOOKIN_ICON_PX, LOOKIN_ICON_X, LOOKIN_LABEL, LOOKIN_LABEL_X, LOOKIN_X, LOOKIN_Y, Labels,
-    Layout, MARGIN, PLACES_H, ROW_LABEL_X, SHELL_H, SHELL_X, SHELL_Y, TOOLBAR_GAP, TOOLBAR_MARGIN,
-    TOOLBAR_VIEWS, TOOLBAR_Y, key_around, rows, views_items,
+    CANCEL_DY, FIELD_BUTTON_GAP, FIELD_X, FILENAME_H, FILENAME_Y, FILETYPE_H, FILETYPE_Y, FileDlg,
+    GRIP, LABEL_DY, LOOKIN_H, LOOKIN_ICON_GAP, LOOKIN_ICON_PX, LOOKIN_ICON_X, LOOKIN_LABEL_X,
+    LOOKIN_X, LOOKIN_Y, Labels, Layout, MARGIN, PLACES_H, ROW_LABEL_X, SHELL_H, SHELL_X, SHELL_Y,
+    TOOLBAR_GAP, TOOLBAR_MARGIN, TOOLBAR_VIEWS, TOOLBAR_Y, cancel_label, filename_label,
+    filetype_label, key_around, lookin_label, rows, views_items,
 };
 use crate::classic::widgets::{self, BUTTON_H, BUTTON_W};
 use crate::controls::combo;
@@ -50,7 +50,7 @@ impl FileDlg {
         // 100% lengths at the text size.
         let u = |v: i32| cm.text.len(v);
         let label_h = px as i32 + 2;
-        let lookin_label_w = text.measure(&split_mnemonic(LOOKIN_LABEL).0, false, px);
+        let lookin_label_w = text.measure(&split_mnemonic(&lookin_label()).0, false, px);
         let lookin_label = Rect::new(
             r.x + u(LOOKIN_LABEL_X),
             r.y + u(LOOKIN_Y + LABEL_DY) - 1,
@@ -104,11 +104,11 @@ impl FileDlg {
         let places_rects = placesbar::layout(&self.places, places, &cm.places);
 
         let label_w = text
-            .measure(&split_mnemonic(FILENAME_LABEL).0, false, px)
-            .max(text.measure(&split_mnemonic(FILETYPE_LABEL).0, false, px));
+            .measure(&split_mnemonic(&filename_label()).0, false, px)
+            .max(text.measure(&split_mnemonic(&filetype_label()).0, false, px));
         let field_x = r.x + u(FIELD_X);
         // Accept and Cancel share a width, grown past 75 px for a label that needs it.
-        let label_need = [&*self.accept_label(), CANCEL]
+        let label_need = [&*self.accept_label(), &*cancel_label()]
             .map(|l| text.measure(&split_mnemonic(l).0, false, px) + u(6));
         let button_w = label_need.into_iter().fold(u(BUTTON_W), i32::max);
         let button_h = u(BUTTON_H);
@@ -193,7 +193,7 @@ impl FileDlg {
         views_items()
             .iter()
             .map(|(label, mode)| {
-                MenuItem::entry(*label)
+                MenuItem::entry(label)
                     .radio(true)
                     .checked(*mode == self.shell.mode)
             })
@@ -219,15 +219,15 @@ impl FileDlg {
             .collect();
         let accept = &self.fields.accept_label;
         taken.extend(access_key(accept));
-        let mut keyed = |label: &'static str| {
+        let mut keyed = |label: String| {
             let label = key_around(label, &taken);
             taken.extend(access_key(&label));
             label
         };
         let (lookin, filename, filetype) = (
-            keyed(LOOKIN_LABEL),
-            keyed(FILENAME_LABEL),
-            keyed(FILETYPE_LABEL),
+            keyed(lookin_label()),
+            keyed(filename_label()),
+            keyed(filetype_label()),
         );
         Labels {
             lookin,

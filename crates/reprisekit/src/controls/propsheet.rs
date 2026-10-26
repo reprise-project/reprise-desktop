@@ -255,15 +255,15 @@ impl PropSheet {
         let (ok, cancel, apply_r) = buttons(self.shown());
         let row = match self.buttons {
             Buttons::OkCancelApply => vec![
-                Item::button(OK, at(ok), "OK", true, true),
-                Item::button(CANCEL, at(cancel), "Cancel", true, false),
-                Item::button(APPLY, at(apply_r), "&Apply", apply, false),
+                Item::button(OK, at(ok), &tr!("ok"), true, true),
+                Item::button(CANCEL, at(cancel), &tr!("cancel"), true, false),
+                Item::button(APPLY, at(apply_r), &tr!("apply"), apply, false),
             ],
             Buttons::OkCancel => vec![
-                Item::button(OK, at(cancel), "OK", true, true),
-                Item::button(CANCEL, at(apply_r), "Cancel", true, false),
+                Item::button(OK, at(cancel), &tr!("ok"), true, true),
+                Item::button(CANCEL, at(apply_r), &tr!("cancel"), true, false),
             ],
-            Buttons::Close => vec![Item::button(OK, at(apply_r), "Close", true, true)],
+            Buttons::Close => vec![Item::button(OK, at(apply_r), &tr!("close"), true, true)],
         };
         page.items.extend(row);
         // A page with no controls of its own starts on OK.

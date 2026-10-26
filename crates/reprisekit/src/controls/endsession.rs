@@ -33,26 +33,22 @@ pub struct Fields {
 }
 
 impl Fields {
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self) -> String {
         match self.goal {
-            Goal::LogOff => "Log Off Reprise",
-            Goal::TurnOff => "Turn Off Computer",
-            Goal::Restart => "Restart Computer",
+            Goal::LogOff => tr!("endsession-title-log-off"),
+            Goal::TurnOff => tr!("endsession-title-turn-off"),
+            Goal::Restart => tr!("endsession-title-restart"),
         }
     }
 
     fn intro(&self) -> String {
-        let then = match self.goal {
-            Goal::LogOff => "Reprise can log off",
-            Goal::TurnOff => "the computer can turn off",
-            Goal::Restart => "the computer can restart",
-        };
-        format!("These programs must close before {then}. Save your work and close them.")
+        match self.goal {
+            Goal::LogOff => tr!("endsession-intro-log-off"),
+            Goal::TurnOff => tr!("endsession-intro-turn-off"),
+            Goal::Restart => tr!("endsession-intro-restart"),
+        }
     }
 }
-
-const OUTRO_TEXT: &str = "To end the programs now, click End Now. Anything they have not \
-                          saved will be lost. To go back to your programs, click Cancel.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Choice {
@@ -97,7 +93,7 @@ fn plan(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Plan {
     let intro_end = TEXT_Y + intro.len() as i32 * LINE_H;
     let list_y = intro_end.max(ICON_XY.1 + ICON) + GAP;
     let outro_y = list_y + LIST_H + GAP;
-    let outro = crate::text::wrap(text, OUTRO_TEXT, u.len(W - 2 * MARGIN), px);
+    let outro = crate::text::wrap(text, &tr!("endsession-outro"), u.len(W - 2 * MARGIN), px);
     let button_y = outro_y + outro.len() as i32 * LINE_H + BUTTON_GAP_Y;
     Plan {
         intro,
@@ -165,14 +161,14 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
     items.push(Item::button(
         END_NOW,
         Rect::new(end_x, p.button_y, BUTTON_W, BUTTON_H),
-        "&End Now",
+        &tr!("endsession-end-now"),
         true,
         false,
     ));
     items.push(Item::button(
         CANCEL,
         Rect::new(cancel_x, p.button_y, BUTTON_W, BUTTON_H),
-        "Cancel",
+        &tr!("cancel"),
         true,
         true,
     ));

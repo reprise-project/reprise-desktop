@@ -86,11 +86,11 @@ fn alt_underlines_the_labels_and_the_accept_button() {
     let ink = cs.button_text.argb();
     // Each label's key is underlined one px under the baseline, and only with Alt.
     for (r, label) in [
-        (lay.lookin_label, LOOKIN_LABEL),
-        (lay.filename_label, FILENAME_LABEL),
-        (lay.filetype_label, FILETYPE_LABEL),
+        (lay.lookin_label, lookin_label()),
+        (lay.filename_label, filename_label()),
+        (lay.filetype_label, filetype_label()),
     ] {
-        let (plain, m) = split_mnemonic(label);
+        let (plain, m) = split_mnemonic(&label);
         let base = t.baseline(r, false, 11).unwrap();
         let (dx, w) = t.span(&plain, m.unwrap(), false, 11);
         for x in r.x + dx..r.x + dx + w {

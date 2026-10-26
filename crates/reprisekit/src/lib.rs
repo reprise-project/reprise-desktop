@@ -31,6 +31,10 @@
 //! [`classic`] holds the paint drawn in the Classic look; [`blue`] holds
 //! Reprise Blue's own palette and painters.
 
+// First, so every module after it can call `tr!`.
+#[macro_use]
+pub mod i18n;
+
 pub mod access;
 pub mod anim;
 pub mod art;
