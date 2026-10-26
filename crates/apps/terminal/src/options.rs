@@ -91,6 +91,7 @@ impl Options {
             cursor,
             blink: general.checked("blink").unwrap_or(true),
             scrollback: number(general, "scrollback") as usize,
+            confirm_multiline_paste: general.checked("confirm_paste").unwrap_or(true),
             font: edit_text(look, "font"),
             size_px: number(look, "size") as u32,
             scheme: schemes::NAMES[scheme.min(schemes::NAMES.len() - 1)]
@@ -293,6 +294,8 @@ fn general_page(s: &Settings) -> Form {
         Item::radio("underline", 250, 110, "&Underline", "cursor")
             .checked(s.cursor == Cursor::Underline),
         Item::check("blink", 16, 156, "Blin&king cursor").checked(s.blink),
+        Item::check("confirm_paste", 200, 156, "Confirm &multi-line pastes")
+            .checked(s.confirm_multiline_paste),
         Item::label(
             "scrollback_label",
             Rect::new(16, 186, 200, 13),
@@ -426,6 +429,7 @@ mod tests {
             cursor: Cursor::Underline,
             blink: false,
             scrollback: 2500,
+            confirm_multiline_paste: false,
             font: "Iosevka".into(),
             size_px: 17,
             scheme: "dark".into(),
