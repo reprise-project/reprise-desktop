@@ -243,7 +243,7 @@ impl State {
         }
     }
 
-    fn clipboard_held(&self) -> bool {
+    pub(crate) fn clipboard_held(&self) -> bool {
         if current_data_device_selection_userdata(&self.seat).is_some() {
             return true;
         }
@@ -548,28 +548,95 @@ mod tests {
         assert_eq!(file_offers(&FileClip::default()), None, "nothing to offer");
     }
 
+    /// Turns the loop until the clipboard history holds `n` entries.
+    fn recorded(h: &mut crate::harness::Harness, n: usize) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while h.state.panels.history.history.entries().count() < n {
+            assert!(std::time::Instant::now() < end, "never recorded");
+            h.run_for(5);
+        }
+    }
+
     #[test]
-    fn paste_greys_once_the_clipboard_source_is_destroyed_or_its_client_goes() {
+    fn a_destroyed_source_leaves_its_recorded_copy_and_paste_greys_without_one() {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
         let mut c = h.connect();
         h.map_toplevel(&mut c, "test.app", 300, 200);
-        let source = c.copy(&["text/plain"]);
+        let source = c.copy(&["text/plain"], b"kept");
+        h.roundtrip(&mut c);
+        recorded(&mut h, 1);
+        source.destroy();
+        h.roundtrip(&mut c);
+        assert!(h.state.clip_has_text(), "the recorded copy stays pastable");
+        let own = h.state.own_offers().expect("Reprise holds the clipboard");
+        assert_eq!(
+            answer(&own, "text/plain").map(|b| &b[..]),
+            Some(&b"kept"[..])
+        );
+
+        let source = c.copy(&["text/plain"], b"");
         h.roundtrip(&mut c);
         assert!(h.state.clip_has_text(), "the client's text is pastable");
+        h.run_for(20);
         source.destroy();
         h.roundtrip(&mut c);
         assert!(
             !h.state.clip_has_text(),
-            "a destroyed source offers no text"
+            "a destroyed source with nothing recorded offers no text"
         );
 
-        c.copy(&["text/uri-list"]);
+        c.copy(&["text/uri-list"], b"file:///tmp/a\r\n");
         h.roundtrip(&mut c);
         assert!(h.state.clip_has_files(), "the client's files are pastable");
         drop(c);
         h.run_for(50);
         assert!(!h.state.clip_has_files(), "a gone client offers no files");
+        assert!(!h.state.clip_has_text(), "nor the older recorded text");
+    }
+
+    #[test]
+    fn a_copy_outlives_the_program_that_made_it_unless_history_is_off() {
+        const UTF8: &str = "text/plain;charset=utf-8";
+        for history in [true, false] {
+            let text = if history {
+                ""
+            } else {
+                "[clipboard]\nhistory = false\n"
+            };
+            let config = crate::config::Config::parse(text).unwrap();
+            let mut h = crate::harness::Harness::with_config(config);
+            h.output("TEST-1", 1024, 768);
+            let mut a = h.connect();
+            h.map_toplevel(&mut a, "test.a", 300, 200);
+            a.copy(&[UTF8], b"from a");
+            h.roundtrip(&mut a);
+            if history {
+                recorded(&mut h, 1);
+            } else {
+                h.run_for(20);
+            }
+            drop(a);
+            h.run_for(50);
+
+            let mut b = h.connect();
+            b.data_device();
+            h.map_toplevel(&mut b, "test.b", 300, 200);
+            h.roundtrip(&mut b);
+            if history {
+                assert!(
+                    b.selection_mimes().iter().any(|m| m == UTF8),
+                    "b hears a text selection: {:?}",
+                    b.selection_mimes()
+                );
+                assert_eq!(h.paste(&mut b, UTF8), b"from a");
+            } else {
+                assert_eq!(
+                    b.side.selection, None,
+                    "nothing is offered with history off"
+                );
+            }
+        }
     }
 
     #[test]
