@@ -8,7 +8,9 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
-pub struct Screenshot;
+pub struct Screenshot {
+    pub frontend: crate::Frontend,
+}
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Screenshot")]
 impl Screenshot {
@@ -19,16 +21,18 @@ impl Screenshot {
 
     async fn screenshot(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         handle: ObjectPath<'_>,
         app_id: String,
         parent_window: String,
         options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         log::info!("Screenshot for {app_id:?}");
         if needs_consent(&options) {
             let cancel = Arc::new(AtomicBool::new(false));
-            crate::export_request(server, &handle, cancel.clone()).await?;
+            crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
             let id = app_id.clone();
             let parent = crate::dialog::parent_handle(&parent_window);
             let ok = blocking::unblock(move || {
@@ -68,15 +72,17 @@ impl Screenshot {
 
     async fn pick_color(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         handle: ObjectPath<'_>,
         app_id: String,
         _parent_window: String,
         _options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         log::info!("PickColor for {app_id:?}");
         let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, &handle, cancel.clone()).await?;
+        crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
         let color = blocking::unblock(move || crate::colorpick::pick(&cancel)).await;
         let _ = server.remove::<crate::Request, _>(handle.clone()).await;
         let Some(color) = color else {

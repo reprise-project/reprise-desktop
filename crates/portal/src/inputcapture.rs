@@ -29,6 +29,7 @@ pub struct InputCapture {
     /// method then fails rather than pretending to capture anything, as it
     /// does once the link's connection is lost.
     pub link: Option<Link>,
+    pub frontend: crate::Frontend,
 }
 
 pub fn validate(barriers: &[Barrier], zones: &[Zone]) -> Vec<u32> {
@@ -125,6 +126,7 @@ impl InputCapture {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         crate::check_session(&session_handle)?;
         let Some(link) = live(&self.link) else {
             return Ok((RESPONSE_OTHER, HashMap::new()));
@@ -142,7 +144,7 @@ impl InputCapture {
             session_handle.as_str()
         );
         let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, &handle, cancel.clone()).await?;
+        crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
         let id = app_id.clone();
         let parent = crate::dialog::parent_handle(&parent_window);
         let ok = blocking::unblock(move || {
@@ -202,11 +204,13 @@ impl InputCapture {
 
     async fn get_zones(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         _app_id: String,
         _options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         let Some(link) = live(&self.link) else {
             return Ok((RESPONSE_OTHER, HashMap::new()));
         };
@@ -242,8 +246,10 @@ impl InputCapture {
         Ok((RESPONSE_OK, r))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn set_pointer_barriers(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         _app_id: String,
@@ -251,6 +257,7 @@ impl InputCapture {
         barriers: Vec<HashMap<String, Value<'_>>>,
         zone_set: u32,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         let Some(link) = live(&self.link) else {
             return Ok((RESPONSE_OTHER, HashMap::new()));
         };
@@ -297,30 +304,36 @@ impl InputCapture {
 
     async fn enable(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         _app_id: String,
         _options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         log::info!("InputCapture.Enable {}", session_handle.as_str());
         self.with_capture(&session_handle, |c| c.enable())
     }
 
     async fn disable(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         _app_id: String,
         _options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         log::info!("InputCapture.Disable {}", session_handle.as_str());
         self.with_capture(&session_handle, |c| c.disable())
     }
 
     async fn release(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         _app_id: String,
         options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         let id = options
             .get("activation_id")
             .and_then(|v| u32::try_from(v).ok());
@@ -338,10 +351,12 @@ impl InputCapture {
     #[zbus(name = "ConnectToEIS")]
     async fn connect_to_eis(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         app_id: String,
         _options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<zbus::zvariant::OwnedFd> {
+        self.frontend.check(&hdr)?;
         if live(&self.link).is_none() {
             return Err(zbus::fdo::Error::Failed("no input link".into()));
         }

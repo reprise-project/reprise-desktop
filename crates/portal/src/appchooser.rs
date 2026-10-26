@@ -34,9 +34,18 @@ pub struct Output {
     pub choice: Option<String>,
 }
 
-#[derive(Default)]
 pub struct AppChooser {
     live: Arc<Mutex<HashMap<String, Sender<String>>>>,
+    frontend: crate::Frontend,
+}
+
+impl AppChooser {
+    pub fn new(frontend: crate::Frontend) -> Self {
+        AppChooser {
+            live: Arc::default(),
+            frontend,
+        }
+    }
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.AppChooser")]
@@ -44,6 +53,7 @@ impl AppChooser {
     #[allow(clippy::too_many_arguments)]
     async fn choose_application(
         &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
         handle: ObjectPath<'_>,
         app_id: String,
         parent_window: String,
@@ -51,6 +61,7 @@ impl AppChooser {
         options: HashMap<String, Value<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        self.frontend.check(&hdr)?;
         if choices.is_empty() {
             log::warn!("AppChooser for {app_id:?}: no choices");
             return Ok((crate::RESPONSE_OTHER, HashMap::new()));
@@ -61,7 +72,7 @@ impl AppChooser {
             _ => None,
         };
         let cancel = Arc::new(AtomicBool::new(false));
-        crate::export_request(server, &handle, cancel.clone()).await?;
+        crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
         let (tx, rx) = mpsc::channel();
         let key = handle.to_string();
         self.live.lock().unwrap().insert(key.clone(), tx);
@@ -72,10 +83,16 @@ impl AppChooser {
         Ok(reply(&out, token))
     }
 
-    async fn update_choices(&self, handle: ObjectPath<'_>, choices: Vec<String>) {
+    async fn update_choices(
+        &self,
+        handle: ObjectPath<'_>,
+        choices: Vec<String>,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+    ) -> zbus::fdo::Result<()> {
+        self.frontend.check(&hdr)?;
         let Some(tx) = self.live.lock().unwrap().get(handle.as_str()).cloned() else {
             log::info!("UpdateChoices for {handle}: no chooser up");
-            return;
+            return Ok(());
         };
         match toml::to_string(&Update { choices }) {
             Ok(doc) => {
@@ -83,6 +100,7 @@ impl AppChooser {
             }
             Err(e) => log::warn!("UpdateChoices: {e}"),
         }
+        Ok(())
     }
 }
 
