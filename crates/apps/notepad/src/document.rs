@@ -1,6 +1,6 @@
 //! Notepad file I/O: reading, atomic writing, line-ending detection.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Write so a crash or full disk never leaves the file truncated: temp file,
 /// sync, rename, sync the directory. Keeps mode, xattrs and (where permitted)
@@ -117,4 +117,52 @@ pub(crate) fn open_failed_text(path: &Path, e: &std::io::Error) -> String {
         ErrorKind::PermissionDenied => format!("Cannot open {path}.\nAccess is denied."),
         _ => format!("Cannot open {path}.\n{e}"),
     }
+}
+
+/// Where `emergency` leaves unsaved text: `$XDG_STATE_HOME/reprise/notepad`.
+pub(crate) fn recovery_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
+    Some(base.join("reprise").join("notepad"))
+}
+
+/// Write `lines` to `recovery-<pid>-<stem>.txt` in `dir`, made 0700 if missing.
+pub(crate) fn write_recovery(
+    dir: &Path,
+    pid: u32,
+    stem: &str,
+    lines: &[impl AsRef<str>],
+    sep: &str,
+) -> std::io::Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)?;
+    let path = dir.join(format!("{RECOVERY_PREFIX}{pid}-{stem}.txt"));
+    write_document(&path, lines, sep)?;
+    Ok(path)
+}
+
+const RECOVERY_PREFIX: &str = "recovery-";
+
+/// The recovery files in `dir`, by name.
+pub(crate) fn recovered_in(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(RECOVERY_PREFIX) && n.ends_with(".txt"))
+        })
+        .collect();
+    found.sort();
+    found
 }

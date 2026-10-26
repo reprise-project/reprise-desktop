@@ -308,34 +308,62 @@ pub fn run(app: Box<dyn App>) {
         .expect("timer");
 
     loop {
-        // Everything that dirties a slot is a source here, so nothing needs polling.
-        if let Err(e) = turn(&mut event_loop, &mut host, &conn) {
-            log::error!("{e}; exiting");
-            std::process::exit(1);
-        }
-        let ready: Vec<WinId> = host
-            .slots
-            .iter()
-            .filter(|s| s.dirty && s.configured)
-            .map(|s| s.id)
-            .collect();
-        // Before the draws: an open menu on popups is left out of its window and laid out
-        // where it shows.
-        host.place_menu();
-        for id in ready {
-            if let Some(s) = host.slot_mut(id) {
-                s.dirty = false;
+        let step = rescued(
+            &mut host,
+            |host| {
+                // Everything that dirties a slot is a source here, so nothing needs polling.
+                turn(&mut event_loop, host, &conn)?;
+                let ready: Vec<WinId> = host
+                    .slots
+                    .iter()
+                    .filter(|s| s.dirty && s.configured)
+                    .map(|s| s.id)
+                    .collect();
+                // Before the draws: an open menu on popups is left out of its window and laid out
+                // where it shows.
+                host.place_menu();
+                for id in ready {
+                    if let Some(s) = host.slot_mut(id) {
+                        s.dirty = false;
+                    }
+                    host.draw(id, &qh);
+                }
+                host.bind_keyboard(&conn, &qh);
+                // After the draws: a window's draw opens the menu a right press asked for.
+                host.settle_keyboard();
+                host.sync_menu();
+                Ok::<bool, String>(host.exit)
+            },
+            |host| host.app.emergency(),
+        );
+        match step {
+            Ok(false) => {}
+            Ok(true) => {
+                let _ = conn.flush();
+                hangup::hang_up(conn.backend().poll_fd());
+                break;
             }
-            host.draw(id, &qh);
+            Err(e) => {
+                log::error!("{e}; exiting");
+                host.app.emergency();
+                std::process::exit(1);
+            }
         }
-        host.bind_keyboard(&conn, &qh);
-        // After the draws: a window's draw opens the menu a right press asked for.
-        host.settle_keyboard();
-        host.sync_menu();
-        if host.exit {
-            let _ = conn.flush();
-            hangup::hang_up(conn.backend().poll_fd());
-            break;
+    }
+}
+
+/// Runs `step` on `data`. When it panics, `rescue` gets `data` once the unwinding has released
+/// every borrow of it, and the panic then carries on.
+pub(crate) fn rescued<D, T>(
+    data: &mut D,
+    step: impl FnOnce(&mut D) -> T,
+    rescue: impl FnOnce(&mut D),
+) -> T {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| step(data))) {
+        Ok(out) => out,
+        Err(panic) => {
+            rescue(data);
+            std::panic::resume_unwind(panic)
         }
     }
 }

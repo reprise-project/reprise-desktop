@@ -76,6 +76,9 @@ pub trait App {
     /// Called once before the first dispatch, with the handle the
     /// program clones into the threads it spawns.
     fn start(&mut self, _waker: Waker) {}
+    /// The process is about to end without the program's say: the compositor connection is gone,
+    /// or an event or draw panicked and left the state half-updated. Save what the user would lose.
+    fn emergency(&mut self) {}
     /// Whether the program sets the outputs: the host then binds
     /// wlr-output-management, sends `Event::Heads` and carries out
     /// [`Ctx::configure_head`]. Read once, at start.

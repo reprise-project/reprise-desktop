@@ -55,6 +55,10 @@ CRLF line endings, never leaves a file half saved, asks before opening a
 file that isn't UTF-8, and grows with Larger Text. Word Wrap and Print are
 greyed out for now. Notepad has always had its priorities.
 
+When Notepad loses the desktop or crashes with unsaved text, it writes the text to
+`$XDG_STATE_HOME/reprise/notepad/` (`~/.local/state/reprise/notepad/` by default) and offers it
+the next time it starts.
+
 ## Terminal
 
 A tabbed terminal, `reprise-terminal`. It opens in the directory it was

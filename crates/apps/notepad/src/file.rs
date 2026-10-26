@@ -17,6 +17,7 @@ impl Notepad {
         match self.write_to(&p) {
             Ok(()) => {
                 self.dirty = false;
+                self.forget_rescued();
                 true
             }
             Err(e) => {
@@ -78,6 +79,104 @@ impl Notepad {
             }
             oneshot::Outcome::Redraw => Reply::redraw(),
             oneshot::Outcome::None => Reply::none(),
+        }
+    }
+
+    /// Leaves unsaved text in the recovery dir, in place of the recovery file it was opened from.
+    pub(crate) fn rescue(&mut self) {
+        let Some(dir) = self.rescue_dir.as_deref().filter(|_| self.dirty) else {
+            return;
+        };
+        let stem = self
+            .path
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Untitled".into());
+        let sep = if self.crlf { "\r\n" } else { "\n" };
+        match write_recovery(dir, std::process::id(), &stem, self.edit.lines(), sep) {
+            Ok(kept) => {
+                log::error!("unsaved text kept in {}", kept.display());
+                if self.rescued.as_ref().is_some_and(|old| *old != kept) {
+                    self.forget_rescued();
+                }
+            }
+            Err(e) => log::error!("cannot keep the unsaved text in {}: {e}", dir.display()),
+        }
+    }
+
+    /// Offers the recovery files left in the recovery dir, one prompt at a time.
+    pub(crate) fn offer_recovered(&mut self) {
+        self.recover_queue = self
+            .rescue_dir
+            .as_deref()
+            .map(recovered_in)
+            .unwrap_or_default();
+        self.offer_next_recovered();
+    }
+
+    fn offer_next_recovered(&mut self) {
+        if self.recover_queue.is_empty() {
+            return;
+        }
+        let file = self.recover_queue.remove(0);
+        let prompt = MsgBox::new(
+            "Notepad",
+            msgbox::Fields {
+                text: "A document was recovered. Open it?".into(),
+                icon: self.warn_icon.clone(),
+                buttons: vec!["Yes".into(), "No".into()],
+                default: 0,
+                min_text_h: None,
+                min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
+            },
+        );
+        self.recovered = Some((prompt, file));
+    }
+
+    /// Yes opens the text as an unsaved Untitled document and offers no more files; No deletes
+    /// the file and offers the next. Closing the prompt keeps the files for the next start.
+    pub(crate) fn recovered_event(&mut self, ev: Event) -> Reply {
+        let Some((b, _)) = &mut self.recovered else {
+            return Reply::none();
+        };
+        match b.event(&ev, &self.dialog_text, &self.forms) {
+            oneshot::Outcome::Closed(answer) => {
+                let (_, file) = self.recovered.take().expect("checked above");
+                match answer {
+                    Some(0) => {
+                        self.recover_queue.clear();
+                        match read_text(&file) {
+                            Ok(text) => {
+                                self.show_document(&text, None);
+                                self.dirty = true;
+                                self.rescued = Some(file);
+                            }
+                            Err(e) => self.open_failed(&file, &e),
+                        }
+                    }
+                    Some(_) => {
+                        if let Err(e) = std::fs::remove_file(&file) {
+                            log::warn!("remove {}: {e}", file.display());
+                        }
+                        self.offer_next_recovered();
+                    }
+                    None => self.recover_queue.clear(),
+                }
+                Reply::redraw_all()
+            }
+            oneshot::Outcome::Redraw => Reply::redraw(),
+            oneshot::Outcome::None => Reply::none(),
+        }
+    }
+
+    /// The recovered document was saved or discarded: its recovery file goes.
+    pub(crate) fn forget_rescued(&mut self) {
+        if let Some(file) = self.rescued.take()
+            && let Err(e) = std::fs::remove_file(&file)
+        {
+            log::warn!("remove {}: {e}", file.display());
         }
     }
 
@@ -185,6 +284,7 @@ impl Notepad {
             form::Event::Pressed(id) if id == msgbox::button_id(1) => {
                 self.savechanges = false;
                 self.dirty = false;
+                self.forget_rescued();
                 match self.pending.discarded() {
                     Some(action) => self.run_pending(action),
                     None => Reply::redraw_all(),

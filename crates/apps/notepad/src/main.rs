@@ -10,7 +10,10 @@ mod pending;
 mod window;
 
 use dialogs::{FormStep, form_event, goto_form, ok_box};
-use document::{has_crlf, load, open_failed_text, read_text, write_document};
+use document::{
+    has_crlf, load, open_failed_text, read_text, recovered_in, recovery_dir, write_document,
+    write_recovery,
+};
 use drop::Hover;
 use menu::menus;
 use pending::{Pending, PendingAction};
@@ -59,6 +62,7 @@ const ABOUT: WinId = "about";
 const SAVECHANGES: WinId = "savechanges";
 const OVERWRITE: WinId = "overwrite";
 const LOSSY: WinId = "lossy";
+const RECOVERED: WinId = "recovered";
 const OPEN: WinId = "open";
 const SAVEAS: WinId = "saveas";
 
@@ -101,6 +105,13 @@ struct Notepad {
     overwrite_focus: usize,
     overwrite_shown: oneshot::Shown,
     lossy: Option<(MsgBox, String)>,
+    /// Where `emergency` leaves unsaved text and the next start finds it.
+    rescue_dir: Option<PathBuf>,
+    /// The prompt for one recovery file, and the files offered after it.
+    recovered: Option<(MsgBox, PathBuf)>,
+    recover_queue: Vec<PathBuf>,
+    /// The recovery file the open document came from, deleted once it is saved or discarded.
+    rescued: Option<PathBuf>,
     /// Kept here because `children(&self)` has no `Ctx`.
     dialog_text: Rc<TextRenderer>,
     /// The dialog font's px at 100%; file dialogs stay at it.
@@ -163,6 +174,10 @@ impl Notepad {
             overwrite_focus: 1,
             overwrite_shown: oneshot::Shown::default(),
             lossy: None,
+            rescue_dir: recovery_dir(),
+            recovered: None,
+            recover_queue: Vec::new(),
+            rescued: None,
             dialog_text: repriseapp::start_text(),
             dialog_px: Theme::default().fonts.size_px,
             forms: Theme::default(),
@@ -232,7 +247,8 @@ impl Notepad {
         let raised = self
             .error
             .iter_mut()
-            .chain(self.lossy.iter_mut().map(|(b, _)| b));
+            .chain(self.lossy.iter_mut().map(|(b, _)| b))
+            .chain(self.recovered.iter_mut().map(|(b, _)| b));
         for b in raised.filter(|b| b.fields.icon.is_none()) {
             b.fields.icon = self.warn_icon.clone();
         }
@@ -253,6 +269,10 @@ impl App for Notepad {
 
     fn text_sized(&self) -> bool {
         true
+    }
+
+    fn emergency(&mut self) {
+        self.rescue();
     }
 
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
@@ -334,6 +354,9 @@ impl App for Notepad {
         if let Some((b, _)) = &self.lossy {
             kids.push(b.child(LOSSY, &self.dialog_text, &self.forms));
         }
+        if let Some((b, _)) = &self.recovered {
+            kids.push(b.child(RECOVERED, &self.dialog_text, &self.forms));
+        }
         if let Some(path) = &self.overwrite {
             let fields = self.overwrite_fields(path);
             kids.push(Child {
@@ -372,6 +395,7 @@ impl App for Notepad {
             SAVECHANGES => self.savechanges_event(ev),
             OVERWRITE => self.overwrite_event(ev),
             LOSSY => self.lossy_event(ev),
+            RECOVERED => self.recovered_event(ev),
             OPEN => self.open_event(ev, ctx),
             SAVEAS => self.saveas_event(ev, ctx),
             _ => self.main_event(ev, ctx),
@@ -469,6 +493,11 @@ impl App for Notepad {
                     b.draw(c, &self.forms, &self.dialog_text);
                 }
             }
+            RECOVERED => {
+                if let Some((b, _)) = &self.recovered {
+                    b.draw(c, &self.forms, &self.dialog_text);
+                }
+            }
             ABOUT => {
                 c.fill_rect(c.bounds(), cs.button_face);
                 let f = self.about_form();
@@ -558,6 +587,11 @@ impl App for Notepad {
                     b.access(tree, dt, forms);
                 }
             }
+            RECOVERED => {
+                if let Some((b, _)) = &self.recovered {
+                    b.access(tree, dt, forms);
+                }
+            }
             ABOUT => {
                 built(&self.about_form(), tree);
             }
@@ -590,6 +624,7 @@ fn main() {
     let path = std::env::args_os().nth(1).map(std::path::PathBuf::from);
     let mut notepad = Notepad::new(path);
     notepad.forms = repriseapp::start_forms();
+    notepad.offer_recovered();
     repriseapp::run(Box::new(notepad));
 }
 

@@ -230,6 +230,7 @@ impl Notepad {
             Ok(()) => {
                 self.path = Some(path);
                 self.dirty = false;
+                self.forget_rescued();
                 self.saveas = None;
                 match self.pending.saved(true) {
                     Some(action) => self.run_pending(action),
