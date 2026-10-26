@@ -266,7 +266,11 @@ impl DialogLayout {
                 text: &d.text,
                 icon: d.icon.is_some(),
                 field: d.field.is_some(),
-                buttons: d.buttons.len(),
+                buttons: &d
+                    .buttons
+                    .iter()
+                    .map(|b| b.label.clone())
+                    .collect::<Vec<_>>(),
                 text_h,
             },
             u,

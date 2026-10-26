@@ -7,12 +7,14 @@
 use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H, ROW_H};
 use crate::controls::form::{Form, Item};
 use crate::raster::{Canvas, Rect};
-use crate::text::{TextRenderer, wrap};
+use crate::text::{TextRenderer, split_mnemonic, wrap};
 use crate::theme::TextUnits;
 
 pub const FRAME: i32 = 3;
 pub const CAPTION_H: i32 = 18;
 pub const ICON_PX: i32 = 32;
+/// The 100% room each side of a button's label: it clears the focus ring 4 px inside the edge.
+const BUTTON_LABEL_PAD: i32 = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Template {
@@ -141,7 +143,8 @@ pub struct Fields<'a> {
     pub text: &'a str,
     pub icon: bool,
     pub field: bool,
-    pub buttons: usize,
+    /// The button labels, `&` before an access key; every button takes the widest one's width.
+    pub buttons: &'a [String],
     pub text_h: Option<i32>,
 }
 
@@ -281,22 +284,22 @@ pub fn layout(
         y += ROW_H;
     }
     y += cm.button_gap;
-    let n = f.buttons as i32;
-    let total = n * cm.button_w + (n - 1).max(0) * cm.button_pitch;
+    let n = f.buttons.len() as i32;
+    let widest = f
+        .buttons
+        .iter()
+        .map(|l| text.ink_width(&split_mnemonic(l).0, false, px))
+        .max()
+        .unwrap_or(0);
+    let button_w = cm.button_w.max(u.design(widest) + 2 * BUTTON_LABEL_PAD);
+    let total = n * button_w + (n - 1).max(0) * cm.button_pitch;
     let bx = if cm.centered {
         (w - total) / 2
     } else {
         w - cm.button_right - total
     };
     let buttons = (0..n)
-        .map(|i| {
-            Rect::new(
-                bx + i * (cm.button_w + cm.button_pitch),
-                y,
-                cm.button_w,
-                BUTTON_H,
-            )
-        })
+        .map(|i| Rect::new(bx + i * (button_w + cm.button_pitch), y, button_w, BUTTON_H))
         .collect();
     Layout {
         size: (w, y + BUTTON_H + cm.bottom),
@@ -358,7 +361,7 @@ mod tests {
             text: "Are you sure you want to delete 'a'?",
             icon: true,
             field: false,
-            buttons: 2,
+            buttons: &["&Yes".into(), "&No".into()],
             text_h: None,
         };
         let lay = layout(Template::MessageBox, &text, px, &f, TextUnits::ONE);
@@ -378,7 +381,7 @@ mod tests {
             text: "Are you sure you want to delete these 2 items?",
             icon: true,
             field: false,
-            buttons: 2,
+            buttons: &["&Yes".into(), "&No".into()],
             text_h: None,
         };
         let whole = layout(Template::MultiDelete, &text, px, &f, TextUnits::ONE);
@@ -393,6 +396,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_label_wider_than_the_template_button_widens_every_button() {
+        let (text, px) = rend();
+        let labels = ["&Run".into(), "Open in &Notepad".into(), "Cancel".into()];
+        let f = Fields {
+            text: "Running it can change or delete your files.",
+            icon: true,
+            field: false,
+            buttons: &labels,
+            text_h: None,
+        };
+        let lay = layout(Template::MessageBox, &text, px, &f, TextUnits::ONE);
+        let ink = text.ink_width("Open in Notepad", false, px);
+        let w = lay.buttons[1].width;
+        assert!(
+            w > 80,
+            "the button is wider than the template's 80 px, at {w}"
+        );
+        assert!(
+            ink + 2 * BUTTON_LABEL_PAD <= w,
+            "{ink} px of label fits {w} px"
+        );
+        assert!(
+            lay.buttons.iter().all(|r| r.width == w),
+            "one width for the row"
+        );
+        assert!(lay.buttons[0].x >= 0, "the row stays inside the dialog");
+    }
+
     /// A grown Run-like template keeps its frame and caption and grows the client: its lines
     /// sit a grown pitch apart and wrap to the grown column, the field and buttons grow.
     #[test]
@@ -402,7 +434,7 @@ mod tests {
             text: "Type the name of a program, folder, document, or Internet resource, and Reprise will open it for you.",
             icon: true,
             field: true,
-            buttons: 3,
+            buttons: &["OK".into(), "Cancel".into(), "&Browse...".into()],
             text_h: None,
         };
         let one = layout(Template::Run, &text, 11, &f, TextUnits::ONE);
@@ -440,7 +472,7 @@ mod tests {
             text: "Are you sure you want to send 'a considerably longer file name.txt' to the Recycle Bin?",
             icon: true,
             field: false,
-            buttons: 2,
+            buttons: &["&Yes".into(), "&No".into()],
             text_h: None,
         };
         for pct in [100, 150, 200] {

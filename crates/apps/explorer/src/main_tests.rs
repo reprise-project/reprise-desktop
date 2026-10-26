@@ -3013,6 +3013,36 @@ fn opening_an_executable_script_runs_it_in_its_folder() {
     }
 }
 
+/// The script question's buttons hold their labels inside the focus ring under every interface
+/// and text size.
+#[test]
+fn the_script_question_fits_its_button_labels() {
+    use reprisekit::controls::dlgtemplate::{self, BUTTON_IDS};
+    const FOCUS_INSET: i32 = 4;
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(std::env::temp_dir()), &mut ctx);
+    ex.ask_run(std::path::Path::new("/tmp/a.sh"), ScriptOpen::Run, &mut ctx);
+    let Some(crate::dialogs::Dialog::Confirm(c)) = &ex.dialog else {
+        panic!("the script question is up");
+    };
+    let over = reprisekit::interfaces::overflows(|_, theme, text| {
+        let px = theme.fonts.size_px;
+        let lay = c.layout(text, px, theme.text);
+        let form = dlgtemplate::form(&lay, None, &c.buttons(), 0);
+        form.drawn_with(&theme.paint());
+        c.buttons()
+            .iter()
+            .zip(BUTTON_IDS)
+            .filter_map(|(label, id)| {
+                let ink = text.ink_width(&reprisekit::text::split_mnemonic(label).0, false, px);
+                let by = ink + 2 * FOCUS_INSET - form.rect(id)?.width;
+                (by > 0).then(|| ("script question".to_string(), id, by))
+            })
+            .collect()
+    });
+    assert!(over.is_empty(), "{over:#?}");
+}
+
 /// Opening an executable script asks Run / Open in Notepad / Cancel before anything runs; Run
 /// runs it and is remembered, Open in Notepad opens it there, and a binary never asks.
 #[test]

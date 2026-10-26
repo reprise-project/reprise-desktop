@@ -3284,6 +3284,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
     c.blit_canvas(10, 990, &msg_c);
 
     {
+        let buttons = ["&Yes".to_string(), "&No".to_string()];
         let lay = dlgtemplate::layout(
             dlgtemplate::Template::MessageBox,
             &text,
@@ -3292,7 +3293,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
                 text: "Are you sure you want to send 'New Rich Text Document' to the Recycle Bin?",
                 icon: true,
                 field: false,
-                buttons: 2,
+                buttons: &buttons,
                 text_h: None,
             },
             theme.text,
@@ -3300,7 +3301,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         .client();
         let mut icon = Canvas::new(32, 32);
         icon.fill_rect(Rect::new(4, 2, 24, 28), Color::rgb(80, 193, 255));
-        let f = dlgtemplate::form(&lay, Some(icon), &["&Yes".into(), "&No".into()], 0);
+        let f = dlgtemplate::form(&lay, Some(icon), &buttons, 0);
         let mut box_c = Canvas::new(lay.size.0 as u32, lay.size.1 as u32);
         box_c.fill_rect(box_c.bounds(), cs.button_face);
         form::draw(
