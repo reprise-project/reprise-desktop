@@ -13,8 +13,8 @@ use wayland_client::{
     self as wc, Connection, EventQueue, QueueHandle,
     protocol::{
         wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_data_device, wl_data_device_manager,
-        wl_data_offer, wl_data_source, wl_keyboard, wl_output::WlOutput, wl_registry, wl_seat,
-        wl_shm, wl_shm_pool, wl_surface::WlSurface,
+        wl_data_offer, wl_data_source, wl_keyboard, wl_output::WlOutput, wl_pointer, wl_registry,
+        wl_seat, wl_shm, wl_shm_pool, wl_surface::WlSurface,
     },
 };
 use wayland_protocols::{
@@ -27,7 +27,9 @@ use wayland_protocols::{
         zwp_text_input_manager_v3::ZwpTextInputManagerV3, zwp_text_input_v3::ZwpTextInputV3,
     },
     xdg::{
-        activation::v1::client::xdg_activation_v1::XdgActivationV1,
+        activation::v1::client::{
+            xdg_activation_token_v1::XdgActivationTokenV1, xdg_activation_v1::XdgActivationV1,
+        },
         shell::client::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base},
     },
 };
@@ -192,19 +194,25 @@ impl Harness {
 
     /// A client on one end of a socket pair, its registry read.
     pub fn connect(&mut self) -> TestClient {
-        self.connect_with(None)
+        self.connect_with(None, false)
+    }
+
+    /// A client in a Flatpak sandbox.
+    pub fn connect_sandboxed(&mut self) -> TestClient {
+        self.connect_with(None, true)
     }
 
     /// A client [`State::client_pid`] takes for process `pid`; pick one above the kernel's
     /// pid limit so no real process answers to it.
     pub fn connect_as(&mut self, pid: i32) -> TestClient {
-        self.connect_with(Some(pid))
+        self.connect_with(Some(pid), false)
     }
 
-    fn connect_with(&mut self, pid: Option<i32>) -> TestClient {
+    fn connect_with(&mut self, pid: Option<i32>, flatpak: bool) -> TestClient {
         let (server, client) = UnixStream::pair().expect("socket pair");
         let mut data = ClientState::of_stream(&server, None);
         data.pid = pid;
+        data.sandbox.flatpak = flatpak;
         let server = self
             .state
             .dh
@@ -330,6 +338,15 @@ impl Harness {
         }
     }
 
+    /// A `wl_surface` from `c` with no role, as `c` sees it.
+    pub fn bare_client_surface(&mut self, c: &mut TestClient) -> WlSurface {
+        let surface = (c.side.compositor.as_ref())
+            .expect("wl_compositor")
+            .create_surface(&c.qh(), ());
+        self.roundtrip(c);
+        surface
+    }
+
     /// A `wl_surface` from `c` with no role yet, as the compositor sees it.
     pub fn bare_surface(
         &mut self,
@@ -436,6 +453,7 @@ impl TestClient {
                 "wl_seat" => {
                     let seat: wl_seat::WlSeat = registry.bind(name, version.min(7), &qh, ());
                     self.side.keyboard = Some(seat.get_keyboard(&qh, ()));
+                    self.side.pointer = Some(seat.get_pointer(&qh, ()));
                     self.side.seat = Some(seat);
                 }
                 "wl_data_device_manager" => {
@@ -493,8 +511,16 @@ impl TestClient {
             .activate(token.into(), &self.side.shells[t.shell].surface);
     }
 
+    /// Ask for an activation token with nothing set on it, as any client may.
+    pub fn mint_token(&self) {
+        (self.side.activation.as_ref())
+            .expect("xdg_activation_v1")
+            .get_activation_token(&self.qh(), ())
+            .commit();
+    }
+
     /// A clipboard selection offering `mimes`, set while the client has the keyboard. The source
-    /// answers no reads.
+    /// answers every read with nothing.
     pub fn copy(&mut self, mimes: &[&str]) -> wl_data_source::WlDataSource {
         let qh = self.qh();
         let manager = self
@@ -504,11 +530,20 @@ impl TestClient {
             .expect("wl_data_device_manager");
         let seat = self.side.seat.as_ref().expect("wl_seat");
         let device = manager.get_data_device(seat, &qh, ());
-        let source = manager.create_data_source(&qh, ());
+        let source = self.data_source(mimes, b"");
+        device.set_selection(Some(&source), 0);
+        source
+    }
+
+    /// A data source offering `mimes`, answering every read with `bytes`. The `target` events it
+    /// hears land in [`ClientSide::source_targets`].
+    pub fn data_source(&mut self, mimes: &[&str], bytes: &[u8]) -> wl_data_source::WlDataSource {
+        let qh = self.qh();
+        let manager = (self.side.data_manager.as_ref()).expect("wl_data_device_manager");
+        let source = manager.create_data_source(&qh, Arc::from(bytes));
         for m in mimes {
             source.offer(m.to_string());
         }
-        device.set_selection(Some(&source), 0);
         source
     }
 
@@ -595,6 +630,11 @@ impl TestClient {
     /// Key `code` (an evdev code) down or up on virtual keyboard `i`.
     pub fn vk_key(&self, i: usize, code: u32, pressed: bool) {
         self.side.vks[i].key(0, code, u32::from(pressed));
+    }
+
+    /// Virtual keyboard `i` sets the seat's modifier masks.
+    pub fn vk_modifiers(&self, i: usize, depressed: u32, latched: u32, locked: u32) {
+        self.side.vks[i].modifiers(depressed, latched, locked, 0);
     }
 
     /// Destroy popup `p`'s role objects and keep its surface, as a toolkit hiding a menu does.
@@ -701,6 +741,7 @@ pub struct ClientSide {
     wm_base: Option<xdg_wm_base::XdgWmBase>,
     activation: Option<XdgActivationV1>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
+    pointer: Option<wl_pointer::WlPointer>,
     seat: Option<wl_seat::WlSeat>,
     data_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     /// The surface the keyboard last entered and has not left.
@@ -717,6 +758,8 @@ pub struct ClientSide {
     pub shells: Vec<Shell>,
     /// Each key event the keyboard heard: its evdev code and whether it went down.
     pub keys: Vec<(u32, bool)>,
+    /// Each button event the pointer heard: its evdev code and whether it went down.
+    pub buttons: Vec<(u32, bool)>,
     /// The `shells` the compositor asked to close, in order.
     pub closes: Vec<usize>,
     layer_shell: Option<ZwlrLayerShellV1>,
@@ -724,6 +767,8 @@ pub struct ClientSide {
     pub layers_closed: Vec<WlSurface>,
     lock_manager: Option<ExtSessionLockManagerV1>,
     outputs: Vec<WlOutput>,
+    /// Each `wl_data_source.target` a source heard: the type a drop target accepts, or none.
+    pub source_targets: Vec<Option<String>>,
 }
 
 impl ClientSide {
@@ -905,6 +950,22 @@ impl wc::Dispatch<wl_keyboard::WlKeyboard, ()> for ClientSide {
     }
 }
 
+impl wc::Dispatch<wl_pointer::WlPointer, ()> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &wl_pointer::WlPointer,
+        ev: wl_pointer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_pointer::Event::Button { button, state, .. } = ev {
+            let down = state == wc::WEnum::Value(wl_pointer::ButtonState::Pressed);
+            st.buttons.push((button, down));
+        }
+    }
+}
+
 impl wc::Dispatch<ZwpInputMethodV2, usize> for ClientSide {
     fn event(
         st: &mut Self,
@@ -966,13 +1027,33 @@ impl wc::Dispatch<wl_data_device::WlDataDevice, ()> for ClientSide {
 wc::delegate_noop!(ClientSide: ignore WlCompositor);
 wc::delegate_noop!(ClientSide: ignore wl_data_device_manager::WlDataDeviceManager);
 wc::delegate_noop!(ClientSide: ignore wl_data_offer::WlDataOffer);
-wc::delegate_noop!(ClientSide: ignore wl_data_source::WlDataSource);
+impl wc::Dispatch<wl_data_source::WlDataSource, Arc<[u8]>> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &wl_data_source::WlDataSource,
+        ev: wl_data_source::Event,
+        bytes: &Arc<[u8]>,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match ev {
+            wl_data_source::Event::Target { mime_type } => st.source_targets.push(mime_type),
+            wl_data_source::Event::Send { fd, .. } => {
+                use std::io::Write;
+                let _ = std::fs::File::from(fd).write_all(bytes);
+            }
+            _ => {}
+        }
+    }
+}
+
 wc::delegate_noop!(ClientSide: ignore WlSurface);
 wc::delegate_noop!(ClientSide: ignore wl_shm::WlShm);
 wc::delegate_noop!(ClientSide: ignore wl_shm_pool::WlShmPool);
 wc::delegate_noop!(ClientSide: ignore WlBuffer);
 wc::delegate_noop!(ClientSide: ignore wl_seat::WlSeat);
 wc::delegate_noop!(ClientSide: ignore XdgActivationV1);
+wc::delegate_noop!(ClientSide: ignore XdgActivationTokenV1);
 wc::delegate_noop!(ClientSide: ignore xdg_positioner::XdgPositioner);
 wc::delegate_noop!(ClientSide: ignore xdg_popup::XdgPopup);
 wc::delegate_noop!(ClientSide: ignore ZwpInputMethodManagerV2);

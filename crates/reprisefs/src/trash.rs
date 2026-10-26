@@ -1735,6 +1735,32 @@ mod tests {
     }
 
     #[test]
+    fn move_path_across_devices_keeps_the_mtime() {
+        use std::os::unix::fs::MetadataExt;
+        let shm = tempfile::tempdir_in("/dev/shm").unwrap();
+        let t = tempfile::tempdir().unwrap();
+        let from = shm.path().join("photo.jpg");
+        std::fs::write(&from, "jpeg").unwrap();
+        let then = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::open(&from)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(then))
+            .unwrap();
+        let to = t.path().join("photo.jpg");
+        let dev = |p: &Path| std::fs::metadata(p).unwrap().dev();
+
+        if dev(shm.path()) == dev(t.path()) {
+            eprintln!("/dev/shm and the temp dir share a device: calling copy_then_remove");
+            copy_then_remove(&from, &to).unwrap();
+        } else {
+            move_path(&from, &to).unwrap();
+        }
+
+        assert!(!from.exists(), "the original is gone");
+        assert_eq!(std::fs::metadata(&to).unwrap().modified().unwrap(), then);
+    }
+
+    #[test]
     fn copy_then_remove_moves_a_symlink_as_a_link() {
         let t = tempfile::tempdir().unwrap();
         let target = t.path().join("target");

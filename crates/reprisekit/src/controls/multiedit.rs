@@ -8,7 +8,9 @@ use crate::look::widgets::{draw_edit_frame, draw_hscrollbar, draw_scroll_corner,
 use crate::pointer::Pointer;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
-use crate::textedit::{Caret, Edit, EditKey, Surrounding, TextSpot, Undo, index_at, words};
+use crate::textedit::{
+    Caret, Doc, Edit, EditKey, Op, Spot, Surrounding, TextSpot, Undo, index_at, words,
+};
 use accesskit::{NodeId, Role};
 use std::cell::RefCell;
 
@@ -17,6 +19,21 @@ use std::cell::RefCell;
 pub struct Pos {
     pub line: usize,
     pub col: usize,
+}
+
+impl Spot for Pos {
+    fn after(self, s: &str) -> Pos {
+        match s.rfind('\n') {
+            None => Pos {
+                line: self.line,
+                col: self.col + s.len(),
+            },
+            Some(i) => Pos {
+                line: self.line + s.bytes().filter(|&b| b == b'\n').count(),
+                col: s.len() - i - 1,
+            },
+        }
+    }
 }
 
 /// How a search runs: a Match case check and an Up/Down group. Nothing wraps around.
@@ -107,30 +124,38 @@ pub fn find(lines: &[String], query: &str, from: Pos, o: &FindOpts) -> Option<(P
 /// Replace every match in the whole document and report how many; `o.down` is ignored.
 /// Each line is scanned once, left to right, so a replacement containing the query terminates.
 pub fn replace_all(lines: &mut [String], query: &str, with: &str, o: &FindOpts) -> usize {
-    if query.is_empty() {
-        return 0;
-    }
     let mut n = 0;
     for line in lines.iter_mut() {
-        let mut out = String::with_capacity(line.len());
-        let mut i = 0;
-        while i < line.len() {
-            if let Some(used) = match_at(line, i, query, o.match_case) {
-                out.push_str(with);
-                i += used;
-                n += 1;
-            } else {
-                let ch = line[i..]
-                    .chars()
-                    .next()
-                    .expect("i is a char boundary in the line");
-                out.push(ch);
-                i += ch.len_utf8();
-            }
+        if let Some((out, k)) = replace_in(line, query, with, o) {
+            *line = out;
+            n += k;
         }
-        *line = out;
     }
     n
+}
+
+/// `line` with every match replaced and the match count; `None` when nothing matches.
+fn replace_in(line: &str, query: &str, with: &str, o: &FindOpts) -> Option<(String, usize)> {
+    if query.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(line.len());
+    let (mut i, mut n) = (0, 0);
+    while i < line.len() {
+        if let Some(used) = match_at(line, i, query, o.match_case) {
+            out.push_str(with);
+            i += used;
+            n += 1;
+        } else {
+            let ch = line[i..]
+                .chars()
+                .next()
+                .expect("i is a char boundary in the line");
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    (n > 0).then_some((out, n))
 }
 
 /// The 1-based character column of byte offset `col`, for the status bar.
@@ -167,7 +192,7 @@ pub struct MultiEdit {
     anchor: Pos,
     /// The x the caret aims for on vertical moves (px).
     pub goal_x: Option<i32>,
-    undo: Undo<Vec<String>, Pos>,
+    undo: Undo<Pos>,
     /// Bumped by every change to `lines`, so `key` reports a change without comparing documents.
     edits: u64,
     /// Per-line widths for `widest_px`; an edit forgets only the lines it touched.
@@ -179,6 +204,16 @@ struct Widths {
     key: (u32, usize),
     px: Vec<Option<i32>>,
     widest: Option<i32>,
+}
+
+impl Doc<Pos> for MultiEdit {
+    fn put(&mut self, at: Pos, s: &str) {
+        self.put_at(at, s);
+    }
+
+    fn cut(&mut self, at: Pos, s: &str) {
+        self.cut_range(at, at.after(s));
+    }
 }
 
 impl Default for MultiEdit {
@@ -213,7 +248,20 @@ impl MultiEdit {
             return 0;
         }
         self.checkpoint(Edit::None);
-        let n = replace_all(&mut self.lines, query, with, o);
+        let mut n = 0;
+        for line in 0..self.lines.len() {
+            let Some((new, k)) = replace_in(&self.lines[line], query, with, o) else {
+                continue;
+            };
+            n += k;
+            let at = Pos { line, col: 0 };
+            let old = std::mem::replace(&mut self.lines[line], new);
+            self.undo.record(Op::Delete { at, text: old });
+            self.undo.record(Op::Insert {
+                at,
+                text: self.lines[line].clone(),
+            });
+        }
         self.replaced_lines();
         self.caret = self.clamp(self.caret);
         self.anchor = self.caret;
@@ -247,6 +295,7 @@ impl MultiEdit {
             secret: false,
             multiline: true,
             can_undo: self.can_undo(),
+            can_redo: self.can_redo(),
             selected: self.has_selection(),
             digits: false,
         }
@@ -261,9 +310,12 @@ impl MultiEdit {
         self.caret != self.anchor
     }
 
-    /// Ctrl+Z has a state to swap back in; after an undo it is the redo.
     pub fn can_undo(&self) -> bool {
         self.undo.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.undo.can_redo()
     }
 
     /// The selected range, ordered.
@@ -318,35 +370,25 @@ impl MultiEdit {
     }
 
     fn checkpoint(&mut self, kind: Edit) {
-        self.undo
-            .checkpoint(kind, &self.lines, self.caret, self.anchor);
+        self.undo.checkpoint(kind, self.caret, self.anchor);
     }
 
-    fn delete_selection(&mut self) {
-        let (a, b) = self.selection();
-        if a == b {
-            return;
-        }
+    /// Remove `a..b` without logging it.
+    fn cut_range(&mut self, a: Pos, b: Pos) {
         self.edits += 1;
         let tail = self.lines[b.line][b.col..].to_string();
         self.lines[a.line].truncate(a.col);
         self.lines[a.line].push_str(&tail);
         self.lines.drain(a.line + 1..=b.line);
         self.forget_widths(a.line, b.line - a.line + 1, 1);
-        self.caret = a;
-        self.anchor = a;
     }
 
-    fn insert(&mut self, s: &str) {
-        self.delete_selection();
-        if s.is_empty() {
-            return;
-        }
+    /// Put `s` (`\n` line breaks) in at `p` without logging it, returning where it ends.
+    fn put_at(&mut self, p: Pos, s: &str) -> Pos {
         self.edits += 1;
-        let Pos { line, col } = self.caret;
+        let Pos { line, col } = p;
         let tail = self.lines[line].split_off(col);
-        let normalised = s.replace("\r\n", "\n");
-        let mut parts = normalised.split('\n').map(str::to_string);
+        let mut parts = s.split('\n').map(str::to_string);
         let first = parts.next().unwrap_or_default();
         self.lines[line].push_str(&first);
         let mut at = line;
@@ -357,8 +399,50 @@ impl MultiEdit {
         let end = self.lines[at].len();
         self.lines[at].push_str(&tail);
         self.forget_widths(line, 1, at - line + 1);
-        self.caret = Pos { line: at, col: end };
-        self.anchor = self.caret;
+        Pos { line: at, col: end }
+    }
+
+    fn delete_selection(&mut self) {
+        let (a, b) = self.selection();
+        if a == b {
+            return;
+        }
+        let text = self.selected_text();
+        self.undo.record(Op::Delete { at: a, text });
+        self.cut_range(a, b);
+        self.caret = a;
+        self.anchor = a;
+    }
+
+    fn insert(&mut self, s: &str) {
+        self.delete_selection();
+        if s.is_empty() {
+            return;
+        }
+        let normalised = s.replace("\r\n", "\n");
+        let at = self.caret;
+        let end = self.put_at(at, &normalised);
+        self.undo.record(Op::Insert {
+            at,
+            text: normalised,
+        });
+        self.caret = end;
+        self.anchor = end;
+    }
+
+    /// Ctrl+Z or Ctrl+Y: replay the undo log on the lines.
+    fn step_undo(&mut self, redo: bool) {
+        let mut undo = std::mem::take(&mut self.undo);
+        let to = if redo {
+            undo.redo(self).map(|c| (c, c))
+        } else {
+            undo.undo(self)
+        };
+        self.undo = undo;
+        if let Some((caret, anchor)) = to {
+            self.caret = self.clamp(caret);
+            self.anchor = self.clamp(anchor);
+        }
     }
 
     fn prev(&self, p: Pos) -> Pos {
@@ -625,16 +709,8 @@ impl MultiEdit {
                 }
             }
             EditKey::Copy | EditKey::Paste => {}
-            EditKey::Undo => {
-                if self
-                    .undo
-                    .toggle(&mut self.lines, &mut self.caret, &mut self.anchor)
-                {
-                    self.replaced_lines();
-                    self.caret = self.clamp(self.caret);
-                    self.anchor = self.clamp(self.anchor);
-                }
-            }
+            EditKey::Undo => self.step_undo(false),
+            EditKey::Redo => self.step_undo(true),
             EditKey::DeleteSurrounding { before, after } => {
                 self.delete_surrounding(before, after);
             }
@@ -1457,8 +1533,12 @@ pub fn draw_drop_point(
     );
 }
 
-/// The edit's `access` part: a multi-line text input, one text run per line (each but the last
-/// ending in its line break) at the rect the line is drawn in, with the caret and the selection.
+/// A document past this many bytes gives its node only the text in view as its value.
+const FULL_VALUE_MAX: usize = 1 << 20;
+
+/// The edit's `access` part: a multi-line text input, one text run per line in view and for the
+/// caret's and the anchor's lines (each but the document's last ending in its line break) at the
+/// rect the line is drawn in, with the caret, the selection and the scroll position in px.
 #[allow(clippy::too_many_arguments)]
 pub fn access(
     edit: &MultiEdit,
@@ -1470,21 +1550,31 @@ pub fn access(
     parent: NodeId,
     key: impl std::hash::Hash,
 ) -> NodeId {
+    let count = edit.lines.len();
+    let shown = view.top.min(count)..(view.top + lay.rows).min(count);
     let mut n = access::node(Role::MultilineTextInput, lay.frame);
     access::focusable(&mut n, true);
+    let line_h = f64::from(m.line_h);
+    n.set_scroll_y(view.top as f64 * line_h);
+    n.set_scroll_y_min(0.0);
+    n.set_scroll_y_max(count.saturating_sub(lay.rows) as f64 * line_h);
+    let bytes = edit.lines.iter().map(|l| l.len() + 1).sum::<usize>();
+    n.set_value(if bytes <= FULL_VALUE_MAX {
+        edit.text()
+    } else {
+        edit.lines[shown.clone()].join("\n")
+    });
     let id = tree.push(parent, key, n);
     let x0 = lay.inner.x + 1 - view.left;
-    let mut starts = Vec::with_capacity(edit.lines.len());
+    let last = count.saturating_sub(1);
+    let wanted = |i: usize| shown.contains(&i) || i == edit.caret.line || i == edit.anchor.line;
+    let end = shown.end.max(edit.caret.line + 1).max(edit.anchor.line + 1);
+    let mut starts = Vec::with_capacity(end.min(count));
+    let mut lines = Vec::with_capacity(shown.len() + 2);
     let mut at = 0;
-    let last = edit.lines.len().saturating_sub(1);
-    let lines: Vec<access::Line> = edit
-        .lines
-        .iter()
-        .enumerate()
-        .map(|(i, line)| {
-            starts.push(at);
-            let start = at;
-            at += line.len() + 1;
+    for (i, line) in edit.lines.iter().enumerate().take(end) {
+        starts.push(at);
+        if wanted(i) {
             let y = lay.inner.y + 1 + (i as i32 - view.top as i32) * m.line_h;
             let w = x_of(
                 text,
@@ -1495,14 +1585,15 @@ pub fn access(
                     col: line.len(),
                 },
             );
-            access::Line {
+            lines.push(access::Line {
                 text: line,
-                start,
+                start: at,
                 rect: Rect::new(x0, y, w.max(1), m.line_h),
                 hard_break: i < last,
-            }
-        })
-        .collect();
+            });
+        }
+        at += line.len() + 1;
+    }
     let offset = |p: Pos| starts.get(p.line).map_or(0, |s| s + p.col);
     access::text_runs(
         tree,

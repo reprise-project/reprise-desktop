@@ -242,6 +242,8 @@ pub struct State {
     /// The pointer at the last button press.
     pub press_at: (f64, f64),
     pub buttons_down: u32,
+    /// The buttons the seat was told went down and not yet up.
+    pub seat_buttons: Vec<u32>,
     pub popups: PopupManager,
     /// What the pointer shows: a client's surface, a named cursor or nothing.
     pub cursor: CursorImageStatus,
@@ -475,6 +477,7 @@ impl State {
         })?;
         let (idle_wake, woken) = make_ping()?;
         handle.insert_source(woken, |_, _, _| {})?;
+        crate::activation::start_pruning(&handle);
 
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&dh, "seat0");
@@ -606,6 +609,7 @@ impl State {
             caption_clicks: DoubleClick::default(),
             press_at: (0.0, 0.0),
             buttons_down: 0,
+            seat_buttons: Vec::new(),
             popups: PopupManager::default(),
             cursor: CursorImageStatus::default_named(),
             cursors,
@@ -836,8 +840,8 @@ impl State {
     }
 
     /// Ask the outputs `commit_outputs` names for a new frame for what `surface` drew, as
-    /// `redraw_content` does for every output; every output when nothing places it. `in_place`:
-    /// only the tree's pixels changed (`samepixels::Commit::in_place`).
+    /// `redraw_content` does for every output; every output when nothing places it and it may
+    /// show. `in_place`: only the tree's pixels changed (`samepixels::Commit::in_place`).
     pub fn redraw_surface(
         &mut self,
         surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -860,8 +864,21 @@ impl State {
         };
         match self.commit_outputs(surface) {
             Some(outputs) => crate::backend::schedule_on(self, &outputs, ask),
+            None if self.never_shown(surface) => {}
             None => self.redraw_content(),
         }
+    }
+
+    /// A surface with no role or of an unmapped window: its commits show nothing, and mapping
+    /// redraws.
+    fn never_shown(
+        &self,
+        surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    ) -> bool {
+        smithay::wayland::compositor::get_role(surface).is_none()
+            || (self.window_for_surface(surface))
+                .and_then(|w| self.win(w))
+                .is_some_and(|w| !w.mapped)
     }
 
     /// The outputs a commit to the surface tree under `surface` can change: the cursor's
@@ -1146,6 +1163,19 @@ mod tests {
                 .all(|(_, a)| !matches!(a, crate::backend::Ask::Commit(_))),
             "a commit that resizes the window may change anything"
         );
+    }
+
+    #[test]
+    fn a_commit_on_a_surface_with_no_role_asks_for_no_frame() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let surface = h.bare_client_surface(&mut c);
+        crate::backend::take_asks();
+        surface.commit();
+        surface.commit();
+        h.roundtrip(&mut c);
+        assert_eq!(crate::backend::take_asks(), vec![]);
     }
 
     #[test]

@@ -961,6 +961,54 @@ fn a_revealed_row_scrolls_in_as_the_last_row_and_stays_unpicked() {
     assert!(!tv.reveal(31, &lay), "past the last row");
 }
 
+#[test]
+fn a_long_tree_publishes_the_rows_in_view_under_their_ancestors() {
+    use crate::access::{Published, ROOT, Tree};
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut b = Node::new("B", true);
+    b.expanded = true;
+    b.children = (0..10_000)
+        .map(|k| Node::new(&format!("b{k}"), false))
+        .collect();
+    let mut tv = TreeView::new(vec![b], Style::Explorer);
+    tv.selected = Some(vec![0, 9_000]);
+    let lay = layout(
+        &tv,
+        &text,
+        11,
+        Rect::new(0, 0, 200, 120),
+        &ControlMetrics::CLASSIC,
+    );
+    tv.top = 101;
+    let mut t = Tree::window("", (200, 120));
+    access(&tv, &lay, &text, 11, &mut t, ROOT, "tree");
+    let list = t.get(ROOT).unwrap().children()[0];
+    let node = t.get(list).unwrap();
+    assert_eq!(node.scroll_y(), Some(101.0 * f64::from(lay.row_h)));
+    let top = node.children();
+    assert_eq!(top.len(), 1, "the root row B");
+    let b = t.get(top[0]).unwrap();
+    assert_eq!(b.label(), Some("B"));
+    assert_eq!(b.position_in_set(), Some(1));
+    let items = b.children().to_vec();
+    assert_eq!(
+        items.len(),
+        lay.rows + 2,
+        "the rows in view, the cut one and the selection"
+    );
+    let first = t.get(items[0]).unwrap();
+    assert_eq!(first.label(), Some("b100"));
+    assert_eq!(
+        (first.position_in_set(), first.size_of_set()),
+        (Some(102), Some(10_001))
+    );
+    let picked = *items.last().unwrap();
+    assert_eq!(t.get(picked).unwrap().label(), Some("b9000"));
+    let mut p = Published::default();
+    p.update(t);
+    assert_eq!(p.reveal(picked).map(|r| r.row), Some(9_001));
+}
+
 /// A hot label is drawn in `hot_light` and underlined 2 px below its ink's lowest row, as wide as its text; on the selection's band the underline takes the band's ink.
 #[test]
 fn a_hot_label_is_underlined_in_the_hot_colour() {

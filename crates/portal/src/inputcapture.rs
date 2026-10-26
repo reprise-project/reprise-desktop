@@ -13,6 +13,10 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
 pub const CAP_KEYBOARD: u32 = 1;
 pub const CAP_POINTER: u32 = 2;
 
+/// The barriers one capture holds. The compositor ends the whole `reprise_input_v1` with `too_many`
+/// past its `inputcapture::MAX_BARRIERS`, so the two must stay equal (or this lower).
+pub const MAX_BARRIERS: usize = 64;
+
 pub(crate) struct CaptureSession {
     capture: CaptureHandle,
     eis: Option<crate::inputlink::EisHandle>,
@@ -33,6 +37,20 @@ pub fn validate(barriers: &[Barrier], zones: &[Zone]) -> Vec<u32> {
         .filter(|b| !barrier_ok(b, zones))
         .map(|b| b.id)
         .collect()
+}
+
+/// The barriers to forward and the ids that failed: the invalid ones and any past `MAX_BARRIERS`.
+pub fn accept(barriers: &[Barrier], zones: &[Zone]) -> (Vec<Barrier>, Vec<u32>) {
+    let mut failed = validate(barriers, zones);
+    let mut good: Vec<Barrier> = barriers
+        .iter()
+        .filter(|b| !failed.contains(&b.id))
+        .copied()
+        .collect();
+    if good.len() > MAX_BARRIERS {
+        failed.extend(good.split_off(MAX_BARRIERS).iter().map(|b| b.id));
+    }
+    (good, failed)
 }
 
 fn barrier_ok(b: &Barrier, zones: &[Zone]) -> bool {
@@ -137,7 +155,13 @@ impl InputCapture {
             log::info!("InputCapture.CreateSession for {app_id:?} denied");
             return Ok((crate::RESPONSE_CANCELLED, HashMap::new()));
         }
-        let capture = link.create_capture();
+        let Some(capture) = link.create_capture() else {
+            log::warn!(
+                "InputCapture.CreateSession for {app_id:?}: {} captures are live already",
+                crate::inputlink::MAX_CAPTURES
+            );
+            return Ok((RESPONSE_OTHER, HashMap::new()));
+        };
         let events = capture.events();
         let path: OwnedObjectPath = session_handle.clone().into();
         // Relay the compositor's events as portal signals for as long as
@@ -243,16 +267,11 @@ impl InputCapture {
             .collect();
         // A stale zone set means the client drew its barriers against a
         // layout that is gone: every one of them fails.
-        let failed: Vec<u32> = if zone_set != current {
-            parsed.iter().map(|b| b.id).collect()
+        let (good, failed) = if zone_set != current {
+            (Vec::new(), parsed.iter().map(|b| b.id).collect())
         } else {
-            validate(&parsed, &zones)
+            accept(&parsed, &zones)
         };
-        let good: Vec<Barrier> = parsed
-            .iter()
-            .filter(|b| !failed.contains(&b.id))
-            .copied()
-            .collect();
         let sessions = self.sessions.lock().unwrap();
         let Some(c) = sessions
             .get(session_handle.as_str())
@@ -491,6 +510,21 @@ mod tests {
             b(10, 0, 500, 1919, 500),  // inside a zone
         ];
         assert_eq!(validate(&bad, &z), vec![7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn barriers_past_the_compositors_limit_fail() {
+        let z = two_screens();
+        let many: Vec<Barrier> = (0..70)
+            .map(|i| b(i, i as i32 * 10, 0, i as i32 * 10 + 5, 0))
+            .collect();
+        let (good, failed) = accept(&many, &z);
+        assert_eq!(good.len(), MAX_BARRIERS, "64 barriers are forwarded");
+        assert_eq!(
+            failed,
+            (64..70).collect::<Vec<u32>>(),
+            "the last 6 ids fail"
+        );
     }
 
     #[test]

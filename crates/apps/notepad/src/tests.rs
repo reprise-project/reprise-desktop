@@ -265,7 +265,7 @@ fn edit_rows_grey_until_there_is_a_selection_or_an_edit_to_undo() {
         })
     };
     np.event(MAIN, Event::Focus(true), &mut ctx);
-    for r in [row::UNDO, row::CUT, row::COPY, row::DELETE] {
+    for r in [row::UNDO, row::REDO, row::CUT, row::COPY, row::DELETE] {
         assert!(
             !on(&np, r),
             "row {r} is greyed with no selection and no edit"
@@ -302,6 +302,15 @@ fn edit_rows_grey_until_there_is_a_selection_or_an_edit_to_undo() {
     np.event(MAIN, key(EditKey::Insert("x".into())), &mut ctx);
     assert!(on(&np, row::UNDO), "typing makes Undo live");
     assert!(!on(&np, row::CUT), "the typed text replaced the selection");
+    assert!(!on(&np, row::REDO), "nothing undone yet");
+
+    np.event(MAIN, key(EditKey::Undo), &mut ctx);
+    assert_eq!(np.edit.text(), "text");
+    assert!(on(&np, row::REDO), "an undo makes Redo live");
+    np.command(title::EDIT, row::REDO, &ctx);
+    np.sync_menus();
+    assert_eq!(np.edit.text(), "x", "Redo makes the typing again");
+    assert!(!on(&np, row::REDO));
 }
 
 fn right_press(x: i32, y: i32) -> PointerInput {
@@ -365,8 +374,8 @@ fn a_right_click_keeps_the_selection_under_it_and_moves_the_caret_outside_it() {
     assert_eq!(np.edit.selected_text(), "beta", "the selection stays");
     assert_eq!(
         context_rows(&np),
-        [false, true, true, false, true, true],
-        "Undo and Paste greyed, Cut, Copy, Delete and Select All live"
+        [false, false, true, true, false, true, true],
+        "Undo, Redo and Paste greyed, Cut, Copy, Delete and Select All live"
     );
     np.event(MAIN, typed(keysym::ESCAPE, None, false), &mut ctx);
     assert!(np.context.is_none(), "Escape closes the menu");
@@ -378,7 +387,10 @@ fn a_right_click_keeps_the_selection_under_it_and_moves_the_caret_outside_it() {
         "a click off the selection drops it"
     );
     assert_eq!(np.edit.caret(), multiedit::Pos { line: 0, col: 2 });
-    assert_eq!(context_rows(&np), [false, false, false, false, false, true]);
+    assert_eq!(
+        context_rows(&np),
+        [false, false, false, false, false, false, true]
+    );
 
     let (x, y) = at_col(&np, &ctx, 0);
     np.event(MAIN, Event::Pointer(right_press(x, y)), &mut ctx);
@@ -448,7 +460,7 @@ fn the_context_menu_runs_the_edit_commands() {
 
     open(&mut np, &mut ctx);
     assert!(
-        context_rows(&np)[3],
+        context_rows(&np)[4],
         "text on the clipboard makes Paste live"
     );
     np.event(MAIN, typed(0x61, Some("a"), false), &mut ctx);
@@ -1785,4 +1797,70 @@ fn replace_that_matches_nothing_does_not_scroll() {
     }));
     np.replace_outcome(form::Event::Pressed(finddlg::REPLACE), &ctx);
     assert_eq!(np.view.top, 50, "nothing matched, nothing scrolled");
+}
+
+#[test]
+fn write_recovery_round_trips_into_a_private_dir() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().join("reprise").join("notepad");
+    let kept = write_recovery(&dir, 42, "notes", &["one", "two"], "\r\n").expect("write");
+    assert_eq!(kept, dir.join("recovery-42-notes.txt"));
+    assert_eq!(recovered_in(&dir), std::slice::from_ref(&kept));
+    assert_eq!(read_text(&kept).expect("read"), "one\r\ntwo");
+    let mode = std::fs::metadata(&dir).expect("dir").permissions().mode();
+    assert_eq!(mode & 0o777, 0o700);
+}
+
+#[test]
+fn a_rescued_document_is_offered_at_the_next_start_and_its_file_goes_once_saved() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().join("recovery");
+    let mut np = Notepad::new(None);
+    np.rescue_dir = Some(dir.clone());
+    np.edit = MultiEdit::new("unsaved");
+    np.dirty = true;
+    np.rescue();
+    let kept = recovered_in(&dir);
+    assert_eq!(kept.len(), 1);
+
+    let mut next = Notepad::new(None);
+    next.rescue_dir = Some(dir.clone());
+    next.offer_recovered();
+    assert_eq!(next.children().last().expect("the prompt").id, RECOVERED);
+    let mut ctx = test_ctx();
+    next.event(RECOVERED, typed(keysym::RETURN, None, false), &mut ctx);
+    assert!(next.recovered.is_none(), "Yes closed the prompt");
+    assert_eq!(next.edit.text(), "unsaved");
+    assert_eq!(next.path, None);
+    assert!(next.dirty);
+    assert!(kept[0].exists(), "kept until the text is saved");
+
+    next.saveas_write(tmp.path().join("saved.txt"));
+    assert!(
+        !kept[0].exists(),
+        "saving elsewhere deletes the recovery file"
+    );
+    assert!(recovered_in(&dir).is_empty());
+}
+
+#[test]
+fn declining_a_recovered_document_deletes_it_and_offers_the_next() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().to_path_buf();
+    let first = write_recovery(&dir, 1, "a", &["a"], "\n").expect("write");
+    let second = write_recovery(&dir, 2, "b", &["b"], "\n").expect("write");
+    let mut np = Notepad::new(None);
+    np.rescue_dir = Some(dir.clone());
+    np.offer_recovered();
+    let mut ctx = test_ctx();
+    np.recovered.as_mut().expect("the prompt").0.fields.default = 1;
+    np.event(RECOVERED, typed(keysym::RETURN, None, false), &mut ctx);
+    assert!(!first.exists(), "No deletes the file");
+    assert_eq!(
+        np.recovered.as_ref().map(|(_, f)| f),
+        Some(&second),
+        "the next file is offered"
+    );
+    assert_eq!(np.edit.text(), "");
 }

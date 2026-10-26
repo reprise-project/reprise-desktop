@@ -5,6 +5,10 @@ use std::time::Duration;
 
 use smithay::{
     input::Seat,
+    reexports::calloop::{
+        LoopHandle,
+        timer::{TimeoutAction, Timer},
+    },
     reexports::wayland_server::{Resource, backend::ClientId, protocol::wl_surface::WlSurface},
     wayland::{
         compositor::get_parent,
@@ -17,6 +21,9 @@ use smithay::{
 use crate::compositor::State;
 
 const TOKEN_LIFETIME: Duration = Duration::from_secs(30);
+
+/// The most live tokens one client holds; Smithay drops a token `token_created` refuses.
+const TOKENS_PER_CLIENT: usize = 32;
 
 struct Trusted;
 
@@ -37,8 +44,13 @@ impl XdgActivationHandler for State {
     }
 
     fn token_created(&mut self, _token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
-        self.activation
-            .retain_tokens(|_, d| d.timestamp.elapsed() < TOKEN_LIFETIME);
+        let held = (self.activation.tokens())
+            .filter(|(_, d)| d.client_id.is_some() && d.client_id == data.client_id)
+            .filter(|(_, d)| d.timestamp.elapsed() < TOKEN_LIFETIME)
+            .count();
+        if held >= TOKENS_PER_CLIENT {
+            return false;
+        }
         let keyboard = self.seat.get_keyboard();
         let serial_ok = data.serial.as_ref().is_some_and(|(serial, seat)| {
             Seat::<State>::from_resource(seat).as_ref() == Some(&self.seat)
@@ -108,10 +120,20 @@ impl XdgActivationHandler for State {
     }
 }
 
+/// Drop expired tokens every [`TOKEN_LIFETIME`].
+pub fn start_pruning(handle: &LoopHandle<'static, State>) {
+    let timer = Timer::from_duration(TOKEN_LIFETIME);
+    let armed = handle.insert_source(timer, |_, _, state| {
+        (state.activation).retain_tokens(|_, d| d.timestamp.elapsed() < TOKEN_LIFETIME);
+        TimeoutAction::ToDuration(TOKEN_LIFETIME)
+    });
+    if let Err(e) = armed {
+        log::warn!("activation tokens: no prune timer: {}", e.error);
+    }
+}
+
 impl State {
     pub fn new_activation_token(&mut self) -> String {
-        self.activation
-            .retain_tokens(|_, d| d.timestamp.elapsed() < TOKEN_LIFETIME);
         let (token, data) = self.activation.create_external_token(None);
         data.user_data.insert_if_missing(|| Trusted);
         token.to_string()
@@ -262,6 +284,17 @@ mod tests {
             !client_token_trusted(true, None, None),
             "expected untrusted"
         );
+    }
+
+    #[test]
+    fn a_client_minting_a_hundred_tokens_holds_only_the_cap() {
+        let mut h = crate::harness::Harness::new();
+        let mut c = h.connect();
+        for _ in 0..100 {
+            c.mint_token();
+        }
+        h.roundtrip(&mut c);
+        assert_eq!(h.state.activation.tokens().count(), TOKENS_PER_CLIENT);
     }
 
     #[test]

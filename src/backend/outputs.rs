@@ -67,21 +67,95 @@ pub(super) fn scan_connectors(
         }
     };
     for event in events {
-        match event {
-            DrmScanEvent::Connected {
-                connector,
-                crtc: Some(crtc),
-            } => connector_connected(state, connector, crtc),
-            DrmScanEvent::Disconnected {
-                crtc: Some(crtc), ..
-            } => connector_disconnected(state, crtc),
-            DrmScanEvent::Connected {
-                connector,
-                crtc: None,
-            } => log::warn!("{}: no free CRTC", connector_name(&connector)),
-            _ => {}
+        let (scan, connector, crtc) = match event {
+            DrmScanEvent::Connected { connector, crtc } => (Scan::Connected, connector, crtc),
+            DrmScanEvent::Changed { connector, crtc } => (Scan::Changed, connector, crtc),
+            DrmScanEvent::Disconnected { connector, crtc } => (Scan::Disconnected, connector, crtc),
+        };
+        match crtc {
+            Some(crtc) => apply_scan(state, scan, connector, crtc),
+            None if scan == Scan::Connected => {
+                log::warn!("{}: no free CRTC", connector_name(&connector));
+            }
+            None => {}
         }
     }
+    for (connector, crtc) in unheld(state) {
+        apply_scan(state, Scan::Connected, connector, crtc);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Scan {
+    Connected,
+    /// The connector's mode list changed while it stayed connected.
+    Changed,
+    Disconnected,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ScanAction {
+    /// A new output, parked and put into the layout.
+    Connect,
+    /// A new output, parked only: the connector lists no modes yet.
+    Park,
+    /// Take the connector's new mode list on the output already holding the CRTC.
+    Refresh,
+    Disconnect,
+    Ignore,
+}
+
+/// What a scan event with a CRTC does, given whether that CRTC is driven or parked.
+pub(super) fn scan_action(driven: bool, parked: bool, scan: Scan, modes: bool) -> ScanAction {
+    let new = if modes {
+        ScanAction::Connect
+    } else {
+        ScanAction::Park
+    };
+    match scan {
+        Scan::Disconnected => ScanAction::Disconnect,
+        Scan::Changed if driven || parked => ScanAction::Refresh,
+        Scan::Connected | Scan::Changed if !driven && !parked => new,
+        Scan::Connected | Scan::Changed => ScanAction::Ignore,
+    }
+}
+
+fn apply_scan(state: &mut State, scan: Scan, connector: connector::Info, crtc: crtc::Handle) {
+    let Some(b) = state.backend.as_ref() else {
+        return;
+    };
+    let driven = b.surfaces.contains_key(&crtc);
+    let parked = b.parked.contains_key(&crtc);
+    match scan_action(driven, parked, scan, !connector.modes().is_empty()) {
+        ScanAction::Connect => connector_connected(state, connector, crtc, true),
+        ScanAction::Park => connector_connected(state, connector, crtc, false),
+        ScanAction::Refresh => connector_changed(state, connector, crtc),
+        ScanAction::Disconnect => connector_disconnected(state, crtc),
+        ScanAction::Ignore => {}
+    }
+}
+
+/// Connected connectors with a CRTC that no output holds: one whose CRTC another output freed
+/// after it was first seen, which brings no new scan event.
+fn unheld(state: &State) -> Vec<(connector::Info, crtc::Handle)> {
+    let Some(b) = state.backend.as_ref() else {
+        return Vec::new();
+    };
+    let held = |c: connector::Handle| {
+        (b.surfaces.values().map(|s| &s.connector))
+            .chain(b.parked.values().map(|p| &p.connector))
+            .any(|i| i.handle() == c)
+    };
+    b.scanner
+        .connectors()
+        .iter()
+        .filter(|(_, info)| info.state() == connector::State::Connected)
+        .filter_map(|(&handle, info)| Some((info, b.scanner.crtc_for_connector(&handle)?)))
+        .filter(|(info, crtc)| {
+            !b.surfaces.contains_key(crtc) && !b.parked.contains_key(crtc) && !held(info.handle())
+        })
+        .map(|(info, crtc)| (info.clone(), crtc))
+        .collect()
 }
 
 /// The device, with connectors' infos from earlier probes in place of a forced probe now.
@@ -134,15 +208,17 @@ pub(super) fn mode_infos(connector: &connector::Info) -> Vec<ModeInfo> {
         .collect()
 }
 
-fn connector_connected(state: &mut State, connector: connector::Info, crtc: crtc::Handle) {
+/// Park a new output for `connector` on `crtc`, and put it into the layout when `into_layout`.
+fn connector_connected(
+    state: &mut State,
+    connector: connector::Info,
+    crtc: crtc::Handle,
+    into_layout: bool,
+) {
     let name = connector_name(&connector);
     let Some(b) = state.backend.as_mut() else {
         return;
     };
-    if connector.modes().is_empty() {
-        log::warn!("{name}: no modes");
-        return;
-    }
     gated(b, "EDID read");
     let info = display_info::for_connector(&b.drm, connector.handle());
     let field = |f: Option<String>| f.unwrap_or_else(|| "Unknown".into());
@@ -157,10 +233,7 @@ fn connector_connected(state: &mut State, connector: connector::Info, crtc: crtc
             serial_number: field(info.as_ref().and_then(|i| i.serial())),
         },
     );
-    let modes = mode_infos(&connector);
-    if let Some(i) = crate::output::pick_mode(&modes, None) {
-        output.set_preferred(WlMode::from(connector.modes()[i]));
-    }
+    set_preferred(&output, &connector);
     output.user_data().insert_if_missing(|| OutputCrtc(crtc));
     b.parked.insert(
         crtc,
@@ -170,7 +243,71 @@ fn connector_connected(state: &mut State, connector: connector::Info, crtc: crtc
             vrr_capable: false,
         },
     );
-    state.set_in_layout(&output, true);
+    if into_layout {
+        state.set_in_layout(&output, true);
+    } else {
+        log::debug!("{}: no modes yet; parked", output.name());
+        crate::outputmgmt::publish(state);
+    }
+}
+
+fn set_preferred(output: &Output, connector: &connector::Info) {
+    if let Some(i) = crate::output::pick_mode(&mode_infos(connector), None) {
+        output.set_preferred(WlMode::from(connector.modes()[i]));
+    }
+}
+
+/// Give the output holding `crtc` the connector's new mode list. A driven output whose mode is
+/// gone takes another (`link_mode`); a parked one that had no modes is connected afresh, which
+/// also reads the EDID its first probe lacked.
+fn connector_changed(state: &mut State, connector: connector::Info, crtc: crtc::Handle) {
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    if let Some(s) = b.surfaces.get_mut(&crtc) {
+        let output = s.output.clone();
+        log::info!("{}: mode list changed", output.name());
+        set_preferred(&output, &connector);
+        let modes = mode_infos(&connector);
+        s.connector = connector;
+        let want = state.config.mode_for_output_name(&output.name());
+        let switch = output.current_mode().and_then(|m| {
+            let current = ModeInfo {
+                width: m.size.w,
+                height: m.size.h,
+                refresh_mhz: m.refresh,
+                preferred: false,
+            };
+            super::links::link_mode(&modes, &current, want.as_ref())
+        });
+        if let Some(i) = switch {
+            log::warn!(
+                "{}: its mode is gone from the connector; taking another",
+                output.name()
+            );
+            if set_mode(state, &output, i) {
+                state.update_layout();
+            } else {
+                log::warn!(
+                    "{}: keeps a mode its connector no longer lists",
+                    output.name()
+                );
+            }
+        }
+        crate::outputmgmt::publish(state);
+        return;
+    }
+    if let Some(p) = b.parked.get_mut(&crtc) {
+        if !p.connector.modes().is_empty() {
+            set_preferred(&p.output, &connector);
+            p.connector = connector;
+            crate::outputmgmt::publish(state);
+            return;
+        }
+        b.parked.remove(&crtc);
+    }
+    let into_layout = !connector.modes().is_empty();
+    connector_connected(state, connector, crtc, into_layout);
 }
 
 fn connector_disconnected(state: &mut State, crtc: crtc::Handle) {

@@ -169,7 +169,7 @@ fn client_limits_keep_zero_max_unbounded_and_cap_at_32767() {
     );
 }
 
-use super::draw::client_holes;
+use super::draw::{client_glass_rects, client_holes};
 use super::owners::{modal_end, owner_chain_has, walk_owned};
 use super::place::{grown_back_inside, retheme_back_inside};
 use super::*;
@@ -189,6 +189,27 @@ fn the_frames_glass_leaves_clear_only_the_client_outside_its_blur_region() {
     assert_eq!(holes, vec![Rect::new(8, 108, 400, 222)], "below the band");
     let holes = client_holes(client, &[Rect::new(0, 0, 400, 300)]);
     assert!(holes.is_empty(), "a region over all of it: {holes:?}");
+}
+
+#[test]
+fn a_huge_clients_full_blur_region_draws_glass_no_larger_than_the_layout() {
+    let client = (32767, 32767);
+    let rects = client_glass_rects(client, &[Rect::new(0, 0, 32767, 32767)], (1920, 1080));
+    assert_eq!(rects, vec![Rect::new(0, 0, 1920, 1080)]);
+    let rects = client_glass_rects(
+        (400, 300),
+        &[
+            Rect::new(0, 0, 400, 78),
+            Rect::new(390, 290, 50, 50),
+            Rect::new(500, 0, 10, 10),
+        ],
+        (1920, 1080),
+    );
+    assert_eq!(
+        rects,
+        vec![Rect::new(0, 0, 400, 78), Rect::new(390, 290, 10, 10)],
+        "clipped to the client, the rect outside it dropped"
+    );
 }
 
 #[test]
@@ -806,4 +827,14 @@ fn a_window_that_sized_itself_keeps_that_size_when_restored() {
         (350, 250),
         "minimize and restore keep the size the program took"
     );
+}
+
+#[test]
+fn a_client_name_is_read_up_to_1024_chars() {
+    use super::{NAME_CAP, capped};
+    assert_eq!(NAME_CAP, 1024);
+    let long: String = "中".repeat(3000);
+    assert_eq!(capped(long).chars().count(), 1024);
+    assert_eq!(capped("Notepad".into()), "Notepad");
+    assert_eq!(capped("a".repeat(1024)).len(), 1024);
 }

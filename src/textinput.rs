@@ -126,6 +126,36 @@ pub struct VkKeymap {
     own: Option<(String, crate::keyboard::XkbMask)>,
     sources: HashMap<VirtualKeyboardDevice, KeyboardSource>,
     echoed: HashSet<(VirtualKeyboardDevice, Keycode)>,
+    mods: HashMap<VirtualKeyboardDevice, VkMods>,
+}
+
+/// The modifier bits a virtual keyboard turned on in the seat's own mask and still holds,
+/// so they go with it and the ones the seat had already stay.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct VkMods {
+    depressed: u32,
+    latched: u32,
+    locked: u32,
+}
+
+impl VkMods {
+    fn claim(
+        &mut self,
+        before: &crate::keyboard::XkbMask,
+        depressed: u32,
+        latched: u32,
+        locked: u32,
+    ) {
+        self.depressed = (self.depressed | (depressed & !before.depressed)) & depressed;
+        self.latched = (self.latched | (latched & !before.latched)) & latched;
+        self.locked = (self.locked | (locked & !before.locked)) & locked;
+    }
+
+    fn release(&self, mask: &mut crate::keyboard::XkbMask) {
+        mask.depressed &= !self.depressed;
+        mask.latched &= !self.latched;
+        mask.locked &= !self.locked;
+    }
 }
 
 impl VkKeymap {
@@ -195,6 +225,9 @@ impl VirtualKeyboardHandler for State {
                     keyboard.release_source(self, source);
                 }
                 self.ime.vk.echoed.retain(|(d, _)| *d != device);
+                if let Some(owned) = self.ime.vk.mods.remove(&device) {
+                    self.vk_release_mods(owned);
+                }
             }
             InputEvent::Special(VirtualKeyboardSpecialEvent::Modifiers {
                 device,
@@ -204,9 +237,20 @@ impl VirtualKeyboardHandler for State {
                 group,
             }) => {
                 self.vk_keymap(&device);
+                let before = self
+                    .ime
+                    .vk
+                    .active
+                    .is_none()
+                    .then(|| self.xkb_mask())
+                    .flatten();
                 keyboard.with_xkb_state(self, |mut ctx| {
                     ctx.set_modifier_mask(mods_depressed, mods_latched, mods_locked, group)
                 });
+                if let Some((before, _)) = before {
+                    let owned = self.ime.vk.mods.entry(device).or_default();
+                    owned.claim(&before, mods_depressed, mods_latched, mods_locked);
+                }
             }
             _ => {}
         }
@@ -241,6 +285,24 @@ impl State {
             Ok(()) => self.ime.vk.active = Some(keymap),
             Err(e) => log::warn!("virtual keyboard: could not compile its keymap: {e:?}"),
         }
+    }
+
+    /// Take a gone virtual keyboard's bits out of the seat's own mask, the one
+    /// set aside while another keyboard's keymap is in force.
+    fn vk_release_mods(&mut self, owned: VkMods) {
+        if owned == VkMods::default() {
+            return;
+        }
+        if let Some((_, mask)) = self.ime.vk.own.as_mut() {
+            owned.release(mask);
+            return;
+        }
+        let Some((mut mask, _)) = self.xkb_mask() else {
+            return;
+        };
+        owned.release(&mut mask);
+        self.set_xkb_mask(mask);
+        self.sync_aids();
     }
 
     pub fn vk_restore(&mut self) {
@@ -688,7 +750,7 @@ impl KeyboardGrab<State> for SplitGrab {
         serial: Serial,
         time: smithay::backend::input::InputTime,
     ) {
-        let grab = self.handle.keyboard_grabbed();
+        let grab = self.handle.keyboard_grabbed() && !keys_shut(data);
         let pressed = key_state == KeyState::Pressed;
         if !data.ime.vk_key && self.split.goes_to_grab(keycode.raw(), pressed, grab) {
             self.im
@@ -740,6 +802,10 @@ pub fn ime_holds_keyboard(kb: &smithay::input::keyboard::KeyboardHandle<State>) 
 
 impl State {
     pub fn ime_sync_grab(&mut self) {
+        if self.is_locked() {
+            self.ime_park_grab();
+            return;
+        }
         self.ime_return_popup_grab();
         let handle = self.seat.input_method().clone();
         if !handle.keyboard_grabbed() {
@@ -777,6 +843,25 @@ impl State {
         kb.set_grab(self, grab, SERIAL_COUNTER.next_serial());
         if regained {
             self.ime_grab_modifiers();
+        }
+    }
+
+    /// Smithay installs an input method's grab whenever it asks, the lock
+    /// notwithstanding: it comes off the keyboard and goes back on unlock.
+    fn ime_park_grab(&mut self) {
+        let Some(kb) = self.seat.get_keyboard() else {
+            return;
+        };
+        let held = kb
+            .with_grab(|_, g| {
+                g.downcast_ref::<InputMethodKeyboardGrab>()
+                    .cloned()
+                    .or_else(|| g.downcast_ref::<SplitGrab>().map(|s| s.im.clone()))
+            })
+            .flatten();
+        if let Some(im) = held {
+            self.ime.grab = Some(im);
+            kb.unset_grab(self);
         }
     }
 
@@ -1518,6 +1603,64 @@ mod harness_tests {
     }
 
     #[test]
+    fn keys_under_a_locker_reach_its_surface_and_never_the_input_methods_grab() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut l = h.connect();
+        let (_lock, surface) = h.map_lock_surface(&mut l);
+        let mut m = input_method(&mut h, false);
+        m.grab_keyboard(0);
+        h.roundtrip(&mut m);
+        assert!(!ime_holds_keyboard(&h.state.seat.get_keyboard().unwrap()));
+        l.side.keys.clear();
+        tap(&mut h, KEY_A);
+        h.roundtrip(&mut m);
+        h.roundtrip(&mut l);
+        assert_eq!(l.side.keyboard_focus.as_ref(), Some(&surface));
+        assert_eq!(
+            l.side.keys,
+            [(KEY_A, true), (KEY_A, false)],
+            "the locker hears the key"
+        );
+        assert!(
+            m.side.ims[0].grab_keys.is_empty(),
+            "the grab heard {:?}",
+            m.side.ims[0].grab_keys
+        );
+    }
+
+    #[test]
+    fn the_input_methods_grab_waits_out_the_lock() {
+        let (mut h, _c, _) = focused_client();
+        let mut m = input_method(&mut h, true);
+        let mut l = h.connect();
+        h.map_lock_surface(&mut l);
+        h.roundtrip(&mut m);
+        m.side.ims[0].grab_keys.clear();
+        tap(&mut h, KEY_A);
+        h.roundtrip(&mut m);
+        h.roundtrip(&mut l);
+        assert!(
+            m.side.ims[0].grab_keys.is_empty(),
+            "the grab heard {:?}",
+            m.side.ims[0].grab_keys
+        );
+        assert_eq!(
+            l.side.keys,
+            [(KEY_A, true), (KEY_A, false)],
+            "the locker hears the key"
+        );
+        crate::lockview::unlock(&mut h.state);
+        assert!(
+            ime_holds_keyboard(&h.state.seat.get_keyboard().unwrap()),
+            "the grab is back"
+        );
+        tap(&mut h, KEY_B);
+        h.roundtrip(&mut m);
+        assert_eq!(m.side.ims[0].grab_keys, [(KEY_B, true), (KEY_B, false)]);
+    }
+
+    #[test]
     fn a_virtual_keyboards_key_skips_the_input_methods_grab() {
         let (mut h, mut c, _) = focused_client();
         let mut m = input_method(&mut h, true);
@@ -1564,6 +1707,36 @@ mod harness_tests {
             "the window gets the echo once each way"
         );
         assert!(h.state.ime.vk.echoed.is_empty(), "the echo is settled");
+    }
+
+    #[test]
+    fn a_virtual_keyboard_that_goes_with_ctrl_locked_leaves_the_keyboard_unlocked() {
+        const KEY_NUMLOCK: u32 = 69;
+        let (mut h, _c, _) = focused_client();
+        let (_, index) = h.state.xkb_mask().expect("the seat's mask");
+        let (ctrl, num) = (1 << index[2], 1 << index[4]);
+        tap(&mut h, KEY_NUMLOCK);
+        let locked = |h: &mut Harness| h.state.xkb_mask().unwrap().0.locked;
+        assert_eq!(locked(&mut h), num, "Num Lock is on");
+        let mut v = h.connect();
+        let vk = v.virtual_keyboard();
+        v.vk_modifiers(vk, ctrl, ctrl, num | ctrl);
+        h.roundtrip(&mut v);
+        assert_eq!(
+            locked(&mut h),
+            num | ctrl,
+            "the virtual keyboard locked Ctrl"
+        );
+        v.side.vks[vk].destroy();
+        h.roundtrip(&mut v);
+        let (mask, _) = h.state.xkb_mask().unwrap();
+        assert_eq!(
+            (mask.depressed, mask.latched, mask.locked),
+            (0, 0, num),
+            "only Num Lock stays"
+        );
+        let mods = h.state.seat.get_keyboard().unwrap().modifier_state();
+        assert!(!mods.ctrl && mods.num_lock);
     }
 
     #[test]

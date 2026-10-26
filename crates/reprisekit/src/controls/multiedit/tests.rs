@@ -792,9 +792,92 @@ fn replace_all_leaves_a_valid_caret_and_one_undo_step() {
     k(&mut t, MultiKey::Edit(EditKey::Undo));
     assert_eq!(
         t.text(),
-        "xc c c",
-        "a Replace All that matched nothing keeps the undo state"
+        "cat cat cat",
+        "a Replace All that matched nothing adds no step"
     );
+    k(&mut t, MultiKey::Edit(EditKey::Redo));
+    k(&mut t, MultiKey::Edit(EditKey::Redo));
+    assert_eq!(t.text(), "xc c c", "Ctrl+Y makes the Replace All again");
+}
+
+fn typed(t: &mut MultiEdit, s: &str) {
+    for c in s.chars() {
+        k(t, MultiKey::Edit(EditKey::Insert(c.into())));
+    }
+}
+
+#[test]
+fn ctrl_z_walks_back_a_step_at_a_time_and_ctrl_y_forward() {
+    let mut t = e("");
+    typed(&mut t, "abc");
+    k(&mut t, MultiKey::Enter);
+    typed(&mut t, "def");
+    assert_eq!(t.undo.held().0, 3, "a typing run is one op");
+    let undo = |t: &mut MultiEdit| k(t, MultiKey::Edit(EditKey::Undo));
+    let redo = |t: &mut MultiEdit| k(t, MultiKey::Edit(EditKey::Redo));
+    assert!(undo(&mut t));
+    assert_eq!((t.text().as_str(), t.caret), ("abc\n", p(1, 0)));
+    assert!(undo(&mut t));
+    assert_eq!((t.text().as_str(), t.caret), ("abc", p(0, 3)));
+    assert!(undo(&mut t));
+    assert_eq!((t.text().as_str(), t.caret), ("", p(0, 0)));
+    assert!(!undo(&mut t), "nothing older");
+    assert!(redo(&mut t));
+    assert_eq!(t.text(), "abc");
+    assert!(redo(&mut t));
+    assert_eq!((t.text().as_str(), t.caret), ("abc\n", p(1, 0)));
+    assert!(redo(&mut t));
+    assert_eq!((t.text().as_str(), t.caret), ("abc\ndef", p(1, 3)));
+    assert!(!redo(&mut t));
+}
+
+#[test]
+fn undo_takes_a_paste_back_to_the_exact_text_and_caret() {
+    let mut t = e("one two\nthree");
+    t.place(p(0, 4), false);
+    t.place(p(1, 2), true);
+    assert!(t.paste("big\r\nred\nfat "));
+    assert_eq!(t.text(), "one big\nred\nfat ree");
+    assert!(k(&mut t, MultiKey::Edit(EditKey::Undo)));
+    assert_eq!(t.text(), "one two\nthree");
+    assert_eq!((t.anchor, t.caret), (p(0, 4), p(1, 2)));
+    assert!(k(&mut t, MultiKey::Edit(EditKey::Redo)));
+    assert_eq!(
+        (t.text().as_str(), t.caret),
+        ("one big\nred\nfat ree", p(2, 4))
+    );
+}
+
+#[test]
+fn deleting_across_lines_is_one_step_and_comes_back_whole() {
+    let mut t = e("ab\ncd");
+    t.place(p(1, 1), false);
+    for _ in 0..3 {
+        k(&mut t, MultiKey::Edit(EditKey::Backspace { word: false }));
+    }
+    assert_eq!(t.text(), "ad");
+    assert_eq!(t.undo.held(), (1, 3), "one op holding b, the break and c");
+    k(&mut t, MultiKey::Edit(EditKey::Undo));
+    assert_eq!((t.text().as_str(), t.caret), ("ab\ncd", p(1, 1)));
+}
+
+#[test]
+fn the_undo_log_holds_what_changed_never_the_document() {
+    let doc: String = (0..5000).map(|i| format!("line {i}\n")).collect();
+    let mut t = e(&doc);
+    for _ in 0..50 {
+        k(&mut t, MultiKey::Enter);
+        typed(&mut t, "xy");
+    }
+    assert_eq!(
+        t.undo.held(),
+        (100, 150),
+        "an Enter and two chars per round"
+    );
+    for _ in 0..100 {
+        k(&mut t, MultiKey::Edit(EditKey::Undo));
+    }
+    assert_eq!(t.text(), doc);
 }
 
 #[test]
@@ -835,6 +918,64 @@ fn lines_are_runs_and_the_caret_lands_on_its_line() {
     assert_eq!(second.y0, f64::from(lay.inner.y + 1 + m.line_h));
     let sel = node.text_selection().unwrap();
     assert_eq!((sel.focus.node, sel.focus.character_index), (runs[1], 2));
+}
+
+#[test]
+fn a_long_document_publishes_runs_for_the_rows_in_view_and_the_caret_line() {
+    use crate::access::{ROOT, Tree};
+    let text = TextRenderer::load(&crate::theme::FontConfig::default());
+    let m = Metrics::default();
+    let mut edit = MultiEdit::new(&"line\n".repeat(10_000));
+    edit.place(
+        Pos {
+            line: 9_000,
+            col: 2,
+        },
+        false,
+    );
+    let r = Rect::new(0, 0, 300, 30 * m.line_h + 4);
+    let lay = layout(&text, &m, &edit, r, 1);
+    let rows = lay.rows;
+    assert!((28..=30).contains(&rows));
+    let view = View {
+        top: 100,
+        ..View::default()
+    };
+    let mut tree = Tree::window("T", (300, r.height));
+    let id = access(&edit, view, &lay, &m, &text, &mut tree, ROOT, "edit");
+    let node = tree.get(id).unwrap();
+    let runs = node.children().to_vec();
+    assert_eq!(
+        runs.len(),
+        rows + 1,
+        "the rows in view and the caret's line"
+    );
+    assert_eq!(tree.get(runs[0]).unwrap().value(), Some("line\n"));
+    let sel = node.text_selection().unwrap();
+    assert_eq!((sel.focus.node, sel.focus.character_index), (runs[rows], 2));
+    let line_h = f64::from(m.line_h);
+    assert_eq!(node.scroll_y(), Some(100.0 * line_h));
+    assert_eq!(node.scroll_y_max(), Some((10_001 - rows) as f64 * line_h));
+    assert_eq!(node.value().map(str::len), Some(edit.text().len()));
+
+    let big = MultiEdit::new(&format!("{}\n", "x".repeat(99)).repeat(20_000));
+    let lay = layout(&text, &m, &big, r, 1);
+    let mut tree = Tree::window("T", (300, r.height));
+    let id = access(
+        &big,
+        View::default(),
+        &lay,
+        &m,
+        &text,
+        &mut tree,
+        ROOT,
+        "edit",
+    );
+    assert_eq!(
+        tree.get(id).unwrap().value().map(str::len),
+        Some(lay.rows * 100 - 1),
+        "a document past 1 MB reads only the rows in view"
+    );
 }
 
 #[test]

@@ -48,6 +48,8 @@ pub use drag::{DragRow, drag_image};
 pub use draw::draw;
 pub use hit::{hit, name_hit};
 pub use keys::{step, type_ahead};
+#[cfg(test)]
+pub(crate) use layout::LAYOUTS;
 pub use layout::{LayoutCache, label_rect, layout};
 pub(crate) use rename::draw_rename;
 pub use rename::{edit_index_at, rename_rect};

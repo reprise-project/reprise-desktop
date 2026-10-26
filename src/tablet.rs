@@ -22,7 +22,7 @@ use smithay::{
         },
     },
     reexports::wayland_server::{DisplayHandle, Resource, protocol::wl_surface::WlSurface},
-    utils::{Logical, Point, SERIAL_COUNTER},
+    utils::{Logical, Point, SERIAL_COUNTER, Transform},
     wayland::tablet_manager::TabletManagerState,
 };
 
@@ -139,13 +139,22 @@ impl State {
     }
 
     /// The layout point a tablet event's 0..1 position stands for: a tablet spans
-    /// the whole layout; on a zoomed output it points at what the zoom shows.
+    /// the whole layout, turned with the output when there is only one; on a
+    /// zoomed output it points at what the zoom shows.
     fn tool_point<B: InputBackend>(
         &self,
         ev: &impl AbsolutePositionEvent<B>,
     ) -> Point<f64, Logical> {
-        let area = self.output_area();
-        self.zoom_absolute(ev.position_transformed(area.size) + area.loc.to_f64())
+        let transform = match self.scene.outputs() {
+            [only] => only.current_transform(),
+            _ => Transform::Normal,
+        };
+        let norm = ev.position_transformed((1, 1).into());
+        self.zoom_absolute(crate::touch::place(
+            transform,
+            (norm.x, norm.y),
+            self.output_area(),
+        ))
     }
 
     fn accepts_tool(&self, tool: &TabletToolHandle<State>, surface: &WlSurface) -> bool {

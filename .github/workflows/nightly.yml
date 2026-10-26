@@ -60,7 +60,8 @@ jobs:
           url="https://github.com/$GH_REPO/releases/download/nightly/$asset"
           notes="$(basename "$pkg"), built from $GITHUB_SHA.
 
-              sudo pacman -U $url"
+              curl -LO $url
+              sudo pacman -U ./$asset"
           if gh release view nightly >/dev/null 2>&1; then
             gh release upload nightly "$asset" --clobber
             gh release edit nightly --notes "$notes"
