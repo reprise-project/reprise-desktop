@@ -44,6 +44,8 @@ const OK_X: i32 = 208;
 const CANCEL_X: i32 = 287;
 
 pub const FAILED: &str = "The user name or password is incorrect.";
+/// The status area's first line while Caps Lock is on.
+pub const CAPS_LOCK: &str = "Caps Lock is on.";
 const PASSWORD_LABEL: &str = "&Password:";
 
 /// Rows the block under the message shifts down by: one per line past two.
@@ -92,6 +94,8 @@ pub struct RunAs {
     pub size: (i32, i32),
     users: Vec<String>,
     busy: bool,
+    status: String,
+    caps_lock: bool,
 }
 
 impl RunAs {
@@ -187,6 +191,8 @@ impl RunAs {
             size,
             users: users.to_vec(),
             busy: false,
+            status: String::new(),
+            caps_lock: false,
         }
     }
 
@@ -269,14 +275,38 @@ impl RunAs {
     }
 
     pub fn set_status(&mut self, s: &str) {
-        self.form.set_text("status", s);
+        self.status = s.to_string();
+        self.show_status();
+    }
+
+    pub fn set_caps_lock(&mut self, on: bool) {
+        if self.caps_lock != on {
+            self.caps_lock = on;
+            self.show_status();
+        }
+    }
+
+    /// The status area: the Caps Lock notice on its first line while it is on, then the status.
+    fn show_status(&mut self) {
+        match (self.caps_lock, self.status.is_empty()) {
+            (false, _) => self.form.set_text("status", &self.status),
+            (true, true) => self.form.set_text("status", CAPS_LOCK),
+            (true, false) => self
+                .form
+                .set_lines("status", &[CAPS_LOCK.into(), self.status.clone()]),
+        }
     }
 
     #[cfg(test)]
     pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    #[cfg(test)]
+    fn status_lines(&self) -> &[String] {
         match self.form.item("status").map(|i| &i.control) {
-            Some(Control::Lines(lines)) => lines.first().map_or("", |l| l),
-            _ => "",
+            Some(Control::Lines(lines)) => lines,
+            _ => &[],
         }
     }
 
@@ -465,6 +495,19 @@ mod tests {
     }
 
     #[test]
+    fn caps_lock_puts_its_notice_above_the_status() {
+        let mut d = dialog(&["root"]);
+        d.set_caps_lock(true);
+        assert_eq!(d.status_lines(), [CAPS_LOCK]);
+        d.fail(None);
+        assert_eq!(d.status_lines(), [CAPS_LOCK, FAILED]);
+        d.set_caps_lock(false);
+        assert_eq!(d.status_lines(), [FAILED]);
+        d.set_status("");
+        assert_eq!(d.status_lines(), [""]);
+    }
+
+    #[test]
     fn a_failure_clears_the_field_and_says_so() {
         let mut d = dialog(&["root"]);
         type_into(&mut d, "password", "wrong");
@@ -560,10 +603,12 @@ mod tests {
             let lines = reprisekit::text::wrap(text, message, width, forms.fonts.size_px);
             statuses
                 .iter()
-                .map(|status| {
+                .flat_map(|status| [(status, false), (status, true)])
+                .map(|(status, caps)| {
                     let mut d = RunAs::new(&lines, &users, 2, None, Some(Canvas::new(16, 16)));
                     d.set_status(status);
-                    (format!("runas \"{status}\""), d.form)
+                    d.set_caps_lock(caps);
+                    (format!("runas \"{status}\" caps {caps}"), d.form)
                 })
                 .collect()
         });

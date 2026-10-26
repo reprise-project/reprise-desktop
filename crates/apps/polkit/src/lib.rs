@@ -417,8 +417,9 @@ impl App for PolkitApp {
         let forms = ctx.forms();
         c.fill_rect(c.bounds(), forms.colors.button_face);
         if win == RUNAS
-            && let Some(a) = &self.active
+            && let Some(a) = &mut self.active
         {
+            a.dialog.set_caps_lock(repriseapp::caps_lock());
             form::draw(
                 c,
                 &ctx.text,
