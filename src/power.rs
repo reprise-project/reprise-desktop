@@ -336,6 +336,7 @@ fn report(state: &mut State, r: Report) {
         }
         Report::Sleeping => sleeping(state),
         Report::Resumed => {
+            crate::idle::resumed(state);
             crate::nightlight::update(state);
             crate::displays::reread(state);
         }
@@ -502,10 +503,7 @@ pub fn run_action(state: &mut State, a: PowerAction) {
     log::info!("power: {}", a.name());
     match a {
         PowerAction::Nothing => {}
-        PowerAction::ScreenOff => {
-            state.idle.steps.screen_off = true;
-            crate::idle::set_outputs_powered(state, false);
-        }
+        PowerAction::ScreenOff => crate::idle::screen_off(state),
         PowerAction::Lock => crate::lockview::lock(state),
         PowerAction::Standby => {
             let cmd = state.config.power.standby.clone();

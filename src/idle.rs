@@ -115,6 +115,11 @@ impl Steps {
     pub fn is_idle(&self) -> bool {
         self.blanked || self.dimming || self.locked_fired || self.screen_off || self.suspended
     }
+
+    /// The machine woke from sleep: the standby step may run again.
+    pub fn resumed(&mut self) {
+        self.suspended = false;
+    }
 }
 
 /// How often activity reaches the idle-notify clients: each time restarts
@@ -330,6 +335,24 @@ pub fn notify_activity(state: &mut State) {
     crate::power::hint(state, crate::power::Hint::Idle(idle));
 }
 
+/// The machine woke from sleep. The countdown starts again, but a wake is no activity: the
+/// outputs, the lock and idle-notify clients stay as they are until input comes.
+pub fn resumed(state: &mut State) {
+    let now = Instant::now();
+    state.idle.since_activity = now;
+    state.idle.saver_since = now;
+    state.idle.steps.resumed();
+    arm(state);
+}
+
+/// Power every output off as the screen-off step, so the next input powers them back on.
+pub fn screen_off(state: &mut State) {
+    state.idle.steps.screen_off = true;
+    set_outputs_powered(state, false);
+    let idle = state.idle.steps.is_idle();
+    crate::power::hint(state, crate::power::Hint::Idle(idle));
+}
+
 /// When activity reaches the idle-notify clients.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Notify {
@@ -435,9 +458,8 @@ fn fired(state: &mut State) {
         }
     }
     if due(cfg.screen_off_after) && !state.idle.steps.screen_off {
-        state.idle.steps.screen_off = true;
         log::info!("idle for {}s: outputs off", cfg.screen_off_after);
-        set_outputs_powered(state, false);
+        screen_off(state);
     }
     if due(cfg.suspend_after) && !state.idle.steps.suspended {
         state.idle.steps.suspended = true;
@@ -721,6 +743,18 @@ mod tests {
             .next_deadline_ms(&c, 1000, Some(1000), false),
             None
         );
+        let mut woke = Steps {
+            suspended: true,
+            locked_fired: true,
+            ..Steps::default()
+        };
+        woke.resumed();
+        assert_eq!(
+            woke.next_deadline_ms(&c, 0, Some(0), false),
+            Some(30_000),
+            "a wake makes standby pending again, a full timeout away"
+        );
+        assert!(woke.locked_fired, "a wake leaves the lock step as it was");
     }
 
     #[test]
