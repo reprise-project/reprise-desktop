@@ -44,8 +44,17 @@ fn release<S: Session>(session: &mut S, held: &Held) {
     }
     for fd in held.take() {
         if let Err(e) = session.close(fd) {
-            log::warn!("input device release: {e:?}");
+            log_release_error(&e);
         }
+    }
+}
+
+/// EINVAL is logind's "Device not taken": a removed device was dropped from the session already.
+fn log_release_error(e: &impl AsErrno) {
+    if e.as_errno() == Some(libc::EINVAL) {
+        log::debug!("input device release: {e:?}");
+    } else {
+        log::warn!("input device release: {e:?}");
     }
 }
 
@@ -69,7 +78,7 @@ pub fn release_one<S: Session>(session: &mut S, held: &Held) -> Back {
         return Back::Resume;
     };
     if let Err(e) = session.close(fd) {
-        log::warn!("input device release: {e:?}");
+        log_release_error(&e);
     }
     Back::Released
 }
