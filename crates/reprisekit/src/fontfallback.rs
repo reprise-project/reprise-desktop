@@ -1,9 +1,10 @@
 //! The faces UI text falls back to for a char its own face lacks (e.g.
 //! CJK), found through fontconfig and kept per block of code points.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
 
 /// Code points per block: a face found for one char of a block is tried
@@ -15,14 +16,20 @@ const BLOCK_BITS: u32 = 7;
 const MISSING_CAP: usize = 4096;
 
 /// After fontconfig names no face for this many chars of a block it never named one for, it is
-/// not asked about the block again.
+/// not asked about the block again for [`MISS_EXPIRY`].
 const BLOCK_MISSES: u8 = 2;
 
-/// What fontconfig has answered for a block's chars: how many it named no face for, and
-/// whether it named one for any (then every char of the block is asked about).
+/// How long a char or block fontconfig had nothing for goes unasked: a font installed meanwhile
+/// is found on the next ask after it.
+const MISS_EXPIRY: Duration = Duration::from_secs(600);
+
+/// What fontconfig has answered for a block's chars: how many it named no face for, when they
+/// reached [`BLOCK_MISSES`], and whether it named one for any (then every char of the block is
+/// asked about).
 #[derive(Default)]
 struct BlockProbes {
     misses: u8,
+    given_up: Option<Instant>,
     hit: bool,
 }
 
@@ -38,12 +45,13 @@ pub(crate) fn no_fallback(ch: char) -> bool {
 /// and which of them each block has used. A block's faces are tried in
 /// the order they were found; fontconfig is asked only for a char none of
 /// them has, and neither a char no face has nor a block it named nothing for
-/// [`BLOCK_MISSES`] times and never named a face for is asked about again.
+/// [`BLOCK_MISSES`] times and never named a face for is asked about again until `expiry` passes.
 pub(crate) struct FallbackCache<K, F> {
     faces: Vec<(K, F)>,
     blocks: HashMap<(u32, bool), Vec<usize>>,
-    missing: HashSet<(char, bool)>,
+    missing: HashMap<(char, bool), Instant>,
     block_probes: HashMap<(u32, bool), BlockProbes>,
+    expiry: Duration,
 }
 
 impl<K: PartialEq, F> Default for FallbackCache<K, F> {
@@ -51,8 +59,9 @@ impl<K: PartialEq, F> Default for FallbackCache<K, F> {
         FallbackCache {
             faces: Vec::new(),
             blocks: HashMap::new(),
-            missing: HashSet::new(),
+            missing: HashMap::new(),
             block_probes: HashMap::new(),
+            expiry: MISS_EXPIRY,
         }
     }
 }
@@ -70,7 +79,12 @@ impl<K: PartialEq, F> FallbackCache<K, F> {
         find: impl FnOnce(char, bool) -> Option<K>,
         open: impl FnOnce(&K) -> Option<F>,
     ) -> Option<&F> {
-        if self.missing.contains(&(ch, bold)) {
+        let expiry = self.expiry;
+        if self
+            .missing
+            .get(&(ch, bold))
+            .is_some_and(|at| at.elapsed() < expiry)
+        {
             return None;
         }
         let block = (ch as u32 >> BLOCK_BITS, bold);
@@ -80,11 +94,14 @@ impl<K: PartialEq, F> FallbackCache<K, F> {
             .and_then(|used| used.iter().copied().find(|&i| has(&self.faces[i].1, ch)));
         let found = known.or_else(|| {
             let probes = self.block_probes.entry(block).or_default();
-            if !probes.hit && probes.misses >= BLOCK_MISSES {
+            if !probes.hit && probes.given_up.is_some_and(|at| at.elapsed() < expiry) {
                 return None;
             }
             let Some(key) = find(ch, bold) else {
                 probes.misses = probes.misses.saturating_add(1);
+                if !probes.hit && probes.misses >= BLOCK_MISSES {
+                    probes.given_up = Some(Instant::now());
+                }
                 return None;
             };
             probes.hit = true;
@@ -108,7 +125,7 @@ impl<K: PartialEq, F> FallbackCache<K, F> {
                 if self.missing.len() >= MISSING_CAP {
                     self.missing.clear();
                 }
-                self.missing.insert((ch, bold));
+                self.missing.insert((ch, bold), Instant::now());
                 None
             }
         }
@@ -144,6 +161,9 @@ pub(crate) fn fontconfig_face_for(ch: char, bold: bool, bitmap: bool) -> Option<
         if FcInit() == 0 {
             return None;
         }
+        // Rereads the configuration and font folders when they changed since the last rescan
+        // interval, so a font installed this session is found.
+        FcInitBringUptoDate();
         let pat = FcPatternCreate();
         if pat.is_null() {
             return None;
@@ -326,6 +346,28 @@ mod tests {
         c.pick('\u{E000}', true, has, none, |_| None);
         c.pick('\u{E080}', false, has, none, |_| None);
         assert_eq!(asked.get(), 4, "bold and the next block ask on their own");
+    }
+
+    #[test]
+    fn a_char_and_block_fontconfig_had_nothing_for_are_asked_about_after_the_expiry() {
+        let mut c = FallbackCache::<u32, Fake>::default();
+        let asked = Cell::new(0);
+        let none = |_: char, _: bool| {
+            asked.set(asked.get() + 1);
+            None
+        };
+        for ch in ['\u{E000}', '\u{E001}', '\u{E002}'] {
+            c.pick(ch, false, has, none, |_| None);
+        }
+        assert_eq!(asked.get(), 2, "the block is given up on before the expiry");
+        c.expiry = Duration::ZERO;
+        c.pick('\u{E000}', false, has, none, |_| None);
+        c.pick('\u{E002}', false, has, none, |_| None);
+        assert_eq!(
+            asked.get(),
+            4,
+            "the missed char and the given-up block are asked again"
+        );
     }
 
     #[test]
