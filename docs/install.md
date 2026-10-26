@@ -62,6 +62,7 @@ URL, so download it first and install the local file:
   without it)
 - Reprise Terminal's emulation comes from the `alacritty_terminal` crate,
   built in; it needs no runtime library
+- Python 3, for the tests' string id check (`scripts/i18n-check`)
 - Translated strings come from the Fluent crates (`fluent-bundle`,
   `fluent-langneg`, `unic-langid`), built in; they need no runtime library
 

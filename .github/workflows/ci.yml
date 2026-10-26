@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed rust clang pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire ttf-dejavu shared-mime-info
+          pacman -S --noconfirm --needed rust clang python pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire ttf-dejavu shared-mime-info
       - name: Install cargo-nextest 0.9.149
         run: |
           curl -LsSf -o /tmp/nextest.tar.gz https://get.nexte.st/0.9.149/linux
