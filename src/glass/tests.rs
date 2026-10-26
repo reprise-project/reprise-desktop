@@ -386,6 +386,37 @@ fn glass_over_another_windows_caption_shows_it_blurred_unless_blur_frames_is_off
     );
 }
 
+#[test]
+fn closed_glass_leaves_the_placed_list_with_blur_frames_off() {
+    let mut renderer = match reprisefx::headless::renderer() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("skipped: {e}");
+            return;
+        }
+    };
+    let ctx = GlassCtx::new();
+    ctx.set_renderer(&mut renderer);
+    let mut scene = DeskScene::new();
+    let root = scene.root();
+    for _ in 0..100 {
+        let chrome = scene.tree_create(root);
+        leave_out(&mut scene, chrome);
+        let mut glass = Backdrop::new(&ctx);
+        glass.set(&mut scene, &ctx, chrome, Some(sheet_pane((40, 20), &[])));
+        scene.destroy(chrome);
+    }
+    let output = test_output();
+    let settings = Settings {
+        blur_frames: false,
+        ..Settings::default()
+    };
+    ctx.begin(&output, settings, Quality::Full, Hold::No);
+    let clear = Color32F::from([0.0, 0.0, 0.0, 1.0]);
+    ctx.update_backdrop(&mut renderer, &scene, &output, clear, true);
+    assert_eq!(ctx.nodes.borrow().len(), 0);
+}
+
 fn test_output_of(w: i32, h: i32) -> Output {
     let o = test_output();
     let mode = smithay::output::Mode {
