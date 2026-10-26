@@ -358,18 +358,32 @@ fn report(state: &mut State, r: Report) {
     }
 }
 
+/// Whether going to sleep locks, and whether it then waits for the cover: only a held delay
+/// inhibitor can hold the sleep back.
+fn sleep_plan(lock_on_sleep: bool, has_delay: bool) -> (bool, bool) {
+    (lock_on_sleep, lock_on_sleep && has_delay)
+}
+
 /// `PrepareForSleep(true)`: lock, then hold logind's delay until every output
 /// that is on has presented the cover, or `COVER_WAIT` has passed.
 fn sleeping(state: &mut State) {
-    if state.power.sleep_delay.is_none() || state.power.cover_wait.is_some() {
+    if state.power.cover_wait.is_some() {
         return;
     }
-    if !state.config.power.lock_on_sleep {
-        release_sleep(state, "sleeping without a lock");
+    let has_delay = state.power.sleep_delay.is_some();
+    let (lock, wait) = sleep_plan(state.config.power.lock_on_sleep, has_delay);
+    if lock {
+        log::info!("power: sleeping, locking first");
+        crate::lockview::lock(state);
+    }
+    if !wait {
+        if has_delay {
+            release_sleep(state, "sleeping without a lock");
+        } else if lock {
+            log::info!("power: no delay inhibitor; locking without waiting for the cover");
+        }
         return;
     }
-    log::info!("power: sleeping, locking first");
-    crate::lockview::lock(state);
     let outputs: Vec<Output> = state.scene.outputs().to_vec();
     let mut armed = Vec::new();
     for o in outputs {
@@ -639,6 +653,18 @@ pub fn switch_toggled(state: &mut State, switch: Option<Switch>, st: SwitchState
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn going_to_sleep_locks_without_a_delay_inhibitor_and_waits_only_with_one() {
+        assert_eq!(sleep_plan(true, true), (true, true));
+        assert_eq!(
+            sleep_plan(true, false),
+            (true, false),
+            "no inhibitor: lock, nothing to hold"
+        );
+        assert_eq!(sleep_plan(false, true), (false, false));
+        assert_eq!(sleep_plan(false, false), (false, false));
+    }
 
     #[test]
     fn built_in_panels_are_told_apart_by_connector() {
