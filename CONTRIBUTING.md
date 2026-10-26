@@ -45,8 +45,10 @@ it.
   `REPRISE_BLESS=1 cargo test -p reprisekit` rewrites those files; review
   their diff like code.
 - **Dependency changes.** After changing a dependency or a feature in any
-  `Cargo.toml`, run `scripts/kit-units`. It must report one reprisekit
-  unit; otherwise add the missing features to `crates/reprisekit-pins`.
+  `Cargo.toml`, run `scripts/kit-units`. It must report one reprisekit,
+  zbus and reprisebus unit; otherwise add the missing features to
+  `crates/reprisekit-pins`, or to `crates/repriseapp-pins` when the crate
+  is outside reprisekit's own dependency graph.
   A new dependency also goes into the Requirements section of
   docs/install.md and the PKGBUILDs under `packaging/arch/`.
 

@@ -1,0 +1,25 @@
+[package]
+name = "repriseapp-pins"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "No code: turns on, for every build, the union of features the workspace asks of the stack the programs and the compositor share outside reprisekit."
+publish = false
+
+# Keeps `cargo build/test -p <program>` on the zbus, wayland and rustix units
+# `--workspace` builds. After a dependency change, rerun `scripts/kit-units`.
+[dependencies]
+anstream = "1"
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
+regex-automata = "0.4"
+regex-syntax = { version = "0.8", default-features = false, features = ["std", "unicode"] }
+rustix = { version = "1", features = ["event", "fs", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+toml_datetime = { version = "1", features = ["serde"] }
+toml_edit.workspace = true
+tracing = { version = "0.1", features = ["log"] }
+wayland-protocols = { version = "0.32", features = ["client", "server", "staging", "unstable"] }
+wayland-protocols-misc = { version = "0.3", features = ["client", "server"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client", "server"] }
+wayland-server = { version = "0.31", features = ["libwayland_1_23"] }
+zbus = { workspace = true, features = ["p2p"] }
