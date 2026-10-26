@@ -677,6 +677,13 @@ impl GlassCtx {
         (self.beneath.borrow_mut()).retain(|(o, _), b| *o != name || b.reuse.in_use());
     }
 
+    /// Drop `output`'s backdrop and the private backdrops on it.
+    pub fn output_removed(&self, output: &Output) {
+        let name = output.name();
+        self.backdrops.borrow_mut().remove(&name);
+        (self.beneath.borrow_mut()).retain(|(o, _), _| *o != name);
+    }
+
     fn redraw<E: RenderElement<GlesRenderer>>(
         &self,
         renderer: &mut GlesRenderer,

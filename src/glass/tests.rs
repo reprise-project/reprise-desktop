@@ -1344,6 +1344,30 @@ fn an_output_that_stops_rendering_drops_the_private_backdrops_not_drawn_from() {
 }
 
 #[test]
+fn a_removed_output_drops_its_backdrops() {
+    let Ok(mut renderer) = reprisefx::headless::renderer() else {
+        eprintln!("skipped: no renderer");
+        return;
+    };
+    let l = Layout {
+        stripe: [0.8, 0.1, 0.1, 1.0],
+        patch: (520, 120),
+        lower: (20, 20),
+        upper: (100, 50),
+        upper_size: (150, 110),
+        lower_on_top: false,
+        material: Material::Frosted,
+    };
+    let live = lay(&l, &mut renderer);
+    frame(&mut renderer, &live, l.material);
+    assert!(live.ctx.backdrops.borrow().get("test").is_some());
+    assert!(!live.ctx.beneath.borrow().is_empty());
+    live.ctx.output_removed(&test_output_of(640, 200));
+    assert!(live.ctx.backdrops.borrow().get("test").is_none());
+    assert!(live.ctx.beneath.borrow().is_empty());
+}
+
+#[test]
 fn glass_kept_while_hidden_resumes_its_private_backdrop_in_a_new_tree() {
     let Ok(mut renderer) = reprisefx::headless::renderer() else {
         eprintln!("skipped: no renderer");
