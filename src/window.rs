@@ -138,6 +138,7 @@ pub struct Window {
     sheet: BufferId,
     /// The client's blur region (`clientglass::region`), client coordinates.
     pub blur: Vec<Rect>,
+    blur_ops: crate::clientglass::BlurOps,
     /// The frame's glass under each `blur` rect while Glass draws it.
     client_glass: Vec<BufferId>,
     /// `draw_sheet` drew the window as a sheet and `unsheet` has not put

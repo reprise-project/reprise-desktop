@@ -72,6 +72,7 @@ impl State {
             frame,
             sheet,
             blur: Vec::new(),
+            blur_ops: Default::default(),
             client_glass: Vec::new(),
             sheeted: false,
             content,
@@ -166,8 +167,12 @@ impl State {
         let Some(win) = self.win_mut(w) else {
             return;
         };
-        let blur =
-            crate::clientglass::region(win.wl_surface(), win.geometry_origin(), win.client_size());
+        let (surface, origin, client) = (
+            win.wl_surface().clone(),
+            win.geometry_origin(),
+            win.client_size(),
+        );
+        let blur = crate::clientglass::region(&surface, &mut win.blur_ops, origin, client);
         let reglassed = blur != win.blur;
         win.blur = blur;
         let Some(win) = self.win(w) else {
