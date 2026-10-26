@@ -47,9 +47,16 @@ body:
     id: actual
     attributes:
       label: Actual
-      description: What happened instead. Paste any error lines from the session log here.
+      description: What happened instead.
     validations:
       required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Errors in the session log
+      description: |
+        If Reprise crashed or misbehaved, paste the output of `journalctl --user -b -t reprise -p err` (`-b -1` in place of `-b` after a reboot). If it died with SIGSEGV or another signal, also paste `coredumpctl info reprise`. With the `reprise-debug` package installed, both show file and line numbers.
+      render: text
   - type: textarea
     id: screenshot
     attributes:
