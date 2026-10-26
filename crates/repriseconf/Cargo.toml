@@ -13,6 +13,7 @@ workspace = true
 libc.workspace = true
 log.workspace = true
 reprisefs = { path = "../reprisefs" }
+repriseapp-pins = { path = "../repriseapp-pins" }
 reprisekit = { path = "../reprisekit" }
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
