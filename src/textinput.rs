@@ -1631,33 +1631,38 @@ mod harness_tests {
 
     #[test]
     fn the_input_methods_grab_waits_out_the_lock() {
-        let (mut h, _c, _) = focused_client();
-        let mut m = input_method(&mut h, true);
-        let mut l = h.connect();
-        h.map_lock_surface(&mut l);
-        h.roundtrip(&mut m);
-        m.side.ims[0].grab_keys.clear();
-        tap(&mut h, KEY_A);
-        h.roundtrip(&mut m);
-        h.roundtrip(&mut l);
-        assert!(
-            m.side.ims[0].grab_keys.is_empty(),
-            "the grab heard {:?}",
-            m.side.ims[0].grab_keys
-        );
-        assert_eq!(
-            l.side.keys,
-            [(KEY_A, true), (KEY_A, false)],
-            "the locker hears the key"
-        );
-        crate::lockview::unlock(&mut h.state);
-        assert!(
-            ime_holds_keyboard(&h.state.seat.get_keyboard().unwrap()),
-            "the grab is back"
-        );
-        tap(&mut h, KEY_B);
-        h.roundtrip(&mut m);
-        assert_eq!(m.side.ims[0].grab_keys, [(KEY_B, true), (KEY_B, false)]);
+        for grab_while_locked in [false, true] {
+            let (mut h, _c, _) = focused_client();
+            let mut m = input_method(&mut h, !grab_while_locked);
+            let mut l = h.connect();
+            h.map_lock_surface(&mut l);
+            if grab_while_locked {
+                m.grab_keyboard(0);
+            }
+            h.roundtrip(&mut m);
+            m.side.ims[0].grab_keys.clear();
+            tap(&mut h, KEY_A);
+            h.roundtrip(&mut m);
+            h.roundtrip(&mut l);
+            assert!(
+                m.side.ims[0].grab_keys.is_empty(),
+                "the grab heard {:?}",
+                m.side.ims[0].grab_keys
+            );
+            assert_eq!(
+                l.side.keys,
+                [(KEY_A, true), (KEY_A, false)],
+                "the locker hears the key"
+            );
+            crate::lockview::unlock(&mut h.state);
+            tap(&mut h, KEY_B);
+            h.roundtrip(&mut m);
+            assert_eq!(
+                m.side.ims[0].grab_keys,
+                [(KEY_B, true), (KEY_B, false)],
+                "after the unlock the grab hears the key"
+            );
+        }
     }
 
     #[test]
