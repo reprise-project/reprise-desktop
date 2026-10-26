@@ -437,10 +437,15 @@ pub fn end_session_env(env: &SessionEnv, end_processes: bool) {
 }
 
 /// The command that stops the app scopes a previous session left behind when it crashed, before
-/// this one starts any. None when nested (the scopes are the parent's) or with `end_processes`
-/// off (they were left on purpose).
-pub fn stale_scopes_command(env: &SessionEnv, end_processes: bool) -> Option<Vec<String>> {
-    (end_processes && env.parent.is_empty()).then(|| {
+/// this one starts any. None when nested (the scopes are the parent's), with `end_processes` off
+/// (they were left on purpose), or while `another_running` (the user manager's scopes are that
+/// session's).
+pub fn stale_scopes_command(
+    env: &SessionEnv,
+    end_processes: bool,
+    another_running: bool,
+) -> Option<Vec<String>> {
+    (end_processes && env.parent.is_empty() && !another_running).then(|| {
         [
             "systemctl",
             "--user",
@@ -454,8 +459,29 @@ pub fn stale_scopes_command(env: &SessionEnv, end_processes: bool) -> Option<Vec
 }
 
 /// Run `stale_scopes_command`, waited on so its pattern matches only scopes that existed before.
-pub fn stop_stale_scopes(env: &SessionEnv, end_processes: bool) {
-    run_waited(Vec::from_iter(stale_scopes_command(env, end_processes)));
+pub fn stop_stale_scopes(env: &SessionEnv, end_processes: bool, another_running: bool) {
+    run_waited(Vec::from_iter(stale_scopes_command(
+        env,
+        end_processes,
+        another_running,
+    )));
+}
+
+/// Whether another compositor holds `org.reprise.Tray` on the session bus. Asked before this
+/// one's tray thread requests the name; false without a bus or an answer.
+pub fn another_session_on_bus() -> bool {
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+    let owned = || -> zbus::Result<bool> {
+        let conn = zbus::blocking::connection::Builder::session()?
+            .method_timeout(TIMEOUT)
+            .build()?;
+        let name = zbus::names::BusName::try_from(reprisebus::tray::NAME)?;
+        Ok(zbus::blocking::fdo::DBusProxy::new(&conn)?.name_has_owner(name)?)
+    };
+    owned().unwrap_or_else(|e| {
+        log::debug!("{}: {e}", reprisebus::tray::NAME);
+        false
+    })
 }
 
 /// Run `cmds` in order, giving all of them `WAIT` together. Best effort: failures are logged,
@@ -1198,7 +1224,7 @@ mod tests {
                 "xdg-desktop-portal.service",
             ]))
         );
-        assert_eq!(stale_scopes_command(&e, false), None);
+        assert_eq!(stale_scopes_command(&e, false, false), None);
     }
 
     /// Scopes a crashed session left are stopped before the next one starts
@@ -1206,7 +1232,7 @@ mod tests {
     #[test]
     fn a_session_starts_by_stopping_app_scopes_left_by_the_last() {
         assert_eq!(
-            stale_scopes_command(&env(None), true),
+            stale_scopes_command(&env(None), true, false),
             Some(argv(&[
                 "systemctl",
                 "--user",
@@ -1219,12 +1245,17 @@ mod tests {
             parent: vec![("WAYLAND_DISPLAY", "wayland-0".into())],
             ..env(None)
         };
-        assert_eq!(stale_scopes_command(&nested, true), None);
+        assert_eq!(stale_scopes_command(&nested, true, false), None);
         assert!(
             !end_commands(&nested, true)
                 .concat()
                 .contains(&"app-reprise-*.scope".to_string())
         );
+    }
+
+    #[test]
+    fn a_second_session_leaves_the_running_ones_scopes() {
+        assert_eq!(stale_scopes_command(&env(None), true, true), None);
     }
 
     /// A nested run puts the parent session's values back, unsets what the
