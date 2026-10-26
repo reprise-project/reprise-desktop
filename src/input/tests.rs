@@ -3,6 +3,7 @@ use super::move_resize::top_below_top_bar;
 use super::*;
 use crate::window::SizeLimits;
 use reprisekit::pointer::DoubleClick;
+use smithay::backend::input::InputTime;
 
 #[test]
 fn a_named_cursor_change_asks_only_the_outputs_showing_the_cursor() {
@@ -392,4 +393,37 @@ fn a_cancelled_caption_press_asks_its_output_for_a_frame() {
     assert_eq!(h.state.win(w).and_then(|w| w.pressed), None);
     let asked = crate::backend::take_asks();
     assert_eq!(scene_asks(&asked), ["TEST-1"], "{asked:?}");
+}
+
+#[test]
+fn letting_go_of_every_button_ends_the_held_move_and_tells_the_client() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let w = h.state.win(t.id).expect("the window");
+    let (cap, client) = (w.geom.caption, w.geom.client);
+    let (x, y) = (w.x, w.y);
+
+    h.pointer_to(
+        f64::from(x + cap.x + cap.width / 2),
+        f64::from(y + cap.y + cap.height / 2),
+    );
+    h.button(BTN_LEFT, true);
+    assert!(matches!(h.state.interaction, Interaction::Move { .. }));
+    h.state.release_all_buttons(InputTime::now());
+    assert_eq!(h.state.interaction, Interaction::Idle);
+    assert_eq!(h.state.buttons_down, 0);
+
+    h.pointer_to(
+        f64::from(x + client.x + client.width / 2),
+        f64::from(y + client.y + client.height / 2),
+    );
+    h.button(BTN_LEFT, true);
+    h.roundtrip(&mut c);
+    assert_eq!(c.side.buttons, [(BTN_LEFT, true)]);
+    h.state.release_all_buttons(InputTime::now());
+    h.roundtrip(&mut c);
+    assert_eq!(c.side.buttons, [(BTN_LEFT, true), (BTN_LEFT, false)]);
+    assert_eq!(h.state.buttons_down, 0);
 }
