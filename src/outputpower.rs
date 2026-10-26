@@ -1,18 +1,12 @@
 //! wlr-output-power-management-v1: `wlopm` and idle daemons switch an
 //! output's scanout off and on via the backend's DPMS.
-//!
-//! Follows cosmic-comp's `src/wayland/protocols/output_power.rs`
-//! (GPL-3.0-only), on Smithay's `Dispatch2` so `delegate_dispatch2!`
-//! covers it.
-
-use std::collections::HashMap;
 
 use smithay::{
     output::{Output, WeakOutput},
     reexports::{
         wayland_protocols_wlr::output_power_management::v1::server::{
             zwlr_output_power_manager_v1::{self, ZwlrOutputPowerManagerV1},
-            zwlr_output_power_v1::{self, ZwlrOutputPowerV1},
+            zwlr_output_power_v1::{self, Mode, ZwlrOutputPowerV1},
         },
         wayland_server::{
             Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, WEnum,
@@ -31,8 +25,9 @@ pub trait OutputPowerHandler {
     fn set_output_power(&mut self, output: &Output, on: bool);
 }
 
+/// The live `zwlr_output_power_v1` objects, each with the mode it was last sent.
 pub struct OutputPowerState {
-    powers: HashMap<ZwlrOutputPowerV1, zwlr_output_power_v1::Mode>,
+    controls: Vec<(ZwlrOutputPowerV1, bool)>,
 }
 
 pub struct ManagerGlobal {
@@ -51,43 +46,46 @@ impl OutputPowerState {
         D: GlobalDispatch<ZwlrOutputPowerManagerV1, ManagerGlobal> + 'static,
         F: for<'a> Fn(&'a Client) -> bool + Send + Sync + 'static,
     {
-        dh.create_global::<D, ZwlrOutputPowerManagerV1, _>(
-            VERSION,
-            ManagerGlobal {
-                filter: Box::new(filter),
-            },
-        );
+        let filter = Box::new(filter);
+        dh.create_global::<D, ZwlrOutputPowerManagerV1, _>(VERSION, ManagerGlobal { filter });
         OutputPowerState {
-            powers: HashMap::new(),
+            controls: Vec::new(),
         }
     }
 
     /// Send the mode to every object whose output changed power since it last heard.
     pub fn refresh<D: OutputPowerHandler>(state: &mut D) {
-        let mut powers = std::mem::take(&mut state.output_power_state().powers);
-        for (power, old) in powers.iter_mut() {
-            let Some(output) = power.data::<PowerData>().and_then(|d| d.output.upgrade()) else {
+        // Taken out so `output_power` can borrow `state`; refresh runs outside
+        // dispatch, so no object is added meanwhile.
+        let mut controls = std::mem::take(&mut state.output_power_state().controls);
+        for (control, sent) in &mut controls {
+            let Some(output) = output_of(control) else {
                 continue;
             };
             if let Some(on) = state.output_power(&output) {
-                let mode = mode_of(on);
-                if mode != *old {
-                    power.mode(mode);
-                    *old = mode;
-                }
+                announce(control, sent, on);
             }
         }
-        // A request handled meanwhile cannot have added any: refresh runs
-        // outside dispatch.
-        state.output_power_state().powers.extend(powers);
+        state.output_power_state().controls = controls;
+    }
+
+    fn forget(&mut self, control: &ZwlrOutputPowerV1) {
+        self.controls.retain(|(c, _)| c != control);
     }
 }
 
-fn mode_of(on: bool) -> zwlr_output_power_v1::Mode {
-    if on {
-        zwlr_output_power_v1::Mode::On
-    } else {
-        zwlr_output_power_v1::Mode::Off
+fn output_of(control: &ZwlrOutputPowerV1) -> Option<Output> {
+    control.data::<PowerData>()?.output.upgrade()
+}
+
+fn mode(on: bool) -> Mode {
+    if on { Mode::On } else { Mode::Off }
+}
+
+fn announce(control: &ZwlrOutputPowerV1, sent: &mut bool, on: bool) {
+    if *sent != on {
+        control.mode(mode(on));
+        *sent = on;
     }
 }
 
@@ -124,25 +122,18 @@ where
         _dh: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
-        match request {
-            zwlr_output_power_manager_v1::Request::GetOutputPower { id, output } => {
-                let output = Output::from_resource(&output);
-                let power = data_init.init(
-                    id,
-                    PowerData {
-                        output: output.as_ref().map(Output::downgrade).unwrap_or_default(),
-                    },
-                );
-                match output.as_ref().and_then(|o| state.output_power(o)) {
-                    Some(on) => {
-                        power.mode(mode_of(on));
-                        state.output_power_state().powers.insert(power, mode_of(on));
-                    }
-                    None => power.failed(),
-                }
+        let zwlr_output_power_manager_v1::Request::GetOutputPower { id, output } = request else {
+            return;
+        };
+        let output = Output::from_resource(&output);
+        let weak = output.as_ref().map(Output::downgrade).unwrap_or_default();
+        let control = data_init.init(id, PowerData { output: weak });
+        match output.and_then(|o| state.output_power(&o)) {
+            Some(on) => {
+                control.mode(mode(on));
+                state.output_power_state().controls.push((control, on));
             }
-            zwlr_output_power_manager_v1::Request::Destroy => {}
-            _ => unreachable!(),
+            None => control.failed(),
         }
     }
 }
@@ -160,44 +151,33 @@ where
         _dh: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
-        match request {
-            zwlr_output_power_v1::Request::SetMode { mode } => {
-                let on = match mode {
-                    WEnum::Value(zwlr_output_power_v1::Mode::On) => true,
-                    WEnum::Value(zwlr_output_power_v1::Mode::Off) => false,
-                    _ => return,
-                };
-                let Some(output) = self.output.upgrade() else {
-                    resource.failed();
-                    state.output_power_state().powers.remove(resource);
-                    return;
-                };
-                state.set_output_power(&output, on);
-                match state.output_power(&output) {
-                    Some(on) => {
-                        let mode = mode_of(on);
-                        for (power, old) in state.output_power_state().powers.iter_mut() {
-                            let same = power
-                                .data::<PowerData>()
-                                .is_some_and(|d| d.output == output);
-                            if same && mode != *old {
-                                power.mode(mode);
-                                *old = mode;
-                            }
-                        }
-                    }
-                    None => {
-                        resource.failed();
-                        state.output_power_state().powers.remove(resource);
-                    }
-                }
+        let zwlr_output_power_v1::Request::SetMode { mode } = request else {
+            return;
+        };
+        let on = match mode {
+            WEnum::Value(Mode::On) => true,
+            WEnum::Value(Mode::Off) => false,
+            _ => return,
+        };
+        let Some(output) = self.output.upgrade() else {
+            resource.failed();
+            state.output_power_state().forget(resource);
+            return;
+        };
+        state.set_output_power(&output, on);
+        let Some(on) = state.output_power(&output) else {
+            resource.failed();
+            state.output_power_state().forget(resource);
+            return;
+        };
+        for (control, sent) in &mut state.output_power_state().controls {
+            if output_of(control).is_some_and(|o| o == output) {
+                announce(control, sent, on);
             }
-            zwlr_output_power_v1::Request::Destroy => {}
-            _ => unreachable!(),
         }
     }
 
     fn destroyed(&self, state: &mut D, _client: ClientId, resource: &ZwlrOutputPowerV1) {
-        state.output_power_state().powers.remove(resource);
+        state.output_power_state().forget(resource);
     }
 }

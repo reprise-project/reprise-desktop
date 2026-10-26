@@ -4,7 +4,7 @@
 //! streaks laid over it.
 //!
 //! The copy out of the frame (`blit`) follows niri's
-//! `src/render_helpers/framebuffer_effect.rs` (GPL-3.0).
+//! `src/render_helpers/framebuffer_effect.rs` (GPL-3.0-or-later).
 
 use reprisekit::glass::Material;
 use smithay::backend::allocator::Fourcc;
