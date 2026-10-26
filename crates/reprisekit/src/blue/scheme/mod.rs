@@ -7,6 +7,7 @@ mod ember;
 mod navy;
 mod obsidian;
 mod olive;
+mod ramps;
 mod sapphire;
 mod silver;
 mod slate;
@@ -28,6 +29,7 @@ use crate::blue::trayarrow::{
     ArrowRecipe, BEAD, BOLD, DIAGONAL, DOWN, FINE, OUTLINED, Shading, banded, lit,
 };
 use crate::theme::{Color, ColorScheme};
+use ramps::stops;
 
 pub fn scheme(v: Variant) -> &'static Scheme {
     match v {
