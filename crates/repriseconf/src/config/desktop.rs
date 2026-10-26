@@ -6,10 +6,14 @@ pub struct SnapConfig {
     pub enabled: bool,
     pub picker: bool,
     pub bar: bool,
-    pub layouts: Vec<crate::snap::ZoneLayout>,
+    pub layouts: Vec<reprisekit::snaplayouts::ZoneLayout>,
     /// Logical px from the usable area's edge where a drag snaps; corners reach twice as far.
     pub distance: i32,
 }
+
+/// `[window_snapping] distance`'s default: how far in from the usable area's edges a
+/// title-bar drag snaps.
+pub const SNAP_DISTANCE_DEFAULT: i32 = 30;
 
 pub const SNAP_DISTANCE_MAX: i32 = 100;
 
@@ -20,7 +24,7 @@ impl Default for SnapConfig {
             picker: true,
             bar: true,
             layouts: Vec::new(),
-            distance: crate::snap::BAND,
+            distance: SNAP_DISTANCE_DEFAULT,
         }
     }
 }
@@ -46,6 +50,18 @@ pub struct DebugConfig {
 pub struct PreviewsConfig {
     pub taskbar: bool,
     pub fps: u32,
+}
+
+/// `[switcher] size` by name.
+pub fn switcher_size(name: &str) -> Option<reprisekit::switcher::Size> {
+    use reprisekit::switcher::Size;
+    Some(match name {
+        "small" => Size::Small,
+        "medium" => Size::Medium,
+        "large" => Size::Large,
+        "huge" => Size::Huge,
+        _ => return None,
+    })
 }
 
 /// Ceiling of `[previews] fps`: a common output's refresh.
@@ -217,5 +233,7 @@ impl Default for ClipboardConfig {
         }
     }
 }
+
+pub const WORKSPACES_DEFAULT: usize = 4;
 
 pub const WORKSPACES_MAX: usize = 16;

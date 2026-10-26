@@ -1,5 +1,28 @@
+use super::fields::{INTERFACE, fields};
 use super::shortcuts::default_shortcuts;
 use super::*;
+use repriseconf::config::Config;
+
+#[test]
+fn every_default_the_sheet_shows_reads_back_as_the_compositors() {
+    for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let shown = Settings::for_interface(interface.as_str());
+        let mut doc = toml_edit::DocumentMut::new();
+        for f in fields() {
+            let v = f.value(&shown);
+            // Empty text is the key left out.
+            if v.as_str() != Some("") {
+                repriseconf::set(&mut doc, f.key(), v).unwrap();
+            }
+        }
+        repriseconf::set(&mut doc, &INTERFACE, interface.as_str().into()).unwrap();
+        assert_eq!(
+            Config::parse(&doc.to_string()),
+            Ok(Config::default_for(interface)),
+            "{interface:?}: every key written as the sheet shows it parses to the defaults"
+        );
+    }
+}
 
 #[test]
 fn the_layout_list_adds_moves_and_removes_through_layout_and_variant() {

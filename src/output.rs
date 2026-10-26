@@ -871,15 +871,7 @@ fn new_draw_scales(used: &[i32], scales: impl IntoIterator<Item = f32>) -> Vec<i
     out
 }
 
-/// An output scale as the compositor runs it: the nearest quarter step,
-/// clamped to 1..=4, 1 for anything that is not a number.
-pub(crate) fn quarter_scale(scale: f32) -> f32 {
-    if scale.is_finite() {
-        ((scale * 4.0).round() / 4.0).clamp(1.0, 4.0)
-    } else {
-        1.0
-    }
-}
+pub(crate) use repriseconf::config::quarter_scale;
 
 /// A connector mode as `pick_mode` weighs it: size, refresh in mHz, preferred.
 pub type ModeInfo = crate::config::OfferedMode;

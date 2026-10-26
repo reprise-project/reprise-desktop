@@ -1,4 +1,4 @@
-//! `[[outputs]]` entries of `config.toml` as Reprise Settings writes them; `toml_edit` leaves the rest of the file as it was. The keys are the ones `FileOutput` in `src/config/file.rs` reads. This crate cannot depend on the compositor, so they change together.
+//! `[[outputs]]` entries of `config.toml` as Reprise Settings writes them; `toml_edit` leaves the rest of the file as it was. The keys are the ones `repriseconf::config::file::FileOutput` reads.
 
 use std::path::Path;
 

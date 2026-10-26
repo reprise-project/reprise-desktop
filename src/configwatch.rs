@@ -101,11 +101,9 @@ enum Redraw {
 }
 
 fn redraw(old: &Config, new: &Config) -> Redraw {
-    let kept = Config {
-        outputs: new.outputs.clone(),
-        adaptive_sync: new.adaptive_sync,
-        ..old.clone()
-    };
+    let mut kept = old.clone();
+    kept.outputs = new.outputs.clone();
+    kept.adaptive_sync = new.adaptive_sync;
     if old == new {
         Redraw::Nothing
     } else if kept == *new {
@@ -926,7 +924,10 @@ mod tests {
     #[test]
     fn the_desktop_count_is_applied_at_once() {
         let new = Config {
-            workspaces: 1,
+            base: repriseconf::config::Config {
+                workspaces: 1,
+                ..Default::default()
+            },
             ..Config::default()
         };
         assert!(diff(&Config::default(), &new).workspaces);

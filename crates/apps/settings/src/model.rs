@@ -1,7 +1,8 @@
 //! `config.toml` as the sheet sees it: one flat [`Settings`] of every key the pages edit, read from the text and written back with `toml_edit` so comments, key order and untouched tables survive.
 //!
-//! The defaults mirror the compositor's own (`Config::default` and the per-section defaults in `src/config.rs`, `Metrics` and `FontConfig` in `reprisekit::theme`, `glass::Settings`). This crate cannot depend on the compositor, so the lists change together; `src/config.rs` carries the same note above `Config`.
+//! The defaults are [`repriseconf::config::Config`]'s, the ones the compositor runs with.
 
+use repriseconf::config::{FontSmoothing, StartMenuStyle, TaskbarButtons, switcher_size};
 use reprisekit::interface::Interface;
 use shortcuts::default_shortcuts;
 
@@ -320,181 +321,231 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
+        Settings::for_interface("classic")
+    }
+}
+
+/// The value `choices` lists for `v`, as `parse` reads the values.
+fn named<T: PartialEq>(choices: &Choices, parse: impl Fn(&str) -> Option<T>, v: &T) -> String {
+    (choices.iter())
+        .find(|(name, _)| parse(name).as_ref() == Some(v))
+        .map(|(name, _)| name.to_string())
+        .expect("every default is one of the sheet's choices")
+}
+
+fn tenths(v: f64) -> i64 {
+    (v * 10.0).round() as i64
+}
+
+impl Settings {
+    /// The defaults under `[appearance] interface` = `interface`: the compositor's own
+    /// ([`repriseconf::config::Config::default_for`]), with the wallpaper as the file names it.
+    /// `interface` itself stays Classic's, the compositor's default, so the key is written for
+    /// either of the others.
+    pub fn for_interface(interface: &str) -> Settings {
+        let interface = Interface::parse(interface).unwrap_or(Interface::Classic);
+        let c = repriseconf::config::Config::default_for(interface);
+        let m = &c.theme.metrics;
+        let fonts = &c.theme.fonts;
+        let a = &c.accessibility;
+        let fx = &c.effects;
+        let hhmm = |min: u32| format!("{:02}:{:02}", min / 60, min % 60);
         Settings {
-            terminal: reprisefs::apps::DEFAULT_TERMINAL.into(),
-            script_terminal: "stay".into(),
-            script_open: "run".into(),
-            task_manager: String::new(),
-            startmenu_banner: "Reprise Desktop".into(),
-            startmenu_style: "classic".into(),
-            desktop_icons: true,
-            desktop_extensions: "hide".into(),
-            start_icon: false,
-            adaptive_sync: false,
-            switcher_preview: true,
-            switcher_desktop: false,
-            switcher_peek: false,
-            switcher_flip: false,
-            preview_taskbar: true,
-            previews_fps: 10,
-            switcher_style: "icons".into(),
-            switcher_size: "small".into(),
-            hot_corner: "none".into(),
-            screenshot_save: true,
-            clipboard_history: true,
+            terminal: c.terminal.clone(),
+            script_terminal: named(
+                SCRIPT_ENDS,
+                reprisefs::program::ScriptEnd::parse,
+                &c.script_terminal,
+            ),
+            script_open: named(
+                SCRIPT_OPENS,
+                reprisefs::program::ScriptOpen::parse,
+                &c.script_open,
+            ),
+            task_manager: c.task_manager.clone().unwrap_or_default(),
+            startmenu_banner: c.startmenu_banner.clone(),
+            startmenu_style: named(STARTMENU_STYLES, StartMenuStyle::parse, &c.startmenu_style),
+            desktop_icons: c.desktop_icons,
+            desktop_extensions: named(
+                DESKTOP_EXTENSIONS,
+                reprisefs::names::Extensions::parse,
+                &c.desktop_extensions,
+            ),
+            start_icon: c.start_icon,
+            adaptive_sync: c.adaptive_sync,
+            switcher_preview: c.switcher.preview,
+            switcher_desktop: c.switcher.desktop,
+            switcher_peek: c.switcher.peek,
+            switcher_flip: c.switcher.flip,
+            preview_taskbar: c.previews.taskbar,
+            previews_fps: c.previews.fps.into(),
+            switcher_style: named(SWITCHER_STYLES, |v| v.parse().ok(), &c.switcher.style),
+            switcher_size: named(SWITCHER_SIZES, switcher_size, &c.switcher.size),
+            hot_corner: c.hot_corner.name().into(),
+            screenshot_save: c.screenshot.save,
+            clipboard_history: c.clipboard.history,
 
-            interface: "classic".into(),
-            color_scheme: String::new(),
-            glass_color: "sky".into(),
-            glass_mode: "light".into(),
-            glass_material: "frosted".into(),
-            glass_frame: "rounded".into(),
-            glass_notification_style: "lozenge".into(),
+            interface: Interface::Classic.as_str().into(),
+            color_scheme: c.color_scheme.clone().unwrap_or_default(),
+            glass_color: reprisekit::glass::swatch_name(c.glass.color)
+                .expect("the default glass colour is a swatch")
+                .into(),
+            glass_mode: c.glass.mode.as_str().into(),
+            glass_material: c.glass.material.as_str().into(),
+            glass_frame: c.glass.frame.as_str().into(),
+            glass_notification_style: c.glass.notification.as_str().into(),
             glass_custom: String::new(),
-            glass_intensity: 42,
-            glass_transparency: true,
-            glass_blur: 2,
-            glass_streaks: true,
-            glass_fast_drag: true,
-            glass_blur_frames: true,
-            glass_orb_glow: 100,
-            wallpaper: String::new(),
-            wallpaper_position: "stretch".into(),
-            wallpaper_water: "off".into(),
-            drive_insert: "ask".into(),
+            glass_intensity: c.glass.intensity.into(),
+            glass_transparency: c.glass.transparency,
+            glass_blur: c.glass.blur.into(),
+            glass_streaks: c.glass.streaks,
+            glass_fast_drag: c.glass.fast_drag,
+            glass_blur_frames: c.glass.blur_frames,
+            glass_orb_glow: c.glass.orb_glow.into(),
+            // The built-in as the file names it; the config holds its tinted variant.
+            wallpaper: reprisekit::interfaces::default_wallpaper(interface)
+                .map(|b| b.uri())
+                .unwrap_or_default(),
+            wallpaper_position: named(
+                POSITIONS,
+                reprisekit::wallpaper::Position::parse,
+                &c.wallpaper.position,
+            ),
+            wallpaper_water: c.wallpaper.water.name().into(),
+            drive_insert: repriseconf::DRIVES_ON_INSERT.into(),
             slideshow: String::new(),
-            slideshow_interval: 30,
-            slideshow_shuffle: false,
-            saver: "blank".into(),
-            saver_speed: 5,
-            saver_stars: 200,
-            saver_shapes: 2,
-            saver_cycle: true,
+            slideshow_interval: c.wallpaper.interval.into(),
+            slideshow_shuffle: c.wallpaper.shuffle,
+            saver: c.screensaver.kind.name().into(),
+            saver_speed: c.screensaver.options.speed.into(),
+            saver_stars: c.screensaver.options.stars.into(),
+            saver_shapes: c.screensaver.options.shapes.into(),
+            saver_cycle: c.screensaver.options.cycle_colors,
             saver_folder: String::new(),
-            saver_photo_seconds: 10,
+            saver_photo_seconds: c.screensaver.options.photo_seconds.into(),
             background: String::new(),
-            system_icons: SYSTEM_ICONS
-                .iter()
-                .chain([&RECYCLE_BIN])
-                .map(|n| n.to_string())
-                .collect(),
+            system_icons: c.system_icons.clone(),
 
-            taskbar_buttons: "when_full".into(),
-            taskbar_pinned: false,
-            taskbar_small_icons: false,
-            taskbar_show_desktop: false,
-            taskbar_peek: false,
-            taskbar_tray_overflow: true,
-            taskbar_position: "bottom".into(),
-            taskbar_auto_hide: false,
-            taskbar_reveal_on_edge: true,
-            taskbar_reveal_on_keys: true,
-            taskbar_reveal_on_attention: true,
-            recent_files: true,
-            location: true,
-            capture_border: true,
-            debug_overlay: false,
-            debug_overlay_in_captures: false,
-            launcher_files: true,
+            taskbar_buttons: named(TASKBAR_BUTTONS, TaskbarButtons::parse, &c.taskbar.buttons),
+            taskbar_pinned: c.taskbar.pinned,
+            taskbar_small_icons: c.taskbar.small_icons,
+            taskbar_show_desktop: c.taskbar.show_desktop_button,
+            taskbar_peek: c.taskbar.peek,
+            taskbar_tray_overflow: c.taskbar.tray_overflow,
+            taskbar_position: c.taskbar.position.name().into(),
+            taskbar_auto_hide: c.taskbar.auto_hide,
+            taskbar_reveal_on_edge: c.taskbar.reveal_on_edge,
+            taskbar_reveal_on_keys: c.taskbar.reveal_on_keys,
+            taskbar_reveal_on_attention: c.taskbar.reveal_on_attention,
+            recent_files: c.recent_files,
+            location: c.location,
+            capture_border: c.capture_border,
+            debug_overlay: c.debug.overlay,
+            debug_overlay_in_captures: c.debug.overlay_in_captures,
+            launcher_files: c.launcher_files,
             thumbnail_cache: repriseconf::ThumbnailCache::DEFAULT.enabled,
             thumbnail_max_mb: repriseconf::ThumbnailCache::DEFAULT.max_mb as i64,
 
-            desktops: DESKTOPS_DEFAULT,
-            desktop_animation: "none".into(),
-            desktop_animation_ms: 200,
-            pager_mark: "light".into(),
-            remember_windows: true,
-            window_tabs: true,
-            window_shake: false,
-            session_restore: false,
-            session_end_processes: true,
+            desktops: c.workspaces as i64,
+            desktop_animation: c.workspace_animation.style.name().into(),
+            desktop_animation_ms: c.workspace_animation.ms.into(),
+            pager_mark: c.pager_mark.name().into(),
+            remember_windows: c.remember_windows,
+            window_tabs: c.window_tabs,
+            window_shake: c.window_shake,
+            session_restore: c.session.restore,
+            session_end_processes: c.session.end_processes,
 
-            font_family: "Tahoma, DejaVu Sans".into(),
-            font_size_px: 11,
-            font_antialias: false,
-            font_shell_dlg: String::new(),
-            icon_theme: "hicolor".into(),
-            gtk_theme: TOOLKIT_AUTO.into(),
-            qt_platform_theme: TOOLKIT_AUTO.into(),
-            font_smoothing: "grayscale".into(),
-            gtk4_colors: false,
-            cursor_theme: String::new(),
-            cursor_size: 0,
+            font_family: fonts.family.join(", "),
+            font_size_px: fonts.size_px.into(),
+            font_antialias: fonts.antialias,
+            font_shell_dlg: fonts.shell_dlg.clone().unwrap_or_default(),
+            icon_theme: c.icons.theme.clone(),
+            gtk_theme: c.toolkits.gtk_theme.clone(),
+            qt_platform_theme: c.toolkits.qt_platform_theme.clone(),
+            font_smoothing: named(
+                FONT_SMOOTHINGS,
+                FontSmoothing::parse,
+                &c.toolkits.font_smoothing,
+            ),
+            gtk4_colors: c.toolkits.gtk4_colors,
+            cursor_theme: c.cursor.theme.clone(),
+            cursor_size: c.cursor.size.into(),
 
-            frame_width: 4,
-            caption_height: 18,
-            taskbar_height: 28,
-            menu_shadow: 4,
-            menu_hover_ms: 400,
-            menu_fade_ms: 150,
-            menu_animation: "fade".into(),
-            window_animation: false,
-            window_open_ms: 250,
-            window_close_ms: 200,
-            hover_fade: false,
-            hover_in_ms: 120,
-            hover_out_ms: 250,
-            taskbar_slide: false,
-            session_fade: true,
-            double_click_ms: 500,
+            frame_width: m.frame_width.into(),
+            caption_height: m.caption_height.into(),
+            taskbar_height: m.taskbar_height.into(),
+            menu_shadow: m.menu_shadow.into(),
+            menu_hover_ms: m.menu_hover_ms.into(),
+            menu_fade_ms: m.menu_fade_ms.into(),
+            menu_animation: fx.menu_animation.name().into(),
+            window_animation: fx.window_animation,
+            window_open_ms: fx.window_open_ms.into(),
+            window_close_ms: fx.window_close_ms.into(),
+            hover_fade: fx.hover_fade,
+            hover_in_ms: fx.hover_in_ms.into(),
+            hover_out_ms: fx.hover_out_ms.into(),
+            taskbar_slide: fx.taskbar_slide,
+            session_fade: fx.session_fade,
+            double_click_ms: m.double_click_ms.into(),
 
-            kb_layout: String::new(),
-            kb_variant: String::new(),
-            kb_model: String::new(),
-            kb_options: String::new(),
-            repeat_rate: 25,
-            repeat_delay: 600,
+            kb_layout: c.keyboard.layout.clone(),
+            kb_variant: c.keyboard.variant.clone(),
+            kb_model: c.keyboard.model.clone(),
+            kb_options: c.keyboard.options.clone(),
+            repeat_rate: c.keyboard.repeat_rate.into(),
+            repeat_delay: c.keyboard.repeat_delay.into(),
 
-            standby: "systemctl suspend".into(),
-            poweroff: "systemctl poweroff".into(),
-            reboot: "systemctl reboot".into(),
-            hibernate: "systemctl hibernate".into(),
-            lock_on_sleep: true,
-            lock_wallpaper: false,
+            standby: c.power.standby.clone(),
+            poweroff: c.power.poweroff.clone(),
+            reboot: c.power.reboot.clone(),
+            hibernate: c.power.hibernate.clone(),
+            lock_on_sleep: c.power.lock_on_sleep,
+            lock_wallpaper: c.wallpaper.lock_screen,
 
-            lock_after: 600,
-            screen_off_after: 900,
-            blank_after: 0,
-            lock_fade: 0,
+            lock_after: c.idle.lock_after.into(),
+            screen_off_after: c.idle.screen_off_after.into(),
+            blank_after: c.idle.blank_after.into(),
+            lock_fade: c.idle.lock_fade.into(),
 
-            mouse_speed: 0,
-            mouse_accel: true,
-            mouse_natural: false,
-            touchpad_speed: 0,
-            touchpad_accel: true,
-            touchpad_natural: false,
-            tap_to_click: true,
-            two_finger_scroll: true,
-            two_finger_tap_right_click: true,
-            disable_while_typing: true,
+            mouse_speed: tenths(c.mouse.speed),
+            mouse_accel: c.mouse.acceleration,
+            mouse_natural: c.mouse.natural_scroll,
+            touchpad_speed: tenths(c.touchpad.pointer.speed),
+            touchpad_accel: c.touchpad.pointer.acceleration,
+            touchpad_natural: c.touchpad.pointer.natural_scroll,
+            tap_to_click: c.touchpad.tap_to_click,
+            two_finger_scroll: c.touchpad.two_finger_scroll,
+            two_finger_tap_right_click: c.touchpad.two_finger_tap_right_click,
+            disable_while_typing: c.touchpad.disable_while_typing,
 
-            snap_enabled: true,
-            snap_picker: true,
-            snap_bar: true,
+            snap_enabled: c.window_snapping.enabled,
+            snap_picker: c.window_snapping.picker,
+            snap_bar: c.window_snapping.bar,
             snap_layouts: String::new(),
-            snap_distance: SNAP_DISTANCE_DEFAULT,
+            snap_distance: c.window_snapping.distance.into(),
 
-            nl_enabled: false,
-            nl_temperature: 4000,
-            nl_schedule: "sun".into(),
-            nl_from: "21:00".into(),
-            nl_to: "07:00".into(),
+            nl_enabled: c.night_light.enabled,
+            nl_temperature: c.night_light.temperature.into(),
+            nl_schedule: c.night_light.schedule.name().into(),
+            nl_from: hhmm(c.night_light.from),
+            nl_to: hhmm(c.night_light.to),
 
-            sticky_keys: false,
-            sticky_lock: true,
-            sticky_two_keys_off: true,
-            slow_keys: false,
-            slow_keys_delay: 10,
-            key_shortcuts: true,
-            mouse_keys: false,
-            mouse_keys_num_lock: true,
-            mouse_keys_speed: 400,
-            mouse_keys_acceleration: 10,
-            text_size: 100,
+            sticky_keys: a.sticky_keys,
+            sticky_lock: a.sticky_lock,
+            sticky_two_keys_off: a.sticky_two_keys_off,
+            slow_keys: a.slow_keys,
+            slow_keys_delay: (a.slow_keys_delay / 100).into(),
+            key_shortcuts: a.shortcuts,
+            mouse_keys: a.mouse_keys,
+            mouse_keys_num_lock: a.mouse_keys_num_lock,
+            mouse_keys_speed: a.mouse_keys_speed.into(),
+            mouse_keys_acceleration: (a.mouse_keys_acceleration / 100).into(),
+            text_size: a.text_size.into(),
 
-            color_filter: "none".into(),
-            color_filter_intensity: 100,
-            magnifier_follow: "pointer+focus".into(),
+            color_filter: a.color_filter.name().into(),
+            color_filter_intensity: a.color_filter_intensity.into(),
+            magnifier_follow: a.magnifier_follow.name().into(),
 
             shortcuts: default_shortcuts(),
             programs: Vec::new(),
@@ -502,36 +553,6 @@ impl Default for Settings {
             startmenu: crate::startmenu::default_menu(),
             tablet_pads: Vec::new(),
         }
-    }
-}
-
-impl Settings {
-    /// The defaults under `[appearance] interface` = `interface`: Glass combines its task buttons, turns the taskbar extras (but not small icons) and the window animation, hover fade and button slide on, shows Alt+Tab as thumbnails with the desktop and peek, and Super+Tab as the 3D switcher. Blue and Glass show the wallpaper on the lock screen. `interface` itself stays Classic's, the compositor's default.
-    pub fn for_interface(interface: &str) -> Settings {
-        let mut s = Settings {
-            lock_wallpaper: matches!(interface, "blue" | "glass"),
-            wallpaper: Interface::parse(interface)
-                .and_then(reprisekit::interfaces::default_wallpaper)
-                .map(|b| b.uri())
-                .unwrap_or_default(),
-            ..Settings::default()
-        };
-        if interface == "glass" {
-            s.taskbar_buttons = "combine".into();
-            s.startmenu_style = "glass".into();
-            s.taskbar_pinned = true;
-            s.taskbar_show_desktop = true;
-            s.taskbar_peek = true;
-            s.window_animation = true;
-            s.hover_fade = true;
-            s.taskbar_slide = true;
-            s.switcher_style = "thumbnails".into();
-            s.switcher_desktop = true;
-            s.switcher_peek = true;
-            s.switcher_flip = true;
-            s.window_shake = true;
-        }
-        s
     }
 
     pub fn layouts(&self) -> Vec<(String, String)> {

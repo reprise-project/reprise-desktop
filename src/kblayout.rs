@@ -56,7 +56,7 @@ impl State {
             kb.layout.as_str()
         };
         self.ime.vk.forget_keymap();
-        match keyboard.set_xkb_config(self, kb.xkb_config()) {
+        match keyboard.set_xkb_config(self, crate::config::xkb_config(&kb)) {
             Ok(()) => log::info!("keyboard layout {layout}"),
             Err(e) => log::error!(
                 "could not compile the xkb keymap for layout {layout} ({e}); the keyboard keeps its keymap"
