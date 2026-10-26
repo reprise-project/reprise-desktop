@@ -46,6 +46,10 @@ it.
   deliberate drawing change, or a new Blue scheme,
   `REPRISE_BLESS=1 cargo test -p reprisekit` rewrites those files; review
   their diff like code.
+- **UI strings.** A string a user reads goes through `tr!("id")` with its
+  English text in the crate's `locale/en.ftl`; `cargo test -p reprisekit`
+  runs `scripts/i18n-check`, which fails on an id missing from English or
+  never used. See [docs/i18n.md](docs/i18n.md).
 - **Dependency changes.** After changing a dependency or a feature in any
   `Cargo.toml`, run `scripts/kit-units`. It must report one reprisekit,
   zbus and reprisebus unit; otherwise add the missing features to
