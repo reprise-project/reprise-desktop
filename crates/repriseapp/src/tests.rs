@@ -846,3 +846,20 @@ fn a_protocol_error_ends_the_loop_instead_of_spinning() {
     }
     panic!("the loop kept turning after the protocol error");
 }
+
+#[test]
+fn a_panicking_step_rescues_its_data_before_the_panic_goes_on() {
+    let mut saved = Vec::new();
+    let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runloop::rescued(
+            &mut saved,
+            |s: &mut Vec<&str>| {
+                s.push("typed");
+                panic!("draw failed");
+            },
+            |s| s.push("rescued"),
+        )
+    }));
+    assert!(out.is_err(), "the panic carries on past the rescue");
+    assert_eq!(saved, ["typed", "rescued"]);
+}
