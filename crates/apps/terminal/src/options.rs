@@ -7,7 +7,7 @@ use reprisekit::raster::Rect;
 use reprisekit::trackbar::{self, TrackBar};
 
 use crate::schemes;
-use crate::settings::{Cursor, Profile, Settings, TabPosition};
+use crate::settings::{Cursor, Profile, SCROLLBACK_MAX, Settings, TabPosition};
 
 pub const CLIENT: (i32, i32) = (398, 317);
 pub const PROFILE_CLIENT: (i32, i32) = (300, 112);
@@ -17,7 +17,7 @@ const GENERAL: usize = 0;
 const APPEARANCE: usize = 1;
 const PROFILES: usize = 2;
 
-const SCROLLBACK: (i32, i32) = (0, 100_000);
+const SCROLLBACK: (i32, i32) = (0, SCROLLBACK_MAX as i32);
 /// The tab position combo's rows, in [`TabPosition`] order.
 const TAB_POSITIONS: [(&str, TabPosition); 2] = [
     ("Below the toolbar", TabPosition::Below),
