@@ -131,6 +131,7 @@ impl State {
         }
         let prev = self.focused;
         self.focused = Some(w);
+        self.toplevels.dirty = true;
         self.focus_order.retain(|p| *p != w);
         self.focus_order.push(w);
         self.restack();

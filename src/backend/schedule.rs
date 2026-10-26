@@ -14,6 +14,7 @@ use super::render::render;
 use super::{crtc_of, surface_mut};
 
 pub fn schedule(state: &mut State, output: &Output) {
+    state.toplevels.dirty = true;
     request(state, output, Ask::Scene);
 }
 
@@ -216,6 +217,10 @@ pub fn schedule_all(state: &mut State, ask: Ask) {
 }
 
 pub fn schedule_on(state: &mut State, outputs: &[Output], ask: Ask) {
+    // A scene change may move, map, restate or refocus a window (`refresh_toplevels`).
+    if ask == Ask::Scene {
+        state.toplevels.dirty = true;
+    }
     for o in outputs {
         request(state, o, ask);
     }
