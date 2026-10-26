@@ -6,6 +6,7 @@ use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::raster::Rect;
 use reprisekit::textedit::TextEdit;
+use zeroize::Zeroizing;
 
 use crate::acct::Op;
 
@@ -250,7 +251,8 @@ impl AddUser {
                     login: self.text(LOGIN).to_string(),
                     real_name: self.text(FULL).trim().to_string(),
                     admin: self.form.checked(ADMIN) == Some(true),
-                    password: (!self.at_login()).then(|| self.text(PASSWORD).to_string()),
+                    password: (!self.at_login())
+                        .then(|| Zeroizing::new(self.text(PASSWORD).to_string())),
                 })
             }
             form::Event::Pressed(CANCEL) | form::Event::Cancel => Outcome::Cancel,
@@ -365,7 +367,7 @@ mod tests {
                 login: "sam".into(),
                 real_name: "Sam Lee".into(),
                 admin: false,
-                password: Some("pw12345!".into()),
+                password: Some(Zeroizing::new("pw12345!".into())),
             })
         );
     }
