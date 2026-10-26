@@ -44,9 +44,12 @@ On Arch, `packaging/arch/PKGBUILD` packages the compositor, the programs, the
 session file, the PAM files and the portal backend.
 
 Every push to main also publishes a package as the
-[Nightly release](https://github.com/reprise-project/reprise-desktop/releases/tag/nightly):
+[Nightly release](https://github.com/reprise-project/reprise-desktop/releases/tag/nightly).
+The package is unsigned, and pacman refuses an unsigned package given as a
+URL, so download it first and install the local file:
 
-    sudo pacman -U https://github.com/reprise-project/reprise-desktop/releases/download/nightly/reprise-nightly-x86_64.pkg.tar.zst
+    curl -LO https://github.com/reprise-project/reprise-desktop/releases/download/nightly/reprise-nightly-x86_64.pkg.tar.zst
+    sudo pacman -U ./reprise-nightly-x86_64.pkg.tar.zst
 
 ## Requirements
 
