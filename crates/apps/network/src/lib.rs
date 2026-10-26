@@ -955,8 +955,12 @@ impl NetApp {
                 Reply::redraw_all()
             }
             chooser::Outcome::Connect { ap, ssid, .. } => {
-                self.dial(device, ap, ssid, None);
+                self.dial(device, ap, ssid, None, false);
                 Reply::redraw()
+            }
+            chooser::Outcome::Hidden => {
+                self.key = Some(keydlg::KeyDialog::hidden());
+                Reply::redraw_all()
             }
         }
     }
@@ -994,12 +998,16 @@ impl NetApp {
                 let Some(device) = self.chooser.as_ref().map(|c| c.device_path.clone()) else {
                     return Reply::redraw_all();
                 };
-                self.dial(
-                    device,
-                    k.ap.clone(),
-                    k.ssid.clone(),
-                    Some(nm::Key::Psk(psk)),
-                );
+                let key = psk.map(nm::Key::Psk);
+                self.dial(device, k.ap.clone(), k.ssid(), key, k.hidden);
+                Reply::redraw_all()
+            }
+            keydlg::Outcome::Enterprise => {
+                if let Some(k) = self.key.take() {
+                    let mut d = keydlg::eap::EapDialog::new(&k.ssid(), &k.ap);
+                    d.hidden = k.hidden;
+                    self.eap = Some(d);
+                }
                 Reply::redraw_all()
             }
         }
@@ -1041,7 +1049,7 @@ impl NetApp {
                     return Reply::redraw_all();
                 };
                 let key = nm::Key::Enterprise(login);
-                self.dial(device, d.ap.clone(), d.ssid.clone(), Some(key));
+                self.dial(device, d.ap.clone(), d.ssid.clone(), Some(key), d.hidden);
                 Reply::redraw_all()
             }
         }
@@ -1087,7 +1095,14 @@ impl NetApp {
 
     /// Dial `ssid` and leave the chooser saying so until the device
     /// settles.
-    fn dial(&mut self, device: String, ap: String, ssid: nm::Ssid, key: Option<nm::Key>) {
+    fn dial(
+        &mut self,
+        device: String,
+        ap: String,
+        ssid: nm::Ssid,
+        key: Option<nm::Key>,
+        hidden: bool,
+    ) {
         if let Some(c) = &mut self.chooser {
             c.connecting = Some(ssid.clone());
         }
@@ -1096,6 +1111,7 @@ impl NetApp {
             ap,
             ssid,
             key,
+            hidden,
         });
     }
 
@@ -1145,11 +1161,11 @@ impl App for NetApp {
                 modal: false,
             });
         }
-        if self.key.is_some() {
+        if let Some(k) = &self.key {
             out.push(Child {
                 id: KEY,
                 title: keydlg::KeyDialog::window_title(),
-                size: u.size(keydlg::CLIENT),
+                size: u.size(k.client()),
                 fixed: true,
                 modal: true,
             });
@@ -1340,6 +1356,7 @@ impl App for NetApp {
         let form = match win {
             VPN => self.vpn.as_mut()?.sheet_mut().open_mut(),
             HOTSPOT => &mut self.hotspot.as_mut()?.form,
+            KEY => &mut self.key.as_mut()?.form,
             EAP => &mut self.eap.as_mut()?.form,
             _ => return None,
         };
