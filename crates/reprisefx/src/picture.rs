@@ -14,6 +14,9 @@
 //! changes that reach that part and keeps the others for an update that
 //! needs them.
 //!
+//! A backdrop may also hold only part of the output ([`Picture::place`]):
+//! the scene beneath one piece of glass, blurred for that glass alone.
+//!
 //! Glass on the output draws from it ([`Picture::source`]) as a plain
 //! element: where the picture changed under a piece of glass is that
 //! glass's damage, so a frame redraws only the glass near a change, and
@@ -25,7 +28,7 @@ use reprisekit::glass::Settings;
 use smithay::backend::renderer::gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture};
 use smithay::backend::renderer::utils::{DamageBag, DamageSnapshot};
 use smithay::backend::renderer::{Bind, Renderer, Texture};
-use smithay::utils::{Buffer, Physical, Rectangle, Size, Transform};
+use smithay::utils::{Buffer, Physical, Point, Rectangle, Size, Transform};
 
 use crate::blur::{self, Plan, Quality, Streaks};
 use crate::element::GlassFx;
@@ -65,6 +68,8 @@ pub struct Picture {
     /// Where the picture changed, output physical pixels as seen, grown by
     /// what a lookup into it reads.
     damage: DamageBag<i32, Physical>,
+    /// [`Picture::place`]; None for all of the output.
+    area: Option<Rectangle<i32, Physical>>,
 }
 
 /// Everything besides the backdrop that the picture's texels depend on.
@@ -72,20 +77,22 @@ pub struct Picture {
 struct Key {
     plan: Plan,
     output: Size<i32, Physical>,
+    /// The part of the output the backdrop holds.
+    area: Rectangle<i32, Physical>,
     scale: u64,
     streaks: bool,
 }
 
 impl Key {
     fn texels(self) -> Size<i32, Buffer> {
-        let (o, f) = (self.output, self.plan.factor);
-        ((o.w + f - 1) / f, (o.h + f - 1) / f).into()
+        let (a, f) = (self.area.size, self.plan.factor);
+        ((a.w + f - 1) / f, (a.h + f - 1) / f).into()
     }
 
     fn extent(self) -> Rectangle<i32, Physical> {
         let t = self.texels();
         let f = self.plan.factor;
-        Rectangle::from_size((t.w * f, t.h * f).into())
+        Rectangle::new(self.area.loc, (t.w * f, t.h * f).into())
     }
 
     /// How far a texel's blur reads, output pixels: `2·pairs` texels
@@ -158,7 +165,15 @@ impl Picture {
             reads: None,
             refresh: false,
             damage: DamageBag::new(DAMAGE_AGE),
+            area: None,
         }
+    }
+
+    /// Have the backdrop hold `area` of the output (physical, as seen) from the next update on,
+    /// its origin on the blur's texel grid ([`blur::texel`]); None for all of the output. A new
+    /// area blurs whole.
+    pub fn place(&mut self, area: Option<Rectangle<i32, Physical>>) {
+        self.area = area;
     }
 
     /// Blur what changed in the backdrop (or all of it when the blur, the
@@ -186,6 +201,7 @@ impl Picture {
         let key = Key {
             plan: Plan::new(s.blur, s.material, u.quality, u.scale),
             output: u.output,
+            area: self.area.unwrap_or(Rectangle::from_size(u.output)),
             scale: u.scale.to_bits(),
             streaks: fx.streaks_ready(s, u.output, u.scale),
         };
@@ -239,12 +255,13 @@ impl Picture {
         } else {
             Parts::of(&due, key)
         };
+        let at = key.area.loc;
         let texels = |rects: &[Rectangle<i32, Physical>]| -> Vec<Rectangle<i32, Physical>> {
             rects
                 .iter()
                 .map(|r| {
                     Rectangle::new(
-                        (r.loc.x / f, r.loc.y / f).into(),
+                        ((r.loc.x - at.x) / f, (r.loc.y - at.y) / f).into(),
                         (r.size.w / f, r.size.h / f).into(),
                     )
                 })
@@ -359,6 +376,7 @@ impl Picture {
         let (picture, key) = (self.picture.clone()?, self.drawn?);
         Some(Source {
             picture,
+            origin: key.area.loc,
             factor: key.plan.factor,
             id: self.id,
             damage: self.damage.snapshot(),
@@ -383,6 +401,8 @@ impl Picture {
 #[derive(Clone)]
 pub struct Source {
     pub(crate) picture: GlesTexture,
+    /// Where its top-left texel lies on the output, physical pixels.
+    pub(crate) origin: Point<i32, Physical>,
     pub(crate) factor: i32,
     /// Which picture: glass keeps how far it caught up with each.
     pub(crate) id: u64,
@@ -402,7 +422,7 @@ impl std::fmt::Debug for Source {
 impl Source {
     pub(crate) fn extent(&self) -> Rectangle<i32, Physical> {
         let s = self.picture.size();
-        Rectangle::from_size((s.w * self.factor, s.h * self.factor).into())
+        Rectangle::new(self.origin, (s.w * self.factor, s.h * self.factor).into())
     }
 }
 
@@ -511,6 +531,7 @@ mod tests {
         Key {
             plan: Plan::new(blur, Material::Frosted, Quality::Full, 1.0),
             output: (400, 300).into(),
+            area: Rectangle::from_size((400, 300).into()),
             scale: 1f64.to_bits(),
             streaks: false,
         }

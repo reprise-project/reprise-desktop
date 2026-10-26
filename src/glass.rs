@@ -11,6 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::rc::{Rc, Weak};
+use std::time::{Duration, Instant};
 
 use reprisefx::{Glass, GlassFrame, GlassFx, Lens, Picture, Quality, Shape, Source, Update};
 use reprisekit::backdrop::{corner_radius, rounded_rects};
@@ -28,7 +29,7 @@ use smithay::{
             damage::OutputDamageTracker,
             element::{
                 Element, Id, Kind, NamespacedElement, RenderElement, UnderlyingStorage,
-                utils::CropRenderElement,
+                utils::{CropRenderElement, Relocate, RelocateRenderElement},
             },
             gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture},
             utils::{CommitCounter, DamageSet, OpaqueRegions},
@@ -81,72 +82,42 @@ struct Beneath {
     reuse: Reuse,
 }
 
-/// How many updates a private backdrop outlives its last use: glass dragged past other glass
-/// resumes it, its damage tracker drawing only what changed in between.
-const KEEP_IDLE: u32 = 120;
+/// How long a private backdrop outlives its last use: glass dragged past other glass resumes it,
+/// its damage tracker drawing only what changed in between.
+const KEEP_IDLE: Duration = Duration::from_secs(2);
 
-/// When glass draws from its private backdrop and where that backdrop's picture blurs.
+/// When glass last drew from its private backdrop.
 #[derive(Debug, Default)]
 struct Reuse {
-    /// What the glass read in the last update that drew it from the backdrop, and under which look.
-    last: Option<(Vec<Rectangle<i32, Physical>>, Look)>,
-    /// Updates of the output since then.
-    idle: u32,
+    last: Option<Instant>,
+    /// It drew from it in the last update.
+    used: bool,
 }
 
-/// What a picture's blur depends on besides the backdrop: settings, quality, output size and scale.
-type Look = (Settings, Quality, Size<i32, Physical>, u64);
-
 impl Reuse {
-    /// Where this update blurs for glass reading `needed`: everywhere once it moved or resized
-    /// under the same look, so a dragged glass's backdrop blurs once, not at each new place.
-    fn blurs<'a>(
-        &self,
-        needed: &'a [Rectangle<i32, Physical>],
-        look: &Look,
-    ) -> Option<&'a [Rectangle<i32, Physical>]> {
-        match &self.last {
-            Some((last, l)) if l == look && last != needed => None,
-            _ => Some(needed),
-        }
-    }
-
-    /// The part of the backdrop to draw (texels): `feed` while the glass stays put, `whole` once
-    /// it moved. A new part needs no more: the tracker redraws each element whose cut changed.
-    fn crop(
-        &self,
-        needed: &[Rectangle<i32, Physical>],
-        feed: Rectangle<i32, Physical>,
-        whole: Rectangle<i32, Physical>,
-    ) -> Rectangle<i32, Physical> {
-        match &self.last {
-            Some((last, _)) if last != needed => whole,
-            _ => feed,
-        }
-    }
-
-    fn drawn(&mut self, needed: &[Rectangle<i32, Physical>], look: Look) {
-        self.last = Some((needed.to_vec(), look));
-        self.idle = 0;
+    fn drawn(&mut self, now: Instant) {
+        self.last = Some(now);
+        self.used = true;
     }
 
     /// Whether the glass drew from it in the last update.
     fn in_use(&self) -> bool {
-        self.last.is_some() && self.idle == 0
+        self.used
     }
 
-    /// Whether to keep it after an update that did not draw from it.
-    fn kept(&mut self) -> bool {
-        self.idle += 1;
-        self.idle <= KEEP_IDLE
+    /// Whether to keep it after an update at `now` that did not draw from it.
+    fn kept(&mut self, now: Instant) -> bool {
+        self.used = false;
+        self.last
+            .is_some_and(|t| now.saturating_duration_since(t) <= KEEP_IDLE)
     }
 }
 
 smithay::render_elements! {
     /// What a backdrop draws: the output's cut to the pieces its glass reads; a private one the
-    /// scene below its glass, cut so while the glass stays put.
+    /// scene below its glass, cut to what feeds that glass and moved to the backdrop's top-left.
     Private<=GlesRenderer>;
-    Whole=SceneElement<GlesRenderer>,
+    Moved=RelocateRenderElement<CropRenderElement<Shared>>,
     Cut=CropRenderElement<Shared>,
     Piece=NamespacedElement<CropRenderElement<Shared>>,
 }
@@ -253,7 +224,10 @@ struct Stacked {
 struct OutputBackdrop {
     texture: GlesTexture,
     tracker: OutputDamageTracker,
+    /// Its size, texels, and its view scale's bits.
     key: (Size<i32, Physical>, u64),
+    /// The part of the output it holds, output pixels.
+    area: Rectangle<i32, Physical>,
     drawn: bool,
     picture: Picture,
     hidden: bool,
@@ -423,7 +397,8 @@ impl GlassCtx {
                 .get(&name)
                 .is_none_or(|b| b.key != OutputBackdrop::key(seen, scale))
             {
-                let Some(fresh) = OutputBackdrop::new(renderer, seen, scale, &name) else {
+                let whole = Rectangle::from_size(seen);
+                let Some(fresh) = OutputBackdrop::new(renderer, whole, scale, &name) else {
                     return;
                 };
                 backdrops.insert(name.clone(), fresh);
@@ -615,14 +590,24 @@ impl GlassCtx {
         let pass = self.pass.get();
         let mut beneath = self.beneath.borrow_mut();
         let mut used = Vec::new();
+        let now = Instant::now();
+        let d = reprisefx::blur::backdrop_downscale(scale);
+        let s = &pass.settings;
+        let f = reprisefx::blur::texel(s.blur, s.material, pass.quality, scale);
+        let whole = Rectangle::from_size(seen);
         for n in own {
             let (glass, anchor, reads) = (n.glass.clone(), n.anchor, &n.reads);
+            let held = reads.feed.map_or(whole, |r| {
+                let r = shrunk(r, f);
+                let r = Rectangle::new(r.loc.upscale(f), r.size.upscale(f));
+                r.intersection(whole).unwrap_or(r)
+            });
             let key = (name.clone(), Rc::as_ptr(&glass));
             if beneath
                 .get(&key)
-                .is_none_or(|b| b.backdrop.key != OutputBackdrop::key(seen, scale))
+                .is_none_or(|b| b.backdrop.key != OutputBackdrop::key(held.size, scale))
             {
-                let Some(backdrop) = OutputBackdrop::new(renderer, seen, scale, &name) else {
+                let Some(backdrop) = OutputBackdrop::new(renderer, held, scale, &name) else {
                     continue;
                 };
                 let glass = Rc::downgrade(&glass);
@@ -639,34 +624,38 @@ impl GlassCtx {
             let Some(b) = beneath.get_mut(&key) else {
                 continue;
             };
-            let whole = Rectangle::from_size(b.backdrop.key.0);
-            let d = reprisefx::blur::backdrop_downscale(scale);
-            let feed = reads.feed.map_or(whole, |f| shrunk(f, d));
-            let crop = b.reuse.crop(&reads.needed, feed, whole);
+            // Moved glass of the same size keeps the textures: the tracker sees every element move.
+            b.backdrop.area = held;
+            let cut = shrunk(held, d);
             let view = View::new(area, scale / f64::from(d));
             self.drawing_beneath.set(Some(d));
             let elements: Vec<Private> = scene
                 .elements_below(renderer, anchor, &view)
                 .into_iter()
-                .filter_map(|e| match crop == whole {
-                    true => Some(Private::Whole(e)),
-                    false => CropRenderElement::from_element(Shared(Rc::new(e)), view.scale, crop)
-                        .map(Private::Cut),
+                .filter_map(|e| {
+                    CropRenderElement::from_element(Shared(Rc::new(e)), view.scale, cut)
+                })
+                .map(|e| {
+                    let to = Point::from((-cut.loc.x, -cut.loc.y));
+                    Private::Moved(RelocateRenderElement::from_element(
+                        e,
+                        to,
+                        Relocate::Relative,
+                    ))
                 })
                 .collect();
             self.drawing_beneath.set(None);
-            let look = (pass.settings, pass.quality, seen, scale.to_bits());
-            let blurs = b.reuse.blurs(&reads.needed, &look);
+            let needed = Some(&reads.needed[..]);
             if let Some(source) =
-                self.redraw(renderer, &mut b.backdrop, &elements, clear, output, blurs)
+                self.redraw(renderer, &mut b.backdrop, &elements, clear, output, needed)
             {
-                b.reuse.drawn(&reads.needed, look);
+                b.reuse.drawn(now);
                 self.own.borrow_mut().push((glass, source));
                 used.push(key);
             }
         }
         beneath.retain(|k, b| {
-            k.0 != name || used.contains(k) || (b.reuse.kept() && b.glass.strong_count() > 0)
+            k.0 != name || used.contains(k) || (b.reuse.kept(now) && b.glass.strong_count() > 0)
         });
     }
 
@@ -728,15 +717,17 @@ impl GlassCtx {
         };
         b.drawn = true;
         b.clear = Some(clear);
+        let at = b.area.loc;
         let changed: Vec<Rectangle<i32, Physical>> = damage
             .iter()
             .map(|r| {
                 Rectangle::new(
-                    (r.loc.x * d, r.loc.y * d).into(),
+                    (at.x + r.loc.x * d, at.y + r.loc.y * d).into(),
                     (r.size.w * d, r.size.h * d).into(),
                 )
             })
             .collect();
+        b.picture.place(Some(b.area));
         let pass = self.pass.get();
         let update = Update {
             backdrop: &b.texture,
@@ -966,19 +957,21 @@ fn draw_damaged<E: RenderElement<GlesRenderer>>(
 }
 
 impl OutputBackdrop {
-    fn key(seen: Size<i32, Physical>, scale: f64) -> (Size<i32, Physical>, u64) {
+    /// The key of a backdrop holding `size` output pixels.
+    fn key(size: Size<i32, Physical>, scale: f64) -> (Size<i32, Physical>, u64) {
         let d = reprisefx::blur::backdrop_downscale(scale);
-        let size = Size::from(((seen.w + d - 1) / d, (seen.h + d - 1) / d));
-        (size, (scale / f64::from(d)).to_bits())
+        let texels = Size::from(((size.w + d - 1) / d, (size.h + d - 1) / d));
+        (texels, (scale / f64::from(d)).to_bits())
     }
 
+    /// A backdrop holding `area` of the output, output pixels.
     fn new(
         renderer: &mut GlesRenderer,
-        seen: Size<i32, Physical>,
+        area: Rectangle<i32, Physical>,
         scale: f64,
         name: &str,
     ) -> Option<OutputBackdrop> {
-        let key = OutputBackdrop::key(seen, scale);
+        let key = OutputBackdrop::key(area.size, scale);
         let (size, view) = (key.0, f64::from_bits(key.1));
         let texture: GlesTexture = renderer
             .create_buffer(Fourcc::Abgr8888, (size.w, size.h).into())
@@ -988,6 +981,7 @@ impl OutputBackdrop {
             texture,
             tracker: OutputDamageTracker::new(size, view, Transform::Normal),
             key,
+            area,
             drawn: false,
             picture: Picture::new(),
             hidden: false,
@@ -1003,8 +997,8 @@ impl OutputBackdrop {
 struct Reads {
     needed: Vec<Rectangle<i32, Physical>>,
     reach: Vec<Rectangle<i32, Physical>>,
-    /// The bounds of `reach` grown by the blur's reach again: what a private backdrop draws while
-    /// its glass stays put. None for glass off the output.
+    /// The bounds of `reach` grown by the blur's reach again: what a private backdrop holds. None
+    /// for glass off the output.
     feed: Option<Rectangle<i32, Physical>>,
 }
 
