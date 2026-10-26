@@ -26,12 +26,19 @@ use smithay::{
         renderer::{
             Bind, Color32F, Frame, Offscreen,
             damage::OutputDamageTracker,
-            element::{Element, Id, NamespacedElement, RenderElement, utils::CropRenderElement},
+            element::{
+                Element, Id, Kind, NamespacedElement, RenderElement, UnderlyingStorage,
+                utils::CropRenderElement,
+            },
             gles::{GlesError, GlesFrame, GlesRenderer, GlesTexture},
+            utils::{CommitCounter, DamageSet, OpaqueRegions},
         },
     },
     output::Output,
-    utils::{Logical, Physical, Point, Rectangle, Scale, Size, Transform},
+    utils::{
+        Buffer as BufferCoords, Logical, Physical, Point, Rectangle, Scale, Size, Transform,
+        user_data::UserDataMap,
+    },
 };
 
 use crate::compositor::DeskScene;
@@ -140,8 +147,77 @@ smithay::render_elements! {
     /// scene below its glass, cut so while the glass stays put.
     Private<=GlesRenderer>;
     Whole=SceneElement<GlesRenderer>,
-    Cut=CropRenderElement<SceneElement<GlesRenderer>>,
-    Piece=NamespacedElement<CropRenderElement<SceneElement<GlesRenderer>>>,
+    Cut=CropRenderElement<Shared>,
+    Piece=NamespacedElement<CropRenderElement<Shared>>,
+}
+
+/// A scene element made once per walk and cut into each piece of the backdrop.
+struct Shared(Rc<SceneElement<GlesRenderer>>);
+
+impl Element for Shared {
+    fn id(&self) -> &Id {
+        self.0.id()
+    }
+    fn current_commit(&self) -> CommitCounter {
+        self.0.current_commit()
+    }
+    fn location(&self, scale: Scale<f64>) -> Point<i32, Physical> {
+        self.0.location(scale)
+    }
+    fn src(&self) -> Rectangle<f64, BufferCoords> {
+        self.0.src()
+    }
+    fn transform(&self) -> Transform {
+        self.0.transform()
+    }
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.0.geometry(scale)
+    }
+    fn damage_since(
+        &self,
+        scale: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
+        self.0.damage_since(scale, commit)
+    }
+    fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        self.0.opaque_regions(scale)
+    }
+    fn alpha(&self) -> f32 {
+        self.0.alpha()
+    }
+    fn kind(&self) -> Kind {
+        self.0.kind()
+    }
+    fn is_framebuffer_effect(&self) -> bool {
+        self.0.is_framebuffer_effect()
+    }
+}
+
+impl RenderElement<GlesRenderer> for Shared {
+    fn draw(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        src: Rectangle<f64, BufferCoords>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+        cache: Option<&UserDataMap>,
+    ) -> Result<(), GlesError> {
+        self.0.draw(frame, src, dst, damage, opaque_regions, cache)
+    }
+    fn underlying_storage(&self, renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
+        self.0.underlying_storage(renderer)
+    }
+    fn capture_framebuffer(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        src: Rectangle<f64, BufferCoords>,
+        dst: Rectangle<i32, Physical>,
+        cache: &UserDataMap,
+    ) -> Result<(), GlesError> {
+        self.0.capture_framebuffer(frame, src, dst, cache)
+    }
 }
 
 /// The parts of the output's backdrop to draw for glass fed from `feeds` (texels): overlapping
@@ -362,12 +438,19 @@ impl GlassCtx {
             // Only the backdrop the glass reads is drawn: what changes elsewhere (the water under
             // Rain each frame) waits until glass moves over it, which moves the cuts.
             let cuts = pieces(reads.iter().filter_map(|r| r.feed).map(|f| shrunk(f, d)));
+            let walked: Vec<Rc<SceneElement<GlesRenderer>>> = match cuts.is_empty() {
+                true => Vec::new(),
+                false => (scene.backdrop_elements(renderer, &view).into_iter())
+                    .map(Rc::new)
+                    .collect(),
+            };
             let mut elements: Vec<Private> = Vec::new();
             for (i, &cut) in cuts.iter().enumerate() {
                 // The damage tracker keeps one state per id: an element in a later piece is
                 // namespaced by it.
-                let cut_out = (scene.backdrop_elements(renderer, &view).into_iter())
-                    .filter_map(|e| CropRenderElement::from_element(e, view.scale, cut));
+                let cut_out = walked.iter().filter_map(|e| {
+                    CropRenderElement::from_element(Shared(e.clone()), view.scale, cut)
+                });
                 elements.extend(cut_out.map(|e| match i {
                     0 => Private::Cut(e),
                     _ => Private::Piece(NamespacedElement::new(e, i)),
@@ -567,7 +650,8 @@ impl GlassCtx {
                 .into_iter()
                 .filter_map(|e| match crop == whole {
                     true => Some(Private::Whole(e)),
-                    false => CropRenderElement::from_element(e, view.scale, crop).map(Private::Cut),
+                    false => CropRenderElement::from_element(Shared(Rc::new(e)), view.scale, crop)
+                        .map(Private::Cut),
                 })
                 .collect();
             self.drawing_beneath.set(None);

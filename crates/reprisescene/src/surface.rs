@@ -55,6 +55,26 @@ fn prefer(
     move |current, _, next, _| if primary == Some(next) { next } else { current }
 }
 
+/// The client surfaces one frame of an output serves ([`Scene::surface_pass`]).
+pub struct SurfacePass {
+    output: Output,
+    surfaces: Vec<PassSurface>,
+}
+
+struct PassSurface {
+    id: NodeId,
+    surface: WlSurface,
+    /// The part of the output it shows, from its own top-left.
+    overlap: Option<Rectangle<i32, Logical>>,
+    primary: Option<Output>,
+}
+
+impl SurfacePass {
+    fn shown(&self) -> impl Iterator<Item = &PassSurface> {
+        self.surfaces.iter().filter(|p| p.overlap.is_some())
+    }
+}
+
 impl<R: Renderer, D> Scene<R, D> {
     pub(crate) fn surface_nodes(&self) -> Vec<(NodeId, WlSurface)> {
         self.live()
@@ -96,79 +116,89 @@ impl<R: Renderer, D> Scene<R, D> {
             .reduce(|a, b| a.merge(b))
     }
 
-    fn surfaces_on(&self, output: &Output) -> Vec<(WlSurface, Option<Output>)> {
-        let Some(area) = output_rect(output) else {
-            return Vec::new();
-        };
-        self.surface_nodes()
-            .into_iter()
-            .filter(|(id, _)| self.extents(*id).is_some_and(|e| e.overlaps(area)))
-            .map(|(id, s)| (s, self.primary_output(id)))
-            .collect()
-    }
-
-    pub fn update_surfaces(&mut self, output: &Output, states: &RenderElementStates) {
+    /// The client surfaces a frame of `output` serves, worked out once for
+    /// [`Scene::update_surfaces`], [`Scene::take_presentation_feedback`] and
+    /// [`Scene::send_frames`]. A surface away from the output that never entered it is left out.
+    pub fn surface_pass(&self, output: &Output) -> SurfacePass {
         let area = output_rect(output);
-        for (id, surface) in self.surface_nodes() {
+        let mut surfaces = Vec::new();
+        for (id, n) in self.live() {
+            let Content::Surface(s) = &n.content else {
+                continue;
+            };
             let Some((pos, visible)) = self.coords(id) else {
                 continue;
             };
-            let overlap = area
-                .filter(|_| visible)
-                .and_then(|a| a.intersection(bbox_from_surface_tree(&surface, pos)))
-                .map(|mut r| {
+            let extents =
+                Some(bbox_from_surface_tree(&s.surface, pos)).filter(|e| visible && !e.is_empty());
+            let overlap = area.zip(extents).and_then(|(a, e)| a.intersection(e));
+            if overlap.is_none() && !s.entered.iter().any(|w| w == output) {
+                continue;
+            }
+            surfaces.push(PassSurface {
+                id,
+                surface: s.surface.clone(),
+                overlap: overlap.map(|mut r| {
                     r.loc -= pos;
                     r
-                });
-            output_update(output, overlap, &surface);
-            let primary = if visible {
-                self.primary_output(id)
-            } else {
-                None
-            };
-            let scale = output.current_scale();
-            with_surfaces_surface_tree(&surface, |s, data| {
+                }),
+                primary: extents.and_then(|e| self.primary_in(e)),
+            });
+        }
+        SurfacePass {
+            output: output.clone(),
+            surfaces,
+        }
+    }
+
+    pub fn update_surfaces(&mut self, pass: &SurfacePass, states: &RenderElementStates) {
+        let output = &pass.output;
+        let scale = output.current_scale();
+        for p in &pass.surfaces {
+            output_update(output, p.overlap, &p.surface);
+            with_surfaces_surface_tree(&p.surface, |s, data| {
                 update_surface_primary_scanout_output(
                     s,
                     output,
                     data,
                     None,
                     states,
-                    prefer(primary.as_ref()),
+                    prefer(p.primary.as_ref()),
                 );
-                if primary.as_ref() == Some(output) {
+                if p.primary.as_ref() == Some(output) {
                     with_fractional_scale(data, |f| {
                         f.set_preferred_scale(scale.fractional_scale())
                     });
                     send_surface_state(s, data, scale.integer_scale(), output.current_transform());
                 }
             });
-            if let Some(Content::Surface(s)) = self.node_untracked(id).map(|n| &mut n.content) {
+            if let Some(Content::Surface(s)) = self.node_untracked(p.id).map(|n| &mut n.content) {
                 s.entered.retain(|w| w.is_alive() && w != output);
-                if overlap.is_some() {
+                if p.overlap.is_some() {
                     s.entered.push(output.downgrade());
                 }
             }
         }
     }
 
-    pub fn send_frames(&self, output: &Output, time: Duration, throttle: Option<Duration>) {
-        for (surface, primary) in self.surfaces_on(output) {
-            send_frames_surface_tree(&surface, output, time, throttle, |_, _| primary.clone());
+    pub fn send_frames(&self, pass: &SurfacePass, time: Duration, throttle: Option<Duration>) {
+        let output = &pass.output;
+        for p in pass.shown() {
+            send_frames_surface_tree(&p.surface, output, time, throttle, |_, _| p.primary.clone());
         }
     }
 
     pub fn take_presentation_feedback(
         &self,
-        output: &Output,
+        pass: &SurfacePass,
         states: &RenderElementStates,
     ) -> OutputPresentationFeedback {
-        let mut feedback = OutputPresentationFeedback::new(output);
-        for (surface, primary) in self.surfaces_on(output) {
+        let mut feedback = OutputPresentationFeedback::new(&pass.output);
+        for p in pass.shown() {
             take_presentation_feedback_surface_tree(
-                &surface,
+                &p.surface,
                 &mut feedback,
-                |_, _| primary.clone(),
+                |_, _| p.primary.clone(),
                 |s, _| surface_presentation_feedback_flags_from_states(s, None, states),
             );
         }
