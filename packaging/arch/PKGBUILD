@@ -98,6 +98,9 @@ package() {
   install -Dm644 data/reprise-portals.conf "$pkgdir/usr/share/xdg-desktop-portal/reprise-portals.conf"
   install -Dm644 data/reprise-mimeapps.list "$pkgdir/usr/share/applications/reprise-mimeapps.list"
   install -Dm644 config.example.toml "$pkgdir/usr/share/doc/reprise/config.example.toml"
+  for ftl in data/locale/*/*.ftl; do
+    install -Dm644 "$ftl" "$pkgdir/usr/share/reprise/locale/${ftl#data/locale/}"
+  done
   install -Dm644 data/pam.d/reprise "$pkgdir/etc/pam.d/reprise"
   install -Dm644 data/pam.d/reprise-fingerprint "$pkgdir/etc/pam.d/reprise-fingerprint"
   install -Dm644 data/geoclue/90-reprise.conf "$pkgdir/etc/geoclue/conf.d/90-reprise.conf"

@@ -1894,3 +1894,21 @@ fn a_save_over_a_file_changed_on_disk_asks_first() {
     assert!(!np.dirty);
     assert!(np.save(), "the save took the file's new stamp");
 }
+
+#[test]
+fn the_german_strings_translate_the_menus_and_fall_back_to_english() {
+    use reprisekit::i18n::Catalog;
+    let de = include_str!("../../../../data/locale/de/notepad.ftl");
+    let en = include_str!("../locale/en.ftl");
+    let c = Catalog::from_texts(&[("de".parse().unwrap(), de), ("en".parse().unwrap(), en)]);
+    assert_eq!(c.tr_args("menu-file", &[]), "&Datei");
+    assert_eq!(
+        c.tr_args("window-title", &[("name", "brief.txt".into())]),
+        "brief.txt - Editor"
+    );
+    assert_eq!(
+        c.tr_args("menu-word-wrap", &[]),
+        "&Word Wrap",
+        "untranslated: English"
+    );
+}

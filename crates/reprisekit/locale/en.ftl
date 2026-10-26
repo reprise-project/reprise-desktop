@@ -13,6 +13,8 @@ close = Close
 yes = &Yes
 yes-to-all = Yes to &All
 no = &No
+yes-bare = Yes
+no-bare = No
 
 ## The edit menu of a text box
 edit-undo = &Undo
