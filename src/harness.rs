@@ -834,6 +834,8 @@ pub struct ClientSide {
     outputs: Vec<WlOutput>,
     /// Each `wl_data_source.target` a source heard: the type a drop target accepts, or none.
     pub source_targets: Vec<Option<String>>,
+    /// How each drag a source started ended: true for `dnd_finished`, false for `cancelled`.
+    pub source_ends: Vec<bool>,
     data_device: Option<wl_data_device::WlDataDevice>,
     /// Every offer the data device made, with the types it named.
     offers: Vec<(wl_data_offer::WlDataOffer, Vec<String>)>,
@@ -1145,6 +1147,8 @@ impl wc::Dispatch<wl_data_source::WlDataSource, Arc<[u8]>> for ClientSide {
     ) {
         match ev {
             wl_data_source::Event::Target { mime_type } => st.source_targets.push(mime_type),
+            wl_data_source::Event::DndFinished => st.source_ends.push(true),
+            wl_data_source::Event::Cancelled => st.source_ends.push(false),
             wl_data_source::Event::Send { fd, .. } => {
                 use std::io::Write;
                 let _ = std::fs::File::from(fd).write_all(bytes);

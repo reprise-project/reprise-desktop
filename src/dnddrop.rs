@@ -322,9 +322,16 @@ fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
 }
 
 /// A document portal key is traded for its files, which blocks on the bus: runs off the loop.
-fn items(mime: &str, bytes: &[u8]) -> std::io::Result<Vec<Dropped>> {
+/// A sandboxed program's URI list is taken only when [`portal_exported`].
+fn items(mime: &str, bytes: &[u8], sandboxed: bool) -> std::io::Result<Vec<Dropped>> {
     if mime != dropdata::FILE_TRANSFER {
-        return Ok(dropdata::decode(mime, bytes));
+        let items = dropdata::decode(mime, bytes);
+        if sandboxed && mime == dropdata::URI_LIST && !portal_exported(&items) {
+            return Err(std::io::Error::other(
+                "a sandboxed program's URI list names files outside the document portal",
+            ));
+        }
+        return Ok(items);
     }
     Ok(portal_files(bytes)?
         .into_iter()
@@ -350,13 +357,37 @@ pub(crate) fn portal_files(bytes: &[u8]) -> std::io::Result<Vec<std::path::PathB
     Ok(files)
 }
 
-/// The types of `offered` Reprise reads `source`'s drop as: a sandboxed program's URI list
-/// names paths inside its sandbox, so its files come only through the portal key.
-pub(crate) fn readable(source: &SeatSource, mut offered: Vec<String>) -> Vec<String> {
-    if source.sandboxed() {
+/// The types of `offered` Reprise reads `source`'s drop as. A sandboxed program's URI list is
+/// taken only for document portal files ([`items`]), so a link it also offers drops as the link.
+fn readable(source: &SeatSource, mut offered: Vec<String>) -> Vec<String> {
+    if source.sandboxed() && offered.iter().any(|m| m == dropdata::MOZ_URL) {
         offered.retain(|m| m != dropdata::URI_LIST);
     }
     offered
+}
+
+/// Where the document portal exports the files it grants sandboxed programs.
+pub(crate) fn document_root() -> std::path::PathBuf {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            // SAFETY: getuid cannot fail.
+            format!("/run/user/{}", unsafe { libc::getuid() }).into()
+        });
+    runtime.join("doc")
+}
+
+/// Whether `items` are all files under [`document_root`], the only host paths a sandboxed
+/// program can name.
+pub(crate) fn portal_exported(items: &[Dropped]) -> bool {
+    let root = document_root();
+    !items.is_empty()
+        && items.iter().all(|d| match d {
+            Dropped::File(p) => {
+                p.starts_with(&root) && p.components().all(|c| c != std::path::Component::ParentDir)
+            }
+            Dropped::Url { .. } => false,
+        })
 }
 
 /// The error box's title for a drop given up before its op was settled.
@@ -518,6 +549,7 @@ impl State {
         let Some(target) = target else {
             return;
         };
+        let sandboxed = source.sandboxed();
         let dir = match &target {
             DropTarget::Folder(dir) => Some(dir.clone()),
             DropTarget::Desktop(_) => self.desktop.as_ref().map(|v| v.dir.clone()),
@@ -525,7 +557,7 @@ impl State {
         };
         self.spawn_fs_job(move || {
             let got = reprisefs::pipe::read_bounded(&read, MAX_BYTES, READ_TIMEOUT)
-                .and_then(|bytes| items(mime, &bytes))
+                .and_then(|bytes| items(mime, &bytes, sandboxed))
                 .map(|items| sort(items, &target, dir.as_deref()));
             Box::new(move |state| state.drop_received(id, got))
         });
@@ -1014,17 +1046,18 @@ mod tests {
     }
 
     #[test]
-    fn a_sandboxed_programs_uri_list_is_refused_on_the_desktop_and_its_portal_key_taken() {
+    fn a_sandboxed_programs_uri_list_drops_only_document_portal_files_and_its_portal_key_wins() {
         use smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource;
         use wayland_client::{Proxy, protocol::wl_data_device_manager::DndAction as WcAction};
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
+        crate::fsjobs::setup(&mut h.state);
         let dir = crate::harness::scratch().join("sandboxed-drop");
         std::fs::create_dir_all(&dir).unwrap();
         crate::desktopview::create(&mut h.state, dir, Default::default(), None);
         let mut c = h.connect_sandboxed();
-        let mut drag_over = |mimes: &[&str]| {
-            let theirs = c.data_source(mimes, b"file:///home/u/.ssh/id_ed25519\r\n");
+        let mut drop = |mimes: &[&str], uris: &str| {
+            let theirs = c.data_source(mimes, format!("{uris}\r\n").as_bytes());
             theirs.set_actions(WcAction::Copy | WcAction::Move);
             h.roundtrip(&mut c);
             let ours: WlDataSource = (c.server)
@@ -1033,22 +1066,74 @@ mod tests {
             let source = SeatSource::new(crate::dnd::Origin::Client(ours));
             h.state.dnd.drops.over = None;
             c.side.source_targets.clear();
+            c.side.source_ends.clear();
             h.state.drop_over(&source, (600.0, 400.0).into());
             h.roundtrip(&mut c);
-            let over = h.state.dnd.drops.over.as_ref().expect("over the desktop");
+            let over = h.state.dnd.drops.over.take().expect("over the desktop");
             assert!(matches!(over.target, DropTarget::Desktop(_)), "{mimes:?}");
-            (over.answer.is_some(), c.side.source_targets.clone())
+            let targets = c.side.source_targets.clone();
+            if mimes == [dropdata::URI_LIST] {
+                let copy = Some(Answer {
+                    action: DndAction::Copy,
+                    plan: Plan::Put(Some(DropOp::Copy)),
+                });
+                assert!(over.answer.is_some(), "the desktop takes the list");
+                h.state.drop_released(
+                    source,
+                    Over {
+                        answer: copy,
+                        ..over
+                    },
+                );
+                let end = std::time::Instant::now() + Duration::from_secs(3);
+                while c.side.source_ends.is_empty() {
+                    assert!(std::time::Instant::now() < end, "the drop never ended");
+                    h.run_for(5);
+                    h.roundtrip(&mut c);
+                }
+            }
+            (targets, c.side.source_ends.clone())
         };
-        assert_eq!(drag_over(&[dropdata::URI_LIST]), (false, vec![None]));
+        let exported = format!("file://{}/abc/x.png", document_root().display());
+        let uris = Some(dropdata::URI_LIST.to_string());
         assert_eq!(
-            drag_over(&[dropdata::FILE_TRANSFER, dropdata::URI_LIST]),
-            (true, vec![Some(dropdata::FILE_TRANSFER.to_string())])
+            drop(&[dropdata::URI_LIST], &exported),
+            (vec![uris.clone()], vec![true]),
+            "a document portal file is taken"
         );
         assert_eq!(
-            drag_over(&[dropdata::MOZ_URL, dropdata::URI_LIST]),
-            (true, vec![Some(dropdata::MOZ_URL.to_string())]),
+            drop(&[dropdata::URI_LIST], "file:///home/u/.ssh/id_ed25519"),
+            (vec![uris.clone()], vec![false]),
+            "a path in the sandbox is refused"
+        );
+        assert_eq!(
+            drop(
+                &[dropdata::URI_LIST],
+                &format!("{exported}\r\nfile:///home/u/.ssh/id_ed25519")
+            ),
+            (vec![uris], vec![false]),
+            "one path outside the document portal refuses the drop"
+        );
+        assert_eq!(
+            drop(&[dropdata::FILE_TRANSFER, dropdata::URI_LIST], &exported).0,
+            vec![Some(dropdata::FILE_TRANSFER.to_string())]
+        );
+        assert_eq!(
+            drop(&[dropdata::MOZ_URL, dropdata::URI_LIST], &exported).0,
+            vec![Some(dropdata::MOZ_URL.to_string())],
             "a link"
         );
+    }
+
+    #[test]
+    fn a_document_portal_path_climbing_out_of_it_is_not_exported() {
+        let root = document_root();
+        let file = |p: std::path::PathBuf| Dropped::File(p);
+        assert!(portal_exported(&[file(root.join("abc/x.png"))]));
+        assert!(!portal_exported(&[file(
+            root.join("abc/../../../etc/passwd")
+        )]));
+        assert!(!portal_exported(&[]));
     }
 
     #[test]
