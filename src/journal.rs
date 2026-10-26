@@ -56,6 +56,17 @@ pub fn stream_for(identifier: &str) -> Option<(OwnedFd, String)> {
     Some((fd, id))
 }
 
+/// Logs every panic with a backtrace at error level, then runs the hook that was set before. Runs
+/// once the logger is up.
+pub fn log_panics() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        log::error!("panic: {info}\n{backtrace}");
+        previous(info);
+    }));
+}
+
 /// The stream protocol's header: identifier, unit id, default priority (info), level prefix on,
 /// no forwarding to syslog, kmsg or console.
 fn header(identifier: &str) -> String {
@@ -82,5 +93,42 @@ mod tests {
     #[test]
     fn a_newline_in_the_identifier_cannot_shift_the_header() {
         assert_eq!(header("a\nb"), "ab\n\n6\n1\n0\n0\n0\n");
+    }
+
+    #[test]
+    fn a_panic_logs_its_message_and_a_backtrace_through_the_logger() {
+        static LINES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+        struct Capture;
+        impl log::Log for Capture {
+            fn enabled(&self, m: &log::Metadata) -> bool {
+                m.level() == log::Level::Error
+            }
+            fn log(&self, r: &log::Record) {
+                if self.enabled(r.metadata()) {
+                    LINES.lock().unwrap().push(r.args().to_string());
+                }
+            }
+            fn flush(&self) {}
+        }
+        log::set_logger(&Capture).expect("no other test sets a logger");
+        log::set_max_level(log::LevelFilter::Error);
+        let before = std::panic::take_hook();
+        log_panics();
+        let caught = std::panic::catch_unwind(|| panic!("panic hook test"));
+        std::panic::set_hook(before);
+        assert!(caught.is_err());
+        let lines = LINES.lock().unwrap();
+        let line = lines
+            .iter()
+            .find(|l| l.contains("panic hook test"))
+            .expect("the panic was logged");
+        assert!(
+            line.starts_with("panic: "),
+            "record starts with \"panic: \": {line}"
+        );
+        assert!(
+            line.contains("a_panic_logs_its_message_and_a_backtrace_through_the_logger"),
+            "backtrace names the test function: {line}"
+        );
     }
 }
