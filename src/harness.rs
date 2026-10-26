@@ -332,6 +332,15 @@ impl Harness {
         }
     }
 
+    /// A `wl_surface` from `c` with no role, as `c` sees it.
+    pub fn bare_client_surface(&mut self, c: &mut TestClient) -> WlSurface {
+        let surface = (c.side.compositor.as_ref())
+            .expect("wl_compositor")
+            .create_surface(&c.qh(), ());
+        self.roundtrip(c);
+        surface
+    }
+
     /// A `wl_surface` from `c` with no role yet, as the compositor sees it.
     pub fn bare_surface(
         &mut self,
