@@ -9,13 +9,69 @@ impl Notepad {
         write_document(path, self.edit.lines(), sep)
     }
 
-    /// False when there is nowhere to write yet: the caller opens Save As.
+    /// False when there is nowhere to write yet (the caller opens Save As), when the write failed,
+    /// or when the file changed on disk and `changed` now asks whether to write anyway.
     pub(crate) fn save(&mut self) -> bool {
+        let Some(p) = self.path.clone() else {
+            return false;
+        };
+        if Stamp::of(&p) != self.stamp {
+            self.changed = Some(self.changed_box(&p));
+            return false;
+        }
+        self.save_anyway()
+    }
+
+    fn changed_box(&self, path: &Path) -> MsgBox {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        MsgBox::new(
+            "Notepad",
+            msgbox::Fields {
+                text: format!("{name} has changed on disk since you opened it.\nSave anyway?"),
+                icon: self.warn_icon.clone(),
+                buttons: vec!["&Yes".into(), "&No".into()],
+                default: 1,
+                min_text_h: None,
+                min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
+            },
+        )
+    }
+
+    /// Yes writes over the other program's change and runs the action waiting on the save; No
+    /// keeps the file and drops the action.
+    pub(crate) fn changed_event(&mut self, ev: Event) -> Reply {
+        let Some(b) = &mut self.changed else {
+            return Reply::none();
+        };
+        match b.event(&ev, &self.dialog_text, &self.forms) {
+            oneshot::Outcome::Closed(answer) => {
+                self.changed = None;
+                if answer != Some(0) {
+                    self.pending.cancelled();
+                    return Reply::redraw_all();
+                }
+                let ok = self.save_anyway();
+                match self.pending.saved(ok) {
+                    Some(action) => self.run_pending(action),
+                    None => Reply::redraw_all(),
+                }
+            }
+            oneshot::Outcome::Redraw => Reply::redraw(),
+            oneshot::Outcome::None => Reply::none(),
+        }
+    }
+
+    fn save_anyway(&mut self) -> bool {
         let Some(p) = self.path.clone() else {
             return false;
         };
         match self.write_to(&p) {
             Ok(()) => {
+                self.stamp = Stamp::of(&p);
                 self.dirty = false;
                 self.forget_rescued();
                 true
@@ -249,6 +305,9 @@ impl Notepad {
             return Reply::redraw_all();
         }
         let ok = self.save();
+        if self.changed.is_some() {
+            return Reply::redraw_all();
+        }
         match self.pending.saved(ok) {
             Some(action) => self.run_pending(action),
             None => Reply::redraw_all(),
