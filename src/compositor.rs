@@ -475,6 +475,7 @@ impl State {
         })?;
         let (idle_wake, woken) = make_ping()?;
         handle.insert_source(woken, |_, _, _| {})?;
+        crate::activation::start_pruning(&handle);
 
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&dh, "seat0");

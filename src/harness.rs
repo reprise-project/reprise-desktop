@@ -27,7 +27,9 @@ use wayland_protocols::{
         zwp_text_input_manager_v3::ZwpTextInputManagerV3, zwp_text_input_v3::ZwpTextInputV3,
     },
     xdg::{
-        activation::v1::client::xdg_activation_v1::XdgActivationV1,
+        activation::v1::client::{
+            xdg_activation_token_v1::XdgActivationTokenV1, xdg_activation_v1::XdgActivationV1,
+        },
         shell::client::{xdg_popup, xdg_positioner, xdg_surface, xdg_toplevel, xdg_wm_base},
     },
 };
@@ -491,6 +493,14 @@ impl TestClient {
         (self.side.activation.as_ref())
             .expect("xdg_activation_v1")
             .activate(token.into(), &self.side.shells[t.shell].surface);
+    }
+
+    /// Ask for an activation token with nothing set on it, as any client may.
+    pub fn mint_token(&self) {
+        (self.side.activation.as_ref())
+            .expect("xdg_activation_v1")
+            .get_activation_token(&self.qh(), ())
+            .commit();
     }
 
     /// A clipboard selection offering `mimes`, set while the client has the keyboard. The source
@@ -973,6 +983,7 @@ wc::delegate_noop!(ClientSide: ignore wl_shm_pool::WlShmPool);
 wc::delegate_noop!(ClientSide: ignore WlBuffer);
 wc::delegate_noop!(ClientSide: ignore wl_seat::WlSeat);
 wc::delegate_noop!(ClientSide: ignore XdgActivationV1);
+wc::delegate_noop!(ClientSide: ignore XdgActivationTokenV1);
 wc::delegate_noop!(ClientSide: ignore xdg_positioner::XdgPositioner);
 wc::delegate_noop!(ClientSide: ignore xdg_popup::XdgPopup);
 wc::delegate_noop!(ClientSide: ignore ZwpInputMethodManagerV2);
