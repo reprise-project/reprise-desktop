@@ -416,10 +416,10 @@ fn a_second_close_request_keeps_the_first_question() {
     until("sleep holds the foreground", || t.w.tabs.list[1].busy());
     let pid = t.w.tabs.list[1].pid();
     t.event(MAIN, key(0x57, true, true), &mut ctx);
-    assert!(matches!(t.confirm, Some((Closing::Tab(p), _)) if p == pid));
+    assert!(matches!(t.confirm, Some((Asking::Tab(p), _)) if p == pid));
     t.event(MAIN, Event::CloseRequest, &mut ctx);
     assert!(
-        matches!(t.confirm, Some((Closing::Tab(p), _)) if p == pid),
+        matches!(t.confirm, Some((Asking::Tab(p), _)) if p == pid),
         "the window's close leaves the tab's question up"
     );
 }
@@ -834,6 +834,7 @@ fn paste_arrives(bracketed: bool) {
     );
     let mut ctx = test_ctx();
     let mut t = terminal(&["sh", "-c", &script]);
+    t.settings.confirm_multiline_paste = false;
     t.follow_scale(MAIN, 1, &mut ctx);
     until("the program reads raw", || row_text(&t, 0) == "ready");
     let mode = t.w.tabs.current().unwrap().mode();
@@ -863,6 +864,53 @@ fn paste_arrives(bracketed: bool) {
     until("every byte arrives", || {
         (0..4).any(|r| row_text(&t, r).trim() == count)
     });
+}
+
+#[test]
+fn a_multi_line_paste_asks_first() {
+    let mut ctx = test_ctx();
+    let mut t = terminal(&["cat"]);
+    let written = |t: &Terminal| t.w.tabs.list[0].written.borrow().concat();
+    t.event(MAIN, Event::Pasted("one line".into()), &mut ctx);
+    assert_eq!(written(&t), b"one line", "a single line goes straight in");
+    t.w.tabs.list[0].written.borrow_mut().clear();
+
+    t.event(MAIN, Event::Pasted("echo a\necho b\n".into()), &mut ctx);
+    assert!(written(&t).is_empty(), "nothing goes in before the answer");
+    let Some((Asking::Paste { .. }, b)) = &t.confirm else {
+        panic!("the paste asks");
+    };
+    assert!(
+        b.fields.text.contains("echo a\necho b"),
+        "{}",
+        b.fields.text
+    );
+    t.event(CONFIRM, key(keysym::ESCAPE, false, false), &mut ctx);
+    assert!(t.confirm.is_none());
+    assert!(written(&t).is_empty(), "Cancel drops the paste");
+
+    t.event(MAIN, Event::Pasted("echo a\necho b\n".into()), &mut ctx);
+    t.event(CONFIRM, key(keysym::RETURN, false, false), &mut ctx);
+    assert_eq!(written(&t), b"echo a\recho b\r", "Paste sends it");
+    t.w.tabs.list[0].written.borrow_mut().clear();
+
+    t.settings.confirm_multiline_paste = false;
+    t.event(MAIN, Event::Pasted("x\ny".into()), &mut ctx);
+    assert!(t.confirm.is_none(), "the setting turns the question off");
+    assert_eq!(written(&t), b"x\ry");
+}
+
+#[test]
+fn a_paste_question_shows_the_first_lines() {
+    let text = format!("{}\n", "x".repeat(70)).repeat(8);
+    let q = paste_question(&text);
+    let shown: Vec<&str> = q.lines().filter(|l| l.starts_with('x')).collect();
+    assert_eq!(shown.len(), PASTE_SHOWN.0);
+    assert_eq!(shown[0], format!("{}...", "x".repeat(PASTE_SHOWN.1)));
+    assert!(
+        q.contains("\n...\n"),
+        "more lines than shown end in an ellipsis"
+    );
 }
 
 #[test]

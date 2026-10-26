@@ -35,6 +35,8 @@ pub struct Settings {
     pub cursor: Cursor,
     pub blink: bool,
     pub scrollback: usize,
+    /// Ask before a paste holding a line end goes to a program not in bracketed-paste mode.
+    pub confirm_multiline_paste: bool,
     /// Empty picks the first installed of [`crate::FONTS`].
     pub font: String,
     pub size_px: u32,
@@ -53,6 +55,7 @@ impl Default for Settings {
             cursor: Cursor::Block,
             blink: true,
             scrollback: 10_000,
+            confirm_multiline_paste: true,
             font: String::new(),
             size_px: 13,
             scheme: "reprise".into(),
@@ -176,6 +179,7 @@ mod tests {
             cursor: Cursor::Bar,
             blink: false,
             scrollback: 2000,
+            confirm_multiline_paste: false,
             font: "Iosevka".into(),
             size_px: 15,
             scheme: "light".into(),

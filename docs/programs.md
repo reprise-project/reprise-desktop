@@ -81,8 +81,12 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 - **Mouse:** a selection goes to the primary selection and a middle click
   pastes it. A program that takes the mouse gets the clicks; hold Shift to
   select anyway. The wheel scrolls back.
-- **Options** (Settings): the shell, cursor shape and blinking, and
-  scrollback lines (10000 by default) on General; the font, size in pixels,
+- **Paste:** control characters other than tab and line ends are dropped
+  from a paste. A paste holding a line end into a program that has not
+  turned on bracketed paste asks first, showing its first lines.
+- **Options** (Settings): the shell, cursor shape and blinking, the
+  multi-line paste question, scrollback lines (10000 by default) and where
+  tabs go on General; the font, size in pixels,
   colour scheme (Reprise, Light or Dark) and, under Glass, a see-through
   background with its opacity on Appearance; on Profiles, named commands for
   the new-tab menu. Other terminal windows take a change when next focused.
