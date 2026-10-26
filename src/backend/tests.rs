@@ -411,3 +411,48 @@ fn a_connect_on_a_held_crtc_is_ignored_and_a_disconnect_always_applies() {
         ScanAction::Disconnect
     );
 }
+
+#[test]
+fn a_drm_fd_that_keeps_failing_ends_the_session_and_leaves_the_loop() {
+    use smithay::reexports::calloop::ping::make_ping;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let mut h = crate::harness::Harness::new();
+    let (ping, source) = make_ping().expect("ping");
+    let errors = Cell::new(0);
+    let calls = Rc::new(Cell::new(0));
+    let token = Rc::new(Cell::new(None));
+    let (seen, own) = (calls.clone(), token.clone());
+    let t = h
+        .state
+        .handle
+        .insert_source(source, move |(), _, state| {
+            seen.set(seen.get() + 1);
+            let e = smithay::backend::drm::DrmError::DeviceInactive;
+            super::drm_error(state, &errors, own.get(), &e);
+        })
+        .expect("source");
+    token.set(Some(t));
+    for _ in 0..super::DRM_ERRORS_GONE - 1 {
+        ping.ping();
+        h.dispatch();
+    }
+    assert!(
+        !h.state.session_fade.fading_out(),
+        "errors below the limit end nothing"
+    );
+    for _ in 0..3 {
+        ping.ping();
+        h.dispatch();
+    }
+    assert_eq!(
+        calls.get(),
+        super::DRM_ERRORS_GONE,
+        "the source is removed at the limit"
+    );
+    assert!(
+        h.state.session_fade.fading_out(),
+        "the session fades out to end"
+    );
+}

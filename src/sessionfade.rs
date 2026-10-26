@@ -220,6 +220,11 @@ impl SessionFade {
             drawn: Vec::new(),
         }
     }
+
+    #[cfg(test)]
+    pub fn fading_out(&self) -> bool {
+        self.fade.out_left(Instant::now()).is_some()
+    }
 }
 
 /// The black over `output`'s next screen frame, if any, and whether the frame after it is due

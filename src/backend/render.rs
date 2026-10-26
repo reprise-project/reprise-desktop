@@ -580,8 +580,13 @@ fn held_back(state: &mut State, crtc: crtc::Handle) -> bool {
 pub(super) fn due(state: &State, crtc: crtc::Handle) -> Option<Output> {
     let b = state.backend.as_ref()?;
     let s = b.surfaces.get(&crtc)?;
-    (s.track.idle() && b.quiet() && !b.back.pending() && !s.hw.off && b.session.is_active())
-        .then(|| s.output.clone())
+    (!b.dead
+        && s.track.idle()
+        && b.quiet()
+        && !b.back.pending()
+        && !s.hw.off
+        && b.session.is_active())
+    .then(|| s.output.clone())
 }
 
 fn count_frame(s: &mut Surface, overlay: bool, started: std::time::Instant, cursor_only: bool) {

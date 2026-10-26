@@ -108,6 +108,10 @@ pub struct Backend {
     gbm: GbmDevice<DrmDeviceFd>,
     render_formats: Vec<DrmFormat>,
     replies: Sender<(crtc::Handle, commit::Reply<Out>)>,
+    /// The DRM device's event source, removed once the device is gone (`drm_error`).
+    drm_events: Option<RegistrationToken>,
+    /// The device is gone: nothing renders while the session ends.
+    dead: bool,
     /// Disabled outputs whose threads still hold their compositors.
     retiring: HashMap<crtc::Handle, std::thread::JoinHandle<()>>,
     /// CRTCs refused while retiring or not quiet, enabled again once quiet (`on_quiet`).
@@ -396,12 +400,20 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
             SessionEvent::PauseSession => pause(state),
             SessionEvent::ActivateSession => activate(state),
         })?;
-    state
-        .handle
-        .insert_source(drm_notifier, move |event, meta, state| match event {
-            DrmEvent::VBlank(crtc) => vblank(state, crtc, meta.as_ref()),
-            DrmEvent::Error(e) => log::error!("drm: {e}"),
-        })?;
+    let errors = std::cell::Cell::new(0);
+    let drm_events =
+        state
+            .handle
+            .insert_source(drm_notifier, move |event, meta, state| match event {
+                DrmEvent::VBlank(crtc) => {
+                    errors.set(0);
+                    vblank(state, crtc, meta.as_ref());
+                }
+                DrmEvent::Error(e) => {
+                    let token = state.backend.as_ref().and_then(|b| b.drm_events);
+                    drm_error(state, &errors, token, &e);
+                }
+            })?;
     let (replies, done) = channel::<(crtc::Handle, commit::Reply<Out>)>();
     state
         .handle
@@ -477,6 +489,8 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         gbm,
         render_formats,
         replies,
+        drm_events: Some(drm_events),
+        dead: false,
         retiring: HashMap::new(),
         reenable: Default::default(),
         delay: std::env::var(commit::Delay::VAR).ok(),
@@ -499,6 +513,38 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         log::warn!("no connected output on {}", path.display());
     }
     Ok(())
+}
+
+/// Read errors in a row on the DRM fd after which the device counts as gone: its fd stays
+/// readable, so the source would otherwise fail on every loop turn.
+const DRM_ERRORS_GONE: u32 = 10;
+
+/// A read error on the DRM device's event source `token`. Once `DRM_ERRORS_GONE` come in a row
+/// the source goes, the backend stops rendering and the session ends as on SIGTERM.
+fn drm_error(
+    state: &mut State,
+    errors: &std::cell::Cell<u32>,
+    token: Option<RegistrationToken>,
+    e: &smithay::backend::drm::DrmError,
+) {
+    let n = errors.get() + 1;
+    errors.set(n);
+    if n < DRM_ERRORS_GONE {
+        log::error!("drm: {e}");
+        return;
+    }
+    if n > DRM_ERRORS_GONE {
+        return;
+    }
+    log::error!("drm: {e}; {n} errors in a row, the device is gone: ending the session");
+    if let Some(token) = token {
+        state.handle.remove(token);
+    }
+    if let Some(b) = state.backend.as_mut() {
+        b.drm_events = None;
+        b.dead = true;
+    }
+    crate::sessionfade::out(state, Box::new(|state| state.signal.stop()));
 }
 
 /// How long exit waits for the outputs' threads to drop their compositors (a blocking clear
