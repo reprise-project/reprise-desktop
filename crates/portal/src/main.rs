@@ -1,10 +1,11 @@
 //! reprise-portal: xdg-desktop-portal backend (ScreenCast, Screenshot, RemoteDesktop, InputCapture, GlobalShortcuts, Access,
-//! FileChooser, AppChooser, Notification, Inhibit) as `org.freedesktop.impl.portal.desktop.reprise`; dialogs run in a child process (`dialog`).
+//! FileChooser, AppChooser, Notification, Inhibit, Background) as `org.freedesktop.impl.portal.desktop.reprise`; dialogs run in a child process (`dialog`).
 //! It serves only while Reprise is the session's compositor (see `owner`).
 
 mod access;
 mod appchoose;
 mod appchooser;
+mod background;
 mod cast;
 mod choices;
 mod colorpick;
@@ -1010,6 +1011,12 @@ async fn serve(
             },
         )?
         .serve_at(PATH, inhibit::SessionEnd { shared: inhibits })?
+        .serve_at(
+            PATH,
+            background::Background {
+                frontend: frontend(),
+            },
+        )?
         .build()
         .await
 }
@@ -1263,6 +1270,34 @@ mod tests {
                 Err(zbus::fdo::Error::AccessDenied(_))
             ));
         }
+    }
+
+    #[test]
+    fn reprise_portal_lists_every_portal_interface_the_crate_defines() {
+        const PREFIX: &str = "#[zbus::interface(name = \"org.freedesktop.impl.portal.";
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut defined = std::collections::BTreeSet::new();
+        for f in std::fs::read_dir(src).unwrap().flatten() {
+            let text = std::fs::read_to_string(f.path()).unwrap();
+            for line in text.lines() {
+                if let Some(rest) = line.trim().strip_prefix(PREFIX)
+                    && let Some((name, _)) = rest.split_once('"')
+                    && !["Request", "Session"].contains(&name)
+                {
+                    defined.insert(format!("org.freedesktop.impl.portal.{name}"));
+                }
+            }
+        }
+        let file = include_str!("../../../data/portal/reprise.portal");
+        let listed: std::collections::BTreeSet<String> = file
+            .lines()
+            .find_map(|l| l.strip_prefix("Interfaces="))
+            .expect("an Interfaces= line")
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        assert_eq!(listed, defined);
     }
 
     #[test]

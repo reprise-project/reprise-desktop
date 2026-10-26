@@ -1,5 +1,5 @@
 //! "Allow this program to ...?": the RemoteDesktop, Screenshot,
-//! InputCapture and GlobalShortcuts prompt, run as our own child
+//! InputCapture, GlobalShortcuts and Background prompt, run as our own child
 //! (`--permit <kind>`, see `dialog`). The parent writes an `Input` on stdin
 //! (the asking window, the app's display name, whether to offer Remember,
 //! the lines to list) and reads `yes` (or `yes remember`) on stdout for
@@ -34,6 +34,7 @@ pub enum Kind {
     Screenshot,
     InputCapture(Devices),
     Shortcuts,
+    Background,
 }
 
 /// Which input devices a RemoteControl or InputCapture grant covers, so the
@@ -68,7 +69,7 @@ impl Devices {
 }
 
 impl Kind {
-    const ALL: [Kind; 8] = [
+    const ALL: [Kind; 9] = [
         Kind::RemoteControl(Devices::Keyboard),
         Kind::RemoteControl(Devices::Pointer),
         Kind::RemoteControl(Devices::Both),
@@ -77,6 +78,7 @@ impl Kind {
         Kind::InputCapture(Devices::Pointer),
         Kind::InputCapture(Devices::Both),
         Kind::Shortcuts,
+        Kind::Background,
     ];
 
     fn arg(self) -> &'static str {
@@ -89,6 +91,7 @@ impl Kind {
             Kind::InputCapture(Devices::Pointer) => "capture-pointer",
             Kind::InputCapture(Devices::Both) => "capture",
             Kind::Shortcuts => "shortcuts",
+            Kind::Background => "background",
         }
     }
 
@@ -102,6 +105,7 @@ impl Kind {
             Kind::Screenshot => "Screenshot",
             Kind::InputCapture(_) => "Input capture",
             Kind::Shortcuts => "Keyboard shortcuts",
+            Kind::Background => "Running in the background",
         }
     }
 
@@ -111,6 +115,7 @@ impl Kind {
             Kind::Screenshot => "camera-photo",
             Kind::InputCapture(_) => "input-mouse",
             Kind::Shortcuts => "input-keyboard",
+            Kind::Background => "system-run",
         }
     }
 
@@ -120,6 +125,7 @@ impl Kind {
             Kind::Screenshot => format!("{who} wants to take a picture of your screen."),
             Kind::InputCapture(d) => format!("{who} wants to capture your {}.", d.noun()),
             Kind::Shortcuts => format!("{who} wants to use keyboard shortcuts."),
+            Kind::Background => format!("{who} is running in the background."),
         }
     }
 
@@ -136,6 +142,7 @@ impl Kind {
             }
             Kind::InputCapture(_) => "At a screen edge it takes it. Super+Shift+Esc ends it.",
             Kind::Shortcuts => "Change the keys on Reprise Settings' Keyboard page.",
+            Kind::Background => "It has no open window. Deny closes it.",
         }
     }
 }
@@ -182,11 +189,17 @@ pub fn ask(
 ) -> Answer {
     let input = Input {
         parent,
-        app: crate::remotedesktop::display_name(app_id).replace('\n', " "),
+        app: crate::remotedesktop::display_name(app_id),
         offer_remember,
         items,
     };
-    let Some(out) = dialog::run_toml(&["--permit", kind.arg()], &input, &cancel) else {
+    ask_with(kind, input, &cancel)
+}
+
+/// `ask` with the prompt's whole input, `app` being the name to show.
+pub fn ask_with(kind: Kind, mut input: Input, cancel: &AtomicBool) -> Answer {
+    input.app = input.app.replace('\n', " ");
+    let Some(out) = dialog::run_toml(&["--permit", kind.arg()], &input, cancel) else {
         return Answer::Dismissed;
     };
     Answer::parse(&out)
@@ -194,13 +207,13 @@ pub fn ask(
 
 /// What the parent tells the prompt, as TOML on stdin.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-struct Input {
-    parent: Option<String>,
-    app: String,
-    offer_remember: bool,
+pub struct Input {
+    pub parent: Option<String>,
+    pub app: String,
+    pub offer_remember: bool,
     /// Lines listed under the prompt, such as the shortcuts asked for.
     #[serde(default)]
-    items: Vec<String>,
+    pub items: Vec<String>,
 }
 
 /// The child's side; the argument after `--permit` names the kind.
