@@ -32,6 +32,7 @@ use crate::textedit::TextEdit;
 use crate::theme::TextUnits;
 use std::borrow::Cow;
 use std::cell::Cell;
+use std::rc::Rc;
 
 mod access_tree;
 mod drag;
@@ -340,7 +341,7 @@ struct Layout {
     filetype_home: (i32, i32),
     cancel: Rect,
     views: Option<(Rect, MenuLayout)>,
-    shell: shellview::Layout,
+    shell: Rc<shellview::Layout>,
     grip: Rect,
 }
 
@@ -392,11 +393,11 @@ pub struct FileDlg {
     text: TextUnits,
 }
 
-/// The sizes a `FileDlg` was last drawn with, and whether its look lights
-/// the pointer's part. Not dialog state: it compares equal and
+/// The sizes a `FileDlg` was last drawn with, whether its look lights
+/// the pointer's part, and the shell view's last layout. Not dialog state: it compares equal and
 /// debug-prints as nothing.
 #[derive(Clone, Default)]
-struct Drawn(Cell<ControlMetrics>, Cell<bool>);
+struct Drawn(Cell<ControlMetrics>, Cell<bool>, shellview::LayoutCache);
 
 impl PartialEq for Drawn {
     fn eq(&self, _: &Drawn) -> bool {
