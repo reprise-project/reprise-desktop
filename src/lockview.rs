@@ -984,20 +984,34 @@ pub fn key(state: &mut State, pressed: bool, handle: &KeysymHandle<'_>) -> bool 
     {
         return false;
     }
+    edit(state, key);
+    false
+}
+
+/// Apply `key` to the dialog's field: submit it, or redraw.
+fn edit(state: &mut State, key: LockKey<'_>) {
     let should_submit = match state.lock.active.as_mut() {
         Some(l) => {
             let submit = l.state.key(key);
             end_abandoned_prompt(l);
             submit
         }
-        None => return false,
+        None => return,
     };
     if should_submit {
         submit(state);
     } else {
         redraw(state);
     }
-    false
+}
+
+/// A held Backspace repeats in the dialog's field; not under a locker.
+pub fn repeat_backspace(state: &mut State) {
+    if !crate::sessionlock::holds_input(state)
+        && state.lock.active.as_ref().is_some_and(Lock::dialog_shown)
+    {
+        edit(state, LockKey::Backspace);
+    }
 }
 
 /// A press while locked: a locker's surfaces take it through the seat; otherwise a left press on OK

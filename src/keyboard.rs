@@ -9,19 +9,28 @@
 //! modifiers come from the xkb state ahead of this key's own update, so a
 //! bare Super press carries no Super bit and its release still does.
 //! A press taken from the client takes its release too: no client hears
-//! the release of a key whose press it never saw.
+//! the release of a key whose press it never saw. A key held in one of
+//! Reprise's own fields repeats at the keyboard's delay and rate.
 
 use reprisekit::classic::frame::{Edges, FrameGeometry};
 use smithay::{
     backend::input::{Event, InputBackend, InputTime, KeyState, KeyboardKeyEvent},
     input::keyboard::{FilterResult, KeyboardSource, Keycode, ModifiersState, xkb},
-    reexports::wayland_server::DisplayHandle,
+    reexports::{
+        calloop::{
+            RegistrationToken,
+            timer::{TimeoutAction, Timer},
+        },
+        wayland_server::DisplayHandle,
+    },
     utils::SERIAL_COUNTER,
 };
+use std::time::Duration;
 
 use crate::{
     compositor::State,
     config::Action,
+    dialogview::DialogKey,
     heldkeys::{HeldKeys, Owner},
     input::Interaction,
     keyroute::{ChordState, GlobalBind, GlobalHit, KeyPress, KeyRoute, Modes},
@@ -54,6 +63,21 @@ pub struct KeyInput {
     pub inhibit: crate::shortcutinhibit::Inhibit,
     /// The media keys' worker and their repeat.
     pub media: crate::media::MediaState,
+    /// The key held in one of Reprise's own fields, repeating.
+    pub field_repeat: Option<FieldRepeat>,
+}
+
+/// A key held in a field route (`imefield::field_route`) or the lock dialog: what it was and where it
+/// went, so each tick runs it again while the route, the focus and the key itself stay.
+#[derive(Debug)]
+pub struct FieldRepeat {
+    code: Keycode,
+    press: KeyPress,
+    route: KeyRoute,
+    focus: Option<WindowId>,
+    /// The field key the route's handler took; None for the rename and lock routes.
+    key: Option<DialogKey>,
+    timer: RegistrationToken,
 }
 
 impl KeyInput {
@@ -70,6 +94,7 @@ impl KeyInput {
             layouts: Default::default(),
             inhibit: crate::shortcutinhibit::Inhibit::new(dh),
             media: Default::default(),
+            field_repeat: None,
         }
     }
 }
@@ -187,8 +212,12 @@ impl State {
         };
         if k.pressed {
             self.stop_media_repeat();
+            self.stop_field_repeat();
         } else {
             self.media_key_up(keycode);
+            if (self.key_input.field_repeat.as_ref()).is_some_and(|r| r.code == code) {
+                self.stop_field_repeat();
+            }
         }
         if let Some(arm) = routed.arm_super {
             self.key_input.super_tap_armed = arm;
@@ -247,6 +276,7 @@ impl State {
         if to_ime {
             routed.route = KeyRoute::Swallow;
         }
+        let repeat_route = (pressed && from_seat).then(|| routed.route.clone());
         let route = &routed.route;
         let intercepted = keyboard.input_from_source::<(), _>(
             source,
@@ -283,6 +313,7 @@ impl State {
         if let Some(k) = field_key.as_mut() {
             k.edit = crate::editkeys::from_keyboard(&keyboard, self, code);
         }
+        let repeat = repeat_route.map(|r| (r, field_key.clone()));
         // A key kept from the client still changes its modifiers, unless a
         // capture holds the keyboard.
         if !forward && !modes.captured && keyboard.modifier_state() != mods_before {
@@ -341,52 +372,24 @@ impl State {
                 self.menu_key(sym);
                 self.redraw_all();
             }
-            KeyRoute::Launcher => {
+            r @ (KeyRoute::Launcher
+            | KeyRoute::StartPanel
+            | KeyRoute::Overview
+            | KeyRoute::Dialog
+            | KeyRoute::NotifyReply
+            | KeyRoute::ClipView
+            | KeyRoute::EmojiView
+            | KeyRoute::Displays) => {
                 if let Some(k) = field_key {
-                    self.launcher_key(&k);
-                }
-            }
-            KeyRoute::StartPanel => {
-                if let Some(k) = field_key {
-                    self.start_panel_key(&k);
-                }
-            }
-            KeyRoute::Overview => {
-                if let Some(k) = field_key {
-                    self.overview_key(&k);
-                }
-            }
-            KeyRoute::Dialog => {
-                if let Some(k) = field_key {
-                    self.dialog_key(&k);
+                    self.field_key(&r, &k);
                 }
             }
             KeyRoute::TrayFlyoutClose => crate::trayflyout::close(self),
             KeyRoute::SnapPicker(sym) => crate::snappickerview::key(self, sym),
             KeyRoute::Taskbar(sym) => self.bar_key(sym, k.mods & keys::MOD_SHIFT != 0),
             KeyRoute::NotifyCenter(sym) => crate::notifycenter::key(self, sym, k.mods),
-            KeyRoute::NotifyReply => {
-                if let Some(k) = field_key {
-                    crate::notifyview::key(self, &k);
-                }
-            }
-            KeyRoute::ClipView => {
-                if let Some(k) = field_key {
-                    self.clipview_key(&k);
-                }
-            }
-            KeyRoute::EmojiView => {
-                if let Some(k) = field_key {
-                    self.emoji_key(&k);
-                }
-            }
             KeyRoute::Region(sym) => self.region_key(sym),
             KeyRoute::CalendarClose => crate::calendarview::close(self),
-            KeyRoute::Displays => {
-                if let Some(k) = field_key {
-                    crate::displaysview::key(self, &k);
-                }
-            }
             KeyRoute::Rename => self.rename_key(code, &k.syms),
             KeyRoute::IconMove(dir) => self.navigate(dir),
             KeyRoute::IconOpen(i) => self.open_selection(i),
@@ -421,6 +424,9 @@ impl State {
                 }
             }
         }
+        if let Some((route, key)) = repeat {
+            self.arm_field_repeat(code, k, route, key);
+        }
         if spends != 0 {
             self.drag_spend(spends);
         }
@@ -430,6 +436,108 @@ impl State {
         self.aids_after_key();
         self.switcher_modifiers();
         crate::access::touch(self);
+    }
+
+    /// A key the route gave a field-taking surface: hand it to that surface.
+    fn field_key(&mut self, route: &KeyRoute, k: &DialogKey) {
+        match route {
+            KeyRoute::Launcher => self.launcher_key(k),
+            KeyRoute::StartPanel => self.start_panel_key(k),
+            KeyRoute::Overview => self.overview_key(k),
+            KeyRoute::Dialog => self.dialog_key(k),
+            KeyRoute::NotifyReply => crate::notifyview::key(self, k),
+            KeyRoute::ClipView => self.clipview_key(k),
+            KeyRoute::EmojiView => self.emoji_key(k),
+            KeyRoute::Displays => crate::displaysview::key(self, k),
+            _ => {}
+        }
+    }
+
+    /// Start repeating `code`, just pressed, if it went to a field route or the lock dialog, no input
+    /// method took it, and xkb says it repeats. Enter and Escape act once; the lock dialog repeats only
+    /// Backspace, so no password character is kept for the repeat.
+    fn arm_field_repeat(
+        &mut self,
+        code: Keycode,
+        press: KeyPress,
+        route: KeyRoute,
+        key: Option<DialogKey>,
+    ) {
+        let lock = route == KeyRoute::Lock;
+        if !(lock || crate::imefield::field_route(&route))
+            || !self.key_input.held.is_taken(code.raw())
+            || self.config.keyboard.repeat_rate <= 0
+        {
+            return;
+        }
+        let once = [keys::KEY_Return, keys::KEY_KP_Enter, keys::KEY_Escape];
+        if press.syms.iter().any(|s| once.contains(s))
+            || (lock && !press.syms.contains(&keys::KEY_BackSpace))
+            || (!lock && route != KeyRoute::Rename && key.is_none())
+        {
+            return;
+        }
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        let repeats = keyboard.with_xkb_state(self, |ctx| {
+            let xkb = ctx.xkb().lock().unwrap();
+            // SAFETY: the keymap is only read here; no reference to it outlives the lock.
+            unsafe { xkb.keymap() }.key_repeats(code)
+        });
+        if !repeats {
+            return;
+        }
+        let delay = Duration::from_millis(self.config.keyboard.repeat_delay.max(1) as u64);
+        let armed = self
+            .handle
+            .insert_source(Timer::from_duration(delay), |_, _, st| {
+                st.field_repeat_tick()
+            });
+        let Ok(timer) = armed else {
+            return;
+        };
+        self.key_input.field_repeat = Some(FieldRepeat {
+            code,
+            press,
+            route,
+            focus: self.focused,
+            key,
+            timer,
+        });
+    }
+
+    pub fn stop_field_repeat(&mut self) {
+        if let Some(r) = self.key_input.field_repeat.take() {
+            self.handle.remove(r.timer);
+        }
+    }
+
+    /// Run the held field key again, unless it was released, the focus moved or the route it went to
+    /// changed (a mode opened or closed); then the repeat ends.
+    fn field_repeat_tick(&mut self) -> TimeoutAction {
+        let Some(r) = self.key_input.field_repeat.as_ref() else {
+            return TimeoutAction::Drop;
+        };
+        let modes = self.key_modes();
+        let globals = self.global_binds();
+        let route = crate::keyroute::route(&modes, &r.press, &self.config.keybinds, &globals).route;
+        if route != r.route
+            || self.focused != r.focus
+            || !self.key_input.held.is_taken(r.code.raw())
+        {
+            self.key_input.field_repeat = None;
+            return TimeoutAction::Drop;
+        }
+        let (code, syms, key) = (r.code, r.press.syms.clone(), r.key.clone());
+        match (&route, key) {
+            (KeyRoute::Lock, _) => crate::lockview::repeat_backspace(self),
+            (KeyRoute::Rename, _) => self.rename_key(code, &syms),
+            (route, Some(k)) => self.field_key(route, &k),
+            _ => {}
+        }
+        let rate = self.config.keyboard.repeat_rate.max(1) as u64;
+        TimeoutAction::ToDuration(Duration::from_micros(1_000_000 / rate))
     }
 
     /// The modes the key route reads. A host not ported yet reads as
@@ -1148,6 +1256,112 @@ mod tests {
     ) -> Vec<(u32, bool)> {
         h.roundtrip(c);
         std::mem::take(&mut c.side.keys)
+    }
+
+    const KEY_BACKSPACE: u32 = 14;
+
+    fn run_box_text(h: &crate::harness::Harness) -> String {
+        let d = &h.state.dialogs.views[0].dialog;
+        d.field
+            .as_ref()
+            .expect("the Run field")
+            .combo
+            .text()
+            .to_string()
+    }
+
+    /// Hold `code` until `done` holds (or 5 s pass), then release it.
+    fn hold(
+        h: &mut crate::harness::Harness,
+        code: u32,
+        done: impl Fn(&crate::harness::Harness) -> bool,
+    ) {
+        h.key(code, true);
+        let end = std::time::Instant::now() + Duration::from_secs(5);
+        while !done(h) {
+            assert!(std::time::Instant::now() < end, "the key repeats");
+            h.run_for(5);
+        }
+        h.key(code, false);
+    }
+
+    #[test]
+    fn a_held_backspace_repeats_in_the_run_box_until_released() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.config.keyboard.repeat_delay = 60;
+        h.state.config.keyboard.repeat_rate = 25;
+        h.state.open_dialog(crate::dialog::Dialog::run(&[]));
+        for _ in 0..6 {
+            h.key(KEY_A, true);
+            h.key(KEY_A, false);
+        }
+        assert_eq!(run_box_text(&h), "aaaaaa");
+        hold(&mut h, KEY_BACKSPACE, |h| run_box_text(h).len() <= 2);
+        assert_eq!(
+            run_box_text(&h),
+            "aa",
+            "the press and three repeats take four"
+        );
+        assert!(
+            h.state.key_input.field_repeat.is_none(),
+            "the release ends it"
+        );
+        h.run_for(200);
+        assert_eq!(run_box_text(&h), "aa");
+    }
+
+    #[test]
+    fn another_press_ends_the_repeat() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.open_dialog(crate::dialog::Dialog::run(&[]));
+        h.key(KEY_BACKSPACE, true);
+        assert!(h.state.key_input.field_repeat.is_some());
+        h.key(KEY_A, true);
+        assert!(
+            h.state
+                .key_input
+                .field_repeat
+                .as_ref()
+                .is_some_and(|r| r.code.raw() == KEY_A + 8),
+            "the new key repeats instead"
+        );
+        h.key(KEY_BACKSPACE, false);
+        assert!(
+            h.state.key_input.field_repeat.is_some(),
+            "the old key's release leaves it"
+        );
+        h.key(KEY_A, false);
+        assert!(h.state.key_input.field_repeat.is_none());
+    }
+
+    #[test]
+    fn a_held_backspace_repeats_in_the_lock_field() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.config.keyboard.repeat_delay = 60;
+        h.state.config.keyboard.repeat_rate = 25;
+        h.state.lock.helpers.finger = |_| None;
+        crate::lockview::lock(&mut h.state);
+        let field =
+            |h: &crate::harness::Harness| h.state.lock.active.as_ref().unwrap().state.input.clone();
+        h.state
+            .lock
+            .active
+            .as_mut()
+            .unwrap()
+            .state
+            .input
+            .push_str("secret");
+        hold(&mut h, KEY_BACKSPACE, |h| field(h).is_empty());
+        assert!(h.state.is_locked());
+        h.key(KEY_A, true);
+        assert!(
+            h.state.key_input.field_repeat.is_none(),
+            "a password character does not repeat"
+        );
+        h.key(KEY_A, false);
     }
 
     #[test]

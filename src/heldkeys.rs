@@ -63,6 +63,11 @@ impl HeldKeys {
         }
     }
 
+    /// `code` is down and its press went to Reprise's own route.
+    pub fn is_taken(&self, code: u32) -> bool {
+        self.0.get(&code) == Some(&Owner::Taken)
+    }
+
     #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
