@@ -309,6 +309,37 @@ fn launch_argv_passes_shell_syntax_through_as_plain_arguments() {
 }
 
 #[test]
+fn an_entry_without_a_file_code_opens_with_no_file() {
+    let e = parse_desktop(
+        "[Desktop Entry]\nType=Application\nName=Term\nExec=gnome-terminal --daemon\n",
+        "t.desktop",
+    )
+    .unwrap();
+    assert_eq!(
+        open_argv(&e, "foot", Path::new("/home/u/-rf")),
+        ["gnome-terminal", "--daemon"]
+    );
+}
+
+#[test]
+fn icon_and_name_codes_expand_from_the_entry() {
+    let e = parse_desktop(
+        "[Desktop Entry]\nType=Application\nName=My Ed\nIcon=ed\n\
+         Exec=ed %i --title %c --x %f\n",
+        "ed.desktop",
+    )
+    .unwrap();
+    assert_eq!(
+        open_argv(&e, "foot", Path::new("/tmp/a")),
+        ["ed", "--icon", "ed", "--title", "My Ed", "--x", "/tmp/a"]
+    );
+    assert_eq!(
+        launch_argv(&e, "foot"),
+        ["ed", "--icon", "ed", "--title", "My Ed", "--x"]
+    );
+}
+
+#[test]
 fn open_argv_fills_the_file_slot_with_the_path_bytes() {
     use std::os::unix::ffi::OsStrExt;
     let entry = |exec: &str, terminal: bool| {
@@ -342,7 +373,8 @@ fn open_argv_fills_the_file_slot_with_the_path_bytes() {
     );
     assert_eq!(
         open("\"/opt/my ed\" -i %i", false, ""),
-        [b("/opt/my ed"), b("-i"), p.clone()]
+        [b("/opt/my ed"), b("-i")],
+        "no file code takes no file, and no Icon drops %i"
     );
     assert_eq!(
         open("vim %F", true, "foot --title \"a b\""),
@@ -652,7 +684,7 @@ fn mime_globs_parse_again_only_when_a_file_changes() {
 fn open_with_lists_the_handlers_by_name_and_text_editors_for_text() {
     let app = |name: &str, mimes: &[&str]| AppEntry {
         name: name.into(),
-        exec_line: name.to_lowercase(),
+        exec_line: format!("{} %f", name.to_lowercase()),
         terminal: name == "Vim",
         id: format!("{name}.desktop"),
         icon: None,

@@ -92,7 +92,7 @@ pub fn strip_field_codes(exec: &str) -> String {
 /// and `;` are plain characters.
 pub fn exec_argv(exec: &str) -> Vec<String> {
     // Every byte comes from `exec`, so the lossy step never replaces one.
-    split_exec(exec, |_| None)
+    split_exec(exec, |_| Vec::new())
         .into_iter()
         .map(|a| a.to_string_lossy().into_owned())
         .collect()
@@ -139,10 +139,10 @@ pub fn exec_quote(arg: &str) -> String {
     out
 }
 
-/// [`exec_argv`]'s splitting, with field code `%c` replaced by
-/// `field('c')` inside its argument; None drops it, and an argument that
-/// was only the code goes with it.
-fn split_exec(exec: &str, mut field: impl FnMut(char) -> Option<OsString>) -> Vec<OsString> {
+/// [`exec_argv`]'s splitting, with field code `%c` replaced by `field('c')`: one value goes
+/// inside its argument, several stand as arguments of their own (`%i`), and none drops it, an
+/// argument that was only the code going with it.
+fn split_exec(exec: &str, mut field: impl FnMut(char) -> Vec<OsString>) -> Vec<OsString> {
     let mut argv = Vec::new();
     let mut arg = OsString::new();
     let mut have = false;
@@ -169,9 +169,16 @@ fn split_exec(exec: &str, mut field: impl FnMut(char) -> Option<OsString>) -> Ve
                     have = true;
                 }
                 Some(code) => {
-                    if let Some(v) = field(code) {
-                        arg.push(v);
+                    let mut values = field(code);
+                    if values.len() == 1 {
+                        arg.push(values.remove(0));
                         have = true;
+                    } else if !values.is_empty() {
+                        if have {
+                            argv.push(std::mem::take(&mut arg));
+                            have = false;
+                        }
+                        argv.extend(values);
                     }
                 }
                 None => {}
@@ -1045,30 +1052,46 @@ pub fn chooser_groups(
 
 /// The argument vector that opens `path` with `entry`, run with no shell:
 /// the entry's `Exec` split by [`exec_argv`]'s rules, with the path's own
-/// bytes in the first `%f`/`%F` and its `file://` URI in a `%u`/`%U`. With
-/// neither code the path goes last. A `Terminal=true` entry runs under
-/// [`in_terminal`].
+/// bytes in the first `%f`/`%F` and its `file://` URI in a `%u`/`%U`. An
+/// entry with neither code takes no file, as the spec says. A
+/// `Terminal=true` entry runs under [`in_terminal`].
 pub fn open_argv(entry: &AppEntry, terminal: &str, path: &Path) -> Vec<OsString> {
     // The spec allows one file code per line; any after the first drop.
     let mut used = false;
-    let mut argv = split_exec(&entry.exec_line, |code| {
+    let argv = split_exec(&entry.exec_line, |code| {
         let v = match code {
-            _ if used => return None,
+            'f' | 'F' | 'u' | 'U' if used => return Vec::new(),
             'f' | 'F' => path.as_os_str().to_owned(),
             'u' | 'U' => format!("file://{}", crate::trash::percent_encode(path)).into(),
-            _ => return None,
+            _ => return entry_field(entry, code),
         };
         used = true;
-        Some(v)
+        vec![v]
     });
-    if !used {
-        argv.push(path.into());
-    }
     wrap(entry, terminal, argv)
 }
 
 pub fn launch_argv(entry: &AppEntry, terminal: &str) -> Vec<OsString> {
-    wrap(entry, terminal, split_exec(&entry.exec_line, |_| None))
+    wrap(
+        entry,
+        terminal,
+        split_exec(&entry.exec_line, |code| entry_field(entry, code)),
+    )
+}
+
+/// What the field code `code` stands for that names `entry` itself: `%i` is `--icon <Icon>`
+/// (nothing without an icon), `%c` the name. Any other code drops.
+fn entry_field(entry: &AppEntry, code: char) -> Vec<OsString> {
+    match code {
+        'i' => entry
+            .icon
+            .iter()
+            .filter(|i| !i.is_empty())
+            .flat_map(|i| ["--icon".into(), i.into()])
+            .collect(),
+        'c' => vec![entry.name.clone().into()],
+        _ => Vec::new(),
+    }
 }
 
 fn wrap(entry: &AppEntry, terminal: &str, argv: Vec<OsString>) -> Vec<OsString> {
@@ -1080,7 +1103,7 @@ fn wrap(entry: &AppEntry, terminal: &str, argv: Vec<OsString>) -> Vec<OsString> 
 }
 
 pub fn in_terminal(terminal: &str, mut argv: Vec<OsString>) -> Vec<OsString> {
-    let mut wrapped = split_exec(terminal, |_| None);
+    let mut wrapped = split_exec(terminal, |_| Vec::new());
     wrapped.push("-e".into());
     wrapped.append(&mut argv);
     wrapped
