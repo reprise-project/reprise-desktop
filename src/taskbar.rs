@@ -799,31 +799,34 @@ pub fn group_name(app_id: &str) -> String {
 
 /// Local time as the LC_TIME locale's short time ("3:39 PM" or "15:39"). `main` sets LC_TIME from the environment.
 pub fn clock_text() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    time_text(now)
+    time_text(clock_now())
 }
 
 /// Today as a long date ("Thursday, September 10, 2026") in the LC_TIME locale: the clock's tip and accessible description.
 pub fn date_text() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
-    reprisefs::locale::strftime(&reprisefs::locale::localtime(now), c"%A, %B %d, %Y")
+    reprisefs::locale::strftime(&reprisefs::locale::localtime(clock_now()), c"%A, %B %d, %Y")
 }
 
 /// The bar's clock text: [`clock_text`], and with `date` the LC_TIME short date ("09/27/2026") on a second line.
 pub fn bar_clock_text(date: bool) -> String {
     // One reading for both lines, so a redraw at midnight never pairs one day's time with the next day's date.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64);
+    let now = clock_now();
     let time = time_text(now);
     if !date {
         return time;
     }
     format!("{time}\n{}", local_text(now, c"%x"))
+}
+
+/// Seconds since the epoch that the bar's clock shows. Tests read a fixed instant on a minute's
+/// start, so no minute turns over mid-test and the clock timer waits a full minute.
+pub fn clock_now() -> i64 {
+    #[cfg(test)]
+    return 1_789_999_980;
+    #[cfg(not(test))]
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 pub fn time_text(secs: i64) -> String {
