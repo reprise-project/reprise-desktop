@@ -45,3 +45,44 @@ jobs:
       - run: pacman -Syu --noconfirm --needed git
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/build
+  # What ships: the desktop entries validate and makepkg builds and installs every binary.
+  package:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    container: archlinux@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
+    env:
+      CARGO_INCREMENTAL: 0
+      ARCH_ARCHIVE: 2026/10/25
+    steps:
+      - name: Install dependencies
+        run: |
+          echo "Server = https://archive.archlinux.org/repos/$ARCH_ARCHIVE/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
+          pacman -Syyuu --noconfirm
+          pacman -S --noconfirm --needed base-devel desktop-file-utils rust clang pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # pkgver counts the commits.
+          fetch-depth: 0
+      # OnlyShowIn=reprise is not in the menu-spec registry: registering the name or renaming it
+      # to X-Reprise is still open, so that one error is filtered out.
+      - name: Validate the desktop entries
+        run: |
+          out=$(desktop-file-validate data/apps/*.desktop data/autostart/*.desktop 2>&1 || true)
+          printf '%s\n' "$out"
+          ! printf '%s\n' "$out" | grep -v 'key "OnlyShowIn" .* unregistered value "reprise"' | grep -E ': (error|warning): '
+      - name: Create the build user
+        run: useradd -m builder
+      # The nightly's cache, read only: main's release build seeds this one.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /home/builder/.cargo/registry
+            /home/builder/.cargo/git
+            /home/builder/makepkg/build/reprise/src/target
+          key: nightly-${{ hashFiles('Cargo.lock') }}
+          restore-keys: nightly-
+      - run: chown -R builder "$GITHUB_WORKSPACE" /home/builder
+      - name: Build the package
+        run: >-
+          runuser -u builder -- env HOME=/home/builder REPRISE_MAKEPKG_DIR=/home/builder/makepkg
+          packaging/arch/local/build.sh --noconfirm --nodeps --noarchive
