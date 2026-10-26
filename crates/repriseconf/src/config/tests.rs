@@ -258,6 +258,21 @@ fn display_gpu_takes_an_absolute_device_path() {
 }
 
 #[test]
+fn display_all_gpus_is_off_unless_set() {
+    assert!(!Config::default().all_gpus);
+    assert!(
+        !Config::parse("[display]\ngpu = \"/dev/dri/card1\"\n")
+            .unwrap()
+            .all_gpus
+    );
+    assert!(
+        Config::parse("[display]\nall_gpus = true\n")
+            .unwrap()
+            .all_gpus
+    );
+}
+
+#[test]
 fn screenshot_save_defaults_on_and_is_configurable() {
     assert!(Config::default().screenshot.save);
     let c = Config::parse("[screenshot]\nsave = false\n").unwrap();

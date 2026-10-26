@@ -58,6 +58,9 @@ pub struct Config {
     pub screensaver: ScreensaverConfig,
     /// `[display] gpu`: the DRM device whose connectors are driven, read once at startup.
     pub gpu: Option<std::path::PathBuf>,
+    /// `[display] all_gpus`: open every GPU of the seat, not only the one that draws; read once
+    /// at startup.
+    pub all_gpus: bool,
     pub outputs: Vec<OutputConfig>,
     pub adaptive_sync: bool,
     pub window_snapping: SnapConfig,
@@ -122,6 +125,7 @@ impl Default for Config {
             wallpaper: WallpaperConfig::default(),
             screensaver: ScreensaverConfig::default(),
             gpu: None,
+            all_gpus: false,
             outputs: Vec::new(),
             adaptive_sync: false,
             window_snapping: SnapConfig::default(),

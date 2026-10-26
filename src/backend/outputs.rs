@@ -254,7 +254,13 @@ fn connector_connected(
             vrr_capable: false,
         },
     );
-    if into_layout {
+    if !b.devices.is_primary(head.node) {
+        log::info!(
+            "{} on {}: parked; only the GPU that renders drives monitors",
+            output.name(),
+            head.node
+        );
+    } else if into_layout {
         state.set_in_layout(&output, true);
     } else {
         log::debug!("{}: no modes yet; parked", output.name());
@@ -321,7 +327,7 @@ fn connector_changed(state: &mut State, connector: connector::Info, head: Head) 
     connector_connected(state, connector, head, into_layout);
 }
 
-fn connector_disconnected(state: &mut State, head: Head) {
+pub(super) fn connector_disconnected(state: &mut State, head: Head) {
     let Some(b) = state.backend.as_ref() else {
         return;
     };
@@ -359,14 +365,18 @@ pub fn heads(state: &State) -> Vec<HeadState> {
             vrr_capable: s.vrr_capable,
             vrr_on: s.vrr_on,
         })
-        .chain(b.parked.values().map(|p| HeadState {
-            output: p.output.clone(),
-            enabled: false,
-            modes: mode_infos(&p.connector),
-            current: current(&p.output, &p.connector),
-            vrr_capable: p.vrr_capable,
-            vrr_on: false,
-        }))
+        .chain(
+            (b.parked.iter())
+                .filter(|(h, _)| b.devices.is_primary(h.node))
+                .map(|(_, p)| HeadState {
+                    output: p.output.clone(),
+                    enabled: false,
+                    modes: mode_infos(&p.connector),
+                    current: current(&p.output, &p.connector),
+                    vrr_capable: p.vrr_capable,
+                    vrr_on: false,
+                }),
+        )
         .collect();
     heads.sort_by_key(|h| h.output.name());
     heads
@@ -385,6 +395,10 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
     let Some(&drm_mode) = p.connector.modes().get(index) else {
         return false;
     };
+    if !b.devices.is_primary(head.node) {
+        log::warn!("{}: its GPU does not render; it stays off", output.name());
+        return false;
+    }
     if b.retiring.contains_key(&head) {
         log::warn!(
             "{}: its last commit has not returned; enabling it once it does",

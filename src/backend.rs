@@ -1,12 +1,12 @@
-//! The DRM backend: a libseat session, one GPU via udev (`[display] gpu`, else the seat's
-//! primary), one KMS output
-//! per connected connector with hotplug, a GLES renderer and libinput. A frame is
-//! drawn only when asked for (`schedule`), at most one per vblank. Which connectors
-//! are driven (`Backend::surfaces`) or parked (`Backend::parked`) is `output`'s call;
-//! the backend only enables, disables, changes mode (`set_mode`) or VRR (`set_vrr`).
-//! One GPU, no leases, no multi-GPU copies. Each driven CRTC owns its `DrmCompositor`; a
-//! modeset is never committed outside an output's own frame. Main renders; each output's
-//! commit thread (`commit`) runs its KMS commits and drops its compositor.
+//! The DRM backend: a libseat session, GPUs via udev (`devices`), one KMS output per
+//! connected connector with hotplug, a GLES renderer and libinput. One GPU (`[display] gpu`,
+//! else the seat's primary) renders and drives monitors; under `[display] all_gpus` the
+//! others are opened too and their connectors scanned and parked. A frame is drawn only when asked for (`schedule`), at
+//! most one per vblank. Which connectors are driven (`Backend::surfaces`) or parked
+//! (`Backend::parked`) is `output`'s call; the backend only enables, disables, changes mode
+//! (`set_mode`) or VRR (`set_vrr`). No leases, no multi-GPU copies. Each driven head owns its
+//! `DrmCompositor`; a modeset is never committed outside an output's own frame. Main renders;
+//! each output's commit thread (`commit`) runs its KMS commits and drops its compositor.
 
 mod commit;
 mod devices;
@@ -38,8 +38,8 @@ use smithay::{
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
         },
         drm::{
-            DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, NodeType, compositor::DrmCompositor,
-            exporter::gbm::GbmFramebufferExporter,
+            DrmDevice, DrmDeviceFd, DrmDeviceNotifier, DrmEvent, DrmNode, NodeType,
+            compositor::DrmCompositor, exporter::gbm::GbmFramebufferExporter,
         },
         egl::{EGLContext, EGLDevice, EGLDisplay},
         renderer::{
@@ -72,11 +72,11 @@ use smithay_drm_extras::drm_scanner::DrmScanner;
 
 use crate::compositor::State;
 
-use devices::{DeviceSet, Head, pick_gpu};
+use devices::{DeviceSet, Head, pick_gpu, secondaries};
 use gamma::{Gamma, Lut, write_gamma};
 pub use gamma::{gamma_size, set_gamma};
 use links::LINK_GOOD;
-use outputs::{Probe, asks_scan, scan_connectors};
+use outputs::{Probe, asks_scan, connector_disconnected, scan_connectors};
 pub use outputs::{disable, enable, heads, output_power, set_mode, set_output_power, set_vrr};
 pub use render::{answer_frames, take_stats};
 use render::{committed, retired, vblank};
@@ -111,6 +111,7 @@ pub struct Backend {
     devices: DeviceSet<Device>,
     render_formats: Vec<DrmFormat>,
     replies: Sender<(Head, commit::Reply<Out>)>,
+    device_replies: Sender<(DrmNode, commit::Reply<Vec<crtc::Handle>>)>,
     /// Disabled outputs whose threads still hold their compositors.
     retiring: HashMap<Head, std::thread::JoinHandle<()>>,
     /// Heads refused while retiring or not quiet, enabled again once quiet (`on_quiet`).
@@ -145,6 +146,9 @@ struct Device {
     back: reset::Return,
     /// The `commit-device` thread, which runs the reset's commit.
     reset: DeviceThread,
+    /// A secondary's fd as the session opened it, closed through the session when the device
+    /// goes; the device works on a dup. None on the primary, whose fd lasts the session.
+    seat_fd: Option<std::os::fd::OwnedFd>,
     /// A hotplug uevent asked for a connector scan, run once quiet; one that came while the
     /// session was away runs on its return.
     rescan: bool,
@@ -424,23 +428,7 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
             SessionEvent::PauseSession => pause(state),
             SessionEvent::ActivateSession => activate(state),
         })?;
-    let errors = std::cell::Cell::new(0);
-    let drm_events =
-        state
-            .handle
-            .insert_source(drm_notifier, move |event, meta, state| match event {
-                DrmEvent::VBlank(crtc) => {
-                    errors.set(0);
-                    vblank(state, Head { node, crtc }, meta.as_ref());
-                }
-                DrmEvent::Error(e) => {
-                    let token = state
-                        .backend
-                        .as_ref()
-                        .and_then(|b| b.devices.primary().events);
-                    drm_error(state, &errors, token, &e);
-                }
-            })?;
+    let drm_events = watch_device(state, node, drm_notifier)?;
     let (replies, done) = channel::<(Head, commit::Reply<Out>)>();
     state
         .handle
@@ -459,14 +447,7 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
             }
         })
         .map_err(|e| e.error)?;
-    let reset = reset::Device {
-        fd: drm.device_fd().clone(),
-        atomic: drm.is_atomic(),
-    };
-    let reset = DeviceThread {
-        thread: commit::Thread::spawn("device", node, reset, None, device_replies)?,
-        track: commit::Track::default(),
-    };
+    let reset = reset_thread(&drm, node, device_replies.clone())?;
     let udev = MonitorBuilder::new()?.match_subsystem("drm")?.listen()?;
     state.handle.insert_source(
         Generic::new(udev, Interest::READ, Mode::Level),
@@ -495,7 +476,7 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
                             .is_some_and(|n| n.to_string_lossy().starts_with("card")) =>
                     {
                         log::info!(
-                            "GPU {} added; only {node} is driven",
+                            "GPU {} added; it is opened when Reprise next starts",
                             event.syspath().display()
                         )
                     }
@@ -525,12 +506,14 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
                 dead: false,
                 back: reset::Return::default(),
                 reset,
+                seat_fd: None,
                 rescan: false,
                 probe: None,
             },
         ),
         render_formats,
         replies,
+        device_replies,
         retiring: HashMap::new(),
         reenable: Default::default(),
         delay: std::env::var(commit::Delay::VAR).ok(),
@@ -544,10 +527,173 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         uploads,
     });
     scan_connectors(state, node, &HashMap::new());
+    for other in secondaries(state.config.all_gpus, &seat_gpus, node) {
+        device_added(state, other);
+    }
     if state.scene.outputs().is_empty() {
         log::warn!("no connected output on {}", path.display());
     }
     Ok(())
+}
+
+/// The `commit-device` thread for `drm`, answering as `node`.
+fn reset_thread(
+    drm: &DrmDevice,
+    node: DrmNode,
+    replies: Sender<(DrmNode, commit::Reply<Vec<crtc::Handle>>)>,
+) -> std::io::Result<DeviceThread> {
+    let reset = reset::Device {
+        fd: drm.device_fd().clone(),
+        atomic: drm.is_atomic(),
+    };
+    Ok(DeviceThread {
+        thread: commit::Thread::spawn("device", node, reset, None, replies)?,
+        track: commit::Track::default(),
+    })
+}
+
+/// Hand `node`'s vblanks to its heads. Read errors that keep coming end the session on the
+/// primary (`drm_error`) and drop a secondary (`device_removed`).
+fn watch_device(
+    state: &mut State,
+    node: DrmNode,
+    notifier: DrmDeviceNotifier,
+) -> Result<RegistrationToken, Box<dyn std::error::Error>> {
+    let errors = std::cell::Cell::new(0);
+    let token = state
+        .handle
+        .insert_source(notifier, move |event, meta, state| match event {
+            DrmEvent::VBlank(crtc) => {
+                errors.set(0);
+                vblank(state, Head { node, crtc }, meta.as_ref());
+            }
+            DrmEvent::Error(e) => {
+                let b = state.backend.as_ref();
+                if b.is_none_or(|b| b.devices.is_primary(node)) {
+                    let token = b.and_then(|b| b.devices.primary().events);
+                    drm_error(state, &errors, token, &e);
+                } else if count_error(&errors, &e) {
+                    log::error!(
+                        "drm {node}: {e}; {DRM_ERRORS_GONE} errors in a row, the device is gone"
+                    );
+                    device_removed(state, node);
+                }
+            }
+        })?;
+    Ok(token)
+}
+
+/// Open `node` beside the primary (`[display] all_gpus`). Its connectors are scanned and
+/// parked: only the primary draws, so none of its monitors lights. A device that fails to open
+/// is left alone.
+fn device_added(state: &mut State, node: DrmNode) {
+    if state
+        .backend
+        .as_ref()
+        .is_none_or(|b| b.devices.contains(node))
+    {
+        return;
+    }
+    let device = match open_secondary(state, node) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("GPU {node}: {e}; left alone");
+            return;
+        }
+    };
+    if let Some(b) = state.backend.as_mut() {
+        b.devices.add(node, device);
+    }
+    scan_connectors(state, node, &HashMap::new());
+}
+
+/// `node` opened through the session; a device that fails to come up is closed again.
+fn open_secondary(state: &mut State, node: DrmNode) -> Result<Device, Box<dyn std::error::Error>> {
+    let b = state.backend.as_mut().ok_or("no backend")?;
+    let path = node.dev_path().ok_or("no device file")?;
+    let seat_fd = b.session.open(
+        &path,
+        OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
+    )?;
+    let made = (seat_fd.try_clone().map_err(Into::into))
+        .and_then(|fd| secondary_device(state, node, &path, fd));
+    let Some(b) = state.backend.as_mut() else {
+        return made;
+    };
+    match made {
+        Ok(mut device) => {
+            device.seat_fd = Some(seat_fd);
+            Ok(device)
+        }
+        Err(e) => {
+            let _ = b.session.close(seat_fd);
+            Err(e)
+        }
+    }
+}
+
+fn secondary_device(
+    state: &mut State,
+    node: DrmNode,
+    path: &std::path::Path,
+    fd: std::os::fd::OwnedFd,
+) -> Result<Device, Box<dyn std::error::Error>> {
+    let b = state.backend.as_mut().ok_or("no backend")?;
+    let fd = DrmDeviceFd::new(DeviceFd::from(fd));
+    let (drm, notifier) = DrmDevice::new(fd.clone(), true)?;
+    let gbm = GbmDevice::new(fd)?;
+    let reset = reset_thread(&drm, node, b.device_replies.clone())?;
+    let render = (node.node_with_type(NodeType::Render))
+        .and_then(Result::ok)
+        .unwrap_or(node);
+    let allocator = GbmAllocator::new(
+        gbm.clone(),
+        GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
+    );
+    let exporter = GbmFramebufferExporter::new(gbm.clone(), Some(render).into());
+    let events = watch_device(state, node, notifier)?;
+    log::info!(
+        "GPU {}: its monitors stay off; only the GPU that renders drives monitors",
+        path.display()
+    );
+    Ok(Device {
+        drm,
+        allocator,
+        exporter,
+        gbm,
+        scanner: DrmScanner::new(),
+        events: Some(events),
+        dead: false,
+        back: reset::Return::default(),
+        reset,
+        seat_fd: None,
+        rescan: false,
+        probe: None,
+    })
+}
+
+/// A secondary `node` is gone: its outputs leave and its reset thread ends.
+fn device_removed(state: &mut State, node: DrmNode) {
+    let Some(b) = state.backend.as_mut() else {
+        return;
+    };
+    let held: Vec<Head> = b.surfaces.keys().chain(b.parked.keys()).copied().collect();
+    let devices::Removed::Secondary(mut device, heads) = b.devices.remove(node, held) else {
+        return;
+    };
+    b.reenable.retain(|h| h.node != node);
+    drop(device.reset.thread.exit());
+    if let Some(fd) = device.seat_fd.take()
+        && let Err(e) = b.session.close(fd)
+    {
+        log::warn!("GPU {node}: close: {e}");
+    }
+    if let Some(t) = device.events.take() {
+        state.handle.remove(t);
+    }
+    for head in heads {
+        connector_disconnected(state, head);
+    }
 }
 
 /// The primary node of the device at `path`, which may name a card, its render node or a
@@ -563,7 +709,17 @@ fn card_node(path: &std::path::Path) -> Option<DrmNode> {
 /// readable, so the source would otherwise fail on every loop turn.
 const DRM_ERRORS_GONE: u32 = 10;
 
-/// A read error on the DRM device's event source `token`. Once `DRM_ERRORS_GONE` come in a row
+/// Count a read error on a device's event source: true on the `DRM_ERRORS_GONE`th in a row.
+fn count_error(errors: &std::cell::Cell<u32>, e: &smithay::backend::drm::DrmError) -> bool {
+    let n = errors.get() + 1;
+    errors.set(n);
+    if n < DRM_ERRORS_GONE {
+        log::error!("drm: {e}");
+    }
+    n == DRM_ERRORS_GONE
+}
+
+/// A read error on the primary's event source `token`. Once `DRM_ERRORS_GONE` come in a row
 /// the source goes, the backend stops rendering and the session ends as on SIGTERM.
 fn drm_error(
     state: &mut State,
@@ -571,16 +727,12 @@ fn drm_error(
     token: Option<RegistrationToken>,
     e: &smithay::backend::drm::DrmError,
 ) {
-    let n = errors.get() + 1;
-    errors.set(n);
-    if n < DRM_ERRORS_GONE {
-        log::error!("drm: {e}");
+    if !count_error(errors, e) {
         return;
     }
-    if n > DRM_ERRORS_GONE {
-        return;
-    }
-    log::error!("drm: {e}; {n} errors in a row, the device is gone: ending the session");
+    log::error!(
+        "drm: {e}; {DRM_ERRORS_GONE} errors in a row, the device is gone: ending the session"
+    );
     if let Some(token) = token {
         state.handle.remove(token);
     }
