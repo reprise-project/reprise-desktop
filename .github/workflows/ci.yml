@@ -7,42 +7,34 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  # The image and the packages are pinned (the archive date names the repos' state), so a new
+  # rustc, clippy or Mesa reaches pull requests only through a commit that bumps both.
   build:
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container: archlinux@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
     # Incremental state buys nothing on a fresh runner and doubles the cache.
     env:
       CARGO_INCREMENTAL: 0
       # Where rust-cache looks for the registry; the builds run as builder.
       CARGO_HOME: /home/builder/.cargo
+      ARCH_ARCHIVE: 2026/10/25
     steps:
-      # PKGBUILD depends, plus the fallback font and the MIME database the tests read.
-      - name: Install dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed rust clang python pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire ttf-dejavu shared-mime-info
-      - name: Install cargo-nextest 0.9.149
-        run: |
-          curl -LsSf -o /tmp/nextest.tar.gz https://get.nexte.st/0.9.149/linux
-          echo '32d1d8c0567b7a80bee2bad8bb09125c846da96bc009b2de11ec08557290c770  /tmp/nextest.tar.gz' | sha256sum -c
-          tar xzf /tmp/nextest.tar.gz -C /usr/local/bin
+      # Before the shared steps: the action is read from the checkout. Without git yet, checkout
+      # downloads the tree through the API, which is all these steps need.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Tests that assert a read-only directory refuses a write only mean
-      # something as an unprivileged user; the container runs as root.
-      - name: Create the build user
-        run: useradd -m builder
-      # Keyed on rustc, Cargo.lock and the job; drops the workspace's own artifacts before saving.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # The Tahoma the pixel tests are pinned to.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: ./.github/actions/build
         with:
-          path: /home/builder/.cache/reprise-test-fonts
-          key: test-fonts-${{ hashFiles('scripts/test-fonts.sh') }}
-      # The checkout and the caches come back owned by root.
-      - run: chown -R builder "$GITHUB_WORKSPACE" /home/builder
-      - run: |
-          dir=$(runuser -u builder -- env HOME=/home/builder scripts/test-fonts.sh)
-          echo "REPRISE_TEST_FONTS=$dir" >> "$GITHUB_ENV"
-      - run: runuser -u builder -- env HOME=/home/builder cargo fmt --check
-      - run: runuser -u builder -- env HOME=/home/builder cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: runuser -u builder -- env HOME=/home/builder REPRISE_TEST_FONTS="$REPRISE_TEST_FONTS" cargo nextest run --workspace --locked --profile ci
+          arch-archive: ${{ env.ARCH_ARCHIVE }}
+  # The same on today's image and repos: shows what the next pin bump will meet, without
+  # blocking a merge.
+  canary:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    continue-on-error: true
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_HOME: /home/builder/.cargo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/build
