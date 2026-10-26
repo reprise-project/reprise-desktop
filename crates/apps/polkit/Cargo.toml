@@ -11,7 +11,8 @@ workspace = true
 
 [[bin]]
 name = "reprise-polkit"
-path = "src/main.rs"
+path = "src/bin/reprise-polkit.rs"
+test = false
 
 [dependencies]
 repriseapp = { path = "../../repriseapp" }

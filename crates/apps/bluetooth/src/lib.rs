@@ -1025,8 +1025,9 @@ impl App for BtApp {
     }
 }
 
-fn main() {
-    repriseapp::applet_main(BtApp::new);
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(args: Vec<std::ffi::OsString>) {
+    repriseapp::applet_main(&args, BtApp::new);
 }
 
 #[cfg(test)]

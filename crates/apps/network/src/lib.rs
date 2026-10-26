@@ -1379,8 +1379,9 @@ fn hotspot_clients(d: &nm::Device) -> Option<usize> {
     d.hotspot.as_ref().and_then(|_| stations::count(&d.iface))
 }
 
-fn main() {
-    repriseapp::applet_main(|tray_only| NetApp {
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(args: Vec<std::ffi::OsString>) {
+    repriseapp::applet_main(&args, |tray_only| NetApp {
         hidden: tray_only,
         tray_only,
         forms: repriseapp::start_forms(),

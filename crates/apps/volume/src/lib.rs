@@ -811,9 +811,10 @@ impl App for Volume {
     }
 }
 
-fn main() {
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    let view = if std::env::args().skip(1).any(|a| a == "--record") {
+    let view = if args.iter().any(|a| a == "--record") {
         View::Recording
     } else {
         View::Playback

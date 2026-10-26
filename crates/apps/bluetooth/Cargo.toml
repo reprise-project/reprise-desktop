@@ -11,7 +11,8 @@ workspace = true
 
 [[bin]]
 name = "reprise-bluetooth"
-path = "src/main.rs"
+path = "src/bin/reprise-bluetooth.rs"
+test = false
 
 [dependencies]
 repriseapp = { path = "../../repriseapp" }

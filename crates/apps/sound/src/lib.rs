@@ -751,8 +751,9 @@ impl Sound {
     }
 }
 
-fn main() {
-    repriseapp::applet_main(|tray_only| Sound {
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(args: Vec<std::ffi::OsString>) {
+    repriseapp::applet_main(&args, |tray_only| Sound {
         hidden: tray_only,
         tray_only,
         ..Sound::default()

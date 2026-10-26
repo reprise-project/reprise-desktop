@@ -600,8 +600,9 @@ impl App for DrivesApp {
     }
 }
 
-fn main() {
-    repriseapp::applet_main(|_| DrivesApp::default());
+/// Runs the program; `args` are the command line after the program's name.
+pub fn main(args: Vec<std::ffi::OsString>) {
+    repriseapp::applet_main(&args, |_| DrivesApp::default());
 }
 
 #[cfg(test)]
