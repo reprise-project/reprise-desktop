@@ -22,4 +22,3 @@ repriseconf = { path = "../../repriseconf" }
 zbus.workspace = true
 zeroize.workspace = true
 log.workspace = true
-reprisebus = { path = "../../reprisebus" }

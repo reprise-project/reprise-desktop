@@ -300,7 +300,11 @@ impl PowerApp {
         let msgs: Vec<tray::TrayMsg> = self
             .msgs
             .as_ref()
-            .map(|rx| rx.try_iter().filter_map(tray::translate).collect())
+            .map(|rx| {
+                rx.try_iter()
+                    .filter_map(|m| tray::translate(m, &self.profiles))
+                    .collect()
+            })
             .unwrap_or_default();
         let raised = !msgs.is_empty();
         let mut shown = None;
@@ -485,14 +489,12 @@ impl PowerApp {
 }
 
 fn main() {
-    reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    let tray_only = std::env::args().any(|a| a == "--tray");
-    repriseapp::run(Box::new(PowerApp {
+    repriseapp::applet_main(|tray_only| PowerApp {
         hidden: tray_only,
         tray_only,
         path: repriseconf::config_path(),
         ..PowerApp::default()
-    }));
+    });
 }
 
 #[cfg(test)]
@@ -543,7 +545,7 @@ mod tests {
             ..PowerApp::default()
         };
         assert_eq!(app.wake().activate, None);
-        tx.send(reprisetray::Msg::Clicked(tray::ID_PROPERTIES))
+        tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::OpenProperties))
             .unwrap();
         assert_eq!(app.wake().activate, Some((repriseapp::MAIN, handoff)));
     }

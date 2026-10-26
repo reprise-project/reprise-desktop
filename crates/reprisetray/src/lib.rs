@@ -7,6 +7,7 @@
 use futures_util::stream::StreamExt;
 use reprisebus::mutex::lock;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -109,6 +110,90 @@ impl Node {
             ..Node::toggle(id, label, on)
         }
     }
+}
+
+/// A dbusmenu's rows, each standing for a value of the applet's `T`. A row's id comes from its
+/// value, so it stays the same across rebuilds and a click on a menu the host still shows from an
+/// earlier layout means the same row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rows<T> {
+    nodes: Vec<Node>,
+    rows: Vec<(i32, T)>,
+}
+
+#[derive(Hash)]
+enum RowKey<'a, T> {
+    Row(&'a T),
+    Separator(usize),
+}
+
+impl<T> Default for Rows<T> {
+    fn default() -> Self {
+        Rows {
+            nodes: Vec::new(),
+            rows: Vec::new(),
+        }
+    }
+}
+
+impl<T: Hash + PartialEq + Clone> Rows<T> {
+    /// The id `row` gets: positive, since 0 is the dbusmenu's root.
+    pub fn id(row: &T) -> i32 {
+        key_id(&RowKey::Row(row))
+    }
+
+    /// The message a click on `row`'s row sends.
+    pub fn clicked(row: &T) -> Msg {
+        Msg::Clicked(Self::id(row))
+    }
+
+    /// Appends the row for `row`, which `node` makes from its id.
+    pub fn add(&mut self, row: T, node: impl FnOnce(i32) -> Node) -> &mut Self {
+        let id = self.free(Self::id(&row));
+        self.rows.push((id, row));
+        self.nodes.push(node(id));
+        self
+    }
+
+    pub fn separator(&mut self) -> &mut Self {
+        let n = self.nodes.iter().filter(|n| n.separator).count();
+        let id = self.free(key_id(&RowKey::<T>::Separator(n)));
+        self.nodes.push(Node::separator(id));
+        self
+    }
+
+    /// The value of the row a [`Msg::Clicked`] names, if it is one of these.
+    pub fn translate(&self, msg: Msg) -> Option<T> {
+        let Msg::Clicked(id) = msg else {
+            return None;
+        };
+        self.rows
+            .iter()
+            .find(|(i, _)| *i == id)
+            .map(|(_, row)| row.clone())
+    }
+
+    pub fn nodes(&self) -> &[Node] {
+        &self.nodes
+    }
+
+    pub fn into_nodes(self) -> Vec<Node> {
+        self.nodes
+    }
+
+    /// `id`, or the next one up no node has yet: two values whose hashes meet still get a row each.
+    fn free(&self, mut id: i32) -> i32 {
+        while self.nodes.iter().any(|n| n.id == id) {
+            id = id.checked_add(1).unwrap_or(1);
+        }
+        id
+    }
+}
+
+fn key_id<T: Hash>(key: &RowKey<'_, T>) -> i32 {
+    let mut h = std::hash::DefaultHasher::new();
+    key.hash(&mut h);
+    ((h.finish() >> 33) as i32).max(1)
 }
 
 /// What the item shows: written by the applet through `set_state`, read by both served interfaces.
@@ -899,6 +984,57 @@ pub fn start(config: Config, initial: Shown, wake: Wake) -> Started {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone, Debug, Hash, PartialEq)]
+    enum Row {
+        Open,
+        Item(usize),
+        Exit,
+    }
+
+    fn menu(items: usize) -> Rows<Row> {
+        let mut rows = Rows::default();
+        rows.add(Row::Open, |id| Node::row(id, "Open")).separator();
+        for i in 0..items {
+            rows.add(Row::Item(i), |id| Node::row(id, format!("Item {i}")));
+        }
+        rows.separator().add(Row::Exit, |id| Node::row(id, "Exit"));
+        rows
+    }
+
+    #[test]
+    fn a_rows_id_stays_while_other_rows_come_and_go() {
+        let (short, long) = (menu(0), menu(3));
+        let id = |rows: &Rows<Row>, label: &str| {
+            rows.nodes().iter().find(|n| n.label == label).unwrap().id
+        };
+        assert_eq!(id(&short, "Exit"), id(&long, "Exit"));
+        assert_eq!(id(&long, "Exit"), Rows::id(&Row::Exit));
+        assert_eq!(
+            long.translate(Rows::clicked(&Row::Item(2))),
+            Some(Row::Item(2))
+        );
+        assert_eq!(
+            short.translate(Rows::clicked(&Row::Item(2))),
+            None,
+            "a row not shown"
+        );
+        assert_eq!(short.translate(Rows::clicked(&Row::Exit)), Some(Row::Exit));
+        assert_eq!(long.translate(Msg::Activate(0, 0)), None);
+    }
+
+    #[test]
+    fn every_node_has_its_own_id_and_separators_mean_nothing() {
+        let rows = menu(3);
+        let mut ids: Vec<i32> = rows.nodes().iter().map(|n| n.id).collect();
+        assert!(ids.iter().all(|&id| id > 0), "0 is the root");
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), rows.nodes().len());
+        for n in rows.nodes().iter().filter(|n| n.separator) {
+            assert_eq!(rows.translate(Msg::Clicked(n.id)), None);
+        }
+    }
 
     #[test]
     fn a_tray_only_program_exits_without_its_item() {
