@@ -80,13 +80,12 @@ pub enum Security {
     Psk,
     Sae,
     Enterprise,
+    Wep,
 }
 
 impl Security {
     /// `Flags` (bit 0 privacy), `WpaFlags` and `RsnFlags` (0x100 PSK,
-    /// 0x200 802.1X, 0x400 SAE). WEP, privacy with neither WPA nor RSN,
-    /// needs a key the applet cannot ask for, so it counts as enterprise
-    /// and sends the user to the connection editor.
+    /// 0x200 802.1X, 0x400 SAE). WEP is privacy with neither WPA nor RSN.
     pub fn from_flags(flags: u32, wpa: u32, rsn: u32) -> Security {
         let both = wpa | rsn;
         if both & 0x200 != 0 {
@@ -96,7 +95,7 @@ impl Security {
         } else if rsn & 0x400 != 0 {
             Security::Sae
         } else if flags & 1 != 0 {
-            Security::Enterprise
+            Security::Wep
         } else {
             Security::Open
         }
@@ -460,7 +459,7 @@ pub fn sort_aps(aps: &mut [AccessPoint]) {
     aps.sort_by(|a, b| b.strength.cmp(&a.strength).then(a.ssid.cmp(&b.ssid)));
 }
 
-/// A secret: a Wi-Fi passphrase or a WireGuard key, zeroized on drop.
+/// A secret: a Wi-Fi passphrase or login password or a WireGuard key, zeroized on drop.
 /// `Debug` redacts it so a logged `Cmd` never carries it into the session
 /// log.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -485,15 +484,86 @@ impl std::ops::Deref for Psk {
     }
 }
 
+/// An 802.1X network's outer EAP method.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Eap {
+    #[default]
+    Peap,
+    Ttls,
+    Tls,
+}
+
+impl Eap {
+    pub const ALL: [Eap; 3] = [Eap::Peap, Eap::Ttls, Eap::Tls];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Eap::Peap => "PEAP",
+            Eap::Ttls => "TTLS",
+            Eap::Tls => "TLS",
+        }
+    }
+
+    /// The inner methods the tunnel takes; TLS has no tunnel.
+    pub fn inner(self) -> &'static [Inner] {
+        match self {
+            Eap::Peap => &[Inner::Mschapv2, Inner::Gtc],
+            Eap::Ttls => &[Inner::Mschapv2, Inner::Pap, Inner::Gtc],
+            Eap::Tls => &[],
+        }
+    }
+}
+
+/// The method PEAP or TTLS authenticates with inside its tunnel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Inner {
+    #[default]
+    Mschapv2,
+    Pap,
+    Gtc,
+}
+
+impl Inner {
+    pub fn label(self) -> &'static str {
+        match self {
+            Inner::Mschapv2 => "MSCHAPv2",
+            Inner::Pap => "PAP",
+            Inner::Gtc => "GTC",
+        }
+    }
+}
+
+/// What an 802.1X network is joined with. `ca_cert` is None when the
+/// user ticked "No CA certificate is required"; the paths are absolute.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Enterprise {
+    pub eap: Eap,
+    pub anonymous_identity: String,
+    pub ca_cert: Option<std::path::PathBuf>,
+    pub inner: Inner,
+    pub identity: String,
+    pub password: Psk,
+    pub client_cert: Option<std::path::PathBuf>,
+    pub private_key: Option<std::path::PathBuf>,
+    pub private_key_password: Psk,
+}
+
+/// The secret a network is joined with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Key {
+    Psk(Psk),
+    Enterprise(Box<Enterprise>),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cmd {
-    /// Join `ssid` on `device` through access point `ap`; `psk` is the
-    /// passphrase the user typed, None for an open or already saved one.
+    /// Join `ssid` on `device` through access point `ap`; `key` is what
+    /// the user typed, None for an open or already saved network.
     Connect {
         device: String,
         ap: String,
         ssid: Ssid,
-        psk: Option<Psk>,
+        key: Option<Key>,
     },
     Disconnect(String),
     Disable(String),
@@ -707,26 +777,26 @@ pub fn psk_in_profile(security: &Props) -> bool {
 }
 
 /// What `Cmd::Connect` should do about the profile, decided before any
-/// call goes out. A saved profile is never duplicated: a passphrase
-/// typed for one that already exists rewrites its key instead. The plan
-/// borrows the passphrase, so the `Cmd`'s copy is the only one.
+/// call goes out. A saved profile is never duplicated: a key typed for
+/// one that already exists rewrites its key instead. The plan borrows the
+/// key, so the `Cmd`'s copy is the only one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConnectPlan<'a> {
     Activate(String),
-    Rekey { conn_path: String, psk: &'a Psk },
-    Add { psk: Option<&'a Psk> },
+    Rekey { conn_path: String, key: &'a Key },
+    Add { key: Option<&'a Key> },
 }
 
 /// The plan for an SSID: `known` is the saved connection carrying it, if
-/// there is one, and `psk` what the user typed, if anything.
-pub fn connect_plan<'a>(known: Option<&str>, psk: Option<&'a Psk>) -> ConnectPlan<'a> {
-    match (known, psk) {
-        (Some(conn_path), Some(psk)) => ConnectPlan::Rekey {
+/// there is one, and `key` what the user typed, if anything.
+pub fn connect_plan<'a>(known: Option<&str>, key: Option<&'a Key>) -> ConnectPlan<'a> {
+    match (known, key) {
+        (Some(conn_path), Some(key)) => ConnectPlan::Rekey {
             conn_path: conn_path.to_string(),
-            psk,
+            key,
         },
         (Some(conn_path), None) => ConnectPlan::Activate(conn_path.to_string()),
-        (None, psk) => ConnectPlan::Add { psk },
+        (None, key) => ConnectPlan::Add { key },
     }
 }
 
@@ -742,12 +812,38 @@ mod tests {
             device: "/dev/0".into(),
             ap: "/ap/1".into(),
             ssid: "home".into(),
-            psk: Some(Psk::new("hunter2")),
+            key: Some(Key::Psk(Psk::new("hunter2"))),
         };
         let logged = format!("{cmd:?}");
         assert!(!logged.contains("hunter2"), "{logged}");
         assert!(logged.contains("home"));
         assert_eq!(&*Psk::new("hunter2"), "hunter2");
+    }
+
+    #[test]
+    fn logged_connect_does_not_carry_enterprise_passwords() {
+        let cmd = Cmd::Connect {
+            device: "/dev/0".into(),
+            ap: "/ap/1".into(),
+            ssid: "campus".into(),
+            key: Some(Key::Enterprise(Box::new(Enterprise {
+                identity: "alice".into(),
+                password: Psk::new("hunter2"),
+                private_key_password: Psk::new("swordfish"),
+                ..Enterprise::default()
+            }))),
+        };
+        let logged = format!("{cmd:?}");
+        assert!(!logged.contains("hunter2"), "{logged}");
+        assert!(!logged.contains("swordfish"), "{logged}");
+        assert!(logged.contains("alice"));
+    }
+
+    #[test]
+    fn peap_and_ttls_offer_their_own_inner_methods() {
+        assert_eq!(Eap::Peap.inner(), [Inner::Mschapv2, Inner::Gtc]);
+        assert_eq!(Eap::Ttls.inner(), [Inner::Mschapv2, Inner::Pap, Inner::Gtc]);
+        assert!(Eap::Tls.inner().is_empty(), "TLS has no tunnel");
     }
 
     fn props(entries: Vec<(&str, Value<'static>)>) -> Props {
@@ -783,7 +879,7 @@ mod tests {
             "WPA1 PSK beside SAE is Psk"
         );
         assert_eq!(Security::from_flags(1, 0, 0x200), Security::Enterprise);
-        assert_eq!(Security::from_flags(1, 0, 0), Security::Enterprise);
+        assert_eq!(Security::from_flags(1, 0, 0), Security::Wep);
     }
 
     #[test]
@@ -1163,22 +1259,22 @@ mod tests {
 
     #[test]
     fn connect_never_duplicates_a_saved_profile() {
-        let psk = Psk::new("hunter2");
+        let key = Key::Psk(Psk::new("hunter2"));
         assert_eq!(
             connect_plan(Some("/Settings/1"), None),
             ConnectPlan::Activate("/Settings/1".into())
         );
         assert_eq!(
-            connect_plan(Some("/Settings/1"), Some(&psk)),
+            connect_plan(Some("/Settings/1"), Some(&key)),
             ConnectPlan::Rekey {
                 conn_path: "/Settings/1".into(),
-                psk: &psk,
+                key: &key,
             }
         );
         assert_eq!(
-            connect_plan(None, Some(&psk)),
-            ConnectPlan::Add { psk: Some(&psk) }
+            connect_plan(None, Some(&key)),
+            ConnectPlan::Add { key: Some(&key) }
         );
-        assert_eq!(connect_plan(None, None), ConnectPlan::Add { psk: None });
+        assert_eq!(connect_plan(None, None), ConnectPlan::Add { key: None });
     }
 }

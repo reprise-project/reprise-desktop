@@ -46,6 +46,7 @@ use reprisekit::theme::{TextUnits, Theme};
 /// sheet at a time: opening another replaces it.
 const CHOOSER: WinId = "chooser";
 const KEY: WinId = "key";
+const EAP: WinId = "eap";
 const STATUS: WinId = "status";
 const VPN: WinId = "vpn";
 const IMPORT: WinId = "import";
@@ -89,6 +90,13 @@ impl VpnWin {
     }
 }
 
+/// The field a Browse... file dialog fills.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Browse {
+    Ovpn(&'static str),
+    Eap(&'static str),
+}
+
 struct Notice {
     msg: MsgBox,
     /// The saved VPN Yes deletes.
@@ -109,12 +117,13 @@ struct NetApp {
     folder: folder::Folder,
     chooser: Option<chooser::Chooser>,
     key: Option<keydlg::KeyDialog>,
+    eap: Option<keydlg::eap::EapDialog>,
     status: Option<status::Status>,
     vpn: Option<VpnWin>,
     import: Option<FileDlg>,
     import_host: Host,
-    /// The file dialog is the OpenVPN sheet's Browse... for this field, not Import.
-    browse_for: Option<&'static str>,
+    /// The file dialog is a Browse... for this field, not Import.
+    browse_for: Option<Browse>,
     hotspot: Option<hotspot::HotspotDialog>,
     notice: Option<Notice>,
     /// The message box's font, loaded in `start`: `children` sizes its window without a `Ctx`.
@@ -203,10 +212,11 @@ impl NetApp {
         }
     }
 
-    /// Drop the chooser, and the key dialog that belongs to it.
+    /// Drop the chooser, and the key dialogs that belong to it.
     fn close_chooser(&mut self) {
         self.chooser = None;
         self.key = None;
+        self.eap = None;
     }
 
     fn primary_path(&self) -> Option<String> {
@@ -364,17 +374,23 @@ impl NetApp {
         ));
     }
 
-    /// The OpenVPN sheet's Browse... for `field`: the file dialog opens where its file is.
-    fn open_browse(&mut self, field: &'static str, u: TextUnits) {
-        let Some(VpnWin::OpenVpn(s)) = &self.vpn else {
-            return;
+    /// A Browse... for `to`: the file dialog opens where its file is.
+    fn open_browse(&mut self, to: Browse, u: TextUnits) {
+        let current = match to {
+            Browse::Ovpn(field) => match &self.vpn {
+                Some(VpnWin::OpenVpn(s)) => s.path_of(field),
+                _ => return,
+            },
+            Browse::Eap(field) => match &self.eap {
+                Some(d) => d.path_of(field),
+                None => return,
+            },
         };
-        let start = s
-            .path_of(field)
+        let start = current
             .and_then(|p| p.parent().map(PathBuf::from))
             .filter(|d| d.is_dir())
             .unwrap_or_else(home_dir);
-        self.browse_for = Some(field);
+        self.browse_for = Some(to);
         self.import = Some(self.import_host.open(
             &start,
             Fields {
@@ -746,7 +762,7 @@ impl NetApp {
                 Reply::redraw_all()
             }
             vpnsheet::Outcome::Browse(field) => {
-                self.open_browse(field, ctx.forms().text);
+                self.open_browse(Browse::Ovpn(field), ctx.forms().text);
                 Reply::redraw_all()
             }
         }
@@ -845,9 +861,14 @@ impl NetApp {
         self.import = None;
         let title = self.file_title();
         match (picked, self.browse_for.take()) {
-            (Some(Ok(path)), Some(field)) => {
+            (Some(Ok(path)), Some(Browse::Ovpn(field))) => {
                 if let Some(VpnWin::OpenVpn(s)) = &mut self.vpn {
                     s.set_path(field, &path.to_string_lossy());
+                }
+            }
+            (Some(Ok(path)), Some(Browse::Eap(field))) => {
+                if let Some(d) = &mut self.eap {
+                    d.set_path(field, &path);
                 }
             }
             (Some(Ok(path)), None) => self.import_file(path),
@@ -918,6 +939,15 @@ impl NetApp {
             chooser::Outcome::Connect {
                 ap,
                 ssid,
+                security: nm::Security::Enterprise,
+                needs_key: true,
+            } => {
+                self.eap = Some(keydlg::eap::EapDialog::new(&ssid, &ap));
+                Reply::redraw_all()
+            }
+            chooser::Outcome::Connect {
+                ap,
+                ssid,
                 security,
                 needs_key: true,
             } => {
@@ -964,7 +994,54 @@ impl NetApp {
                 let Some(device) = self.chooser.as_ref().map(|c| c.device_path.clone()) else {
                     return Reply::redraw_all();
                 };
-                self.dial(device, k.ap.clone(), k.ssid.clone(), Some(psk));
+                self.dial(
+                    device,
+                    k.ap.clone(),
+                    k.ssid.clone(),
+                    Some(nm::Key::Psk(psk)),
+                );
+                Reply::redraw_all()
+            }
+        }
+    }
+
+    fn eap_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
+        let out = {
+            let Some(d) = self.eap.as_mut() else {
+                return Reply::none();
+            };
+            match ev {
+                Event::CloseRequest => keydlg::eap::Outcome::Cancel,
+                Event::Pasted(text) => {
+                    let ev = d.form.paste(text);
+                    d.event(ev)
+                }
+                ev => match form_input(&mut d.form, &ev, ctx) {
+                    Some(ev) => d.event(ev),
+                    None => return Reply::none(),
+                },
+            }
+        };
+        match out {
+            keydlg::eap::Outcome::None => Reply::none(),
+            keydlg::eap::Outcome::Redraw => Reply::redraw(),
+            keydlg::eap::Outcome::Browse(field) => {
+                self.open_browse(Browse::Eap(field), ctx.forms().text);
+                Reply::redraw_all()
+            }
+            keydlg::eap::Outcome::Cancel => {
+                self.eap = None;
+                Reply::redraw_all()
+            }
+            keydlg::eap::Outcome::Connect(login) => {
+                let Some(d) = self.eap.take() else {
+                    return Reply::redraw_all();
+                };
+                let Some(device) = self.chooser.as_ref().map(|c| c.device_path.clone()) else {
+                    return Reply::redraw_all();
+                };
+                let key = nm::Key::Enterprise(login);
+                self.dial(device, d.ap.clone(), d.ssid.clone(), Some(key));
                 Reply::redraw_all()
             }
         }
@@ -1010,7 +1087,7 @@ impl NetApp {
 
     /// Dial `ssid` and leave the chooser saying so until the device
     /// settles.
-    fn dial(&mut self, device: String, ap: String, ssid: nm::Ssid, psk: Option<nm::Psk>) {
+    fn dial(&mut self, device: String, ap: String, ssid: nm::Ssid, key: Option<nm::Key>) {
         if let Some(c) = &mut self.chooser {
             c.connecting = Some(ssid.clone());
         }
@@ -1018,7 +1095,7 @@ impl NetApp {
             device,
             ap,
             ssid,
-            psk,
+            key,
         });
     }
 
@@ -1073,6 +1150,15 @@ impl App for NetApp {
                 id: KEY,
                 title: keydlg::KeyDialog::window_title(),
                 size: u.size(keydlg::CLIENT),
+                fixed: true,
+                modal: true,
+            });
+        }
+        if self.eap.is_some() {
+            out.push(Child {
+                id: EAP,
+                title: keydlg::eap::EapDialog::window_title(),
+                size: u.size(keydlg::eap::CLIENT),
                 fixed: true,
                 modal: true,
             });
@@ -1169,6 +1255,11 @@ impl App for NetApp {
                 let clip = form_clipboard(field, &ev);
                 self.key_event(ev, ctx).with_clipboard(clip)
             }
+            EAP => {
+                let field = self.eap.as_ref().and_then(|d| d.form.focused_edit());
+                let clip = form_clipboard(field, &ev);
+                self.eap_event(ev, ctx).with_clipboard(clip)
+            }
             STATUS => self.status_event(ev, ctx),
             VPN => {
                 let field = self
@@ -1201,6 +1292,11 @@ impl App for NetApp {
             KEY => {
                 if let Some(k) = &self.key {
                     oneshot::access_form(&k.form, tree, &ctx.text, form_px);
+                }
+            }
+            EAP => {
+                if let Some(d) = &self.eap {
+                    oneshot::access_form(&d.form, tree, &ctx.text, form_px);
                 }
             }
             STATUS => {
@@ -1244,6 +1340,7 @@ impl App for NetApp {
         let form = match win {
             VPN => self.vpn.as_mut()?.sheet_mut().open_mut(),
             HOTSPOT => &mut self.hotspot.as_mut()?.form,
+            EAP => &mut self.eap.as_mut()?.form,
             _ => return None,
         };
         Some(DropForm { form, px: None })
@@ -1278,6 +1375,22 @@ impl App for NetApp {
                             ..forms.paint()
                         },
                         &k.form,
+                        true,
+                        form_px,
+                    );
+                }
+            }
+            EAP => {
+                c.fill_rect(c.bounds(), cs.button_face);
+                if let Some(d) = &self.eap {
+                    form::draw(
+                        c,
+                        &ctx.text,
+                        &Paint {
+                            s: 1,
+                            ..forms.paint()
+                        },
+                        &d.form,
                         true,
                         form_px,
                     );
