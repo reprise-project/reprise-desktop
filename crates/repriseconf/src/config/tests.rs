@@ -249,6 +249,15 @@ fn gesture_tuning_defaults_and_ranges() {
 }
 
 #[test]
+fn display_gpu_takes_an_absolute_device_path() {
+    assert_eq!(Config::default().gpu, None);
+    let c = Config::parse("[display]\ngpu = \"/dev/dri/card1\"\n").unwrap();
+    assert_eq!(c.gpu, Some("/dev/dri/card1".into()));
+    assert!(Config::parse("[display]\ngpu = \"card1\"\n").is_err());
+    assert!(Config::parse("[display]\ngpu = \"\"\n").is_err());
+}
+
+#[test]
 fn screenshot_save_defaults_on_and_is_configurable() {
     assert!(Config::default().screenshot.save);
     let c = Config::parse("[screenshot]\nsave = false\n").unwrap();
