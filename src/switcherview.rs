@@ -332,10 +332,7 @@ impl State {
         }
         if !self.switcher.is_open() && keyboard.current_focus() == focused {
             for k in keyboard.pressed_keys() {
-                let k = k.raw();
-                if !self.key_input.drag_keys.contains(&k) {
-                    self.key_input.drag_keys.push(k);
-                }
+                self.key_input.held.hold_back(k.raw());
             }
         }
     }
