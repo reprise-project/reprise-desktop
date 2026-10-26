@@ -130,7 +130,7 @@ impl Queue {
             ]),
             ids: Vec::new(),
             jobs: Vec::new(),
-            bar: Bar::new(Vec::new()),
+            bar: Bar::new(Vec::<(&str, _)>::new()),
             acts: [Vec::new(), Vec::new()],
             popup: None,
             alt_arm: AltArm::default(),

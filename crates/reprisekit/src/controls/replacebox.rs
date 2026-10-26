@@ -141,16 +141,16 @@ const MERGE_TEXT: &str = "If files in the existing folder have the same names as
                           the folder you are moving or copying, they will be replaced. Do \
                           you still want to move or copy the folder?";
 
-fn buttons(f: &Fields) -> Vec<(&'static str, &'static str)> {
+fn buttons(f: &Fields) -> Vec<(&'static str, String)> {
     if f.many {
         vec![
-            (YES, "&Yes"),
-            (YES_ALL, "Yes to &All"),
-            (NO, "&No"),
-            (CANCEL, "Cancel"),
+            (YES, tr!("yes")),
+            (YES_ALL, tr!("yes-to-all")),
+            (NO, tr!("no")),
+            (CANCEL, tr!("cancel")),
         ]
     } else {
-        vec![(YES, "&Yes"), (NO, "&No")]
+        vec![(YES, tr!("yes")), (NO, tr!("no"))]
     }
 }
 
@@ -302,7 +302,7 @@ pub fn form(f: &Fields, text: &TextRenderer, px: u32, u: TextUnits) -> Form {
         items.push(Item::button(
             id,
             Rect::new(x, p.button_y, BUTTON_W, BUTTON_H),
-            label,
+            &label,
             true,
             i == 0,
         ));

@@ -59,7 +59,7 @@ fn match_case_row(xy: (i32, i32), checked: bool) -> Item {
         MATCH_CASE,
         Rect::new(xy.0, xy.1, CHECK, CHECK),
         Control::Check {
-            label: "Match &case".into(),
+            label: tr!("find-match-case"),
             checked,
             enabled: true,
             mixed: None,
@@ -73,7 +73,7 @@ pub fn find_form(f: &FindFields) -> Form {
         Item::label(
             "querylabel",
             Rect::new(LABEL_X, ROW_Y[0], FIND_EDIT_X - LABEL_X, EDIT_H),
-            "Fi&nd what:",
+            &tr!("find-what"),
         ),
         Item::edit(
             QUERY,
@@ -85,15 +85,22 @@ pub fn find_form(f: &FindFields) -> Form {
             FIND_NEXT,
             FIND_BTN_X,
             FIND_BTN_Y[0],
-            "&Find Next",
+            &tr!("find-next"),
             live,
             true,
         ),
-        button(CANCEL, FIND_BTN_X, FIND_BTN_Y[1], "Cancel", true, false),
+        button(
+            CANCEL,
+            FIND_BTN_X,
+            FIND_BTN_Y[1],
+            &tr!("cancel"),
+            true,
+            false,
+        ),
         match_case_row(FIND_CHECK_XY, f.match_case),
-        Item::group("dirgroup", GROUP, "Direction"),
-        Item::radio(UP, RADIO_XY[0].0, RADIO_XY[0].1, "&Up", "dir").checked(!f.down),
-        Item::radio(DOWN, RADIO_XY[1].0, RADIO_XY[1].1, "&Down", "dir").checked(f.down),
+        Item::group("dirgroup", GROUP, &tr!("find-direction")),
+        Item::radio(UP, RADIO_XY[0].0, RADIO_XY[0].1, &tr!("find-up"), "dir").checked(!f.down),
+        Item::radio(DOWN, RADIO_XY[1].0, RADIO_XY[1].1, &tr!("find-down"), "dir").checked(f.down),
     ])
     .set_in(DialogFont::ShellDlg)
     .labels_at_ink()
@@ -105,7 +112,7 @@ pub fn replace_form(f: &ReplaceFields) -> Form {
         Item::label(
             "querylabel",
             Rect::new(LABEL_X, ROW_Y[0], REPLACE_EDIT_X - LABEL_X, EDIT_H),
-            "Fi&nd what:",
+            &tr!("find-what"),
         ),
         Item::edit(
             QUERY,
@@ -116,7 +123,7 @@ pub fn replace_form(f: &ReplaceFields) -> Form {
         Item::label(
             "withlabel",
             Rect::new(LABEL_X, ROW_Y[1], REPLACE_EDIT_X - LABEL_X, EDIT_H),
-            "Re&place with:",
+            &tr!("find-replace-with"),
         ),
         Item::edit(
             WITH,
@@ -128,7 +135,7 @@ pub fn replace_form(f: &ReplaceFields) -> Form {
             FIND_NEXT,
             REPLACE_BTN_X,
             REPLACE_BTN_Y[0],
-            "&Find Next",
+            &tr!("find-next"),
             live,
             true,
         ),
@@ -136,7 +143,7 @@ pub fn replace_form(f: &ReplaceFields) -> Form {
             REPLACE,
             REPLACE_BTN_X,
             REPLACE_BTN_Y[1],
-            "&Replace",
+            &tr!("find-replace"),
             live,
             false,
         ),
@@ -144,7 +151,7 @@ pub fn replace_form(f: &ReplaceFields) -> Form {
             REPLACE_ALL,
             REPLACE_BTN_X,
             REPLACE_BTN_Y[2],
-            "Replace &All",
+            &tr!("find-replace-all"),
             live,
             false,
         ),
@@ -152,7 +159,7 @@ pub fn replace_form(f: &ReplaceFields) -> Form {
             CANCEL,
             REPLACE_BTN_X,
             REPLACE_BTN_Y[3],
-            "Cancel",
+            &tr!("cancel"),
             true,
             false,
         ),

@@ -249,7 +249,7 @@ impl FileDlg {
         match i {
             TOOLBAR_BACK => self.nav(Nav::Back),
             TOOLBAR_UP => self.up(),
-            TOOLBAR_NEW_FOLDER => Event::CreateFolder("New Folder".into()),
+            TOOLBAR_NEW_FOLDER => Event::CreateFolder(tr!("filedlg-new-folder")),
             TOOLBAR_VIEWS => {
                 self.views_open = true;
                 self.views_at = None;
