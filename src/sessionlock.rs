@@ -199,6 +199,7 @@ fn locker_timed_out(state: &mut State) {
     l.awaiting = false;
     let cmd = &state.config.power.locker;
     log::warn!("session lock: {cmd:?} did not lock in time; showing the dialog");
+    crate::lockview::start_dialog_finger(state);
     crate::lockview::redraw(state);
 }
 
@@ -257,9 +258,10 @@ impl SessionLockHandler for State {
             wait: Some(CoverWait::new(outputs)),
         };
         if let Some(l) = self.lock.active.as_mut() {
-            // Whatever was typed into the dialog goes, and a check in
-            // flight ends with its child.
+            // Whatever was typed into the dialog goes, a check in flight
+            // ends with its child, and the reader is the locker's.
             l.pending = None;
+            l.finger = None;
             l.state.reset();
             l.awaiting = false;
             l.client = Some(c);
@@ -510,6 +512,7 @@ pub fn check_alive(state: &mut State) {
     state.pointer_motion(None, p, InputTime::now());
     state.set_cursor("default");
     log::warn!("session lock: the locker went away without unlocking; showing the dialog");
+    crate::lockview::start_dialog_finger(state);
     crate::lockview::redraw(state);
 }
 
