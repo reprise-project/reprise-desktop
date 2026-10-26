@@ -58,6 +58,9 @@ backup=('etc/pam.d/reprise' 'etc/pam.d/reprise-fingerprint')
 # only touches CFLAGS, CXXFLAGS and LDFLAGS; Rust LTO follows Cargo.toml's
 # release profile.
 options=(!lto)
+# makepkg's debug option appends DEBUG_RUSTFLAGS (-C debuginfo=2 on Arch) to RUSTFLAGS,
+# overriding the release profile: line tables keep backtraces at file:line.
+DEBUG_RUSTFLAGS="-C debuginfo=line-tables-only"
 source=()
 
 _repo() {
