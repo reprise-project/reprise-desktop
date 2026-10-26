@@ -205,9 +205,7 @@ pub fn publish(state: &mut State) {
     state.outputs_mgmt.notify(heads);
 }
 
-/// How far from the origin a head may sit: the layout's arithmetic is i32, and
-/// 2^24 leaves room for size and neighbours.
-pub const MAX_POSITION: i32 = 1 << 24;
+pub use repriseconf::config::MAX_POSITION;
 
 /// Whether a configuration is one this compositor will try: at least one head
 /// stays enabled and every enabled head's position is within `MAX_POSITION`.

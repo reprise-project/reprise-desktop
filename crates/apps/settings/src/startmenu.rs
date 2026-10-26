@@ -2,7 +2,7 @@
 //! read out of the file and written back whole, as `[[keybinds]]` is.
 //!
 //! **The default menu here mirrors `default_startmenu` in
-//! `src/config.rs`**, the menu a file without `[[startmenu]]` gets; a test
+//! `src/config/menu.rs`**, the menu a file without `[[startmenu]]` gets; a test
 //! holds both to `config.example.toml`'s block.
 
 use repriseconf::{Key, key as k, remove};

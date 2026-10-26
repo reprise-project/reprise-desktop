@@ -224,7 +224,7 @@ impl TaskbarConfig {
 pub struct WallpaperConfig {
     /// A picture file, or a built-in's `reprise:` URI (`builtin_path`).
     pub image: Option<PathBuf>,
-    pub position: crate::wallpaper::Position,
+    pub position: reprisekit::wallpaper::Position,
     pub lock_screen: bool,
     pub slideshow: Option<PathBuf>,
     pub interval: u32,
