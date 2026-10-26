@@ -626,6 +626,7 @@ fn save_round_trips_every_field() {
         terminal: "kitty".into(),
         script_terminal: "close".into(),
         script_open: "terminal".into(),
+        confirm_scripts: false,
         task_manager: "htop".into(),
         startmenu_banner: "Reprise".into(),
         startmenu_style: "classic".into(),
