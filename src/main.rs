@@ -23,6 +23,7 @@ mod coalesce;
 mod compositor;
 mod configwatch;
 mod constraint;
+mod crash;
 mod cursor;
 mod desktops;
 mod devices;
@@ -217,6 +218,10 @@ struct Cli {
     /// Check the password on stdin for USER and exit (the lock starts it; see `lockfinger`)
     #[arg(long, hide = true, value_name = "USER")]
     password_conversation: Option<String>,
+    /// Start a new session after the last one crashed, the crashes of this login so far (the
+    /// restart passes it; see `crash`)
+    #[arg(long, hide = true, value_name = "CRASHES")]
+    after_crash: Option<u32>,
 }
 
 fn main() {
@@ -233,6 +238,10 @@ fn main() {
     }
     if let Some(user) = cli.password_conversation.as_deref() {
         std::process::exit(lockfinger::password_main(user));
+    }
+    crash::install(cli.after_crash);
+    if let Some(n) = cli.after_crash {
+        log::warn!("starting after crash {n} of this login");
     }
     let config_path = cli
         .config
@@ -251,6 +260,7 @@ fn main() {
         config_stamp,
         cli.startup.as_deref(),
         config_notice,
+        cli.after_crash.is_some(),
     ) {
         log::error!("{e}");
         std::process::exit(1);
@@ -258,14 +268,19 @@ fn main() {
 }
 
 /// Start the display and the backend, then run the event loop until it stops.
-/// A `config_notice` goes up as a balloon once the outputs are up.
+/// A `config_notice` goes up as a balloon once the outputs are up. `after_crash`: this start
+/// follows a crash of the same login (`crash`).
 fn run(
     config: config::Config,
     config_path: PathBuf,
     config_stamp: configwatch::Stamp,
     startup: Option<&str>,
     config_notice: Option<String>,
+    after_crash: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if after_crash {
+        spawn::adopt_orphans();
+    }
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     let mut state = State::new(
         config,
@@ -288,7 +303,9 @@ fn run(
         &state.env,
         state.config.session.end_processes,
         another_session,
+        after_crash,
     );
+    crash::on_start(&mut state, after_crash);
     configwatch::setup(&mut state, config_stamp);
     appindex::setup(&mut state);
     iconwatch::setup(&mut state);

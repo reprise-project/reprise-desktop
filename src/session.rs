@@ -1,5 +1,5 @@
 //! Session restore: the apps open when the session ends start again at the
-//! next login, each from its desktop entry, its first window back on the
+//! next login or the restart after a crash (`crash`), each from its desktop entry, its first window back on the
 //! virtual desktop it was on. Where on the screen it opens is the window
 //! memory's job (`windowrules::Remembered`).
 //!
