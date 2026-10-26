@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 reprisekit = { path = "../reprisekit" }
+repriseapp-pins = { path = "../repriseapp-pins" }
 reprisefs = { path = "../reprisefs" }
 repriseconf = { path = "../repriseconf" }
 smithay-client-toolkit = "0.21"

@@ -2050,6 +2050,7 @@ dependencies = [
  "log",
  "pipewire",
  "reis",
+ "repriseapp-pins",
  "reprisebus",
  "repriseconf",
  "reprisefs",
@@ -2358,6 +2359,7 @@ dependencies = [
  "libc",
  "log",
  "png",
+ "repriseapp-pins",
  "reprisebus",
  "repriseconf",
  "reprisefs",
@@ -2367,6 +2369,25 @@ dependencies = [
  "wayland-client",
  "wayland-scanner",
  "zeroize",
+]
+
+[[package]]
+name = "repriseapp-pins"
+version = "0.1.0"
+dependencies = [
+ "anstream",
+ "hashbrown",
+ "regex-automata",
+ "regex-syntax",
+ "rustix 1.1.5",
+ "toml_datetime",
+ "toml_edit",
+ "tracing",
+ "wayland-protocols",
+ "wayland-protocols-misc",
+ "wayland-protocols-wlr",
+ "wayland-server",
+ "zbus",
 ]
 
 [[package]]
