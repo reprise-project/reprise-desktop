@@ -191,7 +191,10 @@ pub fn lineage(pid: i32) -> (Vec<i32>, Option<i32>) {
 /// panes was started from that terminal. Scans `/proc`, so a host asks it
 /// only once every cheaper check has failed.
 pub fn serves(lineage: &[i32], focused: i32) -> bool {
-    let exe = |p: i32| std::fs::read_link(format!("/proc/{p}/exe")).ok();
+    let exe = |p: i32| {
+        let exe = std::fs::read_link(format!("/proc/{p}/exe")).ok()?;
+        Some((exe, reprisefs::multicall::program_of(p)))
+    };
     let Some(&root) = lineage.last().filter(|_| lineage.len() < MAX_LINEAGE) else {
         return false;
     };
@@ -231,13 +234,9 @@ fn descendants(pid: i32) -> Vec<i32> {
 const PROMPTS: &[&str] = &["reprise-portal", "reprise-polkit", "reprise-drives"];
 
 pub fn is_prompt(pid: i32) -> bool {
-    std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|exe| {
-        use std::os::unix::ffi::OsStrExt;
-        let exe = exe.as_os_str().as_bytes();
-        PROMPTS
-            .iter()
-            .any(|p| crate::inputproto::is_installed_exe(exe, p))
-    })
+    PROMPTS
+        .iter()
+        .any(|p| crate::inputproto::runs_installed(pid, p))
 }
 
 #[cfg(test)]

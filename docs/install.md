@@ -41,7 +41,9 @@ not record window titles, notification text, clipboard contents, what is
 typed or what is playing.
 
 On Arch, `packaging/arch/PKGBUILD` packages the compositor, the programs, the
-session file, the PAM files and the portal backend.
+session file, the PAM files and the portal backend. The programs are one
+binary, `/usr/bin/reprise-apps`, and `reprise-notepad` and the other program
+names are symlinks to it.
 
 Every push to main also publishes a package as the
 [Nightly release](https://github.com/reprise-project/reprise-desktop/releases/tag/nightly).
