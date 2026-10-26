@@ -73,6 +73,11 @@ Code for one look lives in its interface module (`classic`, `blue`,
 `glass`); `crates/reprisekit/tests/layers.rs` checks which modules may
 reach which.
 
+Each program in `crates/apps` is a library with a thin binary, so
+`cargo run -p reprise-notepad` runs one alone; packages install them all as
+one binary, `reprise-apps`, which runs the program named by the symlink it
+was started through.
+
 A control is done when a unit test pins its pixels and
 `cargo run -p reprisekit --example gallery` draws it.
 
