@@ -78,6 +78,10 @@ pkgver() {
 build() {
   cd "$(_repo)"
   export RUSTUP_TOOLCHAIN=stable
+  # The About boxes show it as the build id.
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    export REPRISE_BUILD="$(git rev-parse --short HEAD)"
+  fi
   # Keeps packaging out of the working tree's target/.
   export CARGO_TARGET_DIR="$srcdir/target"
   # Panic locations carry absolute source paths: map the build tree and the
