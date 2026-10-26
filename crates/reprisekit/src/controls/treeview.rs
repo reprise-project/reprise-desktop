@@ -933,7 +933,8 @@ pub fn draw(
 }
 
 /// The tree view's `access` part: a tree whose items nest as the visible rows
-/// do, expanded or collapsed when they have children, placed in the set by their visible index.
+/// do, expanded or collapsed when they have children, placed in the set among their siblings
+/// and carrying their visible index as the row index.
 /// It holds the rows in view and the selected row, each under its ancestors; rows scrolled
 /// out of view lie above or below the frame. Returns the node that has the focus when the tree
 /// does: the rename box while open, the selected row, else the tree.
@@ -983,8 +984,14 @@ pub fn access(
         }
         let selected = tv.selected.as_ref() == Some(&row.path);
         item.set_selected(selected);
-        item.set_position_in_set(i + 1);
-        item.set_size_of_set(count);
+        let (parent_path, place) = row.path.split_at(row.path.len() - 1);
+        let siblings = match parent_path {
+            [] => tv.roots.len(),
+            p => tv.node(p).map_or(0, |n| n.children.len()),
+        };
+        item.set_position_in_set(place[0] + 1);
+        item.set_size_of_set(siblings);
+        item.set_row_index(i);
         let y = lay.body.y + (i as i32 - tv.top as i32) * rh;
         let x = lay.body.x - tv.left_in(lay) + tv.label_x(row.depth);
         let r = Rect::new(x, y, (lay.body.right() - x).max(0), rh);
