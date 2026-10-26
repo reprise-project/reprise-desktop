@@ -315,16 +315,25 @@ impl Launcher {
                 // non-insert disables completion until the next Insert.
                 let drops_tail = tail.is_some() && !is_insert && !eats;
                 if let Some(i) = tail {
-                    if matches!(ek, EditKey::Undo) {
-                        // Undo over a completion drops just the completion:
-                        // TextEdit's own undo could restore a text in which
-                        // `i` is no char boundary.
+                    let moves = matches!(
+                        ek,
+                        EditKey::Left { .. }
+                            | EditKey::Right { .. }
+                            | EditKey::Home { .. }
+                            | EditKey::End { .. }
+                            | EditKey::SelectAll
+                            | EditKey::Copy
+                    );
+                    if moves {
+                        self.edit.key(ek);
                         self.drop_tail(i);
                     } else {
-                        // Apply first so an Insert replaces the completion's selection.
-                        self.edit.key(ek);
-                        if !is_insert && !eats {
-                            self.drop_tail(i);
+                        // The completion was never typed, so it goes before any edit lands and
+                        // the edit's undo log holds typing alone. Undo, Backspace, Delete and Cut
+                        // over it take just the completion.
+                        self.drop_tail(i);
+                        if !eats && !matches!(ek, EditKey::Undo) {
+                            self.edit.key(ek);
                         }
                     }
                     self.tail = None;
@@ -392,8 +401,10 @@ impl Launcher {
     /// A host's paste: replaces a shown completion as a typed insert would.
     pub fn paste(&mut self, text: &str) -> Event {
         let before = self.query().to_string();
+        if let Some(i) = self.tail.take() {
+            self.drop_tail(i);
+        }
         self.edit.paste(text, &[]);
-        self.tail = None;
         self.completing = true;
         if self.query() != before {
             Event::QueryChanged
@@ -1326,6 +1337,22 @@ mod tests {
         l.set_rows(rows(&["ixÉyoZZZ"]));
         assert_eq!(l.edit.text, "ixÉyo");
         assert!(!l.edit.has_selection());
+    }
+
+    #[test]
+    fn undo_after_typing_over_completions_walks_back_the_typing_alone() {
+        let mut l = Launcher::new();
+        typed(&mut l, "f");
+        l.set_rows(rows(&["Firefox"]));
+        typed(&mut l, "i");
+        l.set_rows(rows(&["Firefox"]));
+        assert_eq!(l.edit.text, "firefox");
+        l.key(Key::Char(EditKey::Undo));
+        assert_eq!(l.edit.text, "fi", "the first undo drops the completion");
+        l.key(Key::Char(EditKey::Undo));
+        assert_eq!(l.edit.text, "", "the typing run is one step");
+        l.key(Key::Char(EditKey::Redo));
+        assert_eq!(l.edit.text, "fi");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! The right-click menu of a text box: Undo, Cut, Copy, Paste, Delete and Select All, greyed
+//! The right-click menu of a text box: Undo, Redo, Cut, Copy, Paste, Delete and Select All, greyed
 //! like an Edit menu. A host opens [`tree`] as a [`PopupMenu`] and maps the chosen path back
 //! through [`command`], or holds a whole open [`Menu`] and runs a pick as its [`shortcut`].
 
@@ -14,6 +14,7 @@ use accesskit::NodeId;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Undo,
+    Redo,
     Cut,
     Copy,
     Paste,
@@ -25,6 +26,7 @@ pub enum Command {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Live {
     pub undo: bool,
+    pub redo: bool,
     pub selection: bool,
     /// The clipboard holds text.
     pub paste: bool,
@@ -37,6 +39,7 @@ impl Live {
     pub fn of(spot: &TextSpot, paste: bool) -> Live {
         Live {
             undo: spot.can_undo,
+            redo: spot.can_redo,
             selection: spot.selected,
             paste,
             secret: spot.secret,
@@ -47,6 +50,7 @@ impl Live {
     pub fn of_edit(edit: &TextEdit, paste: bool) -> Live {
         Live {
             undo: edit.can_undo(),
+            redo: edit.can_redo(),
             selection: edit.has_selection(),
             paste,
             secret: edit.is_secret(),
@@ -55,8 +59,9 @@ impl Live {
 }
 
 /// The rows top to bottom, `None` a separator.
-const ROWS: [Option<(&str, Command)>; 8] = [
+const ROWS: [Option<(&str, Command)>; 9] = [
     Some(("&Undo", Command::Undo)),
+    Some(("&Redo", Command::Redo)),
     None,
     Some(("Cu&t", Command::Cut)),
     Some(("&Copy", Command::Copy)),
@@ -77,6 +82,7 @@ pub fn items(live: Live) -> Vec<MenuItem> {
             None => MenuItem::Separator,
             Some((label, cmd)) => MenuItem::item(label).enabled(match cmd {
                 Command::Undo => live.undo,
+                Command::Redo => live.redo,
                 Command::Cut | Command::Copy => live.selection && !live.secret,
                 Command::Delete => live.selection,
                 Command::Paste => live.paste,
@@ -113,6 +119,7 @@ pub fn under_caret(spot: &TextSpot) -> (i32, i32) {
 pub fn shortcut(cmd: Command) -> (u32, bool) {
     match cmd {
         Command::Undo => (0x7a, true),
+        Command::Redo => (0x79, true),
         Command::Cut => (0x78, true),
         Command::Copy => (0x63, true),
         Command::Paste => (0x76, true),
@@ -242,6 +249,7 @@ mod tests {
             enabled(&none),
             [
                 Some(false),
+                Some(false),
                 None,
                 Some(false),
                 Some(false),
@@ -253,6 +261,7 @@ mod tests {
         );
         let all = tree(Live {
             undo: true,
+            redo: true,
             selection: true,
             paste: true,
             secret: false,
@@ -263,11 +272,11 @@ mod tests {
             ..Live::default()
         });
         assert_eq!(
-            enabled(&paste)[4],
+            enabled(&paste)[5],
             Some(true),
             "Paste follows the clipboard"
         );
-        assert_eq!(enabled(&paste)[3], Some(false), "Copy needs a selection");
+        assert_eq!(enabled(&paste)[4], Some(false), "Copy needs a selection");
     }
 
     #[test]
@@ -282,13 +291,22 @@ mod tests {
             .collect();
         assert_eq!(
             labels,
-            ["Undo", "Cut", "Copy", "Paste", "Delete", "Select All"]
+            [
+                "Undo",
+                "Redo",
+                "Cut",
+                "Copy",
+                "Paste",
+                "Delete",
+                "Select All"
+            ]
         );
         assert_eq!(command(&[0]), Some(Command::Undo));
-        assert_eq!(command(&[1]), None);
-        assert_eq!(command(&[4]), Some(Command::Paste));
-        assert_eq!(command(&[7]), Some(Command::SelectAll));
-        assert_eq!(command(&[8]), None);
+        assert_eq!(command(&[1]), Some(Command::Redo));
+        assert_eq!(command(&[2]), None);
+        assert_eq!(command(&[5]), Some(Command::Paste));
+        assert_eq!(command(&[8]), Some(Command::SelectAll));
+        assert_eq!(command(&[9]), None);
         assert_eq!(command(&[4, 0]), None);
     }
 
@@ -307,6 +325,7 @@ mod tests {
         assert_eq!(
             enabled(&tree(live)),
             [
+                Some(false),
                 Some(false),
                 None,
                 Some(false),

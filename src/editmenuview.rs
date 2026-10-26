@@ -50,6 +50,7 @@ impl State {
                 FocusedEdit::Line(e) => Some(line(e)),
                 FocusedEdit::Lines(m) => Some(Live {
                     undo: m.can_undo(),
+                    redo: m.can_redo(),
                     selection: m.has_selection(),
                     paste,
                     secret: false,

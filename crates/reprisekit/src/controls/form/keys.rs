@@ -119,6 +119,7 @@ pub fn flat_key(k: &EditKey) -> Option<Key> {
         | EditKey::Cut
         | EditKey::Paste
         | EditKey::Undo
+        | EditKey::Redo
         | EditKey::DeleteSurrounding { .. } => return None,
     })
 }

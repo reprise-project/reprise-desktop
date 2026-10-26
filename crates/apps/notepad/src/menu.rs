@@ -22,16 +22,17 @@ pub(crate) mod row {
     pub const SAVE_AS: usize = 3;
     pub const EXIT: usize = 8;
     pub const UNDO: usize = 0;
-    pub const CUT: usize = 2;
-    pub const COPY: usize = 3;
-    pub const PASTE: usize = 4;
-    pub const DELETE: usize = 5;
-    pub const FIND: usize = 7;
-    pub const FIND_NEXT: usize = 8;
-    pub const REPLACE: usize = 9;
-    pub const GOTO: usize = 10;
-    pub const SELECT_ALL: usize = 12;
-    pub const TIME_DATE: usize = 13;
+    pub const REDO: usize = 1;
+    pub const CUT: usize = 3;
+    pub const COPY: usize = 4;
+    pub const PASTE: usize = 5;
+    pub const DELETE: usize = 6;
+    pub const FIND: usize = 8;
+    pub const FIND_NEXT: usize = 9;
+    pub const REPLACE: usize = 10;
+    pub const GOTO: usize = 11;
+    pub const SELECT_ALL: usize = 13;
+    pub const TIME_DATE: usize = 14;
     pub const STATUS_BAR: usize = 0;
     pub const ABOUT: usize = 2;
 }
@@ -56,6 +57,7 @@ pub(crate) fn menus() -> Vec<(&'static str, Vec<MenuItem>)> {
             "&Edit",
             vec![
                 mi("&Undo", Some("Ctrl+Z"), true),
+                mi("&Redo", Some("Ctrl+Y"), true),
                 MenuItem::Separator,
                 mi("Cu&t", Some("Ctrl+X"), true),
                 mi("&Copy", Some("Ctrl+C"), true),
@@ -115,6 +117,9 @@ impl Notepad {
             (title::EDIT, row::UNDO) => {
                 self.edit_key(MultiKey::Edit(EditKey::Undo), ctx);
             }
+            (title::EDIT, row::REDO) => {
+                self.edit_key(MultiKey::Edit(EditKey::Redo), ctx);
+            }
             (title::EDIT, row::CUT) => {
                 reply.copy = Some(self.edit.selected_text());
                 self.edit_key(MultiKey::Edit(EditKey::Cut), ctx);
@@ -166,6 +171,7 @@ impl Notepad {
     pub(crate) fn open_context(&mut self, at: (i32, i32), by_keyboard: bool, ctx: &Ctx) {
         let live = editmenu::Live {
             undo: self.edit.can_undo(),
+            redo: self.edit.can_redo(),
             selection: self.edit.has_selection(),
             paste: repriseapp::clipboard_has_text(),
             secret: false,
@@ -207,6 +213,7 @@ impl Notepad {
         self.context = None;
         let row = match cmd {
             editmenu::Command::Undo => row::UNDO,
+            editmenu::Command::Redo => row::REDO,
             editmenu::Command::Cut => row::CUT,
             editmenu::Command::Copy => row::COPY,
             editmenu::Command::Paste => row::PASTE,
@@ -251,6 +258,7 @@ impl Notepad {
         let selected = self.edit.has_selection();
         let live = [
             (row::UNDO, self.edit.can_undo()),
+            (row::REDO, self.edit.can_redo()),
             (row::CUT, selected),
             (row::COPY, selected),
             (row::PASTE, repriseapp::clipboard_has_text()),

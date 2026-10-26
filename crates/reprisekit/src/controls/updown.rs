@@ -147,7 +147,8 @@ impl UpDown {
             | EditKey::End { .. }
             | EditKey::SelectAll
             | EditKey::Cut
-            | EditKey::Undo => {}
+            | EditKey::Undo
+            | EditKey::Redo => {}
             // The host copies the selection and pastes through `paste`.
             EditKey::Copy | EditKey::Paste => return Some(false),
             EditKey::DeleteSurrounding { .. } => return None,

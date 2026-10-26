@@ -866,6 +866,7 @@ impl Terminal {
             secret: false,
             multiline: true,
             can_undo: false,
+            can_redo: false,
             selected: false,
             digits: false,
         });

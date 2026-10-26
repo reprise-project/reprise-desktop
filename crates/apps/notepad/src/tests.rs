@@ -265,7 +265,7 @@ fn edit_rows_grey_until_there_is_a_selection_or_an_edit_to_undo() {
         })
     };
     np.event(MAIN, Event::Focus(true), &mut ctx);
-    for r in [row::UNDO, row::CUT, row::COPY, row::DELETE] {
+    for r in [row::UNDO, row::REDO, row::CUT, row::COPY, row::DELETE] {
         assert!(
             !on(&np, r),
             "row {r} is greyed with no selection and no edit"
@@ -302,6 +302,15 @@ fn edit_rows_grey_until_there_is_a_selection_or_an_edit_to_undo() {
     np.event(MAIN, key(EditKey::Insert("x".into())), &mut ctx);
     assert!(on(&np, row::UNDO), "typing makes Undo live");
     assert!(!on(&np, row::CUT), "the typed text replaced the selection");
+    assert!(!on(&np, row::REDO), "nothing undone yet");
+
+    np.event(MAIN, key(EditKey::Undo), &mut ctx);
+    assert_eq!(np.edit.text(), "text");
+    assert!(on(&np, row::REDO), "an undo makes Redo live");
+    np.command(title::EDIT, row::REDO, &ctx);
+    np.sync_menus();
+    assert_eq!(np.edit.text(), "x", "Redo makes the typing again");
+    assert!(!on(&np, row::REDO));
 }
 
 fn right_press(x: i32, y: i32) -> PointerInput {
@@ -365,8 +374,8 @@ fn a_right_click_keeps_the_selection_under_it_and_moves_the_caret_outside_it() {
     assert_eq!(np.edit.selected_text(), "beta", "the selection stays");
     assert_eq!(
         context_rows(&np),
-        [false, true, true, false, true, true],
-        "Undo and Paste greyed, Cut, Copy, Delete and Select All live"
+        [false, false, true, true, false, true, true],
+        "Undo, Redo and Paste greyed, Cut, Copy, Delete and Select All live"
     );
     np.event(MAIN, typed(keysym::ESCAPE, None, false), &mut ctx);
     assert!(np.context.is_none(), "Escape closes the menu");
@@ -378,7 +387,10 @@ fn a_right_click_keeps_the_selection_under_it_and_moves_the_caret_outside_it() {
         "a click off the selection drops it"
     );
     assert_eq!(np.edit.caret(), multiedit::Pos { line: 0, col: 2 });
-    assert_eq!(context_rows(&np), [false, false, false, false, false, true]);
+    assert_eq!(
+        context_rows(&np),
+        [false, false, false, false, false, false, true]
+    );
 
     let (x, y) = at_col(&np, &ctx, 0);
     np.event(MAIN, Event::Pointer(right_press(x, y)), &mut ctx);
@@ -448,7 +460,7 @@ fn the_context_menu_runs_the_edit_commands() {
 
     open(&mut np, &mut ctx);
     assert!(
-        context_rows(&np)[3],
+        context_rows(&np)[4],
         "text on the clipboard makes Paste live"
     );
     np.event(MAIN, typed(0x61, Some("a"), false), &mut ctx);
