@@ -103,6 +103,26 @@ pub struct Placement {
     pub size: (i32, i32),
 }
 
+impl Placement {
+    /// The client's values held to `full`, the output they are placed on: a zone up to its longer
+    /// side, margins and size up to its extent on their axis.
+    pub fn clamped(self, full: Rect) -> Placement {
+        let (fw, fh) = (full.width.max(0), full.height.max(0));
+        let [top, right, bottom, left] = self.margin;
+        Placement {
+            zone: self.zone.clamp(-1, fw.max(fh)),
+            margin: [
+                top.clamp(-fh, fh),
+                right.clamp(-fw, fw),
+                bottom.clamp(-fh, fh),
+                left.clamp(-fw, fw),
+            ],
+            size: (self.size.0.clamp(0, fw), self.size.1.clamp(0, fh)),
+            ..self
+        }
+    }
+}
+
 impl Default for Placement {
     fn default() -> Placement {
         Placement {
@@ -144,7 +164,7 @@ pub fn place(p: &Placement, full: Rect, usable: Rect) -> Rect {
     } else {
         b.y + b.height / 2 - h / 2
     };
-    Rect::new(x, y, w, h)
+    Rect::new(x, y, w.max(0), h.max(0))
 }
 
 /// The edge a positive zone is on: the one the client named, else the one
@@ -168,17 +188,23 @@ pub fn reserve(p: &Placement, mut usable: Rect) -> Rect {
     let z = p.zone;
     match exclusive_edge(p) {
         Some(Anchor::TOP) => {
-            usable.y += z + top;
-            usable.height -= z + top;
+            usable.y = usable.y.saturating_add(z.saturating_add(top));
+            usable.height = usable.height.saturating_sub(z.saturating_add(top));
         }
-        Some(Anchor::BOTTOM) => usable.height -= z + bottom,
+        Some(Anchor::BOTTOM) => {
+            usable.height = usable.height.saturating_sub(z.saturating_add(bottom));
+        }
         Some(Anchor::LEFT) => {
-            usable.x += z + left;
-            usable.width -= z + left;
+            usable.x = usable.x.saturating_add(z.saturating_add(left));
+            usable.width = usable.width.saturating_sub(z.saturating_add(left));
         }
-        Some(Anchor::RIGHT) => usable.width -= z + right,
+        Some(Anchor::RIGHT) => {
+            usable.width = usable.width.saturating_sub(z.saturating_add(right));
+        }
         _ => {}
     }
+    usable.width = usable.width.max(0);
+    usable.height = usable.height.max(0);
     usable
 }
 
@@ -338,7 +364,8 @@ pub fn commit(state: &mut State, surface: &WlSurface) {
     }
     if mapped && !was_mapped {
         if matches!(now.layer, Layer::Top | Layer::Overlay) {
-            crate::autohideview::popup_mapped(state, &output, &wl, now.placement.zone);
+            let zone = now.placement.clamped(state.layout_box(Some(&output))).zone;
+            crate::autohideview::popup_mapped(state, &output, &wl, zone);
         }
         if now.keyboard == KeyboardInteractivity::Exclusive {
             focus_layer(state, &wl);
@@ -447,7 +474,8 @@ fn configure(state: &mut State, output: &Output) -> bool {
                 if l.output != *output || w.layer != layer || (w.placement.zone > 0) != exclusive {
                     continue;
                 }
-                let b = place(&w.placement, full, usable);
+                let placement = w.placement.clamped(full);
+                let b = place(&placement, full, usable);
                 state.scene.set_position(l.tree, b.x, b.y);
                 l.surface
                     .with_pending_state(|s| s.size = Some((b.width, b.height).into()));
@@ -462,7 +490,7 @@ fn configure(state: &mut State, output: &Output) -> bool {
                     l.surface.send_configure();
                 }
                 if l.mapped {
-                    usable = reserve(&w.placement, usable);
+                    usable = reserve(&placement, usable);
                 }
             }
         }
@@ -640,6 +668,35 @@ mod tests {
         assert_eq!(place(&p, FULL, FULL), Rect::new(860, 490, 200, 100));
         assert_eq!(exclusive_edge(&p), None);
         assert_eq!(reserve(&p, FULL), FULL);
+    }
+
+    #[test]
+    fn a_huge_zone_leaves_an_empty_usable_area_not_a_negative_one() {
+        let p = bar(Anchor::TOP | Anchor::LEFT | Anchor::RIGHT, 5000, (0, 30));
+        assert_eq!(reserve(&p, FULL).height, 0);
+        assert_eq!(reserve(&p.clamped(FULL), FULL).height, 0);
+        let p = bar(Anchor::LEFT | Anchor::TOP | Anchor::BOTTOM, 5000, (48, 0));
+        assert_eq!(reserve(&p, FULL).width, 0);
+    }
+
+    #[test]
+    fn an_overflowing_margin_does_not_panic() {
+        let mut p = bar(
+            Anchor::TOP | Anchor::LEFT | Anchor::RIGHT,
+            i32::MAX,
+            (0, 30),
+        );
+        p.margin = [1, 0, 0, 0];
+        assert_eq!(reserve(&p, FULL).height, 0);
+        let mut p = bar(Anchor::TOP | Anchor::LEFT, 0, (i32::MIN, i32::MAX));
+        p.margin = [i32::MAX, i32::MIN, i32::MAX, i32::MAX];
+        let p = p.clamped(FULL);
+        assert_eq!(p.size, (0, 1080));
+        let b = place(&p, FULL, FULL);
+        assert!(
+            b.width >= 0 && b.height >= 0,
+            "a rect of no negative size: {b:?}"
+        );
     }
 
     #[test]
