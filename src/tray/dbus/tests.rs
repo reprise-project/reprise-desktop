@@ -620,20 +620,20 @@ fn only_its_sender_replaces_or_closes_a_balloon() {
         next += 1;
         next - 1
     };
-    let a = senders.claim(":1.7", "mail", 0, &mut fresh);
+    let a = senders.claim(":1.7", Some(7), "mail", 0, false, &mut fresh);
     assert_eq!(a, 1, "a new balloon gets a fresh id");
     assert_eq!(
-        senders.claim(":1.7", "mail", a, &mut fresh),
+        senders.claim(":1.7", Some(7), "mail", a, false, &mut fresh),
         a,
         "its sender replaces it"
     );
     assert_eq!(
-        senders.claim(":1.8", "chat", a, &mut fresh),
+        senders.claim(":1.8", Some(8), "chat", a, true, &mut fresh),
         2,
         "another peer gets a fresh id"
     );
     assert_eq!(
-        senders.claim(":1.8", "", a, &mut fresh),
+        senders.claim(":1.8", Some(8), "", a, true, &mut fresh),
         3,
         "a peer with no app name gets a fresh id"
     );
@@ -641,27 +641,60 @@ fn only_its_sender_replaces_or_closes_a_balloon() {
     assert!(!senders.owns(a, ":1.8"), "another peer may not close it");
     senders.0.remove(&a);
     assert_eq!(
-        senders.claim(":1.7", "mail", a, &mut fresh),
+        senders.claim(":1.7", Some(7), "mail", a, false, &mut fresh),
         4,
         "a closed id is not reused"
     );
 }
 
 #[test]
-fn a_new_connection_under_the_same_app_name_replaces_its_balloon() {
+fn another_connection_under_the_same_app_name_gets_a_fresh_id() {
     let mut senders = Senders::default();
     let mut next = 1;
     let mut fresh = || {
         next += 1;
         next - 1
     };
-    let a = senders.claim(":1.7", "notify-send", 0, &mut fresh);
-    assert_eq!(senders.claim(":1.9", "notify-send", a, &mut fresh), a);
-    assert!(
-        senders.owns(a, ":1.9"),
-        "the replacing connection may close it"
+    let a = senders.claim(":1.7", Some(7), "mail", 0, false, &mut fresh);
+    assert_eq!(
+        senders.other_sender(a, ":1.8", Some(8), "mail").as_deref(),
+        Some(":1.7")
     );
-    assert!(!senders.owns(a, ":1.10"));
+    assert_eq!(
+        senders.claim(":1.8", Some(8), "mail", a, false, &mut fresh),
+        2
+    );
+    assert!(
+        senders.owns(a, ":1.7"),
+        "the first sender keeps its balloon"
+    );
+    assert_eq!(senders.other_sender(a, ":1.9", Some(7), "mail"), None);
+    assert_eq!(
+        senders.claim(":1.9", Some(7), "mail", a, false, &mut fresh),
+        a,
+        "another connection of its process replaces it"
+    );
+    assert!(
+        senders.owns(a, ":1.7"),
+        "and the first sender still owns it"
+    );
+}
+
+#[test]
+fn a_new_process_under_the_same_app_name_replaces_a_balloon_whose_sender_left() {
+    let mut senders = Senders::default();
+    let mut next = 1;
+    let mut fresh = || {
+        next += 1;
+        next - 1
+    };
+    let a = senders.claim(":1.7", Some(7), "notify-send", 0, false, &mut fresh);
+    assert_eq!(
+        senders.claim(":1.9", Some(9), "notify-send", a, true, &mut fresh),
+        a
+    );
+    assert!(senders.owns(a, ":1.7"), "the stored sender stays");
+    assert!(!senders.owns(a, ":1.9"));
 }
 
 #[test]
