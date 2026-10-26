@@ -195,7 +195,7 @@ pub struct SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         SessionConfig {
-            restore: false,
+            restore: true,
             exclude: Vec::new(),
             end_processes: true,
         }

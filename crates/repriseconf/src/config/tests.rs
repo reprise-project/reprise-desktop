@@ -705,14 +705,14 @@ fn pointer_speed_rejects_out_of_range() {
 }
 
 #[test]
-fn session_restore_is_off_by_default_and_reads_its_exclusions() {
+fn session_restore_is_on_by_default_and_reads_its_exclusions() {
     let d = Config::default();
-    assert!(!d.session.restore && d.session.exclude.is_empty());
-    let c = Config::parse("[session]\nrestore = true\nexclude = [\"foot\", \"org.*\"]\n").unwrap();
+    assert!(d.session.restore && d.session.exclude.is_empty());
+    let c = Config::parse("[session]\nrestore = false\nexclude = [\"foot\", \"org.*\"]\n").unwrap();
     assert_eq!(
         c.session,
         SessionConfig {
-            restore: true,
+            restore: false,
             exclude: vec!["foot".into(), "org.*".into()],
             end_processes: true,
         }

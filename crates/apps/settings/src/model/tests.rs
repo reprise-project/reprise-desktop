@@ -1045,7 +1045,7 @@ fn desktop_and_preview_defaults_match_the_compositor() {
     assert_eq!(d.previews_fps, 10);
     assert!(d.screenshot_save && d.clipboard_history && d.remember_windows);
     assert!(d.window_tabs);
-    assert!(!d.session_restore);
+    assert!(d.session_restore);
     assert!(d.session_end_processes);
     assert_eq!(d.hibernate, "systemctl hibernate");
     assert!(d.lock_on_sleep);
@@ -1301,12 +1301,12 @@ fn the_auto_hide_keys_are_written_only_off_their_defaults() {
 #[test]
 fn session_and_power_flags_write_their_own_tables() {
     let mut s = load("");
-    s.session_restore = true;
+    s.session_restore = false;
     s.lock_on_sleep = false;
     s.hibernate = "zzz".into();
     s.clipboard_history = false;
     let out = saved("", &s);
-    assert!(out.contains("[session]\nrestore = true\n"), "{out}");
+    assert!(out.contains("[session]\nrestore = false\n"), "{out}");
     assert!(out.contains("[clipboard]\nhistory = false\n"), "{out}");
     assert!(out.contains("hibernate = \"zzz\"\n"), "{out}");
     assert!(out.contains("lock_on_sleep = false\n"), "{out}");
