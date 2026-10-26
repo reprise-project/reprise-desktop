@@ -4,7 +4,7 @@
 //! window (`keyroute`, after `[[keybinds]]`) and reported to every object
 //! of that app. reprise-portal writes the entries and relays the events to
 //! the program over D-Bus. A shortcut's key coming up sends deactivated
-//! (`keyboard`'s `shortcut_keys`).
+//! (`heldkeys::Owner::Global`).
 
 use smithay::reexports::wayland_server::Resource;
 
