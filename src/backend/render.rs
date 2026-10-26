@@ -10,11 +10,8 @@ use smithay::{
         session::Session,
     },
     output::Output,
+    reexports::calloop::timer::{TimeoutAction, Timer},
     reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-    reexports::{
-        calloop::timer::{TimeoutAction, Timer},
-        drm::control::crtc,
-    },
     utils::Monotonic,
     wayland::presentation::Refresh,
 };
@@ -33,7 +30,8 @@ use super::outputs::power_off;
 use super::schedule::queue_render;
 use super::steps::{on_quiet, watch};
 use super::{
-    Flip, InFlight, Out, Surface, Work, commit, crtc_of, lock, schedule, schedule_step, surface_mut,
+    Flip, Head, InFlight, Out, Surface, Work, commit, head_of, lock, schedule, schedule_step,
+    surface_mut,
 };
 
 fn flip_time(
@@ -50,20 +48,20 @@ fn flip_time(
     }
 }
 
-pub(super) fn vblank(state: &mut State, crtc: crtc::Handle, meta: Option<&DrmEventMetadata>) {
+pub(super) fn vblank(state: &mut State, head: Head, meta: Option<&DrmEventMetadata>) {
     let flip = flip_time(state, meta);
-    let Some(s) = surface_mut(state, crtc) else {
+    let Some(s) = surface_mut(state, head) else {
         return;
     };
     if let Some(flip) = s.track.vblank(flip) {
-        flipped(state, crtc, flip);
+        flipped(state, head, flip);
     }
 }
 
-/// The frame queued on `crtc` reached the screen at `flip`.
-pub(super) fn flipped(state: &mut State, crtc: crtc::Handle, (time, seq, kind): Flip) {
+/// The frame queued on `head` reached the screen at `flip`.
+pub(super) fn flipped(state: &mut State, head: Head, (time, seq, kind): Flip) {
     let counting = state.config.debug.overlay;
-    let Some(s) = surface_mut(state, crtc) else {
+    let Some(s) = surface_mut(state, head) else {
         return;
     };
     let submitted = lock(&s.compositor).frame_submitted();
@@ -80,38 +78,38 @@ pub(super) fn flipped(state: &mut State, crtc: crtc::Handle, (time, seq, kind): 
         s.stats.flipped(time, s.needs_redraw);
     }
     let (output, redraw) = (s.output.clone(), s.needs_redraw);
-    retrain_link(state, crtc);
-    flush_gamma(state, crtc);
+    retrain_link(state, head);
+    flush_gamma(state, head);
     crate::power::presented(state, &output);
     crate::sessionlock::presented(state, &output);
     crate::sessionfade::presented(state, &output);
     if redraw {
-        render(state, crtc);
+        render(state, head);
     } else {
         state.glass.output_stopped(&output);
     }
     watch(state);
 }
 
-pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
+pub(super) fn render(state: &mut State, head: Head) {
     state.settle_moves();
-    let Some(output) = due(state, crtc) else {
+    let Some(output) = due(state, head) else {
         return;
     };
-    if held_back(state, crtc) {
+    if held_back(state, head) {
         return;
     }
     let started = std::time::Instant::now();
     let mut asked_at = None;
-    if let Some(s) = surface_mut(state, crtc) {
+    if let Some(s) = surface_mut(state, head) {
         s.needs_redraw = false;
         asked_at = s.asked_at.take();
         if std::mem::take(&mut s.pointer_only)
-            && let Some(drawn) = pointer_frame(state, crtc, &output, started)
+            && let Some(drawn) = pointer_frame(state, head, &output, started)
         {
             // A queued cursor frame finishes on its `Done` (`committed`).
             if !drawn {
-                finish(state, crtc, &output, false, true, None, started);
+                finish(state, head, &output, false, true, None, started);
             }
             watch(state);
             return;
@@ -145,7 +143,7 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
     let Some(b) = backend.as_mut() else {
         return;
     };
-    let Some(s) = b.surfaces.get_mut(&crtc) else {
+    let Some(s) = b.surfaces.get_mut(&head) else {
         return;
     };
     s.pointer_shown =
@@ -272,7 +270,7 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
     };
     let flipping = drawn && send_flip(s, modeset, flight);
     if !flipping {
-        finish(state, crtc, &output, false, empty, held, started);
+        finish(state, head, &output, false, empty, held, started);
     }
     if let Some(wait) = owed {
         state.arm_catch_up(&output, wait);
@@ -287,7 +285,7 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
         schedule_step(state, &output, at);
     }
     let asked = (state.backend.as_ref())
-        .and_then(|b| b.surfaces.get(&crtc))
+        .and_then(|b| b.surfaces.get(&head))
         .is_none_or(|s| s.needs_redraw);
     if !flipping && !asked {
         state.glass.output_stopped(&output);
@@ -300,7 +298,7 @@ pub(super) fn render(state: &mut State, crtc: crtc::Handle) {
 /// Some(whether a frame was queued); None when the frame must be drawn normally.
 pub(super) fn pointer_frame(
     state: &mut State,
-    crtc: crtc::Handle,
+    head: Head,
     output: &Output,
     started: std::time::Instant,
 ) -> Option<bool> {
@@ -316,7 +314,7 @@ pub(super) fn pointer_frame(
     } = state;
     let cursor = crate::saverview::cursor(saver, cursor);
     let b = backend.as_mut()?;
-    let s = b.surfaces.get_mut(&crtc)?;
+    let s = b.surfaces.get_mut(&head)?;
     if magnifier.zooms(output) || s.callback_timer.is_some() || s.scene_seen != scene.changes() {
         return None;
     }
@@ -376,22 +374,25 @@ pub(super) fn send_job(s: &mut Surface, kind: commit::Kind, work: Work) -> bool 
 }
 
 /// A disabled output's thread dropped its compositor and ended.
-pub(super) fn retired(state: &mut State, crtc: crtc::Handle) {
+pub(super) fn retired(state: &mut State, head: Head) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
-    if let Some(h) = b.retiring.remove(&crtc) {
+    if let Some(h) = b.retiring.remove(&head) {
         let _ = h.join();
-        log::debug!("{crtc:?}: its commit thread dropped the compositor and ended");
+        log::debug!(
+            "{:?}: its commit thread dropped the compositor and ended",
+            head.crtc
+        );
     }
     on_quiet(state);
     render_waiting(state);
 }
 
-/// The commit thread finished `done` on `crtc`.
-pub(super) fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Done<Out>) {
+/// The commit thread finished `done` on `head`.
+pub(super) fn committed(state: &mut State, head: Head, done: commit::Done<Out>) {
     let overlay = state.config.debug.overlay;
-    let Some(s) = surface_mut(state, crtc) else {
+    let Some(s) = surface_mut(state, head) else {
         return;
     };
     let waited = s.track.waited(done.ended);
@@ -459,23 +460,23 @@ pub(super) fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Don
     }
     let output = s.output.clone();
     if after.off {
-        power_off(state, crtc);
+        power_off(state, head);
     }
     if let Some(f) = flight {
-        if ok && let Some(s) = surface_mut(state, crtc) {
+        if ok && let Some(s) = surface_mut(state, head) {
             count_frame(s, overlay, f.started, f.pointer);
         }
-        finish(state, crtc, &output, ok, false, f.held, f.started);
+        finish(state, head, &output, ok, false, f.held, f.started);
     }
     if gamma_failed {
         crate::nightlight::gamma_failed(state, &output);
     }
     match after.vblank {
-        Some(flip) => flipped(state, crtc, flip),
+        Some(flip) => flipped(state, head, flip),
         None => {
-            flush_gamma(state, crtc);
-            retrain_link(state, crtc);
-            queue_render(state, crtc);
+            flush_gamma(state, head);
+            retrain_link(state, head);
+            queue_render(state, head);
         }
     }
     on_quiet(state);
@@ -487,7 +488,7 @@ pub(super) fn committed(state: &mut State, crtc: crtc::Handle, done: commit::Don
 
 /// Render every output that asked for a frame while something held them all.
 pub(super) fn render_waiting(state: &mut State) {
-    let waiting: Vec<crtc::Handle> = state
+    let waiting: Vec<Head> = state
         .backend
         .iter()
         .flat_map(|b| &b.surfaces)
@@ -509,19 +510,19 @@ pub(super) fn glass_hold(hold: Option<Duration>, asked: Under, stepped: bool) ->
     }
 }
 
-/// After a frame on `crtc` that was `drawn` or `empty`, with its glass
+/// After a frame on `head` that was `drawn` or `empty`, with its glass
 /// `held` for a wait: pace the next render, send the frame callbacks and
 /// fill the captures that waited for it.
 fn finish(
     state: &mut State,
-    crtc: crtc::Handle,
+    head: Head,
     output: &Output,
     drawn: bool,
     empty: bool,
     held: Option<Duration>,
     started: std::time::Instant,
 ) {
-    if let Some(s) = surface_mut(state, crtc) {
+    if let Some(s) = surface_mut(state, head) {
         let interval = crate::framepace::interval(output.current_mode().map_or(0, |m| m.refresh));
         s.pace.not_before = crate::framepace::next_render(drawn, s.needs_redraw, started, interval);
     }
@@ -531,17 +532,17 @@ fn finish(
     crate::sessionlock::rendered(state, output, drawn, empty);
     crate::sessionfade::rendered(state, output, empty);
     crate::power::rendered(state, output, drawn, empty);
-    callbacks_after_a_frame(state, crtc, drawn);
+    callbacks_after_a_frame(state, head, drawn);
     if drawn {
         crate::capture::output_drawn(state, output);
     }
 }
 
-fn held_back(state: &mut State, crtc: crtc::Handle) -> bool {
+fn held_back(state: &mut State, head: Head) -> bool {
     let Some(s) = state
         .backend
         .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&crtc))
+        .and_then(|b| b.surfaces.get_mut(&head))
     else {
         return false;
     };
@@ -560,10 +561,10 @@ fn held_back(state: &mut State, crtc: crtc::Handle) -> bool {
     let token = state
         .handle
         .insert_source(Timer::from_duration(wait), move |_, _, state| {
-            if let Some(s) = surface_mut(state, crtc) {
+            if let Some(s) = surface_mut(state, head) {
                 s.render_timer = None;
             }
-            render(state, crtc);
+            render(state, head);
             TimeoutAction::Drop
         });
     match token {
@@ -578,13 +579,14 @@ fn held_back(state: &mut State, crtc: crtc::Handle) -> bool {
     }
 }
 
-pub(super) fn due(state: &State, crtc: crtc::Handle) -> Option<Output> {
+pub(super) fn due(state: &State, head: Head) -> Option<Output> {
     let b = state.backend.as_ref()?;
-    let s = b.surfaces.get(&crtc)?;
-    (!b.dead
+    let s = b.surfaces.get(&head)?;
+    let device = b.devices.of(head)?;
+    (!device.dead
         && s.track.idle()
         && b.quiet()
-        && !b.back.pending()
+        && !device.back.pending()
         && !s.hw.off
         && b.session.is_active())
     .then(|| s.output.clone())
@@ -651,16 +653,16 @@ fn count_damage(
 }
 
 pub fn take_stats(state: &mut State, output: &Output) -> Option<crate::debugview::FrameStats> {
-    let crtc = crtc_of(output)?;
-    let s = surface_mut(state, crtc)?;
+    let head = head_of(output)?;
+    let s = surface_mut(state, head)?;
     Some(s.stats.take())
 }
 
-pub(super) fn callbacks_after_a_frame(state: &mut State, crtc: crtc::Handle, shown: bool) {
+pub(super) fn callbacks_after_a_frame(state: &mut State, head: Head, shown: bool) {
     let Some(s) = state
         .backend
         .as_mut()
-        .and_then(|b| b.surfaces.get_mut(&crtc))
+        .and_then(|b| b.surfaces.get_mut(&head))
     else {
         return;
     };
@@ -670,7 +672,7 @@ pub(super) fn callbacks_after_a_frame(state: &mut State, crtc: crtc::Handle, sho
             if let Some(t) = s.callback_timer.take() {
                 state.handle.remove(t);
             }
-            callbacks_done(state, crtc);
+            callbacks_done(state, head);
             return;
         }
         Done::Now => Duration::ZERO,
@@ -686,15 +688,15 @@ pub(super) fn callbacks_after_a_frame(state: &mut State, crtc: crtc::Handle, sho
                 return TimeoutAction::Drop;
             };
             let active = b.session.is_active();
-            let held = b.held(crtc, std::time::Instant::now());
-            let Some(s) = b.surfaces.get_mut(&crtc) else {
+            let held = b.held(head, std::time::Instant::now());
+            let Some(s) = b.surfaces.get_mut(&head) else {
                 return TimeoutAction::Drop;
             };
             s.callback_timer = None;
             if waits_for_frame(s.needs_redraw || s.idle_scheduled, s.hw.off, held, active) {
                 return TimeoutAction::Drop;
             }
-            callbacks_done(state, crtc);
+            callbacks_done(state, head);
             TimeoutAction::Drop
         });
     match token {
@@ -714,19 +716,19 @@ pub fn answer_frames(state: &mut State) {
     let Some(b) = state.backend.as_ref() else {
         return;
     };
-    let idle: Vec<crtc::Handle> = b
+    let idle: Vec<Head> = b
         .surfaces
         .iter()
         .filter(|(_, s)| !s.needs_redraw && !s.idle_scheduled && !s.hw.off)
         .map(|(c, _)| *c)
         .collect();
-    for crtc in idle {
-        callbacks_after_a_frame(state, crtc, false);
+    for head in idle {
+        callbacks_after_a_frame(state, head, false);
     }
 }
 
-fn callbacks_done(state: &mut State, crtc: crtc::Handle) {
-    let Some(s) = surface_mut(state, crtc) else {
+fn callbacks_done(state: &mut State, head: Head) {
+    let Some(s) = surface_mut(state, head) else {
         return;
     };
     s.pace.last_done = Some(std::time::Instant::now());

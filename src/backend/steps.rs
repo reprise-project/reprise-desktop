@@ -3,10 +3,7 @@ use std::{collections::HashMap, time::Duration};
 use smithay::{
     backend::session::Session,
     output::Output,
-    reexports::{
-        calloop::timer::{TimeoutAction, Timer},
-        drm::control::crtc,
-    },
+    reexports::calloop::timer::{TimeoutAction, Timer},
 };
 
 use crate::compositor::State;
@@ -15,7 +12,7 @@ use super::links::{check_links, retrain_link};
 use super::outputs::{Probe, scan_connectors};
 use super::render::{callbacks_after_a_frame, render_waiting};
 use super::session::reset_device;
-use super::{Backend, Flip, commit, crtc_of, is_master};
+use super::{Backend, Flip, Head, commit, head_of, is_master};
 
 impl Backend {
     /// No commit holds the kernel's modeset locks (`commit::quiet`).
@@ -40,12 +37,12 @@ impl Backend {
     /// Every output's track and the device reset's.
     fn tracks(&self) -> impl Iterator<Item = &commit::Track<Flip>> {
         let outputs = self.surfaces.values().map(|s| &s.track);
-        outputs.chain(std::iter::once(&self.device.track))
+        outputs.chain(self.devices.iter().map(|(_, d)| &d.reset.track))
     }
 
-    /// `crtc`'s output is held at `now` (`commit::held`).
-    pub(super) fn held(&self, crtc: crtc::Handle, now: std::time::Instant) -> bool {
-        let Some(s) = self.surfaces.get(&crtc) else {
+    /// `head`'s output is held at `now` (`commit::held`).
+    pub(super) fn held(&self, head: Head, now: std::time::Instant) -> bool {
+        let Some(s) = self.surfaces.get(&head) else {
             return false;
         };
         let all: Vec<_> = self.tracks().collect();
@@ -54,7 +51,7 @@ impl Backend {
 
     /// The session is ours and its return has been handled (`reset_device`).
     pub(super) fn settled(&self) -> bool {
-        self.session.is_active() && !self.back.pending()
+        self.session.is_active() && !self.devices.iter().any(|(_, d)| d.back.pending())
     }
 }
 
@@ -89,7 +86,7 @@ pub fn stalled(state: &State, output: &Output) -> bool {
     let Some(b) = state.backend.as_ref() else {
         return false;
     };
-    crtc_of(output).is_some_and(|c| b.held(c, std::time::Instant::now()))
+    head_of(output).is_some_and(|c| b.held(c, std::time::Instant::now()))
 }
 
 /// Deferred work, in the order it runs: the device reset before the scan reads connectors
@@ -131,10 +128,14 @@ impl Backend {
         if !self.quiet() || !self.session.is_active() {
             return None;
         }
+        let devices = || self.devices.iter().map(|(_, d)| d);
+        let unprobed = (devices().filter_map(|d| d.probe.as_ref()))
+            .map(|p| p.left.len())
+            .reduce(|a, b| a + b);
         let step = next_step(
-            self.back.ready(),
-            self.rescan,
-            self.probe.as_ref().map(|p| p.left.len()),
+            devices().any(|d| d.back.ready()),
+            devices().any(|d| d.rescan),
+            unprobed,
             self.reenable.iter().any(|c| !self.retiring.contains_key(c)),
             self.config_from.is_some() || outman,
         )?;
@@ -161,9 +162,9 @@ pub(super) fn on_quiet(state: &mut State) {
     let Some(b) = state.backend.as_mut() else {
         return;
     };
-    let crtcs: Vec<crtc::Handle> = b.surfaces.keys().copied().collect();
-    for crtc in crtcs {
-        retrain_link(state, crtc);
+    let heads: Vec<Head> = b.surfaces.keys().copied().collect();
+    for head in heads {
+        retrain_link(state, head);
     }
     watch(state);
 }
@@ -195,17 +196,27 @@ fn quiet_step(state: &mut State) {
         return;
     };
     match step {
-        Step::Reset => match b
-            .back
-            .master_wait(is_master(&b.drm), std::time::Instant::now())
-        {
-            Some(poll) => step_after(state, Timer::from_duration(poll)),
-            None => reset_device(state),
-        },
+        Step::Reset => {
+            let now = std::time::Instant::now();
+            let Some((node, wait)) = (b.devices.iter())
+                .find(|(_, d)| d.back.ready())
+                .map(|(node, d)| (node, d.back.master_wait(is_master(&d.drm), now)))
+            else {
+                return;
+            };
+            match wait {
+                Some(poll) => step_after(state, Timer::from_duration(poll)),
+                None => reset_device(state, node),
+            }
+        }
         Step::Probe => {
-            if std::mem::take(&mut b.rescan) {
+            let rescan = b.devices.iter().find(|(_, d)| d.rescan).map(|(n, _)| n);
+            if let Some(node) = rescan {
                 gated(b, "connector list");
-                let left = b
+                let Some(d) = b.devices.get_mut(node) else {
+                    return;
+                };
+                let left = d
                     .drm
                     .resource_handles()
                     .map(|r| r.connectors().to_vec())
@@ -213,19 +224,25 @@ fn quiet_step(state: &mut State) {
                         log::warn!("connector scan: {e}");
                         Vec::new()
                     });
-                b.probe = Some(Probe {
+                d.rescan = false;
+                d.probe = Some(Probe {
                     left,
                     infos: HashMap::new(),
                 });
             }
             gated(b, "connector probe");
-            let Some(p) = b.probe.as_mut() else {
+            let probing = (b.devices.iter_mut())
+                .find(|(_, d)| d.probe.as_ref().is_some_and(|p| !p.left.is_empty()));
+            let Some((_, d)) = probing else {
+                return;
+            };
+            let Some(p) = d.probe.as_mut() else {
                 return;
             };
             let Some(conn) = p.left.pop() else {
                 return;
             };
-            match b.drm.get_connector(conn, true) {
+            match d.drm.get_connector(conn, true) {
                 Ok(info) => {
                     p.infos.insert(conn, info);
                 }
@@ -233,17 +250,21 @@ fn quiet_step(state: &mut State) {
             }
         }
         Step::Scan => {
-            let probed = b.probe.take().map(|p| p.infos).unwrap_or_default();
+            let probed: Vec<_> = (b.devices.iter_mut())
+                .filter_map(|(node, d)| Some((node, d.probe.take()?.infos)))
+                .collect();
             log::debug!("connector scan");
-            scan_connectors(state, &probed);
+            for (node, infos) in probed {
+                scan_connectors(state, node, &infos);
+            }
             check_links(state);
         }
         Step::Reenable => {
-            let Some(&crtc) = b.reenable.iter().find(|c| !b.retiring.contains_key(c)) else {
+            let Some(&head) = b.reenable.iter().find(|c| !b.retiring.contains_key(c)) else {
                 return;
             };
-            b.reenable.remove(&crtc);
-            if let Some(output) = b.parked.get(&crtc).map(|p| p.output.clone()) {
+            b.reenable.remove(&head);
+            if let Some(output) = b.parked.get(&head).map(|p| p.output.clone()) {
                 state.set_in_layout(&output, true);
             }
         }
@@ -298,9 +319,12 @@ fn watch_tick(state: &mut State) -> bool {
     let Some(b) = state.backend.as_mut() else {
         return false;
     };
-    let mut newly = b.device.track.stall(now);
-    if newly {
-        log::warn!("the device reset is still in the kernel after 2 s");
+    let mut newly = false;
+    for (_, d) in b.devices.iter_mut() {
+        if d.reset.track.stall(now) {
+            log::warn!("the device reset is still in the kernel after 2 s");
+            newly = true;
+        }
     }
     for s in b.surfaces.values_mut() {
         if s.track.stall(now) {
@@ -317,8 +341,8 @@ fn watch_tick(state: &mut State) -> bool {
     let throttled: Vec<_> = b
         .surfaces
         .iter()
-        .filter(|(crtc, s)| s.callback_timer.is_none() && b.held(**crtc, now))
-        .map(|(crtc, _)| *crtc)
+        .filter(|(head, s)| s.callback_timer.is_none() && b.held(**head, now))
+        .map(|(head, _)| *head)
         .collect();
     if newly {
         let held: Vec<Output> = state
@@ -333,8 +357,8 @@ fn watch_tick(state: &mut State) -> bool {
             crate::power::stalled(state, output);
         }
     }
-    for crtc in throttled {
-        callbacks_after_a_frame(state, crtc, false);
+    for head in throttled {
+        callbacks_after_a_frame(state, head, false);
     }
     on_quiet(state);
     if quiet(state) {
