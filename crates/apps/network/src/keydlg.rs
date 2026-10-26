@@ -28,6 +28,18 @@ const BTN_Y: i32 = CLIENT.1 - MARGIN - BUTTON_H;
 const CANCEL_X: i32 = CLIENT.0 - MARGIN - BUTTON_W;
 const CONNECT_X: i32 = CANCEL_X - BUTTON_GAP - BUTTON_W;
 
+/// The hidden-network dialog: the name and security rows above the two key rows.
+pub const HIDDEN_CLIENT: (i32, i32) = (CLIENT.0, 204);
+const HIDDEN_ROW_Y: [i32; 4] = [48, 76, 104, 132];
+const HIDDEN_INTRO: [&str; 2] = [
+    "Type the name of a network that does not broadcast it, and choose",
+    "the security it uses.",
+];
+const HIDDEN_SECURITY: [&str; 3] = ["Open", "WPA-PSK", "Enterprise (802.1X)"];
+const HIDDEN_KINDS: [Security; 3] = [Security::Open, Security::Psk, Security::Enterprise];
+/// The longest SSID in bytes, 802.11's limit.
+const SSID_MAX: usize = 32;
+
 /// The shortest and longest WPA-PSK passphrase in bytes, the unit
 /// NetworkManager checks `psk` in.
 const KEY_LEN: std::ops::RangeInclusive<usize> = 8..=63;
@@ -47,14 +59,20 @@ fn key_ok(key: &str, security: Security) -> bool {
 pub enum Outcome {
     None,
     Redraw,
-    Connect(Psk),
+    /// Join with this key, None for an open hidden network.
+    Connect(Option<Psk>),
+    /// A hidden 802.1X network: its login goes on in the enterprise dialog.
+    Enterprise,
     Cancel,
 }
 
+/// The key dialog for a network in the list, or for a hidden one (`hidden`), which adds the
+/// network's name and a choice of security above the key rows.
 pub struct KeyDialog {
-    pub ssid: Ssid,
+    ssid: Ssid,
     pub ap: String,
     security: Security,
+    pub hidden: bool,
     pub form: Form,
 }
 
@@ -87,7 +105,76 @@ impl KeyDialog {
             ssid: ssid.clone(),
             ap: ap.into(),
             security,
+            hidden: false,
             form: Form::new(items),
+        }
+    }
+
+    /// The dialog for a network that is in no scan, joined through no access point ("/").
+    pub fn hidden() -> KeyDialog {
+        let label = |id, i: usize, text: &str| {
+            Item::label_at(id, LABEL_X, HIDDEN_ROW_Y[i] + LABEL_DY, LABEL_W, text)
+        };
+        let key = field("key", HIDDEN_ROW_Y[2]);
+        let confirm = field("confirm", HIDDEN_ROW_Y[3]);
+        let btn_y = HIDDEN_CLIENT.1 - MARGIN - BUTTON_H;
+        let mut connect = connect_button(false);
+        connect.rect.y = btn_y;
+        let items = vec![
+            Item::lines_at("intro", MARGIN, INTRO_Y, INTRO_W, &HIDDEN_INTRO),
+            label("ssid_l", 0, "Network &name (SSID):"),
+            Item::edit(
+                "ssid",
+                Rect::new(FIELD_X, HIDDEN_ROW_Y[0], FIELD_W, FIELD_H),
+                "",
+                true,
+            ),
+            label("security_l", 1, "&Security:"),
+            Item::combo(
+                "security",
+                FIELD_X,
+                HIDDEN_ROW_Y[1],
+                FIELD_W,
+                &HIDDEN_SECURITY,
+                HIDDEN_SECURITY.len(),
+            ),
+            label("key_l", 2, "Network &key:"),
+            key,
+            label("confirm_l", 3, "C&onfirm network key:"),
+            confirm,
+            connect,
+            Item::button_at("cancel", CANCEL_X, btn_y, BUTTON_W, "Cancel", true),
+        ];
+        let mut d = KeyDialog {
+            ssid: Ssid::default(),
+            ap: "/".into(),
+            security: Security::Open,
+            hidden: true,
+            form: Form::new(items),
+        };
+        d.sync_button();
+        d
+    }
+
+    pub fn client(&self) -> (i32, i32) {
+        if self.hidden { HIDDEN_CLIENT } else { CLIENT }
+    }
+
+    /// The network to join: the one picked, or the name typed for a hidden one.
+    pub fn ssid(&self) -> Ssid {
+        if self.hidden {
+            Ssid(self.field("ssid").as_bytes().to_vec())
+        } else {
+            self.ssid.clone()
+        }
+    }
+
+    fn security(&self) -> Security {
+        if self.hidden {
+            let i = self.form.combo_selected("security").unwrap_or(0);
+            HIDDEN_KINDS.get(i).copied().unwrap_or_default()
+        } else {
+            self.security
         }
     }
 
@@ -98,10 +185,14 @@ impl KeyDialog {
                 Outcome::Redraw
             }
             form::Event::Pressed("connect") | form::Event::Default => {
-                if self.valid() {
-                    Outcome::Connect(Psk::new(self.field("key")))
-                } else {
+                if !self.valid() {
                     Outcome::None
+                } else {
+                    match self.security() {
+                        Security::Open => Outcome::Connect(None),
+                        Security::Enterprise => Outcome::Enterprise,
+                        _ => Outcome::Connect(Some(Psk::new(self.field("key")))),
+                    }
                 }
             }
             form::Event::Pressed("cancel") | form::Event::Cancel => Outcome::Cancel,
@@ -111,17 +202,34 @@ impl KeyDialog {
     }
 
     pub fn valid(&self) -> bool {
+        if self.hidden && !(1..=SSID_MAX).contains(&self.field("ssid").len()) {
+            return false;
+        }
         let key = self.field("key");
-        key == self.field("confirm") && key_ok(key, self.security)
+        match self.security() {
+            Security::Open | Security::Enterprise => true,
+            security => key == self.field("confirm") && key_ok(key, security),
+        }
     }
 
     pub fn sync_button(&mut self) {
         let valid = self.valid();
         let focused = self.form.focus() == self.form.index_of("connect");
-        if let Some(Control::Button { enabled, .. }) =
+        let security = self.security();
+        let keyed = !matches!(security, Security::Open | Security::Enterprise);
+        for id in ["key_l", "key", "confirm_l", "confirm"] {
+            self.form.set_enabled(id, keyed);
+        }
+        let word = if security == Security::Enterprise {
+            "&Next >"
+        } else {
+            "&Connect"
+        };
+        if let Some(Control::Button { enabled, label, .. }) =
             self.form.item_mut("connect").map(|i| &mut i.control)
         {
             *enabled = valid;
+            *label = word.into();
         }
         // A greyed button is no tab stop, so the focus cannot stay on it.
         if focused && !valid {
@@ -247,11 +355,11 @@ mod tests {
         assert!(enabled(&d, "connect"));
         assert_eq!(
             d.event(form::Event::Pressed("connect")),
-            Outcome::Connect(Psk::new("12345678"))
+            Outcome::Connect(Some(Psk::new("12345678")))
         );
         assert_eq!(
             d.event(form::Event::Default),
-            Outcome::Connect(Psk::new("12345678"))
+            Outcome::Connect(Some(Psk::new("12345678")))
         );
         let mut short = dialog();
         type_into(&mut short, "key", "1234567");
@@ -278,6 +386,73 @@ mod tests {
         type_into(&mut upper, "key", &raw.to_uppercase());
         type_into(&mut upper, "confirm", &raw.to_uppercase());
         assert!(upper.valid());
+    }
+
+    #[test]
+    fn the_hidden_dialog_fits_its_text() {
+        let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+            vec![("hidden".into(), KeyDialog::hidden().form.clone())]
+        });
+        assert!(over.is_empty(), "{}", over.join("\n"));
+    }
+
+    fn pick_security(d: &mut KeyDialog, i: usize) {
+        d.form.set_combo("security", i);
+        d.event(form::Event::Changed("security"));
+    }
+
+    #[test]
+    fn a_hidden_network_takes_a_name_and_its_security() {
+        let mut d = KeyDialog::hidden();
+        assert_eq!(d.ap, "/");
+        assert_eq!(d.client(), HIDDEN_CLIENT);
+        assert!(!enabled(&d, "connect"), "no name yet");
+        assert!(!live(&d, "key"), "an open network takes no key");
+        type_into(&mut d, "ssid", "Attic");
+        assert_eq!(d.ssid(), "Attic".into());
+        assert_eq!(d.event(form::Event::Default), Outcome::Connect(None));
+        pick_security(&mut d, 1);
+        assert!(live(&d, "key") && live(&d, "confirm"));
+        assert!(!enabled(&d, "connect"), "WPA-PSK waits for its key");
+        type_into(&mut d, "key", "hunter22");
+        type_into(&mut d, "confirm", "hunter22");
+        assert_eq!(
+            d.event(form::Event::Pressed("connect")),
+            Outcome::Connect(Some(Psk::new("hunter22")))
+        );
+        pick_security(&mut d, 2);
+        assert!(!live(&d, "key"));
+        assert_eq!(label(&d, "connect"), "&Next >");
+        assert_eq!(d.event(form::Event::Default), Outcome::Enterprise);
+        let mut long = KeyDialog::hidden();
+        type_into(&mut long, "ssid", &"x".repeat(33));
+        assert!(!long.valid(), "33 bytes is one past an SSID");
+    }
+
+    fn live(d: &KeyDialog, id: &str) -> bool {
+        matches!(
+            d.form.item(id).unwrap().control,
+            Control::Edit { enabled: true, .. }
+        )
+    }
+
+    fn label(d: &KeyDialog, id: &str) -> String {
+        match &d.form.item(id).unwrap().control {
+            Control::Button { label, .. } => label.clone(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_hidden_rows_stack_inside_the_client() {
+        let d = KeyDialog::hidden();
+        let r = |id: &str| rect(&d, id);
+        let rows = ["intro", "ssid", "security", "key", "confirm", "connect"];
+        for w in rows.windows(2) {
+            assert!(r(w[1]).y > r(w[0]).bottom(), "{} sits below {}", w[1], w[0]);
+        }
+        assert_eq!(r("cancel").bottom(), HIDDEN_CLIENT.1 - MARGIN);
+        assert_eq!(r("connect").y, r("cancel").y);
     }
 
     #[test]

@@ -834,12 +834,14 @@ async fn activate(
 }
 
 /// A fresh Wi-Fi profile for `ssid`, secured by `key` when one was typed: `key_mgmt` for a
-/// passphrase, `wpa-eap` for an 802.1X login. With an `owner` it is that login's own profile
-/// (`settings.modify.own`), else system-wide.
+/// passphrase, `wpa-eap` for an 802.1X login. A `hidden` network is probed for by name, as it
+/// beacons none. With an `owner` it is that login's own profile (`settings.modify.own`), else
+/// system-wide.
 fn wifi_settings<'a>(
     ssid: &Ssid,
     key: Option<&'a Key>,
     key_mgmt: &'static str,
+    hidden: bool,
     owner: Option<&str>,
 ) -> HashMap<String, HashMap<String, Value<'a>>> {
     let mut out: HashMap<String, HashMap<String, Value<'a>>> = HashMap::new();
@@ -854,13 +856,14 @@ fn wifi_settings<'a>(
         );
     }
     out.insert("connection".into(), connection);
-    out.insert(
-        "802-11-wireless".into(),
-        HashMap::from([
-            ("ssid".to_string(), Value::from(ssid.0.clone())),
-            ("mode".to_string(), Value::from("infrastructure")),
-        ]),
-    );
+    let mut wireless = HashMap::from([
+        ("ssid".to_string(), Value::from(ssid.0.clone())),
+        ("mode".to_string(), Value::from("infrastructure")),
+    ]);
+    if hidden {
+        wireless.insert("hidden".to_string(), Value::from(true));
+    }
+    out.insert("802-11-wireless".into(), wireless);
     if let Some(key) = key {
         secure(&mut out, key, key_mgmt);
     }
@@ -965,6 +968,9 @@ fn key_mgmt_for(wpa: u32, rsn: u32) -> &'static str {
 }
 
 async fn ap_key_mgmt(conn: &Connection, ap: &str) -> &'static str {
+    if ap == "/" {
+        return "wpa-psk";
+    }
     get_all(conn, ap, AP_IFACE).await.map_or("wpa-psk", |p| {
         key_mgmt_for(uint(&p, "WpaFlags"), uint(&p, "RsnFlags"))
     })
@@ -1264,6 +1270,7 @@ async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
             ap,
             ssid,
             key,
+            hidden,
         } => {
             let known = connection_for(conn, ssid).await;
             match connect_plan(known.as_deref(), key.as_ref()) {
@@ -1287,7 +1294,7 @@ async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
                         &manager,
                         "AddAndActivateConnection",
                         &(
-                            wifi_settings(ssid, key, key_mgmt, owner.as_deref()),
+                            wifi_settings(ssid, key, key_mgmt, *hidden, owner.as_deref()),
                             opath(device)?,
                             opath(ap)?,
                         ),
@@ -1455,6 +1462,7 @@ mod tests {
             ap: "/".into(),
             ssid: "Net".into(),
             key: None,
+            hidden: false,
         }
     }
 
@@ -1787,13 +1795,13 @@ mod tests {
     #[test]
     fn an_owned_wifi_profile_carries_a_user_permission() {
         let key = psk("hunter22");
-        let owned = wifi_settings(&"Home".into(), Some(&key), "wpa-psk", Some("alice"));
+        let owned = wifi_settings(&"Home".into(), Some(&key), "wpa-psk", false, Some("alice"));
         assert_eq!(
             owned["connection"].get("permissions"),
             Some(&Value::from(vec!["user:alice".to_string()])),
             "permissions is [\"user:alice\"]"
         );
-        let shared = wifi_settings(&"Home".into(), None, "wpa-psk", None);
+        let shared = wifi_settings(&"Home".into(), None, "wpa-psk", false, None);
         assert!(
             !shared["connection"].contains_key("permissions"),
             "a system-wide profile has no permissions key"
@@ -1807,7 +1815,7 @@ mod tests {
         assert_eq!(key_mgmt_for(0x100, 0x400), "wpa-psk", "WPA1 PSK beside SAE");
         assert_eq!(key_mgmt_for(0, 0x100), "wpa-psk");
         let key = psk("hunter22");
-        let sae = wifi_settings(&"Home".into(), Some(&key), "sae", None);
+        let sae = wifi_settings(&"Home".into(), Some(&key), "sae", false, None);
         assert_eq!(
             sae["802-11-wireless-security"].get("key-mgmt"),
             Some(&Value::from("sae")),
@@ -1821,7 +1829,7 @@ mod tests {
 
     fn campus(e: Enterprise) -> HashMap<String, HashMap<String, Value<'static>>> {
         let key = Key::Enterprise(Box::new(e));
-        wifi_settings(&"campus".into(), Some(&key), "wpa-psk", None)
+        wifi_settings(&"campus".into(), Some(&key), "wpa-psk", false, None)
             .into_iter()
             .map(|(g, entries)| {
                 let entries = entries
@@ -1982,9 +1990,28 @@ mod tests {
     }
 
     #[test]
+    fn a_hidden_network_is_probed_for_by_name() {
+        let key = psk("hunter22");
+        let s = wifi_settings(&"Attic".into(), Some(&key), "wpa-psk", true, None);
+        assert_eq!(s["802-11-wireless"]["hidden"], Value::from(true));
+        assert_eq!(s["802-11-wireless"]["ssid"], Value::from(b"Attic".to_vec()));
+        let open = wifi_settings(&"Attic".into(), None, "wpa-psk", true, None);
+        assert_eq!(open["802-11-wireless"]["hidden"], Value::from(true));
+        assert!(
+            !open.contains_key("802-11-wireless-security"),
+            "no key, no security"
+        );
+        let seen = wifi_settings(&"Attic".into(), None, "wpa-psk", false, None);
+        assert!(
+            !seen["802-11-wireless"].contains_key("hidden"),
+            "a network in the scan list is not marked hidden"
+        );
+    }
+
+    #[test]
     fn a_new_profile_carries_the_ssids_own_bytes() {
         let latin1 = Ssid(b"Caf\xe9".to_vec());
-        let s = wifi_settings(&latin1, None, "wpa-psk", None);
+        let s = wifi_settings(&latin1, None, "wpa-psk", false, None);
         assert_eq!(
             s["802-11-wireless"].get("ssid"),
             Some(&Value::from(b"Caf\xe9".to_vec())),
@@ -2177,6 +2204,7 @@ mod tests {
                 ap: "/".into(),
                 ssid: ssid.into(),
                 key: Some(Key::Psk(Psk::new("new key"))),
+                hidden: false,
             };
             act(&client, &connect("Home")).await.unwrap();
             act(&client, &connect("Cafe")).await.unwrap();

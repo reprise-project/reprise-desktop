@@ -557,13 +557,15 @@ pub enum Key {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cmd {
-    /// Join `ssid` on `device` through access point `ap`; `key` is what
-    /// the user typed, None for an open or already saved network.
+    /// Join `ssid` on `device` through access point `ap` ("/" for a
+    /// `hidden` network, which is in no scan); `key` is what the user
+    /// typed, None for an open or already saved network.
     Connect {
         device: String,
         ap: String,
         ssid: Ssid,
         key: Option<Key>,
+        hidden: bool,
     },
     Disconnect(String),
     Disable(String),
@@ -813,6 +815,7 @@ mod tests {
             ap: "/ap/1".into(),
             ssid: "home".into(),
             key: Some(Key::Psk(Psk::new("hunter2"))),
+            hidden: false,
         };
         let logged = format!("{cmd:?}");
         assert!(!logged.contains("hunter2"), "{logged}");
@@ -832,6 +835,7 @@ mod tests {
                 private_key_password: Psk::new("swordfish"),
                 ..Enterprise::default()
             }))),
+            hidden: false,
         };
         let logged = format!("{cmd:?}");
         assert!(!logged.contains("hunter2"), "{logged}");

@@ -40,6 +40,8 @@ const BARS_RIGHT: i32 = 8;
 const STAR_W: i32 = 10;
 const TAG_GAP: i32 = 8;
 
+const HIDDEN_ROW: &str = "Connect to a hidden network...";
+
 const INTRO: [&str; 2] = [
     "Click an item in the list below to connect to a wireless network in range",
     "or to get more information.",
@@ -63,6 +65,8 @@ pub enum Outcome {
         security: nm::Security,
         needs_key: bool,
     },
+    /// The last row: join a network that is in no scan.
+    Hidden,
     Disconnect,
     Rescan,
     Close,
@@ -196,19 +200,28 @@ impl Chooser {
             self.connecting = None;
         }
         let ssid = self.selected().map(|r| r.ssid.clone());
+        let hidden = self.hidden_picked();
         self.rows = match &d.wifi {
             Some(w) => rows_for(w, d.state, &self.connecting),
             None => Vec::new(),
         };
-        self.list.entries = (0..self.rows.len()).map(tilelist::Entry::Row).collect();
-        self.list
-            .select_row(ssid.and_then(|s| self.rows.iter().position(|r| r.ssid == s)));
+        // One entry past the networks: the hidden-network row.
+        self.list.entries = (0..=self.rows.len()).map(tilelist::Entry::Row).collect();
+        let pick = match ssid {
+            Some(s) => self.rows.iter().position(|r| r.ssid == s),
+            None => hidden.then_some(self.rows.len()),
+        };
+        self.list.select_row(pick);
         self.list.clamp(self.list_r(), self.units);
         self.sync_button();
     }
 
     pub fn selected(&self) -> Option<&NetRow> {
         self.list.selected_row().and_then(|i| self.rows.get(i))
+    }
+
+    fn hidden_picked(&self) -> bool {
+        self.list.selected_row() == Some(self.rows.len())
     }
 
     pub fn layout(&self, ctx: &Ctx) -> (Rect, Rect) {
@@ -345,6 +358,9 @@ impl Chooser {
     }
 
     fn activate(&mut self) -> Outcome {
+        if self.hidden_picked() {
+            return Outcome::Hidden;
+        }
         let Some(row) = self.selected() else {
             return Outcome::None;
         };
@@ -366,7 +382,7 @@ impl Chooser {
     /// network needing a profile this applet cannot build, greys it.
     fn sync_button(&mut self) {
         let row = self.selected();
-        let live = row.is_some_and(|r| r.security != nm::Security::Wep);
+        let live = self.hidden_picked() || row.is_some_and(|r| r.security != nm::Security::Wep);
         let word = if row.is_some_and(|r| r.active) {
             "&Disconnect"
         } else {
@@ -440,7 +456,10 @@ impl Chooser {
             &self.list,
             &lay,
             px,
-            |c, r, i, sel| draw_row(c, ctx, r, &self.rows[i], sel),
+            |c, r, i, sel| match self.rows.get(i) {
+                Some(row) => draw_row(c, ctx, r, row, sel),
+                None => draw_hidden_row(c, ctx, r, sel),
+            },
         );
         form::draw(
             c,
@@ -482,7 +501,9 @@ impl Chooser {
             &self.list,
             &lay,
             |i| {
-                let r = &self.rows[i];
+                let Some(r) = self.rows.get(i) else {
+                    return (HIDDEN_ROW.to_string(), String::new());
+                };
                 let mut about = caption(r.security).to_string();
                 if !r.tag.is_empty() {
                     about = format!("{about}, {}", r.tag);
@@ -551,6 +572,27 @@ pub fn draw_row(c: &mut Canvas, ctx: &Ctx, r: Rect, row: &NetRow, selected: bool
         ink,
         Align::Left,
         px,
+    );
+}
+
+/// The hidden-network row in `r`: one line where a network's name sits.
+fn draw_hidden_row(c: &mut Canvas, ctx: &Ctx, r: Rect, selected: bool) {
+    let cs = &ctx.theme.colors;
+    let u = ctx.theme.text;
+    let ink = if selected {
+        cs.hilight_text
+    } else {
+        cs.window_text
+    };
+    c.fill_rect(r, if selected { cs.hilight } else { cs.window });
+    ctx.text.draw(
+        c,
+        Rect::new(r.x + TEXT_X, r.y + u.len(NAME_Y), r.width, u.len(LINE_H)),
+        HIDDEN_ROW,
+        false,
+        ink,
+        Align::Left,
+        ctx.theme.fonts.size_px,
     );
 }
 
@@ -1034,11 +1076,15 @@ mod tests {
             c.key(&key(keysym::END), &ControlMetrics::CLASSIC),
             Outcome::Redraw
         );
-        assert_eq!(c.list.selected_row(), Some(3));
+        assert_eq!(c.list.selected_row(), Some(4), "the hidden-network row");
         assert_eq!(
             c.key(&key(keysym::DOWN), &ControlMetrics::CLASSIC),
             Outcome::None,
             "already last"
+        );
+        assert_eq!(
+            c.key(&key(keysym::RETURN), &ControlMetrics::CLASSIC),
+            Outcome::Hidden
         );
         assert_eq!(
             c.key(&key(keysym::HOME), &ControlMetrics::CLASSIC),
@@ -1074,7 +1120,7 @@ mod tests {
             tilelist::layout(&c.list, list_r, &ctx.theme.look.controls())
                 .scrollbar
                 .is_none(),
-            "four rows fit"
+            "four rows and the hidden-network row fit"
         );
         assert_eq!(c.scroll(1), Outcome::None);
         let mut w = wifi();
@@ -1091,13 +1137,14 @@ mod tests {
             ..device()
         });
         assert_eq!(c.rows.len(), 10);
+        assert_eq!(c.list.entries.len(), 11);
         let sb = tilelist::layout(&c.list, list_r, &ctx.theme.look.controls())
             .scrollbar
             .expect("a bar");
         assert_eq!(c.scroll(3), Outcome::Redraw);
         assert_eq!(c.list.top, 3);
         assert_eq!(c.scroll(9), Outcome::Redraw);
-        assert_eq!(c.list.top, 4, "the last row stays in the box");
+        assert_eq!(c.list.top, 5, "the last row stays in the box");
         assert_eq!(c.scroll(1), Outcome::None);
         assert_eq!(c.scroll(-99), Outcome::Redraw);
         assert_eq!(c.list.top, 0);
@@ -1116,7 +1163,7 @@ mod tests {
             1,
             c.list.top,
             c.page() as usize,
-            c.rows.len(),
+            c.list.entries.len(),
             false,
             ctx.theme.look.controls().thumb_min,
         );
@@ -1130,7 +1177,7 @@ mod tests {
             c.motion(thumb.x + 2, parts.track.bottom(), &ctx),
             Outcome::Redraw
         );
-        assert_eq!(c.list.top, 4);
+        assert_eq!(c.list.top, 5);
         assert_eq!(
             c.motion(thumb.x + 2, parts.track.y + 3, &ctx),
             Outcome::Redraw
@@ -1147,6 +1194,41 @@ mod tests {
         }
         assert_eq!(c.list.selected_row(), Some(6));
         assert_eq!(c.list.top, 1);
+    }
+
+    #[test]
+    fn the_last_row_opens_the_hidden_network_dialog() {
+        let ctx = ctx();
+        let mut c = chooser();
+        let (x, y) = slot_point(&ctx, &c, 4);
+        assert_eq!(c.press(one(x, y), BTN_LEFT, &ctx), Outcome::Redraw);
+        assert!(c.hidden_picked());
+        assert!(matches!(
+            c.button.item("connect").unwrap().control,
+            Control::Button { enabled: true, .. }
+        ));
+        assert_eq!(c.press(two(x, y), BTN_LEFT, &ctx), Outcome::Hidden);
+        let mut w = wifi();
+        w.aps.push(ap("/ap/9", "Annex", 20, nm::Security::Open));
+        c.refresh(&nm::Device {
+            wifi: Some(w),
+            ..device()
+        });
+        assert_eq!(
+            c.list.selected_row(),
+            Some(5),
+            "the pick stays on the last row as the list grows"
+        );
+        c.refresh(&nm::Device {
+            wifi: None,
+            ..device()
+        });
+        assert_eq!(
+            c.list.entries.len(),
+            1,
+            "a radio with no scan still offers it"
+        );
+        assert_eq!(c.list.selected_row(), Some(0));
     }
 
     #[test]

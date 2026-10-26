@@ -62,6 +62,8 @@ pub enum Outcome {
 pub struct EapDialog {
     pub ssid: Ssid,
     pub ap: String,
+    /// The network is in no scan: its profile probes for it by name.
+    pub hidden: bool,
     pub form: Form,
 }
 
@@ -119,6 +121,7 @@ impl EapDialog {
         let mut d = EapDialog {
             ssid: ssid.clone(),
             ap: ap.into(),
+            hidden: false,
             form: Form::new(items),
         };
         d.sync_method();
