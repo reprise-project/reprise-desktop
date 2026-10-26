@@ -6,6 +6,9 @@ use reprisekit::controls::aboutbox::{Fields, Group};
 use reprisekit::raster::Canvas;
 use reprisekit::text::escape_mnemonic;
 
+/// The build id a package compiles in (its PKGBUILD exports `REPRISE_BUILD`); `None` in a plain cargo build.
+const BUILD: Option<&str> = option_env!("REPRISE_BUILD");
+
 /// Every string an About box shows for `product` (the row under the banner) wearing `icon` (32x32; `None` leaves the slot empty).
 pub fn fields(product: &str, icon: Option<Canvas>) -> Fields {
     Machine::read().fields(product, icon)
@@ -37,11 +40,7 @@ impl Machine {
             .map(|kb| format_kb(kb * 1024))
             .unwrap_or_default();
         Machine {
-            version: version_line(
-                env!("CARGO_PKG_VERSION"),
-                option_env!("REPRISE_BUILD"),
-                &kernel,
-            ),
+            version: version_line(env!("CARGO_PKG_VERSION"), BUILD, &kernel),
             facts: [cpu, video, free],
             memory,
         }
@@ -107,7 +106,7 @@ impl SystemFacts {
         let login = std::env::var("USER").unwrap_or_default();
         SystemFacts {
             version: env!("CARGO_PKG_VERSION").into(),
-            build: option_env!("REPRISE_BUILD").map(str::to_string),
+            build: BUILD.map(str::to_string),
             interface: String::new(),
             renderer: std::env::var(si::RENDERER_ENV)
                 .ok()
@@ -343,7 +342,7 @@ pub fn format_gb(bytes: u64) -> String {
     format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
 }
 
-/// The version line. The parenthetical is a build identifier and, after a colon, a second element; with no git hash the whole parenthetical goes.
+/// The version line. The parenthetical is a build identifier and, after a colon, a second element; with no build id the whole parenthetical goes.
 pub fn version_line(pkg: &str, build: Option<&str>, kernel: &str) -> String {
     match build {
         Some(b) => format!("Version {pkg} (Build {b} : {kernel})"),
@@ -407,20 +406,6 @@ mod tests {
             version_line("0.1.0", None, "6.9.0-generic"),
             "Version 0.1.0"
         );
-    }
-
-    #[test]
-    fn build_hash_is_the_checkout_head() {
-        let head = std::process::Command::new("git")
-            .args(["rev-parse", "--short", "HEAD"])
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-        if let Some(head) = head {
-            assert_eq!(option_env!("REPRISE_BUILD"), Some(head.as_str()));
-        }
     }
 
     fn facts() -> SystemFacts {

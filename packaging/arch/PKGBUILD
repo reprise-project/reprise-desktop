@@ -60,6 +60,8 @@ pkgver() {
 
 build() {
   cd reprise
+  # The About boxes show it as the build id.
+  export REPRISE_BUILD="$(git rev-parse --short HEAD)"
   # Panic locations carry absolute source paths: map the build tree and the
   # cargo home (registry and git checkouts) to fixed prefixes.
   export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
