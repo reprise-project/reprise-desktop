@@ -29,15 +29,17 @@ impl Explorer {
         }
     }
 
-    /// The text field with the keyboard: the rename box, else the address field while it has
-    /// the focus. Its clipboard keys and pastes go there.
+    /// The text field with the keyboard: the rename box, else the Address or Search field while
+    /// it has the focus. Its clipboard keys and pastes go there.
     pub(crate) fn text_field(&self) -> Option<&TextEdit> {
         if let Some((_, e)) = &self.sv.edit {
             return Some(e);
         }
-        (self.focus == Focus::Address)
-            .then_some(self.address.combo.edit.as_ref())
-            .flatten()
+        match self.focus {
+            Focus::Address => self.address.combo.edit.as_ref(),
+            Focus::Search => Some(&self.search_field.edit),
+            _ => None,
+        }
     }
 
     /// The clipboard's text into [`Explorer::text_field`]; a name takes no `/`.
@@ -50,6 +52,7 @@ impl Explorer {
                 .edit
                 .as_mut()
                 .is_some_and(|e| e.paste(text, &[])),
+            (None, Focus::Search) => self.search_field.edit.paste(text, &[]),
             _ => false,
         };
         if changed {

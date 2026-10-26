@@ -69,6 +69,8 @@ pub enum Command {
     GoTo(Place),
     Navigate(String),
     AddressFocus,
+    /// Ctrl+F and F3: the keyboard goes to the toolbar's Search field.
+    SearchFocus,
     ContextMenu,
     CloseBar,
     About,
@@ -161,6 +163,7 @@ pub fn command_for_key(sym: u32, ctrl: bool, shift: bool, alt: bool) -> Command 
         keysym::BACKSPACE => Command::Up,
         F5 => Command::Refresh,
         F2 => Command::Rename,
+        keysym::F3 => Command::SearchFocus,
         keysym::DELETE | keysym::KP_DELETE => Command::Delete { erase: shift },
         _ if !ctrl => Command::Nothing,
         _ => match letter(sym) {
@@ -169,6 +172,7 @@ pub fn command_for_key(sym: u32, ctrl: bool, shift: bool, alt: bool) -> Command 
             Some('v') => Command::Paste,
             Some('z') => Command::Undo,
             Some('a') => Command::SelectAll,
+            Some('f') => Command::SearchFocus,
             _ => Command::Nothing,
         },
     }
@@ -190,13 +194,13 @@ pub fn command_for_key_in(
         return Command::Nothing;
     }
     let cmd = command_for_key(sym, ctrl, shift, alt);
-    if focus == Focus::Address && !address_allows(&cmd) {
+    if matches!(focus, Focus::Address | Focus::Search) && !address_allows(&cmd) {
         return Command::Nothing;
     }
     cmd
 }
 
-/// What the Address field lets past it. Everything else it either types
+/// What the Address and Search fields let past them. Everything else it either types
 /// (a letter), edits with (Backspace, Delete, Ctrl+A/X/C/V/Z) or has no
 /// business with while the caret is in it (F2's rename).
 fn address_allows(cmd: &Command) -> bool {
@@ -206,6 +210,7 @@ fn address_allows(cmd: &Command) -> bool {
             | Command::Forward
             | Command::Refresh
             | Command::AddressFocus
+            | Command::SearchFocus
             | Command::Properties
             | Command::Nothing
     )
@@ -231,6 +236,7 @@ impl Explorer {
                 }
                 Reply::redraw()
             }
+            Command::SearchFocus => self.search_focus(),
             Command::ContextMenu => self.context_menu_key(ctx),
 
             Command::Back => match self.history.back().cloned() {
@@ -518,6 +524,9 @@ mod tests {
         assert_eq!(k('X' as u32, true, true, false), Command::Cut);
         assert_eq!(k('[' as u32, true, false, false), Command::Nothing);
         assert_eq!(k('e' as u32, true, false, false), Command::Nothing);
+        assert_eq!(k('f' as u32, true, false, false), Command::SearchFocus);
+        assert_eq!(k(keysym::F3, false, false, false), Command::SearchFocus);
+        assert_eq!(k('f' as u32, false, false, false), Command::Nothing);
         assert_eq!(k('d' as u32, false, false, true), Command::AddressFocus);
         assert_eq!(k('D' as u32, false, false, true), Command::AddressFocus);
         assert_eq!(k('d' as u32, false, false, false), Command::Nothing);

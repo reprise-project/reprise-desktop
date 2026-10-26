@@ -41,7 +41,8 @@ use reprisekit::look::Paint;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::{
     controls::addressbar, controls::explorerbar, controls::menubar, controls::rebar,
-    controls::shellview, controls::statusbar, controls::taskpane, controls::toolbar,
+    controls::searchfield, controls::shellview, controls::statusbar, controls::taskpane,
+    controls::toolbar,
 };
 use reprisekit::{controls::menu, controls::treeview};
 
@@ -185,6 +186,16 @@ pub fn layout(
     }
 }
 
+/// The toolbar's Search field, at the band's right end past its buttons; `None` with the toolbar
+/// hidden or too narrow.
+pub fn search_field(ex: &Explorer, ctx: &Ctx) -> Option<Rect> {
+    let band = ex.layout(ctx).toolbar?;
+    let cm = ctx.theme.controls();
+    let rects = toolbar::layout(&ex.toolbar, &ctx.text, ctx.theme.fonts.size_px, band, &cm);
+    let right = rects.iter().map(|r| r.right()).max().unwrap_or(band.x);
+    searchfield::layout(band, right, &cm)
+}
+
 /// Paints the window, bottom layer first; the view goes down before the bar
 /// and rebar so their chrome covers its ring.
 pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
@@ -298,11 +309,18 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
         addressbar::draw_label_and_go(c, &ctx.text, &paint, &ex.address, &al, glass_ink, px);
         al
     });
+    let search = search_field(ex, ctx);
     let draw_field = |c: &mut Canvas| {
         if let Some(al) = &address {
             let focused = ex.focus == crate::Focus::Address;
             let caret = reprisekit::textedit::Caret::new(focused, ctx.caret_on);
             addressbar::draw_field(c, &ctx.text, &paint, &ex.address, al, focused, caret, px);
+        }
+        if let Some(r) = search {
+            let focused = ex.focus == crate::Focus::Search;
+            let caret = reprisekit::textedit::Caret::new(focused, ctx.caret_on);
+            let sf = &ex.search_field;
+            searchfield::draw(c, &ctx.text, &paint, sf, r, focused, caret, px);
         }
     };
     if !glass {
@@ -385,6 +403,8 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
         let rects = toolbar::layout(&ex.toolbar, &ctx.text, px, r, &ctx.theme.controls());
         toolbar::access(&ex.toolbar, r, &rects, tree, ROOT, "toolbar");
     }
+    let search = search_field(ex, ctx)
+        .map(|r| searchfield::access(&ex.search_field, r, &ctx.text, px, tree, ROOT, "search"));
     let mut address = None;
     if let Some(r) = lay.address {
         let al = addressbar::layout(&ex.address, &ctx.text, px, r, &ctx.theme.controls());
@@ -426,6 +446,7 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
         .map(|p| p.chain.access(tree, ROOT, "popup"));
     let focus = popup.or(menus).or(match ex.focus {
         crate::Focus::Address => address,
+        crate::Focus::Search => search,
         crate::Focus::Tree => folders,
         crate::Focus::View => Some(view),
     });
