@@ -605,6 +605,8 @@ pub struct Session {
     /// `end` already kept this session, so the loop's own `end` at shutdown
     /// must not take the emptied screen over it.
     pub kept: bool,
+    /// The state file's `screen_locked` at start.
+    pub was_locked: bool,
 }
 
 impl Session {
@@ -612,6 +614,7 @@ impl Session {
         Session {
             apps: p.session.clone(),
             tabs: p.session_tabs.clone(),
+            was_locked: p.screen_locked,
             ..Session::default()
         }
     }

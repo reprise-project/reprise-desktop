@@ -346,10 +346,11 @@ are.
   don't survive it, as their connection to the display goes with the crash;
   session restore starts them again from a list at most 5 seconds old, and
   autostart runs again. Programs without a window keep running, in their
-  app scopes. A notice says it restarted. A second crash within a minute
-  of a restart ends the session and the login manager shows its greeter;
-  the log counts the crashes and keeps each backtrace. A crash by a
-  signal, such as a segfault, ends the session without a restart.
+  app scopes. A session that was locked comes back locked, before its
+  first frame, and a notice says it restarted. A second crash within a
+  minute of a restart ends the session and the login manager shows its
+  greeter; the log counts the crashes and keeps each backtrace. A crash by
+  a signal, such as a segfault, ends the session without a restart.
 
 ## Displays
 

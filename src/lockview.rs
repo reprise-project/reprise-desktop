@@ -489,6 +489,7 @@ pub fn engage(state: &mut State) {
     crate::power::hint(state, crate::power::Hint::Locked(true));
     crate::idle::inhibition_changed(state);
     state.redraw_all();
+    crate::state::save_screen_locked(true);
     log::info!("session locked");
 }
 
@@ -570,6 +571,7 @@ pub fn unlock(state: &mut State) {
     let p = state.pointer_location();
     state.repoint(p, InputTime::now());
     state.redraw_all();
+    crate::state::save_screen_locked(false);
     log::info!("session unlocked");
 }
 
