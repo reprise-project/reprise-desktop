@@ -36,6 +36,10 @@ Started from a terminal, Reprise logs to the terminal and its programs
 inherit it; `REPRISE_LOG_STDERR=1` keeps the log on stderr anywhere.
 `RUST_LOG` sets the level, as in `RUST_LOG=reprise=debug`.
 
+A panic logs its backtrace at error priority, so
+`journalctl --user -b -t reprise -p err` shows why Reprise restarted (see
+Crash recovery in [features](features.md)); `-b -1` reads the boot before.
+
 The log names windows and programs by app id, window id and pid. It does
 not record window titles, notification text, clipboard contents, what is
 typed or what is playing.

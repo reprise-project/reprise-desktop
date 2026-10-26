@@ -376,6 +376,13 @@ pub fn flush() {
     let _ = rx.recv();
 }
 
+/// `flush`, waiting at most `limit`: from the panic hook, which must not hang on a stuck write.
+pub fn flush_within(limit: std::time::Duration) {
+    let (tx, rx) = channel();
+    queue(Job::Flush(tx));
+    let _ = rx.recv_timeout(limit);
+}
+
 fn queue(job: Job) {
     let writer = WRITER.get_or_init(|| {
         let (tx, rx) = channel::<Job>();
