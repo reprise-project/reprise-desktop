@@ -41,13 +41,12 @@ impl Host {
             None if win == MAIN => self.ctx.origin = (0, 0),
             None => return,
         }
-        // Anything but the blink may change what a screen reader is
-        // told, in any window (a dialog's OK retitles the main one).
-        if ev != Event::Blink {
+        if matches!(ev, Event::Focus(_)) {
             for s in &mut self.slots {
                 s.access.state.dirty = true;
             }
         }
+        let blink = ev == Event::Blink;
         if self.edit_menu_event(win, &ev) {
             return;
         }
@@ -55,6 +54,7 @@ impl Host {
             return;
         }
         if let Some((reply, changed)) = self.field_drop(win, &ev) {
+            self.reread(win, &reply);
             self.apply(win, reply);
             if changed != reprisekit::controls::form::Event::None {
                 self.send(win, Event::FieldDropped(changed));
@@ -76,7 +76,17 @@ impl Host {
             .event(win, ev, &mut self.ctx)
             .with_clipboard(keys::take_clipboard());
         reply.tick |= self.ctx.want_tick.take();
+        if !blink {
+            self.reread(win, &reply);
+        }
         self.apply(win, reply);
+    }
+
+    /// Mark the reader trees of the windows `reply` to `win` draws again for a rebuild.
+    fn reread(&mut self, win: WinId, reply: &Reply) {
+        for s in &mut self.slots {
+            s.access.state.dirty |= redraws(reply, win, s.id);
+        }
     }
 
     /// The edit menu's share of `ev` ([`editmenu`]); `true` when the program does not get it. The
@@ -202,6 +212,7 @@ impl Host {
         let tags = self.tag_manager.clone();
         if let Some(s) = self.slot_mut(MAIN) {
             if s.title != title {
+                s.access.state.dirty = true;
                 s.title = title.clone();
                 if let Some(w) = s.window.toplevel() {
                     w.set_title(title);
@@ -333,6 +344,11 @@ pub(crate) fn root_of(win: WinId, parent: impl Fn(WinId) -> Option<WinId>) -> Wi
         }
     }
     w
+}
+
+/// Whether `reply` to window `win` draws window `id` again.
+pub(crate) fn redraws(reply: &Reply, win: WinId, id: WinId) -> bool {
+    (reply.redraw && id == win) || reply.redraw_all || reply.redraw_wins.contains(&id)
 }
 
 /// The modal child among `slots` that gates `win`: the newest with the same toplevel.
