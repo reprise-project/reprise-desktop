@@ -1,0 +1,32 @@
+nextest-version = { required = "0.9.149" }
+
+[test-groups]
+# Each headless EGL context (llvmpipe in CI) starts its own render thread pool.
+headless-gl = { max-threads = 2 }
+
+[profile.default]
+fail-fast = true
+slow-timeout = { period = "30s", terminate-after = 4 }
+status-level = "slow"
+final-status-level = "slow"
+
+# The only retries: a GL context can fail to come up under load. Pixel and font tests are deterministic.
+[[profile.default.overrides]]
+filter = '''
+binary_id(reprisefx::gpu) | binary_id(reprisefx::fluid) | binary_id(reprisefx::water) | binary_id(reprisefx::strokes)
+| (package(=reprise) & test(/^(magnifier|dmaupload|gpufence|livepreview|waterview|offscreen|readback|glass::tests)::/))
+'''
+test-group = "headless-gl"
+retries = { backoff = "fixed", count = 2, delay = "1s" }
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+[profile.ci]
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 5 }
+failure-output = "immediate-final"
+success-output = "never"
+status-level = "fail"
+final-status-level = "slow"
+
+[profile.ci.junit]
+path = "junit.xml"

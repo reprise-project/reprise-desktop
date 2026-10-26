@@ -56,6 +56,8 @@ URL, so download it first and install the local file:
 ### To build
 
 - Rust, clang, pkg-config and git
+- cargo-nextest 0.9.149 or later, to run the tests (`cargo test` works
+  without it)
 - Reprise Terminal's emulation comes from the `alacritty_terminal` crate,
   built in; it needs no runtime library
 

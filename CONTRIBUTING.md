@@ -12,7 +12,12 @@ and run Reprise, nested in your current session or from a login manager.
 
     cargo fmt --check
     cargo clippy --workspace --all-targets -- -D warnings
-    cargo test --workspace
+    cargo nextest run --workspace
+
+`cargo nextest` ([cargo-nextest](https://nexte.st), 0.9.149 or newer) runs
+every test in its own process across all test binaries at once and reads
+`.config/nextest.toml`. Without it, `cargo test --workspace` runs the same
+tests.
 
 CI runs the same three commands in an `archlinux:latest` container as an
 unprivileged user (`.github/workflows/ci.yml` installs the packages). Run
@@ -24,7 +29,7 @@ Pixel tests that depend on the UI font are pinned to Wine 9.0's Tahoma.
 directory; the tests load Tahoma from there instead of the system:
 
     export REPRISE_TEST_FONTS=$(scripts/test-fonts.sh)
-    cargo test --workspace
+    cargo nextest run --workspace
 
 Without `REPRISE_TEST_FONTS` those tests skip, as do the ones that pin
 Trebuchet MS or Segoe UI glyphs when those fonts aren't installed. CI sets
