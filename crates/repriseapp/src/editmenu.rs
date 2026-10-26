@@ -320,8 +320,8 @@ mod tests {
         assert_eq!((r.x, r.y), at, "the menu's corner sits at the press");
         assert_eq!(
             rows(&m),
-            [false, false, false, true, false, true],
-            "nothing selected or to undo: only Paste and Select All"
+            [false, false, false, false, true, false, true],
+            "nothing selected, to undo or to redo: only Paste and Select All"
         );
 
         let mut m = EditMenu::default();
@@ -348,7 +348,7 @@ mod tests {
             m.event(MAIN, &open, spot.as_ref(), false, &cx(&ctx)),
             Outcome::Redraw
         );
-        assert_eq!(rows(&m), [false, true, true, false, true, true]);
+        assert_eq!(rows(&m), [false, false, true, true, false, true, true]);
 
         let Outcome::Run(k) = m.event(MAIN, &key(0x63, Some("c"), false), None, false, &cx(&ctx))
         else {
@@ -383,6 +383,10 @@ mod tests {
         let undo = Event::Key(pick_key(editmenu::Command::Undo));
         form_input(&mut f, &undo, &ctx);
         assert_eq!(name(&f), "alpha beta", "Undo puts it back");
+        assert!(drawn(&f, &ctx).is_some_and(|s| s.can_redo));
+        let redo = Event::Key(pick_key(editmenu::Command::Redo));
+        form_input(&mut f, &redo, &ctx);
+        assert_eq!(name(&f), "", "Redo deletes it again");
     }
 
     #[test]
@@ -407,8 +411,8 @@ mod tests {
         );
         assert_eq!(
             rows(&m),
-            [false, false, false, true, true, true],
-            "Undo, Cut and Copy greyed; Paste, Delete and Select All live"
+            [false, false, false, false, true, true, true],
+            "Undo, Redo, Cut and Copy greyed; Paste, Delete and Select All live"
         );
         assert_eq!(
             m.event(MAIN, &key(0x63, Some("c"), false), None, true, &cx(&ctx)),

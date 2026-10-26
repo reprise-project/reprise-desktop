@@ -352,3 +352,18 @@ fn page_keys_move_a_memos_caret_a_page() {
     shot(&f);
     assert_eq!(memo(&f).1, 0);
 }
+
+#[test]
+fn a_memo_undoes_and_redoes_its_typing() {
+    let mut f = Form::new(vec![Item::memo("m", Rect::new(0, 0, 263, 80), "", true)]);
+    let memo = |f: &Form| match &f.items[0].control {
+        Control::Memo(m) => m.edit.text(),
+        _ => unreachable!(),
+    };
+    f.key(Key::Char('a'));
+    f.key(Key::Char('b'));
+    assert_eq!(f.key(Key::Edit(EditKey::Undo)), Event::Changed("m"));
+    assert_eq!(memo(&f), "");
+    assert_eq!(f.key(Key::Edit(EditKey::Redo)), Event::Changed("m"));
+    assert_eq!(memo(&f), "ab");
+}
