@@ -54,14 +54,25 @@ pub enum LockButton {
 
 /// The dialog's state. `input` is the password typed so far; it is zeroed
 /// whenever it is cleared. `verifying` gates every edit while the password
-/// helper is busy. `finger` is the fingerprint conversation's standing prompt (its
-/// last PAM info text) while it runs, shown when there is no message.
+/// helper is busy. `prompt` is a further PAM prompt (a one-time code) the
+/// field answers in place of the password. `finger` is the fingerprint
+/// conversation's standing prompt (its last PAM info text) while it runs,
+/// shown when there is no message.
 #[derive(Default)]
 pub struct LockState {
     pub input: String,
     pub message: Option<String>,
     pub verifying: bool,
+    pub prompt: Option<Prompt>,
     pub finger: Option<String>,
+}
+
+/// A PAM prompt after the password: its text labels the field, and `echo`
+/// shows the answer as typed instead of as stars.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prompt {
+    pub text: String,
+    pub echo: bool,
 }
 
 /// By hand so a `{:?}` in a log line never carries the password: only
@@ -75,6 +86,7 @@ impl std::fmt::Debug for LockState {
             )
             .field("message", &self.message)
             .field("verifying", &self.verifying)
+            .field("prompt", &self.prompt)
             .field("finger", &self.finger)
             .finish()
     }
@@ -102,6 +114,15 @@ impl LockState {
         self.clear_input();
         self.message = None;
         self.verifying = false;
+        self.prompt = None;
+    }
+
+    /// The conversation asks `prompt`: the field empties and answers it.
+    pub fn ask(&mut self, prompt: Prompt) {
+        self.clear_input();
+        self.message = None;
+        self.verifying = false;
+        self.prompt = Some(prompt);
     }
 
     pub fn take_input(&mut self) -> Zeroizing<String> {
@@ -130,6 +151,7 @@ impl LockState {
             LockKey::Escape => {
                 self.clear_input();
                 self.message = None;
+                self.prompt = None;
                 false
             }
         }
@@ -143,6 +165,7 @@ impl LockState {
             LockButton::Ok => !self.input.is_empty(),
             LockButton::Cancel => {
                 self.clear_input();
+                self.prompt = None;
                 false
             }
         }
@@ -152,6 +175,7 @@ impl LockState {
         self.clear_input();
         self.message = Some(message.into());
         self.verifying = false;
+        self.prompt = None;
     }
 
     /// Apply one line of the fingerprint conversation. Returns true only
@@ -162,6 +186,7 @@ impl LockState {
         match line {
             Line::Info(t) => self.finger = Some(t),
             Line::Error(t) => self.message = Some(t),
+            Line::Prompt(_) => {}
             Line::Result(rc) => {
                 self.finger = None;
                 if rc == ffi::PAM_SUCCESS {
@@ -181,8 +206,12 @@ impl LockState {
 /// cleaned by `add_notice`.
 pub type Verdict = Result<(), Vec<String>>;
 
+/// Answers a PAM prompt after the password: its text and whether it
+/// echoes, to the answer, or None to end the conversation.
+pub type Ask<'a> = dyn FnMut(&str, bool) -> Option<Zeroizing<String>> + 'a;
+
 pub trait Verifier {
-    fn verify(&self, user: &str, password: &str) -> Verdict;
+    fn verify(&self, user: &str, password: &str, ask: &mut Ask<'_>) -> Verdict;
 }
 
 pub fn failure_text(notices: &[String]) -> String {
@@ -302,7 +331,7 @@ impl PamVerifier {
 }
 
 impl Verifier for PamVerifier {
-    fn verify(&self, user: &str, password: &str) -> Verdict {
+    fn verify(&self, user: &str, password: &str, ask: &mut Ask<'_>) -> Verdict {
         // pam_authenticate alone, as swaylock and hyprlock do: pam_acct_mgmt
         // (an expired password, /run/nologin, a time rule) would fail after
         // the right password and read as "incorrect", with the live
@@ -311,10 +340,10 @@ impl Verifier for PamVerifier {
         let (Ok(cservice), Ok(cuser)) = (CString::new(service), CString::new(user)) else {
             return Err(Vec::new());
         };
-        let mut creds = Credentials::new(cuser, password);
+        let mut creds = Credentials::new(cuser, password, ask);
         let conv = ffi::pam_conv {
             conv: Some(converse),
-            appdata_ptr: &mut creds as *mut Credentials as *mut c_void,
+            appdata_ptr: &mut creds as *mut Credentials<'_> as *mut c_void,
         };
         let mut handle: *mut ffi::pam_handle_t = std::ptr::null_mut();
         // SAFETY: every pointer is to a live local or a NUL-terminated
@@ -350,7 +379,7 @@ impl Verifier for PamVerifier {
 /// What the conversation answers with, across every `converse` call of
 /// one `pam_authenticate`. The password is zeroed with it. `notices`
 /// collects the error and info text PAM sends for the dialog.
-struct Credentials {
+struct Credentials<'a> {
     user: CString,
     password: Zeroizing<Vec<u8>>,
     notices: RefCell<Vec<String>>,
@@ -358,30 +387,34 @@ struct Credentials {
     prompted: Cell<bool>,
     /// The password has been handed out.
     password_sent: Cell<bool>,
+    ask: RefCell<&'a mut Ask<'a>>,
 }
 
-impl Credentials {
-    fn new(user: CString, password: &str) -> Credentials {
+impl<'a> Credentials<'a> {
+    fn new(user: CString, password: &str, ask: &'a mut Ask<'a>) -> Credentials<'a> {
         Credentials {
             user,
             password: Zeroizing::new(password.as_bytes().to_vec()),
             notices: RefCell::new(Vec::new()),
             prompted: Cell::new(false),
             password_sent: Cell::new(false),
+            ask: RefCell::new(ask),
         }
     }
 
     /// The answer to the next prompt: the login name for an echo prompt
-    /// that comes first, the password for the first blind one. Any other
-    /// prompt (a one-time code, a second password) has none, since the
-    /// dialog only asks for the password.
-    fn answer(&self, echo: bool) -> Option<&[u8]> {
+    /// that comes first, the password for the first blind one, and `ask`'s
+    /// answer to any further one (a one-time code, a second password).
+    fn answer(&self, echo: bool, text: &str) -> Option<Zeroizing<Vec<u8>>> {
         let first = !self.prompted.replace(true);
-        if echo {
-            first.then_some(self.user.as_bytes())
-        } else {
-            (!self.password_sent.replace(true)).then_some(&self.password[..])
+        if echo && first {
+            return Some(Zeroizing::new(self.user.as_bytes().to_vec()));
         }
+        if !echo && !self.password_sent.replace(true) {
+            return Some(self.password.clone());
+        }
+        let a = (self.ask.borrow_mut())(text, echo)?;
+        Some(Zeroizing::new(a.as_bytes().to_vec()))
     }
 }
 
@@ -409,7 +442,7 @@ unsafe extern "C" fn converse(
     }
     // SAFETY: `data` is the `appdata_ptr` from `verify`: a live `Credentials`
     // that outlives the PAM handle.
-    let creds = unsafe { &*(data as *const Credentials) };
+    let creds = unsafe { &*(data as *const Credentials<'_>) };
     let n = n as usize;
     // SAFETY: plain allocation; the result is null-checked below.
     let resp = unsafe { libc::calloc(n, std::mem::size_of::<ffi::pam_response>()) }
@@ -421,9 +454,14 @@ unsafe extern "C" fn converse(
         // Linux-PAM hands an array of messages; `msgs` points at its first.
         // SAFETY: libpam passes `n` (> 0) live messages behind non-null `msgs`.
         let m = unsafe { &**msgs.add(i) };
-        let answer: Option<&[u8]> = match m.msg_style {
+        let answer = match m.msg_style {
             style @ (ffi::PAM_PROMPT_ECHO_ON | ffi::PAM_PROMPT_ECHO_OFF) => {
-                let Some(a) = creds.answer(style == ffi::PAM_PROMPT_ECHO_ON) else {
+                let text = match m.msg.is_null() {
+                    true => Default::default(),
+                    // SAFETY: libpam's message text is a NUL-terminated string.
+                    false => unsafe { CStr::from_ptr(m.msg) }.to_string_lossy(),
+                };
+                let Some(a) = creds.answer(style == ffi::PAM_PROMPT_ECHO_ON, &text) else {
                     log::warn!("pam: no answer for a further prompt, ending the conversation");
                     // SAFETY: the first `i` answers are null or calloc'd
                     // buffers from this loop, none handed to libpam.
@@ -755,13 +793,18 @@ fn draw_body(
         px,
     );
 
-    label(c, l.field, "Password:");
+    let prompt = state.prompt.as_ref();
+    let name = prompt.map_or("Password:", |p| p.text.as_str());
+    label(c, l.field, &text.ellipsize(name, at(LABEL_W), false, px));
     field(c, l.field, cs.window, true);
-    let stars = "*".repeat(state.input.chars().count());
+    let shown: std::borrow::Cow<str> = match prompt {
+        Some(p) if p.echo => state.input.as_str().into(),
+        _ => "*".repeat(state.input.chars().count()).into(),
+    };
     text.draw(
         c,
         l.field.inset(3 * s),
-        &stars,
+        &shown,
         false,
         cs.button_text,
         Align::Left,
@@ -771,7 +814,9 @@ fn draw_body(
     let msg = if state.verifying {
         Some("Verifying...")
     } else {
-        state.message.as_deref().or(state.finger.as_deref())
+        (state.message.as_deref())
+            .or(prompt.map(|p| p.text.as_str()))
+            .or(state.finger.as_deref())
     };
     if let Some(msg) = msg {
         let lines = message_lines(text, msg, l.message.width, px);
@@ -973,8 +1018,12 @@ mod tests {
         assert_eq!(pick_user(None, None, None), "");
     }
 
-    fn creds() -> Credentials {
-        Credentials::new(CString::new("someone").unwrap(), "hunter2")
+    fn creds<'a>(ask: &'a mut Ask<'a>) -> Credentials<'a> {
+        Credentials::new(CString::new("someone").unwrap(), "hunter2", ask)
+    }
+
+    fn no_answer(_: &str, _: bool) -> Option<Zeroizing<String>> {
+        None
     }
 
     fn msg(msg_style: c_int, text: &CStr) -> ffi::pam_message {
@@ -984,7 +1033,7 @@ mod tests {
         }
     }
 
-    fn ask(creds: &mut Credentials, msgs: &[ffi::pam_message]) -> (c_int, Vec<Option<String>>) {
+    fn ask(creds: &mut Credentials<'_>, msgs: &[ffi::pam_message]) -> (c_int, Vec<Option<String>>) {
         let mut ptrs: Vec<*const ffi::pam_message> = msgs.iter().map(|m| m as *const _).collect();
         let mut out: *mut ffi::pam_response = std::ptr::null_mut();
         // SAFETY: the arguments are what libpam passes: `ptrs.len()` live
@@ -994,7 +1043,7 @@ mod tests {
                 ptrs.len() as c_int,
                 ptrs.as_mut_ptr(),
                 &mut out,
-                creds as *mut Credentials as *mut c_void,
+                creds as *mut Credentials<'_> as *mut c_void,
             )
         };
         if out.is_null() {
@@ -1022,7 +1071,8 @@ mod tests {
     /// one with the password, and keeps error and info text unanswered.
     #[test]
     fn converse_answers_the_prompts_and_keeps_the_notices() {
-        let mut creds = creds();
+        let mut none = no_answer;
+        let mut creds = creds(&mut none);
         let msgs = [
             msg(ffi::PAM_PROMPT_ECHO_ON, c"login:"),
             msg(ffi::PAM_PROMPT_ECHO_OFF, c"Password:"),
@@ -1038,13 +1088,14 @@ mod tests {
         assert_eq!(creds.notices.take(), ["note", "Account locked."]);
     }
 
-    /// A prompt after the password (a one-time code, a second password)
-    /// ends the conversation with PAM_CONV_ERR instead of getting the
-    /// password or the login name.
+    /// A prompt after the password that `ask` has no answer for ends the
+    /// conversation with PAM_CONV_ERR instead of getting the password or
+    /// the login name.
     #[test]
-    fn converse_refuses_a_prompt_after_the_password() {
+    fn converse_refuses_a_prompt_after_the_password_without_an_answer() {
         for second in [ffi::PAM_PROMPT_ECHO_OFF, ffi::PAM_PROMPT_ECHO_ON] {
-            let mut creds = creds();
+            let mut none = no_answer;
+            let mut creds = creds(&mut none);
             let (rc, answers) = ask(&mut creds, &[msg(ffi::PAM_PROMPT_ECHO_OFF, c"Password:")]);
             assert_eq!(rc, ffi::PAM_SUCCESS);
             assert_eq!(answers, [Some("hunter2".into())]);
@@ -1053,12 +1104,40 @@ mod tests {
             assert_eq!(answers, []);
         }
         // Within one round too, and after the login name.
-        let mut creds = creds();
+        let mut none = no_answer;
+        let mut creds = creds(&mut none);
         let msgs = [
             msg(ffi::PAM_PROMPT_ECHO_ON, c"login:"),
             msg(ffi::PAM_PROMPT_ECHO_ON, c"Code:"),
         ];
         assert_eq!(ask(&mut creds, &msgs), (ffi::PAM_CONV_ERR, Vec::new()));
+    }
+
+    /// Each prompt after the password goes to `ask` with its text and echo,
+    /// and gets `ask`'s answer.
+    #[test]
+    fn converse_asks_for_each_further_prompt() {
+        let mut asked = Vec::new();
+        let mut answer = |text: &str, echo: bool| {
+            asked.push((text.to_string(), echo));
+            Some(Zeroizing::new(format!("answer {}", asked.len())))
+        };
+        let mut creds = creds(&mut answer);
+        let msgs = [
+            msg(ffi::PAM_PROMPT_ECHO_OFF, c"Password:"),
+            msg(ffi::PAM_PROMPT_ECHO_ON, c"Verification code:"),
+        ];
+        let (rc, answers) = ask(&mut creds, &msgs);
+        assert_eq!(rc, ffi::PAM_SUCCESS);
+        assert_eq!(answers, [Some("hunter2".into()), Some("answer 1".into())]);
+        let (rc, answers) = ask(&mut creds, &[msg(ffi::PAM_PROMPT_ECHO_OFF, c"PIN:")]);
+        assert_eq!(rc, ffi::PAM_SUCCESS);
+        assert_eq!(answers, [Some("answer 2".into())]);
+        drop(creds);
+        assert_eq!(
+            asked,
+            [("Verification code:".into(), true), ("PIN:".into(), false)]
+        );
     }
 
     #[test]
@@ -1237,6 +1316,54 @@ mod tests {
         s.finger(crate::lockfinger::Line::Info("Place your finger".into()));
         let c = draw_dialog(&theme, &text, None, "someone", &s);
         assert!(has_ink(&c, l.message, bg));
+    }
+
+    /// A further prompt labels the field with its text, fills the empty
+    /// message area with it, and an echoed one shows the answer as typed.
+    #[test]
+    fn a_further_prompt_relabels_the_field() {
+        let theme = Theme::default();
+        let text = TextRenderer::load(&FontConfig::default());
+        let l = dialog_layout(&theme);
+        let s_ = theme.scale;
+        let label = Rect::new(l.caption.x + PAD, l.field.y, LABEL_W, l.field.height);
+        let pixels = |c: &Canvas, r: Rect| -> Vec<u32> {
+            (r.y..r.bottom())
+                .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
+                .map(|(x, y)| c.get(x, y))
+                .collect()
+        };
+        let mut s = LockState::new();
+        s.key(LockKey::Text("1234"));
+        let password = draw_dialog(&theme, &text, None, "someone", &s);
+        s.ask(Prompt {
+            text: "Code:".into(),
+            echo: false,
+        });
+        assert_eq!(s.input, "", "the field is cleared for the answer");
+        s.key(LockKey::Text("1234"));
+        let blind = draw_dialog(&theme, &text, None, "someone", &s);
+        assert_ne!(
+            pixels(&password, label),
+            pixels(&blind, label),
+            "the label is the prompt's"
+        );
+        let inside = l.field.inset(3 * s_);
+        assert_eq!(
+            pixels(&password, inside),
+            pixels(&blind, inside),
+            "a blind answer shows stars"
+        );
+        assert!(has_ink(&blind, l.message, theme.colors.button_face.argb()));
+        s.prompt.as_mut().unwrap().echo = true;
+        let echoed = draw_dialog(&theme, &text, None, "someone", &s);
+        assert_ne!(
+            pixels(&blind, inside),
+            pixels(&echoed, inside),
+            "an echoed answer shows as typed"
+        );
+        s.fail_with(INCORRECT);
+        assert_eq!(s.prompt, None, "a verdict ends the prompt");
     }
 
     fn blue() -> Theme {
