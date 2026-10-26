@@ -1,7 +1,7 @@
-//! A drag over a program's form ([`crate::App::drop_form`]): its single-line edit fields take
+//! A drag over a program's form ([`crate::Extended::drop_form`]): its single-line edit fields take
 //! text, and files as their paths on one line. The host shows the drop caret, scrolls a field
 //! while the drag rests at its edge, puts a drop in at the drop caret, and tells the program
-//! with `Event::FieldDropped`. A file dialog's File name field ([`crate::App::drop_file_dialog`])
+//! with `Event::FieldDropped`. A file dialog's File name field ([`crate::Extended::drop_file_dialog`])
 //! takes text the same way, and files as their names.
 
 use std::path::Path;

@@ -102,25 +102,53 @@ impl Host {
 pub fn applet_main<A: App + 'static>(args: &[std::ffi::OsString], app: impl FnOnce(bool) -> A) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
     let tray_only = args.iter().any(|a| a == "--tray");
-    run(Box::new(app(tray_only)));
+    run(Box::new(app(tray_only))).unwrap_or_else(|e| e.exit());
 }
 
-pub fn run(app: Box<dyn App>) {
+/// Why [`run`] could not start: no Wayland compositor to connect to, or one without a global
+/// every window needs.
+#[derive(Debug)]
+pub struct RunError(String);
+
+impl std::fmt::Display for RunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for RunError {}
+
+fn failed<E: std::fmt::Display>(what: &'static str) -> impl FnOnce(E) -> RunError {
+    move |e| RunError(format!("{what}: {e}"))
+}
+
+impl RunError {
+    /// Prints the error and ends the process with status 1, for a program's `main`.
+    pub fn exit(self) -> ! {
+        eprintln!("{self}");
+        std::process::exit(1)
+    }
+}
+
+/// Runs `app` until it quits. Fails only before the first window, when the compositor cannot be
+/// reached or lacks `wl_compositor`, `xdg_wm_base` or `wl_shm`.
+pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
     filedlg::remember_views();
-    let conn = Connection::connect_to_env().expect("WAYLAND_DISPLAY");
+    let conn =
+        Connection::connect_to_env().map_err(failed("cannot connect to a Wayland compositor"))?;
     hangup::on_signals(conn.backend().poll_fd());
-    let (globals, event_queue) = registry_queue_init(&conn).expect("registry");
+    let (globals, event_queue) = registry_queue_init(&conn).map_err(failed("wayland registry"))?;
     let qh = event_queue.handle();
     let mut event_queue = event_queue;
-    let mut event_loop: EventLoop<Host> = EventLoop::try_new().expect("event loop");
+    let mut event_loop: EventLoop<Host> = EventLoop::try_new().map_err(failed("event loop"))?;
     let loop_handle = event_loop.handle();
     hangup::route_to(&loop_handle, |host: &mut Host| host.app.emergency());
 
-    let compositor = CompositorState::bind(&globals, &qh).expect("wl_compositor");
-    let xdg_shell = XdgShell::bind(&globals, &qh).expect("xdg_wm_base");
+    let compositor = CompositorState::bind(&globals, &qh).map_err(failed("wl_compositor"))?;
+    let xdg_shell = XdgShell::bind(&globals, &qh).map_err(failed("xdg_wm_base"))?;
     let layer_shell = LayerShell::bind(&globals, &qh).ok();
     let activation = ActivationState::bind(&globals, &qh).ok();
-    let shm = Shm::bind(&globals, &qh).expect("wl_shm");
+    let shm = Shm::bind(&globals, &qh).map_err(failed("wl_shm"))?;
     let data_device_manager = DataDeviceManagerState::bind(&globals, &qh).ok();
     let viewporter = globals
         .bind::<wp_viewporter::WpViewporter, _, _>(&qh, 1..=1, NoEvents)
@@ -386,7 +414,7 @@ pub fn run(app: Box<dyn App>) {
             Ok(false) => {}
             Ok(true) => {
                 shut_down(&conn);
-                break;
+                return Ok(());
             }
             Err(e) => {
                 log::error!("{e}; exiting");

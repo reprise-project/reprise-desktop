@@ -257,7 +257,8 @@ pub fn run_dialog() {
         .iter()
         .find_map(|n| icons.get(n, dialog::ICON_PX));
     let out = Arc::new(Mutex::new(Output::default()));
-    repriseapp::run(Box::new(prompt(&input, form, size, icon, out.clone())));
+    repriseapp::run(Box::new(prompt(&input, form, size, icon, out.clone())))
+        .unwrap_or_else(|e| e.exit());
     let out = out.lock().unwrap().clone();
     match toml::to_string(&out) {
         Ok(s) => print!("{s}"),

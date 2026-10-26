@@ -15,16 +15,18 @@ There are two parts:
   makes it straightforward to test down to the pixel. A bevel is either
   right or it isn't.
 - **`repriseapp`** runs a `reprisekit` program as a normal Wayland window.
-  Implement the `App` trait (`title`, `event`, `draw`) and call
-  `repriseapp::run`. It handles keyboard and mouse input, the clipboard,
+  Implement the `App` trait (`title`, `app_id`, `initial_size`, `event`,
+  `draw`), add an empty `impl Extended` for the optional hooks, and call
+  `repriseapp::run`; `examples/hello.rs` is the smallest such program. It handles keyboard and mouse input, the clipboard,
   caret blinking, extra dialog windows, HiDPI and screen readers. It follows
   the desktop's interface and colour scheme, dark ones included.
 
 To have a look:
 
     cargo run -p reprisekit --example gallery      # every control, drawn to a PNG in target/
+    cargo run -p repriseapp --example hello        # one window, a form with a label and a button
     cargo run -p repriseapp --example controls     # a live window with a form
     cargo run -p repriseapp --example twowin       # a main window that opens a dialog
 
-The two `repriseapp` examples need a running Wayland session. Any compositor
+The `repriseapp` examples need a running Wayland session. Any compositor
 will do, though I am obviously going to recommend this one.

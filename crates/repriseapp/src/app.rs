@@ -1,22 +1,35 @@
 //! What a program implements: the [`App`] trait and the windows it names.
 
 use crate::{Ctx, DropForm, Event, FileDrop, Reader, ReaderForm, Reply, Waker};
-use reprisebus::mutex::lock;
 use reprisekit::access::Tree;
 use reprisekit::controls::hosted::Hosted;
 use reprisekit::raster::{Canvas, Rect};
 
-pub trait App {
+/// What every program implements: its main window's names and size, its child windows, and
+/// how each window answers events and draws. [`Extended`] carries the optional hooks.
+pub trait App: Extended {
     fn title(&self) -> String;
     fn app_id(&self) -> String;
     fn initial_size(&self) -> (i32, i32);
+    fn children(&self) -> Vec<Child> {
+        Vec::new()
+    }
+    /// Called once before the first dispatch, with the handle the
+    /// program clones into the threads it spawns.
+    fn start(&mut self, _waker: Waker) -> Start {
+        Start::Continue
+    }
+    fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply;
+    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx);
+}
+
+/// The hooks a program overrides only for what it uses (popups, readers, drops, flyouts, output
+/// management...); every one has a default, so `impl Extended for MyApp {}` takes them all.
+pub trait Extended {
     /// Whether the main window refuses to resize, like an About box.
     /// Its min and max size are pinned to `initial_size`, and to each later `Reply::size`.
     fn fixed(&self) -> bool {
         false
-    }
-    fn children(&self) -> Vec<Child> {
-        Vec::new()
     }
     /// The window child `win` sits over. `None` makes it a toplevel of its own, unparented like
     /// the main window, for a program that shows several (its `modal` is then ignored).
@@ -73,11 +86,6 @@ pub trait App {
     fn shortcuts_inhibited(&self) -> Option<WinId> {
         None
     }
-    /// Called once before the first dispatch, with the handle the
-    /// program clones into the threads it spawns.
-    fn start(&mut self, _waker: Waker) -> Start {
-        Start::Continue
-    }
     /// The process is about to end without the program's say: the compositor connection is gone,
     /// or an event or draw panicked and left the state half-updated. Save what the user would lose.
     fn emergency(&mut self) {}
@@ -99,7 +107,6 @@ pub trait App {
     fn text_sized(&self) -> bool {
         false
     }
-    fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply;
     /// Called before each draw of `win`, at `scale` device px per logical px, with
     /// [`Ctx::icons`] at that scale: a program fetches again what it holds at another one.
     fn follow_scale(&mut self, _win: WinId, _scale: i32, _ctx: &mut Ctx) {}
@@ -109,7 +116,6 @@ pub trait App {
     fn drag_image(&mut self, _win: WinId, _scale: i32, _ctx: &mut Ctx) -> Option<Canvas> {
         None
     }
-    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx);
     /// Whether `draw` gets `win`'s last frame back (until a resize or scale change) and reports
     /// what it redrew with [`Canvas::report_damage`].
     fn keeps_canvas(&self, _win: WinId) -> bool {
@@ -135,7 +141,7 @@ pub trait App {
     }
     /// The form in window `win` that a screen reader's Focus and ScrollIntoView reach without a
     /// click: a row scrolls into view, a button takes the focus unpressed. Defaults to
-    /// [`App::drop_form`].
+    /// [`Extended::drop_form`].
     fn reader_form(&mut self, win: WinId) -> Option<ReaderForm<'_>> {
         self.drop_form(win).map(ReaderForm::Form)
     }
@@ -154,9 +160,9 @@ pub trait App {
     }
 }
 
-/// The open popup of [`App::reader_form`]'s form or sheet, else the open list or Views menu of
-/// [`App::drop_file_dialog`].
-pub fn reader_popup<'a, A: App + ?Sized>(
+/// The open popup of [`Extended::reader_form`]'s form or sheet, else the open list or Views menu of
+/// [`Extended::drop_file_dialog`].
+pub fn reader_popup<'a, A: Extended + ?Sized>(
     app: &'a mut A,
     win: WinId,
     ctx: &Ctx,
@@ -175,9 +181,9 @@ pub fn reader_popup<'a, A: App + ?Sized>(
     }))
 }
 
-/// A screen reader's `act` carried out on window `win`'s [`App::reader_form`], else its
-/// [`App::drop_file_dialog`]; what [`App::reader`] does unless a program answers it.
-pub fn reader_forms<A: App + ?Sized>(app: &mut A, win: WinId, act: Reader, ctx: &Ctx) -> bool {
+/// A screen reader's `act` carried out on window `win`'s [`Extended::reader_form`], else its
+/// [`Extended::drop_file_dialog`]; what [`Extended::reader`] does unless a program answers it.
+pub fn reader_forms<A: Extended + ?Sized>(app: &mut A, win: WinId, act: Reader, ctx: &Ctx) -> bool {
     let base = ctx.base_px();
     if let Some(f) = app.reader_form(win) {
         return f.act(act, &ctx.text, base);
@@ -211,10 +217,30 @@ pub enum Caption {
     Fixed,
 }
 
-/// Ids are fixed strings, so a program has at most one window per id.
-pub type WinId = &'static str;
+/// A window of the program: a named one ([`WinId::named`]), fixed for the program's life, or one
+/// it numbers as it opens windows ([`window_id`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WinId(u32);
 
-pub const MAIN: WinId = "main";
+/// The bit [`window_id`] sets and [`WinId::named`] clears, so the two never meet.
+const NUMBERED: u32 = 1 << 31;
+
+impl WinId {
+    /// The window named `name`: an FNV-1a hash, so a program's distinct names are distinct ids.
+    pub const fn named(name: &str) -> WinId {
+        let b = name.as_bytes();
+        let mut h: u32 = 0x811c_9dc5;
+        let mut i = 0;
+        while i < b.len() {
+            h ^= b[i] as u32;
+            h = h.wrapping_mul(0x0100_0193);
+            i += 1;
+        }
+        WinId(h & !NUMBERED)
+    }
+}
+
+pub const MAIN: WinId = WinId::named("main");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Child {
@@ -248,15 +274,7 @@ impl Flyout {
     pub const UNDER_POINTER: (i32, i32) = (i32::MIN, i32::MIN);
 }
 
-/// The id `window-<n>`, one `'static` str per `n` for the life of the process: for a program
-/// that opens windows of its own as it runs ([`App::parent`]).
+/// The `n`th window a program opens as it runs ([`Extended::parent`]); never a named one.
 pub fn window_id(n: usize) -> WinId {
-    use std::sync::Mutex;
-    static IDS: Mutex<Vec<WinId>> = Mutex::new(Vec::new());
-    let mut ids = lock(&IDS);
-    while ids.len() <= n {
-        let next = format!("window-{}", ids.len());
-        ids.push(Box::leak(next.into_boxed_str()));
-    }
-    ids[n]
+    WinId(NUMBERED | (n as u32 & !NUMBERED))
 }

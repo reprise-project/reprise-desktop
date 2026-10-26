@@ -242,7 +242,7 @@ mod tests {
             b.draw(&mut c, &theme, &text);
             c.take_tip().map(|tip| tip.text)
         };
-        let full = b.child("box", &text, &theme).size.0 as u32;
+        let full = b.child(WinId::named("box"), &text, &theme).size.0 as u32;
         let label = msgbox::form(&b.fields, &text, theme.fonts.size_px, theme.text)
             .item("text")
             .unwrap()
@@ -307,7 +307,10 @@ mod tests {
             let theme = reprisekit::interfaces::theme_for(i);
             crate::look::publish_theme(&theme);
             let b = MsgBox::new("User Accounts", short());
-            let w = b.child("box", &text, &Theme::default()).size.0;
+            let w = b
+                .child(WinId::named("box"), &text, &Theme::default())
+                .size
+                .0;
             let fit = reprisekit::look::caption_fit(
                 &theme,
                 "User Accounts",
@@ -324,7 +327,9 @@ mod tests {
         crate::look::CAPTION_FIT.with_borrow_mut(|(_, out)| *out = Some(180));
         let b = MsgBox::new("User Accounts", short());
         assert_eq!(
-            b.child("box", &text, &Theme::default()).size.0,
+            b.child(WinId::named("box"), &text, &Theme::default())
+                .size
+                .0,
             glass.min(180 - 2 * 8),
             "capped to a 180 px output less the Glass dialog border"
         );
@@ -363,7 +368,7 @@ mod tests {
         let mut b = two_buttons();
         let text = TextRenderer::load(&FontConfig::default());
         let px = 11;
-        let child = b.child("box", &text, &Theme::default());
+        let child = b.child(WinId::named("box"), &text, &Theme::default());
         assert!(child.modal && child.fixed);
         assert_eq!(
             child.size,

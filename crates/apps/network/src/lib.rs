@@ -44,14 +44,14 @@ use reprisekit::theme::{TextUnits, Theme};
 
 /// The windows the folder and the tray open. One Status sheet and one VPN
 /// sheet at a time: opening another replaces it.
-const CHOOSER: WinId = "chooser";
-const KEY: WinId = "key";
-const EAP: WinId = "eap";
-const STATUS: WinId = "status";
-const VPN: WinId = "vpn";
-const IMPORT: WinId = "import";
-const HOTSPOT: WinId = "hotspot";
-const NOTICE: WinId = "notice";
+const CHOOSER: WinId = WinId::named("chooser");
+const KEY: WinId = WinId::named("key");
+const EAP: WinId = WinId::named("eap");
+const STATUS: WinId = WinId::named("status");
+const VPN: WinId = WinId::named("vpn");
+const IMPORT: WinId = WinId::named("import");
+const HOTSPOT: WinId = WinId::named("hotspot");
+const NOTICE: WinId = WinId::named("notice");
 const BROWSE_TITLE: &str = "Choose File";
 
 /// Where the sign-in balloon sends the browser when NetworkManager has no
@@ -1141,14 +1141,6 @@ impl App for NetApp {
         self.forms.text.size(folder::CLIENT)
     }
 
-    fn text_sized(&self) -> bool {
-        true
-    }
-
-    fn hidden(&self) -> bool {
-        self.hidden
-    }
-
     fn children(&self) -> Vec<Child> {
         let u = self.forms.text;
         let mut out = Vec::new();
@@ -1228,14 +1220,6 @@ impl App for NetApp {
         out
     }
 
-    /// The Import file dialog resizes, down to its opening size.
-    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
-        match &self.import {
-            Some(d) if win == IMPORT => Some(d.min_client()),
-            _ => None,
-        }
-    }
-
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         // The tray goes first: it takes the `reprise.network` bus name and a
         // second instance exits here once it has raised the first.
@@ -1294,80 +1278,6 @@ impl App for NetApp {
             NOTICE => self.notice_event(ev),
             _ => self.folder_event(ev, ctx),
         }
-    }
-
-    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let forms = ctx.forms();
-        let form_px = forms.fonts.size_px;
-        match win {
-            CHOOSER => {
-                if let Some(ch) = &self.chooser {
-                    ch.access(tree, ctx);
-                }
-            }
-            KEY => {
-                if let Some(k) = &self.key {
-                    oneshot::access_form(&k.form, tree, &ctx.text, form_px);
-                }
-            }
-            EAP => {
-                if let Some(d) = &self.eap {
-                    oneshot::access_form(&d.form, tree, &ctx.text, form_px);
-                }
-            }
-            STATUS => {
-                if let Some(s) = &self.status {
-                    oneshot::access_sheet(&s.sheet, tree, &ctx.text, form_px);
-                }
-            }
-            VPN => {
-                if let Some(w) = &self.vpn {
-                    oneshot::access_sheet(w.sheet(), tree, &ctx.text, form_px);
-                }
-            }
-            HOTSPOT => {
-                if let Some(d) = &self.hotspot {
-                    oneshot::access_form(&d.form, tree, &ctx.text, form_px);
-                }
-            }
-            IMPORT => {
-                if let Some(d) = &self.import {
-                    let r = Rect::new(0, 0, d.client().0, d.client().1);
-                    d.access(tree, r, &ctx.text, forms.fonts.size_px);
-                }
-            }
-            NOTICE => {
-                if let Some(n) = &self.notice {
-                    n.msg.access(tree, &ctx.text, &forms);
-                }
-            }
-            _ => self.folder.access(tree, ctx),
-        }
-    }
-
-    fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
-        if win == repriseapp::MAIN {
-            return Some(Box::new(&mut self.folder.popup));
-        }
-        repriseapp::reader_popup(self, win, ctx)
-    }
-
-    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
-        let form = match win {
-            VPN => self.vpn.as_mut()?.sheet_mut().open_mut(),
-            HOTSPOT => &mut self.hotspot.as_mut()?.form,
-            KEY => &mut self.key.as_mut()?.form,
-            EAP => &mut self.eap.as_mut()?.form,
-            _ => return None,
-        };
-        Some(DropForm { form, px: None })
-    }
-
-    fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
-        (win == IMPORT).then_some(FileDrop {
-            dlg: self.import.as_mut()?,
-            host: &mut self.import_host,
-        })
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
@@ -1491,6 +1401,98 @@ impl App for NetApp {
                 self.folder.draw(c, ctx);
             }
         }
+    }
+}
+
+impl repriseapp::Extended for NetApp {
+    fn text_sized(&self) -> bool {
+        true
+    }
+
+    fn hidden(&self) -> bool {
+        self.hidden
+    }
+
+    /// The Import file dialog resizes, down to its opening size.
+    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
+        match &self.import {
+            Some(d) if win == IMPORT => Some(d.min_client()),
+            _ => None,
+        }
+    }
+
+    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
+        let forms = ctx.forms();
+        let form_px = forms.fonts.size_px;
+        match win {
+            CHOOSER => {
+                if let Some(ch) = &self.chooser {
+                    ch.access(tree, ctx);
+                }
+            }
+            KEY => {
+                if let Some(k) = &self.key {
+                    oneshot::access_form(&k.form, tree, &ctx.text, form_px);
+                }
+            }
+            EAP => {
+                if let Some(d) = &self.eap {
+                    oneshot::access_form(&d.form, tree, &ctx.text, form_px);
+                }
+            }
+            STATUS => {
+                if let Some(s) = &self.status {
+                    oneshot::access_sheet(&s.sheet, tree, &ctx.text, form_px);
+                }
+            }
+            VPN => {
+                if let Some(w) = &self.vpn {
+                    oneshot::access_sheet(w.sheet(), tree, &ctx.text, form_px);
+                }
+            }
+            HOTSPOT => {
+                if let Some(d) = &self.hotspot {
+                    oneshot::access_form(&d.form, tree, &ctx.text, form_px);
+                }
+            }
+            IMPORT => {
+                if let Some(d) = &self.import {
+                    let r = Rect::new(0, 0, d.client().0, d.client().1);
+                    d.access(tree, r, &ctx.text, forms.fonts.size_px);
+                }
+            }
+            NOTICE => {
+                if let Some(n) = &self.notice {
+                    n.msg.access(tree, &ctx.text, &forms);
+                }
+            }
+            _ => self.folder.access(tree, ctx),
+        }
+    }
+
+    fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        if win == repriseapp::MAIN {
+            return Some(Box::new(&mut self.folder.popup));
+        }
+        repriseapp::reader_popup(self, win, ctx)
+    }
+
+    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
+        let form = match win {
+            VPN => self.vpn.as_mut()?.sheet_mut().open_mut(),
+            HOTSPOT => &mut self.hotspot.as_mut()?.form,
+            KEY => &mut self.key.as_mut()?.form,
+            EAP => &mut self.eap.as_mut()?.form,
+            _ => return None,
+        };
+        Some(DropForm { form, px: None })
+    }
+
+    fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
+        (win == IMPORT).then_some(FileDrop {
+            dlg: self.import.as_mut()?,
+            host: &mut self.import_host,
+        })
     }
 }
 

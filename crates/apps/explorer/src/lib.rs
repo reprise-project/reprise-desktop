@@ -1439,30 +1439,12 @@ impl App for Lazy {
         }
     }
 
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn children(&self) -> Vec<Child> {
         match &self.inner {
             Some(ex) if !ex.closing => ex.children(),
             Some(ex) => ex.progress_children(),
             None => Vec::new(),
         }
-    }
-
-    fn hidden(&self) -> bool {
-        self.inner.as_ref().is_some_and(|ex| ex.closing)
-    }
-
-    fn caption(&self, win: WinId) -> repriseapp::Caption {
-        self.inner
-            .as_ref()
-            .map_or(repriseapp::Caption::Window, |ex| ex.caption(win))
-    }
-
-    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
-        self.inner.as_ref().and_then(|ex| ex.min_size(win))
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
@@ -1584,6 +1566,60 @@ impl App for Lazy {
         ex.settle_drop(reply)
     }
 
+    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        let Some(ex) = &mut self.inner else {
+            c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
+            return;
+        };
+        ex.follow_forms(ctx);
+        if win == DIALOG {
+            ex.draw_dialog(c, ctx);
+            return;
+        }
+        if win == PROGRAM_BROWSE {
+            ex.draw_program_browse(c);
+            return;
+        }
+        if win == browse::ERROR {
+            ex.draw_browse_error(c, ctx);
+            return;
+        }
+        if win == PROPS {
+            ex.draw_props(c, ctx);
+            return;
+        }
+        if [copydlg::COPY, copydlg::REMOVE, copydlg::EXTRACT].contains(&win) {
+            ex.draw_progress(win, c);
+            return;
+        }
+        ex.status.grip = !ctx.maximized;
+        // A look that boxes its items greys the unfocused pane's selection; Classic keeps the highlight.
+        let boxed = item::boxed(&ctx.theme.paint());
+        ex.tree.inactive = boxed && ex.focus != Focus::Tree;
+        ex.sv.inactive = boxed && ex.focus != Focus::View;
+        window::draw(ex, c, ctx);
+    }
+}
+
+impl repriseapp::Extended for Lazy {
+    fn text_sized(&self) -> bool {
+        true
+    }
+
+    fn hidden(&self) -> bool {
+        self.inner.as_ref().is_some_and(|ex| ex.closing)
+    }
+
+    fn caption(&self, win: WinId) -> repriseapp::Caption {
+        self.inner
+            .as_ref()
+            .map_or(repriseapp::Caption::Window, |ex| ex.caption(win))
+    }
+
+    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
+        self.inner.as_ref().and_then(|ex| ex.min_size(win))
+    }
+
     fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
         if win != MAIN {
             return repriseapp::reader_popup(self, win, ctx);
@@ -1645,40 +1681,6 @@ impl App for Lazy {
     fn drag_image(&mut self, win: WinId, scale: i32, ctx: &mut Ctx) -> Option<Canvas> {
         let ex = self.inner.as_mut().filter(|_| win == MAIN)?;
         ex.drag_image(ctx, scale).map(|(image, _)| image)
-    }
-
-    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        let Some(ex) = &mut self.inner else {
-            c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
-            return;
-        };
-        ex.follow_forms(ctx);
-        if win == DIALOG {
-            ex.draw_dialog(c, ctx);
-            return;
-        }
-        if win == PROGRAM_BROWSE {
-            ex.draw_program_browse(c);
-            return;
-        }
-        if win == browse::ERROR {
-            ex.draw_browse_error(c, ctx);
-            return;
-        }
-        if win == PROPS {
-            ex.draw_props(c, ctx);
-            return;
-        }
-        if [copydlg::COPY, copydlg::REMOVE, copydlg::EXTRACT].contains(&win) {
-            ex.draw_progress(win, c);
-            return;
-        }
-        ex.status.grip = !ctx.maximized;
-        // A look that boxes its items greys the unfocused pane's selection; Classic keeps the highlight.
-        let boxed = item::boxed(&ctx.theme.paint());
-        ex.tree.inactive = boxed && ex.focus != Focus::Tree;
-        ex.sv.inactive = boxed && ex.focus != Focus::View;
-        window::draw(ex, c, ctx);
     }
 
     fn access(&mut self, win: WinId, tree: &mut reprisekit::access::Tree, ctx: &Ctx) {
@@ -1763,7 +1765,8 @@ pub fn main(args: Vec<std::ffi::OsString>) {
         start: parse_args(args),
         inner: None,
         units: repriseapp::start_forms().text,
-    }));
+    }))
+    .unwrap_or_else(|e| e.exit());
 }
 
 /// A folder itself, or the folder a symlink to one points at; None for anything else.

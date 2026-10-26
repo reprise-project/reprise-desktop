@@ -1209,7 +1209,7 @@ struct Program {
     dlg: FileDlg,
 }
 
-const DLG: crate::WinId = "open";
+const DLG: crate::WinId = crate::WinId::named("open");
 
 impl crate::App for Program {
     fn title(&self) -> String {
@@ -1225,6 +1225,9 @@ impl crate::App for Program {
         crate::Reply::default()
     }
     fn draw(&mut self, _: crate::WinId, _: &mut Canvas, _: &crate::Ctx) {}
+}
+
+impl crate::Extended for Program {
     fn drop_file_dialog(&mut self, win: crate::WinId) -> Option<crate::fielddrop::FileDrop<'_>> {
         (win == DLG).then_some(crate::fielddrop::FileDrop {
             dlg: &mut self.dlg,

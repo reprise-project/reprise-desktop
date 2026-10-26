@@ -267,7 +267,8 @@ pub fn run_dialog() {
         icon,
         input.parent,
         answer.clone(),
-    )));
+    )))
+    .unwrap_or_else(|e| e.exit());
     match *answer.lock().unwrap() {
         Answer::Allow { remember: false } => println!("yes"),
         Answer::Allow { remember: true } => println!("yes remember"),

@@ -174,24 +174,6 @@ impl App for Choose {
         openwith::client(&crate::dialog::start_forms().controls())
     }
 
-    fn fixed(&self) -> bool {
-        true
-    }
-
-    fn foreign_parent(&self) -> Option<String> {
-        self.input.parent.clone()
-    }
-
-    fn modal(&self) -> bool {
-        self.input.modal
-    }
-
-    /// The chooser has the dialog caption with the ? box, and no taskbar
-    /// button even with no window to belong to.
-    fn caption(&self, _win: WinId) -> repriseapp::Caption {
-        repriseapp::Caption::Help
-    }
-
     fn start(&mut self, waker: Waker) -> repriseapp::Start {
         let Some(rx) = self.updates.take() else {
             return repriseapp::Start::Continue;
@@ -261,6 +243,26 @@ impl App for Choose {
             px,
         );
     }
+}
+
+impl repriseapp::Extended for Choose {
+    fn fixed(&self) -> bool {
+        true
+    }
+
+    fn foreign_parent(&self) -> Option<String> {
+        self.input.parent.clone()
+    }
+
+    fn modal(&self) -> bool {
+        self.input.modal
+    }
+
+    /// The chooser has the dialog caption with the ? box, and no taskbar
+    /// button even with no window to belong to.
+    fn caption(&self, _win: WinId) -> repriseapp::Caption {
+        repriseapp::Caption::Help
+    }
 
     fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let lay = self.ow.layout(
@@ -315,7 +317,7 @@ pub fn run_dialog() {
         out: out.clone(),
     };
     app.resolve_icons();
-    repriseapp::run(Box::new(app));
+    repriseapp::run(Box::new(app)).unwrap_or_else(|e| e.exit());
     let out = out.lock().unwrap().clone();
     match toml::to_string(&out) {
         Ok(s) => print!("{s}"),

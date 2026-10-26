@@ -13,7 +13,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 
 pub struct Ctx {
     /// The look's theme. Its text stays at 100% unless the program is
-    /// [`App::text_sized`](crate::App::text_sized): then it is at the text size, and the program
+    /// [`Extended::text_sized`](crate::Extended::text_sized): then it is at the text size, and the program
     /// lays its lists, menus and bars out with [`Theme::controls`]. Forms draw with [`Ctx::forms`].
     pub theme: Theme,
     /// `[accessibility] text_size`, in percent: what a program grows its
@@ -85,7 +85,7 @@ impl Ctx {
 
     /// Ask the compositor to set `cfg` on output `name`; returns the number
     /// `Event::HeadsApplied` answers with. Fails without
-    /// [`App::output_management`](crate::App::output_management) or the protocol.
+    /// [`Extended::output_management`](crate::Extended::output_management) or the protocol.
     pub fn configure_head(&mut self, name: &str, cfg: heads::HeadConfig) -> u32 {
         self.heads.configure(name, cfg)
     }

@@ -2,7 +2,7 @@
 
 use super::*;
 use alacritty_terminal::term::TermMode;
-use repriseapp::{BTN_LEFT, Mods, PointerInput};
+use repriseapp::{BTN_LEFT, Extended, Mods, PointerInput};
 use reprisekit::textedit::keysym;
 use std::path::Path;
 
@@ -1601,6 +1601,6 @@ fn output_in_one_caption_tab_redraws_only_its_window() {
     );
     assert!(!t.settings.blink, "Apply took the settings");
     for w in [MAIN, second, third] {
-        assert!(t.pane(w).unwrap().full, "{w} draws whole");
+        assert!(t.pane(w).unwrap().full, "{w:?} draws whole");
     }
 }
