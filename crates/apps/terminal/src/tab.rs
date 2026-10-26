@@ -63,7 +63,7 @@ impl EventListener for Proxy {
         {
             let mut inbox = self.inbox.lock().unwrap();
             match ev {
-                TermEvent::Title(t) => inbox.title = Some(Some(t)),
+                TermEvent::Title(t) => inbox.title = Some(Some(shown_title(&t))),
                 TermEvent::ResetTitle => inbox.title = Some(None),
                 TermEvent::PtyWrite(s) => inbox.replies.push(Answer::Text(s)),
                 TermEvent::ColorRequest(i, f) => inbox.replies.push(Answer::Colour(i, f)),
@@ -83,6 +83,18 @@ impl EventListener for Proxy {
         }
         self.waker.wake();
     }
+}
+
+/// The longest title a program can set, in chars.
+pub const TITLE_MAX: usize = 1024;
+
+/// `t` as the tab, the caption and the taskbar show it: its first [`TITLE_MAX`] chars without
+/// control characters.
+fn shown_title(t: &str) -> String {
+    t.chars()
+        .filter(|c| !c.is_control())
+        .take(TITLE_MAX)
+        .collect()
 }
 
 pub struct Tab {
@@ -417,5 +429,15 @@ fn window_size(size: (usize, usize), cell: (i32, i32)) -> WindowSize {
         num_lines: clamp(size.1),
         cell_width: px(cell.0),
         cell_height: px(cell.1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_title_loses_its_control_characters() {
+        assert_eq!(shown_title("a\nb\u{9b}c\td"), "abcd");
     }
 }

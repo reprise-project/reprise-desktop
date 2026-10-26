@@ -1160,6 +1160,18 @@ fn a_palette_query_answers_the_palette_colour() {
 }
 
 #[test]
+fn a_long_title_is_cut() {
+    let mut ctx = test_ctx();
+    let script = "printf '\\033]0;'; head -c 5000 /dev/zero | tr '\\0' x; printf '\\007'; sleep 5";
+    let mut t = terminal(&["sh", "-c", script]);
+    until("the title arrives", || {
+        t.event(MAIN, Event::Wake, &mut ctx);
+        t.w.tabs.list[0].title().starts_with('x')
+    });
+    assert_eq!(t.w.tabs.list[0].title(), "x".repeat(tab::TITLE_MAX));
+}
+
+#[test]
 fn a_program_s_clipboard_store_is_copied() {
     let mut ctx = test_ctx();
     let script =
