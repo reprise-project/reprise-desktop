@@ -87,8 +87,19 @@ fn wants(ls: &WlrLayerSurface) -> Wants {
             size: (s.size.w, s.size.h),
         },
         layer: s.layer,
-        keyboard: s.keyboard_interactivity,
+        keyboard: keyboard_for(s.layer, s.keyboard_interactivity),
     })
+}
+
+/// The protocol grants exclusive keyboard focus only above windows; below them it
+/// reads as on-demand.
+fn keyboard_for(layer: Layer, asked: KeyboardInteractivity) -> KeyboardInteractivity {
+    match (layer, asked) {
+        (Layer::Background | Layer::Bottom, KeyboardInteractivity::Exclusive) => {
+            KeyboardInteractivity::OnDemand
+        }
+        _ => asked,
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -574,10 +585,7 @@ pub fn close_flyout(state: &mut State, surface: &WlSurface) -> bool {
     let Some(l) = state.layer_of(&root) else {
         return false;
     };
-    let over = l
-        .seen
-        .is_some_and(|w| matches!(w.layer, Layer::Top | Layer::Overlay));
-    if !(l.mapped && l.exclusive() && over) {
+    if !(l.mapped && l.exclusive()) {
         return false;
     }
     let ls = l.surface.clone();
@@ -708,5 +716,19 @@ mod tests {
         assert_eq!(exclusive_edge(&corner), None);
         corner.edge = Some(Anchor::RIGHT);
         assert_eq!(reserve(&corner, FULL), Rect::new(0, 0, 1900, 1080));
+    }
+
+    #[test]
+    fn a_background_surface_asking_for_the_keyboard_outright_lets_a_window_take_it() {
+        use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.map_exclusive_layer(&mut c, zwlr_layer_shell_v1::Layer::Background);
+        h.state.focus_window(t.id);
+        let want = h.state.win(t.id).map(|w| w.wl_surface().clone());
+        let got = h.state.seat.get_keyboard().and_then(|k| k.current_focus());
+        assert_eq!(got, want, "the window holds the keyboard");
     }
 }
