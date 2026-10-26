@@ -156,6 +156,8 @@ impl State {
     /// launch either way; the window holds it until the focus first leaves it, and
     /// hands it back if it withdraws before that (`forget_window`).
     pub fn takes_focus_on_map(&mut self, w: WindowId, activated: bool) -> bool {
+        #[cfg(test)]
+        WEIGHED.with(|n| n.set(n.get() + 1));
         // Every X11 window is Xwayland's client, so an X11 window has no
         // client to compare.
         let client =
@@ -332,4 +334,10 @@ mod tests {
         );
         assert_eq!(next_focus(false, false, &[1, 2], |_| false), Next::Nobody);
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Maps this test thread weighed in [`State::takes_focus_on_map`].
+    pub(crate) static WEIGHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
