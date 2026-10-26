@@ -93,6 +93,18 @@ pub struct LastFrame {
     pub normal: Rect,
     pub maximized: bool,
     pub fullscreen: bool,
+    pub focused: bool,
+    pub at: std::time::Instant,
+}
+
+impl LastFrame {
+    /// A map this soon after the unmap is the same window flickering: it keeps its frame and
+    /// focus without being planned or weighed again.
+    const FLICKER: std::time::Duration = std::time::Duration::from_millis(500);
+
+    pub fn flicker(&self) -> bool {
+        self.at.elapsed() < LastFrame::FLICKER
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

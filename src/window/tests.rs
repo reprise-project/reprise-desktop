@@ -892,3 +892,29 @@ fn a_maximized_window_that_hides_and_shows_again_comes_back_maximized() {
     assert!(win.maximized, "the window maps maximized again");
     assert_eq!(win.saved, Some(normal), "and restores to its old frame");
 }
+
+#[test]
+fn a_window_flickering_between_null_and_real_buffers_keeps_its_frame_and_writes_once() {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    let focused = h.state.focused;
+    let queued = || crate::state::QUEUED.with(|n| n.get());
+    let before = queued();
+    for i in 0..20 {
+        h.state.move_to(t.id, 100 + i, 120 + i);
+        unmap_self(&mut h, &mut c, t);
+        h.resize_self(&mut c, t, 300, 200);
+        let win = h.state.win(t.id).unwrap();
+        assert_eq!(
+            (win.x, win.y),
+            (100 + i, 120 + i),
+            "remap {i} keeps the frame"
+        );
+    }
+    assert_eq!(h.state.focused, focused, "the focus stays where it was");
+    assert_eq!(queued(), before, "no write while the frames gather");
+    h.state.save_remembered();
+    assert_eq!(queued(), before + 1, "one write for all twenty");
+}
