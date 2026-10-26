@@ -75,8 +75,9 @@ fn builtin_path(
     PathBuf::from(reprisekit::interfaces::resolve_wallpaper(b, glass).uri())
 }
 
-/// `text` read by `build`, with every top-level key that fails on its own left out.
-/// Returns what `build` made and the dropped keys; Err only when `text` is not TOML.
+/// `text` read by `build`, with every key that fails on its own left out: a table's
+/// failing keys alone (`taskbar.position`), any other top-level key whole. Returns what
+/// `build` made and the dropped keys; Err only when `text` is not TOML.
 pub fn lenient<T>(
     text: &str,
     build: impl Fn(FileConfig) -> Result<T, String>,
@@ -84,16 +85,35 @@ pub fn lenient<T>(
     let mut table: toml::Table = toml::from_str(text).map_err(|e| e.to_string())?;
     let from_table =
         |t: toml::Table| build(t.try_into().map_err(|e: toml::de::Error| e.to_string())?);
+    let alone = |key: &str, value: toml::Value| toml::Table::from_iter([(key.to_string(), value)]);
     let mut dropped = Vec::new();
-    for (key, value) in &table {
-        let alone = toml::Table::from_iter([(key.clone(), value.clone())]);
-        if let Err(e) = from_table(alone) {
-            dropped.push((key.clone(), e.trim_end().to_string()));
+    for (key, value) in table.iter_mut() {
+        let Err(e) = from_table(alone(key, value.clone())) else {
+            continue;
+        };
+        if let toml::Value::Table(inner) = value {
+            let bad: Vec<(String, String)> = (inner.iter())
+                .filter_map(|(name, v)| {
+                    let one = toml::Value::Table(alone(name, v.clone()));
+                    from_table(alone(key, one)).err().map(|e| (name.clone(), e))
+                })
+                .collect();
+            let mut kept = inner.clone();
+            for (name, _) in &bad {
+                kept.remove(name);
+            }
+            // Keys that fail only together (`night_light.from` = `to`) drop the table whole.
+            if !bad.is_empty() && from_table(alone(key, toml::Value::Table(kept.clone()))).is_ok() {
+                for (name, e) in bad {
+                    dropped.push((format!("{key}.{name}"), e.trim_end().to_string()));
+                }
+                *inner = kept;
+                continue;
+            }
         }
+        dropped.push((key.clone(), e.trim_end().to_string()));
     }
-    for (key, _) in &dropped {
-        table.remove(key);
-    }
+    table.retain(|key, _| !dropped.iter().any(|(k, _)| k == key));
     Ok((from_table(table)?, dropped))
 }
 

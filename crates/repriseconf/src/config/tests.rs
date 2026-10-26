@@ -810,3 +810,27 @@ fn follow_names_round_trip() {
     assert_eq!(Follow::parse("caret"), None);
     assert!(!Follow::Pointer.focus() && Follow::PointerAndFocus.focus());
 }
+
+#[test]
+fn a_bad_key_in_a_table_drops_that_key_alone() {
+    let text = "[taskbar]\nposition = \"botom\"\nauto_hide = true\nside_width = 300\n";
+    assert!(Config::parse(text).is_err());
+    let (c, dropped) = Config::parse_lenient(text).unwrap();
+    let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys, ["taskbar.position"]);
+    assert!(
+        c.taskbar.auto_hide,
+        "auto_hide survives its neighbour's typo"
+    );
+    assert_eq!(c.taskbar.side_width, 300);
+    assert_eq!(c.taskbar.position, reprisekit::taskbar::Edge::Bottom);
+}
+
+#[test]
+fn a_table_whose_keys_fail_only_together_is_dropped_whole() {
+    let text = "[night_light]\nenabled = true\nfrom = \"08:00\"\nto = \"08:00\"\ntemperature = 1\n";
+    let (c, dropped) = Config::parse_lenient(text).unwrap();
+    let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys, ["night_light"]);
+    assert_eq!(c.night_light, NightLightConfig::default());
+}
