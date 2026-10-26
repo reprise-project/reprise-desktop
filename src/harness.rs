@@ -597,6 +597,11 @@ impl TestClient {
         self.side.vks[i].key(0, code, u32::from(pressed));
     }
 
+    /// Virtual keyboard `i` sets the seat's modifier masks.
+    pub fn vk_modifiers(&self, i: usize, depressed: u32, latched: u32, locked: u32) {
+        self.side.vks[i].modifiers(depressed, latched, locked, 0);
+    }
+
     /// Destroy popup `p`'s role objects and keep its surface, as a toolkit hiding a menu does.
     pub fn hide_popup(&mut self, p: &Popup) {
         p.popup.destroy();
