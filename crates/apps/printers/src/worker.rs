@@ -84,19 +84,7 @@ pub enum Msg {
     TestPage(String),
 }
 
-#[derive(Clone)]
-struct Poster {
-    tx: Sender<Msg>,
-    waker: repriseapp::Waker,
-}
-
-impl Poster {
-    fn post(&self, m: Msg) {
-        if self.tx.send(m).is_ok() {
-            self.waker.wake();
-        }
-    }
-}
+type Poster = repriseapp::Poster<Msg>;
 
 #[derive(Clone)]
 pub struct Handle(Sender<Cmd>);
@@ -108,9 +96,8 @@ impl Handle {
 }
 
 pub fn start(waker: repriseapp::Waker) -> (Receiver<Msg>, Handle) {
-    let (tx, rx) = channel();
     let (cmd_tx, cmd_rx) = channel();
-    let poster = Poster { tx, waker };
+    let (poster, rx) = Poster::channel(waker);
     std::thread::Builder::new()
         .name("cups".into())
         .spawn({

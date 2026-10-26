@@ -54,19 +54,7 @@ pub enum Failure {
     Text(String),
 }
 
-#[derive(Clone)]
-struct Poster {
-    tx: Sender<Msg>,
-    waker: repriseapp::Waker,
-}
-
-impl Poster {
-    fn post(&self, m: Msg) {
-        if self.tx.send(m).is_ok() {
-            self.waker.wake();
-        }
-    }
-}
+type Poster = repriseapp::Poster<Msg>;
 
 #[derive(Clone)]
 pub struct Jobs(Sender<Job>);
@@ -79,9 +67,8 @@ impl Jobs {
 
 /// Start both threads; `check_now` runs the first check at once.
 pub fn start(waker: repriseapp::Waker, check_now: bool) -> (Receiver<Msg>, Jobs) {
-    let (tx, rx) = channel();
     let (jobs_tx, jobs_rx) = channel();
-    let poster = Poster { tx, waker };
+    let (poster, rx) = Poster::channel(waker);
     let first = if check_now {
         Duration::ZERO
     } else {
