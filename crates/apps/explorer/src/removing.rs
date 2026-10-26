@@ -117,7 +117,7 @@ impl Explorer {
             return;
         }
         let wake = ctx.wake.clone();
-        let job = RemoveJob::start(p.items, p.bins, move || wake.wake());
+        let job = RemoveJob::start_asking(p.items, p.bins, move || wake.wake());
         crate::fileops::wake_to_show(ctx);
         let progress = Progress::new(job.meter().clone(), p.kind, p.from, String::new());
         self.removing = Some(Removing {
@@ -135,6 +135,7 @@ impl Explorer {
     pub(crate) fn poll_removal(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let r = self.removing.as_mut()?;
         let mut finished = false;
+        let mut ask = None;
         for ev in r.job.poll() {
             match ev {
                 RemoveEvent::Done { index, removed } => {
@@ -151,7 +152,7 @@ impl Explorer {
                 }
                 RemoveEvent::Failed { index, error } => {
                     let path = &r.paths[index];
-                    r.failed.get_or_insert(match r.purpose {
+                    let failure = match r.purpose {
                         Purpose::Restore => (
                             "Error Restoring File or Folder",
                             format!("Cannot restore {}: {error}", file_label(path)),
@@ -164,10 +165,19 @@ impl Explorer {
                             "Error Deleting File or Folder",
                             format!("Cannot delete {}: {error}", file_label(path)),
                         ),
-                    });
+                    };
+                    if r.progress.meter.cancelled() || r.purpose == Purpose::Empty {
+                        r.failed.get_or_insert(failure);
+                    } else {
+                        ask = Some(failure);
+                    }
                 }
                 RemoveEvent::Finished => finished = true,
             }
+        }
+        if let Some((title, text)) = ask {
+            let meter = r.progress.meter.clone();
+            return Some(self.ask_failed(meter, title, text, ctx));
         }
         if !finished {
             return Some(Reply::none());
