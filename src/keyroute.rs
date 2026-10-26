@@ -583,6 +583,12 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         if k.pressed && k.mods == MOD_LOGO | MOD_SHIFT && k.has(KEY_Escape) {
             return with(KeyRoute::InhibitEscape);
         }
+        if k.pressed {
+            let passing: Vec<Action> = bound(k, binds).into_iter().filter(passes_dialog).collect();
+            if !passing.is_empty() {
+                return with(KeyRoute::Binds(passing));
+            }
+        }
         return with(KeyRoute::Client);
     }
     if k.pressed {
