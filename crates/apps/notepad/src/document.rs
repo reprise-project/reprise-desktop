@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 /// Write so a crash or full disk never leaves the file truncated: temp file,
 /// sync, rename, sync the directory. Keeps mode, xattrs and (where permitted)
 /// owner. A symlink's target is replaced; hard-linked files and dangling
-/// symlinks are written in place, since a rename would cut the link.
+/// symlinks are written in place (`write_in_place`), since a rename would cut the link.
 pub(crate) fn write_document(
     path: &Path,
     lines: &[impl AsRef<str>],
@@ -26,7 +26,7 @@ pub(crate) fn write_document(
         .as_ref()
         .is_some_and(|m| m.file_type().is_symlink() || m.nlink() > 1)
     {
-        return write_lines(std::fs::File::create(path)?, lines, sep);
+        return write_in_place(path, |f| write_lines(f, lines, sep));
     }
     if meta.as_ref().is_some_and(|m| m.is_file()) {
         std::fs::OpenOptions::new().write(true).open(path)?;
@@ -59,6 +59,64 @@ pub(crate) fn write_document(
         let _ = d.sync_all();
     }
     Ok(())
+}
+
+/// Rewrites `path` in its own inode. A synced copy of the old bytes waits beside it until the new
+/// ones are synced, and a failed write puts them back.
+pub(crate) fn write_in_place(
+    path: &Path,
+    fill: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let Some(backup) = (match std::fs::symlink_metadata(path) {
+        Ok(m) if m.is_file() => Some(backup_beside(path, m.permissions())?),
+        _ => None,
+    }) else {
+        let f = std::fs::File::create(path)?;
+        fill(&f)?;
+        return f.sync_all();
+    };
+    let f = match std::fs::File::create(path) {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = std::fs::remove_file(&backup);
+            return Err(e);
+        }
+    };
+    if let Err(e) = fill(&f).and_then(|()| f.sync_all()) {
+        match restore(&f, &backup) {
+            Ok(()) => {
+                let _ = std::fs::remove_file(&backup);
+            }
+            Err(r) => log::error!(
+                "restore {} from {}: {r}; the old text stays there",
+                path.display(),
+                backup.display()
+            ),
+        }
+        return Err(e);
+    }
+    let _ = std::fs::remove_file(&backup);
+    Ok(())
+}
+
+fn backup_beside(path: &Path, mode: std::fs::Permissions) -> std::io::Result<PathBuf> {
+    let (mut copy, at) = reprisefs::ops::create_temp_beside(path, Some(mode))?;
+    let copied = std::fs::File::open(path)
+        .and_then(|mut old| std::io::copy(&mut old, &mut copy))
+        .and_then(|_| copy.sync_all());
+    if let Err(e) = copied {
+        let _ = std::fs::remove_file(&at);
+        return Err(e);
+    }
+    Ok(at)
+}
+
+fn restore(mut f: &std::fs::File, backup: &Path) -> std::io::Result<()> {
+    use std::io::Seek;
+    f.set_len(0)?;
+    f.rewind()?;
+    std::io::copy(&mut std::fs::File::open(backup)?, &mut f)?;
+    f.sync_all()
 }
 
 /// What a save checks its file against: any field that differs means another program wrote it.
@@ -189,4 +247,47 @@ pub(crate) fn recovered_in(dir: &Path) -> Vec<PathBuf> {
         .collect();
     found.sort();
     found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    #[test]
+    fn a_hard_linked_file_keeps_its_bytes_and_inode_when_the_write_fails_midway() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (a, b) = (tmp.path().join("a.txt"), tmp.path().join("b.txt"));
+        std::fs::write(&a, "original text").expect("write");
+        std::fs::hard_link(&a, &b).expect("link");
+
+        let failed = write_in_place(&a, |mut f| {
+            use std::io::Write;
+            f.write_all(b"half")?;
+            Err(std::io::Error::other("disk full"))
+        });
+        assert_eq!(
+            failed.expect_err("the write failed").to_string(),
+            "disk full"
+        );
+        for p in [&a, &b] {
+            assert_eq!(std::fs::read_to_string(p).expect("read"), "original text");
+        }
+        let (ma, mb) = (
+            std::fs::metadata(&a).unwrap(),
+            std::fs::metadata(&b).unwrap(),
+        );
+        assert_eq!(ma.ino(), mb.ino());
+        assert_eq!(ma.nlink(), 2);
+        assert_eq!(
+            std::fs::read_dir(tmp.path()).unwrap().count(),
+            2,
+            "the backup is gone"
+        );
+
+        write_document(&a, &["new", "text"], "\n").expect("save");
+        assert_eq!(std::fs::read_to_string(&b).expect("read"), "new\ntext");
+        assert_eq!(std::fs::metadata(&b).unwrap().ino(), ma.ino());
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 2);
+    }
 }
