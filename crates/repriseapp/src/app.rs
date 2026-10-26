@@ -75,7 +75,9 @@ pub trait App {
     }
     /// Called once before the first dispatch, with the handle the
     /// program clones into the threads it spawns.
-    fn start(&mut self, _waker: Waker) {}
+    fn start(&mut self, _waker: Waker) -> Start {
+        Start::Continue
+    }
     /// The process is about to end without the program's say: the compositor connection is gone,
     /// or an event or draw panicked and left the state half-updated. Save what the user would lose.
     fn emergency(&mut self) {}
@@ -185,6 +187,13 @@ pub fn reader_forms<A: App + ?Sized>(app: &mut A, win: WinId, act: Reader, ctx: 
         Reader::Focus(at) => dlg.focus_at(&ctx.text, px, r, at),
     };
     !matches!(ev, reprisekit::controls::filedlg::Event::None)
+}
+
+/// What the run loop does once [`App::start`] returns: run, or hang up and end the process with a code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Start {
+    Continue,
+    Exit(i32),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

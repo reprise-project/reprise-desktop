@@ -1048,7 +1048,7 @@ impl App for Terminal {
         self.pane(win).map(|_| repriseapp::MIN_SIZE)
     }
 
-    fn start(&mut self, waker: repriseapp::Waker) {
+    fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.waker = Some(waker);
         self.tab_groups = repriseapp::tab_groups();
         self.w.caption = self.caption_mode();
@@ -1060,6 +1060,7 @@ impl App for Terminal {
             name: None,
         };
         self.spawn_tab(&launch, None);
+        repriseapp::Start::Continue
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {

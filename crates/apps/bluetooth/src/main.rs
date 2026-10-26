@@ -882,26 +882,21 @@ impl App for BtApp {
         out
     }
 
-    fn start(&mut self, waker: repriseapp::Waker) {
+    fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.fonts();
         // The tray takes the `reprise.bluetooth` bus name; a second instance exits here after raising the first.
-        match tray::start(waker.clone()) {
-            reprisetray::Started::Running(tray, msgs) => {
+        match tray::start(waker.clone()).or_exit(self.tray_only) {
+            Ok(Some((tray, msgs))) => {
                 self.tray = Some(tray);
                 self.msgs = Some(msgs);
             }
-            reprisetray::Started::AlreadyRunning => std::process::exit(0),
-            reprisetray::Started::Unavailable if self.tray_only => {
-                log::error!(
-                    "--tray was given but the tray item could not start (no session bus?); exiting"
-                );
-                std::process::exit(1);
-            }
-            reprisetray::Started::Unavailable => {}
+            Ok(None) => {}
+            Err(code) => return repriseapp::Start::Exit(code),
         }
         let (rx, handle) = bz::watch(waker);
         self.bz_rx = Some(rx);
         self.bz = Some(handle);
+        repriseapp::Start::Continue
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {

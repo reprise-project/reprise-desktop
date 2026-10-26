@@ -794,6 +794,27 @@ pub enum Started {
     Unavailable,
 }
 
+/// A running item's handle and the receiver the applet drains on every wake.
+pub type Tray = (TrayHandle, Receiver<Msg>);
+
+impl Started {
+    /// The applet's policy on the outcome: run with the item, or without one unless the program
+    /// has no window to fall back on (`tray_only`); `Err` carries the code to exit with.
+    pub fn or_exit(self, tray_only: bool) -> Result<Option<Tray>, i32> {
+        match self {
+            Started::Running(handle, msgs) => Ok(Some((handle, msgs))),
+            Started::AlreadyRunning => Err(0),
+            Started::Unavailable if tray_only => {
+                log::error!(
+                    "the tray item could not start (no session bus?) and there is no window without it; exiting"
+                );
+                Err(1)
+            }
+            Started::Unavailable => Ok(None),
+        }
+    }
+}
+
 /// Bring the tray item up on its own thread, showing `initial` until the first `set_state`.
 pub fn start(config: Config, initial: Shown, wake: Wake) -> Started {
     let (ready_tx, ready_rx) = channel::<Started>();
@@ -878,6 +899,17 @@ pub fn start(config: Config, initial: Shown, wake: Wake) -> Started {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tray_only_program_exits_without_its_item() {
+        let running = || Started::Running(TrayHandle::holding(Handoff::default()), channel().1);
+        for tray_only in [false, true] {
+            assert!(matches!(running().or_exit(tray_only), Ok(Some(_))));
+            assert_eq!(Started::AlreadyRunning.or_exit(tray_only).err(), Some(0));
+        }
+        assert!(matches!(Started::Unavailable.or_exit(false), Ok(None)));
+        assert_eq!(Started::Unavailable.or_exit(true).err(), Some(1));
+    }
 
     /// A beacon can carry markup in its SSID; the daemon's body shows it as text.
     #[test]

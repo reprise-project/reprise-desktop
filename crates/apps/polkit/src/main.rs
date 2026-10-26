@@ -349,13 +349,16 @@ impl App for PolkitApp {
             .collect()
     }
 
-    fn start(&mut self, waker: repriseapp::Waker) {
+    fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.waker = Some(waker.clone());
         match agent::start(waker) {
-            Some(rx) => self.msgs = Some(rx),
+            Some(rx) => {
+                self.msgs = Some(rx);
+                repriseapp::Start::Continue
+            }
             None => {
                 log::info!("no polkit agent to be; exiting");
-                std::process::exit(0);
+                repriseapp::Start::Exit(0)
             }
         }
     }

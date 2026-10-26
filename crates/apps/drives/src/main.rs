@@ -516,22 +516,20 @@ impl App for DrivesApp {
         })
     }
 
-    fn start(&mut self, waker: repriseapp::Waker) {
+    fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         // The tray first: it owns the bus name, so a second instance exits here.
-        match tray::start(waker.clone()) {
-            reprisetray::Started::Running(t, msgs) => {
+        match tray::start(waker.clone()).or_exit(true) {
+            Ok(Some((t, msgs))) => {
                 self.tray = Some(t);
                 self.msgs = Some(msgs);
             }
-            reprisetray::Started::AlreadyRunning => std::process::exit(0),
-            reprisetray::Started::Unavailable => {
-                log::error!("the tray item could not start (no session bus?); exiting");
-                std::process::exit(1);
-            }
+            Ok(None) => {}
+            Err(code) => return repriseapp::Start::Exit(code),
         }
         let (rx, calls) = watch::watch(waker);
         self.bus = Some(rx);
         self.calls = Some(calls);
+        repriseapp::Start::Continue
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {

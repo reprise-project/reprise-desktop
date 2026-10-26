@@ -669,9 +669,10 @@ impl App for Volume {
         kids
     }
 
-    fn start(&mut self, waker: repriseapp::Waker) {
+    fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.waker = Some(waker.clone());
         self.snapshots = Some(repriseaudio::watch(move || waker.wake()));
+        repriseapp::Start::Continue
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {

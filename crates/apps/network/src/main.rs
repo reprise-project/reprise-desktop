@@ -1134,22 +1134,16 @@ impl App for NetApp {
         }
     }
 
-    fn start(&mut self, waker: repriseapp::Waker) {
+    fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         // The tray goes first: it takes the `reprise.network` bus name and a
         // second instance exits here once it has raised the first.
-        match tray::start(waker.clone()) {
-            reprisetray::Started::Running(tray, msgs) => {
+        match tray::start(waker.clone()).or_exit(self.tray_only) {
+            Ok(Some((tray, msgs))) => {
                 self.tray = Some(tray);
                 self.msgs = Some(msgs);
             }
-            reprisetray::Started::AlreadyRunning => std::process::exit(0),
-            reprisetray::Started::Unavailable if self.tray_only => {
-                log::error!(
-                    "--tray was given but the tray item could not start (no session bus?); exiting"
-                );
-                std::process::exit(1);
-            }
-            reprisetray::Started::Unavailable => {}
+            Ok(None) => {}
+            Err(code) => return repriseapp::Start::Exit(code),
         }
         let station_waker = waker.clone();
         stations::watch(move || station_waker.wake());
@@ -1157,6 +1151,7 @@ impl App for NetApp {
         self.nm_rx = Some(rx);
         self.nm = Some(handle);
         self.dialog_text = Some(repriseapp::start_text());
+        repriseapp::Start::Continue
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {

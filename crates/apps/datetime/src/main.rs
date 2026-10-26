@@ -192,7 +192,7 @@ impl App for DateTimeApp {
         }
     }
 
-    fn start(&mut self, waker: repriseapp::Waker) {
+    fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.dialog_text = Some(repriseapp::start_text());
         self.asked = sheet::CLIENT;
         match timedate::read() {
@@ -215,6 +215,7 @@ impl App for DateTimeApp {
         }
         start_ticker(waker.clone());
         self.waker = Some(waker);
+        repriseapp::Start::Continue
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {

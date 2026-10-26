@@ -655,10 +655,11 @@ impl App for AccountsApp {
         out
     }
 
-    fn start(&mut self, waker: repriseapp::Waker) {
+    fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.fonts();
         self.waker = Some(waker);
         self.run(Vec::new(), After::Read);
+        repriseapp::Start::Continue
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
