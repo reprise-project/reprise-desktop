@@ -670,6 +670,24 @@ fn glass_beneath_other_glass_blurs_a_backdrop_without_the_windows_above_it() {
     };
     red_at(&mut renderer, &ctx, &scene, Material::Frosted, &[]);
     assert!(own(&ctx), "under the upper glass");
+    let (area, seen) = (Rectangle::from_size((320, 200).into()), (320, 200).into());
+    let feed = ctx
+        .drawn_beneath(&scene, area, seen, 1.0)
+        .iter()
+        .find(|n| Rc::as_ptr(&n.glass) == lower)
+        .and_then(|n| n.reads.feed)
+        .expect("the lower glass reads a feed");
+    let size = |ctx: &GlassCtx| {
+        use smithay::backend::renderer::Texture;
+        let b = ctx.beneath.borrow();
+        b[&("test".into(), lower)].backdrop.texture.size()
+    };
+    let texels = shrunk(feed, 2).size;
+    assert_eq!(
+        size(&ctx),
+        (texels.w, texels.h).into(),
+        "the private backdrop holds what feeds its glass"
+    );
     scene.set_position(upper, 200, 120);
     red_at(&mut renderer, &ctx, &scene, Material::Frosted, &[]);
     assert!(
@@ -1076,80 +1094,25 @@ fn glass_missing_from_the_elements_counts_as_shown() {
     );
 }
 
-fn rects(r: &[(i32, i32, i32, i32)]) -> Vec<Rectangle<i32, Physical>> {
-    r.iter()
-        .map(|&(x, y, w, h)| Rectangle::new((x, y).into(), (w, h).into()))
-        .collect()
-}
-
-#[test]
-fn a_private_backdrop_draws_what_feeds_its_glass_while_it_stays_put() {
-    let here = rects(&[(10, 10, 100, 60)]);
-    let there = rects(&[(30, 10, 100, 60)]);
-    let feed = Rectangle::new((0, 0).into(), (70, 50).into());
-    let whole = Rectangle::from_size((320, 100).into());
-    let look = look(Material::Frosted);
-    let mut reuse = Reuse::default();
-    assert_eq!(reuse.crop(&here, feed, whole), feed, "first drawn");
-    reuse.drawn(&here, look);
-    assert_eq!(reuse.crop(&here, feed, whole), feed, "put");
-    assert_eq!(reuse.crop(&there, feed, whole), whole, "moved: all of it");
-    reuse.drawn(&there, look);
-    assert_eq!(reuse.crop(&there, feed, whole), feed, "put again");
-}
-
-fn look(material: Material) -> Look {
-    let settings = Settings {
-        material,
-        ..Settings::default()
-    };
-    (settings, Quality::Full, (640, 200).into(), 1f64.to_bits())
-}
-
-#[test]
-fn a_private_backdrop_blurs_where_its_glass_reads_until_the_glass_moves() {
-    let here = rects(&[(10, 10, 100, 60)]);
-    let there = rects(&[(30, 10, 100, 60)]);
-    let look = look(Material::Frosted);
-    let mut reuse = Reuse::default();
-    assert_eq!(reuse.blurs(&here, &look), Some(&here[..]), "first drawn");
-    reuse.drawn(&here, look);
-    assert_eq!(reuse.blurs(&here, &look), Some(&here[..]), "put");
-    assert_eq!(reuse.blurs(&there, &look), None, "moved: all of it, once");
-    reuse.drawn(&there, look);
-    assert_eq!(reuse.blurs(&there, &look), Some(&there[..]));
-}
-
-#[test]
-fn a_new_look_blurs_where_the_glass_reads_even_as_it_moves() {
-    let here = rects(&[(10, 10, 100, 60)]);
-    let there = rects(&[(30, 10, 100, 60)]);
-    let mut reuse = Reuse::default();
-    reuse.drawn(&here, look(Material::Molten));
-    let frosted = look(Material::Frosted);
-    assert_eq!(reuse.blurs(&there, &frosted), Some(&there[..]));
-    let coarse = (frosted.0, Quality::Coarse, frosted.2, frosted.3);
-    assert_eq!(reuse.blurs(&there, &coarse), Some(&there[..]));
-}
-
 #[test]
 fn a_private_backdrop_outlives_its_use_for_a_while_without_being_drawn_from() {
-    let here = rects(&[(10, 10, 100, 60)]);
-    let look = look(Material::Frosted);
+    let start = Instant::now();
     let mut reuse = Reuse::default();
     assert!(!reuse.in_use(), "never drawn");
-    reuse.drawn(&here, look);
+    reuse.drawn(start);
     assert!(reuse.in_use());
-    assert!(reuse.kept());
+    assert!(reuse.kept(start + Duration::from_millis(16)));
     assert!(!reuse.in_use(), "unused this update");
-    for _ in 1..KEEP_IDLE {
-        assert!(reuse.kept());
-    }
-    assert!(!reuse.kept(), "dropped after {KEEP_IDLE} updates");
-    reuse.drawn(&here, look);
+    assert!(reuse.kept(start + KEEP_IDLE));
     assert!(
-        reuse.in_use() && reuse.kept(),
-        "a use starts the count again"
+        !reuse.kept(start + KEEP_IDLE + Duration::from_millis(1)),
+        "dropped {KEEP_IDLE:?} after its last use"
+    );
+    let later = start + 2 * KEEP_IDLE;
+    reuse.drawn(later);
+    assert!(
+        reuse.in_use() && reuse.kept(later + KEEP_IDLE),
+        "a use starts the time again"
     );
 }
 
