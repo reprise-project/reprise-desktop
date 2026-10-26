@@ -257,8 +257,8 @@ impl SessionLockHandler for State {
             wait: Some(CoverWait::new(outputs)),
         };
         if let Some(l) = self.lock.active.as_mut() {
-            // Whatever was typed into the dialog goes; a check in flight
-            // is dropped, its thread gets EPIPE.
+            // Whatever was typed into the dialog goes, and a check in
+            // flight ends with its child.
             l.pending = None;
             l.state.reset();
             l.awaiting = false;

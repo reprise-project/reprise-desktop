@@ -212,6 +212,9 @@ struct Cli {
     /// (the lock starts it; see `lockfinger`)
     #[arg(long, hide = true, value_name = "USER")]
     fingerprint_conversation: Option<String>,
+    /// Check the password on stdin for USER and exit (the lock starts it; see `lockfinger`)
+    #[arg(long, hide = true, value_name = "USER")]
+    password_conversation: Option<String>,
 }
 
 fn main() {
@@ -224,6 +227,9 @@ fn main() {
     let cli = Cli::parse();
     if let Some(user) = cli.fingerprint_conversation.as_deref() {
         std::process::exit(lockfinger::child_main(user));
+    }
+    if let Some(user) = cli.password_conversation.as_deref() {
+        std::process::exit(lockfinger::password_main(user));
     }
     let config_path = cli
         .config

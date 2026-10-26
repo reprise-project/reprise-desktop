@@ -1,8 +1,7 @@
 //! Built-in lock screen: the dialog's state machine, the "Unlock Computer"
-//! dialog layout and drawing, and password verification through PAM on a
-//! worker thread. A fingerprint unlocks too, through a PAM conversation of
-//! its own beside the password's (see `lockfinger.rs`). Nothing in here
-//! touches the scene or the seat; `lockview.rs` does that.
+//! dialog layout and drawing, and the PAM password check, which runs in a
+//! helper child beside the fingerprint's (see `lockfinger.rs`). Nothing in
+//! here touches the scene or the seat; `lockview.rs` does that.
 //!
 //! `LockState` and the verifier zero the copies they own. libpam wipes its
 //! own, except in modules that copy the answer elsewhere.
@@ -16,13 +15,12 @@ use reprisekit::look::widgets::{draw_button, draw_edit_field};
 use reprisekit::pointer::Interaction;
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
-use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::Path;
 use zeroize::{Zeroize, Zeroizing};
 
 /// Shown after PAM rejects the password without saying why.
 pub const INCORRECT: &str = "The password is incorrect. Please retry.";
-/// Shown when the password could not be checked at all (no verifier thread).
+/// Shown when the password could not be checked at all (the helper did not start, died or hung).
 pub const UNAVAILABLE: &str = "The password could not be checked. Please retry.";
 /// Shown when the fingerprint conversation ended with PAM_MAXTRIES: too
 /// many fingers did not match.
@@ -30,13 +28,12 @@ pub const FINGER_TOO_MANY: &str = "Too many fingerprint attempts. Type your pass
 
 /// Lines the message area holds. PAM text past them is not kept.
 const MESSAGE_LINES: usize = 2;
-/// Characters kept of one PAM text line, which bounds the result pipe's
-/// message well under `PIPE_BUF` (see `encode_verdict`).
+/// Characters kept of one PAM text line.
 const NOTICE_CHARS: usize = 200;
 
 /// Password field reservation in bytes, see `LockState::new`. Typing past
 /// it is refused. 512 is libpam's `PAM_MAX_RESP_SIZE`.
-const INPUT_CAPACITY: usize = 512;
+pub const INPUT_CAPACITY: usize = 512;
 
 /// A key the lock dialog cares about. Text is whatever xkb produced for the
 /// key in the current layout, so the password follows the configured keymap;
@@ -56,8 +53,8 @@ pub enum LockButton {
 }
 
 /// The dialog's state. `input` is the password typed so far; it is zeroed
-/// whenever it is cleared. `verifying` gates every edit while the PAM thread
-/// is busy. `finger` is the fingerprint conversation's standing prompt (its
+/// whenever it is cleared. `verifying` gates every edit while the password
+/// helper is busy. `finger` is the fingerprint conversation's standing prompt (its
 /// last PAM info text) while it runs, shown when there is no message.
 #[derive(Default)]
 pub struct LockState {
@@ -107,8 +104,11 @@ impl LockState {
         self.verifying = false;
     }
 
-    pub fn take_input(&mut self) -> String {
-        std::mem::replace(&mut self.input, String::with_capacity(INPUT_CAPACITY))
+    pub fn take_input(&mut self) -> Zeroizing<String> {
+        Zeroizing::new(std::mem::replace(
+            &mut self.input,
+            String::with_capacity(INPUT_CAPACITY),
+        ))
     }
 
     pub fn key(&mut self, key: LockKey<'_>) -> bool {
@@ -148,10 +148,6 @@ impl LockState {
         }
     }
 
-    pub fn fail(&mut self) {
-        self.fail_with(INCORRECT);
-    }
-
     pub fn fail_with(&mut self, message: &str) {
         self.clear_input();
         self.message = Some(message.into());
@@ -185,7 +181,7 @@ impl LockState {
 /// cleaned by `add_notice`.
 pub type Verdict = Result<(), Vec<String>>;
 
-pub trait Verifier: Send + 'static {
+pub trait Verifier {
     fn verify(&self, user: &str, password: &str) -> Verdict;
 }
 
@@ -200,7 +196,7 @@ pub fn failure_text(notices: &[String]) -> String {
 /// Add one PAM message to `notices`: a line per non-blank line of `raw`,
 /// control characters turned to spaces, each cut to `NOTICE_CHARS`, and
 /// at most `MESSAGE_LINES` lines in all.
-fn add_notice(notices: &mut Vec<String>, raw: &str) {
+pub fn add_notice(notices: &mut Vec<String>, raw: &str) {
     for line in raw.lines() {
         if notices.len() >= MESSAGE_LINES {
             return;
@@ -222,39 +218,13 @@ pub fn clean_notice(raw: &str) -> Vec<String> {
     v
 }
 
-/// The result pipe's message: a verdict byte (1 accepted, 0 rejected),
-/// then the notices joined by '\n'. `add_notice` keeps it under
-/// `PIPE_BUF`, so the one blocking write is atomic and one read takes it.
-fn encode_verdict(v: &Verdict) -> Vec<u8> {
-    match v {
-        Ok(()) => vec![1],
-        Err(notices) => {
-            let mut b = vec![0];
-            b.extend_from_slice(notices.join("\n").as_bytes());
-            b
-        }
-    }
-}
-
-pub fn decode_verdict(b: &[u8]) -> Option<Verdict> {
-    let (&verdict, text) = b.split_first()?;
-    if verdict == 1 {
-        return Some(Ok(()));
-    }
-    let text = String::from_utf8_lossy(text);
-    Some(Err(text
-        .split('\n')
-        .filter(|l| !l.is_empty())
-        .map(str::to_owned)
-        .collect()))
-}
-
 #[allow(non_camel_case_types)]
 pub(crate) mod ffi {
     use std::ffi::{c_char, c_int, c_void};
 
     pub const PAM_SUCCESS: c_int = 0;
     pub const PAM_BUF_ERR: c_int = 5;
+    pub const PAM_AUTH_ERR: c_int = 7;
     pub const PAM_AUTHINFO_UNAVAIL: c_int = 9;
     pub const PAM_MAXTRIES: c_int = 11;
     pub const PAM_CONV_ERR: c_int = 19;
@@ -559,60 +529,6 @@ fn passwd_name() -> Option<String> {
             .to_string_lossy()
             .into_owned();
         return Some(name);
-    }
-}
-
-/// Run `v` on a new thread and write its `encode_verdict` message to `fd`
-/// when it is done. The password is zeroed once used.
-///
-/// The thread owns `fd` and closes it when it ends, so the reader sees
-/// EOF, not silence, if the thread dies without writing (a panic in PAM)
-/// or was never spawned. It must stay blocking (no `O_NONBLOCK`), since the
-/// single write is not retried on `EAGAIN`. Returns false when the thread
-/// could not be spawned; the password is wiped on that path too.
-pub fn verify_async(v: Box<dyn Verifier>, user: String, password: String, fd: OwnedFd) -> bool {
-    // `Zeroizing` so a failed `spawn`, which drops the closure without ever
-    // running it, still wipes the password.
-    let mut password = Zeroizing::new(password);
-    let spawned = std::thread::Builder::new()
-        .name("reprise-pam".into())
-        .spawn(move || {
-            let verdict = v.verify(&user, &password);
-            password.zeroize();
-            let msg = encode_verdict(&verdict);
-            loop {
-                // SAFETY: `fd` is an owned open fd and `msg` is live for
-                // `msg.len()` bytes.
-                let n = unsafe {
-                    libc::write(
-                        fd.as_raw_fd(),
-                        msg.as_ptr() as *const libc::c_void,
-                        msg.len(),
-                    )
-                };
-                if n >= 0 {
-                    // A blocking pipe write of at most PIPE_BUF bytes is
-                    // all-or-nothing.
-                    break;
-                }
-                let err = std::io::Error::last_os_error();
-                match err.raw_os_error() {
-                    Some(libc::EINTR) => {}
-                    // The lock was torn down under us; nobody wants the answer.
-                    Some(libc::EPIPE) => break,
-                    _ => {
-                        log::error!("lock: result pipe write failed: {err}");
-                        break;
-                    }
-                }
-            }
-        });
-    match spawned {
-        Ok(_) => true,
-        Err(e) => {
-            log::error!("lock: cannot spawn verifier thread: {e}");
-            false
-        }
     }
 }
 
@@ -963,7 +879,7 @@ mod tests {
         let mut s = LockState::new();
         s.key(LockKey::Text("secret"));
         s.verifying = true;
-        s.fail();
+        s.fail_with(INCORRECT);
         assert_eq!(s.input, "");
         assert!(!s.verifying);
         assert_eq!(s.message.as_deref(), Some(INCORRECT));
@@ -978,10 +894,10 @@ mod tests {
         assert_eq!(s.input, "");
         assert!(s.input.capacity() >= INPUT_CAPACITY);
         s.key(LockKey::Text(&"y".repeat(300)));
-        s.fail();
+        s.fail_with(INCORRECT);
         assert!(s.input.capacity() >= INPUT_CAPACITY);
         s.key(LockKey::Text("hunter2"));
-        assert_eq!(s.take_input(), "hunter2");
+        assert_eq!(*s.take_input(), "hunter2");
         assert!(s.input.capacity() >= INPUT_CAPACITY);
     }
 
@@ -1055,70 +971,6 @@ mod tests {
         assert_eq!(pick_user(None, s("env"), s("log")), "env");
         assert_eq!(pick_user(Some(String::new()), None, s("log")), "log");
         assert_eq!(pick_user(None, None, None), "");
-    }
-
-    struct FakeVerifier(Verdict);
-    impl Verifier for FakeVerifier {
-        fn verify(&self, user: &str, password: &str) -> Verdict {
-            assert_eq!(user, "someone");
-            assert_eq!(password, "hunter2");
-            self.0.clone()
-        }
-    }
-
-    fn result_pipe() -> (OwnedFd, OwnedFd) {
-        use std::os::fd::FromRawFd;
-        let mut fds = [0i32; 2];
-        // SAFETY: `fds` has room for the two fds pipe writes, and each new
-        // fd gets exactly one owner.
-        unsafe {
-            assert_eq!(libc::pipe(fds.as_mut_ptr()), 0);
-            (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1]))
-        }
-    }
-
-    fn read_result(fd: &OwnedFd) -> Vec<u8> {
-        let mut b = [0u8; libc::PIPE_BUF];
-        // SAFETY: `fd` is open and `b` is writable for `b.len()` bytes.
-        let n = unsafe { libc::read(fd.as_raw_fd(), b.as_mut_ptr() as *mut libc::c_void, b.len()) };
-        assert!(n >= 0);
-        b[..n as usize].to_vec()
-    }
-
-    #[test]
-    fn verify_async_reports_through_the_pipe() {
-        let locked = vec!["Account locked.".to_string(), "(10 minutes left)".into()];
-        for expected in [Ok(()), Err(Vec::new()), Err(locked)] {
-            let (read, write) = result_pipe();
-            assert!(verify_async(
-                Box::new(FakeVerifier(expected.clone())),
-                "someone".into(),
-                "hunter2".into(),
-                write,
-            ));
-            assert_eq!(decode_verdict(&read_result(&read)), Some(expected));
-            // The thread closed its end after the message: EOF, not a hang.
-            assert_eq!(read_result(&read), []);
-        }
-    }
-
-    struct PanickingVerifier;
-    impl Verifier for PanickingVerifier {
-        fn verify(&self, _: &str, _: &str) -> Verdict {
-            panic!("libpam blew up");
-        }
-    }
-
-    #[test]
-    fn verify_async_thread_death_reads_as_eof() {
-        let (read, write) = result_pipe();
-        assert!(verify_async(
-            Box::new(PanickingVerifier),
-            "someone".into(),
-            "hunter2".into(),
-            write,
-        ));
-        assert_eq!(read_result(&read), []);
     }
 
     fn creds() -> Credentials {
@@ -1218,9 +1070,6 @@ mod tests {
         assert_eq!(n[1], "x".repeat(NOTICE_CHARS));
         add_notice(&mut n, "past the message area");
         assert_eq!(n.len(), MESSAGE_LINES);
-        // The longest message still goes through the pipe in one atomic write.
-        let widest = vec!["\u{10FFFF}".repeat(NOTICE_CHARS); MESSAGE_LINES];
-        assert!(encode_verdict(&Err(widest)).len() <= libc::PIPE_BUF);
     }
 
     #[test]
@@ -1376,7 +1225,7 @@ mod tests {
         let c = draw_dialog(&theme, &text, None, "someone", &s);
         assert!(!has_ink(&c, l.message, bg));
         let mut s = LockState::new();
-        s.fail();
+        s.fail_with(INCORRECT);
         let c = draw_dialog(&theme, &text, None, "someone", &s);
         assert!(has_ink(&c, l.message, bg));
         let mut s = LockState::new();
@@ -1515,7 +1364,7 @@ mod tests {
         ] {
             let mut failed = LockState::new();
             failed.key(LockKey::Text("secret"));
-            failed.fail();
+            failed.fail_with(INCORRECT);
             let empty = LockState::new();
             let canvases: Vec<Canvas> = [(1, &empty), (1, &failed), (2, &empty)]
                 .into_iter()
