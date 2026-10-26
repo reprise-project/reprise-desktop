@@ -136,6 +136,7 @@ impl Notepad {
         self.edit = MultiEdit::new(text);
         self.crlf = has_crlf(text);
         self.view = View::default();
+        self.stamp = path.as_deref().and_then(Stamp::of);
         self.path = path;
         self.dirty = false;
         self.open = None;
@@ -228,6 +229,7 @@ impl Notepad {
     pub(crate) fn saveas_write(&mut self, path: PathBuf) -> Reply {
         match self.write_to(&path) {
             Ok(()) => {
+                self.stamp = Stamp::of(&path);
                 self.path = Some(path);
                 self.dirty = false;
                 self.forget_rescued();
