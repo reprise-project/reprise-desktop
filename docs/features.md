@@ -468,7 +468,9 @@ are.
 - **One keyboard and mouse across computers** with Deskflow. Super+Shift+Esc
   always takes them back.
 - **VM viewers and remote desktops get your shortcuts,** Super and Alt+Tab
-  included, while they have focus. Super+Shift+Esc takes them back.
+  included, while they have focus; the lock, the magnifier, colour filters and
+  screenshots stay Reprise's. A balloon says so the first time a program takes
+  them, and Super+Shift+Esc takes them back.
 - **Pointer lock and raw motion** for games, 3D tools and VM viewers.
 
 ## Files
