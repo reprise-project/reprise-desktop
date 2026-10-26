@@ -158,16 +158,8 @@ impl Dismissed {
 type Dismissals = Arc<Mutex<Dismissed>>;
 
 struct Agent {
-    tx: Sender<Msg>,
-    waker: repriseapp::Waker,
+    poster: repriseapp::Poster<Msg>,
     dismissed: Dismissals,
-}
-
-impl Agent {
-    fn send(&self, m: Msg) {
-        let _ = self.tx.send(m);
-        self.waker.wake();
-    }
 }
 
 #[zbus::interface(name = "org.freedesktop.PolicyKit1.AuthenticationAgent")]
@@ -194,7 +186,7 @@ impl Agent {
         }
         let selected = preselect(&users, me.as_deref());
         let (done, wait) = async_channel::bounded(1);
-        self.send(Msg::Begin(Request {
+        self.poster.post(Msg::Begin(Request {
             cookie: cookie.to_string(),
             message: message.to_string(),
             users,
@@ -224,7 +216,7 @@ impl Agent {
         #[zbus(header)] hdr: Header<'_>,
     ) -> Result<(), Error> {
         check_caller(conn, &hdr).await?;
-        self.send(Msg::Cancel(cookie.to_string()));
+        self.poster.post(Msg::Cancel(cookie.to_string()));
         Ok(())
     }
 }
@@ -302,7 +294,7 @@ async fn single_instance(dismissed: Dismissals) {
 
 static SESSION_BUS: std::sync::OnceLock<zbus::Connection> = std::sync::OnceLock::new();
 
-async fn run(tx: Sender<Msg>, waker: repriseapp::Waker, ready: Sender<bool>) {
+async fn run(poster: repriseapp::Poster<Msg>, ready: Sender<bool>) {
     let dismissed = Dismissals::default();
     single_instance(dismissed.clone()).await;
     let conn = match zbus::Connection::system().await {
@@ -321,11 +313,7 @@ async fn run(tx: Sender<Msg>, waker: repriseapp::Waker, ready: Sender<bool>) {
             return;
         }
     };
-    let agent = Agent {
-        tx,
-        waker,
-        dismissed,
-    };
+    let agent = Agent { poster, dismissed };
     if let Err(e) = conn.object_server().at(PATH, agent).await {
         log::warn!("cannot serve the agent: {e}");
         let _ = ready.send(false);
@@ -355,11 +343,11 @@ async fn run(tx: Sender<Msg>, waker: repriseapp::Waker, ready: Sender<bool>) {
 }
 
 pub fn start(waker: repriseapp::Waker) -> Option<Receiver<Msg>> {
-    let (tx, rx) = channel();
+    let (poster, rx) = repriseapp::Poster::channel(waker);
     let (ready_tx, ready_rx) = channel();
     std::thread::Builder::new()
         .name("reprise-polkit-bus".into())
-        .spawn(move || zbus::block_on(run(tx, waker, ready_tx)))
+        .spawn(move || zbus::block_on(run(poster, ready_tx)))
         .ok()?;
     ready_rx.recv().ok().filter(|ok| *ok).map(|_| rx)
 }

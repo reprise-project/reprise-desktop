@@ -2,7 +2,7 @@
 //! every change, and the calls the app asks for, each on its own thread (any can wait on polkit).
 
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::Receiver;
 
 use reprisefs::udisks::{self, Error, Snapshot, Udisks};
 use zeroize::Zeroizing;
@@ -30,19 +30,7 @@ pub enum Msg {
     },
 }
 
-#[derive(Clone)]
-struct Poster {
-    tx: Sender<Msg>,
-    waker: repriseapp::Waker,
-}
-
-impl Poster {
-    fn post(&self, m: Msg) {
-        if self.tx.send(m).is_ok() {
-            self.waker.wake();
-        }
-    }
-}
+type Poster = repriseapp::Poster<Msg>;
 
 #[derive(Clone)]
 pub struct Calls {
@@ -115,8 +103,7 @@ fn session_locked(u: &Udisks) -> bool {
 }
 
 pub fn watch(waker: repriseapp::Waker) -> (Receiver<Msg>, Calls) {
-    let (tx, rx) = channel();
-    let poster = Poster { tx, waker };
+    let (poster, rx) = Poster::channel(waker);
     let calls = Calls {
         udisks: Udisks::system(),
         poster: poster.clone(),
