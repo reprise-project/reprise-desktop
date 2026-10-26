@@ -1113,9 +1113,11 @@ pub fn sample() -> ListView {
 }
 
 impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
-    /// The list view's `access` part: one option per row, named by its first column and described by
-    /// the others. Selected rows are marked, check rows carry their check. The list's bounds are the
-    /// body, so a row scrolled out lies outside them, where a reader can ask to scroll it in. Returns the focused row's node when the list has the focus, else the list.
+    /// The list view's `access` part: one option per row in view and for the focused row, named by
+    /// its first column, described by the others and placed in the set by its index. Selected rows
+    /// are marked, check rows carry their check. The list's bounds are the body, so a row scrolled
+    /// out lies outside them, where a reader can ask to scroll it in. Returns the focused row's
+    /// node when the list has the focus, else the list.
     pub fn access(
         &self,
         lay: &Layout,
@@ -1126,11 +1128,20 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
         let mut n = access::node(Role::ListBox, lay.body);
         n.set_multiselectable();
         access::focusable(&mut n, true);
+        let row_h = f64::from(lay.row_h());
+        n.set_scroll_y(self.top as f64 * row_h);
+        n.set_scroll_y_min(0.0);
+        n.set_scroll_y_max(self.max_top(lay) as f64 * row_h);
         let id = tree.push(parent, key, n);
         let sel = self.selection.borrow();
         let cols = self.columns.as_ref();
         let mut focus = id;
-        for i in 0..self.rows.len() {
+        let count = self.rows.len();
+        let shown = self.top.min(count)..(self.top + lay.rows + 1).min(count);
+        let off = sel.focus.filter(|f| *f < count && !shown.contains(f));
+        let before = off.filter(|f| *f < shown.start);
+        let after = off.filter(|f| *f >= shown.end);
+        for i in before.into_iter().chain(shown).chain(after) {
             let mut o = Node::new(Role::ListBoxOption);
             o.set_label(self.rows.cell(i, 0).into_owned());
             let rest: Vec<String> = cols
@@ -1146,6 +1157,8 @@ impl<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>> ListView<R, C, S> {
                 o.set_description(rest.join(", "));
             }
             o.set_selected(sel.is(i));
+            o.set_position_in_set(i + 1);
+            o.set_size_of_set(count);
             if let Some(on) = self.checks.as_ref().and_then(|c| c.get(i)) {
                 o.set_toggled((*on).into());
             }

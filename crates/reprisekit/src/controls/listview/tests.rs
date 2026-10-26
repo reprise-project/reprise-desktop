@@ -174,27 +174,60 @@ fn a_reader_scrolls_a_row_out_of_view_in_without_picking_it() {
         tree.find(Role::ListBoxOption, &format!("file{i}.txt"))
             .unwrap()
     };
-    let (above, shown, below) = (row(3), row(4), row(15));
+    let (above, shown, below) = (row(0), row(4), row(10));
     let mut p = Published::default();
     p.update(tree);
     assert_eq!(p.reveal(shown), None, "the top row shows");
     assert_eq!(
         p.reveal(above).map(|r| r.row),
-        Some(3),
-        "the row under the header"
+        Some(0),
+        "the focused row above the view"
     );
     assert_eq!(
         p.target(above),
         None,
         "a click there would land on the header"
     );
-    assert_eq!(p.reveal(below).map(|r| r.row), Some(15));
+    assert_eq!(p.reveal(below).map(|r| r.row), Some(10));
     assert!(lv.reveal(15, &lay));
     assert_eq!(lv.top, 10, "row 15 is the last row shown");
     assert!(lv.reveal(3, &lay));
     assert_eq!(lv.top, 3);
     assert!(!lv.reveal(5, &lay), "a row in view stays put");
     assert_eq!(lv.selection.focus, Some(0), "the pick stays");
+}
+
+#[test]
+fn a_long_list_publishes_the_rows_in_view_and_the_focused_row() {
+    use crate::access::{ROOT, Tree};
+    let mut lv = view(10_000);
+    lv.selection.focus = Some(9_000);
+    lv.top = 100;
+    let r = Rect::new(0, 0, 200, 4 + HEADER_H + 30 * ROW_H);
+    let lay = layout(&lv, r, &ControlMetrics::CLASSIC);
+    let n = lay.rows;
+    assert!((28..=30).contains(&n));
+    let mut tree = Tree::window("", (200, r.height));
+    lv.access(&lay, &mut tree, ROOT, "list");
+    let list = tree.get(ROOT).unwrap().children()[0];
+    let node = tree.get(list).unwrap();
+    let rows = node.children();
+    assert_eq!(
+        rows.len(),
+        n + 2,
+        "the rows in view, the one cut by the edge and the focused row"
+    );
+    let first = tree.get(rows[0]).unwrap();
+    assert_eq!(first.label(), Some("file100.txt"));
+    assert_eq!(
+        (first.position_in_set(), first.size_of_set()),
+        (Some(101), Some(10_000))
+    );
+    let last = tree.get(rows[n + 1]).unwrap();
+    assert_eq!(last.label(), Some("file9000.txt"));
+    let row_h = f64::from(lay.row_h());
+    assert_eq!(node.scroll_y(), Some(100.0 * row_h));
+    assert_eq!(node.scroll_y_max(), Some((10_000 - n) as f64 * row_h));
 }
 
 fn render(lv: &ListView, r: Rect) -> (Canvas, Layout, Theme) {

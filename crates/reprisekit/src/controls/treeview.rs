@@ -933,8 +933,9 @@ pub fn draw(
 }
 
 /// The tree view's `access` part: a tree whose items nest as the visible rows
-/// do, expanded or collapsed when they have children. Rows scrolled out of
-/// view lie above or below the frame. Returns the node that has the focus when the tree
+/// do, expanded or collapsed when they have children, placed in the set by their visible index.
+/// It holds the rows in view and the selected row, each under its ancestors; rows scrolled
+/// out of view lie above or below the frame. Returns the node that has the focus when the tree
 /// does: the rename box while open, the selected row, else the tree.
 pub fn access(
     tv: &TreeView,
@@ -945,15 +946,32 @@ pub fn access(
     parent: NodeId,
     key: impl Hash,
 ) -> NodeId {
+    let rows = tv.visible();
+    let count = rows.len();
+    let rh = lay.row_h;
     let mut n = access::node(Role::Tree, lay.frame);
     access::focusable(&mut n, true);
+    n.set_scroll_y(f64::from(rh) * tv.top as f64);
+    n.set_scroll_y_min(0.0);
+    n.set_scroll_y_max(f64::from(rh) * tv.max_top(lay) as f64);
     let id = tree.push(parent, key, n);
     let mut focus = id;
-    let rows = tv.visible();
+    let shown = tv.top.min(count)..(tv.top + lay.rows + 1).min(count);
+    let mut picked: Vec<usize> = shown.clone().collect();
+    for i in [Some(shown.start), tv.selected_row(&rows)]
+        .into_iter()
+        .flatten()
+    {
+        picked.extend(ancestors(&rows, i));
+        picked.push(i);
+    }
+    picked.retain(|&i| i < count);
+    picked.sort_unstable();
+    picked.dedup();
     // The node of each depth's last row: a row hangs under the one at the depth above.
     let mut at_depth: Vec<NodeId> = Vec::new();
-    let rh = lay.row_h;
-    for (i, row) in rows.iter().enumerate() {
+    for i in picked {
+        let row = &rows[i];
         let Some(node) = tv.node(&row.path) else {
             continue;
         };
@@ -965,6 +983,8 @@ pub fn access(
         }
         let selected = tv.selected.as_ref() == Some(&row.path);
         item.set_selected(selected);
+        item.set_position_in_set(i + 1);
+        item.set_size_of_set(count);
         let y = lay.body.y + (i as i32 - tv.top as i32) * rh;
         let x = lay.body.x - tv.left_in(lay) + tv.label_x(row.depth);
         let r = Rect::new(x, y, (lay.body.right() - x).max(0), rh);
@@ -989,6 +1009,22 @@ pub fn access(
         }
     }
     focus
+}
+
+/// The visible indices of row `i`'s ancestors: the nearest row above it at each shallower depth.
+fn ancestors(rows: &[VisibleRow], i: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut depth = rows.get(i).map_or(0, |r| r.depth);
+    for j in (0..i).rev() {
+        if depth == 0 {
+            break;
+        }
+        if rows[j].depth < depth {
+            depth = rows[j].depth;
+            out.push(j);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
