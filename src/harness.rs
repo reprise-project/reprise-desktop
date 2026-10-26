@@ -13,8 +13,8 @@ use wayland_client::{
     self as wc, Connection, EventQueue, QueueHandle,
     protocol::{
         wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_data_device, wl_data_device_manager,
-        wl_data_offer, wl_data_source, wl_keyboard, wl_output::WlOutput, wl_registry, wl_seat,
-        wl_shm, wl_shm_pool, wl_surface::WlSurface,
+        wl_data_offer, wl_data_source, wl_keyboard, wl_output::WlOutput, wl_pointer, wl_registry,
+        wl_seat, wl_shm, wl_shm_pool, wl_surface::WlSurface,
     },
 };
 use wayland_protocols::{
@@ -447,6 +447,7 @@ impl TestClient {
                 "wl_seat" => {
                     let seat: wl_seat::WlSeat = registry.bind(name, version.min(7), &qh, ());
                     self.side.keyboard = Some(seat.get_keyboard(&qh, ()));
+                    self.side.pointer = Some(seat.get_pointer(&qh, ()));
                     self.side.seat = Some(seat);
                 }
                 "wl_data_device_manager" => {
@@ -725,6 +726,7 @@ pub struct ClientSide {
     wm_base: Option<xdg_wm_base::XdgWmBase>,
     activation: Option<XdgActivationV1>,
     keyboard: Option<wl_keyboard::WlKeyboard>,
+    pointer: Option<wl_pointer::WlPointer>,
     seat: Option<wl_seat::WlSeat>,
     data_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     /// The surface the keyboard last entered and has not left.
@@ -741,6 +743,8 @@ pub struct ClientSide {
     pub shells: Vec<Shell>,
     /// Each key event the keyboard heard: its evdev code and whether it went down.
     pub keys: Vec<(u32, bool)>,
+    /// Each button event the pointer heard: its evdev code and whether it went down.
+    pub buttons: Vec<(u32, bool)>,
     /// The `shells` the compositor asked to close, in order.
     pub closes: Vec<usize>,
     layer_shell: Option<ZwlrLayerShellV1>,
@@ -925,6 +929,22 @@ impl wc::Dispatch<wl_keyboard::WlKeyboard, ()> for ClientSide {
             }
             wl_keyboard::Event::Keymap { fd, size, .. } => st.keymap = Some((fd, size)),
             _ => {}
+        }
+    }
+}
+
+impl wc::Dispatch<wl_pointer::WlPointer, ()> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &wl_pointer::WlPointer,
+        ev: wl_pointer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_pointer::Event::Button { button, state, .. } = ev {
+            let down = state == wc::WEnum::Value(wl_pointer::ButtonState::Pressed);
+            st.buttons.push((button, down));
         }
     }
 }

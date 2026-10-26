@@ -1,7 +1,11 @@
 use std::time::Duration;
 
 use smithay::{
-    backend::{input::InputEvent, libinput::LibinputInputBackend, session::Session},
+    backend::{
+        input::{InputEvent, InputTime},
+        libinput::LibinputInputBackend,
+        session::Session,
+    },
     reexports::{
         calloop::timer::{TimeoutAction, Timer},
         drm::control::crtc,
@@ -33,6 +37,7 @@ pub fn on_input(state: &mut State, mut event: InputEvent<LibinputInputBackend>) 
 
 pub(super) fn pause(state: &mut State) {
     state.cancel_drag();
+    state.release_all_buttons(InputTime::now());
     let Some(b) = state.backend.as_mut() else {
         return;
     };
