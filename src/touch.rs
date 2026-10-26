@@ -270,12 +270,17 @@ fn hand_to_pointer(
     Some(at)
 }
 
-/// The output udev tags `device` with (`WL_OUTPUT`).
-fn udev_output(device: &impl Device) -> Option<String> {
+/// The udev property `key` of `device`.
+pub(crate) fn udev_property(device: &impl Device, key: &str) -> Option<String> {
     let path = device.syspath()?;
     let dev = smithay::reexports::udev::Device::from_syspath(&path).ok()?;
-    dev.property_value("WL_OUTPUT")
+    dev.property_value(key)
         .map(|v| v.to_string_lossy().into_owned())
+}
+
+/// The output udev tags `device` with (`WL_OUTPUT`).
+fn udev_output(device: &impl Device) -> Option<String> {
+    udev_property(device, "WL_OUTPUT")
 }
 
 impl State {

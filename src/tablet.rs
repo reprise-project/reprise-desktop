@@ -7,7 +7,7 @@
 
 use smithay::{
     backend::input::{
-        AbsolutePositionEvent, ButtonState, Event, InputBackend, InputTime, ProximityState,
+        AbsolutePositionEvent, ButtonState, Device, Event, InputBackend, InputTime, ProximityState,
         TabletToolButtonEvent, TabletToolDescriptor, TabletToolEvent, TabletToolProximityEvent,
         TabletToolTipEvent, TabletToolTipState,
     },
@@ -22,7 +22,7 @@ use smithay::{
         },
     },
     reexports::wayland_server::{DisplayHandle, Resource, protocol::wl_surface::WlSurface},
-    utils::{Logical, Point, SERIAL_COUNTER, Transform},
+    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size, Transform},
     wayland::tablet_manager::TabletManagerState,
 };
 
@@ -40,6 +40,9 @@ pub struct TabletState {
     #[allow(dead_code)]
     manager: TabletManagerState,
     tools: Vec<Tool>,
+    /// Each tablet's active area in mm (udev's `ID_INPUT_WIDTH_MM`, `ID_INPUT_HEIGHT_MM`), by
+    /// device id.
+    sizes: Vec<(String, Option<(f64, f64)>)>,
 }
 
 impl TabletState {
@@ -47,8 +50,41 @@ impl TabletState {
         TabletState {
             manager: TabletManagerState::new::<State>(dh),
             tools: Vec::new(),
+            sizes: Vec::new(),
         }
     }
+}
+
+/// Which output a tablet maps to: its `[[tablets]]` entry's `configured` output
+/// (`touch::target_output`), else the only output. None spans the layout.
+fn tablet_output<'a>(configured: Option<&str>, outputs: &[&'a str]) -> Option<&'a str> {
+    match (configured, outputs) {
+        (Some(_), _) => crate::touch::target_output(configured, None, outputs),
+        (None, [only]) => Some(*only),
+        (None, _) => None,
+    }
+}
+
+/// The largest rect of a `size` tablet's shape centred in `area`, on an output with
+/// `transform`, which turns the tablet's native axes as `touch::place` does.
+fn letterbox(
+    area: Rectangle<i32, Logical>,
+    transform: Transform,
+    size: (f64, f64),
+) -> Rectangle<i32, Logical> {
+    let shape = transform.transform_size(Size::<f64, Logical>::from(size));
+    if !(shape.w > 0.0 && shape.h > 0.0) {
+        return area;
+    }
+    let a = area.size.to_f64();
+    let k = (a.w / shape.w).min(a.h / shape.h);
+    let (w, h) = (shape.w * k, shape.h * k);
+    let x = f64::from(area.loc.x) + (a.w - w) / 2.0;
+    let y = f64::from(area.loc.y) + (a.h - h) / 2.0;
+    Rectangle::new(
+        (x.round() as i32, y.round() as i32).into(),
+        (w.round() as i32, h.round() as i32).into(),
+    )
 }
 
 struct Tool {
@@ -111,8 +147,24 @@ impl State {
         handle
     }
 
+    /// A new tablet: its size, for `keep_aspect`.
+    pub fn tablet_added(&mut self, device: &impl Device) {
+        let mm = |key| {
+            crate::touch::udev_property(device, key)?
+                .parse::<f64>()
+                .ok()
+        };
+        let size = mm("ID_INPUT_WIDTH_MM").zip(mm("ID_INPUT_HEIGHT_MM"));
+        let id = device.id();
+        let sizes = &mut self.devices.tablet.sizes;
+        sizes.retain(|(d, _)| *d != id);
+        sizes.push((id, size));
+    }
+
     /// A tablet went away. With none left, every tool goes too.
-    pub fn tablet_removed(&mut self, desc: &TabletDescriptor) {
+    pub fn tablet_removed(&mut self, device: &impl Device, desc: &TabletDescriptor) {
+        let id = device.id();
+        self.devices.tablet.sizes.retain(|(d, _)| *d != id);
         let tablets = self.seat.tablet_seat();
         tablets.remove_tablet(desc);
         if tablets.count_tablets() > 0 {
@@ -138,23 +190,40 @@ impl State {
         self.clients_may_have_touch() && !self.inputproto.gated()
     }
 
-    /// The layout point a tablet event's 0..1 position stands for: a tablet spans
-    /// the whole layout, turned with the output when there is only one; on a
-    /// zoomed output it points at what the zoom shows.
+    /// The layout point a tablet event's 0..1 position stands for: on the output its
+    /// `[[tablets]]` entry maps it to (`tablet_output`), turned with it and, with
+    /// `keep_aspect`, letterboxed to the tablet's shape; on a zoomed output it points at
+    /// what the zoom shows.
     fn tool_point<B: InputBackend>(
         &self,
         ev: &impl AbsolutePositionEvent<B>,
     ) -> Point<f64, Logical> {
-        let transform = match self.scene.outputs() {
-            [only] => only.current_transform(),
-            _ => Transform::Normal,
-        };
+        let device = ev.device();
+        let entry = crate::config::find_tablet(&self.config.tablets, &device.name());
+        let outputs: Vec<(String, Transform, Rectangle<i32, Logical>)> = self
+            .scene
+            .outputs()
+            .iter()
+            .filter_map(|o| {
+                reprisescene::output_rect(o).map(|r| (o.name(), o.current_transform(), r))
+            })
+            .collect();
+        let names: Vec<&str> = outputs.iter().map(|(n, ..)| n.as_str()).collect();
+        let (transform, mut area) = tablet_output(entry.and_then(|e| e.output.as_deref()), &names)
+            .and_then(|t| outputs.iter().find(|(n, ..)| n == t))
+            .map_or_else(
+                || (Transform::Normal, self.output_area()),
+                |(_, t, r)| (*t, *r),
+            );
+        if entry.is_some_and(|e| e.keep_aspect) {
+            let id = device.id();
+            let sizes = &self.devices.tablet.sizes;
+            if let Some(size) = sizes.iter().find(|(d, _)| *d == id).and_then(|(_, s)| *s) {
+                area = letterbox(area, transform, size);
+            }
+        }
         let norm = ev.position_transformed((1, 1).into());
-        self.zoom_absolute(crate::touch::place(
-            transform,
-            (norm.x, norm.y),
-            self.output_area(),
-        ))
+        self.zoom_absolute(crate::touch::place(transform, (norm.x, norm.y), area))
     }
 
     fn accepts_tool(&self, tool: &TabletToolHandle<State>, surface: &WlSurface) -> bool {
@@ -455,6 +524,44 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tablet_maps_to_its_configured_output_else_the_only_one() {
+        let outs = ["eDP-1", "DP-2"];
+        assert_eq!(tablet_output(Some("DP-2"), &outs), Some("DP-2"));
+        assert_eq!(tablet_output(None, &outs), None, "spans the layout");
+        assert_eq!(tablet_output(None, &["DP-2"]), Some("DP-2"));
+        assert_eq!(tablet_output(Some("HDMI-A-1"), &["DP-1", "DP-2"]), None);
+    }
+
+    #[test]
+    fn keep_aspect_letterboxes_the_tablet_inside_its_output() {
+        let area = Rectangle::new((1920, 0).into(), (1920, 1200).into());
+        let wide = (200.0, 100.0);
+        assert_eq!(
+            letterbox(area, Transform::Normal, wide),
+            Rectangle::new((1920, 120).into(), (1920, 960).into()),
+            "bands above and below"
+        );
+        assert_eq!(
+            letterbox(area, Transform::_90, wide),
+            Rectangle::new((2580, 0).into(), (600, 1200).into()),
+            "a turned output stands the tablet up: bands at the sides"
+        );
+        assert_eq!(
+            letterbox(area, Transform::Normal, (192.0, 120.0)),
+            area,
+            "the output's own shape fills it"
+        );
+        assert_eq!(letterbox(area, Transform::Normal, (0.0, 100.0)), area);
+        let boxed = letterbox(area, Transform::Normal, wide);
+        let at = |norm| {
+            let p = crate::touch::place(Transform::Normal, norm, boxed);
+            (p.x, p.y)
+        };
+        assert_eq!(at((0.0, 0.0)), (1920.0, 120.0));
+        assert_eq!(at((1.0, 1.0)), (3840.0, 1080.0));
+    }
 
     #[test]
     fn stylus_buttons_stand_for_right_and_middle() {

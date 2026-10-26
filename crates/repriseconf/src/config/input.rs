@@ -65,3 +65,18 @@ impl Default for TouchpadConfig {
 pub struct TouchscreenConfig {
     pub output: Option<String>,
 }
+
+/// A `[[tablets]]` entry: the first whose `name` matches a tablet maps it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TabletConfig {
+    /// A glob over the tablet's device name; `*` when left out.
+    pub name: String,
+    pub output: Option<String>,
+    /// Map the tablet to the largest rect of its own shape inside the area, centred.
+    pub keep_aspect: bool,
+}
+
+/// The `[[tablets]]` entry for the tablet called `name`.
+pub fn find_tablet<'a>(list: &'a [TabletConfig], name: &str) -> Option<&'a TabletConfig> {
+    list.iter().find(|t| crate::glob::glob(&t.name, name))
+}

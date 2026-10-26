@@ -31,6 +31,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[[window_rules]]` | per-program size, place, desktop and state |
 | `[session]` | session restore and leftover programs |
 | `[keyboard]`, `[mouse]`, `[touchpad]`, `[touchscreen]`, `[gestures]` | input |
+| `[[tablets]]` | which output a drawing tablet covers, and whether it keeps its shape |
 | `[[tablet_pads]]` | what pad buttons, rings and strips do |
 | `[accessibility]` | text size, StickyKeys, SlowKeys, MouseKeys, magnifier, colour filters |
 | `[night_light]` | schedule and warmth |
