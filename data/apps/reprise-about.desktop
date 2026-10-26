@@ -1,7 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=About Reprise
+Name[de]=Über Reprise
 Comment=Displays version information for Reprise.
+Comment[de]=Zeigt Versionsinformationen zu Reprise an.
 Exec=reprise-about
 Icon=reprise
 Categories=System;

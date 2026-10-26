@@ -28,11 +28,11 @@ impl Notepad {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         MsgBox::new(
-            "Notepad",
+            tr!("name"),
             msgbox::Fields {
-                text: format!("{name} has changed on disk since you opened it.\nSave anyway?"),
+                text: tr!("changed-on-disk", name = name),
                 icon: self.warn_icon.clone(),
-                buttons: vec!["&Yes".into(), "&No".into()],
+                buttons: vec![reprisekit::kit_tr!("yes"), reprisekit::kit_tr!("no")],
                 default: 1,
                 min_text_h: None,
                 min_w: 0,
@@ -85,10 +85,7 @@ impl Notepad {
 
     pub(crate) fn save_failed(&mut self, path: &Path, e: &std::io::Error) {
         log::warn!("save {}: {e}", path.display());
-        self.error = Some(self.error_box(&format!(
-            "Cannot create the {} file.\nMake sure that the path and file name are correct.",
-            path.display()
-        )));
+        self.error = Some(self.error_box(&tr!("save-failed", path = path.display().to_string())));
     }
 
     pub(crate) fn open_failed(&mut self, path: &Path, e: &std::io::Error) {
@@ -99,14 +96,14 @@ impl Notepad {
         {
             let text = String::from_utf8_lossy(bad.as_bytes()).into_owned();
             let prompt = MsgBox::new(
-                "Notepad",
+                tr!("name"),
                 msgbox::Fields {
-                    text: format!(
-                        "{} is not a UTF-8 text file.\nDo you want to open a copy with the unreadable characters replaced?",
-                        path.display()
-                    ),
+                    text: tr!("not-utf8", path = path.display().to_string()),
                     icon: self.warn_icon.clone(),
-                    buttons: vec!["Yes".into(), "No".into()],
+                    buttons: vec![
+                        reprisekit::kit_tr!("yes-bare"),
+                        reprisekit::kit_tr!("no-bare"),
+                    ],
                     default: 0,
                     min_text_h: None,
                     min_w: 0,
@@ -148,7 +145,7 @@ impl Notepad {
             .as_ref()
             .and_then(|p| p.file_stem())
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled".into());
+            .unwrap_or_else(|| tr!("untitled"));
         let sep = if self.crlf { "\r\n" } else { "\n" };
         match write_recovery(dir, std::process::id(), &stem, self.edit.lines(), sep) {
             Ok(kept) => {
@@ -177,11 +174,14 @@ impl Notepad {
         }
         let file = self.recover_queue.remove(0);
         let prompt = MsgBox::new(
-            "Notepad",
+            tr!("name"),
             msgbox::Fields {
-                text: "A document was recovered. Open it?".into(),
+                text: tr!("recovered"),
                 icon: self.warn_icon.clone(),
-                buttons: vec!["Yes".into(), "No".into()],
+                buttons: vec![
+                    reprisekit::kit_tr!("yes-bare"),
+                    reprisekit::kit_tr!("no-bare"),
+                ],
                 default: 0,
                 min_text_h: None,
                 min_w: 0,
@@ -242,14 +242,15 @@ impl Notepad {
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled".into());
+            .unwrap_or_else(|| tr!("untitled"));
         msgbox::Fields {
-            text: format!(
-                "The text in the {name} file has changed.\n\
-                 Do you want to save the changes?"
-            ),
+            text: tr!("save-changes", name = name),
             icon: self.warn_icon.clone(),
-            buttons: vec!["&Yes".into(), "&No".into(), "Cancel".into()],
+            buttons: vec![
+                reprisekit::kit_tr!("yes"),
+                reprisekit::kit_tr!("no"),
+                reprisekit::kit_tr!("cancel"),
+            ],
             default: self.savechanges_focus,
             min_text_h: None,
             min_w: 0,

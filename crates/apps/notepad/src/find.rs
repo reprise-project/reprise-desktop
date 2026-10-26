@@ -117,7 +117,7 @@ impl Notepad {
     }
 
     pub(crate) fn notfound_box(&self, query: &str) -> MsgBox {
-        ok_box(format!("Cannot find \"{query}\""), self.info_icon.clone())
+        ok_box(tr!("not-found", query = query), self.info_icon.clone())
     }
 
     pub(crate) fn find_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {

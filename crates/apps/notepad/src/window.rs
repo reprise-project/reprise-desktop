@@ -89,10 +89,10 @@ impl Notepad {
             .map(String::as_str)
             .unwrap_or("");
         // Col counts characters, not bytes and not tab stops.
-        format!(
-            "Ln {}, Col {}",
-            self.edit.caret().line + 1,
-            multiedit::char_col(line, self.edit.caret().col)
+        tr!(
+            "status-position",
+            line = (self.edit.caret().line + 1).to_string(),
+            column = multiedit::char_col(line, self.edit.caret().col).to_string(),
         )
     }
 

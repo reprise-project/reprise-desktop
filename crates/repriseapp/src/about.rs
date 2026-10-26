@@ -5,6 +5,7 @@ use reprisefs::sysinfo::{cpu_model, mem_total_kb};
 use reprisekit::controls::aboutbox::{Fields, Group};
 use reprisekit::raster::Canvas;
 use reprisekit::text::escape_mnemonic;
+use reprisekit::tr;
 
 /// The build id a package compiles in (its PKGBUILD exports `REPRISE_BUILD`); `None` in a plain cargo build.
 const BUILD: Option<&str> = option_env!("REPRISE_BUILD");
@@ -31,10 +32,10 @@ impl Machine {
             .map(|c| escape_mnemonic(&c))
             .unwrap_or_default();
         let video = video_driver()
-            .map(|d| format!("Video:  {}", escape_mnemonic(&d)))
+            .map(|d| tr!("about-video", driver = escape_mnemonic(&d)))
             .unwrap_or_default();
         let free = reprisefs::places::statvfs_totals(std::path::Path::new("/"))
-            .map(|(_, b)| format!("Free space on /:  {}", format_gb(b)))
+            .map(|(_, b)| tr!("about-free-space", size = format_gb(b)))
             .unwrap_or_default();
         let memory = mem_total_kb(&read("/proc/meminfo"))
             .map(|kb| format_kb(kb * 1024))
@@ -52,7 +53,7 @@ impl Machine {
             version: self.version.clone(),
             copyright: String::new(),
             facts: self.facts.clone(),
-            memory_label: "Physical memory available to Reprise:".into(),
+            memory_label: tr!("about-memory-label"),
             memory_value: self.memory.clone(),
             icon,
         }
@@ -137,19 +138,27 @@ impl SystemFacts {
     }
 
     /// The table as label and lines per group, unescaped: what Copy puts on the clipboard and, escaped, what the view shows.
-    pub fn table(&self) -> Vec<(&'static str, Vec<String>)> {
+    pub fn table(&self) -> Vec<(String, Vec<String>)> {
         let some = |s: &str| (!s.is_empty()).then(|| s.to_string());
         let reprise = [
             Some(match &self.build {
-                Some(b) => format!("Version {} (build {b})", self.version),
-                None => format!("Version {}", self.version),
+                Some(b) => tr!(
+                    "system-version-build",
+                    version = self.version.as_str(),
+                    build = b.as_str()
+                ),
+                None => tr!("system-version", version = self.version.as_str()),
             }),
-            some(&self.interface).map(|i| format!("{i} interface")),
-            self.renderer.as_ref().map(|r| format!("{r} renderer")),
+            some(&self.interface).map(|i| tr!("system-interface", interface = i)),
+            (self.renderer.as_ref()).map(|r| tr!("system-renderer", renderer = r.as_str())),
         ];
         let kernel = match (self.kernel.is_empty(), self.arch.is_empty()) {
-            (false, false) => Some(format!("Linux {} ({})", self.kernel, self.arch)),
-            (false, true) => Some(format!("Linux {}", self.kernel)),
+            (false, false) => Some(tr!(
+                "system-kernel-arch",
+                kernel = self.kernel.as_str(),
+                arch = self.arch.as_str()
+            )),
+            (false, true) => Some(tr!("system-kernel", kernel = self.kernel.as_str())),
             (true, false) => Some(self.arch.clone()),
             (true, true) => None,
         };
@@ -163,38 +172,50 @@ impl SystemFacts {
             self.ram.map(format_kb),
             self.ram
                 .and(self.ram_free)
-                .map(|f| format!("{} available", format_kb(f))),
+                .map(|f| tr!("system-memory-available", memory = format_kb(f))),
         ];
-        let disk = self
-            .disk
-            .map(|(t, f)| format!("{} ({} free)", format_gb(t), format_gb(f)));
+        let disk = self.disk.map(|(t, f)| {
+            tr!(
+                "system-disk-free",
+                total = format_gb(t),
+                free = format_gb(f)
+            )
+        });
         let user = match (self.user.as_str(), self.login.as_str()) {
             ("", l) => some(l),
             (u, l) if l.is_empty() || u == l => Some(u.to_string()),
-            (u, l) => Some(format!("{u} ({l})")),
+            (u, l) => Some(tr!("system-user-login", user = u, login = l)),
         };
-        let session = [user, self.uptime.map(|s| format!("Up {}", uptime_words(s)))];
+        let session = [
+            user,
+            (self.uptime).map(|s| tr!("system-uptime", duration = uptime_words(s))),
+        ];
         let groups = [
-            ("Reprise:", reprise.into_iter().flatten().collect()),
             (
-                "Operating system:",
+                tr!("system-reprise"),
+                reprise.into_iter().flatten().collect(),
+            ),
+            (
+                tr!("system-os"),
                 [some(&self.os), kernel].into_iter().flatten().collect(),
             ),
-            ("Computer:", computer.into_iter().flatten().collect()),
-            ("Processor:", processor.into_iter().flatten().collect()),
-            ("Graphics:", self.gpus.clone()),
-            ("Memory:", memory.into_iter().flatten().collect()),
-            ("Disk (/):", disk.into_iter().collect()),
             (
-                if self.displays.len() > 1 {
-                    "Displays:"
-                } else {
-                    "Display:"
-                },
+                tr!("system-computer"),
+                computer.into_iter().flatten().collect(),
+            ),
+            (
+                tr!("system-processor"),
+                processor.into_iter().flatten().collect(),
+            ),
+            (tr!("system-graphics"), self.gpus.clone()),
+            (tr!("system-memory"), memory.into_iter().flatten().collect()),
+            (tr!("system-disk"), disk.into_iter().collect()),
+            (
+                tr!("system-displays", count = self.displays.len()),
                 self.displays.clone(),
             ),
             (
-                "Session:",
+                tr!("system-session"),
                 session.into_iter().flatten().collect::<Vec<_>>(),
             ),
         ];
@@ -205,25 +226,20 @@ impl SystemFacts {
     }
 
     fn cpu_line(&self) -> Option<String> {
-        let plural = |n: usize, one: &str| {
-            if n == 1 {
-                format!("1 {one}")
-            } else {
-                format!("{n} {one}s")
-            }
-        };
+        let cores = |count: usize| tr!("cpu-cores", count = count);
+        let threads = |count: usize| tr!("cpu-threads", count = count);
         let mut parts = Vec::new();
         match self.cores {
             Some(c) if c != self.threads && self.threads > 0 => {
-                parts.push(plural(c, "core"));
-                parts.push(plural(self.threads, "thread"));
+                parts.push(cores(c));
+                parts.push(threads(self.threads));
             }
-            Some(c) => parts.push(plural(c, "core")),
-            None if self.threads > 0 => parts.push(plural(self.threads, "thread")),
+            Some(c) => parts.push(cores(c)),
+            None if self.threads > 0 => parts.push(threads(self.threads)),
             None => {}
         }
         if let Some(m) = self.mhz {
-            parts.push(format!("up to {:.2} GHz", m / 1000.0));
+            parts.push(tr!("cpu-speed", ghz = m / 1000.0));
         }
         (!parts.is_empty()).then(|| parts.join(", "))
     }
@@ -232,7 +248,7 @@ impl SystemFacts {
         self.table()
             .into_iter()
             .map(|(label, lines)| Group {
-                label: label.into(),
+                label,
                 lines: lines.iter().map(|l| escape_mnemonic(l)).collect(),
             })
             .collect()
@@ -240,11 +256,16 @@ impl SystemFacts {
 
     pub fn copy_text(&self) -> String {
         let table = self.table();
-        let w = table.iter().map(|(l, _)| l.len()).max().unwrap_or(0) + 1;
+        let w = table
+            .iter()
+            .map(|(l, _)| l.chars().count())
+            .max()
+            .unwrap_or(0)
+            + 1;
         let mut out = String::new();
         for (label, lines) in &table {
             for (i, line) in lines.iter().enumerate() {
-                let head = if i == 0 { *label } else { "" };
+                let head = if i == 0 { label.as_str() } else { "" };
                 out += &format!("{head:w$}{line}\n");
             }
         }
@@ -281,15 +302,21 @@ pub fn display_lines(heads: &[Head]) -> Vec<String> {
     running
         .into_iter()
         .map(|(h, m)| {
-            let mut s = format!("{}x{}", m.width, m.height);
+            let mut s = tr!(
+                "display-mode",
+                width = m.width.to_string(),
+                height = m.height.to_string()
+            );
             if m.refresh_mhz > 0 {
-                s += &format!(" at {} Hz", (m.refresh_mhz as f64 / 1000.0).round());
+                let hz = (m.refresh_mhz as f64 / 1000.0).round();
+                s = tr!("display-refresh", mode = s, hz = hz);
             }
             if (h.scale - 1.0).abs() > 0.001 && h.scale > 0.0 {
-                s += &format!(", {}%", (h.scale * 100.0).round());
+                let percent = (h.scale * 100.0).round();
+                s = tr!("display-scale", mode = s, percent = percent);
             }
             if named && !h.name.is_empty() {
-                s += &format!(" ({})", h.name);
+                s = tr!("display-named", mode = s, name = h.name.as_str());
             }
             s
         })
@@ -305,21 +332,25 @@ pub fn cpu_name(model: &str) -> String {
 }
 
 pub fn uptime_words(secs: u64) -> String {
-    let units = [(86_400, "day"), (3_600, "hour"), (60, "minute")];
-    let parts: Vec<String> = units
-        .iter()
-        .scan(secs, |left, &(size, name)| {
+    let words = |unit: u64, count: u64| match unit {
+        86_400 => tr!("uptime-days", count = count),
+        3_600 => tr!("uptime-hours", count = count),
+        _ => tr!("uptime-minutes", count = count),
+    };
+    let parts: Vec<String> = [86_400, 3_600, 60]
+        .into_iter()
+        .scan(secs, |left, size| {
             let n = *left / size;
             *left %= size;
-            Some((n, name))
+            Some((size, n))
         })
-        .skip_while(|(n, _)| *n == 0)
+        .skip_while(|(_, n)| *n == 0)
         .take(2)
-        .filter(|(n, _)| *n > 0)
-        .map(|(n, name)| format!("{n} {name}{}", if n == 1 { "" } else { "s" }))
+        .filter(|(_, n)| *n > 0)
+        .map(|(size, n)| words(size, n))
         .collect();
     if parts.is_empty() {
-        "less than a minute".into()
+        tr!("uptime-under-a-minute")
     } else {
         parts.join(", ")
     }
@@ -333,20 +364,25 @@ pub fn drm_driver(uevent: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-/// Memory in whole kilobytes with thousands separators: "16,384,000 KB".
+/// Memory in whole kilobytes with the UI language's digit grouping: "16,384,000 KB".
 pub fn format_kb(bytes: u64) -> String {
-    format!("{} KB", reprisefs::props::thousands(bytes / 1024))
+    tr!("size-kb", kb = bytes / 1024)
 }
 
 pub fn format_gb(bytes: u64) -> String {
-    format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
+    tr!("size-gb", gb = bytes as f64 / 1_073_741_824.0)
 }
 
 /// The version line. The parenthetical is a build identifier and, after a colon, a second element; with no build id the whole parenthetical goes.
 pub fn version_line(pkg: &str, build: Option<&str>, kernel: &str) -> String {
     match build {
-        Some(b) => format!("Version {pkg} (Build {b} : {kernel})"),
-        None => format!("Version {pkg}"),
+        Some(b) => tr!(
+            "about-version-build",
+            version = pkg,
+            build = b,
+            kernel = kernel
+        ),
+        None => tr!("about-version", version = pkg),
     }
 }
 
@@ -475,7 +511,7 @@ mod tests {
         ];
         let got: Vec<(&str, Vec<&str>)> = t
             .iter()
-            .map(|(l, ls)| (*l, ls.iter().map(|s| s.as_str()).collect()))
+            .map(|(l, ls)| (l.as_str(), ls.iter().map(|s| s.as_str()).collect()))
             .collect();
         assert_eq!(got, want);
     }
@@ -488,7 +524,7 @@ mod tests {
         };
         assert_eq!(
             bare.table(),
-            vec![("Reprise:", vec!["Version 0.1.0".to_string()])]
+            vec![("Reprise:".to_string(), vec!["Version 0.1.0".to_string()])]
         );
         let f = SystemFacts {
             pretty: "reprise-vm-1".into(),

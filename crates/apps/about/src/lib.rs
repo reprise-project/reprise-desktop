@@ -9,6 +9,9 @@ use reprisekit::controls::aboutbox::{self, System};
 use reprisekit::controls::form::{self, Form};
 use reprisekit::look::Paint;
 use reprisekit::raster::Canvas;
+use reprisekit::tr;
+
+reprisekit::strings!("about");
 
 struct AboutBox {
     facts: SystemFacts,
@@ -154,7 +157,7 @@ impl AboutBox {
 
 impl App for AboutBox {
     fn title(&self) -> String {
-        "About Reprise".into()
+        tr!("title")
     }
 
     fn app_id(&self) -> String {

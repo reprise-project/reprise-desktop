@@ -37,53 +37,59 @@ pub(crate) mod row {
     pub const ABOUT: usize = 2;
 }
 
-pub(crate) fn menus() -> Vec<(&'static str, Vec<MenuItem>)> {
+pub(crate) fn menus() -> Vec<(String, Vec<MenuItem>)> {
     vec![
         (
-            "&File",
+            tr!("menu-file"),
             vec![
-                mi("&New", Some("Ctrl+N"), true),
-                mi("&Open...", Some("Ctrl+O"), true),
-                mi("&Save", Some("Ctrl+S"), true),
-                mi("Save &As...", None, true),
+                mi(&tr!("menu-new"), Some("Ctrl+N"), true),
+                mi(&tr!("menu-open"), Some("Ctrl+O"), true),
+                mi(&tr!("menu-save"), Some("Ctrl+S"), true),
+                mi(&tr!("menu-save-as"), None, true),
                 MenuItem::Separator,
-                mi("Page Set&up...", None, false),
-                mi("&Print...", Some("Ctrl+P"), false),
+                mi(&tr!("menu-page-setup"), None, false),
+                mi(&tr!("menu-print"), Some("Ctrl+P"), false),
                 MenuItem::Separator,
-                mi("E&xit", None, true),
+                mi(&tr!("menu-exit"), None, true),
             ],
         ),
         (
-            "&Edit",
+            tr!("menu-edit"),
             vec![
-                mi("&Undo", Some("Ctrl+Z"), true),
-                mi("&Redo", Some("Ctrl+Y"), true),
+                mi(&tr!("menu-undo"), Some("Ctrl+Z"), true),
+                mi(&tr!("menu-redo"), Some("Ctrl+Y"), true),
                 MenuItem::Separator,
-                mi("Cu&t", Some("Ctrl+X"), true),
-                mi("&Copy", Some("Ctrl+C"), true),
-                mi("&Paste", Some("Ctrl+V"), true),
-                mi("De&lete", Some("Del"), true),
+                mi(&tr!("menu-cut"), Some("Ctrl+X"), true),
+                mi(&tr!("menu-copy"), Some("Ctrl+C"), true),
+                mi(&tr!("menu-paste"), Some("Ctrl+V"), true),
+                mi(&tr!("menu-delete"), Some("Del"), true),
                 MenuItem::Separator,
-                mi("&Find...", Some("Ctrl+F"), true),
-                mi("Find &Next", Some("F3"), true),
-                mi("&Replace...", Some("Ctrl+H"), true),
-                mi("&Go To...", Some("Ctrl+G"), true),
+                mi(&tr!("menu-find"), Some("Ctrl+F"), true),
+                mi(&tr!("menu-find-next"), Some("F3"), true),
+                mi(&tr!("menu-replace"), Some("Ctrl+H"), true),
+                mi(&tr!("menu-go-to"), Some("Ctrl+G"), true),
                 MenuItem::Separator,
-                mi("Select &All", Some("Ctrl+A"), true),
-                mi("Time/&Date", Some("F5"), true),
+                mi(&tr!("menu-select-all"), Some("Ctrl+A"), true),
+                mi(&tr!("menu-time-date"), Some("F5"), true),
             ],
         ),
         (
-            "F&ormat",
-            vec![mi("&Word Wrap", None, false), mi("&Font...", None, false)],
-        ),
-        ("&View", vec![mi("&Status Bar", None, true)]),
-        (
-            "&Help",
+            tr!("menu-format"),
             vec![
-                mi("&Help Topics", None, false),
+                mi(&tr!("menu-word-wrap"), None, false),
+                mi(&tr!("menu-font"), None, false),
+            ],
+        ),
+        (
+            tr!("menu-view"),
+            vec![mi(&tr!("menu-status-bar"), None, true)],
+        ),
+        (
+            tr!("menu-help"),
+            vec![
+                mi(&tr!("menu-help-topics"), None, false),
                 MenuItem::Separator,
-                mi("&About Notepad", None, true),
+                mi(&tr!("menu-about"), None, true),
             ],
         ),
     ]

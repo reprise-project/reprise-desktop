@@ -12,7 +12,7 @@ pub(crate) fn goto_form(value: &str) -> Form {
             "linelabel",
             Rect::new(8, 12, 72, 20),
             Control::Label {
-                text: "&Line Number:".into(),
+                text: tr!("go-to-line-number"),
                 enabled: true,
                 align: reprisekit::text::Align::Left,
             },
@@ -30,7 +30,7 @@ pub(crate) fn goto_form(value: &str) -> Form {
             GOTO_OK,
             Rect::new(8, 56, widgets::BUTTON_W, widgets::BUTTON_H),
             Control::Button {
-                label: "OK".into(),
+                label: reprisekit::kit_tr!("ok"),
                 enabled: true,
                 default: true,
             },
@@ -39,7 +39,7 @@ pub(crate) fn goto_form(value: &str) -> Form {
             GOTO_CANCEL,
             Rect::new(114, 56, widgets::BUTTON_W, widgets::BUTTON_H),
             Control::Button {
-                label: "Cancel".into(),
+                label: reprisekit::kit_tr!("cancel"),
                 enabled: true,
                 default: false,
             },
@@ -128,11 +128,11 @@ pub(crate) fn form_event(
 /// A Notepad box with one OK button.
 pub(crate) fn ok_box(text: String, icon: Option<Canvas>) -> MsgBox {
     MsgBox::new(
-        "Notepad",
+        tr!("name"),
         msgbox::Fields {
             text,
             icon,
-            buttons: vec!["OK".into()],
+            buttons: vec![reprisekit::kit_tr!("ok")],
             default: 0,
             min_text_h: None,
             min_w: 0,
@@ -207,7 +207,7 @@ impl Notepad {
     }
 
     pub(crate) fn about_fields(&self) -> aboutbox::Fields {
-        repriseapp::about::fields("Notepad", self.app_icon.clone())
+        repriseapp::about::fields(&tr!("name"), self.app_icon.clone())
     }
 
     /// Laid out for the 100% font; the banner is drawn at the grown size.

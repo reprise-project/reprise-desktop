@@ -1,7 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=Notepad
+Name[de]=Editor
 Comment=Creates and edits text files using basic text formatting.
+Comment[de]=Erstellt und bearbeitet Textdateien mit einfacher Textformatierung.
 Exec=reprise-notepad %f
 Icon=accessories-text-editor
 Categories=Utility;TextEditor;
