@@ -34,7 +34,17 @@ pub struct ShmTextures {
     allocator: GbmAllocator<DrmDeviceFd>,
     display: Arc<EGLDisplayHandle>,
     committed: HashMap<ObjectId, Weak<WlSurface>>,
-    seen: HashMap<ObjectId, Seen>,
+    seen: HashMap<ObjectId, Entry>,
+}
+
+struct Entry {
+    surface: Weak<WlSurface>,
+    seen: Seen,
+}
+
+/// Drop the entries of destroyed surfaces.
+fn prune(seen: &mut HashMap<ObjectId, Entry>) {
+    seen.retain(|_, e| e.surface.upgrade().is_ok());
 }
 
 enum Seen {
@@ -55,7 +65,6 @@ enum Look {
 }
 
 struct Linear {
-    surface: Weak<WlSurface>,
     texture: GlesTexture,
     image: EGLImage,
     display: Arc<EGLDisplayHandle>,
@@ -86,6 +95,12 @@ impl ShmTextures {
         }
     }
 
+    /// `id`'s surface was destroyed.
+    pub fn surface_gone(&mut self, id: &ObjectId) {
+        self.committed.remove(id);
+        self.seen.remove(id);
+    }
+
     pub fn committed(&mut self, surface: &WlSurface) {
         self.committed
             .entry(surface.id())
@@ -96,10 +111,7 @@ impl ShmTextures {
     /// imported since, after a frame's elements are built and before it
     /// renders. Surfaces not imported yet stay for the next frame.
     pub fn update(&mut self, renderer: &mut GlesRenderer) {
-        self.seen.retain(|_, s| match s {
-            Seen::Linear(l) => l.surface.upgrade().is_ok(),
-            _ => true,
-        });
+        prune(&mut self.seen);
         if self.committed.is_empty() {
             return;
         }
@@ -126,7 +138,7 @@ impl ShmTextures {
         surface: &WlSurface,
     ) -> Option<()> {
         let id = surface.id();
-        let linear_commit = match self.seen.get(&id) {
+        let linear_commit = match self.seen.get(&id).map(|e| &e.seen) {
             Some(Seen::Linear(l)) => Some((l.texture.tex_id(), l.commit)),
             _ => None,
         };
@@ -168,7 +180,7 @@ impl ShmTextures {
             self.seen.remove(&id);
             return Some(());
         }
-        match self.seen.get_mut(&id) {
+        match self.seen.get_mut(&id).map(|e| &mut e.seen) {
             Some(Seen::Linear(l)) if l.texture.tex_id() == tex && !refilled => {
                 l.commit = commit;
                 return Some(());
@@ -178,22 +190,26 @@ impl ShmTextures {
             Some(Seen::Plain(t)) if *t == tex => {}
             Some(Seen::Linear(_)) if refilled => {}
             _ => {
-                self.seen.insert(id, Seen::Plain(tex));
+                self.see(surface, Seen::Plain(tex));
                 return Some(());
             }
         }
-        let seen = match self.back(renderer, surface, &buffer, texture, commit) {
+        let seen = match self.back(renderer, &buffer, texture, commit) {
             Some(l) => Seen::Linear(l),
             None => Seen::Skip(tex),
         };
-        self.seen.insert(id, seen);
+        self.see(surface, seen);
         Some(())
+    }
+
+    fn see(&mut self, surface: &WlSurface, seen: Seen) {
+        let surface = surface.downgrade();
+        self.seen.insert(surface.id(), Entry { surface, seen });
     }
 
     fn back(
         &mut self,
         renderer: &mut GlesRenderer,
-        surface: &WlSurface,
         buffer: &WlBuffer,
         texture: GlesTexture,
         commit: CommitCounter,
@@ -225,7 +241,6 @@ impl ShmTextures {
                 .map_err(|e| log::warn!("shm texture: import failed: {e}"))
                 .ok()?;
             let linear = Linear {
-                surface: surface.downgrade(),
                 texture,
                 image,
                 display,
@@ -330,5 +345,36 @@ unsafe fn copy_into(gl: &ffi::Gles2, from: u32, image: EGLImage, w: i32, h: i32)
         gl.BindTexture(ffi::TEXTURE_2D, 0);
         gl.DeleteTextures(1, &to);
         complete && gl.GetError() == ffi::NO_ERROR
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_destroyed_surface_leaves_no_entry() {
+        use wayland_client::Proxy;
+        let mut h = crate::harness::Harness::new();
+        let mut c = h.connect();
+        let client_side = h.bare_client_surface(&mut c);
+        let surface: WlSurface = c
+            .server
+            .object_from_protocol_id(&h.state.dh, client_side.id().protocol_id())
+            .expect("the surface on the compositor's side");
+        let mut seen = HashMap::new();
+        seen.insert(
+            surface.id(),
+            Entry {
+                surface: surface.downgrade(),
+                seen: Seen::Plain(1),
+            },
+        );
+        prune(&mut seen);
+        assert_eq!(seen.len(), 1, "a live surface keeps its entry");
+        client_side.destroy();
+        h.roundtrip(&mut c);
+        prune(&mut seen);
+        assert!(seen.is_empty(), "a destroyed surface's entry goes");
     }
 }
