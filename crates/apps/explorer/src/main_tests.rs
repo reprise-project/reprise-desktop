@@ -163,6 +163,46 @@ fn a_search_lists_matches_below_the_folder_until_escape_or_a_navigation() {
 }
 
 #[test]
+fn extract_to_lands_a_zip_in_a_folder_named_after_it_and_selects_it() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let d = dir.path();
+    std::fs::create_dir_all(d.join("src/docs")).expect("mkdir");
+    std::fs::write(d.join("src/docs/a.txt"), "a").expect("write");
+    let made = std::process::Command::new("bsdtar")
+        .current_dir(d.join("src"))
+        .args(["-a", "-cf", "../pack.zip", "docs"])
+        .status()
+        .expect("bsdtar runs");
+    assert!(made.success());
+    std::fs::remove_dir_all(d.join("src")).expect("rm");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(d.to_path_buf()), &mut ctx);
+    let zip = ex.index_of(&d.join("pack.zip")).expect("the zip is listed");
+    ex.sv.selection.set_only(Some(zip));
+    assert_eq!(ex.extract_label().as_deref(), Some("pack/"));
+
+    ex.run(Command::Extract { here: false }, &mut ctx);
+    ex.finish_extracts(reprisefs::progress::Decision::Abort, &mut ctx);
+    assert_eq!(
+        std::fs::read_to_string(d.join("pack/docs/a.txt")).expect("extracted"),
+        "a"
+    );
+    assert_eq!(
+        ex.selected_paths(),
+        [d.join("pack")],
+        "the new folder is selected"
+    );
+
+    ex.select_paths(&[d.join("pack.zip")]);
+    ex.run(Command::Extract { here: true }, &mut ctx);
+    ex.finish_extracts(reprisefs::progress::Decision::Abort, &mut ctx);
+    assert!(
+        d.join("docs/a.txt").exists(),
+        "Extract Here lands beside the zip"
+    );
+}
+
+#[test]
 fn navigating_to_the_current_address_re_lists_the_folder() {
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(dir.path().join("one.txt"), "1").expect("write");

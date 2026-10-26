@@ -654,6 +654,7 @@ impl Explorer {
             || self.unsettled.iter().any(|j| !j.settled())
             || !self.clashing.is_empty()
             || self.removing.is_some()
+            || self.extracting.is_some()
             || self.jobs_pending > 0
             || !self.opening.is_empty()
             || self.asking.is_some()

@@ -546,7 +546,9 @@ impl Explorer {
             },
             crate::props_dialog::PROPS => Caption::Help,
             crate::browse::ERROR => Caption::Prompt,
-            crate::copydlg::COPY | crate::copydlg::REMOVE => Caption::Prompt,
+            crate::copydlg::COPY | crate::copydlg::REMOVE | crate::copydlg::EXTRACT => {
+                Caption::Prompt
+            }
             _ => Caption::Window,
         }
     }

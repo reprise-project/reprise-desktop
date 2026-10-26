@@ -124,6 +124,7 @@ impl Explorer {
     pub fn wake(&mut self, ctx: &mut Ctx) -> Reply {
         let put = self.poll_put(ctx);
         let removed = self.poll_removal(ctx);
+        let extracted = self.poll_extract(ctx);
         self.show_progress_dialogs();
         let job = self.poll_jobs(ctx);
         let acted = self.take_acting(ctx);
@@ -163,6 +164,7 @@ impl Explorer {
             acted,
             sent,
             removed,
+            extracted,
             put,
             self.take_read(ctx),
             self.take_search(ctx),
