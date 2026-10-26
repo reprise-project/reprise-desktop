@@ -140,6 +140,11 @@ impl Conversation {
         })
     }
 
+    /// SIGKILL the child, for a conversation that hangs; dropping it reaps it.
+    pub fn kill(&mut self) {
+        let _ = self.child.kill();
+    }
+
     pub fn fd(&self) -> RawFd {
         self.stdout.as_raw_fd()
     }

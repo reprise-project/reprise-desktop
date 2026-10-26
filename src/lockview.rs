@@ -4,13 +4,18 @@
 
 use std::os::fd::BorrowedFd;
 use std::process::Command;
+use std::time::Duration;
 
 use smithay::{
     backend::input::InputTime,
     input::keyboard::KeysymHandle,
     output::Output,
     reexports::{
-        calloop::{Interest, LoopHandle, Mode, PostAction, RegistrationToken, generic::Generic},
+        calloop::{
+            Interest, LoopHandle, Mode, PostAction, RegistrationToken,
+            generic::Generic,
+            timer::{TimeoutAction, Timer},
+        },
         wayland_server::protocol::wl_surface::WlSurface,
     },
     utils::{Logical, Point, SERIAL_COUNTER},
@@ -48,10 +53,12 @@ impl LockScreen {
     }
 }
 
-/// The commands the PAM conversations run, for a user; tests put scripts in their place.
+/// The commands the PAM conversations run, for a user, and how long a password check may take; tests
+/// put scripts in their place.
 pub struct Helpers {
     pub password: fn(&str) -> Command,
     pub finger: fn(&str) -> Option<Command>,
+    pub verify_timeout: Duration,
 }
 
 impl Default for Helpers {
@@ -59,6 +66,7 @@ impl Default for Helpers {
         Helpers {
             password: lockfinger::password_command,
             finger: lockfinger::finger_command,
+            verify_timeout: Duration::from_secs(90),
         }
     }
 }
@@ -139,10 +147,25 @@ pub struct Helper {
     conversation: lockfinger::Conversation,
 }
 
-/// One password check in flight: its conversation and the notices it sent so far.
+/// One password check in flight: its conversation, the notices it sent so far, and the timer that ends
+/// a PAM stack that hangs (a dead network login server, a wedged keyring daemon).
 pub struct Pending {
     helper: Helper,
     answer: lockfinger::PasswordAnswer,
+    timer: Option<Source>,
+}
+
+/// The check took `verify_timeout`: kill its child and let the dialog take a password again.
+fn verify_timed_out(state: &mut State) -> TimeoutAction {
+    if let Some(p) = state.lock.active.as_mut().and_then(|l| l.pending.as_mut()) {
+        if let Some(t) = p.timer.as_mut() {
+            t.disarm();
+        }
+        p.helper.conversation.kill();
+    }
+    log::error!("lock: the password conversation did not answer in time; ended it");
+    abort_verification(state, lock::UNAVAILABLE);
+    TimeoutAction::Drop
 }
 
 /// Watch `conversation`'s stdout with `on_read`. None when the loop refuses the source; the child ends.
@@ -725,9 +748,22 @@ fn submit(state: &mut State) {
     if let Some(l) = state.lock.active.as_mut() {
         match helper {
             Some(helper) => {
+                let timer = state
+                    .handle
+                    .insert_source(
+                        Timer::from_duration(state.lock.helpers.verify_timeout),
+                        |_, _, state| verify_timed_out(state),
+                    )
+                    .map_err(|e| log::warn!("lock: cannot time the password check: {}", e.error))
+                    .ok()
+                    .map(|token| Source {
+                        token: Some(token),
+                        handle: state.handle.clone(),
+                    });
                 l.pending = Some(Pending {
                     helper,
                     answer: Default::default(),
+                    timer,
                 })
             }
             None => l.state.fail_with(lock::UNAVAILABLE),
@@ -859,6 +895,7 @@ mod tests {
         h.state.lock.helpers = Helpers {
             password,
             finger: |_| None,
+            ..Helpers::default()
         };
         lock(&mut h.state);
         h
@@ -904,6 +941,17 @@ mod tests {
         check(&mut h, "hunter2");
         assert!(h.state.is_locked());
         assert_eq!(message(&h).as_deref(), Some(lock::UNAVAILABLE));
+    }
+
+    #[test]
+    fn a_check_that_never_answers_ends_as_unavailable_after_the_timeout() {
+        let mut h = locked(|_| sh("exec sleep 60"));
+        h.state.lock.helpers.verify_timeout = std::time::Duration::from_millis(100);
+        check(&mut h, "hunter2");
+        let l = h.state.lock.active.as_ref().expect("still locked");
+        assert!(!l.state.verifying);
+        assert!(l.pending.is_none());
+        assert_eq!(l.state.message.as_deref(), Some(lock::UNAVAILABLE));
     }
 
     #[test]
