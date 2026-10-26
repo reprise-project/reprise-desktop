@@ -4,7 +4,7 @@
 
 use std::os::fd::BorrowedFd;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay::{
     backend::input::InputTime,
@@ -141,10 +141,34 @@ impl Drop for Source {
 }
 
 /// A PAM conversation's child (see `lockfinger`) and the source watching its stdout. Dropping it removes
-/// the source, then ends the child, which releases what it holds (the fingerprint reader).
+/// the source and interrupts the child, which releases what it holds (the fingerprint reader), without
+/// waiting for it.
 pub struct Helper {
     source: Source,
     conversation: lockfinger::Conversation,
+}
+
+impl Drop for Helper {
+    fn drop(&mut self) {
+        reap_later(&self.source.handle);
+    }
+}
+
+/// Turn `lockfinger::reap_ended` until every ended conversation is reaped or killed.
+fn reap_later(handle: &LoopHandle<'static, State>) {
+    let armed = handle.insert_source(
+        Timer::from_duration(lockfinger::RELEASE_GRACE),
+        |_, _, _| match lockfinger::reap_ended(Instant::now()) {
+            Some(due) => TimeoutAction::ToInstant(due),
+            None => TimeoutAction::Drop,
+        },
+    );
+    if let Err(e) = armed {
+        log::warn!(
+            "lock: cannot time the end of a PAM conversation: {}",
+            e.error
+        );
+    }
 }
 
 /// One password check in flight: its conversation, the notices it sent so far, and the timer that ends
@@ -187,6 +211,8 @@ fn watch(
     });
     let Some(token) = token else {
         log::warn!("lock: cannot watch a PAM conversation");
+        drop(conversation);
+        reap_later(&state.handle);
         return None;
     };
     Some(Helper {
@@ -421,7 +447,8 @@ fn cancel_interaction(state: &mut State) {
 fn teardown(state: &mut State) -> Option<(Option<WindowId>, Option<WlSurface>, bool)> {
     let mut l = state.lock.active.take()?;
     l.pending = None;
-    // The fingerprint child is interrupted and reaped, freeing the reader before a new lock starts its own.
+    // The fingerprint child is interrupted and frees the reader as it ends. A new lock's conversation
+    // that finds the reader still claimed fails, which `on_finger` logs.
     l.finger = None;
     // The compositor ends the lock: a locker still holding it hears `finished`.
     if let Some(c) = l.client.take() {
@@ -952,6 +979,27 @@ mod tests {
         assert!(!l.state.verifying);
         assert!(l.pending.is_none());
         assert_eq!(l.state.message.as_deref(), Some(lock::UNAVAILABLE));
+    }
+
+    #[test]
+    fn unlocking_does_not_wait_for_a_fingerprint_child_that_ignores_the_interrupt() {
+        let mut h = locked(|_| sh("exit 0"));
+        h.state.lock.helpers.finger = |_| Some(sh("trap '' INT; echo 'I ready'; exec sleep 60"));
+        let user = h.state.lock.active.as_ref().unwrap().user.clone();
+        let finger = start_finger(&h.state, &user).expect("a fingerprint conversation");
+        let pid = finger.conversation.pid();
+        h.state.lock.active.as_mut().unwrap().finger = Some(finger);
+        h.run_for(50);
+        let start = std::time::Instant::now();
+        unlock(&mut h.state);
+        assert!(start.elapsed() < std::time::Duration::from_millis(50));
+        assert!(!h.state.is_locked());
+        let end = start + std::time::Duration::from_secs(5);
+        while !crate::lockfinger::tests::ended(pid) {
+            assert!(std::time::Instant::now() < end, "the child is killed");
+            h.run_for(20);
+        }
+        assert!(start.elapsed() >= lockfinger::RELEASE_GRACE);
     }
 
     #[test]

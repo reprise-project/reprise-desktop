@@ -923,6 +923,11 @@ pub(crate) fn detach(c: &mut std::process::Command) {
     }
 }
 
+/// Leave `pid`, a child spawned outside this module and not yet waited for, to `reap_children`.
+pub fn adopt(pid: libc::pid_t, what: &str) {
+    lock(&CHILDREN).push((pid, what.to_string()));
+}
+
 /// Reap the children we spawned, when the SIGCHLD signalfd fires. Only our own pids: Xwayland
 /// is reaped through a pidfd, so `waitpid(-1, ..)` would steal its status.
 pub fn reap_children() {
