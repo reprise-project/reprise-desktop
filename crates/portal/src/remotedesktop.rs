@@ -69,7 +69,7 @@ impl RemoteDesktop {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         crate::check_session(&session_handle)?;
         if live(&self.link).is_none() {
             return Ok((RESPONSE_OTHER, HashMap::new()));
@@ -110,7 +110,7 @@ impl RemoteDesktop {
         app_id: String,
         options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         if live(&self.link).is_none() {
             return Ok((RESPONSE_OTHER, HashMap::new()));
         }
@@ -156,7 +156,7 @@ impl RemoteDesktop {
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, StartResults)> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         if live(&self.link).is_none() {
             return Ok((RESPONSE_OTHER, empty()));
         }
@@ -275,7 +275,7 @@ impl RemoteDesktop {
         app_id: String,
         _options: HashMap<String, Value<'_>>,
     ) -> zbus::fdo::Result<zbus::zvariant::OwnedFd> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         let Some(link) = live(&self.link) else {
             return Err(zbus::fdo::Error::Failed("no input link".into()));
         };
@@ -347,7 +347,7 @@ impl RemoteDesktop {
         keycode: i32,
         state: u32,
     ) -> zbus::fdo::Result<()> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         self.with_keys(&session_handle, |k| k.key(keycode as u32, state != 0))
     }
     async fn notify_keyboard_keysym(
@@ -358,7 +358,7 @@ impl RemoteDesktop {
         keysym: i32,
         state: u32,
     ) -> zbus::fdo::Result<()> {
-        self.frontend.check(&hdr)?;
+        self.frontend.check(&hdr).await?;
         self.with_keys(&session_handle, |k| k.keysym(keysym as u32, state != 0))
     }
     async fn notify_touch_down(
