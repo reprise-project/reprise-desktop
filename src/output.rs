@@ -217,6 +217,7 @@ impl State {
         self.close_overview();
         self.finish_window_anims();
         self.magnifier.retain(self.scene.outputs());
+        self.glass.output_removed(output);
         laid_out(output).0.set(None);
         let bar = self
             .bars
