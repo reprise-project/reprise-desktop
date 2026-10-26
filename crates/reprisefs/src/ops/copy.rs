@@ -18,12 +18,34 @@ pub fn copy_dir_all(src: &Path, dest: &Path) -> io::Result<()> {
 /// the copy fails with `Interrupted` and removes what it made of `dest`.
 pub(super) fn copy_dir_until(src: &Path, dest: &Path, stop: &AtomicBool) -> io::Result<()> {
     let entries = read_then_create(src, dest)?;
-    // `dest` is ours from here on, so a failure may remove it.
-    copy_entries(entries, dest, 0, stop)
-        .and_then(|()| copy_dir_meta(src, dest))
-        .inspect_err(|_| {
-            let _ = std::fs::remove_dir_all(dest);
+    // `dest` is ours from here on, so a failure may remove it. Folders keep the mode they were
+    // made with until the whole tree has landed, so a read-only one never blocks the cleanup.
+    let mut folders = Vec::new();
+    copy_entries(entries, dest, 0, stop, &mut folders)
+        .and_then(|()| {
+            folders.push((src.to_path_buf(), dest.to_path_buf()));
+            (folders.iter()).try_for_each(|(from, to)| copy_dir_meta(from, to))
         })
+        .inspect_err(|_| {
+            let _ = remove_tree(dest);
+        })
+}
+
+/// `remove_dir_all`, making each folder writable before emptying it.
+fn remove_tree(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = std::fs::symlink_metadata(path)?;
+    if !meta.is_dir() {
+        return std::fs::remove_file(path);
+    }
+    let mode = meta.permissions().mode();
+    if mode & 0o300 != 0o300 {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode | 0o700))?;
+    }
+    for entry in std::fs::read_dir(path)? {
+        remove_tree(&entry?.path())?;
+    }
+    std::fs::remove_dir(path)
 }
 
 /// Give the folder `to` the mode, xattrs and times of `from`, once its
@@ -40,12 +62,14 @@ fn read_then_create(src: &Path, dest: &Path) -> io::Result<Vec<std::fs::DirEntry
     Ok(entries)
 }
 
-/// Copy `entries` into `dest`, which sits `depth` folders below the top.
+/// Copy `entries` into `dest`, which sits `depth` folders below the top. Each folder made is
+/// pushed on `folders` after its own entries, for its metadata to follow once all have landed.
 fn copy_entries(
     entries: Vec<std::fs::DirEntry>,
     dest: &Path,
     depth: usize,
     stop: &AtomicBool,
+    folders: &mut Vec<(std::path::PathBuf, std::path::PathBuf)>,
 ) -> io::Result<()> {
     for entry in entries {
         if stop.load(Ordering::Relaxed) {
@@ -68,8 +92,8 @@ fn copy_entries(
                     format!("The folder is more than {MAX_DEPTH} levels deep."),
                 ));
             }
-            copy_entries(read_then_create(&from, &to)?, &to, depth + 1, stop)?;
-            copy_dir_meta(&from, &to)?;
+            copy_entries(read_then_create(&from, &to)?, &to, depth + 1, stop, folders)?;
+            folders.push((from, to));
         } else if kind.is_file() {
             copy_new(&from, &to)?;
         }

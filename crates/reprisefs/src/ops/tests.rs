@@ -1078,6 +1078,77 @@ fn a_stopped_copy_fails_interrupted_and_removes_what_it_made() {
     assert!(src.join("2005/a.txt").exists(), "the source is untouched");
 }
 
+#[test]
+fn a_failed_copy_of_a_read_only_folder_leaves_nothing_behind() {
+    use std::os::unix::fs::PermissionsExt;
+    // SAFETY: geteuid takes no arguments and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        // root reads the unreadable file.
+        return;
+    }
+    let t = tempfile::tempdir().unwrap();
+    let src = t.path().join("Module");
+    // The unreadable file must come after the folder in the listing the copy walks.
+    let mut bad = None;
+    for i in 0..64 {
+        let _ = fs::remove_dir_all(&src);
+        fs::create_dir(&src).unwrap();
+        let name = src.join(format!("bad{i}"));
+        let folder = || {
+            fs::create_dir(src.join("locked")).unwrap();
+            fs::write(src.join("locked/a.txt"), "a").unwrap();
+        };
+        if i % 2 == 0 {
+            folder();
+            fs::write(&name, "x").unwrap();
+        } else {
+            fs::write(&name, "x").unwrap();
+            folder();
+        }
+        let first = fs::read_dir(&src).unwrap().next().unwrap().unwrap();
+        if first.file_name() == "locked" {
+            bad = Some(name);
+            break;
+        }
+    }
+    let bad = bad.expect("a name listed after the folder");
+    fs::set_permissions(&bad, fs::Permissions::from_mode(0o000)).unwrap();
+    fs::set_permissions(src.join("locked"), fs::Permissions::from_mode(0o555)).unwrap();
+    let dest = t.path().join("Copy");
+    let e = copy_dir_until(&src, &dest, &AtomicBool::new(false)).unwrap_err();
+    fs::set_permissions(src.join("locked"), fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
+    assert!(!dest.exists(), "no partial copy left behind");
+}
+
+#[test]
+fn a_copied_read_only_folder_keeps_its_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = tempfile::tempdir().unwrap();
+    let src = t.path().join("Module");
+    fs::create_dir_all(src.join("locked/inner")).unwrap();
+    fs::write(src.join("locked/inner/a.txt"), "a").unwrap();
+    fs::set_permissions(src.join("locked/inner"), fs::Permissions::from_mode(0o555)).unwrap();
+    fs::set_permissions(src.join("locked"), fs::Permissions::from_mode(0o555)).unwrap();
+    let dest = t.path().join("Copy");
+    copy_dir_all(&src, &dest).unwrap();
+    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&dest.join("locked")), 0o555);
+    assert_eq!(mode(&dest.join("locked/inner")), 0o555);
+    assert_eq!(
+        fs::read_to_string(dest.join("locked/inner/a.txt")).unwrap(),
+        "a"
+    );
+    for p in [
+        src.join("locked"),
+        src.join("locked/inner"),
+        dest.join("locked"),
+        dest.join("locked/inner"),
+    ] {
+        fs::set_permissions(p, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
 /// A destination that already exists is refused and left as it was.
 #[test]
 fn copy_dir_all_leaves_an_existing_destination_alone() {
