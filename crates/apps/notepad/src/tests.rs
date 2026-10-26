@@ -1786,3 +1786,69 @@ fn replace_that_matches_nothing_does_not_scroll() {
     np.replace_outcome(form::Event::Pressed(finddlg::REPLACE), &ctx);
     assert_eq!(np.view.top, 50, "nothing matched, nothing scrolled");
 }
+
+#[test]
+fn write_recovery_round_trips_into_a_private_dir() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().join("reprise").join("notepad");
+    let kept = write_recovery(&dir, 42, "notes", &["one", "two"], "\r\n").expect("write");
+    assert_eq!(kept, dir.join("recovery-42-notes.txt"));
+    assert_eq!(recovered_in(&dir), std::slice::from_ref(&kept));
+    assert_eq!(read_text(&kept).expect("read"), "one\r\ntwo");
+    let mode = std::fs::metadata(&dir).expect("dir").permissions().mode();
+    assert_eq!(mode & 0o777, 0o700);
+}
+
+#[test]
+fn a_rescued_document_is_offered_at_the_next_start_and_its_file_goes_once_saved() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().join("recovery");
+    let mut np = Notepad::new(None);
+    np.rescue_dir = Some(dir.clone());
+    np.edit = MultiEdit::new("unsaved");
+    np.dirty = true;
+    np.rescue();
+    let kept = recovered_in(&dir);
+    assert_eq!(kept.len(), 1);
+
+    let mut next = Notepad::new(None);
+    next.rescue_dir = Some(dir.clone());
+    next.offer_recovered();
+    assert_eq!(next.children().last().expect("the prompt").id, RECOVERED);
+    let mut ctx = test_ctx();
+    next.event(RECOVERED, typed(keysym::RETURN, None, false), &mut ctx);
+    assert!(next.recovered.is_none(), "Yes closed the prompt");
+    assert_eq!(next.edit.text(), "unsaved");
+    assert_eq!(next.path, None);
+    assert!(next.dirty);
+    assert!(kept[0].exists(), "kept until the text is saved");
+
+    next.saveas_write(tmp.path().join("saved.txt"));
+    assert!(
+        !kept[0].exists(),
+        "saving elsewhere deletes the recovery file"
+    );
+    assert!(recovered_in(&dir).is_empty());
+}
+
+#[test]
+fn declining_a_recovered_document_deletes_it_and_offers_the_next() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().to_path_buf();
+    let first = write_recovery(&dir, 1, "a", &["a"], "\n").expect("write");
+    let second = write_recovery(&dir, 2, "b", &["b"], "\n").expect("write");
+    let mut np = Notepad::new(None);
+    np.rescue_dir = Some(dir.clone());
+    np.offer_recovered();
+    let mut ctx = test_ctx();
+    np.recovered.as_mut().expect("the prompt").0.fields.default = 1;
+    np.event(RECOVERED, typed(keysym::RETURN, None, false), &mut ctx);
+    assert!(!first.exists(), "No deletes the file");
+    assert_eq!(
+        np.recovered.as_ref().map(|(_, f)| f),
+        Some(&second),
+        "the next file is offered"
+    );
+    assert_eq!(np.edit.text(), "");
+}
