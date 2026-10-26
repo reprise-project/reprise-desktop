@@ -8,13 +8,17 @@ use std::os::fd::{AsFd, AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub const SERVICE: &str = "reprise-fingerprint";
 pub const FLAG: &str = "--fingerprint-conversation";
 pub const PASSWORD_FLAG: &str = "--password-conversation";
 /// Time an ended conversation gets to release the reader after SIGINT before it is killed.
-const RELEASE_GRACE: Duration = Duration::from_millis(500);
+pub const RELEASE_GRACE: Duration = Duration::from_millis(500);
+
+/// Ended conversations still running, unreaped so their pids stay theirs, and when each is killed.
+static ENDING: Mutex<Vec<(libc::pid_t, Instant)>> = Mutex::new(Vec::new());
 
 /// Without the service libpam would fall back to the `other` service.
 pub fn service_installed() -> bool {
@@ -145,6 +149,11 @@ impl Conversation {
         let _ = self.child.kill();
     }
 
+    #[cfg(test)]
+    pub fn pid(&self) -> libc::pid_t {
+        self.child.id() as libc::pid_t
+    }
+
     pub fn fd(&self) -> RawFd {
         self.stdout.as_raw_fd()
     }
@@ -178,25 +187,40 @@ impl Conversation {
     }
 }
 
-/// SIGINT first: the child blocks it, so pam_fprintd's own signal watch stops verifying and releases the reader before PAM returns. A child still running after `RELEASE_GRACE` is killed; either way it is reaped here.
+/// SIGINT and no wait: the fingerprint child blocks it, so pam_fprintd's own signal watch stops
+/// verifying and releases the reader before PAM returns. A child still running goes on `ENDING` for
+/// `reap_ended`.
 impl Drop for Conversation {
     fn drop(&mut self) {
         let pid = self.child.id() as libc::pid_t;
         if let Ok(None) = self.child.try_wait() {
             // SAFETY: `pid` is our unreaped child, so it cannot be reused.
             unsafe { libc::kill(pid, libc::SIGINT) };
-            let end = Instant::now() + RELEASE_GRACE;
-            while Instant::now() < end {
-                match self.child.try_wait() {
-                    Ok(None) => std::thread::sleep(Duration::from_millis(5)),
-                    _ => return,
-                }
-            }
-            log::warn!("lock: the fingerprint conversation did not end; killing it");
-            let _ = self.child.kill();
+            crate::mutex::lock(&ENDING).push((pid, Instant::now() + RELEASE_GRACE));
         }
-        let _ = self.child.wait();
     }
+}
+
+/// Reap the ended conversations that are gone and kill those still running past their grace at `now`,
+/// leaving them to `spawn::reap_children`. Returns when the next one is due.
+pub fn reap_ended(now: Instant) -> Option<Instant> {
+    let mut ending = crate::mutex::lock(&ENDING);
+    ending.retain(|&(pid, deadline)| {
+        let mut status = 0;
+        // SAFETY: `status` is a valid out-param; `pid` is our unreaped child.
+        if unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) } != 0 {
+            return false;
+        }
+        if now < deadline {
+            return true;
+        }
+        log::warn!("lock: the PAM conversation {pid} did not end; killing it");
+        // SAFETY: as above.
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+        crate::spawn::adopt(pid, "PAM conversation");
+        false
+    });
+    ending.iter().map(|&(_, d)| d).min()
 }
 
 /// The password conversation's child: the password from stdin, `lock::PamVerifier`, and the verdict as lines on stdout.
@@ -365,7 +389,7 @@ unsafe extern "C" fn converse(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -471,42 +495,74 @@ mod tests {
         );
     }
 
+    /// Whether `pid` is gone or a zombie: no longer running.
+    pub(crate) fn ended(pid: libc::pid_t) -> bool {
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => stat
+                .rsplit(')')
+                .next()
+                .is_some_and(|s| s.trim_start().starts_with('Z')),
+            Err(_) => true,
+        }
+    }
+
+    fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
+        let end = Instant::now() + Duration::from_secs(5);
+        while !f() {
+            assert!(Instant::now() < end, "{what}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
-    fn dropping_interrupts_the_child_and_reaps_it() {
+    fn dropping_interrupts_the_child_without_waiting_and_reap_ended_reaps_it() {
         let mark = std::env::temp_dir().join(format!("reprise-finger-{}", std::process::id()));
         let _ = std::fs::remove_file(&mark);
         let mut c = sh(&format!(
             "trap 'echo released > {}; exit 0' INT; echo 'I ready'; while :; do sleep 0.01; done",
             mark.display()
         ));
-        let pid = c.child.id() as libc::pid_t;
-        let end = Instant::now() + Duration::from_secs(5);
-        while c.read().0.is_empty() {
-            assert!(Instant::now() < end, "the child says ready");
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        let pid = c.pid();
+        wait_until("the child says ready", || !c.read().0.is_empty());
+        let start = Instant::now();
         drop(c);
-        assert_eq!(
-            std::fs::read_to_string(&mark).ok().as_deref(),
-            Some("released\n")
+        assert!(
+            start.elapsed() < Duration::from_millis(50),
+            "drop does not wait"
         );
-        // SAFETY: signal 0 only checks that the pid exists.
-        assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "the child is reaped");
+        wait_until("the child hears SIGINT", || {
+            std::fs::read_to_string(&mark).ok().as_deref() == Some("released\n")
+        });
+        wait_until("reap_ended reaps it", || {
+            reap_ended(Instant::now());
+            // SAFETY: signal 0 only checks that the pid exists.
+            unsafe { libc::kill(pid, 0) == -1 }
+        });
         let _ = std::fs::remove_file(&mark);
     }
 
     #[test]
-    fn a_child_that_ignores_the_interrupt_is_killed() {
+    fn a_child_that_ignores_the_interrupt_is_killed_once_its_grace_is_over() {
         let c = sh("trap '' INT; exec sleep 60");
-        let pid = c.child.id() as libc::pid_t;
+        let pid = c.pid();
         std::thread::sleep(Duration::from_millis(50));
         let start = Instant::now();
         drop(c);
         assert!(
-            start.elapsed() < RELEASE_GRACE + Duration::from_secs(1),
-            "ends shortly after the 500 ms grace"
+            start.elapsed() < Duration::from_millis(50),
+            "drop does not wait"
         );
-        // SAFETY: signal 0 only checks that the pid exists.
-        assert_eq!(unsafe { libc::kill(pid, 0) }, -1, "the child is reaped");
+        let due = reap_ended(Instant::now());
+        assert!(due.is_some(), "the child waits out its grace");
+        assert!(!ended(pid), "still running within the grace");
+        wait_until("the child is killed", || {
+            reap_ended(Instant::now());
+            ended(pid)
+        });
+        assert!(
+            start.elapsed() >= RELEASE_GRACE,
+            "killed only after its grace"
+        );
+        crate::spawn::reap_children();
     }
 }
