@@ -78,6 +78,7 @@ mod panels;
 mod peek;
 mod pointers;
 mod popupgrab;
+mod popups;
 mod privacy;
 mod putview;
 mod quickwatch;

@@ -8,22 +8,21 @@ use reprisekit::classic::frame::FrameHit;
 use reprisekit::fluid::Source;
 use reprisekit::pointer::{Click, DoubleClick};
 
-use crate::{compositor::State, keys, menuview::MenuRoot, taskbar::TaskbarHit, window::WindowId};
+use crate::{
+    compositor::State,
+    keys,
+    menuview::MenuRoot,
+    popups::{Popup, PressAt},
+    taskbar::TaskbarHit,
+    window::WindowId,
+};
 
 use super::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, Hit, Interaction};
 
-/// Whether a press on `hit` closes the Glass Start menu: anywhere but on
-/// the panel, a popup over it (a menu) and Start, which toggles it itself.
+#[cfg(test)]
 pub(super) fn press_closes_start_panel(hit: &Hit) -> bool {
-    !matches!(
-        hit,
-        Hit::StartPanel { .. }
-            | Hit::Menu { .. }
-            | Hit::Taskbar {
-                hit: TaskbarHit::Start,
-                ..
-            }
-    )
+    let p = Popup::StartPanel;
+    !p.hit_is(hit) && !p.keeps_on(hit, PressAt::default())
 }
 
 impl State {
@@ -158,80 +157,32 @@ impl State {
             .map_or(0, |k| keys::mask(&k.modifier_state()));
         let hit = self.scene_hit(pos);
         let at = (pos.x as i32, pos.y as i32);
-        // A press anywhere but on a menu closes the open menus and goes on
-        // to what it landed on; Start toggles its menu itself. `closed`
-        // lets a click on what opened a menu shut it without reopening it.
+        // `closed` lets a click on what opened a menu shut it without
+        // reopening it.
         let closed = self.menu_root();
         crate::tooltip::press(self);
         let flyout_was_on = crate::trayflyout::open_on(self);
-        if !matches!(hit, Hit::TrayFlyout { .. }) {
-            crate::trayflyout::close(self);
-        }
-        if !matches!(hit, Hit::TaskPreview { .. }) {
-            crate::taskpreview::hide(self);
-        }
-        if !matches!(hit, Hit::SnapPicker { .. }) {
-            crate::snappickerview::hide(self);
-        }
-        // Likewise the history popup, except on its own action menu and
-        // on the tray, where the bell toggles it (`tray::click`).
-        if !matches!(
-            hit,
-            Hit::NotifyCenter
-                | Hit::Menu { .. }
-                | Hit::Taskbar {
-                    hit: TaskbarHit::Tray(_),
-                    ..
-                }
-        ) {
-            crate::notifycenter::close(self);
-        }
-        // A press on a field's edit menu leaves the panel or reply field under it open for the
-        // pick.
-        let on_edit_menu = matches!(hit, Hit::Menu { .. }) && self.edit_menu_open();
+        let calendar_was_open = crate::calendarview::is_open(self);
+        let press_at = PressAt {
+            edit_menu: matches!(hit, Hit::Menu { .. }) && self.edit_menu_open(),
+            displays_cell: match hit {
+                Hit::Taskbar {
+                    bar,
+                    hit: TaskbarHit::Tray(i),
+                } => crate::tray::is_displays_cell(self, bar, i),
+                _ => false,
+            },
+        };
         // A press off the balloon takes the keyboard from its reply field,
-        // which stays open.
-        if !matches!(hit, Hit::Notification) && !on_edit_menu {
+        // which stays open; a field's edit menu over it keeps the keyboard there.
+        if !matches!(hit, Hit::Notification) && !press_at.edit_menu {
             crate::notifyview::blur(self);
         }
-        let calendar_was_open = crate::calendarview::is_open(self);
-        if !matches!(hit, Hit::Calendar { .. }) {
-            crate::calendarview::close(self);
-        }
-        // The displays cell toggles its panel itself (`builtin::click`).
-        let displays_cell_hit = match hit {
-            Hit::Taskbar {
-                bar,
-                hit: TaskbarHit::Tray(i),
-            } => crate::tray::is_displays_cell(self, bar, i),
-            _ => false,
-        };
-        if !matches!(hit, Hit::Displays { .. }) && !displays_cell_hit {
-            crate::displaysview::close(self);
-        }
-        // A tray cell decides itself whether an open menu closes or
-        // toggles (`tray::click`).
-        if !matches!(
-            hit,
-            Hit::Menu { .. }
-                | Hit::Taskbar {
-                    hit: TaskbarHit::Start | TaskbarHit::Tray(_),
-                    ..
-                }
-        ) {
-            self.close_menu();
-        }
-        if !matches!(hit, Hit::Launcher { .. } | Hit::Menu { .. }) {
-            self.close_launcher();
-        }
-        if press_closes_start_panel(&hit) {
-            self.close_start_panel();
-        }
-        if !matches!(hit, Hit::ClipView { .. }) && !on_edit_menu {
-            self.close_clipview();
-        }
-        if !matches!(hit, Hit::EmojiView { .. }) && !on_edit_menu {
-            self.close_emoji();
+        // A press off a popup closes it and goes on to what it landed on.
+        for p in Popup::ALL {
+            if !p.hit_is(&hit) && !p.keeps_on(&hit, press_at) {
+                p.close(self);
+            }
         }
         match hit {
             // A window under a modal dialog takes no press on its frame
