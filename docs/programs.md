@@ -57,9 +57,12 @@ Replace, Go To and Time/Date (F5), with Ln and Col in the status bar. A
 right-click on the text (or Shift+F10) opens Undo, Redo, Cut, Copy, Paste,
 Delete and Select All, and Paste greys while the clipboard holds no text.
 Ctrl+Z steps back through up to 1000 edits, and Ctrl+Y or Ctrl+Shift+Z
-redoes. It keeps
-CRLF line endings, never leaves a file half saved, asks before opening a
-file that isn't UTF-8, and grows with Larger Text. Word Wrap and Print are
+redoes. It opens UTF-8 files, with or without a byte order mark, and
+UTF-16 LE and BE files with one, and saves each back in its encoding with
+its LF, CRLF or CR line endings. Save As has an Encoding box (UTF-8, UTF-8
+with BOM, UTF-16 LE, UTF-16 BE) that starts on the document's encoding; the
+one picked is kept for later saves. Notepad never leaves a file half saved,
+asks before opening a file that doesn't decode, and grows with Larger Text. Word Wrap and Print are
 greyed out for now. Notepad has always had its priorities.
 
 When Notepad loses the desktop or crashes with unsaved text, it writes the text to

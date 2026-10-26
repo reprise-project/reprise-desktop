@@ -48,6 +48,7 @@ title-save-as = Save As
 go-to-line-number = &Line Number:
 open-button = Open
 save-button = Save
+encoding-label = &Encoding:
 # A filter keeps its pattern in brackets: the file dialog matches names against it.
 filter-text = Text Documents (*.txt)
 filter-all = All Files (*.*)
@@ -60,8 +61,8 @@ changed-on-disk =
 save-failed =
     Cannot create the { $path } file.
     Make sure that the path and file name are correct.
-not-utf8 =
-    { $path } is not a UTF-8 text file.
+undecodable =
+    { $path } is not a { $encoding } text file.
     Do you want to open a copy with the unreadable characters replaced?
 recovered = A document was recovered. Open it?
 save-changes =

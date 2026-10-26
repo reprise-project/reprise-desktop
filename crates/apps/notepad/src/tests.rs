@@ -1169,6 +1169,91 @@ fn a_crlf_file_is_saved_with_its_breaks() {
 }
 
 #[test]
+fn bom_utf16_and_cr_files_save_back_byte_for_byte() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let utf16le: Vec<u8> = [0xFF, 0xFE]
+        .into_iter()
+        .chain(
+            "h\u{e9}\r\n\u{1F600}"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes),
+        )
+        .collect();
+    let utf16be: Vec<u8> = [0xFE, 0xFF]
+        .into_iter()
+        .chain(
+            "h\u{e9}\n\u{1F600}\n"
+                .encode_utf16()
+                .flat_map(u16::to_be_bytes),
+        )
+        .collect();
+    let cases: [(&str, Vec<u8>, &str); 4] = [
+        ("bom.txt", b"\xEF\xBB\xBFone\r\ntwo".to_vec(), "one\ntwo"),
+        ("le.txt", utf16le, "h\u{e9}\n\u{1F600}"),
+        ("be.txt", utf16be, "h\u{e9}\n\u{1F600}\n"),
+        ("cr.txt", b"one\rtwo\r".to_vec(), "one\ntwo\n"),
+    ];
+    for (name, bytes, edited) in cases {
+        let path = tmp.path().join(name);
+        std::fs::write(&path, &bytes).expect("write");
+        let mut np = Notepad::new(Some(path.clone()));
+        assert_eq!(np.edit.text(), edited, "{name} opens without its BOM");
+        std::fs::write(&path, b"").expect("truncate");
+        np.stamp = Stamp::of(&path);
+        assert!(np.save(), "{name} saves");
+        assert_eq!(std::fs::read(&path).expect("read"), bytes, "{name}");
+    }
+}
+
+#[test]
+fn save_as_writes_the_encoding_picked_and_the_document_keeps_it() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("plain.txt");
+    std::fs::write(&path, "a\r\nb").expect("write");
+    let mut np = Notepad::new(Some(path.clone()));
+    np.saveas_dialog();
+    let encoding = |np: &Notepad| {
+        np.saveas
+            .as_ref()
+            .and_then(FileDlg::extra)
+            .and_then(|f| f.combo_selected("encoding"))
+    };
+    assert_eq!(encoding(&np), Some(0), "Save As starts on UTF-8");
+    let form = np
+        .saveas
+        .as_mut()
+        .and_then(FileDlg::extra_mut)
+        .expect("row");
+    if let Some(Control::Combo(c)) = form.item_mut("encoding").map(|i| &mut i.control) {
+        c.selected = 3;
+    }
+    let out = tmp.path().join("be.txt");
+    np.saveas_write(out.clone());
+    assert!(np.saveas.is_none(), "the save closed Save As");
+    let want: Vec<u8> = [0xFE, 0xFF, 0, b'a', 0, b'\r', 0, b'\n', 0, b'b'].to_vec();
+    assert_eq!(std::fs::read(&out).expect("read"), want);
+    assert_eq!(
+        std::fs::read(&path).expect("read"),
+        b"a\r\nb",
+        "the old file stays"
+    );
+
+    np.edit = MultiEdit::new("c");
+    assert!(np.save());
+    assert_eq!(
+        std::fs::read(&out).expect("read"),
+        [0xFE, 0xFF, 0, b'c'],
+        "Save keeps UTF-16 BE"
+    );
+    np.saveas_dialog();
+    assert_eq!(
+        encoding(&np),
+        Some(3),
+        "Save As starts on the document's encoding"
+    );
+}
+
+#[test]
 fn write_document_keeps_mode_and_symlinks() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -1176,7 +1261,7 @@ fn write_document_keeps_mode_and_symlinks() {
     let real = dir.join("real.txt");
     std::fs::write(&real, "old").expect("write");
     std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).expect("chmod");
-    write_document(&real, &["new"], "\n").expect("save");
+    write_document(&real, &["new"], Format::default()).expect("save");
     assert_eq!(std::fs::read_to_string(&real).expect("read"), "new");
     assert_eq!(
         std::fs::metadata(&real).expect("stat").permissions().mode() & 0o777,
@@ -1185,7 +1270,7 @@ fn write_document_keeps_mode_and_symlinks() {
 
     let link = dir.join("link.txt");
     std::os::unix::fs::symlink(&real, &link).expect("symlink");
-    write_document(&link, &["via link"], "\n").expect("save");
+    write_document(&link, &["via link"], Format::default()).expect("save");
     assert!(
         std::fs::symlink_metadata(&link)
             .expect("lstat")
@@ -1214,7 +1299,7 @@ fn write_document_replaces_a_symlink_target_and_writes_hard_links_in_place() {
     std::os::unix::fs::symlink("store/doc.txt", &link).expect("symlink");
     let before = std::fs::metadata(&real).expect("stat").ino();
 
-    write_document(&link, &["new"], "\n").expect("save");
+    write_document(&link, &["new"], Format::default()).expect("save");
 
     let lstat = std::fs::symlink_metadata(&link).expect("lstat");
     assert!(lstat.file_type().is_symlink(), "the link stays a symlink");
@@ -1228,7 +1313,7 @@ fn write_document_replaces_a_symlink_target_and_writes_hard_links_in_place() {
     let other = dir.join("store/other.txt");
     std::fs::hard_link(&real, &other).expect("hard link");
     let before = std::fs::metadata(&real).expect("stat").ino();
-    write_document(&other, &["both"], "\n").expect("save");
+    write_document(&other, &["both"], Format::default()).expect("save");
     assert_eq!(std::fs::metadata(&real).expect("stat").ino(), before);
     assert_eq!(std::fs::read_to_string(&real).expect("read"), "both");
     std::fs::remove_dir_all(&dir).ok();
@@ -1247,7 +1332,7 @@ fn write_document_keeps_xattrs() {
         return;
     }
 
-    write_document(&doc, &["new"], "\n").expect("save");
+    write_document(&doc, &["new"], Format::default()).expect("save");
 
     assert_eq!(std::fs::read_to_string(&doc).expect("read"), "new");
     assert!(reprisefs::apps::is_trusted(&doc), "user.* xattr kept");
@@ -1268,7 +1353,7 @@ fn write_document_leaves_a_planted_temp_symlink_alone() {
     let planted = dir.join(format!(".doc.txt.{}.tmp", std::process::id()));
     std::os::unix::fs::symlink(&victim, &planted).expect("symlink");
 
-    write_document(&doc, &["new"], "\n").expect("save");
+    write_document(&doc, &["new"], Format::default()).expect("save");
 
     assert_eq!(std::fs::read_to_string(&doc).expect("read"), "new");
     assert_eq!(std::fs::read_to_string(&victim).expect("read"), "keep");
@@ -1290,7 +1375,7 @@ fn write_document_refuses_a_read_only_file() {
         return;
     }
 
-    let err = write_document(&doc, &["new"], "\n").expect_err("save must fail");
+    let err = write_document(&doc, &["new"], Format::default()).expect_err("save must fail");
 
     assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
     assert_eq!(std::fs::read_to_string(&doc).expect("read"), "old");
@@ -1804,10 +1889,14 @@ fn write_recovery_round_trips_into_a_private_dir() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path().join("reprise").join("notepad");
-    let kept = write_recovery(&dir, 42, "notes", &["one", "two"], "\r\n").expect("write");
+    let crlf = Format {
+        line_end: document::LineEnd::Crlf,
+        ..Format::default()
+    };
+    let kept = write_recovery(&dir, 42, "notes", &["one", "two"], crlf).expect("write");
     assert_eq!(kept, dir.join("recovery-42-notes.txt"));
     assert_eq!(recovered_in(&dir), std::slice::from_ref(&kept));
-    assert_eq!(read_text(&kept).expect("read"), "one\r\ntwo");
+    assert_eq!(read_text(&kept).expect("read").0, "one\r\ntwo");
     let mode = std::fs::metadata(&dir).expect("dir").permissions().mode();
     assert_eq!(mode & 0o777, 0o700);
 }
@@ -1848,8 +1937,8 @@ fn a_rescued_document_is_offered_at_the_next_start_and_its_file_goes_once_saved(
 fn declining_a_recovered_document_deletes_it_and_offers_the_next() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path().to_path_buf();
-    let first = write_recovery(&dir, 1, "a", &["a"], "\n").expect("write");
-    let second = write_recovery(&dir, 2, "b", &["b"], "\n").expect("write");
+    let first = write_recovery(&dir, 1, "a", &["a"], Format::default()).expect("write");
+    let second = write_recovery(&dir, 2, "b", &["b"], Format::default()).expect("write");
     let mut np = Notepad::new(None);
     np.rescue_dir = Some(dir.clone());
     np.offer_recovered();
