@@ -128,8 +128,13 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   2 s.
 - **Modal dialogs that stay modal.** Focus can't land behind a dialog a
   toolkit marked modal.
-- **No focus stealing.** A window takes the keyboard only with a trusted
-  activation token, after you clicked or launched something. Anything else
+- **No focus stealing.** A new window takes the keyboard with a trusted
+  activation token, when Reprise started its program in the last 30 s, when
+  it belongs to the focused window's program (same connection, a child
+  process, a process in its session, a pane of the terminal multiplexer the
+  focused terminal runs), when the focused window owns it, when it is a
+  Reprise prompt, or when nothing has focus; [security.md](security.md#focus)
+  has the details. Anything else
   opens behind the window you're typing in and flags its taskbar button.
   While the taskbar has the keyboard (Super+T), it opens on top with its
   button flagged and the keyboard stays on the taskbar.
@@ -382,7 +387,7 @@ are.
   another window has focus. The program asks once, and you can change its
   keys on the Keyboard page.
 - **Media keys** for volume, mute, brightness, playback and Wi-Fi, with an
-  on-screen panel. They work on the lock screen too.
+  on-screen panel. They work on the lock screen too, except Wi-Fi.
 
 ## Accessibility
 
@@ -446,10 +451,11 @@ are.
   or area being recorded or shared. Recordings never show it, and a single
   screenshot draws none. Settings > Advanced turns it off.
 - **Prompts.** Screen sharing, remote control, input capture, location and
-  camera access all ask first. Cancel or Deny is the default button, so a
+  camera access through the portal all ask first. Cancel or Deny is the default button, so a
   stray Enter never grants anything.
 - **Sandboxed programs get less.** Flatpaks can't see the desktop's
-  privileged protocols, such as input injection or screen capture.
+  privileged protocols, such as input injection or screen capture. Other
+  programs can; [security.md](security.md) draws the line.
 - **Admin prompts.** A polkit agent asks for the password, or a finger, when
   a program needs root. The password goes to polkit, never to the program.
 - **Location.** Reprise is the geoclue agent. It asks before a sandboxed

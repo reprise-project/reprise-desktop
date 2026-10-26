@@ -111,6 +111,8 @@ back without eating your comments. See
   pagers you might want to bolt on
 - [reprisekit](docs/reprisekit.md): build your own period-correct apps
 - [Clipboard access for Flatpak apps](docs/flatpak-clipboard.md)
+- [Security model](docs/security.md): what a program in your session can
+  and can't do
 - [Assets](docs/assets.md): fonts, icons and what Reprise leaves out on purpose
 - [Contributing](CONTRIBUTING.md): building, tests and how the code is laid
   out
