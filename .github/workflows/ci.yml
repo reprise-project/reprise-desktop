@@ -1,5 +1,8 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -10,28 +13,26 @@ jobs:
     # Incremental state buys nothing on a fresh runner and doubles the cache.
     env:
       CARGO_INCREMENTAL: 0
+      # Where rust-cache looks for the registry; the builds run as builder.
+      CARGO_HOME: /home/builder/.cargo
     steps:
       # PKGBUILD depends, plus the fallback font and the MIME database the tests read.
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm --needed rust clang pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire ttf-dejavu shared-mime-info
+      - name: Install cargo-nextest 0.9.149
+        run: |
+          curl -LsSf -o /tmp/nextest.tar.gz https://get.nexte.st/0.9.149/linux
+          echo '32d1d8c0567b7a80bee2bad8bb09125c846da96bc009b2de11ec08557290c770  /tmp/nextest.tar.gz' | sha256sum -c
+          tar xzf /tmp/nextest.tar.gz -C /usr/local/bin
       - uses: actions/checkout@v7
       # Tests that assert a read-only directory refuses a write only mean
       # something as an unprivileged user; the container runs as root.
       - name: Create the build user
         run: useradd -m builder
-      - name: Read the toolchain version
-        id: rustc
-        run: echo "version=$(rustc -V | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
-        with:
-          path: |
-            /home/builder/.cargo/registry
-            /home/builder/.cargo/git
-            target
-          key: cargo-${{ steps.rustc.outputs.version }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-${{ steps.rustc.outputs.version }}-
+      # Keyed on rustc, Cargo.lock and the job; drops the workspace's own artifacts before saving.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # The Tahoma the pixel tests are pinned to.
       - uses: actions/cache@v6
         with:
@@ -43,5 +44,5 @@ jobs:
           dir=$(runuser -u builder -- env HOME=/home/builder scripts/test-fonts.sh)
           echo "REPRISE_TEST_FONTS=$dir" >> "$GITHUB_ENV"
       - run: runuser -u builder -- env HOME=/home/builder cargo fmt --check
-      - run: runuser -u builder -- env HOME=/home/builder cargo clippy --workspace --all-targets -- -D warnings
-      - run: runuser -u builder -- env HOME=/home/builder REPRISE_TEST_FONTS="$REPRISE_TEST_FONTS" cargo test --workspace --no-fail-fast
+      - run: runuser -u builder -- env HOME=/home/builder cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: runuser -u builder -- env HOME=/home/builder REPRISE_TEST_FONTS="$REPRISE_TEST_FONTS" cargo nextest run --workspace --locked --profile ci
