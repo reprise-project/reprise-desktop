@@ -2185,6 +2185,7 @@ dependencies = [
  "pipewire",
  "reis",
  "repriseapp-pins",
+ "repriseaudio",
  "reprisebus",
  "repriseconf",
  "reprisefs",

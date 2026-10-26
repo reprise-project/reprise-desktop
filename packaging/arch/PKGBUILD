@@ -21,6 +21,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'qt6ct: Qt 6 programs in the colours of the look ([toolkits] qt_platform_theme = "reprise")'
             'qt5ct: Qt 5 programs in the colours of the look ([toolkits] qt_platform_theme = "reprise")'
             'pipewire-pulse: desktop and microphone audio in OBS and browsers'
+            'sound-theme-freedesktop: the sound a notification balloon plays'
             'networkmanager: reprise-network, the network tray icon and Network Connections'
             'dnsmasq: sharing the connection from a hotspot in Network Connections'
             'networkmanager-openvpn: OpenVPN connections, and importing .ovpn files in Network Connections'

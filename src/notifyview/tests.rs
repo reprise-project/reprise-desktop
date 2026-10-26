@@ -1531,3 +1531,15 @@ fn a_sheet_draws_and_asks_for_frames_only_on_its_output() {
         reprisescene::output_rect(&a).expect("TEST-1's place")
     );
 }
+
+#[test]
+fn a_low_urgency_balloon_and_the_sound_key_off_are_silent() {
+    let mut n = note(1, "Mail");
+    n.sound = Some(repriseaudio::sounds::Sound::Name("bell".into()));
+    assert_eq!(balloon_sound(&n, true), n.sound.as_ref());
+    assert_eq!(balloon_sound(&n, false), None);
+    n.urgency = Urgency::Critical;
+    assert_eq!(balloon_sound(&n, true), n.sound.as_ref());
+    n.urgency = Urgency::Low;
+    assert_eq!(balloon_sound(&n, true), None);
+}

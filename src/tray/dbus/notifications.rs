@@ -130,6 +130,7 @@ impl Notifications {
             || self.next_id.fetch_add(1, Ordering::Relaxed).max(1),
         );
         let hints = notify::hints(hints);
+        let sound = hints.balloon_sound();
         let entry = hints.desktop_entry.as_deref().and_then(desktop_entry);
         let (app_icon, image) = notification_icons(&self.icons, &hints, app_icon, entry.as_ref());
         let app = entry.map_or(app_name, |e| e.name);
@@ -165,6 +166,7 @@ impl Notifications {
                 sender,
                 pid,
                 reply,
+                sound,
             }),
         );
         id

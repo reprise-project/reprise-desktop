@@ -273,6 +273,17 @@ fn display_all_gpus_is_off_unless_set() {
 }
 
 #[test]
+fn notification_sounds_default_on_from_the_freedesktop_theme() {
+    let d = Config::default().notifications;
+    assert!(d.sound);
+    assert_eq!(d.sound_theme, "freedesktop");
+    let c = Config::parse("[notifications]\nsound = false\nsound_theme = \"ocean\"\n").unwrap();
+    assert!(!c.notifications.sound);
+    assert_eq!(c.notifications.sound_theme, "ocean");
+    assert!(Config::parse("[notifications]\nsound_theme = \"../x\"\n").is_err());
+}
+
+#[test]
 fn screenshot_save_defaults_on_and_is_configurable() {
     assert!(Config::default().screenshot.save);
     let c = Config::parse("[screenshot]\nsave = false\n").unwrap();

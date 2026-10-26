@@ -443,10 +443,14 @@ fn a_super_arrow_snap_leaves_free_only_the_zones_no_member_holds() {
     let l = s.key_zone(a, "DP-1", WORK, 0, false, all).unwrap();
     assert_eq!(s.free_zones(a, l.zones.len(), all), vec![1]);
     let l = s.key_zone(b, "DP-1", WORK, 1, false, all).unwrap();
-    assert_eq!(s.free_zones(b, l.zones.len(), all), vec![]);
+    assert_eq!(s.free_zones(b, l.zones.len(), all), Vec::<usize>::new());
     let l = s.key_zone(a, "DP-1", WORK, 1, false, all).unwrap();
     assert_eq!(l.swapped, Some((b, 0)));
-    assert_eq!(s.free_zones(a, l.zones.len(), all), vec![], "a swap");
+    assert_eq!(
+        s.free_zones(a, l.zones.len(), all),
+        Vec::<usize>::new(),
+        "a swap"
+    );
 }
 
 #[test]

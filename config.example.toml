@@ -306,6 +306,13 @@ suspend_after = 0            # run [power] standby
 #                            # ["me.proton.Pass"] so its copy buttons work; they can read the clipboard too.
 #                            # See docs/flatpak-clipboard.md
 
+# [notifications]
+# sound = true               # a balloon plays the sound its program asks for, else the
+#                            # theme's message-new-instant; low urgency, a suppress-sound
+#                            # hint and Do Not Disturb keep it silent
+# sound_theme = "freedesktop" # an XDG sound theme under /usr/share/sounds or
+#                            # ~/.local/share/sounds; a name it lacks comes from freedesktop
+
 # [privacy]
 # recent_files = true        # false hides the recently used files GTK and KDE apps record
 #                            # (recently-used.xbel) from the Start menu's Documents, the
