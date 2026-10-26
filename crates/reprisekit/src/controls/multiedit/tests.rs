@@ -921,6 +921,64 @@ fn lines_are_runs_and_the_caret_lands_on_its_line() {
 }
 
 #[test]
+fn a_long_document_publishes_runs_for_the_rows_in_view_and_the_caret_line() {
+    use crate::access::{ROOT, Tree};
+    let text = TextRenderer::load(&crate::theme::FontConfig::default());
+    let m = Metrics::default();
+    let mut edit = MultiEdit::new(&"line\n".repeat(10_000));
+    edit.place(
+        Pos {
+            line: 9_000,
+            col: 2,
+        },
+        false,
+    );
+    let r = Rect::new(0, 0, 300, 30 * m.line_h + 4);
+    let lay = layout(&text, &m, &edit, r, 1);
+    let rows = lay.rows;
+    assert!((28..=30).contains(&rows));
+    let view = View {
+        top: 100,
+        ..View::default()
+    };
+    let mut tree = Tree::window("T", (300, r.height));
+    let id = access(&edit, view, &lay, &m, &text, &mut tree, ROOT, "edit");
+    let node = tree.get(id).unwrap();
+    let runs = node.children().to_vec();
+    assert_eq!(
+        runs.len(),
+        rows + 1,
+        "the rows in view and the caret's line"
+    );
+    assert_eq!(tree.get(runs[0]).unwrap().value(), Some("line\n"));
+    let sel = node.text_selection().unwrap();
+    assert_eq!((sel.focus.node, sel.focus.character_index), (runs[rows], 2));
+    let line_h = f64::from(m.line_h);
+    assert_eq!(node.scroll_y(), Some(100.0 * line_h));
+    assert_eq!(node.scroll_y_max(), Some((10_001 - rows) as f64 * line_h));
+    assert_eq!(node.value().map(str::len), Some(edit.text().len()));
+
+    let big = MultiEdit::new(&format!("{}\n", "x".repeat(99)).repeat(20_000));
+    let lay = layout(&text, &m, &big, r, 1);
+    let mut tree = Tree::window("T", (300, r.height));
+    let id = access(
+        &big,
+        View::default(),
+        &lay,
+        &m,
+        &text,
+        &mut tree,
+        ROOT,
+        "edit",
+    );
+    assert_eq!(
+        tree.get(id).unwrap().value().map(str::len),
+        Some(lay.rows * 100 - 1),
+        "a document past 1 MB reads only the rows in view"
+    );
+}
+
+#[test]
 fn a_blue_text_boxs_lit_bar_part_draws_hot() {
     use crate::classic::widgets::{Axis, ScrollHit};
     let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
