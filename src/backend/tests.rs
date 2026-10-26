@@ -1,6 +1,6 @@
 use super::gamma::{GammaStep, Lut, gamma_step, lut_from_blob};
 use super::links::{LINK_TRIES, LinkStep, link_mode, link_step};
-use super::outputs::asks_scan;
+use super::outputs::{Scan, ScanAction, asks_scan, scan_action};
 use super::render::{glass_hold, waits_for_frame};
 use super::schedule::{Asked, pointer_ask_renders};
 use super::steps::{Step, next_step};
@@ -354,4 +354,60 @@ fn only_a_hotplug_uevent_asks_for_a_connector_scan() {
         "the synthetic change of a VT switch does not"
     );
     assert!(!asks_scan(Some("0".as_ref())));
+}
+
+#[test]
+fn a_changed_mode_list_refreshes_the_output_holding_the_crtc() {
+    assert_eq!(
+        scan_action(true, false, Scan::Changed, true),
+        ScanAction::Refresh
+    );
+    assert_eq!(
+        scan_action(false, true, Scan::Changed, true),
+        ScanAction::Refresh
+    );
+    assert_eq!(
+        scan_action(true, false, Scan::Changed, false),
+        ScanAction::Refresh
+    );
+}
+
+#[test]
+fn a_changed_mode_list_on_an_unheld_crtc_connects_it() {
+    assert_eq!(
+        scan_action(false, false, Scan::Changed, true),
+        ScanAction::Connect
+    );
+}
+
+#[test]
+fn a_connector_without_modes_is_parked_out_of_the_layout() {
+    assert_eq!(
+        scan_action(false, false, Scan::Connected, false),
+        ScanAction::Park
+    );
+    assert_eq!(
+        scan_action(false, false, Scan::Connected, true),
+        ScanAction::Connect
+    );
+}
+
+#[test]
+fn a_connect_on_a_held_crtc_is_ignored_and_a_disconnect_always_applies() {
+    assert_eq!(
+        scan_action(true, false, Scan::Connected, true),
+        ScanAction::Ignore
+    );
+    assert_eq!(
+        scan_action(false, true, Scan::Connected, true),
+        ScanAction::Ignore
+    );
+    assert_eq!(
+        scan_action(true, false, Scan::Disconnected, true),
+        ScanAction::Disconnect
+    );
+    assert_eq!(
+        scan_action(false, false, Scan::Disconnected, true),
+        ScanAction::Disconnect
+    );
 }
