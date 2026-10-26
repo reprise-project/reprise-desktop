@@ -69,6 +69,7 @@ pub fn run(app: Box<dyn App>) {
     let mut event_queue = event_queue;
     let mut event_loop: EventLoop<Host> = EventLoop::try_new().expect("event loop");
     let loop_handle = event_loop.handle();
+    hangup::route_to(&loop_handle, |host: &mut Host| host.app.emergency());
 
     let compositor = CompositorState::bind(&globals, &qh).expect("wl_compositor");
     let xdg_shell = XdgShell::bind(&globals, &qh).expect("xdg_wm_base");
