@@ -115,6 +115,30 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     std::fs::File::open(dir)?.sync_all()
 }
 
+/// Give the fresh copy `to` the xattrs, mode and times of `from`. Xattrs go first: a `user.*`
+/// one needs the write bit the mode may drop. Only a file's mode is not best effort (vfat refuses some).
+pub(crate) fn copy_meta(
+    from: &Path,
+    from_meta: &std::fs::Metadata,
+    to: &std::fs::File,
+    dir: bool,
+) -> io::Result<()> {
+    copy_xattrs(from, to);
+    let mode = to.set_permissions(from_meta.permissions());
+    if !dir {
+        mode?;
+    }
+    let mut times = std::fs::FileTimes::new();
+    if let Ok(t) = from_meta.accessed() {
+        times = times.set_accessed(t);
+    }
+    if let Ok(t) = from_meta.modified() {
+        times = times.set_modified(t);
+    }
+    let _ = to.set_times(times);
+    Ok(())
+}
+
 /// Copy the extended attributes of `from` (not followed through a symlink)
 /// onto `to`: POSIX ACLs, `user.*` and `security.*` labels. Best effort:
 /// one the file system or the process cannot read or set is skipped. File
