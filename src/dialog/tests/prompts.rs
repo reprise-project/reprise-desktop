@@ -608,3 +608,21 @@ fn a_key_aid_prompt_asks_on_its_fixed_template() {
         );
     }
 }
+
+#[test]
+fn the_script_question_runs_on_enter_and_offers_notepad() {
+    use reprisefs::program::ScriptOpen;
+    let path = std::path::PathBuf::from("/home/u/setup.sh");
+    let mut d = Dialog::ask_script(path.clone(), ScriptOpen::Terminal);
+    let labels: Vec<&str> = d.buttons.iter().map(|b| b.label.as_str()).collect();
+    assert_eq!(labels, ["&Run", "Open in &Notepad", "Cancel"]);
+    assert_eq!(
+        d.key(Key::Enter),
+        Outcome::Script {
+            path: path.clone(),
+            run: Some(ScriptOpen::Terminal)
+        }
+    );
+    assert_eq!(d.press(1), Outcome::Script { path, run: None });
+    assert_eq!(d.key(Key::Escape), Outcome::Close);
+}

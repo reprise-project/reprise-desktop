@@ -2,6 +2,7 @@
 
 terminal = "reprise-terminal"   # a command line, arguments included (quote a program path with spaces); programs that need a terminal run as <terminal> -e <program>, so the arguments hold no -e; Default Programs sets it
 # script_open = "run"   # what opening a script from the desktop, Explorer or a search does: "run" runs it with no window, "terminal" runs it in `terminal`; its menu has Run and Run in terminal either way; Default Programs sets it
+# confirm_scripts = true   # opening a script the first time asks Run / Open in Notepad / Cancel; Run is remembered for that file; a Run row of its menu and a binary never ask; Default Programs sets it
 # script_terminal = "stay"   # a script run in `terminal`: "stay" waits for Enter after it ends, "close" closes the window at once unless the script fails; Default Programs sets it
 # task_manager = "gnome-system-monitor"   # the taskbar menu's Task Manager row; default: top in the terminal
 startmenu_banner = "Reprise Desktop"   # text of the vertical band on the Start menu's left edge

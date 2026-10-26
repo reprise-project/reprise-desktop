@@ -104,6 +104,7 @@ pub(super) fn binds() -> Vec<Bind> {
             lens!(script_open),
             crate::model::SCRIPT_OPENS,
         ),
+        Bind::Flag(crate::defaultspage::CONFIRM_SCRIPTS, lens!(confirm_scripts)),
         Bind::Named(
             crate::defaultspage::SCRIPT_END,
             lens!(script_terminal),

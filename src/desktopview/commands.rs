@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use reprisefs::program::ScriptOpen;
+use reprisefs::program::{Confirm, Program, ScriptOpen};
 use reprisefs::{apps, names, ops};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
@@ -127,11 +127,12 @@ impl State {
     }
 
     pub fn open_icon(&mut self, index: usize) {
-        self.open_icon_as(index, self.config.script_open);
+        let how = Confirm::on_open(self.config.confirm_scripts);
+        self.open_icon_as(index, self.config.script_open, how);
     }
 
-    /// [`Self::open_icon`], a script running as `open` says.
-    fn open_icon_as(&mut self, index: usize, open: ScriptOpen) {
+    /// [`Self::open_icon`], a script running as `open` says and asking first as `how` says.
+    fn open_icon_as(&mut self, index: usize, open: ScriptOpen, how: Confirm) {
         let Some(view) = self.desktop.as_ref() else {
             return;
         };
@@ -149,9 +150,9 @@ impl State {
                 Some(argv) => argv.into_iter().map(Into::into).collect(),
                 None => return,
             },
-            Target::Run(file, _) => {
-                let file = file.clone();
-                return self.run_program(&file, open);
+            Target::Run(file, program) => {
+                let (file, program) = (file.clone(), *program);
+                return self.run_program(&file, program, open, how);
             }
             // No stat: the file or folder may be on a mount that does not answer.
             Target::Open(dir) if entry.is_dir => apps::open_folder_argv(dir),
@@ -168,14 +169,26 @@ impl State {
     }
 
     /// Run the program file at `path` in its own folder and an app scope named after it, a script
-    /// bare or in the terminal as `open` says. The exec waits on the file's mount, so it runs off the
+    /// bare or in the terminal as `open` says. A script `how` asks about first raises
+    /// [`Dialog::ask_script`] instead. The exec waits on the file's mount, so it runs off the
     /// loop; a program that does not start gets an error box.
-    pub(crate) fn run_program(&mut self, path: &Path, open: ScriptOpen) {
+    pub(crate) fn run_program(
+        &mut self,
+        path: &Path,
+        program: Program,
+        open: ScriptOpen,
+        how: Confirm,
+    ) {
         let launch = self.new_launch();
         let env = self.env.clone();
         let path = path.to_path_buf();
         let (terminal, end) = (self.config.terminal.clone(), self.config.script_terminal);
         self.spawn_job(move || {
+            if reprisefs::program::asks_first(&path, program, how) {
+                return Box::new(move |state: &mut State| {
+                    state.open_dialog(crate::dialog::Dialog::ask_script(path, open));
+                }) as crate::fsjobs::OnLoop;
+            }
             let name = path.file_name().unwrap_or_default().to_string_lossy();
             let started =
                 reprisefs::program::run_argv(&path, open, &terminal, end).and_then(|argv| {
@@ -195,13 +208,15 @@ impl State {
     }
 
     pub(crate) fn open_selection(&mut self, index: usize) {
-        self.open_selection_as(index, self.config.script_open);
+        let how = Confirm::on_open(self.config.confirm_scripts);
+        self.open_selection_as(index, self.config.script_open, how);
     }
 
-    /// Opens every icon of the selection around `index`, a script running as `open` says.
-    pub(crate) fn open_selection_as(&mut self, index: usize, open: ScriptOpen) {
+    /// Opens every icon of the selection around `index`, a script running as `open` says and
+    /// asking first as `how` says.
+    pub(crate) fn open_selection_as(&mut self, index: usize, open: ScriptOpen, how: Confirm) {
         for i in self.selection_around(index) {
-            self.open_icon_as(i, open);
+            self.open_icon_as(i, open, how);
         }
     }
 
@@ -330,7 +345,7 @@ impl State {
             }
             Dc::Run(open) => {
                 if let Some(i) = target {
-                    self.open_selection_as(i, open);
+                    self.open_selection_as(i, open, Confirm::Skip);
                 }
             }
             Dc::Explore => {

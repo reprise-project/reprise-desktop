@@ -29,6 +29,7 @@ pub struct Settings {
     pub script_terminal: String,
     /// `script_open`: one of [`SCRIPT_OPENS`]' values.
     pub script_open: String,
+    pub confirm_scripts: bool,
     pub task_manager: String,
     pub startmenu_banner: String,
     /// `startmenu_style`: one of [`STARTMENU_STYLES`]' values. Glass under
@@ -362,6 +363,7 @@ impl Settings {
                 reprisefs::program::ScriptOpen::parse,
                 &c.script_open,
             ),
+            confirm_scripts: c.confirm_scripts,
             task_manager: c.task_manager.clone().unwrap_or_default(),
             startmenu_banner: c.startmenu_banner.clone(),
             startmenu_style: named(STARTMENU_STYLES, StartMenuStyle::parse, &c.startmenu_style),

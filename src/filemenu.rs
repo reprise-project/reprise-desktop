@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use reprisefs::apps;
-use reprisefs::program::{Program, ScriptOpen};
+use reprisefs::program::{Confirm, Program, ScriptOpen};
 use reprisefs::props::Opening;
 use reprisekit::controls::menu::MenuItem;
 
@@ -97,13 +97,20 @@ impl State {
     /// Open a found `path` as its `facts` say: a program runs, anything else opens as
     /// [`Self::found_opening`] says.
     pub(crate) fn open_found(&mut self, path: &Path, facts: &desktop::FileFacts) {
-        self.open_found_as(path, facts, self.config.script_open);
+        let how = Confirm::on_open(self.config.confirm_scripts);
+        self.open_found_as(path, facts, self.config.script_open, how);
     }
 
     /// [`Self::open_found`], a script running as `open` says.
-    fn open_found_as(&mut self, path: &Path, facts: &desktop::FileFacts, open: ScriptOpen) {
+    fn open_found_as(
+        &mut self,
+        path: &Path,
+        facts: &desktop::FileFacts,
+        open: ScriptOpen,
+        how: Confirm,
+    ) {
         match &facts.target {
-            Target::Run(file, _) => self.run_program(file, open),
+            Target::Run(file, program) => self.run_program(file, *program, open, how),
             _ => {
                 let open = self.found_opening(path, facts);
                 self.spawn_opening_activated(&open);
@@ -122,7 +129,7 @@ impl State {
         let source = || vec![DragSource::file(path.clone())];
         match cmd {
             Dc::Open | Dc::Explore => self.open_found(&path, facts),
-            Dc::Run(open) => self.open_found_as(&path, facts, open),
+            Dc::Run(open) => self.open_found_as(&path, facts, open, Confirm::Skip),
             Dc::AllowLaunching => {
                 if facts.allow_launching {
                     self.allow_launching(&[path]);

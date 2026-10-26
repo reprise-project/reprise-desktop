@@ -567,6 +567,7 @@ pub struct FileConfig {
     pub terminal: Option<String>,
     pub script_terminal: Option<String>,
     pub script_open: Option<String>,
+    pub confirm_scripts: Option<bool>,
     pub task_manager: Option<String>,
     /// Retired, as `FileOutput::hdr`.
     pub renderer: Option<serde::de::IgnoredAny>,

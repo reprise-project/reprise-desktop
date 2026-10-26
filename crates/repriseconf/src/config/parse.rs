@@ -156,6 +156,9 @@ impl Config {
             cfg.script_open = reprisefs::program::ScriptOpen::parse(&v)
                 .ok_or_else(|| format!("script_open = {v:?} is not run or terminal"))?;
         }
+        if let Some(v) = file.confirm_scripts {
+            cfg.confirm_scripts = v;
+        }
         cfg.task_manager = file.task_manager;
         if file.renderer.is_some() {
             cfg.retired.push("renderer".into());

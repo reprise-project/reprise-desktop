@@ -67,6 +67,11 @@ pub enum DialogAction {
     },
     EndProgram(i32),
     TurnOn(crate::keyfilter::Aid),
+    /// The script question's answer for `path`: run it as `run` says, or (None) open it in Notepad.
+    Script {
+        path: std::path::PathBuf,
+        run: Option<reprisefs::program::ScriptOpen>,
+    },
     /// Answer the too-big-for-the-bin question, then ask the next or delete the batch.
     TooBig {
         asker: Box<reprisefs::bincap::TooBig>,
@@ -478,6 +483,11 @@ pub enum Outcome {
     },
     EmptyBin,
     Notice(Box<Dialog>),
+    /// [`DialogAction::Script`].
+    Script {
+        path: std::path::PathBuf,
+        run: Option<reprisefs::program::ScriptOpen>,
+    },
     /// Run what the user typed in the field: spawned like `Spawn`, and
     /// remembered in the Run history.
     Run(String),

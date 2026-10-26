@@ -28,6 +28,7 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Text(k("", "terminal"), lens!(terminal)),
         Field::Text(k("", "script_terminal"), lens!(script_terminal)),
         Field::Text(k("", "script_open"), lens!(script_open)),
+        Field::Flag(k("", "confirm_scripts"), lens!(confirm_scripts)),
         Field::Text(k("", "task_manager"), lens!(task_manager)),
         Field::Text(k("", "startmenu_banner"), lens!(startmenu_banner)),
         Field::Text(k("", "startmenu_style"), lens!(startmenu_style)),

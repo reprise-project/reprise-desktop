@@ -997,6 +997,10 @@ impl Dialog {
             },
             DialogAction::EndProgram(pid) => Outcome::EndProgram(*pid),
             DialogAction::TurnOn(aid) => Outcome::TurnOn(*aid),
+            DialogAction::Script { path, run } => Outcome::Script {
+                path: path.clone(),
+                run: *run,
+            },
             DialogAction::TooBig { asker, answer } => Outcome::TooBig {
                 asker: asker.clone(),
                 answer: *answer,
