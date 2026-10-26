@@ -106,33 +106,8 @@ impl State {
         let Some(win) = self.win_mut(w) else {
             return;
         };
-        win.snapped = None;
-        win.resize_anchor = None;
-        let restore = if on {
-            win.saved = Some(win.frame_rect());
-            win.maximized = true;
-            None
-        } else {
-            win.maximized = false;
-            win.saved.take()
-        };
+        let restore = win.enter(Change::Maximize(on));
         let restore = restore.map(|r| self.restore_to(w, r));
-        if let Some(win) = self.win(w) {
-            match &win.kind {
-                Kind::Xdg(t) => t.with_pending_state(|s| {
-                    if on {
-                        s.states.set(xdg_toplevel::State::Maximized);
-                    } else {
-                        s.states.unset(xdg_toplevel::State::Maximized);
-                    }
-                }),
-                Kind::X11(x) => {
-                    if let Err(e) = x.set_maximized(on) {
-                        log::debug!("x11 maximized: {e}");
-                    }
-                }
-            }
-        }
         if on {
             self.fit_maximized(w);
         } else {
@@ -207,31 +182,10 @@ impl State {
         let Some(win) = self.win_mut(w) else {
             return;
         };
-        win.snapped = None;
-        win.resize_anchor = None;
-        win.fullscreen = on;
-        if on && !win.maximized {
-            win.saved_fullscreen = Some(win.frame_rect());
-        }
-        match &win.kind {
-            Kind::Xdg(t) => t.with_pending_state(|s| {
-                if on {
-                    s.states.set(xdg_toplevel::State::Fullscreen);
-                } else {
-                    s.states.unset(xdg_toplevel::State::Fullscreen);
-                }
-            }),
-            Kind::X11(x) => {
-                if let Err(e) = x.set_fullscreen(on) {
-                    log::debug!("x11 fullscreen: {e}");
-                }
-            }
-        }
-        let maximized = win.maximized;
-        if on || maximized {
+        let saved = win.enter(Change::Fullscreen(on));
+        if on || win.maximized {
             self.fit_maximized(w);
         } else {
-            let saved = self.win_mut(w).and_then(|x| x.saved_fullscreen.take());
             let restore = saved.map(|r| self.restore_to(w, r));
             self.relayout(w);
             match restore {
@@ -255,12 +209,7 @@ impl State {
         if on && win.is_owned() {
             return;
         }
-        win.minimized = on;
-        if let Some(x) = win.x11()
-            && let Err(e) = x.set_hidden(on)
-        {
-            log::debug!("x11 hidden: {e}");
-        }
+        win.enter(Change::Minimize(on));
         let (tree, mapped) = (win.tree, win.mapped);
         let here = self.on_current_desktop(w);
         self.scene.set_enabled(tree, !on && mapped && here);
@@ -316,28 +265,8 @@ impl State {
         let Some(win) = self.win_mut(w) else {
             return;
         };
-        let was_minimized = std::mem::take(&mut win.minimized);
-        win.fullscreen = false;
-        win.maximized = false;
-        win.saved = None;
-        win.saved_fullscreen = None;
-        win.snapped = None;
-        match &win.kind {
-            Kind::Xdg(t) => t.with_pending_state(|s| {
-                s.states.unset(xdg_toplevel::State::Maximized);
-                s.states.unset(xdg_toplevel::State::Fullscreen);
-                s.size = None;
-            }),
-            Kind::X11(x) => {
-                let cleared = x
-                    .set_maximized(false)
-                    .and_then(|()| x.set_fullscreen(false))
-                    .and_then(|()| x.set_hidden(false));
-                if let Err(e) = cleared {
-                    log::debug!("x11 state: {e}");
-                }
-            }
-        }
+        let was_minimized = win.minimized;
+        win.enter(Change::Reset);
         if was_minimized {
             self.show_children(w, self.on_current_desktop(w));
         }
@@ -356,6 +285,100 @@ impl State {
         }
         if !on {
             self.follow_tabs(w, true);
+        }
+    }
+}
+
+/// A move between window states; `Window::enter` makes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Change {
+    Maximize(bool),
+    Fullscreen(bool),
+    Minimize(bool),
+    /// Back to no state, as the window unmaps.
+    Reset,
+}
+
+impl Window {
+    /// The state fields and the client's view of them for the `set_*` calls and `reset_state`.
+    /// Maximizing or going fullscreen drops the snap; fullscreen keeps `maximized` underneath and
+    /// saves the frame only over a normal window. Returns the frame a state that ends gives back.
+    pub(super) fn enter(&mut self, change: Change) -> Option<Rect> {
+        let back = match change {
+            Change::Maximize(on) => {
+                self.snapped = None;
+                self.resize_anchor = None;
+                self.maximized = on;
+                let back = self.saved.take();
+                if on {
+                    self.saved = Some(self.frame_rect());
+                }
+                back.filter(|_| !on)
+            }
+            Change::Fullscreen(on) => {
+                self.snapped = None;
+                self.resize_anchor = None;
+                self.fullscreen = on;
+                match (on, self.maximized) {
+                    (true, false) => {
+                        self.saved_fullscreen = Some(self.frame_rect());
+                        None
+                    }
+                    (false, false) => self.saved_fullscreen.take(),
+                    (_, true) => None,
+                }
+            }
+            Change::Minimize(on) => {
+                self.minimized = on;
+                None
+            }
+            Change::Reset => {
+                self.minimized = false;
+                self.fullscreen = false;
+                self.maximized = false;
+                self.saved = None;
+                self.saved_fullscreen = None;
+                self.snapped = None;
+                None
+            }
+        };
+        self.tell(change);
+        back
+    }
+
+    fn tell(&self, change: Change) {
+        match &self.kind {
+            Kind::Xdg(t) => t.with_pending_state(|s| {
+                let mut put = |state, on| match on {
+                    true => s.states.set(state),
+                    false => s.states.unset(state),
+                };
+                match change {
+                    Change::Maximize(on) => put(xdg_toplevel::State::Maximized, on),
+                    Change::Fullscreen(on) => put(xdg_toplevel::State::Fullscreen, on),
+                    Change::Minimize(_) => false,
+                    Change::Reset => {
+                        put(xdg_toplevel::State::Maximized, false);
+                        put(xdg_toplevel::State::Fullscreen, false);
+                        s.size = None;
+                        false
+                    }
+                };
+            }),
+            Kind::X11(x) => {
+                let told = match change {
+                    Change::Maximize(on) => x.set_maximized(on),
+                    Change::Fullscreen(on) => x.set_fullscreen(on),
+                    Change::Minimize(on) => x.set_hidden(on),
+                    Change::Reset => x
+                        .set_maximized(false)
+                        .and_then(|()| x.set_fullscreen(false))
+                        .and_then(|()| x.set_hidden(false)),
+                };
+                if let Err(e) = told {
+                    log::debug!("x11 state {change:?}: {e}");
+                }
+            }
         }
     }
 }
