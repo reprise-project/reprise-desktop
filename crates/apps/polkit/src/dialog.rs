@@ -44,6 +44,7 @@ const OK_X: i32 = 208;
 const CANCEL_X: i32 = 287;
 
 pub const FAILED: &str = "The user name or password is incorrect.";
+const PASSWORD_LABEL: &str = "&Password:";
 
 /// Rows the block under the message shifts down by: one per line past two.
 fn extra_rows(lines: usize) -> i32 {
@@ -142,7 +143,7 @@ impl RunAs {
             Item::label(
                 "password_l",
                 Rect::new(LABEL_X, EDIT_Y + extra + LABEL_DY, 100, LINE_H),
-                "&Password:",
+                PASSWORD_LABEL,
             ),
             Item::new(
                 "password",
@@ -235,6 +236,27 @@ impl RunAs {
         self.take_password();
         self.set_status(pam_text.unwrap_or(FAILED));
         self.form.focus_id("password");
+    }
+
+    /// Label the field with a further hidden prompt's `text` (None: the password) and open it,
+    /// emptied, for the answer.
+    pub fn ask(&mut self, text: Option<&str>) {
+        let label = text.map_or(PASSWORD_LABEL.into(), reprisekit::text::escape_mnemonic);
+        self.form.set_text("password_l", &label);
+        if text.is_some() {
+            self.take_password();
+            self.set_busy(false);
+            self.set_status("");
+            self.form.focus_id("password");
+        }
+    }
+
+    #[cfg(test)]
+    pub fn label(&self) -> &str {
+        match self.form.item("password_l").map(|i| &i.control) {
+            Some(Control::Label { text, .. }) => text,
+            _ => "",
+        }
     }
 
     /// Wipe the password field in place, for a request that ends without a submit.

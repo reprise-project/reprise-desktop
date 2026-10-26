@@ -47,6 +47,8 @@ struct Active {
     session: Option<(helper::Session, String)>,
     reports: Option<Receiver<Report>>,
     prompted: bool,
+    /// The hidden prompts this conversation has asked; past the first the field asks anew.
+    prompts: u32,
     /// The first PAM error or info text since the password prompt (or the
     /// conversation's start), shown on failure instead of the generic text. The
     /// first explains a rejection (pam_faillock's "account locked" precedes its
@@ -69,6 +71,7 @@ impl Active {
             session: None,
             reports: None,
             prompted: false,
+            prompts: 0,
             notice: None,
             failure_shown: false,
             held: None,
@@ -81,6 +84,8 @@ impl Active {
         self.session = None;
         self.reports = None;
         self.prompted = false;
+        self.prompts = 0;
+        self.dialog.ask(None);
         self.notice = None;
         self.held = None;
         let Some(waker) = waker else {
@@ -189,7 +194,11 @@ impl PolkitApp {
                 a.dialog.set_status(&t);
                 a.notice.get_or_insert(t);
             }
-            Report::Prompt => {
+            Report::Prompt(text) => {
+                a.prompts += 1;
+                if a.prompts > 1 {
+                    a.dialog.ask(Some(&text));
+                }
                 a.prompted = true;
                 a.notice = None;
             }
@@ -280,6 +289,9 @@ impl PolkitApp {
     fn dialog_event(&mut self, ev: Event, ctx: &Ctx) -> Reply {
         let out = {
             let Some(a) = self.active.as_mut() else {
+                if let Event::Pasted(text) = ev {
+                    drop(zeroize::Zeroizing::new(text));
+                }
                 return Reply::none();
             };
             match ev {
@@ -555,7 +567,7 @@ mod tests {
             app.active.as_ref().unwrap().dialog.status(),
             "Place your finger on the fingerprint reader"
         );
-        app.report(Report::Prompt);
+        app.report(Report::Prompt("Password:".into()));
         app.report(Report::Done(Verdict::Failed));
         let act = app.active.as_ref().expect("still open");
         assert_eq!(act.dialog.status(), dialog::FAILED);
@@ -569,7 +581,7 @@ mod tests {
         let (a, _a_rx) = request("a");
         app.handle(Msg::Begin(a));
         open(&mut app);
-        app.report(Report::Prompt);
+        app.report(Report::Prompt("Password:".into()));
         app.report(Report::Done(Verdict::Failed));
         app.report(Report::Info(
             "Place your finger on the fingerprint reader".into(),
@@ -590,7 +602,7 @@ mod tests {
         let (a, _a_rx) = request("a");
         app.handle(Msg::Begin(a));
         open(&mut app);
-        app.report(Report::Prompt);
+        app.report(Report::Prompt("Password:".into()));
         app.report(Report::Done(Verdict::Failed));
         // The next conversation, now on the reader step.
         let (session, passwords) = helper::Session::detached();
@@ -610,6 +622,36 @@ mod tests {
             Some("hunter2")
         );
         assert_eq!(act.attempts, 1);
+    }
+
+    /// A second hidden prompt relabels the field with its text and opens it for a fresh answer,
+    /// which goes to the same conversation; the next conversation asks for the password again.
+    #[test]
+    fn a_second_prompt_asks_with_its_own_text() {
+        let mut app = PolkitApp::default();
+        let (a, _a_rx) = request("a");
+        app.handle(Msg::Begin(a));
+        open(&mut app);
+        let (session, answers) = helper::Session::detached();
+        app.active.as_mut().unwrap().session = Some((session, "root".into()));
+        app.report(Report::Prompt("Password:".into()));
+        let label = |app: &PolkitApp| app.active.as_ref().unwrap().dialog.label().to_string();
+        assert_eq!(label(&app), "&Password:");
+        app.submit("root".into(), zeroize::Zeroizing::new("hunter2".into()));
+        app.report(Report::Prompt("Verification code:".into()));
+        assert_eq!(label(&app), "Verification code:");
+        let act = app.active.as_mut().unwrap();
+        assert_eq!(act.dialog.password(), "");
+        act.dialog.form.paste("123456".into());
+        let out = act.dialog.event(reprisekit::controls::form::Event::Default);
+        let dialog::Outcome::Submit { user, password } = out else {
+            panic!("OK submits the code, got {out:?}");
+        };
+        app.submit(user, password);
+        let got: Vec<String> = answers.try_iter().map(|p| p.to_string()).collect();
+        assert_eq!(got, ["hunter2", "123456"]);
+        app.report(Report::Done(Verdict::Failed));
+        assert_eq!(label(&app), "&Password:", "a retry asks for the password");
     }
 
     /// A finger that matches ends the request with no password typed.
