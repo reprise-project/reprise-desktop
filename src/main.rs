@@ -265,7 +265,7 @@ fn run(
         event_loop.get_signal(),
     )?;
     sandbox::set_trusted(&state.config.clipboard.trusted_apps);
-    spawn::stop_stale_scopes(&state.env, state.config.session.end_processes);
+    let another_session = spawn::another_session_on_bus();
     desktopview::setup(&mut state);
     desktopview::relist_on_loop(&mut state);
     dialogview::setup(&mut state);
@@ -274,6 +274,12 @@ fn run(
     toolkits::refresh(&mut state);
     tray::setup(&mut state);
     backend::init(&mut state)?;
+    // After the seat is ours: a start that cannot take it never stops the scopes.
+    spawn::stop_stale_scopes(
+        &state.env,
+        state.config.session.end_processes,
+        another_session,
+    );
     configwatch::setup(&mut state, config_stamp);
     appindex::setup(&mut state);
     iconwatch::setup(&mut state);
