@@ -46,6 +46,11 @@ pub const FLIP_LOST: Duration = Duration::from_secs(11);
 /// The longest wait between modeset tries (`Track::retry_at`).
 pub const BACKOFF_MAX: Duration = Duration::from_secs(30);
 
+/// The wait after `tries` failures in a row: 1, 2, 4 ... `BACKOFF_MAX` s.
+pub fn backoff_after(tries: u32) -> Duration {
+    Duration::from_secs(1 << tries.min(5)).min(BACKOFF_MAX)
+}
+
 /// Whether main may issue ioctls that take every modeset lock (any output's plane test, property
 /// reads, probes): no blocking job, stall, flip lost 2-11 s ago or `retiring` thread.
 pub fn quiet<'a, M: 'a>(
@@ -460,7 +465,7 @@ impl<M> Track<M> {
                 self.tries = 0;
                 self.retry_at = None;
             } else {
-                let wait = Duration::from_secs(1 << self.tries.min(5)).min(BACKOFF_MAX);
+                let wait = backoff_after(self.tries);
                 self.tries = self.tries.saturating_add(1);
                 self.retry_at = Some(now + wait);
                 backoff = Some(wait);
