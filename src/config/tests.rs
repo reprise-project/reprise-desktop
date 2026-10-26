@@ -443,6 +443,25 @@ fn load_drops_only_the_keys_that_fail() {
 }
 
 #[test]
+fn a_reload_drops_only_the_keys_that_fail_and_names_them() {
+    let path =
+        std::env::temp_dir().join(format!("reprise-reload-config-{}.toml", std::process::id()));
+    std::fs::write(&path, "terminal = \"foot\"\nfuture_key = 1\n").unwrap();
+    let read = crate::configwatch::read(&path);
+    std::fs::write(&path, "terminal = [\n").unwrap();
+    let broken = crate::configwatch::read(&path);
+    std::fs::remove_file(&path).unwrap();
+    let (c, notice) = read.expect("the file reloads");
+    assert_eq!(c.terminal, "foot", "the keys that parse apply");
+    let notice = notice.expect("the dropped key gets a notice");
+    assert!(notice.contains("future_key"), "{notice}");
+    assert!(
+        broken.is_none(),
+        "a file that does not parse keeps the old config"
+    );
+}
+
+#[test]
 fn keyboard_section_parses_and_defaults() {
     let c = Config::parse("[keyboard]\nlayout = \"hu\"\nrepeat_rate = 30\n").unwrap();
     assert_eq!(c.keyboard.layout, "hu");

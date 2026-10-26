@@ -291,6 +291,8 @@ pub struct State {
     pub apps_watch: crate::appindex::AppIndexWatch,
     /// Reloads `config.toml` when it changes (`configwatch`).
     pub config_watch: crate::dirwatch::JobWatch,
+    /// The notice naming the keys the last read of `config.toml` dropped.
+    pub config_notice: Option<String>,
     /// Reads the Quick Launch folder again when it changes (`quickwatch`).
     pub quick_watch: crate::dirwatch::JobWatch,
     pub start_text: TextRenderer,
@@ -664,6 +666,7 @@ impl State {
             },
             apps_watch: Default::default(),
             config_watch: Default::default(),
+            config_notice: None,
             quick_watch: Default::default(),
             icon_watch: Default::default(),
             start_text,
