@@ -52,8 +52,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           pkg=$(ls /home/builder/makepkg/pkg/reprise-[0-9]*.pkg.tar.zst)
+          debug_pkg=$(ls /home/builder/makepkg/pkg/reprise-debug-[0-9]*.pkg.tar.zst)
           asset=reprise-nightly-x86_64.pkg.tar.zst
+          debug_asset=reprise-debug-nightly-x86_64.pkg.tar.zst
           cp "$pkg" "$asset"
+          cp "$debug_pkg" "$debug_asset"
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git tag -f nightly "$GITHUB_SHA"
           git push -f origin refs/tags/nightly
@@ -64,7 +67,8 @@ jobs:
               sudo pacman -U ./$asset"
           if gh release view nightly >/dev/null 2>&1; then
             gh release upload nightly "$asset" --clobber
+            gh release upload nightly "$debug_asset" --clobber
             gh release edit nightly --notes "$notes"
           else
-            gh release create nightly "$asset" --title Nightly --prerelease --notes "$notes"
+            gh release create nightly "$asset" "$debug_asset" --title Nightly --prerelease --notes "$notes"
           fi
