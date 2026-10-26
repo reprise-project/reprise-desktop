@@ -86,7 +86,9 @@ use wayland_client::{
 use windows::Foreign;
 
 pub use access::{Reader, ReaderForm};
-pub use app::{App, Caption, Child, Flyout, MAIN, WinId, reader_forms, reader_popup, window_id};
+pub use app::{
+    App, Caption, Child, Flyout, MAIN, Start, WinId, reader_forms, reader_popup, window_id,
+};
 pub use clipboard::{
     clipboard_has_files, clipboard_has_text, fake_clipboard_files, fake_clipboard_text,
 };

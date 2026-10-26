@@ -850,7 +850,7 @@ impl App for SettingsApp {
         self.describe(win, tree, ctx);
     }
 
-    fn start(&mut self, waker: Waker) {
+    fn start(&mut self, waker: Waker) -> repriseapp::Start {
         if let Some(r) = &self.requests {
             let w = waker.clone();
             r.wake_with(move || w.wake());
@@ -870,6 +870,7 @@ impl App for SettingsApp {
             self.spawn(move || wallpapers::merge(wallpapers::scan(&wallpapers::dirs()), &had)),
         );
         self.want_preview();
+        repriseapp::Start::Continue
     }
 }
 
