@@ -4,7 +4,7 @@ use super::outputs::{Scan, ScanAction, asks_scan, scan_action};
 use super::render::{glass_hold, waits_for_frame};
 use super::schedule::{Asked, pointer_ask_renders};
 use super::steps::{Step, next_step};
-use super::{Ask, CrtcNow};
+use super::{Ask, CrtcNow, pick_gpu};
 use crate::config::OutputMode;
 use crate::output::ModeInfo;
 use smithay::utils::{Point, Rectangle};
@@ -455,4 +455,17 @@ fn a_drm_fd_that_keeps_failing_ends_the_session_and_leaves_the_loop() {
         h.state.session_fade.fading_out(),
         "the session fades out to end"
     );
+}
+
+#[test]
+fn the_configured_gpu_is_driven_only_when_the_seat_has_it() {
+    assert_eq!(pick_gpu(Some(2), Some(1), &[1, 2]), Some(2));
+    assert_eq!(
+        pick_gpu(Some(3), Some(1), &[1, 2]),
+        Some(1),
+        "a GPU the seat lacks falls back to the primary"
+    );
+    assert_eq!(pick_gpu(None, Some(1), &[1, 2]), Some(1));
+    assert_eq!(pick_gpu(None, None, &[2, 1]), Some(2));
+    assert_eq!(pick_gpu::<u8>(None, None, &[]), None);
 }
