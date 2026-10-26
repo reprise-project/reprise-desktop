@@ -253,14 +253,16 @@ impl State {
         win.mapped = true;
         win.desktop = current;
         let last = win.last_frame.take();
+        let flicker = last.filter(LastFrame::flicker);
         // A client can gain an owner between first configure and map.
         let placeable = win.placeable();
-        let mut want = win.placement.take().filter(|_| placeable);
+        let mut want = (win.placement.take()).filter(|_| placeable && flicker.is_none());
         let (app, title) = (win.app(), win.title());
         // Windows of one app planned together can each plan the same saved
         // tab group; the one that maps as another group's takes its frame.
         let mut resized = false;
         if placeable
+            && flicker.is_none()
             && self
                 .session
                 .regrouping
@@ -412,9 +414,11 @@ impl State {
         let mut activated = self.win(w).is_some_and(|x| x.activate_on_map);
         let locked = self.is_locked();
         let bar_keys = self.bar_shared.keys.is_some();
-        let on_map = crate::mapfocus::on_map(locked, here, bar_keys, &mut activated, |a| {
-            self.takes_focus_on_map(w, a)
-        });
+        let on_map =
+            crate::mapfocus::on_map(locked, here, bar_keys, &mut activated, |a| match flicker {
+                Some(l) => l.focused || a,
+                None => self.takes_focus_on_map(w, a),
+            });
         if let Some(win) = self.win_mut(w) {
             win.activate_on_map = activated;
         }
@@ -431,7 +435,9 @@ impl State {
             }
             OnMap::Focus => self.focus_window(w),
             OnMap::Behind => {
-                self.ask_attention(w);
+                if flicker.is_none() {
+                    self.ask_attention(w);
+                }
                 self.place_behind_focus(w);
             }
             OnMap::Attention => self.map_under_bar_keys(w),
@@ -578,6 +584,8 @@ impl State {
                 normal: win.normal_frame(),
                 maximized: win.maximized,
                 fullscreen: win.fullscreen,
+                focused: was_focused,
+                at: std::time::Instant::now(),
             });
         }
         self.remember_window(w, true);
