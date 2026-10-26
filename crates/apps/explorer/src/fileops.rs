@@ -497,7 +497,7 @@ impl Explorer {
     fn start_put(&mut self, pending: PendingPut, ops: Vec<ItemOp>, ctx: &Ctx) {
         use reprisekit::controls::copyprogress::Kind;
         let wake = ctx.wake.clone();
-        let job = PutJob::start_within(
+        let job = PutJob::start_asking(
             pending.items,
             pending.dir.clone(),
             self.action_deadline,
@@ -533,6 +533,7 @@ impl Explorer {
         self.unsettled.retain(|j| !j.settled());
         let put = self.put.as_mut()?;
         let mut finished = false;
+        let mut ask = None;
         for ev in put.job.poll() {
             match ev {
                 PutEvent::Landed {
@@ -559,10 +560,18 @@ impl Explorer {
                 }
                 PutEvent::Failed { index, error } => {
                     let (_, op, name, _) = &put.ops[index];
-                    put.failed = Some(op.failure(name, &error));
+                    let failure = op.failure(name, &error);
+                    match put.progress.meter.cancelled() {
+                        true => put.failed = Some(failure),
+                        false => ask = Some(failure),
+                    }
                 }
                 PutEvent::Finished => finished = true,
             }
+        }
+        if let Some((title, text)) = ask {
+            let meter = put.progress.meter.clone();
+            return Some(self.ask_failed(meter, title, text, ctx));
         }
         if !finished {
             return Some(Reply::none());
@@ -658,6 +667,15 @@ impl Explorer {
     /// as do the pastes waiting behind it, and the rest is put.
     pub fn close(&mut self, ctx: &mut Ctx) -> Reply {
         self.flush_settings();
+        if let Some(Dialog::Confirm(c)) = &self.dialog
+            && let Some(job) = &c.job
+        {
+            job.decide(reprisefs::progress::Decision::Abort);
+            self.dialog = None;
+        }
+        for (job, ..) in self.failed_waiting.drain(..) {
+            job.decide(reprisefs::progress::Decision::Abort);
+        }
         if let Some(Dialog::Replace(r)) = self.dialog.take() {
             self.closing = true;
             self.ask_replace(r.pending, r.asker, ctx);
@@ -673,10 +691,35 @@ impl Explorer {
         }
     }
 
+    /// The title and text of the box a failed item raised ([`Explorer::ask_failed`]), answered
+    /// `d` through its button, then the jobs run out.
+    #[cfg(test)]
+    pub(crate) fn answer_failed(
+        &mut self,
+        d: reprisefs::progress::Decision,
+        ctx: &mut Ctx,
+    ) -> Option<(String, String)> {
+        use reprisefs::progress::Decision;
+        let Some(Dialog::Confirm(c)) = &self.dialog else {
+            return None;
+        };
+        c.job.as_ref()?;
+        let said = (c.title.to_string(), c.text.clone());
+        let button = match d {
+            Decision::Skip => 0,
+            Decision::Retry => 1,
+            Decision::Pending | Decision::Abort => 2,
+        };
+        let id = reprisekit::controls::dlgtemplate::BUTTON_IDS[button];
+        self.dialog_outcome(reprisekit::controls::form::Event::Pressed(id), ctx);
+        self.finish_puts(ctx);
+        Some(said)
+    }
+
     #[cfg(test)]
     pub(crate) fn finish_puts(&mut self, ctx: &mut Ctx) -> Reply {
         let mut reply = Reply::none();
-        while self.busy() || self.tip_walk_out() {
+        while (self.busy() && !self.holds_a_job()) || self.tip_walk_out() {
             std::thread::sleep(std::time::Duration::from_millis(2));
             if let Some(r) = self.poll_put(ctx) {
                 reply = r;

@@ -18,6 +18,20 @@ pub enum Phase {
     Finishing,
 }
 
+/// What the host picked for an item that failed in a job that asks ([`Meter::ask_on_failure`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Decision {
+    /// Not answered yet; the job holds as in a pause.
+    Pending = 1,
+    /// Go on with the next item.
+    Skip,
+    /// Run the same item again.
+    Retry,
+    /// End the job here.
+    Abort,
+}
+
 /// The counts a [`Meter`] held at one moment.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Snapshot {
@@ -53,6 +67,10 @@ pub struct Meter {
     /// Trees [`walk`] found holding no other device, which
     /// [`crate::ops::refuse_holding_mount`] need not walk again.
     clear: Mutex<Vec<PathBuf>>,
+    /// A failed item waits for a [`Decision`] instead of ending the job.
+    asks: AtomicBool,
+    /// The [`Decision`] on the failed item, 0 when none is asked for.
+    decision: AtomicU8,
 }
 
 /// A file this large is flushed in windows as it is written ([`Writeback`]).
@@ -102,9 +120,50 @@ impl Meter {
         self.stir.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Have a failed item wait for the host's [`Decision`] ([`Meter::decide`]) instead of
+    /// ending the job.
+    pub fn ask_on_failure(&self) {
+        self.asks.store(true, Ordering::Relaxed);
+    }
+
+    /// Answer the failed item the job holds on.
+    pub fn decide(&self, d: Decision) {
+        self.decision.store(d as u8, Ordering::Relaxed);
+    }
+
+    /// Mark the item that just failed as waiting for a [`Decision`], before the host hears of it.
+    pub(crate) fn ask(&self) {
+        if self.asks.load(Ordering::Relaxed) {
+            self.decide(Decision::Pending);
+        }
+    }
+
+    /// The host's [`Decision`] on the item [`Meter::ask`] marked, held for like a pause:
+    /// [`Decision::Abort`] when the job does not ask or is cancelled.
+    pub(crate) fn decision(&self) -> Decision {
+        if !self.asks.load(Ordering::Relaxed) {
+            return Decision::Abort;
+        }
+        let d = loop {
+            if self.cancelled() {
+                break Decision::Abort;
+            }
+            match self.decision.load(Ordering::Relaxed) {
+                2 => break Decision::Skip,
+                3 => break Decision::Retry,
+                4 => break Decision::Abort,
+                _ => std::thread::sleep(PAUSE_POLL),
+            }
+        };
+        self.decision.store(0, Ordering::Relaxed);
+        self.stir();
+        d
+    }
+
     /// The step count and whether the job is paused or waiting on a flush, for [`watch`].
     pub(crate) fn stirring(&self) -> (u64, Rest) {
-        let rest = if self.paused.load(Ordering::Relaxed) {
+        let asked = self.decision.load(Ordering::Relaxed) == Decision::Pending as u8;
+        let rest = if self.paused.load(Ordering::Relaxed) || asked {
             Rest::Paused
         } else if self.flush_waits.load(Ordering::Relaxed) > 0 {
             Rest::Flushing
@@ -228,7 +287,7 @@ impl Meter {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Rest {
     No,
-    /// Held by the user: never a give-up.
+    /// Held by the user, or waiting for a [`Decision`]: never a give-up.
     Paused,
     /// In a wait on a drive's flush: given [`FLUSH_ALLOWANCE`] deadlines.
     Flushing,
