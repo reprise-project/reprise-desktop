@@ -850,6 +850,14 @@ fn main() {
     // zbus logs every call it serves at info, with the whole message; RUST_LOG
     // still turns it back on.
     reprisebus::journal::init_logger("info,zbus=warn");
+    // A panic in a handler ends zbus's executor thread and leaves a process that holds the bus name and answers
+    // nothing; exiting lets the unit restart.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_hook(info);
+        log::error!("{info}");
+        std::process::exit(101);
+    }));
     if std::env::args().any(|a| a == "--pick") {
         picker::run_dialog();
         return;
