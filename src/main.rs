@@ -36,6 +36,7 @@ mod dndsource;
 mod editmenuview;
 mod eis;
 mod emojiview;
+mod fdlimit;
 mod flipview;
 mod focus;
 mod framepace;
@@ -243,6 +244,9 @@ fn main() {
         std::process::exit(lockfinger::password_main(user));
     }
     crash::install(cli.after_crash);
+    if let Err(e) = fdlimit::raise() {
+        log::warn!("open-file limit not raised: {e}");
+    }
     if let Some(n) = cli.after_crash {
         log::warn!("starting after crash {n} of this login");
     }
