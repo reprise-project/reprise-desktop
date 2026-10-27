@@ -85,6 +85,10 @@ open-denied =
     Cannot open { $path }.
     Access is denied.
 # error is the system's own message.
+draw-failed =
+    Notepad cannot draw its window: { $error }.
+    Close some programs and try again.
+# error is the system's own message.
 open-failed =
     Cannot open { $path }.
     { $error }

@@ -89,8 +89,8 @@ pub trait Extended {
     /// The process is about to end without the program's say: the compositor connection is gone,
     /// or an event or draw panicked and left the state half-updated. Save what the user would lose.
     fn emergency(&mut self) {}
-    /// The windows have not drawn for a few seconds: no shared memory for their frames
-    /// (`/dev/shm` full, or out of file descriptors). The host keeps trying; the program may say
+    /// The windows have not drawn for a few seconds: no shared memory for their frames (out of
+    /// memory or file descriptors). The host keeps trying; the program may say
     /// so, in a message box. Called once per run of failures.
     fn draw_failed(&mut self, _error: &str) -> Reply {
         Reply::none()
