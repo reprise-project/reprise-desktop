@@ -141,7 +141,7 @@ impl EapDialog {
     }
 
     pub fn window_title() -> String {
-        "Wireless Network Connection".into()
+        "Enterprise Network Login".into()
     }
 
     pub fn event(&mut self, ev: form::Event) -> Outcome {
@@ -382,6 +382,11 @@ mod tests {
 
     fn dialog() -> EapDialog {
         EapDialog::new(&"eduroam".into(), "/ap/8")
+    }
+
+    #[test]
+    fn the_login_has_its_own_title_apart_from_the_network_list() {
+        assert_eq!(EapDialog::window_title(), "Enterprise Network Login");
     }
 
     fn type_into(d: &mut EapDialog, id: &str, s: &str) {
