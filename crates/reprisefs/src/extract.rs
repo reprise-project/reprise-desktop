@@ -251,11 +251,7 @@ fn count(argv: &[OsString], m: &Meter) -> Result<u64, Failure> {
     let mut child = spawn(argv, true)?;
     let out = child.stdout.take().ok_or_else(no_pipe)?;
     let mut err = child.stderr.take().ok_or_else(no_pipe)?;
-    let drain = std::thread::spawn(move || {
-        let mut stderr = Vec::new();
-        let _ = err.read_to_end(&mut stderr);
-        stderr
-    });
+    let drain = std::thread::spawn(move || tail(&mut err, STDERR_TAIL));
     let mut n = 0;
     let mut climbs = None;
     let read = lines(&mut child, out, m, |entry| {
@@ -337,6 +333,29 @@ fn make_folder(dir: &Path, name: &OsStr) -> Result<PathBuf, Failure> {
 
 fn no_pipe() -> Failure {
     Failure::Tool("bsdtar gave no output".into())
+}
+
+/// The bytes of a tool's stderr kept for [`said`], which reads only its last line.
+const STDERR_TAIL: usize = 4096;
+
+/// Reads `r` to its end, keeping only its last `cap` bytes.
+fn tail(r: &mut impl Read, cap: usize) -> Vec<u8> {
+    let mut kept = Vec::new();
+    let mut buf = [0; 8192];
+    loop {
+        let n = match r.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        kept.extend_from_slice(&buf[..n]);
+        if kept.len() > 2 * cap {
+            kept.drain(..kept.len() - cap);
+        }
+    }
+    kept.drain(..kept.len().saturating_sub(cap));
+    kept
 }
 
 /// bsdtar's message without its own name, or a stand-in when it said nothing.
@@ -550,7 +569,9 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(20))
             .expect("the listing ends while stderr holds more than a pipe buffer");
         match res {
-            Err(Failure::Tool(said)) => assert_eq!(said.len(), 300_000),
+            Err(Failure::Tool(said)) => {
+                assert_eq!(said.len(), STDERR_TAIL, "only the tail is kept")
+            }
             other => panic!("expected the tool's own message, got {other:?}"),
         }
     }
