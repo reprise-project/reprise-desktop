@@ -19,11 +19,11 @@
 //! `set_settings`, `set_rows` and `set_files`.
 
 use crate::access::accesskit;
-use crate::classic::widgets::{ROW_H as FIELD_H, draw_edit, edit_first_visible};
+use crate::classic::widgets::{ROW_H as FIELD_H, edit_first_visible};
 use crate::controls::listbox;
 use crate::controls::listbox::ListBox;
 use crate::look::panel;
-use crate::look::widgets::{Interaction, draw_edit_field};
+use crate::look::widgets::{Interaction, draw_edit_field, draw_edit_text};
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::startpanel::layout::{GROUP_GAP, HEADER_H, RESULT_H};
 use crate::startpanel::search;
@@ -740,7 +740,7 @@ fn body(
         Interaction::Idle,
     );
     let first = edit_first_visible(text, &l.edit, inner.width, px, 0);
-    draw_edit(
+    draw_edit_text(
         c,
         text,
         &l.edit,

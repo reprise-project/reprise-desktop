@@ -64,6 +64,21 @@ fn prod_code_references_only_its_own_layer_and_below() {
     assert!(msg.is_empty(), "{msg}");
 }
 
+#[test]
+fn controls_draw_edit_text_through_look() {
+    let direct: Vec<String> = crate_refs()
+        .into_iter()
+        .filter(|(file, path)| {
+            file.starts_with("controls/") && path == "classic::widgets::draw_edit"
+        })
+        .map(|(file, _)| file)
+        .collect();
+    assert!(
+        direct.is_empty(),
+        "controls draw an edit's text with look::widgets::draw_edit_text: {direct:?}"
+    );
+}
+
 fn layer_of(top: &str) -> &'static str {
     LAYERS
         .iter()

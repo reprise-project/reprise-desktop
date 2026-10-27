@@ -1,8 +1,8 @@
 use crate::access::{Tree, accesskit};
-use crate::classic::widgets::{access_edit, draw_edit};
+use crate::classic::widgets::access_edit;
 use crate::controls::form::greyed_field_scheme;
 use crate::look::Paint;
-use crate::look::widgets::{draw_disabled_field, draw_edit_field};
+use crate::look::widgets::{draw_disabled_field, draw_edit_field, draw_edit_text};
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
@@ -335,7 +335,7 @@ pub fn draw(
         Some(cs) => Paint { cs, ..*p },
         None => *p,
     };
-    draw_edit(
+    draw_edit_text(
         c,
         text,
         &as_edit(hk, focused),

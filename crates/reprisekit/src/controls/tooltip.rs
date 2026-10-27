@@ -3,12 +3,10 @@
 //! placement rules that keep them on screen. The host decides when to show one
 //! (a [`SHOW_MS`] rest, 5 s autopop).
 
-use crate::classic::widgets::{
-    BUTTON_GAP, BUTTON_H, BUTTON_W, FIELD_PAD, draw_edit, edit_first_visible,
-};
+use crate::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, FIELD_PAD, edit_first_visible};
 use crate::look::styled;
 use crate::look::widgets::{
-    ICON_BUTTON_W, draw_button, draw_edit_field, draw_icon_button, tooltip,
+    ICON_BUTTON_W, draw_button, draw_edit_field, draw_edit_text, draw_icon_button, tooltip,
 };
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Insets, Rect, rounded_border, rounded_fill};
@@ -894,7 +892,7 @@ pub fn draw_notify_balloon(
             text.draw(&mut c, hint, &shown, false, cs.gray_text, Align::Left, size);
         }
         let first = edit_first_visible(text, edit, inner.width, size, 0);
-        draw_edit(&mut c, text, edit, inner, size, p, caret, first);
+        draw_edit_text(&mut c, text, edit, inner, size, p, caret, first);
     }
     let ptr = |hit: NotifyHit, enabled: bool| {
         if !enabled {

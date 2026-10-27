@@ -540,6 +540,22 @@ pub fn draw_edit_field(
     classic::widgets::draw_sunken_field(c, p, r, fill)
 }
 
+/// A single-line edit's text in `inner` from byte `first`, with its selection, caret and preedit;
+/// the same in every look, inside whichever field frame drew `inner`.
+#[expect(clippy::too_many_arguments)]
+pub fn draw_edit_text(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    edit: &crate::textedit::TextEdit,
+    inner: Rect,
+    px: u32,
+    p: &Paint,
+    caret: crate::textedit::Caret,
+    first: usize,
+) {
+    classic::widgets::draw_edit(c, text, edit, inner, px, p, caret, first)
+}
+
 /// A greyed single-line edit's field; returns the inner rect for text, as
 /// [`draw_sunken_field`] does. The style fills with what sits behind the field
 /// ([`Paint::fill_back`]), or with `window` inside its Disabled frame when it

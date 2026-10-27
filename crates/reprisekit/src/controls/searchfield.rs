@@ -2,10 +2,10 @@
 //! toolbar band.
 
 use crate::access::{Tree, accesskit};
-use crate::classic::widgets::{access_edit, draw_edit};
+use crate::classic::widgets::access_edit;
 use crate::controls::metrics::ControlMetrics;
 use crate::look::Paint;
-use crate::look::widgets::draw_edit_field;
+use crate::look::widgets::{draw_edit_field, draw_edit_text};
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
@@ -97,7 +97,7 @@ pub fn draw(
     let inner = draw_edit_field(c, p, r, p.cs.window, focused, Interaction::Idle);
     c.fill_rect(inner, p.cs.window);
     let first = edit_first_visible(text, &sf.edit, inner.width, px, 0);
-    draw_edit(c, text, &sf.edit, inner, px, p, caret, first);
+    draw_edit_text(c, text, &sf.edit, inner, px, p, caret, first);
 }
 
 pub fn access(

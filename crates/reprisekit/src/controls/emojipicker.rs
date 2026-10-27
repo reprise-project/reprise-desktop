@@ -6,13 +6,15 @@
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{
-    FIELD_PAD, ROW_H as FIELD_H, ScrollHit, access_edit, draw_edit, edit_first_visible,
-    scrollbar_hit, scrollbar_parts,
+    FIELD_PAD, ROW_H as FIELD_H, ScrollHit, access_edit, edit_first_visible, scrollbar_hit,
+    scrollbar_parts,
 };
 use crate::controls::metrics::ControlMetrics;
 use crate::emoji::{EmojiFont, Entry};
 use crate::flyout;
-use crate::look::widgets::{Interaction, draw_edit_field, draw_field_frame, draw_scrollbar};
+use crate::look::widgets::{
+    Interaction, draw_edit_field, draw_edit_text, draw_field_frame, draw_scrollbar,
+};
 use crate::raster::{Canvas, Rect};
 use crate::selection::scroll_into_view;
 use crate::text::{Align, TextRenderer};
@@ -391,7 +393,7 @@ pub fn draw(
         Interaction::Idle,
     );
     let first = edit_first_visible(text, &m.edit, inner.width, px, 0);
-    draw_edit(
+    draw_edit_text(
         &mut c,
         text,
         &m.edit,

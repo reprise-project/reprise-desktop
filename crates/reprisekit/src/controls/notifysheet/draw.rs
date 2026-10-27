@@ -1,7 +1,8 @@
 //! Drawing a sheet: icons, text, pills, close and reply field.
 
-use crate::classic::widgets::{draw_edit, edit_first_visible};
+use crate::classic::widgets::edit_first_visible;
 use crate::controls::tooltip::{NOTIFY_MORE, NotifyHit};
+use crate::look::widgets::draw_edit_text;
 use crate::paint::Paint;
 use crate::raster::{Canvas, Rect};
 use crate::shape::{pack, rounded, scale, unpack};
@@ -201,7 +202,7 @@ pub(super) fn draw_parts(
             text.draw(c, inner, &shown, false, inks.app, left, px);
         }
         let first = edit_first_visible(text, edit, inner.width, px, 0);
-        draw_edit(c, text, edit, inner, px, p, caret, first);
+        draw_edit_text(c, text, edit, inner, px, p, caret, first);
     }
 
     let edit_empty = edit.text.trim().is_empty();

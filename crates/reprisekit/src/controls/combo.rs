@@ -6,7 +6,7 @@
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{
-    BarHit, FIELD_PAD, LINE_H, ROW_H, RingInk, ScrollHit, ScrollParts, access_edit, draw_edit,
+    BarHit, FIELD_PAD, LINE_H, ROW_H, RingInk, ScrollHit, ScrollParts, access_edit,
     draw_edit_drop_point, draw_focus_ring_screen, edit_first_visible, scrollbar_hit,
     scrollbar_parts, scrollbar_pos_at,
 };
@@ -16,7 +16,7 @@ use crate::controls::scrollbar::ThumbDrag;
 use crate::look::Paint;
 use crate::look::widgets::{
     ComboLook, draw_combo_drop, draw_combo_frame, draw_disabled_label, draw_drop_list,
-    draw_scrollbar,
+    draw_edit_text, draw_scrollbar,
 };
 use crate::pointer::Axis;
 use crate::pointer::Interaction;
@@ -813,7 +813,7 @@ pub fn draw(
             Some(_) => Caret::new(caret.focused(), false),
             None => caret,
         };
-        draw_edit(c, text, edit, tr, px, p, caret, first);
+        draw_edit_text(c, text, edit, tr, px, p, caret, first);
         if let Some(x) = combo.drop_x {
             let tail = &edit.text[first..];
             let at = first + crate::textedit::index_at(text, tail, x * s - tr.x, px);

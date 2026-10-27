@@ -6,11 +6,11 @@
 //! Delete removes it, Escape closes. Pure: the host owns the history and
 //! acts on the events, which name a row by the `id` it was given.
 
-use crate::classic::widgets::{ROW_H as FIELD_H, draw_edit, edit_first_visible};
+use crate::classic::widgets::{ROW_H as FIELD_H, edit_first_visible};
 use crate::controls::listbox::{self, ListBox};
 use crate::controls::metrics::ControlMetrics;
 use crate::flyout;
-use crate::look::widgets::{Interaction, draw_edit_field};
+use crate::look::widgets::{Interaction, draw_edit_field, draw_edit_text};
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::{Caret, EditKey, Preedit, TextEdit};
@@ -312,7 +312,7 @@ pub fn draw(
         Interaction::Idle,
     );
     let first = edit_first_visible(text, &m.edit, inner.width, px, 0);
-    draw_edit(
+    draw_edit_text(
         &mut c,
         text,
         &m.edit,
