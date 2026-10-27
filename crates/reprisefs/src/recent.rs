@@ -393,6 +393,47 @@ fn set_attr(tag: &mut String, name: &str, value: &str) {
     tag.push_str(&format!(" {name}=\"{value}\""));
 }
 
+/// The `<bookmark:application .../>` entry for `name` in `body`; None when an entry does not
+/// close.
+fn app_span(body: &str, name: &str) -> Option<Option<std::ops::Range<usize>>> {
+    let mut at = 0;
+    while let Some(i) = body[at..].find("<bookmark:application ") {
+        let start = at + i;
+        let end = start + body[start..].find("/>")? + 2;
+        if tag_attr(&body[start..end], "name").as_deref() == Some(name) {
+            return Some(Some(start..end));
+        }
+        at = end;
+    }
+    Some(None)
+}
+
+/// `el` with the application entries of `others`, more elements for its href, merged in: a
+/// program `el` lists adds the other count to its own, another is appended. None when `el` has
+/// no applications list or an entry does not close.
+fn merged(el: &str, others: &[&str]) -> Option<String> {
+    let count = |e: &str| tag_attr(e, "count").and_then(|c| c.parse::<u64>().ok());
+    let mut el = el.to_string();
+    for other in others {
+        for part in other.split("<bookmark:application ").skip(1) {
+            let entry = format!("<bookmark:application {}/>", &part[..part.find("/>")?]);
+            let Some(name) = tag_attr(&entry, "name") else {
+                continue;
+            };
+            if let Some(r) = app_span(&el, &name)? {
+                let mut tag = el[r.start..r.end - 2].to_string();
+                let sum = count(&el[r.clone()]).unwrap_or(0) + count(&entry).unwrap_or(0);
+                set_attr(&mut tag, "count", &sum.to_string());
+                el.replace_range(r, &format!("{tag}/>"));
+            } else {
+                let i = el.find("</bookmark:applications>")?;
+                el.insert_str(i, &format!("  {entry}\n          "));
+            }
+        }
+    }
+    Some(el)
+}
+
 /// The bookmark element `el` edited in place for one more use by `app` at `stamp`: new
 /// `modified`/`visited`, `app`'s entry added or its count bumped, `mime` added when it has none.
 /// None for a self-closing element or one the edit cannot follow.
@@ -410,18 +451,7 @@ fn spliced(el: &str, app: Option<(&str, &str)>, mime: Option<&str>, stamp: &str)
         meta.push_str(&mime_entry(m));
     }
     if let Some((name, exec)) = app {
-        let mut found = None;
-        let mut at = 0;
-        while let Some(i) = body[at..].find("<bookmark:application ") {
-            let start = at + i;
-            let end = start + body[start..].find("/>")? + 2;
-            if tag_attr(&body[start..end], "name").as_deref() == Some(name) {
-                found = Some(start..end);
-                break;
-            }
-            at = end;
-        }
-        if let Some(r) = found {
+        if let Some(r) = app_span(&body, name)? {
             let count: u64 = tag_attr(&body[r.clone()], "count")
                 .and_then(|c| c.parse().ok())
                 .unwrap_or(0);
@@ -489,12 +519,16 @@ pub fn recorded(
     let mut count = 0u64;
     let mut kept: Vec<(String, &str)> = Vec::new();
     let mut matched: Option<&str> = None;
+    let mut others: Vec<&str> = Vec::new();
     for span in &spans {
         let el = &old[span.clone()];
         let tag = &el[..el.find('>').unwrap_or(el.len())];
         if tag_attr(tag, "href").as_deref() != Some(&uri) {
             kept.push((tag_attr(tag, "modified").unwrap_or_default(), el));
             continue;
+        }
+        if matched.is_some() {
+            others.push(el);
         }
         matched.get_or_insert(el);
         added = tag_attr(tag, "added").unwrap_or(added);
@@ -521,7 +555,8 @@ pub fn recorded(
         format!("\n          <bookmark:applications>{apps}\n          </bookmark:applications>")
     };
     let ours = matched
-        .and_then(|el| spliced(el, app, mime, stamp))
+        .and_then(|el| merged(el, &others))
+        .and_then(|el| spliced(&el, app, mime, stamp))
         .unwrap_or_else(|| {
             format!(
                 "<bookmark href=\"{}\" added=\"{added}\" modified=\"{stamp}\" visited=\"{stamp}\">\n    \
@@ -879,6 +914,42 @@ mod tests {
             .collect();
         assert_eq!(names.len(), 3, "a new program joins the list: {out}");
         assert!(out.contains("<bookmark:private/>"));
+    }
+
+    #[test]
+    fn two_bookmarks_for_one_file_become_one_holding_both_programs() {
+        let mark = |apps: &str| {
+            format!(
+                r#"<bookmark href="file:///home/u/p.png" added="1" modified="1" visited="1">
+    <info>
+      <metadata owner="http://freedesktop.org">
+        <bookmark:applications>
+          {apps}
+        </bookmark:applications>
+      </metadata>
+    </info>
+  </bookmark>"#
+            )
+        };
+        let entry = |name: &str, count: u32| {
+            format!(
+                r#"<bookmark:application name="{name}" exec="'{name}'" modified="1" count="{count}"/>"#
+            )
+        };
+        let old = format!(
+            "{XBEL_HEAD}\n  {}\n  {}\n</xbel>",
+            mark(&(entry("Gimp", 2) + &entry("Viewer", 1))),
+            mark(&(entry("Viewer", 3) + &entry("Paint", 5)))
+        );
+        let p = Path::new("/home/u/p.png");
+        let out = recorded(&old, p, Some(("Gimp", "'Gimp'")), None, "2").unwrap();
+        let marks = parse_xbel(&out);
+        assert_eq!(marks.len(), 1, "{out}");
+        let names: Vec<&str> = marks[0].apps.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["Gimp", "Viewer", "Paint"]);
+        for count in [r#"count="3""#, r#"count="4""#, r#"count="5""#] {
+            assert!(out.contains(count), "{count}: {out}");
+        }
     }
 
     #[test]
