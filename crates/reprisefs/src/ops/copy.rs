@@ -55,9 +55,10 @@ fn copy_dir_meta(from: &Path, to: &Path) -> io::Result<()> {
     super::fileio::copy_meta(from, &meta, &std::fs::File::open(to)?, true)
 }
 
-/// The entries of `src`, read before `dest` is created.
+/// The entries of `src` sorted by name, read before `dest` is created.
 fn read_then_create(src: &Path, dest: &Path) -> io::Result<Vec<std::fs::DirEntry>> {
-    let entries = std::fs::read_dir(src)?.collect::<io::Result<_>>()?;
+    let mut entries = std::fs::read_dir(src)?.collect::<io::Result<Vec<_>>>()?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
     std::fs::create_dir(dest)?;
     Ok(entries)
 }
