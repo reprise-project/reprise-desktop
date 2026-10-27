@@ -69,6 +69,9 @@ impl Status {
             device_path: d.path.clone(),
             wifi,
         };
+        for page in &mut s.sheet.pages {
+            page.focus_id(propsheet::OK);
+        }
         s.refresh(d);
         s
     }
@@ -600,6 +603,15 @@ mod tests {
         assert_eq!(text(g, "signal_l"), "Signal Strength:");
         assert_eq!(text(g, "hotspot"), "");
         assert_eq!(picture_of(g, "signal").width as i32, signalbars::WIDTH);
+    }
+
+    #[test]
+    fn the_sheet_opens_with_the_focus_on_close() {
+        let s = Status::new(&wired());
+        for page in &s.sheet.pages {
+            let focus = page.focus().map(|i| page.items[i].id);
+            assert_eq!(focus, Some(propsheet::OK), "Enter closes the sheet");
+        }
     }
 
     #[test]
