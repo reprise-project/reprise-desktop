@@ -260,18 +260,17 @@ impl SecurityContextHandler for State {
 
 /// The Flatpak app id of the sandbox `win`'s client runs in; an X11
 /// window's is its X client's, by the host pid the X server reports
-/// (XRes), since `_NET_WM_PID` is the pid inside the sandbox.
-pub fn window_app(win: &crate::window::Window) -> Option<String> {
+/// (XRes), since `_NET_WM_PID` is the pid inside the sandbox. Err when the
+/// XRes query fails.
+pub fn window_app(win: &crate::window::Window) -> Result<Option<String>, ()> {
     match win.x11() {
         Some(x) => {
-            let pid = x.get_client_pid().ok().filter(|&p| p > 0)?;
-            reprisefs::flatpak::app_of_pid(pid)
+            let pid = x.get_client_pid().ok().filter(|&p| p > 0).ok_or(())?;
+            Ok(reprisefs::flatpak::app_of_pid(pid))
         }
-        None => win
-            .wl_client()?
-            .get_data::<ClientState>()?
-            .sandbox
-            .flatpak_app(),
+        None => Ok(win
+            .wl_client()
+            .and_then(|c| c.get_data::<ClientState>()?.sandbox.flatpak_app())),
     }
 }
 

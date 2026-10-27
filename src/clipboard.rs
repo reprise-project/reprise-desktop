@@ -334,7 +334,7 @@ impl State {
             .focused
             .and_then(|w| self.win(w))
             .filter(|w| w.x11().is_some())
-            .map(crate::sandbox::window_app);
+            .map(|w| crate::sandbox::window_app(w).ok().flatten());
         owner_sandboxed(x11_app, || {
             // Smithay takes a data device selection only from the client holding the keyboard.
             let focus = self.seat.get_keyboard().and_then(|k| k.current_focus());
@@ -350,7 +350,13 @@ impl State {
         match self.own_offers() {
             // No stat: a file gone since is skipped by the paste.
             Some(offers) => own_files(&offers).is_some_and(|c| !c.paths.is_empty()),
-            None => files_from(self.clip_offered(), self.clip.sandboxed).is_some(),
+            // A sandboxed list is refused unless every path is under the document portal, which
+            // only reading the offer tells, so Paste greys for it.
+            None => match files_from(self.clip_offered(), self.clip.sandboxed) {
+                Some(Files::List(_)) => !self.clip.sandboxed,
+                Some(Files::Portal) => true,
+                None => false,
+            },
         }
     }
 
@@ -764,6 +770,7 @@ mod tests {
         for (mimes, body) in &lists {
             c.copy(mimes, body.as_bytes());
             h.roundtrip(&mut c);
+            assert!(!h.state.clip_has_files(), "{mimes:?} greys Paste");
             h.state.paste_on_desktop(None, false);
             h.run_for(100);
             h.roundtrip(&mut c);
