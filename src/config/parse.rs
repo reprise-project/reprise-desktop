@@ -146,10 +146,15 @@ impl Config {
                 (c, None, table)
             }
             Ok((c, dropped, table)) => {
-                for (key, e) in &dropped {
-                    log::warn!("config {}: {key}: {e}; using its defaults", path.display());
+                for d in &dropped {
+                    log::warn!(
+                        "config {}: {}: {}; using its defaults",
+                        path.display(),
+                        d.key,
+                        d.error
+                    );
                 }
-                (c, Some(dropped_notice(&dropped, |_| false)), table)
+                (c, Some(dropped_notice(&dropped)), table)
             }
             Err(e) => {
                 log::error!("config {}: {e}; using defaults", path.display());
@@ -286,11 +291,16 @@ fn window_rule(f: FileWindowRule, at: &str) -> Result<WindowRule, String> {
     })
 }
 
-/// The notice naming the keys a read dropped, saying which `kept` their previous values and which
+/// The notice naming the keys a read dropped, saying which kept their previous values and which
 /// took their defaults.
-pub(crate) fn dropped_notice(dropped: &[(String, String)], kept: impl Fn(&str) -> bool) -> String {
-    let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
-    let (old, reset): (Vec<&str>, Vec<&str>) = keys.iter().copied().partition(|k| kept(k));
+pub(crate) fn dropped_notice(dropped: &[repriseconf::config::DroppedKey]) -> String {
+    let keys: Vec<&str> = dropped.iter().map(|d| d.key.as_str()).collect();
+    let keys_where = |kept: bool| -> Vec<&str> {
+        (dropped.iter().filter(|d| d.kept == kept))
+            .map(|d| d.key.as_str())
+            .collect()
+    };
+    let (old, reset) = (keys_where(true), keys_where(false));
     let what = if reset.is_empty() {
         "kept their previous values".to_string()
     } else if old.is_empty() {

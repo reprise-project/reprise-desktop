@@ -83,22 +83,34 @@ pub fn lenient<T>(
     text: &str,
     build: impl Fn(FileConfig) -> Result<T, String>,
 ) -> Result<(T, Vec<(String, String)>), String> {
-    lenient_over(text, &toml::Table::new(), build).map(|(t, dropped, _)| (t, dropped))
+    let (t, dropped, _) = lenient_over(text, &toml::Table::new(), build)?;
+    Ok((t, dropped.into_iter().map(|d| (d.key, d.error)).collect()))
 }
 
-/// The keys a lenient read left out, each with its error.
-pub type Dropped = Vec<(String, String)>;
+/// A key a lenient read left out.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DroppedKey {
+    /// `terminal`, `taskbar.position` or `tablets[1]`.
+    pub key: String,
+    pub error: String,
+    /// It took its value in `base` rather than its default.
+    pub kept: bool,
+}
+
+/// The keys a lenient read left out.
+pub type Dropped = Vec<DroppedKey>;
 
 /// [`lenient`] with each dropped key taking its value in `base` (the table the running config
-/// was built from), when it has one, instead of its default; a dropped array entry takes back
-/// the whole array. Also returns the table built, the
-/// `base` of the next read.
+/// was built from), when it has one, instead of its default. A dropped array entry takes back
+/// the running entry with its `name`, or at its index when it has none. Also returns the table
+/// built, the `base` of the next read.
 pub fn lenient_over<T>(
     text: &str,
     base: &toml::Table,
     build: impl Fn(FileConfig) -> Result<T, String>,
 ) -> Result<(T, Dropped, toml::Table), String> {
     let mut table: toml::Table = toml::from_str(text).map_err(|e| e.to_string())?;
+    let read = table.clone();
     let from_table =
         |t: toml::Table| build(t.try_into().map_err(|e: toml::de::Error| e.to_string())?);
     let alone = |key: &str, value: toml::Value| toml::Table::from_iter([(key.to_string(), value)]);
@@ -151,37 +163,55 @@ pub fn lenient_over<T>(
     }
     table.retain(|key, _| !dropped.iter().any(|(k, _)| k == key));
     // One key at a time: a restored value that fails against the new file's keys stays default.
-    for (key, _) in &dropped {
+    // Entries come in index order, so a restored entry goes back at its own index.
+    let mut out = Vec::with_capacity(dropped.len());
+    for (key, error) in dropped {
         let mut next = table.clone();
-        let inner = key.split_once('.').and_then(|(t, name)| {
-            let base = base.get(t)?.get(name)?;
-            Some((next.get_mut(t)?.as_table_mut()?, name, base))
-        });
-        let array = key.split_once('[').map(|(name, _)| name);
-        if let Some((inner, name, value)) = inner {
-            inner.insert(name.to_string(), value.clone());
-        } else if let Some((name, value)) = array.and_then(|a| Some((a, base.get(a)?))) {
-            next.insert(name.to_string(), value.clone());
-        } else if let Some(value) = base.get(key) {
-            next.insert(key.clone(), value.clone());
+        let restored = if let Some((t, name)) = key.split_once('.') {
+            (base.get(t).and_then(|b| b.get(name)))
+                .zip(next.get_mut(t).and_then(|t| t.as_table_mut()))
+                .map(|(value, inner)| inner.insert(name.to_string(), value.clone()))
+                .is_some()
+        } else if let Some((a, i)) = array_entry(&key) {
+            let entry = running_entry(&read, base, a, i);
+            let entries = next.get_mut(a).and_then(|v| v.as_array_mut());
+            entry
+                .zip(entries)
+                .map(|(entry, entries)| entries.insert(i.min(entries.len()), entry.clone()))
+                .is_some()
         } else {
-            continue;
-        }
-        if from_table(next.clone()).is_ok() {
+            base.get(&key)
+                .map(|value| next.insert(key.clone(), value.clone()))
+                .is_some()
+        };
+        let kept = restored && from_table(next.clone()).is_ok();
+        if kept {
             table = next;
         }
+        out.push(DroppedKey { key, error, kept });
     }
-    Ok((from_table(table.clone())?, dropped, table))
+    Ok((from_table(table.clone())?, out, table))
 }
 
-/// Whether dropped `key` (`table.name` or a top-level key) took its value in `base`: the
-/// `table` [`lenient_over`] returned holds it.
-pub fn kept(table: &toml::Table, base: &toml::Table, key: &str) -> bool {
-    let at = |t: &toml::Table| match key.split_once('.') {
-        Some((outer, name)) => t.get(outer)?.get(name).cloned(),
-        None => t.get(key).cloned(),
-    };
-    at(base).is_some_and(|v| at(table) == Some(v))
+/// `name[i]` split into the array's name and the index.
+fn array_entry(key: &str) -> Option<(&str, usize)> {
+    let (name, rest) = key.split_once('[')?;
+    Some((name, rest.strip_suffix(']')?.parse().ok()?))
+}
+
+/// The entry of `base`'s array `a` that entry `i` of `read`'s stands for: the one with the
+/// same `name`, or the one at `i` when the entry has no name.
+fn running_entry<'a>(
+    read: &toml::Table,
+    base: &'a toml::Table,
+    a: &str,
+    i: usize,
+) -> Option<&'a toml::Value> {
+    let running = base.get(a)?.as_array()?;
+    match read.get(a)?.as_array()?.get(i)?.get("name") {
+        Some(name) => running.iter().find(|e| e.get("name") == Some(name)),
+        None => running.get(i),
+    }
 }
 
 impl Config {
