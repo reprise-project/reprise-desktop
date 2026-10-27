@@ -536,4 +536,28 @@ mod tests {
         h.roundtrip(&mut steam);
         assert!(h.state.toplevels.sandboxed_apps().is_empty());
     }
+
+    #[test]
+    fn the_portal_hears_a_sandboxed_app_come_and_go_with_its_window() {
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut portal = h.connect_portal();
+        let watcher = portal.watch_sandboxed();
+        h.roundtrip(&mut portal);
+        assert_eq!(portal.side.sandboxed, vec![None], "an empty set first");
+        let mut app = h.connect_in_flatpak("org.example.App");
+        let t = h.map_toplevel(&mut app, "app", 200, 100);
+        h.roundtrip(&mut portal);
+        app.destroy(t);
+        h.roundtrip(&mut app);
+        h.roundtrip(&mut portal);
+        assert_eq!(
+            portal.side.sandboxed,
+            vec![None, Some("org.example.App".into()), None, None],
+            "the app with its window, then an empty set once it is gone"
+        );
+        watcher.destroy();
+        h.roundtrip(&mut portal);
+        assert!(h.state.toplevels.sandbox_watchers.is_empty());
+    }
 }
