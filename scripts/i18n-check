@@ -15,7 +15,7 @@ SKIP = {"target", "tmp", ".git", "node_modules", "fixtures"}
 DOMAIN = re.compile(r'\bstrings!\(\s*"([\w-]+)"\s*\)|\bStrings::new\(\s*"([\w-]+)"')
 TR = re.compile(r'(?<![\w:])(?:\$?crate::|reprisekit::)?(kit_)?tr!\(\s*"([^"]*)"')
 MESSAGE = re.compile(r"^([A-Za-z][\w-]*)\s*=", re.M)
-VARIABLE = re.compile(r"\{\s*\$([\w-]+)")
+VARIABLE = re.compile(r"\$([A-Za-z][\w-]*)")
 
 
 def ftl_ids(path):
