@@ -198,12 +198,19 @@ impl Harness {
 
     /// A client on one end of a socket pair, its registry read.
     pub fn connect(&mut self) -> TestClient {
-        self.connect_with(None, false, None)
+        self.connect_with(None, |_| {})
     }
 
     /// A client in a Flatpak sandbox.
     pub fn connect_sandboxed(&mut self) -> TestClient {
-        self.connect_with(None, true, None)
+        self.connect_with(None, |d| d.sandbox.flatpak = true)
+    }
+
+    /// A client the global filter takes for the installed reprise-portal.
+    pub fn connect_portal(&mut self) -> TestClient {
+        self.connect_with(None, |d| {
+            d.sandbox.pid = Some(crate::sandbox::TEST_PORTAL_PID);
+        })
     }
 
     /// A client on the socket Flatpak's security context opened for `app_id`.
@@ -212,25 +219,23 @@ impl Harness {
             engine: Some("org.flatpak".into()),
             app_id: Some(app_id.into()),
         };
-        self.connect_with(None, true, Some(context))
+        self.connect_with(Some(context), |d| d.sandbox.flatpak = true)
     }
 
     /// A client [`State::client_pid`] takes for process `pid`; pick one above the kernel's
     /// pid limit so no real process answers to it.
     pub fn connect_as(&mut self, pid: i32) -> TestClient {
-        self.connect_with(Some(pid), false, None)
+        self.connect_with(None, |d| d.pid = Some(pid))
     }
 
     fn connect_with(
         &mut self,
-        pid: Option<i32>,
-        flatpak: bool,
         context: Option<crate::sandbox::Sandbox>,
+        edit: impl FnOnce(&mut ClientState),
     ) -> TestClient {
         let (server, client) = UnixStream::pair().expect("socket pair");
         let mut data = ClientState::of_stream(&server, context);
-        data.pid = pid;
-        data.sandbox.flatpak = flatpak;
+        edit(&mut data);
         let server = self
             .state
             .dh
@@ -493,6 +498,19 @@ impl TestClient {
             &self.qh(),
             (),
         )
+    }
+
+    /// Bind `reprise_input_v1` v5 and watch the sandboxed apps with a window, as the portal
+    /// does; the events land in [`ClientSide::sandboxed`].
+    pub fn watch_sandboxed(&self) -> input_client::reprise_sandboxed_v1::RepriseSandboxedV1 {
+        let name = (self.side.globals.iter())
+            .find(|(_, i, _)| i == "reprise_input_v1")
+            .map(|(n, _, _)| *n)
+            .expect("reprise_input_v1 is shown to the portal");
+        let input: input_client::reprise_input_v1::RepriseInputV1 = (self.side.registry.as_ref())
+            .expect("wl_registry")
+            .bind(name, 5, &self.qh(), ());
+        input.watch_sandboxed(&self.qh(), ())
     }
 
     fn bind_globals(&mut self) {
@@ -839,6 +857,8 @@ pub struct ClientSide {
     pub keys: Vec<(u32, bool)>,
     /// Each button event the pointer heard: its evdev code and whether it went down.
     pub buttons: Vec<(u32, bool)>,
+    /// Each `reprise_sandboxed_v1` event heard: an app id for `app`, `None` for `done`.
+    pub sandboxed: Vec<Option<String>>,
     /// The `shells` the compositor asked to close, in order.
     pub closes: Vec<usize>,
     layer_shell: Option<ZwlrLayerShellV1>,
@@ -1129,6 +1149,44 @@ impl wc::Dispatch<ZwlrForeignToplevelManagerV1, ()> for ClientSide {
     wc::event_created_child!(ClientSide, ZwlrForeignToplevelManagerV1, [
         zwlr_foreign_toplevel_manager_v1::EVT_TOPLEVEL_OPCODE => (ZwlrForeignToplevelHandleV1, ()),
     ]);
+}
+
+#[allow(
+    dead_code,
+    non_camel_case_types,
+    non_upper_case_globals,
+    unused_imports,
+    clippy::all
+)]
+pub mod input_client {
+    pub mod __interfaces {
+        use wayland_client::backend as wayland_backend;
+        use wayland_client::protocol::__interfaces::*;
+        wayland_scanner::generate_interfaces!("protocols/reprise-input-v1.xml");
+    }
+    use self::__interfaces::*;
+    use wayland_client;
+    use wayland_client::protocol::*;
+    wayland_scanner::generate_client_code!("protocols/reprise-input-v1.xml");
+}
+
+wc::delegate_noop!(ClientSide: ignore input_client::reprise_input_v1::RepriseInputV1);
+
+impl wc::Dispatch<input_client::reprise_sandboxed_v1::RepriseSandboxedV1, ()> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &input_client::reprise_sandboxed_v1::RepriseSandboxedV1,
+        ev: input_client::reprise_sandboxed_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        use input_client::reprise_sandboxed_v1::Event;
+        st.sandboxed.push(match ev {
+            Event::App { app_id } => Some(app_id),
+            Event::Done => None,
+        });
+    }
 }
 
 wc::delegate_noop!(ClientSide: ignore ZwlrForeignToplevelHandleV1);

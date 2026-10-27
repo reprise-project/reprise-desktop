@@ -157,6 +157,10 @@ impl ClientSandbox {
     /// preload, ptrace) still passes: the check keeps other clients from
     /// binding directly, it is no boundary against the user.
     fn is_portal(&self) -> bool {
+        #[cfg(test)]
+        if self.pid == Some(TEST_PORTAL_PID) {
+            return true;
+        }
         self.pid.is_some_and(|pid| {
             std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|exe| {
                 is_portal_exe(std::os::unix::ffi::OsStrExt::as_bytes(exe.as_os_str()))
@@ -164,6 +168,10 @@ impl ClientSandbox {
         })
     }
 }
+
+/// The pid a harness client takes to pass as the installed portal.
+#[cfg(test)]
+pub const TEST_PORTAL_PID: i32 = i32::MAX;
 
 /// Whether a client may see and bind the global `name`: a privileged
 /// global is hidden from a sandboxed client, except data control for the
