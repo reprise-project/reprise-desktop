@@ -3,6 +3,7 @@
 use reprisekit::controls::notifysheet::{
     SheetIcons, SheetOpening, WarmJob, WarmLayers, build_warm,
 };
+use reprisekit::look::widgets::BUTTON_ICON;
 use reprisekit::style::SheetShape;
 use reprisekit::taskbar::Edge;
 use smithay::reexports::calloop::channel;
@@ -65,9 +66,13 @@ fn warm_one(
     };
     let lit = b.open_drawn < 1.0;
     let (app, picture) = sheet_icons(&mut state.icons, b, &open);
+    let actions = b
+        .item
+        .button_icon_canvases(BUTTON_ICON * theme.scale.max(1));
     let icons = SheetIcons {
         app: app.as_ref(),
         picture: picture.as_ref(),
+        actions: &actions,
     };
     let tint = b.tint.flatten();
     let Some(job) = opening.warm_job(&b.glass, &theme, &shut, &open, icons, tint, lit) else {

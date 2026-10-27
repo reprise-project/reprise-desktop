@@ -49,6 +49,8 @@ pub struct SheetContent<'a> {
     pub title: &'a str,
     pub body: &'a str,
     pub actions: &'a [&'a str],
+    /// Which `actions` show their icon in place of the label.
+    pub action_icons: &'a [bool],
     pub reply: Option<NotifyReply<'a>>,
     pub has_picture: bool,
     pub has_app_icon: bool,
@@ -76,7 +78,8 @@ pub struct SheetLayout {
     app_line: String,
     app_box: Rect,
     title: String,
-    labels: Vec<String>,
+    /// Each pill's label; None shows its action's icon.
+    labels: Vec<Option<String>>,
     line_h: i32,
     pill_px: u32,
 }

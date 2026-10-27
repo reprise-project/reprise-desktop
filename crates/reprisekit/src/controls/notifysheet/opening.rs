@@ -75,10 +75,11 @@ pub struct WarmLayers {
 pub fn build_warm(job: WarmJob, text: &TextRenderer) -> WarmLayers {
     let WarmJob { theme, key, lit } = job;
     let look = notify_look(&theme).expect("a job is only made under a look with sheets");
-    let (app, picture) = (key.app.clone(), key.picture.clone());
+    let (app, picture, actions) = (key.app.clone(), key.picture.clone(), key.actions.clone());
     let icons = SheetIcons {
         app: app.as_ref(),
         picture: picture.as_ref(),
+        actions: &actions,
     };
     let layers = Layers::parts(
         key,
@@ -111,6 +112,7 @@ pub(super) struct OpeningKey {
     dark: bool,
     app: Option<Canvas>,
     picture: Option<Canvas>,
+    actions: Vec<Option<Canvas>>,
     tint: Option<Color>,
     reply: Option<(TextEdit, Caret, Option<Preedit>)>,
 }
@@ -136,6 +138,7 @@ impl OpeningKey {
             dark: look.dark,
             app: icons.app.cloned(),
             picture: icons.picture.cloned(),
+            actions: icons.actions.to_vec(),
             tint,
             reply: reply.map(|(e, c, p)| (e.clone(), c, p.cloned())),
         }
@@ -356,6 +359,7 @@ impl SheetOpening {
             text,
             &look,
             &open,
+            icons.actions,
             edit_empty,
             pushed,
             hot,
