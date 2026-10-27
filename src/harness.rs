@@ -18,6 +18,12 @@ use wayland_client::{
     },
 };
 use wayland_protocols::{
+    ext::data_control::v1::client::{
+        ext_data_control_device_v1::{self, ExtDataControlDeviceV1},
+        ext_data_control_manager_v1::ExtDataControlManagerV1,
+        ext_data_control_offer_v1::ExtDataControlOfferV1,
+        ext_data_control_source_v1::{self, ExtDataControlSourceV1},
+    },
     ext::session_lock::v1::client::{
         ext_session_lock_manager_v1::ExtSessionLockManagerV1,
         ext_session_lock_surface_v1::{self, ExtSessionLockSurfaceV1},
@@ -539,6 +545,9 @@ impl TestClient {
                 "wl_data_device_manager" => {
                     self.side.data_manager = Some(registry.bind(name, version.min(3), &qh, ()));
                 }
+                "ext_data_control_manager_v1" => {
+                    self.side.data_control = Some(registry.bind(name, 1, &qh, ()));
+                }
                 "zwp_input_method_manager_v2" => {
                     self.side.im_manager = Some(registry.bind(name, 1, &qh, ()));
                 }
@@ -605,6 +614,20 @@ impl TestClient {
         let device = self.data_device();
         let source = self.data_source(mimes, bytes);
         device.set_selection(Some(&source), 0);
+        source
+    }
+
+    /// A clipboard selection offering `mimes` through data control, as a clipboard manager sets
+    /// one without the keyboard. The source answers every read with `bytes`.
+    pub fn control_copy(&mut self, mimes: &[&str], bytes: &[u8]) -> ExtDataControlSourceV1 {
+        let qh = self.qh();
+        let manager = (self.side.data_control.as_ref()).expect("ext_data_control_manager_v1");
+        let device = manager.get_data_device(self.seat(), &qh, ());
+        let source = manager.create_data_source(&qh, Arc::from(bytes));
+        for m in mimes {
+            source.offer(m.to_string());
+        }
+        device.set_selection(Some(&source));
         source
     }
 
@@ -841,6 +864,7 @@ pub struct ClientSide {
     pointer: Option<wl_pointer::WlPointer>,
     seat: Option<wl_seat::WlSeat>,
     data_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
+    data_control: Option<ExtDataControlManagerV1>,
     /// The surface the keyboard last entered and has not left.
     pub keyboard_focus: Option<WlSurface>,
     enter_serial: u32,
@@ -1233,6 +1257,40 @@ impl wc::Dispatch<wl_data_source::WlDataSource, Arc<[u8]>> for ClientSide {
     }
 }
 
+impl wc::Dispatch<ExtDataControlDeviceV1, ()> for ClientSide {
+    fn event(
+        _: &mut Self,
+        _: &ExtDataControlDeviceV1,
+        _: ext_data_control_device_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+
+    wc::event_created_child!(ClientSide, ExtDataControlDeviceV1, [
+        ext_data_control_device_v1::EVT_DATA_OFFER_OPCODE => (ExtDataControlOfferV1, ()),
+    ]);
+}
+
+impl wc::Dispatch<ExtDataControlSourceV1, Arc<[u8]>> for ClientSide {
+    fn event(
+        _: &mut Self,
+        _: &ExtDataControlSourceV1,
+        ev: ext_data_control_source_v1::Event,
+        bytes: &Arc<[u8]>,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let ext_data_control_source_v1::Event::Send { fd, .. } = ev {
+            use std::io::Write;
+            let _ = std::fs::File::from(fd).write_all(bytes);
+        }
+    }
+}
+
+wc::delegate_noop!(ClientSide: ignore ExtDataControlManagerV1);
+wc::delegate_noop!(ClientSide: ignore ExtDataControlOfferV1);
 wc::delegate_noop!(ClientSide: ignore WlSurface);
 wc::delegate_noop!(ClientSide: ignore wl_shm::WlShm);
 wc::delegate_noop!(ClientSide: ignore wl_shm_pool::WlShmPool);
