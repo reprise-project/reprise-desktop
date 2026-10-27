@@ -1004,6 +1004,7 @@ impl XwmHandler for State {
         match selection {
             SelectionTarget::Clipboard => {
                 self.clip.offered.clone_from(&mime_types);
+                self.clip.sandboxed = self.clip_owner_sandboxed();
                 set_data_device_selection(&self.dh, &self.seat, mime_types, Owner::X11(xwm));
                 self.clipboard_changed();
             }
@@ -1019,6 +1020,7 @@ impl XwmHandler for State {
                 if current_data_device_selection_userdata(&self.seat).is_some_and(|o| o.is_x11(xwm))
                 {
                     self.clip.offered.clear();
+                    self.clip.sandboxed = false;
                     clear_data_device_selection(&self.dh, &self.seat);
                     self.clipboard_changed();
                 }
