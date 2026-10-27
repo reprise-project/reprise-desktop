@@ -3,10 +3,15 @@
 
 use crate::compositor::State;
 use reprisefs::autostart::Entry;
+use std::time::Duration;
 
 /// Autostart entries for what Reprise does itself: geoclue's demo agent
 /// would take the agent's place from the compositor (`location`).
 const REPLACED: [&str; 1] = ["geoclue-demo-agent"];
+
+/// How long after a crash a program whose scope still runs gets to finish exiting before its scope
+/// is listed again.
+const DYING_GRACE: Duration = Duration::from_secs(3);
 
 /// The entries that should actually be launched on `desktops`: not hidden,
 /// not fenced off by `OnlyShowIn` / `NotShowIn`, not one Reprise replaces,
@@ -33,10 +38,11 @@ fn on_path(program: &str) -> bool {
 
 /// Spawn every applicable autostart entry, then restore the last session. Called once at startup,
 /// after `WAYLAND_DISPLAY` is exported, so a child inherits the socket. After a crash, an entry
-/// whose app scope still has a process is left running instead of started twice. The scan, the walk of the
-/// user manager's session units and the spawns run on a job thread so the first frames don't wait
-/// on them; the restore follows on the loop. The walk waits for `session_begun`, so the session
-/// target's start jobs are queued and their conditions get checked before it reads them.
+/// whose app scope still has a process a moment later is left running instead of started twice.
+/// The scan, the walk of the user manager's session units and the spawns run on a job thread so
+/// the first frames don't wait on them; the restore follows on the loop. The walk waits for
+/// `session_begun`, so the session target's start jobs are queued and their conditions get
+/// checked before it reads them.
 pub fn start(state: &mut State, session_begun: std::thread::JoinHandle<()>, after_crash: bool) {
     let desktops = reprisefs::autostart::desktop_names(Some(&state.env.desktop));
     let terminal = state.config.terminal.clone();
@@ -44,12 +50,9 @@ pub fn start(state: &mut State, session_begun: std::thread::JoinHandle<()>, afte
     state.spawn_job(move || {
         let _ = session_begun.join();
         let run = find(&desktops);
-        let running = if after_crash {
-            running_scopes()
-        } else {
-            Vec::new()
-        };
-        launch(&to_launch(&run, &running), &terminal, &env);
+        launch_left(&run, after_crash, running_scopes, DYING_GRACE, |e| {
+            launch(e, &terminal, &env)
+        });
         Box::new(move |state: &mut State| crate::session::restore(state, &run))
     });
 }
@@ -86,6 +89,34 @@ fn to_launch<'a>(run: &'a [Entry], running: &[String]) -> Vec<&'a Entry> {
         .collect()
 }
 
+/// `launch` each of `run`. After a crash, an entry with an app scope in `list()` waits `grace` and
+/// starts only if its scope is gone from the listing then: a program still exiting does not keep
+/// it from starting.
+fn launch_left(
+    run: &[Entry],
+    after_crash: bool,
+    list: impl Fn() -> Vec<String>,
+    grace: Duration,
+    mut launch: impl FnMut(&Entry),
+) {
+    if !after_crash {
+        run.iter().for_each(launch);
+        return;
+    }
+    let first = to_launch(run, &list());
+    let waiting: Vec<Entry> = run
+        .iter()
+        .filter(|e| !first.iter().any(|f| f.id == e.id))
+        .cloned()
+        .collect();
+    first.into_iter().for_each(&mut launch);
+    if waiting.is_empty() {
+        return;
+    }
+    std::thread::sleep(grace);
+    to_launch(&waiting, &list()).into_iter().for_each(launch);
+}
+
 /// The user manager's app scopes that still have a process. Blocks on it.
 fn running_scopes() -> Vec<String> {
     let out = std::process::Command::new("systemctl")
@@ -111,12 +142,10 @@ fn running_scopes() -> Vec<String> {
     }
 }
 
-fn launch(run: &[&Entry], terminal: &str, env: &crate::spawn::SessionEnv) {
-    for e in run {
-        log::info!("autostart: {}", e.id);
-        let argv = e.argv(terminal);
-        crate::spawn::spawn_argv_in(&argv, Some(&e.id), e.path.as_deref(), env, None);
-    }
+fn launch(e: &Entry, terminal: &str, env: &crate::spawn::SessionEnv) {
+    log::info!("autostart: {}", e.id);
+    let argv = e.argv(terminal);
+    crate::spawn::spawn_argv_in(&argv, Some(&e.id), e.path.as_deref(), env, None);
 }
 
 #[cfg(test)]
@@ -200,6 +229,49 @@ mod tests {
         assert_eq!(ids(to_launch(&run, &[])), ["syncthing.desktop", "a"]);
         let running = ["app-reprise-syncthing-1ax2.scope".to_string()];
         assert_eq!(ids(to_launch(&run, &running)), ["a"]);
+    }
+
+    #[test]
+    fn after_a_crash_an_entry_starts_once_its_dying_scope_is_gone() {
+        let sync =
+            reprisefs::autostart::parse("syncthing.desktop", "[Desktop Entry]\nExec=s\n", false)
+                .unwrap();
+        let run = [sync, entry("[Desktop Entry]\nExec=a\n")];
+        let scope = "app-reprise-syncthing-1ax2.scope".to_string();
+        let launched = |after_crash: bool, listings: Vec<Vec<String>>| {
+            let listings = std::cell::RefCell::new(listings.into_iter());
+            let mut got = Vec::new();
+            let list = || {
+                listings
+                    .borrow_mut()
+                    .next()
+                    .expect("one listing more than expected")
+            };
+            launch_left(&run, after_crash, list, Duration::ZERO, |e| {
+                got.push(e.id.clone())
+            });
+            got
+        };
+        assert_eq!(
+            launched(false, vec![]),
+            ["syncthing.desktop", "a"],
+            "a login lists nothing"
+        );
+        assert_eq!(
+            launched(true, vec![vec![scope.clone()], vec![]]),
+            ["a", "syncthing.desktop"],
+            "the scope went during the grace"
+        );
+        assert_eq!(
+            launched(true, vec![vec![scope.clone()], vec![scope]]),
+            ["a"],
+            "the scope still runs"
+        );
+        assert_eq!(
+            launched(true, vec![vec![]]),
+            ["syncthing.desktop", "a"],
+            "no scope, no second listing"
+        );
     }
 
     #[test]
