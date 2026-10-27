@@ -198,23 +198,37 @@ impl Harness {
 
     /// A client on one end of a socket pair, its registry read.
     pub fn connect(&mut self) -> TestClient {
-        self.connect_with(None, false)
+        self.connect_with(None, false, None)
     }
 
     /// A client in a Flatpak sandbox.
     pub fn connect_sandboxed(&mut self) -> TestClient {
-        self.connect_with(None, true)
+        self.connect_with(None, true, None)
+    }
+
+    /// A client on the socket Flatpak's security context opened for `app_id`.
+    pub fn connect_in_flatpak(&mut self, app_id: &str) -> TestClient {
+        let context = crate::sandbox::Sandbox {
+            engine: Some("org.flatpak".into()),
+            app_id: Some(app_id.into()),
+        };
+        self.connect_with(None, true, Some(context))
     }
 
     /// A client [`State::client_pid`] takes for process `pid`; pick one above the kernel's
     /// pid limit so no real process answers to it.
     pub fn connect_as(&mut self, pid: i32) -> TestClient {
-        self.connect_with(Some(pid), false)
+        self.connect_with(Some(pid), false, None)
     }
 
-    fn connect_with(&mut self, pid: Option<i32>, flatpak: bool) -> TestClient {
+    fn connect_with(
+        &mut self,
+        pid: Option<i32>,
+        flatpak: bool,
+        context: Option<crate::sandbox::Sandbox>,
+    ) -> TestClient {
         let (server, client) = UnixStream::pair().expect("socket pair");
-        let mut data = ClientState::of_stream(&server, None);
+        let mut data = ClientState::of_stream(&server, context);
         data.pid = pid;
         data.sandbox.flatpak = flatpak;
         let server = self

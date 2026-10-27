@@ -11,6 +11,7 @@ pub mod drawncache;
 pub mod dropdata;
 pub mod extract;
 pub mod fileclip;
+pub mod flatpak;
 pub mod folders;
 pub mod gvfsmeta;
 pub mod hidden;

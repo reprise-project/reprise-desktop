@@ -1,7 +1,8 @@
 //! `reprise_input_v1`: the private global reprise-portal binds to hand in EIS
-//! sockets, drive pointer barriers, receive global shortcuts and press
-//! RemoteDesktop keys without libei. Glue only: each request calls into
-//! `eis`, `inputcapture`, `globalshortcuts` or `remotekeys`.
+//! sockets, drive pointer barriers, receive global shortcuts, press
+//! RemoteDesktop keys without libei and hear which sandboxed apps have a
+//! window. Glue only: each request calls into `eis`, `inputcapture`,
+//! `globalshortcuts`, `remotekeys` or `toplevels`.
 //!
 //! Protocol objects carry ids, not the objects themselves: a resource whose
 //! object the compositor already dropped finds nothing behind its id.
@@ -21,6 +22,7 @@ use proto::reprise_eis_client_v1::{self, RepriseEisClientV1};
 use proto::reprise_input_capture_v1::{self, RepriseInputCaptureV1};
 use proto::reprise_input_v1::{self, RepriseInputV1};
 use proto::reprise_keys_v1::{self, RepriseKeysV1};
+use proto::reprise_sandboxed_v1::{self, RepriseSandboxedV1};
 use proto::reprise_shortcuts_v1::{self, RepriseShortcutsV1};
 
 #[allow(
@@ -48,7 +50,7 @@ pub mod proto {
     wayland_scanner::generate_server_code!("protocols/reprise-input-v1.xml");
 }
 
-const VERSION: u32 = 4;
+const VERSION: u32 = 5;
 
 pub const DEVICE_KEYBOARD: u32 = 1;
 pub const DEVICE_POINTER: u32 = 2;
@@ -223,6 +225,11 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
                 let kid = state.inputproto.keys.create();
                 data_init.init(id, KeysData(kid));
             }
+            Request::WatchSandboxed { id } => {
+                let r = data_init.init(id, SandboxedData);
+                state.toplevels.send_sandboxed(&r);
+                state.toplevels.sandbox_watchers.push(r);
+            }
             Request::Destroy => {}
         }
     }
@@ -350,5 +357,24 @@ impl Dispatch2<RepriseKeysV1, State> for KeysData {
 
     fn destroyed(&self, state: &mut State, _client: ClientId, _resource: &RepriseKeysV1) {
         state.keys_destroy(self.0);
+    }
+}
+
+pub struct SandboxedData;
+
+impl Dispatch2<RepriseSandboxedV1, State> for SandboxedData {
+    fn request(
+        &self,
+        _state: &mut State,
+        _client: &Client,
+        _resource: &RepriseSandboxedV1,
+        _request: reprise_sandboxed_v1::Request,
+        _dh: &DisplayHandle,
+        _data_init: &mut DataInit<'_, State>,
+    ) {
+    }
+
+    fn destroyed(&self, state: &mut State, _client: ClientId, resource: &RepriseSandboxedV1) {
+        state.toplevels.sandbox_watchers.retain(|w| w != resource);
     }
 }

@@ -64,11 +64,12 @@ on the security context, not one the app chose, and only Flatpak's
 contexts are matched. A listed app can read everything you copy. See
 [flatpak-clipboard.md](flatpak-clipboard.md).
 
-One more global, `reprise_input_v1`, carries remote control, input capture
-and global shortcuts between the compositor and the portal. Reprise offers
-it only to a client whose process runs `reprise-portal` from `/usr/bin` or
-`/usr/local/bin`. That keeps other clients from binding it directly; it is
-no boundary against code running as you.
+One more global, `reprise_input_v1`, carries remote control, input capture,
+global shortcuts and the list of sandboxed apps with a window between the
+compositor and the portal. Reprise offers it only to a client whose process
+runs `reprise-portal` from `/usr/bin` or `/usr/local/bin`. That keeps other
+clients from binding it directly; it is no boundary against code running as
+you.
 
 ## X11 programs
 

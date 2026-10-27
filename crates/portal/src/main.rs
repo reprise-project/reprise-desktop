@@ -991,7 +991,7 @@ async fn serve(
             PATH,
             inputcapture::InputCapture {
                 sessions,
-                link,
+                link: link.clone(),
                 frontend: frontend(),
             },
         )?
@@ -1027,6 +1027,7 @@ async fn serve(
             PATH,
             background::Background {
                 frontend: frontend(),
+                link,
             },
         )?
         .serve_at(
@@ -1135,12 +1136,15 @@ fn main() {
         std::process::exit(1);
     }
     log::info!("serving {BUS_NAME}: source types {source_types}");
-    // The compositor's input link backs RemoteDesktop, InputCapture and
-    // GlobalShortcuts; without it those interfaces answer but grant nothing.
+    // The compositor's input link backs RemoteDesktop, InputCapture,
+    // GlobalShortcuts and Background; without it those interfaces answer
+    // but grant nothing.
     let link = match inputlink::Link::start() {
         Ok(l) => Some(l),
         Err(e) => {
-            log::warn!("input link: {e}; RemoteDesktop, InputCapture and GlobalShortcuts disabled");
+            log::warn!(
+                "input link: {e}; RemoteDesktop, InputCapture, GlobalShortcuts and Background disabled"
+            );
             None
         }
     };

@@ -4,14 +4,15 @@
     reprise private protocol: input injection and capture for reprise-portal.
   </copyright>
 
-  <interface name="reprise_input_v1" version="4">
+  <interface name="reprise_input_v1" version="5">
     <description summary="EIS sockets and pointer barriers for the portal">
       One global. connect_eis hands the compositor one end of a socketpair
       to run libei's EIS side on; create_capture makes an object that owns
       pointer barriers and reports when the pointer crosses one.
       create_shortcuts makes an object that receives one program's global
       shortcuts. create_keys makes an object that presses keys for one
-      RemoteDesktop session.
+      RemoteDesktop session. watch_sandboxed makes an object that lists
+      the sandboxed apps with a window.
     </description>
 
     <enum name="kind">
@@ -73,6 +74,15 @@
         through it.
       </description>
       <arg name="id" type="new_id" interface="reprise_keys_v1"/>
+    </request>
+
+    <request name="watch_sandboxed" since="5">
+      <description summary="list the sandboxed apps with a window">
+        For the Background portal, which tells a sandboxed app running
+        without a window from one with a window whose own app id differs
+        from its sandbox's (an X11 client's class, an Electron app).
+      </description>
+      <arg name="id" type="new_id" interface="reprise_sandboxed_v1"/>
     </request>
   </interface>
 
@@ -192,5 +202,20 @@
     <event name="changed">
       <description summary="this app's entries changed in the config"/>
     </event>
+  </interface>
+
+  <interface name="reprise_sandboxed_v1" version="1">
+    <description summary="the sandbox app ids of the clients with a mapped window">
+      On creation and whenever the set changes, the compositor sends one
+      app event per app id in the set, then done. A done after no app
+      event means the set is empty. The app id is the Flatpak id of the
+      client's sandbox: its security context's, or the one in its
+      process's /.flatpak-info; for an X11 window, the X client's.
+    </description>
+    <request name="destroy" type="destructor"/>
+    <event name="app">
+      <arg name="app_id" type="string"/>
+    </event>
+    <event name="done"/>
   </interface>
 </protocol>
