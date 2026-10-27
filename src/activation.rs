@@ -161,8 +161,9 @@ impl State {
     }
 
     /// The Run dialog's line: one that names a folder opens it in Explorer, anything else runs
-    /// as [`State::spawn_command_activated`]. The folder is checked off the loop on a
-    /// [`State::spawn_job`], so a mount that does not answer stalls neither the loop nor the launch.
+    /// as [`State::spawn_command_activated`], a file it names going into the recent files. The
+    /// path is checked off the loop on a [`State::spawn_job`], so a mount that does not answer
+    /// stalls neither the loop nor the launch.
     pub fn run_line_activated(&mut self, cmd: &str) {
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         let Some(dir) = crate::spawn::command_folder(cmd, home.as_deref()) else {
@@ -171,12 +172,17 @@ impl State {
         };
         let cmd = cmd.to_string();
         self.spawn_job(move || {
-            let is_dir = dir.is_dir();
+            let meta = std::fs::metadata(&dir).ok();
+            let (is_dir, is_file) =
+                (meta.as_ref()).map_or((false, false), |m| (m.is_dir(), m.is_file()));
             Box::new(move |state: &mut State| {
                 if is_dir {
                     state.spawn_argv_activated(&reprisefs::apps::open_folder_argv(&dir));
                 } else {
                     state.spawn_command_activated(&cmd);
+                    if is_file {
+                        state.record_recent(dir, None);
+                    }
                 }
             })
         });

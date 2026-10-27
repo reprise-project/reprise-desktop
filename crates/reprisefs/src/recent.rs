@@ -1,9 +1,9 @@
-//! Recently used files from the freedesktop `recently-used.xbel`, where
-//! GTK and KDE record them.
+//! Recently used files in the freedesktop `recently-used.xbel`, where GTK and KDE record them
+//! and [`record`] adds the files Reprise opens.
 
 use crate::apps::{self, AppEntry};
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The recently used files; `current` parses the file again only when its mtime or size changed (it often runs to megabytes).
 #[derive(Debug)]
@@ -117,7 +117,7 @@ pub fn parse_xbel(text: &str) -> Vec<Bookmark> {
             .find("<bookmark ")
             .map_or(tag_start.len(), |j| end + j);
         let body = &tag_start[end..body_end];
-        if let Some(href) = attr(tag, "href")
+        if let Some(href) = attr(tag, "href").map(|h| xml_unescape(&h))
             && let Some(path) = href.strip_prefix("file://")
         {
             let modified = attr(tag, "modified").unwrap_or_default();
@@ -219,6 +219,240 @@ fn program_of(argv: &[String]) -> Option<String> {
         }
     }
     Some(base(first)).filter(|p| !p.is_empty())
+}
+
+/// Bookmarks [`record`] keeps; the oldest by `modified` go first.
+pub const MAX_BOOKMARKS: usize = 500;
+
+/// A `recently-used.xbel` larger than this is left alone.
+const MAX_XBEL_BYTES: u64 = 32 * 1024 * 1024;
+
+const XBEL_HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+<xbel version=\"1.0\"\n      \
+xmlns:bookmark=\"http://www.freedesktop.org/standards/desktop-bookmarks\"\n      \
+xmlns:mime=\"http://www.freedesktop.org/standards/shared-mime-info\"\n>";
+
+/// One writer at a time within the process; other programs replace the file whole, as this does.
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Record that `path`, a regular file, was opened, with `app` (the desktop entry that opened it)
+/// and its `mime` type, in the session's `recently-used.xbel`.
+pub fn record(path: &Path, app: Option<&AppEntry>, mime: Option<&str>) -> std::io::Result<()> {
+    if !path.is_file() {
+        return Ok(());
+    }
+    let xbel = xbel_path().ok_or_else(|| std::io::Error::other("no data directory"))?;
+    record_in(&xbel, path, app, mime, std::time::SystemTime::now())
+}
+
+/// [`record`] into the xbel file at `xbel`, stamped `now`. The file is read, edited and replaced
+/// in one rename, so a reader sees the old file or the new one.
+pub fn record_in(
+    xbel: &Path,
+    path: &Path,
+    app: Option<&AppEntry>,
+    mime: Option<&str>,
+    now: std::time::SystemTime,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    let _held = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    let (old, mode) = match std::fs::File::open(xbel) {
+        Ok(f) => {
+            let bytes = crate::ops::read_opened(&f, MAX_XBEL_BYTES)?;
+            let text = String::from_utf8(bytes)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            (text, f.metadata()?.permissions())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(dir) = xbel.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            (String::new(), std::fs::Permissions::from_mode(0o600))
+        }
+        Err(e) => return Err(e),
+    };
+    let stamp = iso8601(now);
+    let app = app.map(|e| (e.name.as_str(), format!("'{}'", e.exec_line)));
+    let app = app.as_ref().map(|(n, e)| (*n, e.as_str()));
+    let new = recorded(&old, path, app, mime, &stamp).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "unreadable recently-used.xbel",
+        )
+    })?;
+    let (mut f, tmp) = crate::ops::create_temp_beside(xbel, Some(mode))?;
+    let written = (|| {
+        f.write_all(new.as_bytes())?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, xbel)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
+}
+
+/// `t` in UTC as the xbel stamps write it: `2026-10-26T09:05:00.000000Z`.
+fn iso8601(t: std::time::SystemTime) -> String {
+    let secs = t
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as libc::time_t);
+    // SAFETY: `libc::tm` is plain data, and `gmtime_r` writes only the local `tm`.
+    let tm = unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::gmtime_r(&secs, &mut tm);
+        tm
+    };
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.000000Z",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec
+    )
+}
+
+fn xml_escape(v: &str) -> String {
+    let mut out = String::with_capacity(v.len());
+    for c in v.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The value of attribute `name` in the start tag `tag`, unescaped.
+fn tag_attr(tag: &str, name: &str) -> Option<String> {
+    let key = format!(" {name}=\"");
+    let start = tag.find(&key)? + key.len();
+    let end = tag[start..].find('"')? + start;
+    Some(xml_unescape(&tag[start..end]))
+}
+
+/// The `<bookmark>` elements of `text` as byte ranges; None when one does not close.
+fn bookmark_spans(text: &str) -> Option<Vec<std::ops::Range<usize>>> {
+    let mut spans = Vec::new();
+    let mut at = 0;
+    while let Some(i) = text[at..].find("<bookmark ") {
+        let start = at + i;
+        let tag_end = start + text[start..].find('>')?;
+        let end = if text[..tag_end].ends_with('/') {
+            tag_end + 1
+        } else {
+            let close = "</bookmark>";
+            tag_end + text[tag_end..].find(close)? + close.len()
+        };
+        spans.push(start..end);
+        at = end;
+    }
+    Some(spans)
+}
+
+/// `old` (an xbel document, or empty) with `path` recorded at `stamp` as opened by `app`
+/// (`(name, exec)`): a bookmark already there for it keeps its `added` time and the other
+/// programs that used it, and its count for `app` goes up by one. Past [`MAX_BOOKMARKS`] the
+/// oldest bookmarks go. None when `old` cannot be read as xbel.
+pub fn recorded(
+    old: &str,
+    path: &Path,
+    app: Option<(&str, &str)>,
+    mime: Option<&str>,
+    stamp: &str,
+) -> Option<String> {
+    let uri = crate::thumbnails::file_uri(path);
+    let spans = if old.trim().is_empty() {
+        Vec::new()
+    } else {
+        old.find("<xbel")?;
+        bookmark_spans(old)?
+    };
+    let head = match spans.first() {
+        Some(s) => old[..s.start].trim_end(),
+        None => old.find("</xbel>").map_or("", |i| old[..i].trim_end()),
+    };
+    let head = if head.contains("xmlns:bookmark=") && head.contains("xmlns:mime=") {
+        head
+    } else {
+        XBEL_HEAD
+    };
+    let mut added = stamp.to_string();
+    let mut apps: Vec<String> = Vec::new();
+    let mut count = 0u64;
+    let mut kept: Vec<(String, &str)> = Vec::new();
+    for span in &spans {
+        let el = &old[span.clone()];
+        let tag = &el[..el.find('>').unwrap_or(el.len())];
+        if tag_attr(tag, "href").as_deref() != Some(&uri) {
+            kept.push((tag_attr(tag, "modified").unwrap_or_default(), el));
+            continue;
+        }
+        added = tag_attr(tag, "added").unwrap_or(added);
+        for part in el.split("<bookmark:application ").skip(1) {
+            let Some(end) = part.find("/>") else { continue };
+            let entry = format!(" {}", &part[..end]);
+            if app.is_some_and(|(name, _)| tag_attr(&entry, "name").as_deref() == Some(name)) {
+                count = tag_attr(&entry, "count")
+                    .and_then(|c| c.parse().ok())
+                    .unwrap_or(0);
+            } else {
+                apps.push(format!("<bookmark:application{}/>", entry.trim_end()));
+            }
+        }
+    }
+    if let Some((name, exec)) = app {
+        apps.push(format!(
+            "<bookmark:application name=\"{}\" exec=\"{}\" modified=\"{stamp}\" count=\"{}\"/>",
+            xml_escape(name),
+            xml_escape(exec),
+            count + 1
+        ));
+    }
+    let mime = mime.map_or_else(String::new, |m| {
+        format!("\n          <mime:mime-type type=\"{}\"/>", xml_escape(m))
+    });
+    let apps: String = apps.iter().map(|a| format!("\n            {a}")).collect();
+    let apps = if apps.is_empty() {
+        String::new()
+    } else {
+        format!("\n          <bookmark:applications>{apps}\n          </bookmark:applications>")
+    };
+    let ours = format!(
+        "<bookmark href=\"{}\" added=\"{added}\" modified=\"{stamp}\" visited=\"{stamp}\">\n    \
+         <info>\n      <metadata owner=\"http://freedesktop.org\">{mime}{apps}\n      \
+         </metadata>\n    </info>\n  </bookmark>",
+        xml_escape(&uri)
+    );
+    if kept.len() >= MAX_BOOKMARKS {
+        let mut newest: Vec<usize> = (0..kept.len()).collect();
+        newest.sort_by(|&a, &b| kept[b].0.cmp(&kept[a].0));
+        let mut keep = vec![false; kept.len()];
+        for &i in &newest[..MAX_BOOKMARKS - 1] {
+            keep[i] = true;
+        }
+        let mut i = 0;
+        kept.retain(|_| {
+            i += 1;
+            keep[i - 1]
+        });
+    }
+    let mut out = String::from(head);
+    for (_, el) in &kept {
+        out.push_str("\n  ");
+        out.push_str(el);
+    }
+    out.push_str("\n  ");
+    out.push_str(&ours);
+    out.push_str("\n</xbel>\n");
+    Some(out)
 }
 
 #[cfg(test)]
@@ -340,6 +574,128 @@ mod tests {
         assert!(used_by_app("org.gnome.Builder", "'gnome-builder'", &flat));
         assert!(!used_by_app("", "'flatpak run org.gnome.gedit'", &flat));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn editor() -> AppEntry {
+        apps::parse_desktop(
+            "[Desktop Entry]\nType=Application\nName=Text & Notes\nExec=notes %U\n",
+            "notes.desktop",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_recorded_file_parses_back_with_its_program() {
+        let dir = std::env::temp_dir().join(format!("reprise-recent-rec-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = dir.join("Fish & chips.txt");
+        std::fs::write(&doc, "").unwrap();
+        let xbel = dir.join("share/recently-used.xbel");
+        let at = |s: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s);
+        let notes = editor();
+        record_in(
+            &xbel,
+            &doc,
+            Some(&notes),
+            Some("text/plain"),
+            at(1_800_000_000),
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&xbel).unwrap();
+        assert!(
+            text.contains("href=\"file://") && text.contains("Fish%20&amp;%20chips.txt\""),
+            "the space is percent-encoded and the & escaped: {text}"
+        );
+        assert!(text.contains("name=\"Text &amp; Notes\""), "{text}");
+        assert!(
+            text.contains("<mime:mime-type type=\"text/plain\"/>"),
+            "{text}"
+        );
+        assert!(
+            text.contains("modified=\"2027-01-15T08:00:00.000000Z\""),
+            "{text}"
+        );
+        let mut recent = RecentFiles::at(Some(xbel.clone()));
+        assert_eq!(recent.current(10), vec![doc.clone()]);
+        assert_eq!(recent.for_app(10, &notes), vec![doc.clone()]);
+
+        let other = dir.join("other.txt");
+        std::fs::write(&other, "").unwrap();
+        record_in(&xbel, &other, None, None, at(1_800_000_100)).unwrap();
+        record_in(&xbel, &doc, Some(&notes), None, at(1_800_000_200)).unwrap();
+        let text = std::fs::read_to_string(&xbel).unwrap();
+        assert_eq!(
+            text.matches("<bookmark ").count(),
+            2,
+            "one bookmark per file: {text}"
+        );
+        assert!(
+            text.contains("count=\"2\""),
+            "a second open counts up: {text}"
+        );
+        assert!(
+            text.contains("added=\"2027-01-15T08:00:00.000000Z\""),
+            "{text}"
+        );
+        assert_eq!(recent.current(10), [doc.clone(), other.clone()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recording_keeps_other_programs_and_caps_the_bookmarks() {
+        let gtk = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xbel version="1.0"
+      xmlns:bookmark="http://www.freedesktop.org/standards/desktop-bookmarks"
+      xmlns:mime="http://www.freedesktop.org/standards/shared-mime-info"
+>
+  <bookmark href="file:///home/u/a.txt" added="2026-01-01T00:00:00Z" modified="2026-01-01T00:00:00Z" visited="2026-01-01T00:00:00Z">
+    <info>
+      <metadata owner="http://freedesktop.org">
+        <mime:mime-type type="text/plain"/>
+        <bookmark:applications>
+          <bookmark:application name="gedit" exec="&apos;gedit %u&apos;" modified="2026-01-01T00:00:00Z" count="3"/>
+        </bookmark:applications>
+      </metadata>
+    </info>
+  </bookmark>
+</xbel>"#;
+        let notes = editor();
+        let exec = format!("'{}'", notes.exec_line);
+        let app = Some((notes.name.as_str(), exec.as_str()));
+        let a = Path::new("/home/u/a.txt");
+        let out = recorded(gtk, a, app, Some("text/plain"), "2026-02-01T00:00:00Z").unwrap();
+        let marks = parse_xbel(&out);
+        assert_eq!(marks.len(), 1);
+        let names: Vec<&str> = marks[0].apps.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["gedit", "Text & Notes"]);
+        assert!(out.contains("count=\"3\""), "gedit's count stays: {out}");
+        assert!(out.contains("added=\"2026-01-01T00:00:00Z\""), "{out}");
+
+        let mut many = String::new();
+        for i in 0..MAX_BOOKMARKS + 5 {
+            let stamp = format!("2026-01-01T00:{:02}:{:02}Z", i / 60, i % 60);
+            let mark = format!("<bookmark href=\"file:///f/{i}\" modified=\"{stamp}\"/>\n");
+            many.push_str(&mark);
+        }
+        let doc = format!("{}\n{many}</xbel>", XBEL_HEAD);
+        let out = recorded(
+            &doc,
+            Path::new("/f/new"),
+            None,
+            None,
+            "2027-01-01T00:00:00Z",
+        )
+        .unwrap();
+        let marks = parse_xbel(&out);
+        assert_eq!(marks.len(), MAX_BOOKMARKS);
+        assert_eq!(marks[0].path, Path::new("/f/new"));
+        assert!(
+            marks.iter().all(|b| b.path != Path::new("/f/5")),
+            "the oldest go"
+        );
+        assert!(marks.iter().any(|b| b.path == Path::new("/f/6")));
+        assert!(recorded("<xbel><bookmark href=\"x\">", a, None, None, "t").is_none());
     }
 
     #[test]

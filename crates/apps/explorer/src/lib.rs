@@ -1264,7 +1264,15 @@ impl Explorer {
                 .flatten()
                 .and_then(|m| reprisefs::program::program(&path, &m));
             let Some(program) = program else {
-                return Opened::Open(reprisefs::props::open_in(&path, &globs, &apps, &terminal));
+                let open = reprisefs::props::open_in(&path, &globs, &apps, &terminal);
+                if repriseconf::recent_files() {
+                    let app = (open.app.as_deref()).and_then(|id| apps.iter().find(|a| a.id == id));
+                    let mime = reprisefs::apps::mime_of_in(&globs, &path);
+                    if let Err(e) = reprisefs::recent::record(&path, app, mime.as_deref()) {
+                        log::warn!("recent files: could not record {}: {e}", path.display());
+                    }
+                }
+                return Opened::Open(open);
             };
             if reprisefs::program::asks_first(&path, program, how) {
                 return Opened::Ask(open);

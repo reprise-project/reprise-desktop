@@ -319,7 +319,8 @@ suspend_after = 0            # run [power] standby
 # [privacy]
 # recent_files = true        # false hides the recently used files GTK and KDE apps record
 #                            # (recently-used.xbel) from the Start menu's Documents, the
-#                            # jump lists and the file dialogs' My Recent Documents
+#                            # jump lists and the file dialogs' My Recent Documents, and
+#                            # records none of the files Reprise and Explorer open
 # location = true            # false refuses every program that asks geoclue for the
 #                            # location, without the prompt
 # capture_border = true      # a red border on the screen around each output, window
