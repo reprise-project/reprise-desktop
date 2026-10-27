@@ -48,6 +48,7 @@ const NO_CA_WARNING: &str = "Not using a Certificate Authority (CA) certificate 
                              connections to insecure, rogue Wi-Fi networks.";
 const DOMAIN_NEEDED: &str = "A domain is needed so this network's server can be told apart \
                              from any other server the CA has certified.";
+const DOMAIN_PARTIAL: &str = "Enter the server's full domain, such as radius.example.org.";
 
 /// The path fields, each with its Browse... button `<id>_browse`.
 pub const PATHS: [&str; 3] = ["ca", "cert", "pkey"];
@@ -251,6 +252,8 @@ impl EapDialog {
             reprisekit::text::wrap_chars(NO_CA_WARNING, TEXT_COLS)
         } else if ca_chosen && self.domain().is_empty() {
             reprisekit::text::wrap_chars(DOMAIN_NEEDED, TEXT_COLS)
+        } else if ca_chosen && !full_domain(self.domain()) {
+            reprisekit::text::wrap_chars(DOMAIN_PARTIAL, TEXT_COLS)
         } else {
             Vec::new()
         };
@@ -282,7 +285,7 @@ impl EapDialog {
                 CaSource::File(self.absolute("ca")?)
             };
             let domain = self.domain();
-            if domain.is_empty() {
+            if !full_domain(domain) {
                 return None;
             }
             (ca, domain.into())
@@ -329,6 +332,12 @@ impl EapDialog {
             }
         }
     }
+}
+
+/// Whether `domain` has two labels or more: NetworkManager suffix-matches it against the
+/// server certificate, so a bare `com` would accept any server the CA certified under it.
+fn full_domain(domain: &str) -> bool {
+    domain.split('.').filter(|l| !l.is_empty()).count() >= 2
 }
 
 // Wipes both password fields however the dialog closes.
@@ -527,6 +536,22 @@ mod tests {
         type_into(&mut d, "domain", "uni.example");
         assert!(live(&d, "connect"));
         assert_eq!(warning(&d), "");
+    }
+
+    #[test]
+    fn a_domain_of_one_label_is_refused_with_a_note() {
+        for partial in ["com", "com.", ".edu"] {
+            let mut d = dialog();
+            type_into(&mut d, "user", "alice");
+            type_into(&mut d, "password", "hunter22");
+            tick(&mut d, "system_ca");
+            type_into(&mut d, "domain", partial);
+            assert!(!live(&d, "connect"), "{partial} is refused");
+            assert_eq!(
+                warning(&d),
+                "Enter the server's full domain, such as radius.example.org."
+            );
+        }
     }
 
     #[test]
