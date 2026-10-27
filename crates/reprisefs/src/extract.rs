@@ -12,13 +12,11 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
-/// The types offered Extract Here and Extract to.
-pub const MIMES: [&str; 10] = [
+/// The types offered Extract Here and Extract to. A lone compressed file (`.gz`, `.xz`, `.zst`)
+/// is no archive: bsdtar reads it only with `--format raw`.
+pub const MIMES: [&str; 7] = [
     "application/zip",
     "application/x-tar",
-    "application/gzip",
-    "application/x-xz",
-    "application/zstd",
     "application/x-7z-compressed",
     "application/x-compressed-tar",
     "application/x-xz-compressed-tar",
@@ -29,9 +27,8 @@ pub const MIMES: [&str; 10] = [
 pub const FAILURE_TITLE: &str = "Error Extracting File";
 
 /// Suffixes a folder named after its archive drops, longest first.
-const SUFFIXES: [&str; 13] = [
+const SUFFIXES: [&str; 10] = [
     ".tar.gz", ".tar.xz", ".tar.zst", ".tar.bz2", ".tgz", ".txz", ".tbz2", ".tar", ".zip", ".7z",
-    ".gz", ".xz", ".zst",
 ];
 
 const SLICE_MS: i32 = 50;
@@ -500,6 +497,26 @@ mod tests {
     }
 
     #[test]
+    fn archives_are_extractable_and_a_lone_compressed_file_is_not() {
+        for mime in [
+            "application/zip",
+            "application/x-7z-compressed",
+            "application/x-compressed-tar",
+            "application/x-zstd-compressed-tar",
+        ] {
+            assert!(is_archive(mime), "{mime}");
+        }
+        for mime in [
+            "application/gzip",
+            "application/x-xz",
+            "application/zstd",
+            "text/plain",
+        ] {
+            assert!(!is_archive(mime), "{mime}");
+        }
+    }
+
+    #[test]
     fn the_folder_drops_the_archive_suffix() {
         for (archive, folder) in [
             ("photos.zip", "photos"),
@@ -507,7 +524,7 @@ mod tests {
             ("Backup.TAR.XZ", "Backup"),
             ("a.tgz", "a"),
             ("set.7z", "set"),
-            ("notes.txt.zst", "notes.txt"),
+            ("dump.tar.zst", "dump"),
             (".zip", ".zip"),
             ("plain", "plain"),
         ] {
