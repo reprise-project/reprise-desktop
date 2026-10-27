@@ -41,6 +41,13 @@ pub(crate) fn pause(state: &mut State) {
     state.release_all_buttons(InputTime::now());
     state.stop_field_repeat();
     state.stop_media_repeat();
+    // libinput holds back the releases its suspend makes until resume; the client would repeat
+    // a held key all that time. Those late releases find the keys up and are absorbed.
+    if let Some(keyboard) = state.seat.get_keyboard() {
+        for code in keyboard.pressed_keys() {
+            state.handle_key(code, false, InputTime::now());
+        }
+    }
     let Some(b) = state.backend.as_mut() else {
         return;
     };
