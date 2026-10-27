@@ -5,7 +5,9 @@
 use crate::compositor::State;
 use std::cell::Cell;
 use std::ffi::OsString;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// A crash this soon after a restart ends the session instead of restarting again.
@@ -160,8 +162,26 @@ pub fn install(prior: Option<u32>) {
     }));
 }
 
-/// Exec `/proc/self/exe` (the running binary, even once a package update replaced its file) with
-/// `argv` and this environment. Returns only when the exec failed.
+const SELF_EXE: &str = "/proc/self/exe";
+
+/// The file a restart execs: the running binary's own path, so the process keeps its name for
+/// pgrep and killall, or `/proc/self/exe` once that path no longer holds the running image (a
+/// package update replaced it), which still reaches the running image.
+fn exec_path(link: std::io::Result<PathBuf>, runs_from: impl Fn(&Path) -> bool) -> PathBuf {
+    link.ok()
+        .filter(|p| runs_from(p))
+        .unwrap_or_else(|| SELF_EXE.into())
+}
+
+fn is_running_image(p: &Path) -> bool {
+    match (std::fs::metadata(p), std::fs::metadata(SELF_EXE)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+        _ => false,
+    }
+}
+
+/// Exec the running binary (see [`exec_path`]) with `argv` and this environment. Returns only
+/// when the exec failed.
 fn restart(argv: Vec<OsString>) {
     crate::state::flush_within(Duration::from_secs(1));
     // Every descriptor but stdio closes at the exec, whoever opened it: the seat's devices, the
@@ -174,7 +194,8 @@ fn restart(argv: Vec<OsString>) {
             libc::CLOSE_RANGE_CLOEXEC as libc::c_int,
         )
     };
-    let mut c = std::process::Command::new("/proc/self/exe");
+    let exe = exec_path(std::fs::read_link(SELF_EXE), is_running_image);
+    let mut c = std::process::Command::new(exe);
     if let Some((first, rest)) = argv.split_first() {
         c.arg0(first).args(rest);
     }
@@ -185,6 +206,19 @@ fn restart(argv: Vec<OsString>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_restart_execs_the_binary_by_its_path_while_the_path_holds_it() {
+        let bin = || Ok(PathBuf::from("/usr/bin/reprise"));
+        assert_eq!(exec_path(bin(), |_| true), Path::new("/usr/bin/reprise"));
+        assert_eq!(exec_path(bin(), |_| false), Path::new(SELF_EXE), "replaced");
+        let deleted = Ok(PathBuf::from("/usr/bin/reprise (deleted)"));
+        assert_eq!(exec_path(deleted, is_running_image), Path::new(SELF_EXE));
+        let unreadable = Err(std::io::Error::other("no /proc"));
+        assert_eq!(exec_path(unreadable, |_| true), Path::new(SELF_EXE));
+        let own = std::fs::read_link(SELF_EXE).unwrap();
+        assert_eq!(exec_path(Ok(own.clone()), is_running_image), own);
+    }
 
     #[test]
     fn a_first_crash_restarts_and_one_within_a_minute_of_a_restart_exits() {
