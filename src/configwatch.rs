@@ -375,9 +375,6 @@ pub fn reload(state: &mut State, cfg: Config) {
     if old.capture_border != state.config.capture_border {
         crate::captureborder::refresh(state);
     }
-    if old.notifications != state.config.notifications {
-        crate::notifyview::suppress_changed(state);
-    }
     if changes.workspaces {
         state.set_desktop_count(state.config.workspaces);
     }
