@@ -1139,7 +1139,10 @@ mod tests {
             "the field takes it"
         );
         h.roundtrip(&mut c);
-        assert_eq!(c.side.source_targets, [Some("text/plain".to_string())]);
+        assert_eq!(
+            c.side.source_targets,
+            [Some(dropdata::URI_LIST.to_string())]
+        );
         assert!(h.state.field_drag_ended(&source, true));
         let text = |h: &crate::harness::Harness| {
             let d = &h.state.dialogs.views[0].dialog;
