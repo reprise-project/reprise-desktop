@@ -38,6 +38,7 @@ pub(crate) fn on_signals(socket: BorrowedFd) {
             }
             let mut sa: libc::sigaction = std::mem::zeroed();
             sa.sa_sigaction = on_ending as *const () as libc::sighandler_t;
+            sa.sa_flags = libc::SA_RESTART;
             libc::sigemptyset(&mut sa.sa_mask);
             if libc::sigaction(sig, &sa, std::ptr::null_mut()) != 0 {
                 log::warn!(
@@ -308,6 +309,57 @@ mod tests {
             "the rescue finishes: {stdout}"
         );
         assert!(!stdout.contains("SURVIVED"), "the program ends: {stdout}");
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(out.status.signal(), Some(libc::SIGTERM), "{:?}", out.status);
+    }
+
+    #[test]
+    fn a_routed_sigterm_restarts_a_worker_threads_blocking_read() {
+        use smithay_client_toolkit::reexports::calloop::EventLoop;
+        use std::os::unix::thread::JoinHandleExt;
+        if std::env::var_os(CHILD).is_some() {
+            let (ours, _peer) = UnixStream::pair().unwrap();
+            let mut event_loop: EventLoop<()> = EventLoop::try_new().unwrap();
+            on_signals(ours.as_fd());
+            route_to(&event_loop.handle(), |_| {});
+            let mut fds = [-1; 2];
+            // SAFETY: pipe fills `fds` on success.
+            assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+            let worker = std::thread::spawn(move || {
+                let mut b = [0u8; 1];
+                // SAFETY: reads one byte into `b` from the pipe opened above.
+                let n = unsafe { libc::read(fds[0], b.as_mut_ptr().cast(), 1) };
+                println!("READ {n}");
+            });
+            std::thread::sleep(Duration::from_millis(200));
+            // SAFETY: the worker is alive and blocked in read; write goes to our own pipe.
+            unsafe {
+                libc::pthread_kill(worker.as_pthread_t(), libc::SIGTERM);
+                std::thread::sleep(Duration::from_millis(200));
+                libc::write(fds[1], [1u8].as_ptr().cast(), 1);
+            }
+            worker.join().unwrap();
+            for _ in 0..50 {
+                event_loop
+                    .dispatch(Duration::from_millis(20), &mut ())
+                    .unwrap();
+            }
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "hangup::tests::a_routed_sigterm_restarts_a_worker_threads_blocking_read",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("READ 1"),
+            "the read gets its byte, not EINTR: {stdout}"
+        );
         use std::os::unix::process::ExitStatusExt;
         assert_eq!(out.status.signal(), Some(libc::SIGTERM), "{:?}", out.status);
     }
