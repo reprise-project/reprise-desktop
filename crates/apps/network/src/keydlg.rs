@@ -259,7 +259,7 @@ impl KeyDialog {
     }
 
     pub fn window_title() -> String {
-        "Wireless Network Connection".into()
+        "Wireless Network Key".into()
     }
 }
 
@@ -530,7 +530,11 @@ mod tests {
         assert_eq!(d.event(form::Event::Changed("key")), Outcome::Redraw);
         assert_eq!(d.ssid, "Neighbour".into());
         assert_eq!(d.ap, "/ap/5");
-        assert_eq!(KeyDialog::window_title(), "Wireless Network Connection");
+    }
+
+    #[test]
+    fn the_key_dialog_has_its_own_title_apart_from_the_network_list() {
+        assert_eq!(KeyDialog::window_title(), "Wireless Network Key");
     }
 
     #[test]
