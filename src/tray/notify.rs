@@ -192,8 +192,8 @@ pub fn hints(mut raw: HashMap<String, Hint<'_>>) -> Hints<'_> {
 const MAX_IMAGE_SIDE: i32 = 8192;
 /// A picture file's side; its decoder's memory is bounded by [`MAX_PICTURE_ALLOC`].
 const MAX_PICTURE_SIDE: u32 = 4096;
-/// Bytes a picture file's decoder may allocate: a 2048 px square of 8-bit RGBA.
-const MAX_PICTURE_ALLOC: u64 = 2048 * 2048 * 4;
+/// Bytes a picture file's decoder may allocate: 8-bit RGBA at [`MAX_PICTURE_SIDE`] square.
+const MAX_PICTURE_ALLOC: u64 = MAX_PICTURE_SIDE as u64 * MAX_PICTURE_SIDE as u64 * 4;
 
 /// `image-data` decoded at each of [`super::NOTIFY_SIZES`], fitted inside
 /// a square canvas with its aspect kept and the rest clear.
@@ -574,8 +574,8 @@ mod tests {
     fn a_picture_file_larger_than_it_shows_is_scaled_to_each_size() {
         let dir = crate::harness::scratch();
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("notify-picture-2048.png");
-        image::RgbaImage::from_pixel(2048, 1024, image::Rgba([0x20, 0x40, 0x80, 0xFF]))
+        let path = dir.join("notify-picture-4k.png");
+        image::RgbaImage::from_pixel(3840, 2160, image::Rgba([0x20, 0x40, 0x80, 0xFF]))
             .save(&path)
             .unwrap();
         let sources = picture_file_sources(&path);
