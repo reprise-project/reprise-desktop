@@ -15,6 +15,10 @@ static PENDING: AtomicI32 = AtomicI32::new(0);
 
 /// The signals another process ends a program with. SIGKILL can't be caught: End Program drops
 /// the connection itself.
+/// Seconds the loop has to end the program after a routed signal; a loop stuck on a dead mount
+/// never would.
+const GRACE_S: libc::c_uint = 3;
+
 const ENDING: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
 
 /// Hangs up `socket` if the program is ended by a signal. A signal it started with ignored
@@ -45,7 +49,7 @@ pub(crate) fn on_signals(socket: BorrowedFd) {
 }
 
 /// Hands the first ending signal to `handle`'s loop, which runs `rescue` and then ends the
-/// program by that signal. A second signal ends it at once, as without a loop.
+/// program by that signal. A second signal, or [`GRACE_S`] without the loop, ends it at once.
 pub(crate) fn route_to<D>(handle: &LoopHandle<'_, D>, mut rescue: impl FnMut(&mut D) + 'static) {
     let mut fds = [-1; 2];
     // SAFETY: pipe2 fills `fds` on success.
@@ -66,10 +70,20 @@ pub(crate) fn route_to<D>(handle: &LoopHandle<'_, D>, mut rescue: impl FnMut(&mu
         Ok(PostAction::Remove)
     });
     match inserted {
-        Ok(_) => WAKE.store(
-            std::os::fd::IntoRawFd::into_raw_fd(write),
-            Ordering::Release,
-        ),
+        Ok(_) => {
+            WAKE.store(
+                std::os::fd::IntoRawFd::into_raw_fd(write),
+                Ordering::Release,
+            );
+            // SAFETY: the handler calls only async-signal-safe functions; the struct is zeroed
+            // and filled before sigaction reads it.
+            unsafe {
+                let mut sa: libc::sigaction = std::mem::zeroed();
+                sa.sa_sigaction = on_alarm as *const () as libc::sighandler_t;
+                libc::sigemptyset(&mut sa.sa_mask);
+                libc::sigaction(libc::SIGALRM, &sa, std::ptr::null_mut());
+            }
+        }
         Err(e) => log::warn!("no signal source: {e}"),
     }
 }
@@ -88,11 +102,22 @@ extern "C" fn on_ending(sig: libc::c_int) {
             .compare_exchange(0, sig, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
     {
-        // SAFETY: write is async-signal-safe; the pipe is non-blocking.
-        unsafe { libc::write(wake, [1u8].as_ptr().cast(), 1) };
+        // SAFETY: write and alarm are async-signal-safe; the pipe is non-blocking.
+        unsafe {
+            libc::write(wake, [1u8].as_ptr().cast(), 1);
+            libc::alarm(GRACE_S);
+        }
         return;
     }
     end_by(sig);
+}
+
+/// Ends the program by the routed signal its loop did not get to.
+extern "C" fn on_alarm(_: libc::c_int) {
+    match PENDING.load(Ordering::Acquire) {
+        0 => end_by(libc::SIGALRM),
+        sig => end_by(sig),
+    }
 }
 
 /// Hangs up and ends the program as `sig`'s default action would. Async-signal-safe.
@@ -205,6 +230,41 @@ mod tests {
             Some(libc::SIGTERM),
             "the program ends by SIGTERM: {:?}",
             out.status
+        );
+    }
+
+    #[test]
+    fn a_sigterm_ends_the_program_when_its_loop_never_runs() {
+        use smithay_client_toolkit::reexports::calloop::EventLoop;
+        if std::env::var_os(CHILD).is_some() {
+            let (ours, _peer) = UnixStream::pair().unwrap();
+            let event_loop: EventLoop<()> = EventLoop::try_new().unwrap();
+            on_signals(ours.as_fd());
+            route_to(&event_loop.handle(), |_| println!("RESCUED"));
+            // SAFETY: raise on this process.
+            unsafe { libc::raise(libc::SIGTERM) };
+            std::thread::sleep(Duration::from_secs(10));
+            println!("SURVIVED");
+            return;
+        }
+        let started = std::time::Instant::now();
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "hangup::tests::a_sigterm_ends_the_program_when_its_loop_never_runs",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(!stdout.contains("SURVIVED"), "the program ends: {stdout}");
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(out.status.signal(), Some(libc::SIGTERM), "{:?}", out.status);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "it ends 3 s after the signal: {:?}",
+            started.elapsed()
         );
     }
 
