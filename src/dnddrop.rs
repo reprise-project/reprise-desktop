@@ -322,11 +322,11 @@ fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
 }
 
 /// A document portal key is traded for its files, which blocks on the bus: runs off the loop.
-/// A sandboxed program's URI list is taken only when [`portal_exported`].
+/// A sandboxed program's URI list is taken only when [`all_exported`].
 fn items(mime: &str, bytes: &[u8], sandboxed: bool) -> std::io::Result<Vec<Dropped>> {
     if mime != dropdata::FILE_TRANSFER {
         let items = dropdata::decode(mime, bytes);
-        if sandboxed && mime == dropdata::URI_LIST && !portal_exported(&items) {
+        if sandboxed && mime == dropdata::URI_LIST && !all_exported(&items) {
             return Err(std::io::Error::other(
                 "a sandboxed program's URI list names files outside the document portal",
             ));
@@ -366,28 +366,11 @@ fn readable(source: &SeatSource, mut offered: Vec<String>) -> Vec<String> {
     offered
 }
 
-/// Where the document portal exports the files it grants sandboxed programs.
-pub(crate) fn document_root() -> std::path::PathBuf {
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            // SAFETY: getuid cannot fail.
-            format!("/run/user/{}", unsafe { libc::getuid() }).into()
-        });
-    runtime.join("doc")
-}
-
-/// Whether `items` are all files under [`document_root`], the only host paths a sandboxed
-/// program can name.
-pub(crate) fn portal_exported(items: &[Dropped]) -> bool {
-    let root = document_root();
+/// Whether `items` are all files the document portal exported.
+fn all_exported(items: &[Dropped]) -> bool {
     !items.is_empty()
-        && items.iter().all(|d| match d {
-            Dropped::File(p) => {
-                p.starts_with(&root) && p.components().all(|c| c != std::path::Component::ParentDir)
-            }
-            Dropped::Url { .. } => false,
-        })
+        && (items.iter())
+            .all(|d| matches!(d, Dropped::File(p) if crate::sandbox::portal_exported(p)))
 }
 
 /// The error box's title for a drop given up before its op was settled.
@@ -1094,7 +1077,10 @@ mod tests {
             }
             (targets, c.side.source_ends.clone())
         };
-        let exported = format!("file://{}/abc/x.png", document_root().display());
+        let exported = format!(
+            "file://{}/abc/x.png",
+            crate::sandbox::document_root().display()
+        );
         let uris = Some(dropdata::URI_LIST.to_string());
         assert_eq!(
             drop(&[dropdata::URI_LIST], &exported),
@@ -1123,17 +1109,6 @@ mod tests {
             vec![Some(dropdata::MOZ_URL.to_string())],
             "a link"
         );
-    }
-
-    #[test]
-    fn a_document_portal_path_climbing_out_of_it_is_not_exported() {
-        let root = document_root();
-        let file = |p: std::path::PathBuf| Dropped::File(p);
-        assert!(portal_exported(&[file(root.join("abc/x.png"))]));
-        assert!(!portal_exported(&[file(
-            root.join("abc/../../../etc/passwd")
-        )]));
-        assert!(!portal_exported(&[]));
     }
 
     #[test]
