@@ -245,15 +245,16 @@ fn now() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
-/// What holds balloons back now: Do Not Disturb, a focused full-screen window, a screen being
-/// shared, the quiet hours.
+/// What holds balloons back now: Do Not Disturb, a focused full-screen window and a screen being
+/// shared (with `auto_dnd`), the quiet hours.
 fn suppress(state: &State) -> Suppress {
     let tm = reprisefs::locale::localtime(now());
     let minute = (tm.tm_hour * 60 + tm.tm_min) as u32;
     let focused = state.focused.and_then(|w| state.win(w));
+    let auto = state.config.notifications.auto_dnd;
     Suppress {
-        fullscreen_focus: focused.is_some_and(|w| w.fullscreen && w.mapped && !w.minimized),
-        sharing: state.privacy.sharing_shown(),
+        fullscreen_focus: auto && focused.is_some_and(|w| w.fullscreen && w.mapped && !w.minimized),
+        sharing: auto && state.privacy.sharing_shown(),
         scheduled: state.config.notifications.quiet_at(minute),
         manual: state.notify.log.dnd,
     }

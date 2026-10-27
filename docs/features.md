@@ -293,9 +293,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Bursts fold together.** A program that sends more than three balloons in
   ten seconds gets one "5 new from Mail" balloon instead.
 - **Do Not Disturb** holds back all but the critical ones. They still go into
-  the history. It also turns itself on while a full-screen window has focus,
-  while the screen is shared and during `[notifications] quiet_hours`; the
-  balloons it held then show once that ends.
+  the history. It also turns itself on during `[notifications] quiet_hours`,
+  and while a full-screen window has focus or the screen is shared unless
+  `auto_dnd = false`; the balloons it held then show once that ends.
 
 We had notifications in 2001. They were allowed a small corner. They still
 are.
