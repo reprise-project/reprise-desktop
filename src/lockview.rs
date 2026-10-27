@@ -75,6 +75,8 @@ impl Default for Helpers {
 
 /// The longest wait before a failed fingerprint conversation starts again; each failure doubles it.
 const FINGER_RETRY_MAX: Duration = Duration::from_secs(30);
+/// Fingerprint conversations in a row that end without a PAM result before retrying stops.
+const FINGER_LOST_MAX: u32 = 5;
 
 /// The OK and Cancel button rects of one output's dialog, in layout coordinates, for hit testing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -105,6 +107,8 @@ pub struct Lock {
     pub finger_retry: Option<Source>,
     /// The wait before the next fingerprint retry.
     pub finger_delay: Duration,
+    /// Fingerprint conversations in a row that ended without a PAM result.
+    pub finger_lost: u32,
     /// The window focused when the lock engaged; refocused on unlock if it still exists and is mapped.
     pub prev_focus: Option<WindowId>,
     /// The layer surface holding the keyboard when the lock engaged; restored in preference to
@@ -248,7 +252,8 @@ fn start_finger(state: &State, user: &str) -> Option<Helper> {
 }
 
 /// What the fingerprint conversation said since the last wake. Its PAM success unlocks; any other end
-/// drops it and starts it again later, unless PAM said there is no reader or finger to verify.
+/// drops it and starts it again later, unless PAM said there is no reader or finger to verify, or
+/// `FINGER_LOST_MAX` ends in a row came without a result.
 fn on_finger(state: &mut State) -> PostAction {
     let Some(l) = state.lock.active.as_mut() else {
         return PostAction::Remove;
@@ -279,7 +284,16 @@ fn on_finger(state: &mut State) -> PostAction {
     }
     if ended {
         l.state.finger = None;
-        if result != Some(lock::ffi::PAM_AUTHINFO_UNAVAIL) {
+        l.finger_lost = if result.is_some() {
+            0
+        } else {
+            l.finger_lost + 1
+        };
+        if l.finger_lost >= FINGER_LOST_MAX {
+            log::warn!(
+                "lock: the fingerprint conversation keeps ending without a result; not starting it again"
+            );
+        } else if result != Some(lock::ffi::PAM_AUTHINFO_UNAVAIL) {
             arm_finger_retry(state);
         }
     }
@@ -356,7 +370,11 @@ fn on_result(state: &mut State) -> PostAction {
     if verdict.is_none() && !eof {
         if let Some(q) = prompt {
             p.timer = None;
+            let notices = p.answer.take_notices();
             l.state.ask(q);
+            if !notices.is_empty() {
+                l.state.message = Some(notices.join("\n"));
+            }
             redraw(state);
         }
         return PostAction::Continue;
@@ -466,6 +484,7 @@ pub fn engage(state: &mut State) {
         finger: None,
         finger_retry: None,
         finger_delay: state.lock.helpers.finger_retry,
+        finger_lost: 0,
         prev_focus,
         prev_focused_layer,
         prev_desktop,
@@ -1194,6 +1213,22 @@ mod tests {
     }
 
     #[test]
+    fn the_notices_before_a_second_prompt_show_with_it() {
+        let mut h = locked(|_| {
+            sh(
+                "read p; echo 'I Code sent to your phone'; echo '?? Verification code:'; exec sleep 60",
+            )
+        });
+        let l = h.state.lock.active.as_mut().expect("locked");
+        l.state.input.push_str("hunter2");
+        submit(&mut h.state);
+        turn_until(&mut h, "the prompt arrives", |l| l.state.prompt.is_some());
+        let l = h.state.lock.active.as_ref().unwrap();
+        assert_eq!(l.state.message.as_deref(), Some("Code sent to your phone"));
+        unlock(&mut h.state);
+    }
+
+    #[test]
     fn escape_under_a_second_prompt_ends_its_conversation() {
         let mut h = locked(|_| sh("read p; echo '? One-time code:'; exec sleep 60"));
         let l = h.state.lock.active.as_mut().expect("locked");
@@ -1312,6 +1347,26 @@ mod tests {
             "each retry doubles the wait"
         );
         unlock(&mut h.state);
+    }
+
+    #[test]
+    fn a_fingerprint_conversation_that_keeps_ending_without_a_result_stops_starting() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static STARTS: AtomicU32 = AtomicU32::new(0);
+        let mut h = locked(|_| sh("exit 0"));
+        h.state.lock.helpers.finger = |_| {
+            STARTS.fetch_add(1, Ordering::SeqCst);
+            Some(sh("exit 1"))
+        };
+        h.state.lock.active.as_mut().unwrap().finger_delay = Duration::from_millis(1);
+        start_dialog_finger(&mut h.state);
+        turn_until(&mut h, "the retries give up", |l| {
+            l.finger_lost >= FINGER_LOST_MAX
+        });
+        h.run_for(200);
+        assert_eq!(STARTS.load(Ordering::SeqCst), FINGER_LOST_MAX);
+        let l = h.state.lock.active.as_ref().unwrap();
+        assert!(l.finger.is_none() && l.finger_retry.is_none());
     }
 
     #[test]

@@ -91,6 +91,11 @@ impl PasswordAnswer {
             Line::Result(_) => Some(Err(std::mem::take(&mut self.notices))),
         }
     }
+
+    /// The notices so far, for the dialog to show with a further prompt.
+    pub fn take_notices(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notices)
+    }
 }
 
 pub struct Conversation {
