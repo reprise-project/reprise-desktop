@@ -293,6 +293,8 @@ pub struct State {
     pub config_watch: crate::dirwatch::JobWatch,
     /// The notice naming the keys the last read of `config.toml` dropped.
     pub config_notice: Option<String>,
+    /// The table `config` was built from: a key that fails on reload keeps its value here.
+    pub config_file: toml::Table,
     /// Reads the Quick Launch folder again when it changes (`quickwatch`).
     pub quick_watch: crate::dirwatch::JobWatch,
     pub start_text: TextRenderer,
@@ -667,6 +669,7 @@ impl State {
             apps_watch: Default::default(),
             config_watch: Default::default(),
             config_notice: None,
+            config_file: toml::Table::new(),
             quick_watch: Default::default(),
             icon_watch: Default::default(),
             start_text,
