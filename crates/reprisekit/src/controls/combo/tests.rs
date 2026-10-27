@@ -7,6 +7,19 @@ fn combo() -> Combo {
 }
 
 #[test]
+fn a_value_the_list_lacks_shows_as_one_added_row() {
+    let mut c = combo();
+    c.select_text("Gone");
+    c.select_text("Also gone");
+    let rows: Vec<&str> = c.items.iter().map(|i| i.text.as_str()).collect();
+    assert_eq!(rows, ["Reprise Classic", "Slate", "Harbor", "Also gone"]);
+    assert_eq!(c.selected, 3);
+    c.select_text("Slate");
+    assert_eq!(c.items.len(), 3, "a listed value drops the added row");
+    assert_eq!(c.selected, 1);
+}
+
+#[test]
 fn a_popped_list_draws_alone_as_draw_list_does_and_moves_where_it_was_put() {
     let theme = Theme::default();
     let text = TextRenderer::load(&FontConfig::default());

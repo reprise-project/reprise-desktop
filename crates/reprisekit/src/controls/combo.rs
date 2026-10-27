@@ -118,6 +118,8 @@ pub struct Combo {
     pub list_at: Option<(i32, i32)>,
     /// A host shows the open list on a popup: its owner's draw leaves it out.
     pub hosted: bool,
+    /// The first row [`Combo::select_text`] added for a value the list lacked.
+    pub added_at: Option<usize>,
 }
 
 impl Combo {
@@ -143,7 +145,21 @@ impl Combo {
             drop_x: None,
             list_at: None,
             hosted: false,
+            added_at: None,
         }
+    }
+
+    /// Selects the row showing `want`, adding it after the listed rows when they lack it. A row
+    /// added for an earlier value goes first.
+    pub fn select_text(&mut self, want: &str) {
+        if let Some(n) = self.added_at.take() {
+            self.items.truncate(n);
+        }
+        if !self.items.iter().any(|i| i.text == want) {
+            self.added_at = Some(self.items.len());
+            self.items.push(ListItem::new(want));
+        }
+        self.selected = self.items.iter().position(|i| i.text == want).unwrap_or(0);
     }
 
     fn matching(&self) -> Option<usize> {
