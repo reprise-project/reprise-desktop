@@ -1561,8 +1561,8 @@ fn a_left_press_in_the_rename_box_places_the_caret_and_a_drag_or_double_click_se
         left_press_at(&mut ex, &mut ctx, at, 5100, false);
         assert_eq!(
             caret(&ex).selection(),
-            4..name_len,
-            "{mode:?}: a double click selects the word"
+            4..9,
+            "{mode:?}: a double click selects the word, short of the dot"
         );
         release(&mut ex, &mut ctx, at, BTN_LEFT, SeatMods::default());
         ex.key(

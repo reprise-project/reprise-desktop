@@ -262,7 +262,7 @@ impl<P: Spot> Undo<P> {
 }
 
 pub(crate) mod words {
-    use unicode_segmentation::GraphemeCursor;
+    use unicode_segmentation::{GraphemeCursor, UnicodeSegmentation};
 
     /// The scalar before `i`, for Backspace, which takes a cluster apart one scalar at a time.
     pub fn prev_char(text: &str, i: usize) -> usize {
@@ -299,52 +299,88 @@ pub(crate) mod words {
         }
     }
 
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Class {
+        Space,
+        Punct,
+        Word,
+    }
+
+    /// A cluster's class by its first char; a word stops wherever the class changes.
+    fn class(cluster: &str) -> Class {
+        match cluster.chars().next() {
+            Some(c) if c.is_whitespace() => Class::Space,
+            Some(c) if c.is_alphanumeric() || c == '_' => Class::Word,
+            _ => Class::Punct,
+        }
+    }
+
+    /// The cluster ending at `i`: its start and class.
+    fn before(text: &str, i: usize) -> Option<(usize, Class)> {
+        text[..i]
+            .grapheme_indices(true)
+            .next_back()
+            .map(|(j, g)| (j, class(g)))
+    }
+
+    /// The cluster starting at `i`: its end and class.
+    fn after(text: &str, i: usize) -> Option<(usize, Class)> {
+        text[i..]
+            .graphemes(true)
+            .next()
+            .map(|g| (i + g.len(), class(g)))
+    }
+
+    fn back_over(text: &str, mut i: usize, k: Class) -> usize {
+        while let Some((j, c)) = before(text, i)
+            && c == k
+        {
+            i = j;
+        }
+        i
+    }
+
+    fn on_over(text: &str, mut i: usize, k: Class) -> usize {
+        while let Some((j, c)) = after(text, i)
+            && c == k
+        {
+            i = j;
+        }
+        i
+    }
+
+    /// The start of the run before `i`, over the white space in between.
     pub fn word_left(text: &str, i: usize) -> usize {
-        let mut j = i;
-        while j > 0 && text[..j].ends_with(' ') {
-            j -= 1;
+        let i = back_over(text, i, Class::Space);
+        match before(text, i) {
+            Some((_, k)) => back_over(text, i, k),
+            None => i,
         }
-        while j > 0 && !text[..j].ends_with(' ') {
-            j = prev_cluster(text, j);
-        }
-        j
     }
 
+    /// The start of the next run after `i`'s, past the white space in between.
     pub fn word_right(text: &str, i: usize) -> usize {
-        let mut j = i;
-        while j < text.len() && !text[j..].starts_with(' ') {
-            j = next_cluster(text, j);
-        }
-        while j < text.len() && text[j..].starts_with(' ') {
-            j += 1;
-        }
-        j
+        let i = match after(text, i) {
+            Some((_, k)) if k != Class::Space => on_over(text, i, k),
+            _ => i,
+        };
+        on_over(text, i, Class::Space)
     }
 
+    /// The run of the clicked cluster's class, with the white space after it; past the end, the
+    /// last cluster's.
     pub fn word_span_at(text: &str, index: usize) -> std::ops::Range<usize> {
-        let index = index.min(text.len());
-        let bytes = text.as_bytes();
-        let space = |i: usize| bytes.get(i) == Some(&b' ');
-        let (mut a, mut b) = (index, index);
-        if space(index) || (index == bytes.len() && index > 0 && space(index - 1)) {
-            while a > 0 && space(a - 1) {
-                a -= 1;
-            }
-            while b < bytes.len() && space(b) {
-                b += 1;
-            }
-        } else {
-            while a > 0 && !space(a - 1) {
-                a -= 1;
-            }
-            while b < bytes.len() && !space(b) {
-                b += 1;
-            }
-            while b < bytes.len() && space(b) {
-                b += 1;
-            }
+        let index = cluster_floor(text, index.min(text.len()));
+        let k = match after(text, index).or_else(|| before(text, index)) {
+            Some((_, k)) => k,
+            None => return index..index,
+        };
+        let a = back_over(text, index, k);
+        let b = on_over(text, index, k);
+        match k {
+            Class::Space => a..b,
+            _ => a..on_over(text, b, Class::Space),
         }
-        a..b
     }
 }
 
@@ -1214,6 +1250,48 @@ mod tests {
         assert_eq!((s.cursor, s.anchor), (1, 1));
         let s = Surrounding::around(&text, text.len(), 5);
         assert_eq!((s.cursor, s.anchor), (text.len(), 1));
+    }
+
+    #[test]
+    fn words_stop_where_space_punctuation_and_letters_meet() {
+        let t = "a.b c";
+        let rights: Vec<usize> = std::iter::successors(Some(0), |&i| {
+            Some(words::word_right(t, i)).filter(|&j| j != i)
+        })
+        .collect();
+        assert_eq!(rights, [0, 1, 2, 4, 5]);
+        let lefts: Vec<usize> = std::iter::successors(Some(t.len()), |&i| {
+            Some(words::word_left(t, i)).filter(|&j| j != i)
+        })
+        .collect();
+        assert_eq!(lefts, [5, 4, 2, 1, 0]);
+        let path = "path/to/file.txt";
+        assert_eq!(words::word_left(path, path.len()), 13, "back to txt");
+        assert_eq!(words::word_left(path, 12), 8, "back to file");
+        assert_eq!(words::word_right(path, 0), 4, "on to the slash");
+    }
+
+    #[test]
+    fn tabs_and_nbsp_separate_words() {
+        assert_eq!(words::word_right("a\tb", 0), 2);
+        assert_eq!(words::word_left("a\tb", 3), 2);
+        let nbsp = "a\u{a0}b";
+        assert_eq!(words::word_right(nbsp, 0), 3, "NBSP is two bytes");
+        assert_eq!(words::word_span_at(nbsp, 0), 0..3);
+    }
+
+    #[test]
+    fn double_click_selects_the_clicked_class_run() {
+        let t = "foo.bar(baz)";
+        assert_eq!(words::word_span_at(t, 1), 0..3);
+        assert_eq!(words::word_span_at(t, 3), 3..4, "the dot alone");
+        assert_eq!(words::word_span_at(t, 5), 4..7);
+        assert_eq!(words::word_span_at("a.b c", 2), 2..4, "b and its space");
+        assert_eq!(
+            words::word_span_at("e\u{301}x y", 1),
+            0..5,
+            "a combining mark stays"
+        );
     }
 
     #[test]
