@@ -310,13 +310,16 @@ pub(crate) fn read(
         Ok((cfg, dropped, table)) => {
             log::info!("config {} changed; reloading", path.display());
             for (key, e) in &dropped {
-                log::warn!(
-                    "config {}: {key}: {e}; keeping its previous value",
-                    path.display()
-                );
+                let kept = if repriseconf::config::kept(&table, base, key) {
+                    "keeping its previous value"
+                } else {
+                    "using its default"
+                };
+                log::warn!("config {}: {key}: {e}; {kept}", path.display());
             }
+            let kept = |key: &str| repriseconf::config::kept(&table, base, key);
             let notice =
-                (!dropped.is_empty()).then(|| crate::config::dropped_notice(&dropped, true));
+                (!dropped.is_empty()).then(|| crate::config::dropped_notice(&dropped, kept));
             Some((cfg, notice, table))
         }
         Err(e) => {
@@ -373,6 +376,9 @@ pub fn reload(state: &mut State, cfg: Config) {
     }
     if old.capture_border != state.config.capture_border {
         crate::captureborder::refresh(state);
+    }
+    if old.notifications != state.config.notifications {
+        crate::notifyview::suppress_changed(state);
     }
     if changes.workspaces {
         state.set_desktop_count(state.config.workspaces);

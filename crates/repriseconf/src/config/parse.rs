@@ -150,27 +150,38 @@ pub fn lenient_over<T>(
         dropped.push((key.clone(), e.trim_end().to_string()));
     }
     table.retain(|key, _| !dropped.iter().any(|(k, _)| k == key));
-    let mut restored = table.clone();
+    // One key at a time: a restored value that fails against the new file's keys stays default.
     for (key, _) in &dropped {
+        let mut next = table.clone();
         let inner = key.split_once('.').and_then(|(t, name)| {
             let base = base.get(t)?.get(name)?;
-            Some((restored.get_mut(t)?.as_table_mut()?, name, base))
+            Some((next.get_mut(t)?.as_table_mut()?, name, base))
         });
         let array = key.split_once('[').map(|(name, _)| name);
         if let Some((inner, name, value)) = inner {
             inner.insert(name.to_string(), value.clone());
         } else if let Some((name, value)) = array.and_then(|a| Some((a, base.get(a)?))) {
-            restored.insert(name.to_string(), value.clone());
+            next.insert(name.to_string(), value.clone());
         } else if let Some(value) = base.get(key) {
-            restored.insert(key.clone(), value.clone());
+            next.insert(key.clone(), value.clone());
+        } else {
+            continue;
+        }
+        if from_table(next.clone()).is_ok() {
+            table = next;
         }
     }
-    if restored != table
-        && let Ok(t) = from_table(restored.clone())
-    {
-        return Ok((t, dropped, restored));
-    }
     Ok((from_table(table.clone())?, dropped, table))
+}
+
+/// Whether dropped `key` (`table.name` or a top-level key) took its value in `base`: the
+/// `table` [`lenient_over`] returned holds it.
+pub fn kept(table: &toml::Table, base: &toml::Table, key: &str) -> bool {
+    let at = |t: &toml::Table| match key.split_once('.') {
+        Some((outer, name)) => t.get(outer)?.get(name).cloned(),
+        None => t.get(key).cloned(),
+    };
+    at(base).is_some_and(|v| at(table) == Some(v))
 }
 
 impl Config {
