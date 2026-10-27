@@ -5,7 +5,7 @@
 //! task switchers. `State::refresh_toplevels` brings every handle up to date at the end of a
 //! loop iteration that set `Toplevels::dirty`. Adapted from niri's `src/protocols/foreign_toplevel.rs` (GPL-3.0-or-later).
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use smithay::{
     output::Output,
@@ -28,13 +28,20 @@ use smithay::{
     },
 };
 
-use crate::{compositor::State, window::WindowId};
+use crate::{
+    compositor::State, inputproto::proto::reprise_sandboxed_v1::RepriseSandboxedV1,
+    window::WindowId,
+};
 
 pub struct Toplevels {
     list: ForeignToplevelListState,
     handles: HashMap<WindowId, ForeignToplevelHandle>,
     pub capture: ToplevelCaptureSourceState,
     wlr: Wlr,
+    /// The Flatpak app id of each listed window whose client runs in a sandbox.
+    sandboxed: HashMap<WindowId, String>,
+    /// The portal's `reprise_sandboxed_v1` objects, told each change of `sandboxed_apps`.
+    pub sandbox_watchers: Vec<RepriseSandboxedV1>,
     /// A window's title, app id, state, focus or output may have changed since the last
     /// `refresh_toplevels`; set by every scene redraw ask, focus change and retitle.
     pub dirty: bool,
@@ -55,6 +62,8 @@ impl Toplevels {
                 crate::sandbox::filter("ext_foreign_toplevel_image_capture_source_manager_v1"),
             ),
             wlr: Wlr::new(dh),
+            sandboxed: HashMap::new(),
+            sandbox_watchers: Vec::new(),
             dirty: true,
             #[cfg(test)]
             refreshes: 0,
@@ -66,6 +75,27 @@ impl Toplevels {
             .iter()
             .find(|(_, h)| h.matches(handle))
             .map(|(w, _)| *w)
+    }
+
+    /// The Flatpak app ids of the sandboxed clients with a listed window.
+    pub fn sandboxed_apps(&self) -> BTreeSet<String> {
+        self.sandboxed.values().cloned().collect()
+    }
+
+    /// Send the current `sandboxed_apps` to `watcher`.
+    pub fn send_sandboxed(&self, watcher: &RepriseSandboxedV1) {
+        for app in self.sandboxed_apps() {
+            watcher.app(app);
+        }
+        watcher.done();
+    }
+
+    fn sandboxed_changed(&self, before: &BTreeSet<String>) {
+        if *before != self.sandboxed_apps() {
+            for w in &self.sandbox_watchers {
+                self.send_sandboxed(w);
+            }
+        }
     }
 }
 
@@ -83,6 +113,11 @@ impl State {
             return;
         };
         let (title, app_id) = (win.title(), win.app_id());
+        let sandbox_app = if self.toplevels.handles.contains_key(&w) {
+            None
+        } else {
+            crate::sandbox::window_app(win)
+        };
         let t = &mut self.toplevels;
         t.dirty = true;
         match t.handles.get(&w) {
@@ -96,6 +131,11 @@ impl State {
             None => {
                 let h = t.list.new_toplevel::<State>(title, app_id);
                 t.handles.insert(w, h);
+                if let Some(app) = sandbox_app {
+                    let before = t.sandboxed_apps();
+                    t.sandboxed.insert(w, app);
+                    t.sandboxed_changed(&before);
+                }
             }
         }
     }
@@ -104,6 +144,11 @@ impl State {
         crate::capture::window_gone(self, w);
         if let Some(h) = self.toplevels.handles.remove(&w) {
             self.toplevels.list.remove_toplevel(&h);
+        }
+        let t = &mut self.toplevels;
+        let before = t.sandboxed_apps();
+        if t.sandboxed.remove(&w).is_some() {
+            t.sandboxed_changed(&before);
         }
     }
 }
@@ -471,5 +516,24 @@ mod tests {
             h.state.toplevels.wlr.windows[&t.id].shown.states,
             vec![S::Maximized as u32, S::Activated as u32]
         );
+    }
+
+    #[test]
+    fn a_sandboxed_app_is_listed_while_it_has_a_window() {
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let mut steam = h.connect_in_flatpak("com.valvesoftware.Steam");
+        let mut idle = h.connect_in_flatpak("org.example.Sync");
+        let mut host = h.connect();
+        let t = h.map_toplevel(&mut steam, "steam", 200, 100);
+        h.map_toplevel(&mut host, "foot", 200, 100);
+        h.roundtrip(&mut idle);
+        assert_eq!(
+            h.state.toplevels.sandboxed_apps(),
+            BTreeSet::from(["com.valvesoftware.Steam".to_string()])
+        );
+        steam.destroy(t);
+        h.roundtrip(&mut steam);
+        assert!(h.state.toplevels.sandboxed_apps().is_empty());
     }
 }

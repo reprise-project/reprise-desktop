@@ -19,6 +19,7 @@ const AUTOSTART_DBUS: u32 = 1;
 
 pub struct Background {
     pub frontend: crate::Frontend,
+    pub link: Option<crate::inputlink::Link>,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Background")]
@@ -33,17 +34,20 @@ impl Background {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<HashMap<String, OwnedValue>> {
         self.frontend.check(&hdr).await?;
-        let states = blocking::unblock(|| {
-            let windowed = match crate::Wayland::connect() {
-                Ok(wl) => wl.toplevels().into_iter().map(|t| t.app_id).collect(),
-                Err(e) => {
-                    log::warn!("GetAppState: {e}");
-                    Vec::new()
-                }
-            };
-            app_states(&running_flatpaks(), &windowed)
+        // With either list missing, every app with a window would read as in the background, and
+        // xdg-desktop-portal kills a background app the user forbade; an error skips the round.
+        let sandboxed = (self.link.as_ref())
+            .and_then(crate::inputlink::Link::sandboxed)
+            .ok_or_else(|| zbus::fdo::Error::Failed("no list of sandboxed windows".into()))?;
+        let states = blocking::unblock(move || {
+            let wl = crate::Wayland::connect().map_err(|e| {
+                log::warn!("GetAppState: {e}");
+                zbus::fdo::Error::Failed(e)
+            })?;
+            let windowed: Vec<String> = wl.toplevels().into_iter().map(|t| t.app_id).collect();
+            Ok::<_, zbus::fdo::Error>(app_states(&running_flatpaks(), &windowed, &sandboxed))
         })
-        .await;
+        .await?;
         Ok(states
             .into_iter()
             .map(|(id, s)| (id, OwnedValue::from(s)))
@@ -123,14 +127,19 @@ fn background_result(answer: crate::permit::Answer) -> u32 {
 }
 
 /// Every app id with a window as running, and every other app in
-/// `running` as in the background.
-fn app_states(running: &[String], windowed: &[String]) -> HashMap<String, u32> {
+/// `running` as in the background. `windowed` holds the windows' own app
+/// ids, `sandboxed` the sandbox app ids of the clients with a window.
+fn app_states(
+    running: &[String],
+    windowed: &[String],
+    sandboxed: &BTreeSet<String>,
+) -> HashMap<String, u32> {
     let mut out: HashMap<String, u32> = running
         .iter()
         .filter(|id| !id.is_empty())
         .map(|id| (id.clone(), STATE_BACKGROUND))
         .collect();
-    for id in windowed {
+    for id in windowed.iter().chain(sandboxed) {
         if !id.is_empty() && !crate::HIDDEN_APPS.contains(&id.as_str()) {
             out.insert(id.clone(), STATE_RUNNING);
         }
@@ -161,23 +170,7 @@ fn instance_app(dir: &Path) -> Option<String> {
     if !Path::new(&format!("/proc/{pid}")).exists() {
         return None;
     }
-    app_of_info(&std::fs::read_to_string(dir.join("info")).ok()?)
-}
-
-/// `name` in the `[Application]` group of an instance's `info` key file.
-fn app_of_info(info: &str) -> Option<String> {
-    let mut group = "";
-    for line in info.lines().map(str::trim) {
-        if let Some(g) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            group = g;
-        } else if group == "Application"
-            && let Some((k, v)) = line.split_once('=')
-            && k.trim() == "name"
-        {
-            return Some(v.trim().to_string()).filter(|v| !v.is_empty());
-        }
-    }
-    None
+    reprisefs::flatpak::app_of_info(&std::fs::read_to_string(dir.join("info")).ok()?)
 }
 
 /// Write or remove `<dir>/<app_id>.desktop`; Ok(true) when an entry is
@@ -278,6 +271,7 @@ mod tests {
         let states = app_states(
             &strings(&["org.example.Chat", "org.example.Sync", ""]),
             &strings(&["org.example.Chat", "foot", "reprise.portal", ""]),
+            &BTreeSet::new(),
         );
         assert_eq!(states.len(), 3, "{states:?}");
         assert_eq!(states["org.example.Chat"], STATE_RUNNING);
@@ -286,11 +280,14 @@ mod tests {
     }
 
     #[test]
-    fn an_instance_names_its_app_in_the_application_group() {
-        let info =
-            "[Application]\nname=org.example.Sync\nruntime=runtime/x\n\n[Instance]\nname=other\n";
-        assert_eq!(app_of_info(info).as_deref(), Some("org.example.Sync"));
-        assert_eq!(app_of_info("[Instance]\nname=x\n"), None);
+    fn an_app_whose_sandbox_has_a_window_runs_whatever_the_window_calls_itself() {
+        let states = app_states(
+            &strings(&["com.valvesoftware.Steam", "org.example.Sync"]),
+            &strings(&["steam"]),
+            &BTreeSet::from(["com.valvesoftware.Steam".to_string()]),
+        );
+        assert_eq!(states["com.valvesoftware.Steam"], STATE_RUNNING);
+        assert_eq!(states["org.example.Sync"], STATE_BACKGROUND);
     }
 
     #[test]

@@ -1,5 +1,6 @@
-//! The long-lived Wayland connection behind RemoteDesktop, InputCapture and GlobalShortcuts: binds
-//! `reprise_input_v1` and `zxdg_output_manager_v1`, keeps the zones current, and runs every request on
+//! The long-lived Wayland connection behind RemoteDesktop, InputCapture, GlobalShortcuts and Background:
+//! binds `reprise_input_v1` and `zxdg_output_manager_v1`, keeps the zones and the sandboxed apps with a
+//! window current, and runs every request on
 //! its own thread. Requests come in over a channel with a socket as the wake-up; capture and shortcuts
 //! events go out on an async channel each capture or shortcuts object owns.
 
@@ -8,9 +9,10 @@ use crate::inputproto::{
     reprise_input_capture_v1::{self, RepriseInputCaptureV1},
     reprise_input_v1::{Device, Kind, RepriseInputV1},
     reprise_keys_v1::{KeyState, RepriseKeysV1},
+    reprise_sandboxed_v1::{self, RepriseSandboxedV1},
     reprise_shortcuts_v1::{self, RepriseShortcutsV1},
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
@@ -94,6 +96,8 @@ enum Cmd {
 struct Shared {
     zones: Vec<Zone>,
     zone_set: u32,
+    /// The compositor's last `reprise_sandboxed_v1` list; None before a v5 compositor sent one.
+    sandboxed: Option<BTreeSet<String>>,
 }
 
 #[derive(Clone)]
@@ -225,7 +229,7 @@ impl Link {
             registry_queue_init::<State>(&conn).map_err(|e| format!("registry: {e}"))?;
         let qh = queue.handle();
         let input: RepriseInputV1 = globals
-            .bind(&qh, 2..=4, ())
+            .bind(&qh, 2..=5, ())
             .map_err(|e| format!("reprise_input_v1: {e}"))?;
         let shortcuts = input.version() >= 3;
         let keys = input.version() >= 4;
@@ -235,7 +239,9 @@ impl Link {
         let shared = Arc::new(Mutex::new(Shared {
             zones: Vec::new(),
             zone_set: 1,
+            sandboxed: None,
         }));
+        let sandboxed = (input.version() >= 5).then(|| input.watch_sandboxed(&qh, ()));
         let mut state = State {
             input,
             xdg,
@@ -244,6 +250,8 @@ impl Link {
             captures: HashMap::new(),
             shortcuts: HashMap::new(),
             keys: HashMap::new(),
+            _sandboxed: sandboxed,
+            sandboxed_pending: BTreeSet::new(),
             shared: shared.clone(),
             registry: globals.registry().clone(),
         };
@@ -285,6 +293,15 @@ impl Link {
             })
             .map_err(|e| format!("thread: {e}"))?;
         Ok(link)
+    }
+
+    /// The Flatpak app ids of the sandboxed clients with a window, or None when the compositor
+    /// lists none (before v5) or the connection is lost.
+    pub fn sandboxed(&self) -> Option<BTreeSet<String>> {
+        if self.dead.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.shared.lock().unwrap().sandboxed.clone()
     }
 
     pub fn zones(&self) -> (Vec<Zone>, u32) {
@@ -391,6 +408,9 @@ struct State {
     captures: HashMap<u32, (RepriseInputCaptureV1, async_channel::Sender<CaptureEvent>)>,
     shortcuts: HashMap<u32, (RepriseShortcutsV1, async_channel::Sender<ShortcutEvent>)>,
     keys: HashMap<u32, RepriseKeysV1>,
+    /// Held so the compositor goes on sending the list.
+    _sandboxed: Option<RepriseSandboxedV1>,
+    sandboxed_pending: BTreeSet<String>,
     shared: Arc<Mutex<Shared>>,
     registry: wl_registry::WlRegistry,
 }
@@ -744,6 +764,27 @@ impl Dispatch<RepriseInputCaptureV1, u32> for State {
             reprise_input_capture_v1::Event::ZonesChanged => CaptureEvent::ZonesChanged,
         };
         let _ = tx.try_send(e);
+    }
+}
+
+impl Dispatch<RepriseSandboxedV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &RepriseSandboxedV1,
+        ev: reprise_sandboxed_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match ev {
+            reprise_sandboxed_v1::Event::App { app_id } => {
+                state.sandboxed_pending.insert(app_id);
+            }
+            reprise_sandboxed_v1::Event::Done => {
+                let now = std::mem::take(&mut state.sandboxed_pending);
+                state.shared.lock().unwrap().sandboxed = Some(now);
+            }
+        }
     }
 }
 
