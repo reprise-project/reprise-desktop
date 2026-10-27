@@ -5,6 +5,9 @@ use std::borrow::Cow;
 use crate::raster::Canvas;
 use crate::theme::Color;
 
+/// The largest side of a wallpaper picture the desktop shows, in pixels.
+pub const MAX_SIDE: u32 = 16384;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Position {
     Center,
