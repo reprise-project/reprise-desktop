@@ -29,11 +29,11 @@ use reprisekit::theme::{TextUnits, Theme};
 
 use acct::{Op, User};
 
-const PROPS: WinId = "props";
-const ADD: WinId = "add";
-const BROWSE: WinId = "browse";
-const REMOVE: WinId = "remove";
-const ERROR: WinId = "error";
+const PROPS: WinId = WinId::named("props");
+const ADD: WinId = WinId::named("add");
+const BROWSE: WinId = WinId::named("browse");
+const REMOVE: WinId = WinId::named("remove");
+const ERROR: WinId = WinId::named("error");
 
 const TITLE: &str = "User Accounts";
 
@@ -600,21 +600,6 @@ impl App for AccountsApp {
         self.forms.text.size(users::CLIENT)
     }
 
-    fn text_sized(&self) -> bool {
-        true
-    }
-
-    fn fixed(&self) -> bool {
-        true
-    }
-
-    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
-        match &self.browse {
-            Some(d) if win == BROWSE => Some(d.min_client()),
-            _ => None,
-        }
-    }
-
     fn children(&self) -> Vec<Child> {
         let mut out = Vec::new();
         if let Some(p) = &self.props {
@@ -678,6 +663,70 @@ impl App for AccountsApp {
         reply
     }
 
+    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.text = Some(ctx.text.clone());
+        let cs = &ctx.theme.colors;
+        let forms = ctx.forms();
+        let px = forms.fonts.size_px;
+        let paint = Paint {
+            s: 1,
+            ..forms.paint()
+        };
+        match win {
+            PROPS => {
+                c.fill_rect(c.bounds(), cs.button_face);
+                if let Some(p) = &self.props {
+                    propsheet::draw(c, &ctx.text, &paint, &p.sheet, true, px);
+                }
+            }
+            ADD => {
+                c.fill_rect(c.bounds(), cs.button_face);
+                if let Some(d) = &self.add {
+                    form::draw(c, &ctx.text, &paint, &d.form, true, px);
+                }
+            }
+            BROWSE => {
+                if let Some(d) = &self.browse {
+                    d.draw(
+                        c,
+                        &ctx.text,
+                        &paint,
+                        Rect::new(0, 0, d.client().0, d.client().1),
+                        px,
+                    );
+                }
+            }
+            REMOVE => {
+                if let Some((_, b)) = &self.remove {
+                    b.draw(c, &forms, &ctx.text);
+                }
+            }
+            ERROR => {
+                if let Some(b) = &self.error {
+                    b.draw(c, &forms, &ctx.text);
+                }
+            }
+            _ => self.users.draw(c, ctx, self.face.as_ref()),
+        }
+    }
+}
+
+impl repriseapp::Extended for AccountsApp {
+    fn text_sized(&self) -> bool {
+        true
+    }
+
+    fn fixed(&self) -> bool {
+        true
+    }
+
+    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
+        match &self.browse {
+            Some(d) if win == BROWSE => Some(d.min_client()),
+            _ => None,
+        }
+    }
+
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let forms = ctx.forms();
         let px = forms.fonts.size_px;
@@ -727,53 +776,6 @@ impl App for AccountsApp {
             host: &mut self.browse_host,
         })
     }
-
-    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        self.text = Some(ctx.text.clone());
-        let cs = &ctx.theme.colors;
-        let forms = ctx.forms();
-        let px = forms.fonts.size_px;
-        let paint = Paint {
-            s: 1,
-            ..forms.paint()
-        };
-        match win {
-            PROPS => {
-                c.fill_rect(c.bounds(), cs.button_face);
-                if let Some(p) = &self.props {
-                    propsheet::draw(c, &ctx.text, &paint, &p.sheet, true, px);
-                }
-            }
-            ADD => {
-                c.fill_rect(c.bounds(), cs.button_face);
-                if let Some(d) = &self.add {
-                    form::draw(c, &ctx.text, &paint, &d.form, true, px);
-                }
-            }
-            BROWSE => {
-                if let Some(d) = &self.browse {
-                    d.draw(
-                        c,
-                        &ctx.text,
-                        &paint,
-                        Rect::new(0, 0, d.client().0, d.client().1),
-                        px,
-                    );
-                }
-            }
-            REMOVE => {
-                if let Some((_, b)) = &self.remove {
-                    b.draw(c, &forms, &ctx.text);
-                }
-            }
-            ERROR => {
-                if let Some(b) = &self.error {
-                    b.draw(c, &forms, &ctx.text);
-                }
-            }
-            _ => self.users.draw(c, ctx, self.face.as_ref()),
-        }
-    }
 }
 
 impl AccountsApp {
@@ -803,7 +805,7 @@ impl AccountsApp {
 /// Runs the program; `args` are the command line after the program's name.
 pub fn main(_args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    repriseapp::run(Box::new(AccountsApp::new()));
+    repriseapp::run(Box::new(AccountsApp::new())).unwrap_or_else(|e| e.exit());
 }
 
 #[cfg(test)]

@@ -168,22 +168,6 @@ impl App for AboutBox {
         self.asked
     }
 
-    fn fixed(&self) -> bool {
-        true
-    }
-
-    fn caption(&self, _win: WinId) -> Caption {
-        Caption::Fixed
-    }
-
-    fn hidden(&self) -> bool {
-        !self.heard_outputs
-    }
-
-    fn output_management(&self) -> bool {
-        true
-    }
-
     fn event(&mut self, _win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         let mut reply = self.dispatch(ev, ctx);
         let size = self.size(ctx);
@@ -193,20 +177,6 @@ impl App for AboutBox {
             reply.redraw = true;
         }
         reply
-    }
-
-    fn reader_form(&mut self, _win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
-        let form = repriseapp::DropForm {
-            form: self.form.as_mut()?,
-            px: None,
-        };
-        Some(repriseapp::ReaderForm::Form(form))
-    }
-
-    fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let px = ctx.forms().fonts.size_px;
-        let form = self.form(ctx).clone();
-        repriseapp::oneshot::access_form(&form, tree, &ctx.text, px);
     }
 
     fn draw(&mut self, _win: WinId, c: &mut Canvas, ctx: &Ctx) {
@@ -227,10 +197,42 @@ impl App for AboutBox {
     }
 }
 
+impl repriseapp::Extended for AboutBox {
+    fn fixed(&self) -> bool {
+        true
+    }
+
+    fn caption(&self, _win: WinId) -> Caption {
+        Caption::Fixed
+    }
+
+    fn hidden(&self) -> bool {
+        !self.heard_outputs
+    }
+
+    fn output_management(&self) -> bool {
+        true
+    }
+
+    fn reader_form(&mut self, _win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
+        let form = repriseapp::DropForm {
+            form: self.form.as_mut()?,
+            px: None,
+        };
+        Some(repriseapp::ReaderForm::Form(form))
+    }
+
+    fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
+        let px = ctx.forms().fonts.size_px;
+        let form = self.form(ctx).clone();
+        repriseapp::oneshot::access_form(&form, tree, &ctx.text, px);
+    }
+}
+
 /// Runs the program; `args` are the command line after the program's name.
 pub fn main(_args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    repriseapp::run(Box::new(AboutBox::new(SystemFacts::read())));
+    repriseapp::run(Box::new(AboutBox::new(SystemFacts::read()))).unwrap_or_else(|e| e.exit());
 }
 
 #[cfg(test)]

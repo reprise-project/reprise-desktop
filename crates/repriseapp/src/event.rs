@@ -88,14 +88,14 @@ pub enum Event {
     PastedFiles(FileClip),
     Focus(bool),
     /// The compositor took its shortcuts back from the window that held
-    /// them ([`App::shortcuts_inhibited`](crate::App::shortcuts_inhibited)), on the user's
+    /// them ([`Extended::shortcuts_inhibited`](crate::Extended::shortcuts_inhibited)), on the user's
     /// Super+Shift+Escape. The modifiers held for that chord are no
     /// longer a hot-key field's to record.
     ShortcutsInactive,
     /// The frame's X, or the window menu's Close. On `MAIN` the program
     /// answers `Reply::quit`; on a child it drops that `Child`. On a
     /// flyout, the compositor took it away; the program stops returning
-    /// it from `App::flyout`.
+    /// it from `Extended::flyout`.
     CloseRequest,
     /// Something off the event loop's thread has work for the program (see
     /// `Waker::wake`). Delivered on `MAIN` even when the main window is
@@ -140,8 +140,8 @@ pub enum Event {
         action: DragAction,
         source: Actions,
     },
-    /// A drag dropped on a field of the window's `App::drop_form` changed it (`Changed`
-    /// with the field's id), as a key or paste in it would; `App::drop_file_dialog`'s File
+    /// A drag dropped on a field of the window's `Extended::drop_form` changed it (`Changed`
+    /// with the field's id), as a key or paste in it would; `Extended::drop_file_dialog`'s File
     /// name reports `fielddrop::FILE_NAME`.
     FieldDropped(reprisekit::controls::form::Event),
     /// The `Ask` drop this window was answering is gone: the dragging
@@ -158,7 +158,7 @@ pub enum Event {
         action: Option<DragAction>,
     },
     /// The outputs as the compositor has them, on `MAIN`, after every change, for a program that
-    /// asked ([`App::output_management`](crate::App::output_management)). Empty when the compositor
+    /// asked ([`Extended::output_management`](crate::Extended::output_management)). Empty when the compositor
     /// offers no output management.
     Heads(Vec<heads::Head>),
     HeadsApplied {

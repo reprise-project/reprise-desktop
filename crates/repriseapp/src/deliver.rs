@@ -335,7 +335,7 @@ impl Host {
     }
 }
 
-/// The toplevel `win` belongs to: the window up its chain of [`App::parent`](crate::App::parent)s
+/// The toplevel `win` belongs to: the window up its chain of [`Extended::parent`](crate::Extended::parent)s
 /// that has none, or `MAIN`.
 pub(crate) fn root_of(win: WinId, parent: impl Fn(WinId) -> Option<WinId>) -> WinId {
     let mut w = win;

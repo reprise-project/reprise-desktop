@@ -35,11 +35,11 @@ use reprisekit::textedit::keysym;
 use reprisekit::theme::Theme;
 
 /// Child windows; one of each at a time.
-const WIZARD: WinId = "wizard";
-const PROPS: WinId = "props";
-const PAIR: WinId = "pair";
-const REMOVE: WinId = "remove";
-const ERROR: WinId = "error";
+const WIZARD: WinId = WinId::named("wizard");
+const PROPS: WinId = WinId::named("props");
+const PAIR: WinId = WinId::named("pair");
+const REMOVE: WinId = WinId::named("remove");
+const ERROR: WinId = WinId::named("error");
 
 struct BtApp {
     tray: Option<reprisetray::TrayHandle>,
@@ -829,18 +829,6 @@ impl App for BtApp {
         forms.text.size(devices::CLIENT)
     }
 
-    fn fixed(&self) -> bool {
-        true
-    }
-
-    fn text_sized(&self) -> bool {
-        true
-    }
-
-    fn hidden(&self) -> bool {
-        self.hidden
-    }
-
     fn children(&self) -> Vec<Child> {
         let u = self.forms.text;
         let mut out = Vec::new();
@@ -924,49 +912,6 @@ impl App for BtApp {
         reply
     }
 
-    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let forms = ctx.forms();
-        let px = forms.fonts.size_px;
-        match win {
-            WIZARD => {
-                if let Some(w) = &self.wizard {
-                    w.access(tree, ctx);
-                }
-            }
-            PROPS => {
-                if let Some(p) = &self.props {
-                    oneshot::access_sheet(&p.sheet, tree, &ctx.text, px);
-                }
-            }
-            PAIR => {
-                if let Some(d) = &self.pair {
-                    oneshot::access_form(&d.form, tree, &ctx.text, px);
-                }
-            }
-            REMOVE => {
-                if let Some((_, b)) = &self.remove {
-                    b.access(tree, &ctx.text, &forms);
-                }
-            }
-            ERROR => {
-                if let Some(b) = &self.error {
-                    b.access(tree, &ctx.text, &forms);
-                }
-            }
-            _ => self.devices.access(tree, ctx),
-        }
-    }
-
-    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
-        let form = match win {
-            WIZARD => &mut self.wizard.as_mut()?.page.form,
-            PROPS => self.props.as_mut()?.sheet.open_mut(),
-            PAIR => &mut self.pair.as_mut()?.form,
-            _ => return None,
-        };
-        Some(DropForm { form, px: None })
-    }
-
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         self.text = Some(ctx.text.clone());
         let cs = &ctx.theme.colors;
@@ -1025,6 +970,63 @@ impl App for BtApp {
     }
 }
 
+impl repriseapp::Extended for BtApp {
+    fn fixed(&self) -> bool {
+        true
+    }
+
+    fn text_sized(&self) -> bool {
+        true
+    }
+
+    fn hidden(&self) -> bool {
+        self.hidden
+    }
+
+    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
+        let forms = ctx.forms();
+        let px = forms.fonts.size_px;
+        match win {
+            WIZARD => {
+                if let Some(w) = &self.wizard {
+                    w.access(tree, ctx);
+                }
+            }
+            PROPS => {
+                if let Some(p) = &self.props {
+                    oneshot::access_sheet(&p.sheet, tree, &ctx.text, px);
+                }
+            }
+            PAIR => {
+                if let Some(d) = &self.pair {
+                    oneshot::access_form(&d.form, tree, &ctx.text, px);
+                }
+            }
+            REMOVE => {
+                if let Some((_, b)) = &self.remove {
+                    b.access(tree, &ctx.text, &forms);
+                }
+            }
+            ERROR => {
+                if let Some(b) = &self.error {
+                    b.access(tree, &ctx.text, &forms);
+                }
+            }
+            _ => self.devices.access(tree, ctx),
+        }
+    }
+
+    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
+        let form = match win {
+            WIZARD => &mut self.wizard.as_mut()?.page.form,
+            PROPS => self.props.as_mut()?.sheet.open_mut(),
+            PAIR => &mut self.pair.as_mut()?.form,
+            _ => return None,
+        };
+        Some(DropForm { form, px: None })
+    }
+}
+
 /// Runs the program; `args` are the command line after the program's name.
 pub fn main(args: Vec<std::ffi::OsString>) {
     repriseapp::applet_main(&args, BtApp::new);
@@ -1034,6 +1036,7 @@ pub fn main(args: Vec<std::ffi::OsString>) {
 mod tests {
     use super::*;
     use crate::bz::{Adapter, Ask, Device, Kind};
+    use repriseapp::Extended;
     use repriseapp::{KeyInput, MAIN};
     use reprisekit::textedit::EditKey;
     use reprisekit::theme::FontConfig;

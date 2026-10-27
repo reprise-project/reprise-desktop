@@ -83,7 +83,7 @@ impl AccessState {
     }
 }
 
-/// A screen reader's action that takes no click ([`crate::App::reader`]), at a window point.
+/// A screen reader's action that takes no click ([`crate::Extended::reader`]), at a window point.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reader {
     /// Scroll row `row` of the list at `at` into view, picking nothing; the row is counted as
@@ -94,7 +94,7 @@ pub enum Reader {
 }
 
 /// What a screen reader's Focus and ScrollIntoView reach in a window without a click
-/// ([`crate::App::reader_form`]): a form, or a property sheet and its open page.
+/// ([`crate::Extended::reader_form`]): a form, or a property sheet and its open page.
 pub enum ReaderForm<'a> {
     Form(DropForm<'a>),
     Sheet(&'a mut PropSheet),
@@ -262,7 +262,7 @@ impl Host {
         self.reader_act(win, Reader::Focus((at.0 as i32, at.1 as i32)));
     }
 
-    /// Hand `act` to the program ([`App::reader`](crate::App::reader)); when it reports a change
+    /// Hand `act` to the program ([`Extended::reader`](crate::Extended::reader)); when it reports a change
     /// the window and its tree are drawn again.
     fn reader_act(&mut self, win: WinId, act: Reader) {
         let Some(s) = self.slots.iter().find(|s| s.id == win) else {

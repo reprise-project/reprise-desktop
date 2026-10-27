@@ -27,8 +27,8 @@ use reprisekit::textedit::keysym;
 
 use model::{Act, Arrival, Entry};
 
-const FLYOUT: WinId = "flyout";
-const UNLOCK: WinId = "unlock";
+const FLYOUT: WinId = WinId::named("flyout");
+const UNLOCK: WinId = WinId::named("unlock");
 
 struct Flyout {
     at: (i32, i32),
@@ -487,14 +487,6 @@ impl App for DrivesApp {
         unlock::CLIENT
     }
 
-    fn text_sized(&self) -> bool {
-        true
-    }
-
-    fn hidden(&self) -> bool {
-        true
-    }
-
     fn children(&self) -> Vec<Child> {
         self.unlock
             .iter()
@@ -506,14 +498,6 @@ impl App for DrivesApp {
                 modal: false,
             })
             .collect()
-    }
-
-    fn flyout(&self) -> Option<repriseapp::Flyout> {
-        self.flyout.as_ref().map(|f| repriseapp::Flyout {
-            id: FLYOUT,
-            at: f.at,
-            title: tray::TIP,
-        })
     }
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
@@ -548,6 +532,49 @@ impl App for DrivesApp {
         }
     }
 
+    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        match win {
+            FLYOUT => {
+                let Some(f) = self.flyout.as_mut() else {
+                    return;
+                };
+                let menu = Self::menu(f, ctx);
+                let r = menu.rect();
+                let s = ctx.theme.scale.max(1);
+                if !draws_own_shadow(&ctx.theme) {
+                    let shadow =
+                        draw_shadow(r.width * s, r.height * s, ctx.theme.metrics.menu_shadow);
+                    c.blit_over(r.x * s, r.y * s, &shadow);
+                }
+                menu.draw(c, &ctx.theme, &ctx.text, false);
+            }
+            UNLOCK => {
+                if let Some(u) = &self.unlock {
+                    u.draw(c, ctx);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl repriseapp::Extended for DrivesApp {
+    fn text_sized(&self) -> bool {
+        true
+    }
+
+    fn hidden(&self) -> bool {
+        true
+    }
+
+    fn flyout(&self) -> Option<repriseapp::Flyout> {
+        self.flyout.as_ref().map(|f| repriseapp::Flyout {
+            id: FLYOUT,
+            at: f.at,
+            title: tray::TIP,
+        })
+    }
+
     fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
         let u = self.unlock.as_mut().filter(|_| win == UNLOCK)?;
         let form = repriseapp::DropForm {
@@ -568,31 +595,6 @@ impl App for DrivesApp {
             UNLOCK => {
                 if let Some(u) = &self.unlock {
                     u.access(tree, ctx);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        match win {
-            FLYOUT => {
-                let Some(f) = self.flyout.as_mut() else {
-                    return;
-                };
-                let menu = Self::menu(f, ctx);
-                let r = menu.rect();
-                let s = ctx.theme.scale.max(1);
-                if !draws_own_shadow(&ctx.theme) {
-                    let shadow =
-                        draw_shadow(r.width * s, r.height * s, ctx.theme.metrics.menu_shadow);
-                    c.blit_over(r.x * s, r.y * s, &shadow);
-                }
-                menu.draw(c, &ctx.theme, &ctx.text, false);
-            }
-            UNLOCK => {
-                if let Some(u) = &self.unlock {
-                    u.draw(c, ctx);
                 }
             }
             _ => {}

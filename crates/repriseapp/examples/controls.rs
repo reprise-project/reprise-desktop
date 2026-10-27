@@ -185,10 +185,13 @@ impl App for Controls {
     }
 }
 
+impl repriseapp::Extended for Controls {}
+
 fn main() {
     env_logger::init();
     repriseapp::run(Box::new(Controls {
         form: build_form(),
         bar: build_bar(),
-    }));
+    }))
+    .unwrap_or_else(|e| e.exit());
 }

@@ -328,18 +328,6 @@ impl App for Prompt {
         start_forms().text.size(self.size)
     }
 
-    fn fixed(&self) -> bool {
-        true
-    }
-
-    fn foreign_parent(&self) -> Option<String> {
-        self.parent.clone()
-    }
-
-    fn modal(&self) -> bool {
-        self.modal
-    }
-
     fn event(&mut self, _win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         match ev {
             Event::CloseRequest => self.cancelled(Refusal::Dismissed),
@@ -354,11 +342,6 @@ impl App for Prompt {
                 None => Reply::none(),
             },
         }
-    }
-
-    fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let px = self.form.units().px(ctx.theme.fonts.size_px);
-        repriseapp::oneshot::access_form(&self.form, tree, &ctx.text, px);
     }
 
     fn draw(&mut self, _win: WinId, c: &mut Canvas, ctx: &Ctx) {
@@ -380,6 +363,25 @@ impl App for Prompt {
             let u = forms.text;
             c.blit_over(u.len(ICON_AT.0), u.len(ICON_AT.1), ic);
         }
+    }
+}
+
+impl repriseapp::Extended for Prompt {
+    fn fixed(&self) -> bool {
+        true
+    }
+
+    fn foreign_parent(&self) -> Option<String> {
+        self.parent.clone()
+    }
+
+    fn modal(&self) -> bool {
+        self.modal
+    }
+
+    fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
+        let px = self.form.units().px(ctx.theme.fonts.size_px);
+        repriseapp::oneshot::access_form(&self.form, tree, &ctx.text, px);
     }
 }
 

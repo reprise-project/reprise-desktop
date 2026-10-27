@@ -18,7 +18,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use wayland_client::protocol::wl_shm::Format;
 
-const FLYOUT: WinId = "pickcolor";
+const FLYOUT: WinId = WinId::named("pickcolor");
 const TITLE: &str = "Pick a colour";
 
 pub(crate) struct Output {
@@ -58,7 +58,8 @@ pub fn run_dialog() {
         picked: picked.clone(),
         done: false,
         backdrop: None,
-    }));
+    }))
+    .unwrap_or_else(|e| e.exit());
     if let Some(argb) = *picked.lock().unwrap() {
         println!("{}", answer(argb));
     }
@@ -183,16 +184,6 @@ impl App for Picker {
     fn initial_size(&self) -> (i32, i32) {
         (1, 1)
     }
-    fn hidden(&self) -> bool {
-        true
-    }
-    fn flyout(&self) -> Option<Flyout> {
-        (!self.done).then_some(Flyout {
-            id: FLYOUT,
-            at: Flyout::UNDER_POINTER,
-            title: TITLE,
-        })
-    }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
         if win != FLYOUT {
@@ -235,6 +226,19 @@ impl App for Picker {
             &self.stills[idx].still,
             backdrop,
         );
+    }
+}
+
+impl repriseapp::Extended for Picker {
+    fn hidden(&self) -> bool {
+        true
+    }
+    fn flyout(&self) -> Option<Flyout> {
+        (!self.done).then_some(Flyout {
+            id: FLYOUT,
+            at: Flyout::UNDER_POINTER,
+            title: TITLE,
+        })
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {

@@ -12,9 +12,9 @@ use reprisekit::theme::Color;
 use std::sync::Arc;
 use std::time::Instant;
 
-pub const COPY: WinId = "copy progress";
-pub const REMOVE: WinId = "remove progress";
-pub const EXTRACT: WinId = "extract progress";
+pub const COPY: WinId = WinId::named("copy progress");
+pub const REMOVE: WinId = WinId::named("remove progress");
+pub const EXTRACT: WinId = WinId::named("extract progress");
 /// The desktop file a task button's progress is sent for.
 pub(crate) const DESKTOP_ID: &str = "reprise-explorer";
 

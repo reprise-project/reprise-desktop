@@ -24,8 +24,8 @@ use repriseapp::keys::AltArm;
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{
-    App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, FileDrop, KeyInput, MAIN, PointerInput,
-    Reply, WinId,
+    App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, Extended, FileDrop, KeyInput, MAIN,
+    PointerInput, Reply, WinId,
 };
 use reprisekit::access::{ROOT, Tree};
 use reprisekit::classic::widgets::{self, Axis, ScrollHit};
@@ -54,21 +54,21 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use window::{EDIT_PX, edit_font};
 
-const GOTO: WinId = "goto";
+const GOTO: WinId = WinId::named("goto");
 const GOTO_CLIENT: (i32, i32) = (268, 95);
 
-const FIND: WinId = "find";
-const NOTFOUND: WinId = "notfound";
-const ERRORBOX: WinId = "error";
-const REPLACE_WIN: WinId = "replace";
-const ABOUT: WinId = "about";
-const SAVECHANGES: WinId = "savechanges";
-const OVERWRITE: WinId = "overwrite";
-const LOSSY: WinId = "lossy";
-const RECOVERED: WinId = "recovered";
-const CHANGED: WinId = "changed";
-const OPEN: WinId = "open";
-const SAVEAS: WinId = "saveas";
+const FIND: WinId = WinId::named("find");
+const NOTFOUND: WinId = WinId::named("notfound");
+const ERRORBOX: WinId = WinId::named("error");
+const REPLACE_WIN: WinId = WinId::named("replace");
+const ABOUT: WinId = WinId::named("about");
+const SAVECHANGES: WinId = WinId::named("savechanges");
+const OVERWRITE: WinId = WinId::named("overwrite");
+const LOSSY: WinId = WinId::named("lossy");
+const RECOVERED: WinId = WinId::named("recovered");
+const CHANGED: WinId = WinId::named("changed");
+const OPEN: WinId = WinId::named("open");
+const SAVEAS: WinId = WinId::named("saveas");
 
 struct Notepad {
     edit: MultiEdit,
@@ -278,25 +278,6 @@ impl App for Notepad {
         self.forms.text.size((568, 328))
     }
 
-    fn text_sized(&self) -> bool {
-        true
-    }
-
-    fn emergency(&mut self) {
-        self.rescue();
-    }
-
-    fn draw_failed(&mut self, error: &str) -> Reply {
-        self.error = Some(self.error_box(&format!(
-            "Notepad cannot draw its window: {error}.\n\nClose some programs or free space in /dev/shm."
-        )));
-        Reply::redraw()
-    }
-
-    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
-        self.file_dlg(win).map(FileDlg::min_client)
-    }
-
     fn children(&self) -> Vec<Child> {
         let mut kids = Vec::new();
         if self.goto.is_some() {
@@ -430,38 +411,6 @@ impl App for Notepad {
         reply
     }
 
-    fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
-        if win != MAIN {
-            return repriseapp::reader_popup(self, win, ctx);
-        }
-        if self.bar.open.is_some() {
-            return Some(Box::new(&mut self.bar));
-        }
-        Some(Box::new(&mut self.context))
-    }
-
-    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
-        let (form, px) = match win {
-            GOTO => (self.goto.as_mut()?, None),
-            FIND => (self.find.as_mut()?, Some(self.forms.fonts.size_px)),
-            REPLACE_WIN => (self.replace.as_mut()?, Some(self.forms.fonts.size_px)),
-            _ => return None,
-        };
-        Some(DropForm { form, px })
-    }
-
-    fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
-        let dlg = match win {
-            OPEN => self.open.as_mut()?,
-            SAVEAS => self.saveas.as_mut()?,
-            _ => return None,
-        };
-        Some(FileDrop {
-            dlg,
-            host: &mut self.host,
-        })
-    }
-
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         self.dialog_text = ctx.text.clone();
         self.follow(ctx);
@@ -579,6 +528,59 @@ impl App for Notepad {
             _ => self.draw_main(c, ctx),
         }
     }
+}
+
+impl Extended for Notepad {
+    fn text_sized(&self) -> bool {
+        true
+    }
+
+    fn emergency(&mut self) {
+        self.rescue();
+    }
+
+    fn draw_failed(&mut self, error: &str) -> Reply {
+        self.error = Some(self.error_box(&format!(
+            "Notepad cannot draw its window: {error}.\n\nClose some programs or free space in /dev/shm."
+        )));
+        Reply::redraw()
+    }
+
+    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
+        self.file_dlg(win).map(FileDlg::min_client)
+    }
+
+    fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        if win != MAIN {
+            return repriseapp::reader_popup(self, win, ctx);
+        }
+        if self.bar.open.is_some() {
+            return Some(Box::new(&mut self.bar));
+        }
+        Some(Box::new(&mut self.context))
+    }
+
+    fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
+        let (form, px) = match win {
+            GOTO => (self.goto.as_mut()?, None),
+            FIND => (self.find.as_mut()?, Some(self.forms.fonts.size_px)),
+            REPLACE_WIN => (self.replace.as_mut()?, Some(self.forms.fonts.size_px)),
+            _ => return None,
+        };
+        Some(DropForm { form, px })
+    }
+
+    fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
+        let dlg = match win {
+            OPEN => self.open.as_mut()?,
+            SAVEAS => self.saveas.as_mut()?,
+            _ => return None,
+        };
+        Some(FileDrop {
+            dlg,
+            host: &mut self.host,
+        })
+    }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         self.follow(ctx);
@@ -658,7 +660,7 @@ pub fn main(args: Vec<std::ffi::OsString>) {
     let mut notepad = Notepad::new(path);
     notepad.forms = repriseapp::start_forms();
     notepad.offer_recovered();
-    repriseapp::run(Box::new(notepad));
+    repriseapp::run(Box::new(notepad)).unwrap_or_else(|e| e.exit());
 }
 
 #[cfg(test)]

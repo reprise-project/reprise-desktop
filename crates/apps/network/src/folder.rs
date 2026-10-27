@@ -69,7 +69,7 @@ pub enum Outcome {
     StopHotspot(String),
 }
 
-/// An open context menu: the tree it walks, the chain reprisekit lays out, and what each row does (`None` for a separator or greyed row). It shows on popups of its own ([`repriseapp::App::popup`]).
+/// An open context menu: the tree it walks, the chain reprisekit lays out, and what each row does (`None` for a separator or greyed row). It shows on popups of its own ([`repriseapp::Extended::popup`]).
 pub struct Popup {
     tree: MenuTree,
     chain: PopupMenu,

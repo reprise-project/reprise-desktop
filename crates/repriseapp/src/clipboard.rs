@@ -27,7 +27,7 @@ impl Host {
     }
 
     /// The clipboard for a file dialog's File name
-    /// ([`App::drop_file_dialog`](crate::App::drop_file_dialog)): Ctrl+C and Ctrl+X put its
+    /// ([`Extended::drop_file_dialog`](crate::Extended::drop_file_dialog)): Ctrl+C and Ctrl+X put its
     /// selection on the clipboard before the key reaches the dialog, and Ctrl+V asks for the
     /// clipboard's text, which goes into the field. `true` when the program does not get `ev`.
     pub(crate) fn file_dialog_clipboard(&mut self, win: WinId, ev: &Event) -> bool {

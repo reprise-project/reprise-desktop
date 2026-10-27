@@ -43,7 +43,7 @@ pub fn dialog_max_w() -> i32 {
     })
 }
 
-/// `theme` at `text_size` for an [`App::text_sized`] program, else as it is.
+/// `theme` at `text_size` for an [`Extended::text_sized`] program, else as it is.
 pub(crate) fn sized(theme: Theme, app: &dyn App, text_size: u32) -> Theme {
     if app.text_sized() {
         theme.with_text_size(text_size)

@@ -75,16 +75,16 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use repriseapp::{App, Child, Ctx, DropForm, Event, FileDrop, Reply, Waker, WinId};
 
 /// The file dialog: Startup Add... and Background Browse....
-const ADD_WIN: WinId = "add";
-const SHORTCUT_WIN: WinId = "shortcut";
-const LAYOUT_WIN: WinId = "layout";
-const ADD_ITEM_WIN: WinId = "add_item";
-const RENAME_WIN: WinId = "rename";
-const SAVER_WIN: WinId = "saver";
+const ADD_WIN: WinId = WinId::named("add");
+const SHORTCUT_WIN: WinId = WinId::named("shortcut");
+const LAYOUT_WIN: WinId = WinId::named("layout");
+const ADD_ITEM_WIN: WinId = WinId::named("add_item");
+const RENAME_WIN: WinId = WinId::named("rename");
+const SAVER_WIN: WinId = WinId::named("saver");
 
-const CHOOSER_WIN: WinId = "openwith";
+const CHOOSER_WIN: WinId = WinId::named("openwith");
 
-const ERROR_WIN: WinId = "error";
+const ERROR_WIN: WinId = WinId::named("error");
 
 struct Chooser {
     mime: String,
@@ -654,26 +654,6 @@ impl App for SettingsApp {
         self.kept.at(self.text_size, self.min_window())
     }
 
-    /// Smallest sizes: the sheet's pages at their smallest, the file dialog's opening size.
-    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
-        match &self.add {
-            _ if win == repriseapp::MAIN => Some(self.min_window()),
-            Some(d) if win == ADD_WIN => Some(d.min_client()),
-            _ => None,
-        }
-    }
-
-    fn shortcuts_inhibited(&self) -> Option<WinId> {
-        self.shortcut
-            .as_ref()
-            .filter(|d| d.capturing())
-            .map(|_| SHORTCUT_WIN)
-    }
-
-    fn output_management(&self) -> bool {
-        true
-    }
-
     fn children(&self) -> Vec<Child> {
         let mut kids = Vec::new();
         if self.add.is_some() {
@@ -804,6 +784,60 @@ impl App for SettingsApp {
         reply
     }
 
+    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.dialog_text = ctx.text.clone();
+        self.follow_text(ctx);
+        if win == repriseapp::MAIN {
+            self.fit_window(ctx.size);
+        }
+        self.paint(win, c, ctx);
+    }
+
+    fn start(&mut self, waker: Waker) -> repriseapp::Start {
+        if let Some(r) = &self.requests {
+            let w = waker.clone();
+            r.wake_with(move || w.wake());
+            // For a request that came before the loop ran.
+            waker.wake();
+        }
+        let w = waker.clone();
+        configwatch::spawn(&self.path, self.config_touched.clone(), move || w.wake());
+        let w = waker.clone();
+        match configwatch::FolderWatch::spawn(self.slides_touched.clone(), move || w.wake()) {
+            Ok(watch) => self.folder_watch = Some(watch),
+            Err(e) => log::warn!("the slideshow folder is not watched: {e}"),
+        }
+        self.waker = Some(waker);
+        let had = self.wallpapers.clone();
+        self.scan = Some(
+            self.spawn(move || wallpapers::merge(wallpapers::scan(&wallpapers::dirs()), &had)),
+        );
+        self.want_preview();
+        repriseapp::Start::Continue
+    }
+}
+
+impl repriseapp::Extended for SettingsApp {
+    /// Smallest sizes: the sheet's pages at their smallest, the file dialog's opening size.
+    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
+        match &self.add {
+            _ if win == repriseapp::MAIN => Some(self.min_window()),
+            Some(d) if win == ADD_WIN => Some(d.min_client()),
+            _ => None,
+        }
+    }
+
+    fn shortcuts_inhibited(&self) -> Option<WinId> {
+        self.shortcut
+            .as_ref()
+            .filter(|d| d.capturing())
+            .map(|_| SHORTCUT_WIN)
+    }
+
+    fn output_management(&self) -> bool {
+        true
+    }
+
     fn drop_form(&mut self, win: WinId) -> Option<DropForm<'_>> {
         let form = match win {
             repriseapp::MAIN => self.sheet.open_mut(),
@@ -837,40 +871,8 @@ impl App for SettingsApp {
         })
     }
 
-    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        self.dialog_text = ctx.text.clone();
-        self.follow_text(ctx);
-        if win == repriseapp::MAIN {
-            self.fit_window(ctx.size);
-        }
-        self.paint(win, c, ctx);
-    }
-
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         self.describe(win, tree, ctx);
-    }
-
-    fn start(&mut self, waker: Waker) -> repriseapp::Start {
-        if let Some(r) = &self.requests {
-            let w = waker.clone();
-            r.wake_with(move || w.wake());
-            // For a request that came before the loop ran.
-            waker.wake();
-        }
-        let w = waker.clone();
-        configwatch::spawn(&self.path, self.config_touched.clone(), move || w.wake());
-        let w = waker.clone();
-        match configwatch::FolderWatch::spawn(self.slides_touched.clone(), move || w.wake()) {
-            Ok(watch) => self.folder_watch = Some(watch),
-            Err(e) => log::warn!("the slideshow folder is not watched: {e}"),
-        }
-        self.waker = Some(waker);
-        let had = self.wallpapers.clone();
-        self.scan = Some(
-            self.spawn(move || wallpapers::merge(wallpapers::scan(&wallpapers::dirs()), &had)),
-        );
-        self.want_preview();
-        repriseapp::Start::Continue
     }
 }
 
@@ -887,7 +889,7 @@ pub fn main(args: Vec<std::ffi::OsString>) {
         Claim::Handed => return,
         Claim::Alone => None,
     };
-    repriseapp::run(Box::new(SettingsApp::new(page, requests)));
+    repriseapp::run(Box::new(SettingsApp::new(page, requests))).unwrap_or_else(|e| e.exit());
 }
 
 #[cfg(test)]

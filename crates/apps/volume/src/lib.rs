@@ -40,9 +40,9 @@ use reprisekit::theme::{TextUnits, Theme};
 use state::State;
 use view::{Options, Recent, View};
 
-const PROPS_WIN: WinId = "properties";
-const ADVANCED_WIN: WinId = "advanced";
-const ABOUT_WIN: WinId = "about";
+const PROPS_WIN: WinId = WinId::named("properties");
+const ADVANCED_WIN: WinId = WinId::named("advanced");
+const ABOUT_WIN: WinId = WinId::named("about");
 const ICON: &str = "multimedia-volume-control";
 /// The speaker at the Balance sliders' ends, the left one flipped.
 const SPEAKER: &str = "audio-volume-high";
@@ -623,14 +623,6 @@ impl App for Volume {
         self.main_size
     }
 
-    fn fixed(&self) -> bool {
-        true
-    }
-
-    fn text_sized(&self) -> bool {
-        true
-    }
-
     fn children(&self) -> Vec<Child> {
         let mut kids = Vec::new();
         if self.props.is_some() {
@@ -746,6 +738,16 @@ impl App for Volume {
             _ => self.draw_main(c, ctx),
         }
     }
+}
+
+impl repriseapp::Extended for Volume {
+    fn fixed(&self) -> bool {
+        true
+    }
+
+    fn text_sized(&self) -> bool {
+        true
+    }
 
     fn popup(&mut self, win: WinId, ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
         if win == repriseapp::MAIN {
@@ -823,12 +825,13 @@ pub fn main(args: Vec<std::ffi::OsString>) {
     let path = State::path();
     let mut app = Volume::new(view, snapshot, State::load(&path));
     app.state_path = Some(path);
-    repriseapp::run(Box::new(app));
+    repriseapp::run(Box::new(app)).unwrap_or_else(|e| e.exit());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use repriseapp::Extended;
     use reprisekit::theme::FontConfig;
 
     fn label_at(t: usize, r: usize) -> String {

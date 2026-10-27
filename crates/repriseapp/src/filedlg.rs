@@ -294,7 +294,7 @@ fn listing(folders: &mut FolderTable, id: FolderId, read: Read, icons: &mut Icon
     }
 }
 
-/// Starts thumbnails for the file dialog in window `win` ([`crate::App::drop_file_dialog`]):
+/// Starts thumbnails for the file dialog in window `win` ([`crate::Extended::drop_file_dialog`]):
 /// the repriseapp host calls it before each event, so no program wires them up.
 pub(crate) fn thumbs_on(app: &mut dyn crate::App, win: crate::WinId, wake: &crate::Waker) {
     if let Some(f) = app.drop_file_dialog(win) {

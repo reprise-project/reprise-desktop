@@ -297,18 +297,6 @@ impl App for UpdatesApp {
         self.units.size(window::CLIENT)
     }
 
-    fn text_sized(&self) -> bool {
-        true
-    }
-
-    fn fixed(&self) -> bool {
-        true
-    }
-
-    fn hidden(&self) -> bool {
-        self.hidden
-    }
-
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         // The tray goes first: it takes the `reprise.updates` bus name, and a second instance
         // exits here once it has raised the first.
@@ -340,6 +328,26 @@ impl App for UpdatesApp {
         reply
     }
 
+    fn draw(&mut self, _win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.sync_window(ctx);
+        self.window
+            .draw(c, &ctx.text, &ctx.theme, &ctx.forms(), &self.phase);
+    }
+}
+
+impl repriseapp::Extended for UpdatesApp {
+    fn text_sized(&self) -> bool {
+        true
+    }
+
+    fn fixed(&self) -> bool {
+        true
+    }
+
+    fn hidden(&self) -> bool {
+        self.hidden
+    }
+
     fn access(&mut self, _win: WinId, tree: &mut Tree, ctx: &Ctx) {
         self.window.access(
             tree,
@@ -352,12 +360,6 @@ impl App for UpdatesApp {
     fn reader(&mut self, _win: WinId, act: repriseapp::Reader, ctx: &Ctx) -> bool {
         let px = ctx.forms().fonts.size_px;
         (self.window).reader(act, &ctx.text, px, &ctx.theme.controls())
-    }
-
-    fn draw(&mut self, _win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        self.sync_window(ctx);
-        self.window
-            .draw(c, &ctx.text, &ctx.theme, &ctx.forms(), &self.phase);
     }
 }
 

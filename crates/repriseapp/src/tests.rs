@@ -145,6 +145,9 @@ impl App for Picker {
         Reply::default()
     }
     fn draw(&mut self, _: WinId, _: &mut Canvas, _: &Ctx) {}
+}
+
+impl crate::Extended for Picker {
     fn drop_file_dialog(&mut self, _: WinId) -> Option<FileDrop<'_>> {
         Some(FileDrop {
             dlg: &mut self.dlg,
@@ -212,16 +215,19 @@ impl App for Kept {
     fn initial_size(&self) -> (i32, i32) {
         self.kept
     }
+    fn event(&mut self, _: WinId, _: Event, _: &mut Ctx) -> Reply {
+        Reply::default()
+    }
+    fn draw(&mut self, _: WinId, _: &mut Canvas, _: &Ctx) {}
+}
+
+impl crate::Extended for Kept {
     fn fixed(&self) -> bool {
         self.fixed
     }
     fn min_size(&self, _: WinId) -> Option<(i32, i32)> {
         self.min
     }
-    fn event(&mut self, _: WinId, _: Event, _: &mut Ctx) -> Reply {
-        Reply::default()
-    }
-    fn draw(&mut self, _: WinId, _: &mut Canvas, _: &Ctx) {}
 }
 
 #[test]
@@ -406,13 +412,33 @@ fn a_window_at_scale_2_paints_the_blue_status_bar_at_2() {
 #[test]
 fn a_modal_child_gates_input_but_not_the_flyout() {
     let key = Event::Pointer(PointerInput::Leave);
-    assert!(input_blocked(&key, Some("error"), MAIN, false));
-    assert!(!input_blocked(&key, Some("error"), "error", false));
+    assert!(input_blocked(
+        &key,
+        Some(WinId::named("error")),
+        MAIN,
+        false
+    ));
+    assert!(!input_blocked(
+        &key,
+        Some(WinId::named("error")),
+        WinId::named("error"),
+        false
+    ));
     assert!(
-        !input_blocked(&key, Some("error"), "flyout", true),
+        !input_blocked(
+            &key,
+            Some(WinId::named("error")),
+            WinId::named("flyout"),
+            true
+        ),
         "a flyout covers the modal child, so it must still take input"
     );
-    assert!(!input_blocked(&Event::Resized, Some("error"), MAIN, false));
+    assert!(!input_blocked(
+        &Event::Resized,
+        Some(WinId::named("error")),
+        MAIN,
+        false
+    ));
     assert!(!input_blocked(&key, None, MAIN, false));
 }
 
@@ -421,19 +447,19 @@ fn only_the_windows_a_reply_draws_again_are_read_again() {
     let none = Reply::none();
     assert!(!redraws(&none, MAIN, MAIN), "a reply that draws nothing");
     let own = Reply::redraw();
-    assert!(redraws(&own, "dlg", "dlg"));
-    assert!(!redraws(&own, "dlg", MAIN), "another window");
+    assert!(redraws(&own, WinId::named("dlg"), WinId::named("dlg")));
+    assert!(!redraws(&own, WinId::named("dlg"), MAIN), "another window");
     let named = Reply {
         redraw_wins: vec![MAIN],
         ..Reply::none()
     };
-    assert!(redraws(&named, "dlg", MAIN));
-    assert!(!redraws(&named, "dlg", "dlg"));
+    assert!(redraws(&named, WinId::named("dlg"), MAIN));
+    assert!(!redraws(&named, WinId::named("dlg"), WinId::named("dlg")));
     let all = Reply {
         redraw_all: true,
         ..Reply::none()
     };
-    assert!(redraws(&all, "dlg", MAIN));
+    assert!(redraws(&all, WinId::named("dlg"), MAIN));
 }
 
 #[test]
@@ -465,8 +491,18 @@ fn a_modal_child_refuses_drags_over_the_windows_behind_it() {
         y: 0,
         action: None,
     };
-    assert!(input_blocked(&enter, Some("error"), MAIN, false));
-    assert!(input_blocked(&motion, Some("error"), MAIN, false));
+    assert!(input_blocked(
+        &enter,
+        Some(WinId::named("error")),
+        MAIN,
+        false
+    ));
+    assert!(input_blocked(
+        &motion,
+        Some(WinId::named("error")),
+        MAIN,
+        false
+    ));
     let drop = Event::DragDrop {
         x: 0,
         y: 0,
@@ -474,11 +510,21 @@ fn a_modal_child_refuses_drags_over_the_windows_behind_it() {
         action: DragAction::Copy,
         source: Actions::ALL,
     };
-    assert!(input_blocked(&drop, Some("error"), MAIN, false));
-    assert!(!input_blocked(&enter, Some("error"), "error", false));
+    assert!(input_blocked(
+        &drop,
+        Some(WinId::named("error")),
+        MAIN,
+        false
+    ));
+    assert!(!input_blocked(
+        &enter,
+        Some(WinId::named("error")),
+        WinId::named("error"),
+        false
+    ));
     assert!(!input_blocked(
         &Event::DragLeave,
-        Some("error"),
+        Some(WinId::named("error")),
         MAIN,
         false
     ));
@@ -488,34 +534,46 @@ fn a_modal_child_refuses_drags_over_the_windows_behind_it() {
 fn the_newest_modal_child_is_the_one_that_gates() {
     let slots = [
         (MAIN, false),
-        ("open", true),
-        ("find", false),
-        ("error", true),
+        (WinId::named("open"), true),
+        (WinId::named("find"), false),
+        (WinId::named("error"), true),
     ];
-    assert_eq!(top_modal(slots.into_iter()), Some("error"));
-    assert_eq!(top_modal(slots[..3].iter().copied()), Some("open"));
+    assert_eq!(top_modal(slots.into_iter()), Some(WinId::named("error")));
+    assert_eq!(
+        top_modal(slots[..3].iter().copied()),
+        Some(WinId::named("open"))
+    );
     assert_eq!(top_modal([(MAIN, false)].into_iter()), None);
 }
 
 #[test]
 fn a_modal_child_gates_only_the_windows_it_sits_over() {
+    const CONFIRM: WinId = WinId::named("confirm");
+    const SECOND: WinId = WinId::named("second");
     let parent = |w: WinId| match w {
-        "confirm" => Some("second"),
-        "second" => None,
+        CONFIRM => Some(SECOND),
+        SECOND => None,
         _ => Some(MAIN),
     };
-    assert_eq!(root_of("confirm", parent), "second");
-    assert_eq!(root_of("find", parent), MAIN);
+    assert_eq!(
+        root_of(WinId::named("confirm"), parent),
+        WinId::named("second")
+    );
+    assert_eq!(root_of(WinId::named("find"), parent), MAIN);
     assert_eq!(root_of(MAIN, parent), MAIN);
-    let slots = [(MAIN, false), ("second", false), ("confirm", true)];
+    let slots = [
+        (MAIN, false),
+        (WinId::named("second"), false),
+        (WinId::named("confirm"), true),
+    ];
     assert_eq!(modal_over(MAIN, slots.into_iter(), parent), None);
     assert_eq!(
-        modal_over("second", slots.into_iter(), parent),
-        Some("confirm")
+        modal_over(WinId::named("second"), slots.into_iter(), parent),
+        Some(WinId::named("confirm"))
     );
     assert_eq!(
-        modal_over("confirm", slots.into_iter(), parent),
-        Some("confirm")
+        modal_over(WinId::named("confirm"), slots.into_iter(), parent),
+        Some(WinId::named("confirm"))
     );
 }
 
@@ -532,8 +590,8 @@ fn a_child_waits_for_its_parents_first_frame() {
 }
 
 #[test]
-fn a_numbered_window_id_is_one_str_per_number() {
-    assert!(std::ptr::eq(window_id(3), window_id(3)));
+fn numbered_window_ids_never_meet_named_ones() {
+    assert_eq!(window_id(3), window_id(3));
     assert_ne!(window_id(3), window_id(4));
     assert_ne!(window_id(0), MAIN);
 }
@@ -541,38 +599,44 @@ fn a_numbered_window_id_is_one_str_per_number() {
 #[test]
 fn reply_merge_joins_the_windows_to_redraw_and_keeps_the_first_raise() {
     let first = Reply {
-        redraw_wins: vec!["a"],
-        raise: Some("a"),
+        redraw_wins: vec![WinId::named("a")],
+        raise: Some(WinId::named("a")),
         ..Default::default()
     };
     let then = Reply {
-        redraw_wins: vec!["b"],
-        raise: Some("b"),
+        redraw_wins: vec![WinId::named("b")],
+        raise: Some(WinId::named("b")),
         ..Default::default()
     };
     let merged = first.and(then);
-    assert_eq!(merged.redraw_wins, ["a", "b"]);
-    assert_eq!(merged.raise, Some("a"));
+    assert_eq!(merged.redraw_wins, [WinId::named("a"), WinId::named("b")]);
+    assert_eq!(merged.raise, Some(WinId::named("a")));
 }
 
 #[test]
 fn a_flyout_is_made_dropped_or_left() {
     let f = Flyout {
-        id: "flyout",
+        id: WinId::named("flyout"),
         at: (10, 20),
         title: "Volume",
     };
     assert_eq!(flyout_wanted(Some(f), None), (None, Some(f)));
-    assert_eq!(flyout_wanted(None, Some("flyout")), (Some("flyout"), None));
-    assert_eq!(flyout_wanted(Some(f), Some("flyout")), (None, None));
+    assert_eq!(
+        flyout_wanted(None, Some(WinId::named("flyout"))),
+        (Some(WinId::named("flyout")), None)
+    );
+    assert_eq!(
+        flyout_wanted(Some(f), Some(WinId::named("flyout"))),
+        (None, None)
+    );
     let g = Flyout {
-        id: "other",
+        id: WinId::named("other"),
         at: (0, 0),
         title: "Other",
     };
     assert_eq!(
-        flyout_wanted(Some(g), Some("flyout")),
-        (Some("flyout"), Some(g))
+        flyout_wanted(Some(g), Some(WinId::named("flyout"))),
+        (Some(WinId::named("flyout")), Some(g))
     );
 }
 
@@ -697,7 +761,7 @@ fn pixels_land_in_shm_byte_order() {
 fn child(id: WinId) -> Child {
     Child {
         id,
-        title: id.to_string(),
+        title: format!("{id:?}"),
         size: (300, 150),
         fixed: true,
         modal: false,
@@ -744,7 +808,10 @@ fn a_run_of_missing_shm_buffers_is_logged_once_and_told_once() {
 
 #[test]
 fn the_blink_goes_to_the_keyboard_then_the_pointer_then_nowhere() {
-    assert_eq!(blink_target(Some("find"), Some(MAIN)), Some("find"));
+    assert_eq!(
+        blink_target(Some(WinId::named("find")), Some(MAIN)),
+        Some(WinId::named("find"))
+    );
     assert_eq!(blink_target(None, Some(MAIN)), Some(MAIN));
     assert_eq!(blink_target(None, None), None);
 }
@@ -775,7 +842,7 @@ fn nothing_open_and_nothing_wanted_is_a_no_op() {
 
 #[test]
 fn a_new_child_is_created() {
-    let want = [child("find")];
+    let want = [child(WinId::named("find"))];
     let (drop, make) = reconcile(&[], &want.iter().collect::<Vec<_>>());
     assert!(drop.is_empty());
     assert_eq!(make, vec![0]);
@@ -783,24 +850,24 @@ fn a_new_child_is_created() {
 
 #[test]
 fn a_child_that_went_away_is_destroyed() {
-    let (drop, make) = reconcile(&["find"], &[]);
-    assert_eq!(drop, vec!["find"]);
+    let (drop, make) = reconcile(&[WinId::named("find")], &[]);
+    assert_eq!(drop, vec![WinId::named("find")]);
     assert!(make.is_empty());
 }
 
 #[test]
 fn a_child_that_is_still_wanted_is_left_alone() {
-    let want = [child("find"), child("replace")];
-    let (drop, make) = reconcile(&["find"], &want.iter().collect::<Vec<_>>());
+    let want = [child(WinId::named("find")), child(WinId::named("replace"))];
+    let (drop, make) = reconcile(&[WinId::named("find")], &want.iter().collect::<Vec<_>>());
     assert!(drop.is_empty());
     assert_eq!(make, vec![1]);
 }
 
 #[test]
 fn one_child_swapped_for_another() {
-    let want = [child("replace")];
-    let (drop, make) = reconcile(&["find"], &want.iter().collect::<Vec<_>>());
-    assert_eq!(drop, vec!["find"]);
+    let want = [child(WinId::named("replace"))];
+    let (drop, make) = reconcile(&[WinId::named("find")], &want.iter().collect::<Vec<_>>());
+    assert_eq!(drop, vec![WinId::named("find")]);
     assert_eq!(make, vec![0]);
 }
 

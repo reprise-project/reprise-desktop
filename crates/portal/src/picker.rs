@@ -155,7 +155,8 @@ pub fn run_dialog() {
         icon,
         parent,
         chosen.clone(),
-    )));
+    )))
+    .unwrap_or_else(|e| e.exit());
     let picked = *chosen.lock().unwrap();
     match picked {
         Some((i, false)) => println!("{i}"),

@@ -12,7 +12,7 @@ use reprisekit::look::widgets::draw_button;
 use reprisekit::pointer::Interaction;
 use reprisekit::raster::{Canvas, Rect};
 
-const DIALOG: WinId = "dialog";
+const DIALOG: WinId = WinId::named("dialog");
 
 struct TwoWin {
     open: bool,
@@ -154,9 +154,11 @@ impl App for TwoWin {
     }
 }
 
+impl repriseapp::Extended for TwoWin {}
+
 fn main() {
     env_logger::init();
     // `--modal` makes the dialog gate the main window's input.
     let modal = std::env::args().any(|a| a == "--modal");
-    repriseapp::run(Box::new(TwoWin { open: false, modal }));
+    repriseapp::run(Box::new(TwoWin { open: false, modal })).unwrap_or_else(|e| e.exit());
 }

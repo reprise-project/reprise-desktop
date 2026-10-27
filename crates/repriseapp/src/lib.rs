@@ -89,7 +89,8 @@ use windows::Foreign;
 
 pub use access::{Reader, ReaderForm};
 pub use app::{
-    App, Caption, Child, Flyout, MAIN, Start, WinId, reader_forms, reader_popup, window_id,
+    App, Caption, Child, Extended, Flyout, MAIN, Start, WinId, reader_forms, reader_popup,
+    window_id,
 };
 pub use clipboard::{
     clipboard_has_files, clipboard_has_text, fake_clipboard_files, fake_clipboard_text,
@@ -105,7 +106,7 @@ pub use reply::{Reply, spawn_in};
 pub use reprisefs::dropdata::{GNOME_FILES, URI_LIST};
 pub use reprisefs::fileclip::FileClip;
 pub use reprisekit;
-pub use runloop::{applet_main, run};
+pub use runloop::{RunError, applet_main, run};
 pub use sizing::MIN_SIZE;
 pub use windows::tab_groups;
 
@@ -157,7 +158,7 @@ struct Slot {
     glass_top: (i32, i32),
     /// The window's keyboard cues; `keys` is drawn as `Theme::access_keys`.
     cues: Cues,
-    /// The child's [`App::parent`] as the host last set it; none for the main window.
+    /// The child's [`Extended::parent`] as the host last set it; none for the main window.
     parent: Option<WinId>,
     /// The focused field the last frame drew.
     spot: Option<TextSpot>,
@@ -240,7 +241,7 @@ struct Host {
     copy_clip: Option<Vec<(&'static str, Vec<u8>)>>,
     drag_out: Option<Outgoing>,
     drag_in: Option<Incoming>,
-    /// A drag over a window's `App::drop_form`.
+    /// A drag over a window's `Extended::drop_form`.
     field_drag: Option<(WinId, fielddrop::Hover)>,
     edit_menu: editmenu::EditMenu,
     /// The edit menu's popups while it is open.
@@ -286,7 +287,7 @@ struct Host {
     /// The seat the keyboard came from, which an inhibitor and a resize
     /// from a size grip name.
     seat: Option<wl_seat::WlSeat>,
-    /// The shortcuts inhibitor `App::shortcuts_inhibited` asked for, and
+    /// The shortcuts inhibitor `Extended::shortcuts_inhibited` asked for, and
     /// the window it is on.
     inhibitor: Option<(
         WinId,

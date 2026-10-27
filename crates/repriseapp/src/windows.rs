@@ -403,7 +403,7 @@ impl Host {
         }
     }
 
-    /// Move child `id` over the window [`App::parent`](crate::App::parent) names now, once that one
+    /// Move child `id` over the window [`Extended::parent`](crate::Extended::parent) names now, once that one
     /// is mapped.
     fn reparent(&mut self, id: WinId) {
         let want = self.app.parent(id);
@@ -431,7 +431,7 @@ impl Host {
     }
 
     /// Ask for unparented child `id`'s new `window` to join its
-    /// [`App::tab_with`](crate::App::tab_with) window's tab group, before its first commit.
+    /// [`Extended::tab_with`](crate::Extended::tab_with) window's tab group, before its first commit.
     fn join_tabs(&self, window: &Window, id: WinId) {
         let leader = self
             .app
@@ -769,7 +769,7 @@ pub(crate) static TAB_GROUPS: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// Whether the compositor puts a window into another's caption tab group
-/// ([`App::tab_with`](crate::App::tab_with)), known once [`run`](crate::run) connected, before
+/// ([`Extended::tab_with`](crate::Extended::tab_with)), known once [`run`](crate::run) connected, before
 /// [`App::start`](crate::App::start).
 pub fn tab_groups() -> bool {
     TAB_GROUPS.load(std::sync::atomic::Ordering::Relaxed)

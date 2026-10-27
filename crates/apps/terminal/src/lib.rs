@@ -53,11 +53,11 @@ pub const FONTS: [&str; 3] = ["Lucida Console", "Liberation Mono", "DejaVu Sans 
 const OPEN_CELLS: (i32, i32) = (80, 24);
 /// The text sizes zoom stays between, px.
 const ZOOM: (u32, u32) = (6, 72);
-const CONFIRM: WinId = "confirm";
-const OPTIONS: WinId = "options";
-const PROFILE: WinId = "profile";
-const FIND: WinId = "find";
-const NOTFOUND: WinId = "notfound";
+const CONFIRM: WinId = WinId::named("confirm");
+const OPTIONS: WinId = WinId::named("options");
+const PROFILE: WinId = WinId::named("profile");
+const FIND: WinId = WinId::named("find");
+const NOTFOUND: WinId = WinId::named("notfound");
 
 /// What a confirm box is asking about.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -950,10 +950,6 @@ impl App for Terminal {
         pane_title(self.pane(MAIN))
     }
 
-    fn hidden(&self) -> bool {
-        !self.order.contains(&MAIN)
-    }
-
     fn app_id(&self) -> String {
         "reprise.terminal".into()
     }
@@ -1023,31 +1019,6 @@ impl App for Terminal {
         out
     }
 
-    fn parent(&self, win: WinId) -> Option<WinId> {
-        match win {
-            FIND | NOTFOUND => Some(self.find_on),
-            OPTIONS | PROFILE => Some(self.options_on),
-            CONFIRM => match &self.confirm {
-                Some((Asking::Window(w), _)) => Some(*w),
-                Some((what, _)) => what
-                    .pid()
-                    .and_then(|p| self.pane_of_pid(p))
-                    .or(Some(self.cur)),
-                None => Some(self.cur),
-            },
-            _ if self.order.contains(&win) => None,
-            _ => Some(MAIN),
-        }
-    }
-
-    fn tab_with(&self, win: WinId) -> Option<WinId> {
-        self.pane(win).and_then(|p| p.leader)
-    }
-
-    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
-        self.pane(win).map(|_| repriseapp::MIN_SIZE)
-    }
-
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.waker = Some(waker);
         self.tab_groups = repriseapp::tab_groups();
@@ -1070,30 +1041,6 @@ impl App for Terminal {
             true => reply.and(Reply::redraw_all()),
             false => reply,
         }
-    }
-
-    fn follow_scale(&mut self, win: WinId, scale: i32, ctx: &mut Ctx) {
-        if !self.enter(win) {
-            return;
-        }
-        if scale != self.w.scale || self.w.chrome.bar.items.is_empty() {
-            self.w.chrome.bar.items = chrome::toolbar_items(ctx, self.w.caption);
-            self.w.chrome.dirty = true;
-        }
-        self.w.scale = scale;
-        self.fit(ctx);
-    }
-
-    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
-        match win {
-            OPTIONS => Some(Box::new(&mut self.options.as_mut()?.sheet)),
-            PROFILE => Some(Box::new(&mut self.options.as_mut()?.editing.as_mut()?.form)),
-            _ => Some(Box::new(&mut self.pane_mut(win)?.chrome.menu)),
-        }
-    }
-
-    fn keeps_canvas(&self, win: WinId) -> bool {
-        self.order.contains(&win)
     }
 
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
@@ -1120,6 +1067,61 @@ impl App for Terminal {
         if self.enter(win) {
             self.draw_main(c, ctx);
         }
+    }
+}
+
+impl repriseapp::Extended for Terminal {
+    fn hidden(&self) -> bool {
+        !self.order.contains(&MAIN)
+    }
+
+    fn parent(&self, win: WinId) -> Option<WinId> {
+        match win {
+            FIND | NOTFOUND => Some(self.find_on),
+            OPTIONS | PROFILE => Some(self.options_on),
+            CONFIRM => match &self.confirm {
+                Some((Asking::Window(w), _)) => Some(*w),
+                Some((what, _)) => what
+                    .pid()
+                    .and_then(|p| self.pane_of_pid(p))
+                    .or(Some(self.cur)),
+                None => Some(self.cur),
+            },
+            _ if self.order.contains(&win) => None,
+            _ => Some(MAIN),
+        }
+    }
+
+    fn tab_with(&self, win: WinId) -> Option<WinId> {
+        self.pane(win).and_then(|p| p.leader)
+    }
+
+    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
+        self.pane(win).map(|_| repriseapp::MIN_SIZE)
+    }
+
+    fn follow_scale(&mut self, win: WinId, scale: i32, ctx: &mut Ctx) {
+        if !self.enter(win) {
+            return;
+        }
+        if scale != self.w.scale || self.w.chrome.bar.items.is_empty() {
+            self.w.chrome.bar.items = chrome::toolbar_items(ctx, self.w.caption);
+            self.w.chrome.dirty = true;
+        }
+        self.w.scale = scale;
+        self.fit(ctx);
+    }
+
+    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        match win {
+            OPTIONS => Some(Box::new(&mut self.options.as_mut()?.sheet)),
+            PROFILE => Some(Box::new(&mut self.options.as_mut()?.editing.as_mut()?.form)),
+            _ => Some(Box::new(&mut self.pane_mut(win)?.chrome.menu)),
+        }
+    }
+
+    fn keeps_canvas(&self, win: WinId) -> bool {
+        self.order.contains(&win)
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
@@ -1327,7 +1329,7 @@ pub fn main(args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
     let settings = settings::load(&settings::path());
     let cmd = command(args.into_iter());
-    repriseapp::run(Box::new(Terminal::new(settings, cmd)));
+    repriseapp::run(Box::new(Terminal::new(settings, cmd))).unwrap_or_else(|e| e.exit());
 }
 
 #[cfg(test)]

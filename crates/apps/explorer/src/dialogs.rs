@@ -21,9 +21,9 @@ use reprisekit::raster::Canvas;
 use std::path::PathBuf;
 
 /// The dialog's own window; each is modal and one at a time.
-pub const DIALOG: WinId = "dialog";
+pub const DIALOG: WinId = WinId::named("dialog");
 
-pub const PROGRAM_BROWSE: WinId = "program browse";
+pub const PROGRAM_BROWSE: WinId = WinId::named("program browse");
 
 /// The text height Confirm Folder Delete reserves, whatever the folder
 /// is called (the 51 in `src/dialog.rs`'s `confirm_delete`).

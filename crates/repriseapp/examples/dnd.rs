@@ -265,6 +265,8 @@ impl App for Demo {
     }
 }
 
+impl repriseapp::Extended for Demo {}
+
 fn main() {
     env_logger::init();
     let paths = std::env::args_os().skip(1).map(PathBuf::from).collect();
@@ -276,5 +278,6 @@ fn main() {
         lines: Vec::new(),
         asking: false,
         offered: Offered::default(),
-    }));
+    }))
+    .unwrap_or_else(|e| e.exit());
 }

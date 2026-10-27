@@ -23,7 +23,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-const MSGBOX: WinId = "msgbox";
+const MSGBOX: WinId = WinId::named("msgbox");
 const EXTRA_PAD: i32 = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -193,30 +193,11 @@ impl App for Pick {
         self.dlg.client()
     }
 
-    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
-        (win == MAIN).then(|| self.dlg.min_client())
-    }
-
-    fn foreign_parent(&self) -> Option<String> {
-        self.input.parent.clone()
-    }
-
-    fn modal(&self) -> bool {
-        self.input.modal
-    }
-
     fn children(&self) -> Vec<repriseapp::Child> {
         self.msg
             .iter()
             .map(|(m, _)| m.child(MSGBOX, &self.text, &self.forms))
             .collect()
-    }
-
-    fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
-        (win == MAIN).then_some(FileDrop {
-            dlg: &mut self.dlg,
-            host: &mut self.host,
-        })
     }
 
     fn event(&mut self, win: WinId, ev: Event, ctx: &mut Ctx) -> Reply {
@@ -293,6 +274,27 @@ impl App for Pick {
             r,
             forms.fonts.size_px,
         );
+    }
+}
+
+impl repriseapp::Extended for Pick {
+    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
+        (win == MAIN).then(|| self.dlg.min_client())
+    }
+
+    fn foreign_parent(&self) -> Option<String> {
+        self.input.parent.clone()
+    }
+
+    fn modal(&self) -> bool {
+        self.input.modal
+    }
+
+    fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
+        (win == MAIN).then_some(FileDrop {
+            dlg: &mut self.dlg,
+            host: &mut self.host,
+        })
     }
 
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
@@ -394,7 +396,8 @@ pub fn run_dialog() {
         msg: None,
         out: out.clone(),
         mime_tree: Arc::new(MimeTree::load()),
-    }));
+    }))
+    .unwrap_or_else(|e| e.exit());
     let out = out.lock().unwrap().clone();
     match toml::to_string(&out) {
         Ok(s) => print!("{s}"),

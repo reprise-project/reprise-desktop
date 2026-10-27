@@ -21,7 +21,7 @@ use reprisekit::theme::TextUnits;
 use std::path::{Path, PathBuf};
 
 /// The sheet's own window; modeless, its boxes come up modal over it in the [`DIALOG`] child.
-pub const PROPS: WinId = "props";
+pub const PROPS: WinId = WinId::named("props");
 
 pub fn facts(info: &FileInfo, is_12h: bool) -> Facts {
     let walking = info.is_dir && info.contains.is_none();

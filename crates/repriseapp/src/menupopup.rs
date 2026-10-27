@@ -1,5 +1,5 @@
 //! Menus and drop lists on xdg_popups, so they show whole past a short window's edges: the edit
-//! menu and whatever a program's [`App::popup`] has open ([`Hosted`]). One popup per level,
+//! menu and whatever a program's [`Extended::popup`] has open ([`Hosted`]). One popup per level,
 //! placed by the compositor through an xdg_positioner and handed back to the model in the
 //! window's coordinates once configured; input on a popup reaches the owner as the window's own.
 //! Only the root takes a grab; submenus are plain children of it, so the keyboard stays on the
