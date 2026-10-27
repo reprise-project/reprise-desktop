@@ -75,20 +75,10 @@ pub(crate) fn route_to<D>(handle: &LoopHandle<'_, D>, mut rescue: impl FnMut(&mu
         Ok(PostAction::Remove)
     });
     match inserted {
-        Ok(_) => {
-            WAKE.store(
-                std::os::fd::IntoRawFd::into_raw_fd(write),
-                Ordering::Release,
-            );
-            // SAFETY: the handler calls only async-signal-safe functions; the struct is zeroed
-            // and filled before sigaction reads it.
-            unsafe {
-                let mut sa: libc::sigaction = std::mem::zeroed();
-                sa.sa_sigaction = on_alarm as *const () as libc::sighandler_t;
-                libc::sigemptyset(&mut sa.sa_mask);
-                libc::sigaction(libc::SIGALRM, &sa, std::ptr::null_mut());
-            }
-        }
+        Ok(_) => WAKE.store(
+            std::os::fd::IntoRawFd::into_raw_fd(write),
+            Ordering::Release,
+        ),
         Err(e) => log::warn!("no signal source: {e}"),
     }
 }
@@ -107,9 +97,16 @@ extern "C" fn on_ending(sig: libc::c_int) {
             .compare_exchange(0, sig, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
     {
-        // SAFETY: write and alarm are async-signal-safe; the pipe is non-blocking.
+        // SIGALRM is taken only now, so the program's own use of it before an ending signal
+        // keeps its handler.
+        // SAFETY: write, sigemptyset, sigaction and alarm are async-signal-safe; the pipe is
+        // non-blocking and the struct is zeroed and filled before sigaction reads it.
         unsafe {
             libc::write(wake, [1u8].as_ptr().cast(), 1);
+            let mut sa: libc::sigaction = std::mem::zeroed();
+            sa.sa_sigaction = on_alarm as *const () as libc::sighandler_t;
+            libc::sigemptyset(&mut sa.sa_mask);
+            libc::sigaction(libc::SIGALRM, &sa, std::ptr::null_mut());
             libc::alarm(GRACE_S);
         }
         return;
@@ -362,6 +359,40 @@ mod tests {
         );
         use std::os::unix::process::ExitStatusExt;
         assert_eq!(out.status.signal(), Some(libc::SIGTERM), "{:?}", out.status);
+    }
+
+    #[test]
+    fn a_sigalrm_before_any_ending_signal_reaches_the_programs_own_handler() {
+        use smithay_client_toolkit::reexports::calloop::EventLoop;
+        use std::sync::atomic::AtomicBool;
+        static RANG: AtomicBool = AtomicBool::new(false);
+        extern "C" fn own(_: libc::c_int) {
+            RANG.store(true, Ordering::Release);
+        }
+        if std::env::var_os(CHILD).is_some() {
+            // SAFETY: installs a handler that only stores an atomic.
+            unsafe { libc::signal(libc::SIGALRM, own as *const () as libc::sighandler_t) };
+            let (ours, _peer) = UnixStream::pair().unwrap();
+            let event_loop: EventLoop<()> = EventLoop::try_new().unwrap();
+            on_signals(ours.as_fd());
+            route_to(&event_loop.handle(), |_| {});
+            // SAFETY: raise on this process.
+            unsafe { libc::raise(libc::SIGALRM) };
+            println!("RANG {}", RANG.load(Ordering::Acquire));
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "hangup::tests::a_sigalrm_before_any_ending_signal_reaches_the_programs_own_handler",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("RANG true"), "{stdout} {:?}", out.status);
+        assert!(out.status.success(), "{:?}", out.status);
     }
 
     #[test]
