@@ -264,15 +264,26 @@ fn export_argv(env: &SessionEnv) -> Vec<String> {
     argv
 }
 
+/// The AT-SPI registry's units. dbus-broker activates the registry as a transient unit outside
+/// `at-spi-dbus-bus.service`, and it outlives the accessibility bus that stops with
+/// `graphical-session.target`, so whatever stops that target stops these too.
+const A11Y_REGISTRY: &str = "dbus-*-org.a11y.atspi.Registry@*.service";
+
 /// The commands that open the session `env` describes, in order: publish the variables, stop the
-/// target a crashed session left active (its units hold the old display), start the target. A
-/// nested run only publishes: `graphical-session.target` is the parent's.
+/// target a crashed session left active (its units hold the old display) and the registries of
+/// the accessibility bus it takes down, start the target. A nested run only publishes:
+/// `graphical-session.target` is the parent's.
 pub fn begin_commands(env: &SessionEnv) -> Vec<Vec<String>> {
     let mut out = vec![export_argv(env)];
     if env.parent.is_empty() {
         // `graphical-session.target` by name: it stops when unneeded only after the stop job,
         // so the start that follows would keep it and its units running.
-        let stop = ["stop", SESSION_TARGET, "graphical-session.target"];
+        let stop = [
+            "stop",
+            SESSION_TARGET,
+            "graphical-session.target",
+            A11Y_REGISTRY,
+        ];
         let start = ["--no-block", "start", SESSION_TARGET];
         for args in [&stop[..], &start[..]] {
             let mut c = vec!["systemctl".to_string(), "--user".into()];
@@ -386,8 +397,8 @@ fn own_session(get: impl Fn(&str) -> Option<String>) -> Option<String> {
 const PORTAL_UNITS: [&str; 2] = ["reprise-portal.service", "xdg-desktop-portal.service"];
 
 /// The commands that end the session `env` published, in order: unset (or restore the parent's)
-/// variables in the systemd user manager, stop the portal backend, and the session target and
-/// frontend too unless nested (it reads `XDG_CURRENT_DESKTOP` once, so a survivor would route the next desktop's
+/// variables in the systemd user manager, stop the portal backend, and the session target,
+/// [`A11Y_REGISTRY`] and frontend too unless nested (it reads `XDG_CURRENT_DESKTOP` once, so a survivor would route the next desktop's
 /// dialogs here). dbus-broker defers to systemd, so that is all to undo. With `end_processes`
 /// and not nested, the app scopes stop too, and a session of our own is terminated last: logind
 /// leaves its processes running without `KillUserProcesses`, e.g. a windowless Deskflow server.
@@ -413,6 +424,7 @@ pub fn end_commands(env: &SessionEnv, end_processes: bool) -> Vec<Vec<String>> {
     stop.insert(2, "--no-block".into());
     if env.parent.is_empty() {
         stop.push(SESSION_TARGET.into());
+        stop.push(A11Y_REGISTRY.into());
         stop.extend(PORTAL_UNITS.iter().map(|u| u.to_string()));
     } else {
         stop.push(PORTAL_UNITS[0].into());
@@ -1107,8 +1119,8 @@ mod tests {
     }
 
     /// A session of its own publishes its variables before it starts the
-    /// session target, stopping one a crashed session left first; a nested
-    /// run leaves the parent's target alone.
+    /// session target, stopping one a crashed session left and the AT-SPI
+    /// registries first; a nested run leaves the parent's target alone.
     #[test]
     fn a_login_session_begins_by_publishing_then_restarting_the_session_target() {
         let cmds = begin_commands(&env(None));
@@ -1125,7 +1137,8 @@ mod tests {
                 "--user",
                 "stop",
                 "reprise-session.target",
-                "graphical-session.target"
+                "graphical-session.target",
+                "dbus-*-org.a11y.atspi.Registry@*.service",
             ])
         );
         assert_eq!(
@@ -1146,8 +1159,8 @@ mod tests {
     }
 
     /// A session of its own unsets every variable it can publish, set or
-    /// not, then stops the session target, the portal backend, the frontend
-    /// and its app scopes.
+    /// not, then stops the session target, the AT-SPI registries, the portal
+    /// backend, the frontend and its app scopes.
     #[test]
     fn a_login_session_ends_by_unsetting_and_stopping_the_target_portals_and_app_scopes() {
         let every = [
@@ -1181,6 +1194,7 @@ mod tests {
                     "--no-block",
                     "stop",
                     "reprise-session.target",
+                    "dbus-*-org.a11y.atspi.Registry@*.service",
                     "reprise-portal.service",
                     "xdg-desktop-portal.service",
                     "app-reprise-*.scope",
@@ -1247,6 +1261,7 @@ mod tests {
                 "--no-block",
                 "stop",
                 "reprise-session.target",
+                "dbus-*-org.a11y.atspi.Registry@*.service",
                 "reprise-portal.service",
                 "xdg-desktop-portal.service",
             ]))
