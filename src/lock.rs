@@ -406,12 +406,12 @@ impl<'a> Credentials<'a> {
         }
     }
 
-    /// The answer to the next prompt: the login name for an echo prompt
+    /// The answer to the next prompt: the login name for a login prompt
     /// that comes first, the password for the first blind one, and `ask`'s
     /// answer to any further one (a one-time code, a second password).
     fn answer(&self, echo: bool, text: &str) -> Option<Zeroizing<Vec<u8>>> {
         let first = !self.prompted.replace(true);
-        if echo && first {
+        if echo && first && is_login_prompt(text) {
             return Some(Zeroizing::new(self.user.as_bytes().to_vec()));
         }
         if !echo && !self.password_sent.replace(true) {
@@ -420,6 +420,12 @@ impl<'a> Credentials<'a> {
         let a = (self.ask.borrow_mut())(text, echo)?;
         Some(Zeroizing::new(a.as_bytes().to_vec()))
     }
+}
+
+/// libpam's own user prompt is "login:"; modules ask "Username:".
+fn is_login_prompt(text: &str) -> bool {
+    let t = text.trim().to_lowercase();
+    ["login:", "username:", "user name:"].contains(&t.as_str())
 }
 
 fn pam_text(handle: *mut ffi::pam_handle_t, rc: c_int) -> String {
@@ -1100,6 +1106,25 @@ mod tests {
             [Some("someone".into()), Some("hunter2".into()), None, None]
         );
         assert_eq!(creds.notices.take(), ["note", "Account locked."]);
+    }
+
+    #[test]
+    fn converse_asks_for_an_echoed_first_prompt_that_is_no_login_prompt() {
+        let mut asked = Vec::new();
+        let mut answer = |text: &str, echo: bool| {
+            asked.push((text.to_string(), echo));
+            Some(Zeroizing::new("123456".to_string()))
+        };
+        let mut creds = creds(&mut answer);
+        let msgs = [
+            msg(ffi::PAM_PROMPT_ECHO_ON, c"Verification code: "),
+            msg(ffi::PAM_PROMPT_ECHO_OFF, c"Password:"),
+        ];
+        let (rc, answers) = ask(&mut creds, &msgs);
+        assert_eq!(rc, ffi::PAM_SUCCESS);
+        assert_eq!(answers, [Some("123456".into()), Some("hunter2".into())]);
+        drop(creds);
+        assert_eq!(asked, [("Verification code: ".to_string(), true)]);
     }
 
     /// A prompt after the password that `ask` has no answer for ends the
