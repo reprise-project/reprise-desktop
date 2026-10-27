@@ -309,17 +309,15 @@ pub(crate) fn read(
     match Config::parse_over(&text, base) {
         Ok((cfg, dropped, table)) => {
             log::info!("config {} changed; reloading", path.display());
-            for (key, e) in &dropped {
-                let kept = if repriseconf::config::kept(&table, base, key) {
+            for d in &dropped {
+                let kept = if d.kept {
                     "keeping its previous value"
                 } else {
                     "using its default"
                 };
-                log::warn!("config {}: {key}: {e}; {kept}", path.display());
+                log::warn!("config {}: {}: {}; {kept}", path.display(), d.key, d.error);
             }
-            let kept = |key: &str| repriseconf::config::kept(&table, base, key);
-            let notice =
-                (!dropped.is_empty()).then(|| crate::config::dropped_notice(&dropped, kept));
+            let notice = (!dropped.is_empty()).then(|| crate::config::dropped_notice(&dropped));
             Some((cfg, notice, table))
         }
         Err(e) => {
