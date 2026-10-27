@@ -3,6 +3,7 @@
 //! together.
 
 use crate::raster::Canvas;
+use repriseaudio::sounds::Sound;
 use reprisekit::icon::IconSource;
 use serde::de::{self, Deserialize, Deserializer, IgnoredAny, SeqAccess, Visitor};
 use std::collections::HashMap;
@@ -26,6 +27,9 @@ const ACTION_KEY_BYTES: usize = 255;
 pub const DEFAULT_ACTION: &str = "default";
 
 pub const INLINE_REPLY: &str = "inline-reply";
+
+/// What a balloon plays when its sender names no sound.
+pub const DEFAULT_SOUND: &str = "message-new-instant";
 
 pub fn actions(raw: &[String]) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
@@ -129,6 +133,17 @@ pub struct Hints<'a> {
     pub desktop_entry: Option<String>,
     pub reply_placeholder: Option<String>,
     pub reply_send: Option<String>,
+    /// `sound-file` (an absolute path), else `sound-name`.
+    pub sound: Option<Sound>,
+    pub suppress_sound: bool,
+}
+
+impl Hints<'_> {
+    /// What the balloon plays: the hinted sound, else [`DEFAULT_SOUND`]; None under `suppress-sound`.
+    pub fn balloon_sound(&self) -> Option<Sound> {
+        (!self.suppress_sound)
+            .then(|| (self.sound.clone()).unwrap_or_else(|| Sound::Name(DEFAULT_SOUND.into())))
+    }
 }
 
 pub fn hints(mut raw: HashMap<String, Hint<'_>>) -> Hints<'_> {
@@ -153,6 +168,11 @@ pub fn hints(mut raw: HashMap<String, Hint<'_>>) -> Hints<'_> {
     let desktop_entry = text(take(&["desktop-entry"]));
     let reply_placeholder = text(take(&["x-kde-reply-placeholder-text"]));
     let reply_send = text(take(&["x-kde-reply-submit-button-text"]));
+    let file = text(take(&["sound-file"]))
+        .filter(|p| p.starts_with('/'))
+        .map(|p| Sound::File(p.into()));
+    let name = text(take(&["sound-name"])).map(Sound::Name);
+    let suppress_sound = flag(take(&["suppress-sound"]));
     Hints {
         urgency,
         transient,
@@ -162,6 +182,8 @@ pub fn hints(mut raw: HashMap<String, Hint<'_>>) -> Hints<'_> {
         desktop_entry,
         reply_placeholder,
         reply_send,
+        sound: file.or(name),
+        suppress_sound,
     }
 }
 
@@ -471,6 +493,36 @@ mod tests {
             src[0].pixels[4 * 16 + 15],
             reprisekit::icon::premultiply(0x8000_00FF)
         );
+    }
+
+    #[test]
+    fn sound_hints_pick_a_file_over_a_name_and_suppress_silences_both() {
+        let read = |map: HashMap<&str, Value>| {
+            let bytes = round_trip(map);
+            let data = zbus::zvariant::serialized::Data::new(&bytes[..], Context::new_dbus(LE, 0));
+            let (raw, _): (HashMap<String, Hint>, _) = data.deserialize().unwrap();
+            let h = hints(raw);
+            (h.sound.clone(), h.balloon_sound())
+        };
+        let mut map: HashMap<&str, Value> = HashMap::new();
+        map.insert("sound-name", Value::from("bell"));
+        map.insert("sound-file", Value::from("/usr/share/sounds/x.oga"));
+        let file = Sound::File("/usr/share/sounds/x.oga".into());
+        assert_eq!(read(map), (Some(file.clone()), Some(file)));
+
+        let mut map: HashMap<&str, Value> = HashMap::new();
+        map.insert("sound-name", Value::from("bell"));
+        map.insert("sound-file", Value::from("relative.oga"));
+        let bell = Sound::Name("bell".into());
+        assert_eq!(read(map), (Some(bell.clone()), Some(bell)));
+
+        let default = Sound::Name(DEFAULT_SOUND.into());
+        assert_eq!(read(HashMap::new()), (None, Some(default)));
+
+        let mut map: HashMap<&str, Value> = HashMap::new();
+        map.insert("sound-name", Value::from("bell"));
+        map.insert("suppress-sound", Value::Bool(true));
+        assert_eq!(read(map).1, None);
     }
 
     #[test]

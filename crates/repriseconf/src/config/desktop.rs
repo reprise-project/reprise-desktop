@@ -234,6 +234,22 @@ impl Default for ClipboardConfig {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotificationsConfig {
+    pub sound: bool,
+    /// An XDG sound theme name.
+    pub sound_theme: String,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        NotificationsConfig {
+            sound: true,
+            sound_theme: "freedesktop".into(),
+        }
+    }
+}
+
 pub const WORKSPACES_DEFAULT: usize = 4;
 
 pub const WORKSPACES_MAX: usize = 16;

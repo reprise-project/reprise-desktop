@@ -117,6 +117,7 @@ reprisefx = { path = "crates/reprisefx" }
 reprisefs = { path = "crates/reprisefs" }
 repriseconf = { path = "crates/repriseconf" }
 reprisebus = { path = "crates/reprisebus" }
+repriseaudio = { path = "crates/repriseaudio" }
 accesskit_unix.workspace = true
 toml_edit.workspace = true
 libc.workspace = true

@@ -655,6 +655,20 @@ impl Config {
                 cfg.clipboard.trusted_apps = v;
             }
         }
+        if let Some(n) = file.notifications {
+            if let Some(v) = n.sound {
+                cfg.notifications.sound = v;
+            }
+            if let Some(t) = n.sound_theme {
+                let ok = !t.is_empty() && !t.contains('/') && !t.starts_with('.');
+                if !ok {
+                    return Err(format!(
+                        "notifications.sound_theme {t:?} is not a sound theme name"
+                    ));
+                }
+                cfg.notifications.sound_theme = t;
+            }
+        }
         if let Some(p) = file.privacy {
             if let Some(v) = p.recent_files {
                 cfg.recent_files = v;

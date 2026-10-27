@@ -158,6 +158,8 @@ pub struct Notification {
     pub sender: String,
     pub pid: Option<i32>,
     pub reply: Option<Reply>,
+    /// What its balloon plays; None is silent.
+    pub sound: Option<repriseaudio::sounds::Sound>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -185,6 +187,7 @@ impl Notification {
             sender: String::new(),
             pid: None,
             reply: None,
+            sound: None,
         }
     }
 

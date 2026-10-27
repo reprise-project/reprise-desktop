@@ -103,6 +103,7 @@ desktop and stays out of the way when it's missing.
 
 - WirePlumber, for the volume applet, Volume Control and the volume keys
 - pipewire-pulse, for desktop and microphone audio in OBS and browsers
+- sound-theme-freedesktop, for the notification balloons' sound
 - UPower, for the battery icon, power alarms and battery idle timeouts
 - power-profiles-daemon, for the power profile in Power Options and the
   battery menu

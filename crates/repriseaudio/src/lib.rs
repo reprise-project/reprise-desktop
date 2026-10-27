@@ -1,9 +1,10 @@
-//! The PipeWire side of the sound programs: a store fed by `pw-dump -m`, and the `wpctl` and `pw-cli`
-//! calls that write back. Nothing here draws; [`Store::snapshot`] projects the stored objects into the
-//! shape the UI wants.
+//! The PipeWire side of the sound programs: a store fed by `pw-dump -m`, the `wpctl` and `pw-cli`
+//! calls that write back, and [`sounds`] for event sounds. Nothing here draws; [`Store::snapshot`]
+//! projects the stored objects into the shape the UI wants.
 
 mod channels;
 mod recent;
+pub mod sounds;
 
 pub use channels::{Channels, Side, side};
 pub use recent::{Recent, SETTLE};

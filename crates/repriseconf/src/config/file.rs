@@ -251,6 +251,13 @@ pub struct FileLauncher {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub struct FileNotifications {
+    pub sound: Option<bool>,
+    pub sound_theme: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FileClipboard {
     pub history: Option<bool>,
     pub terminal_apps: Option<Vec<String>>,
@@ -630,6 +637,7 @@ pub struct FileConfig {
     pub overview: Option<FileOverview>,
     pub gestures: Option<FileGestures>,
     pub clipboard: Option<FileClipboard>,
+    pub notifications: Option<FileNotifications>,
     pub privacy: Option<FilePrivacy>,
     pub debug: Option<FileDebug>,
     pub launcher: Option<FileLauncher>,

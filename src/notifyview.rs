@@ -277,6 +277,10 @@ pub fn show(state: &mut State, n: Notification) {
         changed(state);
         return;
     }
+    let cfg = &state.config.notifications;
+    if let Some(sound) = balloon_sound(&n, cfg.sound) {
+        repriseaudio::sounds::play(sound.clone(), cfg.sound_theme.clone());
+    }
     if foldable(&n) {
         let v = &mut state.notify;
         let due = arrived(&mut v.recent, &n.app, Instant::now());
@@ -564,6 +568,11 @@ pub fn hide_balloons(state: &mut State) {
 pub fn sender_gone(state: &mut State, sender: &str) {
     state.notify.log.sender_gone(sender);
     crate::notifycenter::refresh(state);
+}
+
+/// What a new balloon for `n` plays with `[notifications] sound` at `on`: a low urgency one is silent.
+fn balloon_sound(n: &Notification, on: bool) -> Option<&repriseaudio::sounds::Sound> {
+    n.sound.as_ref().filter(|_| on && n.urgency != Urgency::Low)
 }
 
 /// `None` for a critical notification, which stays until dealt with.
