@@ -286,6 +286,13 @@ impl App for Notepad {
         self.rescue();
     }
 
+    fn draw_failed(&mut self, error: &str) -> Reply {
+        self.error = Some(self.error_box(&format!(
+            "Notepad cannot draw its window: {error}.\n\nClose some programs or free space in /dev/shm."
+        )));
+        Reply::redraw()
+    }
+
     fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
         self.file_dlg(win).map(FileDlg::min_client)
     }
