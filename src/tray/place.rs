@@ -35,10 +35,12 @@ pub fn behaviour_of(choices: &BTreeMap<String, Remembered>, item: &TrayItem) -> 
 }
 
 /// Where `item` goes with `behaviour`: with overflow on, behind the ^ cell
-/// when the behaviour hides it (its status decides when left Auto); with
-/// overflow off every item is on the bar.
+/// when the behaviour hides it (its status decides when left Auto) and,
+/// unless muted, it does not need attention; with overflow off every item
+/// is on the bar.
 pub fn placement(item: &TrayItem, behaviour: Behaviour, overflow: bool) -> Place {
-    if overflow && behaviour.hidden(item.passive) {
+    let calls = item.needs_attention && behaviour.balloons();
+    if overflow && behaviour.hidden(item.passive) && !calls {
         Place::Hidden
     } else {
         Place::Bar
@@ -54,6 +56,9 @@ fn draws_alike(a: &TrayItem, b: &TrayItem) -> bool {
         && a.icon_name == b.icon_name
         && a.icon_theme_path == b.icon_theme_path
         && a.passive == b.passive
+        && a.needs_attention == b.needs_attention
+        && a.attention == b.attention
+        && a.overlay == b.overlay
 }
 
 /// Put a fresh copy of an item at `place`, taking it out of the other

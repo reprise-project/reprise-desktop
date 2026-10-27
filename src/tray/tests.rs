@@ -417,6 +417,21 @@ fn a_choice_overrides_the_status_only_with_overflow_on() {
 }
 
 #[test]
+fn an_item_needing_attention_leaves_the_overflow_unless_muted() {
+    let mut calling = item("a", false);
+    calling.needs_attention = true;
+    assert_eq!(placement(&calling, Behaviour::Hide, true), Place::Bar);
+    assert_eq!(placement(&calling, Behaviour::Auto, true), Place::Bar);
+    assert_eq!(placement(&calling, Behaviour::Mute, true), Place::Hidden);
+    let (mut bar, mut hidden) = (Vec::new(), vec![item("a", false)]);
+    assert!(
+        merge(&mut bar, &mut hidden, calling),
+        "the status change redraws"
+    );
+    assert_eq!((bar.len(), hidden.len()), (1, 0));
+}
+
+#[test]
 fn new_choices_move_items_and_keep_the_order_in_each_list() {
     fn ids(l: &[TrayItem]) -> Vec<&str> {
         l.iter().map(|i| i.id.as_str()).collect()
