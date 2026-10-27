@@ -214,10 +214,13 @@ impl SelectionHandler for State {
         source: Option<SelectionSource>,
         _: Seat<Self>,
     ) {
-        let mimes = source.map(|s| s.mime_types());
+        let mimes = source.as_ref().map(|s| s.mime_types());
         if ty == SelectionTarget::Clipboard {
             self.clip.offered = mimes.clone().unwrap_or_default();
-            self.clip.sandboxed = mimes.is_some() && self.clip_owner_sandboxed();
+            self.clip.sandboxed = source.is_some_and(|s| match s.client() {
+                Some(c) => crate::sandbox::client_sandboxed(&c),
+                None => self.clip_owner_sandboxed(),
+            });
         }
         self.wayland_selection_to_x11(ty, mimes);
         if ty == SelectionTarget::Clipboard {
@@ -314,7 +317,8 @@ impl State {
         }
     }
 
-    /// Whether the program a new clipboard selection comes from runs sandboxed.
+    /// Whether the focused window's program runs sandboxed: the owner of an X11 selection, or
+    /// of a Wayland source whose client is gone.
     pub(crate) fn clip_owner_sandboxed(&self) -> bool {
         let x11_app = self
             .focused
@@ -876,6 +880,59 @@ mod tests {
             let expected = taken.then(|| vec![exported.clone()]);
             assert_eq!(*got.borrow(), expected, "{what}");
         }
+    }
+
+    /// The paths `clip_files` hands over for the clipboard selection `c` holds, or `None`.
+    fn clip_paths(
+        h: &mut crate::harness::Harness,
+        c: &mut crate::harness::TestClient,
+    ) -> Option<Vec<std::path::PathBuf>> {
+        let got = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let sink = got.clone();
+        h.state
+            .clip_files(move |_, clip| *sink.borrow_mut() = Some(clip.paths));
+        h.run_for(100);
+        h.roundtrip(c);
+        h.run_for(100);
+        got.take()
+    }
+
+    const CUT_THESIS: &[u8] = b"cut\nfile:///home/u/thesis.odt";
+
+    #[test]
+    fn a_sandboxed_clipboard_managers_cut_host_files_are_refused_while_a_host_window_has_focus() {
+        crate::sandbox::set_trusted(&["org.example.ClipManager".to_string()]);
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut manager = h.connect_in_flatpak("org.example.ClipManager");
+        let mut host = h.connect();
+        h.map_toplevel(&mut host, "host.app", 300, 200);
+        manager.control_copy(&[GNOME_FILES], CUT_THESIS);
+        h.roundtrip(&mut manager);
+        assert!(
+            h.state.clip.sandboxed,
+            "the selection is the sandboxed manager's"
+        );
+        assert_eq!(clip_paths(&mut h, &mut manager), None);
+    }
+
+    #[test]
+    fn a_host_clipboard_managers_files_are_taken_while_a_sandboxed_window_has_focus() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut manager = h.connect();
+        let mut app = h.connect_sandboxed();
+        h.map_toplevel(&mut app, "test.app", 300, 200);
+        manager.control_copy(&[GNOME_FILES], CUT_THESIS);
+        h.roundtrip(&mut manager);
+        assert!(
+            !h.state.clip.sandboxed,
+            "the selection is the host manager's"
+        );
+        assert_eq!(
+            clip_paths(&mut h, &mut manager),
+            Some(vec![std::path::PathBuf::from("/home/u/thesis.odt")])
+        );
     }
 
     #[test]
