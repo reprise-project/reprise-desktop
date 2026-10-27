@@ -22,7 +22,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'wireplumber: wpctl, which reprise-sound, reprise-volume and the volume keys set the default device, volume and mute with'
             'upower: the battery behind the reprise-power tray icon and the on-battery idle timeouts'
             'power-profiles-daemon: the power profile in Power Options and the battery icon menu'
-            'xdg-desktop-portal: screen sharing, screenshots, and Deskflow through the portals (reprise-portal is the backend), and file drags into Flatpak programs'
+            'xdg-desktop-portal>=1.19: screen sharing, screenshots, and Deskflow through the portals (reprise-portal is the backend), and file drags into Flatpak programs'
             'xdg-desktop-portal-wlr: the ScreenCast and Screenshot fallback reprise-portals.conf names after reprise-portal'
             'xdg-desktop-portal-gtk: printing from GTK3 programs, the Print portal reprise-portals.conf names'
             'gnome-themes-extra: the dark theme GTK3 programs take under a dark look'
