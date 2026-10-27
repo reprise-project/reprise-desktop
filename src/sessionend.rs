@@ -277,10 +277,17 @@ fn finish(state: &mut State, override_inhibitors: bool) {
 
 /// Fade the screen out, then end: stop the compositor for Log Off, else run `cmd`.
 fn go_on(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: bool) {
+    crate::crash::ending();
     crate::sessionfade::out(
         state,
         Box::new(move |state| act(state, goal, cmd, override_inhibitors)),
     );
+}
+
+/// End the session now, whatever is open (a SIGTERM, a GPU gone): fade out, then stop the loop.
+pub fn quit(state: &mut State) {
+    crate::crash::ending();
+    crate::sessionfade::out(state, Box::new(|state| state.signal.stop()));
 }
 
 fn act(state: &mut State, goal: Goal, cmd: Option<String>, override_inhibitors: bool) {
@@ -365,6 +372,9 @@ enum Refused {
 
 fn refuse(state: &mut State, act: Act, why: &Refused) {
     log::warn!("session end: {act:?} refused: {why:?}");
+    if matches!(act, Act::TurnOff | Act::Restart) {
+        crate::crash::not_ending();
+    }
     crate::sessionfade::restore(state);
     state.open_dialog(crate::dialog::Dialog::error(
         act.title(),
@@ -1047,6 +1057,30 @@ mod tests {
                 ("packagekit", "Installing updates"),
             ]
         );
+    }
+
+    #[test]
+    fn a_log_off_ends_the_session_for_the_crash_hook_before_its_fade() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.lock.helpers.finger = |_| None;
+        crate::lockview::lock(&mut h.state);
+        assert!(!crate::crash::is_ending());
+        begin(&mut h.state, Goal::LogOff, None);
+        assert!(h.state.session_fade.fading_out(), "the fade runs");
+        assert!(
+            crate::crash::is_ending(),
+            "a panic in the fade ends the process"
+        );
+    }
+
+    #[test]
+    fn a_refused_turn_off_lets_a_later_panic_restart_the_session() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        crate::crash::ending();
+        refuse(&mut h.state, Act::TurnOff, &Refused::NotAllowed);
+        assert!(!crate::crash::is_ending());
     }
 
     #[test]

@@ -744,7 +744,7 @@ fn drm_error(
         d.events = None;
         d.dead = true;
     }
-    crate::sessionfade::out(state, Box::new(|state| state.signal.stop()));
+    crate::sessionend::quit(state);
 }
 
 /// How long exit waits for the outputs' threads to drop their compositors (a blocking clear

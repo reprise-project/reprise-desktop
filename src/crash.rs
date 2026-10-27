@@ -103,6 +103,15 @@ pub fn ending() {
     ENDING.set(true);
 }
 
+/// A refused Turn Off or Restart: the session goes on, and a panic restarts it again.
+pub fn not_ending() {
+    ENDING.set(false);
+}
+
+pub fn is_ending() -> bool {
+    ENDING.get()
+}
+
 /// Whether a restart from here on starts locked: set as a lock begins, before anything that can
 /// panic, and cleared as an unlock ends.
 pub fn set_locked(locked: bool) {
@@ -134,7 +143,7 @@ pub fn install(prior: Option<u32>) {
             return;
         }
         let uptime = started.elapsed();
-        let ending = ENDING.get();
+        let ending = is_ending();
         match after_panic(prior, uptime, ending) {
             AfterPanic::Exit(n) if ending => {
                 log::error!("crash {n} of this login while the session ends: not restarting")

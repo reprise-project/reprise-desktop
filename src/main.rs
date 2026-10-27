@@ -331,8 +331,7 @@ fn run(
         |_, fd, state| {
             if let Some(sig) = spawn::read_signal(fd) {
                 log::info!("signal {sig}: shutting down");
-                crash::ending();
-                sessionfade::out(state, Box::new(|state| state.signal.stop()));
+                sessionend::quit(state);
             }
             Ok(PostAction::Continue)
         },
