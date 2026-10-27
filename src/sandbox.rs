@@ -137,6 +137,21 @@ impl ClientSandbox {
         self.context.is_some() || self.flatpak
     }
 
+    /// The Flatpak app id of its sandbox: its context's when Flatpak
+    /// opened that, else the one in its process's `/.flatpak-info`.
+    pub fn flatpak_app(&self) -> Option<String> {
+        let ctx = self
+            .context
+            .as_ref()
+            .filter(|c| c.engine.as_deref() == Some(FLATPAK_ENGINE))
+            .and_then(|c| c.app_id.clone())
+            .filter(|id| !id.is_empty());
+        ctx.or_else(|| {
+            let pid = self.pid.filter(|_| self.flatpak)?;
+            reprisefs::flatpak::app_of_pid(pid as u32)
+        })
+    }
+
     /// Whether the client runs an installed reprise-portal, read afresh
     /// from its pid. Same-user code that runs the portal binary itself (a
     /// preload, ptrace) still passes: the check keeps other clients from
@@ -232,6 +247,23 @@ impl SecurityContextHandler for State {
         if let Err(e) = inserted {
             log::warn!("sandbox socket: {}", e.error);
         }
+    }
+}
+
+/// The Flatpak app id of the sandbox `win`'s client runs in; an X11
+/// window's is its X client's, by the host pid the X server reports
+/// (XRes), since `_NET_WM_PID` is the pid inside the sandbox.
+pub fn window_app(win: &crate::window::Window) -> Option<String> {
+    match win.x11() {
+        Some(x) => {
+            let pid = x.get_client_pid().ok().filter(|&p| p > 0)?;
+            reprisefs::flatpak::app_of_pid(pid)
+        }
+        None => win
+            .wl_client()?
+            .get_data::<ClientState>()?
+            .sandbox
+            .flatpak_app(),
     }
 }
 
