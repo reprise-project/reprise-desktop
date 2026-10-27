@@ -888,6 +888,7 @@ mod tests {
             menu_path: None,
             passive: false,
             pid: Some(VOLUME),
+            ..Default::default()
         };
         tx.send(TrayEvent::Added(item)).expect("send");
         // SAFETY: `wake` is an open eventfd and the buffer a live 8-byte local.

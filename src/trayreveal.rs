@@ -652,6 +652,7 @@ mod tests {
             menu_path: None,
             passive: true,
             pid: None,
+            ..Default::default()
         }
     }
 
