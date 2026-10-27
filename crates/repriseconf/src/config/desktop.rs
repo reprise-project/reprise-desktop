@@ -241,6 +241,9 @@ pub struct NotificationsConfig {
     pub sound_theme: String,
     /// (from, to) in minutes after local midnight; `to` before `from` runs past midnight.
     pub quiet_hours: Option<(u32, u32)>,
+    /// Do Not Disturb turns itself on while a full-screen window has focus and while the screen
+    /// is shared.
+    pub auto_dnd: bool,
 }
 
 impl NotificationsConfig {
@@ -260,6 +263,7 @@ impl Default for NotificationsConfig {
             sound: true,
             sound_theme: "freedesktop".into(),
             quiet_hours: None,
+            auto_dnd: true,
         }
     }
 }

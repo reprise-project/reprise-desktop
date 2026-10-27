@@ -668,6 +668,9 @@ impl Config {
                 }
                 cfg.notifications.sound_theme = t;
             }
+            if let Some(v) = n.auto_dnd {
+                cfg.notifications.auto_dnd = v;
+            }
             if let Some(q) = n.quiet_hours {
                 cfg.notifications.quiet_hours = match q.as_slice() {
                     [] => None,

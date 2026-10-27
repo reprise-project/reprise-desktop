@@ -284,6 +284,13 @@ fn notification_sounds_default_on_from_the_freedesktop_theme() {
 }
 
 #[test]
+fn auto_dnd_is_on_by_default_and_turns_off() {
+    assert!(Config::default().notifications.auto_dnd);
+    let c = Config::parse("[notifications]\nauto_dnd = false\n").unwrap();
+    assert!(!c.notifications.auto_dnd);
+}
+
+#[test]
 fn quiet_hours_run_past_midnight_and_are_off_by_default() {
     assert_eq!(Config::default().notifications.quiet_hours, None);
     let c = Config::parse("[notifications]\nquiet_hours = [\"22:00\", \"07:00\"]\n").unwrap();

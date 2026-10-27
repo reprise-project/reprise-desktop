@@ -231,6 +231,23 @@ fn note(id: u32, app: &str) -> Notification {
 }
 
 #[test]
+fn a_focused_full_screen_window_holds_balloons_unless_auto_dnd_is_off() {
+    for (config, shown) in [("", false), ("[notifications]\nauto_dnd = false\n", true)] {
+        let mut h =
+            crate::harness::Harness::with_config(crate::config::Config::parse(config).unwrap());
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "video", 300, 200);
+        h.state.set_fullscreen(t.id, true);
+        h.roundtrip(&mut c);
+        assert_eq!(h.state.focused, Some(t.id));
+        show(&mut h.state, note(1, "Mail"));
+        assert_eq!(balloon_up(&h.state), shown, "{config:?}");
+        assert_eq!(h.state.notify.log.held.is_empty(), shown, "{config:?}");
+    }
+}
+
+#[test]
 fn the_queue_drops_its_oldest_past_the_cap() {
     let mut q = VecDeque::new();
     let mut dropped = Vec::new();
