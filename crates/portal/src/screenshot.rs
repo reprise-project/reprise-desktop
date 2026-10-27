@@ -1,12 +1,23 @@
-//! `org.freedesktop.impl.portal.Screenshot`: one frame of the first output via
-//! ext-image-copy-capture into a PNG, returned as a `file://` URI. PickColor
+//! `org.freedesktop.impl.portal.Screenshot`: every output at its place in
+//! the layout, or the output or window picked in the share dialog for an
+//! interactive call, as a PNG returned as a `file://` URI. The files are a
+//! hand-over to the app, kept in the runtime dir for `KEEP`. PickColor
 //! needs no prompt; the click is the consent.
 
+use crate::colorpick::{Output, grab};
 use crate::wayland::{Target, Wayland};
+use reprisekit::controls::colorpick::Still;
+use reprisekit::raster::Rect;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::time::{Duration, SystemTime};
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
+
+const KEEP: Duration = Duration::from_secs(10 * 60);
+/// The most pixels a desktop picture may have: 1 GiB of ARGB.
+const MAX_PIXELS: u64 = 1 << 28;
 
 pub struct Screenshot {
     pub frontend: crate::Frontend,
@@ -30,30 +41,40 @@ impl Screenshot {
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
         self.frontend.check(&hdr).await?;
         log::info!("Screenshot for {app_id:?}");
-        if needs_consent(&options) {
+        let interactive = matches!(options.get("interactive"), Some(Value::Bool(true)));
+        let mut target = None;
+        if interactive || needs_consent(&options) {
             let cancel = Arc::new(AtomicBool::new(false));
             crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
             let id = app_id.clone();
             let parent = crate::dialog::parent_handle(&parent_window);
-            let ok = blocking::unblock(move || {
-                crate::permit::ask(
-                    crate::permit::Kind::Screenshot,
-                    &id,
-                    Vec::new(),
-                    false,
-                    parent,
-                    cancel,
-                )
-                .allowed()
+            let asked = blocking::unblock(move || {
+                if interactive {
+                    pick(&id, parent, cancel).map(Some)
+                } else {
+                    let allowed = crate::permit::ask(
+                        crate::permit::Kind::Screenshot,
+                        &id,
+                        Vec::new(),
+                        false,
+                        parent,
+                        cancel,
+                    )
+                    .allowed();
+                    allowed.then_some(None)
+                }
             })
             .await;
             let _ = server.remove::<crate::Request, _>(handle.clone()).await;
-            if !ok {
-                log::info!("Screenshot for {app_id:?} denied");
-                return Ok((crate::RESPONSE_CANCELLED, HashMap::new()));
+            match asked {
+                Some(t) => target = t,
+                None => {
+                    log::info!("Screenshot for {app_id:?} denied");
+                    return Ok((crate::RESPONSE_CANCELLED, HashMap::new()));
+                }
             }
         }
-        match blocking::unblock(take).await {
+        match blocking::unblock(move || take(target)).await {
             Ok(path) => {
                 let mut r = HashMap::new();
                 let uri = format!("file://{}", path.display());
@@ -104,65 +125,163 @@ fn needs_consent(options: &HashMap<String, Value<'_>>) -> bool {
     flag("interactive") || !flag("permission_store_checked")
 }
 
-/// Capture the first output and write it out; blocking.
-fn take() -> Result<std::path::PathBuf, String> {
-    let mut wl = Wayland::connect()?;
-    let out = wl.outputs().into_iter().next().ok_or("no output")?;
-    let session = wl.open_session(&Target::Output(out.name.clone()), true)?;
-    let c = wl.constraints();
-    let format = c.pick_format().ok_or("no 32 bpp shm format")?;
-    let buf = wl.shm_buffer(c.width, c.height, format)?;
-    // An output always has a first frame to give; two seconds is for a
-    // compositor busy with something else.
-    wl.capture(&session, &buf, std::time::Duration::from_secs(2))
-        .map_err(|e| format!("capture failed: {e:?}"))?;
-    let pixels = buf.read()?;
-    let now = std::time::SystemTime::now()
+/// The screen or window the user picks for `app_id`; None on Cancel or a
+/// frontend Close. Blocking.
+fn pick(app_id: &str, parent: Option<String>, cancel: Arc<AtomicBool>) -> Option<Target> {
+    let wl = Wayland::connect()
+        .map_err(|e| log::warn!("Screenshot: {e}"))
+        .ok()?;
+    let mut types = crate::SOURCE_MONITOR;
+    if wl.can_capture_toplevels() {
+        types |= crate::SOURCE_WINDOW;
+    }
+    let entries = crate::share_entries(types, &wl.outputs(), &wl.toplevels());
+    drop(wl);
+    let (target, _) = crate::picker::pick(
+        crate::picker::Purpose::Screenshot,
+        &crate::remotedesktop::display_name(app_id),
+        entries,
+        None,
+        false,
+        parent,
+        cancel,
+    )?;
+    Some(target)
+}
+
+/// Capture `target`, or every output when None, and write it out; blocking.
+fn take(target: Option<Target>) -> Result<PathBuf, String> {
+    let shot = match target {
+        Some(t) => grab(&mut Wayland::connect()?, &t, true)?,
+        None => desktop(&crate::colorpick::capture(true)?)?,
+    };
+    let dir = shot_dir()?;
+    let now = SystemTime::now();
+    prune(&dir, now, KEEP);
+    let secs = now
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let (file, path) =
-        reprisefs::ops::create_new_numbered(&target_dir()?, &format!("Screenshot {now}.png"))
-            .map_err(|e| e.to_string())?;
-    if let Err(e) = write_png(file, c.width, c.height, &pixels, format) {
+    let (file, path) = reprisefs::ops::create_new_numbered(&dir, &format!("Screenshot {secs}.png"))
+        .map_err(|e| e.to_string())?;
+    if let Err(e) = write_png(file, &shot) {
         let _ = std::fs::remove_file(&path);
         return Err(e);
     }
     Ok(path)
 }
 
-/// Pictures when it exists, else the runtime dir, which only this user can
-/// write. Never a shared directory such as `/tmp`.
-fn target_dir() -> Result<std::path::PathBuf, String> {
-    if let Some(pictures) = reprisefs::places::user_dir("PICTURES", "Pictures")
-        && pictures.is_dir()
-    {
-        return Ok(pictures);
-    }
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(std::path::PathBuf::from)
-        .ok_or_else(|| "no Pictures folder and no XDG_RUNTIME_DIR".to_string())
+/// `$XDG_RUNTIME_DIR/reprise-portal/screenshots`, made 0700 when missing.
+fn shot_dir() -> Result<PathBuf, String> {
+    use std::os::unix::fs::DirBuilderExt;
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").ok_or("no XDG_RUNTIME_DIR")?;
+    let dir = Path::new(&runtime).join("reprise-portal/screenshots");
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?;
+    Ok(dir)
 }
 
-fn write_png(
-    file: std::fs::File,
-    w: u32,
-    h: u32,
-    pixels: &[u8],
-    format: wayland_client::protocol::wl_shm::Format,
-) -> Result<(), String> {
-    use wayland_client::protocol::wl_shm::Format;
-    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);
+/// Delete the files in `dir` last written more than `keep` before `now`.
+fn prune(dir: &Path, now: SystemTime, keep: Duration) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let Ok(meta) = e.metadata() else { continue };
+        let old = meta
+            .modified()
+            .ok()
+            .and_then(|m| now.duration_since(m).ok())
+            .is_some_and(|age| age > keep);
+        if meta.is_file() && old {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
+/// The desktop picture's size and each output's place in it: the layout's
+/// bounding box at the scale of the output with the most pixels per
+/// logical pixel, each place's edges rounded so neighbours meet.
+fn arrange(outputs: &[(Rect, (u32, u32))]) -> ((u32, u32), Vec<Rect>) {
+    let scale = outputs
+        .iter()
+        .filter(|(r, _)| r.width > 0)
+        .map(|(r, (w, _))| f64::from(*w) / f64::from(r.width))
+        .fold(1.0f64, f64::max);
+    let left = outputs.iter().map(|(r, _)| r.x).min().unwrap_or(0);
+    let top = outputs.iter().map(|(r, _)| r.y).min().unwrap_or(0);
+    let right = outputs.iter().map(|(r, _)| r.right()).max().unwrap_or(0);
+    let bottom = outputs.iter().map(|(r, _)| r.bottom()).max().unwrap_or(0);
+    let at = |v: i32, origin: i32| (f64::from(v - origin) * scale).round() as i32;
+    let places = outputs
+        .iter()
+        .map(|(r, _)| {
+            let (x, y) = (at(r.x, left), at(r.y, top));
+            Rect::new(x, y, at(r.right(), left) - x, at(r.bottom(), top) - y)
+        })
+        .collect();
+    let size = (at(right, left).max(0) as u32, at(bottom, top).max(0) as u32);
+    (size, places)
+}
+
+/// Every output's still drawn at its place in one picture, black between
+/// them; a still of another size than its place is resampled to it.
+fn desktop(outputs: &[Output]) -> Result<Still, String> {
+    let geometry: Vec<_> = outputs
+        .iter()
+        .map(|o| (o.layout, (o.still.width, o.still.height)))
+        .collect();
+    let ((w, h), places) = arrange(&geometry);
+    if w == 0 || h == 0 || u64::from(w) * u64::from(h) > MAX_PIXELS {
+        return Err(format!("no desktop picture {w}x{h}"));
+    }
+    let mut pixels = vec![0xff00_0000u32; w as usize * h as usize];
+    for (o, place) in outputs.iter().zip(places) {
+        blit(&mut pixels, (w, h), &o.still, place);
+    }
+    Ok(Still {
+        logical: (w as i32, h as i32),
+        width: w,
+        height: h,
+        pixels,
+    })
+}
+
+/// `still` nearest-neighbour scaled into `place` of a `size` picture.
+fn blit(pixels: &mut [u32], size: (u32, u32), still: &Still, place: Rect) {
+    if place.width <= 0 || place.height <= 0 || still.width == 0 || still.height == 0 {
+        return;
+    }
+    let (pw, ph) = (place.width as u64, place.height as u64);
+    for dy in 0..place.height {
+        let y = place.y + dy;
+        if y < 0 || y >= size.1 as i32 {
+            continue;
+        }
+        let sy = (dy as u64 * u64::from(still.height) / ph) as usize;
+        for dx in 0..place.width {
+            let x = place.x + dx;
+            if x < 0 || x >= size.0 as i32 {
+                continue;
+            }
+            let sx = (dx as u64 * u64::from(still.width) / pw) as usize;
+            pixels[y as usize * size.0 as usize + x as usize] =
+                still.pixels[sy * still.width as usize + sx];
+        }
+    }
+}
+
+fn write_png(file: std::fs::File, shot: &Still) -> Result<(), String> {
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), shot.width, shot.height);
     enc.set_color(png::ColorType::Rgb);
     enc.set_depth(png::BitDepth::Eight);
     let mut writer = enc.write_header().map_err(|e| e.to_string())?;
-    let mut rgb = Vec::with_capacity((w * h * 3) as usize);
-    let (words, _) = pixels.as_chunks::<4>();
-    for px in words.iter().take((w * h) as usize) {
-        let (r, g, b) = match format {
-            Format::Argb8888 | Format::Xrgb8888 => (px[2], px[1], px[0]),
-            _ => (px[0], px[1], px[2]),
-        };
+    let mut rgb = Vec::with_capacity(shot.pixels.len() * 3);
+    for px in &shot.pixels {
+        let [_, r, g, b] = px.to_be_bytes();
         rgb.extend_from_slice(&[r, g, b]);
     }
     writer.write_image_data(&rgb).map_err(|e| e.to_string())
@@ -177,6 +296,95 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), Value::from(*v)))
             .collect()
+    }
+
+    fn still(w: u32, h: u32, colour: u32) -> Still {
+        Still {
+            logical: (w as i32, h as i32),
+            width: w,
+            height: h,
+            pixels: vec![colour; (w * h) as usize],
+        }
+    }
+
+    #[test]
+    fn outputs_side_by_side_sit_at_their_layout_places() {
+        let (size, places) = arrange(&[
+            (Rect::new(0, 0, 1920, 1080), (1920, 1080)),
+            (Rect::new(1920, 200, 1280, 1024), (1280, 1024)),
+        ]);
+        assert_eq!(size, (3200, 1224));
+        assert_eq!(
+            places,
+            [
+                Rect::new(0, 0, 1920, 1080),
+                Rect::new(1920, 200, 1280, 1024)
+            ]
+        );
+    }
+
+    #[test]
+    fn the_picture_takes_the_finest_scale_and_starts_at_the_layouts_corner() {
+        // A 4K panel at scale 2 left of a 1080p screen at scale 1.
+        let (size, places) = arrange(&[
+            (Rect::new(-1920, 0, 1920, 1080), (3840, 2160)),
+            (Rect::new(0, 0, 1920, 1080), (1920, 1080)),
+        ]);
+        assert_eq!(size, (7680, 2160));
+        assert_eq!(
+            places,
+            [Rect::new(0, 0, 3840, 2160), Rect::new(3840, 0, 3840, 2160)]
+        );
+        // At 1.5 the rounded edges of neighbours still meet.
+        let (size, places) = arrange(&[
+            (Rect::new(0, 0, 1281, 721), (1922, 1082)),
+            (Rect::new(1281, 0, 1281, 721), (1922, 1082)),
+        ]);
+        assert_eq!(places[0].right(), places[1].x);
+        assert_eq!(size.0 as i32, places[1].right());
+    }
+
+    #[test]
+    fn the_desktop_picture_holds_each_output_and_black_between() {
+        let outputs = [
+            Output {
+                layout: Rect::new(0, 0, 4, 2),
+                still: still(8, 4, 0xffff_0000),
+            },
+            Output {
+                layout: Rect::new(4, 1, 2, 2),
+                still: still(2, 2, 0xff00_00ff),
+            },
+        ];
+        let shot = desktop(&outputs).unwrap();
+        assert_eq!((shot.width, shot.height), (12, 6));
+        let at = |x: usize, y: usize| shot.pixels[y * 12 + x];
+        assert_eq!(at(0, 0), 0xffff_0000);
+        assert_eq!(at(7, 3), 0xffff_0000);
+        assert_eq!(at(8, 0), 0xff00_0000, "above the second output");
+        assert_eq!(at(8, 2), 0xff00_00ff);
+        assert_eq!(at(11, 5), 0xff00_00ff);
+        assert_eq!(at(0, 5), 0xff00_0000, "under the first output");
+    }
+
+    #[test]
+    fn pruning_deletes_only_screenshots_older_than_the_keep() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = SystemTime::now();
+        let write = |name: &str, age: u64| {
+            let p = dir.path().join(name);
+            let f = std::fs::File::create(&p).unwrap();
+            f.set_modified(now - Duration::from_secs(age)).unwrap();
+            p
+        };
+        let fresh = write("fresh.png", 60);
+        let edge = write("edge.png", 10 * 60 - 5);
+        let stale = write("stale.png", 10 * 60 + 5);
+        let sub = dir.path().join("folder");
+        std::fs::create_dir(&sub).unwrap();
+        prune(dir.path(), now, KEEP);
+        assert!(fresh.exists() && edge.exists() && sub.exists());
+        assert!(!stale.exists());
     }
 
     #[test]
