@@ -3,15 +3,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-# One run at a time; a newer commit cancels the run in progress.
-concurrency:
-  group: nightly
-  cancel-in-progress: true
 # Only publish gets a write token; build runs every dependency's build script.
 permissions:
   contents: read
 jobs:
   build:
+    # A newer commit on the same ref cancels the build in progress.
+    concurrency:
+      group: nightly-build-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     container: archlinux@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
     env:
@@ -55,7 +55,14 @@ jobs:
           retention-days: 1
   publish:
     needs: build
+    # A dispatch from another branch builds it but never moves Nightly.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # A newer commit waits for a publish in progress; cancelling it mid-upload would leave the
+    # tag on one commit and the asset from another.
+    concurrency:
+      group: nightly-publish
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
