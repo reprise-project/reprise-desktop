@@ -1416,6 +1416,9 @@ mod tests {
 
     #[test]
     fn caps_lock_dialog_pins_at_scale_1_and_2() {
+        if !reprisekit::text::test_tahoma() {
+            return;
+        }
         let got = CAPS_PINS.map(|(scale, _)| {
             let theme = Theme::default().scaled(scale);
             let text = TextRenderer::load(&theme.fonts);
