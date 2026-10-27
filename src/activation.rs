@@ -175,8 +175,12 @@ impl State {
             .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
         self.spawn_job(move || {
             let meta = std::fs::metadata(&dir).ok();
+            let fixed_modes = reprisefs::props::Mount::of(&dir).fixed_modes;
             let (is_dir, is_document) = (meta.as_ref()).map_or((false, false), |m| {
-                (m.is_dir(), names_a_document(m, mime.as_deref()))
+                (
+                    m.is_dir(),
+                    names_a_document(m, mime.as_deref(), fixed_modes),
+                )
             });
             Box::new(move |state: &mut State| {
                 if is_dir {
@@ -250,13 +254,13 @@ impl State {
 }
 
 /// Whether a Run line's path is a document to record as opened: a regular file with no execute
-/// bit, since an executable it names runs instead, or one whose name's type `mime` is no
-/// program's, as vfat, exFAT, NTFS and SMB mounts mark every file executable.
-fn names_a_document(meta: &std::fs::Metadata, mime: Option<&str>) -> bool {
+/// bit, since an executable it names runs instead, or, on a mount whose modes are fixed (FAT,
+/// exFAT and NTFS can mark every file executable), one whose name's type `mime` is no program's.
+fn names_a_document(meta: &std::fs::Metadata, mime: Option<&str>, fixed_modes: bool) -> bool {
     use std::os::unix::fs::PermissionsExt;
     meta.is_file()
         && (meta.permissions().mode() & 0o111 == 0
-            || mime.is_some_and(|m| !PROGRAM_TYPES.contains(&m)))
+            || fixed_modes && mime.is_some_and(|m| !PROGRAM_TYPES.contains(&m)))
 }
 
 const PROGRAM_TYPES: [&str; 5] = [
@@ -345,21 +349,32 @@ mod tests {
         std::fs::set_permissions(&prog, std::fs::Permissions::from_mode(0o755)).unwrap();
         let meta = |p: &std::path::Path| std::fs::metadata(p).unwrap();
         assert!(
-            names_a_document(&meta(&doc), None),
+            names_a_document(&meta(&doc), None, false),
             "a 0644 file is recorded"
         );
-        assert!(!names_a_document(&meta(&prog), None), "a 0755 file is not");
         assert!(
-            !names_a_document(&meta(&prog), Some("application/x-shellscript")),
-            "nor a 0755 script"
+            !names_a_document(&meta(&prog), None, false),
+            "a 0755 file is not"
+        );
+        let py = dir.join("x.py");
+        std::fs::write(&py, "").unwrap();
+        std::fs::set_permissions(&py, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let fixed = reprisefs::props::Mount::of(&py).fixed_modes;
+        assert!(
+            !names_a_document(&meta(&py), Some("text/x-python"), fixed),
+            "nor a 0755 x.py where modes are kept"
+        );
+        assert!(
+            !names_a_document(&meta(&prog), Some("application/x-shellscript"), true),
+            "nor a 0755 script where modes are fixed"
         );
         std::fs::set_permissions(&doc, std::fs::Permissions::from_mode(0o777)).unwrap();
         assert!(
-            names_a_document(&meta(&doc), Some("text/plain")),
-            "a 0777 document, as on vfat, is recorded"
+            names_a_document(&meta(&doc), Some("text/plain"), true),
+            "a 0777 document where modes are fixed, as on vfat, is recorded"
         );
         assert!(
-            !names_a_document(&meta(&dir), Some("text/plain")),
+            !names_a_document(&meta(&dir), Some("text/plain"), true),
             "a folder is not"
         );
         let _ = std::fs::remove_dir_all(&dir);
