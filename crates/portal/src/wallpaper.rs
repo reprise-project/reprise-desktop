@@ -75,7 +75,8 @@ impl Wallpaper {
             app: String::new(),
             offer_remember: false,
             items: vec![file_name(&path)],
-            preview: show_preview.then(|| path.to_string_lossy().into_owned()),
+            preview: shows_preview(&app_id, show_preview)
+                .then(|| path.to_string_lossy().into_owned()),
         };
         let id = app_id.clone();
         let allowed = blocking::unblock(move || {
@@ -120,8 +121,8 @@ fn set_on(s: &str) -> Option<SetOn> {
     }
 }
 
-/// The local path of a `file://` URI, as the frontend sends both a URI and
-/// a file descriptor (which it turns into its document portal path).
+/// The local path of a `file://` URI. The frontend turns a file descriptor into the host path
+/// it names, so a sandboxed app can name any file the user can read.
 fn file_path(uri: &str) -> Option<PathBuf> {
     use std::os::unix::ffi::OsStringExt;
     let rest = uri.strip_prefix("file://")?;
@@ -136,6 +137,12 @@ fn file_path(uri: &str) -> Option<PathBuf> {
     Some(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
 }
 
+/// Whether the prompt shows the picture: always for a sandboxed app, which may have picked any
+/// picture the user owns; an unsandboxed one asks with `show-preview`.
+fn shows_preview(app_id: &str, asked: bool) -> bool {
+    asked || !app_id.is_empty()
+}
+
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|n| crate::dialog::one_line(&n.to_string_lossy()))
@@ -143,7 +150,8 @@ fn file_name(path: &Path) -> String {
         .unwrap_or_else(|| "Wallpaper".into())
 }
 
-/// The bytes of the regular file at `path` when they decode as a picture.
+/// The bytes of the regular file at `path` when its header names a picture the desktop shows,
+/// no side past [`reprisekit::wallpaper::MAX_SIDE`].
 fn read_picture(path: &Path) -> Option<Vec<u8>> {
     use std::os::unix::fs::OpenOptionsExt;
     let f = std::fs::OpenOptions::new()
@@ -155,11 +163,17 @@ fn read_picture(path: &Path) -> Option<Vec<u8>> {
         return None;
     }
     let bytes = repriseapp::decode::read_capped_from(f).ok()?;
-    repriseapp::decode::Decoders::default_set().decode(&bytes, (1, 1))?;
-    Some(bytes)
+    let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()?;
+    let max = reprisekit::wallpaper::MAX_SIDE;
+    (w <= max && h <= max).then_some(bytes)
 }
 
-/// Write `bytes` as `name` in `dir` and point `[wallpaper]` in `config` at the copy.
+/// Write `bytes` as `name` in `dir`, point `[wallpaper]` in `config` at the copy and delete the
+/// copies earlier calls left in `dir`.
 fn install(
     dir: &Path,
     name: &str,
@@ -187,6 +201,12 @@ fn install(
     if let Err(e) = written {
         let _ = std::fs::remove_file(&to);
         return Err(e);
+    }
+    for old in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let file = old.file_type().is_ok_and(|t| t.is_file());
+        if file && old.path() != to {
+            let _ = std::fs::remove_file(old.path());
+        }
     }
     Ok(to)
 }
@@ -217,7 +237,6 @@ mod tests {
             file_path("file://localhost/srv/a.png"),
             Some(PathBuf::from("/srv/a.png"))
         );
-        // A file descriptor reaches the backend as its document portal path.
         assert_eq!(
             file_path("file:///run/user/1000/doc/3f2a91c0/sunrise%2Ejpg"),
             Some(PathBuf::from("/run/user/1000/doc/3f2a91c0/sunrise.jpg"))
@@ -288,5 +307,51 @@ mod tests {
             written.contains(&format!("image = \"{}\"", copied.display())),
             "{written}"
         );
+    }
+
+    fn png(w: u32, h: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut enc = png::Encoder::new(&mut bytes, w, h);
+        enc.set_color(png::ColorType::Grayscale);
+        let mut out = enc.write_header().unwrap();
+        out.write_image_data(&vec![0; (w * h) as usize]).unwrap();
+        out.finish().unwrap();
+        bytes
+    }
+
+    #[test]
+    fn a_picture_wider_than_the_desktop_shows_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let max = reprisekit::wallpaper::MAX_SIDE;
+        let wide = dir.path().join("wide.png");
+        std::fs::write(&wide, png(max + 1, 1)).unwrap();
+        assert_eq!(read_picture(&wide), None);
+        let widest = dir.path().join("widest.png");
+        std::fs::write(&widest, png(max, 1)).unwrap();
+        assert!(read_picture(&widest).is_some());
+    }
+
+    #[test]
+    fn a_new_wallpaper_deletes_the_copies_before_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let to = dir.path().join("wallpapers");
+        let config = dir.path().join("config.toml");
+        let bytes = png(1, 1);
+        let first = install(&to, "a.png", &bytes, SetOn::Background, &config).unwrap();
+        let again = install(&to, "a.png", &bytes, SetOn::Background, &config).unwrap();
+        assert_ne!(first, again);
+        let last = install(&to, "b.png", &bytes, SetOn::Background, &config).unwrap();
+        let left: Vec<PathBuf> = std::fs::read_dir(&to)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(left, [last]);
+    }
+
+    #[test]
+    fn a_sandboxed_apps_picture_is_always_shown_in_the_prompt() {
+        assert!(shows_preview("org.example.Photos", false));
+        assert!(shows_preview("", true));
+        assert!(!shows_preview("", false));
     }
 }

@@ -5,11 +5,9 @@ use crate::raster::Canvas;
 use std::path::Path;
 use std::sync::Arc;
 
+use reprisekit::wallpaper::MAX_SIDE;
 pub use reprisekit::wallpaper::{Position, compose, composed_known};
 use reprisekit::wallpapers::{self, Builtin};
-
-/// Largest side accepted; the decoder checks the header so oversized files are refused before allocation.
-const MAX_SIDE: u32 = 16384;
 
 /// `path` decoded by its content, refused past `MAX_SIDE` a side before it is read whole.
 pub fn decode(path: &Path) -> image::ImageResult<image::DynamicImage> {
