@@ -1312,6 +1312,25 @@ mod tests {
     }
 
     #[test]
+    fn a_session_pause_ends_the_repeat() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.config.keyboard.repeat_delay = 60;
+        h.state.config.keyboard.repeat_rate = 25;
+        h.state.open_dialog(crate::dialog::Dialog::run(&[]));
+        for _ in 0..4 {
+            h.key(KEY_A, true);
+            h.key(KEY_A, false);
+        }
+        h.key(KEY_BACKSPACE, true);
+        assert!(h.state.key_input.field_repeat.is_some());
+        crate::backend::pause_session(&mut h.state);
+        assert!(h.state.key_input.field_repeat.is_none());
+        h.run_for(500);
+        assert_eq!(run_box_text(&h), "aaa", "only the press deletes");
+    }
+
+    #[test]
     fn another_press_ends_the_repeat() {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
