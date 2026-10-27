@@ -209,6 +209,9 @@ impl Explorer {
             let r = self.refresh(ctx);
             return put.unwrap_or_default().and(r);
         }
+        if let Some(r) = self.rerun_stale(ctx) {
+            return put.unwrap_or_default().and(r);
+        }
         if let Some(r) = self.poll_volumes(ctx) {
             return put.unwrap_or_default().and(r);
         }
