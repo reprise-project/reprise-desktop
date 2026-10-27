@@ -70,7 +70,7 @@ pub(crate) fn route_to<D>(handle: &LoopHandle<'_, D>, mut rescue: impl FnMut(&mu
         }
         // SAFETY: alarm replaces the pending grace alarm with the rescue budget.
         unsafe { libc::alarm(RESCUE_S) };
-        rescue(data);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| rescue(data)));
         end_by(sig);
         Ok(PostAction::Remove)
     });
@@ -287,6 +287,44 @@ mod tests {
             stdout.contains(r#"RESCUED ["typed", "rescued"]"#),
             "the rescue runs with the loop's data: {stdout}"
         );
+        assert!(!stdout.contains("SURVIVED"), "the program ends: {stdout}");
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(
+            out.status.signal(),
+            Some(libc::SIGTERM),
+            "the program ends by SIGTERM: {:?}",
+            out.status
+        );
+    }
+
+    #[test]
+    fn a_rescue_that_panics_still_ends_the_program_by_the_signal() {
+        use smithay_client_toolkit::reexports::calloop::EventLoop;
+        if std::env::var_os(CHILD).is_some() {
+            let (ours, _peer) = UnixStream::pair().unwrap();
+            let mut event_loop: EventLoop<()> = EventLoop::try_new().unwrap();
+            on_signals(ours.as_fd());
+            route_to(&event_loop.handle(), |_| panic!("rescue failed"));
+            // SAFETY: raise on this process.
+            unsafe { libc::raise(libc::SIGTERM) };
+            for _ in 0..50 {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    event_loop.dispatch(Duration::from_millis(20), &mut ())
+                }));
+            }
+            println!("SURVIVED");
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "hangup::tests::a_rescue_that_panics_still_ends_the_program_by_the_signal",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(!stdout.contains("SURVIVED"), "the program ends: {stdout}");
         use std::os::unix::process::ExitStatusExt;
         assert_eq!(
