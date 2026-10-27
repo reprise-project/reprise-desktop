@@ -306,7 +306,8 @@ are.
 - **Lock screen** with a password or a fingerprint, whichever comes first.
   The password also unlocks your keyring if it was left locked. Prefer
   swaylock? `[power] locker` runs it, and if it crashes Reprise's own lock
-  comes back.
+  comes back. With more than one keyboard layout, the Unlock dialog shows
+  the active one in its corner, as the taskbar does.
 - **Idle steps.** Screen saver, lock, screen off and suspend, each with its
   own timeout, and separate timeouts on battery.
 - **Lock on sleep.** The screen locks before the machine suspends, whatever

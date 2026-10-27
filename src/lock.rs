@@ -9,6 +9,7 @@
 use crate::raster::{Canvas, EdgeStyle, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::theme::{Color, Metrics, Theme};
+use reprisekit::classic::indicator;
 use reprisekit::frame::{ButtonSet, Chrome, FrameGeometry, FrameState};
 use reprisekit::look::Look;
 use reprisekit::look::widgets::{draw_button, draw_edit_field};
@@ -59,7 +60,9 @@ pub enum LockButton {
 /// helper is busy. `prompt` is a further PAM prompt (a one-time code) the
 /// field answers in place of the password. `finger` is the fingerprint
 /// conversation's standing prompt (its last PAM info text) while it runs,
-/// shown when there is no message. `caps_lock` mirrors the keyboard's.
+/// shown when there is no message. `caps_lock` mirrors the keyboard's;
+/// `layout` is the active keyboard layout's short name while more than one
+/// is configured.
 #[derive(Default)]
 pub struct LockState {
     pub input: String,
@@ -68,6 +71,7 @@ pub struct LockState {
     pub prompt: Option<Prompt>,
     pub finger: Option<String>,
     pub caps_lock: bool,
+    pub layout: Option<String>,
 }
 
 /// A PAM prompt after the password: its text labels the field, and `echo`
@@ -92,6 +96,7 @@ impl std::fmt::Debug for LockState {
             .field("prompt", &self.prompt)
             .field("finger", &self.finger)
             .field("caps_lock", &self.caps_lock)
+            .field("layout", &self.layout)
             .finish()
     }
 }
@@ -592,6 +597,9 @@ pub struct DialogLayout {
     pub message: Rect,
     pub ok: Rect,
     pub cancel: Rect,
+    /// The keyboard layout badge: the taskbar cell's size, at the message
+    /// area's bottom-right, above Cancel.
+    pub layout: Rect,
 }
 
 /// Unscaled dialog dimensions (logical px), multiplied by the theme scale.
@@ -663,6 +671,13 @@ pub fn dialog_layout(theme: &Theme) -> DialogLayout {
     let by = client.bottom() - at(PAD) - bh;
     let cancel = Rect::new(client.right() - at(PAD) - bw, by, bw, bh);
     let ok = Rect::new(cancel.x - at(6) - bw, by, bw, bh);
+    let badge = theme.icon_size();
+    let layout = Rect::new(
+        cancel.right() - badge,
+        message.bottom() - badge,
+        badge,
+        badge,
+    );
     let size = match frame {
         Some(g) => g.total,
         None => (DIALOG_W * s + grow.0, DIALOG_H * s + grow.1),
@@ -676,6 +691,7 @@ pub fn dialog_layout(theme: &Theme) -> DialogLayout {
         message,
         ok,
         cancel,
+        layout,
     }
 }
 
@@ -828,26 +844,26 @@ fn draw_body(
             .or(prompt.map(|p| p.text.as_str()))
             .or(state.finger.as_deref())
     };
+    let width = match &state.layout {
+        Some(_) => l.layout.x - at(6) - l.message.x,
+        None => l.message.width,
+    };
     let mut lines = Vec::new();
     if state.caps_lock {
-        lines.push(
-            text.ellipsize(CAPS_LOCK, l.message.width, false, px)
-                .into_owned(),
-        );
+        lines.push(text.ellipsize(CAPS_LOCK, width, false, px).into_owned());
     }
     if let Some(msg) = msg {
         let room = MESSAGE_LINES - lines.len();
-        lines.extend(message_lines(text, msg, l.message.width, px, room));
+        lines.extend(message_lines(text, msg, width, px, room));
     }
     for (i, line) in lines.iter().enumerate() {
         let line_h = at(LINE_H);
-        let r = Rect::new(
-            l.message.x,
-            l.message.y + i as i32 * line_h,
-            l.message.width,
-            line_h,
-        );
+        let r = Rect::new(l.message.x, l.message.y + i as i32 * line_h, width, line_h);
         text.draw(c, r, line, false, cs.button_text, Align::Left, px);
+    }
+    if let Some(short) = &state.layout {
+        let badge = indicator::draw_layout(text, cs, short, l.layout.width, px);
+        c.blit_canvas(l.layout.x, l.layout.y, &badge);
     }
 
     for (r, caption) in [(l.ok, "OK"), (l.cancel, "Cancel")] {
@@ -1463,6 +1479,52 @@ mod tests {
 
     fn blue() -> Theme {
         reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Blue)
+    }
+
+    /// The layout badge sits at the message area's bottom-right, above
+    /// Cancel, in the taskbar cell's highlight in every look; the message
+    /// wraps short of it.
+    #[test]
+    fn the_layout_badge_fills_its_corner_only_when_set() {
+        assert_eq!(
+            dialog_layout(&Theme::default()).layout,
+            Rect::new(328, 124, 16, 16)
+        );
+        let glass = reprisekit::interfaces::theme_for(reprisekit::interface::Interface::Glass);
+        for look in [Theme::default(), blue(), glass] {
+            for scale in [1, 2] {
+                let theme = look.scaled(scale);
+                let text = TextRenderer::load(&theme.fonts);
+                let l = dialog_layout(&theme);
+                assert_eq!(l.layout.right(), l.cancel.right());
+                assert_eq!(l.layout.bottom(), l.message.bottom());
+                assert!(l.layout.bottom() <= l.cancel.y);
+                let mut s = LockState::new();
+                let without = draw_dialog(&theme, &text, None, "someone", &s);
+                s.layout = Some("EN".into());
+                let with = draw_dialog(&theme, &text, None, "someone", &s);
+                let hilight = theme.colors.hilight.argb();
+                let r = l.layout;
+                for (x, y) in [(r.x, r.y), (r.right() - 1, r.bottom() - 1)] {
+                    assert_eq!(with.get(x, y), hilight, "badge corner at {scale}x");
+                    assert_ne!(without.get(x, y), hilight, "no badge at {scale}x");
+                }
+                let outside = (0..with.height as i32)
+                    .flat_map(|y| (0..with.width as i32).map(move |x| (x, y)))
+                    .filter(|&(x, y)| !r.contains(x, y))
+                    .all(|(x, y)| with.get(x, y) == without.get(x, y));
+                assert!(outside, "the badge draws inside its rect at {scale}x");
+            }
+        }
+        let theme = Theme::default();
+        let text = TextRenderer::load(&theme.fonts);
+        let l = dialog_layout(&theme);
+        let mut s = LockState::new();
+        s.layout = Some("EN".into());
+        s.fail_with(&"word ".repeat(80));
+        let c = draw_dialog(&theme, &text, None, "someone", &s);
+        let gap = Rect::new(l.layout.x - 6, l.message.y, 6, l.message.height);
+        assert!(!has_ink(&c, gap, theme.colors.button_face.argb()));
     }
 
     /// Under Blue the dialog's caption is the style's 26 px band inside a
