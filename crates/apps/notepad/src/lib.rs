@@ -540,9 +540,7 @@ impl Extended for Notepad {
     }
 
     fn draw_failed(&mut self, error: &str) -> Reply {
-        self.error = Some(self.error_box(&format!(
-            "Notepad cannot draw its window: {error}.\n\nClose some programs or free space in /dev/shm."
-        )));
+        self.error = Some(self.error_box(&tr!("draw-failed", error = error)));
         Reply::redraw()
     }
 

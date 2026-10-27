@@ -1443,6 +1443,16 @@ fn a_device_or_folder_on_the_command_line_raises_the_box() {
     }
 }
 
+#[test]
+fn a_draw_failure_raises_the_box_with_the_systems_error() {
+    let mut np = Notepad::new(None);
+    np.draw_failed("Too many open files");
+    assert_eq!(
+        np.error.as_ref().expect("the box").fields.text,
+        "Notepad cannot draw its window: Too many open files.\nClose some programs and try again."
+    );
+}
+
 /// A name the Open dialog cannot read raises the box over the dialog, which stays up with the
 /// document untouched.
 #[test]

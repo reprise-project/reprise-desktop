@@ -276,7 +276,7 @@ const SHM_RETRY: Duration = Duration::from_millis(100);
 /// Failed tries in a row after which the program hears that its windows cannot draw: 5 s.
 pub(crate) const SHM_TELL_AFTER: u32 = 50;
 
-/// A run of frames that found no shm buffer (`/dev/shm` full, out of file descriptors).
+/// A run of frames that found no shm buffer (out of memory or file descriptors).
 #[derive(Debug, Default)]
 pub(crate) struct ShmTrouble {
     failures: u32,
