@@ -909,7 +909,7 @@ fn a_bad_key_on_reload_keeps_its_running_value() {
     assert_eq!(c.taskbar.position, reprisekit::taskbar::Edge::Top);
     let bad = "terminal = 5\n[taskbar]\nposition = \"botom\"\nauto_hide = true\n";
     let (c, dropped, _) = super::lenient_over(bad, &base, Config::from_file).unwrap();
-    let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
+    let keys: Vec<&str> = dropped.iter().map(|d| d.key.as_str()).collect();
     assert_eq!(keys, ["taskbar.position", "terminal"]);
     assert_eq!(
         c.taskbar.position,
@@ -942,11 +942,42 @@ fn a_bad_tablet_entry_drops_that_entry_alone() {
         "with no entry left the array goes whole"
     );
     assert!(c.tablets.is_empty());
-    let good = "[[tablets]]\nname = \"Pen A\"\n";
+}
+
+#[test]
+fn a_bad_array_entry_on_reload_takes_back_its_running_entry_alone() {
+    let good = "[[tablets]]\nname = \"Pen A\"\n\
+                [[tablets]]\nname = \"Pen B\"\nkeep_aspect = true\n";
     let (_, _, base) = super::lenient_over(good, &toml::Table::new(), Config::from_file).unwrap();
-    let (c, _, _) = super::lenient_over(text, &base, Config::from_file).unwrap();
-    let names: Vec<&str> = c.tablets.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["Pen A"], "a reload keeps the running entries");
+    let text = "[[tablets]]\nname = \"Pen A\"\noutput = \"DP-1\"\n\
+                [[tablets]]\nname = \"Pen B\"\nkeep_aspect = \"yes\"\n\
+                [[tablets]]\nname = \"Pen C\"\nkeep_aspect = \"no\"\n";
+    let (c, dropped, _) = super::lenient_over(text, &base, Config::from_file).unwrap();
+    let tablets: Vec<(&str, Option<&str>, bool)> = (c.tablets.iter())
+        .map(|t| (t.name.as_str(), t.output.as_deref(), t.keep_aspect))
+        .collect();
+    assert_eq!(
+        tablets,
+        [("Pen A", Some("DP-1"), false), ("Pen B", None, true)],
+        "Pen A takes its edit, Pen B its running entry, Pen C has none"
+    );
+    let kept: Vec<(&str, bool)> = dropped.iter().map(|d| (d.key.as_str(), d.kept)).collect();
+    assert_eq!(kept, [("tablets[1]", true), ("tablets[2]", false)]);
+}
+
+#[test]
+fn a_bad_output_entry_on_reload_keeps_the_other_outputs_edits() {
+    let good = "[[outputs]]\nname = \"DP-1\"\nscale = 1.0\n\
+                [[outputs]]\nname = \"HDMI-A-1\"\nscale = 1.5\n";
+    let (_, _, base) = super::lenient_over(good, &toml::Table::new(), Config::from_file).unwrap();
+    let text = "[[outputs]]\nname = \"HDMI-A-1\"\nscale = \"big\"\n\
+                [[outputs]]\nname = \"DP-1\"\nscale = 2.0\n";
+    let (c, dropped, _) = super::lenient_over(text, &base, Config::from_file).unwrap();
+    let outputs: Vec<(&str, f32)> = (c.outputs.iter())
+        .map(|o| (o.name.as_str(), o.scale))
+        .collect();
+    assert_eq!(outputs, [("HDMI-A-1", 1.5), ("DP-1", 2.0)]);
+    assert!(dropped[0].kept, "outputs[0] kept its running entry");
 }
 
 #[test]
@@ -954,14 +985,18 @@ fn a_restored_key_that_fails_against_the_new_file_takes_its_default_alone() {
     let good = "terminal = \"foot\"\n[night_light]\nfrom = \"22:00\"\nto = \"06:00\"\n";
     let (_, _, base) = super::lenient_over(good, &toml::Table::new(), Config::from_file).unwrap();
     let bad = "terminal = 5\n[night_light]\nfrom = \"x\"\nto = \"22:00\"\n";
-    let (c, dropped, table) = super::lenient_over(bad, &base, Config::from_file).unwrap();
-    let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
+    let (c, dropped, _) = super::lenient_over(bad, &base, Config::from_file).unwrap();
+    let keys: Vec<&str> = dropped.iter().map(|d| d.key.as_str()).collect();
     assert_eq!(keys, ["night_light.from", "terminal"]);
     assert_eq!(c.terminal, "foot", "terminal keeps its running value");
     assert_eq!(c.night_light.from, NightLightConfig::default().from);
     assert_eq!(c.night_light.to, 22 * 60);
-    assert!(super::kept(&table, &base, "terminal"));
-    assert!(!super::kept(&table, &base, "night_light.from"));
+    let kept: Vec<bool> = dropped.iter().map(|d| d.kept).collect();
+    assert_eq!(
+        kept,
+        [false, true],
+        "night_light.from takes its default, terminal its running value"
+    );
 }
 
 #[test]
