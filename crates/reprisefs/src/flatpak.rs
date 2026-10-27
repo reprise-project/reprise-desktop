@@ -2,7 +2,8 @@
 //! file Flatpak puts at the root of every sandbox.
 
 /// The app id of the Flatpak sandbox process `pid` runs in, or None
-/// outside one.
+/// outside one. A claim, not proof: any process in its own mount namespace
+/// can put a `.flatpak-info` at its root, so never grant access on it.
 pub fn app_of_pid(pid: u32) -> Option<String> {
     app_of_info(&std::fs::read_to_string(format!("/proc/{pid}/root/.flatpak-info")).ok()?)
 }

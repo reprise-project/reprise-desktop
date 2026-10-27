@@ -16,9 +16,9 @@ const RESULT_FORBID: u32 = 0;
 const RESULT_ALLOW: u32 = 1;
 const RESULT_ALLOW_ONCE: u32 = 2;
 
-/// How long the list of sandboxed apps with a window must rest before
-/// RunningApplicationsChanged goes out, so a window swapped for another
-/// sends nothing.
+/// How long after a change to the list of sandboxed apps with a window the
+/// list is read again for RunningApplicationsChanged, so a window swapped for
+/// another within it sends nothing.
 const SETTLE: Duration = Duration::from_millis(500);
 
 pub struct Background {
