@@ -88,6 +88,21 @@ fn number_placeables_use_reprisekits_english_separators() {
 }
 
 #[test]
+fn a_number_in_the_separator_strings_formats_without_the_separators() {
+    let c = Catalog::english(
+        "number-group-separator = { 1000 }\nnumber-decimal-separator = { \"\\u202F\" }",
+    );
+    let (group, decimal) = reading_separators(|| {
+        (
+            c.tr_args("number-group-separator", &[]),
+            c.tr_args("number-decimal-separator", &[]),
+        )
+    });
+    assert_eq!(group, "1000");
+    assert_eq!(decimal, "\u{202F}");
+}
+
+#[test]
 fn a_translation_that_fails_to_format_falls_back_to_english() {
     let c = Catalog::from_texts(&[
         (lang("de"), "greeting = Hallo, { $nobody }"),

@@ -222,8 +222,15 @@ pub struct Separators {
     pub decimal: String,
 }
 
+thread_local! {
+    /// Set while the separators format, so a number in their own strings takes Fluent's plain
+    /// form instead of re-entering [`separators`]'s `OnceLock`.
+    static READING_SEPARATORS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn number_formatter<M>(v: &Value, _: &M) -> Option<String> {
     match v {
+        Value::Number(_) if READING_SEPARATORS.get() => None,
         Value::Number(n) => Some(format_number(n.value, &n.options, separators())),
         _ => None,
     }
@@ -231,10 +238,19 @@ fn number_formatter<M>(v: &Value, _: &M) -> Option<String> {
 
 fn separators() -> &'static Separators {
     static SEPARATORS: OnceLock<Separators> = OnceLock::new();
-    SEPARATORS.get_or_init(|| Separators {
-        group: tr!("number-group-separator"),
-        decimal: tr!("number-decimal-separator"),
+    SEPARATORS.get_or_init(|| {
+        reading_separators(|| Separators {
+            group: tr!("number-group-separator"),
+            decimal: tr!("number-decimal-separator"),
+        })
     })
+}
+
+fn reading_separators<T>(read: impl FnOnce() -> T) -> T {
+    READING_SEPARATORS.set(true);
+    let value = read();
+    READING_SEPARATORS.set(false);
+    value
 }
 
 /// `value` as Fluent's `NUMBER()` asks: fraction digits between the minimum and maximum
