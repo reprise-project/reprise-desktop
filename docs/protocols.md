@@ -85,7 +85,7 @@ confinement holds, every motion goes through as it comes.
 - **Screenshot:** every screen in one picture at its place in the layout, or
   for an interactive call the screen or window picked in the share dialog;
   the files are a hand-over in `$XDG_RUNTIME_DIR/reprise-portal/screenshots`,
-  deleted after ten minutes. Also the colour picker
+  deleted after an hour. Also the colour picker
 - **RemoteDesktop:** keyboard and pointer
 - **InputCapture**, for Deskflow
 - **GlobalShortcuts**

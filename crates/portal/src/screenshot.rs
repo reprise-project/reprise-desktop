@@ -15,9 +15,10 @@ use std::sync::atomic::AtomicBool;
 use std::time::{Duration, SystemTime};
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
-const KEEP: Duration = Duration::from_secs(10 * 60);
-/// The most pixels a desktop picture may have: 1 GiB of ARGB.
-const MAX_PIXELS: u64 = 1 << 28;
+/// Long enough for an app that reads the file only when it sends it, as a chat attaches on send.
+const KEEP: Duration = Duration::from_secs(60 * 60);
+/// The most pixels a desktop picture may have: 256 MiB of ARGB, two 8K outputs side by side.
+const MAX_PIXELS: u64 = 1 << 26;
 
 pub struct Screenshot {
     pub frontend: crate::Frontend,
@@ -368,6 +369,17 @@ mod tests {
     }
 
     #[test]
+    fn outputs_far_apart_in_the_layout_make_no_desktop_picture() {
+        let one = |x: i32| Output {
+            layout: Rect::new(x, 0, 1, 1),
+            still: still(1, 1, 0xffff_ffff),
+        };
+        assert!(desktop(&[one(0), one(4095)]).is_ok());
+        let far = desktop(&[one(0), one(1 << 26)]);
+        assert!(far.is_err(), "a picture past MAX_PIXELS is refused");
+    }
+
+    #[test]
     fn pruning_deletes_only_screenshots_older_than_the_keep() {
         let dir = tempfile::tempdir().unwrap();
         let now = SystemTime::now();
@@ -377,9 +389,9 @@ mod tests {
             f.set_modified(now - Duration::from_secs(age)).unwrap();
             p
         };
-        let fresh = write("fresh.png", 60);
-        let edge = write("edge.png", 10 * 60 - 5);
-        let stale = write("stale.png", 10 * 60 + 5);
+        let fresh = write("fresh.png", 10 * 60);
+        let edge = write("edge.png", 60 * 60 - 5);
+        let stale = write("stale.png", 60 * 60 + 5);
         let sub = dir.path().join("folder");
         std::fs::create_dir(&sub).unwrap();
         prune(dir.path(), now, KEEP);
