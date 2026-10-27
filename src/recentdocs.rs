@@ -219,21 +219,33 @@ fn mount_of<'a>(path: &'a Path, mounts: &'a [PathBuf]) -> &'a Path {
 }
 
 impl State {
-    /// Records `path`, opened by `app` (else its type's default program), in `recently-used.xbel`
-    /// on a file job, unless `[privacy] recent_files` is off.
-    pub fn record_recent(&mut self, path: PathBuf, app: Option<AppEntry>) {
-        if !self.config.recent_files {
+    /// Records `paths`, opened by `app` (else each one's type's default program), in
+    /// `recently-used.xbel` on one file job, unless `[privacy] recent_files` is off.
+    pub fn record_recent(&mut self, paths: Vec<PathBuf>, app: Option<AppEntry>) {
+        if !self.config.recent_files || paths.is_empty() {
             return;
         }
-        let mime = (path.file_name())
-            .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
-        let app = app.or_else(|| {
-            let m = mime.as_deref()?;
-            reprisefs::props::default_app_entry(m, &self.app_index).cloned()
-        });
+        let opened: Vec<_> = paths
+            .into_iter()
+            .map(|path| {
+                let mime = (path.file_name())
+                    .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
+                let app = app.clone().or_else(|| {
+                    let m = mime.as_deref()?;
+                    reprisefs::props::default_app_entry(m, &self.app_index).cloned()
+                });
+                (path, app, mime)
+            })
+            .collect();
         self.spawn_fs_job(move || {
-            if let Err(e) = reprisefs::recent::record(&path, app.as_ref(), mime.as_deref()) {
-                log::warn!("recent files: could not record {}: {e}", path.display());
+            let borrowed: Vec<reprisefs::recent::Opening> = (opened.iter())
+                .map(|(p, a, m)| (p.as_path(), a.as_ref(), m.as_deref()))
+                .collect();
+            if let Err(e) = reprisefs::recent::record(&borrowed) {
+                log::warn!(
+                    "recent files: could not record {} files: {e}",
+                    borrowed.len()
+                );
             }
             Box::new(|_: &mut State| {})
         });

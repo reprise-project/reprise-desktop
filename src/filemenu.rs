@@ -119,7 +119,7 @@ impl State {
                 {
                     let app = (open.app.as_deref())
                         .and_then(|id| self.app_index.iter().find(|a| a.id == id).cloned());
-                    self.record_recent(file.clone(), app);
+                    self.record_recent(vec![file.clone()], app);
                 }
             }
         }

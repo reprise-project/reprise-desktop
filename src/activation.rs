@@ -181,7 +181,7 @@ impl State {
                 } else {
                     state.spawn_command_activated(&cmd);
                     if is_document {
-                        state.record_recent(dir, None);
+                        state.record_recent(vec![dir], None);
                     }
                 }
             })
