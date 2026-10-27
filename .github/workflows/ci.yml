@@ -6,6 +6,8 @@ on:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+permissions:
+  contents: read
 jobs:
   # The image and the packages are pinned (the archive date names the repos' state), so a new
   # rustc, clippy or Mesa reaches pull requests only through a commit that bumps both.
