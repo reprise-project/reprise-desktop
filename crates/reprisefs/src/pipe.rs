@@ -9,6 +9,10 @@ use zeroize::Zeroize;
 
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Readers the writer holds at once; past it the oldest is closed, so a
+/// client that never reads cannot run the compositor out of fds.
+const MAX_JOBS: usize = 256;
+
 /// Bytes a paste may bring in before the offer is dropped; the owner is any client.
 pub const MAX_PASTE_BYTES: usize = 8 << 20;
 
@@ -156,11 +160,13 @@ fn run_writer(woken: &OwnedFd, rx: &mpsc::Receiver<Job>) {
     let mut jobs: Vec<Job> = Vec::new();
     let mut pfds: Vec<libc::pollfd> = Vec::new();
     let mut drain = [0u8; 64];
+    let mut failing = false;
     loop {
         // SAFETY: `drain` is `drain.len()` writable bytes, and `woken` is open.
         while unsafe { libc::read(woken.as_raw_fd(), drain.as_mut_ptr().cast(), drain.len()) } > 0 {
         }
         jobs.extend(rx.try_iter());
+        cap_jobs(&mut jobs);
         let now = Instant::now();
         jobs.retain(|j| {
             let live = j.deadline > now;
@@ -187,7 +193,20 @@ fn run_writer(woken: &OwnedFd, rx: &mpsc::Receiver<Job>) {
         }));
         // SAFETY: `pfds` is `pfds.len()` live `pollfd`s.
         let n = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, ms) };
-        if n <= 0 {
+        if n < 0 {
+            let e = std::io::Error::last_os_error();
+            if e.kind() != std::io::ErrorKind::Interrupted {
+                if !failing {
+                    log::warn!("pipe write: poll: {e}");
+                }
+                failing = true;
+                let pause = if ms < 0 { 100 } else { ms.min(100) };
+                std::thread::sleep(Duration::from_millis(pause as u64));
+            }
+            continue;
+        }
+        failing = false;
+        if n == 0 {
             continue;
         }
         let mut ready = pfds[1..].iter().map(|p| p.revents);
@@ -196,6 +215,17 @@ fn run_writer(woken: &OwnedFd, rx: &mpsc::Receiver<Job>) {
             revents == 0 || step(j, revents)
         });
     }
+}
+
+/// Closes the jobs with the earliest deadlines until at most [`MAX_JOBS`] are left.
+fn cap_jobs(jobs: &mut Vec<Job>) {
+    let over = jobs.len().saturating_sub(MAX_JOBS);
+    if over == 0 {
+        return;
+    }
+    log::warn!("pipe write: too many readers, closing {over}");
+    jobs.sort_by_key(|j| j.deadline);
+    jobs.drain(..over);
 }
 
 /// Writes what the pipe takes; false once the job is over.
@@ -395,6 +425,37 @@ mod tests {
         let (read, write) = pipe();
         write_detached(write, b"again"[..].into());
         assert_eq!(read_all(read), b"again");
+    }
+
+    #[test]
+    fn past_the_job_cap_the_oldest_readers_are_closed() {
+        let start = Instant::now();
+        let mut reads = Vec::new();
+        let mut jobs: Vec<Job> = (0..MAX_JOBS + 10)
+            .map(|i| {
+                let (read, write) = pipe();
+                reads.push(read);
+                Job {
+                    fd: write,
+                    bytes: b"x"[..].into(),
+                    sent: 0,
+                    deadline: start + Duration::from_millis(i as u64),
+                }
+            })
+            .collect();
+        jobs.swap(0, MAX_JOBS + 9);
+        cap_jobs(&mut jobs);
+        assert_eq!(jobs.len(), MAX_JOBS, "the writer keeps MAX_JOBS readers");
+        let oldest = start + Duration::from_millis(10);
+        assert!(
+            jobs.iter().all(|j| j.deadline >= oldest),
+            "the 10 earliest deadlines are the ones closed"
+        );
+        for read in reads.drain(..10) {
+            assert_eq!(read_all(read), b"", "a closed reader sees EOF");
+        }
+        cap_jobs(&mut jobs);
+        assert_eq!(jobs.len(), MAX_JOBS, "under the cap nothing more is closed");
     }
 
     #[test]
