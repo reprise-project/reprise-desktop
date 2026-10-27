@@ -44,6 +44,8 @@ pub(crate) struct Search {
     serial: u64,
     running: Option<Running>,
     shown: Option<Asked>,
+    /// The folder changed during the run, which searches again once it lands.
+    stale: bool,
 }
 
 impl Search {
@@ -56,6 +58,7 @@ impl Search {
             return None;
         }
         self.serial += 1;
+        self.stale = false;
         let mut query = Query::folder(text, &root);
         query.filter.hidden = hidden;
         let cancel = Arc::new(AtomicBool::new(false));
@@ -79,6 +82,7 @@ impl Search {
         let had = self.running.is_some() || self.shown.is_some();
         self.running = None;
         self.shown = None;
+        self.stale = false;
         had
     }
 
@@ -91,6 +95,19 @@ impl Search {
             }
             None => false,
         }
+    }
+
+    /// The folder watch saw a change: true when a run is under way, which keeps the change for
+    /// when it lands ([`Search::take_stale`]) instead of restarting the walk.
+    pub fn hold_change(&mut self) -> bool {
+        let running = self.running.is_some();
+        self.stale |= running;
+        running
+    }
+
+    /// Whether the run that just landed missed a change and should run once more.
+    pub fn take_stale(&mut self) -> bool {
+        std::mem::take(&mut self.stale)
     }
 
     /// What the view's results answer.
@@ -200,10 +217,14 @@ impl Explorer {
         if !self.search.landed(found.serial) || found.read.place != self.place {
             return Reply::none();
         }
-        if again.as_ref() == self.search.shown() {
-            return self.keeping_view(ctx, |ex, ctx| ex.show_read(found.read, ctx));
+        let reply = match again.as_ref() == self.search.shown() {
+            true => self.keeping_view(ctx, |ex, ctx| ex.show_read(found.read, ctx)),
+            false => self.show_read(found.read, ctx),
+        };
+        match self.search.take_stale() {
+            true => reply.and(self.search_again(ctx).unwrap_or_default()),
+            false => reply,
         }
-        self.show_read(found.read, ctx)
     }
 
     /// Escape: a search under way stops, and results shown give way to the folder's listing.
@@ -268,6 +289,24 @@ mod tests {
         );
         assert!(!s.running());
         assert_eq!(s.caption().as_deref(), Some("Search results in data"));
+    }
+
+    #[test]
+    fn a_change_during_a_run_is_held_and_searches_once_more_after_it_lands() {
+        let mut s = Search::default();
+        assert!(!s.hold_change(), "no run: the change refreshes at once");
+        let run = s.start(&folder("/data"), "a", false).expect("a run");
+        assert!(s.hold_change());
+        assert!(s.hold_change(), "every change during the run is held");
+        assert!(s.landed(run.serial));
+        assert!(!s.hold_change(), "results shown: the change searches again");
+        assert!(s.take_stale(), "the landed run searches once more");
+        assert!(!s.take_stale());
+        let run = s.start(&folder("/data"), "a", false).expect("a run");
+        assert!(s.hold_change());
+        let fresh = s.start(&folder("/data"), "a", false).expect("a new run");
+        assert!(!s.take_stale(), "a new run already sees the change");
+        assert!(!s.landed(run.serial) && s.landed(fresh.serial));
     }
 
     #[test]

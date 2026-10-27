@@ -202,7 +202,7 @@ impl Explorer {
         };
         dirty |= !holders.is_empty();
         let shown = || self.place.path();
-        if self.watch.as_mut().is_some_and(|w| w.take_changed())
+        if (self.watch.as_mut().is_some_and(|w| w.take_changed()) && !self.search.hold_change())
             || (!due.is_empty() && shown().is_some_and(|p| due.contains(&p)))
             || shown().is_some_and(|p| holders.contains(&p))
         {
