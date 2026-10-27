@@ -1,4 +1,4 @@
-use super::item::{Pixmaps, ToolTip, icon_ref, item_texts};
+use super::item::{Pixmaps, ToolTip, decode_names, icon_ref, item_texts};
 use super::menu::{LABEL_CHARS, MENU_ROWS, parse_layout};
 use super::notifications::notification_icons;
 use super::watcher::{
@@ -7,6 +7,7 @@ use super::watcher::{
 use super::*;
 use crate::tray::{DEFAULT_PROP, MenuNode, NOTIFY_SIZES, item_pixmaps, notify};
 use reprisekit::controls::tooltip::TIP_CHARS;
+use reprisekit::icon::IconSource;
 use std::collections::HashMap;
 use std::os::fd::FromRawFd;
 use std::sync::atomic::AtomicUsize;
@@ -272,20 +273,75 @@ fn an_item_name_is_decoded_here_at_the_drawn_sizes() {
         menu_path: None,
         passive: false,
         pid: None,
+        ..Default::default()
     };
     let drawn = [16, 24, 32, 48];
-    let named = item_named(&icons, &item, &drawn);
-    let sizes: Vec<(u32, u32)> = named.iter().map(|s| (s.width, s.height)).collect();
+    assert!(decode_names(&icons, &mut item, &drawn), "the name decoded");
+    let sizes: Vec<(u32, u32)> = item.named.iter().map(|s| (s.width, s.height)).collect();
     assert_eq!(sizes, [(16, 16), (24, 24), (32, 32), (48, 48)]);
-    let at24 = crate::tray::closest(&named, 24).unwrap();
+    let at24 = crate::tray::closest(&item.named, 24).unwrap();
     assert_eq!(at24.get(12, 12), 0xFF00_00FF);
+    assert!(!decode_names(&icons, &mut item, &drawn), "nothing changed");
+
+    item.attention.name = Some("peer".into());
+    item.overlay.name = Some("peer".into());
+    assert!(decode_names(&icons, &mut item, &drawn));
+    assert_eq!(
+        item.attention.named.len(),
+        drawn.len(),
+        "the attention name decodes too"
+    );
+    assert_eq!(item.overlay.named.len(), drawn.len(), "and the overlay's");
 
     item.pixmaps = item_pixmaps(&[(1, 1, &[255u8, 255, 0, 0][..])], &drawn).into();
-    assert!(item_named(&icons, &item, &drawn).is_empty());
+    decode_names(&icons, &mut item, &drawn);
+    assert!(item.named.is_empty(), "pixmaps stand in for the name");
     item.pixmaps = Arc::from([]);
     item.icon_name = Some("absent".into());
-    assert!(item_named(&icons, &item, &drawn).is_empty());
+    decode_names(&icons, &mut item, &drawn);
+    assert!(item.named.is_empty());
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A `side` px square pixmap entry of one ARGB colour, as `IconPixmap` sends it.
+fn solid(side: i32, argb: u32) -> Vec<u8> {
+    argb.to_be_bytes().repeat((side * side) as usize)
+}
+
+#[test]
+fn a_needs_attention_item_shows_its_attention_icon_with_the_overlay_in_the_corner() {
+    let drawn = [16];
+    let (red, green, blue) = (
+        solid(16, 0xFFFF_0000),
+        solid(16, 0xFF00_FF00),
+        solid(16, 0xFF00_00FF),
+    );
+    let set = |px: &[u8]| -> Arc<[IconSource]> { item_pixmaps(&[(16, 16, px)], &drawn).into() };
+    let mut item = TrayItem {
+        id: ":1.5/StatusNotifierItem".into(),
+        pixmaps: set(&red),
+        ..Default::default()
+    };
+    item.attention.pixmaps = set(&green);
+    let at = |item: &TrayItem, x, y| crate::tray::icons::item_canvas(item, 16).unwrap().get(x, y);
+    assert_eq!(at(&item, 2, 2), 0xFFFF_0000, "Active shows its own icon");
+    item.needs_attention = true;
+    assert_eq!(
+        at(&item, 2, 2),
+        0xFF00_FF00,
+        "NeedsAttention shows the attention icon"
+    );
+    item.attention = Default::default();
+    assert_eq!(at(&item, 2, 2), 0xFFFF_0000, "with none it keeps its own");
+
+    item.overlay.pixmaps = set(&blue);
+    assert_eq!(
+        at(&item, 12, 12),
+        0xFF00_00FF,
+        "the overlay covers the bottom-right quarter"
+    );
+    assert_eq!(at(&item, 7, 7), 0xFFFF_0000, "and nothing else");
+    assert_eq!(at(&item, 12, 2), 0xFFFF_0000);
 }
 
 #[test]

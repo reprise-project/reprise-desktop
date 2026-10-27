@@ -326,6 +326,7 @@ fn item(id: &str, passive: bool) -> TrayItem {
         menu_path: None,
         passive,
         pid: None,
+        ..Default::default()
     }
 }
 

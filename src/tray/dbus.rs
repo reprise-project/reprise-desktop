@@ -24,7 +24,7 @@ mod notifications;
 mod tests;
 mod watcher;
 
-use item::{call_item, fetch_item, item_named, provide_token};
+use item::{call_item, decode_names, fetch_item, provide_token};
 use menu::{get_layout, send_menu_event};
 use notifications::{Notifications, Senders};
 use watcher::{Published, Watcher, split_service};
@@ -33,9 +33,16 @@ const WATCHER_NAME: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";
 const WATCHER_IFACE: &str = "org.kde.StatusNotifierWatcher";
 const ITEM_IFACE: &str = "org.kde.StatusNotifierItem";
-/// Item signals that change what `fetch_item` reads; no `NewAttentionIcon`, as no attention icon
-/// is read.
-const ITEM_SIGNALS: [&str; 5] = ["NewIcon", "NewTitle", "NewStatus", "NewToolTip", "NewMenu"];
+/// Item signals that change what `fetch_item` reads.
+const ITEM_SIGNALS: [&str; 7] = [
+    "NewIcon",
+    "NewAttentionIcon",
+    "NewOverlayIcon",
+    "NewTitle",
+    "NewStatus",
+    "NewToolTip",
+    "NewMenu",
+];
 
 const DBUS_IFACE: &str = "org.freedesktop.DBus";
 const NOTIFY_NAME: &str = "org.freedesktop.Notifications";
@@ -479,9 +486,7 @@ impl Loop {
         *lock(&self.icons) = load_icons(name);
         let sizes = sizes_now(&self.sizes);
         for item in self.items.values_mut() {
-            let named = item_named(&self.icons, item, &sizes);
-            if named != item.named {
-                item.named = named;
+            if decode_names(&self.icons, item, &sizes) {
                 emit(&self.events, self.eventfd, TrayEvent::Updated(item.clone()));
             }
         }

@@ -46,7 +46,7 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::thread::JoinHandle;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TrayItem {
     pub id: String,
     /// What its tray choice is kept under across restarts: its `Id`
@@ -70,6 +70,21 @@ pub struct TrayItem {
     /// The process owning `service`, whose next window a click on the item
     /// lets take focus; `None` when the bus would not say.
     pub pid: Option<i32>,
+    /// `Status` is `NeedsAttention`: the cell shows `attention` when it has one.
+    pub needs_attention: bool,
+    /// `AttentionIconName` and `AttentionIconPixmap`.
+    pub attention: ItemIcon,
+    /// `OverlayIconName`, drawn over the icon's bottom-right quarter.
+    pub overlay: ItemIcon,
+}
+
+/// A second icon an item names besides its own, decoded at the drawn sizes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ItemIcon {
+    pub name: Option<String>,
+    pub pixmaps: Arc<[IconSource]>,
+    /// `name` from the theme, when there are no pixmaps.
+    pub named: Arc<[IconSource]>,
 }
 
 impl TrayItem {

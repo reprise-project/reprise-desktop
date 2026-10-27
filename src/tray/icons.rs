@@ -132,13 +132,37 @@ pub fn sync_icon_sizes(state: &mut State) {
     }
 }
 
+/// `item`'s icon at `px`: its attention icon while it needs attention and has one, else its own,
+/// with its overlay drawn over the bottom-right quarter. None when it has no icon.
+pub fn item_canvas(item: &TrayItem, px: i32) -> Option<Canvas> {
+    let attention = &item.attention;
+    let wants =
+        item.needs_attention && !(attention.pixmaps.is_empty() && attention.named.is_empty());
+    let (pixmaps, named) = if wants {
+        (&attention.pixmaps, &attention.named)
+    } else {
+        (&item.pixmaps, &item.named)
+    };
+    let mut icon = closest(pixmaps, px).or_else(|| closest(named, px))?;
+    let side = px / 2;
+    let overlay = (side > 0)
+        .then(|| {
+            closest(&item.overlay.pixmaps, side).or_else(|| closest(&item.overlay.named, side))
+        })
+        .flatten();
+    if let Some(o) = overlay {
+        let (w, h) = (icon.width as i32, icon.height as i32);
+        icon.blit_over(w - o.width as i32, h - o.height as i32, &o);
+    }
+    Some(icon)
+}
+
 pub fn item_icon(state: &mut State, item: &TrayItem, px: i32) -> Option<Arc<Canvas>> {
     let key = (item.id.clone(), px);
     if let Some(c) = state.tray.as_ref().and_then(|t| t.icon_cache.get(&key)) {
         return c.clone();
     }
-    let found = closest(&item.pixmaps, px)
-        .or_else(|| closest(&item.named, px))
+    let found = item_canvas(item, px)
         .or_else(|| state.icons.get("application-x-executable", px))
         .map(Arc::new);
     if let Some(t) = state.tray.as_mut() {
