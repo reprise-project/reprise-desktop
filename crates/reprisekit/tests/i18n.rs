@@ -34,6 +34,7 @@ fn a_translation_using_a_variable_its_english_message_lacks_fails_the_check() {
     assert_eq!(out.status.code(), Some(1), "{stdout}");
     assert_eq!(
         stdout,
-        "data/locale/de/demo.ftl: \"window-title\" uses $nme, which the English message does not\n"
+        "data/locale/de/demo.ftl: \"size\" uses $kib, which the English message does not\n\
+         data/locale/de/demo.ftl: \"window-title\" uses $nme, which the English message does not\n"
     );
 }
