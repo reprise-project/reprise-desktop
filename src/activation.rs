@@ -161,7 +161,7 @@ impl State {
     }
 
     /// The Run dialog's line: one that names a folder opens it in Explorer, anything else runs
-    /// as [`State::spawn_command_activated`], a file it names going into the recent files. The
+    /// as [`State::spawn_command_activated`], a document it names going into the recent files. The
     /// path is checked off the loop on a [`State::spawn_job`], so a mount that does not answer
     /// stalls neither the loop nor the launch.
     pub fn run_line_activated(&mut self, cmd: &str) {
@@ -173,14 +173,14 @@ impl State {
         let cmd = cmd.to_string();
         self.spawn_job(move || {
             let meta = std::fs::metadata(&dir).ok();
-            let (is_dir, is_file) =
-                (meta.as_ref()).map_or((false, false), |m| (m.is_dir(), m.is_file()));
+            let (is_dir, is_document) =
+                (meta.as_ref()).map_or((false, false), |m| (m.is_dir(), names_a_document(m)));
             Box::new(move |state: &mut State| {
                 if is_dir {
                     state.spawn_argv_activated(&reprisefs::apps::open_folder_argv(&dir));
                 } else {
                     state.spawn_command_activated(&cmd);
-                    if is_file {
+                    if is_document {
                         state.record_recent(dir, None);
                     }
                 }
@@ -244,6 +244,13 @@ impl State {
             &self.config.terminal,
         ))
     }
+}
+
+/// Whether a Run line's path is a document to record as opened: a regular file with no execute
+/// bit, since an executable it names runs instead.
+fn names_a_document(meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    meta.is_file() && meta.permissions().mode() & 0o111 == 0
 }
 
 #[cfg(test)]
@@ -310,5 +317,30 @@ mod tests {
             !client_token_trusted(false, Some(focused.clone()), Some(focused)),
             "expected untrusted"
         );
+    }
+
+    #[test]
+    fn a_run_line_records_a_document_but_not_a_program() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("reprise-run-line-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (doc, prog) = (dir.join("notes.txt"), dir.join("backup.sh"));
+        std::fs::write(&doc, "").unwrap();
+        std::fs::write(&prog, "").unwrap();
+        std::fs::set_permissions(&doc, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::set_permissions(&prog, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            names_a_document(&std::fs::metadata(&doc).unwrap()),
+            "a 0644 file is recorded"
+        );
+        assert!(
+            !names_a_document(&std::fs::metadata(&prog).unwrap()),
+            "a 0755 file is not"
+        );
+        assert!(
+            !names_a_document(&std::fs::metadata(&dir).unwrap()),
+            "a folder is not"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
