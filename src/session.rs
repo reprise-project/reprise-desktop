@@ -695,6 +695,10 @@ pub fn end(state: &mut State) {
     if state.session.kept {
         return;
     }
+    // A clean end inside the restore wait shows the restored apps did not stop the compositor.
+    if std::mem::take(&mut state.session.restore_marked) {
+        crate::state::save_session_restoring(false);
+    }
     state.remember_open_windows();
     save(state);
     crate::state::flush();
@@ -1554,5 +1558,20 @@ mod tests {
         h.state.session.restoring.mapped("foot");
         h.run_for(60);
         assert!(!h.state.session.restore_marked);
+    }
+
+    #[test]
+    fn an_end_inside_the_restore_wait_clears_the_mark() {
+        let mut h = crate::harness::Harness::new();
+        let foot = saved("foot", "foot.desktop", 0);
+        h.state.session.restoring = Pending::new(&[&foot], Instant::now());
+        h.state.session.restore_marked = true;
+        let queued = crate::state::QUEUED.with(|n| n.get());
+        end(&mut h.state);
+        assert!(!h.state.session.restore_marked);
+        assert!(
+            crate::state::QUEUED.with(|n| n.get()) > queued,
+            "session_restoring is written false before the flush"
+        );
     }
 }
