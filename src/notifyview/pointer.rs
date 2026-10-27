@@ -147,6 +147,7 @@ fn lay_scale(state: &State) -> i32 {
 /// button too) and sheets hold their clocks; crossing the replying balloon restarts `REPLY_IDLE`.
 pub fn hover(state: &mut State, x: f64, y: f64, over: bool) {
     let (dirty, touched) = point_at(&mut state.notify, x, y, over, Instant::now());
+    crate::tooltip::hover_notify(state, icon_tip(&state.notify));
     show_marks(state, dirty);
     if touched {
         reply_touched(state);
@@ -187,6 +188,19 @@ fn show_marks(state: &mut State, dirty: bool) {
     if dirty {
         paint(state);
     }
+}
+
+/// The lit button that shows its action's icon: (notification id, button, the action's label).
+pub(super) fn icon_tip(v: &NotifyView) -> Option<(u32, usize, String)> {
+    v.stack.iter().find_map(|b| {
+        let (Some(NotifyHit::Button(i)), Some(n)) = (b.hot, b.item.note()) else {
+            return None;
+        };
+        let (key, label) = n.button_actions().nth(i)?;
+        n.action_icons
+            .contains_key(key)
+            .then(|| (n.id, i, label.clone()))
+    })
 }
 
 /// `hover`'s marks on the stack and chip; returns whether to repaint and whether the pointer

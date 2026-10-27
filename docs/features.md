@@ -287,7 +287,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   chat app's Reply opens a text field right there. Left alone for two
   minutes, the field folds away (keeping what you typed for the next Reply)
   and the balloon makes room for the next. A program that sets the
-  `action-icons` hint gets each button's icon in place of its label.
+  `action-icons` hint gets each button's icon in place of its label, with
+  the label as the icon's tooltip.
 - **History.** A bell in the tray keeps the session's notifications, grouped
   per program, each group with its own Clear. The arrows walk it, Enter runs
   a notification, Delete dismisses it and the Menu key lists its actions.
