@@ -3,10 +3,11 @@
 use crate::look::CAPTION_FIT;
 use crate::runloop::NoEvents;
 use crate::sizing::{at_pick, draw_scale};
-use crate::{Event, Host, MAIN, Scaling, Shell, WinId, filedlg};
+use crate::{Event, Host, MAIN, Scaling, Shell, Slot, WinId, filedlg};
 use reprisekit::controls::form;
 use reprisekit::controls::menu::MenuCtx;
 use reprisekit::raster::{Canvas, Rect};
+use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay_client_toolkit::reexports::protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, FrameCallbackData},
@@ -14,6 +15,7 @@ use smithay_client_toolkit::{
     output::{OutputHandler, OutputState},
     shm::{Shm, ShmHandler, slot::SlotPool},
 };
+use std::time::Duration;
 use wayland_client::{
     Connection, QueueHandle,
     protocol::{wl_output, wl_shm, wl_surface},
@@ -120,9 +122,15 @@ impl Host {
             self.slots[i].buffers = [None, None];
             self.slots[i].pool = None;
         }
-        self.ctx.icons.set_scale(scale);
         let (bw, bh) = (w * scale, h * scale);
-        let stride = bw * 4;
+        let k = match ready_buffer(&mut self.slots[i], &self.shm, (bw, bh)) {
+            Ok(k) => k,
+            Err(e) => return self.no_buffer(i, &e),
+        };
+        if self.shm_trouble.drawn() {
+            log::info!("shm buffers are back");
+        }
+        self.ctx.icons.set_scale(scale);
         // Cleared: an app may leave a region alone and expect it transparent.
         let mut canvas = std::mem::replace(&mut self.slots[i].canvas, Canvas::new(0, 0));
         let fresh = (canvas.width, canvas.height, canvas.scale()) == (w as u32, h as u32, scale);
@@ -202,26 +210,11 @@ impl Host {
         let mapped = self.slots[i].mapped;
         self.slots[i].access.state.after_draw(mapped);
         self.publish(id);
-        let shm = &self.shm;
         let slot = &mut self.slots[i];
-        let pool = slot.pool.get_or_insert_with(|| {
-            // SCTK rounds a slot up to 64 bytes; a pool a byte short of
-            // that doubles itself on the first allocation.
-            let len = ((bh * stride) as usize + 63) & !63;
-            SlotPool::new(len.max(64), shm).expect("shm pool")
-        });
-        let free = slot
-            .buffers
-            .each_ref()
-            .map(|b| b.as_ref().map(|b| b.canvas(pool).is_some()));
-        let (k, make) = next_buffer(free, slot.attached);
-        if make {
-            let (buffer, _) = pool
-                .create_buffer(bw, bh, stride, wl_shm::Format::Argb8888)
-                .expect("create buffer");
-            slot.buffers[k] = Some(buffer);
-        }
-        let buffer = slot.buffers[k].as_ref().expect("buffer");
+        let pool = slot.pool.as_mut().expect("ready_buffer made the pool");
+        let buffer = slot.buffers[k]
+            .as_ref()
+            .expect("ready_buffer made the buffer");
         let target = pool.canvas(buffer).expect("a released buffer");
         copy_pixels(target, &canvas.pixels);
         let s = &mut self.slots[i];
@@ -248,6 +241,85 @@ impl Host {
             self.sync_children();
         }
     }
+}
+
+impl Host {
+    /// No shm buffer for slot `i`'s frame: it stays dirty and a timer tries again shortly. The
+    /// first failure of a run is logged; a run that goes on is told to the program
+    /// ([`App::draw_failed`](crate::App::draw_failed)).
+    fn no_buffer(&mut self, i: usize, e: &str) {
+        self.slots[i].dirty = true;
+        let (log, tell) = self.shm_trouble.failed();
+        if log {
+            log::warn!("no shm buffer for a frame, trying again: {e}");
+        }
+        if !self.shm_retry {
+            let timer = Timer::from_duration(SHM_RETRY);
+            let armed = self
+                .loop_handle
+                .insert_source(timer, |_, _, host: &mut Host| {
+                    host.shm_retry = false;
+                    TimeoutAction::Drop
+                });
+            self.shm_retry = armed.is_ok();
+        }
+        if tell {
+            let reply = self.app.draw_failed(e);
+            self.apply(MAIN, reply);
+        }
+    }
+}
+
+/// The wait before a frame that found no shm buffer tries again.
+const SHM_RETRY: Duration = Duration::from_millis(100);
+
+/// Failed tries in a row after which the program hears that its windows cannot draw: 5 s.
+pub(crate) const SHM_TELL_AFTER: u32 = 50;
+
+/// A run of frames that found no shm buffer (`/dev/shm` full, out of file descriptors).
+#[derive(Debug, Default)]
+pub(crate) struct ShmTrouble {
+    failures: u32,
+}
+
+impl ShmTrouble {
+    /// One more failed try: whether to log it (the first of a run) and whether to tell the
+    /// program (once, at [`SHM_TELL_AFTER`]).
+    pub(crate) fn failed(&mut self) -> (bool, bool) {
+        self.failures = self.failures.saturating_add(1);
+        (self.failures == 1, self.failures == SHM_TELL_AFTER)
+    }
+
+    /// A frame got its buffer; whether that ended a run.
+    pub(crate) fn drawn(&mut self) -> bool {
+        std::mem::take(&mut self.failures) > 0
+    }
+}
+
+/// The buffer `slot`'s next frame of `size` buffer px goes into, its pool and the buffer made
+/// when missing.
+fn ready_buffer(slot: &mut Slot, shm: &Shm, (bw, bh): (i32, i32)) -> Result<usize, String> {
+    let stride = bw * 4;
+    if slot.pool.is_none() {
+        // SCTK rounds a slot up to 64 bytes; a pool a byte short of
+        // that doubles itself on the first allocation.
+        let len = ((bh * stride) as usize + 63) & !63;
+        let pool = SlotPool::new(len.max(64), shm).map_err(|e| format!("shm pool: {e}"))?;
+        slot.pool = Some(pool);
+    }
+    let pool = slot.pool.as_mut().expect("made above");
+    let free = slot
+        .buffers
+        .each_ref()
+        .map(|b| b.as_ref().map(|b| b.canvas(pool).is_some()));
+    let (k, make) = next_buffer(free, slot.attached);
+    if make {
+        let (buffer, _) = pool
+            .create_buffer(bw, bh, stride, wl_shm::Format::Argb8888)
+            .map_err(|e| format!("shm buffer: {e}"))?;
+        slot.buffers[k] = Some(buffer);
+    }
+    Ok(k)
 }
 
 /// Which of a slot's two buffers the next frame goes into, and whether to

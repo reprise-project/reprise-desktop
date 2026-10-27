@@ -729,6 +729,20 @@ fn a_paste_writer_that_never_writes_is_dropped_at_the_timeout() {
 }
 
 #[test]
+fn a_run_of_missing_shm_buffers_is_logged_once_and_told_once() {
+    let mut t = crate::draw::ShmTrouble::default();
+    assert!(!t.drawn(), "nothing to recover from");
+    assert_eq!(t.failed(), (true, false), "the first failure is logged");
+    for _ in 2..crate::draw::SHM_TELL_AFTER {
+        assert_eq!(t.failed(), (false, false));
+    }
+    assert_eq!(t.failed(), (false, true), "the program hears of it once");
+    assert_eq!(t.failed(), (false, false));
+    assert!(t.drawn(), "a frame ends the run");
+    assert_eq!(t.failed(), (true, false), "the next run is logged again");
+}
+
+#[test]
 fn the_blink_goes_to_the_keyboard_then_the_pointer_then_nowhere() {
     assert_eq!(blink_target(Some("find"), Some(MAIN)), Some("find"));
     assert_eq!(blink_target(None, Some(MAIN)), Some(MAIN));

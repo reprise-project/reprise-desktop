@@ -259,6 +259,8 @@ pub fn run(app: Box<dyn App>) {
         look,
         icon_watch: None,
         blink_armed: false,
+        shm_trouble: Default::default(),
+        shm_retry: false,
     };
     // Started before the roundtrip, so the theme warms while the compositor answers.
     host.watch_icons();

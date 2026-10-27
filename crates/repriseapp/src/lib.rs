@@ -322,6 +322,9 @@ struct Host {
     icon_watch: Option<reprisefs::dirchange::Stop>,
     /// The caret blink timer is in the loop; it leaves while no window blinks ([`Host::arm_blink`]).
     blink_armed: bool,
+    shm_trouble: draw::ShmTrouble,
+    /// A timer will retry the frames that found no shm buffer.
+    shm_retry: bool,
 }
 
 impl Host {
