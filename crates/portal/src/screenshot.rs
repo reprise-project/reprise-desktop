@@ -1,7 +1,7 @@
 //! `org.freedesktop.impl.portal.Screenshot`: every output at its place in
 //! the layout, or the output or window picked in the share dialog for an
 //! interactive call, as a PNG returned as a `file://` URI. The files are a
-//! hand-over to the app, kept in the runtime dir for `KEEP`. PickColor
+//! hand-over to the app, kept in the runtime dir for `KEEP` up to `MAX_KEPT_BYTES`. PickColor
 //! needs no prompt; the click is the consent.
 
 use crate::colorpick::{Output, grab};
@@ -17,6 +17,8 @@ use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 /// Long enough for an app that reads the file only when it sends it, as a chat attaches on send.
 const KEEP: Duration = Duration::from_secs(60 * 60);
+/// The most bytes the kept screenshots may hold: the runtime dir is a small tmpfs.
+const MAX_KEPT_BYTES: u64 = 256 << 20;
 /// The most pixels a desktop picture may have: 256 MiB of ARGB, two 8K outputs side by side.
 const MAX_PIXELS: u64 = 1 << 26;
 
@@ -185,22 +187,46 @@ fn shot_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Delete the files in `dir` last written more than `keep` before `now`.
+/// Delete the files in `dir` last written more than `keep` before `now`, then the oldest until
+/// the rest fit in [`MAX_KEPT_BYTES`].
 fn prune(dir: &Path, now: SystemTime, keep: Duration) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    for e in entries.flatten() {
-        let Ok(meta) = e.metadata() else { continue };
-        let old = meta
-            .modified()
-            .ok()
-            .and_then(|m| now.duration_since(m).ok())
-            .is_some_and(|age| age > keep);
-        if meta.is_file() && old {
-            let _ = std::fs::remove_file(e.path());
+    let files = entries
+        .flatten()
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            let modified = meta.modified().ok()?;
+            meta.is_file().then(|| (e.path(), modified, meta.len()))
+        })
+        .collect();
+    for path in doomed(files, now, keep, MAX_KEPT_BYTES) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Which of `files` (path, last written, bytes) [`prune`] deletes: those older than `keep`, then
+/// the oldest of the rest until their total is at most `cap`.
+fn doomed(
+    mut files: Vec<(PathBuf, SystemTime, u64)>,
+    now: SystemTime,
+    keep: Duration,
+    cap: u64,
+) -> Vec<PathBuf> {
+    files.sort_by_key(|&(_, modified, _)| std::cmp::Reverse(modified));
+    let mut total = 0u64;
+    let mut out = Vec::new();
+    for (path, modified, len) in files {
+        let old = now.duration_since(modified).is_ok_and(|age| age > keep);
+        if !old {
+            total = total.saturating_add(len);
+        }
+        if old || total > cap {
+            out.push(path);
         }
     }
+    out
 }
 
 /// The desktop picture's size and each output's place in it: the layout's
@@ -397,6 +423,32 @@ mod tests {
         prune(dir.path(), now, KEEP);
         assert!(fresh.exists() && edge.exists() && sub.exists());
         assert!(!stale.exists());
+    }
+
+    #[test]
+    fn pruning_keeps_the_folder_under_its_byte_cap() {
+        let now = SystemTime::now();
+        let file = |name: &str, age: u64, len: u64| {
+            (PathBuf::from(name), now - Duration::from_secs(age), len)
+        };
+        let files = vec![
+            file("middle.png", 20, 40),
+            file("newest.png", 10, 50),
+            file("oldest.png", 30, 30),
+        ];
+        assert_eq!(
+            doomed(files.clone(), now, KEEP, 100),
+            [PathBuf::from("oldest.png")]
+        );
+        assert_eq!(
+            doomed(files.clone(), now, KEEP, 49),
+            [
+                PathBuf::from("newest.png"),
+                PathBuf::from("middle.png"),
+                PathBuf::from("oldest.png")
+            ]
+        );
+        assert!(doomed(files, now, KEEP, 120).is_empty());
     }
 
     #[test]
