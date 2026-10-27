@@ -106,52 +106,98 @@ fn both_pkgbuilds_link_every_program_and_install_every_desktop_entry() {
 
 /// The package names in the PKGBUILD array `key` (`depends`), version bounds left off.
 fn deps(pkgbuild: &str, key: &str) -> Vec<String> {
-    let line = (pkgbuild.lines())
-        .find_map(|l| l.strip_prefix(&format!("{key}=(")))
-        .unwrap_or_else(|| panic!("the PKGBUILD sets {key}"));
-    (line.trim_end_matches(')').split_whitespace())
+    let head = format!("\n{key}=(");
+    let at = (pkgbuild.find(&head)).unwrap_or_else(|| panic!("the PKGBUILD sets {key}"));
+    let rest = &pkgbuild[at + head.len()..];
+    let body = &rest[..rest.find(')').unwrap_or_else(|| panic!("{key} closes"))];
+    (body.split_whitespace())
         .map(|w| w.trim_matches('\'').split(['<', '>', '=']).next().unwrap())
         .map(|name| if name == "cargo" { "rust" } else { name }.to_string())
         .collect()
 }
 
+/// The lines of the job `job` in a workflow: from its heading to the next job's.
+fn job<'a>(workflow: &'a str, job: &str) -> Vec<&'a str> {
+    let heading = format!("  {job}:");
+    (workflow.lines())
+        .skip_while(|l| *l != heading)
+        .enumerate()
+        .take_while(|(i, l)| {
+            *i == 0 || !(l.starts_with("  ") && !l.starts_with("   ") && l.ends_with(':'))
+        })
+        .map(|(_, l)| l)
+        .collect()
+}
+
+/// The packages of the one `.github/pacman.sh` call among `lines`.
+fn pacman_sh(lines: &[&str], what: &str) -> BTreeSet<String> {
+    let calls: Vec<&str> = (lines.iter())
+        .filter_map(|l| l.split_once(".github/pacman.sh ").map(|(_, pkgs)| pkgs))
+        .collect();
+    assert_eq!(calls.len(), 1, "{what} calls .github/pacman.sh once");
+    calls[0].split_whitespace().map(str::to_string).collect()
+}
+
 #[test]
 fn ci_installs_every_pkgbuild_dependency() {
-    let lists: Vec<(&str, BTreeSet<String>)> = [
-        ".github/actions/build/action.yml",
-        ".github/workflows/ci.yml",
+    let read = |path: &str| std::fs::read_to_string(root().join(path)).expect("CI file reads");
+    let action = read(".github/actions/build/action.yml");
+    let ci = read(".github/workflows/ci.yml");
+    let nightly = read(".github/workflows/nightly.yml");
+    let lists = [
+        ("the build action", action.lines().collect()),
+        ("ci.yml's package job", job(&ci, "package")),
+        ("nightly.yml's build job", job(&nightly, "build")),
     ]
-    .into_iter()
-    .flat_map(|path| {
-        let text = std::fs::read_to_string(root().join(path)).expect("CI file reads");
-        let lines: Vec<String> = (text.lines())
-            .filter_map(|l| {
-                let l = l.trim();
-                (l.strip_prefix("pacman -S --noconfirm --needed "))
-                    .or_else(|| l.split_once(".github/pacman.sh ").map(|(_, pkgs)| pkgs))
-            })
-            .map(str::to_string)
-            .collect();
-        // The fullest list in the file: a one-package install (git before the checkout) is
-        // bootstrap, not the build's dependencies.
-        let full = (lines.into_iter())
-            .max_by_key(|l| l.split_whitespace().count())
-            .unwrap_or_else(|| panic!("{path} installs packages"));
-        std::iter::once((path, full.split_whitespace().map(str::to_string).collect()))
-    })
-    .collect();
+    .map(|(what, lines): (&str, Vec<&str>)| (what, pacman_sh(&lines, what)));
     for pkgbuild in PKGBUILDS {
         let text = std::fs::read_to_string(root().join(pkgbuild)).expect("PKGBUILD reads");
         for dep in deps(&text, "depends")
             .into_iter()
             .chain(deps(&text, "makedepends"))
         {
-            for (path, installed) in &lists {
+            for (what, installed) in &lists {
                 assert!(
                     installed.contains(&dep),
-                    "{path} installs {pkgbuild}'s {dep}"
+                    "{what} installs {pkgbuild}'s {dep}"
                 );
             }
         }
+    }
+}
+
+#[test]
+fn deps_reads_a_wrapped_array() {
+    let pkgbuild =
+        "pkgname=x\ndepends=('seatd'\n         'libinput>=1.26')\nmakedepends=('cargo')\n";
+    assert_eq!(deps(pkgbuild, "depends"), ["seatd", "libinput"]);
+    assert_eq!(deps(pkgbuild, "makedepends"), ["rust"]);
+}
+
+#[test]
+fn every_workflow_pins_the_same_archive_date() {
+    let dates: Vec<(&str, String)> = [
+        ".github/workflows/ci.yml",
+        ".github/workflows/nightly.yml",
+        ".github/workflows/supply.yml",
+    ]
+    .into_iter()
+    .flat_map(|path| {
+        let text = std::fs::read_to_string(root().join(path)).expect("workflow reads");
+        (text.lines())
+            .filter_map(|l| l.trim().strip_prefix("ARCH_ARCHIVE: "))
+            .map(|date| (path, date.to_string()))
+            .collect::<Vec<_>>()
+    })
+    .collect();
+    for path in [".github/workflows/ci.yml", ".github/workflows/supply.yml"] {
+        assert!(
+            dates.iter().any(|(p, _)| *p == path),
+            "{path} sets ARCH_ARCHIVE"
+        );
+    }
+    let first = &dates[0].1;
+    for (path, date) in &dates {
+        assert_eq!(date, first, "{path} pins ARCH_ARCHIVE to {first}");
     }
 }

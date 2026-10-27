@@ -13,20 +13,22 @@ jobs:
       group: nightly-build-${{ github.ref }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     container: archlinux@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
     env:
       CARGO_INCREMENTAL: 0
     steps:
       # Downloads the tree for .github/pacman.sh; the second checkout clones once git is in.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install build tools
-        run: bash .github/pacman.sh base-devel git github-cli
+      - name: Install dependencies
+        run: >-
+          bash .github/pacman.sh base-devel github-cli rust clang pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # pkgver counts the commits.
           fetch-depth: 0
           persist-credentials: false
-      # makepkg refuses root; -s installs the PKGBUILD's depends through sudo.
+      # makepkg refuses root; -s finds the depends installed and needs sudo only for one missing.
       - name: Create build user
         run: |
           useradd -m builder
@@ -58,6 +60,7 @@ jobs:
     # A dispatch from another branch builds it but never moves Nightly.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # A newer commit waits for a publish in progress; cancelling it mid-upload would leave the
     # tag on one commit and the asset from another.
     concurrency:

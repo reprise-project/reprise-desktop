@@ -14,6 +14,7 @@ permissions:
 jobs:
   deny:
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     container: archlinux@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
     # The archive date pins cargo-deny with deny.toml, as ci.yml pins its packages; the
     # advisories still come live.
