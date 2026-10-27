@@ -12,11 +12,12 @@ use std::collections::HashMap;
 use std::os::fd::FromRawFd;
 use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::Receiver;
-use zbus::zvariant::{DeserializeValue, OwnedValue, Value};
+use zbus::as_variant;
+use zbus::{OwnedVariant, Variant};
 
-fn child(id: i32, props: Vec<(&str, Value<'static>)>) -> OwnedValue {
-    let map: HashMap<&str, Value> = props.into_iter().collect();
-    Value::from((id, map, Vec::<Value>::new()))
+fn child(id: i32, props: Vec<(&str, Variant<'static>)>) -> OwnedVariant {
+    let map: HashMap<&str, Variant> = props.into_iter().collect();
+    Variant::from((id, map, Vec::<Variant>::new()))
         .try_to_owned()
         .unwrap()
 }
@@ -27,19 +28,19 @@ fn parse_layout_extracts_nodes() {
         child(
             7,
             vec![
-                ("label", Value::from("_Connect")),
-                ("enabled", Value::from(false)),
-                ("toggle-type", Value::from("checkmark")),
-                ("toggle-state", Value::from(1i32)),
+                ("label", Variant::from("_Connect")),
+                ("enabled", Variant::from(false)),
+                ("toggle-type", Variant::from("checkmark")),
+                ("toggle-state", Variant::from(1i32)),
             ],
         ),
-        child(8, vec![("type", Value::from("separator"))]),
+        child(8, vec![("type", Variant::from("separator"))]),
         child(
             9,
             vec![
-                ("label", Value::from("More")),
-                ("visible", Value::from(false)),
-                ("children-display", Value::from("submenu")),
+                ("label", Variant::from("More")),
+                ("visible", Variant::from(false)),
+                ("children-display", Variant::from("submenu")),
             ],
         ),
     ];
@@ -67,9 +68,9 @@ fn parse_layout_extracts_nodes() {
     let radio = parse_layout(&[child(
         10,
         vec![
-            ("label", Value::from("Balanced")),
-            ("toggle-type", Value::from("radio")),
-            ("toggle-state", Value::from(1i32)),
+            ("label", Variant::from("Balanced")),
+            ("toggle-type", Variant::from("radio")),
+            ("toggle-state", Variant::from(1i32)),
         ],
     )]);
     assert_eq!(
@@ -84,22 +85,22 @@ fn parse_layout_reads_variant_wrapped_properties() {
     let children = vec![child(
         3,
         vec![
-            ("label", Value::from("_Connect")),
-            ("enabled", Value::from(false)),
-            ("toggle-type", Value::from("checkmark")),
-            ("toggle-state", Value::from(0i32)),
-            ("children-display", Value::from("submenu")),
-            (DEFAULT_PROP, Value::from(true)),
+            ("label", Variant::from("_Connect")),
+            ("enabled", Variant::from(false)),
+            ("toggle-type", Variant::from("checkmark")),
+            ("toggle-state", Variant::from(0i32)),
+            ("children-display", Variant::from("submenu")),
+            (DEFAULT_PROP, Variant::from(true)),
         ],
     )];
-    let Value::Structure(s) = &*children[0] else {
+    let Variant::Structure(s) = &*children[0] else {
         panic!("fixture is not a structure");
     };
-    let Some(Value::Dict(props)) = s.fields().get(1) else {
+    let Some(Variant::Dict(props)) = s.fields().get(1) else {
         panic!("fixture has no property dictionary");
     };
     assert!(
-        props.iter().all(|(_, v)| matches!(v, Value::Value(_))),
+        props.iter().all(|(_, v)| matches!(v, Variant::Variant(_))),
         "fixture is not in the a{{sv}} wire shape"
     );
     assert_eq!(
@@ -121,8 +122,8 @@ fn parse_layout_reads_variant_wrapped_properties() {
 #[test]
 fn parse_layout_clips_labels_and_caps_rows() {
     let long = "x".repeat(LABEL_CHARS + 1000);
-    let children: Vec<OwnedValue> = (0..MENU_ROWS as i32 + 10)
-        .map(|id| child(id, vec![("label", Value::from(long.clone()))]))
+    let children: Vec<OwnedVariant> = (0..MENU_ROWS as i32 + 10)
+        .map(|id| child(id, vec![("label", Variant::from(long.clone()))]))
         .collect();
     let nodes = parse_layout(&children);
     assert_eq!(nodes.len(), MENU_ROWS);
@@ -153,10 +154,10 @@ fn item_texts_clip_the_title_and_the_tooltip() {
 
 #[test]
 fn icon_pixmap_variant_decodes_borrowing_the_pixels() {
-    use zbus::zvariant::{LE, serialized::Context, to_bytes};
+    use zbus::wire::{LE, serialized::Context, to_bytes};
     let list = vec![(2i32, 1i32, vec![7u8; 8])];
-    let data = to_bytes(Context::new_dbus(LE, 0), &Value::from(list)).unwrap();
-    let (v, _): (DeserializeValue<Pixmaps>, _) = data.deserialize().unwrap();
+    let data = to_bytes(Context::new(LE, 0), &Variant::from(list)).unwrap();
+    let (v, _): (as_variant::Deserialize<Pixmaps>, _) = data.deserialize().unwrap();
     assert_eq!(v.0, [(2, 1, &[7u8; 8][..])]);
 }
 
@@ -346,7 +347,7 @@ fn a_needs_attention_item_shows_its_attention_icon_with_the_overlay_in_the_corne
 
 #[test]
 fn parse_layout_skips_malformed_children() {
-    let junk = Value::from(42i32).try_to_owned().unwrap();
+    let junk = Variant::from(42i32).try_to_owned().unwrap();
     assert!(parse_layout(&[junk]).is_empty());
 }
 
@@ -374,12 +375,11 @@ fn test_loop(conn: Connection, events: Sender<TrayEvent>, eventfd: RawFd) -> Loo
 async fn peers(timeout: Duration) -> (Connection, Connection) {
     let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
     let (item_side, our_side) = futures_util::join!(
-        zbus::connection::Builder::async_io_unix_stream(theirs)
+        zbus::connection::Builder::unix_stream(theirs)
             .server(zbus::Guid::generate())
-            .unwrap()
             .p2p()
             .build(),
-        zbus::connection::Builder::async_io_unix_stream(ours)
+        zbus::connection::Builder::unix_stream(ours)
             .p2p()
             .method_timeout(timeout)
             .build(),
@@ -405,12 +405,10 @@ async fn serve_items(conn: Connection, mut calls: zbus::MessageStream, titles: &
         };
         if name == "Title" {
             let first = titles.fetch_add(1, Ordering::Relaxed) == 0;
-            let _ = conn.reply(&hdr, &Value::from("B")).await;
+            let _ = conn.reply(&hdr, &Variant::from("B")).await;
             if first && path == "/changing" {
                 let changed = zbus::message::Message::signal("/changing", ITEM_IFACE, "NewTitle")
-                    .unwrap()
                     .sender(":1.1")
-                    .unwrap()
                     .build(&())
                     .unwrap();
                 let _ = conn.send(&changed).await;
@@ -512,9 +510,7 @@ fn a_signal_flood_before_the_loop_drains_it_does_not_stall_the_connection() {
         lp.watch_item(":1.1", "/chatty").await;
         for _ in 0..200 {
             let changed = zbus::message::Message::signal("/chatty", ITEM_IFACE, "NewTitle")
-                .unwrap()
                 .sender(":1.1")
-                .unwrap()
                 .build(&())
                 .unwrap();
             item.send(&changed).await.unwrap();
@@ -652,9 +648,7 @@ fn every_change_signal_reads_the_item_again() {
         let mut reads = Vec::new();
         for signal in ["NewIcon", "NewTitle", "NewStatus", "NewToolTip", "NewMenu"] {
             let msg = zbus::message::Message::signal("/answering", ITEM_IFACE, signal)
-                .unwrap()
                 .sender(":1.1")
-                .unwrap()
                 .build(&())
                 .unwrap();
             h.item.send(&msg).await.unwrap();
@@ -815,10 +809,10 @@ fn an_items_overlay_pixmap_is_read_with_its_other_properties() {
                     continue;
                 };
                 let _ = match name.as_str() {
-                    "Title" => item.reply(&hdr, &Value::from("B")).await,
+                    "Title" => item.reply(&hdr, &Variant::from("B")).await,
                     "OverlayIconPixmap" => {
                         let badge = vec![(16, 16, vec![255u8; 16 * 16 * 4])];
-                        item.reply(&hdr, &Value::from(badge)).await
+                        item.reply(&hdr, &Variant::from(badge)).await
                     }
                     _ => {
                         let err = "org.freedesktop.DBus.Error.UnknownProperty";

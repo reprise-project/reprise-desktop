@@ -11,7 +11,7 @@ use std::os::fd::OwnedFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
+use zbus::{ObjectPath, OwnedObjectPath, Variant};
 
 pub const FLAG_LOGOUT: u32 = 1;
 pub const FLAG_SWITCH: u32 = 2;
@@ -105,7 +105,7 @@ impl Inhibits {
         v.into_iter().map(|(_, l)| l.clone()).collect()
     }
 
-    fn monitor_state(&self) -> HashMap<&'static str, Value<'static>> {
+    fn monitor_state(&self) -> HashMap<&'static str, Variant<'static>> {
         state(
             self.locked.load(Ordering::Relaxed),
             self.ending.load(Ordering::Relaxed),
@@ -199,14 +199,14 @@ impl Inhibit {
         app_id: String,
         _window: String,
         flags: u32,
-        options: HashMap<String, Value<'_>>,
+        options: HashMap<String, Variant<'_>>,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<()> {
         self.frontend.check(&hdr).await?;
         crate::check_handle(&handle, crate::REQUEST_PREFIX)?;
         let reason = match options.get("reason") {
-            Some(Value::Str(s)) => clip(s.as_str()),
+            Some(Variant::Str(s)) => clip(s.as_str()),
             _ => String::new(),
         };
         let who = if app_id.is_empty() {
@@ -286,18 +286,14 @@ impl Inhibit {
         server.at(session_handle.clone(), monitor).await?;
         let (conn2, shared) = (conn.clone(), self.shared.clone());
         let path: OwnedObjectPath = session_handle.into();
-        conn.executor()
-            .spawn(
-                async move {
-                    async_io::Timer::after(FIRST_STATE_DELAY).await;
-                    // Unless the frontend closed it in the meantime.
-                    if shared.monitors.lock().unwrap().contains_key(path.as_str()) {
-                        emit_state(&conn2, &path, shared.monitor_state()).await;
-                    }
-                },
-                "first monitor state",
-            )
-            .detach();
+        zruntime::spawn(async move {
+            async_io::Timer::after(FIRST_STATE_DELAY).await;
+            // Unless the frontend closed it in the meantime.
+            if shared.monitors.lock().unwrap().contains_key(path.as_str()) {
+                emit_state(&conn2, &path, shared.monitor_state()).await;
+            }
+        })
+        .detach();
         Ok(crate::RESPONSE_OK)
     }
 
@@ -308,26 +304,26 @@ impl Inhibit {
     async fn state_changed(
         emitter: &SignalEmitter<'_>,
         session_handle: ObjectPath<'_>,
-        state: HashMap<&str, Value<'_>>,
+        state: HashMap<&str, Variant<'_>>,
     ) -> zbus::Result<()>;
 }
 
-fn state(locked: bool, ending: bool) -> HashMap<&'static str, Value<'static>> {
+fn state(locked: bool, ending: bool) -> HashMap<&'static str, Variant<'static>> {
     let session = if ending {
         SESSION_QUERY_END
     } else {
         SESSION_RUNNING
     };
     HashMap::from([
-        ("screensaver-active", Value::Bool(locked)),
-        ("session-state", Value::U32(session)),
+        ("screensaver-active", Variant::Bool(locked)),
+        ("session-state", Variant::U32(session)),
     ])
 }
 
 async fn emit_state(
     conn: &zbus::Connection,
     session: &ObjectPath<'_>,
-    state: HashMap<&'static str, Value<'static>>,
+    state: HashMap<&'static str, Variant<'static>>,
 ) {
     let Ok(emitter) = SignalEmitter::new(conn, crate::PATH) else {
         return;
@@ -374,7 +370,7 @@ impl SessionEnd {
 /// about other properties.
 fn locked_hint_change(
     iface: &str,
-    changed: &HashMap<String, zbus::zvariant::OwnedValue>,
+    changed: &HashMap<String, zbus::OwnedVariant>,
     invalidated: &[String],
 ) -> Option<Option<bool>> {
     if iface != LOGIND_SESSION {
@@ -401,7 +397,7 @@ async fn read_locked(system: &zbus::Connection, session: &ObjectPath<'_>) -> Opt
         )
         .await
         .ok()?;
-    let v: zbus::zvariant::OwnedValue = reply.body().deserialize().ok()?;
+    let v: zbus::OwnedVariant = reply.body().deserialize().ok()?;
     bool::try_from(v).ok()
 }
 
@@ -437,10 +433,11 @@ pub async fn watch_lock(conn: zbus::Connection, shared: Shared) {
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .interface(PROPERTIES)
-        .and_then(|b| b.member("PropertiesChanged"))
-        .and_then(|b| b.path(session.clone()))
-        .and_then(|b| b.add_arg(LOGIND_SESSION))
-        .map(|b| b.build().into());
+        .member("PropertiesChanged")
+        .path(session.clone())
+        .add_arg(LOGIND_SESSION)
+        .build()
+        .map(Into::into);
     let rules = match rule {
         Ok(r) => vec![r],
         Err(e) => {
@@ -466,11 +463,7 @@ pub async fn watch_lock(conn: zbus::Connection, shared: Shared) {
         let reread = match sig {
             reprisebus::Signal::OwnerChanged => true,
             reprisebus::Signal::Message(m) => {
-                type Changed = (
-                    String,
-                    HashMap<String, zbus::zvariant::OwnedValue>,
-                    Vec<String>,
-                );
+                type Changed = (String, HashMap<String, zbus::OwnedVariant>, Vec<String>);
                 let Ok((iface, changed, invalidated)) = m.body().deserialize::<Changed>() else {
                     continue;
                 };
@@ -532,7 +525,7 @@ async fn sleep_inhibit(who: &str, why: &str) -> zbus::Result<OwnedFd> {
             &("sleep", who, why, "block"),
         )
         .await?;
-    let fd: zbus::zvariant::OwnedFd = reply.body().deserialize()?;
+    let fd: zbus::OwnedFd = reply.body().deserialize()?;
     Ok(fd.into())
 }
 
@@ -663,15 +656,15 @@ mod tests {
     #[test]
     fn a_monitor_state_is_running_with_the_lock_as_the_screensaver() {
         let s = state(true, false);
-        assert_eq!(s["screensaver-active"], Value::Bool(true));
-        assert_eq!(s["session-state"], Value::U32(1));
+        assert_eq!(s["screensaver-active"], Variant::Bool(true));
+        assert_eq!(s["session-state"], Variant::U32(1));
         assert_eq!(
             state(false, false)["screensaver-active"],
-            Value::Bool(false)
+            Variant::Bool(false)
         );
         assert_eq!(
             state(false, true)["session-state"],
-            Value::U32(2),
+            Variant::U32(2),
             "an ending session is query-end"
         );
     }
@@ -703,7 +696,7 @@ mod tests {
 
     #[test]
     fn only_a_locked_hint_change_moves_the_lock() {
-        let owned = |b: bool| Value::Bool(b).try_to_owned().unwrap();
+        let owned = |b: bool| Variant::Bool(b).try_to_owned().unwrap();
         let changed = HashMap::from([("LockedHint".to_string(), owned(true))]);
         assert_eq!(
             locked_hint_change(LOGIND_SESSION, &changed, &[]),
@@ -763,16 +756,13 @@ mod tests {
         zbus::block_on(async {
             let calls = Arc::new(Mutex::new(Vec::new()));
             let _saver = zbus::connection::Builder::session()
-                .unwrap()
                 .name(SCREENSAVER)
-                .unwrap()
                 .serve_at(
                     SCREENSAVER_PATH,
                     FakeSaver {
                         calls: calls.clone(),
                     },
                 )
-                .unwrap()
                 .build()
                 .await
                 .unwrap();
@@ -781,7 +771,6 @@ mod tests {
             let frontend = crate::Frontend::default();
             frontend.set(client.unique_name().map(|n| n.to_string()));
             let portal = zbus::connection::Builder::session()
-                .unwrap()
                 .serve_at(
                     crate::PATH,
                     Inhibit {
@@ -789,22 +778,18 @@ mod tests {
                         frontend,
                     },
                 )
-                .unwrap()
                 .build()
                 .await
                 .unwrap();
-            portal
-                .executor()
-                .spawn(run_idle(portal.clone(), rx), "idle")
-                .detach();
+            zruntime::spawn(run_idle(portal.clone(), rx)).detach();
             let dest = portal.unique_name().unwrap().to_string();
             let handles = [
                 "/org/freedesktop/portal/desktop/request/1_1/a",
                 "/org/freedesktop/portal/desktop/request/1_1/b",
             ];
             for handle in handles {
-                let mut options: HashMap<&str, Value<'_>> = HashMap::new();
-                options.insert("reason", Value::from("Playing"));
+                let mut options: HashMap<&str, Variant<'_>> = HashMap::new();
+                options.insert("reason", Variant::from("Playing"));
                 client
                     .call_method(
                         Some(dest.as_str()),
@@ -873,7 +858,6 @@ mod tests {
             let frontend = crate::Frontend::default();
             frontend.set(client.unique_name().map(|n| n.to_string()));
             let portal = zbus::connection::Builder::session()
-                .unwrap()
                 .serve_at(
                     crate::PATH,
                     Inhibit {
@@ -881,7 +865,6 @@ mod tests {
                         frontend,
                     },
                 )
-                .unwrap()
                 .build()
                 .await
                 .unwrap();
@@ -889,10 +872,9 @@ mod tests {
                 zbus::MatchRule::builder()
                     .msg_type(zbus::message::Type::Signal)
                     .interface("org.freedesktop.impl.portal.Inhibit")
-                    .unwrap()
                     .member("StateChanged")
-                    .unwrap()
-                    .build(),
+                    .build()
+                    .unwrap(),
                 &client,
                 None,
             )
@@ -921,11 +903,7 @@ mod tests {
                         .await
                 }
             };
-            let stranger = zbus::connection::Builder::session()
-                .unwrap()
-                .build()
-                .await
-                .unwrap();
+            let stranger = zbus::connection::Builder::session().build().await.unwrap();
             let refused = monitor(stranger).await.unwrap_err();
             assert!(
                 matches!(
@@ -953,7 +931,7 @@ mod tests {
                 .unwrap();
             assert_eq!(reply.body().deserialize::<u32>().unwrap(), 0);
             let m = states.next().await.unwrap().unwrap();
-            let (path, state): (OwnedObjectPath, HashMap<String, zbus::zvariant::OwnedValue>) =
+            let (path, state): (OwnedObjectPath, HashMap<String, zbus::OwnedVariant>) =
                 m.body().deserialize().unwrap();
             assert_eq!(path.as_str(), session);
             assert_eq!(

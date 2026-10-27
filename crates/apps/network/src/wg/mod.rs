@@ -8,7 +8,7 @@ mod x25519;
 use std::collections::HashMap;
 use std::net::IpAddr;
 
-use zbus::zvariant::Value;
+use zbus::Variant;
 
 use crate::nm::{Props, Psk};
 
@@ -187,7 +187,7 @@ pub fn parse_conf(text: &str, name: &str) -> Result<Config, String> {
             continue;
         }
         let Some((key, value)) = line.split_once('=') else {
-            return Err(at("expected Key = Value."));
+            return Err(at("expected Key = Variant."));
         };
         let (key, value) = (key.trim().to_ascii_lowercase(), value.trim());
         let number = |what: &str| {
@@ -386,7 +386,7 @@ pub fn check(cfg: &Config) -> Option<Problem> {
     None
 }
 
-pub type Settings = HashMap<String, HashMap<String, Value<'static>>>;
+pub type Settings = HashMap<String, HashMap<String, Variant<'static>>>;
 
 /// A secret flag: the secret is never saved, so there is nothing to keep.
 const SECRET_NOT_SAVED: u32 = 0x2;
@@ -400,68 +400,71 @@ const SECRET_NOT_REQUIRED: u32 = 0x4;
 /// secret goes in with flags 0, so NetworkManager keeps it itself; a kept
 /// one goes in as its flags alone.
 pub fn settings(cfg: &Config, owner: Option<&str>) -> Settings {
-    let mut connection: HashMap<String, Value<'static>> = HashMap::from([
-        ("id".to_string(), Value::from(cfg.name.trim().to_string())),
-        ("type".to_string(), Value::from("wireguard")),
-        ("interface-name".to_string(), Value::from(cfg.iface.clone())),
-        ("autoconnect".to_string(), Value::from(false)),
+    let mut connection: HashMap<String, Variant<'static>> = HashMap::from([
+        ("id".to_string(), Variant::from(cfg.name.trim().to_string())),
+        ("type".to_string(), Variant::from("wireguard")),
+        (
+            "interface-name".to_string(),
+            Variant::from(cfg.iface.clone()),
+        ),
+        ("autoconnect".to_string(), Variant::from(false)),
     ]);
     if let Some(owner) = owner {
         connection.insert(
             "permissions".to_string(),
-            Value::from(vec![format!("user:{owner}")]),
+            Variant::from(vec![format!("user:{owner}")]),
         );
     }
-    let peers: Vec<HashMap<String, Value<'static>>> = cfg
+    let peers: Vec<HashMap<String, Variant<'static>>> = cfg
         .peers
         .iter()
         .map(|p| {
             let mut m = HashMap::from([
                 (
                     "public-key".to_string(),
-                    Value::from(p.public_key.trim().to_string()),
+                    Variant::from(p.public_key.trim().to_string()),
                 ),
                 (
                     "allowed-ips".to_string(),
-                    Value::from(p.allowed_ips.clone()),
+                    Variant::from(p.allowed_ips.clone()),
                 ),
             ]);
             if !p.endpoint.is_empty() {
-                m.insert("endpoint".into(), Value::from(p.endpoint.clone()));
+                m.insert("endpoint".into(), Variant::from(p.endpoint.clone()));
             }
             if let Some(k) = p.keepalive {
-                m.insert("persistent-keepalive".into(), Value::from(u32::from(k)));
+                m.insert("persistent-keepalive".into(), Variant::from(u32::from(k)));
             }
             match p.psk_secret() {
                 Secret::None => {
                     m.insert(
                         "preshared-key-flags".into(),
-                        Value::from(SECRET_NOT_REQUIRED),
+                        Variant::from(SECRET_NOT_REQUIRED),
                     );
                 }
                 Secret::Kept => {
-                    m.insert("preshared-key-flags".into(), Value::from(0u32));
+                    m.insert("preshared-key-flags".into(), Variant::from(0u32));
                 }
                 Secret::New(k) => {
-                    m.insert("preshared-key".into(), Value::from(k.to_string()));
-                    m.insert("preshared-key-flags".into(), Value::from(0u32));
+                    m.insert("preshared-key".into(), Variant::from(k.to_string()));
+                    m.insert("preshared-key-flags".into(), Variant::from(0u32));
                 }
             }
             m
         })
         .collect();
-    let mut wireguard: HashMap<String, Value<'static>> = HashMap::from([
-        ("private-key-flags".to_string(), Value::from(0u32)),
-        ("peers".to_string(), Value::from(peers)),
+    let mut wireguard: HashMap<String, Variant<'static>> = HashMap::from([
+        ("private-key-flags".to_string(), Variant::from(0u32)),
+        ("peers".to_string(), Variant::from(peers)),
     ]);
     if let Secret::New(k) = cfg.private_secret() {
-        wireguard.insert("private-key".into(), Value::from(k.to_string()));
+        wireguard.insert("private-key".into(), Variant::from(k.to_string()));
     }
     if let Some(port) = cfg.listen_port {
-        wireguard.insert("listen-port".into(), Value::from(u32::from(port)));
+        wireguard.insert("listen-port".into(), Variant::from(u32::from(port)));
     }
     if let Some(mtu) = cfg.mtu {
-        wireguard.insert("mtu".into(), Value::from(mtu));
+        wireguard.insert("mtu".into(), Variant::from(mtu));
     }
     let (ipv4, ipv6) = ip_groups(cfg);
     HashMap::from([
@@ -477,15 +480,15 @@ pub fn settings(cfg: &Config, owner: Option<&str>) -> Settings {
 fn ip_groups(
     cfg: &Config,
 ) -> (
-    HashMap<String, Value<'static>>,
-    HashMap<String, Value<'static>>,
+    HashMap<String, Variant<'static>>,
+    HashMap<String, Variant<'static>>,
 ) {
     let (mut v4, mut v6) = (Vec::new(), Vec::new());
     for a in &cfg.addresses {
         if let Some((ip, prefix)) = parse_cidr(a) {
             let m = HashMap::from([
-                ("address".to_string(), Value::from(ip.to_string())),
-                ("prefix".to_string(), Value::from(u32::from(prefix))),
+                ("address".to_string(), Variant::from(ip.to_string())),
+                ("prefix".to_string(), Variant::from(u32::from(prefix))),
             ]);
             if ip.is_ipv4() {
                 v4.push(m);
@@ -504,21 +507,21 @@ fn ip_groups(
             Err(_) => search.push(d.clone()),
         }
     }
-    let group = |addrs: Vec<HashMap<String, Value<'static>>>| {
-        let mut g: HashMap<String, Value<'static>> = HashMap::new();
+    let group = |addrs: Vec<HashMap<String, Variant<'static>>>| {
+        let mut g: HashMap<String, Variant<'static>> = HashMap::new();
         if addrs.is_empty() {
-            g.insert("method".into(), Value::from("disabled"));
+            g.insert("method".into(), Variant::from("disabled"));
         } else {
-            g.insert("method".into(), Value::from("manual"));
-            g.insert("address-data".into(), Value::from(addrs));
+            g.insert("method".into(), Variant::from("manual"));
+            g.insert("address-data".into(), Variant::from(addrs));
         }
         g
     };
     let mut ipv4 = group(v4);
     let mut ipv6 = group(v6);
-    ipv4.insert("dns".into(), Value::from(dns4));
-    ipv4.insert("dns-search".into(), Value::from(search));
-    ipv6.insert("dns".into(), Value::from(dns6));
+    ipv4.insert("dns".into(), Variant::from(dns4));
+    ipv4.insert("dns-search".into(), Variant::from(search));
+    ipv6.insert("dns".into(), Variant::from(dns6));
     (ipv4, ipv6)
 }
 
@@ -786,7 +789,7 @@ AllowedIPs = 0.0.0.0/0
     fn a_broken_conf_names_its_line() {
         assert_eq!(
             parse_conf("[Interface]\nPrivateKey\n", "x"),
-            Err("Line 2: expected Key = Value.".into())
+            Err("Line 2: expected Key = Variant.".into())
         );
         assert_eq!(
             parse_conf("[Interface]\nFoo = 1\n", "x"),
@@ -798,7 +801,7 @@ AllowedIPs = 0.0.0.0/0
         );
         assert_eq!(
             parse_conf("client\ndev tun\n", "x"),
-            Err("Line 1: expected Key = Value.".into()),
+            Err("Line 1: expected Key = Variant.".into()),
             "an OpenVPN file is no WireGuard one"
         );
     }
@@ -871,24 +874,24 @@ AllowedIPs = 0.0.0.0/0
         c.listen_port = Some(51820);
         c.peers[0].keepalive = Some(25);
         let s = settings(&c, Some("alice"));
-        assert_eq!(s["connection"]["type"], Value::from("wireguard"));
-        assert_eq!(s["connection"]["interface-name"], Value::from("wg0"));
+        assert_eq!(s["connection"]["type"], Variant::from("wireguard"));
+        assert_eq!(s["connection"]["interface-name"], Variant::from("wg0"));
         assert_eq!(
             s["connection"]["permissions"],
-            Value::from(vec!["user:alice".to_string()])
+            Variant::from(vec!["user:alice".to_string()])
         );
-        assert_eq!(s["wireguard"]["private-key"], Value::from(KEY_A));
-        assert_eq!(s["wireguard"]["listen-port"], Value::from(51820u32));
-        assert_eq!(s["ipv4"]["method"], Value::from("manual"));
-        assert_eq!(s["ipv6"]["method"], Value::from("manual"));
+        assert_eq!(s["wireguard"]["private-key"], Variant::from(KEY_A));
+        assert_eq!(s["wireguard"]["listen-port"], Variant::from(51820u32));
+        assert_eq!(s["ipv4"]["method"], Variant::from("manual"));
+        assert_eq!(s["ipv6"]["method"], Variant::from("manual"));
         assert_eq!(
             s["ipv4"]["dns"],
-            Value::from(vec![u32::from_ne_bytes([1, 1, 1, 1])]),
+            Variant::from(vec![u32::from_ne_bytes([1, 1, 1, 1])]),
             "1.1.1.1 in network byte order"
         );
         assert_eq!(
             s["ipv4"]["dns-search"],
-            Value::from(vec!["corp".to_string()])
+            Variant::from(vec!["corp".to_string()])
         );
         let owned = |s: &Settings| -> HashMap<String, Props> {
             s.iter()
@@ -914,8 +917,8 @@ AllowedIPs = 0.0.0.0/0
         let s = settings(&good(), None);
         assert!(!s["connection"].contains_key("permissions"));
         let peers =
-            Vec::<HashMap<String, Value>>::try_from(s["wireguard"]["peers"].clone()).unwrap();
-        assert_eq!(peers[0]["preshared-key-flags"], Value::from(4u32));
+            Vec::<HashMap<String, Variant>>::try_from(s["wireguard"]["peers"].clone()).unwrap();
+        assert_eq!(peers[0]["preshared-key-flags"], Variant::from(4u32));
         assert!(!peers[0].contains_key("preshared-key"));
         assert_eq!(
             settings(
@@ -925,7 +928,7 @@ AllowedIPs = 0.0.0.0/0
                 },
                 None
             )["ipv4"]["method"],
-            Value::from("disabled")
+            Variant::from("disabled")
         );
     }
 
@@ -942,13 +945,13 @@ AllowedIPs = 0.0.0.0/0
         assert_eq!(check(&kept()), None);
         let s = settings(&kept(), None);
         assert!(!s["wireguard"].contains_key("private-key"));
-        assert_eq!(s["wireguard"]["private-key-flags"], Value::from(0u32));
+        assert_eq!(s["wireguard"]["private-key-flags"], Variant::from(0u32));
         let peers =
-            Vec::<HashMap<String, Value>>::try_from(s["wireguard"]["peers"].clone()).unwrap();
+            Vec::<HashMap<String, Variant>>::try_from(s["wireguard"]["peers"].clone()).unwrap();
         assert!(!peers[0].contains_key("preshared-key"));
         assert_eq!(
             peers[0]["preshared-key-flags"],
-            Value::from(0u32),
+            Variant::from(0u32),
             "a kept preshared key stays required"
         );
     }
@@ -971,21 +974,25 @@ AllowedIPs = 0.0.0.0/0
 
     #[test]
     fn refused_secrets_read_back_as_stored_keys() {
-        let v = |x: Value<'static>| x.try_to_owned().unwrap();
+        let v = |x: Variant<'static>| x.try_to_owned().unwrap();
         let peer = |flags: Option<u32>| {
-            let mut p = HashMap::from([("public-key".to_string(), v(Value::from(KEY_B)))]);
+            let mut p = HashMap::from([("public-key".to_string(), v(Variant::from(KEY_B)))]);
             if let Some(f) = flags {
-                p.insert("preshared-key-flags".into(), v(Value::from(f)));
+                p.insert("preshared-key-flags".into(), v(Variant::from(f)));
             }
             p
         };
         let profile = |key_flags: Option<u32>| {
             let mut wg = HashMap::from([(
                 "peers".to_string(),
-                v(Value::from(vec![peer(Some(0)), peer(None), peer(Some(2))])),
+                v(Variant::from(vec![
+                    peer(Some(0)),
+                    peer(None),
+                    peer(Some(2)),
+                ])),
             )]);
             if let Some(f) = key_flags {
-                wg.insert("private-key-flags".into(), v(Value::from(f)));
+                wg.insert("private-key-flags".into(), v(Variant::from(f)));
             }
             HashMap::from([("wireguard".to_string(), wg)])
         };
@@ -1005,14 +1012,14 @@ AllowedIPs = 0.0.0.0/0
 
     #[test]
     fn an_edit_keeps_what_the_editor_does_not_show() {
-        let v = |x: Value<'static>| x.try_to_owned().unwrap();
+        let v = |x: Variant<'static>| x.try_to_owned().unwrap();
         let current = HashMap::from([
             (
                 "connection".to_string(),
                 HashMap::from([
-                    ("id".to_string(), v(Value::from("Old"))),
-                    ("uuid".to_string(), v(Value::from("1234"))),
-                    ("autoconnect".to_string(), v(Value::from(true))),
+                    ("id".to_string(), v(Variant::from("Old"))),
+                    ("uuid".to_string(), v(Variant::from("1234"))),
+                    ("autoconnect".to_string(), v(Variant::from(true))),
                 ]),
             ),
             (
@@ -1020,23 +1027,23 @@ AllowedIPs = 0.0.0.0/0
                 HashMap::from([
                     (
                         "addresses".to_string(),
-                        v(Value::from(vec![vec![1u32, 24, 0]])),
+                        v(Variant::from(vec![vec![1u32, 24, 0]])),
                     ),
-                    ("route-metric".to_string(), v(Value::from(50i64))),
+                    ("route-metric".to_string(), v(Variant::from(50i64))),
                 ]),
             ),
         ]);
         let m = merge(current, settings(&good(), Some("alice")));
-        assert_eq!(m["connection"]["id"], Value::from("Away"));
-        assert_eq!(m["connection"]["uuid"], Value::from("1234"));
+        assert_eq!(m["connection"]["id"], Variant::from("Away"));
+        assert_eq!(m["connection"]["uuid"], Variant::from("1234"));
         assert_eq!(
             m["connection"]["autoconnect"],
-            Value::from(true),
+            Variant::from(true),
             "autoconnect stays as it was"
         );
         assert!(!m["connection"].contains_key("permissions"));
         assert!(!m["ipv4"].contains_key("addresses"), "the old form goes");
-        assert_eq!(m["ipv4"]["route-metric"], Value::from(50i64));
+        assert_eq!(m["ipv4"]["route-metric"], Variant::from(50i64));
         assert!(m["ipv4"].contains_key("address-data"));
     }
 }

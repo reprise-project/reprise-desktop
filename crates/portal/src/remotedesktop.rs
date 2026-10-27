@@ -13,7 +13,7 @@ use crate::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use zbus::zvariant::{ObjectPath, OwnedValue, SerializeDict, Type, Value};
+use zbus::{ObjectPath, OwnedVariant, SerializeDict, Type, Variant};
 
 pub const DEVICE_KEYBOARD: u32 = Device::Keyboard as u32;
 pub const DEVICE_POINTER: u32 = Device::Pointer as u32;
@@ -44,7 +44,7 @@ struct StartResults {
     devices: u32,
     clipboard_enabled: bool,
     persist_mode: u32,
-    restore_data: Option<(String, u32, OwnedValue)>,
+    restore_data: Option<(String, u32, OwnedVariant)>,
     streams: Vec<(u32, crate::StreamProps)>,
 }
 
@@ -65,10 +65,10 @@ impl RemoteDesktop {
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         app_id: String,
-        _options: HashMap<String, Value<'_>>,
+        _options: HashMap<String, Variant<'_>>,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         crate::check_session(&session_handle)?;
         if live(&self.link).is_none() {
@@ -108,8 +108,8 @@ impl RemoteDesktop {
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         app_id: String,
-        options: HashMap<String, Value<'_>>,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        options: HashMap<String, Variant<'_>>,
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         if live(&self.link).is_none() {
             return Ok((RESPONSE_OTHER, HashMap::new()));
@@ -152,7 +152,7 @@ impl RemoteDesktop {
         session_handle: ObjectPath<'_>,
         app_id: String,
         parent_window: String,
-        options: HashMap<String, Value<'_>>,
+        options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, StartResults)> {
@@ -273,8 +273,8 @@ impl RemoteDesktop {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         app_id: String,
-        _options: HashMap<String, Value<'_>>,
-    ) -> zbus::fdo::Result<zbus::zvariant::OwnedFd> {
+        _options: HashMap<String, Variant<'_>>,
+    ) -> zbus::fdo::Result<zbus::OwnedFd> {
         self.frontend.check(&hdr).await?;
         let Some(link) = live(&self.link) else {
             return Err(zbus::fdo::Error::Failed("no input link".into()));
@@ -296,7 +296,7 @@ impl RemoteDesktop {
     async fn notify_pointer_motion(
         &self,
         _s: ObjectPath<'_>,
-        _o: HashMap<String, Value<'_>>,
+        _o: HashMap<String, Variant<'_>>,
         _dx: f64,
         _dy: f64,
     ) -> zbus::fdo::Result<()> {
@@ -305,7 +305,7 @@ impl RemoteDesktop {
     async fn notify_pointer_motion_absolute(
         &self,
         _s: ObjectPath<'_>,
-        _o: HashMap<String, Value<'_>>,
+        _o: HashMap<String, Variant<'_>>,
         _stream: u32,
         _x: f64,
         _y: f64,
@@ -315,7 +315,7 @@ impl RemoteDesktop {
     async fn notify_pointer_button(
         &self,
         _s: ObjectPath<'_>,
-        _o: HashMap<String, Value<'_>>,
+        _o: HashMap<String, Variant<'_>>,
         _button: i32,
         _state: u32,
     ) -> zbus::fdo::Result<()> {
@@ -324,7 +324,7 @@ impl RemoteDesktop {
     async fn notify_pointer_axis(
         &self,
         _s: ObjectPath<'_>,
-        _o: HashMap<String, Value<'_>>,
+        _o: HashMap<String, Variant<'_>>,
         _dx: f64,
         _dy: f64,
     ) -> zbus::fdo::Result<()> {
@@ -333,7 +333,7 @@ impl RemoteDesktop {
     async fn notify_pointer_axis_discrete(
         &self,
         _s: ObjectPath<'_>,
-        _o: HashMap<String, Value<'_>>,
+        _o: HashMap<String, Variant<'_>>,
         _axis: u32,
         _steps: i32,
     ) -> zbus::fdo::Result<()> {
@@ -343,7 +343,7 @@ impl RemoteDesktop {
         &self,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
-        _o: HashMap<String, Value<'_>>,
+        _o: HashMap<String, Variant<'_>>,
         keycode: i32,
         state: u32,
     ) -> zbus::fdo::Result<()> {
@@ -354,7 +354,7 @@ impl RemoteDesktop {
         &self,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
-        _o: HashMap<String, Value<'_>>,
+        _o: HashMap<String, Variant<'_>>,
         keysym: i32,
         state: u32,
     ) -> zbus::fdo::Result<()> {
@@ -364,7 +364,7 @@ impl RemoteDesktop {
     async fn notify_touch_down(
         &self,
         _s: ObjectPath<'_>,
-        _o: HashMap<String, Value<'_>>,
+        _o: HashMap<String, Variant<'_>>,
         _stream: u32,
         _slot: u32,
         _x: f64,
@@ -375,7 +375,7 @@ impl RemoteDesktop {
     async fn notify_touch_motion(
         &self,
         _s: ObjectPath<'_>,
-        _o: HashMap<String, Value<'_>>,
+        _o: HashMap<String, Variant<'_>>,
         _stream: u32,
         _slot: u32,
         _x: f64,
@@ -386,7 +386,7 @@ impl RemoteDesktop {
     async fn notify_touch_up(
         &self,
         _s: ObjectPath<'_>,
-        _o: HashMap<String, Value<'_>>,
+        _o: HashMap<String, Variant<'_>>,
         _slot: u32,
     ) -> zbus::fdo::Result<()> {
         Err(unsupported())
@@ -453,8 +453,8 @@ pub(crate) fn parse_grant(grant: &str) -> Option<(u32, Option<Target>)> {
     Some((mask, target))
 }
 
-fn our_grant(v: &Value<'_>, app_id: &str) -> Option<u32> {
-    let data = <(String, u32, OwnedValue)>::try_from(v.try_to_owned().ok()?).ok()?;
+fn our_grant(v: &Variant<'_>, app_id: &str) -> Option<u32> {
+    let data = <(String, u32, OwnedVariant)>::try_from(v.try_to_owned().ok()?).ok()?;
     parse_grant(crate::restored_grant(&data, app_id)?).map(|(mask, _)| mask)
 }
 
@@ -476,26 +476,26 @@ mod tests {
 
     const APP: &str = "org.example.Remote";
 
-    fn token(app_id: &str, grant: &str) -> Value<'static> {
-        Value::from(restore_data(app_id, grant))
+    fn token(app_id: &str, grant: &str) -> Variant<'static> {
+        Variant::from(restore_data(app_id, grant))
     }
 
     #[test]
     fn only_our_own_restore_data_skips_the_dialog() {
         let ours = token(APP, &grant(DEVICE_POINTER, None));
         assert_eq!(our_grant(&ours, APP), Some(DEVICE_POINTER));
-        let unasked = Value::from((
+        let unasked = Variant::from((
             RESTORE_VENDOR.to_string(),
             2u32,
-            Value::from(format!("{RESTORE_TAG}:{DEVICE_POINTER}"))
+            Variant::from(format!("{RESTORE_TAG}:{DEVICE_POINTER}"))
                 .try_to_owned()
                 .unwrap(),
         ));
         assert_eq!(our_grant(&unasked, APP), None);
-        let theirs = Value::from((
+        let theirs = Variant::from((
             "someone-else".to_string(),
             crate::RESTORE_VERSION,
-            Value::from(RESTORE_TAG).try_to_owned().unwrap(),
+            Variant::from(RESTORE_TAG).try_to_owned().unwrap(),
         ));
         assert_eq!(our_grant(&theirs, APP), None);
         assert_eq!(our_grant(&token(APP, "output:Virtual-1"), APP), None);

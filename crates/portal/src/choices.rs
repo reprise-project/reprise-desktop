@@ -10,7 +10,7 @@ use reprisekit::metrics::ControlMetrics;
 use reprisekit::raster::Rect;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::TextUnits;
-use zbus::zvariant::Value;
+use zbus::Variant;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Choice {
@@ -41,13 +41,13 @@ const LABEL_GAP: i32 = 6;
 const DROP_ROWS: usize = 8;
 
 /// The choices in a call's `choices` option; a value of another type gives none.
-pub fn parse_choices(v: &Value<'_>) -> Vec<Choice> {
-    let Value::Array(a) = v else {
+pub fn parse_choices(v: &Variant<'_>) -> Vec<Choice> {
+    let Variant::Array(a) = v else {
         log::warn!("choices: not an array ({})", v.value_signature());
         return Vec::new();
     };
-    let string = |v: Option<&Value<'_>>| match v {
-        Some(Value::Str(s)) => Some(s.to_string()),
+    let string = |v: Option<&Variant<'_>>| match v {
+        Some(Variant::Str(s)) => Some(s.to_string()),
         _ => None,
     };
     a.inner()
@@ -55,10 +55,10 @@ pub fn parse_choices(v: &Value<'_>) -> Vec<Choice> {
         .filter_map(|item| {
             // A loosely typed caller sends `av`: each item wrapped once.
             let item = match item {
-                Value::Value(inner) => inner.as_ref(),
+                Variant::Variant(inner) => inner.as_ref(),
                 v => v,
             };
-            let Value::Structure(s) = item else {
+            let Variant::Structure(s) = item else {
                 log::warn!("choices: dropped an item that is not a structure");
                 return None;
             };
@@ -68,12 +68,12 @@ pub fn parse_choices(v: &Value<'_>) -> Vec<Choice> {
                 return None;
             };
             let options = match f.get(2) {
-                Some(Value::Array(o)) => o
+                Some(Variant::Array(o)) => o
                     .inner()
                     .iter()
                     .filter_map(|p| match p {
-                        Value::Structure(p) => match p.fields() {
-                            [Value::Str(id), Value::Str(label)] => {
+                        Variant::Structure(p) => match p.fields() {
+                            [Variant::Str(id), Variant::Str(label)] => {
                                 Some((id.to_string(), label.to_string()))
                             }
                             _ => None,
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn choices_parse_from_the_bus_type() {
-        let v = Value::new(vec![
+        let v = Variant::new(vec![
             (
                 "remember".to_string(),
                 "Remember".to_string(),
@@ -472,9 +472,9 @@ mod tests {
 
     #[test]
     fn a_choice_without_an_id_is_dropped_and_the_rest_stay() {
-        let v = Value::new(vec![
-            Value::new(7u32),
-            Value::new((
+        let v = Variant::new(vec![
+            Variant::new(7u32),
+            Variant::new((
                 "ok".to_string(),
                 "OK".to_string(),
                 Vec::<(String, String)>::new(),
@@ -486,6 +486,6 @@ mod tests {
 
     #[test]
     fn parse_choices_ignores_a_wrong_type() {
-        assert!(parse_choices(&Value::new(7u32)).is_empty());
+        assert!(parse_choices(&Variant::new(7u32)).is_empty());
     }
 }

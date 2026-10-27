@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+use zbus::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
 
 pub const NAME: &str = "org.freedesktop.UDisks2";
 pub const ROOT: &str = "/org/freedesktop/UDisks2";
@@ -24,7 +24,7 @@ const OBJECT_MANAGER: &str = "org.freedesktop.DBus.ObjectManager";
 const CALL_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// One interface's properties as `GetManagedObjects` returns them.
-pub type Props = HashMap<String, OwnedValue>;
+pub type Props = HashMap<String, OwnedVariant>;
 /// Every object UDisks2 has, by path, with its interfaces.
 pub type Objects = HashMap<OwnedObjectPath, HashMap<String, Props>>;
 
@@ -343,7 +343,7 @@ impl From<zbus::Error> for Error {
 
 /// The empty `a{sv}` every call takes: UDisks2 picks the mount point and
 /// options itself.
-fn no_options() -> HashMap<&'static str, Value<'static>> {
+fn no_options() -> HashMap<&'static str, Variant<'static>> {
     HashMap::new()
 }
 
@@ -383,9 +383,10 @@ async fn run(mut post: impl FnMut(Snapshot)) {
         match zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender(NAME)
-            .and_then(|b| b.member(*member))
+            .member(*member)
+            .build()
         {
-            Ok(b) => rules.push(b.build().into()),
+            Ok(r) => rules.push(r.into()),
             Err(e) => log::warn!("no match rule for {member}: {e}"),
         }
     }
@@ -423,14 +424,14 @@ async fn read(conn: &zbus::Connection) -> Snapshot {
 
 #[derive(Clone)]
 pub struct Udisks {
-    conn: zbus::blocking::Connection,
+    conn: zbus::Connection,
 }
 
 impl Udisks {
     /// Connect to the system bus. None without one.
     pub fn system() -> Option<Udisks> {
-        let conn = zbus::blocking::connection::Builder::system()
-            .and_then(|b| b.method_timeout(CALL_TIMEOUT).build());
+        let conn =
+            reprisebus::connect(zbus::connection::Builder::system().method_timeout(CALL_TIMEOUT));
         match conn {
             Ok(conn) => Some(Udisks { conn }),
             Err(e) => {
@@ -440,24 +441,24 @@ impl Udisks {
         }
     }
 
-    pub fn on(conn: zbus::blocking::Connection) -> Udisks {
+    pub fn on(conn: zbus::Connection) -> Udisks {
         Udisks { conn }
     }
 
     /// The system bus connection, for a caller's own calls beside these.
-    pub fn connection(&self) -> &zbus::blocking::Connection {
+    pub fn connection(&self) -> &zbus::Connection {
         &self.conn
     }
 
     /// Every drive and volume. Empty when UDisks2 cannot be reached.
     pub fn snapshot(&self) -> Snapshot {
-        let reply = self.conn.call_method(
+        let reply = reprisebus::wait(self.conn.call_method(
             Some(NAME),
             ROOT,
             Some(OBJECT_MANAGER),
             "GetManagedObjects",
             &(),
-        );
+        ));
         match reply.and_then(|m| m.body().deserialize::<Objects>()) {
             Ok(objects) => fold(&objects),
             Err(e) => {
@@ -475,12 +476,16 @@ impl Udisks {
         body: &B,
     ) -> Result<zbus::Message, Error>
     where
-        B: serde::ser::Serialize + zbus::zvariant::DynamicType,
+        B: serde::ser::Serialize + zbus::DynamicType,
     {
-        let path = ObjectPath::try_from(path).map_err(zbus::Error::from)?;
-        Ok(self
-            .conn
-            .call_method(Some(NAME), &path, Some(iface), method, body)?)
+        let path = ObjectPath::try_from(path)?;
+        Ok(reprisebus::wait(self.conn.call_method(
+            Some(NAME),
+            &path,
+            Some(iface),
+            method,
+            body,
+        ))?)
     }
 
     /// Mount the file system on `volume`; where it went.
@@ -552,25 +557,25 @@ impl Udisks {
 pub(crate) mod tests {
     use super::*;
 
-    fn props(pairs: Vec<(&str, OwnedValue)>) -> Props {
+    fn props(pairs: Vec<(&str, OwnedVariant)>) -> Props {
         pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
     }
 
-    fn s(v: &str) -> OwnedValue {
-        OwnedValue::try_from(Value::from(v)).unwrap()
+    fn s(v: &str) -> OwnedVariant {
+        OwnedVariant::try_from(Variant::from(v)).unwrap()
     }
 
-    fn o(v: &str) -> OwnedValue {
-        OwnedValue::try_from(Value::from(ObjectPath::try_from(v).unwrap())).unwrap()
+    fn o(v: &str) -> OwnedVariant {
+        OwnedVariant::try_from(Variant::from(ObjectPath::try_from(v).unwrap())).unwrap()
     }
 
-    fn ay(v: &str) -> OwnedValue {
+    fn ay(v: &str) -> OwnedVariant {
         let mut b = v.as_bytes().to_vec();
         b.push(0);
-        OwnedValue::try_from(Value::from(b)).unwrap()
+        OwnedVariant::try_from(Variant::from(b)).unwrap()
     }
 
-    fn aay(vs: &[&str]) -> OwnedValue {
+    fn aay(vs: &[&str]) -> OwnedVariant {
         let list: Vec<Vec<u8>> = vs
             .iter()
             .map(|v| {
@@ -579,11 +584,11 @@ pub(crate) mod tests {
                 b
             })
             .collect();
-        OwnedValue::try_from(Value::from(list)).unwrap()
+        OwnedVariant::try_from(Variant::from(list)).unwrap()
     }
 
-    fn b(v: bool) -> OwnedValue {
-        OwnedValue::from(v)
+    fn b(v: bool) -> OwnedVariant {
+        OwnedVariant::from(v)
     }
 
     fn drive(vendor: &str, model: &str, removable: bool, bus: &str) -> HashMap<String, Props> {
@@ -612,7 +617,7 @@ pub(crate) mod tests {
             ("HintSystem", b(system)),
             ("HintAuto", b(!system)),
             ("CryptoBackingDevice", o("/")),
-            ("Size", OwnedValue::from(64u64 << 20)),
+            ("Size", OwnedVariant::from(64u64 << 20)),
         ])
     }
 

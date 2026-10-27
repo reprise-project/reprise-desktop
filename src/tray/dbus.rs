@@ -142,9 +142,9 @@ async fn uncached_proxy(
     interface: &'static str,
 ) -> zbus::Result<Proxy<'static>> {
     zbus::proxy::Builder::<Proxy<'static>>::new(conn)
-        .destination(bus.to_string())?
-        .path(path.to_string())?
-        .interface(interface)?
+        .destination(bus.to_string())
+        .path(path.to_string())
+        .interface(interface)
         .cache_properties(CacheProperties::No)
         .build()
         .await
@@ -238,7 +238,7 @@ impl Loop {
                 let stop = stop_rx.clone();
                 let changes = stream.map(move |_| Wake::ItemChanged(key.clone()));
                 self.streams.push(
-                    pumped(&self.conn, changes)
+                    pumped(changes)
                         .take_until(Box::pin(async move {
                             let _ = stop.recv().await;
                         }))
@@ -273,7 +273,7 @@ impl Loop {
     /// Run `call` beside the loop, so a peer that never answers holds up only its own call.
     fn spawn(&mut self, call: impl Future<Output = ()> + Send + 'static) {
         let done = futures_util::stream::once(call).filter_map(|()| std::future::ready(None));
-        self.streams.push(pumped(&self.conn, done));
+        self.streams.push(pumped(done));
     }
 
     fn fetch(&mut self, bus: String, path: String, settle: Duration) {
@@ -304,8 +304,7 @@ impl Loop {
                 .map(Box::new);
             Wake::Fetched { key, fetch, item }
         };
-        self.streams
-            .push(pumped(&self.conn, futures_util::stream::once(read)));
+        self.streams.push(pumped(futures_util::stream::once(read)));
     }
 
     async fn fetched(&mut self, key: String, fetch: u64, item: Option<Box<TrayItem>>) {
@@ -537,28 +536,24 @@ async fn signal_stream(
 ) -> Option<BoxStream<'static, Wake>> {
     let stream = proxy.receive_signal(member).await.ok()?;
     let wakes = stream.filter_map(move |m| std::future::ready(f(m)));
-    Some(pumped(proxy.connection(), wakes))
+    Some(pumped(wakes))
 }
 
-/// Drain `stream` on the connection's executor, so it moves while the loop is inside an await: a
+/// Drain `stream` on a task of its own, so it moves while the loop is inside an await: a
 /// full zbus match queue never stops the socket, and a call never sits on the connection's write
 /// lock until the loop polls again. Dropping the returned stream cancels the drain.
 fn pumped<T: Send + 'static>(
-    conn: &Connection,
     stream: impl futures_util::Stream<Item = T> + Send + 'static,
 ) -> BoxStream<'static, T> {
     let (tx, rx) = async_channel::unbounded();
-    let drain = conn.executor().spawn(
-        async move {
-            let mut stream = std::pin::pin!(stream);
-            while let Some(item) = stream.next().await {
-                if tx.send(item).await.is_err() {
-                    break;
-                }
+    let drain = zruntime::spawn(async move {
+        let mut stream = std::pin::pin!(stream);
+        while let Some(item) = stream.next().await {
+            if tx.send(item).await.is_err() {
+                break;
             }
-        },
-        "tray signal drain",
-    );
+        }
+    });
     futures_util::stream::unfold((rx, drain), |(rx, drain)| async move {
         let item = rx.recv().await.ok()?;
         Some((item, (rx, drain)))
@@ -582,7 +577,6 @@ async fn setup(
     let icons: Icons = Arc::new(Mutex::new(load_icons(&icon_theme)));
     let senders: Arc<Mutex<Senders>> = Arc::default();
     let conn = zbus::connection::Builder::session()
-        .map_err(|e| format!("session bus: {e}"))?
         .method_timeout(METHOD_TIMEOUT)
         .build()
         .await

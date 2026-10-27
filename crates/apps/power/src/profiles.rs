@@ -3,7 +3,7 @@
 use futures_util::stream::StreamExt;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender};
-use zbus::zvariant::OwnedValue;
+use zbus::OwnedVariant;
 use zbus::{Connection, Proxy};
 
 use crate::upower::{Feed, Run, follow};
@@ -36,10 +36,10 @@ pub fn label(profile: &str) -> String {
 
 /// The daemon's properties folded into `Profiles`: `Profiles` is an
 /// `aa{sv}`, one dictionary per profile with its name under `Profile`.
-fn fold(props: &HashMap<String, OwnedValue>) -> Profiles {
+fn fold(props: &HashMap<String, OwnedVariant>) -> Profiles {
     let available = props
         .get("Profiles")
-        .and_then(|v| Vec::<HashMap<String, OwnedValue>>::try_from(v.clone()).ok())
+        .and_then(|v| Vec::<HashMap<String, OwnedVariant>>::try_from(v.clone()).ok())
         .unwrap_or_default()
         .into_iter()
         .filter_map(|p| String::try_from(p.get("Profile")?.clone()).ok())
@@ -51,7 +51,7 @@ fn fold(props: &HashMap<String, OwnedValue>) -> Profiles {
     Profiles { available, active }
 }
 
-type Changed = (String, HashMap<String, OwnedValue>, Vec<String>);
+type Changed = (String, HashMap<String, OwnedVariant>, Vec<String>);
 
 async fn properties(
     conn: &Connection,
@@ -60,18 +60,15 @@ async fn properties(
 ) -> Option<Proxy<'static>> {
     zbus::proxy::Builder::new(conn)
         .destination(name)
-        .ok()?
         .path(path)
-        .ok()?
         .interface(PROPERTIES)
-        .ok()?
         .cache_properties(zbus::proxy::CacheProperties::No)
         .build()
         .await
         .ok()
 }
 
-async fn all_props(props: &Proxy<'_>, name: &str) -> Option<HashMap<String, OwnedValue>> {
+async fn all_props(props: &Proxy<'_>, name: &str) -> Option<HashMap<String, OwnedVariant>> {
     props
         .call_method("GetAll", &(name,))
         .await
@@ -87,7 +84,7 @@ async fn find(
     &'static str,
     &'static str,
     Proxy<'static>,
-    HashMap<String, OwnedValue>,
+    HashMap<String, OwnedVariant>,
 )> {
     for (name, path) in DAEMONS {
         if let Some(props) = properties(conn, name, path).await
@@ -111,11 +108,12 @@ async fn run(feed: &mut Feed<Profiles>) -> Run {
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(name)
-        .and_then(|b| b.path(path))
-        .and_then(|b| b.interface(PROPERTIES))
-        .and_then(|b| b.member("PropertiesChanged"));
+        .path(path)
+        .interface(PROPERTIES)
+        .member("PropertiesChanged")
+        .build();
     let rules = match rule {
-        Ok(b) => vec![b.build().into()],
+        Ok(r) => vec![r.into()],
         Err(e) => {
             log::warn!("no match rule for {path}: {e}");
             Vec::new()
@@ -172,7 +170,7 @@ impl Setter {
                     let Some((name, _, props, _)) = find(&conn).await else {
                         return;
                     };
-                    let value = zbus::zvariant::Value::from(profile.as_str());
+                    let value = zbus::Variant::from(profile.as_str());
                     if let Err(e) = props
                         .call_method("Set", &(name, "ActiveProfile", value))
                         .await
@@ -207,25 +205,25 @@ pub fn watch(waker: repriseapp::Waker) -> (Receiver<Profiles>, Setter) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zbus::zvariant::Value;
+    use zbus::Variant;
 
-    fn profile(name: &str) -> HashMap<String, Value<'static>> {
+    fn profile(name: &str) -> HashMap<String, Variant<'static>> {
         HashMap::from([
-            ("Profile".to_string(), Value::from(name.to_string())),
-            ("Driver".to_string(), Value::from("placeholder")),
+            ("Profile".to_string(), Variant::from(name.to_string())),
+            ("Driver".to_string(), Variant::from("placeholder")),
         ])
     }
 
-    fn props(list: &[&str], active: &str) -> HashMap<String, OwnedValue> {
+    fn props(list: &[&str], active: &str) -> HashMap<String, OwnedVariant> {
         let list: Vec<_> = list.iter().map(|p| profile(p)).collect();
         HashMap::from([
             (
                 "Profiles".to_string(),
-                Value::from(list).try_to_owned().unwrap(),
+                Variant::from(list).try_to_owned().unwrap(),
             ),
             (
                 "ActiveProfile".to_string(),
-                Value::from(active.to_string()).try_to_owned().unwrap(),
+                Variant::from(active.to_string()).try_to_owned().unwrap(),
             ),
         ])
     }

@@ -2,7 +2,7 @@ use super::uncached_proxy;
 use crate::tray::{DEFAULT_PROP, MenuNode, TrayItem};
 use std::collections::HashMap;
 use zbus::Connection;
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::{OwnedVariant, Variant};
 
 const MENU_IFACE: &str = "com.canonical.dbusmenu";
 
@@ -11,15 +11,15 @@ const MENU_IFACE: &str = "com.canonical.dbusmenu";
 pub(super) const LABEL_CHARS: usize = 255;
 pub(super) const MENU_ROWS: usize = 256;
 
-fn parse_node(v: &OwnedValue) -> Option<MenuNode> {
-    let Value::Structure(s) = &**v else {
+fn parse_node(v: &OwnedVariant) -> Option<MenuNode> {
+    let Variant::Structure(s) = &**v else {
         return None;
     };
     let fields = s.fields();
-    let Value::I32(id) = fields.first()? else {
+    let Variant::I32(id) = fields.first()? else {
         return None;
     };
-    let Value::Dict(props) = fields.get(1)? else {
+    let Variant::Dict(props) = fields.get(1)? else {
         return None;
     };
     let mut node = MenuNode {
@@ -36,20 +36,20 @@ fn parse_node(v: &OwnedValue) -> Option<MenuNode> {
     let mut toggle_type: Option<String> = None;
     let mut toggle_state: Option<i32> = None;
     for (k, v) in props.iter() {
-        let Value::Str(k) = k else { continue };
+        let Variant::Str(k) = k else { continue };
         let v = match v {
-            Value::Value(inner) => &**inner,
+            Variant::Variant(inner) => &**inner,
             other => other,
         };
         match (k.as_str(), v) {
-            ("label", Value::Str(s)) => node.label = s.chars().take(LABEL_CHARS).collect(),
-            ("enabled", Value::Bool(b)) => node.enabled = *b,
-            ("visible", Value::Bool(b)) => node.visible = *b,
-            ("type", Value::Str(s)) => node.separator = s.as_str() == "separator",
-            ("toggle-type", Value::Str(s)) => toggle_type = Some(s.as_str().to_string()),
-            ("toggle-state", Value::I32(i)) => toggle_state = Some(*i),
-            ("children-display", Value::Str(s)) => node.has_children = s.as_str() == "submenu",
-            (DEFAULT_PROP, Value::Bool(b)) => node.default = *b,
+            ("label", Variant::Str(s)) => node.label = s.chars().take(LABEL_CHARS).collect(),
+            ("enabled", Variant::Bool(b)) => node.enabled = *b,
+            ("visible", Variant::Bool(b)) => node.visible = *b,
+            ("type", Variant::Str(s)) => node.separator = s.as_str() == "separator",
+            ("toggle-type", Variant::Str(s)) => toggle_type = Some(s.as_str().to_string()),
+            ("toggle-state", Variant::I32(i)) => toggle_state = Some(*i),
+            ("children-display", Variant::Str(s)) => node.has_children = s.as_str() == "submenu",
+            (DEFAULT_PROP, Variant::Bool(b)) => node.default = *b,
             _ => {}
         }
     }
@@ -62,7 +62,7 @@ fn parse_node(v: &OwnedValue) -> Option<MenuNode> {
 
 /// The first `MENU_ROWS` well-formed children of a `GetLayout` reply, in order; malformed children
 /// are skipped.
-pub(super) fn parse_layout(children: &[OwnedValue]) -> Vec<MenuNode> {
+pub(super) fn parse_layout(children: &[OwnedVariant]) -> Vec<MenuNode> {
     children
         .iter()
         .filter_map(parse_node)
@@ -70,7 +70,7 @@ pub(super) fn parse_layout(children: &[OwnedValue]) -> Vec<MenuNode> {
         .collect()
 }
 
-type LayoutReply = (u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>));
+type LayoutReply = (u32, (i32, HashMap<String, OwnedVariant>, Vec<OwnedVariant>));
 
 pub(super) async fn get_layout(
     conn: &Connection,
@@ -114,6 +114,6 @@ pub(super) async fn send_menu_event(conn: &Connection, item: &TrayItem, node: i3
         .map(|d| d.as_secs() as u32)
         .unwrap_or(0);
     let _ = proxy
-        .call_method("Event", &(node, "clicked", Value::I32(0), now))
+        .call_method("Event", &(node, "clicked", Variant::I32(0), now))
         .await;
 }

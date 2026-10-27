@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use zbus::zvariant::OwnedValue;
+use zbus::OwnedVariant;
 
 const NAME: &str = "org.freedesktop.impl.portal.PermissionStore";
 const PATH: &str = "/org/freedesktop/impl/portal/PermissionStore";
@@ -17,32 +17,32 @@ const NOT_FOUND: &str = "org.freedesktop.portal.Error.NotFound";
 /// and whether each may read the location. Empty when it has none.
 pub fn location_answers() -> zbus::Result<Vec<(String, bool)>> {
     let conn = crate::session()?;
-    let reply = conn.call_method(
+    let reply = crate::wait(conn.call_method(
         Some(NAME),
         PATH,
         Some(INTERFACE),
         "Lookup",
         &(LOCATION, LOCATION),
-    );
+    ));
     let reply = match reply {
         Err(zbus::Error::MethodError(name, _, _)) if name.as_str() == NOT_FOUND => {
             return Ok(Vec::new());
         }
         r => r?,
     };
-    let (perms, _): (HashMap<String, Vec<String>>, OwnedValue) = reply.body().deserialize()?;
+    let (perms, _): (HashMap<String, Vec<String>>, OwnedVariant) = reply.body().deserialize()?;
     Ok(answers(perms))
 }
 
 /// Drop `app_id`'s answer: the portal asks it again next time.
 pub fn forget_location(app_id: &str) -> zbus::Result<()> {
-    crate::session()?.call_method(
+    crate::wait(crate::session()?.call_method(
         Some(NAME),
         PATH,
         Some(INTERFACE),
         "DeletePermission",
         &(LOCATION, LOCATION, app_id),
-    )?;
+    ))?;
     Ok(())
 }
 

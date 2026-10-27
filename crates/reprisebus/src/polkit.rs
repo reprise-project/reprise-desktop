@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use zbus::zvariant::Value;
+use zbus::Variant;
 
 pub const NAME: &str = "reprise.polkit";
 pub const PATH: &str = "/reprise/polkit/Dismissals";
@@ -16,7 +16,7 @@ pub const INTERFACE: &str = "reprise.polkit.Dismissals";
 /// answer. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn dismissed() -> bool {
     let answer = crate::session().and_then(|conn| {
-        conn.call_method(Some(NAME), PATH, Some(INTERFACE), "Take", &())?
+        crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "Take", &()))?
             .body()
             .deserialize::<bool>()
     });
@@ -81,7 +81,7 @@ pub async fn allowed_without_prompt(conn: &zbus::Connection, action: &str) -> bo
     };
     let subject = (
         "system-bus-name",
-        HashMap::from([("name", Value::from(name.as_str()))]),
+        HashMap::from([("name", Variant::from(name.as_str()))]),
     );
     let details: HashMap<&str, &str> = HashMap::new();
     let reply = conn
@@ -112,7 +112,7 @@ mod tests {
 
     fn error(name: &'static str) -> zbus::Error {
         let msg = zbus::Message::method_call("/", "M")
-            .and_then(|b| b.build(&()))
+            .build(&())
             .expect("a method call");
         zbus::Error::MethodError(
             zbus::names::OwnedErrorName::try_from(name).expect("an error name"),

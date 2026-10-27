@@ -1,7 +1,7 @@
 //! Whether fprintd on the system bus has a finger enrolled for a user. The verification itself
 //! runs in PAM (`pam_fprintd`), never here.
 
-use zbus::zvariant::OwnedObjectPath;
+use zbus::OwnedObjectPath;
 use zbus::{Connection, Proxy};
 
 pub const NAME: &str = "net.reactivated.Fprint";
@@ -15,10 +15,11 @@ const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// (false).
 pub fn has_finger(user: &str) -> bool {
     zbus::block_on(async {
-        let Ok(conn) = zbus::connection::Builder::system() else {
-            return false;
-        };
-        let Ok(conn) = conn.method_timeout(TIMEOUT).build().await else {
+        let Ok(conn) = zbus::connection::Builder::system()
+            .method_timeout(TIMEOUT)
+            .build()
+            .await
+        else {
             return false;
         };
         enrolled(&conn, user).await
@@ -38,15 +39,14 @@ pub async fn enrolled(conn: &Connection, user: &str) -> bool {
             return false;
         }
     };
-    let device = zbus::proxy::Builder::<Proxy>::new(conn)
+    let Ok(device) = zbus::proxy::Builder::<Proxy>::new(conn)
         .destination(NAME)
-        .and_then(|b| b.path(path))
-        .and_then(|b| b.interface(DEVICE))
-        .map(|b| b.cache_properties(zbus::proxy::CacheProperties::No));
-    let Ok(builder) = device else {
-        return false;
-    };
-    let Ok(device) = builder.build().await else {
+        .path(path)
+        .interface(DEVICE)
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
+        .await
+    else {
         return false;
     };
     match device
@@ -92,7 +92,6 @@ mod tests {
 
     async fn connect(address: &str) -> Connection {
         zbus::connection::Builder::address(address)
-            .expect("address")
             .build()
             .await
             .expect("connect")

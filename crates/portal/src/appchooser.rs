@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
-use zbus::zvariant::{ObjectPath, OwnedValue, Value};
+use zbus::{ObjectPath, OwnedVariant, Variant};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct Input {
@@ -58,9 +58,9 @@ impl AppChooser {
         app_id: String,
         parent_window: String,
         choices: Vec<String>,
-        options: HashMap<String, Value<'_>>,
+        options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         if choices.is_empty() {
             log::warn!("AppChooser for {app_id:?}: no choices");
@@ -68,7 +68,7 @@ impl AppChooser {
         }
         let input = Input::from_call(&parent_window, choices, &options);
         let token = match options.get("activation_token") {
-            Some(Value::Str(s)) => Some(s.to_string()),
+            Some(Variant::Str(s)) => Some(s.to_string()),
             _ => None,
         };
         let cancel = Arc::new(AtomicBool::new(false));
@@ -111,10 +111,10 @@ impl Input {
     fn from_call(
         parent_window: &str,
         choices: Vec<String>,
-        options: &HashMap<String, Value<'_>>,
+        options: &HashMap<String, Variant<'_>>,
     ) -> Input {
         let string = |k: &str| match options.get(k) {
-            Some(Value::Str(s)) if !s.is_empty() => Some(s.to_string()),
+            Some(Variant::Str(s)) if !s.is_empty() => Some(s.to_string()),
             _ => None,
         };
         let file = string("filename")
@@ -122,7 +122,7 @@ impl Input {
             .unwrap_or_default();
         Input {
             parent: dialog::parent_handle(parent_window),
-            modal: !matches!(options.get("modal"), Some(Value::Bool(false))),
+            modal: !matches!(options.get("modal"), Some(Variant::Bool(false))),
             file,
             content_type: string("content_type"),
             choices,
@@ -164,11 +164,11 @@ fn ask(input: &Input, updates: mpsc::Receiver<String>, cancel: Arc<AtomicBool>) 
 
 /// The D-Bus answer: 0 with `choice` (and the caller's activation token)
 /// when a program was picked, 1 otherwise.
-fn reply(out: &Output, token: Option<String>) -> (u32, HashMap<String, OwnedValue>) {
+fn reply(out: &Output, token: Option<String>) -> (u32, HashMap<String, OwnedVariant>) {
     let Some(choice) = &out.choice else {
         return (crate::RESPONSE_CANCELLED, HashMap::new());
     };
-    let owned = |s: &str| Value::from(s).try_to_owned().expect("a plain string");
+    let owned = |s: &str| Variant::from(s).try_to_owned().expect("a plain string");
     let mut r = HashMap::new();
     r.insert("choice".to_string(), owned(choice));
     if let Some(t) = token {
@@ -183,11 +183,11 @@ mod tests {
 
     #[test]
     fn a_call_becomes_input() {
-        let mut o: HashMap<String, Value<'_>> = HashMap::new();
-        o.insert("last_choice".into(), Value::from("vim.desktop"));
-        o.insert("content_type".into(), Value::from("text/plain"));
-        o.insert("uri".into(), Value::from("file:///home/u/My%20Notes.txt"));
-        o.insert("modal".into(), Value::Bool(false));
+        let mut o: HashMap<String, Variant<'_>> = HashMap::new();
+        o.insert("last_choice".into(), Variant::from("vim.desktop"));
+        o.insert("content_type".into(), Variant::from("text/plain"));
+        o.insert("uri".into(), Variant::from("file:///home/u/My%20Notes.txt"));
+        o.insert("modal".into(), Variant::Bool(false));
         let i = Input::from_call("wayland:h1", vec!["vim.desktop".into()], &o);
         assert_eq!(i.parent.as_deref(), Some("h1"));
         assert!(!i.modal);
@@ -212,9 +212,9 @@ mod tests {
 
     #[test]
     fn filename_wins_over_uri_and_modal_defaults_on() {
-        let mut o: HashMap<String, Value<'_>> = HashMap::new();
-        o.insert("filename".into(), Value::from("a.txt"));
-        o.insert("uri".into(), Value::from("file:///x/b.txt"));
+        let mut o: HashMap<String, Variant<'_>> = HashMap::new();
+        o.insert("filename".into(), Variant::from("a.txt"));
+        o.insert("uri".into(), Variant::from("file:///x/b.txt"));
         let i = Input::from_call("", vec![], &o);
         assert_eq!(i.file, "a.txt");
         assert!(i.modal);

@@ -10,7 +10,7 @@ pub fn can(method: &str) -> Option<String> {
 }
 
 async fn ask(method: &str) -> zbus::Result<String> {
-    let conn = zbus::connection::Builder::system()?
+    let conn = zbus::connection::Builder::system()
         .method_timeout(TIMEOUT)
         .build()
         .await?;

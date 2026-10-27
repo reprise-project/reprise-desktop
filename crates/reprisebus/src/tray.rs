@@ -7,14 +7,14 @@ pub const INTERFACE: &str = "org.reprise.Tray";
 /// Ask the compositor to open the tray's Customize dialog. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn customize() -> zbus::Result<()> {
     let conn = crate::session()?;
-    conn.call_method(Some(NAME), PATH, Some(INTERFACE), "Customize", &())?;
+    crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "Customize", &()))?;
     Ok(())
 }
 
 /// Ask the compositor to turn the computer off for a critical battery: it asks programs to close, ends what is left after a few seconds, and runs `[power] poweroff`. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn critical_turn_off() -> zbus::Result<()> {
     let conn = crate::session()?;
-    conn.call_method(Some(NAME), PATH, Some(INTERFACE), "CriticalTurnOff", &())?;
+    crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "CriticalTurnOff", &()))?;
     Ok(())
 }
 
@@ -61,7 +61,8 @@ impl Pad {
 /// The tablet pads connected now, in the order they came. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn tablet_pads() -> zbus::Result<Vec<Pad>> {
     let conn = crate::session()?;
-    let reply = conn.call_method(Some(NAME), PATH, Some(INTERFACE), "TabletPads", &())?;
+    let reply =
+        crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "TabletPads", &()))?;
     let list: Vec<PadWire> = reply.body().deserialize()?;
     Ok(list.into_iter().map(Pad::from_wire).collect())
 }
@@ -69,7 +70,7 @@ pub fn tablet_pads() -> zbus::Result<Vec<Pad>> {
 /// Ask the compositor to show each output's number, big in its middle for 2 s. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn identify(outputs: &[String]) -> zbus::Result<()> {
     let conn = crate::session()?;
-    conn.call_method(Some(NAME), PATH, Some(INTERFACE), "Identify", &(outputs,))?;
+    crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "Identify", &(outputs,)))?;
     Ok(())
 }
 
@@ -121,33 +122,33 @@ impl WindowIcon {
 /// of one, else of the window titled `title`. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn window_icon(pids: &[u32], title: &str) -> zbus::Result<Option<WindowIcon>> {
     let conn = crate::session()?;
-    let reply = conn.call_method(
+    let reply = crate::wait(conn.call_method(
         Some(NAME),
         PATH,
         Some(INTERFACE),
         "WindowIcon",
         &(pids, title),
-    )?;
+    ))?;
     Ok(WindowIcon::from_wire(reply.body().deserialize()?))
 }
 
 /// Ask the compositor to show the screen saver `name` full screen until the next input. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn preview_screen_saver(name: &str) -> zbus::Result<()> {
     let conn = crate::session()?;
-    conn.call_method(
+    crate::wait(conn.call_method(
         Some(NAME),
         PATH,
         Some(INTERFACE),
         "PreviewScreenSaver",
         &(name,),
-    )?;
+    ))?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zbus::zvariant::Type;
+    use zbus::Type;
 
     #[test]
     fn a_pad_crosses_the_bus_with_its_dials_and_keys() {

@@ -2,11 +2,10 @@
 //! DNS-SD needs no admin rights, where CUPS-Get-Devices does in cupsd's default policy.
 
 use std::collections::{BTreeMap, HashSet};
+use std::num::NonZeroUsize;
 
-use zbus::blocking::{Connection, MessageIterator, Proxy};
 use zbus::message::Type;
-use zbus::zvariant::OwnedObjectPath;
-use zbus::{MatchRule, Message};
+use zbus::{Connection, MatchRule, Message, MessageStream, OwnedObjectPath, Proxy};
 
 use crate::cups::Device;
 
@@ -187,35 +186,39 @@ impl Services {
 }
 
 fn server(conn: &Connection) -> zbus::Result<Proxy<'static>> {
-    Proxy::new(conn, DEST, "/", SERVER)
+    reprisebus::wait(Proxy::new(conn, DEST, "/", SERVER))
 }
 
 /// Ask avahi-daemon for a browser per printer type. An error means no avahi-daemon (or no
 /// system bus): the wizard asks cupsd instead.
-pub fn start(conn: &Connection) -> zbus::Result<MessageIterator> {
+pub fn start(conn: &Connection) -> zbus::Result<MessageStream> {
     // Subscribed before the browsers exist: their first signals can beat the method reply.
     let rule = MatchRule::builder()
         .msg_type(Type::Signal)
-        .interface(BROWSER)?
-        .build();
-    let signals = MessageIterator::for_match_rule(rule, conn, Some(1024))?;
+        .interface(BROWSER)
+        .build()?;
+    let signals = reprisebus::wait(MessageStream::for_match_rule(
+        rule,
+        conn,
+        NonZeroUsize::new(1024),
+    ))?;
     let server = server(conn)?;
     for kind in TYPES {
         let _: OwnedObjectPath =
-            server.call("ServiceBrowserNew", &(UNSPEC, UNSPEC, kind, "", 0u32))?;
+            reprisebus::wait(server.call("ServiceBrowserNew", &(UNSPEC, UNSPEC, kind, "", 0u32)))?;
     }
     Ok(signals)
 }
 
 /// Follow the browsers until the connection closes. `changed` gets the whole list once every
 /// browser has sent what avahi-daemon knew, then on each change.
-pub fn run(conn: &Connection, signals: MessageIterator, mut changed: impl FnMut(Vec<Device>)) {
+pub fn run(conn: &Connection, signals: MessageStream, mut changed: impl FnMut(Vec<Device>)) {
     let Ok(server) = server(conn) else {
         return;
     };
     let mut services = Services::default();
     let mut done: HashSet<String> = HashSet::new();
-    for msg in signals {
+    for msg in reprisebus::blocking_iter(signals) {
         let Ok(msg) = msg else {
             break;
         };
@@ -269,10 +272,10 @@ type Resolved = (
 
 fn resolve(server: &Proxy, key: &Key) -> Option<Device> {
     let (iface, proto, name, kind, domain) = key;
-    let r: zbus::Result<Resolved> = server.call(
+    let r: zbus::Result<Resolved> = reprisebus::wait(server.call(
         "ResolveService",
         &(*iface, *proto, name, kind, domain, UNSPEC, 0u32),
-    );
+    ));
     match r {
         Ok((.., txt, flags)) => device(name, kind, domain, &txt, flags),
         Err(e) => {

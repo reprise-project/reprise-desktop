@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+use zbus::{OwnedObjectPath, OwnedVariant};
 use zeroize::Zeroizing;
 
 use crate::passwd;
@@ -97,7 +97,7 @@ pub enum Op {
 }
 
 async fn connect(timeout: Option<Duration>) -> zbus::Result<zbus::Connection> {
-    let b = zbus::connection::Builder::system()?;
+    let b = zbus::connection::Builder::system();
     match timeout {
         Some(t) => b.method_timeout(t).build().await,
         None => b.build().await,
@@ -117,14 +117,14 @@ pub fn people(passwd: &str) -> Vec<String> {
         .collect()
 }
 
-fn text(m: &HashMap<String, OwnedValue>, k: &str) -> String {
+fn text(m: &HashMap<String, OwnedVariant>, k: &str) -> String {
     m.get(k)
         .and_then(|v| v.downcast_ref::<&str>().ok())
         .unwrap_or_default()
         .to_string()
 }
 
-fn user_of(path: &str, m: &HashMap<String, OwnedValue>, me: u32) -> Option<User> {
+fn user_of(path: &str, m: &HashMap<String, OwnedVariant>, me: u32) -> Option<User> {
     let system = m
         .get("SystemAccount")
         .and_then(|v| v.downcast_ref::<bool>().ok())
@@ -216,7 +216,7 @@ pub fn read() -> zbus::Result<Vec<User>> {
                     &(USER_IFACE,),
                 )
                 .await?;
-            let m: HashMap<String, OwnedValue> = reply.body().deserialize()?;
+            let m: HashMap<String, OwnedVariant> = reply.body().deserialize()?;
             users.extend(user_of(p.as_str(), &m, me));
         }
         sort(&mut users);
@@ -346,7 +346,7 @@ async fn user_call<B>(
     body: &B,
 ) -> Result<(), Failure>
 where
-    B: serde::Serialize + zbus::zvariant::DynamicType,
+    B: serde::Serialize + zbus::DynamicType,
 {
     interactive::<_, ()>(conn, path, USER_IFACE, method, body).await
 }
@@ -362,14 +362,13 @@ async fn interactive<B, R>(
     body: &B,
 ) -> Result<R, Failure>
 where
-    B: serde::Serialize + zbus::zvariant::DynamicType,
-    R: for<'d> zbus::zvariant::DynamicDeserialize<'d>,
+    B: serde::Serialize + zbus::DynamicType,
+    R: for<'d> zbus::wire::DynamicDeserialize<'d>,
 {
     let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(conn)
         .destination(DEST)
-        .and_then(|b| b.path(path.to_string()))
-        .and_then(|b| b.interface(iface))
-        .map_err(|e| e.to_string())?
+        .path(path.to_string())
+        .interface(iface)
         .cache_properties(zbus::proxy::CacheProperties::No)
         .build()
         .await
@@ -377,7 +376,7 @@ where
     proxy
         .call_with_flags(
             method,
-            zbus::proxy::MethodFlags::AllowInteractiveAuth.into(),
+            zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH,
             body,
         )
         .await
@@ -447,7 +446,7 @@ fn update_faces_in(home: &Path, file: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zbus::zvariant::Value;
+    use zbus::Variant;
 
     #[test]
     fn an_applied_picture_is_deleted_once_the_call_returns() {
@@ -506,18 +505,21 @@ mod tests {
         name: &str,
         kind: i32,
         system: bool,
-    ) -> HashMap<String, OwnedValue> {
+    ) -> HashMap<String, OwnedVariant> {
         let mut m = HashMap::new();
-        let mut put = |k: &str, v: Value| {
-            m.insert(k.to_string(), OwnedValue::try_from(v).unwrap());
+        let mut put = |k: &str, v: Variant| {
+            m.insert(k.to_string(), OwnedVariant::try_from(v).unwrap());
         };
-        put("Uid", Value::from(uid));
-        put("UserName", Value::from(login));
-        put("RealName", Value::from(name));
-        put("AccountType", Value::from(kind));
-        put("SystemAccount", Value::from(system));
-        put("IconFile", Value::from("/var/lib/AccountsService/icons/x"));
-        put("HomeDirectory", Value::from("/home/x"));
+        put("Uid", Variant::from(uid));
+        put("UserName", Variant::from(login));
+        put("RealName", Variant::from(name));
+        put("AccountType", Variant::from(kind));
+        put("SystemAccount", Variant::from(system));
+        put(
+            "IconFile",
+            Variant::from("/var/lib/AccountsService/icons/x"),
+        );
+        put("HomeDirectory", Variant::from("/home/x"));
         m
     }
 

@@ -12,6 +12,7 @@ description = "No code: turns on, for every build, the union of features the wor
 # `--workspace` builds. After a dependency change, rerun `scripts/kit-units`.
 [dependencies]
 anstream = "1"
+fastrand = "2"
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
 regex-automata = "0.4"
 regex-syntax = { version = "0.8", default-features = false, features = ["std", "unicode"] }

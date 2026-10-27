@@ -7,10 +7,10 @@ pub use bus::{NmHandle, watch};
 
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
-use zbus::zvariant::OwnedValue;
+use zbus::OwnedVariant;
 use zeroize::Zeroizing;
 
-pub type Props = HashMap<String, OwnedValue>;
+pub type Props = HashMap<String, OwnedVariant>;
 
 /// The two device kinds the applet shows; everything else NM manages
 /// (bridges, tunnels, loopback) is left out of the snapshot.
@@ -727,7 +727,7 @@ pub fn owned_to_values(current: HashMap<String, Props>) -> crate::wg::Settings {
         .map(|(group, entries)| {
             let entries = entries
                 .into_iter()
-                .map(|(k, v)| (k, zbus::zvariant::Value::from(v)))
+                .map(|(k, v)| (k, zbus::Variant::from(v)))
                 .collect();
             (group, entries)
         })
@@ -816,7 +816,7 @@ pub fn connect_plan<'a>(known: Option<&str>, key: Option<&'a Key>) -> ConnectPla
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zbus::zvariant::Value;
+    use zbus::Variant;
 
     /// The daemon logs a failed `Cmd` with `{:?}`; the key must not be in it.
     #[test]
@@ -861,7 +861,7 @@ mod tests {
         assert!(Eap::Tls.inner().is_empty(), "TLS has no tunnel");
     }
 
-    fn props(entries: Vec<(&str, Value<'static>)>) -> Props {
+    fn props(entries: Vec<(&str, Variant<'static>)>) -> Props {
         entries
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.try_to_owned().unwrap()))
@@ -919,28 +919,28 @@ mod tests {
     #[test]
     fn fold_device_reads_a_wired_device() {
         let address = props(vec![
-            ("address", Value::from("10.0.0.5")),
-            ("prefix", Value::from(24u32)),
+            ("address", Variant::from("10.0.0.5")),
+            ("prefix", Variant::from(24u32)),
         ]);
         let d = fold_device(&DeviceProps {
             path: "/org/freedesktop/NetworkManager/Devices/2".into(),
             device: props(vec![
-                ("Interface", Value::from("enp3s0")),
-                ("DeviceType", Value::from(1u32)),
-                ("State", Value::from(100u32)),
-                ("Managed", Value::from(true)),
-                ("Driver", Value::from("e1000e")),
+                ("Interface", Variant::from("enp3s0")),
+                ("DeviceType", Variant::from(1u32)),
+                ("State", Variant::from(100u32)),
+                ("Managed", Variant::from(true)),
+                ("Driver", Variant::from("e1000e")),
             ]),
             wired: Some(props(vec![
-                ("Speed", Value::from(1000u32)),
-                ("Carrier", Value::from(true)),
+                ("Speed", Variant::from(1000u32)),
+                ("Carrier", Variant::from(true)),
             ])),
             wireless: None,
             ip4: Some(props(vec![
-                ("AddressData", Value::from(vec![address])),
-                ("Gateway", Value::from("10.0.0.1")),
+                ("AddressData", Variant::from(vec![address])),
+                ("Gateway", Variant::from("10.0.0.1")),
             ])),
-            stats: Some(props(vec![("RxBytes", Value::from(1234u64))])),
+            stats: Some(props(vec![("RxBytes", Variant::from(1234u64))])),
             aps: vec![],
             known_ssids: HashMap::new(),
             active_ap: None,
@@ -973,24 +973,24 @@ mod tests {
     fn fold_device_reads_wifi_aps() {
         let ap = |ssid: &str, strength: u8, rsn: u32| {
             props(vec![
-                ("Ssid", Value::from(ssid.as_bytes().to_vec())),
-                ("Strength", Value::from(strength)),
-                ("Flags", Value::from(1u32)),
-                ("WpaFlags", Value::from(0u32)),
-                ("RsnFlags", Value::from(rsn)),
+                ("Ssid", Variant::from(ssid.as_bytes().to_vec())),
+                ("Strength", Variant::from(strength)),
+                ("Flags", Variant::from(1u32)),
+                ("WpaFlags", Variant::from(0u32)),
+                ("RsnFlags", Variant::from(rsn)),
             ])
         };
         let d = fold_device(&DeviceProps {
             path: "/org/freedesktop/NetworkManager/Devices/3".into(),
             device: props(vec![
-                ("Interface", Value::from("wlan0")),
-                ("DeviceType", Value::from(2u32)),
-                ("State", Value::from(100u32)),
-                ("Managed", Value::from(true)),
-                ("Driver", Value::from("iwlwifi")),
+                ("Interface", Variant::from("wlan0")),
+                ("DeviceType", Variant::from(2u32)),
+                ("State", Variant::from(100u32)),
+                ("Managed", Variant::from(true)),
+                ("Driver", Variant::from("iwlwifi")),
             ]),
             wired: None,
-            wireless: Some(props(vec![("Bitrate", Value::from(130000u32))])),
+            wireless: Some(props(vec![("Bitrate", Variant::from(130000u32))])),
             ip4: None,
             stats: None,
             aps: vec![
@@ -1073,19 +1073,19 @@ mod tests {
                     (
                         "connection".to_string(),
                         props(vec![
-                            ("type", Value::from("802-11-wireless")),
-                            ("id", Value::from("Intrepid 5")),
+                            ("type", Variant::from("802-11-wireless")),
+                            ("id", Variant::from("Intrepid 5")),
                         ]),
                     ),
                     (
                         "802-11-wireless".to_string(),
-                        props(vec![("ssid", Value::from(b"Intrepid 5".to_vec()))]),
+                        props(vec![("ssid", Variant::from(b"Intrepid 5".to_vec()))]),
                     ),
                     (
                         "802-11-wireless-security".to_string(),
                         props(vec![
-                            ("key-mgmt", Value::from("wpa-psk")),
-                            ("psk-flags", Value::from(0u32)),
+                            ("key-mgmt", Variant::from("wpa-psk")),
+                            ("psk-flags", Variant::from(0u32)),
                         ]),
                     ),
                 ]),
@@ -1098,19 +1098,19 @@ mod tests {
                     (
                         "connection".to_string(),
                         props(vec![
-                            ("type", Value::from("802-11-wireless")),
-                            ("id", Value::from("Office")),
+                            ("type", Variant::from("802-11-wireless")),
+                            ("id", Variant::from("Office")),
                         ]),
                     ),
                     (
                         "802-11-wireless".to_string(),
-                        props(vec![("ssid", Value::from(b"Office".to_vec()))]),
+                        props(vec![("ssid", Variant::from(b"Office".to_vec()))]),
                     ),
                     (
                         "802-11-wireless-security".to_string(),
                         props(vec![
-                            ("key-mgmt", Value::from("wpa-psk")),
-                            ("psk-flags", Value::from(1u32)),
+                            ("key-mgmt", Variant::from("wpa-psk")),
+                            ("psk-flags", Variant::from(1u32)),
                         ]),
                     ),
                 ]),
@@ -1119,7 +1119,7 @@ mod tests {
                 "/Settings/2".to_string(),
                 HashMap::from([(
                     "connection".to_string(),
-                    props(vec![("type", Value::from("802-11-wireless"))]),
+                    props(vec![("type", Variant::from("802-11-wireless"))]),
                 )]),
             ),
             (
@@ -1128,15 +1128,15 @@ mod tests {
                     (
                         "connection".to_string(),
                         props(vec![
-                            ("type", Value::from("vpn")),
-                            ("id", Value::from("Work")),
+                            ("type", Variant::from("vpn")),
+                            ("id", Variant::from("Work")),
                         ]),
                     ),
                     (
                         "vpn".to_string(),
                         props(vec![(
                             "service-type",
-                            Value::from("org.freedesktop.NetworkManager.openvpn"),
+                            Variant::from("org.freedesktop.NetworkManager.openvpn"),
                         )]),
                     ),
                 ]),
@@ -1146,8 +1146,8 @@ mod tests {
                 HashMap::from([(
                     "connection".to_string(),
                     props(vec![
-                        ("type", Value::from("wireguard")),
-                        ("id", Value::from("Away")),
+                        ("type", Variant::from("wireguard")),
+                        ("id", Variant::from("Away")),
                     ]),
                 )]),
             ),
@@ -1155,7 +1155,7 @@ mod tests {
                 "/Settings/5".to_string(),
                 HashMap::from([(
                     "connection".to_string(),
-                    props(vec![("type", Value::from("802-3-ethernet"))]),
+                    props(vec![("type", Variant::from("802-3-ethernet"))]),
                 )]),
             ),
         ];
@@ -1198,8 +1198,8 @@ mod tests {
             HashMap::from([(
                 "802-11-wireless".to_string(),
                 props(vec![
-                    ("mode", Value::from(mode.to_string())),
-                    ("ssid", Value::from(ssid.as_bytes().to_vec())),
+                    ("mode", Variant::from(mode.to_string())),
+                    ("ssid", Variant::from(ssid.as_bytes().to_vec())),
                 ]),
             )])
         };
@@ -1223,8 +1223,8 @@ mod tests {
             (
                 "connection".to_string(),
                 props(vec![
-                    ("id", Value::from("Work")),
-                    ("uuid", Value::from("abcd")),
+                    ("id", Variant::from("Work")),
+                    ("uuid", Variant::from("abcd")),
                 ]),
             ),
             (
@@ -1232,9 +1232,9 @@ mod tests {
                 props(vec![
                     (
                         "service-type",
-                        Value::from("org.freedesktop.NetworkManager.openvpn"),
+                        Variant::from("org.freedesktop.NetworkManager.openvpn"),
                     ),
-                    ("data", Value::from(data)),
+                    ("data", Variant::from(data)),
                 ]),
             ),
         ]);
@@ -1257,18 +1257,18 @@ mod tests {
             HashMap::new(),
         );
         assert!(!s["vpn"].contains_key("secrets"), "no secret goes back");
-        assert_eq!(s["connection"]["id"], Value::from("Office"));
-        assert_eq!(s["connection"]["uuid"], Value::from("abcd"));
+        assert_eq!(s["connection"]["id"], Variant::from("Office"));
+        assert_eq!(s["connection"]["uuid"], Variant::from("abcd"));
         assert_eq!(
             s["vpn"]["data"],
-            Value::from(HashMap::from([(
+            Variant::from(HashMap::from([(
                 "remote".to_string(),
                 "b.example".to_string()
             )]))
         );
         assert_eq!(
             s["vpn"]["service-type"],
-            Value::from("org.freedesktop.NetworkManager.openvpn")
+            Variant::from("org.freedesktop.NetworkManager.openvpn")
         );
     }
 

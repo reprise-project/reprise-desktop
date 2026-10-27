@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 use zbus::{Connection, Proxy};
+use zbus::{ObjectPath, OwnedVariant, Variant};
 
 use reprisebus::instance::Handoff;
 
@@ -221,43 +221,43 @@ pub enum Msg {
 
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
-fn owned(v: Value<'_>) -> OwnedValue {
+fn owned(v: Variant<'_>) -> OwnedVariant {
     v.try_to_owned().expect("menu property is ownable")
 }
 
-fn props(node: &Node) -> Vec<(&'static str, Value<'static>)> {
+fn props(node: &Node) -> Vec<(&'static str, Variant<'static>)> {
     if node.separator {
-        return vec![("type", Value::from("separator"))];
+        return vec![("type", Variant::from("separator"))];
     }
     let mut out = vec![
-        ("label", Value::from(node.label.clone())),
-        ("enabled", Value::from(true)),
-        ("visible", Value::from(true)),
+        ("label", Variant::from(node.label.clone())),
+        ("enabled", Variant::from(true)),
+        ("visible", Variant::from(true)),
     ];
     if let Some(on) = node.toggle {
         let kind = if node.radio { "radio" } else { "checkmark" };
-        out.push(("toggle-type", Value::from(kind)));
-        out.push(("toggle-state", Value::from(if on { 1i32 } else { 0i32 })));
+        out.push(("toggle-type", Variant::from(kind)));
+        out.push(("toggle-state", Variant::from(if on { 1i32 } else { 0i32 })));
     }
     if node.default {
-        out.push((DEFAULT_PROP, Value::from(true)));
+        out.push((DEFAULT_PROP, Variant::from(true)));
     }
     out
 }
 
-pub fn node_value(node: &Node) -> OwnedValue {
-    let props: HashMap<&str, Value<'static>> = props(node).into_iter().collect();
-    owned(Value::from((node.id, props, Vec::<Value>::new())))
+pub fn node_value(node: &Node) -> OwnedVariant {
+    let props: HashMap<&str, Variant<'static>> = props(node).into_iter().collect();
+    owned(Variant::from((node.id, props, Vec::<Variant>::new())))
 }
 
-fn node_props(node: &Node) -> HashMap<String, OwnedValue> {
+fn node_props(node: &Node) -> HashMap<String, OwnedVariant> {
     props(node)
         .into_iter()
         .map(|(k, v)| (k.to_string(), owned(v)))
         .collect()
 }
 
-type LayoutItem = (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>);
+type LayoutItem = (i32, HashMap<String, OwnedVariant>, Vec<OwnedVariant>);
 
 #[derive(Debug)]
 struct State {
@@ -401,7 +401,7 @@ struct Handoffs(Token);
 
 #[zbus::interface(name = "org.reprise.TrayItem")]
 impl Handoffs {
-    fn provide_platform_data(&self, platform_data: HashMap<String, OwnedValue>) {
+    fn provide_platform_data(&self, platform_data: HashMap<String, OwnedVariant>) {
         *lock(&self.0) = Some(Handoff::from_platform_data(&platform_data));
     }
 }
@@ -523,7 +523,7 @@ impl Menu {
             let mut root = HashMap::new();
             root.insert(
                 "children-display".to_string(),
-                owned(Value::from("submenu")),
+                owned(Variant::from("submenu")),
             );
             let children = s.shown.nodes.iter().map(node_value).collect();
             (s.revision, (0, root, children))
@@ -534,7 +534,7 @@ impl Menu {
         &self,
         ids: Vec<i32>,
         _property_names: Vec<String>,
-    ) -> Vec<(i32, HashMap<String, OwnedValue>)> {
+    ) -> Vec<(i32, HashMap<String, OwnedVariant>)> {
         self.0.with(|s| {
             s.shown
                 .nodes
@@ -550,7 +550,7 @@ impl Menu {
         false
     }
 
-    fn event(&self, id: i32, event_id: &str, _data: Value<'_>, _timestamp: u32) {
+    fn event(&self, id: i32, event_id: &str, _data: Variant<'_>, _timestamp: u32) {
         if event_id == "clicked" {
             self.0.send(Msg::Clicked(id));
         }
@@ -617,7 +617,7 @@ async fn activate_existing(conn: &Connection, config: &Config) {
         Raise::MenuRow(id) => {
             match Proxy::new(conn, config.bus_name, MENU_PATH, MENU_IFACE).await {
                 Ok(proxy) => {
-                    let data = Value::from(0u32);
+                    let data = Variant::from(0u32);
                     proxy
                         .call_method("Event", &(id, "clicked", data, 0u32))
                         .await
@@ -701,8 +701,8 @@ async fn notify(
     }
 }
 
-fn notify_hints(config: &Config) -> HashMap<&'static str, Value<'static>> {
-    HashMap::from([("desktop-entry", Value::from(config.id))])
+fn notify_hints(config: &Config) -> HashMap<&'static str, Variant<'static>> {
+    HashMap::from([("desktop-entry", Variant::from(config.id))])
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -770,11 +770,12 @@ async fn balloon_signals(conn: &Connection) -> futures_util::stream::BoxStream<'
         match zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender(NOTIFY_NAME)
-            .and_then(|b| b.path(NOTIFY_PATH))
-            .and_then(|b| b.interface(NOTIFY_NAME))
-            .and_then(|b| b.member(member))
+            .path(NOTIFY_PATH)
+            .interface(NOTIFY_NAME)
+            .member(member)
+            .build()
         {
-            Ok(b) => rules.push(b.build().into()),
+            Ok(r) => rules.push(r.into()),
             Err(e) => log::warn!("no match rule for {member}: {e}"),
         }
     }
@@ -948,7 +949,7 @@ pub fn start(config: Config, initial: Shown, wake: Wake) -> Started {
                     return;
                 }
                 let owned = conn
-                    .request_name_with_flags(config.bus_name, RequestNameFlags::DoNotQueue.into())
+                    .request_name_with_flags(config.bus_name, RequestNameFlags::DO_NOT_QUEUE)
                     .await;
                 if !matches!(owned, Ok(RequestNameReply::PrimaryOwner)) {
                     activate_existing(&conn, &config).await;
@@ -1083,7 +1084,7 @@ mod tests {
         };
         assert_eq!(
             notify_hints(&config).get("desktop-entry"),
-            Some(&Value::from("reprise-printers"))
+            Some(&Variant::from("reprise-printers"))
         );
     }
 
@@ -1095,14 +1096,11 @@ mod tests {
         std::thread::spawn(move || {
             zbus::block_on(async move {
                 let (server, _client) = futures_util::future::join(
-                    zbus::connection::Builder::async_io_unix_stream(a)
+                    zbus::connection::Builder::unix_stream(a)
                         .server(zbus::Guid::generate())
-                        .expect("server")
                         .p2p()
                         .build(),
-                    zbus::connection::Builder::async_io_unix_stream(b)
-                        .p2p()
-                        .build(),
+                    zbus::connection::Builder::unix_stream(b).p2p().build(),
                 )
                 .await;
                 let config = Config {
@@ -1141,10 +1139,10 @@ mod tests {
         );
     }
 
-    fn sent(h: &Handoff) -> HashMap<String, OwnedValue> {
+    fn sent(h: &Handoff) -> HashMap<String, OwnedVariant> {
         h.platform_data()
             .into_iter()
-            .map(|(k, v)| (k.to_string(), OwnedValue::try_from(v).unwrap()))
+            .map(|(k, v)| (k.to_string(), OwnedVariant::try_from(v).unwrap()))
             .collect()
     }
 
@@ -1244,16 +1242,16 @@ mod tests {
         );
     }
 
-    fn prop(row: &OwnedValue, key: &str) -> Option<OwnedValue> {
-        let Value::Structure(s) = &**row else {
+    fn prop(row: &OwnedVariant, key: &str) -> Option<OwnedVariant> {
+        let Variant::Structure(s) = &**row else {
             panic!("a menu row is not a structure");
         };
-        let Some(Value::Dict(props)) = s.fields().get(1) else {
+        let Some(Variant::Dict(props)) = s.fields().get(1) else {
             panic!("a menu row has no property dictionary");
         };
         props.iter().find_map(|(k, v)| match k {
-            Value::Str(k) if k.as_str() == key => match v {
-                Value::Value(inner) => Some(owned((**inner).clone())),
+            Variant::Str(k) if k.as_str() == key => match v {
+                Variant::Variant(inner) => Some(owned((**inner).clone())),
                 other => Some(owned(other.clone())),
             },
             _ => None,
@@ -1264,31 +1262,37 @@ mod tests {
     #[test]
     fn nodes_serialize_as_dbusmenu_children() {
         let mute = node_value(&Node::toggle(2, "Mute", true));
-        let Value::Structure(s) = &*mute else {
+        let Variant::Structure(s) = &*mute else {
             panic!("a menu row is not a structure");
         };
-        assert_eq!(s.fields().first(), Some(&Value::I32(2)));
-        assert_eq!(prop(&mute, "label"), Some(owned(Value::from("Mute"))));
+        assert_eq!(s.fields().first(), Some(&Variant::I32(2)));
+        assert_eq!(prop(&mute, "label"), Some(owned(Variant::from("Mute"))));
         assert_eq!(
             prop(&mute, "toggle-type"),
-            Some(owned(Value::from("checkmark")))
+            Some(owned(Variant::from("checkmark")))
         );
-        assert_eq!(prop(&mute, "toggle-state"), Some(owned(Value::from(1i32))));
-        assert_eq!(prop(&mute, "enabled"), Some(owned(Value::from(true))));
+        assert_eq!(
+            prop(&mute, "toggle-state"),
+            Some(owned(Variant::from(1i32)))
+        );
+        assert_eq!(prop(&mute, "enabled"), Some(owned(Variant::from(true))));
         assert_eq!(
             prop(&node_value(&Node::toggle(2, "Mute", false)), "toggle-state"),
-            Some(owned(Value::from(0i32)))
+            Some(owned(Variant::from(0i32)))
         );
 
         let saver = node_value(&Node::radio(16, "Power saver", true));
         assert_eq!(
             prop(&saver, "toggle-type"),
-            Some(owned(Value::from("radio")))
+            Some(owned(Variant::from("radio")))
         );
-        assert_eq!(prop(&saver, "toggle-state"), Some(owned(Value::from(1i32))));
+        assert_eq!(
+            prop(&saver, "toggle-state"),
+            Some(owned(Variant::from(1i32)))
+        );
 
         let plain = node_value(&Node::row(1, "Exit"));
-        assert_eq!(prop(&plain, "label"), Some(owned(Value::from("Exit"))));
+        assert_eq!(prop(&plain, "label"), Some(owned(Variant::from("Exit"))));
         assert_eq!(prop(&plain, "toggle-type"), None);
         assert_eq!(
             prop(&plain, DEFAULT_PROP),
@@ -1300,14 +1304,14 @@ mod tests {
                 &node_value(&Node::row(5, "Open").as_default()),
                 DEFAULT_PROP
             ),
-            Some(owned(Value::from(true))),
+            Some(owned(Variant::from(true))),
             "the default row says so"
         );
 
         let sep = node_value(&Node::separator(3));
         assert_eq!(
             prop(&sep, "type"),
-            Some(owned(Value::from("separator"))),
+            Some(owned(Variant::from("separator"))),
             "the separator row must carry type=separator"
         );
         assert_eq!(prop(&sep, "label"), None);
@@ -1316,11 +1320,11 @@ mod tests {
     #[test]
     fn group_properties_match_the_layout_row() {
         let p = node_props(&Node::toggle(2, "Mute", true));
-        assert_eq!(p.get("label"), Some(&owned(Value::from("Mute"))));
-        assert_eq!(p.get("toggle-state"), Some(&owned(Value::from(1i32))));
+        assert_eq!(p.get("label"), Some(&owned(Variant::from("Mute"))));
+        assert_eq!(p.get("toggle-state"), Some(&owned(Variant::from(1i32))));
         assert_eq!(
             node_props(&Node::separator(3)).get("type"),
-            Some(&owned(Value::from("separator")))
+            Some(&owned(Variant::from("separator")))
         );
     }
 }

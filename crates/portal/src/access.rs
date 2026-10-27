@@ -15,7 +15,7 @@ use reprisekit::theme::TextUnits;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use zbus::zvariant::{ObjectPath, OwnedValue, Value};
+use zbus::{ObjectPath, OwnedVariant, Variant};
 
 const CLIENT_W: i32 = 391;
 const FIRST_Y: i32 = 12;
@@ -45,9 +45,9 @@ impl Access {
         title: String,
         subtitle: String,
         body: String,
-        options: HashMap<String, Value<'_>>,
+        options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         let input = Input::from_call(&parent_window, title, subtitle, body, &options);
         // The Request object lets the frontend cancel the prompt.
@@ -192,15 +192,15 @@ impl Input {
         title: String,
         subtitle: String,
         body: String,
-        options: &HashMap<String, Value<'_>>,
+        options: &HashMap<String, Variant<'_>>,
     ) -> Input {
         let string = |k: &str| match options.get(k) {
-            Some(Value::Str(s)) => Some(s.to_string()),
+            Some(Variant::Str(s)) => Some(s.to_string()),
             _ => None,
         };
         Input {
             parent: dialog::parent_handle(parent_window),
-            modal: !matches!(options.get("modal"), Some(Value::Bool(false))),
+            modal: !matches!(options.get("modal"), Some(Variant::Bool(false))),
             title,
             subtitle,
             body,
@@ -228,10 +228,10 @@ fn ask(input: &Input, cancel: Arc<AtomicBool>) -> Output {
 
 /// The D-Bus answer: 0 on Allow and 1 otherwise, with the choices as
 /// `a(ss)` whenever the prompt reported them.
-fn reply(out: &Output) -> (u32, HashMap<String, OwnedValue>) {
+fn reply(out: &Output) -> (u32, HashMap<String, OwnedVariant>) {
     let mut r = HashMap::new();
     if !out.choices.is_empty() {
-        let v = Value::new(out.choices.clone())
+        let v = Variant::new(out.choices.clone())
             .try_to_owned()
             .expect("choices are plain strings");
         r.insert("choices".to_string(), v);
@@ -309,7 +309,7 @@ mod tests {
     use reprisekit::controls::form::Control;
     use reprisekit::theme::FontConfig;
     use std::collections::HashMap;
-    use zbus::zvariant::Value;
+    use zbus::Variant;
 
     fn form(input: &Input) -> (Form, (i32, i32)) {
         build_form(
@@ -396,10 +396,10 @@ mod tests {
 
     #[test]
     fn a_call_becomes_input() {
-        let mut options: HashMap<String, Value<'_>> = HashMap::new();
-        options.insert("modal".into(), Value::Bool(false));
-        options.insert("icon".into(), Value::from("camera-web-symbolic"));
-        options.insert("deny_label".into(), Value::from("_No"));
+        let mut options: HashMap<String, Variant<'_>> = HashMap::new();
+        options.insert("modal".into(), Variant::Bool(false));
+        options.insert("icon".into(), Variant::from("camera-web-symbolic"));
+        options.insert("deny_label".into(), Variant::from("_No"));
         let input = Input::from_call("x11:12", "T".into(), "S".into(), "B".into(), &options);
         assert_eq!(input.parent, None);
         assert!(!input.modal);

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use zbus::zvariant::OwnedValue;
+use zbus::OwnedVariant;
 use zbus::{Connection, MatchRule, Message, MessageStream};
 
 const ROOT: &str = "org.mpris.MediaPlayer2";
@@ -40,16 +40,16 @@ struct Entry {
     active: u64,
 }
 
-fn bool_of(v: &OwnedValue) -> Option<bool> {
+fn bool_of(v: &OwnedVariant) -> Option<bool> {
     bool::try_from(v.clone()).ok()
 }
 
-fn string_of(v: &OwnedValue) -> Option<String> {
+fn string_of(v: &OwnedVariant) -> Option<String> {
     String::try_from(v.clone()).ok()
 }
 
 /// `xesam:artist` is a list of names; some players send one string.
-fn artists_of(v: &OwnedValue) -> Option<String> {
+fn artists_of(v: &OwnedVariant) -> Option<String> {
     Vec::<String>::try_from(v.clone())
         .map(|a| a.join(", "))
         .ok()
@@ -78,7 +78,7 @@ fn file_name(url: &str) -> String {
 }
 
 impl Entry {
-    fn apply(&mut self, props: &HashMap<String, OwnedValue>) -> bool {
+    fn apply(&mut self, props: &HashMap<String, OwnedVariant>) -> bool {
         let was = self.status;
         for (k, v) in props {
             match k.as_str() {
@@ -91,7 +91,7 @@ impl Entry {
                 }
                 "Metadata" => {
                     let meta =
-                        HashMap::<String, OwnedValue>::try_from(v.clone()).unwrap_or_default();
+                        HashMap::<String, OwnedVariant>::try_from(v.clone()).unwrap_or_default();
                     let get = |k: &str| meta.get(k);
                     self.title = get("xesam:title").and_then(string_of).unwrap_or_default();
                     self.artist = get("xesam:artist").and_then(artists_of).unwrap_or_default();
@@ -143,7 +143,7 @@ impl Players {
         self.clock
     }
 
-    pub fn add(&mut self, name: &str, props: &HashMap<String, OwnedValue>, identity: String) {
+    pub fn add(&mut self, name: &str, props: &HashMap<String, OwnedVariant>, identity: String) {
         let mut e = Entry {
             identity,
             // MPRIS: a player that does not say is controllable.
@@ -155,7 +155,7 @@ impl Players {
         self.players.insert(name.to_string(), e);
     }
 
-    pub fn changed(&mut self, name: &str, props: &HashMap<String, OwnedValue>) {
+    pub fn changed(&mut self, name: &str, props: &HashMap<String, OwnedVariant>) {
         let now = self.clock + 1;
         if let Some(e) = self.players.get_mut(name)
             && e.apply(props)
@@ -246,13 +246,13 @@ enum Run {
     Closed,
 }
 
-async fn read(conn: &Connection, name: &str) -> Option<(HashMap<String, OwnedValue>, String)> {
+async fn read(conn: &Connection, name: &str) -> Option<(HashMap<String, OwnedVariant>, String)> {
     let get_all = |iface: &'static str| async move {
         conn.call_method(Some(name), PATH, Some(PROPERTIES), "GetAll", &(iface,))
             .await
             .ok()?
             .body()
-            .deserialize::<HashMap<String, OwnedValue>>()
+            .deserialize::<HashMap<String, OwnedVariant>>()
             .ok()
     };
     let props = get_all(PLAYER).await?;
@@ -272,7 +272,7 @@ enum Wake {
     Owner(String, String, String),
     Props(
         String,
-        Option<(String, HashMap<String, OwnedValue>, Vec<String>)>,
+        Option<(String, HashMap<String, OwnedVariant>, Vec<String>)>,
     ),
 }
 
@@ -302,17 +302,17 @@ async fn run(feed: &mut Feed, shared: &Mutex<Option<Connection>>) -> Run {
         MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender("org.freedesktop.DBus")
-            .and_then(|b| b.interface("org.freedesktop.DBus"))
-            .and_then(|b| b.member("NameOwnerChanged"))
-            .and_then(|b| b.arg0ns(ROOT))
-            .map(|b| b.build()),
+            .interface("org.freedesktop.DBus")
+            .member("NameOwnerChanged")
+            .arg0ns(ROOT)
+            .build(),
         MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .path(PATH)
-            .and_then(|b| b.interface(PROPERTIES))
-            .and_then(|b| b.member("PropertiesChanged"))
-            .and_then(|b| b.arg(0, PLAYER))
-            .map(|b| b.build()),
+            .interface(PROPERTIES)
+            .member("PropertiesChanged")
+            .arg(0, PLAYER)
+            .build(),
     ];
     let mut streams = Vec::new();
     for rule in rules {
@@ -433,17 +433,17 @@ pub fn watch(waker: repriseapp::Waker) -> Watch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zbus::zvariant::Value;
+    use zbus::Variant;
 
-    fn props(entries: Vec<(&str, Value<'static>)>) -> HashMap<String, OwnedValue> {
+    fn props(entries: Vec<(&str, Variant<'static>)>) -> HashMap<String, OwnedVariant> {
         entries
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.try_to_owned().unwrap()))
             .collect()
     }
 
-    fn status(s: &str) -> HashMap<String, OwnedValue> {
-        props(vec![("PlaybackStatus", Value::from(s.to_string()))])
+    fn status(s: &str) -> HashMap<String, OwnedVariant> {
+        props(vec![("PlaybackStatus", Variant::from(s.to_string()))])
     }
 
     fn picked(p: &Players) -> Option<String> {
@@ -490,22 +490,22 @@ mod tests {
     #[test]
     fn metadata_and_capabilities_reach_the_strip() {
         let mut p = Players::default();
-        let meta: HashMap<String, Value<'static>> = HashMap::from([
-            ("xesam:title".to_string(), Value::from("Song")),
+        let meta: HashMap<String, Variant<'static>> = HashMap::from([
+            ("xesam:title".to_string(), Variant::from("Song")),
             (
                 "xesam:artist".to_string(),
-                Value::from(vec!["One".to_string(), "Two".to_string()]),
+                Variant::from(vec!["One".to_string(), "Two".to_string()]),
             ),
         ]);
         p.add(
             "org.mpris.MediaPlayer2.a",
             &props(vec![
-                ("PlaybackStatus", Value::from("Playing")),
-                ("Metadata", Value::from(meta)),
-                ("CanGoNext", Value::from(true)),
-                ("CanGoPrevious", Value::from(false)),
-                ("CanPlay", Value::from(true)),
-                ("CanPause", Value::from(true)),
+                ("PlaybackStatus", Variant::from("Playing")),
+                ("Metadata", Variant::from(meta)),
+                ("CanGoNext", Variant::from(true)),
+                ("CanGoPrevious", Variant::from(false)),
+                ("CanPlay", Variant::from(true)),
+                ("CanPause", Variant::from(true)),
             ]),
             "A".into(),
         );
@@ -524,7 +524,7 @@ mod tests {
         );
         p.changed(
             "org.mpris.MediaPlayer2.a",
-            &props(vec![("CanControl", Value::from(false))]),
+            &props(vec![("CanControl", Variant::from(false))]),
         );
         let (_, np) = p.pick().unwrap();
         assert!(!np.can_next && !np.can_pause, "uncontrollable: all greyed");
@@ -533,15 +533,15 @@ mod tests {
     #[test]
     fn a_track_with_no_title_shows_its_file_then_the_player() {
         let mut p = Players::default();
-        let meta: HashMap<String, Value<'static>> = HashMap::from([(
+        let meta: HashMap<String, Variant<'static>> = HashMap::from([(
             "xesam:url".to_string(),
-            Value::from("file:///home/u/Music/My%20Song.ogg"),
+            Variant::from("file:///home/u/Music/My%20Song.ogg"),
         )]);
         p.add(
             "org.mpris.MediaPlayer2.a",
             &props(vec![
-                ("PlaybackStatus", Value::from("Paused")),
-                ("Metadata", Value::from(meta)),
+                ("PlaybackStatus", Variant::from("Paused")),
+                ("Metadata", Variant::from(meta)),
             ]),
             "mpv".into(),
         );
@@ -550,7 +550,7 @@ mod tests {
             "org.mpris.MediaPlayer2.a",
             &props(vec![(
                 "Metadata",
-                Value::from(HashMap::<String, Value<'static>>::new()),
+                Variant::from(HashMap::<String, Variant<'static>>::new()),
             )]),
         );
         assert_eq!(p.pick().unwrap().1.title, "mpv");

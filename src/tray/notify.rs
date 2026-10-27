@@ -8,7 +8,7 @@ use reprisekit::icon::IconSource;
 use serde::de::{self, Deserialize, Deserializer, IgnoredAny, SeqAccess, Visitor};
 use std::collections::HashMap;
 use std::path::Path;
-use zbus::zvariant::{Signature, Type};
+use zbus::{Signature, Type};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Urgency {
@@ -348,7 +348,8 @@ fn attribute(tag: &str, name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zbus::zvariant::{LE, Value, serialized::Context, to_bytes};
+    use zbus::Variant;
+    use zbus::wire::{LE, serialized::Context, to_bytes};
 
     /// A PNG of `w` x `h` with no image data: a decoder that reads past the header fails on it.
     fn png_header(w: u32, h: u32) -> Vec<u8> {
@@ -431,8 +432,8 @@ mod tests {
         assert!(actions(&long).is_empty());
     }
 
-    fn round_trip(map: HashMap<&str, Value<'_>>) -> Vec<u8> {
-        let ctxt = Context::new_dbus(LE, 0);
+    fn round_trip(map: HashMap<&str, Variant<'_>>) -> Vec<u8> {
+        let ctxt = Context::new(LE, 0);
         to_bytes(ctxt, &map).unwrap().to_vec()
     }
 
@@ -473,20 +474,20 @@ mod tests {
     #[test]
     fn hints_read_urgency_flags_names_and_image_data() {
         let pixels: Vec<u8> = vec![255, 0, 0, 255, 0, 0, 255, 128];
-        let mut map: HashMap<&str, Value> = HashMap::new();
-        map.insert("urgency", Value::U8(2));
-        map.insert("transient", Value::Bool(true));
-        map.insert("resident", Value::Bool(false));
-        map.insert("desktop-entry", Value::from("org.example.Mail"));
-        map.insert("image-path", Value::from("/tmp/x.png"));
+        let mut map: HashMap<&str, Variant> = HashMap::new();
+        map.insert("urgency", Variant::U8(2));
+        map.insert("transient", Variant::Bool(true));
+        map.insert("resident", Variant::Bool(false));
+        map.insert("desktop-entry", Variant::from("org.example.Mail"));
+        map.insert("image-path", Variant::from("/tmp/x.png"));
         map.insert(
             "image-data",
-            Value::from((2i32, 1i32, 8i32, true, 8i32, 4i32, pixels.clone())),
+            Variant::from((2i32, 1i32, 8i32, true, 8i32, 4i32, pixels.clone())),
         );
-        map.insert("action-icons", Value::Bool(true));
-        map.insert("x-other", Value::from(vec![1u32, 2, 3]));
+        map.insert("action-icons", Variant::Bool(true));
+        map.insert("x-other", Variant::from(vec![1u32, 2, 3]));
         let bytes = round_trip(map);
-        let data = zbus::zvariant::serialized::Data::new(&bytes[..], Context::new_dbus(LE, 0));
+        let data = zbus::wire::serialized::Data::new(&bytes[..], Context::new(LE, 0));
         let (raw, _): (HashMap<String, Hint>, _) = data.deserialize().unwrap();
         assert_eq!(raw.get("x-other"), Some(&Hint::Other));
         let h = hints(raw);
@@ -528,42 +529,42 @@ mod tests {
 
     #[test]
     fn sound_hints_pick_a_file_over_a_name_and_suppress_silences_both() {
-        let read = |map: HashMap<&str, Value>| {
+        let read = |map: HashMap<&str, Variant>| {
             let bytes = round_trip(map);
-            let data = zbus::zvariant::serialized::Data::new(&bytes[..], Context::new_dbus(LE, 0));
+            let data = zbus::wire::serialized::Data::new(&bytes[..], Context::new(LE, 0));
             let (raw, _): (HashMap<String, Hint>, _) = data.deserialize().unwrap();
             let h = hints(raw);
             (h.sound.clone(), h.balloon_sound())
         };
-        let mut map: HashMap<&str, Value> = HashMap::new();
-        map.insert("sound-name", Value::from("bell"));
-        map.insert("sound-file", Value::from("/usr/share/sounds/x.oga"));
+        let mut map: HashMap<&str, Variant> = HashMap::new();
+        map.insert("sound-name", Variant::from("bell"));
+        map.insert("sound-file", Variant::from("/usr/share/sounds/x.oga"));
         let file = Sound::File("/usr/share/sounds/x.oga".into());
         assert_eq!(read(map), (Some(file.clone()), Some(file)));
 
-        let mut map: HashMap<&str, Value> = HashMap::new();
-        map.insert("sound-name", Value::from("bell"));
-        map.insert("sound-file", Value::from("relative.oga"));
+        let mut map: HashMap<&str, Variant> = HashMap::new();
+        map.insert("sound-name", Variant::from("bell"));
+        map.insert("sound-file", Variant::from("relative.oga"));
         let bell = Sound::Name("bell".into());
         assert_eq!(read(map), (Some(bell.clone()), Some(bell)));
 
         let default = Sound::Name(DEFAULT_SOUND.into());
         assert_eq!(read(HashMap::new()), (None, Some(default)));
 
-        let mut map: HashMap<&str, Value> = HashMap::new();
-        map.insert("sound-name", Value::from("bell"));
-        map.insert("suppress-sound", Value::Bool(true));
+        let mut map: HashMap<&str, Variant> = HashMap::new();
+        map.insert("sound-name", Variant::from("bell"));
+        map.insert("suppress-sound", Variant::Bool(true));
         assert_eq!(read(map).1, None);
     }
 
     #[test]
     fn older_hint_names_and_integer_flags_still_count() {
-        let mut map: HashMap<&str, Value> = HashMap::new();
-        map.insert("urgency", Value::U8(0));
-        map.insert("transient", Value::I32(1));
-        map.insert("image_path", Value::from("dialog-information"));
+        let mut map: HashMap<&str, Variant> = HashMap::new();
+        map.insert("urgency", Variant::U8(0));
+        map.insert("transient", Variant::I32(1));
+        map.insert("image_path", Variant::from("dialog-information"));
         let bytes = round_trip(map);
-        let data = zbus::zvariant::serialized::Data::new(&bytes[..], Context::new_dbus(LE, 0));
+        let data = zbus::wire::serialized::Data::new(&bytes[..], Context::new(LE, 0));
         let (raw, _): (HashMap<String, Hint>, _) = data.deserialize().unwrap();
         let h = hints(raw);
         assert_eq!(h.urgency, Urgency::Low);

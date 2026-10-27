@@ -112,45 +112,46 @@ fn describe(method: &str, e: zbus::Error, dismissed: impl FnOnce() -> bool) -> E
 
 #[derive(Debug, Default)]
 pub struct Bus {
-    conn: Mutex<Option<zbus::blocking::Connection>>,
+    conn: Mutex<Option<zbus::Connection>>,
 }
 
 impl Bus {
-    fn conn(&self) -> Result<zbus::blocking::Connection> {
+    fn conn(&self) -> Result<zbus::Connection> {
         let mut c = lock(&self.conn);
         if let Some(c) = c.as_ref() {
             return Ok(c.clone());
         }
-        let conn = zbus::blocking::Connection::system()
+        let conn = reprisebus::connect(zbus::connection::Builder::system())
             .map_err(|e| Error::Refused(format!("The system bus is not there ({e}).")))?;
         *c = Some(conn.clone());
         Ok(conn)
     }
 
-    fn proxy(&self) -> Result<zbus::blocking::Proxy<'static>> {
+    fn proxy(&self) -> Result<zbus::Proxy<'static>> {
         let conn = self.conn()?;
-        zbus::blocking::proxy::Builder::new(&conn)
-            .destination(DEST)
-            .and_then(|b| b.path(PATH))
-            .and_then(|b| b.interface(IFACE))
-            .map(|b| b.cache_properties(zbus::proxy::CacheProperties::No))
-            .and_then(|b| b.build())
-            .map_err(|e| bus_error("proxy", e))
+        reprisebus::wait(
+            zbus::proxy::Builder::new(&conn)
+                .destination(DEST)
+                .path(PATH)
+                .interface(IFACE)
+                .cache_properties(zbus::proxy::CacheProperties::No)
+                .build(),
+        )
+        .map_err(|e| bus_error("proxy", e))
     }
 
     fn send<B>(&self, method: &str, body: &B) -> Result<()>
     where
-        B: serde::Serialize + zbus::zvariant::DynamicType,
+        B: serde::Serialize + zbus::DynamicType,
     {
         let proxy = self.proxy()?;
         let call = || {
-            proxy
-                .call_with_flags(
-                    method,
-                    zbus::proxy::MethodFlags::AllowInteractiveAuth.into(),
-                    body,
-                )
-                .map(Option::unwrap_or_default)
+            reprisebus::wait(proxy.call_with_flags(
+                method,
+                zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH,
+                body,
+            ))
+            .map(Option::unwrap_or_default)
         };
         send_with(method, call, || self.running())
     }
@@ -162,8 +163,12 @@ impl Bus {
         let Ok(name) = zbus::names::BusName::try_from(DEST) else {
             return false;
         };
-        zbus::blocking::fdo::DBusProxy::new(&conn)
-            .is_ok_and(|d| d.name_has_owner(name).unwrap_or(false))
+        reprisebus::wait(async {
+            match zbus::fdo::DBusProxy::new(&conn).await {
+                Ok(d) => d.name_has_owner(name).await.unwrap_or(false),
+                Err(_) => false,
+            }
+        })
     }
 }
 
@@ -218,11 +223,12 @@ impl Helper for Bus {
         let Ok(conn) = self.conn() else {
             return false;
         };
-        let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&conn) else {
+        let Ok(dbus) = reprisebus::wait(zbus::fdo::DBusProxy::new(&conn)) else {
             return false;
         };
         let has = |names: Vec<zbus::names::OwnedBusName>| names.iter().any(|n| n.as_str() == DEST);
-        dbus.list_activatable_names().is_ok_and(has) || dbus.list_names().is_ok_and(has)
+        reprisebus::wait(dbus.list_activatable_names()).is_ok_and(has)
+            || reprisebus::wait(dbus.list_names()).is_ok_and(has)
     }
 
     fn call(&self, call: &Call) -> Result<()> {
@@ -260,13 +266,13 @@ impl Helper for Bus {
 
     fn devices(&self, timeout: i32, exclude: &[&str]) -> Result<BTreeMap<String, String>> {
         let none: &[&str] = &[];
-        let (error, found): (String, BTreeMap<String, String>) = self
-            .proxy()?
-            .call_with_flags(
+        let proxy = self.proxy()?;
+        let (error, found): (String, BTreeMap<String, String>) =
+            reprisebus::wait(proxy.call_with_flags(
                 "DevicesGet",
-                zbus::proxy::MethodFlags::AllowInteractiveAuth.into(),
+                zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH,
                 &(timeout, 0i32, none, exclude),
-            )
+            ))
             .map_err(|e| bus_error("DevicesGet", e))?
             .unwrap_or_default();
         outcome("DevicesGet", &error).map(|()| found)
@@ -353,7 +359,7 @@ mod tests {
     #[test]
     fn not_privileged_is_a_dismissal_or_a_refusal() {
         let msg = zbus::Message::method_call("/", "PrinterDelete")
-            .and_then(|b| b.build(&()))
+            .build(&())
             .expect("a method call");
         let error = |name: &'static str| {
             zbus::Error::MethodError(
@@ -381,7 +387,7 @@ mod tests {
 
     fn bus_failure(name: &'static str, text: &str) -> zbus::Error {
         let msg = zbus::Message::method_call("/", "PrinterSetEnabled")
-            .and_then(|b| b.build(&()))
+            .build(&())
             .expect("a method call");
         zbus::Error::MethodError(
             zbus::names::OwnedErrorName::try_from(name).expect("an error name"),

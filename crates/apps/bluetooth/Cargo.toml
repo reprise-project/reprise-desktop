@@ -24,5 +24,6 @@ reprisebus = { path = "../../reprisebus" }
 repriseconf = { path = "../../repriseconf" }
 async-channel.workspace = true
 zbus.workspace = true
+zruntime.workspace = true
 futures-util.workspace = true
 log.workspace = true

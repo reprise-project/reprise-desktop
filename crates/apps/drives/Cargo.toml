@@ -21,6 +21,7 @@ repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisetray = { path = "../../reprisetray" }
 reprisefs = { path = "../../reprisefs" }
+reprisebus = { path = "../../reprisebus" }
 repriseconf = { path = "../../repriseconf" }
 zbus.workspace = true
 zeroize.workspace = true

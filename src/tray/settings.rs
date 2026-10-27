@@ -8,8 +8,8 @@ use reprisekit::blue::Variant;
 use reprisekit::interface::Interface;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use zbus::OwnedVariant;
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant::{OwnedValue, Value};
 
 pub const SETTINGS_NAME: &str = "org.freedesktop.impl.portal.desktop.reprise-settings";
 pub const SETTINGS_PATH: &str = "/org/freedesktop/portal/desktop";
@@ -121,71 +121,75 @@ impl Appearance {
             && self.gtk_generated.is_some()
     }
 
-    fn keys(&self) -> Vec<(&'static str, &'static str, Value<'static>)> {
+    fn keys(&self) -> Vec<(&'static str, &'static str, zbus::Variant<'static>)> {
         let (antialiasing, hinting, rgba_order) = self.font_smoothing.gnome_keys();
         vec![
-            (NAMESPACE, "color-scheme", Value::U32(self.color_scheme)),
-            (NAMESPACE, "contrast", Value::U32(self.contrast)),
-            (NAMESPACE, "accent-color", Value::from(self.accent)),
+            (
+                NAMESPACE,
+                "color-scheme",
+                zbus::Variant::U32(self.color_scheme),
+            ),
+            (NAMESPACE, "contrast", zbus::Variant::U32(self.contrast)),
+            (NAMESPACE, "accent-color", zbus::Variant::from(self.accent)),
             (
                 look::NAMESPACE,
                 look::INTERFACE,
-                Value::from(self.interface.as_str()),
+                zbus::Variant::from(self.interface.as_str()),
             ),
             (
                 look::NAMESPACE,
                 look::BLUE_VARIANT,
-                Value::from(self.blue_variant.as_str()),
+                zbus::Variant::from(self.blue_variant.as_str()),
             ),
             (
                 look::NAMESPACE,
                 look::COLORS,
-                Value::from(self.colors.clone()),
+                zbus::Variant::from(self.colors.clone()),
             ),
             (
                 look::NAMESPACE,
                 look::ICON_THEME,
-                Value::from(self.icon_theme.clone()),
+                zbus::Variant::from(self.icon_theme.clone()),
             ),
             (
                 look::NAMESPACE,
                 look::SHELL_DLG,
-                Value::from(self.shell_dlg.clone()),
+                zbus::Variant::from(self.shell_dlg.clone()),
             ),
             (
                 look::NAMESPACE,
                 look::FONT_FAMILY,
-                Value::from(self.font_family.clone()),
+                zbus::Variant::from(self.font_family.clone()),
             ),
             (
                 look::NAMESPACE,
                 look::FONT_ANTIALIAS,
-                Value::from(self.font_antialias.to_string()),
+                zbus::Variant::from(self.font_antialias.to_string()),
             ),
             (
                 look::NAMESPACE,
                 look::GLASS_MODE,
-                Value::from(self.glass_mode.as_str()),
+                zbus::Variant::from(self.glass_mode.as_str()),
             ),
             (
                 look::NAMESPACE,
                 look::GLASS_MATERIAL,
-                Value::from(self.glass_material.as_str()),
+                zbus::Variant::from(self.glass_material.as_str()),
             ),
             (
                 look::NAMESPACE,
                 look::TEXT_SIZE,
-                Value::from(self.text_size.to_string()),
+                zbus::Variant::from(self.text_size.to_string()),
             ),
             (
                 look::NAMESPACE,
                 look::DOUBLE_CLICK_MS,
-                Value::from(self.double_click_ms.to_string()),
+                zbus::Variant::from(self.double_click_ms.to_string()),
             ),
             (
                 GNOME,
                 "color-scheme",
-                Value::from(if self.dark() {
+                zbus::Variant::from(if self.dark() {
                     "prefer-dark"
                 } else {
                     "default"
@@ -194,47 +198,59 @@ impl Appearance {
             (
                 GNOME,
                 "gtk-theme",
-                Value::from(self.gtk_theme().to_string()),
+                zbus::Variant::from(self.gtk_theme().to_string()),
             ),
             // Classic's generated theme draws its scroll bars beside the
             // content, never over it.
             (
                 GNOME,
                 "overlay-scrolling",
-                Value::Bool(!self.classic_gtk_theme()),
+                zbus::Variant::Bool(!self.classic_gtk_theme()),
             ),
-            (GNOME, "icon-theme", Value::from(self.icon_theme.clone())),
+            (
+                GNOME,
+                "icon-theme",
+                zbus::Variant::from(self.icon_theme.clone()),
+            ),
             (
                 GNOME,
                 "cursor-theme",
-                Value::from(self.cursor_theme.clone()),
+                zbus::Variant::from(self.cursor_theme.clone()),
             ),
-            (GNOME, "cursor-size", Value::I32(self.cursor_size)),
-            (GNOME, "font-name", Value::from(self.font_name.clone())),
+            (GNOME, "cursor-size", zbus::Variant::I32(self.cursor_size)),
+            (
+                GNOME,
+                "font-name",
+                zbus::Variant::from(self.font_name.clone()),
+            ),
             // GTK3 leaves text unsmoothed and unhinted at 0 dpi until the
             // portal names these, so every one is answered.
-            (GNOME, "font-antialiasing", Value::from(antialiasing)),
-            (GNOME, "font-hinting", Value::from(hinting)),
-            (GNOME, "font-rgba-order", Value::from(rgba_order)),
+            (
+                GNOME,
+                "font-antialiasing",
+                zbus::Variant::from(antialiasing),
+            ),
+            (GNOME, "font-hinting", zbus::Variant::from(hinting)),
+            (GNOME, "font-rgba-order", zbus::Variant::from(rgba_order)),
             (
                 GNOME,
                 "text-scaling-factor",
-                Value::F64(self.text_size as f64 / 100.0),
+                zbus::Variant::F64(self.text_size as f64 / 100.0),
             ),
             // GTK4 falls back to its simple module when the namespace lacks
             // this key; empty lets it pick text-input-v3 (input methods).
-            (GNOME, "gtk-im-module", Value::from("")),
+            (GNOME, "gtk-im-module", zbus::Variant::from("")),
             // GTK's fallback is close only, which client-drawn captions
             // (Chromium, libadwaita) then show.
             (
                 GNOME_WM,
                 "button-layout",
-                Value::from(":minimize,maximize,close"),
+                zbus::Variant::from(":minimize,maximize,close"),
             ),
         ]
     }
 
-    fn get(&self, namespace: &str, key: &str) -> Option<Value<'static>> {
+    fn get(&self, namespace: &str, key: &str) -> Option<zbus::Variant<'static>> {
         self.keys()
             .into_iter()
             .find(|(n, k, _)| *n == namespace && *k == key)
@@ -287,8 +303,8 @@ impl Settings {
         2
     }
 
-    fn read_all(&self, namespaces: Vec<String>) -> HashMap<String, HashMap<String, OwnedValue>> {
-        let mut out: HashMap<String, HashMap<String, OwnedValue>> = HashMap::new();
+    fn read_all(&self, namespaces: Vec<String>) -> HashMap<String, HashMap<String, OwnedVariant>> {
+        let mut out: HashMap<String, HashMap<String, OwnedVariant>> = HashMap::new();
         let keys = lock(&self.current).keys();
         for (namespace, key, value) in keys {
             if matches(&namespaces, namespace)
@@ -302,14 +318,14 @@ impl Settings {
         out
     }
 
-    fn read_one(&self, namespace: &str, key: &str) -> Result<OwnedValue, PortalError> {
+    fn read_one(&self, namespace: &str, key: &str) -> Result<OwnedVariant, PortalError> {
         self.lookup(namespace, key)
     }
 
     /// Version 1's reader. The frontend's own `Read` is the one that
     /// wraps the value in a second variant; the backend returns it bare,
     /// as xdg-desktop-portal-gtk does.
-    fn read(&self, namespace: &str, key: &str) -> Result<OwnedValue, PortalError> {
+    fn read(&self, namespace: &str, key: &str) -> Result<OwnedVariant, PortalError> {
         self.lookup(namespace, key)
     }
 
@@ -318,17 +334,17 @@ impl Settings {
         emitter: &SignalEmitter<'_>,
         namespace: &str,
         key: &str,
-        value: Value<'_>,
+        value: zbus::Variant<'_>,
     ) -> zbus::Result<()>;
 }
 
 impl Settings {
-    fn lookup(&self, namespace: &str, key: &str) -> Result<OwnedValue, PortalError> {
+    fn lookup(&self, namespace: &str, key: &str) -> Result<OwnedVariant, PortalError> {
         if ![NAMESPACE, GNOME, GNOME_WM, look::NAMESPACE].contains(&namespace) {
             return Err(PortalError::NotFound(format!("namespace {namespace}")));
         }
         match lock(&self.current).get(namespace, key) {
-            Some(v) => Ok(v.try_to_owned().map_err(zbus::Error::from)?),
+            Some(v) => Ok(v.try_to_owned()?),
             None => Err(PortalError::NotFound(format!("key {key}"))),
         }
     }
@@ -359,7 +375,7 @@ pub async fn update(conn: &zbus::Connection, current: &Mutex<Appearance>, next: 
 fn changed(
     prev: &Appearance,
     next: &Appearance,
-) -> Vec<(&'static str, &'static str, Value<'static>)> {
+) -> Vec<(&'static str, &'static str, zbus::Variant<'static>)> {
     next.keys()
         .into_iter()
         .zip(prev.keys())
@@ -477,7 +493,7 @@ mod tests {
         let slow = crate::config::Config::parse("[metrics]\ndouble_click_ms = 900\n").unwrap();
         assert_eq!(
             Appearance::of(&slow).get(look::NAMESPACE, look::DOUBLE_CLICK_MS),
-            Some(Value::from("900"))
+            Some(zbus::Variant::from("900"))
         );
     }
 
@@ -546,10 +562,13 @@ mod tests {
         assert_eq!(large.theme.fonts.size_px, 17);
         let big = Appearance::of(&large);
         assert_eq!(big.font_name, "Tahoma, DejaVu Sans 8.5");
-        assert_eq!(big.get(GNOME, "text-scaling-factor"), Some(Value::F64(1.5)));
+        assert_eq!(
+            big.get(GNOME, "text-scaling-factor"),
+            Some(zbus::Variant::F64(1.5))
+        );
         assert_eq!(
             big.get(look::NAMESPACE, look::TEXT_SIZE),
-            Some(Value::from("150"))
+            Some(zbus::Variant::from("150"))
         );
         assert_eq!(
             (a.cursor_theme.clone(), a.cursor_size as u32),
@@ -593,7 +612,7 @@ mod tests {
     #[test]
     fn gtk_is_told_to_pick_its_input_method_module_itself() {
         let a = Appearance::of(&crate::config::Config::default());
-        assert_eq!(a.get(GNOME, "gtk-im-module"), Some(Value::from("")));
+        assert_eq!(a.get(GNOME, "gtk-im-module"), Some(zbus::Variant::from("")));
     }
 
     #[test]
@@ -601,7 +620,7 @@ mod tests {
         let a = Appearance::of(&crate::config::Config::default());
         assert_eq!(
             a.get(GNOME_WM, "button-layout"),
-            Some(Value::from(":minimize,maximize,close"))
+            Some(zbus::Variant::from(":minimize,maximize,close"))
         );
         let s = Settings {
             current: Arc::new(Mutex::new(a)),
@@ -613,35 +632,39 @@ mod tests {
     fn classics_generated_theme_turns_overlay_scrolling_off() {
         let overlay = |a: &Appearance| a.get(GNOME, "overlay-scrolling").unwrap();
         let mut c = crate::config::Config::default();
-        assert_eq!(overlay(&Appearance::of(&c)), Value::Bool(true), "Adwaita");
+        assert_eq!(
+            overlay(&Appearance::of(&c)),
+            zbus::Variant::Bool(true),
+            "Adwaita"
+        );
         c.toolkits.gtk_theme = "reprise".into();
         assert_eq!(
             overlay(&Appearance::of(&c)),
-            Value::Bool(true),
+            zbus::Variant::Bool(true),
             "nothing written yet"
         );
         let classic = Appearance {
             gtk_generated: Some("Reprise"),
             ..Appearance::of(&c)
         };
-        assert_eq!(overlay(&classic), Value::Bool(false));
+        assert_eq!(overlay(&classic), zbus::Variant::Bool(false));
         c.interface = Interface::Blue;
         let blue = Appearance {
             gtk_generated: Some("Reprise-alt"),
             ..Appearance::of(&c)
         };
-        assert_eq!(overlay(&blue), Value::Bool(true));
+        assert_eq!(overlay(&blue), zbus::Variant::Bool(true));
         assert!(
             changed(&classic, &blue)
                 .iter()
-                .any(|&(_, k, ref v)| k == "overlay-scrolling" && *v == Value::Bool(true))
+                .any(|&(_, k, ref v)| k == "overlay-scrolling" && *v == zbus::Variant::Bool(true))
         );
     }
 
     #[test]
     fn gtk_reads_the_font_smoothing_and_a_change_signals_it() {
         let read = |a: &Appearance, key| match a.get(GNOME, key).unwrap() {
-            Value::Str(s) => s.to_string(),
+            zbus::Variant::Str(s) => s.to_string(),
             v => panic!("{key} is {v:?}"),
         };
         let mut c = crate::config::Config::default();
@@ -651,7 +674,7 @@ mod tests {
         assert_eq!(read(&grayscale, "font-rgba-order"), "rgb");
         assert_eq!(
             grayscale.get(GNOME, "text-scaling-factor"),
-            Some(Value::F64(1.0))
+            Some(zbus::Variant::F64(1.0))
         );
         c.toolkits.font_smoothing = FontSmoothing::Subpixel;
         let subpixel = Appearance::of(&c);
@@ -668,8 +691,8 @@ mod tests {
         assert_eq!(
             changed(&grayscale, &none),
             [
-                (GNOME, "font-antialiasing", Value::from("none")),
-                (GNOME, "font-hinting", Value::from("full")),
+                (GNOME, "font-antialiasing", zbus::Variant::from("none")),
+                (GNOME, "font-hinting", zbus::Variant::from("full")),
             ]
         );
     }
@@ -707,15 +730,19 @@ mod tests {
         assert_eq!(
             changed(&light, &dark),
             [
-                (NAMESPACE, "color-scheme", Value::U32(1)),
+                (NAMESPACE, "color-scheme", zbus::Variant::U32(1)),
                 (
                     look::NAMESPACE,
                     look::COLORS,
-                    Value::from(dark.colors.clone())
+                    zbus::Variant::from(dark.colors.clone())
                 ),
-                (look::NAMESPACE, look::GLASS_MODE, Value::from("dark")),
-                (GNOME, "color-scheme", Value::from("prefer-dark")),
-                (GNOME, "gtk-theme", Value::from("Adwaita-dark")),
+                (
+                    look::NAMESPACE,
+                    look::GLASS_MODE,
+                    zbus::Variant::from("dark")
+                ),
+                (GNOME, "color-scheme", zbus::Variant::from("prefer-dark")),
+                (GNOME, "gtk-theme", zbus::Variant::from("Adwaita-dark")),
             ],
             "the scheme, the colours and the mode move; the accent, icons, cursor and font stay"
         );

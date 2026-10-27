@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+use zbus::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
 
 pub const CAP_KEYBOARD: u32 = 1;
 pub const CAP_POINTER: u32 = 2;
@@ -20,7 +20,7 @@ pub const MAX_BARRIERS: usize = 64;
 pub(crate) struct CaptureSession {
     capture: CaptureHandle,
     eis: Option<crate::inputlink::EisHandle>,
-    _relay: zbus::Task<()>,
+    _relay: zruntime::Task<(), zruntime::Shared>,
 }
 
 pub struct InputCapture {
@@ -121,11 +121,11 @@ impl InputCapture {
         session_handle: ObjectPath<'_>,
         app_id: String,
         parent_window: String,
-        options: HashMap<String, Value<'_>>,
+        options: HashMap<String, Variant<'_>>,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         crate::check_session(&session_handle)?;
         let Some(link) = live(&self.link) else {
@@ -168,10 +168,7 @@ impl InputCapture {
         let path: OwnedObjectPath = session_handle.clone().into();
         // Relay the compositor's events as portal signals for as long as
         // the session lives; the task dies with the session's data.
-        let task = conn.executor().spawn(
-            relay(conn.clone(), path.clone(), events),
-            "input-capture-relay",
-        );
+        let task = zruntime::spawn(relay(conn.clone(), path.clone(), events));
         crate::replace_session(
             &self.sessions,
             session_handle.to_string(),
@@ -197,7 +194,7 @@ impl InputCapture {
         let mut r = HashMap::new();
         r.insert(
             "capabilities".into(),
-            Value::from(caps).try_to_owned().expect("u32"),
+            Variant::from(caps).try_to_owned().expect("u32"),
         );
         Ok((RESPONSE_OK, r))
     }
@@ -208,8 +205,8 @@ impl InputCapture {
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         _app_id: String,
-        _options: HashMap<String, Value<'_>>,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        _options: HashMap<String, Variant<'_>>,
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         let Some(link) = live(&self.link) else {
             return Ok((RESPONSE_OTHER, HashMap::new()));
@@ -237,11 +234,11 @@ impl InputCapture {
         let mut r = HashMap::new();
         r.insert(
             "zones".into(),
-            Value::from(tuples).try_to_owned().expect("zones"),
+            Variant::from(tuples).try_to_owned().expect("zones"),
         );
         r.insert(
             "zone_set".into(),
-            Value::from(set).try_to_owned().expect("u32"),
+            Variant::from(set).try_to_owned().expect("u32"),
         );
         Ok((RESPONSE_OK, r))
     }
@@ -253,10 +250,10 @@ impl InputCapture {
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         _app_id: String,
-        _options: HashMap<String, Value<'_>>,
-        barriers: Vec<HashMap<String, Value<'_>>>,
+        _options: HashMap<String, Variant<'_>>,
+        barriers: Vec<HashMap<String, Variant<'_>>>,
         zone_set: u32,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         let Some(link) = live(&self.link) else {
             return Ok((RESPONSE_OTHER, HashMap::new()));
@@ -297,7 +294,7 @@ impl InputCapture {
         let mut r = HashMap::new();
         r.insert(
             "failed_barriers".into(),
-            Value::from(failed).try_to_owned().expect("au"),
+            Variant::from(failed).try_to_owned().expect("au"),
         );
         Ok((RESPONSE_OK, r))
     }
@@ -307,8 +304,8 @@ impl InputCapture {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         _app_id: String,
-        _options: HashMap<String, Value<'_>>,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        _options: HashMap<String, Variant<'_>>,
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         log::info!("InputCapture.Enable {}", session_handle.as_str());
         self.with_capture(&session_handle, |c| c.enable())
@@ -319,8 +316,8 @@ impl InputCapture {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         _app_id: String,
-        _options: HashMap<String, Value<'_>>,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        _options: HashMap<String, Variant<'_>>,
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         log::info!("InputCapture.Disable {}", session_handle.as_str());
         self.with_capture(&session_handle, |c| c.disable())
@@ -331,8 +328,8 @@ impl InputCapture {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         _app_id: String,
-        options: HashMap<String, Value<'_>>,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+        options: HashMap<String, Variant<'_>>,
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         let id = options
             .get("activation_id")
@@ -354,8 +351,8 @@ impl InputCapture {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         session_handle: ObjectPath<'_>,
         app_id: String,
-        _options: HashMap<String, Value<'_>>,
-    ) -> zbus::fdo::Result<zbus::zvariant::OwnedFd> {
+        _options: HashMap<String, Variant<'_>>,
+    ) -> zbus::fdo::Result<zbus::OwnedFd> {
         self.frontend.check(&hdr).await?;
         if live(&self.link).is_none() {
             return Err(zbus::fdo::Error::Failed("no input link".into()));
@@ -377,25 +374,25 @@ impl InputCapture {
     async fn disabled(
         emitter: &SignalEmitter<'_>,
         session_handle: OwnedObjectPath,
-        options: HashMap<String, OwnedValue>,
+        options: HashMap<String, OwnedVariant>,
     ) -> zbus::Result<()>;
     #[zbus(signal)]
     async fn activated(
         emitter: &SignalEmitter<'_>,
         session_handle: OwnedObjectPath,
-        options: HashMap<String, OwnedValue>,
+        options: HashMap<String, OwnedVariant>,
     ) -> zbus::Result<()>;
     #[zbus(signal)]
     async fn deactivated(
         emitter: &SignalEmitter<'_>,
         session_handle: OwnedObjectPath,
-        options: HashMap<String, OwnedValue>,
+        options: HashMap<String, OwnedVariant>,
     ) -> zbus::Result<()>;
     #[zbus(signal)]
     async fn zones_changed(
         emitter: &SignalEmitter<'_>,
         session_handle: OwnedObjectPath,
-        options: HashMap<String, OwnedValue>,
+        options: HashMap<String, OwnedVariant>,
     ) -> zbus::Result<()>;
 }
 
@@ -404,7 +401,7 @@ impl InputCapture {
         &self,
         session: &ObjectPath<'_>,
         f: impl FnOnce(&CaptureHandle),
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         if live(&self.link).is_none() {
             return Ok((RESPONSE_OTHER, HashMap::new()));
         }
@@ -433,7 +430,7 @@ async fn relay(
         Err(_) => return,
     };
     while let Ok(ev) = events.recv().await {
-        let mut opts: HashMap<String, OwnedValue> = HashMap::new();
+        let mut opts: HashMap<String, OwnedVariant> = HashMap::new();
         let r = match ev {
             CaptureEvent::Activated {
                 activation_id,
@@ -443,22 +440,22 @@ async fn relay(
             } => {
                 opts.insert(
                     "activation_id".into(),
-                    Value::from(activation_id).try_to_owned().unwrap(),
+                    Variant::from(activation_id).try_to_owned().unwrap(),
                 );
                 opts.insert(
                     "barrier_id".into(),
-                    Value::from(barrier_id).try_to_owned().unwrap(),
+                    Variant::from(barrier_id).try_to_owned().unwrap(),
                 );
                 opts.insert(
                     "cursor_position".into(),
-                    Value::from((x, y)).try_to_owned().unwrap(),
+                    Variant::from((x, y)).try_to_owned().unwrap(),
                 );
                 InputCapture::activated(&emitter, session.clone(), opts).await
             }
             CaptureEvent::Deactivated { activation_id } => {
                 opts.insert(
                     "activation_id".into(),
-                    Value::from(activation_id).try_to_owned().unwrap(),
+                    Variant::from(activation_id).try_to_owned().unwrap(),
                 );
                 InputCapture::deactivated(&emitter, session.clone(), opts).await
             }

@@ -76,19 +76,23 @@ fn follow_launcher(restarted: &impl Fn()) -> zbus::Result<()> {
     let conn = crate::session()?;
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .sender("org.a11y.Bus")?
-        .path("/org/a11y/bus")?
-        .interface("org.freedesktop.DBus.Properties")?
-        .member("PropertiesChanged")?
-        .add_arg("org.a11y.Status")?
-        .build();
-    let signals = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None)?;
-    let owner = zbus::blocking::fdo::DBusProxy::new(&conn)?
-        .get_name_owner("org.a11y.Bus".try_into()?)
-        .ok()
-        .map(|o| o.to_string());
+        .sender("org.a11y.Bus")
+        .path("/org/a11y/bus")
+        .interface("org.freedesktop.DBus.Properties")
+        .member("PropertiesChanged")
+        .add_arg("org.a11y.Status")
+        .build()?;
+    let signals = crate::wait(zbus::MessageStream::for_match_rule(rule, &conn, None))?;
+    let owner = crate::wait(async {
+        zbus::fdo::DBusProxy::new(&conn)
+            .await?
+            .get_name_owner("org.a11y.Bus".try_into()?)
+            .await
+    })
+    .ok()
+    .map(|o| o.to_string());
     let mut launcher = Launcher::new(owner);
-    for msg in signals {
+    for msg in crate::blocking_iter(signals) {
         let msg = msg?;
         let header = msg.header();
         let Some(sender) = header.sender() else {
@@ -96,7 +100,7 @@ fn follow_launcher(restarted: &impl Fn()) -> zbus::Result<()> {
         };
         let Ok((_, changed, _)) = msg.body().deserialize::<(
             String,
-            std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+            std::collections::HashMap<String, zbus::OwnedVariant>,
             Vec<String>,
         )>() else {
             continue;
@@ -158,22 +162,30 @@ pub fn retry_after(attempt: u32) -> Option<Duration> {
 /// What accesskit_unix's first adapter goes through: `org.a11y.Status`'s properties on the session
 /// bus, then the accessibility bus and its registry, each started on demand.
 fn status() -> zbus::Result<()> {
-    let session = zbus::blocking::Connection::session()?;
-    session.call_method(
-        Some("org.a11y.Bus"),
-        "/org/a11y/bus",
-        Some("org.freedesktop.DBus.Properties"),
-        "GetAll",
-        &("org.a11y.Status",),
-    )?;
-    a11y_bus_of(&session)?.call_method(
-        Some("org.a11y.atspi.Registry"),
-        "/org/a11y/atspi/registry",
-        Some("org.freedesktop.DBus.Peer"),
-        "Ping",
-        &(),
-    )?;
-    Ok(())
+    zbus::block_on(async {
+        let session = zbus::Connection::session().await?;
+        session
+            .call_method(
+                Some("org.a11y.Bus"),
+                "/org/a11y/bus",
+                Some("org.freedesktop.DBus.Properties"),
+                "GetAll",
+                &("org.a11y.Status",),
+            )
+            .await?;
+        zbus::connection::Builder::address(a11y_address(&session).await?.as_str())
+            .build()
+            .await?
+            .call_method(
+                Some("org.a11y.atspi.Registry"),
+                "/org/a11y/atspi/registry",
+                Some("org.freedesktop.DBus.Peer"),
+                "Ping",
+                &(),
+            )
+            .await?;
+        Ok(())
+    })
 }
 
 pub struct KeyNote {
@@ -214,14 +226,14 @@ impl KeyEcho {
                     n.text.as_str(),
                     n.is_text,
                 );
-                let notify = |conn: &zbus::blocking::Connection| {
-                    conn.call_method(
+                let notify = |conn: &zbus::Connection| {
+                    crate::wait(conn.call_method(
                         Some("org.a11y.atspi.Registry"),
                         "/org/a11y/atspi/registry/deviceeventcontroller",
                         Some("org.a11y.atspi.DeviceEventController"),
                         "NotifyListenersSync",
                         &(event,),
-                    )
+                    ))
                 };
                 // A restarted bus leaves the old connection closed: join the new one and retry.
                 let sent = notify(&conn).or_else(|e| match e {
@@ -251,20 +263,23 @@ impl KeyEcho {
 }
 
 /// A connection to the session's accessibility bus, whose address the session bus's `org.a11y.Bus` hands out.
-fn a11y_bus() -> zbus::Result<zbus::blocking::Connection> {
-    a11y_bus_of(&zbus::blocking::Connection::session()?)
+fn a11y_bus() -> zbus::Result<zbus::Connection> {
+    let address =
+        zbus::block_on(async { a11y_address(&zbus::Connection::session().await?).await })?;
+    crate::connect(zbus::connection::Builder::address(address.as_str()))
 }
 
-fn a11y_bus_of(session: &zbus::blocking::Connection) -> zbus::Result<zbus::blocking::Connection> {
-    let reply = session.call_method(
-        Some("org.a11y.Bus"),
-        "/org/a11y/bus",
-        Some("org.a11y.Bus"),
-        "GetAddress",
-        &(),
-    )?;
-    let address: String = reply.body().deserialize()?;
-    zbus::blocking::connection::Builder::address(address.as_str())?.build()
+async fn a11y_address(session: &zbus::Connection) -> zbus::Result<String> {
+    let reply = session
+        .call_method(
+            Some("org.a11y.Bus"),
+            "/org/a11y/bus",
+            Some("org.a11y.Bus"),
+            "GetAddress",
+            &(),
+        )
+        .await?;
+    reply.body().deserialize()
 }
 
 #[cfg(test)]

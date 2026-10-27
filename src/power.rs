@@ -24,8 +24,8 @@ use smithay::{
         timer::{TimeoutAction, Timer},
     },
 };
-use zbus::zvariant::{OwnedFd as ZOwnedFd, OwnedObjectPath};
 use zbus::{Connection, Proxy};
+use zbus::{OwnedFd as ZOwnedFd, OwnedObjectPath};
 
 use crate::compositor::State;
 use crate::config::PowerAction;
@@ -57,10 +57,11 @@ fn signal_rule(
     zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(sender)
-        .and_then(|b| b.path(path))
-        .and_then(|b| b.interface(interface))
-        .and_then(|b| b.member(member))
-        .map(|b| b.build().into())
+        .path(path)
+        .interface(interface)
+        .member(member)
+        .build()
+        .map(Into::into)
         .ok()
 }
 
@@ -191,7 +192,7 @@ async fn run(reports: Sender<Report>, hints: async_channel::Receiver<Hint>) {
         };
         let Ok((iface, changed, _invalidated)) = msg.body().deserialize::<(
             String,
-            std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+            std::collections::HashMap<String, zbus::OwnedVariant>,
             Vec<String>,
         )>() else {
             continue;

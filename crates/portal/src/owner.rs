@@ -129,10 +129,12 @@ fn frontend_needs_restart(frontend: Option<&str>, manager: Option<&str>) -> bool
 }
 
 fn frontend_desktop() -> Option<String> {
-    let conn = zbus::blocking::Connection::session().ok()?;
-    let dbus = zbus::blocking::fdo::DBusProxy::new(&conn).ok()?;
-    let name = zbus::names::BusName::try_from(FRONTEND).ok()?;
-    let pid = dbus.get_connection_unix_process_id(name).ok()?;
+    let pid = zbus::block_on(async {
+        let conn = zbus::Connection::session().await.ok()?;
+        let dbus = zbus::fdo::DBusProxy::new(&conn).await.ok()?;
+        let name = zbus::names::BusName::try_from(FRONTEND).ok()?;
+        dbus.get_connection_unix_process_id(name).await.ok()
+    })?;
     let environ = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
     environ_value(&environ, "XDG_CURRENT_DESKTOP")
 }

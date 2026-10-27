@@ -547,13 +547,13 @@ async fn call(verb: Verb, override_inhibitors: bool) -> Option<Refused> {
     };
     let reply = async {
         let proxy: zbus::Proxy<'_> = zbus::proxy::Builder::new(&conn)
-            .destination(LOGIND)?
-            .path(LOGIND_PATH)?
-            .interface(LOGIND_MANAGER)?
+            .destination(LOGIND)
+            .path(LOGIND_PATH)
+            .interface(LOGIND_MANAGER)
             .cache_properties(zbus::proxy::CacheProperties::No)
             .build()
             .await?;
-        let interactive = zbus::proxy::MethodFlags::AllowInteractiveAuth.into();
+        let interactive = zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH;
         let flags = logind_flags(override_inhibitors);
         match proxy
             .call_with_flags::<_, _, ()>(verb.method_with_flags(), interactive, &(flags,))
@@ -845,17 +845,11 @@ async fn connect(system: bool) -> Option<zbus::Connection> {
     } else {
         zbus::connection::Builder::session()
     };
-    match b.map(|b| b.method_timeout(CALL_TIMEOUT)) {
-        Ok(b) => b
-            .build()
-            .await
-            .map_err(|e| log::warn!("session end: bus: {e}"))
-            .ok(),
-        Err(e) => {
-            log::warn!("session end: bus: {e}");
-            None
-        }
-    }
+    b.method_timeout(CALL_TIMEOUT)
+        .build()
+        .await
+        .map_err(|e| log::warn!("session end: bus: {e}"))
+        .ok()
 }
 
 async fn poll(tx: channel::Sender<Vec<Holder>>, stop: async_channel::Receiver<()>) {
@@ -1156,7 +1150,7 @@ mod tests {
 
     fn method_error(name: &'static str, text: &str) -> zbus::Error {
         let msg = zbus::Message::method_call("/", "M")
-            .and_then(|b| b.build(&()))
+            .build(&())
             .expect("a method call");
         zbus::Error::MethodError(
             zbus::names::OwnedErrorName::try_from(name).expect("an error name"),

@@ -1,7 +1,7 @@
 //! A one-off balloon through `org.freedesktop.Notifications`, for a program with no tray item.
 
 use std::collections::HashMap;
-use zbus::zvariant::Value;
+use zbus::Variant;
 
 const NAME: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
@@ -10,9 +10,9 @@ const PATH: &str = "/org/freedesktop/Notifications";
 /// name. Blocks for at most [`crate::METHOD_TIMEOUT`].
 pub fn notify(app: &str, icon: &str, summary: &str, body: &str) -> zbus::Result<()> {
     let conn = crate::session()?;
-    let hints: HashMap<&str, Value<'_>> = HashMap::new();
+    let hints: HashMap<&str, Variant<'_>> = HashMap::new();
     let actions: Vec<&str> = Vec::new();
-    conn.call_method(
+    crate::wait(conn.call_method(
         Some(NAME),
         PATH,
         Some(NAME),
@@ -27,7 +27,7 @@ pub fn notify(app: &str, icon: &str, summary: &str, body: &str) -> zbus::Result<
             hints,
             -1i32,
         ),
-    )?;
+    ))?;
     Ok(())
 }
 

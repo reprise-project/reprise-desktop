@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use zbus::blocking::Proxy;
+use zbus::Proxy;
 
 /// Reprise's session target (data/systemd). It binds `graphical-session.target`, so units wanted
 /// by or part of that target run with the session.
@@ -88,34 +88,31 @@ const SETTLE: Duration = Duration::from_secs(3);
 /// `ExecStart`'s D-Bus signature `a(sasbttttuii)`: the binary's path comes first.
 type ExecCommand = (String, Vec<String>, bool, u64, u64, u64, u64, u32, i32, i32);
 
-fn load(
-    conn: &zbus::blocking::Connection,
-    name: &str,
-    deadline: Instant,
-) -> zbus::Result<Option<Unit>> {
-    let path: zbus::zvariant::OwnedObjectPath = conn
-        .call_method(
-            Some(DEST),
-            "/org/freedesktop/systemd1",
-            Some("org.freedesktop.systemd1.Manager"),
-            "LoadUnit",
-            &(name,),
-        )?
-        .body()
-        .deserialize()?;
+fn load(conn: &zbus::Connection, name: &str, deadline: Instant) -> zbus::Result<Option<Unit>> {
+    let path: zbus::OwnedObjectPath = crate::wait(conn.call_method(
+        Some(DEST),
+        "/org/freedesktop/systemd1",
+        Some("org.freedesktop.systemd1.Manager"),
+        "LoadUnit",
+        &(name,),
+    ))?
+    .body()
+    .deserialize()?;
     // Uncached: `Job` and the condition result are polled while the start job runs.
-    let unit: Proxy = zbus::blocking::proxy::Builder::new(conn)
-        .destination(DEST)?
-        .path(&path)?
-        .interface("org.freedesktop.systemd1.Unit")?
-        .cache_properties(zbus::proxy::CacheProperties::No)
-        .build()?;
-    if unit.get_property::<String>("LoadState")? != "loaded" {
+    let unit: Proxy = crate::wait(
+        zbus::proxy::Builder::new(conn)
+            .destination(DEST)
+            .path(&path)
+            .interface("org.freedesktop.systemd1.Unit")
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build(),
+    )?;
+    if crate::wait(unit.get_property::<String>("LoadState"))? != "loaded" {
         return Ok(None);
     }
     let mut pulls = Vec::new();
     for p in PULLS {
-        pulls.extend(unit.get_property::<Vec<String>>(p)?);
+        pulls.extend(crate::wait(unit.get_property::<Vec<String>>(p))?);
     }
     if !name.ends_with(".service") {
         return Ok(Some(Unit {
@@ -123,23 +120,25 @@ fn load(
             ..Unit::default()
         }));
     }
-    let programs = Proxy::new(conn, DEST, &path, "org.freedesktop.systemd1.Service")?
-        .get_property::<Vec<ExecCommand>>("ExecStart")?
+    let service = crate::wait(Proxy::new(
+        conn,
+        DEST,
+        &path,
+        "org.freedesktop.systemd1.Service",
+    ))?;
+    let programs = crate::wait(service.get_property::<Vec<ExecCommand>>("ExecStart"))?
         .into_iter()
         .map(|c| PathBuf::from(c.0))
         .collect();
     while Instant::now() < deadline
-        && unit
-            .get_property::<(u32, zbus::zvariant::OwnedObjectPath)>("Job")?
-            .0
-            != 0
+        && crate::wait(unit.get_property::<(u32, zbus::OwnedObjectPath)>("Job"))?.0 != 0
     {
         std::thread::sleep(Duration::from_millis(50));
     }
     let checked = |kind: &str| -> zbus::Result<(u64, bool)> {
         Ok((
-            unit.get_property::<u64>(&format!("{kind}TimestampMonotonic"))?,
-            unit.get_property::<bool>(&format!("{kind}Result"))?,
+            crate::wait(unit.get_property::<u64>(&format!("{kind}TimestampMonotonic")))?,
+            crate::wait(unit.get_property::<bool>(&format!("{kind}Result")))?,
         ))
     };
     Ok(Some(Unit {

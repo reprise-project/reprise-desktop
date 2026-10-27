@@ -4,6 +4,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
+use std::num::NonZeroUsize;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::time::Duration;
@@ -110,25 +111,28 @@ fn adopt(pid: u32, app: &str) -> zbus::Result<()> {
     // Matched before the call: the job can end before its reply arrives.
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .sender("org.freedesktop.systemd1")?
-        .interface(MANAGER)?
-        .member("JobRemoved")?
-        .arg(2, unit.as_str())?
-        .build();
-    let removed = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, Some(4))?;
-    let aux: Vec<(&str, Vec<(&str, zbus::zvariant::Value)>)> = Vec::new();
-    let job: zbus::zvariant::OwnedObjectPath = conn
-        .call_method(
-            Some("org.freedesktop.systemd1"),
-            "/org/freedesktop/systemd1",
-            Some(MANAGER),
-            "StartTransientUnit",
-            &(&unit, "fail", properties, aux),
-        )?
-        .body()
-        .deserialize()?;
-    for m in removed {
-        let (_, path, _, result): (u32, zbus::zvariant::OwnedObjectPath, String, String) =
+        .sender("org.freedesktop.systemd1")
+        .interface(MANAGER)
+        .member("JobRemoved")
+        .arg(2, unit.as_str())
+        .build()?;
+    let removed = reprisebus::wait(zbus::MessageStream::for_match_rule(
+        rule,
+        &conn,
+        NonZeroUsize::new(4),
+    ))?;
+    let aux: Vec<(&str, Vec<(&str, zbus::Variant)>)> = Vec::new();
+    let job: zbus::OwnedObjectPath = reprisebus::wait(conn.call_method(
+        Some("org.freedesktop.systemd1"),
+        "/org/freedesktop/systemd1",
+        Some(MANAGER),
+        "StartTransientUnit",
+        &(&unit, "fail", properties, aux),
+    ))?
+    .body()
+    .deserialize()?;
+    for m in reprisebus::blocking_iter(removed) {
+        let (_, path, _, result): (u32, zbus::OwnedObjectPath, String, String) =
             m?.body().deserialize()?;
         if path == job {
             return match result.as_str() {
@@ -146,7 +150,7 @@ fn transient_scope(
     app: &str,
     suffix: &str,
     pid: u32,
-) -> (String, Vec<(&'static str, zbus::zvariant::Value<'static>)>) {
+) -> (String, Vec<(&'static str, zbus::Variant<'static>)>) {
     let properties = vec![
         ("PIDs", vec![pid].into()),
         ("Slice", "app.slice".into()),
@@ -302,7 +306,7 @@ mod tests {
         assert_eq!(
             properties,
             [
-                ("PIDs", zbus::zvariant::Value::from(vec![4242u32])),
+                ("PIDs", zbus::Variant::from(vec![4242u32])),
                 ("Slice", "app.slice".into()),
                 ("CollectMode", "inactive-or-failed".into()),
             ]

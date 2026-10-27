@@ -10,8 +10,8 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use zbus::OwnedVariant;
 use zbus::message::Header;
-use zbus::zvariant::OwnedValue;
 
 pub const PATH: &str = "/reprise/polkit/Agent";
 const BUS_NAME: &str = reprisebus::polkit::NAME;
@@ -92,7 +92,7 @@ fn preselect(users: &[String], me: Option<&str>) -> usize {
         .unwrap_or(0)
 }
 
-fn users_of(ids: &[(String, HashMap<String, OwnedValue>)]) -> Vec<String> {
+fn users_of(ids: &[(String, HashMap<String, OwnedVariant>)]) -> Vec<String> {
     ids.iter()
         .filter(|(kind, _)| kind == "unix-user")
         .filter_map(|(_, d)| d.get("uid"))
@@ -172,7 +172,7 @@ impl Agent {
         _icon_name: &str,
         details: HashMap<&str, &str>,
         cookie: &str,
-        identities: Vec<(String, HashMap<String, OwnedValue>)>,
+        identities: Vec<(String, HashMap<String, OwnedVariant>)>,
         #[zbus(connection)] conn: &zbus::Connection,
         #[zbus(header)] hdr: Header<'_>,
     ) -> Result<(), Error> {
@@ -256,16 +256,11 @@ async fn session_id(conn: &zbus::Connection) -> zbus::Result<String> {
     .await
 }
 
-fn subject(session: &str) -> zbus_polkit::policykit1::Subject {
-    let mut details = HashMap::new();
-    details.insert(
-        "session-id".to_string(),
-        OwnedValue::from(zbus::zvariant::Str::from(session)),
-    );
-    zbus_polkit::policykit1::Subject {
-        subject_kind: "unix-session".to_string(),
-        subject_details: details,
-    }
+/// polkit's `(sa{sv})` subject for the logind session `session`. zbus_polkit's `Subject` has no
+/// constructor for a session, so the registration call sends this tuple itself.
+fn subject(session: &str) -> (&'static str, HashMap<&'static str, OwnedVariant>) {
+    let id = OwnedVariant::from(zbus::Str::from(session));
+    ("unix-session", HashMap::from([("session-id", id)]))
 }
 
 async fn single_instance(dismissed: Dismissals) {
@@ -283,7 +278,7 @@ async fn single_instance(dismissed: Dismissals) {
         log::warn!("cannot serve {}: {e}", reprisebus::polkit::INTERFACE);
     }
     let owned = conn
-        .request_name_with_flags(BUS_NAME, zbus::fdo::RequestNameFlags::DoNotQueue.into())
+        .request_name_with_flags(BUS_NAME, zbus::fdo::RequestNameFlags::DO_NOT_QUEUE)
         .await;
     if !matches!(owned, Ok(zbus::fdo::RequestNameReply::PrimaryOwner)) {
         log::info!("another reprise-polkit owns {BUS_NAME}; exiting");
@@ -330,7 +325,11 @@ async fn run(poster: repriseapp::Poster<Msg>, ready: Sender<bool>) {
     let subject = subject(&session);
     let locale = std::env::var("LANG").unwrap_or_else(|_| "C".into());
     if let Err(e) = authority
-        .register_authentication_agent(&subject, &locale, PATH)
+        .inner()
+        .call::<_, _, ()>(
+            "RegisterAuthenticationAgent",
+            &(subject, locale.as_str(), PATH),
+        )
         .await
     {
         log::info!("polkitd refused the agent ({e}); no polkit agent");
@@ -360,7 +359,7 @@ mod tests {
     fn identities_become_user_names() {
         let uid = |n: u32| {
             let mut m = HashMap::new();
-            m.insert("uid".to_string(), OwnedValue::from(n));
+            m.insert("uid".to_string(), OwnedVariant::from(n));
             m
         };
         let ids = vec![
