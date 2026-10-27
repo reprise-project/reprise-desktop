@@ -515,7 +515,7 @@ pub fn recorded(
         XBEL_HEAD
     };
     let mut added = stamp.to_string();
-    let mut apps: Vec<String> = Vec::new();
+    let mut apps: Vec<(String, String)> = Vec::new();
     let mut count = 0u64;
     let mut kept: Vec<(String, &str)> = Vec::new();
     let mut matched: Option<&str> = None;
@@ -534,16 +534,20 @@ pub fn recorded(
         added = tag_attr(tag, "added").unwrap_or(added);
         for part in el.split("<bookmark:application ").skip(1) {
             let Some(end) = part.find("/>") else { continue };
-            let entry = format!(" {}", &part[..end]);
-            if app.is_some_and(|(name, _)| tag_attr(&entry, "name").as_deref() == Some(name)) {
-                count = tag_attr(&entry, "count")
-                    .and_then(|c| c.parse().ok())
-                    .unwrap_or(0);
+            let tag = format!("<bookmark:application {}", part[..end].trim_end());
+            let name = tag_attr(&tag, "name").unwrap_or_default();
+            let uses = |t: &str| tag_attr(t, "count").and_then(|c| c.parse::<u64>().ok());
+            if app.is_some_and(|(a, _)| a == name) {
+                count += uses(&tag).unwrap_or(0);
+            } else if let Some((_, seen)) = apps.iter_mut().find(|(n, _)| *n == name) {
+                let sum = uses(seen).unwrap_or(0) + uses(&tag).unwrap_or(0);
+                set_attr(seen, "count", &sum.to_string());
             } else {
-                apps.push(format!("<bookmark:application{}/>", entry.trim_end()));
+                apps.push((name, tag));
             }
         }
     }
+    let mut apps: Vec<String> = apps.into_iter().map(|(_, tag)| tag + "/>").collect();
     if let Some((name, exec)) = app {
         apps.push(app_entry(name, exec, stamp, count + 1));
     }
@@ -950,6 +954,47 @@ mod tests {
         for count in [r#"count="3""#, r#"count="4""#, r#"count="5""#] {
             assert!(out.contains(count), "{count}: {out}");
         }
+    }
+
+    #[test]
+    fn a_rebuilt_bookmark_sums_each_program_once() {
+        let mark = |apps: &str| {
+            format!(
+                r#"<bookmark href="file:///home/u/p.png" added="1" modified="1" visited="1">
+    <info>
+      <metadata owner="http://freedesktop.org">
+        <bookmark:applications>
+          {apps}
+        </bookmark:applications>
+      </metadata>
+    </info>
+  </bookmark>"#
+            )
+        };
+        let entry = |name: &str, count: u32| {
+            format!(
+                r#"<bookmark:application name="{name}" exec="'{name}'" modified="1" count="{count}"/>"#
+            )
+        };
+        let old = format!(
+            "{XBEL_HEAD}\n  <bookmark href=\"file:///home/u/p.png\" added=\"1\"/>\n  {}\n  {}\n</xbel>",
+            mark(&(entry("Gimp", 2) + &entry("Viewer", 1))),
+            mark(&(entry("Viewer", 3) + &entry("Gimp", 4)))
+        );
+        let p = Path::new("/home/u/p.png");
+        let out = recorded(&old, p, Some(("Gimp", "'Gimp'")), None, "2").unwrap();
+        let marks = parse_xbel(&out);
+        assert_eq!(marks.len(), 1, "{out}");
+        let names: Vec<&str> = marks[0].apps.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["Viewer", "Gimp"], "{out}");
+        assert!(
+            out.contains(r#"name="Viewer" exec="'Viewer'" modified="1" count="4""#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"count="7""#),
+            "Gimp's 2 + 4 + this use: {out}"
+        );
     }
 
     #[test]
