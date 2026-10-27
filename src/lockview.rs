@@ -477,7 +477,11 @@ pub fn engage(state: &mut State) {
         log::error!("lock: no login name for uid {uid}; the password cannot be checked");
     }
     state.lock.active = Some(Lock {
-        state: LockState::new(),
+        state: LockState {
+            caps_lock: caps_lock(state),
+            layout: layout(state),
+            ..LockState::new()
+        },
         user,
         outputs: Vec::new(),
         pending: None,
@@ -781,11 +785,21 @@ fn caps_lock(state: &State) -> bool {
         .is_some_and(|k| k.modifier_state().caps_lock)
 }
 
+/// The badge's text: the active layout's short name, None while nothing switches (the taskbar cell's rule).
+fn layout(state: &State) -> Option<String> {
+    let layouts = &state.key_input.layouts;
+    (layouts.switchable())
+        .then(|| layouts.active().map(|d| d.short.clone()))
+        .flatten()
+}
+
 pub fn redraw(state: &mut State) {
     let caps = caps_lock(state);
+    let layout = layout(state);
     let outputs: Vec<Output> = match state.lock.active.as_mut() {
         Some(l) => {
             l.state.caps_lock = caps;
+            l.state.layout = layout;
             l.outputs.iter().map(|lo| lo.output.clone()).collect()
         }
         None => return,
@@ -1260,6 +1274,26 @@ mod tests {
         h.key(KEY_CAPSLOCK, true);
         h.key(KEY_CAPSLOCK, false);
         assert!(!caps(&h));
+    }
+
+    #[test]
+    fn a_layout_switch_while_locked_redraws_the_badge() {
+        let mut h = locked(|_| sh("exit 0"));
+        let badge = |h: &crate::harness::Harness| {
+            h.state.lock.active.as_ref().unwrap().state.layout.clone()
+        };
+        assert_eq!(badge(&h), None, "one layout shows no badge");
+        h.state.config.keyboard.layout = "us,hu".into();
+        h.state.apply_keyboard();
+        let described = |short: &str| reprisefs::xkb::Described {
+            short: short.into(),
+            description: short.into(),
+        };
+        h.state.key_input.layouts.labels = vec![described("EN"), described("HU")];
+        h.state.set_layout(1);
+        assert_eq!(badge(&h).as_deref(), Some("HU"));
+        h.state.set_layout(0);
+        assert_eq!(badge(&h).as_deref(), Some("EN"));
     }
 
     #[test]
