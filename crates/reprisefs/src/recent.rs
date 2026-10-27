@@ -357,9 +357,103 @@ fn bookmark_spans(text: &str) -> Option<Vec<std::ops::Range<usize>>> {
     Some(spans)
 }
 
+const FREEDESKTOP_METADATA: &str = "<metadata owner=\"http://freedesktop.org\">";
+
+fn mime_entry(mime: &str) -> String {
+    format!(
+        "\n          <mime:mime-type type=\"{}\"/>",
+        xml_escape(mime)
+    )
+}
+
+fn app_entry(name: &str, exec: &str, stamp: &str, count: u64) -> String {
+    format!(
+        "<bookmark:application name=\"{}\" exec=\"{}\" modified=\"{stamp}\" count=\"{count}\"/>",
+        xml_escape(name),
+        xml_escape(exec)
+    )
+}
+
+/// Sets attribute `name` in `tag` (a start tag without its `>`) to `value`, an escaped string.
+fn set_attr(tag: &mut String, name: &str, value: &str) {
+    let key = format!(" {name}=\"");
+    if let Some(i) = tag.find(&key) {
+        let start = i + key.len();
+        if let Some(len) = tag[start..].find('"') {
+            tag.replace_range(start..start + len, value);
+            return;
+        }
+    }
+    tag.push_str(&format!(" {name}=\"{value}\""));
+}
+
+/// The bookmark element `el` edited in place for one more use by `app` at `stamp`: new
+/// `modified`/`visited`, `app`'s entry added or its count bumped, `mime` added when it has none.
+/// None for a self-closing element or one the edit cannot follow.
+fn spliced(el: &str, app: Option<(&str, &str)>, mime: Option<&str>, stamp: &str) -> Option<String> {
+    let tag_end = el.find('>')?;
+    if el[..tag_end].ends_with('/') {
+        return None;
+    }
+    let mut tag = el[..tag_end].to_string();
+    set_attr(&mut tag, "modified", stamp);
+    set_attr(&mut tag, "visited", stamp);
+    let mut body = el[tag_end..].to_string();
+    let mut meta = String::new();
+    if let Some(m) = mime.filter(|_| !body.contains("<mime:mime-type")) {
+        meta.push_str(&mime_entry(m));
+    }
+    if let Some((name, exec)) = app {
+        let mut found = None;
+        let mut at = 0;
+        while let Some(i) = body[at..].find("<bookmark:application ") {
+            let start = at + i;
+            let end = start + body[start..].find("/>")? + 2;
+            if tag_attr(&body[start..end], "name").as_deref() == Some(name) {
+                found = Some(start..end);
+                break;
+            }
+            at = end;
+        }
+        if let Some(r) = found {
+            let count: u64 = tag_attr(&body[r.clone()], "count")
+                .and_then(|c| c.parse().ok())
+                .unwrap_or(0);
+            body.replace_range(r, &app_entry(name, exec, stamp, count + 1));
+        } else if let Some(i) = body.find("</bookmark:applications>") {
+            body.insert_str(
+                i,
+                &format!("  {}\n          ", app_entry(name, exec, stamp, 1)),
+            );
+        } else {
+            meta.push_str(&format!(
+                "\n          <bookmark:applications>\n            {}\n          </bookmark:applications>",
+                app_entry(name, exec, stamp, 1)
+            ));
+        }
+    }
+    if !meta.is_empty() {
+        if let Some(i) = body.find(FREEDESKTOP_METADATA) {
+            body.insert_str(i + FREEDESKTOP_METADATA.len(), &meta);
+        } else if let Some(i) = body.find("</info>") {
+            body.insert_str(
+                i,
+                &format!("  {FREEDESKTOP_METADATA}{meta}\n      </metadata>\n    "),
+            );
+        } else {
+            let i = body.rfind("</bookmark>")?;
+            body.insert_str(
+                i,
+                &format!("  <info>\n      {FREEDESKTOP_METADATA}{meta}\n      </metadata>\n    </info>\n  "),
+            );
+        }
+    }
+    Some(tag + &body)
+}
+
 /// `old` (an xbel document, or empty) with `path` recorded at `stamp` as opened by `app`
-/// (`(name, exec)`): a bookmark already there for it keeps its `added` time and the other
-/// programs that used it, and its count for `app` goes up by one. Past [`MAX_BOOKMARKS`] the
+/// (`(name, exec)`): a bookmark already there for it keeps everything it holds (title, groups,
+/// `private`, other programs) and gets new `modified`/`visited` times and `app`'s count up by one. Past [`MAX_BOOKMARKS`] the
 /// oldest bookmarks go. None when `old` cannot be read as xbel.
 pub fn recorded(
     old: &str,
@@ -388,6 +482,7 @@ pub fn recorded(
     let mut apps: Vec<String> = Vec::new();
     let mut count = 0u64;
     let mut kept: Vec<(String, &str)> = Vec::new();
+    let mut matched: Option<&str> = None;
     for span in &spans {
         let el = &old[span.clone()];
         let tag = &el[..el.find('>').unwrap_or(el.len())];
@@ -395,6 +490,7 @@ pub fn recorded(
             kept.push((tag_attr(tag, "modified").unwrap_or_default(), el));
             continue;
         }
+        matched.get_or_insert(el);
         added = tag_attr(tag, "added").unwrap_or(added);
         for part in el.split("<bookmark:application ").skip(1) {
             let Some(end) = part.find("/>") else { continue };
@@ -409,28 +505,25 @@ pub fn recorded(
         }
     }
     if let Some((name, exec)) = app {
-        apps.push(format!(
-            "<bookmark:application name=\"{}\" exec=\"{}\" modified=\"{stamp}\" count=\"{}\"/>",
-            xml_escape(name),
-            xml_escape(exec),
-            count + 1
-        ));
+        apps.push(app_entry(name, exec, stamp, count + 1));
     }
-    let mime = mime.map_or_else(String::new, |m| {
-        format!("\n          <mime:mime-type type=\"{}\"/>", xml_escape(m))
-    });
+    let mime_line = mime.map_or_else(String::new, mime_entry);
     let apps: String = apps.iter().map(|a| format!("\n            {a}")).collect();
     let apps = if apps.is_empty() {
         String::new()
     } else {
         format!("\n          <bookmark:applications>{apps}\n          </bookmark:applications>")
     };
-    let ours = format!(
-        "<bookmark href=\"{}\" added=\"{added}\" modified=\"{stamp}\" visited=\"{stamp}\">\n    \
-         <info>\n      <metadata owner=\"http://freedesktop.org\">{mime}{apps}\n      \
-         </metadata>\n    </info>\n  </bookmark>",
-        xml_escape(&uri)
-    );
+    let ours = matched
+        .and_then(|el| spliced(el, app, mime, stamp))
+        .unwrap_or_else(|| {
+            format!(
+                "<bookmark href=\"{}\" added=\"{added}\" modified=\"{stamp}\" visited=\"{stamp}\">\n    \
+                 <info>\n      <metadata owner=\"http://freedesktop.org\">{mime_line}{apps}\n      \
+                 </metadata>\n    </info>\n  </bookmark>",
+                xml_escape(&uri)
+            )
+        });
     if kept.len() >= MAX_BOOKMARKS {
         let mut newest: Vec<usize> = (0..kept.len()).collect();
         newest.sort_by(|&a, &b| kept[b].0.cmp(&kept[a].0));
@@ -696,6 +789,68 @@ mod tests {
         );
         assert!(marks.iter().any(|b| b.path == Path::new("/f/6")));
         assert!(recorded("<xbel><bookmark href=\"x\">", a, None, None, "t").is_none());
+    }
+
+    #[test]
+    fn an_updated_bookmark_keeps_its_title_groups_and_private_flag() {
+        let gimp = format!(
+            r#"{XBEL_HEAD}
+  <bookmark href="file:///home/u/p.png" added="2026-01-01T00:00:00Z" modified="2026-01-01T00:00:00Z" visited="2026-01-01T00:00:00Z">
+    <title>Holiday</title>
+    <info>
+      <metadata owner="http://freedesktop.org">
+        <mime:mime-type type="image/png"/>
+        <bookmark:groups>
+          <bookmark:group>Graphics</bookmark:group>
+        </bookmark:groups>
+        <bookmark:applications>
+          <bookmark:application name="GNU Image Manipulation Program" exec="&apos;gimp %U&apos;" modified="2026-01-01T00:00:00Z" count="2"/>
+          <bookmark:application name="Text &amp; Notes" exec="&apos;notes&apos;" modified="2026-01-01T00:00:00Z" count="4"/>
+        </bookmark:applications>
+        <bookmark:private/>
+      </metadata>
+    </info>
+  </bookmark>
+</xbel>"#
+        );
+        let notes = editor();
+        let exec = format!("'{}'", notes.exec_line);
+        let app = Some((notes.name.as_str(), exec.as_str()));
+        let p = Path::new("/home/u/p.png");
+        let out = recorded(&gimp, p, app, Some("text/plain"), "2026-02-01T00:00:00Z").unwrap();
+        for kept in [
+            "<title>Holiday</title>",
+            "<bookmark:group>Graphics</bookmark:group>",
+            "<bookmark:private/>",
+            "count=\"2\"",
+            "added=\"2026-01-01T00:00:00Z\"",
+            "<mime:mime-type type=\"image/png\"/>",
+        ] {
+            assert!(out.contains(kept), "{kept} is kept: {out}");
+        }
+        assert!(
+            !out.contains("text/plain"),
+            "an existing mime type stays: {out}"
+        );
+        assert!(
+            out.contains("count=\"5\""),
+            "our count goes from 4 to 5: {out}"
+        );
+        assert!(out.contains("visited=\"2026-02-01T00:00:00Z\""), "{out}");
+        let marks = parse_xbel(&out);
+        assert_eq!(marks.len(), 1);
+        let names: Vec<&str> = marks[0].apps.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["GNU Image Manipulation Program", "Text & Notes"]);
+
+        let other = Some(("Viewer", "'viewer %f'"));
+        let out = recorded(&gimp, p, other, None, "2026-02-01T00:00:00Z").unwrap();
+        let names: Vec<String> = parse_xbel(&out)[0]
+            .apps
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect();
+        assert_eq!(names.len(), 3, "a new program joins the list: {out}");
+        assert!(out.contains("<bookmark:private/>"));
     }
 
     #[test]
