@@ -66,12 +66,13 @@ jobs:
           # pkgver counts the commits.
           fetch-depth: 0
       # OnlyShowIn=reprise is not in the menu-spec registry: registering the name or renaming it
-      # to X-Reprise is still open, so that one error is filtered out.
+      # to X-Reprise is still open, so that one error is filtered out. DesktopNames is the
+      # display managers' session key, which the validator does not know.
       - name: Validate the desktop entries
         run: |
-          out=$(desktop-file-validate data/apps/*.desktop data/autostart/*.desktop 2>&1 || true)
+          out=$(desktop-file-validate data/reprise.desktop data/apps/*.desktop data/autostart/*.desktop 2>&1 || true)
           printf '%s\n' "$out"
-          ! printf '%s\n' "$out" | grep -v 'key "OnlyShowIn" .* unregistered value "reprise"' | grep -E ': (error|warning): '
+          ! printf '%s\n' "$out" | grep -v -e 'key "OnlyShowIn" .* unregistered value "reprise"' -e 'reprise.desktop: error: file contains key "DesktopNames"' | grep -E ': (error|warning): '
       - name: Create the build user
         run: useradd -m builder
       # The nightly's cache, read only: main's release build seeds this one.

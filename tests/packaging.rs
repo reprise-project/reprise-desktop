@@ -1,5 +1,5 @@
 //! Both PKGBUILDs build reprise-apps, link every program crate to it and install every desktop
-//! entry.
+//! entry, and CI installs their dependencies.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -101,5 +101,51 @@ fn both_pkgbuilds_link_every_program_and_install_every_desktop_entry() {
             stray.is_empty(),
             "{path} installs only entries that exist: {stray:?}"
         );
+    }
+}
+
+/// The package names in the PKGBUILD array `key` (`depends`), version bounds left off.
+fn deps(pkgbuild: &str, key: &str) -> Vec<String> {
+    let line = (pkgbuild.lines())
+        .find_map(|l| l.strip_prefix(&format!("{key}=(")))
+        .unwrap_or_else(|| panic!("the PKGBUILD sets {key}"));
+    (line.trim_end_matches(')').split_whitespace())
+        .map(|w| w.trim_matches('\'').split(['<', '>', '=']).next().unwrap())
+        .map(|name| if name == "cargo" { "rust" } else { name }.to_string())
+        .collect()
+}
+
+#[test]
+fn ci_installs_every_pkgbuild_dependency() {
+    let lists: Vec<(&str, BTreeSet<String>)> = [
+        ".github/actions/build/action.yml",
+        ".github/workflows/ci.yml",
+    ]
+    .into_iter()
+    .flat_map(|path| {
+        let text = std::fs::read_to_string(root().join(path)).expect("CI file reads");
+        let lines: Vec<String> = (text.lines())
+            .filter_map(|l| l.trim().strip_prefix("pacman -S --noconfirm --needed "))
+            .map(str::to_string)
+            .collect();
+        assert!(!lines.is_empty(), "{path} installs packages");
+        lines
+            .into_iter()
+            .map(move |l| (path, l.split_whitespace().map(str::to_string).collect()))
+    })
+    .collect();
+    for pkgbuild in PKGBUILDS {
+        let text = std::fs::read_to_string(root().join(pkgbuild)).expect("PKGBUILD reads");
+        for dep in deps(&text, "depends")
+            .into_iter()
+            .chain(deps(&text, "makedepends"))
+        {
+            for (path, installed) in &lists {
+                assert!(
+                    installed.contains(&dep),
+                    "{path} installs {pkgbuild}'s {dep}"
+                );
+            }
+        }
     }
 }

@@ -15,8 +15,15 @@ jobs:
   deny:
     runs-on: ubuntu-latest
     container: archlinux@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
+    # The archive date pins cargo-deny with deny.toml, as ci.yml pins its packages; the
+    # advisories still come live.
+    env:
+      ARCH_ARCHIVE: 2026/10/25
     steps:
       - name: Install cargo-deny
-        run: pacman -Syu --noconfirm --needed rust cargo-deny
+        run: |
+          echo "Server = https://archive.archlinux.org/repos/$ARCH_ARCHIVE/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
+          pacman -Syyuu --noconfirm
+          pacman -S --noconfirm --needed rust cargo-deny
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: cargo deny --locked check

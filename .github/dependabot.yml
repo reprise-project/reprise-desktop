@@ -12,6 +12,7 @@ updates:
       cargo-minor-patch:
         update-types: [minor, patch]
   - package-ecosystem: github-actions
-    directory: /
+    # The composite action pins its own actions.
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: monthly
