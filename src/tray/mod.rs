@@ -29,7 +29,7 @@ pub use pointer::{bell_cell, click, click_item, is_displays_cell, scroll_item, w
 
 use icons::drawn_sizes;
 use menu::{menu_open_for, open_layout};
-use place::merge_item;
+use place::{Change, merge_item};
 
 use crate::compositor::State;
 use crate::raster::{Canvas, Rect};
@@ -339,9 +339,11 @@ pub struct Tray {
     /// whether the axis was horizontal, and the leftover 120ths (hi-res
     /// wheels send fractions of a notch).
     wheel: Option<(usize, bool, i32)>,
-    /// `item_icon`'s answers by (item id, px), dropped whenever an item
-    /// changes: a redraw must not rescale every pixmap.
-    icon_cache: HashMap<(String, i32), Option<Arc<Canvas>>>,
+    /// `item_icon`'s answers by (item id, px, needs attention), dropped when an item's icons
+    /// change: a redraw must not rescale every pixmap.
+    icon_cache: HashMap<(String, i32, bool), Option<Arc<Canvas>>>,
+    /// Where in `hidden` each item that went to the bar left it, by id.
+    left_hidden: HashMap<String, usize>,
     /// The [`icons::icon_sizes`] the D-Bus thread decodes item icons at.
     icon_sizes: Vec<i32>,
 }
@@ -562,6 +564,7 @@ fn install(
         gone: false,
         wheel: None,
         icon_cache: HashMap::new(),
+        left_hidden: HashMap::new(),
         icon_sizes: drawn_sizes(state),
     });
 }
@@ -606,19 +609,26 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
             };
             let id = item.id.clone();
             let place = placement(&item, behaviour_of(&tray.choices, &item), overflow);
-            let redraw = merge_item(&mut tray.items, &mut tray.hidden, item, place);
-            if redraw {
-                tray.icon_cache.retain(|(cached, _), _| *cached != id);
-            } else {
-                crate::access::touch(state);
+            let change = merge_item(
+                &mut tray.items,
+                &mut tray.hidden,
+                &mut tray.left_hidden,
+                item,
+                place,
+            );
+            match change {
+                Change::Icon => tray.icon_cache.retain(|(cached, ..), _| *cached != id),
+                Change::Status => {}
+                Change::None => crate::access::touch(state),
             }
-            redraw
+            change != Change::None
         }
         TrayEvent::Removed(id) => {
             let Some(tray) = state.tray.as_mut() else {
                 return false;
             };
-            tray.icon_cache.retain(|(cached, _), _| *cached != id);
+            tray.icon_cache.retain(|(cached, ..), _| *cached != id);
+            tray.left_hidden.remove(&id);
             tray.items.retain(|i| i.id != id);
             tray.hidden.retain(|i| i.id != id);
             if tray

@@ -160,7 +160,7 @@ pub fn item_canvas(item: &TrayItem, px: i32) -> Option<Canvas> {
 }
 
 pub fn item_icon(state: &mut State, item: &TrayItem, px: i32) -> Option<Arc<Canvas>> {
-    let key = (item.id.clone(), px);
+    let key = (item.id.clone(), px, item.needs_attention);
     if let Some(c) = state.tray.as_ref().and_then(|t| t.icon_cache.get(&key)) {
         return c.clone();
     }

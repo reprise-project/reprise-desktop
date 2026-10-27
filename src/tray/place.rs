@@ -3,7 +3,7 @@
 use super::{Remembered, TrayItem};
 use crate::compositor::State;
 use reprisekit::controls::traycustomize::Behaviour;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Tray overflow is on: `[taskbar] tray_overflow`, on by default under
 /// Glass. Off, Passive items stay off the bar and nothing shows them.
@@ -47,43 +47,62 @@ pub fn placement(item: &TrayItem, behaviour: Behaviour, overflow: bool) -> Place
     }
 }
 
-/// Whether `a` and `b` look the same in a tray cell: the same icon from
-/// the same sources and the same status. The tooltip, title, menu and pid
-/// are read when used, never drawn.
-fn draws_alike(a: &TrayItem, b: &TrayItem) -> bool {
-    a.pixmaps == b.pixmaps
-        && a.named == b.named
-        && a.icon_name == b.icon_name
-        && a.icon_theme_path == b.icon_theme_path
-        && a.passive == b.passive
-        && a.needs_attention == b.needs_attention
-        && a.attention == b.attention
-        && a.overlay == b.overlay
+/// What a fresh copy of an item changes in its tray cell. The tooltip, title, menu and pid are
+/// read when used, never drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Change {
+    None,
+    /// Only Passive or NeedsAttention: the icons drawn for each status stay valid.
+    Status,
+    /// A new item, or other icon sources, attention icon or overlay.
+    Icon,
 }
 
-/// Put a fresh copy of an item at `place`, taking it out of the other
-/// list when it moved. A known item keeps its place in its list; a new
-/// one goes last. Returns whether the tray draws differently: a new item,
-/// or one whose cell changed (`draws_alike`).
+fn change(old: &TrayItem, new: &TrayItem) -> Change {
+    let icon_alike = old.pixmaps == new.pixmaps
+        && old.named == new.named
+        && old.icon_name == new.icon_name
+        && old.icon_theme_path == new.icon_theme_path
+        && old.attention == new.attention
+        && old.overlay == new.overlay;
+    if !icon_alike {
+        Change::Icon
+    } else if old.passive != new.passive || old.needs_attention != new.needs_attention {
+        Change::Status
+    } else {
+        Change::None
+    }
+}
+
+/// Put a fresh copy of an item at `place`, taking it out of the other list when it moved. A
+/// known item keeps its place in its list; one back in the hidden list goes where it left it
+/// (`left`, by item id); a new one goes last.
 pub(super) fn merge_item(
     items: &mut Vec<TrayItem>,
     hidden: &mut Vec<TrayItem>,
+    left: &mut HashMap<String, usize>,
     item: TrayItem,
     place: Place,
-) -> bool {
-    let changed = items
-        .iter()
-        .chain(hidden.iter())
+) -> Change {
+    let changed = (items.iter().chain(hidden.iter()))
         .find(|i| i.id == item.id)
-        .is_none_or(|old| !draws_alike(old, &item));
+        .map_or(Change::Icon, |old| change(old, &item));
     let (to, from) = match place {
         Place::Bar => (items, hidden),
         Place::Hidden => (hidden, items),
     };
-    from.retain(|i| i.id != item.id);
+    if let Some(at) = from.iter().position(|i| i.id == item.id) {
+        from.remove(at);
+        if place == Place::Bar {
+            left.insert(item.id.clone(), at);
+        }
+    }
     match to.iter().position(|i| i.id == item.id) {
         Some(i) => to[i] = item,
-        None => to.push(item),
+        None => {
+            let at = (place == Place::Hidden).then(|| left.remove(&item.id));
+            to.insert(at.flatten().map_or(to.len(), |at| at.min(to.len())), item);
+        }
     }
     changed
 }

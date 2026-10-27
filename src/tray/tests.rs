@@ -2,7 +2,7 @@ use super::customize::{past_icon, refill_past, remember};
 use super::icons::icon_sizes;
 use super::icons::pixmap_to_source;
 use super::menu::{SubmenuRequest, menu_items, strip_mnemonic};
-use super::place::{Place, arrange, merge_item, shows_chevron};
+use super::place::{Change, Place, arrange, merge_item, shows_chevron};
 use super::pointer::click_command;
 use crate::icontheme::IconCache;
 use crate::input::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
@@ -10,6 +10,7 @@ use crate::raster::Canvas;
 use reprisekit::controls::shellview;
 use reprisekit::controls::traycustomize::{self, Behaviour, Entry, TrayCustomize};
 use reprisekit::icon::IconSource;
+use std::collections::HashMap;
 
 #[test]
 fn a_remembered_icon_file_is_never_read_on_the_loop() {
@@ -307,8 +308,17 @@ fn strip_mnemonic_drops_single_underscores_and_keeps_doubles() {
 }
 
 fn merge(bar: &mut Vec<TrayItem>, hidden: &mut Vec<TrayItem>, it: TrayItem) -> bool {
+    merge_left(bar, hidden, &mut HashMap::new(), it) != Change::None
+}
+
+fn merge_left(
+    bar: &mut Vec<TrayItem>,
+    hidden: &mut Vec<TrayItem>,
+    left: &mut HashMap<String, usize>,
+    it: TrayItem,
+) -> Change {
     let place = placement(&it, Behaviour::Auto, true);
-    merge_item(bar, hidden, it, place)
+    merge_item(bar, hidden, left, it, place)
 }
 
 fn item(id: &str, passive: bool) -> TrayItem {
@@ -546,6 +556,23 @@ fn an_item_changing_status_moves_between_the_bar_and_the_hidden_list() {
     merge(&mut bar, &mut hidden, c);
     assert_eq!(ids(&bar), vec!["c".to_string(), "a".into()]);
     assert_eq!(bar[0].title, "new");
+}
+
+#[test]
+fn a_status_flip_keeps_the_hidden_order_and_the_icons() {
+    let ids = |l: &[TrayItem]| l.iter().map(|i| i.id.clone()).collect::<Vec<_>>();
+    let (mut bar, mut left) = (Vec::new(), HashMap::new());
+    let mut hidden = vec![item("a", true), item("b", true), item("c", true)];
+    for _ in 0..2 {
+        let mut calling = item("a", true);
+        calling.needs_attention = true;
+        let flip = merge_left(&mut bar, &mut hidden, &mut left, calling);
+        assert_eq!(flip, Change::Status, "the icons drawn stay cached");
+        assert_eq!(ids(&bar), ["a"]);
+        let back = merge_left(&mut bar, &mut hidden, &mut left, item("a", true));
+        assert_eq!(back, Change::Status);
+        assert_eq!(ids(&hidden), ["a", "b", "c"], "a goes back first");
+    }
 }
 
 #[test]
