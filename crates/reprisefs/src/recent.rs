@@ -235,23 +235,26 @@ xmlns:mime=\"http://www.freedesktop.org/standards/shared-mime-info\"\n>";
 /// One writer at a time within the process; other programs replace the file whole, as this does.
 static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Record that `path`, a regular file, was opened, with `app` (the desktop entry that opened it)
-/// and its `mime` type, in the session's `recently-used.xbel`.
-pub fn record(path: &Path, app: Option<&AppEntry>, mime: Option<&str>) -> std::io::Result<()> {
-    if !path.is_file() {
+/// A file that was opened, the desktop entry that opened it, and its mime type.
+pub type Opening<'a> = (&'a Path, Option<&'a AppEntry>, Option<&'a str>);
+
+/// Record each opened file that is a regular file in the session's `recently-used.xbel`, in one
+/// rewrite of it.
+pub fn record(opened: &[Opening]) -> std::io::Result<()> {
+    let opened: Vec<_> = opened.iter().filter(|o| o.0.is_file()).copied().collect();
+    if opened.is_empty() {
         return Ok(());
     }
     let xbel = xbel_path().ok_or_else(|| std::io::Error::other("no data directory"))?;
-    record_in(&xbel, path, app, mime, std::time::SystemTime::now())
+    record_in(&xbel, &opened, std::time::SystemTime::now())
 }
 
 /// [`record`] into the xbel file at `xbel`, stamped `now`. The file is read, edited and replaced
-/// in one rename, so a reader sees the old file or the new one.
+/// in one rename, so a reader sees the old file or the new one. GLib's writers take no lock
+/// either, so a bookmark another program writes between the read and the rename is lost.
 pub fn record_in(
     xbel: &Path,
-    path: &Path,
-    app: Option<&AppEntry>,
-    mime: Option<&str>,
+    opened: &[Opening],
     now: std::time::SystemTime,
 ) -> std::io::Result<()> {
     use std::io::Write;
@@ -273,14 +276,17 @@ pub fn record_in(
         Err(e) => return Err(e),
     };
     let stamp = iso8601(now);
-    let app = app.map(|e| (e.name.as_str(), format!("'{}'", e.exec_line)));
-    let app = app.as_ref().map(|(n, e)| (*n, e.as_str()));
-    let new = recorded(&old, path, app, mime, &stamp).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "unreadable recently-used.xbel",
-        )
-    })?;
+    let mut new = old;
+    for &(path, app, mime) in opened {
+        let app = app.map(|e| (e.name.as_str(), format!("'{}'", e.exec_line)));
+        let app = app.as_ref().map(|(n, e)| (*n, e.as_str()));
+        new = recorded(&new, path, app, mime, &stamp).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "unreadable recently-used.xbel",
+            )
+        })?;
+    }
     let (mut f, tmp) = crate::ops::create_temp_beside(xbel, Some(mode))?;
     let written = (|| {
         f.write_all(new.as_bytes())?;
@@ -689,9 +695,7 @@ mod tests {
         let notes = editor();
         record_in(
             &xbel,
-            &doc,
-            Some(&notes),
-            Some("text/plain"),
+            &[(&doc, Some(&notes), Some("text/plain"))],
             at(1_800_000_000),
         )
         .unwrap();
@@ -715,8 +719,8 @@ mod tests {
 
         let other = dir.join("other.txt");
         std::fs::write(&other, "").unwrap();
-        record_in(&xbel, &other, None, None, at(1_800_000_100)).unwrap();
-        record_in(&xbel, &doc, Some(&notes), None, at(1_800_000_200)).unwrap();
+        record_in(&xbel, &[(&other, None, None)], at(1_800_000_100)).unwrap();
+        record_in(&xbel, &[(&doc, Some(&notes), None)], at(1_800_000_200)).unwrap();
         let text = std::fs::read_to_string(&xbel).unwrap();
         assert_eq!(
             text.matches("<bookmark ").count(),
@@ -732,6 +736,30 @@ mod tests {
             "{text}"
         );
         assert_eq!(recent.current(10), [doc.clone(), other.clone()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn one_record_takes_every_opened_file() {
+        let dir = std::env::temp_dir().join(format!("reprise-recent-all-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        std::fs::write(&a, "").unwrap();
+        std::fs::write(&b, "").unwrap();
+        let xbel = dir.join("recently-used.xbel");
+        let notes = editor();
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+        record_in(
+            &xbel,
+            &[(&a, Some(&notes), None), (&b, Some(&notes), None)],
+            now,
+        )
+        .unwrap();
+        let mut recent = RecentFiles::at(Some(xbel));
+        let mut got = recent.for_app(10, &notes);
+        got.sort();
+        assert_eq!(got, [a, b]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

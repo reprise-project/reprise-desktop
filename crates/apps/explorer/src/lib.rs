@@ -1268,7 +1268,7 @@ impl Explorer {
                 if repriseconf::recent_files() {
                     let app = (open.app.as_deref()).and_then(|id| apps.iter().find(|a| a.id == id));
                     let mime = reprisefs::apps::mime_of_in(&globs, &path);
-                    if let Err(e) = reprisefs::recent::record(&path, app, mime.as_deref()) {
+                    if let Err(e) = reprisefs::recent::record(&[(&path, app, mime.as_deref())]) {
                         log::warn!("recent files: could not record {}: {e}", path.display());
                     }
                 }

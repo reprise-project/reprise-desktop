@@ -295,11 +295,11 @@ impl State {
         let Some(app) = self.app_index.iter().find(|a| a.id == app).cloned() else {
             return;
         };
-        for path in paths {
-            let argv = apps::open_argv(&app, &self.config.terminal, &path);
+        for path in &paths {
+            let argv = apps::open_argv(&app, &self.config.terminal, path);
             self.spawn_app_activated(&argv, &app.id);
-            self.record_recent(path, Some(app.clone()));
         }
+        self.record_recent(paths, Some(app));
     }
 
     /// Print each of `paths` (files, not folders) with `lp`, or open it in the text/plain
