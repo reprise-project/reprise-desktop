@@ -330,6 +330,7 @@ fn run(
         |_, fd, state| {
             if let Some(sig) = spawn::read_signal(fd) {
                 log::info!("signal {sig}: shutting down");
+                crash::ending();
                 sessionfade::out(state, Box::new(|state| state.signal.stop()));
             }
             Ok(PostAction::Continue)
@@ -362,7 +363,9 @@ fn run(
     }
     autostart::start(&mut state, session_begun);
 
-    event_loop.run(None, &mut state, State::turn_end)?;
+    let ran = event_loop.run(None, &mut state, State::turn_end);
+    crash::ending();
+    ran?;
     tray::shutdown(&mut state);
     // Open windows end with the session: their places and apps are what the next
     // one restores.

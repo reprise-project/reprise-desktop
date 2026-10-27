@@ -22,10 +22,11 @@ pub enum AfterPanic {
     Exit(u32),
 }
 
-/// What a panic `uptime` after this start does, `prior` being the `--after-crash` count it got.
-pub fn after_panic(prior: Option<u32>, uptime: Duration) -> AfterPanic {
+/// What a panic `uptime` after this start does, `prior` being the `--after-crash` count it got
+/// and `ending` whether the session was ending (`ending`).
+pub fn after_panic(prior: Option<u32>, uptime: Duration, ending: bool) -> AfterPanic {
     let crashes = prior.unwrap_or(0).saturating_add(1);
-    if prior.is_some() && uptime < LOOP_WINDOW {
+    if ending || (prior.is_some() && uptime < LOOP_WINDOW) {
         AfterPanic::Exit(crashes)
     } else {
         AfterPanic::Restart(crashes)
@@ -88,6 +89,13 @@ pub fn on_start(state: &mut State, after_crash: bool, locked: bool) {
 thread_local! {
     static GUARDED: Cell<u32> = const { Cell::new(0) };
     static LOCK_WANTED: Cell<bool> = const { Cell::new(false) };
+    static ENDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The session is ending (the loop stopped, or a signal asked it to): a panic from here on ends
+/// the process instead of restarting it.
+pub fn ending() {
+    ENDING.set(true);
 }
 
 /// Whether a restart from here on starts locked: set as a lock begins, before anything that can
@@ -121,7 +129,11 @@ pub fn install(prior: Option<u32>) {
             return;
         }
         let uptime = started.elapsed();
-        match after_panic(prior, uptime) {
+        let ending = ENDING.get();
+        match after_panic(prior, uptime, ending) {
+            AfterPanic::Exit(n) if ending => {
+                log::error!("crash {n} of this login while the session ends: not restarting")
+            }
             AfterPanic::Exit(n) => log::error!(
                 "crash {n} of this login, {}s after the last restart: not restarting",
                 uptime.as_secs()
@@ -163,10 +175,17 @@ mod tests {
     #[test]
     fn a_first_crash_restarts_and_one_within_a_minute_of_a_restart_exits() {
         let s = Duration::from_secs;
-        assert_eq!(after_panic(None, s(1)), AfterPanic::Restart(1));
-        assert_eq!(after_panic(Some(1), s(59)), AfterPanic::Exit(2));
-        assert_eq!(after_panic(Some(1), s(60)), AfterPanic::Restart(2));
-        assert_eq!(after_panic(Some(3), s(600)), AfterPanic::Restart(4));
+        assert_eq!(after_panic(None, s(1), false), AfterPanic::Restart(1));
+        assert_eq!(after_panic(Some(1), s(59), false), AfterPanic::Exit(2));
+        assert_eq!(after_panic(Some(1), s(60), false), AfterPanic::Restart(2));
+        assert_eq!(after_panic(Some(3), s(600), false), AfterPanic::Restart(4));
+    }
+
+    #[test]
+    fn a_crash_while_the_session_ends_never_restarts() {
+        let s = Duration::from_secs;
+        assert_eq!(after_panic(None, s(600), true), AfterPanic::Exit(1));
+        assert_eq!(after_panic(Some(1), s(600), true), AfterPanic::Exit(2));
     }
 
     #[test]
