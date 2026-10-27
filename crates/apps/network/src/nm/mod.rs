@@ -533,13 +533,24 @@ impl Inner {
     }
 }
 
-/// What an 802.1X network is joined with. `ca_cert` is None when the
-/// user ticked "No CA certificate is required"; the paths are absolute.
+/// Where the server's certificate chain is checked against.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum CaSource {
+    /// "No CA certificate is required": any server is accepted.
+    #[default]
+    None,
+    File(std::path::PathBuf),
+    System,
+}
+
+/// What an 802.1X network is joined with. `domain` is the suffix the server certificate's
+/// name must end in; the paths are absolute.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Enterprise {
     pub eap: Eap,
     pub anonymous_identity: String,
-    pub ca_cert: Option<std::path::PathBuf>,
+    pub ca: CaSource,
+    pub domain: String,
     pub inner: Inner,
     pub identity: String,
     pub password: Psk,
