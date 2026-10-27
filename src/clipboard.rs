@@ -18,8 +18,8 @@ use smithay::{
     wayland::selection::{
         SelectionHandler, SelectionSource, SelectionTarget,
         data_device::{
-            SelectionRequestError, clear_data_device_selection,
-            current_data_device_selection_userdata, request_data_device_client_selection,
+            clear_data_device_selection, current_data_device_selection_userdata,
+            data_device_selection_alive, request_data_device_client_selection,
             set_data_device_selection,
         },
         primary_selection::{PrimarySelectionHandler, PrimarySelectionState},
@@ -307,25 +307,11 @@ impl State {
     /// The types a client's clipboard offers. Smithay drops a destroyed source (its client
     /// gone) without a `new_selection`, so a source no longer held offers nothing.
     pub(crate) fn clip_offered(&self) -> &[String] {
-        if self.clip.offered.is_empty() || self.clipboard_held() {
+        if data_device_selection_alive(&self.seat) {
             &self.clip.offered
         } else {
             &[]
         }
-    }
-
-    pub(crate) fn clipboard_held(&self) -> bool {
-        if current_data_device_selection_userdata(&self.seat).is_some() {
-            return true;
-        }
-        let Ok(null) = std::fs::File::open("/dev/null") else {
-            return true;
-        };
-        // No source offers the empty type, so a held one refuses it and is sent nothing.
-        !matches!(
-            request_data_device_client_selection(&self.seat, String::new(), null.into()),
-            Err(SelectionRequestError::NoSelection)
-        )
     }
 
     /// Whether the program a new clipboard selection comes from runs sandboxed.
@@ -724,6 +710,30 @@ mod tests {
         h.run_for(50);
         assert!(!h.state.clip_has_files(), "a gone client offers no files");
         assert!(!h.state.clip_has_text(), "nor the older recorded text");
+    }
+
+    #[test]
+    fn a_held_selection_is_never_sent_a_probe_and_a_destroyed_one_offers_nothing() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        let source = c.copy(&["", "text/plain"], b"");
+        h.roundtrip(&mut c);
+        h.run_for(20);
+        h.roundtrip(&mut c);
+        assert_eq!(h.state.clip_offered(), strs(&["", "text/plain"]));
+        source.destroy();
+        h.roundtrip(&mut c);
+        assert!(h.state.clip_offered().is_empty(), "Paste offers nothing");
+        assert!(h.state.clip.offered.is_empty(), "the record is cleared");
+        assert_eq!(h.state.panels.history.history.entries().count(), 0);
+        h.roundtrip(&mut c);
+        assert!(
+            !c.side.source_sends.iter().any(|m| m.is_empty()),
+            "the source is never asked for the empty type: {:?}",
+            c.side.source_sends
+        );
     }
 
     #[test]
