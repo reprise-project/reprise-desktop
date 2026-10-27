@@ -118,7 +118,7 @@ struct State {
     listening: bool,
     lease: Option<Lease>,
     /// The system bus connection the avahi-daemon browsers live on; closing it ends them.
-    network: Option<zbus::blocking::Connection>,
+    network: Option<zbus::Connection>,
 }
 
 fn run(rx: Receiver<Cmd>, tx: Sender<Cmd>, poster: Poster) {
@@ -273,12 +273,12 @@ impl State {
 
     fn browse(&mut self, on: bool) {
         if let Some(conn) = self.network.take() {
-            let _ = conn.close();
+            let _ = reprisebus::wait(conn.close());
         }
         if !on {
             return;
         }
-        let conn = match zbus::blocking::Connection::system() {
+        let conn = match reprisebus::connect(zbus::connection::Builder::system()) {
             Ok(c) => c,
             Err(e) => {
                 log::info!("no system bus for network printers: {e}");

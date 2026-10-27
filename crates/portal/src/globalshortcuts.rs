@@ -12,15 +12,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+use zbus::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
 
-type Shortcuts = Vec<(String, HashMap<String, OwnedValue>)>;
+type Shortcuts = Vec<(String, HashMap<String, OwnedVariant>)>;
 
 pub(crate) struct ShortcutsSession {
     app: String,
     ids: Vec<String>,
     _handle: ShortcutsHandle,
-    _relay: zbus::Task<()>,
+    _relay: zruntime::Task<(), zruntime::Shared>,
 }
 
 pub struct GlobalShortcuts {
@@ -31,7 +31,7 @@ pub struct GlobalShortcuts {
     pub frontend: crate::Frontend,
 }
 
-fn string_opt(opts: &HashMap<String, OwnedValue>, key: &str) -> String {
+fn string_opt(opts: &HashMap<String, OwnedVariant>, key: &str) -> String {
     opts.get(key)
         .and_then(|v| String::try_from(v.clone()).ok())
         .unwrap_or_default()
@@ -83,13 +83,13 @@ fn described(entries: &[Entry]) -> Shortcuts {
             let mut o = HashMap::new();
             o.insert(
                 "description".into(),
-                Value::from(e.description.as_str())
+                Variant::from(e.description.as_str())
                     .try_to_owned()
                     .expect("string"),
             );
             o.insert(
                 "trigger_description".into(),
-                Value::from(trigger(&e.keys))
+                Variant::from(trigger(&e.keys))
                     .try_to_owned()
                     .expect("string"),
             );
@@ -102,7 +102,7 @@ fn results(entries: &[Entry]) -> Results {
     let mut r = Results::new();
     r.insert(
         "shortcuts".into(),
-        Value::from(described(entries))
+        Variant::from(described(entries))
             .try_to_owned()
             .expect("shortcuts"),
     );
@@ -137,7 +137,7 @@ impl GlobalShortcuts {
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         app_id: String,
-        _options: HashMap<String, Value<'_>>,
+        _options: HashMap<String, Variant<'_>>,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
@@ -169,15 +169,12 @@ impl GlobalShortcuts {
         let path: OwnedObjectPath = session_handle.clone().into();
         // Relay the compositor's events as portal signals for as long as
         // the session lives; the task dies with the session's data.
-        let task = conn.executor().spawn(
-            relay(
-                conn.clone(),
-                self.sessions.clone(),
-                path.clone(),
-                h.events(),
-            ),
-            "global-shortcuts-relay",
-        );
+        let task = zruntime::spawn(relay(
+            conn.clone(),
+            self.sessions.clone(),
+            path.clone(),
+            h.events(),
+        ));
         crate::replace_session(
             &self.sessions,
             session_handle.to_string(),
@@ -216,7 +213,7 @@ impl GlobalShortcuts {
         session_handle: ObjectPath<'_>,
         shortcuts: Shortcuts,
         parent_window: String,
-        _options: HashMap<String, Value<'_>>,
+        _options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, Results)> {
         self.frontend.check(&hdr).await?;
@@ -313,7 +310,7 @@ impl GlobalShortcuts {
         &self,
         _session_handle: ObjectPath<'_>,
         _parent_window: String,
-        _options: HashMap<String, Value<'_>>,
+        _options: HashMap<String, Variant<'_>>,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
     ) -> zbus::fdo::Result<()> {
         self.frontend.check(&hdr).await?;
@@ -414,11 +411,11 @@ mod tests {
         let mut opts = HashMap::new();
         opts.insert(
             "description".to_string(),
-            OwnedValue::try_from(Value::from("Hold to talk")).unwrap(),
+            OwnedVariant::try_from(Variant::from("Hold to talk")).unwrap(),
         );
         opts.insert(
             "preferred_trigger".to_string(),
-            OwnedValue::try_from(Value::from("Pause")).unwrap(),
+            OwnedVariant::try_from(Variant::from("Pause")).unwrap(),
         );
         let got = wanted(vec![("talk".into(), opts), ("bare".into(), HashMap::new())]);
         assert_eq!(

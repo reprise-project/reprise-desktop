@@ -340,10 +340,11 @@ async fn watch_packagekit(conn: &Connection, jobs: &Jobs) {
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(packagekit::NAME)
-        .and_then(|b| b.path(packagekit::PATH))
-        .and_then(|b| b.interface(packagekit::IFACE))
-        .and_then(|b| b.member("UpdatesChanged"))
-        .map(|b| b.build().into());
+        .path(packagekit::PATH)
+        .interface(packagekit::IFACE)
+        .member("UpdatesChanged")
+        .build()
+        .map(Into::into);
     let mut signals = match rule {
         Ok(r) => reprisebus::signals(conn, packagekit::NAME, vec![r]).await,
         Err(e) => {

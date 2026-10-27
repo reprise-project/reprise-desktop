@@ -478,14 +478,18 @@ pub fn stop_stale_scopes(
 /// one's tray thread requests the name; false without a bus or an answer.
 pub fn another_session_on_bus() -> bool {
     const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
-    let owned = || -> zbus::Result<bool> {
-        let conn = zbus::blocking::connection::Builder::session()?
+    let owned = async || -> zbus::Result<bool> {
+        let conn = zbus::connection::Builder::session()
             .method_timeout(TIMEOUT)
-            .build()?;
+            .build()
+            .await?;
         let name = zbus::names::BusName::try_from(reprisebus::tray::NAME)?;
-        Ok(zbus::blocking::fdo::DBusProxy::new(&conn)?.name_has_owner(name)?)
+        Ok(zbus::fdo::DBusProxy::new(&conn)
+            .await?
+            .name_has_owner(name)
+            .await?)
     };
-    owned().unwrap_or_else(|e| {
+    zbus::block_on(owned()).unwrap_or_else(|e| {
         log::debug!("{}: {e}", reprisebus::tray::NAME);
         false
     })

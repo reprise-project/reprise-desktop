@@ -5,7 +5,7 @@ use crate::mutex::lock;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Sender};
-use zbus::zvariant::Value;
+use zbus::Variant;
 
 const IFACE: &str = "com.canonical.Unity.LauncherEntry";
 const PATH: &str = "/com/canonical/unity/launcherentry/reprise";
@@ -46,11 +46,11 @@ pub fn update(app_id: &str, progress: Option<(f64, bool)>) {
 fn send(app_id: &str, progress: Option<(f64, bool)>) -> zbus::Result<()> {
     let conn = crate::session()?;
     let (fraction, paused) = progress.unwrap_or_default();
-    let props: HashMap<&str, Value<'_>> = HashMap::from([
-        ("progress", Value::from(fraction.clamp(0.0, 1.0))),
-        ("progress-visible", Value::from(progress.is_some())),
-        ("progress-paused", Value::from(paused)),
+    let props: HashMap<&str, Variant<'_>> = HashMap::from([
+        ("progress", Variant::from(fraction.clamp(0.0, 1.0))),
+        ("progress-visible", Variant::from(progress.is_some())),
+        ("progress-paused", Variant::from(paused)),
     ]);
     let uri = format!("application://{app_id}.desktop");
-    conn.emit_signal(None::<&str>, PATH, IFACE, "Update", &(uri, props))
+    crate::wait(conn.emit_signal(None::<&str>, PATH, IFACE, "Update", &(uri, props)))
 }

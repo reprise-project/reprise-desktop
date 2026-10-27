@@ -8,7 +8,7 @@
 use super::bus::{NAME, Poster};
 use super::{AgentRequest, Answer, Ask, BzMsg};
 use zbus::message::Header;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath};
+use zbus::{ObjectPath, OwnedObjectPath};
 
 pub const PATH: &str = "/reprise/bluetooth/agent";
 /// A keyboard and a display: BlueZ may use any pairing method.
@@ -190,8 +190,11 @@ impl Agent {
     }
 }
 
-pub(super) async fn serve(conn: &zbus::Connection, poster: Poster) -> zbus::Result<bool> {
-    conn.object_server().at(PATH, Agent { poster }).await
+pub(super) async fn serve(conn: &zbus::Connection, poster: Poster) -> zbus::Result<()> {
+    conn.object_server()
+        .at(PATH, Agent { poster })
+        .await
+        .map(drop)
 }
 
 /// Register with BlueZ and ask to be the default agent, so a pairing a

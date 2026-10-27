@@ -38,7 +38,7 @@ use smithay::reexports::calloop::{
     LoopHandle,
     channel::{Event, Sender, channel},
 };
-use zbus::zvariant::OwnedValue;
+use zbus::OwnedVariant;
 
 use crate::compositor::State;
 
@@ -381,7 +381,7 @@ async fn follow(
     max: &Arc<AtomicU32>,
 ) -> zbus::Result<()> {
     let geoclue = Arc::new(Mutex::new(None));
-    let conn = zbus::connection::Builder::system()?
+    let conn = zbus::connection::Builder::system()
         .serve_at(
             AGENT_PATH,
             Agent {
@@ -389,15 +389,15 @@ async fn follow(
                 max: max.clone(),
                 geoclue: geoclue.clone(),
             },
-        )?
+        )
         .build()
         .await?;
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .interface("org.freedesktop.DBus.Properties")?
-        .member("PropertiesChanged")?
-        .path_namespace("/org/freedesktop/GeoClue2")?
-        .build();
+        .interface("org.freedesktop.DBus.Properties")
+        .member("PropertiesChanged")
+        .path_namespace("/org/freedesktop/GeoClue2")
+        .build()?;
     let signals = reprisebus::signals(&conn, GEOCLUE, vec![rule.into()]).await;
     let mut wakes: SelectAll<BoxStream<'static, Wake>> = SelectAll::new();
     wakes.push(signals.map(Wake::Geoclue).boxed());
@@ -500,7 +500,7 @@ async fn in_use(conn: &zbus::Connection) -> bool {
         .await;
     reply
         .ok()
-        .and_then(|m| m.body().deserialize::<OwnedValue>().ok())
+        .and_then(|m| m.body().deserialize::<OwnedVariant>().ok())
         .and_then(|v| bool::try_from(v).ok())
         .unwrap_or(false)
 }
@@ -523,7 +523,7 @@ impl Clients {
         };
         let Ok((_, props, _)) = msg
             .body()
-            .deserialize::<(String, HashMap<String, OwnedValue>, Vec<String>)>()
+            .deserialize::<(String, HashMap<String, OwnedVariant>, Vec<String>)>()
         else {
             return false;
         };
@@ -586,7 +586,7 @@ enum Prop {
 }
 
 impl Prop {
-    fn from(name: &str, v: OwnedValue) -> Option<Prop> {
+    fn from(name: &str, v: OwnedVariant) -> Option<Prop> {
         Some(match name {
             "InUse" => Prop::InUse(bool::try_from(v).ok()?),
             "Active" => Prop::Active(bool::try_from(v).ok()?),

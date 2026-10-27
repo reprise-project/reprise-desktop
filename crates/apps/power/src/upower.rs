@@ -4,7 +4,7 @@ use futures_util::stream::StreamExt;
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
-use zbus::zvariant::OwnedValue;
+use zbus::OwnedVariant;
 use zbus::{Connection, Proxy};
 
 const NAME: &str = "org.freedesktop.UPower";
@@ -48,7 +48,7 @@ pub struct Power {
     pub battery: Option<Battery>,
 }
 
-fn fold(on_battery: bool, props: &HashMap<String, OwnedValue>) -> Power {
+fn fold(on_battery: bool, props: &HashMap<String, OwnedVariant>) -> Power {
     let present = props
         .get("IsPresent")
         .and_then(|v| bool::try_from(v.clone()).ok())
@@ -88,15 +88,15 @@ async fn proxy(
     iface: &'static str,
 ) -> zbus::Result<Proxy<'static>> {
     zbus::proxy::Builder::new(conn)
-        .destination(NAME)?
-        .path(path)?
-        .interface(iface)?
+        .destination(NAME)
+        .path(path)
+        .interface(iface)
         .cache_properties(zbus::proxy::CacheProperties::No)
         .build()
         .await
 }
 
-async fn all_props(props: &Proxy<'_>) -> Option<HashMap<String, OwnedValue>> {
+async fn all_props(props: &Proxy<'_>) -> Option<HashMap<String, OwnedVariant>> {
     props
         .call_method("GetAll", &(DEVICE_IFACE,))
         .await
@@ -106,7 +106,7 @@ async fn all_props(props: &Proxy<'_>) -> Option<HashMap<String, OwnedValue>> {
         .ok()
 }
 
-type Changed = (String, HashMap<String, OwnedValue>, Vec<String>);
+type Changed = (String, HashMap<String, OwnedVariant>, Vec<String>);
 
 enum Wake {
     Device(Option<Changed>),
@@ -117,7 +117,7 @@ enum Wake {
 #[derive(Default)]
 struct Store {
     on_battery: bool,
-    device: HashMap<String, OwnedValue>,
+    device: HashMap<String, OwnedVariant>,
 }
 
 impl Store {
@@ -125,7 +125,7 @@ impl Store {
         fold(self.on_battery, &self.device)
     }
 
-    fn device_changed(&mut self, changed: HashMap<String, OwnedValue>) {
+    fn device_changed(&mut self, changed: HashMap<String, OwnedVariant>) {
         self.device.extend(changed);
     }
 
@@ -215,10 +215,7 @@ async fn run(feed: &mut Feed<Power>) -> Run {
         return feed.unavailable();
     };
     let device: String = match upower.call_method("GetDisplayDevice", &()).await {
-        Ok(reply) => match reply
-            .body()
-            .deserialize::<zbus::zvariant::OwnedObjectPath>()
-        {
+        Ok(reply) => match reply.body().deserialize::<zbus::OwnedObjectPath>() {
             Ok(p) => p.as_str().to_string(),
             Err(_) => return feed.unavailable(),
         },
@@ -233,11 +230,12 @@ async fn run(feed: &mut Feed<Power>) -> Run {
         match zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender(NAME)
-            .and_then(|b| b.path(path))
-            .and_then(|b| b.interface(PROPERTIES))
-            .and_then(|b| b.member("PropertiesChanged"))
+            .path(path)
+            .interface(PROPERTIES)
+            .member("PropertiesChanged")
+            .build()
         {
-            Ok(b) => rules.push(b.build().into()),
+            Ok(r) => rules.push(r.into()),
             Err(e) => log::warn!("no match rule for {path}: {e}"),
         }
     }
@@ -344,9 +342,9 @@ pub(crate) fn follow<T: Clone + Default + PartialEq + Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zbus::zvariant::Value;
+    use zbus::Variant;
 
-    fn props(entries: Vec<(&str, Value<'static>)>) -> HashMap<String, OwnedValue> {
+    fn props(entries: Vec<(&str, Variant<'static>)>) -> HashMap<String, OwnedVariant> {
         entries
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.try_to_owned().unwrap()))
@@ -368,12 +366,12 @@ mod tests {
         let p = fold(
             true,
             &props(vec![
-                ("IsPresent", Value::from(true)),
-                ("Type", Value::from(2u32)),
-                ("State", Value::from(2u32)),
-                ("Percentage", Value::from(45.4f64)),
-                ("TimeToEmpty", Value::from(7800i64)),
-                ("TimeToFull", Value::from(0i64)),
+                ("IsPresent", Variant::from(true)),
+                ("Type", Variant::from(2u32)),
+                ("State", Variant::from(2u32)),
+                ("Percentage", Variant::from(45.4f64)),
+                ("TimeToEmpty", Variant::from(7800i64)),
+                ("TimeToFull", Variant::from(0i64)),
             ]),
         );
         assert_eq!(
@@ -395,14 +393,14 @@ mod tests {
         let mut store = Store {
             on_battery: false,
             device: props(vec![
-                ("IsPresent", Value::from(true)),
-                ("Type", Value::from(2u32)),
-                ("State", Value::from(1u32)),
-                ("Percentage", Value::from(40.0f64)),
-                ("TimeToFull", Value::from(600i64)),
+                ("IsPresent", Variant::from(true)),
+                ("Type", Variant::from(2u32)),
+                ("State", Variant::from(1u32)),
+                ("Percentage", Variant::from(40.0f64)),
+                ("TimeToFull", Variant::from(600i64)),
             ]),
         };
-        store.device_changed(props(vec![("Percentage", Value::from(41.0f64))]));
+        store.device_changed(props(vec![("Percentage", Variant::from(41.0f64))]));
         let b = store.power().battery.expect("still a battery");
         assert_eq!(
             (b.percent, b.state, b.time_to_full),
@@ -415,10 +413,10 @@ mod tests {
                 invalidated.iter().map(|k| k.to_string()).collect(),
             )
         };
-        let lid = daemon(vec![("LidIsClosed", Value::from(true))], &[]);
+        let lid = daemon(vec![("LidIsClosed", Variant::from(true))], &[]);
         assert!(!store.daemon_changed(Some(&lid)), "nothing to read again");
         assert!(!store.on_battery, "no OnBattery in it");
-        let plugged = daemon(vec![("OnBattery", Value::from(true))], &[]);
+        let plugged = daemon(vec![("OnBattery", Variant::from(true))], &[]);
         assert!(!store.daemon_changed(Some(&plugged)));
         assert!(store.on_battery);
     }
@@ -497,8 +495,8 @@ mod tests {
         let p = fold(
             false,
             &props(vec![
-                ("IsPresent", Value::from(false)),
-                ("Type", Value::from(0u32)),
+                ("IsPresent", Variant::from(false)),
+                ("Type", Variant::from(0u32)),
             ]),
         );
         assert_eq!(p.battery, None);

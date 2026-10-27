@@ -88,15 +88,15 @@ impl Calls {
 
 fn session_locked(u: &Udisks) -> bool {
     let conn = u.connection();
-    let reply = conn.call_method(
+    let reply = reprisebus::wait(conn.call_method(
         Some(LOGIN),
         "/org/freedesktop/login1/session/auto",
         Some(PROPERTIES),
         "Get",
         &(SESSION_IFACE, "LockedHint"),
-    );
+    ));
     reply
-        .and_then(|m| m.body().deserialize::<zbus::zvariant::OwnedValue>())
+        .and_then(|m| m.body().deserialize::<zbus::OwnedVariant>())
         .ok()
         .and_then(|v| bool::try_from(v).ok())
         .unwrap_or(false)

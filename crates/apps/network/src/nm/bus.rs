@@ -5,8 +5,8 @@ use super::*;
 use futures_util::future::join_all;
 use futures_util::stream::StreamExt;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use zbus::zvariant::{ObjectPath, Value};
 use zbus::{Connection, Proxy};
+use zbus::{ObjectPath, Variant};
 
 const NAME: &str = "org.freedesktop.NetworkManager";
 const MANAGER_PATH: &str = "/org/freedesktop/NetworkManager";
@@ -180,10 +180,10 @@ async fn run(
             waker.wake();
         }
     };
-    let conn = match zbus::connection::Builder::system() {
-        Ok(b) => b.method_timeout(CALL_TIMEOUT).build().await,
-        Err(e) => Err(e),
-    };
+    let conn = zbus::connection::Builder::system()
+        .method_timeout(CALL_TIMEOUT)
+        .build()
+        .await;
     let conn = match conn {
         Ok(c) => c,
         Err(e) => {
@@ -269,25 +269,22 @@ async fn run(
     }
 }
 
-/// Run the windows' commands on zbus's executor, each answered by a [`Wake::Ran`], so the loop
+/// Run the windows' commands on a task beside the connection, each answered by a [`Wake::Ran`], so the loop
 /// keeps reading while a call waits on the authentication dialog. The returned task must be kept
 /// alive.
 fn commands(
     conn: &Connection,
     cmds: async_channel::Receiver<Cmd>,
     wakes: async_channel::Sender<Wake>,
-) -> zbus::Task<()> {
+) -> zruntime::Task<(), zruntime::Shared> {
     let bus = conn.clone();
-    conn.executor().spawn(
-        async move {
-            queue(cmds, wakes, |cmd| {
-                let bus = bus.clone();
-                async move { command(&bus, &cmd).await }
-            })
-            .await
-        },
-        "reprise-network-commands",
-    )
+    zruntime::spawn(async move {
+        queue(cmds, wakes, |cmd| {
+            let bus = bus.clone();
+            async move { command(&bus, &cmd).await }
+        })
+        .await
+    })
 }
 
 /// [`commands`] without the bus. `Stats` commands take their own lane so a Status sheet opened
@@ -365,19 +362,19 @@ fn ran(cmd: &Cmd, result: Result<Option<NmMsg>, Failure>) -> Wake {
 /// Drain the signal streams into the loop's unbounded channel: a full 64-slot `MessageStream` would
 /// block zbus's socket reader and the replies [`build`] awaits. The returned task must be kept
 /// alive.
-async fn pump(conn: &Connection, wakes: async_channel::Sender<Wake>) -> zbus::Task<()> {
+async fn pump(
+    conn: &Connection,
+    wakes: async_channel::Sender<Wake>,
+) -> zruntime::Task<(), zruntime::Shared> {
     let mut streams = subscribe(conn).await;
-    conn.executor().spawn(
-        async move {
-            while let Some(wake) = streams.next().await {
-                if wakes.send(wake).await.is_err() {
-                    return;
-                }
+    zruntime::spawn(async move {
+        while let Some(wake) = streams.next().await {
+            if wakes.send(wake).await.is_err() {
+                return;
             }
-            log::warn!("the network store's signal streams all ended");
-        },
-        "reprise-network-signals",
-    )
+        }
+        log::warn!("the network store's signal streams all ended");
+    })
 }
 
 /// Signal names worth a wake anywhere under NetworkManager's tree; matched by member alone since
@@ -402,10 +399,11 @@ async fn subscribe(conn: &Connection) -> futures_util::stream::BoxStream<'static
         match zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender(NAME)
-            .and_then(|b| b.path_namespace(MANAGER_PATH))
-            .and_then(|b| b.member(*member))
+            .path_namespace(MANAGER_PATH)
+            .member(*member)
+            .build()
         {
-            Ok(b) => rules.push(b.build().into()),
+            Ok(r) => rules.push(r.into()),
             Err(e) => log::warn!("no match rule for {member}: {e}"),
         }
     }
@@ -487,10 +485,7 @@ async fn paths(conn: &Connection, path: &str, iface: &str, method: &str) -> Vec<
         }
     };
     match p.call_method(method, &()).await {
-        Ok(reply) => match reply
-            .body()
-            .deserialize::<Vec<zbus::zvariant::OwnedObjectPath>>()
-        {
+        Ok(reply) => match reply.body().deserialize::<Vec<zbus::OwnedObjectPath>>() {
             Ok(v) => v.iter().map(|p| p.as_str().to_string()).collect(),
             Err(e) => {
                 log::debug!("{method} on {path} did not deserialize: {e}");
@@ -558,7 +553,7 @@ async fn build(
     };
     let active_paths = manager_props
         .get("ActiveConnections")
-        .and_then(|v| Vec::<zbus::zvariant::OwnedObjectPath>::try_from(v.clone()).ok())
+        .and_then(|v| Vec::<zbus::OwnedObjectPath>::try_from(v.clone()).ok())
         .unwrap_or_default()
         .into_iter()
         .map(|p| p.as_str().to_string())
@@ -583,7 +578,7 @@ async fn build(
         if primary_active.as_deref() == Some(path.as_str()) {
             primary = props
                 .get("Devices")
-                .and_then(|v| Vec::<zbus::zvariant::OwnedObjectPath>::try_from(v.clone()).ok())
+                .and_then(|v| Vec::<zbus::OwnedObjectPath>::try_from(v.clone()).ok())
                 .and_then(|d| d.first().map(|p| p.as_str().to_string()));
         }
     }
@@ -791,9 +786,8 @@ async fn proxy_on<'a>(
     let path = opath(path)?;
     zbus::proxy::Builder::<Proxy>::new(conn)
         .destination(dest)
-        .and_then(|b| b.path(path))
-        .and_then(|b| b.interface(iface))
-        .map_err(clean)?
+        .path(path)
+        .interface(iface)
         .cache_properties(zbus::proxy::CacheProperties::No)
         .build()
         .await
@@ -804,12 +798,12 @@ async fn proxy_on<'a>(
 /// without which polkit refuses outright.
 async fn call_auth<B, R>(p: &Proxy<'_>, method: &str, body: &B) -> Result<Option<R>, Failure>
 where
-    B: zbus::export::serde::Serialize + zbus::zvariant::DynamicType,
-    R: for<'d> zbus::zvariant::DynamicDeserialize<'d>,
+    B: zbus::export::serde::Serialize + zbus::DynamicType,
+    R: for<'d> zbus::wire::DynamicDeserialize<'d>,
 {
     p.call_with_flags(
         method,
-        zbus::proxy::MethodFlags::AllowInteractiveAuth.into(),
+        zbus::proxy::MethodFlags::ALLOW_INTERACTIVE_AUTH,
         body,
     )
     .await
@@ -824,7 +818,7 @@ async fn activate(
     ap: &str,
 ) -> Result<(), Failure> {
     let manager = proxy(conn, MANAGER_PATH, NAME).await?;
-    call_auth::<_, zbus::zvariant::OwnedObjectPath>(
+    call_auth::<_, zbus::OwnedObjectPath>(
         &manager,
         "ActivateConnection",
         &(opath(connection)?, opath(device)?, opath(ap)?),
@@ -843,25 +837,25 @@ fn wifi_settings<'a>(
     key_mgmt: &'static str,
     hidden: bool,
     owner: Option<&str>,
-) -> HashMap<String, HashMap<String, Value<'a>>> {
-    let mut out: HashMap<String, HashMap<String, Value<'a>>> = HashMap::new();
+) -> HashMap<String, HashMap<String, Variant<'a>>> {
+    let mut out: HashMap<String, HashMap<String, Variant<'a>>> = HashMap::new();
     let mut connection = HashMap::from([
-        ("id".to_string(), Value::from(ssid.to_string())),
-        ("type".to_string(), Value::from("802-11-wireless")),
+        ("id".to_string(), Variant::from(ssid.to_string())),
+        ("type".to_string(), Variant::from("802-11-wireless")),
     ]);
     if let Some(owner) = owner {
         connection.insert(
             "permissions".to_string(),
-            Value::from(vec![format!("user:{owner}")]),
+            Variant::from(vec![format!("user:{owner}")]),
         );
     }
     out.insert("connection".into(), connection);
     let mut wireless = HashMap::from([
-        ("ssid".to_string(), Value::from(ssid.0.clone())),
-        ("mode".to_string(), Value::from("infrastructure")),
+        ("ssid".to_string(), Variant::from(ssid.0.clone())),
+        ("mode".to_string(), Variant::from("infrastructure")),
     ]);
     if hidden {
-        wireless.insert("hidden".to_string(), Value::from(true));
+        wireless.insert("hidden".to_string(), Variant::from(true));
     }
     out.insert("802-11-wireless".into(), wireless);
     if let Some(key) = key {
@@ -873,7 +867,7 @@ fn wifi_settings<'a>(
 /// Put `key` into `settings`' security groups: a passphrase under `key_mgmt`, or an 802.1X
 /// login as `wpa-eap` with its own `802-1x` group.
 fn secure<'a>(
-    settings: &mut HashMap<String, HashMap<String, Value<'a>>>,
+    settings: &mut HashMap<String, HashMap<String, Variant<'a>>>,
     key: &'a Key,
     key_mgmt: &str,
 ) {
@@ -882,12 +876,12 @@ fn secure<'a>(
         .or_default();
     match key {
         Key::Psk(psk) => {
-            security.insert("key-mgmt".into(), Value::from(key_mgmt.to_string()));
-            security.insert("psk".into(), Value::from(&**psk));
-            security.insert("psk-flags".into(), Value::from(0u32));
+            security.insert("key-mgmt".into(), Variant::from(key_mgmt.to_string()));
+            security.insert("psk".into(), Variant::from(&**psk));
+            security.insert("psk-flags".into(), Variant::from(0u32));
         }
         Key::Enterprise(e) => {
-            security.insert("key-mgmt".into(), Value::from("wpa-eap"));
+            security.insert("key-mgmt".into(), Variant::from("wpa-eap"));
             security.remove("psk");
             security.remove("psk-flags");
             settings.insert("802-1x".into(), dot1x(e));
@@ -898,32 +892,35 @@ fn secure<'a>(
 /// The `802-1x` group for `e`. Secrets carry flags 0 so NetworkManager stores them in the
 /// profile; an empty private-key password is marked not required (0x4), as an unencrypted key
 /// needs none.
-fn dot1x(e: &Enterprise) -> HashMap<String, Value<'_>> {
+fn dot1x(e: &Enterprise) -> HashMap<String, Variant<'_>> {
     let mut g = HashMap::from([
         (
             "eap".to_string(),
-            Value::from(vec![e.eap.label().to_lowercase()]),
+            Variant::from(vec![e.eap.label().to_lowercase()]),
         ),
-        ("identity".to_string(), Value::from(e.identity.as_str())),
+        ("identity".to_string(), Variant::from(e.identity.as_str())),
     ]);
     match &e.ca {
         CaSource::None => {}
         CaSource::File(ca) => {
-            g.insert("ca-cert".into(), Value::from(cert_path(ca)));
+            g.insert("ca-cert".into(), Variant::from(cert_path(ca)));
         }
         CaSource::System => {
-            g.insert("system-ca-certs".into(), Value::from(true));
+            g.insert("system-ca-certs".into(), Variant::from(true));
         }
     }
     if !e.domain.is_empty() {
-        g.insert("domain-suffix-match".into(), Value::from(e.domain.as_str()));
+        g.insert(
+            "domain-suffix-match".into(),
+            Variant::from(e.domain.as_str()),
+        );
     }
     match e.eap {
         Eap::Peap | Eap::Ttls => {
             if !e.anonymous_identity.is_empty() {
                 g.insert(
                     "anonymous-identity".into(),
-                    Value::from(e.anonymous_identity.as_str()),
+                    Variant::from(e.anonymous_identity.as_str()),
                 );
             }
             // TTLS names an inner EAP method (GTC) apart from its plain ones.
@@ -931,25 +928,25 @@ fn dot1x(e: &Enterprise) -> HashMap<String, Value<'_>> {
                 (Eap::Ttls, Inner::Gtc) => "phase2-autheap",
                 _ => "phase2-auth",
             };
-            g.insert(phase2.into(), Value::from(e.inner.label().to_lowercase()));
-            g.insert("password".into(), Value::from(&*e.password));
-            g.insert("password-flags".into(), Value::from(0u32));
+            g.insert(phase2.into(), Variant::from(e.inner.label().to_lowercase()));
+            g.insert("password".into(), Variant::from(&*e.password));
+            g.insert("password-flags".into(), Variant::from(0u32));
         }
         Eap::Tls => {
             if let Some(cert) = &e.client_cert {
-                g.insert("client-cert".into(), Value::from(cert_path(cert)));
+                g.insert("client-cert".into(), Variant::from(cert_path(cert)));
             }
             if let Some(key) = &e.private_key {
-                g.insert("private-key".into(), Value::from(cert_path(key)));
+                g.insert("private-key".into(), Variant::from(cert_path(key)));
             }
             if e.private_key_password.is_empty() {
-                g.insert("private-key-password-flags".into(), Value::from(4u32));
+                g.insert("private-key-password-flags".into(), Variant::from(4u32));
             } else {
                 g.insert(
                     "private-key-password".into(),
-                    Value::from(&*e.private_key_password),
+                    Variant::from(&*e.private_key_password),
                 );
-                g.insert("private-key-password-flags".into(), Value::from(0u32));
+                g.insert("private-key-password-flags".into(), Variant::from(0u32));
             }
         }
     }
@@ -1072,18 +1069,18 @@ fn rekeyed<'a>(
     current: HashMap<String, Props>,
     key: &'a Key,
     offered: &'static str,
-) -> HashMap<String, HashMap<String, Value<'a>>> {
+) -> HashMap<String, HashMap<String, Variant<'a>>> {
     let key_mgmt = current
         .get("802-11-wireless-security")
         .map(|s| text(s, "key-mgmt"))
         .unwrap_or_default();
     let key_mgmt = rekey_mgmt(&key_mgmt, offered).to_string();
-    let mut settings: HashMap<String, HashMap<String, Value<'a>>> = current
+    let mut settings: HashMap<String, HashMap<String, Variant<'a>>> = current
         .into_iter()
         .map(|(group, entries)| {
             let entries = entries
                 .into_iter()
-                .map(|(k, v)| (k, Value::from(v)))
+                .map(|(k, v)| (k, Variant::from(v)))
                 .collect();
             (group, entries)
         })
@@ -1170,43 +1167,43 @@ fn hotspot_settings(
     band: Band,
     owner: Option<&str>,
 ) -> crate::wg::Settings {
-    let mut connection: HashMap<String, Value<'static>> = HashMap::from([
-        ("id".to_string(), Value::from("Hotspot")),
-        ("type".to_string(), Value::from("802-11-wireless")),
-        ("autoconnect".to_string(), Value::from(false)),
+    let mut connection: HashMap<String, Variant<'static>> = HashMap::from([
+        ("id".to_string(), Variant::from("Hotspot")),
+        ("type".to_string(), Variant::from("802-11-wireless")),
+        ("autoconnect".to_string(), Variant::from(false)),
     ]);
     if let Some(owner) = owner {
         connection.insert(
             "permissions".to_string(),
-            Value::from(vec![format!("user:{owner}")]),
+            Variant::from(vec![format!("user:{owner}")]),
         );
     }
-    let mut wireless: HashMap<String, Value<'static>> = HashMap::from([
-        ("ssid".to_string(), Value::from(ssid.as_bytes().to_vec())),
-        ("mode".to_string(), Value::from("ap")),
+    let mut wireless: HashMap<String, Variant<'static>> = HashMap::from([
+        ("ssid".to_string(), Variant::from(ssid.as_bytes().to_vec())),
+        ("mode".to_string(), Variant::from("ap")),
     ]);
     match band {
         Band::Auto => {}
         Band::Bg => {
-            wireless.insert("band".into(), Value::from("bg"));
+            wireless.insert("band".into(), Variant::from("bg"));
         }
         Band::A => {
-            wireless.insert("band".into(), Value::from("a"));
+            wireless.insert("band".into(), Variant::from("a"));
         }
     }
-    let security: HashMap<String, Value<'static>> = HashMap::from([
+    let security: HashMap<String, Variant<'static>> = HashMap::from([
         (
             "key-mgmt".to_string(),
-            Value::from(if wpa3 { "sae" } else { "wpa-psk" }),
+            Variant::from(if wpa3 { "sae" } else { "wpa-psk" }),
         ),
-        ("proto".to_string(), Value::from(vec!["rsn".to_string()])),
+        ("proto".to_string(), Variant::from(vec!["rsn".to_string()])),
         (
             "pairwise".to_string(),
-            Value::from(vec!["ccmp".to_string()]),
+            Variant::from(vec!["ccmp".to_string()]),
         ),
-        ("group".to_string(), Value::from(vec!["ccmp".to_string()])),
-        ("psk".to_string(), Value::from(psk.to_string())),
-        ("psk-flags".to_string(), Value::from(0u32)),
+        ("group".to_string(), Variant::from(vec!["ccmp".to_string()])),
+        ("psk".to_string(), Variant::from(psk.to_string())),
+        ("psk-flags".to_string(), Variant::from(0u32)),
     ]);
     HashMap::from([
         ("connection".to_string(), connection),
@@ -1214,11 +1211,11 @@ fn hotspot_settings(
         ("802-11-wireless-security".to_string(), security),
         (
             "ipv4".to_string(),
-            HashMap::from([("method".to_string(), Value::from("shared"))]),
+            HashMap::from([("method".to_string(), Variant::from("shared"))]),
         ),
         (
             "ipv6".to_string(),
-            HashMap::from([("method".to_string(), Value::from("ignore"))]),
+            HashMap::from([("method".to_string(), Variant::from("ignore"))]),
         ),
     ])
 }
@@ -1256,7 +1253,7 @@ async fn nmcli_import(path: &std::path::Path, kind: &str) -> Result<(), Failure>
 
 async fn add_connection(conn: &Connection, settings: crate::wg::Settings) -> Result<(), Failure> {
     let p = proxy(conn, SETTINGS_PATH, SETTINGS_IFACE).await?;
-    call_auth::<_, zbus::zvariant::OwnedObjectPath>(&p, "AddConnection", &(settings,))
+    call_auth::<_, zbus::OwnedObjectPath>(&p, "AddConnection", &(settings,))
         .await
         .map(|_| ())
 }
@@ -1293,13 +1290,7 @@ async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
                     let owner = new_profile_owner(conn).await;
                     let key_mgmt = ap_key_mgmt(conn, ap).await;
                     let manager = proxy(conn, MANAGER_PATH, NAME).await?;
-                    call_auth::<
-                        _,
-                        (
-                            zbus::zvariant::OwnedObjectPath,
-                            zbus::zvariant::OwnedObjectPath,
-                        ),
-                    >(
+                    call_auth::<_, (zbus::OwnedObjectPath, zbus::OwnedObjectPath)>(
                         &manager,
                         "AddAndActivateConnection",
                         &(
@@ -1339,7 +1330,7 @@ async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
         Cmd::VpnDown(connection) => {
             let manager = proxy(conn, MANAGER_PATH, NAME).await?;
             let actives = manager
-                .get_property::<Vec<zbus::zvariant::OwnedObjectPath>>("ActiveConnections")
+                .get_property::<Vec<zbus::OwnedObjectPath>>("ActiveConnections")
                 .await
                 .map_err(clean)?;
             for active in actives {
@@ -1417,13 +1408,7 @@ async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
                 }
                 None => {
                     let manager = proxy(conn, MANAGER_PATH, NAME).await?;
-                    call_auth::<
-                        _,
-                        (
-                            zbus::zvariant::OwnedObjectPath,
-                            zbus::zvariant::OwnedObjectPath,
-                        ),
-                    >(
+                    call_auth::<_, (zbus::OwnedObjectPath, zbus::OwnedObjectPath)>(
                         &manager,
                         "AddAndActivateConnection",
                         &(fresh, opath(device)?, opath("/")?),
@@ -1434,7 +1419,7 @@ async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
             }
         }
         Cmd::Rescan(device) => {
-            let empty: HashMap<&str, Value<'_>> = HashMap::new();
+            let empty: HashMap<&str, Variant<'_>> = HashMap::new();
             proxy(conn, device, WIRELESS_IFACE)
                 .await?
                 .call_method("RequestScan", &(empty,))
@@ -1456,7 +1441,7 @@ async fn act(conn: &Connection, cmd: &Cmd) -> Result<(), Failure> {
 mod tests {
     use super::*;
 
-    fn props(entries: Vec<(&str, Value<'static>)>) -> Props {
+    fn props(entries: Vec<(&str, Variant<'static>)>) -> Props {
         entries
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.try_to_owned().unwrap()))
@@ -1555,7 +1540,7 @@ mod tests {
     #[test]
     fn a_dismissed_prompt_has_no_message_box_and_a_refusal_has_one() {
         let msg = zbus::Message::method_call("/", "ActivateConnection")
-            .and_then(|b| b.build(&()))
+            .build(&())
             .unwrap();
         let denied = || {
             zbus::Error::MethodError(
@@ -1657,7 +1642,7 @@ mod tests {
     #[test]
     fn only_a_bare_statistics_tick_skips_the_rebuild() {
         let dev = "/org/freedesktop/NetworkManager/Devices/2";
-        let tick = props(vec![("RxBytes", Value::from(10u64))]);
+        let tick = props(vec![("RxBytes", Variant::from(10u64))]);
         assert_eq!(
             wake_for_change(dev, STATS_IFACE, &tick),
             Some(Wake::Stats {
@@ -1667,8 +1652,8 @@ mod tests {
             })
         );
         let rate = props(vec![
-            ("RxBytes", Value::from(10u64)),
-            ("RefreshRateMs", Value::from(2000u32)),
+            ("RxBytes", Variant::from(10u64)),
+            ("RefreshRateMs", Variant::from(2000u32)),
         ]);
         assert_eq!(wake_for_change(dev, STATS_IFACE, &rate), Some(Wake::Bus));
         assert_eq!(wake_for_change(dev, DEVICE_IFACE, &tick), Some(Wake::Bus));
@@ -1682,8 +1667,8 @@ mod tests {
     fn only_a_bare_signal_update_skips_the_rebuild() {
         let ap = "/org/freedesktop/NetworkManager/AccessPoint/7";
         let scan = props(vec![
-            ("Strength", Value::from(55u8)),
-            ("LastSeen", Value::from(1234i32)),
+            ("Strength", Variant::from(55u8)),
+            ("LastSeen", Variant::from(1234i32)),
         ]);
         assert_eq!(
             wake_for_change(ap, AP_IFACE, &scan),
@@ -1692,7 +1677,7 @@ mod tests {
                 strength: Some(55)
             })
         );
-        let seen = props(vec![("LastSeen", Value::from(1234i32))]);
+        let seen = props(vec![("LastSeen", Variant::from(1234i32))]);
         assert_eq!(
             wake_for_change(ap, AP_IFACE, &seen),
             Some(Wake::Strength {
@@ -1701,8 +1686,8 @@ mod tests {
             })
         );
         let flags = props(vec![
-            ("Strength", Value::from(55u8)),
-            ("RsnFlags", Value::from(0x100u32)),
+            ("Strength", Variant::from(55u8)),
+            ("RsnFlags", Variant::from(0x100u32)),
         ]);
         assert_eq!(wake_for_change(ap, AP_IFACE, &flags), Some(Wake::Bus));
     }
@@ -1710,11 +1695,11 @@ mod tests {
     #[test]
     fn a_bare_scan_stamp_wakes_nothing() {
         let dev = "/org/freedesktop/NetworkManager/Devices/3";
-        let stamp = props(vec![("LastScan", Value::from(5000i64))]);
+        let stamp = props(vec![("LastScan", Variant::from(5000i64))]);
         assert_eq!(wake_for_change(dev, WIRELESS_IFACE, &stamp), None);
         let rate = props(vec![
-            ("LastScan", Value::from(5000i64)),
-            ("Bitrate", Value::from(54000u32)),
+            ("LastScan", Variant::from(5000i64)),
+            ("Bitrate", Variant::from(54000u32)),
         ]);
         assert_eq!(wake_for_change(dev, WIRELESS_IFACE, &rate), Some(Wake::Bus));
     }
@@ -1807,7 +1792,7 @@ mod tests {
         let owned = wifi_settings(&"Home".into(), Some(&key), "wpa-psk", false, Some("alice"));
         assert_eq!(
             owned["connection"].get("permissions"),
-            Some(&Value::from(vec!["user:alice".to_string()])),
+            Some(&Variant::from(vec!["user:alice".to_string()])),
             "permissions is [\"user:alice\"]"
         );
         let shared = wifi_settings(&"Home".into(), None, "wpa-psk", false, None);
@@ -1827,7 +1812,7 @@ mod tests {
         let sae = wifi_settings(&"Home".into(), Some(&key), "sae", false, None);
         assert_eq!(
             sae["802-11-wireless-security"].get("key-mgmt"),
-            Some(&Value::from("sae")),
+            Some(&Variant::from("sae")),
             "key-mgmt is sae"
         );
     }
@@ -1836,7 +1821,7 @@ mod tests {
         Key::Psk(Psk::new(s))
     }
 
-    fn campus(e: Enterprise) -> HashMap<String, HashMap<String, Value<'static>>> {
+    fn campus(e: Enterprise) -> HashMap<String, HashMap<String, Variant<'static>>> {
         let key = Key::Enterprise(Box::new(e));
         wifi_settings(&"campus".into(), Some(&key), "wpa-psk", false, None)
             .into_iter()
@@ -1850,8 +1835,8 @@ mod tests {
             .collect()
     }
 
-    fn file(path: &str) -> Value<'static> {
-        Value::from([b"file://", path.as_bytes(), b"\0"].concat())
+    fn file(path: &str) -> Variant<'static> {
+        Variant::from([b"file://", path.as_bytes(), b"\0"].concat())
     }
 
     #[test]
@@ -1867,22 +1852,22 @@ mod tests {
         });
         assert_eq!(
             s["802-11-wireless-security"],
-            HashMap::from([("key-mgmt".to_string(), Value::from("wpa-eap"))]),
+            HashMap::from([("key-mgmt".to_string(), Variant::from("wpa-eap"))]),
             "key-mgmt is wpa-eap and nothing else"
         );
         assert_eq!(
             s["802-1x"],
             HashMap::from([
-                ("eap".to_string(), Value::from(vec!["peap".to_string()])),
-                ("identity".to_string(), Value::from("alice@uni.example")),
+                ("eap".to_string(), Variant::from(vec!["peap".to_string()])),
+                ("identity".to_string(), Variant::from("alice@uni.example")),
                 (
                     "anonymous-identity".to_string(),
-                    Value::from("anonymous@uni.example")
+                    Variant::from("anonymous@uni.example")
                 ),
                 ("ca-cert".to_string(), file("/etc/ssl/certs/uni.pem")),
-                ("phase2-auth".to_string(), Value::from("mschapv2")),
-                ("password".to_string(), Value::from("hunter22")),
-                ("password-flags".to_string(), Value::from(0u32)),
+                ("phase2-auth".to_string(), Variant::from("mschapv2")),
+                ("password".to_string(), Variant::from("hunter22")),
+                ("password-flags".to_string(), Variant::from(0u32)),
             ])
         );
     }
@@ -1899,11 +1884,11 @@ mod tests {
         assert_eq!(
             s["802-1x"],
             HashMap::from([
-                ("eap".to_string(), Value::from(vec!["ttls".to_string()])),
-                ("identity".to_string(), Value::from("bob")),
-                ("phase2-auth".to_string(), Value::from("pap")),
-                ("password".to_string(), Value::from("hunter22")),
-                ("password-flags".to_string(), Value::from(0u32)),
+                ("eap".to_string(), Variant::from(vec!["ttls".to_string()])),
+                ("identity".to_string(), Variant::from("bob")),
+                ("phase2-auth".to_string(), Variant::from("pap")),
+                ("password".to_string(), Variant::from("hunter22")),
+                ("password-flags".to_string(), Variant::from(0u32)),
             ]),
             "no ca-cert and no empty anonymous-identity"
         );
@@ -1912,7 +1897,7 @@ mod tests {
             inner: Inner::Gtc,
             ..Enterprise::default()
         });
-        assert_eq!(gtc["802-1x"]["phase2-autheap"], Value::from("gtc"));
+        assert_eq!(gtc["802-1x"]["phase2-autheap"], Variant::from("gtc"));
         assert!(
             !gtc["802-1x"].contains_key("phase2-auth"),
             "TTLS takes GTC as an inner EAP method only"
@@ -1930,8 +1915,11 @@ mod tests {
             ..Enterprise::default()
         });
         let x = &s["802-1x"];
-        assert_eq!(x["system-ca-certs"], Value::from(true));
-        assert_eq!(x["domain-suffix-match"], Value::from("radius.uni.example"));
+        assert_eq!(x["system-ca-certs"], Variant::from(true));
+        assert_eq!(
+            x["domain-suffix-match"],
+            Variant::from("radius.uni.example")
+        );
         assert!(!x.contains_key("ca-cert"), "the system store needs no file");
         let file_ca = campus(Enterprise {
             ca: CaSource::File("/etc/ssl/certs/uni.pem".into()),
@@ -1940,7 +1928,7 @@ mod tests {
         });
         assert_eq!(
             file_ca["802-1x"]["domain-suffix-match"],
-            Value::from("uni.example")
+            Variant::from("uni.example")
         );
         assert!(!file_ca["802-1x"].contains_key("system-ca-certs"));
     }
@@ -1961,13 +1949,19 @@ mod tests {
         assert_eq!(
             s["802-1x"],
             HashMap::from([
-                ("eap".to_string(), Value::from(vec!["tls".to_string()])),
-                ("identity".to_string(), Value::from("alice")),
+                ("eap".to_string(), Variant::from(vec!["tls".to_string()])),
+                ("identity".to_string(), Variant::from("alice")),
                 ("ca-cert".to_string(), file("/home/alice/ca.pem")),
                 ("client-cert".to_string(), file("/home/alice/alice.crt")),
                 ("private-key".to_string(), file("/home/alice/alice.key")),
-                ("private-key-password".to_string(), Value::from("swordfish")),
-                ("private-key-password-flags".to_string(), Value::from(0u32)),
+                (
+                    "private-key-password".to_string(),
+                    Variant::from("swordfish")
+                ),
+                (
+                    "private-key-password-flags".to_string(),
+                    Variant::from(0u32)
+                ),
             ]),
             "no password or phase 2 for TLS"
         );
@@ -1977,7 +1971,7 @@ mod tests {
         });
         assert_eq!(
             bare["802-1x"]["private-key-password-flags"],
-            Value::from(4u32),
+            Variant::from(4u32),
             "an unencrypted key needs no password"
         );
         assert!(!bare["802-1x"].contains_key("private-key-password"));
@@ -1988,13 +1982,13 @@ mod tests {
         let current = HashMap::from([
             (
                 "connection".to_string(),
-                props(vec![("uuid", Value::from("u-1"))]),
+                props(vec![("uuid", Variant::from("u-1"))]),
             ),
             (
                 "802-11-wireless-security".to_string(),
                 props(vec![
-                    ("key-mgmt", Value::from("wpa-psk")),
-                    ("psk-flags", Value::from(1u32)),
+                    ("key-mgmt", Variant::from("wpa-psk")),
+                    ("psk-flags", Variant::from(1u32)),
                 ]),
             ),
         ]);
@@ -2006,18 +2000,18 @@ mod tests {
         let s = rekeyed(current.clone(), &key, "wpa-psk");
         assert_eq!(
             s["802-11-wireless-security"],
-            HashMap::from([("key-mgmt".to_string(), Value::from("wpa-eap"))])
+            HashMap::from([("key-mgmt".to_string(), Variant::from("wpa-eap"))])
         );
-        assert_eq!(s["802-1x"]["identity"], Value::from("alice"));
-        assert_eq!(s["connection"]["uuid"], Value::from("u-1"));
+        assert_eq!(s["802-1x"]["identity"], Variant::from("alice"));
+        assert_eq!(s["connection"]["uuid"], Variant::from("u-1"));
         let key = psk("hunter22");
         let s = rekeyed(current, &key, "sae");
         assert_eq!(
             s["802-11-wireless-security"],
             HashMap::from([
-                ("key-mgmt".to_string(), Value::from("wpa-psk")),
-                ("psk".to_string(), Value::from("hunter22")),
-                ("psk-flags".to_string(), Value::from(0u32)),
+                ("key-mgmt".to_string(), Variant::from("wpa-psk")),
+                ("psk".to_string(), Variant::from("hunter22")),
+                ("psk-flags".to_string(), Variant::from(0u32)),
             ]),
             "a passphrase keeps the profile's own key-mgmt"
         );
@@ -2027,10 +2021,13 @@ mod tests {
     fn a_hidden_network_is_probed_for_by_name() {
         let key = psk("hunter22");
         let s = wifi_settings(&"Attic".into(), Some(&key), "wpa-psk", true, None);
-        assert_eq!(s["802-11-wireless"]["hidden"], Value::from(true));
-        assert_eq!(s["802-11-wireless"]["ssid"], Value::from(b"Attic".to_vec()));
+        assert_eq!(s["802-11-wireless"]["hidden"], Variant::from(true));
+        assert_eq!(
+            s["802-11-wireless"]["ssid"],
+            Variant::from(b"Attic".to_vec())
+        );
         let open = wifi_settings(&"Attic".into(), None, "wpa-psk", true, None);
-        assert_eq!(open["802-11-wireless"]["hidden"], Value::from(true));
+        assert_eq!(open["802-11-wireless"]["hidden"], Variant::from(true));
         assert!(
             !open.contains_key("802-11-wireless-security"),
             "no key, no security"
@@ -2048,7 +2045,7 @@ mod tests {
         let s = wifi_settings(&latin1, None, "wpa-psk", false, None);
         assert_eq!(
             s["802-11-wireless"].get("ssid"),
-            Some(&Value::from(b"Caf\xe9".to_vec())),
+            Some(&Variant::from(b"Caf\xe9".to_vec())),
             "ssid is the bytes 43 61 66 e9"
         );
     }
@@ -2056,22 +2053,25 @@ mod tests {
     #[test]
     fn a_hotspot_profile_is_an_access_point_sharing_its_address() {
         let s = hotspot_settings("Desk", "hunter222", false, Band::A, Some("alice"));
-        assert_eq!(s["802-11-wireless"]["mode"], Value::from("ap"));
-        assert_eq!(s["802-11-wireless"]["band"], Value::from("a"));
-        assert_eq!(s["802-11-wireless"]["ssid"], Value::from(b"Desk".to_vec()));
+        assert_eq!(s["802-11-wireless"]["mode"], Variant::from("ap"));
+        assert_eq!(s["802-11-wireless"]["band"], Variant::from("a"));
+        assert_eq!(
+            s["802-11-wireless"]["ssid"],
+            Variant::from(b"Desk".to_vec())
+        );
         assert_eq!(
             s["802-11-wireless-security"]["key-mgmt"],
-            Value::from("wpa-psk")
+            Variant::from("wpa-psk")
         );
-        assert_eq!(s["ipv4"]["method"], Value::from("shared"));
+        assert_eq!(s["ipv4"]["method"], Variant::from("shared"));
         assert_eq!(
             s["connection"]["permissions"],
-            Value::from(vec!["user:alice".to_string()])
+            Variant::from(vec!["user:alice".to_string()])
         );
         let wpa3 = hotspot_settings("Desk", "hunter222", true, Band::Auto, None);
         assert_eq!(
             wpa3["802-11-wireless-security"]["key-mgmt"],
-            Value::from("sae")
+            Variant::from("sae")
         );
         assert!(
             !wpa3["802-11-wireless"].contains_key("band"),
@@ -2085,20 +2085,20 @@ mod tests {
             (
                 "connection".to_string(),
                 props(vec![
-                    ("id", Value::from("Hotspot")),
-                    ("uuid", Value::from("u-1")),
+                    ("id", Variant::from("Hotspot")),
+                    ("uuid", Variant::from("u-1")),
                 ]),
             ),
             (
                 "802-11-wireless".to_string(),
-                props(vec![("band", Value::from("a"))]),
+                props(vec![("band", Variant::from("a"))]),
             ),
         ]);
         let m = merge_groups(
             current,
             hotspot_settings("Desk", "hunter222", false, Band::Auto, None),
         );
-        assert_eq!(m["connection"]["uuid"], Value::from("u-1"));
+        assert_eq!(m["connection"]["uuid"], Variant::from("u-1"));
         assert!(!m["802-11-wireless"].contains_key("band"));
     }
 
@@ -2136,7 +2136,7 @@ mod tests {
     fn interactive(hdr: &zbus::message::Header<'_>) -> bool {
         hdr.primary()
             .flags()
-            .contains(zbus::message::Flags::AllowInteractiveAuth)
+            .contains(zbus::message::Flags::ALLOW_INTERACTIVE_AUTH)
     }
 
     /// NetworkManager with one saved Wi-Fi profile, "Home", recording which calls may prompt.
@@ -2147,32 +2147,29 @@ mod tests {
         fn activate_connection(
             &self,
             #[zbus(header)] hdr: zbus::message::Header<'_>,
-            _connection: zbus::zvariant::OwnedObjectPath,
-            _device: zbus::zvariant::OwnedObjectPath,
-            _ap: zbus::zvariant::OwnedObjectPath,
-        ) -> zbus::zvariant::OwnedObjectPath {
+            _connection: zbus::OwnedObjectPath,
+            _device: zbus::OwnedObjectPath,
+            _ap: zbus::OwnedObjectPath,
+        ) -> zbus::OwnedObjectPath {
             self.0
                 .lock()
                 .unwrap()
                 .push(("ActivateConnection", interactive(&hdr)));
-            zbus::zvariant::OwnedObjectPath::try_from("/a/1").unwrap()
+            zbus::OwnedObjectPath::try_from("/a/1").unwrap()
         }
 
         fn add_and_activate_connection(
             &self,
             #[zbus(header)] hdr: zbus::message::Header<'_>,
             _settings: HashMap<String, Props>,
-            _device: zbus::zvariant::OwnedObjectPath,
-            _ap: zbus::zvariant::OwnedObjectPath,
-        ) -> (
-            zbus::zvariant::OwnedObjectPath,
-            zbus::zvariant::OwnedObjectPath,
-        ) {
+            _device: zbus::OwnedObjectPath,
+            _ap: zbus::OwnedObjectPath,
+        ) -> (zbus::OwnedObjectPath, zbus::OwnedObjectPath) {
             self.0
                 .lock()
                 .unwrap()
                 .push(("AddAndActivateConnection", interactive(&hdr)));
-            let path = |p: &str| zbus::zvariant::OwnedObjectPath::try_from(p).unwrap();
+            let path = |p: &str| zbus::OwnedObjectPath::try_from(p).unwrap();
             (path("/c/2"), path("/a/2"))
         }
     }
@@ -2181,8 +2178,8 @@ mod tests {
 
     #[zbus::interface(name = "org.freedesktop.NetworkManager.Settings")]
     impl FakeSettings {
-        fn list_connections(&self) -> Vec<zbus::zvariant::OwnedObjectPath> {
-            vec![zbus::zvariant::OwnedObjectPath::try_from(HOME).unwrap()]
+        fn list_connections(&self) -> Vec<zbus::OwnedObjectPath> {
+            vec![zbus::OwnedObjectPath::try_from(HOME).unwrap()]
         }
     }
 
@@ -2193,7 +2190,7 @@ mod tests {
         fn get_settings(&self) -> HashMap<String, Props> {
             HashMap::from([(
                 "802-11-wireless".to_string(),
-                props(vec![("ssid", Value::from(b"Home".to_vec()))]),
+                props(vec![("ssid", Variant::from(b"Home".to_vec()))]),
             )])
         }
 
@@ -2216,20 +2213,14 @@ mod tests {
         let recorded = calls.clone();
         zbus::block_on(async move {
             let (server, client) = futures_util::future::join(
-                zbus::connection::Builder::async_io_unix_stream(a)
+                zbus::connection::Builder::unix_stream(a)
                     .server(zbus::Guid::generate())
-                    .unwrap()
                     .p2p()
                     .serve_at(MANAGER_PATH, FakeNm(recorded.clone()))
-                    .unwrap()
                     .serve_at(SETTINGS_PATH, FakeSettings)
-                    .unwrap()
                     .serve_at(HOME, FakeProfile(recorded))
-                    .unwrap()
                     .build(),
-                zbus::connection::Builder::async_io_unix_stream(b)
-                    .p2p()
-                    .build(),
+                zbus::connection::Builder::unix_stream(b).p2p().build(),
             )
             .await;
             let (_server, client) = (server.unwrap(), client.unwrap());

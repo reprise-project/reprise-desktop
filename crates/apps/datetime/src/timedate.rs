@@ -12,7 +12,7 @@ const IFACE: &str = "org.freedesktop.timedate1";
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 
 async fn connect(timeout: Option<Duration>) -> zbus::Result<zbus::Connection> {
-    let b = zbus::connection::Builder::system()?;
+    let b = zbus::connection::Builder::system();
     match timeout {
         Some(t) => b.method_timeout(t).build().await,
         None => b.build().await,
@@ -21,7 +21,7 @@ async fn connect(timeout: Option<Duration>) -> zbus::Result<zbus::Connection> {
 
 async fn property<T>(conn: &zbus::Connection, name: &str) -> zbus::Result<T>
 where
-    T: TryFrom<zbus::zvariant::OwnedValue>,
+    T: TryFrom<zbus::OwnedVariant>,
     T::Error: Into<zbus::Error>,
 {
     let reply = conn
@@ -33,7 +33,7 @@ where
             &(IFACE, name),
         )
         .await?;
-    let v: zbus::zvariant::OwnedValue = reply.body().deserialize()?;
+    let v: zbus::OwnedVariant = reply.body().deserialize()?;
     T::try_from(v).map_err(Into::into)
 }
 
@@ -126,7 +126,7 @@ fn text(e: zbus::Error) -> Failure {
 
 async fn call<B>(conn: &zbus::Connection, method: &str, body: &B) -> Result<(), Failure>
 where
-    B: serde::Serialize + zbus::zvariant::DynamicType,
+    B: serde::Serialize + zbus::DynamicType,
 {
     conn.call_method(Some(DEST), PATH, Some(IFACE), method, body)
         .await
@@ -167,7 +167,7 @@ mod tests {
 
     fn error(name: &'static str, text: &str) -> zbus::Error {
         let msg = zbus::Message::method_call(PATH, "SetNTP")
-            .and_then(|b| b.build(&()))
+            .build(&())
             .expect("a method call");
         zbus::Error::MethodError(
             name.try_into().expect("an error name"),

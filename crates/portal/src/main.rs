@@ -36,8 +36,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use wayland::{Target, Wayland};
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant::{
-    DeserializeDict, ObjectPath, OwnedObjectPath, OwnedValue, SerializeDict, Type, Value,
+use zbus::{
+    DeserializeDict, ObjectPath, OwnedObjectPath, OwnedVariant, SerializeDict, Type, Variant,
 };
 
 const BUS_NAME: &str = "org.freedesktop.impl.portal.desktop.reprise";
@@ -69,7 +69,7 @@ const RESTORE_VERSION: u32 = 3;
 /// surfaces, including this program's dialog.
 const HIDDEN_APPS: [&str; 2] = ["reprise.portal", "xdg-desktop-portal-wlr"];
 
-pub(crate) type Results = HashMap<String, OwnedValue>;
+pub(crate) type Results = HashMap<String, OwnedVariant>;
 
 /// Casts start and stop one at a time: a client that shares again right
 /// after closing would otherwise open the new capture session while the old
@@ -278,7 +278,7 @@ struct SelectSourcesOptions {
     #[allow(dead_code)]
     multiple: Option<bool>,
     cursor_mode: Option<u32>,
-    restore_data: Option<(String, u32, OwnedValue)>,
+    restore_data: Option<(String, u32, OwnedVariant)>,
     persist_mode: Option<u32>,
 }
 
@@ -298,7 +298,7 @@ pub(crate) struct StreamProps {
 struct StartResults {
     streams: Vec<(u32, StreamProps)>,
     persist_mode: u32,
-    restore_data: Option<(String, u32, OwnedValue)>,
+    restore_data: Option<(String, u32, OwnedVariant)>,
 }
 
 struct SessionData {
@@ -411,7 +411,7 @@ impl ScreenCast {
         _handle: ObjectPath<'_>,
         session_handle: ObjectPath<'_>,
         app_id: String,
-        _options: HashMap<String, Value<'_>>,
+        _options: HashMap<String, Variant<'_>>,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<(u32, Results)> {
@@ -485,7 +485,7 @@ impl ScreenCast {
         session_handle: ObjectPath<'_>,
         app_id: String,
         parent_window: String,
-        _options: HashMap<String, Value<'_>>,
+        _options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<(u32, StartResults)> {
@@ -527,7 +527,7 @@ pub(crate) struct Started {
     pub(crate) stream: (u32, StreamProps),
     pub(crate) target: Target,
     pub(crate) persist_mode: u32,
-    pub(crate) restore_data: Option<(String, u32, OwnedValue)>,
+    pub(crate) restore_data: Option<(String, u32, OwnedVariant)>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -644,18 +644,14 @@ pub(crate) async fn pick_and_cast(
     // The compositor can end the cast on its own (the window closed,
     // the output went); the frontend hears of it as a Closed session.
     if let Some(ended) = ended {
-        conn.executor()
-            .spawn(
-                cast_ended(
-                    conn.clone(),
-                    sessions.clone(),
-                    key.to_string(),
-                    node_id,
-                    ended,
-                ),
-                "cast-ended",
-            )
-            .detach();
+        zruntime::spawn(cast_ended(
+            conn.clone(),
+            sessions.clone(),
+            key.to_string(),
+            node_id,
+            ended,
+        ))
+        .detach();
     }
     Ok(Started {
         stream,
@@ -718,7 +714,7 @@ fn empty_start() -> StartResults {
 }
 
 /// The output or window a restore token names, for `app_id` only.
-fn restore_target(data: &(String, u32, OwnedValue), app_id: &str) -> Option<Target> {
+fn restore_target(data: &(String, u32, OwnedVariant), app_id: &str) -> Option<Target> {
     let grant = restored_grant(data, app_id)?;
     match remotedesktop::parse_grant(grant) {
         Some((_, target)) => target,
@@ -726,11 +722,11 @@ fn restore_target(data: &(String, u32, OwnedValue), app_id: &str) -> Option<Targ
     }
 }
 
-pub(crate) fn restore_data(app_id: &str, grant: &str) -> (String, u32, OwnedValue) {
+pub(crate) fn restore_data(app_id: &str, grant: &str) -> (String, u32, OwnedVariant) {
     (
         RESTORE_VENDOR.to_string(),
         RESTORE_VERSION,
-        Value::from(format!("{app_id}:{grant}"))
+        Variant::from(format!("{app_id}:{grant}"))
             .try_to_owned()
             .expect("string"),
     )
@@ -739,7 +735,7 @@ pub(crate) fn restore_data(app_id: &str, grant: &str) -> (String, u32, OwnedValu
 /// The grant in one of our current tokens issued to `app_id`. An app id
 /// holds no `:`, so the first one ends it.
 pub(crate) fn restored_grant<'a>(
-    data: &'a (String, u32, OwnedValue),
+    data: &'a (String, u32, OwnedVariant),
     app_id: &str,
 ) -> Option<&'a str> {
     if data.0 != RESTORE_VENDOR || data.1 != RESTORE_VERSION {
@@ -749,10 +745,10 @@ pub(crate) fn restored_grant<'a>(
     (app == app_id).then_some(grant)
 }
 
-fn as_str<'a>(v: &'a Value<'a>) -> Option<&'a str> {
+fn as_str<'a>(v: &'a Variant<'a>) -> Option<&'a str> {
     match v {
-        Value::Str(s) => Some(s.as_str()),
-        Value::Value(inner) => as_str(inner),
+        Variant::Str(s) => Some(s.as_str()),
+        Variant::Variant(inner) => as_str(inner),
         _ => None,
     }
 }
@@ -963,7 +959,7 @@ async fn serve(
     frontend: &Frontend,
 ) -> zbus::Result<zbus::Connection> {
     let frontend = || frontend.clone();
-    zbus::connection::Builder::session()?
+    zbus::connection::Builder::session()
         .serve_at(
             PATH,
             ScreenCast {
@@ -971,13 +967,13 @@ async fn serve(
                 source_types,
                 frontend: frontend(),
             },
-        )?
+        )
         .serve_at(
             PATH,
             screenshot::Screenshot {
                 frontend: frontend(),
             },
-        )?
+        )
         .serve_at(
             PATH,
             remotedesktop::RemoteDesktop {
@@ -985,7 +981,7 @@ async fn serve(
                 link: link.clone(),
                 frontend: frontend(),
             },
-        )?
+        )
         .serve_at(
             PATH,
             globalshortcuts::GlobalShortcuts {
@@ -993,7 +989,7 @@ async fn serve(
                 link: link.clone(),
                 frontend: frontend(),
             },
-        )?
+        )
         .serve_at(
             PATH,
             inputcapture::InputCapture {
@@ -1001,48 +997,48 @@ async fn serve(
                 link: link.clone(),
                 frontend: frontend(),
             },
-        )?
+        )
         .serve_at(
             PATH,
             access::Access {
                 frontend: frontend(),
             },
-        )?
+        )
         .serve_at(
             PATH,
             filechooser::FileChooser {
                 frontend: frontend(),
             },
-        )?
-        .serve_at(PATH, appchooser::AppChooser::new(frontend()))?
+        )
+        .serve_at(PATH, appchooser::AppChooser::new(frontend()))
         .serve_at(
             PATH,
             notification::Notification {
                 book: notes,
                 frontend: frontend(),
             },
-        )?
+        )
         .serve_at(
             PATH,
             inhibit::Inhibit {
                 shared: inhibits.clone(),
                 frontend: frontend(),
             },
-        )?
-        .serve_at(PATH, inhibit::SessionEnd { shared: inhibits })?
+        )
+        .serve_at(PATH, inhibit::SessionEnd { shared: inhibits })
         .serve_at(
             PATH,
             background::Background {
                 frontend: frontend(),
                 link,
             },
-        )?
+        )
         .serve_at(
             PATH,
             wallpaper::Wallpaper {
                 frontend: frontend(),
             },
-        )?
+        )
         .build()
         .await
 }
@@ -1051,8 +1047,8 @@ fn main() {
     // zbus logs every call it serves at info, with the whole message; RUST_LOG
     // still turns it back on.
     reprisebus::journal::init_logger("info,zbus=warn");
-    // A panic in a handler ends zbus's executor thread and leaves a process that holds the bus name and answers
-    // nothing; exiting lets the unit restart.
+    // A panic in a handler can leave a process that holds the bus name and answers nothing;
+    // exiting lets the unit restart.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         default_hook(info);
@@ -1181,25 +1177,11 @@ fn main() {
         conn.request_name(BUS_NAME)
             .await
             .unwrap_or_else(|e| fail(e));
-        conn.executor()
-            .spawn(notification::watch(conn.clone(), notes), "notifications")
-            .detach();
-        conn.executor()
-            .spawn(inhibit::run_idle(conn.clone(), idle), "idle inhibitions")
-            .detach();
-        conn.executor()
-            .spawn(
-                inhibit::watch_lock(conn.clone(), inhibits.clone()),
-                "screen lock",
-            )
-            .detach();
+        zruntime::spawn(notification::watch(conn.clone(), notes)).detach();
+        zruntime::spawn(inhibit::run_idle(conn.clone(), idle)).detach();
+        zruntime::spawn(inhibit::watch_lock(conn.clone(), inhibits.clone())).detach();
         if let Some(link) = background_link {
-            conn.executor()
-                .spawn(
-                    background::announce(conn.clone(), link),
-                    "running applications",
-                )
-                .detach();
+            zruntime::spawn(background::announce(conn.clone(), link)).detach();
         }
         owner::exit_with(compositor);
         watch_frontends(conn, changes, frontend, sessions, inhibits).await;
@@ -1248,7 +1230,7 @@ mod tests {
         let unbound = (
             RESTORE_VENDOR.to_string(),
             2,
-            Value::from("output:DP-1").try_to_owned().unwrap(),
+            Variant::from("output:DP-1").try_to_owned().unwrap(),
         );
         assert_eq!(
             restore_target(&unbound, "output"),

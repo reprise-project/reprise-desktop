@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, SystemTime};
-use zbus::zvariant::{ObjectPath, OwnedValue, Value};
+use zbus::{ObjectPath, OwnedVariant, Variant};
 
 /// Long enough for an app that reads the file only when it sends it, as a chat attaches on send.
 const KEEP: Duration = Duration::from_secs(60 * 60);
@@ -39,12 +39,12 @@ impl Screenshot {
         handle: ObjectPath<'_>,
         app_id: String,
         parent_window: String,
-        options: HashMap<String, Value<'_>>,
+        options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         log::info!("Screenshot for {app_id:?}");
-        let interactive = matches!(options.get("interactive"), Some(Value::Bool(true)));
+        let interactive = matches!(options.get("interactive"), Some(Variant::Bool(true)));
         let mut target = None;
         if interactive || needs_consent(&options) {
             let cancel = Arc::new(AtomicBool::new(false));
@@ -83,7 +83,7 @@ impl Screenshot {
                 let uri = format!("file://{}", path.display());
                 r.insert(
                     "uri".to_string(),
-                    Value::from(uri).try_to_owned().expect("string"),
+                    Variant::from(uri).try_to_owned().expect("string"),
                 );
                 Ok((crate::RESPONSE_OK, r))
             }
@@ -100,9 +100,9 @@ impl Screenshot {
         handle: ObjectPath<'_>,
         app_id: String,
         _parent_window: String,
-        _options: HashMap<String, Value<'_>>,
+        _options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         log::info!("PickColor for {app_id:?}");
         let cancel = Arc::new(AtomicBool::new(false));
@@ -115,7 +115,7 @@ impl Screenshot {
         let mut r = HashMap::new();
         r.insert(
             "color".to_string(),
-            Value::from(color).try_to_owned().expect("struct"),
+            Variant::from(color).try_to_owned().expect("struct"),
         );
         Ok((crate::RESPONSE_OK, r))
     }
@@ -123,8 +123,8 @@ impl Screenshot {
 
 /// False only when the frontend already settled the `screenshot`
 /// permission: a non-interactive call with `permission_store_checked`.
-fn needs_consent(options: &HashMap<String, Value<'_>>) -> bool {
-    let flag = |key| matches!(options.get(key), Some(Value::Bool(true)));
+fn needs_consent(options: &HashMap<String, Variant<'_>>) -> bool {
+    let flag = |key| matches!(options.get(key), Some(Variant::Bool(true)));
     flag("interactive") || !flag("permission_store_checked")
 }
 
@@ -318,10 +318,10 @@ fn write_png(file: std::fs::File, shot: &Still) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn opts(pairs: &[(&str, bool)]) -> HashMap<String, Value<'static>> {
+    fn opts(pairs: &[(&str, bool)]) -> HashMap<String, Variant<'static>> {
         pairs
             .iter()
-            .map(|(k, v)| (k.to_string(), Value::from(*v)))
+            .map(|(k, v)| (k.to_string(), Variant::from(*v)))
             .collect()
     }
 

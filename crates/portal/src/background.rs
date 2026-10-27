@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant::{ObjectPath, OwnedValue};
+use zbus::{ObjectPath, OwnedVariant};
 
 const STATE_BACKGROUND: u32 = 0;
 const STATE_RUNNING: u32 = 1;
@@ -36,7 +36,7 @@ impl Background {
     async fn get_app_state(
         &self,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
-    ) -> zbus::fdo::Result<HashMap<String, OwnedValue>> {
+    ) -> zbus::fdo::Result<HashMap<String, OwnedVariant>> {
         self.frontend.check(&hdr).await?;
         // With either list missing, every app with a window would read as in the background, and
         // xdg-desktop-portal kills a background app the user forbade; an error skips the round.
@@ -54,7 +54,7 @@ impl Background {
         .await?;
         Ok(states
             .into_iter()
-            .map(|(id, s)| (id, OwnedValue::from(s)))
+            .map(|(id, s)| (id, OwnedVariant::from(s)))
             .collect())
     }
 
@@ -68,7 +68,7 @@ impl Background {
         app_id: String,
         name: String,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         let cancel = Arc::new(AtomicBool::new(false));
         crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
@@ -93,7 +93,7 @@ impl Background {
         let result = background_result(answer);
         log::info!("NotifyBackground for {app_id:?}: {result}");
         let mut r = HashMap::new();
-        r.insert("result".to_string(), OwnedValue::from(result));
+        r.insert("result".to_string(), OwnedVariant::from(result));
         Ok((crate::RESPONSE_OK, r))
     }
 }

@@ -54,20 +54,20 @@ pub fn unset_custom_icon(dir: &Path) -> zbus::Result<()> {
         return Ok(());
     }
     // An unset is a byte 0, as GIO sends `gio set -t unset`; both paths are NUL-terminated.
-    let data: HashMap<&str, zbus::zvariant::Value> = (set.into_iter())
-        .map(|k| (k, zbus::zvariant::Value::U8(0)))
+    let data: HashMap<&str, zbus::Variant> = (set.into_iter())
+        .map(|k| (k, zbus::Variant::U8(0)))
         .collect();
     let mut tree_bytes = tree.as_os_str().as_bytes().to_vec();
     tree_bytes.push(0);
     let mut path_bytes = path;
     path_bytes.push(0);
-    reprisebus::session()?.call_method(
+    reprisebus::wait(reprisebus::session()?.call_method(
         Some(METADATA),
         METADATA_PATH,
         Some(METADATA),
         "Set",
         &(tree_bytes, path_bytes, data),
-    )?;
+    ))?;
     forget(&tree);
     Ok(())
 }
@@ -156,10 +156,11 @@ fn listen() -> zbus::Result<()> {
     let conn = reprisebus::session()?;
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .interface(METADATA)?
-        .member("AttributeChanged")?
-        .build();
-    for m in zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None)? {
+        .interface(METADATA)
+        .member("AttributeChanged")
+        .build()?;
+    let signals = reprisebus::wait(zbus::MessageStream::for_match_rule(rule, &conn, None))?;
+    for m in reprisebus::blocking_iter(signals) {
         let Ok((tree, path)) = m?.body().deserialize::<(String, String)>() else {
             continue;
         };

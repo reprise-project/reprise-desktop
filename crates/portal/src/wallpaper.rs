@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use toml_edit::{DocumentMut, Value};
-use zbus::zvariant::{self, ObjectPath};
+use zbus::ObjectPath;
 
 const IMAGE: repriseconf::Key = repriseconf::key("wallpaper", "image");
 const SLIDESHOW: repriseconf::Key = repriseconf::key("wallpaper", "slideshow");
@@ -39,13 +39,13 @@ impl Wallpaper {
         app_id: String,
         parent_window: String,
         uri: String,
-        options: HashMap<String, zvariant::Value<'_>>,
+        options: HashMap<String, zbus::Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
     ) -> zbus::fdo::Result<u32> {
         self.frontend.check(&hdr).await?;
         let set_on = match options.get("set-on") {
             None => Some(SetOn::Background),
-            Some(zvariant::Value::Str(s)) => set_on(s.as_str()),
+            Some(zbus::Variant::Str(s)) => set_on(s.as_str()),
             Some(_) => None,
         };
         let Some(set_on) = set_on else {
@@ -56,10 +56,7 @@ impl Wallpaper {
             log::info!("SetWallpaperURI for {app_id:?}: {uri:?} is not a local file");
             return Ok(crate::RESPONSE_OTHER);
         };
-        let show_preview = matches!(
-            options.get("show-preview"),
-            Some(zvariant::Value::Bool(true))
-        );
+        let show_preview = matches!(options.get("show-preview"), Some(zbus::Variant::Bool(true)));
         let src = path.clone();
         let Some(bytes) = blocking::unblock(move || read_picture(&src)).await else {
             log::info!(

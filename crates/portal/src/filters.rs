@@ -2,7 +2,7 @@
 
 use reprisefs::mimetree::MimeTree;
 use serde::{Deserialize, Serialize};
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::{OwnedVariant, Variant};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum Pattern {
@@ -28,7 +28,7 @@ impl Filter {
         })
     }
 
-    pub fn to_value(&self) -> OwnedValue {
+    pub fn to_value(&self) -> OwnedVariant {
         let pats: Vec<(u32, String)> = self
             .patterns
             .iter()
@@ -37,19 +37,19 @@ impl Filter {
                 Pattern::Mime(m) => (1, m.clone()),
             })
             .collect();
-        Value::new((self.label.clone(), pats))
+        Variant::new((self.label.clone(), pats))
             .try_to_owned()
             .expect("plain strings")
     }
 }
 
 /// One filter from its `(sa(us))` value; None, logged, when it has no label or no usable pattern.
-pub fn parse_filter(v: &Value<'_>) -> Option<Filter> {
-    let Value::Structure(s) = v else {
+pub fn parse_filter(v: &Variant<'_>) -> Option<Filter> {
+    let Variant::Structure(s) = v else {
         log::warn!("filter: not a structure ({})", v.value_signature());
         return None;
     };
-    let (Some(Value::Str(label)), Some(Value::Array(pats))) =
+    let (Some(Variant::Str(label)), Some(Variant::Array(pats))) =
         (s.fields().first(), s.fields().get(1))
     else {
         log::warn!("filter: not (sa(us))");
@@ -59,9 +59,9 @@ pub fn parse_filter(v: &Value<'_>) -> Option<Filter> {
         .inner()
         .iter()
         .filter_map(|p| match p {
-            Value::Structure(p) => match p.fields() {
-                [Value::U32(0), Value::Str(g)] => Some(Pattern::Glob(g.to_string())),
-                [Value::U32(1), Value::Str(m)] => Some(Pattern::Mime(m.to_string())),
+            Variant::Structure(p) => match p.fields() {
+                [Variant::U32(0), Variant::Str(g)] => Some(Pattern::Glob(g.to_string())),
+                [Variant::U32(1), Variant::Str(m)] => Some(Pattern::Mime(m.to_string())),
                 _ => {
                     log::warn!("filter {label}: dropped a pattern that is not (0|1, s)");
                     None
@@ -80,8 +80,8 @@ pub fn parse_filter(v: &Value<'_>) -> Option<Filter> {
     })
 }
 
-pub fn parse_filters(v: &Value<'_>) -> Vec<Filter> {
-    let Value::Array(a) = v else {
+pub fn parse_filters(v: &Variant<'_>) -> Vec<Filter> {
+    let Variant::Array(a) = v else {
         log::warn!("filters: not an array ({})", v.value_signature());
         return Vec::new();
     };
@@ -106,7 +106,7 @@ pub fn with_current(mut filters: Vec<Filter>, current: Option<Filter>) -> (Vec<F
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zbus::zvariant::Value;
+    use zbus::Variant;
 
     fn f(label: &str, pats: Vec<Pattern>) -> Filter {
         Filter {
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn filters_parse_from_the_bus_type() {
-        let v = Value::new(vec![
+        let v = Variant::new(vec![
             (
                 "Images".to_string(),
                 vec![
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn a_bad_pattern_kind_or_type_is_dropped() {
-        let v = Value::new(vec![(
+        let v = Variant::new(vec![(
             "Odd".to_string(),
             vec![(7u32, "x".to_string()), (0u32, "*.a".to_string())],
         )]);
@@ -153,7 +153,7 @@ mod tests {
             parse_filters(&v),
             vec![f("Odd", vec![Pattern::Glob("*.a".into())])]
         );
-        assert!(parse_filters(&Value::new(3u32)).is_empty());
+        assert!(parse_filters(&Variant::new(3u32)).is_empty());
     }
 
     #[test]
