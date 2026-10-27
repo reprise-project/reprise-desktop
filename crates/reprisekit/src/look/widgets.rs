@@ -1021,7 +1021,7 @@ pub fn draw_icon_button(
     focus: bool,
     px: u32,
 ) {
-    let classic = p.look.style().is_none();
+    let classic = !styled_button(p);
     draw_button(
         c,
         text,
@@ -1068,14 +1068,17 @@ fn silhouette(icon: &Canvas, ink: Color) -> Canvas {
     out
 }
 
+/// Whether the look draws push buttons itself; [`draw_button`] paints Classic's otherwise.
+fn styled_button(p: &Paint) -> bool {
+    p.look
+        .style()
+        .is_some_and(|st| st.part(Part::PushButton).is_some())
+}
+
 /// The top-left of a `w` x `h` glyph centred in button `r`, a pixel down and right in a held
 /// Classic button.
 fn glyph_at(p: &Paint, r: Rect, ptr: Interaction, (w, h): (i32, i32)) -> (i32, i32) {
-    let styled = p
-        .look
-        .style()
-        .is_some_and(|st| st.part(Part::PushButton).is_some());
-    let shift = if !styled && ptr == Interaction::Pressed {
+    let shift = if !styled_button(p) && ptr == Interaction::Pressed {
         p.s
     } else {
         0
@@ -1091,7 +1094,7 @@ fn glyph_at(p: &Paint, r: Rect, ptr: Interaction, (w, h): (i32, i32)) -> (i32, i
 /// text under a style, else etched: hilight a pixel down and right, then shadow over it.
 fn ink_button_glyph(p: &Paint, enabled: bool, mut ink: impl FnMut(i32, Color)) {
     let style = p.look.style();
-    let styled = style.is_some_and(|st| st.part(Part::PushButton).is_some());
+    let styled = styled_button(p);
     if enabled {
         ink(0, p.cs.button_text);
     } else if let Some(c) = style.and_then(|st| st.text_color(Part::PushButton, State::Disabled)) {
@@ -1355,6 +1358,56 @@ mod tests {
             a == b,
             "a corner beside Classic bars is Classic's size grip"
         );
+    }
+
+    #[test]
+    fn a_style_without_a_push_button_draws_classic_icon_buttons() {
+        use crate::look::styled::fixture::{one_part_style, solid_frames};
+        use crate::style::{Layout, PartImage};
+        let img = PartImage::new(
+            solid_frames(&[Color::rgb(10, 0, 0)]),
+            &[State::Normal],
+            Layout::Vertical,
+        );
+        let styled =
+            crate::look::Look::Styled(std::sync::Arc::new(one_part_style(Part::ScrollTrackV, img)));
+        let classic = crate::look::Look::Classic;
+        let cs = crate::theme::ColorScheme::default();
+        let theme = theme_for(Interface::Classic);
+        let text = crate::text::TextRenderer::load(&theme.fonts);
+        let icon = monitor(1);
+        let r = Rect::new(0, 0, ICON_BUTTON_W, 23);
+        let draw = |look: &crate::look::Look, enabled, focus| {
+            let p = Paint {
+                cs: &cs,
+                look,
+                s: 1,
+                back: crate::look::Backdrop::Face,
+                active: true,
+                access_keys: true,
+                text: crate::theme::TextUnits::ONE,
+            };
+            let mut c = Canvas::new(r.width as u32, r.height as u32);
+            c.fill_rect(r, cs.button_face);
+            draw_icon_button(
+                &mut c,
+                &text,
+                &p,
+                r,
+                &icon,
+                enabled,
+                Interaction::Idle,
+                focus,
+                11,
+            );
+            c
+        };
+        for (enabled, focus) in [(false, false), (true, true)] {
+            assert!(
+                draw(&styled, enabled, focus) == draw(&classic, enabled, focus),
+                "enabled {enabled}, focused {focus}: the Classic button"
+            );
+        }
     }
 
     /// Classic has no hot look, and no pressed look but the push button's, a
