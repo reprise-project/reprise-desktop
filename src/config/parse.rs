@@ -27,8 +27,18 @@ impl Config {
 
     /// `text` with every key that fails on its own left at its default; see
     /// [`repriseconf::config::lenient`].
+    #[cfg(test)]
     pub fn parse_lenient(text: &str) -> Result<(Config, Vec<(String, String)>), String> {
         repriseconf::config::lenient(text, Config::from_file)
+    }
+
+    /// `text` with every key that fails on its own kept at its value in `base`, the table the
+    /// running config was built from; see [`repriseconf::config::lenient_over`].
+    pub fn parse_over(
+        text: &str,
+        base: &toml::Table,
+    ) -> Result<(Config, repriseconf::config::Dropped, toml::Table), String> {
+        repriseconf::config::lenient_over(text, base, Config::from_file)
     }
 
     fn from_file(mut file: FileConfig) -> Result<Config, String> {
@@ -109,8 +119,9 @@ impl Config {
     }
 
     /// Load for startup. A key that does not parse is dropped to its
-    /// default and a non-TOML file yields all defaults. Returns a notice when anything was dropped.
-    pub fn load(path: Option<&Path>) -> (Config, Option<String>) {
+    /// default and a non-TOML file yields all defaults. Returns a notice when anything was dropped,
+    /// and the table read, the base of the first reload.
+    pub fn load(path: Option<&Path>) -> (Config, Option<String>, toml::Table) {
         let path = path
             .map(Path::to_path_buf)
             .unwrap_or_else(Config::default_path);
@@ -118,27 +129,35 @@ impl Config {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 log::info!("no config at {}; using defaults", path.display());
-                return (Config::default(), None);
+                return (Config::default(), None, toml::Table::new());
             }
             Err(e) => {
                 log::error!("config {}: {e}; using defaults", path.display());
-                return (Config::default(), Some(UNREADABLE_NOTICE.to_string()));
+                return (
+                    Config::default(),
+                    Some(UNREADABLE_NOTICE.to_string()),
+                    toml::Table::new(),
+                );
             }
         };
-        match Config::parse_lenient(&text) {
-            Ok((c, dropped)) if dropped.is_empty() => {
+        match Config::parse_over(&text, &toml::Table::new()) {
+            Ok((c, dropped, table)) if dropped.is_empty() => {
                 log::info!("loaded config {}", path.display());
-                (c, None)
+                (c, None, table)
             }
-            Ok((c, dropped)) => {
+            Ok((c, dropped, table)) => {
                 for (key, e) in &dropped {
                     log::warn!("config {}: {key}: {e}; using its defaults", path.display());
                 }
-                (c, Some(dropped_notice(&dropped)))
+                (c, Some(dropped_notice(&dropped, false)), table)
             }
             Err(e) => {
                 log::error!("config {}: {e}; using defaults", path.display());
-                (Config::default(), Some(UNREADABLE_NOTICE.to_string()))
+                (
+                    Config::default(),
+                    Some(UNREADABLE_NOTICE.to_string()),
+                    toml::Table::new(),
+                )
             }
         }
     }
@@ -267,11 +286,17 @@ fn window_rule(f: FileWindowRule, at: &str) -> Result<WindowRule, String> {
     })
 }
 
-/// The notice naming the keys `Config::parse_lenient` left at their defaults.
-pub(crate) fn dropped_notice(dropped: &[(String, String)]) -> String {
+/// The notice naming the keys a read dropped: left at their defaults at startup, at their
+/// previous values on a `reload`.
+pub(crate) fn dropped_notice(dropped: &[(String, String)], reload: bool) -> String {
     let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
+    let kept = if reload {
+        "kept their previous values"
+    } else {
+        "used the defaults there"
+    };
     format!(
-        "Reprise ignored {} in config.toml and used the defaults there. \
+        "Reprise ignored {} in config.toml and {kept}. \
          `journalctl --user -t reprise` names the errors.",
         keys.join(", ")
     )

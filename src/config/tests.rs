@@ -379,7 +379,7 @@ fn errors_are_reported() {
 
 #[test]
 fn load_missing_file_gives_defaults() {
-    let (c, notice) = Config::load(Some(std::path::Path::new("/nonexistent/reprise.toml")));
+    let (c, notice, _) = Config::load(Some(std::path::Path::new("/nonexistent/reprise.toml")));
     assert_eq!(c.terminal, "reprise-terminal");
     assert_eq!(notice, None, "a missing file is not worth a notice");
 }
@@ -388,7 +388,7 @@ fn load_missing_file_gives_defaults() {
 fn load_malformed_file_falls_back() {
     let path = std::env::temp_dir().join(format!("reprise-bad-config-{}.toml", std::process::id()));
     std::fs::write(&path, "terminal = \n[colors]\nactive_title = \"zzz\"\n").unwrap();
-    let (c, notice) = Config::load(Some(&path));
+    let (c, notice, _) = Config::load(Some(&path));
     std::fs::remove_file(&path).unwrap();
     assert_eq!(c, Config::default());
     assert!(notice.is_some(), "a file that is not TOML gets a notice");
@@ -397,7 +397,7 @@ fn load_malformed_file_falls_back() {
 #[test]
 fn load_unreadable_file_gives_defaults_and_a_notice() {
     let dir = std::env::temp_dir();
-    let (c, notice) = Config::load(Some(&dir));
+    let (c, notice, _) = Config::load(Some(&dir));
     assert_eq!(c, Config::default());
     assert!(notice.is_some(), "a path that cannot be read gets a notice");
 }
@@ -432,7 +432,7 @@ fn load_drops_only_the_keys_that_fail() {
     let path =
         std::env::temp_dir().join(format!("reprise-skew-config-{}.toml", std::process::id()));
     std::fs::write(&path, text).unwrap();
-    let (loaded, notice) = Config::load(Some(&path));
+    let (loaded, notice, _) = Config::load(Some(&path));
     std::fs::remove_file(&path).unwrap();
     assert_eq!(loaded, c);
     let notice = notice.expect("dropped keys get a notice");
@@ -447,17 +447,41 @@ fn a_reload_drops_only_the_keys_that_fail_and_names_them() {
     let path =
         std::env::temp_dir().join(format!("reprise-reload-config-{}.toml", std::process::id()));
     std::fs::write(&path, "terminal = \"foot\"\nfuture_key = 1\n").unwrap();
-    let read = crate::configwatch::read(&path);
+    let read = crate::configwatch::read(&path, &toml::Table::new());
     std::fs::write(&path, "terminal = [\n").unwrap();
-    let broken = crate::configwatch::read(&path);
+    let broken = crate::configwatch::read(&path, &toml::Table::new());
     std::fs::remove_file(&path).unwrap();
-    let (c, notice) = read.expect("the file reloads");
+    let (c, notice, _) = read.expect("the file reloads");
     assert_eq!(c.terminal, "foot", "the keys that parse apply");
     let notice = notice.expect("the dropped key gets a notice");
     assert!(notice.contains("future_key"), "{notice}");
     assert!(
         broken.is_none(),
         "a file that does not parse keeps the old config"
+    );
+}
+
+#[test]
+fn a_reload_keeps_the_running_value_of_a_key_that_fails() {
+    let path =
+        std::env::temp_dir().join(format!("reprise-reload-keep-{}.toml", std::process::id()));
+    std::fs::write(&path, "[[outputs]]\nname = \"A\"\nscale = 2.0\n").unwrap();
+    let (_, _, base) = crate::configwatch::read(&path, &toml::Table::new()).unwrap();
+    std::fs::write(
+        &path,
+        "terminal = \"foot\"\n[[outputs]]\nname = \"A\"\nscale = \"1,5\"\n",
+    )
+    .unwrap();
+    let read = crate::configwatch::read(&path, &base);
+    std::fs::remove_file(&path).unwrap();
+    let (c, notice, _) = read.expect("the file reloads");
+    assert_eq!(c.outputs.len(), 1);
+    assert_eq!(c.outputs[0].scale, 2.0, "the output keeps scale 2");
+    assert_eq!(c.terminal, "foot", "the other keys in the file apply");
+    let notice = notice.expect("the dropped key gets a notice");
+    assert!(
+        notice.contains("outputs") && notice.contains("previous"),
+        "{notice}"
     );
 }
 

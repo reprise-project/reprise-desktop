@@ -252,19 +252,18 @@ fn main() {
         .unwrap_or_else(config::Config::default_path);
     migrate::run(&config_path, &state::path());
     let config_stamp = configwatch::stamp(&config_path);
-    let (config, config_notice) = config::Config::load(cli.config.as_deref());
+    let (config, config_notice, config_file) = config::Config::load(cli.config.as_deref());
     config.warn_retired();
     if let Some(notice) = &config_notice {
         log::warn!("{notice}");
     }
     if let Err(e) = run(
         config,
+        config_file,
         config_path,
         config_stamp,
-        cli.startup.as_deref(),
         config_notice,
-        cli.after_crash.is_some(),
-        cli.locked,
+        &cli,
     ) {
         log::error!("{e}");
         std::process::exit(1);
@@ -272,17 +271,19 @@ fn main() {
 }
 
 /// Start the display and the backend, then run the event loop until it stops.
-/// A `config_notice` goes up as a balloon once the outputs are up. `after_crash`: this start
-/// follows a crash of the same login (`crash`), `locked` of a locked session.
+/// A `config_notice` goes up as a balloon once the outputs are up. The command line says
+/// whether this start follows a crash of the same login (`crash`) and whether it was locked.
 fn run(
     config: config::Config,
+    config_file: toml::Table,
     config_path: PathBuf,
     config_stamp: configwatch::Stamp,
-    startup: Option<&str>,
     config_notice: Option<String>,
-    after_crash: bool,
-    locked: bool,
+    cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let after_crash = cli.after_crash.is_some();
+    let locked = cli.locked;
+    let startup = cli.startup.as_deref();
     if after_crash {
         spawn::adopt_orphans();
     }
@@ -356,6 +357,7 @@ fn run(
         spawn::spawn(cmd, &state.env, None);
     }
     state.config_notice = config_notice.clone();
+    state.config_file = config_file;
     if let Some(body) = config_notice {
         event_loop.handle().insert_idle(move |state| {
             notifyview::notice(state, "Configuration", &body);

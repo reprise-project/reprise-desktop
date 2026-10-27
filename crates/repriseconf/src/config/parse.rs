@@ -82,6 +82,20 @@ pub fn lenient<T>(
     text: &str,
     build: impl Fn(FileConfig) -> Result<T, String>,
 ) -> Result<(T, Vec<(String, String)>), String> {
+    lenient_over(text, &toml::Table::new(), build).map(|(t, dropped, _)| (t, dropped))
+}
+
+/// The keys a lenient read left out, each with its error.
+pub type Dropped = Vec<(String, String)>;
+
+/// [`lenient`] with each dropped key taking its value in `base` (the table the running config
+/// was built from), when it has one, instead of its default. Also returns the table built, the
+/// `base` of the next read.
+pub fn lenient_over<T>(
+    text: &str,
+    base: &toml::Table,
+    build: impl Fn(FileConfig) -> Result<T, String>,
+) -> Result<(T, Dropped, toml::Table), String> {
     let mut table: toml::Table = toml::from_str(text).map_err(|e| e.to_string())?;
     let from_table =
         |t: toml::Table| build(t.try_into().map_err(|e: toml::de::Error| e.to_string())?);
@@ -114,7 +128,24 @@ pub fn lenient<T>(
         dropped.push((key.clone(), e.trim_end().to_string()));
     }
     table.retain(|key, _| !dropped.iter().any(|(k, _)| k == key));
-    Ok((from_table(table)?, dropped))
+    let mut restored = table.clone();
+    for (key, _) in &dropped {
+        let inner = key.split_once('.').and_then(|(t, name)| {
+            let base = base.get(t)?.get(name)?;
+            Some((restored.get_mut(t)?.as_table_mut()?, name, base))
+        });
+        if let Some((inner, name, value)) = inner {
+            inner.insert(name.to_string(), value.clone());
+        } else if let Some(value) = base.get(key) {
+            restored.insert(key.clone(), value.clone());
+        }
+    }
+    if restored != table
+        && let Ok(t) = from_table(restored.clone())
+    {
+        return Ok((t, dropped, restored));
+    }
+    Ok((from_table(table.clone())?, dropped, table))
 }
 
 impl Config {

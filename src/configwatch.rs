@@ -259,12 +259,13 @@ where
         return;
     };
     let path = state.config_path.clone();
+    let base = state.config_file.clone();
     state.spawn_fs_job(move || {
         let want = find();
         // Before the read, so a write between the two is not missed.
         let added = job.adder.run(&want);
         let cfg = if job.hit || since.is_some_and(|s| stamp(&path) != s) {
-            self::read(&path)
+            self::read(&path, &base)
         } else {
             None
         };
@@ -277,22 +278,27 @@ where
                     return;
                 }
             }
-            if let Some((cfg, notice)) = cfg {
+            if let Some((cfg, notice, table)) = cfg {
                 if notice != state.config_notice {
                     if let Some(body) = &notice {
                         crate::notifyview::notice(state, "Configuration", body);
                     }
                     state.config_notice = notice;
                 }
+                state.config_file = table;
                 reload(state, cfg);
             }
         })
     });
 }
 
-/// The config at `path` with the keys that fail left at their defaults, as at startup, and the
-/// notice naming them; None when the file cannot be read or parsed at all.
-pub(crate) fn read(path: &Path) -> Option<(Config, Option<String>)> {
+/// The config at `path` with the keys that fail kept at their values in `base` (see
+/// [`Config::parse_over`]), the notice naming them and the table read; None when the file cannot
+/// be read or parsed at all.
+pub(crate) fn read(
+    path: &Path,
+    base: &toml::Table,
+) -> Option<(Config, Option<String>, toml::Table)> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) => {
@@ -300,14 +306,18 @@ pub(crate) fn read(path: &Path) -> Option<(Config, Option<String>)> {
             return None;
         }
     };
-    match Config::parse_lenient(&text) {
-        Ok((cfg, dropped)) => {
+    match Config::parse_over(&text, base) {
+        Ok((cfg, dropped, table)) => {
             log::info!("config {} changed; reloading", path.display());
             for (key, e) in &dropped {
-                log::warn!("config {}: {key}: {e}; using its defaults", path.display());
+                log::warn!(
+                    "config {}: {key}: {e}; keeping its previous value",
+                    path.display()
+                );
             }
-            let notice = (!dropped.is_empty()).then(|| crate::config::dropped_notice(&dropped));
-            Some((cfg, notice))
+            let notice =
+                (!dropped.is_empty()).then(|| crate::config::dropped_notice(&dropped, true));
+            Some((cfg, notice, table))
         }
         Err(e) => {
             log::error!("config: {e}; keeping the old one");
@@ -784,7 +794,7 @@ mod tests {
              [[keybinds]]\nkeys = \"Super+q\"\naction = \"none\"\n",
         )
         .unwrap();
-        let (cfg, _) = read(&path).expect("the file parses");
+        let (cfg, _, _) = read(&path, &toml::Table::new()).expect("the file parses");
         std::fs::remove_file(&path).unwrap();
         let on = |keys: &str| {
             let (mods, keysym) = crate::config::parse_keybind(keys).unwrap();

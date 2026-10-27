@@ -901,6 +901,31 @@ fn a_bad_key_in_a_table_drops_that_key_alone() {
 }
 
 #[test]
+fn a_bad_key_on_reload_keeps_its_running_value() {
+    let good = "terminal = \"foot\"\n[taskbar]\nposition = \"top\"\nside_width = 300\n";
+    let (c, dropped, base) =
+        super::lenient_over(good, &toml::Table::new(), Config::from_file).unwrap();
+    assert!(dropped.is_empty());
+    assert_eq!(c.taskbar.position, reprisekit::taskbar::Edge::Top);
+    let bad = "terminal = 5\n[taskbar]\nposition = \"botom\"\nauto_hide = true\n";
+    let (c, dropped, _) = super::lenient_over(bad, &base, Config::from_file).unwrap();
+    let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys, ["taskbar.position", "terminal"]);
+    assert_eq!(
+        c.taskbar.position,
+        reprisekit::taskbar::Edge::Top,
+        "position stays top"
+    );
+    assert_eq!(c.terminal, "foot", "terminal stays foot");
+    assert!(c.taskbar.auto_hide, "the good key in the file applies");
+    assert_eq!(
+        c.taskbar.side_width,
+        Config::default().taskbar.side_width,
+        "a key gone from the file takes its default"
+    );
+}
+
+#[test]
 fn a_table_whose_keys_fail_only_together_is_dropped_whole() {
     let text = "[night_light]\nenabled = true\nfrom = \"08:00\"\nto = \"08:00\"\ntemperature = 1\n";
     let (c, dropped) = Config::parse_lenient(text).unwrap();
