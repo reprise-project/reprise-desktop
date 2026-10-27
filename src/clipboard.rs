@@ -64,7 +64,7 @@ pub struct Clip {
     pub primary: PrimarySelectionState,
     /// Read through [`State::clip_offered`].
     pub(crate) offered: Vec<String>,
-    /// Whether a sandboxed client set the clipboard.
+    /// Whether a sandboxed client set the clipboard, or the recorded entry Reprise offers again.
     pub(crate) sandboxed: bool,
     paste: Option<Paste>,
     dirty: bool,
@@ -272,6 +272,7 @@ impl State {
     pub fn clip_offer_each(&mut self, offers: Vec<Offer>) {
         let mimes: Vec<String> = offers.iter().map(|(m, _)| m.clone()).collect();
         self.clip.offered.clear();
+        self.clip.sandboxed = false;
         self.wayland_selection_to_x11(SelectionTarget::Clipboard, Some(mimes.clone()));
         set_data_device_selection(
             &self.dh,
@@ -339,7 +340,9 @@ impl State {
     pub fn clip_has_files(&self) -> bool {
         match self.own_offers() {
             // No stat: a file gone since is skipped by the paste.
-            Some(offers) => own_files(&offers).is_some_and(|c| !c.paths.is_empty()),
+            Some(offers) => own_files(&offers).is_some_and(|c| {
+                !c.paths.is_empty() && (!self.clip.sandboxed || sandboxed_list_taken(&c))
+            }),
             // A sandboxed list is refused unless every path is under the document portal, which
             // only reading the offer tells, so Paste greys for it.
             None => match files_from(self.clip_offered(), self.clip.sandboxed) {
@@ -354,8 +357,12 @@ impl State {
     /// in [`KDE_CUT`] is read first, then the files.
     pub fn clip_files(&mut self, done: impl FnOnce(&mut State, FileClip) + 'static) {
         if let Some(offers) = self.own_offers() {
-            if let Some(clip) = own_files(&offers) {
-                done(self, clip);
+            match own_files(&offers) {
+                Some(clip) if self.clip.sandboxed && !sandboxed_list_taken(&clip) => {
+                    log::debug!("paste: a sandboxed program's recorded file list is refused");
+                }
+                Some(clip) => done(self, clip),
+                None => {}
             }
             return;
         }
@@ -933,6 +940,41 @@ mod tests {
             clip_paths(&mut h, &mut manager),
             Some(vec![std::path::PathBuf::from("/home/u/thesis.odt")])
         );
+    }
+
+    #[test]
+    fn a_recorded_cut_list_offered_again_keeps_its_owners_sandbox_rule() {
+        for sandboxed in [true, false] {
+            let mut h = crate::harness::Harness::new();
+            h.output("TEST-1", 1024, 768);
+            let mut c = if sandboxed {
+                h.connect_sandboxed()
+            } else {
+                h.connect()
+            };
+            h.map_toplevel(&mut c, "test.app", 300, 200);
+            let source = c.copy(&["text/plain", GNOME_FILES], CUT_THESIS);
+            h.roundtrip(&mut c);
+            recorded(&mut h, 1);
+            let entry = h.state.panels.history.history.entries().next().unwrap();
+            assert_eq!(entry.sandboxed, sandboxed);
+            assert!(
+                answer(&entry.offers, GNOME_FILES).is_some(),
+                "the list is recorded"
+            );
+            source.destroy();
+            h.roundtrip(&mut c);
+            assert!(h.state.own_offers().is_some(), "Reprise offers the entry");
+            assert_eq!(h.state.clip.sandboxed, sandboxed);
+            let expected =
+                (!sandboxed).then(|| vec![std::path::PathBuf::from("/home/u/thesis.odt")]);
+            assert_eq!(h.state.clip_has_files(), !sandboxed);
+            assert_eq!(
+                clip_paths(&mut h, &mut c),
+                expected,
+                "sandboxed: {sandboxed}"
+            );
+        }
     }
 
     #[test]
