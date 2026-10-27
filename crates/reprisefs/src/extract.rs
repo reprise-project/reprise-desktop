@@ -242,9 +242,20 @@ fn run(items: &[Archive], m: &Meter, send: impl Fn(ExtractEvent) -> bool) {
 
 /// How many entries `archive` lists, refusing one that climbs out.
 fn list(archive: &Path, m: &Meter) -> Result<u64, Failure> {
-    let argv = list_argv(archive);
-    let mut child = spawn(&argv, true)?;
+    count(&list_argv(archive), m)
+}
+
+/// Counts the lines `argv` prints, draining its stderr on a thread so a chatty listing cannot
+/// fill that pipe and stall.
+fn count(argv: &[OsString], m: &Meter) -> Result<u64, Failure> {
+    let mut child = spawn(argv, true)?;
     let out = child.stdout.take().ok_or_else(no_pipe)?;
+    let mut err = child.stderr.take().ok_or_else(no_pipe)?;
+    let drain = std::thread::spawn(move || {
+        let mut stderr = Vec::new();
+        let _ = err.read_to_end(&mut stderr);
+        stderr
+    });
     let mut n = 0;
     let mut climbs = None;
     let read = lines(&mut child, out, m, |entry| {
@@ -256,11 +267,11 @@ fn list(archive: &Path, m: &Meter) -> Result<u64, Failure> {
         true
     });
     let status = finish(child, &read);
+    let stderr = drain.join().unwrap_or_default();
     if let Some(entry) = climbs {
         return Err(Failure::Climbs(entry));
     }
-    let (status, stderr) = status?;
-    match status {
+    match status? {
         true => Ok(n),
         false => Err(Failure::Tool(said(&stderr))),
     }
@@ -304,7 +315,7 @@ fn extract(a: &Archive, m: &Meter, before: u64) -> Result<PathBuf, Failure> {
         }
         true
     });
-    let (ok, _) = finish(child, &read).map_err(undo)?;
+    let ok = finish(child, &read).map_err(undo)?;
     if !ok {
         return Err(undo(Failure::Tool(said(last.as_bytes()))));
     }
@@ -343,8 +354,7 @@ fn said(stderr: &[u8]) -> String {
     }
 }
 
-/// Starts `argv` with stdout (`stdout`) or stderr piped; the other is dropped, but a listing
-/// keeps its stderr for [`finish`].
+/// Starts `argv` with stderr piped, and stdout too when `stdout`.
 fn spawn(argv: &[OsString], stdout: bool) -> Result<Child, Failure> {
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..])
@@ -429,9 +439,9 @@ fn lines(
     Ok(ended)
 }
 
-/// Reaps `child` after [`lines`] read it to `read`: whether it exited cleanly, and its stderr
-/// when still piped. A child cut short is killed first and counts as cancelled.
-fn finish(mut child: Child, read: &std::io::Result<bool>) -> Result<(bool, Vec<u8>), Failure> {
+/// Reaps `child` after [`lines`] read it to `read`: whether it exited cleanly. A child cut
+/// short is killed first and counts as cancelled.
+fn finish(mut child: Child, read: &std::io::Result<bool>) -> Result<bool, Failure> {
     if !matches!(read, Ok(true)) {
         let _ = child.kill();
         let _ = child.wait();
@@ -440,12 +450,8 @@ fn finish(mut child: Child, read: &std::io::Result<bool>) -> Result<(bool, Vec<u
             _ => Err(Failure::Cancelled),
         };
     }
-    let mut stderr = Vec::new();
-    if let Some(mut err) = child.stderr.take() {
-        let _ = err.read_to_end(&mut stderr);
-    }
     let status = child.wait().map_err(|e| Failure::Tool(e.to_string()))?;
-    Ok((status.success(), stderr))
+    Ok(status.success())
 }
 
 #[cfg(test)]
@@ -529,6 +535,23 @@ mod tests {
             ("plain", "plain"),
         ] {
             assert_eq!(folder_name(OsStr::new(archive)), folder, "{archive}");
+        }
+    }
+
+    #[test]
+    fn a_listing_that_floods_stderr_still_ends_with_its_count() {
+        let script = "head -c 300000 /dev/zero | tr '\\0' w >&2; echo a; echo b; exit 1";
+        let argv: Vec<OsString> = ["sh", "-c", script].map(OsString::from).to_vec();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(count(&argv, &Meter::default()));
+        });
+        let res = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("the listing ends while stderr holds more than a pipe buffer");
+        match res {
+            Err(Failure::Tool(said)) => assert_eq!(said.len(), 300_000),
+            other => panic!("expected the tool's own message, got {other:?}"),
         }
     }
 
