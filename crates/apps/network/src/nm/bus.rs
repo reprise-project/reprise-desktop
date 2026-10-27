@@ -875,7 +875,12 @@ fn secure<'a>(
         .entry("802-11-wireless-security".into())
         .or_default();
     match key {
-        Key::Psk(psk) => {
+        Key::Psk(psk) | Key::Sae(psk) => {
+            let key_mgmt = if matches!(key, Key::Sae(_)) {
+                "sae"
+            } else {
+                key_mgmt
+            };
             security.insert("key-mgmt".into(), Variant::from(key_mgmt.to_string()));
             security.insert("psk".into(), Variant::from(&**psk));
             security.insert("psk-flags".into(), Variant::from(0u32));
@@ -2025,6 +2030,13 @@ mod tests {
         assert_eq!(
             s["802-11-wireless"]["ssid"],
             Variant::from(b"Attic".to_vec())
+        );
+        let sae = Key::Sae(Psk::new("hunter22"));
+        let s = wifi_settings(&"Attic".into(), Some(&sae), "wpa-psk", true, None);
+        assert_eq!(
+            s["802-11-wireless-security"]["key-mgmt"],
+            Variant::from("sae"),
+            "a WPA3 key joins as sae though the hidden network has no access point to ask"
         );
         let open = wifi_settings(&"Attic".into(), None, "wpa-psk", true, None);
         assert_eq!(open["802-11-wireless"]["hidden"], Variant::from(true));
