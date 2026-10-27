@@ -926,6 +926,30 @@ fn a_bad_key_on_reload_keeps_its_running_value() {
 }
 
 #[test]
+fn a_bad_tablet_entry_drops_that_entry_alone() {
+    let text = "[[tablets]]\nname = \"Pen A\"\noutput = \"DP-1\"\n\
+                [[tablets]]\nname = \"Pen B\"\nkeep_aspect = \"yes\"\n\
+                [[tablets]]\nname = \"Pen C\"\nkeep_aspect = true\n";
+    let (c, dropped) = Config::parse_lenient(text).unwrap();
+    let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys, ["tablets[1]"]);
+    let names: Vec<&str> = c.tablets.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["Pen A", "Pen C"]);
+    let only_bad = "[[tablets]]\nname = \"Pen B\"\nkeep_aspect = \"yes\"\n";
+    let (c, dropped) = Config::parse_lenient(only_bad).unwrap();
+    assert_eq!(
+        dropped[0].0, "tablets",
+        "with no entry left the array goes whole"
+    );
+    assert!(c.tablets.is_empty());
+    let good = "[[tablets]]\nname = \"Pen A\"\n";
+    let (_, _, base) = super::lenient_over(good, &toml::Table::new(), Config::from_file).unwrap();
+    let (c, _, _) = super::lenient_over(text, &base, Config::from_file).unwrap();
+    let names: Vec<&str> = c.tablets.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["Pen A"], "a reload keeps the running entries");
+}
+
+#[test]
 fn a_table_whose_keys_fail_only_together_is_dropped_whole() {
     let text = "[night_light]\nenabled = true\nfrom = \"08:00\"\nto = \"08:00\"\ntemperature = 1\n";
     let (c, dropped) = Config::parse_lenient(text).unwrap();

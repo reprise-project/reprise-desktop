@@ -76,7 +76,8 @@ fn builtin_path(
 }
 
 /// `text` read by `build`, with every key that fails on its own left out: a table's
-/// failing keys alone (`taskbar.position`), any other top-level key whole. Returns what
+/// failing keys alone (`taskbar.position`), an array's failing entries alone (`tablets[2]`),
+/// any other top-level key whole. Returns what
 /// `build` made and the dropped keys; Err only when `text` is not TOML.
 pub fn lenient<T>(
     text: &str,
@@ -89,7 +90,8 @@ pub fn lenient<T>(
 pub type Dropped = Vec<(String, String)>;
 
 /// [`lenient`] with each dropped key taking its value in `base` (the table the running config
-/// was built from), when it has one, instead of its default. Also returns the table built, the
+/// was built from), when it has one, instead of its default; a dropped array entry takes back
+/// the whole array. Also returns the table built, the
 /// `base` of the next read.
 pub fn lenient_over<T>(
     text: &str,
@@ -125,6 +127,26 @@ pub fn lenient_over<T>(
                 continue;
             }
         }
+        if let toml::Value::Array(entries) = value {
+            let bad: Vec<(usize, String)> = (entries.iter().enumerate())
+                .filter_map(|(i, v)| {
+                    let one = toml::Value::Array(vec![v.clone()]);
+                    from_table(alone(key, one)).err().map(|e| (i, e))
+                })
+                .collect();
+            let kept: Vec<toml::Value> = (entries.iter().enumerate())
+                .filter(|(i, _)| !bad.iter().any(|(b, _)| b == i))
+                .map(|(_, v)| v.clone())
+                .collect();
+            let kept_builds = || from_table(alone(key, toml::Value::Array(kept.clone()))).is_ok();
+            if !bad.is_empty() && !kept.is_empty() && kept_builds() {
+                for (i, e) in bad {
+                    dropped.push((format!("{key}[{i}]"), e.trim_end().to_string()));
+                }
+                *entries = kept;
+                continue;
+            }
+        }
         dropped.push((key.clone(), e.trim_end().to_string()));
     }
     table.retain(|key, _| !dropped.iter().any(|(k, _)| k == key));
@@ -134,8 +156,11 @@ pub fn lenient_over<T>(
             let base = base.get(t)?.get(name)?;
             Some((restored.get_mut(t)?.as_table_mut()?, name, base))
         });
+        let array = key.split_once('[').map(|(name, _)| name);
         if let Some((inner, name, value)) = inner {
             inner.insert(name.to_string(), value.clone());
+        } else if let Some((name, value)) = array.and_then(|a| Some((a, base.get(a)?))) {
+            restored.insert(name.to_string(), value.clone());
         } else if let Some(value) = base.get(key) {
             restored.insert(key.clone(), value.clone());
         }
