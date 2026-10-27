@@ -12,6 +12,7 @@ use smithay::reexports::calloop::{
     generic::Generic,
     timer::{TimeoutAction, Timer},
 };
+use smithay::wayland::selection::data_device::data_device_selection_alive;
 
 use crate::clipboard::{Offer, TEXT_MIMES};
 use crate::compositor::State;
@@ -335,7 +336,7 @@ impl State {
     /// The client holding the clipboard destroyed its source without a new selection, which
     /// Smithay tells no handler: the copy recorded of it stays on the clipboard.
     pub(crate) fn clip_keep_orphaned(&mut self) {
-        if self.clip.offered.is_empty() || self.clipboard_held() {
+        if self.clip.offered.is_empty() || data_device_selection_alive(&self.seat) {
             return;
         }
         self.clip.offered.clear();
