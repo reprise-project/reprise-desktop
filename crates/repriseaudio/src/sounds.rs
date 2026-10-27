@@ -44,20 +44,32 @@ pub fn sound_dirs() -> Vec<PathBuf> {
         .collect()
 }
 
-/// The first `Inherits` theme of `theme`'s `index.theme` in `dirs`.
-fn inherits(dirs: &[PathBuf], theme: &str) -> Option<String> {
-    dirs.iter().find_map(|d| {
-        let text = std::fs::read_to_string(d.join(theme).join("index.theme")).ok()?;
-        let line = text
-            .lines()
-            .find_map(|l| l.trim().strip_prefix("Inherits="))?;
-        let first = line.split([',', ';']).next()?.trim();
-        safe_name(first).then(|| first.to_string())
-    })
+/// The `Inherits` list of `theme`'s first `index.theme` in `dirs`.
+fn inherits(dirs: &[PathBuf], theme: &str) -> Vec<String> {
+    let Some(text) = dirs
+        .iter()
+        .find_map(|d| std::fs::read_to_string(d.join(theme).join("index.theme")).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(line) = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Inherits="))
+    else {
+        return Vec::new();
+    };
+    line.split([',', ';'])
+        .map(str::trim)
+        .filter(|t| safe_name(t))
+        .map(String::from)
+        .collect()
 }
 
-/// The file for sound `name` under `theme`: its stereo profile in each of `dirs`, then the theme it
-/// inherits, then [`FALLBACK_THEME`]; a name with no file of its own tries its shorter dash
+/// The most themes one lookup walks, so a cycle or a deep chain ends.
+const MAX_THEMES: usize = 10;
+
+/// The file for sound `name` under `theme`: its stereo profile in each of `dirs`, then the themes
+/// it inherits breadth-first, then [`FALLBACK_THEME`]; a name with no file of its own tries its shorter dash
 /// prefixes (`message-new-instant`, `message-new`, `message`).
 pub fn resolve(dirs: &[PathBuf], theme: &str, name: &str) -> Option<PathBuf> {
     if !safe_name(name) {
@@ -66,10 +78,19 @@ pub fn resolve(dirs: &[PathBuf], theme: &str, name: &str) -> Option<PathBuf> {
     let mut themes: Vec<String> = Vec::new();
     if safe_name(theme) {
         themes.push(theme.to_string());
-        themes.extend(inherits(dirs, theme));
     }
-    themes.push(FALLBACK_THEME.to_string());
-    themes.dedup();
+    let mut next = 0;
+    while next < themes.len() && themes.len() < MAX_THEMES {
+        for parent in inherits(dirs, &themes[next]) {
+            if !themes.contains(&parent) && themes.len() < MAX_THEMES {
+                themes.push(parent);
+            }
+        }
+        next += 1;
+    }
+    if !themes.iter().any(|t| t == FALLBACK_THEME) {
+        themes.push(FALLBACK_THEME.to_string());
+    }
     let mut name = name;
     loop {
         for theme in &themes {
@@ -201,6 +222,49 @@ mod tests {
             got("../user/ocean", "bell"),
             None,
             "a theme that climbs out is the fallback alone"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_theme_follows_every_inherited_theme_down_the_chain() {
+        let root = tree(&[
+            "sys/ocean/index.theme",
+            "sys/deep/index.theme",
+            "sys/abyss/index.theme",
+            "sys/abyss/stereo/bell.oga",
+            "sys/coral/stereo/chime.oga",
+            "sys/coral/stereo/bell.oga",
+        ]);
+        let index = |theme: &str, inherits: &str| {
+            std::fs::write(
+                root.join(format!("sys/{theme}/index.theme")),
+                format!("[Sound Theme]\nInherits={inherits}\n"),
+            )
+            .unwrap();
+        };
+        index("ocean", "deep, coral");
+        index("deep", "abyss");
+        index("abyss", "ocean");
+        let dirs = [root.join("sys")];
+        let got = |name: &str| {
+            resolve(&dirs, "ocean", name).map(|p| p.strip_prefix(&root).unwrap().to_path_buf())
+        };
+        assert_eq!(
+            got("chime"),
+            Some("sys/coral/stereo/chime.oga".into()),
+            "the second theme of the list"
+        );
+        assert_eq!(
+            got("bell"),
+            Some("sys/coral/stereo/bell.oga".into()),
+            "the list comes before the grandparent"
+        );
+        index("ocean", "deep");
+        assert_eq!(
+            got("bell"),
+            Some("sys/abyss/stereo/bell.oga".into()),
+            "the grandparent, through a cycle back to the start"
         );
         std::fs::remove_dir_all(&root).unwrap();
     }
