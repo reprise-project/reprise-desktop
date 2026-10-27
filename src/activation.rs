@@ -171,10 +171,13 @@ impl State {
             return;
         };
         let cmd = cmd.to_string();
+        let mime = (dir.file_name())
+            .and_then(|n| self.with_mime(|db| db.mime_of_name(&n.to_string_lossy())));
         self.spawn_job(move || {
             let meta = std::fs::metadata(&dir).ok();
-            let (is_dir, is_document) =
-                (meta.as_ref()).map_or((false, false), |m| (m.is_dir(), names_a_document(m)));
+            let (is_dir, is_document) = (meta.as_ref()).map_or((false, false), |m| {
+                (m.is_dir(), names_a_document(m, mime.as_deref()))
+            });
             Box::new(move |state: &mut State| {
                 if is_dir {
                     state.spawn_argv_activated(&reprisefs::apps::open_folder_argv(&dir));
@@ -247,11 +250,22 @@ impl State {
 }
 
 /// Whether a Run line's path is a document to record as opened: a regular file with no execute
-/// bit, since an executable it names runs instead.
-fn names_a_document(meta: &std::fs::Metadata) -> bool {
+/// bit, since an executable it names runs instead, or one whose name's type `mime` is no
+/// program's, as vfat, exFAT, NTFS and SMB mounts mark every file executable.
+fn names_a_document(meta: &std::fs::Metadata, mime: Option<&str>) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    meta.is_file() && meta.permissions().mode() & 0o111 == 0
+    meta.is_file()
+        && (meta.permissions().mode() & 0o111 == 0
+            || mime.is_some_and(|m| !PROGRAM_TYPES.contains(&m)))
 }
+
+const PROGRAM_TYPES: [&str; 5] = [
+    "application/x-executable",
+    "application/x-pie-executable",
+    "application/x-sharedlib",
+    "application/x-shellscript",
+    "application/x-desktop",
+];
 
 #[cfg(test)]
 mod tests {
@@ -329,16 +343,23 @@ mod tests {
         std::fs::write(&prog, "").unwrap();
         std::fs::set_permissions(&doc, std::fs::Permissions::from_mode(0o644)).unwrap();
         std::fs::set_permissions(&prog, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let meta = |p: &std::path::Path| std::fs::metadata(p).unwrap();
         assert!(
-            names_a_document(&std::fs::metadata(&doc).unwrap()),
+            names_a_document(&meta(&doc), None),
             "a 0644 file is recorded"
         );
+        assert!(!names_a_document(&meta(&prog), None), "a 0755 file is not");
         assert!(
-            !names_a_document(&std::fs::metadata(&prog).unwrap()),
-            "a 0755 file is not"
+            !names_a_document(&meta(&prog), Some("application/x-shellscript")),
+            "nor a 0755 script"
+        );
+        std::fs::set_permissions(&doc, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(
+            names_a_document(&meta(&doc), Some("text/plain")),
+            "a 0777 document, as on vfat, is recorded"
         );
         assert!(
-            !names_a_document(&std::fs::metadata(&dir).unwrap()),
+            !names_a_document(&meta(&dir), Some("text/plain")),
             "a folder is not"
         );
         let _ = std::fs::remove_dir_all(&dir);
