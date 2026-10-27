@@ -470,6 +470,7 @@ fn a_drm_fd_that_keeps_failing_ends_the_session_and_leaves_the_loop() {
         !h.state.session_fade.fading_out(),
         "errors below the limit end nothing"
     );
+    assert!(!crate::crash::is_ending());
     for _ in 0..3 {
         ping.ping();
         h.dispatch();
@@ -482,6 +483,10 @@ fn a_drm_fd_that_keeps_failing_ends_the_session_and_leaves_the_loop() {
     assert!(
         h.state.session_fade.fading_out(),
         "the session fades out to end"
+    );
+    assert!(
+        crate::crash::is_ending(),
+        "a panic in the fade ends the process"
     );
 }
 
