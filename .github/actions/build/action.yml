@@ -12,12 +12,8 @@ runs:
       shell: bash
       env:
         ARCH_ARCHIVE: ${{ inputs.arch-archive }}
-      run: |
-        if [ -n "$ARCH_ARCHIVE" ]; then
-          echo "Server = https://archive.archlinux.org/repos/$ARCH_ARCHIVE/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
-        fi
-        pacman -Syyuu --noconfirm
-        pacman -S --noconfirm --needed rust clang python pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire ttf-dejavu shared-mime-info
+      run: >-
+        bash "$GITHUB_WORKSPACE"/.github/pacman.sh rust clang python pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire ttf-dejavu shared-mime-info
     - name: Install cargo-nextest 0.9.149
       shell: bash
       run: |

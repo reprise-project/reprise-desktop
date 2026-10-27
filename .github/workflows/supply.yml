@@ -20,10 +20,7 @@ jobs:
     env:
       ARCH_ARCHIVE: 2026/10/25
     steps:
-      - name: Install cargo-deny
-        run: |
-          echo "Server = https://archive.archlinux.org/repos/$ARCH_ARCHIVE/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
-          pacman -Syyuu --noconfirm
-          pacman -S --noconfirm --needed rust cargo-deny
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install cargo-deny
+        run: bash .github/pacman.sh rust cargo-deny
       - run: cargo deny --locked check

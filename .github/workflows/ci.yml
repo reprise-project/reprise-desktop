@@ -23,11 +23,10 @@ jobs:
       # A font-gated test fails instead of skipping; see CONTRIBUTING.md.
       REPRISE_TEST_STRICT: 1
     steps:
-      # git before the checkout, so it clones instead of downloading the tree: the licence
-      # test lists tracked files. The action pins the mirror again; the second sync is a no-op.
-      - run: |
-          echo "Server = https://archive.archlinux.org/repos/$ARCH_ARCHIVE/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
-          pacman -Syu --noconfirm --needed git
+      # The first checkout downloads the tree for .github/pacman.sh; the second clones once git
+      # is in, as the licence test lists tracked files.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash .github/pacman.sh git
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/build
         with:
@@ -44,7 +43,8 @@ jobs:
       CARGO_HOME: /home/builder/.cargo
       REPRISE_TEST_STRICT: 1
     steps:
-      - run: pacman -Syu --noconfirm --needed git
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash .github/pacman.sh git
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/build
   # What ships: the desktop entries validate and makepkg builds and installs every binary.
@@ -56,11 +56,10 @@ jobs:
       CARGO_INCREMENTAL: 0
       ARCH_ARCHIVE: 2026/10/25
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install dependencies
-        run: |
-          echo "Server = https://archive.archlinux.org/repos/$ARCH_ARCHIVE/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
-          pacman -Syyuu --noconfirm
-          pacman -S --noconfirm --needed base-devel desktop-file-utils rust clang pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire
+        run: >-
+          bash .github/pacman.sh base-devel desktop-file-utils rust clang pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # pkgver counts the commits.

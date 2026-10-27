@@ -17,10 +17,10 @@ jobs:
     env:
       CARGO_INCREMENTAL: 0
     steps:
+      # Downloads the tree for .github/pacman.sh; the second checkout clones once git is in.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install build tools
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed base-devel git github-cli
+        run: bash .github/pacman.sh base-devel git github-cli
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # pkgver counts the commits.

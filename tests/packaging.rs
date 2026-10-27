@@ -125,13 +125,19 @@ fn ci_installs_every_pkgbuild_dependency() {
     .flat_map(|path| {
         let text = std::fs::read_to_string(root().join(path)).expect("CI file reads");
         let lines: Vec<String> = (text.lines())
-            .filter_map(|l| l.trim().strip_prefix("pacman -S --noconfirm --needed "))
+            .filter_map(|l| {
+                let l = l.trim();
+                (l.strip_prefix("pacman -S --noconfirm --needed "))
+                    .or_else(|| l.split_once(".github/pacman.sh ").map(|(_, pkgs)| pkgs))
+            })
             .map(str::to_string)
             .collect();
-        assert!(!lines.is_empty(), "{path} installs packages");
-        lines
-            .into_iter()
-            .map(move |l| (path, l.split_whitespace().map(str::to_string).collect()))
+        // The fullest list in the file: a one-package install (git before the checkout) is
+        // bootstrap, not the build's dependencies.
+        let full = (lines.into_iter())
+            .max_by_key(|l| l.split_whitespace().count())
+            .unwrap_or_else(|| panic!("{path} installs packages"));
+        std::iter::once((path, full.split_whitespace().map(str::to_string).collect()))
     })
     .collect();
     for pkgbuild in PKGBUILDS {
