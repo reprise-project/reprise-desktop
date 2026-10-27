@@ -149,7 +149,7 @@ impl Config {
                 for (key, e) in &dropped {
                     log::warn!("config {}: {key}: {e}; using its defaults", path.display());
                 }
-                (c, Some(dropped_notice(&dropped, false)), table)
+                (c, Some(dropped_notice(&dropped, |_| false)), table)
             }
             Err(e) => {
                 log::error!("config {}: {e}; using defaults", path.display());
@@ -286,17 +286,24 @@ fn window_rule(f: FileWindowRule, at: &str) -> Result<WindowRule, String> {
     })
 }
 
-/// The notice naming the keys a read dropped: left at their defaults at startup, at their
-/// previous values on a `reload`.
-pub(crate) fn dropped_notice(dropped: &[(String, String)], reload: bool) -> String {
+/// The notice naming the keys a read dropped, saying which `kept` their previous values and which
+/// took their defaults.
+pub(crate) fn dropped_notice(dropped: &[(String, String)], kept: impl Fn(&str) -> bool) -> String {
     let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
-    let kept = if reload {
-        "kept their previous values"
+    let (old, reset): (Vec<&str>, Vec<&str>) = keys.iter().copied().partition(|k| kept(k));
+    let what = if reset.is_empty() {
+        "kept their previous values".to_string()
+    } else if old.is_empty() {
+        "used the defaults there".to_string()
     } else {
-        "used the defaults there"
+        format!(
+            "kept the previous values of {}; {} used the defaults",
+            old.join(", "),
+            reset.join(", ")
+        )
     };
     format!(
-        "Reprise ignored {} in config.toml and {kept}. \
+        "Reprise ignored {} in config.toml and {what}. \
          `journalctl --user -t reprise` names the errors.",
         keys.join(", ")
     )

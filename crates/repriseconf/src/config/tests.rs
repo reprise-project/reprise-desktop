@@ -950,6 +950,21 @@ fn a_bad_tablet_entry_drops_that_entry_alone() {
 }
 
 #[test]
+fn a_restored_key_that_fails_against_the_new_file_takes_its_default_alone() {
+    let good = "terminal = \"foot\"\n[night_light]\nfrom = \"22:00\"\nto = \"06:00\"\n";
+    let (_, _, base) = super::lenient_over(good, &toml::Table::new(), Config::from_file).unwrap();
+    let bad = "terminal = 5\n[night_light]\nfrom = \"x\"\nto = \"22:00\"\n";
+    let (c, dropped, table) = super::lenient_over(bad, &base, Config::from_file).unwrap();
+    let keys: Vec<&str> = dropped.iter().map(|(k, _)| k.as_str()).collect();
+    assert_eq!(keys, ["night_light.from", "terminal"]);
+    assert_eq!(c.terminal, "foot", "terminal keeps its running value");
+    assert_eq!(c.night_light.from, NightLightConfig::default().from);
+    assert_eq!(c.night_light.to, 22 * 60);
+    assert!(super::kept(&table, &base, "terminal"));
+    assert!(!super::kept(&table, &base, "night_light.from"));
+}
+
+#[test]
 fn a_table_whose_keys_fail_only_together_is_dropped_whole() {
     let text = "[night_light]\nenabled = true\nfrom = \"08:00\"\nto = \"08:00\"\ntemperature = 1\n";
     let (c, dropped) = Config::parse_lenient(text).unwrap();
