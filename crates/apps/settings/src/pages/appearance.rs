@@ -210,8 +210,9 @@ pub fn night_light(a: Area) -> Form {
 }
 
 /// The Effects page: window animations and the fade of hovered buttons, each a check with its two durations
-/// indented under it, and the screen's fade; then the menus' shadow, timings and opening, then the task buttons' slide.
-pub fn effects(a: Area) -> Form {
+/// indented under it, and the screen's fade; then the menus' shadow, timings and opening, the task buttons' slide,
+/// and the notification sound with its theme picked from `sound_themes`.
+pub fn effects(a: Area, sound_themes: &[String]) -> Form {
     let range = (0, EFFECTS_MS_MAX as i32);
     let mut items = vec![group(a, "effects_group", 44, 158, "Windows")];
     items.push(Item::check(
@@ -322,8 +323,34 @@ pub fn effects(a: Area) -> Form {
         318,
         "Slide &taskbar buttons as they are dragged",
     ));
+    items.push(group(a, "sounds_group", 354, 74, "Sounds"));
+    items.push(Item::check(
+        NOTIFICATION_SOUND,
+        GX,
+        376,
+        "&Play a sound for notifications",
+    ));
+    items.extend(
+        [
+            Item::label_at(SOUND_CONTROLS[0], GX, 402, 80, "Sound th&eme:"),
+            combo(
+                SOUND_CONTROLS[1],
+                GX + 84,
+                398,
+                a.combo(200),
+                sound_themes,
+                sound_themes.len().clamp(1, 8),
+            ),
+        ]
+        .map(Item::under_check),
+    );
     Form::new(items)
 }
+
+pub(super) const NOTIFICATION_SOUND: &str = "notification_sound";
+
+/// The sound theme's label and combo, greyed while notifications play no sound.
+pub(super) const SOUND_CONTROLS: [&str; 2] = ["sound_theme_label", "notification_sound_theme"];
 
 pub(super) const ANIM_CONTROLS: [&str; 4] = [
     "open_label",

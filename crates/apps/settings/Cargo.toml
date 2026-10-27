@@ -21,6 +21,7 @@ repriseapp = { path = "../../repriseapp" }
 reprisekit = { path = "../../reprisekit" }
 reprisebus = { path = "../../reprisebus" }
 reprisefs = { path = "../../reprisefs" }
+repriseaudio = { path = "../../repriseaudio" }
 repriseconf = { path = "../../repriseconf" }
 toml_edit.workspace = true
 inotify.workspace = true

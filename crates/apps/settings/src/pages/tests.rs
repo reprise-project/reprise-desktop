@@ -32,6 +32,7 @@ fn with(s: &Settings) -> PropSheet {
             gtk_themes: &gtk_themes(),
             qt_tools: true,
             cursor_themes: &cursor_themes(),
+            sound_themes: &sound_themes(),
             layouts: &reg(),
             heads: &[],
         },
@@ -245,6 +246,10 @@ fn reg() -> Vec<Layout> {
 
 fn cursor_themes() -> Vec<String> {
     vec!["Adwaita".into(), "breeze_cursors".into()]
+}
+
+fn sound_themes() -> Vec<String> {
+    vec!["freedesktop".into(), "ocean".into()]
 }
 
 fn gtk_themes() -> Vec<String> {

@@ -415,6 +415,7 @@ impl SettingsApp {
             gtk_themes: &[],
             qt_tools: false,
             cursor_themes: &[],
+            sound_themes: &[],
             layouts: &[],
             heads: &[],
         };
@@ -482,6 +483,7 @@ impl SettingsApp {
                 gtk_themes: &gtk_themes(),
                 qt_tools: qt_tools(),
                 cursor_themes: &cursors::themes(),
+                sound_themes: &repriseaudio::sounds::themes(&repriseaudio::sounds::sound_dirs()),
                 layouts: &xkb,
                 heads: &[],
             },
