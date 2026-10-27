@@ -341,7 +341,10 @@ are.
   groups aren't back 4 seconds after a window of it appears, it starts
   again for each one missing that no
   earlier start is still bringing, never more often than it had windows.
-  Windows that don't come back within two minutes are left out.
+  Windows that don't come back within two minutes are left out. When
+  Reprise stops before the restored programs' first windows are back, the
+  next start restores nothing, so a program that brings Reprise down is
+  not started into it again.
 - **XDG autostart,** with a Startup page in Reprise Settings to turn entries
   on and off.
 - **Crash recovery.** When Reprise panics it starts again in place: the

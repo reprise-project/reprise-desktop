@@ -23,6 +23,7 @@ use crate::windowrules::Remembered;
 use reprisefs::apps::AppEntry;
 use reprisefs::autostart::Entry;
 use serde::{Deserialize, Serialize};
+use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use std::time::{Duration, Instant};
 
@@ -607,6 +608,13 @@ pub struct Session {
     pub kept: bool,
     /// The state file's `screen_locked` at start.
     pub was_locked: bool,
+    /// The state file's `session_restoring` at start: the last restore never finished.
+    pub restore_unfinished: bool,
+    /// This session set `session_restoring` and has not cleared it.
+    pub restore_marked: bool,
+    /// `restore` ran, so the save timer may take the list.
+    pub started: bool,
+    pub save_timer: Option<RegistrationToken>,
 }
 
 impl Session {
@@ -615,6 +623,7 @@ impl Session {
             apps: p.session.clone(),
             tabs: p.session_tabs.clone(),
             was_locked: p.screen_locked,
+            restore_unfinished: p.session_restoring,
             ..Session::default()
         }
     }
@@ -691,19 +700,48 @@ pub fn end(state: &mut State) {
     crate::state::flush();
 }
 
-/// Take the list again every `every` while the session runs. A tick passes while restored apps'
-/// first windows are still awaited, which would drop them, and once `end` kept the session.
+/// Take the list again every `every` while the session runs and `[session] restore` is on. A tick
+/// passes while restored apps' first windows are still awaited, which would drop them, and once
+/// `end` kept the session; the first tick past the wait clears `session_restoring`.
 pub fn save_every(state: &mut State, every: Duration) {
+    if !state.config.session.restore || state.session.save_timer.is_some() {
+        return;
+    }
     let armed = state
         .handle
         .insert_source(Timer::from_duration(every), move |_, _, state| {
-            if !state.session.kept && !state.session.restoring.waiting(Instant::now()) {
+            let waiting = state.session.restoring.waiting(Instant::now());
+            if !waiting && state.session.restore_marked {
+                state.session.restore_marked = false;
+                crate::state::save_session_restoring(false);
+            }
+            if !state.session.kept && !waiting {
                 save(state);
             }
             TimeoutAction::ToDuration(every)
         });
-    if let Err(e) = armed {
-        log::warn!("session: no save timer: {e}; the list is taken at the session's end only");
+    match armed {
+        Ok(token) => state.session.save_timer = Some(token),
+        Err(e) => {
+            log::warn!("session: no save timer: {e}; the list is taken at the session's end only")
+        }
+    }
+}
+
+/// `[session] restore` turned on or off by a reload: arm the save timer, or stop it and empty
+/// the saved list.
+pub fn restore_changed(state: &mut State) {
+    if !state.session.started {
+        return;
+    }
+    if state.config.session.restore {
+        save_every(state, SAVE_EVERY);
+    } else if let Some(token) = state.session.save_timer.take() {
+        state.handle.remove(token);
+        if std::mem::take(&mut state.session.restore_marked) {
+            crate::state::save_session_restoring(false);
+        }
+        save(state);
     }
 }
 
@@ -711,11 +749,20 @@ pub fn save_every(state: &mut State, every: Duration) {
 /// then keep the list fresh (`save_every`).
 pub fn restore(state: &mut State, autostarted: &[Entry]) {
     restore_now(state, autostarted);
+    state.session.started = true;
     save_every(state, SAVE_EVERY);
 }
 
 fn restore_now(state: &mut State, autostarted: &[Entry]) {
+    let unfinished = std::mem::take(&mut state.session.restore_unfinished);
+    if unfinished {
+        crate::state::save_session_restoring(false);
+    }
     if !state.config.session.restore {
+        return;
+    }
+    if unfinished {
+        log::warn!("session: the last restore never finished; starting none of its apps");
         return;
     }
     let start = to_start(
@@ -724,6 +771,11 @@ fn restore_now(state: &mut State, autostarted: &[Entry]) {
         &state.config.session.exclude,
         autostarted,
     );
+    if !start.is_empty() {
+        state.session.restore_marked = true;
+        crate::state::save_session_restoring(true);
+        crate::state::flush();
+    }
     let now = Instant::now();
     let mut regrouping = PendingTabs::new(&state.session.tabs, &state.session.apps, now);
     for (s, e) in &start {
@@ -1451,5 +1503,56 @@ mod tests {
             queued + 1,
             "one write, the unchanged ticks after it write nothing"
         );
+    }
+
+    #[test]
+    fn the_save_timer_runs_only_while_restore_is_on() {
+        let mut h = crate::harness::Harness::new();
+        h.state.config.session.restore = false;
+        restore(&mut h.state, &[]);
+        assert!(
+            h.state.session.save_timer.is_none(),
+            "restore off arms nothing"
+        );
+        h.state.config.session.restore = true;
+        restore_changed(&mut h.state);
+        assert!(h.state.session.save_timer.is_some(), "turned on, it arms");
+        h.state.config.session.restore = false;
+        restore_changed(&mut h.state);
+        assert!(h.state.session.save_timer.is_none(), "turned off, it stops");
+    }
+
+    #[test]
+    fn a_restore_that_never_finished_starts_nothing_at_the_next_start() {
+        let mut h = crate::harness::Harness::new();
+        h.state.app_index = vec![app("foot", "foot", None)];
+        h.state.session.apps = vec![saved("foot", "foot.desktop", 0)];
+        h.state.session.restore_unfinished = true;
+        let queued = crate::state::QUEUED.with(|n| n.get());
+        restore_now(&mut h.state, &[]);
+        assert!(
+            !h.state.session.restoring.waiting(Instant::now()),
+            "foot is not started"
+        );
+        assert!(!h.state.session.restore_marked);
+        assert_eq!(
+            crate::state::QUEUED.with(|n| n.get()),
+            queued + 1,
+            "the mark is cleared"
+        );
+    }
+
+    #[test]
+    fn the_restore_mark_clears_once_the_restored_windows_are_back() {
+        let mut h = crate::harness::Harness::new();
+        let foot = saved("foot", "foot.desktop", 0);
+        h.state.session.restoring = Pending::new(&[&foot], Instant::now());
+        h.state.session.restore_marked = true;
+        save_every(&mut h.state, Duration::from_millis(20));
+        h.run_for(60);
+        assert!(h.state.session.restore_marked, "kept while foot is awaited");
+        h.state.session.restoring.mapped("foot");
+        h.run_for(60);
+        assert!(!h.state.session.restore_marked);
     }
 }

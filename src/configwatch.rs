@@ -363,6 +363,9 @@ pub fn reload(state: &mut State, cfg: Config) {
     if old.taskbar.tray_overflow != state.config.taskbar.tray_overflow {
         crate::tray::replace_all(state);
     }
+    if old.session.restore != state.config.session.restore {
+        crate::session::restore_changed(state);
+    }
     crate::sandbox::set_trusted(&state.config.clipboard.trusted_apps);
     crate::idle::config_changed(state);
     if old.location != state.config.location {
