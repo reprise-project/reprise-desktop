@@ -26,12 +26,20 @@ const HIDE_MS: u64 = 5000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Target {
-    Taskbar { bar: TreeId, hit: TaskbarHit },
+    Taskbar {
+        bar: TreeId,
+        hit: TaskbarHit,
+    },
     Dialog(usize, usize),
-    Menu { depth: usize, row: usize },
+    Menu {
+        depth: usize,
+        row: usize,
+    },
     Desktop(usize),
     StartPanel(Spot),
     Caption(WindowId, CaptionButton),
+    /// A notification's icon button: its id and the button.
+    Notify(u32, usize),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,6 +157,19 @@ pub fn hover_caption(state: &mut State, window: WindowId, hit: FrameHit) {
     });
 }
 
+/// The pointer is over a notification's icon button, `(id, button, label)`, or over none.
+pub fn hover_notify(state: &mut State, icon: Option<(u32, usize, String)>) {
+    let Some((id, button, label)) = icon else {
+        if state.tooltip.any(|t| matches!(t, Target::Notify(..))) {
+            hide(state);
+        }
+        return;
+    };
+    rest_on(state, Target::Notify(id, button), |_| {
+        Some(Tip::Label(label))
+    });
+}
+
 /// The `snap-layouts` bind's first chord, as an accelerator reads.
 fn snap_layouts_keys(binds: &[crate::config::Keybind]) -> Option<String> {
     (binds.iter())
@@ -262,7 +283,7 @@ fn fired(state: &mut State) {
         Target::Menu { depth, .. } => state.menus.get(depth).map(|m| m.output.clone()),
         Target::Desktop(_) => state.output_at(cursor.x, cursor.y),
         Target::StartPanel(_) => state.start_panel_output(),
-        Target::Caption(..) => state.output_at(cursor.x, cursor.y),
+        Target::Caption(..) | Target::Notify(..) => state.output_at(cursor.x, cursor.y),
     };
     let Some(output) = output else {
         return;

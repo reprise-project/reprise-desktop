@@ -4,7 +4,7 @@ use super::motion::{
     Band, aim_stack, band, follow_slot, keeps_ticking, open_target, restack, still,
 };
 use super::paint::{frame_outputs, relative, slot_needs_icon};
-use super::pointer::{hold_at, point_at, press_target, rest_point};
+use super::pointer::{hold_at, icon_tip, point_at, press_target, rest_point};
 use super::reply::take_draft;
 use super::stack::{
     Burst, chip_count, fill, fold_from, fold_in, join_burst, overflow, retint, shed, take_queued,
@@ -693,6 +693,31 @@ fn sheets_at(scene: &mut crate::compositor::DeskScene) -> (NotifyView, i32) {
         ..NotifyView::default()
     };
     (v, pitch)
+}
+
+#[test]
+fn a_lit_icon_button_tips_its_actions_label_and_a_labelled_one_none() {
+    let mut scene = crate::compositor::DeskScene::new();
+    let mut b = balloon(&mut scene, 4);
+    let Item::Note(n) = &mut b.item else {
+        unreachable!()
+    };
+    n.actions = vec![
+        ("default".into(), "Open".into()),
+        ("archive".into(), "Archive".into()),
+        ("reply".into(), "Reply".into()),
+    ];
+    n.action_icons.insert("archive".into(), red_icon());
+    let mut v = NotifyView {
+        stack: vec![b],
+        ..NotifyView::default()
+    };
+    v.stack[0].hot = Some(NotifyHit::Button(0));
+    assert_eq!(icon_tip(&v), Some((4, 0, "Archive".to_string())));
+    v.stack[0].hot = Some(NotifyHit::Button(1));
+    assert_eq!(icon_tip(&v), None, "a button showing its label has no tip");
+    v.stack[0].hot = Some(NotifyHit::Close);
+    assert_eq!(icon_tip(&v), None);
 }
 
 #[test]
