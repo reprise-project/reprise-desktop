@@ -1,6 +1,6 @@
 //! Colour emoji for the emoji picker: the catalog (names, shortcodes and
 //! groups from the `emojis` crate) and the first installed colour emoji font.
-//! Sequences (ZWJ families, flags, keycaps) are shaped with rustybuzz to the
+//! Sequences (ZWJ families, flags, keycaps) are shaped with harfrust to the
 //! one glyph the font draws; ones without a single glyph are left out of the
 //! catalog. Glyphs come from FreeType with `FT_LOAD_COLOR`: a bitmap font at
 //! its nearest strike, a scalable one at the size asked, each box-filtered
@@ -14,6 +14,7 @@ use freetype::{Face, Library};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 pub const FAMILIES: &[&str] = &[
     "Noto Color Emoji",
@@ -78,9 +79,8 @@ pub fn catalog(font: Option<&EmojiFont>) -> Vec<Entry> {
 }
 
 pub struct EmojiFont {
-    data: Rc<Vec<u8>>,
-    index: u32,
-    face: Face,
+    shaper: Option<harfrust::Font>,
+    face: Face<Arc<[u8]>>,
     family: String,
     cache: RefCell<Squares>,
 }
@@ -100,24 +100,23 @@ impl EmojiFont {
             if !face.families.iter().any(|(n, _)| n == family) {
                 return None;
             }
-            let data = match &face.source {
+            let data: Arc<[u8]> = match &face.source {
                 fontdb::Source::File(p) | fontdb::Source::SharedFile(p, _) => {
-                    std::fs::read(p).ok()?
+                    std::fs::read(p).ok()?.into()
                 }
                 fontdb::Source::Binary(_) => return None,
             };
-            let data = Rc::new(data);
-            let ft = match lib.new_memory_face(data.clone(), face.index as isize) {
+            let ft = match lib.new_memory_face2(data.clone(), face.index as isize) {
                 Ok(f) => f,
                 Err(e) => {
                     log::warn!("FreeType could not open {family}: {e}");
                     return None;
                 }
             };
+            let bytes: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(data);
             log::info!("emoji font: {family}");
             Some(EmojiFont {
-                data,
-                index: face.index,
+                shaper: harfrust::Font::new(bytes, face.index),
                 face: ft,
                 family: family.to_string(),
                 cache: RefCell::new(HashMap::new()),
@@ -129,20 +128,21 @@ impl EmojiFont {
         &self.family
     }
 
-    fn shaper(&self) -> Option<rustybuzz::Face<'_>> {
-        rustybuzz::Face::from_slice(&self.data, self.index)
+    fn shaper(&self) -> Option<harfrust::ShaperFont<'_, '_>> {
+        self.shaper.as_ref().map(harfrust::ShaperFont::new)
     }
 
     pub fn glyph(&self, emoji: &str) -> Option<u32> {
         self.glyph_with(&self.shaper()?, emoji)
     }
 
-    fn glyph_with(&self, shaper: &rustybuzz::Face<'_>, emoji: &str) -> Option<u32> {
-        let mut buf = rustybuzz::UnicodeBuffer::new();
+    fn glyph_with(&self, shaper: &harfrust::ShaperFont<'_, '_>, emoji: &str) -> Option<u32> {
+        let mut buf = harfrust::Buffer::new();
         buf.push_str(emoji);
-        buf.set_flags(rustybuzz::BufferFlags::REMOVE_DEFAULT_IGNORABLES);
-        let out = rustybuzz::shape(shaper, &[], buf);
-        match out.glyph_infos() {
+        buf.guess_segment_properties();
+        buf.set_flags(harfrust::BufferFlags::REMOVE_DEFAULT_IGNORABLES);
+        harfrust::shape(shaper, &mut buf, harfrust::ShapeOptions::new()).ok()?;
+        match buf.glyph_infos() {
             [g] if g.glyph_id != 0 => Some(g.glyph_id),
             _ => None,
         }
@@ -186,7 +186,7 @@ impl EmojiFont {
     }
 }
 
-fn strike_sizes(f: &Face) -> Vec<u32> {
+fn strike_sizes(f: &Face<Arc<[u8]>>) -> Vec<u32> {
     crate::text::fixed_sizes(f)
         .iter()
         .map(|s| (s.y_ppem >> 6).max(i64::from(s.height)) as u32)

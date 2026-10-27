@@ -105,7 +105,7 @@ impl Glyph {
     }
 }
 
-pub(crate) fn fixed_sizes(f: &Face) -> &[freetype::ffi::FT_Bitmap_Size] {
+pub(crate) fn fixed_sizes<B>(f: &Face<B>) -> &[freetype::ffi::FT_Bitmap_Size] {
     let raw = f.raw();
     if raw.available_sizes.is_null() {
         return &[];

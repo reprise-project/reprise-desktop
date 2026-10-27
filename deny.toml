@@ -7,9 +7,6 @@ targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 # Vulnerabilities always fail; an unmaintained crate fails only as a direct dependency.
 unmaintained = "workspace"
 yanked = "warn"
-ignore = [
-    { id = "RUSTSEC-2026-0206", reason = "rustybuzz only shapes emoji sequences in reprisekit::emoji; moving to harfrust is its own change" },
-]
 
 [licenses]
 allow = [
