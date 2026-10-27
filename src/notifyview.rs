@@ -161,6 +161,8 @@ pub struct NotifyView {
     timer: Option<RegistrationToken>,
     age_timer: Option<RegistrationToken>,
     tick_timer: Option<RegistrationToken>,
+    /// Wakes at each minute boundary while `[notifications] quiet_hours` is set.
+    minute_timer: Option<RegistrationToken>,
     /// The bar edge the stack was last placed by.
     edge: Option<Edge>,
     /// The output the stack was last placed on; its sheets and chip draw only inside it.
@@ -280,19 +282,32 @@ pub fn suppress_changed(state: &mut State) {
     changed(state);
 }
 
-/// Check [`suppress_changed`] at every minute boundary, for the quiet hours.
-pub fn setup(state: &mut State) {
+/// Check [`suppress_changed`] at every minute boundary while quiet hours are set, and once now.
+/// Runs at startup and on each config reload.
+pub fn config_changed(state: &mut State) {
     use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
-    let to_next_minute = || Duration::from_secs((60 - now().rem_euclid(60)).max(1) as u64);
-    let timer = state.handle.insert_source(
-        Timer::from_duration(to_next_minute()),
-        move |_, _, state| {
-            suppress_changed(state);
-            TimeoutAction::ToDuration(to_next_minute())
-        },
-    );
-    if let Err(e) = timer {
-        log::warn!("notifications: no minute timer: {}", e.error);
+    let want = state.config.notifications.quiet_hours.is_some();
+    match (want, state.notify.minute_timer.is_some()) {
+        (true, false) => {
+            let to_next_minute = || Duration::from_secs((60 - now().rem_euclid(60)).max(1) as u64);
+            let timer = state.handle.insert_source(
+                Timer::from_duration(to_next_minute()),
+                move |_, _, state| {
+                    suppress_changed(state);
+                    TimeoutAction::ToDuration(to_next_minute())
+                },
+            );
+            match timer {
+                Ok(t) => state.notify.minute_timer = Some(t),
+                Err(e) => log::warn!("notifications: no minute timer: {}", e.error),
+            }
+        }
+        (false, true) => {
+            if let Some(t) = state.notify.minute_timer.take() {
+                state.handle.remove(t);
+            }
+        }
+        _ => {}
     }
     suppress_changed(state);
 }

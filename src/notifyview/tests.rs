@@ -1560,3 +1560,16 @@ fn a_low_urgency_balloon_and_the_sound_key_off_are_silent() {
     n.urgency = Urgency::Low;
     assert_eq!(balloon_sound(&n, true), None);
 }
+
+#[test]
+fn the_minute_timer_runs_only_while_quiet_hours_are_set() {
+    let mut h = crate::harness::Harness::new();
+    config_changed(&mut h.state);
+    assert!(h.state.notify.minute_timer.is_none());
+    h.state.config.notifications.quiet_hours = Some((22 * 60, 7 * 60));
+    config_changed(&mut h.state);
+    assert!(h.state.notify.minute_timer.is_some());
+    h.state.config.notifications.quiet_hours = None;
+    config_changed(&mut h.state);
+    assert!(h.state.notify.minute_timer.is_none());
+}

@@ -338,7 +338,7 @@ fn run(
     )?;
     power::setup(&mut state);
     nightlight::setup(&mut state);
-    notifyview::setup(&mut state);
+    notifyview::config_changed(&mut state);
     idle::setup(&mut state);
     debugview::config_changed(&mut state);
     state.apply_wallpaper_config();

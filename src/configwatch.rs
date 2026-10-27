@@ -446,6 +446,7 @@ pub fn reload(state: &mut State, cfg: Config) {
     state.sync_caret_reports();
     state.mousekeys_configured();
     crate::nightlight::update(state);
+    crate::notifyview::config_changed(state);
     if changes.closes_bar_popups() {
         close_bar_popups(state);
         if matches!(
