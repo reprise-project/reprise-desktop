@@ -117,20 +117,21 @@ fn launch_left(
     to_launch(&waiting, &list()).into_iter().for_each(launch);
 }
 
-/// The user manager's app scopes that still have a process. Blocks on it.
+/// The user manager's app scopes that still have a process; none when it does not answer within
+/// [`LIST_LIMIT`], so every entry starts.
 fn running_scopes() -> Vec<String> {
-    let out = std::process::Command::new("systemctl")
-        .args([
-            "--user",
-            "list-units",
-            "--state=running",
-            "--plain",
-            "--no-legend",
-        ])
-        .arg(reprisefs::scope::PATTERN)
-        .output();
-    match out {
-        Ok(o) => String::from_utf8_lossy(&o.stdout)
+    let mut cmd = std::process::Command::new("systemctl");
+    cmd.args([
+        "--user",
+        "--no-ask-password",
+        "list-units",
+        "--state=running",
+        "--plain",
+        "--no-legend",
+    ])
+    .arg(reprisefs::scope::PATTERN);
+    match output_within(&mut cmd, LIST_LIMIT) {
+        Ok(out) => String::from_utf8_lossy(&out)
             .lines()
             .filter_map(|l| l.split_whitespace().next())
             .map(String::from)
@@ -139,6 +140,32 @@ fn running_scopes() -> Vec<String> {
             log::warn!("autostart: systemctl list-units: {e}");
             Vec::new()
         }
+    }
+}
+
+const LIST_LIMIT: Duration = Duration::from_secs(5);
+
+/// `cmd`'s stdout, or Err once it has run `limit` without ending; then it is killed.
+fn output_within(cmd: &mut std::process::Command, limit: Duration) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut child = (cmd.stdin(std::process::Stdio::null()))
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut stdout = child.stdout.take().ok_or("no stdout")?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let _ = tx.send(stdout.read_to_end(&mut out).map(|_| out));
+    });
+    let got = rx.recv_timeout(limit);
+    if got.is_err() {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    match got {
+        Ok(read) => read.map_err(|e| e.to_string()),
+        Err(_) => Err(format!("no answer in {limit:?}")),
     }
 }
 
@@ -154,6 +181,24 @@ mod tests {
 
     fn entry(text: &str) -> Entry {
         reprisefs::autostart::parse("a", text, false).unwrap()
+    }
+
+    #[test]
+    fn a_listing_that_never_ends_is_killed_at_its_limit() {
+        let mut echo = std::process::Command::new("sh");
+        echo.args(["-c", "echo app-reprise-a-1.scope running"]);
+        assert_eq!(
+            output_within(&mut echo, Duration::from_secs(5)).unwrap(),
+            b"app-reprise-a-1.scope running\n"
+        );
+        let started = std::time::Instant::now();
+        let mut hang = std::process::Command::new("sleep");
+        hang.arg("30");
+        assert!(output_within(&mut hang, Duration::from_millis(200)).is_err());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "killed, not waited for"
+        );
     }
 
     #[test]
