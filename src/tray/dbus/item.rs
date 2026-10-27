@@ -122,6 +122,7 @@ pub(super) async fn fetch_item(
         attention_name,
         attention_pixmaps,
         overlay_name,
+        overlay_pixmaps,
     ) = futures_util::join!(
         prop::<String>(&proxy, "Id"),
         prop::<String>(&proxy, "Title"),
@@ -135,6 +136,7 @@ pub(super) async fn fetch_item(
         prop::<String>(&proxy, "AttentionIconName"),
         prop_body(&proxy, "AttentionIconPixmap"),
         prop::<String>(&proxy, "OverlayIconName"),
+        prop_body(&proxy, "OverlayIconPixmap"),
     );
     let pixmaps = pixmaps_of(&pixmaps);
     let tip = tip
@@ -180,7 +182,8 @@ pub(super) async fn fetch_item(
         },
         overlay: ItemIcon {
             name: icon_ref(overlay_name),
-            ..ItemIcon::default()
+            pixmaps: item_pixmaps(&pixmaps_of(&overlay_pixmaps).unwrap_or_default(), &sizes).into(),
+            named: Arc::from([]),
         },
     };
     decode_names(icons, &mut item, &sizes);

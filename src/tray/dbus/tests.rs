@@ -802,3 +802,38 @@ fn an_action_key_naming_no_icon_keeps_its_label() {
     let actions = [("reprise-no-such-icon".to_string(), "Stop".to_string())];
     assert!(action_icons(&hicolor(), &actions).is_empty());
 }
+
+#[test]
+fn an_items_overlay_pixmap_is_read_with_its_other_properties() {
+    let got = zbus::block_on(async {
+        let (ours, item) = peers(Duration::from_secs(5)).await;
+        let mut calls = zbus::MessageStream::from(&item);
+        let serve = async {
+            while let Some(Ok(msg)) = calls.next().await {
+                let hdr = msg.header();
+                let Ok((_, name)) = msg.body().deserialize::<(String, String)>() else {
+                    continue;
+                };
+                let _ = match name.as_str() {
+                    "Title" => item.reply(&hdr, &Value::from("B")).await,
+                    "OverlayIconPixmap" => {
+                        let badge = vec![(16, 16, vec![255u8; 16 * 16 * 4])];
+                        item.reply(&hdr, &Value::from(badge)).await
+                    }
+                    _ => {
+                        let err = "org.freedesktop.DBus.Error.UnknownProperty";
+                        item.reply_error(&hdr, err, &name).await
+                    }
+                };
+            }
+            None
+        };
+        let icons: Icons = Arc::new(Mutex::new(IconCache::new(IconTheme::load("hicolor", &[]))));
+        let sizes: Sizes = Arc::new(Mutex::new(vec![16]));
+        let fetch = fetch_item(&ours, &icons, &sizes, ":1.1", "/item");
+        futures_lite::future::or(fetch, serve).await
+    });
+    let item = got.expect("the item is read");
+    assert_eq!(item.overlay.pixmaps.len(), 1, "the badge is decoded");
+    assert_eq!(item.overlay.pixmaps[0].width, 16);
+}
