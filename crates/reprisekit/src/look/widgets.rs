@@ -1007,7 +1007,8 @@ pub const BUTTON_ICON_PAD: i32 = 4;
 pub const ICON_BUTTON_W: i32 = BUTTON_ICON + 2 * BUTTON_ICON_PAD;
 
 /// A push button with `icon` (device px) centred instead of a label, placed as
-/// [`draw_media_button`] places its glyph. Greyed, the icon shows at half alpha.
+/// [`draw_media_button`] places its glyph. Greyed, Classic embosses the icon's silhouette as it
+/// etches a greyed glyph; the styled looks show it at half alpha.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_icon_button(
     c: &mut Canvas,
@@ -1020,13 +1021,51 @@ pub fn draw_icon_button(
     focus: bool,
     px: u32,
 ) {
-    draw_button(c, text, p, r, "", false, ptr, enabled, focus, px);
+    let classic = p.look.style().is_none();
+    draw_button(
+        c,
+        text,
+        p,
+        r,
+        "",
+        false,
+        ptr,
+        enabled,
+        focus && !classic,
+        px,
+    );
     let (x, y) = glyph_at(p, r, ptr, (icon.width as i32, icon.height as i32));
     if enabled {
         c.blit_over(x, y, icon);
+    } else if classic {
+        ink_button_glyph(p, false, |d, ink| {
+            c.blit_over(x + d, y + d, &silhouette(icon, ink))
+        });
     } else {
         c.blit_over_faded(x, y, icon, 1, 2);
     }
+    // Classic's ring sits 4 px in, under the icon; this one goes 2 px in, clear of it.
+    if focus && classic {
+        let origin = (-(r.x / p.s), -(r.y / p.s));
+        classic::widgets::draw_focus_ring_screen(
+            c,
+            r.inset(2 * p.s),
+            p.s,
+            p.cs.button_text,
+            origin,
+        );
+    }
+}
+
+/// `icon` with every pixel `ink` at that pixel's alpha.
+fn silhouette(icon: &Canvas, ink: Color) -> Canvas {
+    let mut out = icon.clone();
+    for px in &mut out.pixels {
+        let a = *px >> 24;
+        let ch = |c: u8| (c as u32 * a + 127) / 255;
+        *px = a << 24 | ch(ink.r) << 16 | ch(ink.g) << 8 | ch(ink.b);
+    }
+    out
 }
 
 /// The top-left of a `w` x `h` glyph centred in button `r`, a pixel down and right in a held
@@ -1457,33 +1496,34 @@ mod tests {
         ic
     }
 
-    /// An icon button `ICON_BUTTON_W` x 23 on face, at rest, hot, held and greyed.
-    fn icon_buttons(interface: Interface, s: i32) -> [Canvas; 4] {
+    /// An icon button `ICON_BUTTON_W` x 23 on face, at rest, hot, held, greyed and focused.
+    fn icon_buttons(interface: Interface, s: i32) -> [Canvas; 5] {
         let theme = theme_for(interface).scaled(s);
         let text = crate::text::TextRenderer::load(&theme.fonts);
         let p = theme.paint();
         let icon = monitor(s);
         let r = Rect::new(0, 0, ICON_BUTTON_W * s, 23 * s);
-        let draw = |ptr, enabled| {
+        let draw = |ptr, enabled, focus| {
             let mut c = Canvas::new(r.width as u32, r.height as u32);
             c.fill_rect(r, theme.colors.button_face);
             let px = theme.fonts.size_px;
-            draw_icon_button(&mut c, &text, &p, r, &icon, enabled, ptr, false, px);
+            draw_icon_button(&mut c, &text, &p, r, &icon, enabled, ptr, focus, px);
             c
         };
         [
-            draw(Interaction::Idle, true),
-            draw(Interaction::Hot, true),
-            draw(Interaction::Pressed, true),
-            draw(Interaction::Idle, false),
+            draw(Interaction::Idle, true, false),
+            draw(Interaction::Hot, true, false),
+            draw(Interaction::Pressed, true, false),
+            draw(Interaction::Idle, false, false),
+            draw(Interaction::Idle, true, true),
         ]
     }
 
     #[test]
     fn the_icon_button_pins_its_pixels_in_every_look_at_1_and_2() {
         let want: [(Interface, i32, u64); 6] = [
-            (Interface::Classic, 1, 0x4fdb_984e_7825_f8ff),
-            (Interface::Classic, 2, 0xf460_3370_ed4c_bfa4),
+            (Interface::Classic, 1, 0x7d35_7413_054c_1c4a),
+            (Interface::Classic, 2, 0xc459_a513_3384_83bc),
             (Interface::Blue, 1, 0x5879_eedc_65d6_600b),
             (Interface::Blue, 2, 0x1792_b510_4119_ddd7),
             (Interface::Glass, 1, 0x44f5_cd24_22b0_2b68),
@@ -1493,11 +1533,68 @@ mod tests {
             .iter()
             .filter_map(|&(interface, s, hash)| {
                 let all = icon_buttons(interface, s);
-                let h = all.iter().fold(0u64, |h, c| h.rotate_left(7) ^ fnv(c));
+                let h = all[..4].iter().fold(0u64, |h, c| h.rotate_left(7) ^ fnv(c));
                 (h != hash).then(|| format!("{interface:?} at {s}: {h:#018x}"))
             })
             .collect();
         assert!(got.is_empty(), "{got:#?}");
+    }
+
+    #[test]
+    fn a_focused_icon_button_pins_its_pixels_in_every_look_at_1_and_2() {
+        let want: [(Interface, i32, u64); 6] = [
+            (Interface::Classic, 1, 0x0c77_5762_3b95_9c73),
+            (Interface::Classic, 2, 0xa045_e113_47f7_193b),
+            (Interface::Blue, 1, 0x2246_6f2d_1895_bdc6),
+            (Interface::Blue, 2, 0xef6d_08a2_ed11_491f),
+            (Interface::Glass, 1, 0x8ba8_3014_1ba1_df1d),
+            (Interface::Glass, 2, 0x1b5d_2b96_372c_5e47),
+        ];
+        let got: Vec<String> = want
+            .iter()
+            .filter_map(|&(interface, s, hash)| {
+                let h = fnv(&icon_buttons(interface, s)[4]);
+                (h != hash).then(|| format!("{interface:?} at {s}: {h:#018x}"))
+            })
+            .collect();
+        assert!(got.is_empty(), "{got:#?}");
+    }
+
+    /// Classic's focus ring runs 2 px in, between the button's edge and the icon, and leaves the
+    /// icon whole; greyed, the icon's solid pixels are the button shadow, its silhouette.
+    #[test]
+    fn a_classic_icon_button_rings_its_focus_clear_of_the_icon_and_embosses_it_greyed() {
+        let cs = theme_for(Interface::Classic).colors;
+        for s in [1, 2] {
+            let icon = monitor(s);
+            let (x0, y0) = (BUTTON_ICON_PAD * s, (23 - BUTTON_ICON) * s / 2);
+            let [idle, _, _, grey, focused] = icon_buttons(Interface::Classic, s);
+            let (w, h) = (ICON_BUTTON_W * s, 23 * s);
+            let changed: Vec<(i32, i32)> = (0..h)
+                .flat_map(|y| (0..w).map(move |x| (x, y)))
+                .filter(|&(x, y)| focused.get(x, y) != idle.get(x, y))
+                .collect();
+            assert!(!changed.is_empty(), "the ring shows at {s}");
+            let ring = Rect::new(0, 0, w, h).inset(2 * s);
+            let inner = ring.inset(s);
+            for &(x, y) in &changed {
+                assert!(
+                    ring.contains(x, y) && !inner.contains(x, y),
+                    "({x}, {y}) is on the ring 2 px in at {s}"
+                );
+            }
+            for y in 0..BUTTON_ICON * s {
+                for x in 0..BUTTON_ICON * s {
+                    if icon.get(x, y) >> 24 == 0xFF {
+                        assert_eq!(
+                            grey.get(x0 + x, y0 + y),
+                            cs.button_shadow.argb(),
+                            "({x}, {y})"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// The icon sits centred, the same pixels as the icon itself; held in Classic it moves a
@@ -1512,7 +1609,7 @@ mod tests {
                 .filter(|&(x, y)| icon.get(x, y) >> 24 == 0xFF)
                 .collect();
             assert!(!opaque.is_empty());
-            let [idle, _, held, grey] = icon_buttons(Interface::Classic, s);
+            let [idle, _, held, grey, _] = icon_buttons(Interface::Classic, s);
             for &(x, y) in &opaque {
                 assert_eq!(
                     idle.get(x0 + x, y0 + y),
