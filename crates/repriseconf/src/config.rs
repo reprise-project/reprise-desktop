@@ -21,7 +21,7 @@ pub use desktop::*;
 pub use effects::*;
 pub use input::*;
 pub use output::*;
-pub use parse::{Dropped, kept, lenient, lenient_over};
+pub use parse::{Dropped, DroppedKey, lenient, lenient_over};
 pub use power::*;
 use reprisekit::interface::Interface;
 use reprisekit::theme::Theme;
