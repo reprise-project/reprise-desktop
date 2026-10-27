@@ -50,6 +50,9 @@ pub struct Entry {
     primary: Arc<[u8]>,
     pub offers: Vec<Offer>,
     pub thumb: Option<Canvas>,
+    /// Whether a sandboxed program set the selection, which holds its file list to the sandbox rule
+    /// when the entry is offered again.
+    pub sandboxed: bool,
 }
 
 impl Entry {
@@ -93,7 +96,13 @@ impl History {
         self.entries.clear();
     }
 
-    pub fn push(&mut self, kind: Kind, primary: Arc<[u8]>, offers: Vec<Offer>) -> Option<u64> {
+    pub fn push(
+        &mut self,
+        kind: Kind,
+        primary: Arc<[u8]>,
+        offers: Vec<Offer>,
+        sandboxed: bool,
+    ) -> Option<u64> {
         let is_image = matches!(kind, Kind::Image { .. });
         let old = self.entries.iter().position(|e| {
             matches!(e.kind, Kind::Image { .. }) == is_image && e.primary[..] == primary[..]
@@ -111,6 +120,7 @@ impl History {
             primary,
             offers,
             thumb,
+            sandboxed,
         };
         if entry.size() > MAX_BYTES {
             return None;
@@ -320,16 +330,14 @@ impl State {
 
     /// Put entry `id` back on the clipboard, held by Reprise. False when the entry is gone.
     pub(crate) fn clip_offer_entry(&mut self, id: u64) -> bool {
-        let Some(offers) = self
-            .panels
-            .history
-            .history
+        let Some((offers, sandboxed)) = (self.panels.history.history)
             .get(id)
-            .map(|e| e.offers.clone())
+            .map(|e| (e.offers.clone(), e.sandboxed))
         else {
             return false;
         };
         self.clip_offer_each(offers);
+        self.clip.sandboxed = sandboxed;
         true
     }
 
@@ -485,8 +493,9 @@ impl State {
             .iter()
             .find(|(m, _)| m == PNG)
             .map(|(_, b)| b.clone());
+        let sandboxed = self.clip.sandboxed;
         let r = &mut self.panels.history;
-        let Some(id) = r.history.push(kind, primary, offers) else {
+        let Some(id) = r.history.push(kind, primary, offers, sandboxed) else {
             return;
         };
         r.live = Some(id);
@@ -575,7 +584,7 @@ mod tests {
 
     fn push_text(h: &mut History, s: &str) -> Option<u64> {
         let (k, p, o) = text(s);
-        h.push(k, p, o)
+        h.push(k, p, o, false)
     }
 
     fn labels(h: &History) -> Vec<String> {
@@ -625,7 +634,7 @@ mod tests {
         };
         for fill in 1..=3 {
             let (k, p, o) = big(fill);
-            h.push(k, p, o).unwrap();
+            h.push(k, p, o, false).unwrap();
         }
         assert_eq!(labels(&h), ["Image, 1x3", "Image, 1x2"]);
         let p: Arc<[u8]> = vec![0u8; MAX_BYTES + 1].into();
@@ -636,6 +645,7 @@ mod tests {
             },
             p.clone(),
             png_offer(p),
+            false,
         );
         assert_eq!(refused, None);
         assert_eq!(labels(&h).len(), 2);
