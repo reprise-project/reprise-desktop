@@ -563,6 +563,9 @@ pub struct Enterprise {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Key {
     Psk(Psk),
+    /// A WPA3 passphrase, joined as `sae` whatever the access point says: a hidden network has
+    /// none to ask.
+    Sae(Psk),
     Enterprise(Box<Enterprise>),
 }
 

@@ -216,8 +216,8 @@ own editor.
 
 The last row of the wireless list, "Connect to a hidden network...", joins
 a network that doesn't broadcast its name: type the name, pick Open,
-WPA-PSK (and type the key) or Enterprise (which goes on to the login
-above). Its profile is marked hidden so NetworkManager looks for it by name.
+WPA-PSK or WPA3-SAE (and type the key) or Enterprise (which goes on to the
+login above). Its profile is marked hidden so NetworkManager looks for it by name.
 
 ## Bluetooth Devices
 
