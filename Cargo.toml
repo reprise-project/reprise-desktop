@@ -59,11 +59,12 @@ serde = "1"
 # xdg_toplevel_icon_v1 fix that stops a request after its immutable error, and
 # `DrmCompositor::reset_buffer_ages_keep_held`, which keeps the buffers a VT
 # return would reallocate, `GlesFrame::finish_unsynced` for offscreen
-# frames read only by the same context, and `data_device_selection_alive` for
-# a client selection whose source was destroyed. Back to upstream once all six
+# frames read only by the same context, `data_device_selection_alive` for
+# a client selection whose source was destroyed, and `SelectionSource::client`
+# naming the client that set a selection. Back to upstream once all seven
 # are merged there.
-smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "b823d650b9de2a7a7cd26e3bd675640413130553", default-features = false }
-smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "b823d650b9de2a7a7cd26e3bd675640413130553" }
+smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "78df9785340722c1a474b0a689e71c9574f77144", default-features = false }
+smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "78df9785340722c1a474b0a689e71c9574f77144" }
 tempfile = "3"
 toml = "1"
 toml_edit = "0.25"
