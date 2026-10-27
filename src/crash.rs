@@ -154,12 +154,36 @@ pub fn install(prior: Option<u32>) {
                 "crash {n} of this login, {}s after the last restart: not restarting",
                 uptime.as_secs()
             ),
-            AfterPanic::Restart(n) => {
-                log::error!("crash {n} of this login: restarting");
-                restart(restart_argv(argv.iter().cloned(), n, locked()));
-            }
+            AfterPanic::Restart(n) => match take_end_signal() {
+                Some(sig) => {
+                    log::error!("crash {n} of this login with signal {sig} pending: not restarting")
+                }
+                None => {
+                    log::error!("crash {n} of this login: restarting");
+                    restart(restart_argv(argv.iter().cloned(), n, locked()));
+                }
+            },
         }
     }));
+}
+
+/// A SIGTERM or SIGINT pending for this thread, taken. The loop keeps them blocked for its
+/// signalfd, and the exec would empty the mask and let the default action kill the restart.
+fn take_end_signal() -> Option<libc::c_int> {
+    // SAFETY: the set is initialised by sigemptyset before use; a zero timeout never blocks.
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        for sig in [libc::SIGTERM, libc::SIGINT] {
+            libc::sigaddset(&mut set, sig);
+        }
+        let zero = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        let sig = libc::sigtimedwait(&set, std::ptr::null_mut(), &zero);
+        (sig > 0).then_some(sig)
+    }
 }
 
 const SELF_EXE: &str = "/proc/self/exe";
@@ -206,6 +230,25 @@ fn restart(argv: Vec<OsString>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pending_end_signal_is_taken_once() {
+        std::thread::spawn(|| {
+            // SAFETY: the mask and the signal touch only this thread.
+            unsafe {
+                let mut set: libc::sigset_t = std::mem::zeroed();
+                libc::sigemptyset(&mut set);
+                libc::sigaddset(&mut set, libc::SIGINT);
+                libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+                assert_eq!(take_end_signal(), None);
+                libc::pthread_kill(libc::pthread_self(), libc::SIGINT);
+            }
+            assert_eq!(take_end_signal(), Some(libc::SIGINT));
+            assert_eq!(take_end_signal(), None);
+        })
+        .join()
+        .unwrap();
+    }
 
     #[test]
     fn a_restart_execs_the_binary_by_its_path_while_the_path_holds_it() {
