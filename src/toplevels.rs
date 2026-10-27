@@ -33,6 +33,8 @@ use crate::{
     window::WindowId,
 };
 
+const LOOKUP_TRIES: u8 = 3;
+
 pub struct Toplevels {
     list: ForeignToplevelListState,
     handles: HashMap<WindowId, ForeignToplevelHandle>,
@@ -40,6 +42,8 @@ pub struct Toplevels {
     wlr: Wlr,
     /// The Flatpak app id of each listed window whose client runs in a sandbox.
     sandboxed: HashMap<WindowId, String>,
+    /// Listed windows not yet looked up for `sandboxed`, with their failed lookups.
+    unresolved: HashMap<WindowId, u8>,
     /// The portal's `reprise_sandboxed_v1` objects, told each change of `sandboxed_apps`.
     pub sandbox_watchers: Vec<RepriseSandboxedV1>,
     /// A window's title, app id, state, focus or output may have changed since the last
@@ -63,6 +67,7 @@ impl Toplevels {
             ),
             wlr: Wlr::new(dh),
             sandboxed: HashMap::new(),
+            unresolved: HashMap::new(),
             sandbox_watchers: Vec::new(),
             dirty: true,
             #[cfg(test)]
@@ -90,6 +95,28 @@ impl Toplevels {
         watcher.done();
     }
 
+    /// Take `got`, the lookup of `w`'s app, into `sandboxed`; a failed lookup stays unresolved
+    /// for a later sync, at most [`LOOKUP_TRIES`] times.
+    fn resolved(&mut self, w: WindowId, got: Result<Option<String>, ()>) {
+        match got {
+            Ok(app) => {
+                self.unresolved.remove(&w);
+                if let Some(app) = app {
+                    let before = self.sandboxed_apps();
+                    self.sandboxed.insert(w, app);
+                    self.sandboxed_changed(&before);
+                }
+            }
+            Err(()) => {
+                let tries = self.unresolved.entry(w).or_default();
+                *tries += 1;
+                if *tries >= LOOKUP_TRIES {
+                    self.unresolved.remove(&w);
+                }
+            }
+        }
+    }
+
     fn sandboxed_changed(&self, before: &BTreeSet<String>) {
         if *before != self.sandboxed_apps() {
             for w in &self.sandbox_watchers {
@@ -113,11 +140,6 @@ impl State {
             return;
         };
         let (title, app_id) = (win.title(), win.app_id());
-        let sandbox_app = if self.toplevels.handles.contains_key(&w) {
-            None
-        } else {
-            crate::sandbox::window_app(win)
-        };
         let t = &mut self.toplevels;
         t.dirty = true;
         match t.handles.get(&w) {
@@ -131,13 +153,39 @@ impl State {
             None => {
                 let h = t.list.new_toplevel::<State>(title, app_id);
                 t.handles.insert(w, h);
-                if let Some(app) = sandbox_app {
-                    let before = t.sandboxed_apps();
-                    t.sandboxed.insert(w, app);
-                    t.sandboxed_changed(&before);
-                }
+                t.unresolved.insert(w, 0);
             }
         }
+        self.resolve_sandboxed(w);
+    }
+
+    /// Look up unresolved `w`'s app while a portal watches the list: an X11 window costs an XRes
+    /// round trip.
+    fn resolve_sandboxed(&mut self, w: WindowId) {
+        if !self.toplevels.sandbox_watchers.is_empty() {
+            self.look_up_sandboxed(w);
+        }
+    }
+
+    fn look_up_sandboxed(&mut self, w: WindowId) {
+        if !self.toplevels.unresolved.contains_key(&w) {
+            return;
+        }
+        let Some(win) = self.win(w) else {
+            return;
+        };
+        let got = crate::sandbox::window_app(win);
+        self.toplevels.resolved(w, got);
+    }
+
+    /// Bind `watcher` to the list, first looking up the windows mapped while none watched.
+    pub fn watch_sandboxed(&mut self, watcher: RepriseSandboxedV1) {
+        let pending: Vec<WindowId> = self.toplevels.unresolved.keys().copied().collect();
+        for w in pending {
+            self.look_up_sandboxed(w);
+        }
+        self.toplevels.send_sandboxed(&watcher);
+        self.toplevels.sandbox_watchers.push(watcher);
     }
 
     pub fn withdraw_toplevel(&mut self, w: WindowId) {
@@ -146,6 +194,7 @@ impl State {
             self.toplevels.list.remove_toplevel(&h);
         }
         let t = &mut self.toplevels;
+        t.unresolved.remove(&w);
         let before = t.sandboxed_apps();
         if t.sandboxed.remove(&w).is_some() {
             t.sandboxed_changed(&before);
@@ -528,13 +577,49 @@ mod tests {
         let t = h.map_toplevel(&mut steam, "steam", 200, 100);
         h.map_toplevel(&mut host, "foot", 200, 100);
         h.roundtrip(&mut idle);
+        assert!(
+            h.state.toplevels.sandboxed_apps().is_empty(),
+            "nothing is looked up while no portal watches"
+        );
+        let mut portal = h.connect_portal();
+        let _watcher = portal.watch_sandboxed();
+        h.roundtrip(&mut portal);
         assert_eq!(
             h.state.toplevels.sandboxed_apps(),
             BTreeSet::from(["com.valvesoftware.Steam".to_string()])
         );
+        assert_eq!(
+            portal.side.sandboxed,
+            vec![Some("com.valvesoftware.Steam".into()), None],
+            "the first list holds the windows mapped before the watch"
+        );
         steam.destroy(t);
         h.roundtrip(&mut steam);
         assert!(h.state.toplevels.sandboxed_apps().is_empty());
+    }
+
+    #[test]
+    fn a_failed_lookup_is_retried_on_later_syncs_up_to_three_times() {
+        let mut h = crate::harness::Harness::new();
+        let w = WindowId::next();
+        let t = &mut h.state.toplevels;
+        t.unresolved.insert(w, 0);
+        for _ in 0..LOOKUP_TRIES - 1 {
+            t.resolved(w, Err(()));
+            assert!(t.unresolved.contains_key(&w), "retried");
+        }
+        t.resolved(w, Err(()));
+        assert!(
+            !t.unresolved.contains_key(&w),
+            "given up after {LOOKUP_TRIES}"
+        );
+        t.unresolved.insert(w, 1);
+        t.resolved(w, Ok(Some("org.example.App".into())));
+        assert!(!t.unresolved.contains_key(&w));
+        assert_eq!(
+            t.sandboxed_apps(),
+            BTreeSet::from(["org.example.App".to_string()])
+        );
     }
 
     #[test]
