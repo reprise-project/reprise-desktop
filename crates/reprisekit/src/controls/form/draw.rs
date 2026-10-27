@@ -1,6 +1,6 @@
 use crate::art::clockface;
 use crate::classic::widgets::{
-    self, Axis, CheckState, LINE_H, draw_edit, draw_focus_ring, draw_label, edit_first_visible,
+    self, Axis, CheckState, LINE_H, draw_focus_ring, draw_label, edit_first_visible,
 };
 use crate::controls::arrange;
 use crate::controls::calendar;
@@ -17,8 +17,8 @@ use crate::controls::updown;
 use crate::look::Paint;
 use crate::look::widgets::{
     draw_button, draw_checkbox_state, draw_checkbox_state_disabled, draw_disabled_field,
-    draw_disabled_label, draw_edit_field, draw_group_box, draw_radio, draw_radio_disabled,
-    draw_trackbar, draw_well, group_label_ink,
+    draw_disabled_label, draw_edit_field, draw_edit_text, draw_group_box, draw_radio,
+    draw_radio_disabled, draw_trackbar, draw_well, group_label_ink,
 };
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -306,7 +306,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
                     Some(gcs) => Paint { cs: gcs, ..*p },
                     None => *p,
                 };
-                draw_edit(
+                draw_edit_text(
                     c,
                     text,
                     shown,

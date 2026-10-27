@@ -17,15 +17,17 @@
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{
-    Axis, BarHit, ScrollHit, ScrollParts, axis_lit, bar_hit, draw_edit, draw_focus_ring,
-    edit_first_visible, scrollbar_parts, scrollbar_pos_at,
+    Axis, BarHit, ScrollHit, ScrollParts, axis_lit, bar_hit, draw_focus_ring, edit_first_visible,
+    scrollbar_parts, scrollbar_pos_at,
 };
 use crate::controls::metrics::ControlMetrics;
 use crate::controls::scrollbar;
 use crate::look::Paint;
 use crate::look::widgets::header as header_widgets;
 use crate::look::widgets::item::{self, Mark};
-use crate::look::widgets::{draw_checkbox, draw_field_frame, draw_hscrollbar, draw_scrollbar};
+use crate::look::widgets::{
+    draw_checkbox, draw_edit_text, draw_field_frame, draw_hscrollbar, draw_scrollbar,
+};
 use crate::pointer::{Click, DoubleClick, Lit, Pointer};
 use crate::raster::{Canvas, Rect};
 use crate::selection::{Mods, Selection, step_index};
@@ -1011,7 +1013,7 @@ pub(crate) fn draw_rename_box(
         b.height - 2 * EDIT_INSET * s,
     );
     let first = edit_first_visible(text, ed, inner.width, px, 0);
-    draw_edit(c, text, ed, inner, px, p, Caret::Shown, first);
+    draw_edit_text(c, text, ed, inner, px, p, Caret::Shown, first);
     // The field is the whole box: a press on its frame is a press in the field.
     if let Some(spot) = c.take_spot() {
         c.report_spot(TextSpot { field: b, ..spot });

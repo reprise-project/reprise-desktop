@@ -1,12 +1,12 @@
 use super::{CLIENT, FileDlg, Focus, MARGIN, cancel_label, lookin_icon};
-use crate::classic::widgets::{self, draw_edit, edit_first_visible};
+use crate::classic::widgets::{self, edit_first_visible};
 use crate::controls::combo;
 use crate::controls::form;
 use crate::controls::placesbar;
 use crate::controls::shellview;
 use crate::controls::toolbar;
 use crate::look::Paint;
-use crate::look::widgets::{draw_button, draw_edit_field, draw_label};
+use crate::look::widgets::{draw_button, draw_edit_field, draw_edit_text, draw_label};
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
@@ -91,7 +91,7 @@ impl FileDlg {
             Some((_, first)) => first.min(self.filename.text.len()),
             None => edit_first_visible(text, &self.filename, inner.width, px, 0),
         };
-        draw_edit(
+        draw_edit_text(
             c,
             text,
             &self.filename,
