@@ -203,10 +203,13 @@ as no other key is changed.
 
 An enterprise (802.1X) network, the kind campuses and offices run, asks for
 its login when you pick it: PEAP, TTLS or TLS, an anonymous identity, the
-CA certificate (or "No CA certificate is required", which warns that a rogue
-network could pose as yours), the inner method (MSCHAPv2, PAP or GTC),
-username and password, or for TLS your certificate, private key and its
-password. The login is saved in the network's NetworkManager profile, so
+CA certificate file or "Use system CA certificates" (or "No CA certificate
+is required", which warns that a rogue network could pose as yours), the
+inner method (MSCHAPv2, PAP or GTC), username and password, or for TLS your
+certificate, private key and its password. With a CA, the Domain row is
+required: the server's certificate must name that domain or a host under
+it, so a stranger holding another certificate from the same CA is refused.
+The login is saved in the network's NetworkManager profile, so
 the next join needs nothing typed. WEP networks still need NetworkManager's
 own editor.
 
