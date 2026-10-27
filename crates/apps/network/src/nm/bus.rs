@@ -906,8 +906,17 @@ fn dot1x(e: &Enterprise) -> HashMap<String, Value<'_>> {
         ),
         ("identity".to_string(), Value::from(e.identity.as_str())),
     ]);
-    if let Some(ca) = &e.ca_cert {
-        g.insert("ca-cert".into(), Value::from(cert_path(ca)));
+    match &e.ca {
+        CaSource::None => {}
+        CaSource::File(ca) => {
+            g.insert("ca-cert".into(), Value::from(cert_path(ca)));
+        }
+        CaSource::System => {
+            g.insert("system-ca-certs".into(), Value::from(true));
+        }
+    }
+    if !e.domain.is_empty() {
+        g.insert("domain-suffix-match".into(), Value::from(e.domain.as_str()));
     }
     match e.eap {
         Eap::Peap | Eap::Ttls => {
@@ -1850,7 +1859,7 @@ mod tests {
         let s = campus(Enterprise {
             eap: Eap::Peap,
             anonymous_identity: "anonymous@uni.example".into(),
-            ca_cert: Some("/etc/ssl/certs/uni.pem".into()),
+            ca: CaSource::File("/etc/ssl/certs/uni.pem".into()),
             inner: Inner::Mschapv2,
             identity: "alice@uni.example".into(),
             password: Psk::new("hunter22"),
@@ -1882,7 +1891,6 @@ mod tests {
     fn a_ttls_profile_with_no_ca_logs_in_with_pap() {
         let s = campus(Enterprise {
             eap: Eap::Ttls,
-            ca_cert: None,
             inner: Inner::Pap,
             identity: "bob".into(),
             password: Psk::new("hunter22"),
@@ -1912,10 +1920,36 @@ mod tests {
     }
 
     #[test]
+    fn a_profile_names_the_server_domain_and_can_trust_the_system_cas() {
+        let s = campus(Enterprise {
+            eap: Eap::Peap,
+            ca: CaSource::System,
+            domain: "radius.uni.example".into(),
+            identity: "alice".into(),
+            password: Psk::new("hunter22"),
+            ..Enterprise::default()
+        });
+        let x = &s["802-1x"];
+        assert_eq!(x["system-ca-certs"], Value::from(true));
+        assert_eq!(x["domain-suffix-match"], Value::from("radius.uni.example"));
+        assert!(!x.contains_key("ca-cert"), "the system store needs no file");
+        let file_ca = campus(Enterprise {
+            ca: CaSource::File("/etc/ssl/certs/uni.pem".into()),
+            domain: "uni.example".into(),
+            ..Enterprise::default()
+        });
+        assert_eq!(
+            file_ca["802-1x"]["domain-suffix-match"],
+            Value::from("uni.example")
+        );
+        assert!(!file_ca["802-1x"].contains_key("system-ca-certs"));
+    }
+
+    #[test]
     fn a_tls_profile_carries_its_certificate_and_key() {
         let tls = Enterprise {
             eap: Eap::Tls,
-            ca_cert: Some("/home/alice/ca.pem".into()),
+            ca: CaSource::File("/home/alice/ca.pem".into()),
             identity: "alice".into(),
             password: Psk::new("unused"),
             client_cert: Some("/home/alice/alice.crt".into()),

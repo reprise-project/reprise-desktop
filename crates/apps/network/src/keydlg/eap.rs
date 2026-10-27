@@ -10,9 +10,9 @@ use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::raster::Rect;
 use reprisekit::textedit::TextEdit;
 
-use crate::nm::{Eap, Enterprise, Inner, Psk, Ssid};
+use crate::nm::{CaSource, Eap, Enterprise, Inner, Psk, Ssid};
 
-pub const CLIENT: (i32, i32) = (420, 408);
+pub const CLIENT: (i32, i32) = (420, 460);
 
 const MARGIN: i32 = 12;
 const TEXT_W: i32 = CLIENT.0 - 2 * MARGIN;
@@ -29,8 +29,10 @@ const PITCH: i32 = 28;
 const METHOD_Y: i32 = 60;
 const ANON_Y: i32 = METHOD_Y + PITCH;
 const CA_Y: i32 = ANON_Y + PITCH;
-const NO_CA_Y: i32 = CA_Y + PITCH + 2;
-const WARNING_Y: i32 = NO_CA_Y + 18;
+const SYSTEM_CA_Y: i32 = CA_Y + PITCH + 2;
+const NO_CA_Y: i32 = SYSTEM_CA_Y + 20;
+const DOMAIN_Y: i32 = NO_CA_Y + 24;
+const WARNING_Y: i32 = DOMAIN_Y + FIELD_H + 6;
 const INNER_Y: i32 = WARNING_Y + 2 * LINE_H + 6;
 const USER_Y: i32 = INNER_Y + PITCH;
 const PASSWORD_Y: i32 = USER_Y + PITCH;
@@ -44,6 +46,8 @@ const CONNECT_X: i32 = CANCEL_X - BUTTON_GAP - BUTTON_W;
 
 const NO_CA_WARNING: &str = "Not using a Certificate Authority (CA) certificate can result in \
                              connections to insecure, rogue Wi-Fi networks.";
+const DOMAIN_NEEDED: &str = "A domain is needed so this network's server can be told apart \
+                             from any other server the CA has certified.";
 
 /// The path fields, each with its Browse... button `<id>_browse`.
 pub const PATHS: [&str; 3] = ["ca", "cert", "pkey"];
@@ -89,7 +93,15 @@ impl EapDialog {
             label("ca_l", CA_Y, "CA cer&tificate:"),
             Item::edit("ca", field_r(CA_Y, PATH_W), "", true),
             browse("ca_browse", CA_Y),
+            Item::check(
+                "system_ca",
+                FIELD_X,
+                SYSTEM_CA_Y,
+                "Use s&ystem CA certificates",
+            ),
             Item::check("no_ca", FIELD_X, NO_CA_Y, "No CA certificate is re&quired"),
+            label("domain_l", DOMAIN_Y, "&Domain:"),
+            Item::edit("domain", field_r(DOMAIN_Y, FIELD_W), "", true),
             Item::lines(
                 "warning",
                 Rect::new(MARGIN, WARNING_Y, TEXT_W, 2 * LINE_H),
@@ -199,11 +211,12 @@ impl EapDialog {
         self.sync();
     }
 
-    /// Grey what the method and the CA check box leave unused, and the Connect button until
+    /// Grey what the method and the CA check boxes leave unused, and the Connect button until
     /// the login is complete.
     fn sync(&mut self) {
         let tls = self.method() == Eap::Tls;
         let no_ca = self.form.checked("no_ca") == Some(true);
+        let system_ca = self.form.checked("system_ca") == Some(true);
         for id in [
             "anon_l",
             "anon",
@@ -228,10 +241,16 @@ impl EapDialog {
             self.form.set_enabled(id, tls);
         }
         for id in ["ca_l", "ca", "ca_browse"] {
+            self.form.set_enabled(id, !no_ca && !system_ca);
+        }
+        for id in ["system_ca", "domain_l", "domain"] {
             self.form.set_enabled(id, !no_ca);
         }
+        let ca_chosen = system_ca || !self.form.edit_text("ca").is_empty();
         let warning = if no_ca {
             reprisekit::text::wrap_chars(NO_CA_WARNING, TEXT_COLS)
+        } else if ca_chosen && self.domain().is_empty() {
+            reprisekit::text::wrap_chars(DOMAIN_NEEDED, TEXT_COLS)
         } else {
             Vec::new()
         };
@@ -245,23 +264,33 @@ impl EapDialog {
         }
     }
 
-    /// What the form says, once it says enough to log in: a username, a CA certificate or
-    /// none on purpose, and a password (PEAP, TTLS) or a certificate and key (TLS). Paths
-    /// must be absolute, as NetworkManager keeps them.
+    /// What the form says, once it says enough to log in: a username, a CA (file or system)
+    /// with the server's domain or no CA on purpose, and a password (PEAP, TTLS) or a
+    /// certificate and key (TLS). Paths must be absolute, as NetworkManager keeps them.
     pub fn login(&self) -> Option<Enterprise> {
         let eap = self.method();
         let identity = self.form.edit_text("user");
         if identity.is_empty() {
             return None;
         }
-        let ca_cert = if self.form.checked("no_ca") == Some(true) {
-            None
+        let (ca, domain) = if self.form.checked("no_ca") == Some(true) {
+            (CaSource::None, String::new())
         } else {
-            Some(self.absolute("ca")?)
+            let ca = if self.form.checked("system_ca") == Some(true) {
+                CaSource::System
+            } else {
+                CaSource::File(self.absolute("ca")?)
+            };
+            let domain = self.domain();
+            if domain.is_empty() {
+                return None;
+            }
+            (ca, domain.into())
         };
         let mut e = Enterprise {
             eap,
-            ca_cert,
+            ca,
+            domain,
             identity: identity.into(),
             ..Enterprise::default()
         };
@@ -282,6 +311,10 @@ impl EapDialog {
             }
         }
         Some(e)
+    }
+
+    fn domain(&self) -> &str {
+        self.form.edit_text("domain").trim()
     }
 
     fn absolute(&self, id: &str) -> Option<PathBuf> {
@@ -364,16 +397,21 @@ mod tests {
         d.event(form::Event::Changed(id));
     }
 
+    fn tick(d: &mut EapDialog, id: &'static str) {
+        d.form.set_check(id, true);
+        d.event(form::Event::Changed(id));
+    }
+
     fn tick_no_ca(d: &mut EapDialog) {
-        d.form.set_check("no_ca", true);
-        d.event(form::Event::Changed("no_ca"));
+        tick(d, "no_ca");
     }
 
     fn live(d: &EapDialog, id: &str) -> bool {
         match &d.form.item(id).unwrap().control {
             Control::Button { enabled, .. }
             | Control::Edit { enabled, .. }
-            | Control::Label { enabled, .. } => *enabled,
+            | Control::Label { enabled, .. }
+            | Control::Check { enabled, .. } => *enabled,
             Control::Combo(c) => c.enabled,
             other => panic!("{id} is {other:?}"),
         }
@@ -386,14 +424,26 @@ mod tests {
         }
     }
 
-    /// The dialog fits its text under every interface and text size, with the CA warning shown.
+    fn warning(d: &EapDialog) -> String {
+        let Control::Lines(lines) = &d.form.item("warning").unwrap().control else {
+            panic!("the warning is a note");
+        };
+        lines.join(" ")
+    }
+
+    /// The dialog fits its text under every interface and text size, with each warning shown.
     #[test]
     fn the_dialog_fits_its_text() {
         let over = reprisekit::interfaces::form_overflows(|_, _, _| {
             let mut d = dialog();
             tick_no_ca(&mut d);
             pick(&mut d, "method", 1);
-            vec![("eap".into(), d.form.clone())]
+            let mut domain = dialog();
+            tick(&mut domain, "system_ca");
+            vec![
+                ("eap".into(), d.form.clone()),
+                ("eap-domain".into(), domain.form.clone()),
+            ]
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
     }
@@ -409,6 +459,8 @@ mod tests {
         d.set_path("ca", Path::new("certs/uni.pem"));
         assert!(!live(&d, "connect"), "a relative path is refused");
         d.set_path("ca", Path::new("/etc/ssl/certs/uni.pem"));
+        assert!(!live(&d, "connect"), "no domain yet");
+        type_into(&mut d, "domain", "radius.uni.example");
         assert!(live(&d, "connect"));
         type_into(&mut d, "anon", "anonymous@uni.example");
         let Outcome::Connect(e) = d.event(form::Event::Default) else {
@@ -419,7 +471,8 @@ mod tests {
             Enterprise {
                 eap: Eap::Peap,
                 anonymous_identity: "anonymous@uni.example".into(),
-                ca_cert: Some("/etc/ssl/certs/uni.pem".into()),
+                ca: CaSource::File("/etc/ssl/certs/uni.pem".into()),
+                domain: "radius.uni.example".into(),
                 inner: Inner::Mschapv2,
                 identity: "alice@uni.example".into(),
                 password: Psk::new("hunter22"),
@@ -438,20 +491,55 @@ mod tests {
         );
         tick_no_ca(&mut d);
         assert!(!live(&d, "ca") && !live(&d, "ca_browse") && !live(&d, "ca_l"));
-        let Control::Lines(lines) = &d.form.item("warning").unwrap().control else {
-            panic!("the warning is a note");
-        };
-        assert!(
-            lines
-                .join(" ")
-                .starts_with("Not using a Certificate Authority (CA)")
-        );
+        assert!(warning(&d).starts_with("Not using a Certificate Authority (CA)"));
+        for id in ["system_ca", "domain_l", "domain"] {
+            assert!(!live(&d, id), "{id} greys without a CA");
+        }
         type_into(&mut d, "user", "bob");
         type_into(&mut d, "password", "hunter22");
         assert!(matches!(
             d.event(form::Event::Pressed("connect")),
-            Outcome::Connect(e) if e.ca_cert.is_none()
+            Outcome::Connect(e) if e.ca == CaSource::None && e.domain.is_empty()
         ));
+    }
+
+    #[test]
+    fn a_ca_without_a_domain_is_refused_with_a_note() {
+        let mut d = dialog();
+        type_into(&mut d, "user", "alice");
+        type_into(&mut d, "password", "hunter22");
+        assert_eq!(warning(&d), "", "no CA picked yet");
+        d.set_path("ca", Path::new("/etc/ssl/certs/uni.pem"));
+        assert!(!live(&d, "connect"));
+        assert_eq!(
+            d.event(form::Event::Default),
+            Outcome::None,
+            "a CA file alone does not log in"
+        );
+        assert!(warning(&d).starts_with("A domain is needed so this network's server"));
+        type_into(&mut d, "domain", "   ");
+        assert!(!live(&d, "connect"), "blanks are no domain");
+        type_into(&mut d, "domain", "uni.example");
+        assert!(live(&d, "connect"));
+        assert_eq!(warning(&d), "");
+    }
+
+    #[test]
+    fn system_cas_grey_the_file_row_and_still_need_a_domain() {
+        let mut d = dialog();
+        type_into(&mut d, "user", "alice");
+        type_into(&mut d, "password", "hunter22");
+        tick(&mut d, "system_ca");
+        assert!(!live(&d, "ca") && !live(&d, "ca_browse") && !live(&d, "ca_l"));
+        assert!(live(&d, "domain"));
+        assert!(!live(&d, "connect"));
+        assert!(warning(&d).starts_with("A domain is needed"));
+        type_into(&mut d, "domain", "radius.uni.example");
+        let Outcome::Connect(e) = d.event(form::Event::Default) else {
+            panic!("no login");
+        };
+        assert_eq!(e.ca, CaSource::System);
+        assert_eq!(e.domain, "radius.uni.example");
     }
 
     #[test]
@@ -535,8 +623,20 @@ mod tests {
         let d = dialog();
         let r = |id: &str| d.form.item(id).unwrap().rect;
         let rows = [
-            "method", "anon", "ca", "no_ca", "warning", "inner", "user", "password", "cert",
-            "pkey", "pkey_pw", "connect",
+            "method",
+            "anon",
+            "ca",
+            "system_ca",
+            "no_ca",
+            "domain",
+            "warning",
+            "inner",
+            "user",
+            "password",
+            "cert",
+            "pkey",
+            "pkey_pw",
+            "connect",
         ];
         assert!(r("method").y > r("intro").y + intro_lines(&"x".repeat(32)).len() as i32 * LINE_H);
         for w in rows.windows(2) {
