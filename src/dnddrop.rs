@@ -1162,6 +1162,52 @@ mod tests {
         assert_eq!(text(&h), "https://a.test/");
     }
 
+    #[test]
+    fn a_sandboxed_programs_list_of_sandbox_paths_drops_its_text_in_a_dialog_field() {
+        use smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource;
+        use wayland_client::{Proxy, protocol::wl_data_device_manager::DndAction as WcAction};
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        crate::fsjobs::setup(&mut h.state);
+        h.pointer_to(500.0, 400.0);
+        h.state.open_dialog(crate::dialog::Dialog::run(&[]));
+        let mut c = h.connect_sandboxed();
+        let path = b"file:///home/u/notes.txt";
+        let theirs = c.data_source(&[dropdata::URI_LIST, "text/plain"], path);
+        theirs.set_actions(WcAction::Copy);
+        h.roundtrip(&mut c);
+        let ours: WlDataSource = (c.server)
+            .object_from_protocol_id(&h.state.dh, theirs.id().protocol_id())
+            .expect("the server's source");
+        let source = SeatSource::new(crate::dnd::Origin::Client(ours));
+        let v = &h.state.dialogs.views[0];
+        let r = v.layout.field.expect("the Run field");
+        let at = (
+            (v.x + r.x + r.width / 2) as f64,
+            (v.y + r.y + r.height / 2) as f64,
+        );
+        assert!(h.state.drop_over(&source, at.into()).is_some());
+        h.roundtrip(&mut c);
+        assert!(h.state.field_drag_ended(&source, true));
+        let text = |h: &crate::harness::Harness| {
+            let d = &h.state.dialogs.views[0].dialog;
+            d.field
+                .as_ref()
+                .expect("the Run field")
+                .combo
+                .text()
+                .to_string()
+        };
+        let end = std::time::Instant::now() + Duration::from_secs(3);
+        while c.side.source_ends.is_empty() {
+            assert!(std::time::Instant::now() < end, "the drop never ended");
+            h.roundtrip(&mut c);
+            h.run_for(5);
+        }
+        assert_eq!(c.side.source_ends, [true], "the text is taken");
+        assert_eq!(text(&h), "file:///home/u/notes.txt");
+    }
+
     /// A drag source that takes the drop's pipe and never writes, as a drop onto a folder on a
     /// mount that stopped answering never sorts. Dropping the pipes ends the read.
     #[derive(Default)]
