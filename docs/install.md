@@ -165,10 +165,12 @@ desktop and stays out of the way when it's missing.
 
 **Portals and toolkits**
 
-- xdg-desktop-portal, which routes screen sharing, screenshots, remote
-  desktop, Deskflow, global shortcuts, file dialogs, permission prompts and
-  the light or dark look to Reprise's portal backend, and lets files dragged
-  between Explorer and Flatpak programs open on the other side
+- xdg-desktop-portal 1.19 or newer, which routes screen sharing,
+  screenshots, remote desktop, Deskflow, global shortcuts, file dialogs,
+  permission prompts and the light or dark look to Reprise's portal backend,
+  and lets files dragged between Explorer and Flatpak programs open on the
+  other side. Older releases ask the backend to write the autostart entries
+  Flatpak programs request, which Reprise leaves to the portal
 - xdg-desktop-portal-wlr, the screen sharing and screenshot fallback
 - xdg-desktop-portal-gtk, for printing from GTK3 programs
 - gnome-themes-extra, for GTK3 programs' dark theme under a dark look
