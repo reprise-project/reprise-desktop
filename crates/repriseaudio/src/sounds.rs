@@ -44,6 +44,24 @@ pub fn sound_dirs() -> Vec<PathBuf> {
         .collect()
 }
 
+/// The sound themes under `dirs`, sorted: each directory with an `index.theme` or a `stereo/`.
+pub fn themes(dirs: &[PathBuf]) -> Vec<String> {
+    let mut out: Vec<String> = dirs
+        .iter()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flat_map(|rd| rd.flatten())
+        .filter(|e| {
+            let p = e.path();
+            p.join("index.theme").is_file() || p.join("stereo").is_dir()
+        })
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| safe_name(n))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// The `Inherits` list of `theme`'s first `index.theme` in `dirs`.
 fn inherits(dirs: &[PathBuf], theme: &str) -> Vec<String> {
     let Some(text) = dirs
@@ -266,6 +284,21 @@ mod tests {
             Some("sys/abyss/stereo/bell.oga".into()),
             "the grandparent, through a cycle back to the start"
         );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_theme_is_a_directory_with_an_index_or_a_stereo_profile() {
+        let root = tree(&[
+            "user/ocean/index.theme",
+            "user/.cache/index.theme",
+            "sys/deep/stereo/bell.oga",
+            "sys/ocean/index.theme",
+            "sys/notes/readme.txt",
+            "sys/loose.oga",
+        ]);
+        let dirs = [root.join("user"), root.join("sys"), root.join("none")];
+        assert_eq!(themes(&dirs), ["deep", "ocean"]);
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

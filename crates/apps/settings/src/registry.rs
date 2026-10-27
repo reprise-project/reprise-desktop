@@ -11,13 +11,14 @@ use crate::pages::{self, Area};
 
 pub use repriseconf::pages::{GROUPS, Page};
 
-/// What the pages offer besides the settings: installed themes, Qt tools,
+/// What the pages offer besides the settings: installed themes (sound themes included), Qt tools,
 /// keyboard layouts and the compositor's outputs.
 pub struct Sources<'a> {
     pub icon_themes: &'a [String],
     pub gtk_themes: &'a [String],
     pub qt_tools: bool,
     pub cursor_themes: &'a [String],
+    pub sound_themes: &'a [String],
     pub layouts: &'a [Layout],
     pub heads: &'a [repriseapp::heads::Head],
 }
@@ -39,7 +40,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::FontsAndIcons => {
             pages::fonts_and_icons(a, src.icon_themes, src.gtk_themes, src.qt_tools)
         }
-        Page::Effects => pages::effects(a),
+        Page::Effects => pages::effects(a, src.sound_themes),
         Page::Taskbar => pages::taskbar(a),
         Page::StartMenu => crate::menupage::page(a),
         Page::Launcher => pages::launcher(a),
@@ -97,6 +98,7 @@ mod tests {
                 gtk_themes: &[],
                 qt_tools: false,
                 cursor_themes: &[],
+                sound_themes: &[],
                 layouts: &[],
                 heads: &[],
             },
@@ -240,6 +242,7 @@ mod tests {
             gtk_themes: &themes,
             qt_tools: true,
             cursor_themes: &themes,
+            sound_themes: &themes,
             layouts: &[],
             heads: &[],
         };
