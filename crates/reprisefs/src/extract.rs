@@ -281,8 +281,10 @@ fn extract(a: &Archive, m: &Meter, before: u64) -> Result<PathBuf, Failure> {
         false => make_folder(dir, &folder_name(a.src.file_name().unwrap_or_default()))?,
     };
     let undo = |e: Failure| {
-        if !a.here {
-            let _ = std::fs::remove_dir_all(&into);
+        if !a.here
+            && let Err(e) = crate::ops::remove_tree(&into)
+        {
+            log::warn!("reprisefs: cannot remove {}: {e}", into.display());
         }
         e
     };
@@ -592,6 +594,49 @@ mod tests {
             "b"
         );
         assert!(!d.join("broken").exists(), "a failure leaves no folder");
+    }
+
+    #[test]
+    fn a_failed_extract_of_a_read_only_folder_leaves_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        for dir in ["src/d", "more/e"] {
+            std::fs::create_dir_all(d.join(dir)).unwrap();
+        }
+        std::fs::write(d.join("src/d/a"), "a").unwrap();
+        std::fs::write(d.join("src/e"), "e").unwrap();
+        std::fs::write(d.join("more/e/f"), "f").unwrap();
+        let mode = |m| std::fs::Permissions::from_mode(m);
+        std::fs::set_permissions(d.join("src/d"), mode(0o555)).unwrap();
+        bsdtar(&d.join("src"), &["-cf", "../pack.tar", "d", "e"]);
+        bsdtar(&d.join("more"), &["-rf", "../pack.tar", "e/f"]);
+        std::fs::set_permissions(d.join("src/d"), mode(0o755)).unwrap();
+        for dir in ["src", "more"] {
+            std::fs::remove_dir_all(d.join(dir)).unwrap();
+        }
+        let got = run_job(
+            vec![Archive {
+                src: d.join("pack.tar"),
+                here: false,
+            }],
+            Decision::Skip,
+        );
+        assert!(
+            matches!(
+                &got[..],
+                [
+                    ExtractEvent::Failed { index: 0, .. },
+                    ExtractEvent::Finished
+                ]
+            ),
+            "{got:?}"
+        );
+        let left: Vec<_> = std::fs::read_dir(d)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["pack.tar"], "the half folder is removed");
     }
 
     #[test]

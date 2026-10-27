@@ -32,7 +32,7 @@ pub(super) fn copy_dir_until(src: &Path, dest: &Path, stop: &AtomicBool) -> io::
 }
 
 /// `remove_dir_all`, making each folder writable before emptying it.
-fn remove_tree(path: &Path) -> io::Result<()> {
+pub(crate) fn remove_tree(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let meta = std::fs::symlink_metadata(path)?;
     if !meta.is_dir() {
