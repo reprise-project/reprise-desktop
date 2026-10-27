@@ -13,12 +13,13 @@ static WAKE: AtomicI32 = AtomicI32::new(-1);
 /// The signal handed to the run loop, or 0 while none was.
 static PENDING: AtomicI32 = AtomicI32::new(0);
 
+/// Seconds the loop has to pick up a routed signal; a loop stuck on a dead mount never would.
+const GRACE_S: libc::c_uint = 3;
+/// Seconds the rescue has once the loop picked the signal up; below systemd's stop timeout.
+const RESCUE_S: libc::c_uint = 10;
+
 /// The signals another process ends a program with. SIGKILL can't be caught: End Program drops
 /// the connection itself.
-/// Seconds the loop has to end the program after a routed signal; a loop stuck on a dead mount
-/// never would.
-const GRACE_S: libc::c_uint = 3;
-
 const ENDING: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
 
 /// Hangs up `socket` if the program is ended by a signal. A signal it started with ignored
@@ -49,7 +50,8 @@ pub(crate) fn on_signals(socket: BorrowedFd) {
 }
 
 /// Hands the first ending signal to `handle`'s loop, which runs `rescue` and then ends the
-/// program by that signal. A second signal, or [`GRACE_S`] without the loop, ends it at once.
+/// program by that signal. A second signal, [`GRACE_S`] without the loop, or a rescue past
+/// [`RESCUE_S`] ends it at once.
 pub(crate) fn route_to<D>(handle: &LoopHandle<'_, D>, mut rescue: impl FnMut(&mut D) + 'static) {
     let mut fds = [-1; 2];
     // SAFETY: pipe2 fills `fds` on success.
@@ -65,6 +67,8 @@ pub(crate) fn route_to<D>(handle: &LoopHandle<'_, D>, mut rescue: impl FnMut(&mu
         if sig == 0 {
             return Ok(PostAction::Continue);
         }
+        // SAFETY: alarm replaces the pending grace alarm with the rescue budget.
+        unsafe { libc::alarm(RESCUE_S) };
         rescue(data);
         end_by(sig);
         Ok(PostAction::Remove)
@@ -266,6 +270,46 @@ mod tests {
             "it ends 3 s after the signal: {:?}",
             started.elapsed()
         );
+    }
+
+    #[test]
+    fn a_rescue_longer_than_the_grace_runs_to_its_end() {
+        use smithay_client_toolkit::reexports::calloop::EventLoop;
+        if std::env::var_os(CHILD).is_some() {
+            let (ours, _peer) = UnixStream::pair().unwrap();
+            let mut event_loop: EventLoop<()> = EventLoop::try_new().unwrap();
+            on_signals(ours.as_fd());
+            route_to(&event_loop.handle(), |_| {
+                std::thread::sleep(Duration::from_secs(4));
+                println!("RESCUE DONE");
+            });
+            // SAFETY: raise on this process.
+            unsafe { libc::raise(libc::SIGTERM) };
+            for _ in 0..50 {
+                event_loop
+                    .dispatch(Duration::from_millis(20), &mut ())
+                    .unwrap();
+            }
+            println!("SURVIVED");
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "hangup::tests::a_rescue_longer_than_the_grace_runs_to_its_end",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("RESCUE DONE"),
+            "the rescue finishes: {stdout}"
+        );
+        assert!(!stdout.contains("SURVIVED"), "the program ends: {stdout}");
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(out.status.signal(), Some(libc::SIGTERM), "{:?}", out.status);
     }
 
     #[test]
