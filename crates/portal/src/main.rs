@@ -121,10 +121,17 @@ impl Frontend {
             }
         })
         .await;
-        if owner != cached {
-            self.set(owner);
-        }
+        self.replace(&cached, owner);
         verdict
+    }
+
+    /// Take `owner` as the frontend's owner unless the cache moved off `cached` meanwhile: a
+    /// NameOwnerChanged that `watch_frontends` stored is newer than the owner read before it.
+    fn replace(&self, cached: &Option<String>, owner: Option<String>) {
+        let mut held = lock(&self.owner);
+        if *held == *cached {
+            *held = owner;
+        }
     }
 }
 
@@ -1286,6 +1293,16 @@ mod tests {
         assert!(verdict.is_err(), "another peer is still refused");
         assert_eq!(owner.as_deref(), Some(":1.42"));
         assert_eq!(asked.get(), 2);
+    }
+
+    #[test]
+    fn an_owner_read_off_the_bus_does_not_replace_a_newer_one_the_watch_stored() {
+        let f = Frontend::default();
+        f.set(Some(":1.50".into()));
+        f.replace(&Some(":1.42".into()), Some(":1.43".into()));
+        assert_eq!(lock(&f.owner).as_deref(), Some(":1.50"));
+        f.replace(&Some(":1.50".into()), Some(":1.51".into()));
+        assert_eq!(lock(&f.owner).as_deref(), Some(":1.51"));
     }
 
     #[test]
