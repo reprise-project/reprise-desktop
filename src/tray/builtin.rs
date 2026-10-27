@@ -3,6 +3,7 @@
 use crate::compositor::State;
 use crate::input::{BTN_LEFT, BTN_RIGHT};
 use crate::media::Value;
+use crate::notifylog::Suppress;
 use crate::raster::{Canvas, Rect};
 use reprisekit::classic::indicator;
 use smithay::output::Output;
@@ -44,7 +45,10 @@ pub fn shown(state: &State) -> Vec<Builtin> {
         ),
         (Builtin::Layout, state.key_input.layouts.switchable()),
         (Builtin::Displays, crate::displays::cell_shown(state)),
-        (Builtin::Notifications, state.notify.log.bell_shown()),
+        (
+            Builtin::Notifications,
+            state.notify.log.bell_shown() || state.notify.quiet.automatic(),
+        ),
         (Builtin::Sharing, state.privacy.sharing_shown()),
         (Builtin::Microphone, state.privacy.mic_shown()),
         (Builtin::Camera, state.privacy.camera_shown()),
@@ -94,7 +98,8 @@ pub fn icon(state: &mut State, b: Builtin, px: i32) -> Option<Canvas> {
         Builtin::Location => Some(indicator::draw_location(px)),
         Builtin::Notifications => {
             let log = &state.notify.log;
-            Some(indicator::draw_bell(px, log.unseen, log.dnd))
+            let quiet = log.dnd || state.notify.quiet.automatic();
+            Some(indicator::draw_bell(px, log.unseen, quiet))
         }
     }
 }
@@ -106,7 +111,14 @@ pub fn label(state: &State, b: Builtin) -> Option<String> {
         Builtin::MouseKeys => Some(crate::mousekeys::tip(&state.key_input.mouse_keys)),
         Builtin::Layout => Some(state.key_input.layouts.active()?.description.clone()),
         Builtin::Displays => Some(crate::displays::tip(state)),
-        Builtin::Notifications => Some(bell_tip(state.notify.log.unseen, state.notify.log.dnd)),
+        Builtin::Notifications => {
+            let log = &state.notify.log;
+            let quiet = Suppress {
+                manual: log.dnd,
+                ..state.notify.quiet
+            };
+            Some(bell_tip(log.unseen, quiet))
+        }
         Builtin::Sharing => Some(state.privacy.sharing_tip()),
         Builtin::Microphone => Some(state.privacy.mic_tip()),
         Builtin::Camera => Some(crate::privacy::camera_tip(state)),
@@ -114,17 +126,24 @@ pub fn label(state: &State, b: Builtin) -> Option<String> {
     }
 }
 
-fn bell_tip(unseen: usize, dnd: bool) -> String {
+fn bell_tip(unseen: usize, quiet: Suppress) -> String {
     let count = match unseen {
         0 => "Notifications".to_string(),
         1 => "1 new notification".to_string(),
         n => format!("{n} new notifications"),
     };
-    if dnd {
-        format!("{count}\nDo not disturb is on")
+    let why = if quiet.manual {
+        ""
+    } else if quiet.fullscreen_focus {
+        " while a full-screen window has focus"
+    } else if quiet.sharing {
+        " while the screen is shared"
+    } else if quiet.scheduled {
+        " during quiet hours"
     } else {
-        count
-    }
+        return count;
+    };
+    format!("{count}\nDo not disturb is on{why}")
 }
 
 /// A pointer button on cell `b`, which sits at `cell` (layout coordinates) on `output`'s taskbar.
@@ -186,11 +205,51 @@ mod tests {
 
     #[test]
     fn the_bell_tip_counts_what_is_new() {
-        assert_eq!(bell_tip(0, false), "Notifications");
-        assert_eq!(bell_tip(1, false), "1 new notification");
+        let none = Suppress::default();
+        assert_eq!(bell_tip(0, none), "Notifications");
+        assert_eq!(bell_tip(1, none), "1 new notification");
+        let manual = Suppress {
+            manual: true,
+            sharing: true,
+            ..none
+        };
         assert_eq!(
-            bell_tip(4, true),
+            bell_tip(4, manual),
             "4 new notifications\nDo not disturb is on"
         );
+    }
+
+    #[test]
+    fn the_bell_tip_says_why_do_not_disturb_turned_itself_on() {
+        let none = Suppress::default();
+        let tip = |s| {
+            bell_tip(0, s)
+                .lines()
+                .nth(1)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let full = Suppress {
+            fullscreen_focus: true,
+            sharing: true,
+            ..none
+        };
+        assert_eq!(
+            tip(full),
+            "Do not disturb is on while a full-screen window has focus"
+        );
+        let shared = Suppress {
+            sharing: true,
+            ..none
+        };
+        assert_eq!(
+            tip(shared),
+            "Do not disturb is on while the screen is shared"
+        );
+        let quiet = Suppress {
+            scheduled: true,
+            ..none
+        };
+        assert_eq!(tip(quiet), "Do not disturb is on during quiet hours");
     }
 }

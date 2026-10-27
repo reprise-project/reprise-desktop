@@ -3,8 +3,40 @@
 
 use crate::tray::Notification;
 use crate::tray::notify::Urgency;
+use std::collections::VecDeque;
 
 pub const MAX_ENTRIES: usize = 50;
+
+/// Balloons Do Not Disturb holds while it is on by itself; past this the oldest stays in the history
+/// only.
+pub const MAX_HELD: usize = 8;
+
+/// What holds balloons back: Do Not Disturb turned on by hand, and the conditions that turn it on
+/// by themselves.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Suppress {
+    pub fullscreen_focus: bool,
+    pub sharing: bool,
+    pub scheduled: bool,
+    pub manual: bool,
+}
+
+impl Suppress {
+    pub fn automatic(self) -> bool {
+        self.fullscreen_focus || self.sharing || self.scheduled
+    }
+
+    /// Whether `n`, held back, waits to show once the automatic conditions end; one held back by
+    /// hand, or a transient one, goes to the history only.
+    pub fn holds(self, n: &Notification) -> bool {
+        !shows_balloon(n, self) && !self.manual && !n.transient
+    }
+}
+
+/// Whether `n` raises a balloon under `s`: a critical one always does.
+pub fn shows_balloon(n: &Notification, s: Suppress) -> bool {
+    n.urgency == Urgency::Critical || !(s.manual || s.automatic())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
@@ -29,11 +61,34 @@ pub struct Log {
     pub entries: Vec<Entry>,
     pub unseen: usize,
     pub dnd: bool,
+    /// Balloons waiting for the automatic Do Not Disturb to end, oldest first.
+    pub held: VecDeque<Notification>,
 }
 
 impl Log {
-    pub fn shows_balloon(&self, n: &Notification) -> bool {
-        !self.dnd || n.urgency == Urgency::Critical
+    /// Hold `n` until [`Log::release`]: it replaces a held one with its id, else queues behind
+    /// them, the oldest going past [`MAX_HELD`].
+    pub fn hold(&mut self, n: Notification) {
+        if let Some(slot) = self.held.iter_mut().find(|h| h.id == n.id) {
+            *slot = n;
+            return;
+        }
+        self.held.push_back(n);
+        if self.held.len() > MAX_HELD {
+            self.held.pop_front();
+        }
+    }
+
+    pub fn unhold(&mut self, id: u32) {
+        self.held.retain(|h| h.id != id);
+    }
+
+    /// Every held notification still open in the history, oldest first; the hold empties.
+    pub fn release(&mut self) -> Vec<Notification> {
+        let held = std::mem::take(&mut self.held);
+        held.into_iter()
+            .filter(|n| self.get(n.id).is_some_and(|e| e.open))
+            .collect()
     }
 
     /// Keep `n`, arrived at `time`, at the top: one with the same id is
@@ -232,11 +287,85 @@ mod tests {
         let mut log = Log::default();
         let mut crit = note(1);
         crit.urgency = Urgency::Critical;
-        assert!(log.shows_balloon(&note(2)));
+        let none = Suppress::default();
+        assert!(shows_balloon(&note(2), none));
+        let each = [
+            Suppress {
+                manual: true,
+                ..none
+            },
+            Suppress {
+                fullscreen_focus: true,
+                ..none
+            },
+            Suppress {
+                sharing: true,
+                ..none
+            },
+            Suppress {
+                scheduled: true,
+                ..none
+            },
+        ];
+        for s in each {
+            assert!(
+                !shows_balloon(&note(2), s),
+                "{s:?} holds a normal balloon back"
+            );
+            assert!(shows_balloon(&crit, s), "{s:?} lets a critical one through");
+        }
         log.dnd = true;
-        assert!(!log.shows_balloon(&note(2)));
-        assert!(log.shows_balloon(&crit));
         assert!(log.bell_shown(), "the bell shows for DND alone");
+    }
+
+    #[test]
+    fn only_the_automatic_conditions_hold_a_balloon_for_later() {
+        let none = Suppress::default();
+        let full = Suppress {
+            fullscreen_focus: true,
+            ..none
+        };
+        assert!(full.holds(&note(1)));
+        assert!(!none.holds(&note(1)), "nothing to wait for");
+        assert!(
+            !Suppress {
+                manual: true,
+                ..full
+            }
+            .holds(&note(1)),
+            "by hand: history only"
+        );
+        let mut transient = note(2);
+        transient.transient = true;
+        assert!(!full.holds(&transient));
+        let mut crit = note(3);
+        crit.urgency = Urgency::Critical;
+        assert!(!full.holds(&crit), "it shows at once");
+    }
+
+    #[test]
+    fn the_hold_replaces_by_id_caps_and_releases_what_is_still_open() {
+        let mut log = Log::default();
+        for id in 1..=(MAX_HELD as u32 + 2) {
+            log.record(&note(id), 0, false);
+            log.hold(note(id));
+        }
+        let ids = |log: &Log| log.held.iter().map(|n| n.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(&log),
+            (3..=MAX_HELD as u32 + 2).collect::<Vec<_>>(),
+            "oldest went"
+        );
+        let mut again = note(5);
+        again.summary = "again".into();
+        log.hold(again);
+        assert_eq!(log.held.len(), MAX_HELD, "a replace takes its slot");
+        assert_eq!(log.held[2].summary, "again");
+        log.unhold(4);
+        log.close(6);
+        let out: Vec<u32> = log.release().iter().map(|n| n.id).collect();
+        assert_eq!(out, [3, 5, 7, 8, 9, 10], "closed and unheld ones stay back");
+        assert!(log.held.is_empty());
     }
 
     #[test]

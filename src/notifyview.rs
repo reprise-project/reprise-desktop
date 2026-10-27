@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 
 use crate::compositor::{SceneOwner, State};
 use crate::glass::{Backdrop, Pane};
-use crate::notifylog::Log;
+use crate::notifylog::{Log, Suppress, shows_balloon};
 use crate::raster::Rect;
 use crate::startmenu::MenuItem;
 use crate::theme::Color;
@@ -183,6 +183,9 @@ pub struct NotifyView {
     /// A wheel's sub-notch remainder over the history popup.
     pub center_wheel: i32,
     shown: u64,
+    /// The conditions that turn Do Not Disturb on by themselves, as last checked; the bell shows
+    /// them.
+    pub quiet: Suppress,
 }
 
 impl NotifyView {
@@ -242,9 +245,61 @@ fn now() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
+/// What holds balloons back now: Do Not Disturb, a focused full-screen window, a screen being
+/// shared, the quiet hours.
+fn suppress(state: &State) -> Suppress {
+    let tm = reprisefs::locale::localtime(now());
+    let minute = (tm.tm_hour * 60 + tm.tm_min) as u32;
+    let focused = state.focused.and_then(|w| state.win(w));
+    Suppress {
+        fullscreen_focus: focused.is_some_and(|w| w.fullscreen && w.mapped && !w.minimized),
+        sharing: state.privacy.sharing_shown(),
+        scheduled: state.config.notifications.quiet_at(minute),
+        manual: state.notify.log.dnd,
+    }
+}
+
+/// The focus, a capture or the clock moved: the bell redraws when the automatic Do Not Disturb
+/// changed, and the balloons it held show once nothing holds them.
+pub fn suppress_changed(state: &mut State) {
+    let mut s = suppress(state);
+    let manual = std::mem::take(&mut s.manual);
+    if s != state.notify.quiet {
+        state.notify.quiet = s;
+        state.redraw_taskbars();
+    }
+    let idle = !manual && !s.automatic() && !crate::notifycenter::is_open(state);
+    if !idle || state.notify.log.held.is_empty() {
+        return;
+    }
+    for n in state.notify.log.release() {
+        enqueue(&mut state.notify.queue, Item::Note(n));
+    }
+    display_next(state);
+    changed(state);
+}
+
+/// Check [`suppress_changed`] at every minute boundary, for the quiet hours.
+pub fn setup(state: &mut State) {
+    use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+    let to_next_minute = || Duration::from_secs((60 - now().rem_euclid(60)).max(1) as u64);
+    let timer = state.handle.insert_source(
+        Timer::from_duration(to_next_minute()),
+        move |_, _, state| {
+            suppress_changed(state);
+            TimeoutAction::ToDuration(to_next_minute())
+        },
+    );
+    if let Err(e) = timer {
+        log::warn!("notifications: no minute timer: {}", e.error);
+    }
+    suppress_changed(state);
+}
+
 /// Notification `n` arrived: into the history unless it is transient, and a balloon unless Do Not
-/// Disturb holds it back or the history is open, where it shows as a row instead. A replace swaps
-/// in place, keeping a reply being typed.
+/// Disturb holds it back or the history is open, where it shows as a row instead. One the automatic
+/// Do Not Disturb holds back waits to show until it ends. A replace swaps in place, keeping a reply
+/// being typed.
 pub fn show(state: &mut State, n: Notification) {
     let looking = crate::notifycenter::is_open(state);
     if !n.transient {
@@ -253,14 +308,18 @@ pub fn show(state: &mut State, n: Notification) {
             crate::tray::notification_closed(state, id, REASON_EXPIRED);
         }
     }
-    if looking || !state.notify.log.shows_balloon(&n) {
+    let s = suppress(state);
+    if looking || !shows_balloon(&n, s) {
         drop_balloon(state, n.id);
-        if n.transient {
+        if !looking && s.holds(&n) {
+            state.notify.log.hold(n);
+        } else if n.transient {
             crate::tray::notification_closed(state, n.id, REASON_EXPIRED);
         }
         changed(state);
         return;
     }
+    state.notify.log.unhold(n.id);
     let shown: Vec<&Item> = state.notify.stack.iter().map(|b| &b.item).collect();
     if let Some(i) = slot_of(&shown, n.id) {
         replace(state, i, n);
@@ -409,6 +468,7 @@ pub fn forget(state: &mut State, id: u32) {
 /// Takes `id`'s balloon down without closing the notification; true when it had one of its own.
 fn drop_balloon(state: &mut State, id: u32) -> bool {
     let v = &mut state.notify;
+    v.log.unhold(id);
     if let Some(i) = v.stack.iter().position(|b| b.item.is(id)) {
         let b = v.stack.remove(i);
         leave(state, b);
@@ -518,10 +578,14 @@ pub fn set_dnd(state: &mut State, on: bool) {
     state.notify.log.dnd = on;
     if on {
         let v = &mut state.notify;
-        let log = &v.log;
+        v.log.held.clear();
+        let manual = Suppress {
+            manual: true,
+            ..Suppress::default()
+        };
         let held = |item: &Item| match item {
             Item::Burst(_) => true,
-            Item::Note(n) => !log.shows_balloon(n) && !n.transient,
+            Item::Note(n) => !shows_balloon(n, manual) && !n.transient,
         };
         v.queue.retain(|q| !held(q));
         let (gone, kept): (Vec<Balloon>, Vec<Balloon>) = std::mem::take(&mut v.stack)
@@ -559,6 +623,7 @@ fn close_transient(state: &mut State, items: &[Item]) {
 
 /// The history opened over the balloons' corner: every balloon comes down.
 pub fn hide_balloons(state: &mut State) {
+    state.notify.log.held.clear();
     let mut gone: Vec<Item> = state.notify.queue.drain(..).collect();
     gone.extend(take_down(state));
     close_transient(state, &gone);
