@@ -4119,6 +4119,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             "Updates are ready",
             "Click here to install them.",
             &["Install", "Later"],
+            &[],
             None,
         );
         let pushed = Some(tooltip::NotifyHit::Button(0));
@@ -4128,6 +4129,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             "Ana",
             "Lunch on Friday?",
             &["Reply"],
+            &[],
             Some(tooltip::NotifyReply {
                 placeholder: "Write a reply",
                 send: "Send",
@@ -4139,13 +4141,14 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         c.blit_over(
             10,
             3550,
-            &tooltip::draw_notify_balloon(theme, &text, &lay, None, pushed, None, None),
+            &tooltip::draw_notify_balloon(theme, &text, &lay, None, &[], pushed, None, None),
         );
         let open = tooltip::draw_notify_balloon(
             theme,
             &text,
             &reply,
             None,
+            &[],
             None,
             None,
             Some((&typed, caret, None)),
@@ -7131,9 +7134,10 @@ fn render_glass_balloons(theme: &Theme) -> Canvas {
         "Updates are ready",
         "Click here to install them. Your computer may restart once they are in.",
         &[],
+        &[],
         None,
     );
-    let rest = tooltip::draw_notify_balloon(theme, &text, &lay, Some(&icon), None, None, None);
+    let rest = tooltip::draw_notify_balloon(theme, &text, &lay, Some(&icon), &[], None, None, None);
     c.blit_over(8, 8, &rest);
     let lay = tooltip::notify_layout(
         theme,
@@ -7141,12 +7145,21 @@ fn render_glass_balloons(theme: &Theme) -> Canvas {
         "New message",
         "From Ann: Lunch at noon?",
         &["Reply", "Mark as read"],
+        &[],
         None,
     )
     .on_edge(Edge::Top);
     for (x, hot) in [(328, NotifyHit::Close), (644, NotifyHit::Button(1))] {
-        let lit =
-            tooltip::draw_notify_balloon(theme, &text, &lay, Some(&icon), None, Some(hot), None);
+        let lit = tooltip::draw_notify_balloon(
+            theme,
+            &text,
+            &lay,
+            Some(&icon),
+            &[],
+            None,
+            Some(hot),
+            None,
+        );
         c.blit_over(x, 8, &lit);
     }
     let reply = tooltip::notify_layout(
@@ -7155,6 +7168,7 @@ fn render_glass_balloons(theme: &Theme) -> Canvas {
         "New message",
         "From Ann: Lunch at noon?",
         &["Reply", "Mark as read"],
+        &[],
         Some(tooltip::NotifyReply {
             placeholder: "Write a reply",
             send: "Send",
@@ -7167,6 +7181,7 @@ fn render_glass_balloons(theme: &Theme) -> Canvas {
         &text,
         &reply,
         Some(&icon),
+        &[],
         None,
         None,
         Some((&typed, caret, None)),
@@ -7215,6 +7230,7 @@ fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
         title,
         body,
         actions: &[],
+        action_icons: &[],
         reply: None,
         has_picture: false,
         has_app_icon: true,
@@ -7228,6 +7244,7 @@ fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
             let icons = SheetIcons {
                 app: Some(&app),
                 picture: with_pic.then_some(&picture),
+                actions: &[],
             };
             let reply = typed.map(|t| (t, Caret::Shown, None));
             notifysheet::draw_sheet(theme, &text, lay, icons, None, None, hot, reply)
@@ -7321,6 +7338,7 @@ fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
         let icons = SheetIcons {
             app: Some(icon),
             picture: with_pic.then_some(&picture),
+            actions: &[],
         };
         let tint = (look.colour)(icon);
         notifysheet::draw_sheet(theme, &text, lay, icons, tint, None, None, None)
@@ -7388,6 +7406,7 @@ fn render_glass_notify_sheets(theme: &Theme) -> Canvas {
     let drop_icons = |with_pic: bool| SheetIcons {
         app: Some(&app),
         picture: with_pic.then_some(&art),
+        actions: &[],
     };
     let note = content(
         "New message",

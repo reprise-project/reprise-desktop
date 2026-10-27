@@ -14,11 +14,12 @@ use super::SheetLayout;
 use super::glass::SheetGlass;
 use super::layout::{BADGE_ICON_IN, FIELD_TEXT_IN, PILL_PAD};
 
-/// The app icon and the notification's own picture, device px.
+/// The app icon, the notification's own picture and each pill's action icon, device px.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SheetIcons<'a> {
     pub app: Option<&'a Canvas>,
     pub picture: Option<&'a Canvas>,
+    pub actions: &'a [Option<Canvas>],
 }
 
 fn opaque_bounds(c: &Canvas) -> Rect {
@@ -204,15 +205,42 @@ pub(super) fn draw_parts(
     }
 
     let edit_empty = edit.text.trim().is_empty();
-    for (r, label, state) in pill_row(text, lay, edit_empty, pushed, hot, s) {
-        draw_pill(c, text, look, lay, r, &label, state, s);
+    for (i, (r, label, state)) in pill_row(text, lay, edit_empty, pushed, hot, s)
+        .into_iter()
+        .enumerate()
+    {
+        draw_pill(
+            c,
+            text,
+            look,
+            lay,
+            r,
+            face(&label, icons.actions, i),
+            state,
+            s,
+        );
     }
     if hot.is_some() {
         draw_close(c, look, lay, pushed, hot, s);
     }
 }
 
-/// Each pill on `lay` with its label and state.
+/// A pill's label, or with none the icon of action `i`.
+fn face<'a>(label: &'a Option<String>, icons: &'a [Option<Canvas>], i: usize) -> Face<'a> {
+    match label {
+        Some(l) => Face::Label(l),
+        None => Face::Icon(icons.get(i).and_then(Option::as_ref)),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Face<'a> {
+    Label(&'a str),
+    Icon(Option<&'a Canvas>),
+}
+
+/// Each pill on `lay` with its label (None for an action's icon) and state; the buttons come
+/// first, in order.
 fn pill_row(
     text: &TextRenderer,
     lay: &SheetLayout,
@@ -220,7 +248,7 @@ fn pill_row(
     pushed: Option<NotifyHit>,
     hot: Option<NotifyHit>,
     s: i32,
-) -> Vec<(Rect, String, State)> {
+) -> Vec<(Rect, Option<String>, State)> {
     let mut row: Vec<_> = lay
         .parts
         .buttons
@@ -238,7 +266,7 @@ fn pill_row(
     if let Some(r) = lay.parts.more {
         row.push((
             r,
-            NOTIFY_MORE.to_string(),
+            Some(NOTIFY_MORE.to_string()),
             pill_state(NotifyHit::More, pushed, hot),
         ));
     }
@@ -250,7 +278,7 @@ fn pill_row(
         };
         let room = r.width - 2 * PILL_PAD * s;
         let label = text.ellipsize(&lay.parts.send_label, room, true, lay.pill_px);
-        row.push((r, label.into_owned(), state));
+        row.push((r, Some(label.into_owned()), state));
     }
     row
 }
@@ -262,18 +290,25 @@ fn draw_pill(
     look: &NotifyLook,
     lay: &SheetLayout,
     r: Rect,
-    label: &str,
+    face: Face,
     state: State,
     s: i32,
 ) {
-    let face = (look.pill)(look, (r.width / s, r.height / s), state, s);
-    c.blit_over(r.x, r.y, &face);
+    let pill = (look.pill)(look, (r.width / s, r.height / s), state, s);
+    c.blit_over(r.x, r.y, &pill);
     let ink = if state == State::Disabled {
         look.inks.app
     } else {
         look.inks.title
     };
-    text.draw(c, r, label, true, ink, Align::Center, lay.pill_px);
+    match face {
+        Face::Label(label) => text.draw(c, r, label, true, ink, Align::Center, lay.pill_px),
+        Face::Icon(Some(icon)) => {
+            let (w, h) = (icon.width as i32, icon.height as i32);
+            c.blit_over(r.x + (r.width - w) / 2, r.y + (r.height - h) / 2, icon);
+        }
+        Face::Icon(None) => {}
+    }
 }
 
 fn draw_close(
@@ -297,6 +332,7 @@ pub(super) fn relight(
     text: &TextRenderer,
     look: &NotifyLook,
     lay: &SheetLayout,
+    actions: &[Option<Canvas>],
     edit_empty: bool,
     pushed: Option<NotifyHit>,
     hot: Option<NotifyHit>,
@@ -304,12 +340,21 @@ pub(super) fn relight(
 ) {
     let unlit = pill_row(text, lay, edit_empty, None, None, s);
     let lit = pill_row(text, lay, edit_empty, pushed, hot, s);
-    for ((r, label, state), (.., was)) in lit.into_iter().zip(unlit) {
+    for (i, ((r, label, state), (.., was))) in lit.into_iter().zip(unlit).enumerate() {
         if state == was {
             continue;
         }
         parts.clear_rect(r);
-        draw_pill(parts, text, look, lay, r, &label, state, s);
+        draw_pill(
+            parts,
+            text,
+            look,
+            lay,
+            r,
+            face(&label, actions, i),
+            state,
+            s,
+        );
     }
     if hot.is_some() {
         draw_close(parts, look, lay, pushed, hot, s);

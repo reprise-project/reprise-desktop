@@ -1,6 +1,6 @@
 use super::item::{Pixmaps, ToolTip, decode_names, icon_ref, item_texts};
 use super::menu::{LABEL_CHARS, MENU_ROWS, parse_layout};
-use super::notifications::notification_icons;
+use super::notifications::{CAPABILITIES, action_icons, notification_icons};
 use super::watcher::{
     Admission, MAX_REGISTRATIONS, MAX_REGISTRATIONS_PER_SENDER, admit, resolve_registration,
 };
@@ -790,4 +790,15 @@ fn admit_caps_the_total_across_senders() {
         .collect();
     assert_eq!(items.len(), MAX_REGISTRATIONS);
     assert_eq!(admit(&items, ":1.99/item0", ":1.99"), Admission::TotalFull);
+}
+
+#[test]
+fn the_server_advertises_action_icons() {
+    assert!(CAPABILITIES.contains(&"action-icons"));
+}
+
+#[test]
+fn an_action_key_naming_no_icon_keeps_its_label() {
+    let actions = [("reprise-no-such-icon".to_string(), "Stop".to_string())];
+    assert!(action_icons(&hicolor(), &actions).is_empty());
 }

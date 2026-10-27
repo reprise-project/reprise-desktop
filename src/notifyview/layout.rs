@@ -89,6 +89,7 @@ pub(super) fn lay_out(
 ) -> Drawn {
     let labels;
     let burst;
+    let icons = item.button_icons();
     let (app, title, body, actions, reply) = match item {
         Item::Note(n) => {
             labels = button_labels(n);
@@ -122,6 +123,7 @@ pub(super) fn lay_out(
         title,
         body,
         actions,
+        action_icons: &icons,
         reply,
         has_picture: !item.image().is_empty(),
         has_app_icon: item.has_app_icon(),
@@ -129,7 +131,8 @@ pub(super) fn lay_out(
     match sheet_layout(theme, text, shape, &content, expanded || replying) {
         Some(lay) => Drawn::Sheet(lay),
         None => {
-            Drawn::Balloon(notify_layout(theme, text, title, body, actions, reply).on_edge(edge))
+            let lay = notify_layout(theme, text, title, body, actions, &icons, reply);
+            Drawn::Balloon(lay.on_edge(edge))
         }
     }
 }
