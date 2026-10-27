@@ -52,8 +52,20 @@ pub fn restart_argv(argv: impl IntoIterator<Item = OsString>, crashes: u32) -> V
 /// The notice a restarted session shows.
 pub const NOTICE: &str = "Reprise restarted after a crash; the log has the details";
 
-/// A start's steps once the backend is up: after a crash, the notice after the first frame.
+/// Whether this start engages the lock before its first frame: only a restart whose crashed
+/// session was locked.
+pub fn starts_locked(after_crash: bool, was_locked: bool) -> bool {
+    after_crash && was_locked
+}
+
+/// A start's steps once the backend is up: the lock when `starts_locked`, else a stale
+/// `screen_locked` cleared; after a crash, the notice after the first frame.
 pub fn on_start(state: &mut State, after_crash: bool) {
+    if starts_locked(after_crash, state.session.was_locked) {
+        crate::lockview::lock(state);
+    } else if state.session.was_locked {
+        crate::state::save_screen_locked(false);
+    }
     if after_crash {
         state.handle.insert_idle(|state| {
             crate::notifyview::notice(state, "Reprise", NOTICE);
@@ -149,6 +161,29 @@ mod tests {
         };
         assert_eq!(notice(true).as_deref(), Some(NOTICE));
         assert_eq!(notice(false), None);
+    }
+
+    #[test]
+    fn only_a_restart_from_a_locked_session_starts_locked() {
+        assert!(starts_locked(true, true));
+        assert!(!starts_locked(true, false));
+        assert!(
+            !starts_locked(false, true),
+            "a login is never locked by the last session"
+        );
+    }
+
+    #[test]
+    fn a_restart_from_a_locked_session_is_locked_before_its_first_frame() {
+        let start = |after_crash| {
+            let mut h = crate::harness::Harness::new();
+            h.output("TEST-1", 1024, 768);
+            h.state.session.was_locked = true;
+            on_start(&mut h.state, after_crash);
+            h.state.is_locked()
+        };
+        assert!(start(true));
+        assert!(!start(false));
     }
 
     #[test]
