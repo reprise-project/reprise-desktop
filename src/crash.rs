@@ -1,6 +1,7 @@
 //! A panic on the compositor thread starts a new session in place: the hook re-execs this binary
-//! with `--after-crash <crashes>`, a new session on the same seat. Programs do not survive it;
-//! session restore starts them again (docs/features.md, "Crash recovery").
+//! with `--after-crash <crashes>`, a new session on the same seat. Wayland programs do not survive
+//! it and session restore starts them again; autostart skips a program whose app scope still runs
+//! (docs/features.md, "Crash recovery").
 
 use crate::compositor::State;
 use std::cell::Cell;
