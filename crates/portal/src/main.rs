@@ -1148,6 +1148,7 @@ fn main() {
             None
         }
     };
+    let background_link = link.clone();
     let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
     zbus::block_on(async move {
         let notes = notification::Shared::default();
@@ -1185,6 +1186,14 @@ fn main() {
                 "screen lock",
             )
             .detach();
+        if let Some(link) = background_link {
+            conn.executor()
+                .spawn(
+                    background::announce(conn.clone(), link),
+                    "running applications",
+                )
+                .detach();
+        }
         owner::exit_with(compositor);
         watch_frontends(conn, changes, frontend, sessions, inhibits).await;
         std::future::pending::<()>().await;

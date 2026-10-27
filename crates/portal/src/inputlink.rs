@@ -112,6 +112,7 @@ pub struct Link {
     shortcuts: bool,
     live_shortcuts: Arc<AtomicUsize>,
     keys: bool,
+    sandboxed_changes: async_channel::Receiver<()>,
 }
 
 /// One EIS connection. Dropping it destroys the `reprise_eis_client_v1`, disconnecting the libei client.
@@ -242,6 +243,7 @@ impl Link {
             sandboxed: None,
         }));
         let sandboxed = (input.version() >= 5).then(|| input.watch_sandboxed(&qh, ()));
+        let (changed_tx, changed_rx) = async_channel::bounded(1);
         let mut state = State {
             input,
             xdg,
@@ -252,6 +254,7 @@ impl Link {
             keys: HashMap::new(),
             _sandboxed: sandboxed,
             sandboxed_pending: BTreeSet::new(),
+            sandboxed_changed: changed_tx,
             shared: shared.clone(),
             registry: globals.registry().clone(),
         };
@@ -279,6 +282,7 @@ impl Link {
             shortcuts,
             live_shortcuts: Arc::new(AtomicUsize::new(0)),
             keys,
+            sandboxed_changes: changed_rx,
         };
         let dead = link.dead.clone();
         std::thread::Builder::new()
@@ -302,6 +306,11 @@ impl Link {
             return None;
         }
         self.shared.lock().unwrap().sandboxed.clone()
+    }
+
+    /// Wakes after each list `sandboxed` takes; several lists may share one wake.
+    pub fn sandboxed_changes(&self) -> async_channel::Receiver<()> {
+        self.sandboxed_changes.clone()
     }
 
     pub fn zones(&self) -> (Vec<Zone>, u32) {
@@ -411,6 +420,7 @@ struct State {
     /// Held so the compositor goes on sending the list.
     _sandboxed: Option<RepriseSandboxedV1>,
     sandboxed_pending: BTreeSet<String>,
+    sandboxed_changed: async_channel::Sender<()>,
     shared: Arc<Mutex<Shared>>,
     registry: wl_registry::WlRegistry,
 }
@@ -783,6 +793,7 @@ impl Dispatch<RepriseSandboxedV1, ()> for State {
             reprise_sandboxed_v1::Event::Done => {
                 let now = std::mem::take(&mut state.sandboxed_pending);
                 state.shared.lock().unwrap().sandboxed = Some(now);
+                let _ = state.sandboxed_changed.try_send(());
             }
         }
     }
