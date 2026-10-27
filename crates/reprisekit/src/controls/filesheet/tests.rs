@@ -38,7 +38,7 @@ fn the_summary_labels_fit_in_a_wider_face() {
         ..FontConfig::default()
     });
     if !text.has_face(family) {
-        return;
+        crate::pins::skip!("DejaVu Sans is not installed");
     }
     let page = summary_page(None);
     page.drawn_with(&Theme::default().paint());
@@ -56,7 +56,7 @@ fn a_long_date_wraps_inside_its_row() {
         ..FontConfig::default()
     });
     if !text.has_face(family) {
-        return;
+        crate::pins::skip!("DejaVu Sans is not installed");
     }
     let date = "Wednesday, September 30, 2026, 12:00:00 PM";
     let mut f = facts(false);

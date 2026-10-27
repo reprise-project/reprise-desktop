@@ -66,8 +66,8 @@ pub mod metrics;
 mod mutex;
 pub mod overview;
 pub mod paint;
-#[cfg(test)]
-mod pins;
+#[doc(hidden)]
+pub mod pins;
 pub mod pointer;
 pub mod raster;
 pub mod saver;

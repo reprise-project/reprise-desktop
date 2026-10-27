@@ -172,8 +172,11 @@ fn a_form_draws_in_its_dialog_font() {
 #[test]
 fn labels_at_their_ink_start_on_the_same_column_in_either_dialog_font() {
     let path = "/usr/share/wine/fonts/sserife.fon";
-    if !crate::text::test_tahoma() || !std::path::Path::new(path).exists() {
+    if !crate::text::test_tahoma() {
         return;
+    }
+    if !std::path::Path::new(path).exists() {
+        crate::pins::skip!(face path);
     }
     let theme = Theme::default();
     let cs = &theme.colors;

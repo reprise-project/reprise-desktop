@@ -162,7 +162,7 @@ fn the_start_label_draws_at_its_own_font_size() {
     let s = theme.look.style().unwrap();
     let start = TextRenderer::load(&s.start_text.font());
     if !start.has_face("Franklin Gothic Medium") && !start.has_face("Trebuchet MS") {
-        return;
+        crate::pins::skip!(face "Franklin Gothic Medium or Trebuchet MS");
     }
     let layout = TaskbarLayout::compute(
         &theme.metrics,
@@ -350,7 +350,7 @@ fn the_start_label_is_inked_heavier_over_a_soft_shadow_from_1_px_up_left_to_2_do
     let s = theme.look.style().unwrap();
     let start = TextRenderer::load(&s.start_text.font());
     if !start.has_face("Franklin Gothic Medium") && !start.has_face("Trebuchet MS") {
-        return;
+        crate::pins::skip!(face "Franklin Gothic Medium or Trebuchet MS");
     }
     let text = TextRenderer::load(&FontConfig::default());
     let layout = TaskbarLayout::compute(

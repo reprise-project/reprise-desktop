@@ -759,7 +759,7 @@ mod tests {
     fn the_start_label_inks_37_by_12_px_in_franklin_gothic_medium() {
         let spec = start_text(Variant::Blue);
         let Some(ink) = start_ink(&spec, "Franklin Gothic Medium") else {
-            return;
+            crate::pins::skip!(face "Franklin Gothic Medium");
         };
         assert_eq!(ink, (37, 12), "37 px wide, 12 rows tall");
     }
@@ -769,7 +769,7 @@ mod tests {
         let mut spec = start_text(Variant::Blue);
         spec.family.retain(|f| f != "Franklin Gothic Medium");
         let Some((w, _)) = start_ink(&spec, "Trebuchet MS") else {
-            return;
+            crate::pins::skip!(face "Trebuchet MS");
         };
         assert_eq!(spec.size_px, 16);
         assert_eq!(w, 37, "37 px wide");
@@ -780,7 +780,7 @@ mod tests {
         let spec = caption_text(Variant::Blue);
         let t = crate::text::TextRenderer::load(&spec.font());
         if !t.has_face("Trebuchet MS") {
-            return;
+            crate::pins::skip!(face "Trebuchet MS");
         }
         let mut c = crate::raster::Canvas::new(100, 30);
         c.fill_rect(Rect::new(0, 0, 100, 30), Color::rgb(0x00, 0x55, 0xE5));
@@ -808,7 +808,7 @@ mod tests {
         let spec = caption_text(Variant::Blue);
         let t = crate::text::TextRenderer::load(&spec.font());
         if !t.has_face("Trebuchet MS") {
-            return;
+            crate::pins::skip!(face "Trebuchet MS");
         }
         assert_eq!(t.measure("My Computer", spec.bold, spec.size_px), 81);
     }

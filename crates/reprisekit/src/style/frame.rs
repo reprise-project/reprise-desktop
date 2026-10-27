@@ -777,7 +777,7 @@ mod tests {
         let s = theme.look.style().unwrap();
         let text = TextRenderer::load(&s.caption_text.font());
         if !text.has_face("Trebuchet MS") && !text.has_face("DejaVu Sans") {
-            return;
+            crate::pins::skip!("neither Trebuchet MS nor DejaVu Sans is installed");
         }
         let shadow = s.caption_text.shadow.unwrap().color.argb();
         let g = FrameGeometry::layout(&theme.metrics, 300, 200, false, Chrome::WINDOW);
@@ -1178,7 +1178,7 @@ mod tests {
             .iter()
             .any(|f| text.has_face(f));
         if !found {
-            eprintln!("skipped: none of Segoe UI, Noto Sans or DejaVu Sans is installed");
+            crate::pins::skipped("none of Segoe UI, Noto Sans or DejaVu Sans is installed");
         }
         found
     }
