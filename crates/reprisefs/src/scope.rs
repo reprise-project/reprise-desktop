@@ -196,18 +196,32 @@ fn unit_escape(s: &str) -> String {
     out
 }
 
-/// Two instances of one app need two scopes, also when two processes launch it.
+/// Two instances of one app need two scopes, also when two processes launch it and when a
+/// process re-execs itself, keeping its pid and starting its count over.
 fn unit_suffix() -> String {
+    static START: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     suffix(
         std::process::id(),
+        *START.get_or_init(monotonic_us),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
     )
 }
 
-/// Launch `n` of process `pid`; the `x` keeps pid 0x1a's launch 0x23 apart from pid 0x1a2's 0x3.
-fn suffix(pid: u32, n: u32) -> String {
-    format!("{pid:x}x{n:x}")
+fn monotonic_us() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime writes only the timespec it is given.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    (ts.tv_sec as u64) * 1_000_000 + (ts.tv_nsec as u64) / 1_000
+}
+
+/// Launch `n` of process `pid` in the run that started at `start`; each `x` keeps the hex fields
+/// apart, so pid 0x1a's launch 0x23 is not pid 0x1a2's 0x3.
+fn suffix(pid: u32, start: u64, n: u32) -> String {
+    format!("{pid:x}x{start:x}x{n:x}")
 }
 
 /// Without a user manager `systemd-run --user` fails, so the command runs unscoped.
@@ -332,8 +346,19 @@ mod tests {
 
     #[test]
     fn two_processes_never_share_a_scope_suffix() {
-        assert_ne!(suffix(0x1a, 0x23), suffix(0x1a2, 0x3));
-        assert_eq!(suffix(0x1a, 0x23), "1ax23");
+        assert_ne!(suffix(0x1a, 0x5, 0x23), suffix(0x1a2, 0x5, 0x3));
+        assert_eq!(suffix(0x1a, 0x5, 0x23), "1ax5x23");
+    }
+
+    #[test]
+    fn a_process_restarted_under_its_pid_never_reuses_a_scope_suffix() {
+        let run = |start| (0..64).map(move |n| suffix(0x1a, start, n));
+        let first: std::collections::HashSet<_> = run(0x10).collect();
+        assert!(run(0x11).all(|s| !first.contains(&s)));
+        assert!(run(0x100).all(|s| !first.contains(&s)));
+        assert!(monotonic_us() > 0);
+        let unit = format!("{}.scope", unit_name("syncthing", &unit_suffix()));
+        assert!(is_app_scope(&unit, "syncthing"), "{unit}");
     }
 
     #[test]
