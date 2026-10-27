@@ -363,7 +363,7 @@ fn run(
             notifyview::notice(state, "Configuration", &body);
         });
     }
-    autostart::start(&mut state, session_begun);
+    autostart::start(&mut state, session_begun, after_crash);
 
     let ran = event_loop.run(None, &mut state, State::turn_end);
     crash::ending();

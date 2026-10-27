@@ -155,6 +155,13 @@ fn transient_scope(
     (format!("{}.scope", unit_name(app, suffix)), properties)
 }
 
+/// Whether `unit` is one of `app`'s scopes, whatever its suffix.
+pub fn is_app_scope(unit: &str, app: &str) -> bool {
+    unit.strip_prefix(&unit_name(app, ""))
+        .and_then(|rest| rest.strip_suffix(".scope"))
+        .is_some_and(|suffix| !suffix.is_empty())
+}
+
 /// `app-reprise-<app>-<suffix>`; the id is unit-escaped so its dashes stay apart from the
 /// launcher and suffix (systemd's app naming).
 fn unit_name(app: &str, suffix: &str) -> String {
@@ -295,6 +302,27 @@ mod tests {
         assert_eq!(unit_escape("a b/c"), "a\\x20b\\x2fc");
         assert_eq!(unit_escape(".hidden"), "\\x2ehidden");
         assert_eq!(unit_escape("org.kde.ark"), "org.kde.ark");
+    }
+
+    #[test]
+    fn an_app_scope_is_told_apart_from_another_apps_with_a_longer_id() {
+        assert!(is_app_scope(
+            "app-reprise-syncthing-1ax2.scope",
+            "syncthing.desktop"
+        ));
+        assert!(is_app_scope(
+            "app-reprise-run\\x2dme.sh-1a.scope",
+            "run-me.sh"
+        ));
+        assert!(!is_app_scope(
+            "app-reprise-syncthing\\x2dgtk-1ax2.scope",
+            "syncthing"
+        ));
+        assert!(!is_app_scope("app-reprise-syncthing-.scope", "syncthing"));
+        assert!(!is_app_scope(
+            "app-reprise-syncthing-1ax2.service",
+            "syncthing"
+        ));
     }
 
     #[test]

@@ -32,18 +32,24 @@ fn on_path(program: &str) -> bool {
 }
 
 /// Spawn every applicable autostart entry, then restore the last session. Called once at startup,
-/// after `WAYLAND_DISPLAY` is exported, so a child inherits the socket. The scan, the walk of the
+/// after `WAYLAND_DISPLAY` is exported, so a child inherits the socket. After a crash, an entry
+/// whose app scope still has a process is left running instead of started twice. The scan, the walk of the
 /// user manager's session units and the spawns run on a job thread so the first frames don't wait
 /// on them; the restore follows on the loop. The walk waits for `session_begun`, so the session
 /// target's start jobs are queued and their conditions get checked before it reads them.
-pub fn start(state: &mut State, session_begun: std::thread::JoinHandle<()>) {
+pub fn start(state: &mut State, session_begun: std::thread::JoinHandle<()>, after_crash: bool) {
     let desktops = reprisefs::autostart::desktop_names(Some(&state.env.desktop));
     let terminal = state.config.terminal.clone();
     let env = state.env.clone();
     state.spawn_job(move || {
         let _ = session_begun.join();
         let run = find(&desktops);
-        launch(&run, &terminal, &env);
+        let running = if after_crash {
+            running_scopes()
+        } else {
+            Vec::new()
+        };
+        launch(&to_launch(&run, &running), &terminal, &env);
         Box::new(move |state: &mut State| crate::session::restore(state, &run))
     });
 }
@@ -65,7 +71,47 @@ fn find(desktops: &[String]) -> Vec<Entry> {
     })
 }
 
-fn launch(run: &[Entry], terminal: &str, env: &crate::spawn::SessionEnv) {
+/// The entries of `run` with no app scope among `running` units.
+fn to_launch<'a>(run: &'a [Entry], running: &[String]) -> Vec<&'a Entry> {
+    run.iter()
+        .filter(|e| {
+            let left = running
+                .iter()
+                .any(|u| reprisefs::scope::is_app_scope(u, &e.id));
+            if left {
+                log::info!("autostart: {} still runs from before the crash", e.id);
+            }
+            !left
+        })
+        .collect()
+}
+
+/// The user manager's app scopes that still have a process. Blocks on it.
+fn running_scopes() -> Vec<String> {
+    let out = std::process::Command::new("systemctl")
+        .args([
+            "--user",
+            "list-units",
+            "--state=running",
+            "--plain",
+            "--no-legend",
+        ])
+        .arg(reprisefs::scope::PATTERN)
+        .output();
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter_map(|l| l.split_whitespace().next())
+            .map(String::from)
+            .collect(),
+        Err(e) => {
+            log::warn!("autostart: systemctl list-units: {e}");
+            Vec::new()
+        }
+    }
+}
+
+fn launch(run: &[&Entry], terminal: &str, env: &crate::spawn::SessionEnv) {
     for e in run {
         log::info!("autostart: {}", e.id);
         let argv = e.argv(terminal);
@@ -142,6 +188,18 @@ mod tests {
             .len(),
             1
         );
+    }
+
+    #[test]
+    fn an_entry_whose_scope_still_runs_is_not_started_again() {
+        let sync =
+            reprisefs::autostart::parse("syncthing.desktop", "[Desktop Entry]\nExec=s\n", false)
+                .unwrap();
+        let run = [sync, entry("[Desktop Entry]\nExec=a\n")];
+        let ids = |l: Vec<&Entry>| l.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(to_launch(&run, &[])), ["syncthing.desktop", "a"]);
+        let running = ["app-reprise-syncthing-1ax2.scope".to_string()];
+        assert_eq!(ids(to_launch(&run, &running)), ["a"]);
     }
 
     #[test]

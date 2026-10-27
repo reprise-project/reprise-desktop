@@ -13,6 +13,7 @@ pub const LOOP_WINDOW: Duration = Duration::from_secs(60);
 
 const FLAG: &str = "--after-crash";
 const LOCKED: &str = "--locked";
+const STARTUP: &str = "--startup";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AfterPanic {
@@ -33,8 +34,9 @@ pub fn after_panic(prior: Option<u32>, uptime: Duration, ending: bool) -> AfterP
     }
 }
 
-/// `argv` without an earlier `--after-crash` and its count or `--locked`, then `--locked` when
-/// `locked` and `--after-crash <crashes>`.
+/// `argv` without an earlier `--after-crash` and its count, `--startup` and its command (whatever
+/// it started outlives the crash) or `--locked`, then `--locked` when `locked` and
+/// `--after-crash <crashes>`.
 pub fn restart_argv(
     argv: impl IntoIterator<Item = OsString>,
     crashes: u32,
@@ -42,13 +44,16 @@ pub fn restart_argv(
 ) -> Vec<OsString> {
     let mut out = Vec::new();
     let mut argv = argv.into_iter();
+    let valued = [FLAG, STARTUP];
     while let Some(a) = argv.next() {
-        if a == FLAG {
+        if valued.iter().any(|f| a == *f) {
             argv.next();
         } else if a != LOCKED
-            && !a
-                .to_str()
-                .is_some_and(|a| a.starts_with(&format!("{FLAG}=")))
+            && !a.to_str().is_some_and(|a| {
+                valued
+                    .iter()
+                    .any(|f| a.strip_prefix(f).is_some_and(|v| v.starts_with('=')))
+            })
         {
             out.push(a);
         }
@@ -229,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn a_restart_keeps_the_arguments_and_replaces_the_crash_count() {
+    fn a_restart_keeps_the_arguments_but_the_startup_command_and_replaces_the_crash_count() {
         let args = |v: &[&str]| v.iter().map(OsString::from).collect::<Vec<_>>();
         assert_eq!(
             restart_argv(args(&["reprise", "--config", "c.toml"]), 1, false),
@@ -241,7 +246,15 @@ mod tests {
                 2,
                 false
             ),
-            args(&["reprise", "--startup", "foot", "--after-crash", "2"])
+            args(&["reprise", "--after-crash", "2"])
+        );
+        assert_eq!(
+            restart_argv(
+                args(&["reprise", "--startup=foot", "--config=c.toml"]),
+                1,
+                false
+            ),
+            args(&["reprise", "--config=c.toml", "--after-crash", "1"])
         );
         assert_eq!(
             restart_argv(args(&["reprise", "--after-crash=2"]), 3, false),
