@@ -38,13 +38,15 @@ enum Field {
     Rename(usize),
 }
 
-/// The types of `offered` a field reads `source`'s drag as: a sandboxed program's URI list
-/// names paths inside its sandbox.
-fn readable(source: &SeatSource, mut offered: Vec<String>) -> Vec<String> {
-    if source.sandboxed() {
-        offered.retain(|m| m != dropdata::URI_LIST);
-    }
-    offered
+/// Whether a field takes a sandboxed program's URI list: its links, and files only from the
+/// document portal, as any other path names a file inside its sandbox.
+fn sandboxed_list_taken(bytes: &[u8]) -> bool {
+    let items = dropdata::decode(dropdata::URI_LIST, bytes);
+    !items.is_empty()
+        && items.iter().all(|d| match d {
+            Dropped::File(p) => crate::sandbox::portal_exported(p),
+            Dropped::Url { .. } => true,
+        })
 }
 
 /// The mime a field reads a drag offering `offered` as: a file manager's URI list (its paths),
@@ -126,7 +128,7 @@ impl State {
             return None;
         }
         let meta = source.metadata()?;
-        let mime = field_mime(&readable(source, meta.mime_types))?;
+        let mime = field_mime(&meta.mime_types)?;
         let allowed = crate::dnddrop::source_actions(&meta.dnd_actions);
         if !allowed.contains(WlDndAction::Copy) {
             return None;
@@ -309,12 +311,15 @@ impl State {
                 Vec::new()
             }
         };
-        let took = match over.field {
-            Field::Dialog(id) => self.dialog_field_dropped(id, &field_line(over.mime, &bytes)),
-            Field::Launcher => self.launcher_dropped(name_line(over.mime, &bytes).text()),
-            Field::StartPanel => self.start_panel_dropped(name_line(over.mime, &bytes).text()),
-            Field::Rename(_) => self.rename_dropped(&name_line(over.mime, &bytes)),
-        };
+        let refused =
+            over.mime == dropdata::URI_LIST && source.sandboxed() && !sandboxed_list_taken(&bytes);
+        let took = !refused
+            && match over.field {
+                Field::Dialog(id) => self.dialog_field_dropped(id, &field_line(over.mime, &bytes)),
+                Field::Launcher => self.launcher_dropped(name_line(over.mime, &bytes).text()),
+                Field::StartPanel => self.start_panel_dropped(name_line(over.mime, &bytes).text()),
+                Field::Rename(_) => self.rename_dropped(&name_line(over.mime, &bytes)),
+            };
         self.field_let_go(over);
         if source.alive() {
             if took {
@@ -383,6 +388,18 @@ mod tests {
         );
         assert_eq!(field_mime(&["UTF8_STRING", "TEXT"]), Some("UTF8_STRING"));
         assert_eq!(field_mime(&["image/png"]), None);
+    }
+
+    #[test]
+    fn a_sandboxed_programs_list_drops_in_a_field_only_with_document_portal_files() {
+        let root = crate::sandbox::document_root();
+        let exported = format!("file://{}/abc/x.png\r\n", root.display());
+        assert!(sandboxed_list_taken(exported.as_bytes()));
+        assert!(sandboxed_list_taken(b"https://a.test/\r\n"));
+        assert!(!sandboxed_list_taken(b"file:///home/u/.ssh/id_ed25519\r\n"));
+        let mixed = format!("{exported}file:///home/u/notes.txt\r\n");
+        assert!(!sandboxed_list_taken(mixed.as_bytes()));
+        assert!(!sandboxed_list_taken(b""));
     }
 
     #[test]
