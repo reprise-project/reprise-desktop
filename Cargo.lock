@@ -2999,7 +2999,7 @@ checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 [[package]]
 name = "smithay"
 version = "0.7.0"
-source = "git+https://github.com/reprise-project/smithay.git?rev=b823d650b9de2a7a7cd26e3bd675640413130553#b823d650b9de2a7a7cd26e3bd675640413130553"
+source = "git+https://github.com/reprise-project/smithay.git?rev=78df9785340722c1a474b0a689e71c9574f77144#78df9785340722c1a474b0a689e71c9574f77144"
 dependencies = [
  "appendlist",
  "bitflags 2.13.2",
@@ -3073,7 +3073,7 @@ dependencies = [
 [[package]]
 name = "smithay-drm-extras"
 version = "0.1.0"
-source = "git+https://github.com/reprise-project/smithay.git?rev=b823d650b9de2a7a7cd26e3bd675640413130553#b823d650b9de2a7a7cd26e3bd675640413130553"
+source = "git+https://github.com/reprise-project/smithay.git?rev=78df9785340722c1a474b0a689e71c9574f77144#78df9785340722c1a474b0a689e71c9574f77144"
 dependencies = [
  "drm",
  "libdisplay-info",
