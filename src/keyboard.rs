@@ -1331,6 +1331,20 @@ mod tests {
     }
 
     #[test]
+    fn a_session_pause_releases_the_focused_clients_held_key() {
+        let (mut h, mut c, _) = focused_client();
+        h.key(KEY_A, true);
+        assert_eq!(heard(&mut h, &mut c), [(KEY_A, true)]);
+        crate::backend::pause_session(&mut h.state);
+        assert_eq!(heard(&mut h, &mut c), [(KEY_A, false)]);
+        h.key(KEY_A, false);
+        assert!(
+            heard(&mut h, &mut c).is_empty(),
+            "the late release reaches no one"
+        );
+    }
+
+    #[test]
     fn another_press_ends_the_repeat() {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
