@@ -49,6 +49,8 @@ pub struct Persisted {
     /// The colour filter `color-filter` last turned off, by its config name: the one it turns back
     /// on.
     pub color_filter_last: Option<String>,
+    /// Set at lock, cleared at unlock: a restart after a crash while it is set starts locked.
+    pub screen_locked: bool,
 }
 
 /// `$XDG_STATE_HOME/reprise/state.toml`; in tests a file of the test process's own, so no test
@@ -181,6 +183,13 @@ fn window_geometry_keys(
 pub fn save_session(apps: &[crate::session::SavedApp], tabs: &[crate::session::SavedTabs]) {
     let path = path();
     let keys = session_keys(apps, tabs);
+    run_in_order(move || patch(&path, keys));
+}
+
+/// Queue a write of `screen_locked`, leaving every other key as it is.
+pub fn save_screen_locked(locked: bool) {
+    let path = path();
+    let keys = toml::Table::from_iter([("screen_locked".to_string(), locked.into())]);
     run_in_order(move || patch(&path, keys));
 }
 
