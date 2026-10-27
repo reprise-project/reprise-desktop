@@ -244,6 +244,15 @@ fn a_focused_full_screen_window_holds_balloons_unless_auto_dnd_is_off() {
         show(&mut h.state, note(1, "Mail"));
         assert_eq!(balloon_up(&h.state), shown, "{config:?}");
         assert_eq!(h.state.notify.log.held.is_empty(), shown, "{config:?}");
+        if !shown {
+            let off = crate::config::Config::parse("[notifications]\nauto_dnd = false\n");
+            crate::configwatch::reload(&mut h.state, off.unwrap());
+            assert!(
+                balloon_up(&h.state),
+                "turning auto_dnd off shows the held balloon"
+            );
+            assert!(h.state.notify.log.held.is_empty());
+        }
     }
 }
 
