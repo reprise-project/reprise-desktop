@@ -458,6 +458,41 @@ mod tests {
         assert_eq!(jobs.len(), MAX_JOBS, "under the cap nothing more is closed");
     }
 
+    /// Whether `read`'s writer closed within `wait`, data still unread or not.
+    fn hung_up(read: &OwnedFd, wait: Duration) -> bool {
+        let mut pfd = libc::pollfd {
+            fd: read.as_raw_fd(),
+            events: 0,
+            revents: 0,
+        };
+        let ms = wait.as_millis() as i32;
+        // SAFETY: `pfd` is one live `pollfd`, matching the count of 1.
+        unsafe { libc::poll(&mut pfd, 1, ms) == 1 && pfd.revents & libc::POLLHUP != 0 }
+    }
+
+    #[test]
+    fn the_writer_closes_the_oldest_readers_past_the_job_cap() {
+        let big: Arc<[u8]> = vec![b'c'; 1 << 20].into();
+        // A deadline earlier than the other tests' keeps their readers out of the cut.
+        let reads: Vec<OwnedFd> = (0..MAX_JOBS + 10)
+            .map(|_| {
+                let (read, write) = pipe();
+                submit(write, big.clone(), Duration::from_secs(20));
+                read
+            })
+            .collect();
+        for (i, read) in reads[..10].iter().enumerate() {
+            assert!(
+                hung_up(read, Duration::from_secs(1)),
+                "reader {i} of the 10 oldest is closed"
+            );
+        }
+        assert!(
+            !hung_up(reads.last().unwrap(), Duration::ZERO),
+            "the newest reader stays open"
+        );
+    }
+
     #[test]
     fn a_paste_stops_at_the_cap() {
         assert!(paste_fits(MAX_PASTE_BYTES - 1, 1));
