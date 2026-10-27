@@ -1,9 +1,8 @@
 //! `org.freedesktop.impl.portal.Background`: which apps run with and
-//! without a window, the "running in the background" prompt, and the
-//! autostart entries of `RequestBackground`.
+//! without a window, and the "running in the background" prompt.
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -16,8 +15,6 @@ const STATE_RUNNING: u32 = 1;
 const RESULT_FORBID: u32 = 0;
 const RESULT_ALLOW: u32 = 1;
 const RESULT_ALLOW_ONCE: u32 = 2;
-
-const AUTOSTART_DBUS: u32 = 1;
 
 /// How long the list of sandboxed apps with a window must rest before
 /// RunningApplicationsChanged goes out, so a window swapped for another
@@ -98,30 +95,6 @@ impl Background {
         let mut r = HashMap::new();
         r.insert("result".to_string(), OwnedValue::from(result));
         Ok((crate::RESPONSE_OK, r))
-    }
-
-    async fn enable_autostart(
-        &self,
-        #[zbus(header)] hdr: zbus::message::Header<'_>,
-        app_id: String,
-        enable: bool,
-        commandline: Vec<String>,
-        flags: u32,
-    ) -> zbus::fdo::Result<bool> {
-        self.frontend.check(&hdr).await?;
-        let dir = repriseconf::xdg_home("XDG_CONFIG_HOME", ".config").join("autostart");
-        let id = app_id.clone();
-        let done = blocking::unblock(move || {
-            set_autostart(&dir, &id, enable, &commandline, flags & AUTOSTART_DBUS != 0)
-        })
-        .await;
-        match done {
-            Ok(on) => Ok(on),
-            Err(e) => {
-                log::warn!("EnableAutostart for {app_id:?}: {e}");
-                Ok(false)
-            }
-        }
     }
 }
 
@@ -212,91 +185,6 @@ fn instance_app(dir: &Path) -> Option<String> {
     reprisefs::flatpak::app_of_info(&std::fs::read_to_string(dir.join("info")).ok()?)
 }
 
-/// Write or remove `<dir>/<app_id>.desktop`; Ok(true) when an entry is
-/// now in place.
-fn set_autostart(
-    dir: &Path,
-    app_id: &str,
-    enable: bool,
-    commandline: &[String],
-    dbus: bool,
-) -> Result<bool, String> {
-    if !is_app_id(app_id) {
-        return Err("not a Flatpak app id".into());
-    }
-    let path: PathBuf = dir.join(format!("{app_id}.desktop"));
-    if !enable {
-        return match std::fs::remove_file(&path) {
-            Ok(()) => Ok(false),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(e.to_string()),
-        };
-    }
-    let text = autostart_entry(app_id, commandline, dbus)?;
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    reprisefs::ops::write_atomic(&path, text.as_bytes()).map_err(|e| e.to_string())?;
-    Ok(true)
-}
-
-/// A Flatpak app id: dot-separated names of letters, digits, `_` and `-`,
-/// so it is also a safe file name.
-fn is_app_id(id: &str) -> bool {
-    id.len() <= 255
-        && id.contains('.')
-        && id.split('.').all(|part| {
-            !part.is_empty()
-                && part
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        })
-}
-
-/// The autostart entry that runs `commandline` inside `app_id`'s sandbox.
-/// Err when an argument holds a control character, which no Exec line
-/// carries.
-fn autostart_entry(app_id: &str, commandline: &[String], dbus: bool) -> Result<String, String> {
-    if commandline.iter().any(|a| a.chars().any(char::is_control)) {
-        return Err("a control character in the command line".into());
-    }
-    let mut exec = vec!["flatpak".to_string(), "run".to_string()];
-    if let Some((command, args)) = commandline.split_first() {
-        exec.push(format!("--command={command}"));
-        exec.push(app_id.to_string());
-        exec.extend(args.iter().cloned());
-    } else {
-        exec.push(app_id.to_string());
-    }
-    let exec: Vec<String> = exec.iter().map(|a| exec_arg(a)).collect();
-    let mut text = format!(
-        "[Desktop Entry]\nType=Application\nName={app_id}\nExec={}\nX-Flatpak={app_id}\n",
-        exec.join(" ")
-    );
-    if dbus {
-        text.push_str("DBusActivatable=true\n");
-    }
-    Ok(text)
-}
-
-/// One Exec argument as the desktop entry spec quotes it, then escaped
-/// for a string value: `%` doubled (field codes) and `\` doubled.
-fn exec_arg(arg: &str) -> String {
-    const RESERVED: &str = " \t\"'\\><~|&;$*?#()`";
-    let quoted = if arg.is_empty() || arg.chars().any(|c| RESERVED.contains(c)) {
-        let mut q = String::from("\"");
-        for c in arg.chars() {
-            if matches!(c, '"' | '`' | '$' | '\\') {
-                q.push('\\');
-            }
-            q.push(c);
-        }
-        q.push('"');
-        q
-    } else {
-        arg.to_string()
-    };
-    quoted.replace('\\', "\\\\").replace('%', "%%")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,70 +232,6 @@ mod tests {
         ));
         assert!(settled(&mut emitted, set(&[])));
         assert_eq!(emitted, set(&[]));
-    }
-
-    #[test]
-    fn the_autostart_entry_runs_the_command_in_the_apps_sandbox() {
-        let text = autostart_entry(
-            "org.example.Sync",
-            &strings(&["sync-app", "--background", "a b", "50%"]),
-            false,
-        )
-        .unwrap();
-        assert_eq!(
-            text,
-            "[Desktop Entry]\nType=Application\nName=org.example.Sync\n\
-             Exec=flatpak run --command=sync-app org.example.Sync --background \"a b\" 50%%\n\
-             X-Flatpak=org.example.Sync\n"
-        );
-        let bare = autostart_entry("org.example.Sync", &[], true).unwrap();
-        assert!(
-            bare.contains("\nExec=flatpak run org.example.Sync\n"),
-            "{bare}"
-        );
-        assert!(bare.ends_with("DBusActivatable=true\n"), "{bare}");
-    }
-
-    #[test]
-    fn exec_arguments_are_quoted_and_escaped_for_the_entry() {
-        assert_eq!(exec_arg("plain"), "plain");
-        assert_eq!(exec_arg(""), "\"\"");
-        assert_eq!(exec_arg("$HOME"), "\"\\\\$HOME\"");
-        assert_eq!(exec_arg("a\\b"), "\"a\\\\\\\\b\"");
-        assert_eq!(exec_arg("say \"hi\""), "\"say \\\\\"hi\\\\\"\"");
-        assert!(autostart_entry("org.example.A", &strings(&["a\nb"]), false).is_err());
-    }
-
-    #[test]
-    fn autostart_writes_and_removes_only_an_app_ids_entry() {
-        let dir = tempfile::tempdir().unwrap();
-        let auto = dir.path().join("autostart");
-        let cmd = strings(&["app"]);
-        assert_eq!(
-            set_autostart(&auto, "org.example.A", true, &cmd, false),
-            Ok(true)
-        );
-        let file = auto.join("org.example.A.desktop");
-        assert!(
-            std::fs::read_to_string(&file)
-                .unwrap()
-                .contains("X-Flatpak=org.example.A")
-        );
-        assert_eq!(
-            set_autostart(&auto, "org.example.A", false, &cmd, false),
-            Ok(false)
-        );
-        assert!(!file.exists());
-        assert_eq!(
-            set_autostart(&auto, "org.example.A", false, &cmd, false),
-            Ok(false)
-        );
-        for bad in ["../evil", "noperiod", "org..x", "org.x/y", ""] {
-            assert!(
-                set_autostart(&auto, bad, true, &cmd, false).is_err(),
-                "{bad}"
-            );
-        }
     }
 
     #[test]
