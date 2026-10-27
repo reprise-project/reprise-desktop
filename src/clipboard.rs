@@ -65,7 +65,7 @@ pub struct Clip {
     /// Read through [`State::clip_offered`].
     pub(crate) offered: Vec<String>,
     /// Whether a sandboxed client set the clipboard.
-    sandboxed: bool,
+    pub(crate) sandboxed: bool,
     paste: Option<Paste>,
     dirty: bool,
     #[cfg(test)]
@@ -114,6 +114,15 @@ pub fn file_offers(clip: &FileClip) -> Option<Vec<Offer>> {
 enum Files {
     List(fileclip::Source),
     Portal,
+}
+
+/// `x11_app` is the focused X11 window's Flatpak app (`Some(None)` for a host window), `None`
+/// when no X11 window has focus; then `wayland_focus` answers for the keyboard focus's client.
+fn owner_sandboxed(x11_app: Option<Option<String>>, wayland_focus: impl FnOnce() -> bool) -> bool {
+    match x11_app {
+        Some(app) => app.is_some(),
+        None => wayland_focus(),
+    }
 }
 
 /// A sandboxed program's files come through its document portal key when it offers one;
@@ -199,10 +208,7 @@ impl SelectionHandler for State {
         let mimes = source.map(|s| s.mime_types());
         if ty == SelectionTarget::Clipboard {
             self.clip.offered = mimes.clone().unwrap_or_default();
-            // Smithay takes a data device selection only from the client holding the keyboard.
-            let focus = self.seat.get_keyboard().and_then(|k| k.current_focus());
-            self.clip.sandboxed =
-                mimes.is_some() && focus.is_some_and(|f| crate::sandbox::resource_sandboxed(&f));
+            self.clip.sandboxed = mimes.is_some() && self.clip_owner_sandboxed();
         }
         self.wayland_selection_to_x11(ty, mimes);
         if ty == SelectionTarget::Clipboard {
@@ -311,6 +317,20 @@ impl State {
             request_data_device_client_selection(&self.seat, String::new(), null.into()),
             Err(SelectionRequestError::NoSelection)
         )
+    }
+
+    /// Whether the program a new clipboard selection comes from runs sandboxed.
+    pub(crate) fn clip_owner_sandboxed(&self) -> bool {
+        let x11_app = self
+            .focused
+            .and_then(|w| self.win(w))
+            .filter(|w| w.x11().is_some())
+            .map(crate::sandbox::window_app);
+        owner_sandboxed(x11_app, || {
+            // Smithay takes a data device selection only from the client holding the keyboard.
+            let focus = self.seat.get_keyboard().and_then(|k| k.current_focus());
+            focus.is_some_and(|f| crate::sandbox::resource_sandboxed(&f))
+        })
     }
 
     pub fn own_file_clip(&self) -> Option<FileClip> {
@@ -746,6 +766,20 @@ mod tests {
             h.state.clip_has_files(),
             "a host program's list is pastable"
         );
+    }
+
+    #[test]
+    fn an_x11_selection_is_sandboxed_by_its_windows_app_whatever_the_wayland_focus() {
+        let flatpak = Some(Some("org.example.App".to_string()));
+        assert!(
+            owner_sandboxed(flatpak.clone(), || false),
+            "Flatpak X11 window"
+        );
+        assert!(owner_sandboxed(flatpak, || true));
+        assert!(!owner_sandboxed(Some(None), || true), "host X11 window");
+        assert!(!owner_sandboxed(Some(None), || false));
+        assert!(owner_sandboxed(None, || true), "sandboxed Wayland focus");
+        assert!(!owner_sandboxed(None, || false), "host Wayland focus");
     }
 
     #[test]
