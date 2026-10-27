@@ -1380,7 +1380,8 @@ pub fn select_drag(
 }
 
 /// Draw the control: edge, box, lines from `view.top`, selection on `hilight`, the caret (1 px bar)
-/// in the blink's shown half, and the scrollbars the layout calls for.
+/// in the blink's shown half, and the scrollbars the layout calls for. On a blink-only frame the
+/// caret bar is the damage (an empty rect when it is scrolled out of view).
 #[expect(clippy::too_many_arguments)]
 pub fn draw(
     c: &mut Canvas,
@@ -1507,6 +1508,9 @@ pub fn draw(
             Rect::new(cx.clamp(clip.x, clip.right() - s), y, s, line_h)
         });
         c.report_spot(edit.spot(lay.frame, bar));
+        if c.blink_only() {
+            c.report_damage(caret_bar.unwrap_or_default());
+        }
     }
     if let Some(sb) = lay.vscroll {
         let (visible, total) = vextent(edit, lay);

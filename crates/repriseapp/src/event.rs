@@ -77,7 +77,9 @@ pub enum Event {
     /// each time it enters one (with several, the last it entered).
     Output((i32, i32)),
     /// The caret's blink flipped (`ctx.caret_on`). It goes to the window
-    /// with the keyboard, else the one under the pointer, else nowhere.
+    /// with the keyboard, else the one under the pointer, else nowhere, and
+    /// only while that window's last frame drew a focused field or one of its
+    /// forms waits to show a label tip.
     Blink,
     Tick,
     Pasted(String),

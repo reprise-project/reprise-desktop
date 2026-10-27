@@ -96,10 +96,10 @@ fn damage_rects_scale_to_buffer() {
 }
 
 #[test]
-fn only_a_kept_canvas_damages_part_of_the_buffer() {
+fn only_a_kept_canvas_or_a_blink_damages_part_of_the_buffer() {
     let rects = Some(vec![Rect::new(1, 2, 3, 4)]);
     let whole = vec![(0, 0, 40, 20)];
-    let damage = |rects, fresh, keeps| surface_damage(rects, fresh, keeps, 2, (40, 20));
+    let damage = |rects, fresh, partial| surface_damage(rects, fresh, partial, 2, (40, 20));
     assert_eq!(damage(rects.clone(), true, true), vec![(2, 4, 6, 8)]);
     assert_eq!(
         damage(rects.clone(), true, false),
