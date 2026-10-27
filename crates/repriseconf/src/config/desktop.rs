@@ -239,6 +239,19 @@ pub struct NotificationsConfig {
     pub sound: bool,
     /// An XDG sound theme name.
     pub sound_theme: String,
+    /// (from, to) in minutes after local midnight; `to` before `from` runs past midnight.
+    pub quiet_hours: Option<(u32, u32)>,
+}
+
+impl NotificationsConfig {
+    /// Whether `minute` (after local midnight) falls in the quiet hours.
+    pub fn quiet_at(&self, minute: u32) -> bool {
+        match self.quiet_hours {
+            Some((from, to)) if from <= to => (from..to).contains(&minute),
+            Some((from, to)) => minute >= from || minute < to,
+            None => false,
+        }
+    }
 }
 
 impl Default for NotificationsConfig {
@@ -246,6 +259,7 @@ impl Default for NotificationsConfig {
         NotificationsConfig {
             sound: true,
             sound_theme: "freedesktop".into(),
+            quiet_hours: None,
         }
     }
 }

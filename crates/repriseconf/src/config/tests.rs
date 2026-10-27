@@ -284,6 +284,28 @@ fn notification_sounds_default_on_from_the_freedesktop_theme() {
 }
 
 #[test]
+fn quiet_hours_run_past_midnight_and_are_off_by_default() {
+    assert_eq!(Config::default().notifications.quiet_hours, None);
+    let c = Config::parse("[notifications]\nquiet_hours = [\"22:00\", \"07:00\"]\n").unwrap();
+    let n = &c.notifications;
+    assert_eq!(n.quiet_hours, Some((22 * 60, 7 * 60)));
+    assert!(n.quiet_at(23 * 60) && n.quiet_at(0) && n.quiet_at(7 * 60 - 1));
+    assert!(!n.quiet_at(7 * 60) && !n.quiet_at(12 * 60) && !n.quiet_at(22 * 60 - 1));
+    let day = Config::parse("[notifications]\nquiet_hours = [\"09:00\", \"17:30\"]\n").unwrap();
+    assert!(day.notifications.quiet_at(9 * 60) && !day.notifications.quiet_at(17 * 60 + 30));
+    for bad in [
+        r#"["22:00"]"#,
+        r#"["22:00", "22:00"]"#,
+        r#"["25:00", "07:00"]"#,
+    ] {
+        let text = format!("[notifications]\nquiet_hours = {bad}\n");
+        assert!(Config::parse(&text).is_err(), "{bad} is refused");
+    }
+    let off = Config::parse("[notifications]\nquiet_hours = []\n").unwrap();
+    assert_eq!(off.notifications.quiet_hours, None);
+}
+
+#[test]
 fn screenshot_save_defaults_on_and_is_configurable() {
     assert!(Config::default().screenshot.save);
     let c = Config::parse("[screenshot]\nsave = false\n").unwrap();

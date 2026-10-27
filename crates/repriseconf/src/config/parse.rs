@@ -668,6 +668,31 @@ impl Config {
                 }
                 cfg.notifications.sound_theme = t;
             }
+            if let Some(q) = n.quiet_hours {
+                cfg.notifications.quiet_hours = match q.as_slice() {
+                    [] => None,
+                    [from, to] => {
+                        let time = |t: &str| {
+                            super::parse_hhmm(t).ok_or_else(|| {
+                                format!(
+                                    "notifications.quiet_hours {t:?} is not a time like \"22:00\""
+                                )
+                            })
+                        };
+                        let (from, to) = (time(from)?, time(to)?);
+                        if from == to {
+                            return Err("notifications.quiet_hours must start and end apart".into());
+                        }
+                        Some((from, to))
+                    }
+                    _ => {
+                        return Err(
+                            "notifications.quiet_hours is [\"from\", \"to\"], or [] for none"
+                                .into(),
+                        );
+                    }
+                };
+            }
         }
         if let Some(p) = file.privacy {
             if let Some(v) = p.recent_files {
