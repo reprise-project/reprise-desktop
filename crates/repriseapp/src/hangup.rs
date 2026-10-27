@@ -98,17 +98,20 @@ extern "C" fn on_ending(sig: libc::c_int) {
             .is_ok()
     {
         // SIGALRM is taken only now, so the program's own use of it before an ending signal
-        // keeps its handler.
+        // keeps its handler. The grace alarm is armed before the wake: on a worker thread the
+        // loop may pick the signal up at once, and its rescue alarm must come last.
         // SAFETY: write, sigemptyset, sigaction and alarm are async-signal-safe; the pipe is
         // non-blocking and the struct is zeroed and filled before sigaction reads it.
         unsafe {
-            libc::write(wake, [1u8].as_ptr().cast(), 1);
             let mut sa: libc::sigaction = std::mem::zeroed();
             sa.sa_sigaction = on_alarm as *const () as libc::sighandler_t;
             libc::sigemptyset(&mut sa.sa_mask);
             libc::sigaction(libc::SIGALRM, &sa, std::ptr::null_mut());
             libc::alarm(GRACE_S);
+            libc::write(wake, [1u8].as_ptr().cast(), 1);
         }
+        #[cfg(test)]
+        tests::linger();
         return;
     }
     end_by(sig);
@@ -188,6 +191,65 @@ mod tests {
     }
 
     const CHILD: &str = "REPRISE_HANGUP_CHILD";
+
+    /// Milliseconds the ending handler sleeps after its wake byte, so the loop runs first.
+    static LINGER_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    pub(super) fn linger() {
+        let ms = LINGER_MS.load(Ordering::Acquire);
+        if ms > 0 {
+            let ts = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: (ms * 1_000_000) as libc::c_long,
+            };
+            // SAFETY: nanosleep is async-signal-safe and reads `ts` only.
+            unsafe { libc::nanosleep(&ts, std::ptr::null_mut()) };
+        }
+    }
+
+    #[test]
+    fn a_signal_on_a_worker_thread_leaves_the_rescue_its_full_budget() {
+        use smithay_client_toolkit::reexports::calloop::EventLoop;
+        use std::os::unix::thread::JoinHandleExt;
+        if std::env::var_os(CHILD).is_some() {
+            LINGER_MS.store(500, Ordering::Release);
+            let (ours, _peer) = UnixStream::pair().unwrap();
+            let mut event_loop: EventLoop<()> = EventLoop::try_new().unwrap();
+            on_signals(ours.as_fd());
+            route_to(&event_loop.handle(), |_| {
+                std::thread::sleep(Duration::from_secs(4));
+                println!("RESCUE DONE");
+            });
+            let worker = std::thread::spawn(|| std::thread::sleep(Duration::from_secs(20)));
+            // SAFETY: the worker is alive and asleep.
+            unsafe { libc::pthread_kill(worker.as_pthread_t(), libc::SIGTERM) };
+            for _ in 0..50 {
+                event_loop
+                    .dispatch(Duration::from_millis(20), &mut ())
+                    .unwrap();
+            }
+            println!("SURVIVED");
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "hangup::tests::a_signal_on_a_worker_thread_leaves_the_rescue_its_full_budget",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("RESCUE DONE"),
+            "the 4 s rescue outlasts the 3 s grace: {stdout} {:?}",
+            out.status
+        );
+        assert!(!stdout.contains("SURVIVED"), "the program ends: {stdout}");
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(out.status.signal(), Some(libc::SIGTERM), "{:?}", out.status);
+    }
 
     #[test]
     fn a_sigterm_runs_the_rescue_on_the_loop_then_ends_the_program_by_it() {
