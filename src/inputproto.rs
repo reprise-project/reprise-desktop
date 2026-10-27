@@ -227,8 +227,7 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
             }
             Request::WatchSandboxed { id } => {
                 let r = data_init.init(id, SandboxedData);
-                state.toplevels.send_sandboxed(&r);
-                state.toplevels.sandbox_watchers.push(r);
+                state.watch_sandboxed(r);
             }
             Request::Destroy => {}
         }
