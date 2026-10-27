@@ -242,6 +242,26 @@ pub fn resource_sandboxed(resource: &impl Resource) -> bool {
         .unwrap_or(false)
 }
 
+/// Where the document portal exports the files it grants sandboxed programs.
+pub fn document_root() -> std::path::PathBuf {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            // SAFETY: getuid cannot fail.
+            format!("/run/user/{}", unsafe { libc::getuid() }).into()
+        });
+    runtime.join("doc")
+}
+
+/// Whether `path` lies under [`document_root`]: a sandboxed program can name a host file only
+/// there.
+pub fn portal_exported(path: &std::path::Path) -> bool {
+    path.starts_with(document_root())
+        && path
+            .components()
+            .all(|c| c != std::path::Component::ParentDir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,5 +367,13 @@ mod tests {
         assert!(is_portal_exe(b"/usr/bin/reprise-portal"));
         assert!(is_portal_exe(b"/usr/local/bin/reprise-portal (deleted)"));
         assert!(!is_portal_exe(b"/home/u/reprise-portal"));
+    }
+
+    #[test]
+    fn a_document_portal_path_climbing_out_of_it_is_not_exported() {
+        let root = document_root();
+        assert!(portal_exported(&root.join("abc/x.png")));
+        assert!(!portal_exported(&root.join("abc/../../../etc/passwd")));
+        assert!(!portal_exported(std::path::Path::new("/home/u/x.png")));
     }
 }
