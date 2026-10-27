@@ -7,7 +7,7 @@ use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::raster::Rect;
 use reprisekit::textedit::TextEdit;
 
-use crate::nm::{Psk, Security, Ssid};
+use crate::nm::{Key, Psk, Security, Ssid};
 
 pub const CLIENT: (i32, i32) = (380, 220);
 
@@ -35,8 +35,13 @@ const HIDDEN_INTRO: [&str; 2] = [
     "Type the name of a network that does not broadcast it, and choose",
     "the security it uses.",
 ];
-const HIDDEN_SECURITY: [&str; 3] = ["Open", "WPA-PSK", "Enterprise (802.1X)"];
-const HIDDEN_KINDS: [Security; 3] = [Security::Open, Security::Psk, Security::Enterprise];
+const HIDDEN_SECURITY: [&str; 4] = ["Open", "WPA-PSK", "WPA3-SAE", "Enterprise (802.1X)"];
+const HIDDEN_KINDS: [Security; 4] = [
+    Security::Open,
+    Security::Psk,
+    Security::Sae,
+    Security::Enterprise,
+];
 /// The longest SSID in bytes, 802.11's limit.
 const SSID_MAX: usize = 32;
 
@@ -60,7 +65,7 @@ pub enum Outcome {
     None,
     Redraw,
     /// Join with this key, None for an open hidden network.
-    Connect(Option<Psk>),
+    Connect(Option<Key>),
     /// A hidden 802.1X network: its login goes on in the enterprise dialog.
     Enterprise,
     Cancel,
@@ -191,7 +196,10 @@ impl KeyDialog {
                     match self.security() {
                         Security::Open => Outcome::Connect(None),
                         Security::Enterprise => Outcome::Enterprise,
-                        _ => Outcome::Connect(Some(Psk::new(self.field("key")))),
+                        Security::Sae => {
+                            Outcome::Connect(Some(Key::Sae(Psk::new(self.field("key")))))
+                        }
+                        _ => Outcome::Connect(Some(Key::Psk(Psk::new(self.field("key"))))),
                     }
                 }
             }
@@ -355,11 +363,11 @@ mod tests {
         assert!(enabled(&d, "connect"));
         assert_eq!(
             d.event(form::Event::Pressed("connect")),
-            Outcome::Connect(Some(Psk::new("12345678")))
+            Outcome::Connect(Some(Key::Psk(Psk::new("12345678"))))
         );
         assert_eq!(
             d.event(form::Event::Default),
-            Outcome::Connect(Some(Psk::new("12345678")))
+            Outcome::Connect(Some(Key::Psk(Psk::new("12345678"))))
         );
         let mut short = dialog();
         type_into(&mut short, "key", "1234567");
@@ -418,9 +426,15 @@ mod tests {
         type_into(&mut d, "confirm", "hunter22");
         assert_eq!(
             d.event(form::Event::Pressed("connect")),
-            Outcome::Connect(Some(Psk::new("hunter22")))
+            Outcome::Connect(Some(Key::Psk(Psk::new("hunter22"))))
         );
         pick_security(&mut d, 2);
+        assert!(live(&d, "key"), "WPA3-SAE takes a key");
+        assert_eq!(
+            d.event(form::Event::Pressed("connect")),
+            Outcome::Connect(Some(Key::Sae(Psk::new("hunter22"))))
+        );
+        pick_security(&mut d, 3);
         assert!(!live(&d, "key"));
         assert_eq!(label(&d, "connect"), "&Next >");
         assert_eq!(d.event(form::Event::Default), Outcome::Enterprise);

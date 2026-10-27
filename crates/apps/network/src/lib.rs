@@ -991,14 +991,13 @@ impl NetApp {
                 self.key = None;
                 Reply::redraw_all()
             }
-            keydlg::Outcome::Connect(psk) => {
+            keydlg::Outcome::Connect(key) => {
                 let Some(k) = self.key.take() else {
                     return Reply::redraw_all();
                 };
                 let Some(device) = self.chooser.as_ref().map(|c| c.device_path.clone()) else {
                     return Reply::redraw_all();
                 };
-                let key = psk.map(nm::Key::Psk);
                 self.dial(device, k.ap.clone(), k.ssid(), key, k.hidden);
                 Reply::redraw_all()
             }
