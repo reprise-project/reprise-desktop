@@ -45,10 +45,11 @@ use reprisekit::glass::shadow;
 use reprisekit::interface::Interface;
 use reprisekit::interfaces;
 use reprisekit::look::widgets::{
-    draw_button, draw_checkbox, draw_checkbox_disabled, draw_checkbox_state, draw_combo_drop,
-    draw_group_box, draw_hscrollbar, draw_marquee, draw_page, draw_progress, draw_radio,
-    draw_radio_disabled, draw_scroll_corner, draw_scrollbar, draw_size_grip, draw_spin_buttons,
-    draw_sunken_field, draw_tab, draw_trackbar, draw_vertical_trackbar,
+    BUTTON_ICON, ICON_BUTTON_W, draw_button, draw_checkbox, draw_checkbox_disabled,
+    draw_checkbox_state, draw_combo_drop, draw_group_box, draw_hscrollbar, draw_icon_button,
+    draw_marquee, draw_page, draw_progress, draw_radio, draw_radio_disabled, draw_scroll_corner,
+    draw_scrollbar, draw_size_grip, draw_spin_buttons, draw_sunken_field, draw_tab, draw_trackbar,
+    draw_vertical_trackbar,
 };
 use reprisekit::look::{self, Paint, sample};
 use reprisekit::raster::{Canvas, EdgeStyle, Rect, write_preview};
@@ -5462,6 +5463,15 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         let cb = colorbutton::ColorButton::new(bcs.background, vec![]);
         colorbutton::draw(&mut c, &bp, Rect::new(X0 + 5 * 84, y, 75, 21), &cb);
         state_label(&mut c, X0 + 5 * 84, y + 25, 76, "Colour");
+        let icon = monitor_icon(s);
+        for (i, ptr) in [Interaction::Idle, Interaction::Pressed]
+            .into_iter()
+            .enumerate()
+        {
+            let r = Rect::new(X0 + 7 * 84 + i as i32 * 30, y, ICON_BUTTON_W, 23);
+            draw_icon_button(&mut c, &text, &bp, r, &icon, true, ptr, false, px);
+        }
+        state_label(&mut c, X0 + 7 * 84, y + 25, 76, "Icon");
         y += 23 + 16;
 
         row_label(&mut c, y, "Check Box");
@@ -7888,7 +7898,15 @@ fn write_volume_popups(with_blue: bool, n: i32) {
     }
 }
 
-/// Glass's push buttons, group box and tabs on its face, 950x160.
+/// The monitor icon at `s` device px per icon px, for the icon buttons.
+fn monitor_icon(s: i32) -> Canvas {
+    let side = (BUTTON_ICON * s) as u32;
+    let mut icon = Canvas::new(side, side);
+    reprisekit::art::icons::MONITOR.paint(&mut icon, 0, 0, s);
+    icon
+}
+
+/// Glass's push buttons, icon buttons, group box and tabs on its face, 950x160.
 fn render_glass_sheet(theme: &Theme) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     let p = theme.paint();
@@ -7918,6 +7936,14 @@ fn render_glass_sheet(theme: &Theme) -> Canvas {
     draw_button(
         &mut c, &text, &inactive, r, "Inactive", true, idle, true, false, px,
     );
+    let icon = monitor_icon(1);
+    for (i, (ptr, enabled)) in [(idle, true), (hot, true), (held, true), (idle, false)]
+        .into_iter()
+        .enumerate()
+    {
+        let r = Rect::new(10 + 85 * 8 + 30 * i as i32, 10, ICON_BUTTON_W, 23);
+        draw_icon_button(&mut c, &text, &p, r, &icon, enabled, ptr, false, px);
+    }
     let wide = Rect::new(10, 45, 160, 23);
     draw_button(
         &mut c, &text, &p, wide, "Wide", false, idle, true, false, px,
