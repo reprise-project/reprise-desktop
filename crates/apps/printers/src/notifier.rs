@@ -185,7 +185,7 @@ pub fn renew(c: &Client, id: i32, now: SystemTime) -> Result<Lease> {
 /// False when there is no system bus to listen on. Server signals are skipped: reading
 /// cupsd on `ServerStopped` would start it again.
 pub fn listen(wake: impl Fn() + Send + 'static) -> bool {
-    let conn = match zbus::blocking::Connection::system() {
+    let conn = match reprisebus::connect(zbus::connection::Builder::system()) {
         Ok(c) => c,
         Err(e) => {
             log::info!("no system bus for printer events: {e}");
@@ -195,15 +195,16 @@ pub fn listen(wake: impl Fn() + Send + 'static) -> bool {
     let rule = match zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .path(PATH)
-        .and_then(|b| b.interface(IFACE))
+        .interface(IFACE)
+        .build()
     {
-        Ok(b) => b.build(),
+        Ok(r) => r,
         Err(e) => {
             log::warn!("no match rule for printer events: {e}");
             return false;
         }
     };
-    let signals = match zbus::blocking::MessageIterator::for_match_rule(rule, &conn, None) {
+    let signals = match reprisebus::wait(zbus::MessageStream::for_match_rule(rule, &conn, None)) {
         Ok(s) => s,
         Err(e) => {
             log::info!("cannot listen for printer events: {e}");
@@ -213,7 +214,7 @@ pub fn listen(wake: impl Fn() + Send + 'static) -> bool {
     std::thread::Builder::new()
         .name("cups-events".into())
         .spawn(move || {
-            for m in signals.flatten() {
+            for m in reprisebus::blocking_iter(signals).flatten() {
                 let header = m.header();
                 let member = header.member().map(|m| m.as_str()).unwrap_or_default();
                 if wakes(member) {

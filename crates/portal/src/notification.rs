@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use zbus::object_server::SignalEmitter;
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::{OwnedVariant, Variant};
 
 const SERVER: &str = "org.freedesktop.Notifications";
 const SERVER_PATH: &str = "/org/freedesktop/Notifications";
@@ -63,7 +63,7 @@ pub enum Icon {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Action {
     pub name: String,
-    pub target: Option<OwnedValue>,
+    pub target: Option<OwnedVariant>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -150,8 +150,8 @@ impl Notification {
     }
 
     #[zbus(property)]
-    fn supported_options(&self) -> HashMap<String, OwnedValue> {
-        let list = |v: &str| Value::from(vec![v]).try_to_owned().ok();
+    fn supported_options(&self) -> HashMap<String, OwnedVariant> {
+        let list = |v: &str| Variant::from(vec![v]).try_to_owned().ok();
         [("category", IM_CATEGORY), ("button-purpose", REPLY_PURPOSE)]
             .into_iter()
             .filter_map(|(k, v)| Some((k.to_string(), list(v)?)))
@@ -163,7 +163,7 @@ impl Notification {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         app_id: String,
         id: String,
-        notification: HashMap<String, OwnedValue>,
+        notification: HashMap<String, OwnedVariant>,
         #[zbus(connection)] conn: &zbus::Connection,
     ) -> zbus::fdo::Result<()> {
         self.frontend.check(&hdr).await?;
@@ -234,13 +234,13 @@ impl Notification {
         app_id: &str,
         id: &str,
         action: &str,
-        parameter: Vec<OwnedValue>,
+        parameter: Vec<OwnedVariant>,
     ) -> zbus::Result<()>;
 }
 
 /// The portal's vardict read into `Parsed`; wrong types and unknown keys
 /// are left out, as the frontend already refused malformed ones.
-pub fn parse(n: &HashMap<String, OwnedValue>) -> Parsed {
+pub fn parse(n: &HashMap<String, OwnedVariant>) -> Parsed {
     let string = |k: &str| n.get(k).and_then(|v| String::try_from(v.clone()).ok());
     let default_action = string("default-action").map(|name| Action {
         name,
@@ -249,7 +249,7 @@ pub fn parse(n: &HashMap<String, OwnedValue>) -> Parsed {
     let mut reply = None;
     let buttons = n
         .get("buttons")
-        .and_then(|v| Vec::<HashMap<String, OwnedValue>>::try_from(v.clone()).ok())
+        .and_then(|v| Vec::<HashMap<String, OwnedVariant>>::try_from(v.clone()).ok())
         .unwrap_or_default()
         .into_iter()
         .filter_map(|b| {
@@ -295,19 +295,19 @@ pub fn parse(n: &HashMap<String, OwnedValue>) -> Parsed {
 
 /// A serialized icon: `("themed", as)`, `("bytes", ay)` or
 /// `("file-descriptor", h)`, whose file is read here into `Bytes`.
-fn parse_icon(v: &OwnedValue) -> Icon {
-    let Value::Structure(st) = &**v else {
+fn parse_icon(v: &OwnedVariant) -> Icon {
+    let Variant::Structure(st) = &**v else {
         return Icon::None;
     };
-    let [Value::Str(kind), inner] = st.fields() else {
+    let [Variant::Str(kind), inner] = st.fields() else {
         return Icon::None;
     };
     // The second field is a variant.
     let inner = match inner {
-        Value::Value(v) => &**v,
+        Variant::Variant(v) => &**v,
         v => v,
     };
-    if let ("file-descriptor", Value::Fd(fd)) = (kind.as_str(), inner) {
+    if let ("file-descriptor", Variant::Fd(fd)) = (kind.as_str(), inner) {
         return read_icon(fd)
             .map_err(|e| log::debug!("notification icon: {e}"))
             .map(Icon::Bytes)
@@ -339,7 +339,7 @@ fn icon_file(fd: std::os::fd::BorrowedFd<'_>) -> std::io::Result<std::fs::File> 
 
 /// The whole file behind an icon's descriptor, read from its start
 /// whatever its offset; an error for one over `MAX_ICON_BYTES`.
-fn read_icon(fd: &zbus::zvariant::Fd<'_>) -> std::io::Result<Vec<u8>> {
+fn read_icon(fd: &zbus::Fd<'_>) -> std::io::Result<Vec<u8>> {
     use std::os::fd::AsFd;
     use std::os::unix::fs::FileExt;
     let file = icon_file(fd.as_fd())?;
@@ -414,20 +414,20 @@ async fn notify(
     p: &Parsed,
     image: Option<ImageData>,
 ) -> zbus::Result<u32> {
-    let mut hints: HashMap<&str, Value<'_>> = HashMap::new();
-    hints.insert("urgency", Value::U8(p.urgency));
+    let mut hints: HashMap<&str, Variant<'_>> = HashMap::new();
+    hints.insert("urgency", Variant::U8(p.urgency));
     if p.transient {
-        hints.insert("transient", Value::Bool(true));
+        hints.insert("transient", Variant::Bool(true));
     }
     if !app_id.is_empty() {
-        hints.insert("desktop-entry", Value::from(app_id));
+        hints.insert("desktop-entry", Variant::from(app_id));
     }
     let mut app_icon = String::new();
     if let Icon::Themed(names) = &p.icon {
         app_icon = names.first().cloned().unwrap_or_default();
     }
     if let Some(data) = image {
-        hints.insert("image-data", Value::from(data));
+        hints.insert("image-data", Variant::from(data));
     }
     let reply = conn
         .call_method(
@@ -456,9 +456,9 @@ pub fn app_path(app_id: &str) -> String {
     format!("/{}", app_id.replace('.', "/").replace('-', "_"))
 }
 
-fn platform_data(token: Option<&str>) -> HashMap<&'static str, Value<'_>> {
+fn platform_data(token: Option<&str>) -> HashMap<&'static str, Variant<'_>> {
     token
-        .map(|t| ("activation-token", Value::from(t)))
+        .map(|t| ("activation-token", Variant::from(t)))
         .into_iter()
         .collect()
 }
@@ -483,8 +483,9 @@ fn replied(book: &Book, server_id: u32) -> Option<(String, String, Action)> {
 /// as `ActionInvoked` with the text after the platform data.
 async fn reply(conn: &zbus::Connection, app_id: &str, id: &str, a: Action, text: &str) {
     if let Some(name) = a.name.strip_prefix("app.") {
-        let mut param: Vec<Value<'_>> = a.target.iter().map(|t| Value::from(t.clone())).collect();
-        param.push(Value::from(text));
+        let mut param: Vec<Variant<'_>> =
+            a.target.iter().map(|t| Variant::from(t.clone())).collect();
+        param.push(Variant::from(text));
         let body = (name, param, platform_data(None));
         match app_call(conn, app_id, "ActivateAction", &body).await {
             Ok(()) => return,
@@ -512,7 +513,8 @@ async fn invoke(
             }
         }
         Invoke::ActivateAction(a) => {
-            let param: Vec<Value<'_>> = a.target.iter().map(|t| Value::from(t.clone())).collect();
+            let param: Vec<Variant<'_>> =
+                a.target.iter().map(|t| Variant::from(t.clone())).collect();
             let body = (a.name.as_str(), param, platform);
             if let Err(e) = app_call(conn, app_id, "ActivateAction", &body).await {
                 log::info!("Notification {app_id:?}/{id:?}: {e}; telling the app instead");
@@ -534,7 +536,7 @@ async fn app_call<B>(
     body: &B,
 ) -> zbus::Result<()>
 where
-    B: serde::Serialize + zbus::zvariant::DynamicType,
+    B: serde::Serialize + zbus::DynamicType,
 {
     if app_id.is_empty() || zbus::names::BusName::try_from(app_id).is_err() {
         return Err(zbus::Error::Failure(format!(
@@ -556,11 +558,11 @@ async fn signal(
     token: Option<&str>,
     response: Option<&str>,
 ) {
-    let mut parameter: Vec<OwnedValue> = a.target.iter().cloned().collect();
-    if let Ok(v) = Value::from(platform_data(token)).try_to_owned() {
+    let mut parameter: Vec<OwnedVariant> = a.target.iter().cloned().collect();
+    if let Ok(v) = Variant::from(platform_data(token)).try_to_owned() {
         parameter.push(v);
     }
-    if let Some(Ok(v)) = response.map(|r| Value::from(r).try_to_owned()) {
+    if let Some(Ok(v)) = response.map(|r| Variant::from(r).try_to_owned()) {
         parameter.push(v);
     }
     let Ok(iface) = conn
@@ -585,8 +587,9 @@ pub async fn watch(conn: zbus::Connection, book: Shared) {
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .interface(SERVER)
-        .and_then(|b| b.path(SERVER_PATH))
-        .map(|b| b.build().into());
+        .path(SERVER_PATH)
+        .build()
+        .map(Into::into);
     let rules = match rule {
         Ok(r) => vec![r],
         Err(e) => {
@@ -629,12 +632,10 @@ pub async fn watch(conn: zbus::Connection, book: Shared) {
                 };
                 log::info!("Notification {app_id:?}/{id:?}: {key} runs {runs:?}");
                 let conn2 = conn.clone();
-                conn.executor()
-                    .spawn(
-                        async move { invoke(&conn2, &app_id, &id, what, token.as_deref()).await },
-                        "notification click",
-                    )
-                    .detach();
+                zruntime::spawn(async move {
+                    invoke(&conn2, &app_id, &id, what, token.as_deref()).await
+                })
+                .detach();
             }
             Some("NotificationReplied") => {
                 let Ok((server_id, text)) = m.body().deserialize::<(u32, String)>() else {
@@ -645,11 +646,7 @@ pub async fn watch(conn: zbus::Connection, book: Shared) {
                 };
                 log::info!("Notification {app_id:?}/{id:?}: a reply runs {:?}", a.name);
                 let conn2 = conn.clone();
-                conn.executor()
-                    .spawn(
-                        async move { reply(&conn2, &app_id, &id, a, &text).await },
-                        "notification reply",
-                    )
+                zruntime::spawn(async move { reply(&conn2, &app_id, &id, a, &text).await })
                     .detach();
             }
             Some("NotificationClosed") => {
@@ -666,11 +663,11 @@ pub async fn watch(conn: zbus::Connection, book: Shared) {
 mod tests {
     use super::*;
 
-    fn owned<'a>(v: impl Into<Value<'a>>) -> OwnedValue {
+    fn owned<'a>(v: impl Into<Variant<'a>>) -> OwnedVariant {
         v.into().try_to_owned().unwrap()
     }
 
-    fn button(label: &str, action: &str) -> HashMap<String, OwnedValue> {
+    fn button(label: &str, action: &str) -> HashMap<String, OwnedVariant> {
         let mut b = HashMap::new();
         b.insert("label".to_string(), owned(label));
         b.insert("action".to_string(), owned(action));
@@ -687,7 +684,7 @@ mod tests {
         n.insert("default-action-target".to_string(), owned(7u32));
         n.insert(
             "icon".to_string(),
-            owned(("themed", Value::from(vec!["mail-unread", "mail"]))),
+            owned(("themed", Variant::from(vec!["mail-unread", "mail"]))),
         );
         n.insert(
             "buttons".to_string(),
@@ -763,7 +760,7 @@ mod tests {
         let mut n = HashMap::new();
         n.insert(
             "icon".to_string(),
-            owned(("bytes", Value::from(vec![1u8, 2, 3]))),
+            owned(("bytes", Variant::from(vec![1u8, 2, 3]))),
         );
         n.insert("priority".to_string(), owned("low"));
         let p = parse(&n);
@@ -797,11 +794,11 @@ mod tests {
         let mut file = tempfile::tempfile().unwrap();
         file.write_all(b"picture").unwrap();
         file.seek(std::io::SeekFrom::Start(3)).unwrap();
-        let fd = zbus::zvariant::Fd::from(std::os::fd::OwnedFd::from(file));
+        let fd = zbus::Fd::from(std::os::fd::OwnedFd::from(file));
         let mut n = HashMap::new();
         n.insert(
             "icon".to_string(),
-            owned(("file-descriptor", Value::Fd(fd))),
+            owned(("file-descriptor", Variant::Fd(fd))),
         );
         assert_eq!(parse(&n).icon, Icon::Bytes(b"picture".to_vec()));
     }
@@ -909,7 +906,7 @@ mod tests {
             summary: String,
             _body: String,
             actions: Vec<String>,
-            hints: HashMap<String, OwnedValue>,
+            hints: HashMap<String, OwnedVariant>,
             _expire_timeout: i32,
         ) -> u32 {
             let mut keys: Vec<String> = hints.into_keys().collect();
@@ -934,11 +931,8 @@ mod tests {
         zbus::block_on(async {
             let got = Arc::new(Mutex::new(Vec::new()));
             let server = zbus::connection::Builder::session()
-                .unwrap()
                 .name(SERVER)
-                .unwrap()
                 .serve_at(SERVER_PATH, FakeServer { got: got.clone() })
-                .unwrap()
                 .build()
                 .await
                 .unwrap();
@@ -947,7 +941,6 @@ mod tests {
             let frontend = crate::Frontend::default();
             frontend.set(client.unique_name().map(|n| n.to_string()));
             let portal = zbus::connection::Builder::session()
-                .unwrap()
                 .serve_at(
                     crate::PATH,
                     Notification {
@@ -955,23 +948,18 @@ mod tests {
                         frontend,
                     },
                 )
-                .unwrap()
                 .build()
                 .await
                 .unwrap();
-            portal
-                .executor()
-                .spawn(watch(portal.clone(), book.clone()), "watch")
-                .detach();
+            zruntime::spawn(watch(portal.clone(), book.clone())).detach();
             let dest = portal.unique_name().unwrap().to_string();
             let mut invoked = zbus::MessageStream::for_match_rule(
                 zbus::MatchRule::builder()
                     .msg_type(zbus::message::Type::Signal)
                     .interface("org.freedesktop.impl.portal.Notification")
-                    .unwrap()
                     .member("ActionInvoked")
-                    .unwrap()
-                    .build(),
+                    .build()
+                    .unwrap(),
                 &client,
                 None,
             )
@@ -981,14 +969,14 @@ mod tests {
             image::RgbaImage::from_pixel(4, 4, image::Rgba([9, 9, 9, 255]))
                 .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
                 .unwrap();
-            let mut n: HashMap<&str, Value<'_>> = HashMap::new();
-            n.insert("title", Value::from("Build done"));
-            n.insert("icon", Value::from(("bytes", Value::from(png))));
-            let mut b: HashMap<&str, Value<'_>> = HashMap::new();
-            b.insert("label", Value::from("Show"));
-            b.insert("action", Value::from("show"));
-            b.insert("target", Value::from("log"));
-            n.insert("buttons", Value::from(vec![b]));
+            let mut n: HashMap<&str, Variant<'_>> = HashMap::new();
+            n.insert("title", Variant::from("Build done"));
+            n.insert("icon", Variant::from(("bytes", Variant::from(png))));
+            let mut b: HashMap<&str, Variant<'_>> = HashMap::new();
+            b.insert("label", Variant::from("Show"));
+            b.insert("action", Variant::from("show"));
+            b.insert("target", Variant::from("log"));
+            n.insert("buttons", Variant::from(vec![b]));
             for _ in 0..2 {
                 client
                     .call_method(
@@ -1029,7 +1017,7 @@ mod tests {
                 .await
                 .unwrap();
             let m = invoked.next().await.unwrap().unwrap();
-            let (app, id, action, param): (String, String, String, Vec<OwnedValue>) =
+            let (app, id, action, param): (String, String, String, Vec<OwnedVariant>) =
                 m.body().deserialize().unwrap();
             assert_eq!(
                 (app.as_str(), id.as_str(), action.as_str()),
@@ -1037,7 +1025,7 @@ mod tests {
             );
             assert_eq!(String::try_from(param[0].clone()).unwrap(), "log");
             assert_eq!(param.len(), 2, "the target, then the platform data");
-            let platform = HashMap::<String, OwnedValue>::try_from(param[1].clone()).unwrap();
+            let platform = HashMap::<String, OwnedVariant>::try_from(param[1].clone()).unwrap();
             assert_eq!(
                 String::try_from(platform["activation-token"].clone()).unwrap(),
                 "tok"

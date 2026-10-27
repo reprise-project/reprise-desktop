@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Usage: scripts/kit-units [TREE]   (default: the checkout holding this script)
 # Builds and test-builds every workspace member, one command at a time, and
-# lists the rlib hash of reprisekit, zbus and reprisebus each one links. Exit 0
-# when every command that links reprisekit shares one unit of each, 1
-# otherwise. Run it after a dependency change; a second hash means
-# crates/reprisekit-pins (or, for a crate outside reprisekit's graph,
-# crates/repriseapp-pins) needs the new feature. Take the missing features from
-# `cargo tree -e features -i <crate>` under the command that differs. It
-# builds every member twice, so it takes a while.
+# lists the rlib hash of each version of reprisekit, zbus and reprisebus each
+# one links. Exit 0 when every command that links reprisekit shares one unit
+# of each crate version, 1 otherwise. Run it after a dependency change; a
+# second hash means crates/reprisekit-pins (or, for a crate outside
+# reprisekit's graph, crates/repriseapp-pins) needs the new feature. Take the
+# missing features from `cargo tree -e features -i <crate>` under the command
+# that differs. It builds every member twice, so it takes a while.
 tree=${1:-$(cd "$(dirname "$0")/.." && pwd)}
 cd "$tree" || exit 2
 crates="reprisekit zbus reprisebus"
@@ -17,16 +17,17 @@ units() {
   "$@" --message-format=json 2>/dev/null | CRATES=$crates python3 -c '
 import json, os, sys
 names = os.environ["CRATES"].split()
-seen = {}
+seen = {n: {} for n in names}
 for l in sys.stdin:
     try: m = json.loads(l)
     except Exception: continue
     n = m.get("target", {}).get("name")
-    if (m.get("reason") == "compiler-artifact" and n in names and n not in seen
+    if (m.get("reason") == "compiler-artifact" and n in names
             and "lib" in m["target"]["kind"] and not m["profile"]["test"]):
+        version = m["package_id"].rsplit("#", 1)[-1].rsplit("@", 1)[-1]
         f = [f for f in m["filenames"] if "/deps/" in f][0]
-        seen[n] = f.rsplit("-", 1)[-1].split(".")[0]
-print("\t".join(seen.get(n, "") for n in names))'
+        seen[n].setdefault(version, f.rsplit("-", 1)[-1].split(".")[0])
+print("\t".join(",".join(f"{v}={h}" for v, h in sorted(seen[n].items())) for n in names))'
 }
 out=$(
   for m in $members; do
@@ -38,12 +39,18 @@ out=$(
 )
 echo "command	$crates" | tr ' ' '\t'
 echo "$out" | awk -F'\t' '$2 != ""'
-fail=0
-col=2
-for c in $crates; do
-  n=$(echo "$out" | awk -F'\t' -v c=$col '$2 != "" && $c != "" {print $c}' | sort -u | wc -l)
-  echo "$n distinct $c units"
-  [ "$n" -eq 1 ] || fail=1
-  col=$((col + 1))
-done
-exit $fail
+echo "$out" | CRATES=$crates python3 -c '
+import os, sys
+names = os.environ["CRATES"].split()
+units = {}
+for line in sys.stdin:
+    cells = line.rstrip("\n").split("\t")[1:]
+    if not cells or not cells[0]:
+        continue
+    for n, cell in zip(names, cells):
+        for unit in filter(None, cell.split(",")):
+            version, h = unit.split("=")
+            units.setdefault(f"{n}@{version}", set()).add(h)
+for key in sorted(units):
+    print(f"{len(units[key])} distinct {key} units")
+sys.exit(any(len(h) != 1 for h in units.values()))'

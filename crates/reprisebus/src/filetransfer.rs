@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
-use zbus::blocking::Connection;
-use zbus::zvariant::{Fd, Value};
+use zbus::Connection;
+use zbus::{Fd, Variant};
 
 const NAME: &str = "org.freedesktop.portal.Documents";
 const PATH: &str = "/org/freedesktop/portal/documents";
@@ -35,17 +35,16 @@ pub struct FileTransfer {
 
 impl FileTransfer {
     pub fn on(conn: Connection) -> zbus::Result<FileTransfer> {
-        let version: u32 = conn
-            .call_method(
-                Some(NAME),
-                PATH,
-                Some("org.freedesktop.DBus.Properties"),
-                "Get",
-                &(INTERFACE, "version"),
-            )?
-            .body()
-            .deserialize::<zbus::zvariant::OwnedValue>()
-            .and_then(|v| u32::try_from(v).map_err(Into::into))?;
+        let version: u32 = crate::wait(conn.call_method(
+            Some(NAME),
+            PATH,
+            Some("org.freedesktop.DBus.Properties"),
+            "Get",
+            &(INTERFACE, "version"),
+        ))?
+        .body()
+        .deserialize::<zbus::OwnedVariant>()
+        .and_then(u32::try_from)?;
         log::debug!("file transfer portal version {version}");
         Ok(FileTransfer { conn })
     }
@@ -66,8 +65,8 @@ impl FileTransfer {
             return Err(zbus::Error::Failure("no dragged file can be sent".into()));
         }
         let options = [
-            ("writable", Value::from(false)),
-            ("autostop", Value::from(true)),
+            ("writable", Variant::from(false)),
+            ("autostop", Variant::from(true)),
         ];
         let key: String = self
             .call("StartTransfer", &(options_dict(&options),))?
@@ -99,10 +98,12 @@ impl FileTransfer {
 
     fn call<B>(&self, method: &str, body: &B) -> zbus::Result<zbus::message::Message>
     where
-        B: zbus::export::serde::ser::Serialize + zbus::zvariant::DynamicType,
+        B: zbus::export::serde::ser::Serialize + zbus::DynamicType,
     {
-        self.conn
-            .call_method(Some(NAME), PATH, Some(INTERFACE), method, body)
+        crate::wait(
+            self.conn
+                .call_method(Some(NAME), PATH, Some(INTERFACE), method, body),
+        )
     }
 }
 
@@ -329,8 +330,8 @@ fn spawn(name: &str, run: impl FnOnce() + Send + 'static) {
 }
 
 fn options_dict<'a>(
-    options: &'a [(&'a str, Value<'a>)],
-) -> std::collections::HashMap<&'a str, &'a Value<'a>> {
+    options: &'a [(&'a str, Variant<'a>)],
+) -> std::collections::HashMap<&'a str, &'a Variant<'a>> {
     options.iter().map(|(k, v)| (*k, v)).collect()
 }
 
@@ -357,7 +358,7 @@ mod tests {
     use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStringExt;
     use std::process::{Child, Command, Stdio};
-    use zbus::zvariant::OwnedValue;
+    use zbus::OwnedVariant;
 
     struct Bus(Child, String);
 
@@ -407,15 +408,12 @@ mod tests {
     }
 
     fn connect(address: &str) -> Connection {
-        zbus::blocking::connection::Builder::address(address)
-            .expect("address")
-            .build()
-            .expect("connect")
+        crate::connect(zbus::connection::Builder::address(address)).expect("connect")
     }
 
     #[derive(Default)]
     struct Seen {
-        options: Vec<HashMap<String, OwnedValue>>,
+        options: Vec<HashMap<String, OwnedVariant>>,
         added: Vec<Vec<PathBuf>>,
         o_path: bool,
         stopped: Vec<String>,
@@ -430,7 +428,7 @@ mod tests {
             1
         }
 
-        fn start_transfer(&self, options: HashMap<String, OwnedValue>) -> String {
+        fn start_transfer(&self, options: HashMap<String, OwnedVariant>) -> String {
             let mut seen = self.0.lock().unwrap();
             seen.options.push(options);
             seen.o_path = true;
@@ -440,8 +438,8 @@ mod tests {
         fn add_files(
             &self,
             _key: &str,
-            fds: Vec<zbus::zvariant::OwnedFd>,
-            _options: HashMap<String, OwnedValue>,
+            fds: Vec<zbus::OwnedFd>,
+            _options: HashMap<String, OwnedVariant>,
         ) -> zbus::fdo::Result<()> {
             let mut seen = self.0.lock().unwrap();
             let mut paths = Vec::new();
@@ -463,7 +461,7 @@ mod tests {
         fn retrieve_files(
             &self,
             key: &str,
-            _options: HashMap<String, OwnedValue>,
+            _options: HashMap<String, OwnedVariant>,
         ) -> zbus::fdo::Result<Vec<String>> {
             if key != "key1" {
                 return Err(zbus::fdo::Error::Failed("no such transfer".into()));
@@ -485,14 +483,12 @@ mod tests {
     fn fake() -> Option<(Bus, Connection, Arc<Mutex<Seen>>)> {
         let (bus, _dir) = bus(false, &[])?;
         let seen = Arc::new(Mutex::new(Seen::default()));
-        let portal = zbus::blocking::connection::Builder::address(bus.1.as_str())
-            .unwrap()
-            .serve_at(PATH, Fake(seen.clone()))
-            .unwrap()
-            .name(NAME)
-            .unwrap()
-            .build()
-            .unwrap();
+        let portal = crate::connect(
+            zbus::connection::Builder::address(bus.1.as_str())
+                .serve_at(PATH, Fake(seen.clone()))
+                .name(NAME),
+        )
+        .unwrap();
         Some((bus, portal, seen))
     }
 

@@ -12,7 +12,7 @@ use futures_util::stream::StreamExt;
 use reprisebus::Signal;
 use zbus::Connection;
 use zbus::proxy::{CacheProperties, MethodFlags};
-use zbus::zvariant::{Fd, OwnedValue, Value};
+use zbus::{Fd, OwnedVariant, Variant};
 
 use crate::model::{Kind, Origin, Request, Restart, Update};
 
@@ -62,7 +62,7 @@ pub type Progress<'a> = &'a mut dyn FnMut(Option<f64>, Option<String>);
 /// A device's request while its firmware installs, and `None` once it carries on.
 pub type Asks<'a> = &'a mut dyn FnMut(Option<Request>);
 
-type Dict = HashMap<String, OwnedValue>;
+type Dict = HashMap<String, OwnedVariant>;
 
 fn failed(e: zbus::Error) -> Error {
     if let zbus::Error::MethodError(name, detail, _) = &e {
@@ -133,7 +133,7 @@ fn strings(d: &Dict, key: &str) -> Vec<String> {
 async fn call(
     conn: &Connection,
     method: &str,
-    body: &(impl zbus::export::serde::Serialize + zbus::zvariant::DynamicType),
+    body: &(impl zbus::export::serde::Serialize + zbus::DynamicType),
 ) -> zbus::Result<zbus::Message> {
     conn.call_method(Some(NAME), PATH, Some(IFACE), method, body)
         .await
@@ -217,11 +217,12 @@ pub fn change_rules() -> zbus::Result<Vec<zbus::OwnedMatchRule>> {
         .map(|member| {
             zbus::MatchRule::builder()
                 .msg_type(zbus::message::Type::Signal)
-                .sender(NAME)?
-                .path(PATH)?
-                .interface(IFACE)?
+                .sender(NAME)
+                .path(PATH)
+                .interface(IFACE)
                 .member(member)
-                .map(|b| b.build().into())
+                .build()
+                .map(Into::into)
         })
         .collect()
 }
@@ -481,10 +482,11 @@ pub async fn install(
         zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender(NAME)
-            .and_then(|b| b.path(PATH))
-            .and_then(|b| b.interface(iface))
-            .and_then(|b| b.member(member))
-            .map(|b| b.build().into())
+            .path(PATH)
+            .interface(iface)
+            .member(member)
+            .build()
+            .map(Into::into)
             .map_err(|e| Error::Failed(e.to_string()))
     };
     let rules = vec![
@@ -504,22 +506,18 @@ pub async fn install(
     }
     let proxy = zbus::proxy::Builder::<zbus::Proxy>::new(conn)
         .destination(NAME)
-        .and_then(|b| b.path(PATH))
-        .and_then(|b| b.interface(IFACE))
-        .map(|b| b.cache_properties(CacheProperties::No))
-        .map_err(failed)?
+        .path(PATH)
+        .interface(IFACE)
+        .cache_properties(CacheProperties::No)
         .build()
         .await
         .map_err(failed)?;
-    let options: HashMap<&str, Value> = HashMap::new();
+    let options: HashMap<&str, Variant> = HashMap::new();
     // The daemon asks polkit, which may prompt through the session's
     // agent: the call allows it.
     let body = (device.id.as_str(), Fd::from(&cab), options);
-    let call = proxy.call_with_flags::<_, _, ()>(
-        "Install",
-        MethodFlags::AllowInteractiveAuth.into(),
-        &body,
-    );
+    let call =
+        proxy.call_with_flags::<_, _, ()>("Install", MethodFlags::ALLOW_INTERACTIVE_AUTH, &body);
     futures_util::pin_mut!(call);
     let mut listening = true;
     let mut waiting = false;
@@ -580,13 +578,13 @@ pub async fn install(
 mod tests {
     use super::*;
 
-    fn dict(pairs: &[(&str, Value)]) -> Dict {
+    fn dict(pairs: &[(&str, Variant)]) -> Dict {
         pairs
             .iter()
             .map(|(k, v)| {
                 (
                     k.to_string(),
-                    OwnedValue::try_from(v.try_clone().unwrap()).unwrap(),
+                    OwnedVariant::try_from(v.try_clone().unwrap()).unwrap(),
                 )
             })
             .collect()
@@ -595,7 +593,7 @@ mod tests {
     #[test]
     fn auth_failed_is_a_dismissal_or_a_refusal() {
         let msg = zbus::Message::method_call("/", "Install")
-            .and_then(|b| b.build(&()))
+            .build(&())
             .unwrap();
         let error = |name: &str| {
             zbus::Error::MethodError(
@@ -619,21 +617,21 @@ mod tests {
     #[test]
     fn a_device_and_its_release_make_an_update() {
         let device = dict(&[
-            ("DeviceId", Value::from("08d460be")),
-            ("Name", Value::from("Integrated Webcam™")),
-            ("Version", Value::from("1.2.2")),
-            ("Flags", Value::from(UPDATABLE)),
+            ("DeviceId", Variant::from("08d460be")),
+            ("Name", Variant::from("Integrated Webcam™")),
+            ("Version", Variant::from("1.2.2")),
+            ("Flags", Variant::from(UPDATABLE)),
         ]);
         let release = dict(&[
-            ("Version", Value::from("1.2.4")),
-            ("Summary", Value::from("Firmware for the webcam")),
+            ("Version", Variant::from("1.2.4")),
+            ("Summary", Variant::from("Firmware for the webcam")),
             (
                 "Description",
-                Value::from(
+                Variant::from(
                     "<p>Fixes the picture going dark.</p><ul><li>Faster &amp; sharper</li></ul>",
                 ),
             ),
-            ("Urgency", Value::from(3u32)),
+            ("Urgency", Variant::from(3u32)),
         ]);
         let u = update(&device, &release);
         assert_eq!(u.id, "08d460be");
@@ -645,7 +643,7 @@ mod tests {
 
     #[test]
     fn notes_fall_back_to_the_summary() {
-        let release = dict(&[("Summary", Value::from("Firmware for the webcam"))]);
+        let release = dict(&[("Summary", Variant::from("Firmware for the webcam"))]);
         assert_eq!(notes(&release), "Firmware for the webcam");
     }
 
@@ -659,17 +657,17 @@ mod tests {
     #[test]
     fn a_remote_firmware_base_replaces_the_location_directory() {
         let release = dict(&[
-            ("RemoteId", Value::from("lvfs")),
+            ("RemoteId", Variant::from("lvfs")),
             (
                 "Locations",
-                Value::from(vec!["https://cdn.example.org/downloads/abc-webcam.cab"]),
+                Variant::from(vec!["https://cdn.example.org/downloads/abc-webcam.cab"]),
             ),
         ]);
         let remotes = vec![dict(&[
-            ("RemoteId", Value::from("lvfs")),
+            ("RemoteId", Variant::from("lvfs")),
             (
                 "FirmwareBaseUri",
-                Value::from("https://mirror.example.org/fw/"),
+                Variant::from("https://mirror.example.org/fw/"),
             ),
         ])];
         assert_eq!(
@@ -687,11 +685,11 @@ mod tests {
         let replug = dict(&[
             (
                 "AppstreamId",
-                Value::from("org.freedesktop.fwupd.request.remove-replug"),
+                Variant::from("org.freedesktop.fwupd.request.remove-replug"),
             ),
-            ("RequestKind", Value::from(2u32)),
-            ("Flags", Value::from(1u64)),
-            ("UpdateMessage", Value::from("Please pull it out")),
+            ("RequestKind", Variant::from(2u32)),
+            ("Flags", Variant::from(1u64)),
+            ("UpdateMessage", Variant::from("Please pull it out")),
         ]);
         assert_eq!(
             request(&replug, "Webcam"),
@@ -704,16 +702,16 @@ mod tests {
         let own = dict(&[
             (
                 "AppstreamId",
-                Value::from("org.freedesktop.fwupd.request.remove-replug"),
+                Variant::from("org.freedesktop.fwupd.request.remove-replug"),
             ),
-            ("Flags", Value::from(REQUEST_NON_GENERIC_MESSAGE)),
-            ("UpdateMessage", Value::from("Hold the pairing button")),
+            ("Flags", Variant::from(REQUEST_NON_GENERIC_MESSAGE)),
+            ("UpdateMessage", Variant::from("Hold the pairing button")),
         ]);
         assert_eq!(request(&own, "Dock").message, "Hold the pairing button.");
 
         let unknown = dict(&[
-            ("AppstreamId", Value::from("com.example.dock.lever")),
-            ("RequestKind", Value::from(REQUEST_POST)),
+            ("AppstreamId", Variant::from("com.example.dock.lever")),
+            ("RequestKind", Variant::from(REQUEST_POST)),
         ]);
         let r = request(&unknown, "Dock");
         assert_eq!(r.message, "Dock is waiting for you to continue the update.");
@@ -735,7 +733,7 @@ mod tests {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-        use zbus::zvariant::{OwnedFd, OwnedValue, Value};
+        use zbus::{OwnedFd, OwnedVariant, Variant};
 
         use super::super::{Dict, NAME, refresh};
 
@@ -764,7 +762,6 @@ mod tests {
 
         async fn connect(address: &str) -> zbus::Connection {
             zbus::connection::Builder::address(address)
-                .expect("address")
                 .build()
                 .await
                 .expect("connect")
@@ -778,14 +775,14 @@ mod tests {
         #[zbus::interface(name = "org.freedesktop.fwupd")]
         impl Fwupd {
             fn get_remotes(&self) -> Vec<Dict> {
-                let v = |v: Value| OwnedValue::try_from(v).unwrap();
+                let v = |v: Variant| OwnedVariant::try_from(v).unwrap();
                 vec![Dict::from([
-                    ("RemoteId".to_string(), v(Value::from("lvfs"))),
-                    ("Enabled".to_string(), v(Value::from(true))),
-                    ("Type".to_string(), v(Value::from(1u32))),
-                    ("Uri".to_string(), v(Value::from(self.uri.as_str()))),
-                    ("ModificationTime".to_string(), v(Value::from(0u64))),
-                    ("RefreshInterval".to_string(), v(Value::from(86400u64))),
+                    ("RemoteId".to_string(), v(Variant::from("lvfs"))),
+                    ("Enabled".to_string(), v(Variant::from(true))),
+                    ("Type".to_string(), v(Variant::from(1u32))),
+                    ("Uri".to_string(), v(Variant::from(self.uri.as_str()))),
+                    ("ModificationTime".to_string(), v(Variant::from(0u64))),
+                    ("RefreshInterval".to_string(), v(Variant::from(86400u64))),
                 ])]
             }
 
@@ -800,7 +797,7 @@ mod tests {
         impl Authority {
             fn check_authorization(
                 &self,
-                _subject: (String, std::collections::HashMap<String, OwnedValue>),
+                _subject: (String, std::collections::HashMap<String, OwnedVariant>),
                 action: &str,
                 _details: std::collections::HashMap<String, String>,
                 flags: u32,

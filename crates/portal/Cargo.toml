@@ -22,6 +22,7 @@ reprisefs = { path = "../reprisefs" }
 repriseconf = { path = "../repriseconf" }
 toml_edit.workspace = true
 zbus.workspace = true
+zruntime.workspace = true
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
 blocking.workspace = true

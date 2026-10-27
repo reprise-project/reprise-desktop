@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use futures_util::stream::StreamExt;
 use reprisebus::Signal;
 use zbus::Connection;
-use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+use zbus::{OwnedObjectPath, OwnedVariant};
 
 use crate::model::{Kind, Origin, Restart, Update, split_package_id};
 
@@ -129,8 +129,9 @@ async fn transaction(
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(NAME)
-        .and_then(|b| b.path(tid.as_str()))
-        .map(|b| b.build().into())
+        .path(tid.as_str())
+        .build()
+        .map(Into::into)
         .map_err(|e| Error::Failed(e.to_string()))?;
     let mut signals = reprisebus::signals(conn, NAME, vec![rule]).await;
     // Old daemons lack some hints; none is worth failing over.
@@ -230,7 +231,7 @@ async fn transaction(
             }
             (PROPERTIES, "PropertiesChanged") => {
                 let Ok((_, changed, _)) =
-                    body.deserialize::<(String, HashMap<String, OwnedValue>, Vec<String>)>()
+                    body.deserialize::<(String, HashMap<String, OwnedVariant>, Vec<String>)>()
                 else {
                     continue;
                 };

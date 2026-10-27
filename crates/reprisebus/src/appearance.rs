@@ -2,10 +2,9 @@
 //! own namespace. A program starts with the look the compositor put in its environment;
 //! these keys carry every change after that.
 
-use zbus::blocking::Proxy;
-use zbus::blocking::proxy::Builder;
-use zbus::proxy::CacheProperties;
-use zbus::zvariant::OwnedValue;
+use zbus::OwnedVariant;
+use zbus::Proxy;
+use zbus::proxy::{Builder, CacheProperties};
 
 /// The namespace the compositor's Settings backend serves the look in.
 pub const NAMESPACE: &str = "org.reprise.appearance";
@@ -80,16 +79,18 @@ pub fn watch(mut changed: impl FnMut(&str, String) + Send + 'static) {
 
 fn follow(changed: &mut impl FnMut(&str, String)) -> zbus::Result<()> {
     let conn = crate::session()?;
-    let proxy: Proxy = Builder::new(&conn)
-        .destination("org.freedesktop.portal.Desktop")?
-        .path("/org/freedesktop/portal/desktop")?
-        .interface("org.freedesktop.portal.Settings")?
-        .cache_properties(CacheProperties::No)
-        .build()?;
+    let proxy: Proxy = crate::wait(
+        Builder::new(&conn)
+            .destination("org.freedesktop.portal.Desktop")
+            .path("/org/freedesktop/portal/desktop")
+            .interface("org.freedesktop.portal.Settings")
+            .cache_properties(CacheProperties::No)
+            .build(),
+    )?;
     // Subscribed before the first read, so a change in between is not lost.
-    let signals = proxy.receive_signal("SettingChanged")?;
+    let signals = crate::wait(proxy.receive_signal("SettingChanged"))?;
     for key in KEYS {
-        match proxy.call::<_, _, OwnedValue>("ReadOne", &(NAMESPACE, key)) {
+        match crate::wait(proxy.call::<_, _, OwnedVariant>("ReadOne", &(NAMESPACE, key))) {
             Ok(v) => {
                 if let Some(s) = string(v) {
                     changed(key, s);
@@ -98,8 +99,9 @@ fn follow(changed: &mut impl FnMut(&str, String)) -> zbus::Result<()> {
             Err(e) => log::debug!("appearance: ReadOne {key}: {e}"),
         }
     }
-    for msg in signals {
-        let Ok((namespace, key, value)) = msg.body().deserialize::<(String, String, OwnedValue)>()
+    for msg in crate::blocking_iter(signals) {
+        let Ok((namespace, key, value)) =
+            msg.body().deserialize::<(String, String, OwnedVariant)>()
         else {
             continue;
         };
@@ -113,6 +115,6 @@ fn follow(changed: &mut impl FnMut(&str, String)) -> zbus::Result<()> {
     Ok(())
 }
 
-fn string(v: OwnedValue) -> Option<String> {
+fn string(v: OwnedVariant) -> Option<String> {
     String::try_from(v).ok()
 }

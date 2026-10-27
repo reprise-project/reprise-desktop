@@ -4,14 +4,14 @@ use reprisekit::controls::tooltip::TIP_CHARS;
 use reprisekit::icon::IconSource;
 use std::path::PathBuf;
 use std::sync::Arc;
+use zbus::as_variant;
 use zbus::message::Body;
-use zbus::zvariant::{DeserializeValue, DynamicType, OwnedObjectPath, OwnedValue};
 use zbus::{Connection, Proxy};
+use zbus::{DynamicType, OwnedObjectPath};
 
 async fn prop<T>(proxy: &Proxy<'_>, name: &str) -> Option<T>
 where
-    T: TryFrom<OwnedValue>,
-    T::Error: Into<zbus::Error>,
+    T: serde::de::DeserializeOwned + zbus::Type,
 {
     proxy.get_property::<T>(name).await.ok()
 }
@@ -20,8 +20,8 @@ pub(super) type Pixmaps<'a> = Vec<(i32, i32, &'a [u8])>;
 
 pub(super) type ToolTip<'a> = (&'a str, Pixmaps<'a>, &'a str, &'a str);
 
-/// One property's `Properties.Get` reply body, for decoding in place with [`DeserializeValue`].
-/// [`prop`]'s `OwnedValue` holds each `ay` byte as its own `Value`: gigabytes for a 128 MiB pixmap.
+/// One property's `Properties.Get` reply body, for decoding in place with [`as_variant::Deserialize`].
+/// [`prop`]'s `OwnedVariant` holds each `ay` byte as its own `Variant`: gigabytes for a 128 MiB pixmap.
 async fn prop_body(proxy: &Proxy<'_>, name: &str) -> Option<Body> {
     let reply = proxy
         .connection()
@@ -87,7 +87,7 @@ pub(super) fn icon_ref(name: Option<String>) -> Option<String> {
 
 fn pixmaps_of(body: &Option<Body>) -> Option<Pixmaps<'_>> {
     body.as_ref()
-        .and_then(|b| b.deserialize::<DeserializeValue<Pixmaps>>().ok())
+        .and_then(|b| b.deserialize::<as_variant::Deserialize<Pixmaps>>().ok())
         .map(|v| v.0)
 }
 
@@ -141,7 +141,7 @@ pub(super) async fn fetch_item(
     let pixmaps = pixmaps_of(&pixmaps);
     let tip = tip
         .as_ref()
-        .and_then(|b| b.deserialize::<DeserializeValue<ToolTip>>().ok())
+        .and_then(|b| b.deserialize::<as_variant::Deserialize<ToolTip>>().ok())
         .map(|v| v.0);
     // Not one property answered: the peer is gone, or never was an SNI.
     // `IconThemePath` is left out, plenty of well-behaved items omit it.

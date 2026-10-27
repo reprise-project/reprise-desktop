@@ -7,7 +7,7 @@ use futures_util::stream::StreamExt;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 use zbus::Connection;
-use zbus::zvariant::{ObjectPath, Value};
+use zbus::{ObjectPath, Variant};
 
 pub(super) const NAME: &str = "org.bluez";
 const OBJECT_MANAGER: &str = "org.freedesktop.DBus.ObjectManager";
@@ -80,10 +80,10 @@ enum Wake {
 }
 
 async fn run(poster: Poster, cmds: async_channel::Receiver<Cmd>, done: Sender<()>) {
-    let conn = match zbus::connection::Builder::system() {
-        Ok(b) => b.method_timeout(CALL_TIMEOUT).build().await,
-        Err(e) => Err(e),
-    };
+    let conn = zbus::connection::Builder::system()
+        .method_timeout(CALL_TIMEOUT)
+        .build()
+        .await;
     let conn = match conn {
         Ok(c) => c,
         Err(e) => {
@@ -183,56 +183,44 @@ fn commands(
     cmds: async_channel::Receiver<Cmd>,
     wakes: async_channel::Sender<Wake>,
     poster: Poster,
-) -> zbus::Task<()> {
+) -> zruntime::Task<(), zruntime::Shared> {
     let bus = conn.clone();
-    conn.executor().spawn(
-        async move {
-            while let Ok(cmd) = cmds.recv().await {
-                match cmd {
-                    Cmd::Quit => {
-                        let _ = wakes.send(Wake::Quit).await;
-                        return;
-                    }
-                    Cmd::Pair(device) => {
-                        let (b, p) = (bus.clone(), poster.clone());
-                        bus.executor()
-                            .spawn(
-                                async move { pair(&b, &device, &p).await },
-                                "reprise-bluetooth-pair",
-                            )
-                            .detach();
-                    }
-                    Cmd::Connect(device) => {
-                        let (b, p) = (bus.clone(), poster.clone());
-                        bus.executor()
-                            .spawn(
-                                async move {
-                                    let error = call0(&b, &device, DEVICE_IFACE, "Connect")
-                                        .await
-                                        .err()
-                                        .map(|e| error_of(&e));
-                                    p.post(BzMsg::Connected { device, error });
-                                },
-                                "reprise-bluetooth-connect",
-                            )
-                            .detach();
-                    }
-                    cmd => {
-                        if let Err(e) = command(&bus, &cmd).await {
-                            log::warn!("{cmd:?} failed: {e}");
-                            if !quiet(&cmd) {
-                                poster.post(BzMsg::Failed {
-                                    title: failure_title(&cmd).into(),
-                                    body: error_of(&e),
-                                });
-                            }
+    zruntime::spawn(async move {
+        while let Ok(cmd) = cmds.recv().await {
+            match cmd {
+                Cmd::Quit => {
+                    let _ = wakes.send(Wake::Quit).await;
+                    return;
+                }
+                Cmd::Pair(device) => {
+                    let (b, p) = (bus.clone(), poster.clone());
+                    zruntime::spawn(async move { pair(&b, &device, &p).await }).detach();
+                }
+                Cmd::Connect(device) => {
+                    let (b, p) = (bus.clone(), poster.clone());
+                    zruntime::spawn(async move {
+                        let error = call0(&b, &device, DEVICE_IFACE, "Connect")
+                            .await
+                            .err()
+                            .map(|e| error_of(&e));
+                        p.post(BzMsg::Connected { device, error });
+                    })
+                    .detach();
+                }
+                cmd => {
+                    if let Err(e) = command(&bus, &cmd).await {
+                        log::warn!("{cmd:?} failed: {e}");
+                        if !quiet(&cmd) {
+                            poster.post(BzMsg::Failed {
+                                title: failure_title(&cmd).into(),
+                                body: error_of(&e),
+                            });
                         }
                     }
                 }
             }
-        },
-        "reprise-bluetooth-commands",
-    )
+        }
+    })
 }
 
 async fn pair(conn: &Connection, device: &str, poster: &Poster) {
@@ -243,7 +231,7 @@ async fn pair(conn: &Connection, device: &str, poster: &Poster) {
         });
         return;
     }
-    if let Err(e) = set(conn, device, DEVICE_IFACE, "Trusted", Value::from(true)).await {
+    if let Err(e) = set(conn, device, DEVICE_IFACE, "Trusted", Variant::from(true)).await {
         log::warn!("could not trust {device}: {e}");
     }
     let connect_error = call0(conn, device, DEVICE_IFACE, "Connect")
@@ -262,7 +250,7 @@ async fn command(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
             if *on && let Err(e) = rfkill::unblock() {
                 log::info!("could not unblock Bluetooth through rfkill: {e}");
             }
-            set(conn, adapter, ADAPTER_IFACE, "Powered", Value::from(*on)).await
+            set(conn, adapter, ADAPTER_IFACE, "Powered", Variant::from(*on)).await
         }
         Cmd::SetDiscoverable { adapter, on } => {
             set(
@@ -270,7 +258,7 @@ async fn command(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
                 adapter,
                 ADAPTER_IFACE,
                 "Discoverable",
-                Value::from(*on),
+                Variant::from(*on),
             )
             .await
         }
@@ -279,7 +267,7 @@ async fn command(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
         Cmd::CancelPair(d) => call0(conn, d, DEVICE_IFACE, "CancelPairing").await,
         Cmd::Disconnect(d) => call0(conn, d, DEVICE_IFACE, "Disconnect").await,
         Cmd::SetTrusted { device, on } => {
-            set(conn, device, DEVICE_IFACE, "Trusted", Value::from(*on)).await
+            set(conn, device, DEVICE_IFACE, "Trusted", Variant::from(*on)).await
         }
         Cmd::SetAlias { device, alias } => {
             set(
@@ -287,7 +275,7 @@ async fn command(conn: &Connection, cmd: &Cmd) -> zbus::Result<()> {
                 device,
                 DEVICE_IFACE,
                 "Alias",
-                Value::from(alias.as_str()),
+                Variant::from(alias.as_str()),
             )
             .await
         }
@@ -318,7 +306,7 @@ async fn set(
     path: &str,
     iface: &str,
     prop: &str,
-    value: Value<'_>,
+    value: Variant<'_>,
 ) -> zbus::Result<()> {
     conn.call_method(
         Some(NAME),
@@ -331,19 +319,19 @@ async fn set(
     .map(|_| ())
 }
 
-async fn pump(conn: &Connection, wakes: async_channel::Sender<Wake>) -> zbus::Task<()> {
+async fn pump(
+    conn: &Connection,
+    wakes: async_channel::Sender<Wake>,
+) -> zruntime::Task<(), zruntime::Shared> {
     let mut streams = subscribe(conn).await;
-    conn.executor().spawn(
-        async move {
-            while let Some(wake) = streams.next().await {
-                if wakes.send(wake).await.is_err() {
-                    return;
-                }
+    zruntime::spawn(async move {
+        while let Some(wake) = streams.next().await {
+            if wakes.send(wake).await.is_err() {
+                return;
             }
-            log::warn!("the BlueZ signal streams all ended");
-        },
-        "reprise-bluetooth-signals",
-    )
+        }
+        log::warn!("the BlueZ signal streams all ended");
+    })
 }
 
 async fn subscribe(conn: &Connection) -> futures_util::stream::BoxStream<'static, Wake> {
@@ -352,9 +340,10 @@ async fn subscribe(conn: &Connection) -> futures_util::stream::BoxStream<'static
         match zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender(NAME)
-            .and_then(|b| b.member(*member))
+            .member(*member)
+            .build()
         {
-            Ok(b) => rules.push(b.build().into()),
+            Ok(r) => rules.push(r.into()),
             Err(e) => log::warn!("no match rule for {member}: {e}"),
         }
     }
@@ -376,10 +365,7 @@ mod tests {
         let e = zbus::Error::MethodError(
             zbus::names::OwnedErrorName::try_from("org.bluez.Error.NotReady").unwrap(),
             Some("Resource Not Ready".into()),
-            zbus::Message::method_call("/", "X")
-                .unwrap()
-                .build(&())
-                .unwrap(),
+            zbus::Message::method_call("/", "X").build(&()).unwrap(),
         );
         assert_eq!(
             error_of(&e),

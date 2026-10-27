@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
-use zbus::zvariant::{OwnedValue, Value};
+use zbus::{OwnedVariant, Variant};
 
 const INTERFACE: &str = "org.freedesktop.Application";
 const TOKEN: &str = "activation-token";
@@ -39,18 +39,18 @@ impl Handoff {
 
     /// As `org.freedesktop.Application` platform data: `activation-token`
     /// and `reprise-keyboard-launch`.
-    pub fn platform_data(&self) -> HashMap<&'static str, Value<'static>> {
+    pub fn platform_data(&self) -> HashMap<&'static str, Variant<'static>> {
         let mut data = HashMap::new();
         if let Some(token) = &self.token {
-            data.insert(TOKEN, Value::from(token.clone()));
+            data.insert(TOKEN, Variant::from(token.clone()));
         }
         if self.by_key {
-            data.insert(BY_KEY, Value::from(true));
+            data.insert(BY_KEY, Variant::from(true));
         }
         data
     }
 
-    pub fn from_platform_data(data: &HashMap<String, OwnedValue>) -> Handoff {
+    pub fn from_platform_data(data: &HashMap<String, OwnedVariant>) -> Handoff {
         Handoff {
             token: data
                 .get(TOKEN)
@@ -119,11 +119,11 @@ pub fn claim(name: &str, action: Option<(String, Vec<String>)>) -> Claim {
         tx,
         wake: wake.clone(),
     };
-    if let Err(e) = conn.object_server().at(path.as_str(), app) {
+    if let Err(e) = crate::wait(conn.object_server().at(path.as_str(), app)) {
         log::warn!("could not serve {INTERFACE}: {e}");
         return Claim::Alone;
     }
-    match conn.request_name_with_flags(name, RequestNameFlags::DoNotQueue.into()) {
+    match crate::wait(conn.request_name_with_flags(name, RequestNameFlags::DO_NOT_QUEUE)) {
         Ok(RequestNameReply::PrimaryOwner) => return Claim::First(Requests { rx, wake }),
         Ok(_) | Err(zbus::Error::NameTaken) => {}
         Err(e) => {
@@ -131,26 +131,26 @@ pub fn claim(name: &str, action: Option<(String, Vec<String>)>) -> Claim {
             return Claim::Alone;
         }
     }
-    let _ = conn.object_server().remove::<Application, _>(path.as_str());
+    let _ = crate::wait(conn.object_server().remove::<Application, _>(path.as_str()));
     let data = Handoff::from_env().platform_data();
     let sent = match action {
         Some((action, params)) => {
-            let params: Vec<Value> = params.into_iter().map(Value::from).collect();
-            conn.call_method(
+            let params: Vec<Variant> = params.into_iter().map(Variant::from).collect();
+            crate::wait(conn.call_method(
                 Some(name),
                 path.as_str(),
                 Some(INTERFACE),
                 "ActivateAction",
                 &(action, params, data),
-            )
+            ))
         }
-        None => conn.call_method(
+        None => crate::wait(conn.call_method(
             Some(name),
             path.as_str(),
             Some(INTERFACE),
             "Activate",
             &(data,),
-        ),
+        )),
     };
     match sent {
         Ok(_) => Claim::Handed,
@@ -173,7 +173,7 @@ struct Application {
 }
 
 impl Application {
-    fn send(&self, action: Option<(String, Vec<String>)>, data: &HashMap<String, OwnedValue>) {
+    fn send(&self, action: Option<(String, Vec<String>)>, data: &HashMap<String, OwnedVariant>) {
         let handoff = Handoff::from_platform_data(data);
         if self.tx.send(Request { action, handoff }).is_ok()
             && let Some(wake) = &*lock(&self.wake)
@@ -185,21 +185,21 @@ impl Application {
 
 #[zbus::interface(name = "org.freedesktop.Application")]
 impl Application {
-    fn activate(&self, platform_data: HashMap<String, OwnedValue>) {
+    fn activate(&self, platform_data: HashMap<String, OwnedVariant>) {
         self.send(None, &platform_data);
     }
 
     /// Files are not something a Reprise program opens this way; the
     /// window is raised.
-    fn open(&self, _uris: Vec<String>, platform_data: HashMap<String, OwnedValue>) {
+    fn open(&self, _uris: Vec<String>, platform_data: HashMap<String, OwnedVariant>) {
         self.send(None, &platform_data);
     }
 
     fn activate_action(
         &self,
         action_name: String,
-        parameter: Vec<OwnedValue>,
-        platform_data: HashMap<String, OwnedValue>,
+        parameter: Vec<OwnedVariant>,
+        platform_data: HashMap<String, OwnedVariant>,
     ) {
         let params = parameter
             .iter()
@@ -217,7 +217,7 @@ mod tests {
         let data = h
             .platform_data()
             .into_iter()
-            .map(|(k, v)| (k.to_string(), OwnedValue::try_from(v).expect("owned")))
+            .map(|(k, v)| (k.to_string(), OwnedVariant::try_from(v).expect("owned")))
             .collect();
         Handoff::from_platform_data(&data)
     }

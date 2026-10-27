@@ -10,9 +10,9 @@ pub use bus::{BzHandle, watch};
 use std::collections::HashMap;
 
 use reprisekit::art::devicon;
-use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+use zbus::{OwnedObjectPath, OwnedVariant};
 
-pub type Props = HashMap<String, OwnedValue>;
+pub type Props = HashMap<String, OwnedVariant>;
 pub type Objects = HashMap<OwnedObjectPath, HashMap<String, Props>>;
 
 pub const ADAPTER_IFACE: &str = "org.bluez.Adapter1";
@@ -424,13 +424,13 @@ pub fn plain_error(name: &str, detail: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zbus::zvariant::{OwnedValue, Str};
+    use zbus::{OwnedVariant, Str};
 
-    fn s(v: &str) -> OwnedValue {
-        OwnedValue::from(Str::from(v.to_string()))
+    fn s(v: &str) -> OwnedVariant {
+        OwnedVariant::from(Str::from(v.to_string()))
     }
 
-    fn props(pairs: Vec<(&str, OwnedValue)>) -> Props {
+    fn props(pairs: Vec<(&str, OwnedVariant)>) -> Props {
         pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
     }
 
@@ -438,10 +438,10 @@ mod tests {
         HashMap::from([(
             ADAPTER_IFACE.to_string(),
             props(vec![
-                ("Powered", OwnedValue::from(powered)),
+                ("Powered", OwnedVariant::from(powered)),
                 ("PowerState", s(state)),
-                ("Discoverable", OwnedValue::from(false)),
-                ("Discovering", OwnedValue::from(true)),
+                ("Discoverable", OwnedVariant::from(false)),
+                ("Discovering", OwnedVariant::from(true)),
             ]),
         )])
     }
@@ -451,10 +451,10 @@ mod tests {
             ("Address", s("AA:BB:CC:DD:EE:01")),
             ("Alias", s(alias)),
             ("Icon", s(icon)),
-            ("Paired", OwnedValue::from(paired)),
-            ("Trusted", OwnedValue::from(paired)),
-            ("Connected", OwnedValue::from(false)),
-            ("RSSI", OwnedValue::from(-60i16)),
+            ("Paired", OwnedVariant::from(paired)),
+            ("Trusted", OwnedVariant::from(paired)),
+            ("Connected", OwnedVariant::from(false)),
+            ("RSSI", OwnedVariant::from(-60i16)),
         ];
         if let Some(n) = name {
             p.push(("Name", s(n)));
@@ -517,7 +517,7 @@ mod tests {
         let mut dev = device(Some("Cans"), "Cans", "audio-headphones", true);
         dev.insert(
             BATTERY_IFACE.into(),
-            props(vec![("Percentage", OwnedValue::from(80u8))]),
+            props(vec![("Percentage", OwnedVariant::from(80u8))]),
         );
         o.insert(path("/org/bluez/hci0/dev_AA"), dev);
         assert_eq!(fold(&o).devices[0].battery, Some(80));

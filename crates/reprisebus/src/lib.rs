@@ -18,9 +18,9 @@
 //! to turn off for a critical battery. [`polkit`] asks whether a password
 //! prompt was dismissed. [`launcher`] shows a program's progress on its
 //! task button. [`journal`] starts the logger with journal priorities.
-//! The last six share a program's one blocking session bus connection
-//! ([`session`]), as does [`units`], which lists the programs the systemd user
-//! manager starts with the session.
+//! The last six share a program's one session bus connection ([`session`]),
+//! as does [`units`], which lists the programs the systemd user manager starts
+//! with the session. Synchronous callers [`wait`] on it.
 //! [`mutex`] locks a mutex even when its holder panicked.
 
 pub mod a11y;
@@ -39,7 +39,7 @@ pub mod units;
 
 use crate::mutex::lock;
 use futures_util::future::ready;
-use futures_util::stream::{BoxStream, SelectAll, StreamExt};
+use futures_util::stream::{BoxStream, SelectAll, Stream, StreamExt};
 use std::sync::Mutex;
 use std::time::Duration;
 use zbus::{Connection, Message, MessageStream, OwnedMatchRule};
@@ -48,19 +48,40 @@ use zbus::{Connection, Message, MessageStream, OwnedMatchRule};
 /// a hung service never holds a caller's thread past this.
 pub const METHOD_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The program's blocking session bus connection, made by the first call that
-/// finds the bus.
-pub fn session() -> zbus::Result<zbus::blocking::Connection> {
-    static SESSION: Mutex<Option<zbus::blocking::Connection>> = Mutex::new(None);
+/// The program's session bus connection, made by the first call that finds
+/// the bus.
+pub fn session() -> zbus::Result<Connection> {
+    static SESSION: Mutex<Option<Connection>> = Mutex::new(None);
     let mut conn = lock(&SESSION);
     if let Some(c) = conn.as_ref() {
         return Ok(c.clone());
     }
-    let c = zbus::blocking::connection::Builder::session()?
-        .method_timeout(METHOD_TIMEOUT)
-        .build()?;
+    let c = connect(zbus::connection::Builder::session().method_timeout(METHOD_TIMEOUT))?;
     *conn = Some(c.clone());
     Ok(c)
+}
+
+/// Builds a connection whose I/O runs on a helper thread of its own, so any
+/// thread can [`wait`] on it, an async task included.
+pub fn connect(builder: zbus::connection::Builder<'_>) -> zbus::Result<Connection> {
+    std::thread::scope(|s| {
+        s.spawn(|| zbus::block_on(builder.build()))
+            .join()
+            .unwrap_or_else(|p| std::panic::resume_unwind(p))
+    })
+}
+
+/// Runs `future` to completion on the calling thread. Unlike
+/// [`zbus::block_on`], it may be called from inside an async task, which
+/// it blocks meanwhile; the connection awaited must be one from [`connect`].
+pub fn wait<F: Future>(future: F) -> F::Output {
+    futures_lite::future::block_on(future)
+}
+
+/// The items of `stream`, each [`wait`]ed for, for a thread that follows
+/// signals in a plain loop.
+pub fn blocking_iter<S: Stream + Unpin>(mut stream: S) -> impl Iterator<Item = S::Item> {
+    std::iter::from_fn(move || wait(stream.next()))
 }
 
 /// The bus itself: the sender of `NameOwnerChanged`, a name no peer can own.
@@ -147,11 +168,11 @@ pub async fn signals(
     let owner_rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender(DBUS)
-        .and_then(|b| b.path(DBUS_PATH))
-        .and_then(|b| b.interface(DBUS))
-        .and_then(|b| b.member("NameOwnerChanged"))
-        .and_then(|b| b.add_arg(name))
-        .map(|b| b.build());
+        .path(DBUS_PATH)
+        .interface(DBUS)
+        .member("NameOwnerChanged")
+        .add_arg(name)
+        .build();
     let owner_stream = match owner_rule {
         Ok(rule) => MessageStream::for_match_rule(rule, conn, None).await,
         Err(e) => Err(e),

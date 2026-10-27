@@ -11,7 +11,7 @@ use reprisefs::apps::AppEntry;
 use reprisekit::taskbar::TaskProgress;
 use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::calloop::channel::{self, Event, Sender};
-use zbus::zvariant::OwnedValue;
+use zbus::OwnedVariant;
 
 use crate::compositor::State;
 
@@ -161,7 +161,7 @@ fn update_of(msg: &zbus::Message) -> Option<(String, String, Props)> {
     let sender = msg.header().sender()?.to_string();
     let (uri, props) = msg
         .body()
-        .deserialize::<(String, HashMap<String, OwnedValue>)>()
+        .deserialize::<(String, HashMap<String, OwnedVariant>)>()
         .ok()?;
     let mut p = Props::default();
     for (k, v) in props {
@@ -195,9 +195,9 @@ async fn follow(tx: &Sender<Msg>) -> zbus::Result<()> {
     let conn = zbus::Connection::session().await?;
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
-        .interface(IFACE)?
-        .member("Update")?
-        .build();
+        .interface(IFACE)
+        .member("Update")
+        .build()?;
     let updates = zbus::MessageStream::for_match_rule(rule, &conn, None)
         .await?
         .filter_map(|m| std::future::ready(m.ok().map(Seen::Update)));

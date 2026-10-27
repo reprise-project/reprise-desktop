@@ -68,7 +68,9 @@ tempfile = "3"
 toml = "1"
 toml_edit = "0.25"
 wayland-client = "0.31"
-zbus = "5"
+zbus = "6.1"
+# The runtime zbus runs its connections on, for tasks spawned beside them.
+zruntime = { version = "0.2", default-features = false, features = ["helper"] }
 zeroize = "1"
 
 [workspace.lints.rust]
@@ -131,6 +133,7 @@ toml.workspace = true
 inotify.workspace = true
 zeroize.workspace = true
 zbus.workspace = true
+zruntime.workspace = true
 async-channel.workspace = true
 async-io = "2"
 futures-lite.workspace = true

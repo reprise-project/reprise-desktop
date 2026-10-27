@@ -11,7 +11,7 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use zbus::zvariant::{ObjectPath, OwnedValue, Value};
+use zbus::{ObjectPath, OwnedVariant, Variant};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -71,7 +71,7 @@ pub fn uri(path: &Path) -> String {
 
 /// The folders a call asks to start in, most specific first:
 /// `current_file`'s folder, then `current_folder`.
-fn asked_folders(o: &HashMap<String, Value<'_>>) -> Vec<PathBuf> {
+fn asked_folders(o: &HashMap<String, Variant<'_>>) -> Vec<PathBuf> {
     let current_file_dir =
         opt_bytes(o, "current_file").and_then(|b| bytes_path(&b).parent().map(Path::to_path_buf));
     let current_folder = opt_bytes(o, "current_folder").map(|b| bytes_path(&b));
@@ -136,7 +136,7 @@ fn save_files_names_ok(files: &[Vec<u8>]) -> bool {
     })
 }
 
-fn reply(out: &Output, filters: &[Filter]) -> (u32, HashMap<String, OwnedValue>) {
+fn reply(out: &Output, filters: &[Filter]) -> (u32, HashMap<String, OwnedVariant>) {
     let mut r = HashMap::new();
     if out.paths.is_empty() {
         return (crate::RESPONSE_CANCELLED, r);
@@ -148,7 +148,7 @@ fn reply(out: &Output, filters: &[Filter]) -> (u32, HashMap<String, OwnedValue>)
         .collect();
     r.insert(
         "uris".into(),
-        Value::new(uris).try_to_owned().expect("strings"),
+        Variant::new(uris).try_to_owned().expect("strings"),
     );
     if let Some(f) = out.filter.and_then(|i| filters.get(i)) {
         r.insert("current_filter".into(), f.to_value());
@@ -156,7 +156,7 @@ fn reply(out: &Output, filters: &[Filter]) -> (u32, HashMap<String, OwnedValue>)
     if !out.choices.is_empty() {
         r.insert(
             "choices".into(),
-            Value::new(out.choices.clone())
+            Variant::new(out.choices.clone())
                 .try_to_owned()
                 .expect("strings"),
         );
@@ -171,7 +171,7 @@ pub struct FileChooser {
 /// SaveFile's starting name: `current_file`'s file name, else
 /// `current_name`; and the real bytes when the name is not UTF-8, so a
 /// Save keeps them.
-fn start_name(o: &HashMap<String, Value<'_>>) -> (String, Option<Vec<u8>>) {
+fn start_name(o: &HashMap<String, Variant<'_>>) -> (String, Option<Vec<u8>>) {
     if let Some(name) = opt_bytes(o, "current_file")
         .and_then(|b| bytes_path(&b).file_name().map(|n| n.to_os_string()))
     {
@@ -181,28 +181,28 @@ fn start_name(o: &HashMap<String, Value<'_>>) -> (String, Option<Vec<u8>>) {
     (opt_str(o, "current_name").unwrap_or_default(), None)
 }
 
-fn opt_str(o: &HashMap<String, Value<'_>>, k: &str) -> Option<String> {
+fn opt_str(o: &HashMap<String, Variant<'_>>, k: &str) -> Option<String> {
     match o.get(k) {
-        Some(Value::Str(s)) => Some(s.to_string()),
+        Some(Variant::Str(s)) => Some(s.to_string()),
         _ => None,
     }
 }
 
-fn opt_bool(o: &HashMap<String, Value<'_>>, k: &str) -> Option<bool> {
+fn opt_bool(o: &HashMap<String, Variant<'_>>, k: &str) -> Option<bool> {
     match o.get(k) {
-        Some(Value::Bool(b)) => Some(*b),
+        Some(Variant::Bool(b)) => Some(*b),
         _ => None,
     }
 }
 
-fn opt_bytes(o: &HashMap<String, Value<'_>>, k: &str) -> Option<Vec<u8>> {
-    let Some(Value::Array(a)) = o.get(k) else {
+fn opt_bytes(o: &HashMap<String, Variant<'_>>, k: &str) -> Option<Vec<u8>> {
+    let Some(Variant::Array(a)) = o.get(k) else {
         return None;
     };
     a.inner()
         .iter()
         .map(|v| match v {
-            Value::U8(b) => Some(*b),
+            Variant::U8(b) => Some(*b),
             _ => None,
         })
         .collect()
@@ -212,7 +212,7 @@ fn base_input(
     kind: Kind,
     parent_window: &str,
     title: String,
-    o: &HashMap<String, Value<'_>>,
+    o: &HashMap<String, Variant<'_>>,
 ) -> Input {
     let folder_mode =
         kind == Kind::SaveFiles || (kind == Kind::Open && opt_bool(o, "directory") == Some(true));
@@ -256,7 +256,7 @@ impl FileChooser {
         handle: &ObjectPath<'_>,
         mut input: Input,
         asked: Vec<PathBuf>,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         let cancel = Arc::new(AtomicBool::new(false));
         crate::export_request(server, handle, cancel.clone(), &self.frontend).await?;
         let filters = input.filters.clone();
@@ -286,9 +286,9 @@ impl FileChooser {
         app_id: String,
         parent_window: String,
         title: String,
-        options: HashMap<String, Value<'_>>,
+        options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         log::info!("OpenFile for {app_id:?}");
         self.run(
@@ -308,9 +308,9 @@ impl FileChooser {
         app_id: String,
         parent_window: String,
         title: String,
-        options: HashMap<String, Value<'_>>,
+        options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         log::info!("SaveFile for {app_id:?}");
         let mut input = base_input(Kind::Save, &parent_window, title, &options);
@@ -327,22 +327,22 @@ impl FileChooser {
         app_id: String,
         parent_window: String,
         title: String,
-        options: HashMap<String, Value<'_>>,
+        options: HashMap<String, Variant<'_>>,
         #[zbus(object_server)] server: &zbus::ObjectServer,
-    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedValue>)> {
+    ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         log::info!("SaveFiles for {app_id:?}");
         let mut input = base_input(Kind::SaveFiles, &parent_window, title, &options);
         let files: Vec<Vec<u8>> = match options.get("files") {
-            Some(Value::Array(a)) => a
+            Some(Variant::Array(a)) => a
                 .inner()
                 .iter()
                 .filter_map(|v| match v {
-                    Value::Array(b) => b
+                    Variant::Array(b) => b
                         .inner()
                         .iter()
                         .map(|x| match x {
-                            Value::U8(c) => Some(*c),
+                            Variant::U8(c) => Some(*c),
                             _ => None,
                         })
                         .collect(),
@@ -417,12 +417,12 @@ mod tests {
 
     #[test]
     fn a_byte_array_option_is_read_off_the_wire() {
-        use zbus::zvariant::{LE, serialized::Context, to_bytes};
-        let mut o: HashMap<String, Value<'_>> = HashMap::new();
-        o.insert("current_folder".into(), Value::new(b"/tmp\0".to_vec()));
-        let ctxt = Context::new_dbus(LE, 0);
+        use zbus::wire::{LE, serialized::Context, to_bytes};
+        let mut o: HashMap<String, Variant<'_>> = HashMap::new();
+        o.insert("current_folder".into(), Variant::new(b"/tmp\0".to_vec()));
+        let ctxt = Context::new(LE, 0);
         let wire = to_bytes(ctxt, &o).unwrap();
-        let (back, _): (HashMap<String, Value<'_>>, _) = wire.deserialize().unwrap();
+        let (back, _): (HashMap<String, Variant<'_>>, _) = wire.deserialize().unwrap();
         assert_eq!(opt_bytes(&back, "current_folder"), Some(b"/tmp\0".to_vec()));
     }
 
@@ -435,9 +435,12 @@ mod tests {
 
     #[test]
     fn the_current_files_folder_is_asked_before_the_current_folder() {
-        let mut o: HashMap<String, Value<'_>> = HashMap::new();
-        o.insert("current_folder".into(), Value::new(b"/srv\0".to_vec()));
-        o.insert("current_file".into(), Value::new(b"/tmp/a.txt\0".to_vec()));
+        let mut o: HashMap<String, Variant<'_>> = HashMap::new();
+        o.insert("current_folder".into(), Variant::new(b"/srv\0".to_vec()));
+        o.insert(
+            "current_file".into(),
+            Variant::new(b"/tmp/a.txt\0".to_vec()),
+        );
         assert_eq!(
             asked_folders(&o),
             [PathBuf::from("/tmp"), PathBuf::from("/srv")]
@@ -485,16 +488,16 @@ mod tests {
 
     #[test]
     fn a_start_name_that_is_not_utf8_keeps_its_bytes() {
-        let mut o: HashMap<String, Value<'_>> = HashMap::new();
+        let mut o: HashMap<String, Variant<'_>> = HashMap::new();
         o.insert(
             "current_file".into(),
-            Value::new(b"/tmp/caf\xe9.pdf\0".to_vec()),
+            Variant::new(b"/tmp/caf\xe9.pdf\0".to_vec()),
         );
         let (shown, raw) = start_name(&o);
         assert_eq!(shown, "caf\u{FFFD}.pdf");
         assert_eq!(raw, Some(b"caf\xe9.pdf".to_vec()));
-        let mut o: HashMap<String, Value<'_>> = HashMap::new();
-        o.insert("current_name".into(), Value::from("plain.txt"));
+        let mut o: HashMap<String, Variant<'_>> = HashMap::new();
+        o.insert("current_name".into(), Variant::from("plain.txt"));
         assert_eq!(start_name(&o), ("plain.txt".to_string(), None));
     }
 
