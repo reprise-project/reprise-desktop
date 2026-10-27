@@ -1016,3 +1016,21 @@ fn a_blue_text_boxs_lit_bar_part_draws_hot() {
         "the hot up arrow"
     );
 }
+
+#[test]
+fn right_and_delete_step_over_a_zwj_family_whole() {
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    let mut t = e(&format!("{family}\nx"));
+    t.place(p(0, 0), false);
+    k(
+        &mut t,
+        MultiKey::Edit(EditKey::Right {
+            select: false,
+            word: false,
+        }),
+    );
+    assert_eq!(t.caret, p(0, family.len()));
+    t.place(p(0, 0), false);
+    k(&mut t, MultiKey::Edit(EditKey::Delete { word: false }));
+    assert_eq!(t.lines, ["", "x"]);
+}
