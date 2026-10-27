@@ -222,6 +222,9 @@ struct Cli {
     /// restart passes it; see `crash`)
     #[arg(long, hide = true, value_name = "CRASHES")]
     after_crash: Option<u32>,
+    /// With `--after-crash`: the crashed session was locked (the restart passes it; see `crash`)
+    #[arg(long, hide = true)]
+    locked: bool,
 }
 
 fn main() {
@@ -261,6 +264,7 @@ fn main() {
         cli.startup.as_deref(),
         config_notice,
         cli.after_crash.is_some(),
+        cli.locked,
     ) {
         log::error!("{e}");
         std::process::exit(1);
@@ -269,7 +273,7 @@ fn main() {
 
 /// Start the display and the backend, then run the event loop until it stops.
 /// A `config_notice` goes up as a balloon once the outputs are up. `after_crash`: this start
-/// follows a crash of the same login (`crash`).
+/// follows a crash of the same login (`crash`), `locked` of a locked session.
 fn run(
     config: config::Config,
     config_path: PathBuf,
@@ -277,6 +281,7 @@ fn run(
     startup: Option<&str>,
     config_notice: Option<String>,
     after_crash: bool,
+    locked: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if after_crash {
         spawn::adopt_orphans();
@@ -305,7 +310,7 @@ fn run(
         another_session,
         after_crash,
     );
-    crash::on_start(&mut state, after_crash);
+    crash::on_start(&mut state, after_crash, locked);
     configwatch::setup(&mut state, config_stamp);
     appindex::setup(&mut state);
     iconwatch::setup(&mut state);
