@@ -6,6 +6,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::time::Duration;
+use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{ObjectPath, OwnedValue};
 
 const STATE_BACKGROUND: u32 = 0;
@@ -16,6 +18,11 @@ const RESULT_ALLOW: u32 = 1;
 const RESULT_ALLOW_ONCE: u32 = 2;
 
 const AUTOSTART_DBUS: u32 = 1;
+
+/// How long the list of sandboxed apps with a window must rest before
+/// RunningApplicationsChanged goes out, so a window swapped for another
+/// sends nothing.
+const SETTLE: Duration = Duration::from_millis(500);
 
 pub struct Background {
     pub frontend: crate::Frontend,
@@ -53,6 +60,9 @@ impl Background {
             .map(|(id, s)| (id, OwnedValue::from(s)))
             .collect())
     }
+
+    #[zbus(signal)]
+    async fn running_applications_changed(emitter: &SignalEmitter<'_>) -> zbus::Result<()>;
 
     async fn notify_background(
         &self,
@@ -113,6 +123,35 @@ impl Background {
             }
         }
     }
+}
+
+/// Send RunningApplicationsChanged each time the compositor's list of
+/// sandboxed apps with a window settles on a new set.
+pub async fn announce(conn: zbus::Connection, link: crate::inputlink::Link) {
+    let Ok(emitter) = SignalEmitter::new(&conn, crate::PATH) else {
+        return;
+    };
+    let changes = link.sandboxed_changes();
+    let mut emitted = link.sandboxed().unwrap_or_default();
+    while changes.recv().await.is_ok() {
+        async_io::Timer::after(SETTLE).await;
+        while changes.try_recv().is_ok() {}
+        if settled(&mut emitted, link.sandboxed().unwrap_or_default())
+            && let Err(e) = Background::running_applications_changed(&emitter).await
+        {
+            log::warn!("RunningApplicationsChanged: {e}");
+        }
+    }
+}
+
+/// Whether `now` differs from the set last announced, taking it as the
+/// new `emitted` when it does.
+fn settled(emitted: &mut BTreeSet<String>, now: BTreeSet<String>) -> bool {
+    if *emitted == now {
+        return false;
+    }
+    *emitted = now;
+    true
 }
 
 /// The frontend's answer for the prompt: Allow with Remember allows for
@@ -288,6 +327,23 @@ mod tests {
         );
         assert_eq!(states["com.valvesoftware.Steam"], STATE_RUNNING);
         assert_eq!(states["org.example.Sync"], STATE_BACKGROUND);
+    }
+
+    #[test]
+    fn a_change_is_announced_once_and_a_set_back_where_it_was_not_at_all() {
+        let set = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
+        let mut emitted = set(&["org.example.Chat"]);
+        assert!(!settled(&mut emitted, set(&["org.example.Chat"])));
+        assert!(settled(
+            &mut emitted,
+            set(&["org.example.Chat", "org.example.Sync"])
+        ));
+        assert!(!settled(
+            &mut emitted,
+            set(&["org.example.Chat", "org.example.Sync"])
+        ));
+        assert!(settled(&mut emitted, set(&[])));
+        assert_eq!(emitted, set(&[]));
     }
 
     #[test]
