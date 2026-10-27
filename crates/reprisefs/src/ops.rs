@@ -8,7 +8,7 @@ mod put;
 
 pub use copy::copy_dir_all;
 use copy::copy_dir_until;
-pub(crate) use copy::copy_new;
+pub(crate) use copy::{copy_new, remove_tree};
 pub use erase::erase;
 pub(crate) use erase::{erase_counted, erase_stepped};
 pub(crate) use fileio::read_opened;
