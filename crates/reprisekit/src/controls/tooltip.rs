@@ -7,7 +7,9 @@ use crate::classic::widgets::{
     BUTTON_GAP, BUTTON_H, BUTTON_W, FIELD_PAD, draw_edit, edit_first_visible,
 };
 use crate::look::styled;
-use crate::look::widgets::{draw_button, draw_edit_field, tooltip};
+use crate::look::widgets::{
+    ICON_BUTTON_W, draw_button, draw_edit_field, draw_icon_button, tooltip,
+};
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Insets, Rect, rounded_border, rounded_fill};
 use crate::style::{BalloonLook, DropShadow};
@@ -434,7 +436,8 @@ pub struct NotifyLayout {
     /// The close cross's hit box (the look's close box, when it has one).
     pub close: Rect,
     pub buttons: Vec<Rect>,
-    labels: Vec<String>,
+    /// Each button's label; None shows its action's icon.
+    labels: Vec<Option<String>>,
     pub more: Option<Rect>,
     /// The reply row's field and send button, when it is expanded
     /// ([`NotifyReply`]); then there are no other buttons.
@@ -483,7 +486,8 @@ fn balloon_look(theme: &Theme) -> Option<BalloonLook> {
 /// Lay out the balloon for `title`, `body` and the action labels `actions`
 /// (every one but the body's own action). The first [`NOTIFY_BUTTONS`] get a
 /// button each, right-aligned under the body; more put a "..." button at the
-/// right end. A row too wide shrinks its labelled buttons evenly. With `reply`
+/// right end. An action `icons` marks shows its icon in an icon button in place
+/// of its label. A row too wide shrinks its labelled buttons evenly. With `reply`
 /// the row holds the reply field and send button instead, as tall as the button
 /// row so expanding the reply leaves the size alone. A look with its own balloon
 /// ([`BalloonLook`]) places the icon, text and close box and sizes the tail.
@@ -493,6 +497,7 @@ pub fn notify_layout(
     title: &str,
     body: &str,
     actions: &[&str],
+    icons: &[bool],
     reply: Option<NotifyReply>,
 ) -> NotifyLayout {
     let s = theme.scale.max(1);
@@ -563,15 +568,21 @@ pub fn notify_layout(
         0
     };
     let gap = BUTTON_GAP * s;
+    let iconic = |i: usize| icons.get(i).copied().unwrap_or(false);
     let mut widths: Vec<i32> = actions[..shown]
         .iter()
-        .map(|a| (text.measure(a, false, size) + 2 * NOTIFY_LABEL_PAD * s).max(BUTTON_W * s))
+        .enumerate()
+        .map(|(i, a)| {
+            if iconic(i) {
+                ICON_BUTTON_W * s
+            } else {
+                (text.measure(a, false, size) + 2 * NOTIFY_LABEL_PAD * s).max(BUTTON_W * s)
+            }
+        })
         .collect();
     let parts = shown + usize::from(more_w > 0);
     let room = w - 2 * pad - more_w - parts.saturating_sub(1) as i32 * gap;
-    if shown > 0 && widths.iter().sum::<i32>() > room {
-        widths.fill(room / shown as i32);
-    }
+    shrink_labelled(&mut widths, iconic, room);
     let (mut buttons, mut labels, mut more) = (Vec::new(), Vec::new(), None);
     let (mut field, mut send) = (None, None);
     let bubble_h = if let Some(r) = reply {
@@ -594,11 +605,11 @@ pub fn notify_layout(
             more = Some(Rect::new(x, y, more_w, BUTTON_H * s));
             x -= gap;
         }
-        for (a, bw) in actions[..shown].iter().zip(&widths).rev() {
+        for (i, (a, bw)) in actions[..shown].iter().zip(&widths).enumerate().rev() {
             x -= bw;
             buttons.push(Rect::new(x, y, *bw, BUTTON_H * s));
             let room = bw - 2 * NOTIFY_LABEL_PAD * s;
-            labels.push(text.ellipsize(a, room, false, size).into_owned());
+            labels.push((!iconic(i)).then(|| text.ellipsize(a, room, false, size).into_owned()));
             x -= gap;
         }
         buttons.reverse();
@@ -630,6 +641,24 @@ pub fn notify_layout(
         text_w,
         tail_h,
         shadow,
+    }
+}
+
+/// Shares what `room` leaves after the icon buttons evenly among the labelled ones, when the
+/// row's `widths` overrun it.
+pub(crate) fn shrink_labelled(widths: &mut [i32], iconic: impl Fn(usize) -> bool, room: i32) {
+    let labelled = (0..widths.len()).filter(|&i| !iconic(i)).count() as i32;
+    if labelled == 0 || widths.iter().sum::<i32>() <= room {
+        return;
+    }
+    let fixed: i32 = (0..widths.len())
+        .filter(|&i| iconic(i))
+        .map(|i| widths[i])
+        .sum();
+    for (i, w) in widths.iter_mut().enumerate() {
+        if !iconic(i) {
+            *w = (room - fixed) / labelled;
+        }
     }
 }
 
@@ -748,14 +777,17 @@ pub fn parts_hit(p: &NotifyParts, x: i32, y: i32) -> NotifyHit {
 /// Draw the notification balloon laid out as `lay`: a rounded bubble with a
 /// tail near its right end (under it, or over it after [`NotifyLayout::on_edge`]),
 /// `icon`, title, close cross, wrapped body and action buttons, `pushed` held
-/// down and `hot` under the pointer. An expanded reply row draws `reply`'s text
+/// down and `hot` under the pointer. A button laid out for an icon shows its
+/// `actions` icon (device px). An expanded reply row draws `reply`'s text
 /// with its caret and the input method's preedit, the grey hint while both are
 /// empty; send greys with nothing to send. A focused field reports its spot.
+#[expect(clippy::too_many_arguments)]
 pub fn draw_notify_balloon(
     theme: &Theme,
     text: &TextRenderer,
     lay: &NotifyLayout,
     icon: Option<&Canvas>,
+    actions: &[Option<Canvas>],
     pushed: Option<NotifyHit>,
     hot: Option<NotifyHit>,
     reply: Option<(&TextEdit, Caret, Option<&Preedit>)>,
@@ -864,10 +896,8 @@ pub fn draw_notify_balloon(
         let first = edit_first_visible(text, edit, inner.width, size, 0);
         draw_edit(&mut c, text, edit, inner, size, p, caret, first);
     }
-    // A peer's label is plain text: `&` is not an access key marker.
-    let mut button = |r: Rect, label: &str, hit: NotifyHit, enabled: bool| {
-        let label = crate::text::escape_mnemonic(label);
-        let ptr = if !enabled {
+    let ptr = |hit: NotifyHit, enabled: bool| {
+        if !enabled {
             Interaction::Idle
         } else if pushed == Some(hit) {
             Interaction::Pressed
@@ -875,19 +905,37 @@ pub fn draw_notify_balloon(
             Interaction::Hot
         } else {
             Interaction::Idle
-        };
-        draw_button(&mut c, text, p, r, &label, false, ptr, enabled, false, size);
+        }
+    };
+    // A peer's label is plain text: `&` is not an access key marker.
+    let button = |c: &mut Canvas, r: Rect, label: &str, hit: NotifyHit, enabled: bool| {
+        let label = crate::text::escape_mnemonic(label);
+        let ptr = ptr(hit, enabled);
+        draw_button(c, text, p, r, &label, false, ptr, enabled, false, size);
     };
     for (i, (r, label)) in lay.buttons.iter().zip(&lay.labels).enumerate() {
-        button(*r, label, NotifyHit::Button(i), true);
+        let hit = NotifyHit::Button(i);
+        match (label, actions.get(i).and_then(Option::as_ref)) {
+            (Some(label), _) => button(&mut c, *r, label, hit, true),
+            (None, Some(icon)) => {
+                draw_icon_button(&mut c, text, p, *r, icon, true, ptr(hit, true), false, size)
+            }
+            (None, None) => button(&mut c, *r, "", hit, true),
+        }
     }
     if let Some(r) = lay.more {
-        button(r, NOTIFY_MORE, NotifyHit::More, true);
+        button(&mut c, r, NOTIFY_MORE, NotifyHit::More, true);
     }
     if let Some(r) = lay.send {
         let room = r.width - 2 * NOTIFY_LABEL_PAD * s;
         let label = text.ellipsize(&lay.send_label, room, false, size);
-        button(r, &label, NotifyHit::Send, !edit.text.trim().is_empty());
+        button(
+            &mut c,
+            r,
+            &label,
+            NotifyHit::Send,
+            !edit.text.trim().is_empty(),
+        );
     }
     c
 }

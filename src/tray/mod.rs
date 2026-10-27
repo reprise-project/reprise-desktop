@@ -16,8 +16,8 @@ mod tests;
 pub(crate) use customize::customize_icon_landed;
 pub use customize::{Remembered, apply_choices, customize};
 pub use icons::{
-    NOTIFY_SIZES, bar_icons, closest, decode_named_at, invalidate_icons, item_icon, item_pixmaps,
-    sync_icon_sizes,
+    ACTION_ICON_SIZES, NOTIFY_SIZES, bar_icons, closest, decode_named_at, invalidate_icons,
+    item_icon, item_pixmaps, sync_icon_sizes,
 };
 pub use menu::{
     DEFAULT_PROP, MenuNode, Submenus, forget_output, menu_activate, menu_hover, menus_closed,
@@ -165,6 +165,9 @@ pub struct Notification {
     /// (key, label) pairs in the sender's order, `default` among them when
     /// a click on the body should run something.
     pub actions: Vec<(String, String)>,
+    /// Under `action-icons`, each button action's key decoded as an icon at
+    /// [`ACTION_ICON_SIZES`], for those that resolve.
+    pub action_icons: HashMap<String, Vec<IconSource>>,
     pub urgency: notify::Urgency,
     /// Not kept in the history once its balloon goes.
     pub transient: bool,
@@ -196,6 +199,7 @@ impl Notification {
             image: Vec::new(),
             expire_timeout: -1,
             actions: Vec::new(),
+            action_icons: Default::default(),
             urgency: notify::Urgency::Normal,
             transient: false,
             resident: false,

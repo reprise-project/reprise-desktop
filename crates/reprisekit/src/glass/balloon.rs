@@ -105,10 +105,10 @@ mod tests {
     fn the_notification_balloon_is_a_shaded_bubble_with_stepped_corners() {
         let theme = theme_for(Interface::Glass);
         let t = text(&theme);
-        let lay = notify_layout(&theme, &t, "Update", "Ready to install.", &[], None);
+        let lay = notify_layout(&theme, &t, "Update", "Ready to install.", &[], &[], None);
         assert_eq!((lay.bubble_w, lay.bubble_h), (300, 55), "one body line");
         assert_eq!((lay.width, lay.height), (305, 55 + 19));
-        let c = draw_notify_balloon(&theme, &t, &lay, None, None, None, None);
+        let c = draw_notify_balloon(&theme, &t, &lay, None, &[], None, None, None);
         let corner: Vec<String> = (0..7).map(|y| frame_row(&c, y, 0..7)).collect();
         assert_eq!(
             corner,
@@ -152,10 +152,10 @@ mod tests {
     fn icon_text_and_close_cross_sit_where_glass_puts_them() {
         let theme = theme_for(Interface::Glass);
         let t = text(&theme);
-        let lay = notify_layout(&theme, &t, "Update", "Ready to install.", &[], None);
+        let lay = notify_layout(&theme, &t, "Update", "Ready to install.", &[], &[], None);
         let mut icon = Canvas::new(16, 16);
         icon.fill_rect(icon.bounds(), Color::rgb(0xFA, 12, 0));
-        let c = draw_notify_balloon(&theme, &t, &lay, Some(&icon), None, None, None);
+        let c = draw_notify_balloon(&theme, &t, &lay, Some(&icon), &[], None, None, None);
         assert_eq!(c.get(13, 12), rgb(0xFA0C00), "the icon's top-left");
         assert_eq!(c.get(28, 27), rgb(0xFA0C00), "the icon's bottom-right");
         assert_ne!(c.get(12, 12), rgb(0xFA0C00));
@@ -212,6 +212,7 @@ mod tests {
             &t,
             &lay,
             Some(&icon),
+            &[],
             None,
             Some(NotifyHit::Close),
             None,
@@ -229,6 +230,7 @@ mod tests {
             &t,
             &lay,
             Some(&icon),
+            &[],
             None,
             Some(NotifyHit::Body),
             None,
@@ -240,7 +242,15 @@ mod tests {
     fn hits_follow_the_glass_layout_on_either_edge() {
         let theme = theme_for(Interface::Glass);
         let t = text(&theme);
-        let lay = notify_layout(&theme, &t, "Mail", "New message", &["Open", "Reply"], None);
+        let lay = notify_layout(
+            &theme,
+            &t,
+            "Mail",
+            "New message",
+            &["Open", "Reply"],
+            &[],
+            None,
+        );
         let close = lay.close;
         assert_eq!(notify_hit(&lay, close.x, close.y), NotifyHit::Close);
         assert_eq!(
@@ -260,12 +270,13 @@ mod tests {
         assert_eq!(top.close.y, close.y + 19);
         let b = top.buttons[1];
         assert_eq!(notify_hit(&top, b.x + 3, b.y + 3), NotifyHit::Button(1));
-        let rest = draw_notify_balloon(&theme, &t, &top, None, None, None, None);
+        let rest = draw_notify_balloon(&theme, &t, &top, None, &[], None, None, None);
         let lit = draw_notify_balloon(
             &theme,
             &t,
             &top,
             None,
+            &[],
             None,
             Some(NotifyHit::Button(1)),
             None,
@@ -312,18 +323,18 @@ mod tests {
             },
         );
         let t = text(&dark);
-        let lay = notify_layout(&dark, &t, "Update", "Ready.", &[], None);
-        let c = draw_notify_balloon(&dark, &t, &lay, None, None, None, None);
+        let lay = notify_layout(&dark, &t, "Update", "Ready.", &[], &[], None);
+        let c = draw_notify_balloon(&dark, &t, &lay, None, &[], None, None, None);
         assert_eq!(c.get(150, 53), remap_color(LOOK.fill.1).argb(), "dark fill");
         assert_eq!(c.get(150, 0), remap_color(LOOK.frame).argb(), "dark frame");
 
         let theme = theme_for(Interface::Glass);
         let t = text(&theme);
         let two = theme.scaled(2);
-        let lay = notify_layout(&two, &t, "Update", "Ready.", &[], None);
+        let lay = notify_layout(&two, &t, "Update", "Ready.", &[], &[], None);
         assert_eq!((lay.bubble_w, lay.bubble_h), (600, 110));
         assert_eq!(lay.close, Rect::new(546, 18, 34, 32));
-        let c = draw_notify_balloon(&two, &t, &lay, None, None, None, None);
+        let c = draw_notify_balloon(&two, &t, &lay, None, &[], None, None, None);
         assert_eq!(frame_row(&c, 0, 8..12), "  ##", "the corner, doubled");
         assert_eq!(frame_row(&c, 2, 4..12), "  ######");
         let v = 598 - 32;

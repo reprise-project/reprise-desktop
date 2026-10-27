@@ -136,6 +136,8 @@ pub struct Hints<'a> {
     /// `sound-file` (an absolute path), else `sound-name`.
     pub sound: Option<Sound>,
     pub suppress_sound: bool,
+    /// `action-icons`: each button action's key names an icon shown in place of its label.
+    pub action_icons: bool,
 }
 
 impl Hints<'_> {
@@ -173,6 +175,7 @@ pub fn hints(mut raw: HashMap<String, Hint<'_>>) -> Hints<'_> {
         .map(|p| Sound::File(p.into()));
     let name = text(take(&["sound-name"])).map(Sound::Name);
     let suppress_sound = flag(take(&["suppress-sound"]));
+    let action_icons = flag(take(&["action-icons"]));
     Hints {
         urgency,
         transient,
@@ -184,7 +187,17 @@ pub fn hints(mut raw: HashMap<String, Hint<'_>>) -> Hints<'_> {
         reply_send,
         sound: file.or(name),
         suppress_sound,
+        action_icons,
     }
+}
+
+/// The keys of `actions` looked up as icons under `action-icons`: every button action but
+/// `inline-reply`, and only theme icon names, never a path.
+pub fn icon_keys(actions: &[(String, String)]) -> impl Iterator<Item = &str> {
+    actions
+        .iter()
+        .map(|(k, _)| k.as_str())
+        .filter(|k| ![DEFAULT_ACTION, INLINE_REPLY].contains(k) && !k.contains('/'))
 }
 
 /// Notification pictures show at most 96 px a side and are scaled down to it. `image-data`'s
@@ -470,6 +483,7 @@ mod tests {
             "image-data",
             Value::from((2i32, 1i32, 8i32, true, 8i32, 4i32, pixels.clone())),
         );
+        map.insert("action-icons", Value::Bool(true));
         map.insert("x-other", Value::from(vec![1u32, 2, 3]));
         let bytes = round_trip(map);
         let data = zbus::zvariant::serialized::Data::new(&bytes[..], Context::new_dbus(LE, 0));
@@ -478,6 +492,7 @@ mod tests {
         let h = hints(raw);
         assert_eq!(h.urgency, Urgency::Critical);
         assert!(h.transient && !h.resident);
+        assert!(h.action_icons, "action-icons is read");
         assert_eq!(h.desktop_entry.as_deref(), Some("org.example.Mail"));
         assert_eq!(h.image_path.as_deref(), Some("/tmp/x.png"));
         let img = h.image.expect("image-data");
@@ -492,6 +507,22 @@ mod tests {
         assert_eq!(
             src[0].pixels[4 * 16 + 15],
             reprisekit::icon::premultiply(0x8000_00FF)
+        );
+    }
+
+    #[test]
+    fn icon_keys_skip_the_default_reply_and_path_keys() {
+        let pair = |k: &str| (k.to_string(), String::new());
+        let actions = [
+            pair(DEFAULT_ACTION),
+            pair("media-playback-start"),
+            pair(INLINE_REPLY),
+            pair("/etc/passwd"),
+            pair("call-stop"),
+        ];
+        assert_eq!(
+            icon_keys(&actions).collect::<Vec<_>>(),
+            ["media-playback-start", "call-stop"]
         );
     }
 

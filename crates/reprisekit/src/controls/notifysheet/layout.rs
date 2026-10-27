@@ -1,6 +1,9 @@
 //! Sheet layouts for each shape, and a Droplet part way open.
 
-use crate::controls::tooltip::{NOTIFY_BODY_LINES, NOTIFY_BUTTONS, NotifyParts, NotifyReply};
+use crate::controls::tooltip::{
+    NOTIFY_BODY_LINES, NOTIFY_BUTTONS, NotifyParts, NotifyReply, shrink_labelled,
+};
+use crate::look::widgets::BUTTON_ICON;
 use crate::raster::Rect;
 use crate::style::{NotifyLook, SheetShape, Well};
 use crate::text::{TextRenderer, wrap};
@@ -20,6 +23,7 @@ const PILL_GAP: i32 = 6;
 const PILL_PX: u32 = 13;
 pub(super) const PILL_PAD: i32 = 14;
 const PILL_MIN: i32 = 64;
+const ICON_PILL_W: i32 = BUTTON_ICON + 2 * PILL_PAD;
 const MORE_W: i32 = 34;
 const CLOSE: i32 = 20;
 /// The app line and title end this far short of the close button.
@@ -134,16 +138,18 @@ fn body_lines(text: &TextRenderer, body: &str, width: i32, px: u32) -> Vec<Strin
 /// `left` and `right` from `y`, design px.
 struct ActionRow {
     buttons: Vec<Rect>,
-    labels: Vec<String>,
+    labels: Vec<Option<String>>,
     more: Option<Rect>,
     field: Option<Rect>,
     send: Option<Rect>,
     shown: bool,
 }
 
+#[expect(clippy::too_many_arguments)]
 fn action_row(
     text: &TextRenderer,
     actions: &[&str],
+    icons: &[bool],
     reply: Option<NotifyReply>,
     (left, right, y): (i32, i32, i32),
     s: i32,
@@ -166,26 +172,27 @@ fn action_row(
         shown: true,
     };
     if let Some(r) = reply {
-        let sw = pill_widths(text, &[r.send], pill_px, s, room)[0];
+        let sw = pill_widths(text, &[r.send], &[], pill_px, s, room)[0];
         let sx = right - sw;
         row.send = Some(at(sx, y, sw, PILL_H));
         row.field = Some(at(left, y, sx - PILL_GAP - left, PILL_H));
     } else if shown > 0 || more_w > 0 {
         let parts = shown + usize::from(more_w > 0);
         let room = room - more_w - (parts as i32 - 1) * PILL_GAP;
-        let widths = pill_widths(text, &actions[..shown], pill_px, s, room);
+        let widths = pill_widths(text, &actions[..shown], icons, pill_px, s, room);
         let mut x = right;
         if more_w > 0 {
             x -= more_w;
             row.more = Some(at(x, y, more_w, PILL_H));
             x -= PILL_GAP;
         }
-        for (a, w) in actions[..shown].iter().zip(&widths).rev() {
+        for (i, (a, w)) in actions[..shown].iter().zip(&widths).enumerate().rev() {
             x -= w;
             row.buttons.push(at(x, y, *w, PILL_H));
             let room = (w - 2 * PILL_PAD) * s;
+            let iconic = icons.get(i).copied().unwrap_or(false);
             row.labels
-                .push(text.ellipsize(a, room, true, pill_px).into_owned());
+                .push((!iconic).then(|| text.ellipsize(a, room, true, pill_px).into_owned()));
             x -= PILL_GAP;
         }
         row.buttons.reverse();
@@ -196,16 +203,29 @@ fn action_row(
     row
 }
 
-/// Pill widths, design px: label plus padding, shrunk evenly when they overrun `room`.
-fn pill_widths(text: &TextRenderer, labels: &[&str], px: u32, s: i32, room: i32) -> Vec<i32> {
+/// Pill widths, design px: label plus padding, or for an action `icons` marks its icon plus
+/// padding; the labelled ones shrink evenly when they overrun `room`.
+fn pill_widths(
+    text: &TextRenderer,
+    labels: &[&str],
+    icons: &[bool],
+    px: u32,
+    s: i32,
+    room: i32,
+) -> Vec<i32> {
+    let iconic = |i: usize| icons.get(i).copied().unwrap_or(false);
     let mut w: Vec<i32> = labels
         .iter()
-        .map(|l| ((text.measure(l, true, px) + s - 1) / s + 2 * PILL_PAD).max(PILL_MIN))
+        .enumerate()
+        .map(|(i, l)| {
+            if iconic(i) {
+                ICON_PILL_W
+            } else {
+                ((text.measure(l, true, px) + s - 1) / s + 2 * PILL_PAD).max(PILL_MIN)
+            }
+        })
         .collect();
-    let n = w.len() as i32;
-    if n > 0 && w.iter().sum::<i32>() > room {
-        w.fill(room / n);
-    }
+    shrink_labelled(&mut w, iconic, room);
     w
 }
 
@@ -260,6 +280,7 @@ fn column_layout(
     } = action_row(
         text,
         actions,
+        c.action_icons,
         reply,
         (f.row_x, w - f.pad, row_y),
         s,
@@ -423,6 +444,7 @@ fn droplet_layout(
     let row = action_row(
         text,
         actions,
+        c.action_icons,
         reply,
         (text_x, DROPLET_W - DROPLET_PAD, row_y),
         s,
@@ -491,7 +513,7 @@ pub fn open_layout(collapsed: &SheetLayout, expanded: &SheetLayout, t: f64) -> S
     let fits = |r: &Rect| r.bottom() <= bottom;
     let p = &mut lay.parts;
     p.bubble = lay.sheet;
-    let kept: Vec<(Rect, String)> = p
+    let kept: Vec<(Rect, Option<String>)> = p
         .buttons
         .drain(..)
         .zip(lay.labels.drain(..))

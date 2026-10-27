@@ -29,6 +29,7 @@ fn render_tooltip() {
         "Ana",
         "Lunch on Friday?",
         &["Reply"],
+        &[],
         Some(reply),
     );
     let typed = TextEdit::new("Sounds good", false);
@@ -37,6 +38,7 @@ fn render_tooltip() {
         &text,
         &lay,
         None,
+        &[],
         None,
         None,
         Some((&typed, Caret::Shown, None)),
@@ -346,8 +348,8 @@ fn task_tip_only_when_the_title_was_cut() {
 }
 
 fn balloon(theme: &Theme, text: &TextRenderer, title: &str, body: &str) -> Canvas {
-    let lay = notify_layout(theme, text, title, body, &[], None);
-    draw_notify_balloon(theme, text, &lay, None, None, None, None)
+    let lay = notify_layout(theme, text, title, body, &[], &[], None);
+    draw_notify_balloon(theme, text, &lay, None, &[], None, None, None)
 }
 
 fn notify_height(text: &TextRenderer, theme: &Theme, body: &str) -> u32 {
@@ -394,10 +396,10 @@ fn a_scale_2_notify_balloon_sits_in_the_same_logical_corner() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
     let usable = Rect::new(0, 0, 1920, 1050);
-    let one = notify_layout(&theme, &t, "Update", "Ready.", &[], None);
+    let one = notify_layout(&theme, &t, "Update", "Ready.", &[], &[], None);
     let want = (1920 - 300 - 8, 1050 - one.height - 2);
     assert_eq!(place_notify(usable, &one, 1, Edge::Bottom), want);
-    let two = notify_layout(&theme.scaled(2), &t, "Update", "Ready.", &[], None);
+    let two = notify_layout(&theme.scaled(2), &t, "Update", "Ready.", &[], &[], None);
     assert_eq!(place_notify(usable, &two, 2, Edge::Bottom), want);
 }
 
@@ -406,7 +408,7 @@ fn under_a_top_bar_the_notify_balloon_sits_top_right_its_tail_rising() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
     let usable = Rect::new(0, 30, 1920, 1050);
-    let bottom = notify_layout(&theme, &t, "Update", "Ready.", &["Open"], None);
+    let bottom = notify_layout(&theme, &t, "Update", "Ready.", &["Open"], &[], None);
     let top = bottom.clone().on_edge(Edge::Top);
     assert_eq!(
         place_notify(usable, &top, 1, Edge::Top),
@@ -427,8 +429,8 @@ fn under_a_top_bar_the_notify_balloon_sits_top_right_its_tail_rising() {
     assert_eq!(top.close.y, bottom.close.y + dy);
     let b = top.buttons[0];
     assert_eq!(notify_hit(&top, b.x + 3, b.y + 3), NotifyHit::Button(0));
-    let up = draw_notify_balloon(&theme, &t, &top, None, None, None, None);
-    let down = draw_notify_balloon(&theme, &t, &bottom, None, None, None, None);
+    let up = draw_notify_balloon(&theme, &t, &top, None, &[], None, None, None);
+    let down = draw_notify_balloon(&theme, &t, &bottom, None, &[], None, None, None);
     // The bubble inside its top and bottom border rows, 12 px lower.
     for y in 1..bottom.bubble_h - 1 {
         for x in 0..NOTIFY_W {
@@ -457,8 +459,16 @@ fn under_a_top_bar_the_notify_balloon_sits_top_right_its_tail_rising() {
 fn action_buttons_sit_right_aligned_in_a_row_under_the_body() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
-    let plain = notify_layout(&theme, &t, "Mail", "New message", &[], None);
-    let lay = notify_layout(&theme, &t, "Mail", "New message", &["Open", "Reply"], None);
+    let plain = notify_layout(&theme, &t, "Mail", "New message", &[], &[], None);
+    let lay = notify_layout(
+        &theme,
+        &t,
+        "Mail",
+        "New message",
+        &["Open", "Reply"],
+        &[],
+        None,
+    );
     // The row adds its 8 px gap and a 23 px button to the bubble.
     assert_eq!(lay.bubble_h, plain.bubble_h + NOTIFY_ROW_GAP + BUTTON_H);
     assert_eq!(lay.height, lay.bubble_h + NOTIFY_TAIL_H);
@@ -494,6 +504,7 @@ fn action_buttons_sit_right_aligned_in_a_row_under_the_body() {
         &t,
         &lay,
         None,
+        &[],
         Some(NotifyHit::Button(0)),
         None,
         None,
@@ -503,12 +514,75 @@ fn action_buttons_sit_right_aligned_in_a_row_under_the_body() {
     assert_eq!(c.get(reply.x + 5, reply.y), cs.button_hilight.argb());
 }
 
+/// An opaque 16 px square at `s` device px per px, for an action's icon.
+fn swatch(s: i32) -> Canvas {
+    let side = (crate::look::widgets::BUTTON_ICON * s) as u32;
+    let mut c = Canvas::new(side, side);
+    c.fill_rect(c.bounds(), Color::rgb(0xFA, 12, 0));
+    c
+}
+
+#[test]
+fn an_action_with_an_icon_gets_an_icon_button_sized_by_the_icon() {
+    let t = TextRenderer::load(&FontConfig::default());
+    for s in [1, 2] {
+        let theme = Theme::default().scaled(s);
+        let acts = ["media-playback-start", "Later"];
+        let label = notify_layout(&theme, &t, "Song", "Next up", &acts, &[], None);
+        let lay = notify_layout(&theme, &t, "Song", "Next up", &acts, &[true], None);
+        let [play, later] = lay.buttons[..] else {
+            panic!("two buttons: {:?}", lay.buttons);
+        };
+        assert_eq!(play.width, ICON_BUTTON_W * s, "the icon button at {s}");
+        assert_eq!(
+            later.width, label.buttons[1].width,
+            "the labelled one at {s}"
+        );
+        assert_eq!(later.right(), (NOTIFY_W - NOTIFY_PAD) * s);
+        assert_eq!(later.x - play.right(), BUTTON_GAP * s);
+
+        let icon = swatch(s);
+        let c = draw_notify_balloon(&theme, &t, &lay, None, &[Some(icon)], None, None, None);
+        let side = crate::look::widgets::BUTTON_ICON * s;
+        let (x, y) = (
+            play.x + (play.width - side) / 2,
+            play.y + (play.height - side) / 2,
+        );
+        assert_eq!(c.get(x, y), 0xFFFA_0C00, "the icon's top-left at {s}");
+        assert_eq!(
+            c.get(x + side - 1, y + side - 1),
+            0xFFFA_0C00,
+            "its bottom-right at {s}"
+        );
+        assert_ne!(c.get(x - 1, y), 0xFFFA_0C00, "nothing left of it at {s}");
+    }
+}
+
+#[test]
+fn icon_buttons_keep_their_width_when_a_long_label_shrinks() {
+    let t = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let long = "a label long enough to overrun the whole balloon row on its own";
+    let lay = notify_layout(
+        &theme,
+        &t,
+        "Hi",
+        "Body",
+        &["call-stop", long],
+        &[true],
+        None,
+    );
+    assert_eq!(lay.buttons[0].width, ICON_BUTTON_W);
+    assert_eq!(lay.buttons[1].right(), NOTIFY_W - NOTIFY_PAD);
+    assert_eq!(lay.buttons[0].x, NOTIFY_PAD, "the row fills the room");
+}
+
 #[test]
 fn a_fourth_action_brings_the_more_button() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
     let acts = ["One", "Two", "Three", "Four", "Five"];
-    let lay = notify_layout(&theme, &t, "Hi", "Body", &acts, None);
+    let lay = notify_layout(&theme, &t, "Hi", "Body", &acts, &[], None);
     assert_eq!(lay.buttons.len(), NOTIFY_BUTTONS);
     let more = lay.more.expect("a ... button");
     assert_eq!((more.width, more.height), (BUTTON_H, BUTTON_H));
@@ -520,7 +594,7 @@ fn a_fourth_action_brings_the_more_button() {
     // Long labels overrun the 280 px row, so the labelled three share
     // what the square button and the gaps leave, evenly.
     let long = ["Open in a new window", "Mark as read", "Archive", "Delete"];
-    let lay = notify_layout(&theme, &t, "Hi", "Body", &long, None);
+    let lay = notify_layout(&theme, &t, "Hi", "Body", &long, &[], None);
     let room = NOTIFY_W - 2 * NOTIFY_PAD - BUTTON_H - 3 * BUTTON_GAP;
     assert!(lay.buttons.iter().all(|b| b.width == room / 3));
     assert!(lay.buttons[0].x >= NOTIFY_PAD);
@@ -558,7 +632,7 @@ fn a_blue_tip_is_black_round_its_info_colour_in_every_variant() {
 fn beside_a_side_bar_the_balloon_sits_in_the_foot_corner_by_the_tray() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
-    let lay = notify_layout(&theme, &t, "Update", "Ready.", &["Open"], None);
+    let lay = notify_layout(&theme, &t, "Update", "Ready.", &["Open"], &[], None);
     let left = lay.clone().on_edge(Edge::Left);
     assert_eq!(
         (left.bubble_y, left.close, left.buttons.clone()),
@@ -590,8 +664,8 @@ fn the_reply_row_stands_where_the_buttons_stood() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
     let acts = ["Reply", "Mark as read"];
-    let row = notify_layout(&theme, &t, "Ana", "Lunch?", &acts, None);
-    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &acts, Some(REPLY));
+    let row = notify_layout(&theme, &t, "Ana", "Lunch?", &acts, &[], None);
+    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &acts, &[], Some(REPLY));
     assert_eq!(lay.height, row.height, "same size either way");
     assert!(lay.buttons.is_empty() && lay.more.is_none());
     let send = lay.send.expect("a send button");
@@ -624,7 +698,7 @@ fn the_reply_field_shows_its_hint_until_there_is_text() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
     let cs = &theme.colors;
-    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], Some(REPLY));
+    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], &[], Some(REPLY));
     let (field, send) = (lay.field.unwrap(), lay.send.unwrap());
     let inks = |c: &Canvas, r: Rect, ink: crate::theme::Color| {
         (r.x..r.right()).any(|x| (r.y..r.bottom()).any(|y| c.get(x, y) == ink.argb()))
@@ -636,6 +710,7 @@ fn the_reply_field_shows_its_hint_until_there_is_text() {
         &t,
         &lay,
         None,
+        &[],
         None,
         None,
         Some((&empty, Caret::Unfocused, None)),
@@ -658,6 +733,7 @@ fn the_reply_field_shows_its_hint_until_there_is_text() {
         &t,
         &lay,
         None,
+        &[],
         None,
         None,
         Some((&typed, Caret::Shown, None)),
@@ -675,6 +751,7 @@ fn the_reply_field_shows_its_hint_until_there_is_text() {
         &t,
         &lay,
         None,
+        &[],
         None,
         None,
         Some((&typed, Caret::Hidden, None)),
@@ -690,7 +767,7 @@ fn the_reply_field_shows_the_preedit_and_reports_its_spot() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
     let ink = theme.colors.button_text.argb();
-    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], Some(REPLY));
+    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], &[], Some(REPLY));
     let field = lay.field.unwrap();
     let typed = TextEdit::new("ok", false);
     let preedit = Preedit::new("nihao".into(), 5, 5);
@@ -700,6 +777,7 @@ fn the_reply_field_shows_the_preedit_and_reports_its_spot() {
             &t,
             &lay,
             None,
+            &[],
             None,
             None,
             Some((&typed, caret, preedit.as_ref())),
@@ -726,6 +804,7 @@ fn the_reply_field_shows_the_preedit_and_reports_its_spot() {
         &t,
         &lay,
         None,
+        &[],
         None,
         None,
         Some((&typed, Caret::Unfocused, None)),
@@ -738,6 +817,7 @@ fn the_reply_field_shows_the_preedit_and_reports_its_spot() {
         &t,
         &lay,
         None,
+        &[],
         None,
         None,
         Some((&empty, Caret::Shown, preedit.as_ref())),
@@ -758,7 +838,7 @@ fn every_interface_draws_the_reply_row() {
     for iface in [Interface::Classic, Interface::Blue, Interface::Glass] {
         let theme = crate::interfaces::theme_for(iface);
         let t = TextRenderer::load(&theme.fonts);
-        let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], Some(REPLY));
+        let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], &[], Some(REPLY));
         let field = lay.field.unwrap();
         let typed = TextEdit::default();
         let c = draw_notify_balloon(
@@ -766,6 +846,7 @@ fn every_interface_draws_the_reply_row() {
             &t,
             &lay,
             None,
+            &[],
             None,
             None,
             Some((&typed, Caret::Shown, None)),
@@ -803,7 +884,7 @@ fn enter_sends_the_trimmed_reply_and_escape_collapses() {
 fn a_click_on_the_field_focuses_it_and_places_the_caret() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
-    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], Some(REPLY));
+    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], &[], Some(REPLY));
     let field = lay.field.unwrap();
     let mut f = ReplyField {
         edit: TextEdit::new("Sure thing", false),
@@ -823,7 +904,7 @@ fn a_click_on_the_field_focuses_it_and_places_the_caret() {
 fn a_right_press_keeps_the_selection_under_it_and_moves_the_caret_elsewhere() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
-    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], Some(REPLY));
+    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], &[], Some(REPLY));
     let field = lay.field.unwrap();
     let mut f = ReplyField {
         edit: TextEdit::new("Sure thing", false),
@@ -863,7 +944,7 @@ fn the_balloon_is_a_live_alert_naming_its_parts() {
     let theme = Theme::default();
     let acts = ["Open", "Save & Archive", "Later", "Snooze"];
     let body = "Lunch at noon? The usual place, unless it rains again today.";
-    let lay = notify_layout(&theme, &t, "Ana", body, &acts, None);
+    let lay = notify_layout(&theme, &t, "Ana", body, &acts, &[], None);
     let says = NotifySays {
         app: "Chat",
         title: "Ana",
@@ -911,7 +992,7 @@ fn the_balloon_is_a_live_alert_naming_its_parts() {
 fn an_urgent_balloon_is_assertive_and_follows_the_bubble() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
-    let lay = notify_layout(&theme, &t, "Battery low", "", &[], None).on_edge(Edge::Top);
+    let lay = notify_layout(&theme, &t, "Battery low", "", &[], &[], None).on_edge(Edge::Top);
     let says = NotifySays {
         app: "",
         title: "Battery low",
@@ -945,7 +1026,7 @@ fn an_urgent_balloon_is_assertive_and_follows_the_bubble() {
 fn the_reply_row_reads_as_a_field_and_send() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
-    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], Some(REPLY));
+    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", &["Reply"], &[], Some(REPLY));
     let says = NotifySays {
         app: "Chat",
         title: "Ana",

@@ -1,8 +1,8 @@
 use super::item::{icon_ref, owner_pid};
 use super::{Icons, emit, lock};
 use crate::tray::{
-    BODY_CHARS, NOTIFY_SIZES, Notification, REPLY_SEND, Reply, SUMMARY_CHARS, TrayEvent, clip,
-    decode_named_at, notify,
+    ACTION_ICON_SIZES, BODY_CHARS, NOTIFY_SIZES, Notification, REPLY_SEND, Reply, SUMMARY_CHARS,
+    TrayEvent, clip, decode_named_at, notify,
 };
 use reprisekit::icon::IconSource;
 use std::collections::HashMap;
@@ -88,7 +88,8 @@ pub(super) struct Notifications {
     pub(super) icons: Icons,
 }
 
-const CAPABILITIES: [&str; 6] = [
+pub(super) const CAPABILITIES: [&str; 7] = [
+    "action-icons",
     "actions",
     "body",
     "body-markup",
@@ -135,6 +136,11 @@ impl Notifications {
         let (app_icon, image) = notification_icons(&self.icons, &hints, app_icon, entry.as_ref());
         let app = entry.map_or(app_name, |e| e.name);
         let actions = notify::actions(&actions);
+        let action_icons = if hints.action_icons {
+            action_icons(&self.icons, &actions)
+        } else {
+            HashMap::new()
+        };
         let reply = actions
             .iter()
             .any(|(k, _)| k == notify::INLINE_REPLY)
@@ -160,6 +166,7 @@ impl Notifications {
                 image,
                 expire_timeout,
                 actions,
+                action_icons,
                 urgency: hints.urgency,
                 transient: hints.transient,
                 resident: hints.resident,
@@ -219,6 +226,19 @@ impl Notifications {
         id: u32,
         activation_token: &str,
     ) -> zbus::Result<()>;
+}
+
+/// Each of `actions`' [`notify::icon_keys`] that resolves as a theme icon, decoded.
+pub(super) fn action_icons(
+    icons: &Icons,
+    actions: &[(String, String)],
+) -> HashMap<String, Vec<IconSource>> {
+    notify::icon_keys(actions)
+        .filter_map(|k| {
+            let sources = decode_named_at(&mut lock(icons), k, &[], &ACTION_ICON_SIZES);
+            (!sources.is_empty()).then(|| (k.to_string(), sources))
+        })
+        .collect()
 }
 
 fn desktop_entry(hint: &str) -> Option<reprisefs::apps::AppEntry> {

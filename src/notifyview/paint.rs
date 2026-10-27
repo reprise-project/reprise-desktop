@@ -5,6 +5,7 @@ use reprisekit::controls::notifysheet::{
     place_stack, sheet_hit,
 };
 use reprisekit::controls::tooltip::{draw_notify_balloon, place_notify};
+use reprisekit::look::widgets::BUTTON_ICON;
 use reprisekit::taskbar::Edge;
 use reprisekit::textedit::Caret;
 use reprisescene::Input;
@@ -250,11 +251,13 @@ fn paint_one(
                 let icon_px = theme.icon_size();
                 let icon = crate::tray::closest(b.item.icon(), icon_px)
                     .or_else(|| state.icons.get("dialog-information", icon_px));
+                let actions = b.item.button_icon_canvases(BUTTON_ICON * scale);
                 draw_notify_balloon(
                     &theme,
                     state.text.for_output(theme.scale),
                     lay,
                     icon.as_ref(),
+                    &actions,
                     pushed,
                     b.hot,
                     reply,
@@ -265,9 +268,11 @@ fn paint_one(
         Drawn::Sheet(lay) => {
             let canvas = fresh.then(|| {
                 let (app, picture) = sheet_icons(&mut state.icons, b, lay);
+                let actions = b.item.button_icon_canvases(BUTTON_ICON * scale);
                 let icons = SheetIcons {
                     app: app.as_ref(),
                     picture: picture.as_ref(),
+                    actions: &actions,
                 };
                 let builds = opening.builds();
                 let canvas = match &ends {

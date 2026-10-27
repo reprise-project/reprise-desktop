@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::compositor::State;
+use crate::raster::Canvas;
 use crate::theme::Theme;
 use crate::tray::Notification;
 use crate::tray::notify::Urgency;
@@ -109,6 +110,31 @@ impl Item {
         match self {
             Item::Note(n) => &n.image,
             Item::Burst(_) => &[],
+        }
+    }
+
+    /// Which buttons show their action's icon in place of the label.
+    pub(super) fn button_icons(&self) -> Vec<bool> {
+        match self {
+            Item::Note(n) => n
+                .button_actions()
+                .map(|(k, _)| n.action_icons.contains_key(k))
+                .collect(),
+            Item::Burst(_) => Vec::new(),
+        }
+    }
+
+    /// Each button's action icon at `px`, None for a button that keeps its label.
+    pub(super) fn button_icon_canvases(&self, px: i32) -> Vec<Option<Canvas>> {
+        match self {
+            Item::Note(n) => n
+                .button_actions()
+                .map(|(k, _)| {
+                    let sources = n.action_icons.get(k)?;
+                    crate::tray::closest(sources, px)
+                })
+                .collect(),
+            Item::Burst(_) => Vec::new(),
         }
     }
 }

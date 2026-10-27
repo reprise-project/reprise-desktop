@@ -27,6 +27,7 @@ fn content<'a>(app: &'a str, title: &'a str, body: &'a str) -> SheetContent<'a> 
         title,
         body,
         actions: &[],
+        action_icons: &[],
         reply: None,
         has_picture: false,
         has_app_icon: true,
@@ -193,6 +194,52 @@ fn pills_sit_right_aligned_under_the_body_and_a_fourth_brings_more() {
 }
 
 #[test]
+fn an_icon_pill_is_sized_by_its_icon_and_draws_it() {
+    let t = text();
+    let acts = ["media-playback-start", "Later"];
+    let red = Color::rgb(0xFA, 12, 0);
+    for s in [1, 2] {
+        let theme = glass(false, s);
+        let lay = |icons: &[bool]| {
+            let c = SheetContent {
+                actions: &acts,
+                action_icons: icons,
+                ..content("Music", "Song", "Next up")
+            };
+            sheet_layout(&theme, &t, SheetShape::Lozenge, &c, false).unwrap()
+        };
+        let (plain, lay) = (lay(&[]), lay(&[true]));
+        let [play, later] = lay.parts.buttons[..] else {
+            panic!("two pills: {:?}", lay.parts.buttons)
+        };
+        assert_eq!(play.width, (16 + 2 * 14) * s, "the icon pill at {s}");
+        assert_eq!(
+            later.width, plain.parts.buttons[1].width,
+            "the labelled one at {s}"
+        );
+        assert_eq!(later.right(), lay.sheet.right() - 14 * s);
+
+        let side = 16 * s;
+        let mut icon = Canvas::new(side as u32, side as u32);
+        icon.fill_rect(icon.bounds(), red);
+        let actions = [Some(icon)];
+        let icons = SheetIcons {
+            actions: &actions,
+            ..SheetIcons::default()
+        };
+        let drawn = draw_sheet(&theme, &t, &lay, icons, None, None, None, None);
+        let (x, y) = (
+            play.x + (play.width - side) / 2,
+            play.y + (play.height - side) / 2,
+        );
+        assert_eq!(drawn.get(x, y), red.argb(), "the icon's top-left at {s}");
+        let end = drawn.get(x + side - 1, y + side - 1);
+        assert_eq!(end, red.argb(), "its bottom-right at {s}");
+        assert_ne!(drawn.get(x - 1, y), red.argb(), "nothing left of it at {s}");
+    }
+}
+
+#[test]
 fn expanded_the_reply_row_replaces_the_pills() {
     let acts = ["Reply"];
     let c = SheetContent {
@@ -223,6 +270,7 @@ fn picture_sheet(pic: &Canvas, app: Option<&Canvas>, with_pic: bool) -> (SheetLa
     let icons = SheetIcons {
         app,
         picture: with_pic.then_some(pic),
+        actions: &[],
     };
     let drawn = draw_sheet(&theme, &t, &lay, icons, None, None, None, None);
     (lay, drawn)
@@ -293,6 +341,7 @@ fn a_balloons_parts_are_its_rects() {
         "t",
         "b",
         &["Open", "Later"],
+        &[],
         None,
     );
     let p = lay.parts();
@@ -398,6 +447,7 @@ fn pin_case(case: usize, theme: &Theme, t: &TextRenderer) -> Canvas {
     let icons = SheetIcons {
         app: Some(&app),
         picture: c.has_picture.then_some(&picture),
+        actions: &[],
     };
     let typed = TextEdit::new("Sounds good", false);
     let reply = (case == 3).then_some((&typed, Caret::Shown, None));
@@ -743,6 +793,7 @@ fn halo_case(case: usize, theme: &Theme, t: &TextRenderer) -> Canvas {
     let icons = SheetIcons {
         app: Some(&app),
         picture: c.has_picture.then_some(&picture),
+        actions: &[],
     };
     draw_sheet(theme, t, &lay, icons, tint, None, hot, None)
 }
@@ -834,6 +885,7 @@ fn a_halo_canvas_is_its_layout_with_the_icon_in_the_well() {
         let icons = SheetIcons {
             app: Some(&app),
             picture: Some(&pic),
+            actions: &[],
         };
         let drawn = draw_sheet(&theme, &t, &lay, icons, Some(blue), None, None, None);
         assert_eq!(
@@ -1373,7 +1425,7 @@ fn lit_parts_laid_on_the_unlit_layer_match_parts_drawn_lit() {
         draw_parts(&mut want, &theme, &t, &look, &e, icons, pushed, hot, None);
         let mut got = clear();
         draw_parts(&mut got, &theme, &t, &look, &e, icons, None, None, None);
-        relight(&mut got, &t, &look, &e, true, pushed, hot, 2);
+        relight(&mut got, &t, &look, &e, &[], true, pushed, hot, 2);
         assert!(got == want, "{hot:?} pushed {pushed:?}");
     }
 }
@@ -1515,6 +1567,7 @@ fn droplet_case(case: usize, theme: &Theme, t: &TextRenderer) -> Canvas {
     let icons = SheetIcons {
         app: Some(&app),
         picture: c.has_picture.then_some(&picture),
+        actions: &[],
     };
     match case {
         0 | 3 => draw_sheet(theme, t, &lay(false), icons, None, None, None, None),

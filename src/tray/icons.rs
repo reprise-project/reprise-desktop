@@ -70,6 +70,8 @@ pub(super) fn pixmap_to_source(w: i32, h: i32, argb_be: &[u8]) -> Option<IconSou
 
 /// Sizes a notification's icons are decoded at; 48 and 96 px feed the Glass sheet's icon slot.
 pub const NOTIFY_SIZES: [i32; 4] = [16, 32, 48, 96];
+/// Sizes an action's icon is decoded at: its button's 16 px at scale 1 and 2.
+pub const ACTION_ICON_SIZES: [i32; 2] = [16, 32];
 
 /// A peer-named icon (a theme name or an absolute path, with `extra`
 /// directories searched first) decoded at each of `sizes`. Only the D-Bus
