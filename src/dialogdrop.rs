@@ -277,6 +277,12 @@ impl State {
             self.field_let_go(over);
             return;
         }
+        source.drop_performed();
+        self.field_read(source, over);
+    }
+
+    /// Read `source`'s data as `over.mime`, then hand it to `field_received`.
+    fn field_read(&mut self, source: SeatSource, over: FieldOver) {
         let (read, write) = match std::io::pipe() {
             Ok((r, w)) => (OwnedFd::from(r), OwnedFd::from(w)),
             Err(e) => {
@@ -286,7 +292,6 @@ impl State {
                 return;
             }
         };
-        source.drop_performed();
         source.send(over.mime, write);
         self.spawn_job(move || {
             let got = reprisefs::pipe::read_bounded(
@@ -313,6 +318,16 @@ impl State {
         };
         let refused =
             over.mime == dropdata::URI_LIST && source.sandboxed() && !sandboxed_list_taken(&bytes);
+        // A list naming paths inside the sandbox drops the text offered with it.
+        if refused
+            && source.alive()
+            && let Some(meta) = source.metadata()
+            && let Some(mime) = TEXT_MIMES
+                .into_iter()
+                .find(|t| meta.mime_types.iter().any(|m| m == t))
+        {
+            return self.field_read(source, FieldOver { mime, ..over });
+        }
         let took = !refused
             && match over.field {
                 Field::Dialog(id) => self.dialog_field_dropped(id, &field_line(over.mime, &bytes)),

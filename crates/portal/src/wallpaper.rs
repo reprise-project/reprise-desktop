@@ -173,7 +173,7 @@ fn read_picture(path: &Path) -> Option<Vec<u8>> {
 }
 
 /// Write `bytes` as `name` in `dir`, point `[wallpaper]` in `config` at the copy and delete the
-/// copies earlier calls left in `dir`.
+/// copy in `dir` the config named before.
 fn install(
     dir: &Path,
     name: &str,
@@ -185,6 +185,7 @@ fn install(
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let (mut file, to) =
         reprisefs::ops::create_new_numbered(dir, name).map_err(|e| e.to_string())?;
+    let mut before = None;
     let written = file
         .write_all(bytes)
         .and_then(|()| file.sync_all())
@@ -192,6 +193,9 @@ fn install(
         .and_then(|()| {
             repriseconf::edit(config, |text| {
                 let mut doc: DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
+                before = repriseconf::get(&doc, &IMAGE)
+                    .and_then(|i| i.as_str())
+                    .map(PathBuf::from);
                 apply(&mut doc, &to, set_on)?;
                 Ok::<_, String>(doc.to_string())
             })
@@ -202,11 +206,8 @@ fn install(
         let _ = std::fs::remove_file(&to);
         return Err(e);
     }
-    for old in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        let file = old.file_type().is_ok_and(|t| t.is_file());
-        if file && old.path() != to {
-            let _ = std::fs::remove_file(old.path());
-        }
+    if let Some(old) = before.filter(|old| old.parent() == Some(dir) && *old != to) {
+        let _ = std::fs::remove_file(old);
     }
     Ok(to)
 }
@@ -346,6 +347,22 @@ mod tests {
             .map(|e| e.unwrap().path())
             .collect();
         assert_eq!(left, [last]);
+    }
+
+    #[test]
+    fn a_file_in_the_folder_the_config_never_named_survives() {
+        let dir = tempfile::tempdir().unwrap();
+        let to = dir.path().join("wallpapers");
+        let config = dir.path().join("config.toml");
+        std::fs::create_dir_all(&to).unwrap();
+        let own = to.join("my-own-photo.jpg");
+        std::fs::write(&own, b"photo").unwrap();
+        let bytes = png(1, 1);
+        let first = install(&to, "a.png", &bytes, SetOn::Background, &config).unwrap();
+        let last = install(&to, "b.png", &bytes, SetOn::Background, &config).unwrap();
+        assert!(own.exists(), "my-own-photo.jpg is kept");
+        assert!(!first.exists(), "a.png is replaced by b.png");
+        assert!(last.exists());
     }
 
     #[test]

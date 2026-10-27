@@ -54,6 +54,10 @@ options=(!lto)
 # makepkg's debug option appends DEBUG_RUSTFLAGS (-C debuginfo=2 on Arch) to RUSTFLAGS,
 # overriding the release profile: line tables keep backtraces at file:line.
 DEBUG_RUSTFLAGS="-C debuginfo=line-tables-only"
+# makepkg's strip step runs gdb-add-index on each binary whenever gdb is installed
+# (debugedit in base-devel pulls it in); the index only speeds up gdb's first load and
+# is a fifth of the debug package. The strip step calls this function in its place.
+gdb-add-index() { :; }
 source=("git+$url.git")
 sha256sums=('SKIP')
 
