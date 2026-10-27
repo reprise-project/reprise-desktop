@@ -381,6 +381,7 @@ fn on_result(state: &mut State) -> PostAction {
 
 /// Lock the session, then start `[power] locker` if one is set. No-op when already locked.
 pub fn lock(state: &mut State) {
+    crate::crash::set_locked(true);
     if state.is_locked() {
         return;
     }
@@ -409,9 +410,11 @@ pub fn start_dialog_finger(state: &mut State) {
 /// already locked. A locker's own lock comes through here directly so it does not start another
 /// locker. Window captures go blank while it holds (`capture::render_window`).
 pub fn engage(state: &mut State) {
+    crate::crash::set_locked(true);
     if state.is_locked() {
         return;
     }
+    crate::state::save_screen_locked(true);
     state.close_menu();
     if let Some(c) = state.compose.as_mut() {
         c.reset();
@@ -489,7 +492,6 @@ pub fn engage(state: &mut State) {
     crate::power::hint(state, crate::power::Hint::Locked(true));
     crate::idle::inhibition_changed(state);
     state.redraw_all();
-    crate::state::save_screen_locked(true);
     log::info!("session locked");
 }
 
@@ -572,6 +574,7 @@ pub fn unlock(state: &mut State) {
     state.repoint(p, InputTime::now());
     state.redraw_all();
     crate::state::save_screen_locked(false);
+    crate::crash::set_locked(false);
     log::info!("session unlocked");
 }
 
@@ -586,6 +589,10 @@ impl State {
 fn cover_output(state: &mut State, output: &Output) {
     if !state.is_locked() {
         return;
+    }
+    #[cfg(test)]
+    if tests::COVER_PANICS.get() {
+        panic!("cover_output");
     }
     let b = state.layout_box(Some(output));
     if b.width <= 0 {
@@ -1053,6 +1060,38 @@ pub fn motion(state: &mut State, pos: Point<f64, Logical>, time: InputTime) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        pub(super) static COVER_PANICS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    #[test]
+    fn a_panic_while_the_lock_covers_the_outputs_restarts_locked() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.lock.helpers.finger = |_| None;
+        COVER_PANICS.set(true);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lock(&mut h.state)));
+        COVER_PANICS.set(false);
+        assert!(r.is_err(), "the cover panics");
+        let argv = crate::crash::restart_argv(
+            [std::ffi::OsString::from("reprise")],
+            1,
+            crate::crash::locked(),
+        );
+        assert!(
+            argv.contains(&"--locked".into()),
+            "restart argv {argv:?} carries --locked"
+        );
+    }
+
+    #[test]
+    fn the_restart_flag_is_set_by_a_lock_and_cleared_by_its_unlock() {
+        let mut h = locked(|_| sh("true"));
+        assert!(crate::crash::locked());
+        unlock(&mut h.state);
+        assert!(!crate::crash::locked());
+    }
 
     fn buttons(ok: Rect, cancel: Rect) -> Buttons {
         Buttons { ok, cancel }

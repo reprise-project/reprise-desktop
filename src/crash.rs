@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 pub const LOOP_WINDOW: Duration = Duration::from_secs(60);
 
 const FLAG: &str = "--after-crash";
+const LOCKED: &str = "--locked";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AfterPanic {
@@ -31,19 +32,28 @@ pub fn after_panic(prior: Option<u32>, uptime: Duration) -> AfterPanic {
     }
 }
 
-/// `argv` without an earlier `--after-crash` and its count, then `--after-crash <crashes>`.
-pub fn restart_argv(argv: impl IntoIterator<Item = OsString>, crashes: u32) -> Vec<OsString> {
+/// `argv` without an earlier `--after-crash` and its count or `--locked`, then `--locked` when
+/// `locked` and `--after-crash <crashes>`.
+pub fn restart_argv(
+    argv: impl IntoIterator<Item = OsString>,
+    crashes: u32,
+    locked: bool,
+) -> Vec<OsString> {
     let mut out = Vec::new();
     let mut argv = argv.into_iter();
     while let Some(a) = argv.next() {
         if a == FLAG {
             argv.next();
-        } else if !a
-            .to_str()
-            .is_some_and(|a| a.starts_with(&format!("{FLAG}=")))
+        } else if a != LOCKED
+            && !a
+                .to_str()
+                .is_some_and(|a| a.starts_with(&format!("{FLAG}=")))
         {
             out.push(a);
         }
+    }
+    if locked {
+        out.push(LOCKED.into());
     }
     out.extend([FLAG.into(), crashes.to_string().into()]);
     out
@@ -59,9 +69,10 @@ pub fn starts_locked(after_crash: bool, was_locked: bool) -> bool {
 }
 
 /// A start's steps once the backend is up: the lock when `starts_locked`, else a stale
-/// `screen_locked` cleared; after a crash, the notice after the first frame.
-pub fn on_start(state: &mut State, after_crash: bool) {
-    if starts_locked(after_crash, state.session.was_locked) {
+/// `screen_locked` cleared; after a crash, the notice after the first frame. `locked`: the
+/// restart was passed `--locked`.
+pub fn on_start(state: &mut State, after_crash: bool, locked: bool) {
+    if starts_locked(after_crash, locked || state.session.was_locked) {
         crate::lockview::lock(state);
     } else if state.session.was_locked {
         crate::state::save_screen_locked(false);
@@ -73,8 +84,20 @@ pub fn on_start(state: &mut State, after_crash: bool) {
     }
 }
 
+// Per thread: the hook restarts only for a panic on the compositor's thread, the one that locks.
 thread_local! {
     static GUARDED: Cell<u32> = const { Cell::new(0) };
+    static LOCK_WANTED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether a restart from here on starts locked: set as a lock begins, before anything that can
+/// panic, and cleared as an unlock ends.
+pub fn set_locked(locked: bool) {
+    LOCK_WANTED.set(locked);
+}
+
+pub fn locked() -> bool {
+    LOCK_WANTED.get()
 }
 
 /// `catch_unwind` for loop work whose panic the session survives: the hook leaves it alone.
@@ -105,7 +128,7 @@ pub fn install(prior: Option<u32>) {
             ),
             AfterPanic::Restart(n) => {
                 log::error!("crash {n} of this login: restarting");
-                restart(restart_argv(argv.iter().cloned(), n));
+                restart(restart_argv(argv.iter().cloned(), n, locked()));
             }
         }
     }));
@@ -151,7 +174,7 @@ mod tests {
         let notice = |after_crash| {
             let mut h = crate::harness::Harness::new();
             h.output("TEST-1", 1024, 768);
-            on_start(&mut h.state, after_crash);
+            on_start(&mut h.state, after_crash, false);
             assert!(
                 h.state.notify.log.get(u32::MAX).is_none(),
                 "nothing before a frame"
@@ -179,7 +202,7 @@ mod tests {
             let mut h = crate::harness::Harness::new();
             h.output("TEST-1", 1024, 768);
             h.state.session.was_locked = true;
-            on_start(&mut h.state, after_crash);
+            on_start(&mut h.state, after_crash, false);
             h.state.is_locked()
         };
         assert!(start(true));
@@ -190,19 +213,50 @@ mod tests {
     fn a_restart_keeps_the_arguments_and_replaces_the_crash_count() {
         let args = |v: &[&str]| v.iter().map(OsString::from).collect::<Vec<_>>();
         assert_eq!(
-            restart_argv(args(&["reprise", "--config", "c.toml"]), 1),
+            restart_argv(args(&["reprise", "--config", "c.toml"]), 1, false),
             args(&["reprise", "--config", "c.toml", "--after-crash", "1"])
         );
         assert_eq!(
             restart_argv(
                 args(&["reprise", "--after-crash", "1", "--startup", "foot"]),
-                2
+                2,
+                false
             ),
             args(&["reprise", "--startup", "foot", "--after-crash", "2"])
         );
         assert_eq!(
-            restart_argv(args(&["reprise", "--after-crash=2"]), 3),
+            restart_argv(args(&["reprise", "--after-crash=2"]), 3, false),
             args(&["reprise", "--after-crash", "3"])
         );
+    }
+
+    #[test]
+    fn a_restart_while_locked_carries_one_locked_flag_and_an_unlocked_one_none() {
+        let args = |v: &[&str]| v.iter().map(OsString::from).collect::<Vec<_>>();
+        assert_eq!(
+            restart_argv(
+                args(&["reprise", "--locked", "--after-crash", "1"]),
+                2,
+                true
+            ),
+            args(&["reprise", "--locked", "--after-crash", "2"])
+        );
+        assert_eq!(
+            restart_argv(
+                args(&["reprise", "--locked", "--after-crash", "1"]),
+                2,
+                false
+            ),
+            args(&["reprise", "--after-crash", "2"])
+        );
+    }
+
+    #[test]
+    fn a_restart_passed_locked_starts_locked_without_the_state_file() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        h.state.session.was_locked = false;
+        on_start(&mut h.state, true, true);
+        assert!(h.state.is_locked());
     }
 }
