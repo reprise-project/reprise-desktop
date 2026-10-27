@@ -275,10 +275,13 @@ pub fn window_app(win: &crate::window::Window) -> Result<Option<String>, ()> {
 }
 
 pub fn resource_sandboxed(resource: &impl Resource) -> bool {
-    resource
-        .client()
-        .and_then(|c| c.get_data::<ClientState>().map(|d| d.sandbox.sandboxed()))
-        .unwrap_or(false)
+    resource.client().is_some_and(|c| client_sandboxed(&c))
+}
+
+pub fn client_sandboxed(client: &Client) -> bool {
+    client
+        .get_data::<ClientState>()
+        .is_some_and(|d| d.sandbox.sandboxed())
 }
 
 /// Where the document portal exports the files it grants sandboxed programs.
