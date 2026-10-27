@@ -87,24 +87,26 @@ fn inherits(dirs: &[PathBuf], theme: &str) -> Vec<String> {
 const MAX_THEMES: usize = 10;
 
 /// The file for sound `name` under `theme`: its stereo profile in each of `dirs`, then the themes
-/// it inherits breadth-first, then [`FALLBACK_THEME`]; a name with no file of its own tries its shorter dash
+/// it inherits depth-first, then [`FALLBACK_THEME`]; a name with no file of its own tries its shorter dash
 /// prefixes (`message-new-instant`, `message-new`, `message`).
 pub fn resolve(dirs: &[PathBuf], theme: &str, name: &str) -> Option<PathBuf> {
     if !safe_name(name) {
         return None;
     }
     let mut themes: Vec<String> = Vec::new();
+    let mut stack: Vec<String> = Vec::new();
     if safe_name(theme) {
-        themes.push(theme.to_string());
+        stack.push(theme.to_string());
     }
-    let mut next = 0;
-    while next < themes.len() && themes.len() < MAX_THEMES {
-        for parent in inherits(dirs, &themes[next]) {
-            if !themes.contains(&parent) && themes.len() < MAX_THEMES {
-                themes.push(parent);
-            }
+    while let Some(t) = stack.pop() {
+        if themes.len() == MAX_THEMES {
+            break;
         }
-        next += 1;
+        if themes.contains(&t) {
+            continue;
+        }
+        stack.extend(inherits(dirs, &t).into_iter().rev());
+        themes.push(t);
     }
     if !themes.iter().any(|t| t == FALLBACK_THEME) {
         themes.push(FALLBACK_THEME.to_string());
@@ -180,10 +182,11 @@ mod tests {
     use super::*;
 
     fn tree(files: &[&str]) -> PathBuf {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
             "repriseaudio-sounds-{}-{}",
             std::process::id(),
-            files.len()
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let _ = std::fs::remove_dir_all(&root);
         for f in files {
@@ -275,8 +278,8 @@ mod tests {
         );
         assert_eq!(
             got("bell"),
-            Some("sys/coral/stereo/bell.oga".into()),
-            "the list comes before the grandparent"
+            Some("sys/abyss/stereo/bell.oga".into()),
+            "the first parent's own parents come before the second parent"
         );
         index("ocean", "deep");
         assert_eq!(
