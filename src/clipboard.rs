@@ -394,16 +394,22 @@ impl State {
             let bytes = buf.bytes().to_vec();
             state.spawn_fs_job(move || {
                 let got = crate::dnddrop::portal_files(&bytes);
-                Box::new(move |state| match got {
-                    Ok(paths) => {
-                        if let Some(done) = take_paste(&mut state.clip.portal_paste, serial) {
-                            done(state, FileClip { paths, cut: false });
-                        }
-                    }
-                    Err(e) => log::warn!("paste: {e}"),
-                })
+                Box::new(move |state| state.portal_answered(serial, got))
             });
         });
+    }
+
+    /// Ends portal paste `serial`, running it with the files when the portal lent them.
+    fn portal_answered(&mut self, serial: u64, got: std::io::Result<Vec<std::path::PathBuf>>) {
+        let done = take_paste(&mut self.clip.portal_paste, serial);
+        match got {
+            Ok(paths) => {
+                if let Some(done) = done {
+                    done(self, FileClip { paths, cut: false });
+                }
+            }
+            Err(e) => log::warn!("paste: {e}"),
+        }
     }
 
     pub fn own_offers(&self) -> Option<Offers> {
@@ -624,6 +630,15 @@ mod tests {
         assert!(slot.is_some(), "the newer paste still waits");
         assert!(take_paste(&mut slot, 2).is_some());
         assert!(slot.is_none());
+    }
+
+    #[test]
+    fn a_failed_portal_answer_ends_its_paste() {
+        let mut h = crate::harness::Harness::new();
+        h.state.clip.portal_paste = Some((3, Box::new(|_, _| panic!("no files were lent"))));
+        h.state
+            .portal_answered(3, Err(std::io::Error::other("no file transfer key")));
+        assert!(h.state.clip.portal_paste.is_none());
     }
 
     #[test]
