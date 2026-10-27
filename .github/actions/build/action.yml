@@ -1,0 +1,51 @@
+name: build
+description: Installs the build dependencies, then runs fmt, clippy and the tests as an unprivileged user.
+inputs:
+  arch-archive:
+    description: Arch Linux Archive date (YYYY/MM/DD) to pin the pacman repos to; empty for the live mirrors.
+    default: ""
+runs:
+  using: composite
+  steps:
+    # PKGBUILD depends, plus the fallback font and the MIME database the tests read.
+    - name: Install dependencies
+      shell: bash
+      env:
+        ARCH_ARCHIVE: ${{ inputs.arch-archive }}
+      run: |
+        if [ -n "$ARCH_ARCHIVE" ]; then
+          echo "Server = https://archive.archlinux.org/repos/$ARCH_ARCHIVE/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
+        fi
+        pacman -Syyuu --noconfirm
+        pacman -S --noconfirm --needed rust clang python pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire ttf-dejavu shared-mime-info
+    - name: Install cargo-nextest 0.9.149
+      shell: bash
+      run: |
+        curl -LsSf -o /tmp/nextest.tar.gz https://get.nexte.st/0.9.149/linux
+        echo '32d1d8c0567b7a80bee2bad8bb09125c846da96bc009b2de11ec08557290c770  /tmp/nextest.tar.gz' | sha256sum -c
+        tar xzf /tmp/nextest.tar.gz -C /usr/local/bin
+    # Tests that assert a read-only directory refuses a write only mean
+    # something as an unprivileged user; the container runs as root.
+    - name: Create the build user
+      shell: bash
+      run: useradd -m builder
+    # Keyed on rustc, Cargo.lock and the job; drops the workspace's own artifacts before saving.
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+    # The Tahoma the pixel tests are pinned to.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /home/builder/.cache/reprise-test-fonts
+        key: test-fonts-${{ hashFiles('scripts/test-fonts.sh') }}
+    # The checkout and the caches come back owned by root.
+    - shell: bash
+      run: chown -R builder "$GITHUB_WORKSPACE" /home/builder
+    - shell: bash
+      run: |
+        dir=$(runuser -u builder -- env HOME=/home/builder scripts/test-fonts.sh)
+        echo "REPRISE_TEST_FONTS=$dir" >> "$GITHUB_ENV"
+    - shell: bash
+      run: runuser -u builder -- env HOME=/home/builder cargo fmt --check
+    - shell: bash
+      run: runuser -u builder -- env HOME=/home/builder cargo clippy --workspace --all-targets --locked -- -D warnings
+    - shell: bash
+      run: runuser -u builder -- env HOME=/home/builder REPRISE_TEST_FONTS="$REPRISE_TEST_FONTS" cargo nextest run --workspace --locked --profile ci

@@ -33,6 +33,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
+rust-version = "1.99"
 license = "GPL-3.0-or-later"
 publish = false
 repository = "https://github.com/reprise-project/reprise-desktop"
@@ -79,6 +80,7 @@ undocumented_unsafe_blocks = "warn"
 name = "reprise"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
