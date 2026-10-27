@@ -116,15 +116,25 @@ enum Files {
     Portal,
 }
 
-/// A sandboxed program's file lists name paths inside its sandbox, so its files come only
-/// through a document portal key.
+/// A sandboxed program's files come through its document portal key when it offers one;
+/// its file list is held to [`sandboxed_list_taken`] once read.
 fn files_from(offered: &[String], sandboxed: bool) -> Option<Files> {
-    if !sandboxed {
-        return fileclip::source(offered).map(Files::List);
+    if sandboxed
+        && offered
+            .iter()
+            .any(|m| m == reprisefs::dropdata::FILE_TRANSFER)
+    {
+        return Some(Files::Portal);
     }
-    (offered.iter())
-        .any(|m| m == reprisefs::dropdata::FILE_TRANSFER)
-        .then_some(Files::Portal)
+    fileclip::source(offered).map(Files::List)
+}
+
+/// A sandboxed program's file list names host files only under the document portal, which
+/// lends them read-only, so a cut of them is refused.
+fn sandboxed_list_taken(clip: &FileClip) -> bool {
+    !clip.cut
+        && !clip.paths.is_empty()
+        && (clip.paths.iter()).all(|p| crate::sandbox::portal_exported(p))
 }
 
 pub fn own_files(offers: &[Offer]) -> Option<FileClip> {
@@ -332,10 +342,15 @@ impl State {
                 return;
             }
         };
+        let sandboxed = self.clip.sandboxed;
         let read_files = move |state: &mut State, kde_cut: bool| {
             state.clip_read(source.files, move |state, buf| {
                 let mut clip = fileclip::decode(source.files, buf.bytes());
                 clip.cut |= kde_cut;
+                if sandboxed && !sandboxed_list_taken(&clip) {
+                    log::debug!("paste: a sandboxed program's file list is refused");
+                    return;
+                }
                 done(state, clip)
             });
         };
@@ -689,7 +704,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sandboxed_programs_file_lists_are_refused_on_paste_and_its_portal_key_taken() {
+    fn a_sandboxed_programs_host_file_lists_are_refused_and_its_portal_key_taken() {
         use reprisefs::dropdata::{FILE_TRANSFER, URI_LIST};
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
@@ -709,8 +724,9 @@ mod tests {
         for (mimes, body) in &lists {
             c.copy(mimes, body.as_bytes());
             h.roundtrip(&mut c);
-            assert!(!h.state.clip_has_files(), "{mimes:?} offers no files");
             h.state.paste_on_desktop(None, false);
+            h.run_for(100);
+            h.roundtrip(&mut c);
             h.run_for(100);
             assert!(host.exists(), "{mimes:?} leaves the host file where it is");
             assert_eq!(std::fs::read_dir(&desk).unwrap().count(), 0, "{mimes:?}");
@@ -730,6 +746,50 @@ mod tests {
             h.state.clip_has_files(),
             "a host program's list is pastable"
         );
+    }
+
+    #[test]
+    fn a_sandboxed_programs_file_list_is_taken_only_for_uncut_document_portal_files() {
+        use reprisefs::dropdata::URI_LIST;
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect_sandboxed();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        let exported = crate::sandbox::document_root().join("abc/x.png");
+        let exported_uri = format!("file://{}", exported.display());
+        let cases = [
+            (
+                vec![URI_LIST],
+                format!("{exported_uri}\r\n"),
+                true,
+                "exported",
+            ),
+            (
+                vec![URI_LIST],
+                format!("{exported_uri}\r\nfile:///home/u/.ssh/id_ed25519\r\n"),
+                false,
+                "a path outside the document portal",
+            ),
+            (
+                vec![GNOME_FILES],
+                format!("cut\n{exported_uri}"),
+                false,
+                "a cut",
+            ),
+        ];
+        for (mimes, body, taken, what) in cases {
+            c.copy(&mimes, body.as_bytes());
+            h.roundtrip(&mut c);
+            let got = std::rc::Rc::new(std::cell::RefCell::new(None));
+            let sink = got.clone();
+            h.state
+                .clip_files(move |_, clip| *sink.borrow_mut() = Some(clip.paths));
+            h.run_for(100);
+            h.roundtrip(&mut c);
+            h.run_for(100);
+            let expected = taken.then(|| vec![exported.clone()]);
+            assert_eq!(*got.borrow(), expected, "{what}");
+        }
     }
 
     #[test]
