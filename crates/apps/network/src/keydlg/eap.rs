@@ -334,10 +334,24 @@ impl EapDialog {
     }
 }
 
-/// Whether `domain` has two labels or more: NetworkManager suffix-matches it against the
-/// server certificate, so a bare `com` would accept any server the CA certified under it.
+/// Whether `domain` has two labels or more and is not a country's public suffix such as
+/// `co.uk`: NetworkManager suffix-matches it against the server certificate, so a bare `com`
+/// would accept any server the CA certified under it.
 fn full_domain(domain: &str) -> bool {
-    domain.split('.').filter(|l| !l.is_empty()).count() >= 2
+    const SECOND_LEVEL: [&str; 10] = [
+        "ac", "co", "com", "edu", "go", "gov", "ne", "net", "or", "org",
+    ];
+    match domain
+        .split('.')
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()[..]
+    {
+        [_] | [] => false,
+        [first, cc] => {
+            !(cc.len() == 2 && SECOND_LEVEL.contains(&first.to_ascii_lowercase().as_str()))
+        }
+        _ => true,
+    }
 }
 
 // Wipes both password fields however the dialog closes.
@@ -539,8 +553,8 @@ mod tests {
     }
 
     #[test]
-    fn a_domain_of_one_label_is_refused_with_a_note() {
-        for partial in ["com", "com.", ".edu"] {
+    fn a_domain_of_one_label_or_a_country_suffix_is_refused_with_a_note() {
+        for partial in ["com", "com.", ".edu", "co.uk", "AC.uk", "com.au"] {
             let mut d = dialog();
             type_into(&mut d, "user", "alice");
             type_into(&mut d, "password", "hunter22");
@@ -551,6 +565,14 @@ mod tests {
                 warning(&d),
                 "Enter the server's full domain, such as radius.example.org."
             );
+        }
+        for full in ["uni.ac.uk", "uni.de", "co.example"] {
+            let mut d = dialog();
+            type_into(&mut d, "user", "alice");
+            type_into(&mut d, "password", "hunter22");
+            tick(&mut d, "system_ca");
+            type_into(&mut d, "domain", full);
+            assert!(live(&d, "connect"), "{full} is a server's domain");
         }
     }
 
