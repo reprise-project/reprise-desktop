@@ -141,6 +141,8 @@ impl Host {
             cues: Cues::opened(self.key_last),
             parent: None,
             spot: None,
+            tip: None,
+            tip_waits: false,
         }
     }
 

@@ -1,5 +1,6 @@
 //! Connecting to the compositor and running the event loop.
 
+use crate::Slot;
 use crate::deliver::blink_target;
 use crate::look::{Look, publish_theme, sized, text_for};
 use crate::sizing::opening_size;
@@ -51,6 +52,50 @@ use std::time::Duration;
 use wayland_client::{Connection, QueueHandle, globals::registry_queue_init};
 
 const BLINK_MS: u64 = 530;
+
+impl Host {
+    /// Puts the caret blink timer in the loop when a window takes blinks and it is not there.
+    pub(crate) fn arm_blink(&mut self) {
+        if self.blink_armed || !self.slots.iter().any(Slot::blinks) {
+            return;
+        }
+        let timer = Timer::from_duration(Duration::from_millis(BLINK_MS));
+        match (self.loop_handle).insert_source(timer, |_, _, host: &mut Host| host.blink()) {
+            Ok(_) => {
+                self.blink_armed = true;
+                self.ctx.caret_on = true;
+            }
+            Err(e) => log::warn!("caret blink timer: {e}"),
+        }
+    }
+
+    /// One blink: the caret flips and the keyboard's window (else the pointer's) hears it. A
+    /// window that was clean redraws at once as a blink-only frame, whose damage is the caret.
+    fn blink(&mut self) -> TimeoutAction {
+        if !self.slots.iter().any(Slot::blinks) {
+            self.blink_armed = false;
+            return TimeoutAction::Drop;
+        }
+        self.ctx.caret_on = !self.ctx.caret_on;
+        let target = blink_target(self.focus, self.pointer_in)
+            .and_then(|win| self.slots.iter().find(|s| s.id == win))
+            .filter(|s| s.blinks())
+            .map(|s| (s.id, !s.dirty && !s.frame_pending && s.configured));
+        if let Some((win, clean)) = target {
+            let quiet = clean && self.menu_popups.is_none();
+            self.send(win, Event::Blink);
+            let qh = self.qh.clone();
+            if quiet
+                && self
+                    .slot_mut(win)
+                    .is_some_and(|s| std::mem::take(&mut s.dirty))
+            {
+                self.draw_frame(win, &qh, true);
+            }
+        }
+        TimeoutAction::ToDuration(Duration::from_millis(BLINK_MS))
+    }
+}
 
 /// A tray applet's `main`: the journal logger, then the program `app` makes from whether `args`
 /// hold `--tray` (start with the window hidden).
@@ -213,6 +258,7 @@ pub fn run(app: Box<dyn App>) {
         key_echo: None,
         look,
         icon_watch: None,
+        blink_armed: false,
     };
     // Started before the roundtrip, so the theme warms while the compositor answers.
     host.watch_icons();
@@ -304,20 +350,6 @@ pub fn run(app: Box<dyn App>) {
     host.sync_main();
     // A program may start with its flyout up; no event would reconcile it otherwise.
     host.sync_flyout();
-    loop_handle
-        .insert_source(
-            Timer::from_duration(Duration::from_millis(BLINK_MS)),
-            |_, _, host: &mut Host| {
-                host.ctx.caret_on = !host.ctx.caret_on;
-                if let Some(win) = blink_target(host.focus, host.pointer_in)
-                    && host.slots.iter().any(|s| s.id == win)
-                {
-                    host.send(win, Event::Blink);
-                }
-                TimeoutAction::ToDuration(Duration::from_millis(BLINK_MS))
-            },
-        )
-        .expect("timer");
 
     loop {
         let step = rescued(

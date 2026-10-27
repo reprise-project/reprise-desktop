@@ -1034,3 +1034,49 @@ fn right_and_delete_step_over_a_zwj_family_whole() {
     k(&mut t, MultiKey::Edit(EditKey::Delete { word: false }));
     assert_eq!(t.lines, ["", "x"]);
 }
+
+#[test]
+fn a_blink_only_frame_damages_just_the_caret_bar() {
+    let text = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let m = Metrics::default();
+    let mut t = e("one\ntwo");
+    t.place(p(1, 2), false);
+    let lay = layout(&text, &m, &t, Rect::new(0, 0, 200, 60), 1);
+    let draw_with = |caret, blink_only| {
+        let mut c = Canvas::new(200, 60);
+        c.set_blink_only(blink_only);
+        draw(
+            &mut c,
+            &text,
+            &classic_paint(&theme.colors, 1),
+            &m,
+            &t,
+            View::default(),
+            &lay,
+            caret,
+        );
+        c
+    };
+    let mut full = draw_with(Caret::Shown, false);
+    assert_eq!(
+        full.take_damage(),
+        None,
+        "a normal frame damages everything"
+    );
+    let mut on = draw_with(Caret::Shown, true);
+    let off = draw_with(Caret::Hidden, true);
+    let bar = on.take_spot().expect("focused").caret;
+    assert_eq!(on.take_damage(), Some(vec![bar]));
+    assert_eq!(on.pixels, full.pixels, "the same pixels either way");
+    let changed: Vec<usize> = (0..on.pixels.len())
+        .filter(|&i| on.pixels[i] != off.pixels[i])
+        .collect();
+    assert!(!changed.is_empty());
+    assert!(
+        changed
+            .iter()
+            .all(|&i| bar.contains((i % 200) as i32, (i / 200) as i32)),
+        "the blink changes nothing outside the bar"
+    );
+}

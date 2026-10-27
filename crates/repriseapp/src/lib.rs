@@ -161,6 +161,18 @@ struct Slot {
     parent: Option<WinId>,
     /// The focused field the last frame drew.
     spot: Option<TextSpot>,
+    /// Where the runtime drew a form's label tip on the last frame, for the frame it goes away.
+    tip: Option<reprisekit::raster::Rect>,
+    /// A form in the window waits to show a label tip, which counts caret blinks.
+    tip_waits: bool,
+}
+
+impl Slot {
+    /// Whether the window takes caret blinks: its last frame drew a focused field, or a label tip
+    /// waits on it.
+    fn blinks(&self) -> bool {
+        self.spot.is_some() || self.tip_waits
+    }
 }
 
 impl Drop for Slot {
@@ -308,6 +320,8 @@ struct Host {
     look: Look,
     /// Ends the thread watching the icon theme's directories when replaced.
     icon_watch: Option<reprisefs::dirchange::Stop>,
+    /// The caret blink timer is in the loop; it leaves while no window blinks ([`Host::arm_blink`]).
+    blink_armed: bool,
 }
 
 impl Host {

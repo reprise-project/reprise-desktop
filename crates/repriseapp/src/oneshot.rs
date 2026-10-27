@@ -84,6 +84,7 @@ impl Shown {
             }
             _ => return None,
         };
+        crate::keys::note_tip(last.as_ref().is_some_and(Form::tip_waiting));
         Some(if changed { Step::Redraw } else { Step::None })
     }
 }
@@ -259,7 +260,12 @@ mod tests {
         assert_eq!(b.event(&leave, &text, &theme), Outcome::None);
 
         assert_eq!(draw(&b, 150), None, "no tip before a blink");
+        crate::keys::take_tip_waits();
         assert_eq!(b.event(&on, &text, &theme), Outcome::None);
+        assert!(
+            crate::keys::take_tip_waits(),
+            "the window keeps taking blinks"
+        );
         assert_eq!(
             blink(&mut b),
             Outcome::Redraw,

@@ -76,6 +76,12 @@ impl Host {
             .event(win, ev, &mut self.ctx)
             .with_clipboard(keys::take_clipboard());
         reply.tick |= self.ctx.want_tick.take();
+        let tip = keys::take_tip_waits();
+        if let Some(s) = self.slot_mut(win) {
+            // A program answers a blink by ticking its forms itself, past this note.
+            s.tip_waits = tip || (blink && s.tip_waits);
+        }
+        self.arm_blink();
         if !blink {
             self.reread(win, &reply);
         }
@@ -384,7 +390,8 @@ pub(crate) fn input_blocked(ev: &Event, modal: Option<WinId>, win: WinId, flyout
     input && !flyout && modal.is_some_and(|m| m != win)
 }
 
-/// The keyboard's window, else the pointer's (a hover tip ticks on the blink), else none.
+/// The keyboard's window, else the pointer's (a hover tip ticks on the blink), else none; the
+/// host sends the blink only to a window that takes it ([`Slot::blinks`]).
 pub(crate) fn blink_target(focus: Option<WinId>, pointer_in: Option<WinId>) -> Option<WinId> {
     focus.or(pointer_in)
 }
