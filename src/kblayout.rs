@@ -72,6 +72,7 @@ impl State {
         self.key_input.layouts.labels = labels(&self.config.keyboard);
         self.key_input.layouts.current = self.active_layout();
         self.redraw_taskbars();
+        crate::lockview::redraw(self);
     }
 
     fn active_layout(&mut self) -> u32 {
@@ -91,6 +92,7 @@ impl State {
         layouts.current = group;
         if layouts.switchable() {
             self.redraw_taskbars();
+            crate::lockview::redraw(self);
         }
     }
 
