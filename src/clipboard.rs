@@ -70,7 +70,9 @@ pub struct Clip {
     dirty: bool,
     #[cfg(test)]
     relayouts: usize,
-    portal_paste: Option<FilesDone>,
+    /// The newest portal paste waiting for its files, by serial.
+    portal_paste: Option<(u64, FilesDone)>,
+    portal_serial: u64,
 }
 
 impl Clip {
@@ -84,6 +86,7 @@ impl Clip {
             #[cfg(test)]
             relayouts: 0,
             portal_paste: None,
+            portal_serial: 0,
         }
     }
 }
@@ -144,6 +147,12 @@ fn sandboxed_list_taken(clip: &FileClip) -> bool {
     !clip.cut
         && !clip.paths.is_empty()
         && (clip.paths.iter()).all(|p| crate::sandbox::portal_exported(p))
+}
+
+/// The waiting paste's `done` when `serial` is still the newest paste; an older paste's answer
+/// leaves it waiting.
+fn take_paste(slot: &mut Option<(u64, FilesDone)>, serial: u64) -> Option<FilesDone> {
+    slot.take_if(|(s, _)| *s == serial).map(|(_, done)| done)
 }
 
 pub fn own_files(offers: &[Offer]) -> Option<FileClip> {
@@ -386,14 +395,16 @@ impl State {
     /// Trade the clipboard's document portal key for its files off the loop. The portal lends
     /// them read-only, so they are only ever copied.
     fn clip_portal_files(&mut self, done: impl FnOnce(&mut State, FileClip) + 'static) {
-        self.clip.portal_paste = Some(Box::new(done));
-        self.clip_read(reprisefs::dropdata::FILE_TRANSFER, |state, buf| {
+        self.clip.portal_serial += 1;
+        let serial = self.clip.portal_serial;
+        self.clip.portal_paste = Some((serial, Box::new(done)));
+        self.clip_read(reprisefs::dropdata::FILE_TRANSFER, move |state, buf| {
             let bytes = buf.bytes().to_vec();
             state.spawn_fs_job(move || {
                 let got = crate::dnddrop::portal_files(&bytes);
                 Box::new(move |state| match got {
                     Ok(paths) => {
-                        if let Some(done) = state.clip.portal_paste.take() {
+                        if let Some(done) = take_paste(&mut state.clip.portal_paste, serial) {
                             done(state, FileClip { paths, cut: false });
                         }
                     }
@@ -612,6 +623,15 @@ mod tests {
 
     fn strs(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_portal_answer_runs_only_its_own_paste() {
+        let mut slot: Option<(u64, FilesDone)> = Some((2, Box::new(|_, _| {})));
+        assert!(take_paste(&mut slot, 1).is_none());
+        assert!(slot.is_some(), "the newer paste still waits");
+        assert!(take_paste(&mut slot, 2).is_some());
+        assert!(slot.is_none());
     }
 
     #[test]
