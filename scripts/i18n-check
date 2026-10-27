@@ -3,21 +3,38 @@
 
 Lists every tr!("id") and kit_tr!("id") in the workspace and checks them against the
 .ftl files: an id a crate uses must be in its locale/en.ftl, every id there must be
-used, and a translation (data/locale/<lang>/<domain>.ftl) may only hold English ids.
+used, and a translation (data/locale/<lang>/<domain>.ftl) may only hold English ids, each
+using only the { $variables } its English message has.
 Exit 0 when all hold, 1 otherwise. reprisekit's tests run it."""
 import pathlib
 import re
 import sys
 
 TREE = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else pathlib.Path(__file__).resolve().parent.parent)
-SKIP = {"target", "tmp", ".git", "node_modules"}
+SKIP = {"target", "tmp", ".git", "node_modules", "fixtures"}
 DOMAIN = re.compile(r'\bstrings!\(\s*"([\w-]+)"\s*\)|\bStrings::new\(\s*"([\w-]+)"')
 TR = re.compile(r'(?<![\w:])(?:\$?crate::|reprisekit::)?(kit_)?tr!\(\s*"([^"]*)"')
 MESSAGE = re.compile(r"^([A-Za-z][\w-]*)\s*=", re.M)
+VARIABLE = re.compile(r"\{\s*\$([\w-]+)")
 
 
 def ftl_ids(path):
     return set(MESSAGE.findall(path.read_text())) if path.is_file() else set()
+
+
+def ftl_variables(path):
+    """Each message's id to the variables its value and indented lines use."""
+    out = {}
+    ident = None
+    for line in path.read_text().splitlines() if path.is_file() else []:
+        m = MESSAGE.match(line)
+        if m:
+            ident = m.group(1)
+        elif line and not line[:1].isspace():
+            ident = None
+        if ident:
+            out.setdefault(ident, set()).update(VARIABLE.findall(line))
+    return out
 
 
 def crate_dirs():
@@ -75,8 +92,12 @@ def main():
         if crate is None:
             problems.append(f"{rel}: no crate declares the domain \"{ftl.stem}\"")
             continue
-        for ident in sorted(ftl_ids(ftl) - ftl_ids(crate / "locale" / "en.ftl")):
+        english = ftl_variables(crate / "locale" / "en.ftl")
+        for ident in sorted(ftl_ids(ftl) - set(english)):
             problems.append(f"{rel}: \"{ident}\" is not an English id")
+        for ident, names in sorted(ftl_variables(ftl).items()):
+            for name in sorted(names - english.get(ident, names)):
+                problems.append(f"{rel}: \"{ident}\" uses ${name}, which the English message does not")
     for p in problems:
         print(p)
     return 1 if problems else 0
