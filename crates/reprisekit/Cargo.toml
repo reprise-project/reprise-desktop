@@ -24,6 +24,8 @@ freetype-rs = "0.38"
 yeslogic-fontconfig-sys = "6"
 # Which chars the fallback lookup skips; rustybuzz already builds it with this feature.
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+# Grapheme clusters, so the caret and Delete never split one.
+unicode-segmentation = "1"
 png.workspace = true
 # No svgz: a gzipped file would inflate past the decoder's SVG byte cap.
 resvg = { version = "0.48", default-features = false }

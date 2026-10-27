@@ -262,6 +262,9 @@ impl<P: Spot> Undo<P> {
 }
 
 pub(crate) mod words {
+    use unicode_segmentation::GraphemeCursor;
+
+    /// The scalar before `i`, for Backspace, which takes a cluster apart one scalar at a time.
     pub fn prev_char(text: &str, i: usize) -> usize {
         text[..i].char_indices().last().map_or(0, |(j, _)| j)
     }
@@ -270,13 +273,39 @@ pub(crate) mod words {
         text[i..].chars().next().map_or(i, |c| i + c.len_utf8())
     }
 
+    /// The grapheme cluster boundary before `i`, so the caret never rests inside a cluster.
+    pub fn prev_cluster(text: &str, i: usize) -> usize {
+        GraphemeCursor::new(i, text.len(), true)
+            .prev_boundary(text, 0)
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+    }
+
+    pub fn next_cluster(text: &str, i: usize) -> usize {
+        GraphemeCursor::new(i, text.len(), true)
+            .next_boundary(text, 0)
+            .ok()
+            .flatten()
+            .unwrap_or(text.len())
+    }
+
+    /// `i` moved back to the start of the cluster it falls inside.
+    pub fn cluster_floor(text: &str, i: usize) -> usize {
+        let i = text.floor_char_boundary(i);
+        match GraphemeCursor::new(i, text.len(), true).is_boundary(text, 0) {
+            Ok(false) => prev_cluster(text, i),
+            _ => i,
+        }
+    }
+
     pub fn word_left(text: &str, i: usize) -> usize {
         let mut j = i;
         while j > 0 && text[..j].ends_with(' ') {
             j -= 1;
         }
         while j > 0 && !text[..j].ends_with(' ') {
-            j = prev_char(text, j);
+            j = prev_cluster(text, j);
         }
         j
     }
@@ -284,7 +313,7 @@ pub(crate) mod words {
     pub fn word_right(text: &str, i: usize) -> usize {
         let mut j = i;
         while j < text.len() && !text[j..].starts_with(' ') {
-            j = next_char(text, j);
+            j = next_cluster(text, j);
         }
         while j < text.len() && text[j..].starts_with(' ') {
             j += 1;
@@ -437,10 +466,10 @@ pub struct Surrounding {
 }
 
 impl Surrounding {
-    /// The part of `text` around `cursor` that fits in [`SURROUNDING_MAX`]: the whole selection when it fits, else the cursor alone.
+    /// The part of `text` around `cursor` that fits in [`SURROUNDING_MAX`]: the whole selection when it fits, else the cursor alone. A cursor or anchor inside a grapheme cluster moves to its start.
     pub fn around(text: &str, cursor: usize, anchor: usize) -> Surrounding {
-        let cursor = text.floor_char_boundary(cursor);
-        let anchor = text.floor_char_boundary(anchor);
+        let cursor = words::cluster_floor(text, cursor);
+        let anchor = words::cluster_floor(text, anchor);
         let (lo, hi) = (cursor.min(anchor), cursor.max(anchor));
         let anchor = if hi - lo <= SURROUNDING_MAX {
             anchor
@@ -675,7 +704,7 @@ impl TextEdit {
                     let to = if word {
                         words::word_right(&self.text, self.caret)
                     } else {
-                        words::next_char(&self.text, self.caret)
+                        words::next_cluster(&self.text, self.caret)
                     };
                     self.replace(self.caret..to, "");
                     self.anchor = self.caret;
@@ -688,7 +717,7 @@ impl TextEdit {
                 } else if self.has_selection() && !select {
                     self.selection().start
                 } else {
-                    words::prev_char(&self.text, self.caret)
+                    words::prev_cluster(&self.text, self.caret)
                 };
                 self.move_to(to, select);
             }
@@ -698,7 +727,7 @@ impl TextEdit {
                 } else if self.has_selection() && !select {
                     self.selection().end
                 } else {
-                    words::next_char(&self.text, self.caret)
+                    words::next_cluster(&self.text, self.caret)
                 };
                 self.move_to(to, select);
             }
@@ -1028,10 +1057,10 @@ pub fn drag_scroll(
 ) -> Option<usize> {
     let first = first.min(s.len());
     if x < band {
-        return (first > 0).then(|| words::prev_char(s, first));
+        return (first > 0).then(|| words::prev_cluster(s, first));
     }
     if x >= inner_w - band && text.measure(&s[first..], false, px) > inner_w {
-        return Some(words::next_char(s, first));
+        return Some(words::next_cluster(s, first));
     }
     None
 }
@@ -1131,6 +1160,60 @@ mod tests {
         assert_eq!(words::word_span_at(t, 1), 0..4, "word plus its spaces");
         assert_eq!(words::word_span_at(t, 3), 2..4, "a run of spaces");
         assert_eq!(words::word_span_at(t, 99), 7..t.len(), "clamped");
+    }
+
+    const FAMILY: &str = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+
+    #[test]
+    fn right_steps_over_a_zwj_family_and_delete_removes_it_whole() {
+        let text = format!("a{FAMILY}b");
+        let mut e = TextEdit::new(text.clone(), false);
+        e.key(EditKey::Home { select: false });
+        let right = EditKey::Right {
+            select: false,
+            word: false,
+        };
+        e.key(right.clone());
+        e.key(right);
+        assert_eq!(e.caret(), 1 + FAMILY.len(), "past the family");
+        e.key(EditKey::Left {
+            select: true,
+            word: false,
+        });
+        assert_eq!(
+            e.selection(),
+            1..1 + FAMILY.len(),
+            "shift+Left selects it whole"
+        );
+        e.key(EditKey::Left {
+            select: false,
+            word: false,
+        });
+        e.key(EditKey::Delete { word: false });
+        assert_eq!(e.text, "ab");
+    }
+
+    #[test]
+    fn backspace_takes_a_cluster_apart_one_scalar_at_a_time() {
+        let mut e = TextEdit::new("e\u{301}", false);
+        e.key(EditKey::Backspace { word: false });
+        assert_eq!(e.text, "e");
+    }
+
+    #[test]
+    fn a_flag_pair_is_one_step() {
+        let flag = "\u{1F1ED}\u{1F1FA}\u{1F1EB}\u{1F1F7}";
+        assert_eq!(words::next_cluster(flag, 0), 8, "the first flag");
+        assert_eq!(words::prev_cluster(flag, 16), 8, "the second flag");
+    }
+
+    #[test]
+    fn surrounding_never_puts_the_cursor_inside_a_cluster() {
+        let text = format!("a{FAMILY}");
+        let s = Surrounding::around(&text, 5, 5);
+        assert_eq!((s.cursor, s.anchor), (1, 1));
+        let s = Surrounding::around(&text, text.len(), 5);
+        assert_eq!((s.cursor, s.anchor), (text.len(), 1));
     }
 
     #[test]

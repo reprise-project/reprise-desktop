@@ -69,6 +69,8 @@ URL, so download it first and install the local file:
 - Python 3, for the tests' string id check (`scripts/i18n-check`)
 - Translated strings come from the Fluent crates (`fluent-bundle`,
   `fluent-langneg`, `unic-langid`), built in; they need no runtime library
+- Text fields find grapheme clusters with the `unicode-segmentation` crate,
+  built in; it needs no runtime library
 
 ### To run
 

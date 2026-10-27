@@ -445,9 +445,27 @@ impl MultiEdit {
         }
     }
 
+    /// One scalar back, a line break counting as one.
     fn prev(&self, p: Pos) -> Pos {
+        self.back(p, words::prev_char)
+    }
+
+    fn next(&self, p: Pos) -> Pos {
+        self.on(p, words::next_char)
+    }
+
+    /// One grapheme cluster back, a line break counting as one.
+    fn prev_cluster(&self, p: Pos) -> Pos {
+        self.back(p, words::prev_cluster)
+    }
+
+    fn next_cluster(&self, p: Pos) -> Pos {
+        self.on(p, words::next_cluster)
+    }
+
+    fn back(&self, p: Pos, step: fn(&str, usize) -> usize) -> Pos {
         if p.col > 0 {
-            let col = words::prev_char(&self.lines[p.line], p.col);
+            let col = step(&self.lines[p.line], p.col);
             Pos { line: p.line, col }
         } else if p.line > 0 {
             Pos {
@@ -459,10 +477,10 @@ impl MultiEdit {
         }
     }
 
-    fn next(&self, p: Pos) -> Pos {
+    fn on(&self, p: Pos, step: fn(&str, usize) -> usize) -> Pos {
         let line = &self.lines[p.line];
         if p.col < line.len() {
-            let col = words::next_char(line, p.col);
+            let col = step(line, p.col);
             Pos { line: p.line, col }
         } else if p.line + 1 < self.lines.len() {
             Pos {
@@ -661,7 +679,7 @@ impl MultiEdit {
                     let to = if word {
                         self.word_right(self.caret)
                     } else {
-                        self.next(self.caret)
+                        self.next_cluster(self.caret)
                     };
                     self.anchor = to;
                     self.delete_selection();
@@ -673,7 +691,7 @@ impl MultiEdit {
                 } else if self.has_selection() && !select {
                     self.selection().0
                 } else {
-                    self.prev(self.caret)
+                    self.prev_cluster(self.caret)
                 };
                 self.move_to(to, select);
             }
@@ -683,7 +701,7 @@ impl MultiEdit {
                 } else if self.has_selection() && !select {
                     self.selection().1
                 } else {
-                    self.next(self.caret)
+                    self.next_cluster(self.caret)
                 };
                 self.move_to(to, select);
             }
