@@ -969,16 +969,8 @@ pub fn draw_media_button(
 ) {
     draw_button(c, text, p, r, "", false, ptr, enabled, focus, px);
     let s = p.s;
-    let style = p.look.style();
-    let styled = style.is_some_and(|st| st.part(Part::PushButton).is_some());
-    let shift = if !styled && ptr == Interaction::Pressed {
-        s
-    } else {
-        0
-    };
     let (w, h) = (if glyph == MediaGlyph::Play { 4 } else { 6 }, 7);
-    let x = r.x + (r.width - w * s) / 2 + shift;
-    let y = r.y + (r.height - h * s) / 2 + shift;
+    let (x, y) = glyph_at(p, r, ptr, (w * s, h * s));
     ink_button_glyph(p, enabled, |d, ink| {
         draw_media_glyph(c, x + d, y + d, s, glyph, ink)
     });
@@ -1000,22 +992,59 @@ pub fn draw_glyph_button(
 ) {
     draw_button(c, text, p, r, "", false, ptr, enabled, focus, px);
     let s = p.s;
-    let styled = p
-        .look
-        .style()
-        .is_some_and(|st| st.part(Part::PushButton).is_some());
-    let shift = if !styled && ptr == Interaction::Pressed {
-        s
-    } else {
-        0
-    };
-    let x = r.x + (r.width - size * s) / 2 + shift;
-    let y = r.y + (r.height - size * s) / 2 + shift;
+    let (x, y) = glyph_at(p, r, ptr, (size * s, size * s));
     let cs = c.scale();
     ink_button_glyph(p, enabled, |d, ink| {
         let g = crate::shape::glyph(glyph, size, s * cs, 1.0, crate::shape::premul(ink, 255));
         c.blit_over(x + d, y + d, &g.at_scale(cs));
     });
+}
+
+/// The icon an icon button shows, px a side at scale 1, and the room either side of it.
+pub const BUTTON_ICON: i32 = 16;
+pub const BUTTON_ICON_PAD: i32 = 4;
+/// An icon button's width at scale 1: the icon and its padding.
+pub const ICON_BUTTON_W: i32 = BUTTON_ICON + 2 * BUTTON_ICON_PAD;
+
+/// A push button with `icon` (device px) centred instead of a label, placed as
+/// [`draw_media_button`] places its glyph. Greyed, the icon shows at half alpha.
+#[expect(clippy::too_many_arguments)]
+pub fn draw_icon_button(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    r: Rect,
+    icon: &Canvas,
+    enabled: bool,
+    ptr: Interaction,
+    focus: bool,
+    px: u32,
+) {
+    draw_button(c, text, p, r, "", false, ptr, enabled, focus, px);
+    let (x, y) = glyph_at(p, r, ptr, (icon.width as i32, icon.height as i32));
+    if enabled {
+        c.blit_over(x, y, icon);
+    } else {
+        c.blit_over_faded(x, y, icon, 1, 2);
+    }
+}
+
+/// The top-left of a `w` x `h` glyph centred in button `r`, a pixel down and right in a held
+/// Classic button.
+fn glyph_at(p: &Paint, r: Rect, ptr: Interaction, (w, h): (i32, i32)) -> (i32, i32) {
+    let styled = p
+        .look
+        .style()
+        .is_some_and(|st| st.part(Part::PushButton).is_some());
+    let shift = if !styled && ptr == Interaction::Pressed {
+        p.s
+    } else {
+        0
+    };
+    (
+        r.x + (r.width - w) / 2 + shift,
+        r.y + (r.height - h) / 2 + shift,
+    )
 }
 
 /// Calls `ink` with an offset and a colour for each pass of a button glyph: once in the button's
@@ -1406,5 +1435,101 @@ mod tests {
             crate::look::styled::fixture::blue_doubles_at_paint_scale_2(20, 20, draw),
             "a size grip at s = 2 is its s = 1 pixels doubled"
         );
+    }
+
+    fn fnv(c: &Canvas) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for w in [c.width, c.height]
+            .into_iter()
+            .chain(c.pixels.iter().copied())
+        {
+            for b in w.to_le_bytes() {
+                h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    /// The monitor icon at `s` device px per icon px.
+    fn monitor(s: i32) -> Canvas {
+        let mut ic = Canvas::new((BUTTON_ICON * s) as u32, (BUTTON_ICON * s) as u32);
+        crate::art::icons::MONITOR.paint(&mut ic, 0, 0, s);
+        ic
+    }
+
+    /// An icon button `ICON_BUTTON_W` x 23 on face, at rest, hot, held and greyed.
+    fn icon_buttons(interface: Interface, s: i32) -> [Canvas; 4] {
+        let theme = theme_for(interface).scaled(s);
+        let text = crate::text::TextRenderer::load(&theme.fonts);
+        let p = theme.paint();
+        let icon = monitor(s);
+        let r = Rect::new(0, 0, ICON_BUTTON_W * s, 23 * s);
+        let draw = |ptr, enabled| {
+            let mut c = Canvas::new(r.width as u32, r.height as u32);
+            c.fill_rect(r, theme.colors.button_face);
+            let px = theme.fonts.size_px;
+            draw_icon_button(&mut c, &text, &p, r, &icon, enabled, ptr, false, px);
+            c
+        };
+        [
+            draw(Interaction::Idle, true),
+            draw(Interaction::Hot, true),
+            draw(Interaction::Pressed, true),
+            draw(Interaction::Idle, false),
+        ]
+    }
+
+    #[test]
+    fn the_icon_button_pins_its_pixels_in_every_look_at_1_and_2() {
+        let want: [(Interface, i32, u64); 6] = [
+            (Interface::Classic, 1, 0x4fdb_984e_7825_f8ff),
+            (Interface::Classic, 2, 0xf460_3370_ed4c_bfa4),
+            (Interface::Blue, 1, 0x5879_eedc_65d6_600b),
+            (Interface::Blue, 2, 0x1792_b510_4119_ddd7),
+            (Interface::Glass, 1, 0x44f5_cd24_22b0_2b68),
+            (Interface::Glass, 2, 0x86ee_d626_3c70_5d81),
+        ];
+        let got: Vec<String> = want
+            .iter()
+            .filter_map(|&(interface, s, hash)| {
+                let all = icon_buttons(interface, s);
+                let h = all.iter().fold(0u64, |h, c| h.rotate_left(7) ^ fnv(c));
+                (h != hash).then(|| format!("{interface:?} at {s}: {h:#018x}"))
+            })
+            .collect();
+        assert!(got.is_empty(), "{got:#?}");
+    }
+
+    /// The icon sits centred, the same pixels as the icon itself; held in Classic it moves a
+    /// pixel down and right; greyed it differs from at rest.
+    #[test]
+    fn the_icon_button_centres_its_icon_and_greys_it() {
+        for s in [1, 2] {
+            let icon = monitor(s);
+            let (x0, y0) = (BUTTON_ICON_PAD * s, (23 - BUTTON_ICON) * s / 2);
+            let opaque: Vec<(i32, i32)> = (0..BUTTON_ICON * s)
+                .flat_map(|y| (0..BUTTON_ICON * s).map(move |x| (x, y)))
+                .filter(|&(x, y)| icon.get(x, y) >> 24 == 0xFF)
+                .collect();
+            assert!(!opaque.is_empty());
+            let [idle, _, held, grey] = icon_buttons(Interface::Classic, s);
+            for &(x, y) in &opaque {
+                assert_eq!(
+                    idle.get(x0 + x, y0 + y),
+                    icon.get(x, y),
+                    "at rest ({x}, {y})"
+                );
+                let (hx, hy) = (x0 + x + s, y0 + y + s);
+                assert_eq!(held.get(hx, hy), icon.get(x, y), "held ({x}, {y})");
+            }
+            assert!(grey != idle, "greyed at {s}");
+            for interface in [Interface::Blue, Interface::Glass] {
+                let [idle, ..] = icon_buttons(interface, s);
+                for &(x, y) in &opaque {
+                    let at = idle.get(x0 + x, y0 + y);
+                    assert_eq!(at, icon.get(x, y), "{interface:?} at {s} ({x}, {y})");
+                }
+            }
+        }
     }
 }
