@@ -303,10 +303,11 @@ impl State {
         // A remap keeps its size, and goes back where the window was while that is on an output,
         // unless a rule places it.
         let remap = last.filter(|_| !matches!(position, Some(Position::At(..))));
-        if let Some(l) = remap {
-            size = Some((l.normal.width, l.normal.height));
-        }
         let back = remap.filter(|l| self.centre_on_an_output(l.normal));
+        if let Some(l) = remap {
+            let s = (l.normal.width, l.normal.height);
+            size = Some(if back.is_some() { s } else { fit_size(s, area) });
+        }
         let kept = (self.file_dialog_position(w)).or(back.map(|l| (l.normal.x, l.normal.y)));
         let (mut x, mut y) = match (owner, position, kept) {
             (_, _, Some(at)) => at,

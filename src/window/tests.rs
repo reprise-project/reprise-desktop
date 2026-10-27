@@ -898,6 +898,33 @@ fn a_window_hidden_on_an_output_that_goes_comes_back_on_one_that_stays() {
 }
 
 #[test]
+fn a_maximized_window_hidden_on_a_larger_output_that_goes_restores_to_a_frame_that_fits() {
+    let mut h = forgetful();
+    let two = h.output("TEST-2", 2560, 1440);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    h.resize_self(&mut c, t, 1800, 1100);
+    let b = h.state.layout_box(Some(&two));
+    h.state.move_to(t.id, b.x + 100, b.y + 100);
+    h.state.set_maximized(t.id, true);
+    h.roundtrip(&mut c);
+    unmap_self(&mut h, &mut c, t);
+    h.state.scene.remove_output(&two);
+    h.state.output_removed(&two);
+    h.resize_self(&mut c, t, 300, 200);
+    h.roundtrip(&mut c);
+    let one = h.state.scene.outputs()[0].clone();
+    let area = h.state.usable_area(Some(&one));
+    let win = h.state.win(t.id).unwrap();
+    assert!(win.maximized, "the window maps maximized again");
+    let saved = win.saved.expect("a frame to restore to");
+    assert!(
+        saved.width <= area.width && saved.height <= area.height,
+        "the restore frame {saved:?} fits TEST-1's {area:?}"
+    );
+}
+
+#[test]
 fn a_maximized_window_that_hides_and_shows_again_comes_back_maximized() {
     let mut h = forgetful();
     let mut c = h.connect();
