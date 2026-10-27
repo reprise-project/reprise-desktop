@@ -925,6 +925,43 @@ fn a_maximized_window_hidden_on_a_larger_output_that_goes_restores_to_a_frame_th
 }
 
 #[test]
+fn a_maximized_window_hidden_while_its_output_shrinks_restores_to_a_frame_that_fits() {
+    use smithay::output::Mode;
+    let mut h = forgetful();
+    let o = h.state.scene.outputs()[0].clone();
+    let mode = |w: i32, h: i32| Mode {
+        size: (w, h).into(),
+        refresh: 60_000,
+    };
+    o.change_current_state(Some(mode(3840, 2160)), None, None, None);
+    h.state.update_layout();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    h.resize_self(&mut c, t, 2500, 1500);
+    h.state.move_to(t.id, 100, 100);
+    h.state.set_maximized(t.id, true);
+    h.roundtrip(&mut c);
+    unmap_self(&mut h, &mut c, t);
+    o.change_current_state(Some(mode(1920, 1080)), None, None, None);
+    h.state.update_layout();
+    h.resize_self(&mut c, t, 300, 200);
+    h.roundtrip(&mut c);
+    let area = h.state.usable_area(Some(&o));
+    let saved = h
+        .state
+        .win(t.id)
+        .unwrap()
+        .saved
+        .expect("a frame to restore to");
+    assert!(
+        area.contains(saved.x, saved.y)
+            && saved.right() <= area.right()
+            && saved.bottom() <= area.bottom(),
+        "the restore frame {saved:?} fits TEST-1's {area:?}"
+    );
+}
+
+#[test]
 fn a_maximized_window_that_hides_and_shows_again_comes_back_maximized() {
     let mut h = forgetful();
     let mut c = h.connect();
