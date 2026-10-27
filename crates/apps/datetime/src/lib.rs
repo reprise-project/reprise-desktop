@@ -22,7 +22,7 @@ use reprisekit::theme::Theme;
 
 use sheet::{Local, Outcome, Sheet, System};
 
-const ERROR_WIN: WinId = "error";
+const ERROR_WIN: WinId = WinId::named("error");
 const TITLE: &str = "Date and Time Properties";
 
 #[derive(Default)]
@@ -181,10 +181,6 @@ impl App for DateTimeApp {
         sheet::CLIENT
     }
 
-    fn fixed(&self) -> bool {
-        true
-    }
-
     fn children(&self) -> Vec<Child> {
         match (&self.error, &self.dialog_text) {
             (Some(b), Some(text)) => vec![b.child(ERROR_WIN, text, &self.forms)],
@@ -231,22 +227,6 @@ impl App for DateTimeApp {
         reply
     }
 
-    fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
-        let s = self.sheet.as_mut().filter(|_| win != ERROR_WIN)?;
-        Some(repriseapp::ReaderForm::Sheet(&mut s.sheet))
-    }
-
-    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let forms = ctx.forms();
-        if win == ERROR_WIN {
-            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
-                b.access(tree, text, &forms);
-            }
-        } else if let Some(s) = &self.sheet {
-            oneshot::access_sheet(&s.sheet, tree, &ctx.text, forms.fonts.size_px);
-        }
-    }
-
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         self.dialog_text = Some(ctx.text.clone());
         let forms = ctx.forms();
@@ -270,6 +250,28 @@ impl App for DateTimeApp {
             true,
             forms.fonts.size_px,
         );
+    }
+}
+
+impl repriseapp::Extended for DateTimeApp {
+    fn fixed(&self) -> bool {
+        true
+    }
+
+    fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
+        let s = self.sheet.as_mut().filter(|_| win != ERROR_WIN)?;
+        Some(repriseapp::ReaderForm::Sheet(&mut s.sheet))
+    }
+
+    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
+        let forms = ctx.forms();
+        if win == ERROR_WIN {
+            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
+                b.access(tree, text, &forms);
+            }
+        } else if let Some(s) = &self.sheet {
+            oneshot::access_sheet(&s.sheet, tree, &ctx.text, forms.fonts.size_px);
+        }
     }
 }
 
@@ -313,5 +315,5 @@ impl DateTimeApp {
 /// Runs the program; `args` are the command line after the program's name.
 pub fn main(_args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    repriseapp::run(Box::new(DateTimeApp::default()));
+    repriseapp::run(Box::new(DateTimeApp::default())).unwrap_or_else(|e| e.exit());
 }

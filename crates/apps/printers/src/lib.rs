@@ -47,10 +47,10 @@ use cups::{JobState, PrinterState, Snapshot};
 use wins::{Ids, Opened, Wins};
 use worker::{Cmd, Msg};
 
-const WIZARD: WinId = "wizard";
-const BROWSE: WinId = "browse";
-const CONFIRM: WinId = "confirm";
-const NOTE: WinId = "note";
+const WIZARD: WinId = WinId::named("wizard");
+const BROWSE: WinId = WinId::named("browse");
+const CONFIRM: WinId = WinId::named("confirm");
+const NOTE: WinId = WinId::named("note");
 
 const PRINTER_ICON: &str = "printer";
 
@@ -196,7 +196,7 @@ impl PrintersApp {
             keep
         });
         let queues = &self.queues;
-        self.refit_queues.retain(|id| queues.get(id).is_some());
+        self.refit_queues.retain(|id| queues.get(*id).is_some());
         self.props.retain(|p| match snap.printer(&p.printer) {
             Some(pr) => {
                 p.refresh(pr, false);
@@ -824,19 +824,6 @@ impl App for PrintersApp {
         self.forms.text.size(folder::CLIENT)
     }
 
-    fn text_sized(&self) -> bool {
-        true
-    }
-
-    fn hidden(&self) -> bool {
-        self.hidden
-    }
-
-    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
-        let (_, d) = self.browse.as_ref().filter(|_| win == BROWSE)?;
-        Some(d.min_client())
-    }
-
     fn children(&self) -> Vec<Child> {
         let mut out = Vec::new();
         for (id, q) in self.queues.iter() {
@@ -931,6 +918,87 @@ impl App for PrintersApp {
         .with_clipboard(clip)
     }
 
+    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.text = Some(ctx.text.clone());
+        let forms = ctx.forms();
+        let px = forms.fonts.size_px;
+        let paint = Paint {
+            s: 1,
+            ..forms.paint()
+        };
+        match win {
+            _ if let Some(q) = self.queues.get_mut(win) => {
+                if self.refit_queues.remove(&win) {
+                    q.fit_columns(ctx);
+                }
+                q.draw(c, ctx);
+            }
+            _ if let Some(p) = self.props.get(win) => {
+                c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
+                propsheet::draw(c, &ctx.text, &paint, &p.sheet, true, px);
+            }
+            WIZARD => {
+                if let Some(w) = &self.wizard {
+                    w.draw(c, &paint, &ctx.text, px);
+                }
+            }
+            BROWSE => {
+                if let Some((_, d)) = &self.browse {
+                    let (w, h) = d.client();
+                    let paint = Paint {
+                        s: 1,
+                        ..forms.paint()
+                    };
+                    d.draw(
+                        c,
+                        &ctx.text,
+                        &paint,
+                        Rect::new(0, 0, w, h),
+                        forms.fonts.size_px,
+                    );
+                }
+            }
+            CONFIRM => {
+                if let Some((_, b)) = &self.confirm {
+                    b.draw(c, &forms, &ctx.text);
+                }
+            }
+            NOTE => {
+                if let Some(b) = &self.note {
+                    b.draw(c, &forms, &ctx.text);
+                }
+            }
+            _ => {
+                if std::mem::take(&mut self.refit) {
+                    self.folder.fit_columns(ctx);
+                }
+                if let Some(n) = self.select.take() {
+                    if self.snapshot.printer(&n).is_some() {
+                        self.folder.select_name(&n, ctx, &self.snapshot);
+                    } else {
+                        self.select = Some(n);
+                    }
+                }
+                self.folder.draw(c, ctx);
+            }
+        }
+    }
+}
+
+impl repriseapp::Extended for PrintersApp {
+    fn text_sized(&self) -> bool {
+        true
+    }
+
+    fn hidden(&self) -> bool {
+        self.hidden
+    }
+
+    fn min_size(&self, win: WinId) -> Option<(i32, i32)> {
+        let (_, d) = self.browse.as_ref().filter(|_| win == BROWSE)?;
+        Some(d.min_client())
+    }
+
     fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
         let forms = ctx.forms();
         let px = forms.fonts.size_px;
@@ -1003,72 +1071,6 @@ impl App for PrintersApp {
         let (host, dlg) = self.browse.as_mut().filter(|_| win == BROWSE)?;
         Some(FileDrop { dlg, host })
     }
-
-    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        self.text = Some(ctx.text.clone());
-        let forms = ctx.forms();
-        let px = forms.fonts.size_px;
-        let paint = Paint {
-            s: 1,
-            ..forms.paint()
-        };
-        match win {
-            _ if let Some(q) = self.queues.get_mut(win) => {
-                if self.refit_queues.remove(&win) {
-                    q.fit_columns(ctx);
-                }
-                q.draw(c, ctx);
-            }
-            _ if let Some(p) = self.props.get(win) => {
-                c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
-                propsheet::draw(c, &ctx.text, &paint, &p.sheet, true, px);
-            }
-            WIZARD => {
-                if let Some(w) = &self.wizard {
-                    w.draw(c, &paint, &ctx.text, px);
-                }
-            }
-            BROWSE => {
-                if let Some((_, d)) = &self.browse {
-                    let (w, h) = d.client();
-                    let paint = Paint {
-                        s: 1,
-                        ..forms.paint()
-                    };
-                    d.draw(
-                        c,
-                        &ctx.text,
-                        &paint,
-                        Rect::new(0, 0, w, h),
-                        forms.fonts.size_px,
-                    );
-                }
-            }
-            CONFIRM => {
-                if let Some((_, b)) = &self.confirm {
-                    b.draw(c, &forms, &ctx.text);
-                }
-            }
-            NOTE => {
-                if let Some(b) = &self.note {
-                    b.draw(c, &forms, &ctx.text);
-                }
-            }
-            _ => {
-                if std::mem::take(&mut self.refit) {
-                    self.folder.fit_columns(ctx);
-                }
-                if let Some(n) = self.select.take() {
-                    if self.snapshot.printer(&n).is_some() {
-                        self.folder.select_name(&n, ctx, &self.snapshot);
-                    } else {
-                        self.select = Some(n);
-                    }
-                }
-                self.folder.draw(c, ctx);
-            }
-        }
-    }
 }
 
 /// Runs the program; `args` are the command line after the program's name.
@@ -1079,6 +1081,7 @@ pub fn main(args: Vec<std::ffi::OsString>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use repriseapp::Extended;
 
     pub(crate) fn test_ctx(size: (i32, i32)) -> Ctx {
         Ctx {

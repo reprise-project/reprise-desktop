@@ -41,7 +41,7 @@ pub struct Browse {
     pub refused: Option<Refused>,
 }
 
-pub const ERROR: repriseapp::WinId = "browse error";
+pub const ERROR: repriseapp::WinId = repriseapp::WinId::named("browse error");
 pub const ERROR_TITLE: &str = "Error Renaming File or Folder";
 
 /// A picker write on a listing thread, with the children of the node it changed read after it.

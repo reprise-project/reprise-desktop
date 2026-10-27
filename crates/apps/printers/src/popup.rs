@@ -1,4 +1,4 @@
-//! A context menu on popups of its own ([`repriseapp::App::popup`]): the tree it walks, the
+//! A context menu on popups of its own ([`repriseapp::Extended::popup`]): the tree it walks, the
 //! chain reprisekit lays out, and what each row does.
 
 use repriseapp::{Ctx, KeyInput};

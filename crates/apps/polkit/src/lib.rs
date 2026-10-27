@@ -30,7 +30,7 @@ use agent::{Msg, Outcome, Request};
 use dialog::RunAs;
 use helper::{Report, Verdict};
 
-const RUNAS: WinId = "runas";
+const RUNAS: WinId = WinId::named("runas");
 const KEY_ICON: &str = "polkit-gnome-authorization";
 const USER_ICON: &str = "system-users";
 const ATTEMPTS: u8 = 3;
@@ -344,10 +344,6 @@ impl App for PolkitApp {
             .map_or(dialog::CLIENT, |a| self.units.size(a.dialog.size))
     }
 
-    fn hidden(&self) -> bool {
-        true
-    }
-
     fn children(&self) -> Vec<Child> {
         self.active
             .iter()
@@ -399,20 +395,6 @@ impl App for PolkitApp {
         reply
     }
 
-    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        if win == RUNAS
-            && let Some(a) = &self.active
-        {
-            let px = a.dialog.form.units().px(ctx.theme.fonts.size_px);
-            oneshot::access_form(&a.dialog.form, tree, &ctx.text, px);
-        }
-    }
-
-    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
-        let a = self.active.as_mut().filter(|_| win == RUNAS)?;
-        Some(Box::new(&mut a.dialog.form))
-    }
-
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         let forms = ctx.forms();
         c.fill_rect(c.bounds(), forms.colors.button_face);
@@ -435,15 +417,36 @@ impl App for PolkitApp {
     }
 }
 
+impl repriseapp::Extended for PolkitApp {
+    fn hidden(&self) -> bool {
+        true
+    }
+
+    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
+        if win == RUNAS
+            && let Some(a) = &self.active
+        {
+            let px = a.dialog.form.units().px(ctx.theme.fonts.size_px);
+            oneshot::access_form(&a.dialog.form, tree, &ctx.text, px);
+        }
+    }
+
+    fn popup(&mut self, win: WinId, _: &Ctx) -> Option<Box<dyn Hosted + '_>> {
+        let a = self.active.as_mut().filter(|_| win == RUNAS)?;
+        Some(Box::new(&mut a.dialog.form))
+    }
+}
+
 /// Runs the program; `args` are the command line after the program's name.
 pub fn main(_args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    repriseapp::run(Box::new(PolkitApp::default()));
+    repriseapp::run(Box::new(PolkitApp::default())).unwrap_or_else(|e| e.exit());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use repriseapp::Extended;
 
     fn open(app: &mut PolkitApp) {
         app.open_next(&|m| reprisekit::text::wrap_chars(m, 58), None, None);

@@ -59,7 +59,7 @@ struct PowerApp {
     asked: (i32, i32),
 }
 
-const ERROR_WIN: WinId = "error";
+const ERROR_WIN: WinId = WinId::named("error");
 
 /// The icon for a snapshot under these alarm thresholds, for the tray and the Power Meter alike; an alarm at 0 is off, never "low".
 pub fn icon_for(p: &Power, s: &Settings) -> powericon::Source {
@@ -371,14 +371,6 @@ impl App for PowerApp {
         self.forms.text.size(sheet::CLIENT)
     }
 
-    fn fixed(&self) -> bool {
-        true
-    }
-
-    fn hidden(&self) -> bool {
-        self.hidden
-    }
-
     fn children(&self) -> Vec<Child> {
         match (&self.error, &self.dialog_text) {
             (Some(b), Some(text)) => vec![b.child(ERROR_WIN, text, &self.forms)],
@@ -419,22 +411,6 @@ impl App for PowerApp {
         reply
     }
 
-    fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
-        let s = self.sheet.as_mut().filter(|_| win != ERROR_WIN)?;
-        Some(repriseapp::ReaderForm::Sheet(&mut s.sheet))
-    }
-
-    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
-        let forms = ctx.forms();
-        if win == ERROR_WIN {
-            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
-                b.access(tree, text, &forms);
-            }
-        } else if let Some(s) = &self.sheet {
-            oneshot::access_sheet(&s.sheet, tree, &ctx.text, forms.fonts.size_px);
-        }
-    }
-
     fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
         self.dialog_text = Some(ctx.text.clone());
         let forms = ctx.forms();
@@ -458,6 +434,32 @@ impl App for PowerApp {
                 true,
                 forms.fonts.size_px,
             );
+        }
+    }
+}
+
+impl repriseapp::Extended for PowerApp {
+    fn fixed(&self) -> bool {
+        true
+    }
+
+    fn hidden(&self) -> bool {
+        self.hidden
+    }
+
+    fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
+        let s = self.sheet.as_mut().filter(|_| win != ERROR_WIN)?;
+        Some(repriseapp::ReaderForm::Sheet(&mut s.sheet))
+    }
+
+    fn access(&mut self, win: WinId, tree: &mut Tree, ctx: &Ctx) {
+        let forms = ctx.forms();
+        if win == ERROR_WIN {
+            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
+                b.access(tree, text, &forms);
+            }
+        } else if let Some(s) = &self.sheet {
+            oneshot::access_sheet(&s.sheet, tree, &ctx.text, forms.fonts.size_px);
         }
     }
 }

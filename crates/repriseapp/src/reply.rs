@@ -80,7 +80,7 @@ pub struct Reply {
     /// answer a pointer press still held (the host uses that press's
     /// serial); the compositor refuses it otherwise.
     pub start_drag: Option<Box<DragOut>>,
-    /// Ask again for the running drag's image ([`App::drag_image`](crate::App::drag_image)) at the
+    /// Ask again for the running drag's image ([`Extended::drag_image`](crate::Extended::drag_image)) at the
     /// scale it shows at, for art that landed since it was drawn.
     pub redraw_drag: bool,
     /// The answer to a drag over the window: `Some(None)` refuses it,

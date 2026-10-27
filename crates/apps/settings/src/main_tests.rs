@@ -1,6 +1,6 @@
 use super::*;
 use crate::locations::location_answers;
-use repriseapp::{BTN_LEFT, KeyInput, PointerInput};
+use repriseapp::{BTN_LEFT, Extended, KeyInput, PointerInput};
 use reprisekit::classic::widgets::BarHit;
 use reprisekit::controls::{form, listview, propsheet};
 use reprisekit::theme::FontConfig;

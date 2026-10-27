@@ -246,7 +246,7 @@ impl Host {
 impl Host {
     /// No shm buffer for slot `i`'s frame: it stays dirty and a timer tries again shortly. The
     /// first failure of a run is logged; a run that goes on is told to the program
-    /// ([`App::draw_failed`](crate::App::draw_failed)).
+    /// ([`Extended::draw_failed`](crate::Extended::draw_failed)).
     fn no_buffer(&mut self, i: usize, e: &str) {
         self.slots[i].dirty = true;
         let (log, tell) = self.shm_trouble.failed();

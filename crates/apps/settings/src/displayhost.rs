@@ -13,7 +13,7 @@ use crate::displaypage::{self, Display};
 use crate::monitordlg::{self, Outcome};
 use crate::{SettingsApp, outputwrite};
 
-pub const MONITOR_WIN: WinId = "monitor";
+pub const MONITOR_WIN: WinId = WinId::named("monitor");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Press {

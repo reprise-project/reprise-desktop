@@ -25,9 +25,9 @@ use reprisekit::taskbar::Edge;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
 
-const ERROR_WIN: WinId = "error";
+const ERROR_WIN: WinId = WinId::named("error");
 const VOLUME_CONTROL: &str = "reprise-volume";
-const FLYOUT_WIN: WinId = "flyout";
+const FLYOUT_WIN: WinId = WinId::named("flyout");
 /// Master's icon in the popup, as the Volume Control window shows it.
 const SPEAKER: &str = "audio-volume-high";
 
@@ -587,27 +587,11 @@ impl App for Sound {
         self.forms.text.size(sheet::CLIENT)
     }
 
-    fn fixed(&self) -> bool {
-        true
-    }
-
-    fn hidden(&self) -> bool {
-        self.hidden
-    }
-
     fn children(&self) -> Vec<Child> {
         match (&self.error, &self.dialog_text) {
             (Some(b), Some(text)) => vec![b.child(ERROR_WIN, text, &self.forms)],
             _ => Vec::new(),
         }
-    }
-
-    fn flyout(&self) -> Option<repriseapp::Flyout> {
-        self.flyout.as_ref().map(|f| repriseapp::Flyout {
-            id: FLYOUT_WIN,
-            at: f.at,
-            title: volumepopup::VOLUME,
-        })
     }
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
@@ -642,6 +626,58 @@ impl App for Sound {
             reply.redraw = true;
         }
         reply
+    }
+
+    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
+        self.dialog_text = Some(ctx.text.clone());
+        if win == FLYOUT_WIN {
+            // The canvas arrives transparent; only the panel is drawn.
+            if let Some(f) = &self.flyout {
+                let lay = flyout_layout(f, ctx);
+                volumepopup::draw(c, &ctx.forms(), &ctx.text, &f.popup, &lay);
+            }
+            return;
+        }
+        let forms = ctx.forms();
+        if win == ERROR_WIN {
+            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
+                b.draw(c, &forms, text);
+            }
+            return;
+        }
+        self.build(None);
+        c.fill_rect(c.bounds(), forms.colors.button_face);
+        if let Some(s) = &self.sheet {
+            propsheet::draw(
+                c,
+                &ctx.text,
+                &Paint {
+                    s: 1,
+                    ..forms.paint()
+                },
+                &s.sheet,
+                true,
+                forms.fonts.size_px,
+            );
+        }
+    }
+}
+
+impl repriseapp::Extended for Sound {
+    fn fixed(&self) -> bool {
+        true
+    }
+
+    fn hidden(&self) -> bool {
+        self.hidden
+    }
+
+    fn flyout(&self) -> Option<repriseapp::Flyout> {
+        self.flyout.as_ref().map(|f| repriseapp::Flyout {
+            id: FLYOUT_WIN,
+            at: f.at,
+            title: volumepopup::VOLUME,
+        })
     }
 
     fn reader_form(&mut self, win: WinId) -> Option<repriseapp::ReaderForm<'_>> {
@@ -683,40 +719,6 @@ impl App for Sound {
                     oneshot::access_sheet(&s.sheet, tree, &ctx.text, forms.fonts.size_px);
                 }
             }
-        }
-    }
-
-    fn draw(&mut self, win: WinId, c: &mut Canvas, ctx: &Ctx) {
-        self.dialog_text = Some(ctx.text.clone());
-        if win == FLYOUT_WIN {
-            // The canvas arrives transparent; only the panel is drawn.
-            if let Some(f) = &self.flyout {
-                let lay = flyout_layout(f, ctx);
-                volumepopup::draw(c, &ctx.forms(), &ctx.text, &f.popup, &lay);
-            }
-            return;
-        }
-        let forms = ctx.forms();
-        if win == ERROR_WIN {
-            if let (Some(b), Some(text)) = (&self.error, &self.dialog_text) {
-                b.draw(c, &forms, text);
-            }
-            return;
-        }
-        self.build(None);
-        c.fill_rect(c.bounds(), forms.colors.button_face);
-        if let Some(s) = &self.sheet {
-            propsheet::draw(
-                c,
-                &ctx.text,
-                &Paint {
-                    s: 1,
-                    ..forms.paint()
-                },
-                &s.sheet,
-                true,
-                forms.fonts.size_px,
-            );
         }
     }
 }
