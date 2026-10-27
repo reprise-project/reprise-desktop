@@ -304,11 +304,25 @@ impl State {
         // unless a rule places it.
         let remap = last.filter(|_| !matches!(position, Some(Position::At(..))));
         let back = remap.filter(|l| self.centre_on_an_output(l.normal));
+        // Going back, the frame fits the output under its centre, which may have shrunk.
+        let back = back.map(|l| {
+            let r = l.normal;
+            let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
+            let under = self.output_at(f64::from(cx), f64::from(cy));
+            let area = self.usable_area(under.as_ref());
+            let s = fit_size((r.width, r.height), area);
+            let at = if s == (r.width, r.height) {
+                (r.x, r.y)
+            } else {
+                keep_inside((r.x, r.y), s, area)
+            };
+            (at, s)
+        });
         if let Some(l) = remap {
             let s = (l.normal.width, l.normal.height);
-            size = Some(if back.is_some() { s } else { fit_size(s, area) });
+            size = Some(back.map_or(fit_size(s, area), |(_, s)| s));
         }
-        let kept = (self.file_dialog_position(w)).or(back.map(|l| (l.normal.x, l.normal.y)));
+        let kept = (self.file_dialog_position(w)).or(back.map(|(at, _)| at));
         let (mut x, mut y) = match (owner, position, kept) {
             (_, _, Some(at)) => at,
             (Some(p), _, None) => {
