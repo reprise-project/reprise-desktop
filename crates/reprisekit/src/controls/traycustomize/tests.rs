@@ -673,7 +673,7 @@ fn a_glass_tip_is_set_in_its_fonts_italic() {
         ..Default::default()
     });
     if !text.has_face("DejaVu Sans") {
-        return;
+        crate::pins::skip!("DejaVu Sans is not installed");
     }
     let t = sample(Wording::Glass);
     let theme = glass_theme();

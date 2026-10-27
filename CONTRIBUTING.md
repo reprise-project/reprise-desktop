@@ -35,7 +35,9 @@ directory; the tests load Tahoma from there instead of the system:
 
 Without `REPRISE_TEST_FONTS` those tests skip, as do the ones that pin
 Trebuchet MS or Segoe UI glyphs when those fonts aren't installed. CI sets
-it.
+it and `REPRISE_TEST_STRICT=1`, under which a skipped test fails; only the
+tests for Trebuchet MS, Franklin Gothic Medium, Segoe UI and Wine's
+`sserife.fon` still skip.
 
 - **Pixel-neutral changes.** If a change shouldn't move a pixel, prove it
   with `scripts/pixels-unchanged.sh [--with-blue] BASE`. It renders the
