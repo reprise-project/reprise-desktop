@@ -682,6 +682,8 @@ fn save_round_trips_every_field() {
         taskbar_show_desktop: true,
         taskbar_peek: true,
         taskbar_tray_overflow: true,
+        notification_sound: false,
+        notification_sound_theme: "ocean".into(),
         taskbar_position: "top".into(),
         taskbar_auto_hide: true,
         taskbar_reveal_on_edge: false,

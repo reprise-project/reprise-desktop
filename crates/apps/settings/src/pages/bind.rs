@@ -1,6 +1,8 @@
 //! The binding between each control and its [`Settings`] field: writing, reading back and greying.
 
-use super::appearance::{ANIM_CONTROLS, HOVER_CONTROLS, NL_CONTROLS, NL_TIMES};
+use super::appearance::{
+    ANIM_CONTROLS, HOVER_CONTROLS, NL_CONTROLS, NL_TIMES, NOTIFICATION_SOUND, SOUND_CONTROLS,
+};
 use super::desktop::{
     DESKTOP_CONTROLS, DRAG_SNAP_CONTROLS, DURATION_CONTROLS, FPS_CONTROLS, REVEAL_CONTROLS,
 };
@@ -185,6 +187,8 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag("taskbar_show_desktop", lens!(taskbar_show_desktop)),
         Bind::Flag("taskbar_peek", lens!(taskbar_peek)),
         Bind::Flag("taskbar_tray_overflow", lens!(taskbar_tray_overflow)),
+        Bind::Flag(NOTIFICATION_SOUND, lens!(notification_sound)),
+        Bind::Choice(SOUND_CONTROLS[1], lens!(notification_sound_theme)),
         Bind::Flag("taskbar_auto_hide", lens!(taskbar_auto_hide)),
         Bind::Flag("taskbar_reveal_on_edge", lens!(taskbar_reveal_on_edge)),
         Bind::Flag("taskbar_reveal_on_keys", lens!(taskbar_reveal_on_keys)),
@@ -489,7 +493,8 @@ pub fn write_form(form: &mut Form, s: &Settings) {
 /// sample redrawn; the Background page greys the position without a wallpaper
 /// and the file name extensions without the desktop's files, and shows the look's desktop
 /// colour on its Color button; the Taskbar page
-/// greys the auto-hide triggers while auto-hide is off, and the Advanced page
+/// greys the auto-hide triggers while auto-hide is off, the Effects page the sound theme while
+/// notifications play no sound, and the Advanced page
 /// the debug overlay's captures check while the overlay is off and the thumbnail cache's size
 /// while the cache is off. Runs from
 /// `write` and after every read-back.
@@ -570,6 +575,9 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     }
     for id in HOVER_CONTROLS {
         fx.set_enabled(id, s.hover_fade);
+    }
+    for id in SOUND_CONTROLS {
+        fx.set_enabled(id, s.notification_sound);
     }
     let tb = &mut sheet.pages[Page::Taskbar.index()];
     for id in REVEAL_CONTROLS {

@@ -1033,6 +1033,7 @@ pub(crate) mod tests {
                 gtk_themes: &[],
                 qt_tools: false,
                 cursor_themes: &[],
+                sound_themes: &[],
                 layouts: &[],
                 heads: &[],
             },
