@@ -243,6 +243,13 @@ impl Link {
             sandboxed: None,
         }));
         let sandboxed = (input.version() >= 5).then(|| input.watch_sandboxed(&qh, ()));
+        if sandboxed.is_none() {
+            log::warn!(
+                "reprise_input_v1 v{} has no list of sandboxed windows: Background app states \
+                 fail until the session restarts on a newer compositor",
+                input.version()
+            );
+        }
         let (changed_tx, changed_rx) = async_channel::bounded(1);
         let mut state = State {
             input,
