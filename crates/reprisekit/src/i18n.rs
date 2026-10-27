@@ -239,18 +239,26 @@ fn number_formatter<M>(v: &Value, _: &M) -> Option<String> {
 fn separators() -> &'static Separators {
     static SEPARATORS: OnceLock<Separators> = OnceLock::new();
     SEPARATORS.get_or_init(|| {
-        reading_separators(|| Separators {
-            group: tr!("number-group-separator"),
-            decimal: tr!("number-decimal-separator"),
+        separators_from(|| {
+            [
+                tr!("number-group-separator"),
+                tr!("number-decimal-separator"),
+            ]
         })
     })
 }
 
-fn reading_separators<T>(read: impl FnOnce() -> T) -> T {
+fn separators_from(read: impl FnOnce() -> [String; 2]) -> Separators {
+    struct Reading;
+    impl Drop for Reading {
+        fn drop(&mut self) {
+            READING_SEPARATORS.set(false);
+        }
+    }
     READING_SEPARATORS.set(true);
-    let value = read();
-    READING_SEPARATORS.set(false);
-    value
+    let _reading = Reading;
+    let [group, decimal] = read();
+    Separators { group, decimal }
 }
 
 /// `value` as Fluent's `NUMBER()` asks: fraction digits between the minimum and maximum

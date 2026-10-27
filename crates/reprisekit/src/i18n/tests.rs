@@ -92,11 +92,11 @@ fn a_number_in_the_separator_strings_formats_without_the_separators() {
     let c = Catalog::english(
         "number-group-separator = { 1000 }\nnumber-decimal-separator = { \"\\u202F\" }",
     );
-    let (group, decimal) = reading_separators(|| {
-        (
+    let Separators { group, decimal } = separators_from(|| {
+        [
             c.tr_args("number-group-separator", &[]),
             c.tr_args("number-decimal-separator", &[]),
-        )
+        ]
     });
     assert_eq!(group, "1000");
     assert_eq!(decimal, "\u{202F}");
