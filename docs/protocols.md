@@ -64,6 +64,7 @@ confinement holds, every motion goes through as it comes.
 - **Input:** `zwp_pointer_constraints_v1`, `zwp_relative_pointer_manager_v1`,
   `zwp_pointer_gestures_v1`, `wp_cursor_shape_manager_v1`,
   `zwp_tablet_manager_v2`, `zwp_keyboard_shortcuts_inhibit_manager_v1`,
+  `zwp_xwayland_keyboard_grab_manager_v1` (Xwayland only),
   `zwp_text_input_manager_v3`, `zwp_input_method_manager_v2`,
   `zwp_virtual_keyboard_manager_v1`, `zwlr_virtual_pointer_manager_v1`
 - **Desktop tools:** `zwlr_layer_shell_v1`, `ext_session_lock_manager_v1`,
