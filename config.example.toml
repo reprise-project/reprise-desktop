@@ -310,12 +310,17 @@ suspend_after = 0            # run [power] standby
 # sound = true               # a balloon plays the sound its program asks for, else the
 #                            # theme's message-new-instant; low urgency, a suppress-sound
 #                            # hint and Do Not Disturb keep it silent
-# sound_theme = "freedesktop" # an XDG sound theme under /usr/share/sounds or
-#                            # ~/.local/share/sounds; a name it lacks comes from freedesktop
 # quiet_hours = []           # ["22:00", "07:00"] holds balloons back from 22:00 until 07:00,
 #                            # then they show; critical ones always show
 # auto_dnd = true            # balloons also wait while a full-screen window has focus and
 #                            # while the screen is shared; false shows them then
+
+# [sounds]                   # Settings > Sounds also sets these
+# theme = "freedesktop"      # an XDG sound theme under /usr/share/sounds or
+#                            # ~/.local/share/sounds, for balloons and the bell; a name
+#                            # it lacks comes from freedesktop
+# bell = true                # a program's system bell plays the theme's bell; false keeps
+#                            # it silent, and an unfocused window's task button still flashes
 
 # [privacy]
 # recent_files = true        # false hides the recently used files GTK and KDE apps record

@@ -52,7 +52,10 @@ confinement holds, every motion goes through as it comes.
   `xdg_wm_dialog_v1`, `xdg_toplevel_tag_manager_v1` (a toplevel tagged
   `file-dialog` opens at the size and place the last file dialog was left
   at), `xdg_toplevel_icon_manager_v1`, `zxdg_exporter_v1`/`zxdg_importer_v1`,
-  `zxdg_exporter_v2`/`zxdg_importer_v2`, `xwayland_shell_v1`
+  `zxdg_exporter_v2`/`zxdg_importer_v2`, `xwayland_shell_v1`,
+  `xdg_system_bell_v1` (a ring plays the `[sounds] theme`'s bell unless
+  `[sounds] bell` is off, at most one per 100 ms, and flashes the task button of
+  an unfocused window it names)
 - **Selection:** `zwp_primary_selection_device_manager_v1`,
   `ext_data_control_manager_v1`, `zwlr_data_control_manager_v1`
 - **Surfaces:** `wp_viewporter`, `wp_fractional_scale_manager_v1`,

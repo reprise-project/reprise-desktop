@@ -36,7 +36,7 @@ pub use lists::{
     fit_shortcut_columns, list_key, new_list, new_location_list, new_shortcut_list,
     show_locations_loading,
 };
-pub use system::{advanced, power, startup};
+pub use system::{advanced, power, sounds, startup};
 
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).
 pub const CLIENT: (i32, i32) = (398, 528);

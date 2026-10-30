@@ -127,8 +127,7 @@ One window, 23 pages, four headings. Only one runs at a time.
   - **Fonts & Icons:** the UI and dialog fonts, the icon theme, frame and
     caption sizes, and how GTK and Qt programs are themed.
   - **Effects:** window animations, highlight fades, menu shadows and how menus
-    open (fade, slide or none), taskbar slides, and the notification sound and
-    its sound theme.
+    open (fade, slide or none) and taskbar slides.
 - **Desktop**
   - **Taskbar:** position, button mode, pinned programs, Peek, Show desktop,
     tray overflow, auto-hide, and the Start button and menu style.
@@ -151,6 +150,8 @@ One window, 23 pages, four headings. Only one runs at a time.
   - **Accessibility:** text size, StickyKeys, SlowKeys and MouseKeys.
   - **Vision:** colour filters and the magnifier.
 - **System**
+  - **Sounds:** the sound theme, and whether notifications and a program's
+    bell play a sound.
   - **Power:** the Turn Off commands, idle timeouts, lock on sleep and the
     lock screen's wallpaper.
   - **Startup:** autostart entries and session restore.

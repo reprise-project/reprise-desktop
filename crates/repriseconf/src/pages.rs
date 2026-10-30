@@ -22,6 +22,7 @@ pub enum Page {
     Pointers,
     Accessibility,
     Vision,
+    Sounds,
     Power,
     Startup,
     DefaultPrograms,
@@ -66,6 +67,7 @@ pub const GROUPS: &[(&str, &[Page])] = &[
     (
         "System",
         &[
+            Page::Sounds,
             Page::Power,
             Page::Startup,
             Page::DefaultPrograms,
@@ -110,6 +112,7 @@ impl Page {
             Page::Pointers => "Pointers",
             Page::Accessibility => "Accessibility",
             Page::Vision => "Vision",
+            Page::Sounds => "Sounds",
             Page::Power => "Power",
             Page::Startup => "Startup",
             Page::DefaultPrograms => "Default Programs",
@@ -149,13 +152,7 @@ impl Page {
             ],
             Page::NightLight => &["blue light", "colour temperature", "color temperature"],
             Page::FontsAndIcons => &["font", "icon theme", "gtk", "qt", "dpi"],
-            Page::Effects => &[
-                "animations",
-                "transparency",
-                "shadows",
-                "notification sounds",
-                "sound theme",
-            ],
+            Page::Effects => &["animations", "transparency", "shadows"],
             Page::Taskbar => &["tray", "notification area", "panel"],
             Page::StartMenu => &["menu", "pinned"],
             Page::Launcher => &["search", "run"],
@@ -205,6 +202,7 @@ impl Page {
                 "magnifier",
                 "zoom",
             ],
+            Page::Sounds => &["sound theme", "notification sounds", "bell", "beep"],
             Page::Power => &["idle", "sleep", "suspend", "standby", "lid", "screen off"],
             Page::Startup => &["autostart", "login", "session", "startup programs"],
             Page::DefaultPrograms => &[

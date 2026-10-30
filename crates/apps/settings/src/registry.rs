@@ -40,7 +40,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::FontsAndIcons => {
             pages::fonts_and_icons(a, src.icon_themes, src.gtk_themes, src.qt_tools)
         }
-        Page::Effects => pages::effects(a, src.sound_themes),
+        Page::Effects => pages::effects(a),
         Page::Taskbar => pages::taskbar(a),
         Page::StartMenu => crate::menupage::page(a),
         Page::Launcher => pages::launcher(a),
@@ -53,6 +53,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::Pointers => pages::pointers(a, src.cursor_themes),
         Page::Accessibility => pages::accessibility(a),
         Page::Vision => crate::visionpage::page(a),
+        Page::Sounds => pages::sounds(a, src.sound_themes),
         Page::Power => pages::power(a),
         Page::Startup => pages::startup(a),
         Page::DefaultPrograms => crate::defaultspage::page(a),
@@ -130,6 +131,7 @@ mod tests {
                 "Pointers",
                 "Accessibility",
                 "Vision",
+                "Sounds",
                 "Power",
                 "Startup",
                 "Default Programs",
@@ -179,9 +181,9 @@ mod tests {
         assert_eq!(open(&s), GROUPS[0].1[0], "the first page opens");
     }
 
-    /// The list's inside is 480 px: 27 rows at 471 px, so every row shows. On a
-    /// sheet 56 px shorter the list scrolls, and a page opened from its end (keys
-    /// or `--page`) comes into view.
+    /// The list's inside is 480 px at the smallest sheet: 28 rows at 488 px, so it scrolls
+    /// until the sheet is 8 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
         use reprisekit::controls::form::Key;
@@ -190,13 +192,16 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 27, "four headings over 23 pages");
-        assert_eq!((list.total, list.inner.height), (471, 480));
+        assert_eq!(list.rows.len(), 28, "four headings over 24 pages");
+        assert_eq!((list.total, list.inner.height), (488, 480));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 8 px");
+        sheet.size.1 += 8;
+        let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 56;
+        sheet.size.1 -= 64;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (471, 424));
+        assert_eq!((list.total, list.inner.height), (488, 424));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();

@@ -769,16 +769,9 @@ fn the_effects_page_geometry() {
     assert_eq!(rect(&s, p, "menu_animation"), Rect::new(246, 256, 110, 21));
     assert_eq!(rect(&s, p, "taskbar_group"), Rect::new(20, 296, 358, 48));
     assert_eq!(rect(&s, p, "taskbar_slide"), Rect::new(GX, 318, 13, 13));
-    assert_eq!(rect(&s, p, "sounds_group"), Rect::new(20, 354, 358, 74));
-    assert_eq!(
-        rect(&s, p, "notification_sound"),
-        Rect::new(GX, 376, 13, 13)
-    );
-    assert_eq!(rect(&s, p, "sound_theme_label"), Rect::new(50, 402, 80, 13));
-    assert_eq!(
-        rect(&s, p, "notification_sound_theme"),
-        Rect::new(134, 398, 200, 21)
-    );
+    for id in ["notification_sound", "sound_theme"] {
+        assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Sounds");
+    }
     inside_page(&s, p);
 }
 
@@ -857,67 +850,6 @@ fn the_taskbar_slide_check_goes_in_and_comes_back_out() {
     set_check(&mut s, &mut got, "taskbar_slide", false);
     assert!(!got.taskbar_slide);
     assert!(!checked(&with(&Settings::for_interface("classic"))));
-}
-
-/// The check box writes `[notifications] sound` and greys the theme combo while off; the combo
-/// lists the installed sound themes, keeps a configured one that is missing, and writes the pick.
-#[test]
-fn the_notification_sound_and_its_theme_write_their_keys() {
-    let root = std::env::temp_dir().join(format!("reprise-settings-sounds-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    for f in ["ocean/index.theme", "deep/stereo/bell.oga"] {
-        let path = root.join(f);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, "").unwrap();
-    }
-    let themes = repriseaudio::sounds::themes(std::slice::from_ref(&root));
-    std::fs::remove_dir_all(&root).unwrap();
-    assert_eq!(themes, ["deep", "ocean"]);
-
-    let want = Settings {
-        notification_sound_theme: "gone".into(),
-        ..Settings::default()
-    };
-    let mut s = registry::sheet(
-        &want,
-        &registry::Sources {
-            icon_themes: &[],
-            gtk_themes: &[],
-            qt_tools: false,
-            cursor_themes: &[],
-            sound_themes: &themes,
-            layouts: &[],
-            heads: &[],
-        },
-    );
-    let p = Page::Effects;
-    let id = "notification_sound_theme";
-    assert_eq!(
-        rows(&s, p, id),
-        (vec!["deep".into(), "ocean".into(), "gone".into()], 2)
-    );
-    assert_eq!(s.pages[p.index()].checked("notification_sound"), Some(true));
-
-    let mut got = want.clone();
-    pick(&mut s, &mut got, p, id, 1);
-    assert_eq!(got.notification_sound_theme, "ocean");
-
-    for id in ["sound_theme_label", id] {
-        assert!(enabled_on(&s, p, id), "{id} is lit with the sound on");
-    }
-    tick(&mut s, &mut got, p, "notification_sound", false);
-    assert!(!got.notification_sound);
-    for id in ["sound_theme_label", id] {
-        assert!(!enabled_on(&s, p, id), "{id} greys with the sound off");
-    }
-    assert_eq!(
-        got,
-        Settings {
-            notification_sound: false,
-            notification_sound_theme: "ocean".into(),
-            ..want
-        }
-    );
 }
 
 #[test]

@@ -273,14 +273,20 @@ fn display_all_gpus_is_off_unless_set() {
 }
 
 #[test]
-fn notification_sounds_default_on_from_the_freedesktop_theme() {
-    let d = Config::default().notifications;
-    assert!(d.sound);
-    assert_eq!(d.sound_theme, "freedesktop");
-    let c = Config::parse("[notifications]\nsound = false\nsound_theme = \"ocean\"\n").unwrap();
+fn notification_sounds_default_on() {
+    assert!(Config::default().notifications.sound);
+    let c = Config::parse("[notifications]\nsound = false\n").unwrap();
     assert!(!c.notifications.sound);
-    assert_eq!(c.notifications.sound_theme, "ocean");
-    assert!(Config::parse("[notifications]\nsound_theme = \"../x\"\n").is_err());
+}
+
+#[test]
+fn sounds_play_from_the_freedesktop_theme_and_the_bell_rings_by_default() {
+    let d = Config::default().sounds;
+    assert_eq!((d.theme.as_str(), d.bell), ("freedesktop", true));
+    assert_eq!(Config::parse("[sounds]\n").unwrap().sounds, d);
+    let c = Config::parse("[sounds]\ntheme = \"ocean\"\nbell = false\n").unwrap();
+    assert_eq!((c.sounds.theme.as_str(), c.sounds.bell), ("ocean", false));
+    assert!(Config::parse("[sounds]\ntheme = \"../x\"\n").is_err());
 }
 
 #[test]

@@ -36,7 +36,8 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[accessibility]` | text size, StickyKeys, SlowKeys, MouseKeys, magnifier, colour filters |
 | `[night_light]` | schedule and warmth |
 | `[launcher]`, `[clipboard]`, `[screenshot]`, `[previews]` | the launcher's file search, clipboard history, where screenshots go, live previews |
-| `[notifications]` | balloon sounds, their sound theme, quiet hours, Do Not Disturb during full screen and screen sharing |
+| `[notifications]` | balloon sounds, quiet hours, Do Not Disturb during full screen and screen sharing |
+| `[sounds]` | the sound theme balloons and the bell play from, and whether the bell sounds |
 | `[privacy]` | recent files and location |
 | `[thumbnail_cache]` | whether pictures' thumbnails are kept, and the cap |
 | `[debug]` | the debug overlay |

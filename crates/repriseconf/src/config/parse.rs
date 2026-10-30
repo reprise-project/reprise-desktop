@@ -756,15 +756,6 @@ impl Config {
             if let Some(v) = n.sound {
                 cfg.notifications.sound = v;
             }
-            if let Some(t) = n.sound_theme {
-                let ok = !t.is_empty() && !t.contains('/') && !t.starts_with('.');
-                if !ok {
-                    return Err(format!(
-                        "notifications.sound_theme {t:?} is not a sound theme name"
-                    ));
-                }
-                cfg.notifications.sound_theme = t;
-            }
             if let Some(v) = n.auto_dnd {
                 cfg.notifications.auto_dnd = v;
             }
@@ -792,6 +783,18 @@ impl Config {
                         );
                     }
                 };
+            }
+        }
+        if let Some(s) = file.sounds {
+            if let Some(t) = s.theme {
+                let ok = !t.is_empty() && !t.contains('/') && !t.starts_with('.');
+                if !ok {
+                    return Err(format!("sounds.theme {t:?} is not a sound theme name"));
+                }
+                cfg.sounds.theme = t;
+            }
+            if let Some(v) = s.bell {
+                cfg.sounds.bell = v;
             }
         }
         if let Some(p) = file.privacy {
