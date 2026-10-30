@@ -514,7 +514,7 @@ pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
             idle_scheduled: false,
             callback_timer: None,
             render_timer: None,
-            step_timer: None,
+            frame_timer: None,
             last_flip: None,
             pace: Default::default(),
             frames: 0,
@@ -594,9 +594,8 @@ pub fn disable(state: &mut State, output: &Output) -> bool {
         mut thread,
         compositor,
         track,
-        callback_timer,
         render_timer,
-        step_timer,
+        frame_timer,
         ..
     } = s;
     if track.busy() {
@@ -618,7 +617,7 @@ pub fn disable(state: &mut State, output: &Output) -> bool {
             vrr_capable,
         },
     );
-    for t in [callback_timer, render_timer, step_timer]
+    for t in [render_timer, frame_timer.map(|(t, _, _)| t)]
         .into_iter()
         .flatten()
     {
@@ -776,11 +775,8 @@ pub(super) fn power_off(state: &mut State, head: Head) -> bool {
         send_job(s, commit::Kind::Clear, Work::None);
     }
     s.hw.off = true;
-    let timer = s.callback_timer.take();
+    s.callback_timer = None;
     log::info!("{}: power off", s.output.name());
-    if let Some(t) = timer {
-        state.handle.remove(t);
-    }
     true
 }
 

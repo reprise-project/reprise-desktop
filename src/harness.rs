@@ -29,6 +29,8 @@ use wayland_protocols::{
         ext_session_lock_surface_v1::{self, ExtSessionLockSurfaceV1},
         ext_session_lock_v1::ExtSessionLockV1,
     },
+    wp::commit_timing::v1::client::{wp_commit_timer_v1, wp_commit_timing_manager_v1},
+    wp::fifo::v1::client::{wp_fifo_manager_v1, wp_fifo_v1},
     wp::text_input::zv3::client::{
         zwp_text_input_manager_v3::ZwpTextInputManagerV3, zwp_text_input_v3::ZwpTextInputV3,
     },
@@ -490,6 +492,21 @@ pub struct TestClient {
 impl TestClient {
     pub fn qh(&self) -> QueueHandle<ClientSide> {
         self.queue.handle()
+    }
+
+    /// Bind global `interface` at `version` for a protocol whose objects send no events.
+    pub fn bind<I>(&self, interface: &str, version: u32) -> I
+    where
+        I: wc::Proxy + 'static,
+        ClientSide: wc::Dispatch<I, ()>,
+    {
+        let name = (self.side.globals.iter())
+            .find(|(_, i, _)| i == interface)
+            .map(|(n, _, _)| *n)
+            .unwrap_or_else(|| panic!("{interface} is offered"));
+        (self.side.registry.as_ref())
+            .expect("wl_registry")
+            .bind(name, version, &self.qh(), ())
     }
 
     /// Bind the wlr foreign-toplevel manager, as a bar or dock does.
@@ -1217,6 +1234,10 @@ impl wc::Dispatch<input_client::reprise_sandboxed_v1::RepriseSandboxedV1, ()> fo
 
 wc::delegate_noop!(ClientSide: ignore ZwlrForeignToplevelHandleV1);
 wc::delegate_noop!(ClientSide: ignore WlCompositor);
+wc::delegate_noop!(ClientSide: ignore wp_fifo_manager_v1::WpFifoManagerV1);
+wc::delegate_noop!(ClientSide: ignore wp_fifo_v1::WpFifoV1);
+wc::delegate_noop!(ClientSide: ignore wp_commit_timing_manager_v1::WpCommitTimingManagerV1);
+wc::delegate_noop!(ClientSide: ignore wp_commit_timer_v1::WpCommitTimerV1);
 wc::delegate_noop!(ClientSide: ignore wl_data_device_manager::WlDataDeviceManager);
 impl wc::Dispatch<wl_data_offer::WlDataOffer, ()> for ClientSide {
     fn event(
