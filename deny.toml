@@ -37,8 +37,6 @@ skip = [
     { crate = "rustix@0.38.44", reason = "drm 0.14 via smithay" },
     { crate = "linux-raw-sys@0.4.15", reason = "rustix 0.38 via drm 0.14" },
     { crate = "linux-raw-sys@0.9.4", reason = "drm-sys 0.8 via smithay" },
-    { crate = "x11rb@0.13.2", reason = "smithay's xwayland; ours is 0.14" },
-    { crate = "x11rb-protocol@0.13.2", reason = "x11rb 0.13 via smithay" },
     { crate = "miniz_oxide@0.8.9", reason = "png 0.18; flate2 has 0.9" },
     { crate = "nom@7.1.3", reason = "cexpr via bindgen, build only" },
     { crate = "shlex@1.3.0", reason = "bindgen, build only; cc has 2.0" },
