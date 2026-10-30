@@ -1,4 +1,4 @@
-//! Window icons: the client's own (xdg-toplevel-icon, or an X11 window's
+//! Window icons: the client's own (an xdg-toplevel-icon name or pixels, or an X11 window's
 //! `_NET_WM_ICON` via `xwayland::helper`), else the app id's from the icon theme
 //! or its `.desktop` entry (`taskbarview::app_icon`). Formats, resampling and the
 //! fallback glyph are `reprisekit::icon`.
@@ -49,10 +49,22 @@ pub fn window_icon_waiting(
     win: &Window,
     px: i32,
 ) -> (Option<Arc<Canvas>>, Option<String>) {
+    if let Some(icon) = (win.icon_name.as_deref()).and_then(|n| named(icons, n, px)) {
+        return (Some(icon), None);
+    }
     if let Some(icon) = win.own_icon(px) {
         return (Some(icon), None);
     }
     crate::taskbarview::app_icon_waiting(icons, index, &win.app_id(), px)
+}
+
+/// Theme icon `name` at `px`, for a name a client set. A name with a path separator would be
+/// taken for a file path, so it never resolves.
+fn named(icons: &mut IconCache, name: &str, px: i32) -> Option<Arc<Canvas>> {
+    if name.contains('/') {
+        return None;
+    }
+    icons.get_shared(name, px)
 }
 
 /// Read a wl_shm icon buffer's pixels at their native size. None for an
@@ -210,9 +222,9 @@ impl State {
         crate::taskpreview::icons_landed(self);
     }
 
-    /// A commit of `w`'s surface applies a newly set icon: the buffer whose width
-    /// is closest to 32 px is kept at native size. None that reads falls back to the
-    /// app id's.
+    /// A commit of `w`'s surface applies a newly set icon: its name, and the buffer
+    /// whose width is closest to 32 px at native size. A name the theme has wins over
+    /// the buffer; with neither the app id's icon draws.
     pub fn apply_icon(&mut self, w: WindowId) {
         let Some(win) = self.win_mut(w) else {
             return;
@@ -220,16 +232,17 @@ impl State {
         if !std::mem::take(&mut win.icon_pending) {
             return;
         }
-        let source = with_states(win.wl_surface(), |s| {
+        let (name, source) = with_states(win.wl_surface(), |s| {
             let mut cached = s.cached_state.get::<ToplevelIconCachedState>();
-            cached
-                .current()
-                .buffers()
-                .iter()
+            let icon = cached.current();
+            let source = (icon.buffers().iter())
                 .min_by_key(|(b, _)| (width_of(b) - PREFERRED_SOURCE).abs())
-                .and_then(|(b, _)| from_shm(b))
+                .and_then(|(b, _)| from_shm(b));
+            (icon.icon_name().map(str::to_owned), source)
         });
-        if win.set_icon(source) && win.mapped {
+        let renamed = win.icon_name != name;
+        win.icon_name = name;
+        if (win.set_icon(source) || renamed) && win.mapped {
             self.retitled(w, crate::retitle::Changes::ICON);
         }
     }
@@ -274,6 +287,19 @@ mod tests {
         icons.put_file(file, 16, Some(Canvas::new(16, 16)));
         let icon = crate::taskbarview::app_icon(&mut icons, &index, app, 16);
         assert_eq!(icon.map(|c| c.width), Some(16));
+    }
+
+    #[test]
+    fn a_client_icon_name_resolves_in_the_theme_but_never_as_a_path() {
+        use reprisekit::icontheme::IconTheme;
+        let mut icons = IconCache::new(IconTheme::load("none", &[]));
+        let theme = icons.theme();
+        let art = |n: &str| (n.to_string(), 16, Some(Canvas::new(16, 16)));
+        icons.put_icons(&theme, vec![art("document-edit")]);
+        icons.put_file("/srv/icons/viewer.png", 16, Some(Canvas::new(16, 16)));
+        assert!(named(&mut icons, "document-edit", 16).is_some());
+        assert!(named(&mut icons, "/srv/icons/viewer.png", 16).is_none());
+        assert!(named(&mut icons, "unknown-name", 16).is_none());
     }
 
     #[test]

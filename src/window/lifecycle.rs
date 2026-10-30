@@ -62,6 +62,7 @@ impl State {
             override_redirect: false,
             frameless: false,
             icon: None,
+            icon_name: None,
             icon_sizes: RefCell::default(),
             tree,
             chrome,
