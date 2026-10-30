@@ -527,8 +527,8 @@ impl State {
             .insert_source(source, move |_, _, state| {
                 if let Some(t) = state.hang.threads.get_mut(&pid) {
                     t.exit = None;
+                    state.settle_then_drop(pid, "exited", |_| true);
                 }
-                state.settle_then_drop(pid, "exited", |_| true);
                 Ok(PostAction::Remove)
             })
             .inspect_err(|e| log::warn!("pidfd source: {}", e.error))
@@ -693,21 +693,25 @@ impl State {
             .copied()
             .filter(|p| !live.contains(p))
             .collect();
+        let mut stale = Vec::new();
         for pid in gone {
             let threads = self.hang.threads.remove(&pid).unwrap_or_default();
-            for t in threads
-                .watched
-                .into_iter()
-                .map(|(_, t)| t)
-                .chain(threads.exit)
-            {
-                self.handle.remove(t);
-            }
+            stale.extend(threads.watched.into_iter().map(|(_, t)| t));
+            stale.extend(threads.exit);
         }
         if dying_scan(&self.hang.threads).is_empty()
             && let Some((t, _)) = self.hang.dying_check.take()
         {
             self.handle.remove(t);
+        }
+        // An exited program's pidfds turn readable with its socket's hang-up, so their events may
+        // wait in this dispatch; the sources go once it ends, and meanwhile find no watch.
+        if !stale.is_empty() {
+            self.handle.insert_idle(move |state| {
+                for t in stale {
+                    state.handle.remove(t);
+                }
+            });
         }
         self.close_end_programs(|p| !live.contains(&p), "has no window left");
     }

@@ -27,6 +27,8 @@ pub enum Ask {
     /// Glass a held frame left behind its own window's program (`GlassCtx::owes`): blurs at once
     /// without moving `[glass] blur_rate`'s cap.
     CatchUp,
+    /// The frame a timed commit shows in: the commit asks for what it changes once it applies.
+    Timed,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -49,7 +51,7 @@ impl Asked {
         self.backdrop = self.backdrop.and(match ask {
             Ask::Scene | Ask::Content => Under::Anywhere,
             Ask::Commit(d) => Under::Within(d),
-            Ask::Pointer | Ask::Cursor | Ask::CatchUp => Under::Nothing,
+            Ask::Pointer | Ask::Cursor | Ask::CatchUp | Ask::Timed => Under::Nothing,
         });
     }
 }
@@ -124,8 +126,8 @@ pub(super) fn queue_render(state: &mut State, head: Head) {
 }
 
 /// Ask for a desktop water step's frame on `output` that starts at or after `at`
-/// (`framepace::ask_at`). A wait already armed stands. Glass re-blurs the moving water at
-/// `[glass] blur_rate`, like a program's content.
+/// (`framepace::ask_at`). Glass re-blurs the moving water at `[glass] blur_rate`, like a
+/// program's content.
 pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant) {
     let Some(head) = head_of(output) else {
         return;
@@ -133,37 +135,66 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
     let Some(s) = surface_mut(state, head) else {
         return;
     };
-    if s.step_timer.is_some() {
-        return;
-    }
     let interval = crate::framepace::interval(output.current_mode().map_or(0, |m| m.refresh));
     let now = std::time::Instant::now();
-    let Some(wait) = crate::framepace::ask_at(at, now, s.last_flip, !s.track.idle(), interval)
-    else {
-        request(state, output, Ask::Content);
+    match crate::framepace::ask_at(at, now, s.last_flip, !s.track.idle(), interval) {
+        Some(wait) => arm_frame(state, head, output, now + wait, Ask::Content),
+        None => request(state, output, Ask::Content),
+    }
+}
+
+/// Ask for the frame on `output` that shows at the first refresh at or after `at`
+/// (`framepace::start_for`): a timed commit's.
+pub fn schedule_shows_at(state: &mut State, output: &Output, at: std::time::Instant) {
+    let Some(head) = head_of(output) else {
         return;
     };
+    let Some(s) = surface_mut(state, head) else {
+        return;
+    };
+    let interval = crate::framepace::interval(output.current_mode().map_or(0, |m| m.refresh));
+    let start = crate::framepace::start_for(at, s.last_flip, interval);
+    if start <= std::time::Instant::now() {
+        request(state, output, Ask::Timed);
+    } else {
+        arm_frame(state, head, output, start, Ask::Timed);
+    }
+}
+
+/// Ask for a frame on `output` at `fires`; of two such asks, the earlier stands, and the
+/// later's source asks again after that frame.
+fn arm_frame(state: &mut State, head: Head, output: &Output, fires: std::time::Instant, ask: Ask) {
+    let Some(s) = surface_mut(state, head) else {
+        return;
+    };
+    let armed = s.frame_timer;
+    match armed {
+        Some((_, at, _)) if at <= fires => return,
+        Some((t, _, _)) => state.handle.remove(t),
+        None => {}
+    }
+    let wait = fires.saturating_duration_since(std::time::Instant::now());
     let token = state
         .handle
         .insert_source(Timer::from_duration(wait), move |_, _, state| {
             let output = surface_mut(state, head).map(|s| {
-                s.step_timer = None;
+                s.frame_timer = None;
                 s.output.clone()
             });
             if let Some(output) = output {
-                request(state, &output, Ask::Content);
+                request(state, &output, ask);
             }
             TimeoutAction::Drop
         });
+    let Some(s) = surface_mut(state, head) else {
+        return;
+    };
     match token {
-        Ok(t) => {
-            if let Some(s) = surface_mut(state, head) {
-                s.step_timer = Some(t);
-            }
-        }
+        Ok(t) => s.frame_timer = Some((t, fires, ask)),
         Err(e) => {
-            log::warn!("step timer: {}", e.error);
-            request(state, output, Ask::Content);
+            s.frame_timer = None;
+            log::warn!("frame timer: {}", e.error);
+            request(state, output, ask);
         }
     }
 }

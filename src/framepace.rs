@@ -76,6 +76,31 @@ pub fn ask_at(
     (at > next).then(|| refresh_from(at).saturating_duration_since(now))
 }
 
+/// The first refresh after `now` on a screen that last flipped at `flip`, refreshing every
+/// `interval`: when a frame queued now shows. A refresh `interval` away when no flip is known.
+pub fn next_refresh(now: Instant, flip: Option<Instant>, interval: Duration) -> Instant {
+    match flip {
+        Some(f) if f <= now && !interval.is_zero() => {
+            let n = (now - f).as_nanos() / interval.as_nanos() + 1;
+            f + interval * u32::try_from(n).unwrap_or(u32::MAX)
+        }
+        _ => now + interval,
+    }
+}
+
+/// When to start the frame that shows at the first refresh at or after `at`, on a screen that
+/// last flipped at `flip`: a quarter refresh after the one before, clear of both refreshes.
+pub fn start_for(at: Instant, flip: Option<Instant>, interval: Duration) -> Instant {
+    let shows = match flip {
+        Some(f) if at > f && !interval.is_zero() => {
+            let n = (at - f).as_nanos().div_ceil(interval.as_nanos());
+            f + interval * u32::try_from(n).unwrap_or(u32::MAX)
+        }
+        _ => at,
+    };
+    shows.checked_sub(interval * 3 / 4).unwrap_or(shows)
+}
+
 #[derive(Default)]
 pub struct Pace {
     pub last_done: Option<Instant>,
@@ -219,6 +244,44 @@ mod tests {
             pace.done(false, t + ms(5), HZ60),
             Done::After(HZ60 - ms(5)),
             "the next empty frame waits"
+        );
+    }
+
+    #[test]
+    fn a_frame_queued_now_shows_at_the_next_refresh_after_the_last_flip() {
+        let flip = Instant::now();
+        assert_eq!(next_refresh(flip + ms(2), Some(flip), HZ60), flip + HZ60);
+        assert_eq!(
+            next_refresh(flip + HZ60 + ms(1), Some(flip), HZ60),
+            flip + 2 * HZ60,
+            "a refresh passed without a flip"
+        );
+        assert_eq!(
+            next_refresh(flip, Some(flip), HZ60),
+            flip + HZ60,
+            "at the flip itself"
+        );
+        assert_eq!(next_refresh(flip, None, HZ60), flip + HZ60, "no flip seen");
+    }
+
+    #[test]
+    fn a_frame_for_a_time_starts_a_quarter_refresh_after_the_refresh_before_it_shows() {
+        let flip = Instant::now();
+        let start = |shows: Instant| shows - HZ60 * 3 / 4;
+        assert_eq!(
+            start_for(flip + HZ60 * 2 - ms(1), Some(flip), HZ60),
+            start(flip + HZ60 * 2),
+            "a time just before a refresh shows at it"
+        );
+        assert_eq!(
+            start_for(flip + HZ60 + ms(1), Some(flip), HZ60),
+            start(flip + HZ60 * 2),
+            "a time just after a refresh shows at the next"
+        );
+        assert_eq!(
+            start_for(flip + HZ60, None, HZ60),
+            start(flip + HZ60),
+            "no flip seen"
         );
     }
 }

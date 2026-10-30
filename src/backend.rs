@@ -83,7 +83,8 @@ use render::{committed, retired, vblank};
 #[cfg(test)]
 pub use schedule::take_asks;
 pub use schedule::{
-    Ask, cursor_outputs, schedule, schedule_all, schedule_on, schedule_pointer, schedule_step,
+    Ask, cursor_outputs, schedule, schedule_all, schedule_on, schedule_pointer, schedule_shows_at,
+    schedule_step,
 };
 pub use session::on_input;
 use session::{activate, device_reset_done, pause};
@@ -185,10 +186,13 @@ struct Surface {
     /// frame that waited for a flip does not hold the one after.
     asked_at: Option<std::time::Instant>,
     idle_scheduled: bool,
-    callback_timer: Option<RegistrationToken>,
+    /// When the frame-callback timer armed last fires. Disarming only clears it (the expiry may
+    /// already wait in the loop's batch); a timer finding another time here does nothing.
+    callback_timer: Option<std::time::Instant>,
     render_timer: Option<RegistrationToken>,
-    /// Asks for the frame desktop water steps next in (`schedule_step`).
-    step_timer: Option<RegistrationToken>,
+    /// Asks for a later frame, when it fires and what it asks: a water step's or a timed
+    /// commit's (`schedule_step`, `schedule_shows_at`).
+    frame_timer: Option<(RegistrationToken, std::time::Instant, Ask)>,
     last_flip: Option<std::time::Instant>,
     pace: crate::framepace::Pace,
     frames: u32,

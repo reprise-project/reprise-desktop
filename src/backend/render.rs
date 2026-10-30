@@ -99,6 +99,7 @@ pub(super) fn render(state: &mut State, head: Head) {
     if held_back(state, head) {
         return;
     }
+    release_timed(state, head, &output);
     let started = std::time::Instant::now();
     let mut asked_at = None;
     if let Some(s) = surface_mut(state, head) {
@@ -291,6 +292,18 @@ pub(super) fn render(state: &mut State, head: Head) {
         state.glass.output_stopped(&output);
     }
     watch(state);
+}
+
+/// Apply the commits timed to show by the refresh this frame lands on.
+fn release_timed(state: &mut State, head: Head, output: &Output) {
+    let Some(s) = surface_mut(state, head) else {
+        return;
+    };
+    let interval = crate::framepace::interval(output.current_mode().map_or(0, |m| m.refresh));
+    let now = std::time::Instant::now();
+    let wait = crate::framepace::next_refresh(now, s.last_flip, interval) - now;
+    let shows_at = state.now() + wait;
+    crate::surfaceproto::before_frame(state, output, shows_at);
 }
 
 /// A frame asked for by pointer motion alone (`Ask::Pointer`): when the last
@@ -669,9 +682,7 @@ pub(super) fn callbacks_after_a_frame(state: &mut State, head: Head, shown: bool
     let interval = crate::framepace::interval(s.output.current_mode().map_or(0, |m| m.refresh));
     let wait = match s.pace.done(shown, std::time::Instant::now(), interval) {
         Done::Now if shown => {
-            if let Some(t) = s.callback_timer.take() {
-                state.handle.remove(t);
-            }
+            s.callback_timer = None;
             callbacks_done(state, head);
             return;
         }
@@ -681,9 +692,10 @@ pub(super) fn callbacks_after_a_frame(state: &mut State, head: Head, shown: bool
     if s.callback_timer.is_some() {
         return;
     }
+    let fires = std::time::Instant::now() + wait;
     let token = state
         .handle
-        .insert_source(Timer::from_duration(wait), move |_, _, state| {
+        .insert_source(Timer::from_deadline(fires), move |_, _, state| {
             let Some(b) = state.backend.as_mut() else {
                 return TimeoutAction::Drop;
             };
@@ -692,6 +704,9 @@ pub(super) fn callbacks_after_a_frame(state: &mut State, head: Head, shown: bool
             let Some(s) = b.surfaces.get_mut(&head) else {
                 return TimeoutAction::Drop;
             };
+            if s.callback_timer != Some(fires) {
+                return TimeoutAction::Drop;
+            }
             s.callback_timer = None;
             if waits_for_frame(s.needs_redraw || s.idle_scheduled, s.hw.off, held, active) {
                 return TimeoutAction::Drop;
@@ -700,7 +715,7 @@ pub(super) fn callbacks_after_a_frame(state: &mut State, head: Head, shown: bool
             TimeoutAction::Drop
         });
     match token {
-        Ok(t) => s.callback_timer = Some(t),
+        Ok(_) => s.callback_timer = Some(fires),
         Err(e) => log::warn!("frame callback timer: {}", e.error),
     }
 }
@@ -740,6 +755,7 @@ fn send_frame_callbacks(state: &mut State, output: &Output) {
     let now = state.now();
     let pass = state.scene.surface_pass(output);
     (state.scene).send_frames(&pass, now, Some(Duration::from_secs(1)));
+    crate::surfaceproto::frame_done(state, output);
     if let smithay::input::pointer::CursorImageStatus::Surface(s) = &state.cursor {
         smithay::desktop::utils::send_frames_surface_tree(
             s,
