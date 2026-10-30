@@ -1,6 +1,94 @@
 use super::*;
 
 #[test]
+fn the_sounds_page_geometry() {
+    let s = built();
+    let p = Page::Sounds;
+    assert_eq!(rect(&s, p, "sound_theme_group"), Rect::new(20, 44, 358, 52));
+    assert_eq!(rect(&s, p, "sound_theme_label"), Rect::new(GX, 70, 80, 13));
+    assert_eq!(rect(&s, p, "sound_theme"), Rect::new(116, 66, 200, 21));
+    assert_eq!(
+        rect(&s, p, "sound_events_group"),
+        Rect::new(20, 106, 358, 74)
+    );
+    assert_eq!(
+        rect(&s, p, "notification_sound"),
+        Rect::new(GX, 128, 13, 13)
+    );
+    assert_eq!(rect(&s, p, "bell"), Rect::new(GX, 154, 13, 13));
+    inside_page(&s, p);
+}
+
+/// The checks write `[notifications] sound` and `[sounds] bell` and grey the theme combo while
+/// both are off; the combo lists the installed sound themes, keeps a configured one that is
+/// missing, and writes the pick.
+#[test]
+fn the_sound_theme_and_the_sound_checks_write_their_keys() {
+    let root = std::env::temp_dir().join(format!("reprise-settings-sounds-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for f in ["ocean/index.theme", "deep/stereo/bell.oga"] {
+        let path = root.join(f);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
+    let themes = repriseaudio::sounds::themes(std::slice::from_ref(&root));
+    std::fs::remove_dir_all(&root).unwrap();
+    assert_eq!(themes, ["deep", "ocean"]);
+
+    let want = Settings {
+        sound_theme: "gone".into(),
+        ..Settings::default()
+    };
+    let mut s = registry::sheet(
+        &want,
+        &registry::Sources {
+            icon_themes: &[],
+            gtk_themes: &[],
+            qt_tools: false,
+            cursor_themes: &[],
+            sound_themes: &themes,
+            layouts: &[],
+            heads: &[],
+        },
+    );
+    let p = Page::Sounds;
+    let id = "sound_theme";
+    assert_eq!(
+        rows(&s, p, id),
+        (vec!["deep".into(), "ocean".into(), "gone".into()], 2)
+    );
+    assert_eq!(s.pages[p.index()].checked("notification_sound"), Some(true));
+    assert_eq!(s.pages[p.index()].checked("bell"), Some(true));
+
+    let mut got = want.clone();
+    pick(&mut s, &mut got, p, id, 1);
+    assert_eq!(got.sound_theme, "ocean");
+
+    for id in ["sound_theme_label", id] {
+        assert!(enabled_on(&s, p, id), "{id} is lit with the sound on");
+    }
+    tick(&mut s, &mut got, p, "notification_sound", false);
+    assert!(!got.notification_sound);
+    for id in ["sound_theme_label", id] {
+        assert!(enabled_on(&s, p, id), "{id} stays lit for the bell");
+    }
+    tick(&mut s, &mut got, p, "bell", false);
+    assert!(!got.bell);
+    for id in ["sound_theme_label", id] {
+        assert!(!enabled_on(&s, p, id), "{id} greys with both sounds off");
+    }
+    assert_eq!(
+        got,
+        Settings {
+            notification_sound: false,
+            sound_theme: "ocean".into(),
+            bell: false,
+            ..want
+        }
+    );
+}
+
+#[test]
 fn the_advanced_page_geometry() {
     let s = built();
     let p = Page::Advanced;

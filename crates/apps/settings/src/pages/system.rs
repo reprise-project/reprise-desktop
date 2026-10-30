@@ -1,9 +1,9 @@
-//! Power, Startup and Advanced.
+//! Sounds, Power, Startup and Advanced.
 
 use super::{
     ADD, Area, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE,
     THUMBS, THUMBS_CLEAR, THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, WATER, WATER_STYLE, X, button,
-    choice, edit, field, group, list, locations, spin,
+    choice, combo, edit, field, group, list, locations, spin,
 };
 use crate::model::WATER_STYLES;
 use repriseconf::ThumbnailCache;
@@ -143,6 +143,36 @@ pub fn advanced(a: Area) -> Form {
     ));
     Form::new(items)
 }
+
+/// The sound theme picked from `sound_themes`, then the events that play from it.
+pub fn sounds(a: Area, sound_themes: &[String]) -> Form {
+    Form::new(vec![
+        group(a, "sound_theme_group", 44, 52, "Sound Theme"),
+        Item::label_at(SOUND_CONTROLS[0], GX, 70, 80, "Sound th&eme:"),
+        combo(
+            SOUND_CONTROLS[1],
+            GX + 84,
+            66,
+            a.combo(200),
+            sound_themes,
+            sound_themes.len().clamp(1, 8),
+        ),
+        group(a, "sound_events_group", 106, 74, "Play Sounds"),
+        Item::check(
+            NOTIFICATION_SOUND,
+            GX,
+            128,
+            "&Play a sound for notifications",
+        ),
+        Item::check(BELL, GX, 154, "Play a &sound when a program rings the bell"),
+    ])
+}
+
+pub(super) const NOTIFICATION_SOUND: &str = "notification_sound";
+pub(super) const BELL: &str = "bell";
+
+/// The sound theme's label and combo, greyed while nothing plays a sound.
+pub(super) const SOUND_CONTROLS: [&str; 2] = ["sound_theme_label", "sound_theme"];
 
 pub fn power(a: Area) -> Form {
     let gw = a.gw();

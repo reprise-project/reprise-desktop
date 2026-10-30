@@ -139,9 +139,11 @@ pub struct Settings {
     pub taskbar_show_desktop: bool,
     pub taskbar_peek: bool,
     pub taskbar_tray_overflow: bool,
-    /// `[notifications] sound` and `sound_theme`.
+    /// `[notifications] sound`.
     pub notification_sound: bool,
-    pub notification_sound_theme: String,
+    /// `[sounds] theme` and `bell`.
+    pub sound_theme: String,
+    pub bell: bool,
     /// `[taskbar] position`: one of [`TASKBAR_POSITIONS`]' values, the
     /// bottom under every interface.
     pub taskbar_position: String,
@@ -438,7 +440,8 @@ impl Settings {
             taskbar_peek: c.taskbar.peek,
             taskbar_tray_overflow: c.taskbar.tray_overflow,
             notification_sound: c.notifications.sound,
-            notification_sound_theme: c.notifications.sound_theme.clone(),
+            sound_theme: c.sounds.theme.clone(),
+            bell: c.sounds.bell,
             taskbar_position: c.taskbar.position.name().into(),
             taskbar_auto_hide: c.taskbar.auto_hide,
             taskbar_reveal_on_edge: c.taskbar.reveal_on_edge,
