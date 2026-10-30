@@ -65,7 +65,9 @@ confinement holds, every motion goes through as it comes.
   `zwp_pointer_gestures_v1`, `wp_cursor_shape_manager_v1`,
   `zwp_tablet_manager_v2`, `zwp_keyboard_shortcuts_inhibit_manager_v1`,
   `zwp_text_input_manager_v3`, `zwp_input_method_manager_v2`,
-  `zwp_virtual_keyboard_manager_v1`, `zwlr_virtual_pointer_manager_v1`
+  `zwp_virtual_keyboard_manager_v1`, `zwlr_virtual_pointer_manager_v1`,
+  `wp_pointer_warp_v1` (within the window under the pointer, while no grab
+  but a button's own holds it)
 - **Desktop tools:** `zwlr_layer_shell_v1`, `ext_session_lock_manager_v1`,
   `ext_foreign_toplevel_list_v1`, `zwlr_foreign_toplevel_manager_v1`,
   `ext_workspace_manager_v1`, `zwlr_output_manager_v1`,
