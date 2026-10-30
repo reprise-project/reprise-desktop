@@ -41,7 +41,7 @@ use smithay::{
             DrmDevice, DrmDeviceFd, DrmDeviceNotifier, DrmEvent, DrmNode, NodeType,
             compositor::DrmCompositor, exporter::gbm::GbmFramebufferExporter,
         },
-        egl::{EGLContext, EGLDevice, EGLDisplay},
+        egl::{EGLContext, EGLDevice, EGLDisplay, context::ContextPriority},
         renderer::{
             ImportDma, ImportMemWl,
             gles::{Capability, GlesRenderer},
@@ -357,7 +357,12 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|d| d.try_get_render_node().ok().flatten())
         .unwrap_or(node);
-    let context = EGLContext::new(&display)?;
+    // A hint: i915 and xe refuse High without CAP_SYS_NICE, and Mesa's iris reports High anyway.
+    let context = EGLContext::new_with_priority(&display, ContextPriority::High)?;
+    match context.get_context_priority() {
+        Some(p) => log::info!("GPU context priority: EGL reports {p:?} (asked for High)"),
+        None => log::info!("GPU context priority: EGL has no priorities"),
+    }
     // No fencing: it fences every texture draw and upload for other contexts sharing the textures, and none shares this one.
     // SAFETY: the context is current only on this thread.
     let capabilities = unsafe { GlesRenderer::supported_capabilities(&context)? }
