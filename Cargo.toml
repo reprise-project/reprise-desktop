@@ -53,18 +53,15 @@ pipewire = "0.10"
 png = "0.18"
 serde = "1"
 # Pinned to a commit on our fork: upstream master (far ahead of the last
-# release) plus a fix to `Rectangle::subtract_rects_many_in_place`, without
-# which the damage tracker redraws overlapping windows on every frame, and
-# `DrmCompositor::reposition_cursor` for pointer-only frames, an
-# xdg_toplevel_icon_v1 fix that stops a request after its immutable error, and
+# release) plus `DrmCompositor::reposition_cursor` for pointer-only frames, an
+# xdg_toplevel_icon_v1 fix that stops a request after its immutable error,
 # `DrmCompositor::reset_buffer_ages_keep_held`, which keeps the buffers a VT
 # return would reallocate, `GlesFrame::finish_unsynced` for offscreen
 # frames read only by the same context, `data_device_selection_alive` for
 # a client selection whose source was destroyed, and `SelectionSource::client`
-# naming the client that set a selection. Back to upstream once all seven
-# are merged there.
-smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "78df9785340722c1a474b0a689e71c9574f77144", default-features = false }
-smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "78df9785340722c1a474b0a689e71c9574f77144" }
+# naming the client that set a selection.
+smithay = { git = "https://github.com/reprise-project/smithay.git", rev = "f28cc23f75e82cbf913997eab5f96ba215a1a41e", default-features = false }
+smithay-drm-extras = { git = "https://github.com/reprise-project/smithay.git", rev = "f28cc23f75e82cbf913997eab5f96ba215a1a41e" }
 tempfile = "3"
 toml = "1"
 toml_edit = "0.25"

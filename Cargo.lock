@@ -2249,7 +2249,7 @@ dependencies = [
  "wayland-protocols-wlr",
  "wayland-scanner",
  "wayland-server",
- "x11rb 0.14.0",
+ "x11rb",
  "xcursor",
  "zbus 6.1.0",
  "zeroize",
@@ -2999,7 +2999,7 @@ checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 [[package]]
 name = "smithay"
 version = "0.7.0"
-source = "git+https://github.com/reprise-project/smithay.git?rev=78df9785340722c1a474b0a689e71c9574f77144#78df9785340722c1a474b0a689e71c9574f77144"
+source = "git+https://github.com/reprise-project/smithay.git?rev=f28cc23f75e82cbf913997eab5f96ba215a1a41e#f28cc23f75e82cbf913997eab5f96ba215a1a41e"
 dependencies = [
  "appendlist",
  "bitflags 2.13.2",
@@ -3038,7 +3038,7 @@ dependencies = [
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "wayland-server",
- "x11rb 0.13.2",
+ "x11rb",
  "xkbcommon 0.9.0",
 ]
 
@@ -3073,7 +3073,7 @@ dependencies = [
 [[package]]
 name = "smithay-drm-extras"
 version = "0.1.0"
-source = "git+https://github.com/reprise-project/smithay.git?rev=78df9785340722c1a474b0a689e71c9574f77144#78df9785340722c1a474b0a689e71c9574f77144"
+source = "git+https://github.com/reprise-project/smithay.git?rev=f28cc23f75e82cbf913997eab5f96ba215a1a41e#f28cc23f75e82cbf913997eab5f96ba215a1a41e"
 dependencies = [
  "drm",
  "libdisplay-info",
@@ -3872,31 +3872,14 @@ dependencies = [
 
 [[package]]
 name = "x11rb"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9993aa5be5a26815fe2c3eacfc1fde061fc1a1f094bf1ad2a18bf9c495dd7414"
-dependencies = [
- "gethostname",
- "rustix 1.1.5",
- "x11rb-protocol 0.13.2",
-]
-
-[[package]]
-name = "x11rb"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a8885a854a8bfdf87a301e53e41b17c5f8f33639903131338b997b1eb614f44"
 dependencies = [
  "gethostname",
  "rustix 1.1.5",
- "x11rb-protocol 0.14.0",
+ "x11rb-protocol",
 ]
-
-[[package]]
-name = "x11rb-protocol"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 
 [[package]]
 name = "x11rb-protocol"
