@@ -206,7 +206,7 @@ impl PointerConstraintsHandler for State {
     }
 }
 
-fn root_of(surface: &WlSurface) -> WlSurface {
+pub(crate) fn root_of(surface: &WlSurface) -> WlSurface {
     let mut root = surface.clone();
     while let Some(parent) = get_parent(&root) {
         root = parent;
@@ -221,7 +221,10 @@ fn surface_rect(surface: &WlSurface) -> Vec<(RectangleKind, Rectangle<i32, Logic
     vec![(RectangleKind::Add, Rectangle::from_size(size))]
 }
 
-fn inside(rects: &[(RectangleKind, Rectangle<i32, Logical>)], p: Point<f64, Logical>) -> bool {
+pub(crate) fn inside(
+    rects: &[(RectangleKind, Rectangle<i32, Logical>)],
+    p: Point<f64, Logical>,
+) -> bool {
     let p = Point::<i32, Logical>::from((p.x.floor() as i32, p.y.floor() as i32));
     let mut inside = false;
     for (kind, r) in rects {

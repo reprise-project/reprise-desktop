@@ -89,12 +89,16 @@ impl State {
     /// grab, drag, lock, region overlay or popup that owns the pointer
     /// (`Popup::owns_pointer`) holds it.
     pub(crate) fn pointer_free(&self) -> bool {
+        self.shell_leaves_pointer() && self.seat.get_pointer().is_some_and(|p| !p.is_grabbed())
+    }
+
+    /// `pointer_free` short of the seat's grab.
+    pub(crate) fn shell_leaves_pointer(&self) -> bool {
         matches!(self.interaction, Interaction::Idle)
             && !self.is_locked()
             && !self.drag_running()
             && self.panels.region.is_none()
             && !Popup::open(self).any(Popup::owns_pointer)
-            && self.seat.get_pointer().is_some_and(|p| !p.is_grabbed())
     }
 
     pub(crate) fn owe_repoint(&mut self, time: InputTime, left: Duration) {

@@ -118,6 +118,7 @@ mod tooltip;
 mod toplevels;
 mod touch;
 mod virtualpointer;
+mod warp;
 mod workspaces;
 mod xdgforeign;
 mod xdnd;

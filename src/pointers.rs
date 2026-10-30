@@ -22,7 +22,8 @@ use smithay::{
     utils::{Logical, Point, SERIAL_COUNTER},
     wayland::{
         cursor_shape::CursorShapeManagerState, pointer_constraints::PointerConstraintsState,
-        pointer_gestures::PointerGesturesState, relative_pointer::RelativePointerManagerState,
+        pointer_gestures::PointerGesturesState, pointer_warp::PointerWarpManager,
+        relative_pointer::RelativePointerManagerState,
     },
 };
 
@@ -53,6 +54,7 @@ struct Globals {
     _relative: RelativePointerManagerState,
     _gestures: PointerGesturesState,
     _cursor_shape: CursorShapeManagerState,
+    _warp: PointerWarpManager,
 }
 
 impl Pointers {
@@ -74,6 +76,7 @@ impl Pointers {
                 _relative: RelativePointerManagerState::new::<State>(dh),
                 _gestures: PointerGesturesState::new::<State>(dh),
                 _cursor_shape: CursorShapeManagerState::new::<State>(dh),
+                _warp: PointerWarpManager::new::<State>(dh),
             },
         }
     }
