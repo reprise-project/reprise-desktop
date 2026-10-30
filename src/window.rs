@@ -141,6 +141,8 @@ pub struct Window {
     pub override_redirect: bool,
     /// The client's own icon at its native size; `None` draws the theme's.
     pub icon: Option<IconSource>,
+    /// The theme icon name the client set through xdg-toplevel-icon, drawn before `icon`.
+    pub icon_name: Option<String>,
     /// `icon` resampled per size; emptied when the icon changes.
     icon_sizes: RefCell<Vec<(i32, Arc<Canvas>)>>,
     pub tree: TreeId,
