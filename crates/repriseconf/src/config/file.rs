@@ -238,6 +238,13 @@ pub struct FilePrivacy {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub struct FileSounds {
+    pub theme: Option<String>,
+    pub bell: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FileDebug {
     pub overlay: Option<bool>,
     pub overlay_in_captures: Option<bool>,
@@ -253,7 +260,6 @@ pub struct FileLauncher {
 #[serde(deny_unknown_fields)]
 pub struct FileNotifications {
     pub sound: Option<bool>,
-    pub sound_theme: Option<String>,
     pub quiet_hours: Option<Vec<String>>,
     pub auto_dnd: Option<bool>,
 }
@@ -640,6 +646,7 @@ pub struct FileConfig {
     pub gestures: Option<FileGestures>,
     pub clipboard: Option<FileClipboard>,
     pub notifications: Option<FileNotifications>,
+    pub sounds: Option<FileSounds>,
     pub privacy: Option<FilePrivacy>,
     pub debug: Option<FileDebug>,
     pub launcher: Option<FileLauncher>,

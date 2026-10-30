@@ -598,6 +598,7 @@ impl State {
                 virtual_pointer: crate::virtualpointer::VirtualPointerManagerState::new(&dh),
                 security_context: crate::sandbox::security_context_state(&dh),
                 xwayland_keyboard_grab: XWaylandKeyboardGrabState::new::<State>(&dh),
+                system_bell: crate::bell::Bell::new(&dh),
             },
             surface_protos: crate::surfaceproto::SurfaceProtos::new(&dh),
             foreign: crate::xdgforeign::Foreign::new(&dh),
@@ -967,6 +968,7 @@ pub struct Globals {
     pub security_context: smithay::wayland::security_context::SecurityContextState,
     /// Offered to Xwayland alone.
     pub xwayland_keyboard_grab: XWaylandKeyboardGrabState,
+    pub system_bell: crate::bell::Bell,
 }
 
 /// The caption renderer for `theme`'s look: the style's own font, or the

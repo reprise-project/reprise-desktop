@@ -8,6 +8,7 @@ mod autohideview;
 mod autostart;
 mod backend;
 mod barkeys;
+mod bell;
 mod calc;
 mod calendarview;
 mod camdev;

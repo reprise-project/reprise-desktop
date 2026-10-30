@@ -352,9 +352,8 @@ pub fn show(state: &mut State, n: Notification) {
         changed(state);
         return;
     }
-    let cfg = &state.config.notifications;
-    if let Some(sound) = balloon_sound(&n, cfg.sound) {
-        repriseaudio::sounds::play(sound.clone(), cfg.sound_theme.clone());
+    if let Some(sound) = balloon_sound(&n, state.config.notifications.sound) {
+        repriseaudio::sounds::play(sound.clone(), state.config.sounds.theme.clone());
     }
     if foldable(&n) {
         let v = &mut state.notify;

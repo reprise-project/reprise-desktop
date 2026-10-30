@@ -237,8 +237,6 @@ impl Default for ClipboardConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NotificationsConfig {
     pub sound: bool,
-    /// An XDG sound theme name.
-    pub sound_theme: String,
     /// (from, to) in minutes after local midnight; `to` before `from` runs past midnight.
     pub quiet_hours: Option<(u32, u32)>,
     /// Do Not Disturb turns itself on while a full-screen window has focus and while the screen
@@ -261,9 +259,25 @@ impl Default for NotificationsConfig {
     fn default() -> Self {
         NotificationsConfig {
             sound: true,
-            sound_theme: "freedesktop".into(),
             quiet_hours: None,
             auto_dnd: true,
+        }
+    }
+}
+
+/// `[sounds]`: the theme notifications and the bell play from, and whether the bell sounds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SoundsConfig {
+    /// An XDG sound theme name.
+    pub theme: String,
+    pub bell: bool,
+}
+
+impl Default for SoundsConfig {
+    fn default() -> Self {
+        SoundsConfig {
+            theme: "freedesktop".into(),
+            bell: true,
         }
     }
 }
