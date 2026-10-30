@@ -42,6 +42,7 @@ use smithay::{
         shm::ShmState,
         socket::ListeningSocketSource,
         xdg_toplevel_tag::XdgToplevelTagManager,
+        xwayland_keyboard_grab::XWaylandKeyboardGrabState,
     },
 };
 
@@ -596,6 +597,7 @@ impl State {
                 xdg_toplevel_icon: crate::icon::manager(&dh),
                 virtual_pointer: crate::virtualpointer::VirtualPointerManagerState::new(&dh),
                 security_context: crate::sandbox::security_context_state(&dh),
+                xwayland_keyboard_grab: XWaylandKeyboardGrabState::new::<State>(&dh),
             },
             surface_protos: crate::surfaceproto::SurfaceProtos::new(&dh),
             foreign: crate::xdgforeign::Foreign::new(&dh),
@@ -963,6 +965,8 @@ pub struct Globals {
     pub xdg_toplevel_icon: smithay::wayland::xdg_toplevel_icon::XdgToplevelIconManager,
     pub virtual_pointer: crate::virtualpointer::VirtualPointerManagerState,
     pub security_context: smithay::wayland::security_context::SecurityContextState,
+    /// Offered to Xwayland alone.
+    pub xwayland_keyboard_grab: XWaylandKeyboardGrabState,
 }
 
 /// The caption renderer for `theme`'s look: the style's own font, or the
