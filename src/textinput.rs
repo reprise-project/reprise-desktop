@@ -16,7 +16,7 @@ use smithay::{
         SeatHandler,
         keyboard::{
             GrabStartData as KeyboardGrabStartData, KeyboardGrab, KeyboardInnerHandle,
-            KeyboardSource, ModifiersState, SerializedMods,
+            KeyboardSource, KeymapFile, ModifiersState, SerializedMods,
         },
     },
     reexports::{
@@ -122,8 +122,8 @@ impl Ime {
 
 #[derive(Default)]
 pub struct VkKeymap {
-    active: Option<Arc<str>>,
-    own: Option<(String, crate::keyboard::XkbMask)>,
+    active: Option<KeymapFile>,
+    own: Option<(KeymapFile, crate::keyboard::XkbMask)>,
     sources: HashMap<VirtualKeyboardDevice, KeyboardSource>,
     echoed: HashSet<(VirtualKeyboardDevice, Keycode)>,
     mods: HashMap<VirtualKeyboardDevice, VkMods>,
@@ -263,25 +263,25 @@ impl State {
             self.vk_restore();
             return;
         };
-        if self.ime.vk.active.as_deref() == Some(&*keymap) {
+        if self.ime.vk.active.as_ref().map(KeymapFile::id) == Some(keymap.id()) {
             return;
         }
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
         };
         if self.ime.vk.own.is_none() {
-            let (Some(own), Some((mask, _))) = (self.keymap_text(), self.xkb_mask()) else {
+            let Some((mask, _)) = self.xkb_mask() else {
                 return;
             };
-            self.ime.vk.own = Some((own, mask));
+            self.ime.vk.own = Some((keyboard.keymap_file(), mask));
         }
         if let Some((own, _)) = &self.ime.vk.own
-            && own.trim_end_matches('\0') == keymap.trim_end_matches('\0')
+            && own.id() == keymap.id()
         {
             self.vk_restore();
             return;
         }
-        match keyboard.set_keymap_from_string(self, keymap.to_string()) {
+        match keyboard.set_keymap_from_keymap_file(self, keymap.clone()) {
             Ok(()) => self.ime.vk.active = Some(keymap),
             Err(e) => log::warn!("virtual keyboard: could not compile its keymap: {e:?}"),
         }
@@ -315,7 +315,7 @@ impl State {
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
         };
-        if let Err(e) = keyboard.set_keymap_from_string(self, own) {
+        if let Err(e) = keyboard.set_keymap_from_keymap_file(self, own) {
             log::warn!("virtual keyboard: could not restore the keymap: {e:?}");
             return;
         }
