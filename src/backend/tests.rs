@@ -108,6 +108,12 @@ fn only_scene_content_and_commit_asks_may_change_what_lies_under_glass() {
         "commits in two windows lie in neither alone"
     );
     assert_eq!(under(&[Ask::Pointer]), Under::Nothing);
+    assert_eq!(under(&[Ask::Timed]), Under::Nothing);
+    assert_eq!(
+        under(&[Ask::Timed, Ask::Commit(first)]),
+        Under::Within(first),
+        "a timed commit's frame changes only what the commit draws"
+    );
     let cursor = asked(&[Ask::Cursor, Ask::Pointer]);
     assert!(cursor.redraw && !cursor.pointer_only && cursor.backdrop == Under::Nothing);
 }

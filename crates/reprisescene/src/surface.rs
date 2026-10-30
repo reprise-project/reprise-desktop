@@ -108,6 +108,24 @@ impl<R: Renderer, D> Scene<R, D> {
         found.then_some(out)
     }
 
+    /// `surface`'s primary output as [`Scene::surface_pass`] picks it; `None` when no output
+    /// shows it.
+    pub fn surface_primary_output(&self, surface: &WlSurface) -> Option<Output> {
+        self.live().find_map(|(id, n)| {
+            let Content::Surface(s) = &n.content else {
+                return None;
+            };
+            if s.surface != *surface {
+                return None;
+            }
+            let (pos, _) = self.coords(id).filter(|(_, visible)| *visible)?;
+            let extents = bbox_from_surface_tree(&s.surface, pos);
+            (!extents.is_empty())
+                .then(|| self.primary_in(extents))
+                .flatten()
+        })
+    }
+
     /// The box around everything the nodes showing `surface` show; `None` when none is shown.
     pub fn surface_extents(&self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {
         (self.live())
