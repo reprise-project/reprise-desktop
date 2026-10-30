@@ -28,7 +28,7 @@ unicode-properties = { version = "0.1", default-features = false, features = ["g
 unicode-segmentation = "1"
 png.workspace = true
 # No svgz: a gzipped file would inflate past the decoder's SVG byte cap.
-resvg = { version = "0.48", default-features = false }
+resvg = { version = "0.49", default-features = false }
 zeroize.workspace = true
 accesskit = "0.25"
 emojis = "0.9"
