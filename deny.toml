@@ -44,6 +44,8 @@ skip = [
     { crate = "phf@0.13.1", reason = "emojis 0.9; accesskit has 0.14" },
     { crate = "phf_shared@0.13.1", reason = "phf 0.13 via emojis" },
     { crate = "roxmltree@0.20.0", reason = "fontconfig-parser 0.5; usvg has 0.21" },
+    { crate = "zbus@5.19.0", reason = "accesskit_unix 0.24 and atspi 0.13" },
+    { crate = "zbus_macros@5.19.0", reason = "zbus 5 via accesskit_unix" },
 ]
 
 [sources]
