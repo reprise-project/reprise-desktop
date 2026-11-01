@@ -713,6 +713,35 @@ impl TextRenderer {
         self.draw_run(canvas, pen, baseline, clip, text, bold, color, size_px);
     }
 
+    /// Draw `label` with its access key underlined (`&File` underlines F), the underline `s` px
+    /// under the baseline and `s` px thick.
+    #[expect(clippy::too_many_arguments)]
+    pub fn draw_marked(
+        &self,
+        c: &mut Canvas,
+        r: Rect,
+        label: &str,
+        bold: bool,
+        color: Color,
+        align: Align,
+        px: u32,
+        s: i32,
+    ) {
+        let (plain, mnemonic) = split_mnemonic(label);
+        let Some(m) = mnemonic else {
+            self.draw(c, r, &plain, bold, color, align, px);
+            return;
+        };
+        let Some(baseline) = self.baseline(r, bold, px) else {
+            return;
+        };
+        let (dx, w, total) = self.span_and_measure(&plain, m, bold, px);
+        let start = align.pen(r, total);
+        self.draw_run(c, start, baseline, r, &plain, bold, color, px);
+        let ul = Rect::new(start + dx, baseline + s, w, s);
+        c.fill_rect(ul.intersect(&r), color);
+    }
+
     /// Draw `text` from pen x `pen` on `baseline`, clipped to `clip`. At canvas scale `s` glyphs
     /// rasterize at `s * size_px` but the pen moves by the `size_px` advances, keeping the logical
     /// width carets are measured against.

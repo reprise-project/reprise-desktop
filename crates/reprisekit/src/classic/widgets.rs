@@ -6,7 +6,6 @@ use crate::paint::Paint;
 use crate::pointer::Lit;
 pub use crate::pointer::{Axis, ScrollHit};
 use crate::raster::{Canvas, EdgeStyle, Rect};
-use crate::text::split_mnemonic;
 use crate::text::{Align, TextRenderer};
 use crate::textedit::{Caret, TextEdit};
 use crate::theme::{Color, ColorScheme};
@@ -35,19 +34,7 @@ pub fn draw_label(
     px: u32,
     s: i32,
 ) {
-    let (plain, mnemonic) = split_mnemonic(label);
-    let Some(m) = mnemonic else {
-        text.draw(c, r, &plain, bold, color, align, px);
-        return;
-    };
-    let Some(baseline) = text.baseline(r, bold, px) else {
-        return;
-    };
-    let (dx, w, total) = text.span_and_measure(&plain, m, bold, px);
-    let start = align.pen(r, total);
-    text.draw_run(c, start, baseline, r, &plain, bold, color, px);
-    let ul = Rect::new(start + dx, baseline + s, w, s);
-    c.fill_rect(ul.intersect(&r), color);
+    text.draw_marked(c, r, label, bold, color, align, px, s);
 }
 
 pub fn draw_disabled_label(

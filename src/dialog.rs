@@ -17,6 +17,7 @@ use reprisekit::controls::scrollbar::ThumbDrag;
 use reprisekit::controls::traycustomize::{self, TrayCustomize};
 use reprisekit::frame::{CaptionButton, Edges};
 use reprisekit::pointer::Pointer;
+use reprisekit::powerpanel::{Choice, Panel};
 
 mod build;
 mod draw;
@@ -50,6 +51,8 @@ pub enum DialogAction {
     Spawn(String),
     /// Run this `[power]` standby command, reporting a refusal (`sessionend::sleep`).
     StandBy(String),
+    /// Run this `[power]` hibernate command, as `StandBy` does.
+    Hibernate(String),
     /// End the session toward `Goal`, then run this command (`sessionend`).
     EndSession(Goal, String),
     /// Delete these paths, to the trash or, with `erase`, for good.
@@ -86,8 +89,8 @@ pub struct DialogButton {
     pub action: DialogAction,
     /// Drawn with the black default ring; Enter presses it.
     pub default: bool,
-    /// Welcome panel icon button: the 32 px icon above the label.
-    pub icon: Option<String>,
+    /// A Welcome panel's big button: what it offers, drawn as its tile above the label.
+    pub choice: Option<Choice>,
     /// Greyed out and inert (Stand By without power support).
     pub enabled: bool,
     /// Welcome balloon tip shown while the pointer rests on the button.
@@ -139,9 +142,9 @@ pub enum Style {
     },
     /// The "Open With" chooser: the `openwith` control in a fixed frame.
     Chooser(Box<Chooser>),
-    /// Blue Welcome panel (Log Off, Turn off): title band with logo, icon buttons on a gradient,
-    /// Cancel below. Under glass a framed dialog with push buttons.
-    Welcome,
+    /// Log Off or Turn off computer: the Blue `powerpanel`, or under glass a framed dialog with
+    /// push buttons unless the panel is to be Blue there too.
+    Welcome(Box<Welcome>),
     /// Form controls at fixed positions, optionally with a tab strip over a page: Properties sheets
     /// and similar.
     Form(Box<FormDialog>),
@@ -153,6 +156,16 @@ pub enum Style {
     TrayCustomize(Box<TrayCustomize>),
     /// A desktop copy or move's progress: the `copyprogress` control in a fixed frame.
     Copy(Box<CopyDialog>),
+}
+
+/// A Welcome panel's model and what each of its choices does; `d.buttons` are drawn from them
+/// ([`Dialog::sync_welcome`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Welcome {
+    pub panel: Panel,
+    pub actions: Vec<(Choice, DialogAction)>,
+    /// Drawn Blue under glass too, as the Blue Start menu opens it.
+    pub always_blue: bool,
 }
 
 /// The progress of the put into `dir`; `units` is the text growth its control is laid out for.
@@ -469,6 +482,7 @@ pub enum Outcome {
     Close,
     Spawn(String),
     StandBy(String),
+    Hibernate(String),
     EndSession(Goal, String),
     /// The session-end prompt's answer: End Now or Cancel.
     SessionEnd(reprisekit::controls::endsession::Choice),

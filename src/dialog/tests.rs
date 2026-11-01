@@ -5,9 +5,8 @@ use super::{
     layout::{CHOOSER_H, CHOOSER_W},
     sheet::props_changes,
     welcome::{
-        GLASS_WELCOME_CELL, GLASS_WELCOME_MARGIN, GLASS_WELCOME_TOP, GLASS_WELCOME_W, PANEL_BAND,
-        PANEL_DISABLED, PANEL_H, PANEL_LINE_RUNS, PANEL_W, SEPARATOR_RUNS, WELCOME_BORDER,
-        WELCOME_ICON_Y, WELCOME_W, panel_gradient, welcome_title_text,
+        GLASS_WELCOME_CELL, GLASS_WELCOME_MARGIN, GLASS_WELCOME_TOP, GLASS_WELCOME_W,
+        WELCOME_ICON_Y,
     },
 };
 use crate::config::PowerConfig;
@@ -173,8 +172,6 @@ fn render(theme: &Theme, text: &TextRenderer, l: &DialogLayout, d: &Dialog) -> C
         None,
         None,
         &[],
-        &[],
-        None,
         d,
         false,
         Lit::default(),

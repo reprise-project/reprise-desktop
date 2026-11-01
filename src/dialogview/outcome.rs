@@ -37,6 +37,10 @@ impl State {
                 self.close_dialog();
                 crate::sessionend::sleep(self, crate::sessionend::Act::StandBy, cmd);
             }
+            Outcome::Hibernate(cmd) => {
+                self.close_dialog();
+                crate::sessionend::sleep(self, crate::sessionend::Act::Hibernate, cmd);
+            }
             Outcome::EndSession(goal, cmd) => {
                 self.close_dialog();
                 crate::sessionend::begin(self, goal, Some(cmd));

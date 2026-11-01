@@ -954,8 +954,6 @@ mod tests {
                 None,
                 None,
                 &[],
-                &[],
-                None,
                 &d,
                 false,
                 None,

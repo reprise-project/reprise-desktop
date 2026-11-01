@@ -69,6 +69,7 @@ pub mod paint;
 #[doc(hidden)]
 pub mod pins;
 pub mod pointer;
+pub mod powerpanel;
 pub mod raster;
 pub mod saver;
 pub mod schemes;

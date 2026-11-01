@@ -8,6 +8,7 @@ mod controls;
 mod copyflight;
 mod frame;
 pub mod overview;
+pub mod powerpanel;
 pub mod scheme;
 mod start;
 mod taskbutton;
@@ -104,7 +105,7 @@ impl Variant {
 
     /// The style's name, which tells variants apart ([`crate::look::Look`] compares styles by
     /// name).
-    fn style_name(self) -> &'static str {
+    pub(crate) fn style_name(self) -> &'static str {
         match self {
             Variant::Blue => "Blue",
             Variant::Olive => "Blue Olive Green",

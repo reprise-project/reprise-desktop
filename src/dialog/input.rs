@@ -31,6 +31,9 @@ impl Dialog {
             Key::DocEdge { end: true, select } => Key::Edit(EditKey::End { select }),
             k => k,
         };
+        if matches!(self.style, Style::Welcome(_)) {
+            return self.welcome_key(&key);
+        }
         if let Some(c) = self.copy_mut() {
             let key = match key {
                 Key::Edit(k) => match reprisekit::controls::form::flat_key(&k) {
@@ -437,7 +440,7 @@ impl Dialog {
     fn buttons_only(&self) -> bool {
         matches!(
             self.style,
-            Style::Classic { .. } | Style::EndProgram | Style::Welcome
+            Style::Classic { .. } | Style::EndProgram | Style::Welcome(_)
         ) && self.field.is_none()
     }
 
@@ -627,6 +630,9 @@ impl Dialog {
     /// Button `i` takes the keyboard: in a dialog with a field it wears the focus as Tab gives it,
     /// in one of buttons only it becomes the default as the arrows make it.
     fn focus_button(&mut self, i: usize) -> Outcome {
+        if matches!(self.style, Style::Welcome(_)) {
+            return self.welcome_focus(i);
+        }
         if !self.buttons.get(i).is_some_and(|b| b.enabled) {
             return Outcome::Nothing;
         }
@@ -964,7 +970,7 @@ impl Dialog {
     /// Whether the pointer lights buttons in every look: a Welcome
     /// panel's icon buttons draw hot under it.
     fn lights_icons(&self) -> bool {
-        matches!(self.style, Style::Welcome)
+        matches!(self.style, Style::Welcome(_))
     }
 
     /// Press button `i`; a disabled one does nothing. Run's Browse...
@@ -982,6 +988,7 @@ impl Dialog {
             DialogAction::Cancel => Outcome::Close,
             DialogAction::Spawn(cmd) => Outcome::Spawn(cmd.clone()),
             DialogAction::StandBy(cmd) => Outcome::StandBy(cmd.clone()),
+            DialogAction::Hibernate(cmd) => Outcome::Hibernate(cmd.clone()),
             DialogAction::EndSession(goal, cmd) => Outcome::EndSession(*goal, cmd.clone()),
             DialogAction::Delete { paths, erase } => Outcome::Delete {
                 paths: paths.clone(),
