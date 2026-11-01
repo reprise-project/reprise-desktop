@@ -123,6 +123,10 @@ fn main() {
             &render_blue_start_panel(n.max(1)),
             &format!("reprisekit-gallery-blue-start-menu@{}.png", n.max(1)),
         );
+        write_preview(
+            &render_blue_start_menus(n.max(1)),
+            &format!("reprisekit-gallery-blue-start-menus@{}.png", n.max(1)),
+        );
         for mode in [
             reprisekit::glass::Mode::Light,
             reprisekit::glass::Mode::Dark,
@@ -307,6 +311,10 @@ fn main() {
         write_preview(
             &render_blue_start_panel(1),
             "reprisekit-gallery-blue-start-menu.png",
+        );
+        write_preview(
+            &render_blue_start_menus(1),
+            "reprisekit-gallery-blue-start-menus.png",
         );
         write_preview(&render_list_sheets(), "reprisekit-gallery-list-sheet.png");
         write_preview(
@@ -9503,6 +9511,105 @@ fn render_blue_start_panel(n: i32) -> Canvas {
             (k / 3) as i32 * cell_h + 10 * n,
         );
         c.blit_over(x, y, &panel);
+    }
+    c
+}
+
+/// The menus the Blue Start menu opens at scale `n`, a scheme a column (Blue, Olive Green,
+/// Silver): All Programs with a folder lit and open, All Programs with a program lit, and an empty
+/// Recent Items with its greyed row lit.
+fn render_blue_start_menus(n: i32) -> Canvas {
+    use reprisekit::blue::Variant;
+    use reprisekit::controls::menu::{
+        MenuLayout, MenuStyle, draw_menu_at, draw_menu_shadow, place_submenu_beside,
+    };
+    let text = TextRenderer::load(&FontConfig::default());
+    let square = |c: Color| {
+        let px = 16 * n;
+        let mut i = Canvas::new(px as u32, px as u32);
+        i.fill_rect(Rect::new(n, 2 * n, px - 2 * n, px - 4 * n), c);
+        i
+    };
+    let folder = |label: &str| {
+        MenuItem::entry(label)
+            .icon(Some(square(Color::rgb(230, 200, 90))))
+            .submenu(true)
+    };
+    let program = |label: &str| MenuItem::entry(label).icon(Some(square(Color::rgb(40, 120, 220))));
+    let programs = [
+        folder("Accessories"),
+        folder("Games"),
+        folder("System Tools"),
+        program("Web Browser"),
+        program("Terminal"),
+        program("Media Player"),
+    ];
+    let accessories = [
+        program("Calculator"),
+        program("Notepad"),
+        program("Paint"),
+        program("Word Processor"),
+    ];
+    let empty = [MenuItem::entry("(Empty)").enabled(false)];
+    let none: &[MenuItem] = &[];
+    let menus = [
+        (&programs[..], 0, &accessories[..]),
+        (&programs[..], 4, none),
+        (&empty[..], 0, none),
+    ];
+    let (cell_w, cell_h) = (440, 200);
+    let mut c = Canvas::new((3 * cell_w * n) as u32, (3 * cell_h * n) as u32);
+    c.fill_rect(c.bounds(), Color::rgb(67, 149, 209));
+    let base = interfaces::theme_for(Interface::Classic);
+    let usable = Rect::new(0, 0, 3 * cell_w, 3 * cell_h);
+    for (col, v) in [Variant::Blue, Variant::Olive, Variant::Silver]
+        .into_iter()
+        .enumerate()
+    {
+        let one = interfaces::blue_start_menus(&base, v);
+        let theme = interfaces::blue_start_menus(&base.scaled(n), v);
+        let laid_out = |items: &[MenuItem]| {
+            let style =
+                MenuStyle::context_for(&one, items).fit(&text, items, one.fonts.size_px, 400);
+            MenuLayout::compute_styled(&style, items, usize::MAX)
+        };
+        let level = |c: &mut Canvas, at: (i32, i32), l: &MenuLayout, items: &[MenuItem], lit| {
+            let l = l.scaled(n);
+            let reach = reprisekit::controls::menu::shadow_reach(&theme);
+            c.blit_over(
+                at.0 * n,
+                at.1 * n,
+                &draw_menu_shadow(&theme, l.width, l.height, l.height + reach),
+            );
+            draw_menu_at(
+                c,
+                (at.0 * n, at.1 * n),
+                &theme,
+                &text,
+                &l,
+                items,
+                lit,
+                "",
+                false,
+            );
+        };
+        for (row, &(items, lit, child)) in menus.iter().enumerate() {
+            let at = (col as i32 * cell_w + 10, row as i32 * cell_h + 10);
+            let l = laid_out(items);
+            level(&mut c, at, &l, items, Some(lit));
+            if !child.is_empty() {
+                let cl = laid_out(child);
+                let r = l.rows[lit];
+                let spot = place_submenu_beside(
+                    Rect::new(at.0, at.1, l.width, l.height),
+                    Rect::new(at.0 + r.x, at.1 + r.y, r.width, r.height),
+                    (cl.width, cl.height),
+                    usable,
+                    cl.inset,
+                );
+                level(&mut c, spot, &cl, child, None);
+            }
+        }
     }
     c
 }

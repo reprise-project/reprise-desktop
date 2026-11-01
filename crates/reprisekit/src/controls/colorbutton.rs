@@ -174,11 +174,11 @@ pub fn draw_popup(
     let (current, palette) = (b.color, b.palette.as_slice());
     let popup = popup_rect(button, b).scaled(s);
     let button = popup_button(button, b);
-    let menu = p.look.style().and_then(|st| st.menu);
+    let menu = p.look.style().and_then(|st| Some((st, st.menu?)));
     match &menu {
-        Some(m) => {
+        Some((st, m)) => {
             crate::look::styled::menu::draw_shadow(m, c, popup, s);
-            crate::look::styled::menu::draw_frame(m, c, popup, cs.menu, s);
+            crate::look::styled::menu::draw_frame(st, m, c, popup, cs.menu, s);
         }
         None => {
             c.fill_rect(popup, cs.button_face);
@@ -201,7 +201,7 @@ pub fn draw_popup(
         (button.y + POPUP_LINE.2) * s,
     );
     match &menu {
-        Some(m) => {
+        Some((_, m)) => {
             c.fill_rect(Rect::new(x0, y, x1 - x0, s), m.rule.0);
             c.fill_rect(Rect::new(x0, y + s, x1 - x0, s), m.rule.1);
         }

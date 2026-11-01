@@ -148,9 +148,10 @@ pub fn draw_menu_at(
         layout.rows.len(),
         "menu layout does not match items"
     );
-    if layout.gutter > 0
-        && let Some(st) = theme.look.style()
+    // A look with a gutter draws only the menus laid out with one; a gutterless look draws them all.
+    if let Some(st) = theme.look.style()
         && let Some(m) = &st.menu
+        && (layout.gutter > 0 || m.gutter == 0)
     {
         return draw_gutter_menu(
             canvas, at, theme, st, m, text, layout, items, hovered, underline,
@@ -382,18 +383,20 @@ fn draw_gutter_menu(
     let s = theme.scale.max(1);
     let size = theme.fonts.size_px;
     let all = Rect::new(ox, oy, layout.width, layout.height);
-    look::draw_frame(m, canvas, all, cs.menu, s);
+    look::draw_frame(st, m, canvas, all, cs.menu, s);
     let ins = layout.inset;
     let rows_h = layout.height - ins.top - ins.bottom;
     for c in 0..layout.columns as i32 {
         let x = ox + layout.band + c * layout.column_width + ins.left;
-        canvas.fill_rect(
-            Rect::new(x, oy + ins.top, layout.gutter, rows_h),
-            m.gutter_fill,
-        );
-        let dx = x + layout.gutter;
-        canvas.fill_rect(Rect::new(dx, oy + ins.top, s, rows_h), m.divider.0);
-        canvas.fill_rect(Rect::new(dx + s, oy + ins.top, s, rows_h), m.divider.1);
+        if layout.gutter > 0 {
+            canvas.fill_rect(
+                Rect::new(x, oy + ins.top, layout.gutter, rows_h),
+                m.gutter_fill,
+            );
+            let dx = x + layout.gutter;
+            canvas.fill_rect(Rect::new(dx, oy + ins.top, s, rows_h), m.divider.0);
+            canvas.fill_rect(Rect::new(dx + s, oy + ins.top, s, rows_h), m.divider.1);
+        }
         if c > 0 {
             let x = x - ins.left;
             let line = |x: i32| Rect::new(x, oy + ins.top, s, rows_h);
@@ -428,7 +431,14 @@ fn draw_gutter_menu(
         if lit {
             look::draw_lit_row(st, canvas, r, !*enabled, s);
         }
-        let fg = if *enabled { cs.menu_text } else { m.greyed };
+        let lit_ink = lit
+            .then(|| st.text_color(crate::style::Part::MenuItem, crate::style::State::Hot))
+            .flatten();
+        let fg = match (*enabled, lit_ink) {
+            (false, _) => m.greyed,
+            (true, Some(ink)) => ink,
+            (true, None) => cs.menu_text,
+        };
         let square = Rect::new(r.x, r.y, r.height, r.height);
         match icon {
             Some(ic) => {
@@ -455,7 +465,11 @@ fn draw_gutter_menu(
             }
         }
         if *submenu {
-            let ink = if *enabled { m.arrow } else { m.greyed };
+            let ink = match (*enabled, lit_ink) {
+                (false, _) => m.greyed,
+                (true, Some(ink)) => ink,
+                (true, None) => m.arrow,
+            };
             draw_arrow(
                 canvas,
                 r.right() - m.arrow_inset * s,

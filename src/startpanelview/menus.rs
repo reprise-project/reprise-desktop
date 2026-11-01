@@ -5,7 +5,7 @@ use reprisekit::taskbar::Edge;
 
 use crate::compositor::State;
 use crate::config::{Action, PowerAction};
-use crate::menuview::MenuKind;
+use crate::menuview::{MenuKind, Skin};
 use crate::raster::Rect;
 use crate::startmenu::{MenuItem, StartRow, place_popup};
 
@@ -50,7 +50,7 @@ impl State {
         items: Vec<MenuItem>,
         kind: crate::menuview::MenuKind,
         place: impl FnOnce((i32, i32), (i32, i32), Rect) -> (i32, i32),
-        options_look: bool,
+        skin: Skin,
     ) {
         if let Some(t) = self.start_panel.as_mut().and_then(|v| v.hover.take()) {
             self.handle.remove(t);
@@ -58,7 +58,7 @@ impl State {
         crate::tooltip::hover_start_panel(self, None);
         self.close_menu();
         let from = crate::menuview::MenuFrom::StartPanel;
-        self.push_context_menu_looked(at, items, kind, from, place, options_look);
+        self.push_context_menu_looked(at, items, kind, from, place, skin);
     }
 
     pub(super) fn open_start_context(&mut self, s: Spot) {
@@ -82,7 +82,7 @@ impl State {
             }
         };
         let kind = crate::menuview::MenuKind::StartPanel { rows };
-        self.push_start_popup(at, items, kind, place_popup, false);
+        self.push_start_popup(at, items, kind, place_popup, Skin::Theme);
     }
 
     pub(super) fn open_shutdown_options(&mut self) {
@@ -98,7 +98,7 @@ impl State {
         let kind = crate::menuview::MenuKind::StartPanel { rows };
         let at = (arrow.right(), arrow.y);
         let place = |_, size, usable| shutdown_options_at(edge, arrow, size, usable);
-        self.push_start_popup(at, items, kind, place, true);
+        self.push_start_popup(at, items, kind, place, Skin::Options);
     }
 
     pub(super) fn open_recent_items(&mut self, i: usize) {
@@ -119,7 +119,8 @@ impl State {
             * self.draw_scale_at(Some(&output)).max(1);
         self.refresh_recent();
         let (items, kind, icons) = self.documents_rows(px, false);
-        self.push_start_popup((row.right(), row.y), items, kind, place_popup, false);
+        let skin = self.start_flyout_skin();
+        self.push_start_popup((row.right(), row.y), items, kind, place_popup, skin);
         self.set_row_icons(0, icons);
         self.light_flyout_from_keys(Spot::Place(i));
     }
@@ -143,9 +144,17 @@ impl State {
         let place = |_, size: (i32, i32), usable| {
             place_popup((row.right(), row.bottom() - size.1), size, usable)
         };
-        self.push_start_popup((row.right(), row.y), items, kind, place, false);
+        self.push_start_popup((row.right(), row.y), items, kind, place, Skin::BlueStart);
         self.set_row_icons(0, icons);
         self.light_flyout_from_keys(Spot::AllPrograms);
+    }
+
+    /// The Blue menu's flyouts wear its own look; the Glass panel's Recent Items the theme's.
+    fn start_flyout_skin(&self) -> Skin {
+        match self.start_panel.as_ref().map(|v| v.model.shape) {
+            Some(Shape::Blue) => Skin::BlueStart,
+            _ => Skin::Theme,
+        }
     }
 
     /// A Blue flyout the keyboard opened (its row is lit but not under the pointer) starts on its

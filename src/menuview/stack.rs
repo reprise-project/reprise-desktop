@@ -171,7 +171,7 @@ impl State {
             kind,
             from,
             parent_row: None,
-            options_look: false,
+            skin: Skin::Theme,
             opened: Instant::now(),
             opening,
             shift: (0, 0),
@@ -184,6 +184,18 @@ impl State {
         crate::autohideview::poke(self);
     }
 
+    /// The theme a menu in `skin` is laid out (at `scale` 1) and drawn in.
+    pub(crate) fn menu_theme(&self, skin: Skin, scale: i32) -> reprisekit::theme::Theme {
+        let theme = self.config.theme.scaled(scale);
+        match skin {
+            Skin::Theme => theme,
+            Skin::Options => theme.for_options_menu(),
+            Skin::BlueStart => {
+                reprisekit::interfaces::blue_start_menus(&theme, self.blue_start_variant())
+            }
+        }
+    }
+
     pub(crate) fn redraw_menu(&mut self, depth: usize) {
         let Some(m) = self.menus.get(depth) else {
             return;
@@ -191,12 +203,7 @@ impl State {
         let tree = m.tree;
         let was = self.scene.outputs_of(tree);
         let scale = self.draw_scale_at(Some(&m.output));
-        let theme = self.config.theme.scaled(scale);
-        let theme = if m.options_look {
-            theme.for_options_menu()
-        } else {
-            theme
-        };
+        let theme = self.menu_theme(m.skin, scale);
         let layout = m.layout.scaled(scale);
         let mut canvas = Canvas::new(layout.width.max(1) as u32, layout.height.max(1) as u32);
         draw_menu(
@@ -529,7 +536,10 @@ impl State {
 
     /// Shows menu `idx` at `t` (0 to 1) of its opening; at 1 the opening ends.
     fn open_menu_frame(&mut self, idx: usize, t: f32) {
-        let reach = shadow_reach(&self.config.theme);
+        let Some(skin) = self.menus.get(idx).map(|m| m.skin) else {
+            return;
+        };
+        let reach = shadow_reach(&self.menu_theme(skin, 1));
         let Some(m) = self.menus.get_mut(idx) else {
             return;
         };

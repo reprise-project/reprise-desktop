@@ -7,6 +7,7 @@ mod capbutton;
 mod controls;
 mod copyflight;
 mod frame;
+pub mod menus;
 pub mod overview;
 pub mod powerpanel;
 pub mod scheme;
@@ -177,6 +178,10 @@ fn build(v: Variant, scale: i32) -> Style {
     .with_copy_flight(copyflight::paint)
     .with_task_progress(taskprogress::painter(v))
     .with_flat_menus()
+    .with_painted_group(&[Part::MenuFrame, Part::MenuItem], move || {
+        menus::parts(v.scheme(), scale)
+    })
+    .with_text_color(Part::MenuItem, State::Hot, v.scheme().system.hilight_text)
     .with_track_marks(TrackMarks {
         ink: inks.track_tick,
         ..TrackMarks::LOW

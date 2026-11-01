@@ -321,6 +321,17 @@ impl MenuKind {
     }
 }
 
+/// The look a menu is laid out and drawn in ([`State::menu_theme`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Skin {
+    Theme,
+    /// The style's Shut down options look ([`reprisekit::theme::Theme::for_options_menu`]).
+    Options,
+    /// The Blue Start menu's, for the menus it opens and their folders
+    /// ([`reprisekit::interfaces::blue_start_menus`]).
+    BlueStart,
+}
+
 pub struct Menu {
     pub tree: TreeId,
     buffer: BufferId,
@@ -340,8 +351,7 @@ pub struct Menu {
     pub kind: MenuKind,
     pub from: MenuFrom,
     pub parent_row: Option<usize>,
-    /// Laid out and drawn with the style's Shut down options look ([`reprisekit::theme::Theme::for_options_menu`]).
-    options_look: bool,
+    pub(crate) skin: Skin,
     opened: Instant,
     /// The animation still running since `opened`.
     opening: Option<Opening>,
@@ -511,7 +521,7 @@ impl Menu {
             kind,
             from,
             parent_row: None,
-            options_look: false,
+            skin: Skin::Theme,
             opened: Instant::now(),
             opening: None,
             shift: (0, 0),

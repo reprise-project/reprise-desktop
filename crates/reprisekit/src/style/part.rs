@@ -142,6 +142,9 @@ pub enum Part {
     StartTriangleLeft,
     StartRowArrow,
     MenuItem,
+    /// A popup menu's face and frame, a nine-grid over the whole menu; a look without it draws its
+    /// [`MenuLook`](crate::style::MenuLook)'s frame and ring.
+    MenuFrame,
     MenuCheck,
     MenuCheckMark,
     MenuRadioMark,
