@@ -5,6 +5,7 @@ pub mod clockface;
 pub mod devicon;
 pub mod glyph;
 pub mod icons;
+pub mod lockkey;
 pub mod logo;
 pub mod neticon;
 pub mod powericon;

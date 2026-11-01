@@ -575,6 +575,21 @@ fn location_default_on_and_privacy_turns_it_off() {
 }
 
 #[test]
+fn both_lock_keys_show_on_screen_until_osd_turns_one_off() {
+    assert_eq!(
+        Config::default().osd,
+        OsdConfig {
+            caps_lock: true,
+            num_lock: true
+        }
+    );
+    let c = Config::parse("[osd]\nnum_lock = false\n").unwrap();
+    assert!(c.osd.caps_lock);
+    assert!(!c.osd.num_lock);
+    assert!(Config::parse("[osd]\nscroll_lock = true\n").is_err());
+}
+
+#[test]
 fn capture_border_default_on_and_privacy_turns_it_off() {
     assert!(Config::default().capture_border);
     assert!(

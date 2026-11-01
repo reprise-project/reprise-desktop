@@ -668,6 +668,14 @@ impl Config {
         if let Some(v) = file.screenshot.and_then(|s| s.save) {
             cfg.screenshot.save = v;
         }
+        if let Some(o) = file.osd {
+            if let Some(v) = o.caps_lock {
+                cfg.osd.caps_lock = v;
+            }
+            if let Some(v) = o.num_lock {
+                cfg.osd.num_lock = v;
+            }
+        }
         if let Some(p) = file.previews {
             if let Some(v) = p.taskbar {
                 cfg.previews.taskbar = v;

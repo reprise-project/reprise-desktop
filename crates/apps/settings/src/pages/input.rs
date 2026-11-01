@@ -91,6 +91,20 @@ pub fn keyboard(a: Area) -> Form {
         "&Edit...",
     ));
     items.push(button(SC_REMOVE, r - BUTTON_W, y, "&Delete"));
+    let y = 388 + a.dh;
+    items.push(group(a, "osd_group", y, 62, "On-screen display"));
+    items.push(Item::check(
+        "osd_caps_lock",
+        GX,
+        y + 18,
+        "Show &Caps Lock on screen",
+    ));
+    items.push(Item::check(
+        "osd_num_lock",
+        GX,
+        y + 38,
+        "Show &Num Lock on screen",
+    ));
     Form::new(items)
 }
 

@@ -1,6 +1,7 @@
-//! The media keys' on-screen panel: either one icon, bold title and progress bar, or a title over one line per display; under glass the box is glass and the level is also written out.
+//! The on-screen panel of the media keys and the lock keys: either one icon, bold title and progress bar, or a title over one line per display; under glass the box is glass and the level is also written out.
 
 use crate::art::icons::Icon;
+pub use crate::art::lockkey::LockKey;
 use crate::look::widgets::draw_progress;
 use crate::look::{Paint, panel};
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -39,6 +40,24 @@ pub fn layout() -> Layout {
         title: Rect::new(text_x, 16, W - text_x - PAD, 13),
         bar: Rect::new(text_x, 36, W - text_x - PAD, BAR_H),
     }
+}
+
+/// The panel a lock key shows when it changes: "Caps Lock On", "Num Lock Off".
+pub fn lock_key(key: LockKey, on: bool) -> Osd {
+    let name = match key {
+        LockKey::Caps => "Caps Lock",
+        LockKey::Num => "Num Lock",
+    };
+    Osd {
+        title: format!("{name} {}", if on { "On" } else { "Off" }),
+        meter: None,
+    }
+}
+
+/// [`draw`] for [`lock_key`] with its [`lockkey`](crate::art::lockkey) icon.
+pub fn draw_lock_key(theme: &Theme, text: &TextRenderer, key: LockKey, on: bool) -> Canvas {
+    let icon = crate::art::lockkey::draw(key, on, theme.paint().s);
+    draw(theme, text, &lock_key(key, on), Some(&icon))
 }
 
 /// The panel for `osd` with `icon` (32 px at the theme's scale). Under a look
@@ -393,6 +412,66 @@ mod tests {
         let [r, g, b] = rgb(at(&draw_one("Muted", meter(false)), bx, by));
         assert!(r == g && g == b, "grey: {:?}", [r, g, b]);
     }
+
+    #[test]
+    fn a_lock_key_says_which_key_and_which_way() {
+        assert_eq!(lock_key(LockKey::Caps, true).title, "Caps Lock On");
+        assert_eq!(lock_key(LockKey::Caps, false).title, "Caps Lock Off");
+        assert_eq!(lock_key(LockKey::Num, true).title, "Num Lock On");
+        assert_eq!(lock_key(LockKey::Num, false).title, "Num Lock Off");
+        assert_eq!(lock_key(LockKey::Num, true).meter, None);
+    }
+
+    fn fnv(c: &Canvas) -> u64 {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for y in 0..c.height as i32 {
+            for x in 0..c.width as i32 {
+                for b in c.get(x, y).to_le_bytes() {
+                    h = (h ^ u64::from(b)).wrapping_mul(0x100000001b3);
+                }
+            }
+        }
+        h
+    }
+
+    #[test]
+    fn lock_key_panels_pin_in_every_interface_at_scale_1_and_2() {
+        use crate::interface::Interface;
+        if !crate::text::test_tahoma() {
+            return;
+        }
+        let mut got = Vec::new();
+        for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for scale in [1, 2] {
+                let theme = crate::interfaces::theme_for(look).scaled(scale);
+                let text = TextRenderer::load(&theme.fonts);
+                for (key, on) in [(LockKey::Caps, true), (LockKey::Num, false)] {
+                    let c = draw_lock_key(&theme, &text, key, on);
+                    got.push((look, scale, key, on, fnv(&c)));
+                }
+            }
+        }
+        assert_eq!(got, LOCK_PINS, "pins changed; now:\n{got:#x?}");
+    }
+
+    const LOCK_PINS: [(crate::interface::Interface, i32, LockKey, bool, u64); 12] = {
+        use crate::interface::Interface::{Blue, Classic, Glass};
+        use LockKey::{Caps, Num};
+        [
+            (Classic, 1, Caps, true, 0x3a10f8be06828114),
+            (Classic, 1, Num, false, 0x95078fc03c79a217),
+            (Classic, 2, Caps, true, 0xef3353dab172bd62),
+            (Classic, 2, Num, false, 0xd61f26da54a57440),
+            (Blue, 1, Caps, true, 0xa3220a8b3db3cc5e),
+            (Blue, 1, Num, false, 0x4caeee78092d8b8f),
+            (Blue, 2, Caps, true, 0x834487477c12d82a),
+            (Blue, 2, Num, false, 0x331c0af8ef624fa2),
+            (Glass, 1, Caps, true, 0x19b24c2f9002fd6f),
+            (Glass, 1, Num, false, 0x1a30af69ac06111e),
+            (Glass, 2, Caps, true, 0xfe6f96700d8f0928),
+            (Glass, 2, Num, false, 0x9dce89ece8625b92),
+        ]
+    };
 
     #[test]
     #[ignore]
