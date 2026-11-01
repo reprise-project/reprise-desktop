@@ -16,6 +16,9 @@ pub enum Command {
     OpenWith(usize),
     ChooseProgram,
     Explore,
+    /// The terminal in the selected folder, or in the place shown (`OpenTerminalHere`).
+    OpenTerminal,
+    OpenTerminalHere,
     Eject,
     Cut,
     Copy,
@@ -279,6 +282,14 @@ impl Explorer {
                 }
             }
 
+            Command::OpenTerminal => match self.selected_dir().and_then(|p| p.path()) {
+                Some(dir) => self.open_terminal(&dir),
+                None => Reply::none(),
+            },
+            Command::OpenTerminalHere => match self.place.path() {
+                Some(dir) if !self.place.read_only() => self.open_terminal(&dir),
+                _ => Reply::none(),
+            },
             Command::Mode(m) => {
                 self.sv.set_mode(m);
                 self.draw_list_icons(ctx);

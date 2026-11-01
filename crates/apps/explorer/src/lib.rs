@@ -1240,6 +1240,18 @@ impl Explorer {
         self.open_file(&it.path, it.exec, open, how, ctx)
     }
 
+    /// Starts the configured terminal in `dir`, in its program's app scope.
+    pub(crate) fn open_terminal(&self, dir: &Path) -> Reply {
+        let terminal = repriseconf::terminal();
+        let app = reprisefs::apps::terminal_app(&terminal, &self.app_index);
+        let argv = reprisefs::apps::terminal_argv(&terminal);
+        let argv = reprisefs::scope::in_scope(&argv, app.as_deref());
+        if let Err(e) = repriseapp::spawn_in(&argv, Some(dir), None) {
+            log::warn!("explorer: terminal {terminal:?} in {}: {e}", dir.display());
+        }
+        Reply::none()
+    }
+
     /// Runs the program file at `path` in its own folder and an app scope named after it (a
     /// script `how` asks about first raises [`Explorer::ask_run`] instead), or
     /// opens a file that is no program in its program. Telling a program (its first bytes), the

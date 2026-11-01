@@ -1112,10 +1112,24 @@ fn wrap(entry: &AppEntry, terminal: &str, argv: Vec<OsString>) -> Vec<OsString> 
 }
 
 pub fn in_terminal(terminal: &str, mut argv: Vec<OsString>) -> Vec<OsString> {
-    let mut wrapped = split_exec(terminal, |_| Vec::new());
+    let mut wrapped = terminal_argv(terminal);
     wrapped.push("-e".into());
     wrapped.append(&mut argv);
     wrapped
+}
+
+/// The `terminal` command line on its own, which opens a shell in the working directory it is
+/// started in.
+pub fn terminal_argv(terminal: &str) -> Vec<OsString> {
+    split_exec(terminal, |_| Vec::new())
+}
+
+/// The app scope `terminal` runs in: the id of the desktop entry its program names, else the
+/// program's file name.
+pub fn terminal_app(terminal: &str, apps: &[AppEntry]) -> Option<String> {
+    let argv = terminal_argv(terminal);
+    let name = Path::new(argv.first()?).file_name()?.to_string_lossy();
+    Some(entry_for_app_id(apps, &name, |_| true).map_or_else(|| name.to_string(), |e| e.id.clone()))
 }
 
 pub fn default_dirs() -> Vec<PathBuf> {

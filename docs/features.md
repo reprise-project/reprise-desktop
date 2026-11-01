@@ -222,6 +222,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   want them, and the files in `~/Desktop` too. Labels hide file name extensions, only
   `.desktop`, or none (`desktop_extensions`); renaming a shown extension selects the name
   before it.
+- **Open in Terminal** on the desktop's right-click menu, a folder's and
+  Documents' or Home's starts your `terminal` there.
 - **Trusted launchers.** A `.desktop` file on the desktop, or one the
   launcher finds, runs only once you've marked it trusted (Allow Launching),
   so a download can't pose as a program.

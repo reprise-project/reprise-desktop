@@ -21,6 +21,8 @@ fn disabled_row(label: &str) -> MenuItem {
     entry(label).enabled(false)
 }
 
+const TERMINAL: &str = "Open in Termina&l";
+
 /// A menu's rows, each with what it does, so a row and its command cannot drift.
 type Rows = Vec<(MenuItem, Option<DesktopCommand>)>;
 
@@ -34,7 +36,7 @@ fn split(rows: Rows) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
 /// and Paste Shortcut are greyed unless `can_paste`. With `show_files` false, New
 /// and the Paste pair are greyed (what they make would land in ~/Desktop, which
 /// is not shown). While a `slideshow` runs, "Next desktop background" follows
-/// Refresh.
+/// Refresh, ahead of Open in Terminal.
 pub fn desktop_menu(
     can_paste: bool,
     show_files: bool,
@@ -56,6 +58,7 @@ pub fn desktop_menu(
     let mut rows = vec![
         (entry("Arrange &Icons By").submenu(true), Some(ArrangeIcons)),
         (entry("R&efresh"), Some(Refresh)),
+        (entry(TERMINAL), Some(OpenTerminal)),
         SEP,
         paste("&Paste", Paste),
         paste("Paste &Shortcut", PasteShortcut),
@@ -155,11 +158,11 @@ pub struct IconMenu {
 /// Open. A file gets its verbs (`print`, `edit`) and Open With, and Allow Launching with `allow_launching`. A launcher gets a greyed
 /// Run as... under Open (a program runs in the session of the logged-in user and
 /// another user's program cannot reach its display), no Open With, and Paste under
-/// Copy. A folder gets Explore, the greyed Sharing and Security... (no sheet behind
-/// it), and Paste under Copy. On
+/// Copy. A folder gets Explore, Open in Terminal, the greyed Sharing and Security... (no sheet
+/// behind it), and Paste under Copy. On
 /// an icon `in_set` of a multi-selection it is the same menu less Sharing and
-/// Security..., its rows acting on the whole set but for Explore, Paste, Rename
-/// and Properties.
+/// Security..., its rows acting on the whole set but for Explore, Open in Terminal, Paste,
+/// Rename and Properties.
 pub fn icon_menu(m: IconMenu) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     use DesktopCommand::*;
     let script = m
@@ -174,6 +177,7 @@ pub fn icon_menu(m: IconMenu) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     };
     if m.is_dir {
         rows.push((entry("E&xplore"), Some(Explore)));
+        rows.push((entry(TERMINAL), Some(OpenTerminal)));
         if !m.in_set {
             rows.extend([SEP, (disabled_row("S&haring and Security..."), None)]);
         }
@@ -256,8 +260,8 @@ pub fn open_with_menu(apps: &[(String, String)]) -> (Vec<MenuItem>, Vec<Option<D
     split(rows)
 }
 
-/// A place icon's menu. Documents and Home (real folders) open, explore and
-/// have Copy, and Properties with `sheet` (a folder that exists); Computer opens
+/// A place icon's menu. Documents and Home (real folders) open, explore, open in the
+/// terminal and have Copy, and Properties with `sheet` (a folder that exists); Computer opens
 /// and ends on Reprise Settings and About Reprise, after a separator. All three
 /// Create Shortcut, Delete (hide) and Rename.
 pub fn place_menu(
@@ -270,6 +274,7 @@ pub fn place_menu(
     if !computer {
         rows.extend([
             (entry("E&xplore"), Some(Explore)),
+            (entry(TERMINAL), Some(OpenTerminal)),
             SEP,
             (entry("&Copy"), Some(Copy)),
         ]);

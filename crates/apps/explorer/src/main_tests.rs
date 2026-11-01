@@ -32,13 +32,15 @@ pub(crate) fn test_env() {
             std::env::set_var("XDG_DATA_HOME", state.join("data"));
         }
         scratch_bin();
-        // A script opened in a test runs under this terminal, which records its arguments.
+        // A script opened in a test runs under this terminal, which records its arguments; started
+        // with none, it marks the folder it opened in.
         use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(&state).expect("mkdir");
         let term = state.join("term");
         let argv = state.join("term-argv");
         let script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >'{}'\nshift\nexec \"$@\"\n",
+            "#!/bin/sh\n[ $# -eq 0 ] && exec touch opened-here\n\
+             printf '%s\\n' \"$@\" >'{}'\nshift\nexec \"$@\"\n",
             argv.display()
         );
         std::fs::write(&term, script).expect("write");
@@ -3526,4 +3528,29 @@ fn a_shortcut_picked_while_anothers_read_is_out_is_read_once_that_one_lands() {
     ex.held = None;
     let want = format!("Location: {}", real.join("m2").display());
     wake_until(&mut ex, &mut ctx, |ex| ex.status.panels[0].text == want);
+}
+
+/// Open in Terminal starts the config's terminal on its own in the folder picked or shown.
+#[test]
+fn open_in_terminal_starts_the_terminal_in_the_folder() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::create_dir(dir.path().join("sub")).expect("mkdir");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    let opened = |folder: &Path| {
+        let marker = folder.join("opened-here");
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !marker.exists() {
+            assert!(
+                std::time::Instant::now() < end,
+                "the terminal opened in {folder:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    ex.sv.selection.set_only(Some(0));
+    ex.run(Command::OpenTerminal, &mut ctx);
+    opened(&dir.path().join("sub"));
+    ex.run(Command::OpenTerminalHere, &mut ctx);
+    opened(dir.path());
 }
