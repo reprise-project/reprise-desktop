@@ -226,9 +226,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   dialog, in Reprise's programs, Run's Browse and the portal's, opens in the
   view and Details sort, and at the size and place, the last one was left in
   (`$XDG_STATE_HOME/reprise/filedialog.toml`). The size grows with the text
-  size and stays inside the screen; a place whose title bar is off every
-  screen opens where the dialog would have opened. A maximized dialog leaves
-  its restored size.
+  size and stays inside the screen. With no place kept, or one whose title
+  bar is off every screen, a program's dialog opens centred on the screen its
+  window is on. A maximized dialog leaves its restored size.
 - **File dialogs follow their folder.** A file or folder made, deleted or
   renamed in the folder an Open or Save As dialog shows lists at once, the
   selection and scroll staying where their entries still are. The folder
