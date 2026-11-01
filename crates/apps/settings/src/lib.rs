@@ -558,7 +558,10 @@ impl SettingsApp {
             err_icon: None,
             open_error,
             preview_for: None,
-            display: displayhost::DisplayHost::default(),
+            display: displayhost::DisplayHost {
+                layouts: layouts_file(),
+                ..Default::default()
+            },
             wallpapers,
             picture: None,
             wallpaper_icons: None,
@@ -892,6 +895,17 @@ pub fn main(args: Vec<std::ffi::OsString>) {
         Claim::Alone => None,
     };
     repriseapp::run(Box::new(SettingsApp::new(page, requests))).unwrap_or_else(|e| e.exit());
+}
+
+/// The compositor's saved layouts; in tests a file of the test process's own.
+fn layouts_file() -> std::path::PathBuf {
+    #[cfg(test)]
+    return std::env::temp_dir().join(format!(
+        "reprise-settings-displays-{}.toml",
+        std::process::id()
+    ));
+    #[cfg(not(test))]
+    repriseconf::displays::path()
 }
 
 #[cfg(test)]

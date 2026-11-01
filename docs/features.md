@@ -405,6 +405,20 @@ are.
   adaptive sync. Reprise Settings arranges them by dragging numbered screens
   or moving the picked one with Ctrl+arrows, and a change you don't confirm reverts after 15 seconds.
   Windows move with the monitor they are on.
+- **A layout per set of monitors.** Each set of connected monitors keeps
+  its own layout: which are on, their modes, places, scales and rotations,
+  and the primary one. Docking, undocking or plugging in a monitor puts back
+  the layout saved for the monitors now connected; a set without one starts
+  from `[[outputs]]` and lines new monitors up to the right. A layout is
+  saved whenever a change to `[[outputs]]` takes effect, whether confirmed in
+  Reprise Settings or typed into `config.toml`. Monitors are told apart by
+  the make, model and serial number in their EDID, or by their connector
+  without one. The layouts live in `$XDG_STATE_HOME/reprise/displays.toml`;
+  Forget saved layouts on the Display page drops them.
+- **The newest change wins.** A saved layout holds the last change made
+  while its monitors were connected, so it wins over `[[outputs]]` when they
+  connect again. An `[[outputs]]` edit made while Reprise is not running
+  wins over every saved layout: Reprise forgets them at its next start.
 - **Fractional scaling** from 1 to 4 in quarter steps, per monitor. Programs
   that support it draw at the exact scale.
 - **Night light** from sunset to sunrise, worked out from your time zone, or

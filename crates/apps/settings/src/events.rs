@@ -64,6 +64,7 @@ impl SettingsApp {
             propsheet::Event::Page(_, form::Event::Pressed(id)) => match id {
                 pages::EDIT_FILE => self.edit_file(),
                 displaypage::IDENTIFY => self.identify(),
+                displaypage::FORGET => self.forget_layouts(),
                 pages::TRAY_CUSTOMIZE => {
                     // Off the loop: the call waits on the compositor.
                     std::thread::spawn(|| {
