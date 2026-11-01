@@ -179,6 +179,8 @@ pub enum Dialog {
     Browse(crate::browse::Browse),
     /// Unlock Drive, over a locked drive opened from Computer.
     Unlock(Box<Unlock>),
+    /// Rename with several items picked; the preview follows each change.
+    BatchRename(Box<crate::rename::BatchRename>),
 }
 
 impl Dialog {
@@ -203,6 +205,7 @@ impl Dialog {
             Dialog::Browse(b) if b.mv => "Move Items".to_string(),
             Dialog::Browse(_) => "Copy Items".to_string(),
             Dialog::Unlock(_) => unlock::TITLE.to_string(),
+            Dialog::BatchRename(_) => "Rename".to_string(),
         }
     }
 }
@@ -485,7 +488,8 @@ impl Explorer {
             | Dialog::ChangeIcon { .. }
             | Dialog::About(_)
             | Dialog::Browse(_)
-            | Dialog::Unlock(_) => None,
+            | Dialog::Unlock(_)
+            | Dialog::BatchRename(_) => None,
         }
     }
 
@@ -573,6 +577,7 @@ impl Explorer {
                     Dialog::Browse(_) => browsefolder::client(&self.forms.controls()),
                     Dialog::ChooseProgram(_) => openwith::client(&self.forms.controls()),
                     Dialog::Unlock(_) => u.size(unlock::CLIENT),
+                    Dialog::BatchRename(_) => u.size(reprisekit::controls::batchrename::CLIENT),
                     Dialog::Confirm(_) => {
                         u.size(self.confirm_layout().expect("a delete prompt is up").size)
                     }
@@ -669,6 +674,7 @@ impl Explorer {
             Some(Dialog::Advanced { form, .. }) => form,
             Some(Dialog::ChangeIcon { form, .. }) => form,
             Some(Dialog::About(f)) => f,
+            Some(Dialog::BatchRename(b)) => &b.form,
             Some(_) => match self.box_form().or_else(|| self.replace_form()) {
                 Some(f) => {
                     built = f;
@@ -721,6 +727,7 @@ impl Explorer {
             Some(Dialog::Advanced { form, .. }) => form,
             Some(Dialog::ChangeIcon { form, .. }) => form,
             Some(Dialog::About(f)) => f,
+            Some(Dialog::BatchRename(b)) => &b.form,
             Some(_) => match self.box_form().or_else(|| self.replace_form()) {
                 Some(f) => {
                     built = f;
@@ -760,6 +767,7 @@ impl Explorer {
             Some(Dialog::Advanced { form, .. }) => Some(form),
             Some(Dialog::ChangeIcon { form, .. }) => Some(form),
             Some(Dialog::About(f)) => Some(f),
+            Some(Dialog::BatchRename(b)) => Some(&mut b.form),
             _ => None,
         };
         let out = if let Some(form) = kept {
@@ -840,6 +848,9 @@ impl Explorer {
         let Some(d) = &self.dialog else {
             return Reply::none();
         };
+        if let Dialog::BatchRename(_) = d {
+            return self.batch_rename_answered(out, ctx);
+        }
         if let Dialog::Confirm(c) = d
             && c.script.is_some()
         {
@@ -927,7 +938,7 @@ impl Explorer {
             Dialog::Browse(_) => Answer::Stay,
             // The chooser and Unlock Drive answer in `chooser_event` and
             // `unlock_event`; `dialog_event` never reaches here for them.
-            Dialog::ChooseProgram(_) | Dialog::Unlock(_) => Answer::Stay,
+            Dialog::ChooseProgram(_) | Dialog::Unlock(_) | Dialog::BatchRename(_) => Answer::Stay,
         };
         match answer {
             Answer::Stay if out == form::Event::None => Reply::none(),
