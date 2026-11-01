@@ -39,10 +39,10 @@ impl State {
         from: MenuFrom,
         place: impl FnOnce((i32, i32), (i32, i32), Rect) -> (i32, i32),
     ) {
-        self.push_context_menu_looked(at, items, kind, from, place, false);
+        self.push_context_menu_looked(at, items, kind, from, place, Skin::Theme);
     }
 
-    /// [`State::push_context_menu_placed`], with the Shut down options look when `options_look`.
+    /// [`State::push_context_menu_placed`] in `skin`.
     pub(crate) fn push_context_menu_looked(
         &mut self,
         at: (i32, i32),
@@ -50,7 +50,7 @@ impl State {
         kind: MenuKind,
         from: MenuFrom,
         place: impl FnOnce((i32, i32), (i32, i32), Rect) -> (i32, i32),
-        options_look: bool,
+        skin: Skin,
     ) {
         let send_to = Some(DesktopCommand::SendTo);
         if let MenuKind::Desktop { commands, .. } | MenuKind::File { commands, .. } = &kind
@@ -62,9 +62,8 @@ impl State {
             return;
         };
         let usable = self.usable_area(Some(&output));
-        let options = options_look.then(|| self.config.theme.for_options_menu());
-        let theme = options.as_ref().unwrap_or(&self.config.theme);
-        let style = MenuStyle::context_for(theme, &items).fit(
+        let theme = self.menu_theme(skin, 1);
+        let style = MenuStyle::context_for(&theme, &items).fit(
             &self.text,
             &items,
             self.config.theme.fonts.size_px,
@@ -74,7 +73,7 @@ impl State {
         let pos = place(at, (layout.width, layout.height), usable);
         self.push_menu(0, pos, layout, items, output, kind, from);
         if let Some(m) = self.menus.last_mut() {
-            m.options_look = options_look;
+            m.skin = skin;
         }
         self.redraw_menu(0);
     }

@@ -16,6 +16,7 @@ const LOOK: MenuLook = MenuLook {
     frame: Color::rgb(0x94, 0x95, 0x95),
     ring: Some(Color::rgb(0xF4, 0xF5, 0xF5)),
     face: None,
+    inset: Insets::new(3, 3, 3, 3),
     row: 22,
     separator: 8,
     gutter: 26,

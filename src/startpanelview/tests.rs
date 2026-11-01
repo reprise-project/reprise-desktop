@@ -1113,3 +1113,38 @@ fn the_blue_menu_hangs_all_programs_off_its_row_and_drops_it_on_another_row() {
     assert!(h.state.menus.is_empty(), "another row closes it");
     assert!(h.state.start_panel.is_some(), "the menu stays open");
 }
+
+#[test]
+fn the_blue_menus_menus_and_their_folders_wear_its_look_and_other_menus_keep_the_theme() {
+    use crate::menuview::Skin;
+    let config = crate::config::Config::parse(
+        "startmenu_style = \"blue\"\n[appearance]\ninterface = \"classic\"\n",
+    )
+    .unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.state.app_index = vec![app("Notepad", "Utility"), app("Paint", "Graphics")];
+    let bar = h.state.bars[0].tree;
+    h.state.toggle_start(bar);
+    h.state.start_panel_click(Spot::AllPrograms);
+    let m = &h.state.menus[0];
+    assert_eq!(m.skin, Skin::BlueStart, "All Programs");
+    assert_eq!(m.layout.rows[0].x, 6, "its rows start past the strip");
+    assert!(
+        reprisekit::controls::menu::shadow_reach(&h.state.menu_theme(Skin::BlueStart, 1)) > 0,
+        "it casts its own shadow"
+    );
+    h.state.set_menu_hover(0, Some(0));
+    h.state.menu_key(crate::keys::KEY_Right);
+    let sub = h.state.menus.get(1).expect("the folder opened");
+    assert_eq!(sub.skin, Skin::BlueStart, "a folder opens in the same look");
+    assert_eq!(sub.layout.rows[0].x, 6);
+    h.state.close_menu();
+    h.state.close_start_panel();
+    h.state.open_taskbar_menu((10, 760));
+    assert_eq!(
+        h.state.menus[0].skin,
+        Skin::Theme,
+        "the taskbar's menu keeps the theme"
+    );
+}

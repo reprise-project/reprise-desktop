@@ -15,7 +15,7 @@ pub use access::{access_menu, access_row};
 pub use draw::{BULLET_D, draw_menu, draw_menu_at};
 pub use layout::{
     ARROW_RIGHT_INSET, BULLET_X, CHECK_X, ContextBitmaps, MenuLayout, MenuStyle, place_popup,
-    place_submenu, place_submenu_inset, relist, submenu_max_rows,
+    place_submenu, place_submenu_beside, place_submenu_inset, relist, submenu_max_rows,
 };
 pub use popup::{Level, MenuAction, MenuCtx, MenuKey, MenuTree, PopupMenu, submenu_anchor};
 pub use shadow::{

@@ -182,6 +182,15 @@ fn unroll_frame(v: &mut StartPanelView, scene: &mut crate::compositor::DeskScene
 }
 
 impl State {
+    /// The scheme the Blue Start menu and its menus draw in: the active one under Blue, Blue's own
+    /// under another interface.
+    pub(crate) fn blue_start_variant(&self) -> Variant {
+        match self.config.interface {
+            Interface::Blue => self.config.blue_variant,
+            _ => Variant::Blue,
+        }
+    }
+
     fn arm_start_panel_crossfade(&mut self) {
         if self
             .start_panel
@@ -299,13 +308,9 @@ impl State {
             None => {
                 let mut canvas = Canvas::new(sl.canvas.width as u32, sl.canvas.height as u32);
                 if blue {
-                    let variant = match self.config.interface {
-                        Interface::Blue => self.config.blue_variant,
-                        _ => Variant::Blue,
-                    };
                     reprisekit::interfaces::draw_blue_start_panel(
                         &mut canvas,
-                        variant,
+                        self.blue_start_variant(),
                         self.text.for_output(scale),
                         &v.model,
                         &sl,
