@@ -323,7 +323,7 @@ impl State {
             let s = (l.normal.width, l.normal.height);
             size = Some(back.map_or(fit_size(s, area), |(_, s)| s));
         }
-        let kept = (self.file_dialog_position(w)).or(back.map(|(at, _)| at));
+        let kept = (self.file_dialog_position(w, total, out.as_ref())).or(back.map(|(at, _)| at));
         let (mut x, mut y) = match (owner, position, kept) {
             (_, _, Some(at)) => at,
             (Some(p), _, None) => {
@@ -630,6 +630,7 @@ impl State {
         let refocus = self.focused == Some(w) || !self.win(w).is_some_and(|x| x.override_redirect);
         if self.win(w).is_some_and(|x| x.mapped) {
             self.remember_window(w, true);
+            self.remember_file_dialog(w);
             self.window_closing(w);
         }
         self.finish_window_anim(w);
