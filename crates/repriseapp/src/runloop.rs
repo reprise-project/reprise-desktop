@@ -133,7 +133,7 @@ impl RunError {
 /// Runs `app` until it quits. Fails only before the first window, when the compositor cannot be
 /// reached or lacks `wl_compositor`, `xdg_wm_base` or `wl_shm`.
 pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
-    filedlg::remember_views();
+    filedlg::remember_as(&app.app_id());
     let conn =
         Connection::connect_to_env().map_err(failed("cannot connect to a Wayland compositor"))?;
     hangup::on_signals(conn.backend().poll_fd());

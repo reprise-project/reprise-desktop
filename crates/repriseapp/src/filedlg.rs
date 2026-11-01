@@ -376,14 +376,25 @@ pub enum Resolved {
     File(PathBuf),
 }
 
-/// The file every dialog's view and sort are kept in, once [`remember_views`] ran: a test
-/// that never runs a program opens every dialog in the default view and stores nothing.
-static VIEW_FILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+/// Where dialogs keep their folder, view and sort, and the app id they keep them under.
+#[derive(Clone, Debug)]
+pub struct Memory {
+    pub file: PathBuf,
+    pub app: String,
+}
 
-/// Dialogs opened from here on open in the view and sort the last one left, and store theirs.
-/// [`crate::run`] calls it; a host that opens a dialog before that calls it first.
-pub fn remember_views() {
-    VIEW_FILE.get_or_init(repriseconf::filedialog::path);
+/// The [`Memory`] of every dialog, once [`remember_as`] ran: a test that never runs a program
+/// opens every dialog in the default view and stores nothing.
+static MEMORY: std::sync::OnceLock<Memory> = std::sync::OnceLock::new();
+
+/// Dialogs opened from here on open with what `app`'s last one left, and store theirs under it.
+/// The first call wins: [`crate::run`] names the program, the portal names the requesting app
+/// before that.
+pub fn remember_as(app: &str) {
+    MEMORY.get_or_init(|| Memory {
+        file: repriseconf::filedialog::path(),
+        app: app.to_string(),
+    });
 }
 
 /// A step of Delete done off the loop, for [`Host::deleted`].
@@ -465,8 +476,8 @@ pub struct Host {
     ask: Option<Ask>,
     /// The view and sort the open dialog last stored ([`Host::remember`]).
     remembered: Remembered,
-    /// Where they are stored; None is [`VIEW_FILE`].
-    view_file: Option<PathBuf>,
+    /// Where they are stored; None is [`MEMORY`].
+    memory: Option<Memory>,
 }
 
 /// How long the dialog waits for a listing before it goes on. Tests wait as long as it takes.
@@ -494,6 +505,31 @@ impl Host {
     /// The dialog on `dir`, laid out for text grown by `u` ([`crate::Ctx::forms`]'s): the host
     /// draws it with that theme and sizes its window from [`FileDlg::client`].
     pub fn open(&mut self, dir: &Path, fields: Fields, u: TextUnits) -> FileDlg {
+        self.open_in(Some(dir), dir, fields, u)
+    }
+
+    /// [`Host::open`] on the folder this app's last dialog was confirmed in, else `fallback`.
+    pub fn open_last(&mut self, fallback: &Path, fields: Fields, u: TextUnits) -> FileDlg {
+        self.open_in(None, fallback, fields, u)
+    }
+
+    fn open_in(
+        &mut self,
+        dir: Option<&Path>,
+        fallback: &Path,
+        fields: Fields,
+        u: TextUnits,
+    ) -> FileDlg {
+        let kept = (self.memory())
+            .map(|m| {
+                repriseconf::filedialog::section(
+                    &repriseconf::filedialog::load_from(&m.file),
+                    &m.app,
+                )
+            })
+            .unwrap_or_default();
+        let last = repriseconf::filedialog::folder(&kept).filter(|d| d.is_dir());
+        let dir = dir.or(last.as_deref()).unwrap_or(fallback);
         self.folder = Some(self.folders.id(dir));
         self.watched = None;
         self.ask = None;
@@ -506,16 +542,25 @@ impl Host {
         let mut dlg = self.icons.dialog(fields);
         self.icons_scale = 0;
         dlg.set_text(u);
-        self.remembered = self
-            .view_file()
-            .map(|f| Remembered::parse(&repriseconf::filedialog::load_from(&f)))
-            .unwrap_or_default();
+        self.remembered = Remembered::parse(&kept);
         dlg.restore(self.remembered);
         dlg
     }
 
-    fn view_file(&self) -> Option<PathBuf> {
-        self.view_file.clone().or_else(|| VIEW_FILE.get().cloned())
+    fn memory(&self) -> Option<Memory> {
+        self.memory.clone().or_else(|| MEMORY.get().cloned())
+    }
+
+    fn store(&self, lines: &str) {
+        let Some(m) = self.memory() else {
+            return;
+        };
+        if let Err(e) = repriseconf::filedialog::save_to(&m.file, &m.app, lines) {
+            log::warn!(
+                "file dialog: could not store {lines:?} in {}: {e}",
+                m.file.display()
+            );
+        }
     }
 
     /// Stores the dialog's view and sort once they change, for every dialog opened after.
@@ -525,14 +570,14 @@ impl Host {
             return;
         }
         self.remembered = now;
-        let Some(path) = self.view_file() else {
-            return;
-        };
-        if let Err(e) = repriseconf::filedialog::save_to(&path, &now.text()) {
-            log::warn!(
-                "file dialog: could not store its view in {}: {e}",
-                path.display()
-            );
+        self.store(&now.text());
+    }
+
+    /// The next dialog of this app opens in `dir`, where this one was confirmed. [`Host::resolve`]
+    /// keeps a picked file's folder; a host that confirms a folder pick keeps it here.
+    pub fn keep_folder(&self, dir: &Path) {
+        if let Some(line) = repriseconf::filedialog::folder_text(dir) {
+            self.store(&line);
         }
     }
 
@@ -1257,7 +1302,12 @@ impl Host {
         };
         match found {
             (true, _) => Ok(Resolved::Folder(self.folders.id(&path), path)),
-            (false, true) => Ok(Resolved::File(path)),
+            (false, true) => {
+                if let Some(dir) = path.parent() {
+                    self.keep_folder(dir);
+                }
+                Ok(Resolved::File(path))
+            }
             (false, false) => Err(format!(
                 "The folder {} does not exist.",
                 path.parent().unwrap_or(&path).display()

@@ -50,8 +50,8 @@ confinement holds, every motion goes through as it comes.
   `zwp_linux_dmabuf_v1`, `xdg_wm_base`, `zxdg_decoration_manager_v1`,
   `org_kde_kwin_server_decoration_manager`, `xdg_activation_v1`,
   `xdg_wm_dialog_v1`, `xdg_toplevel_tag_manager_v1` (a toplevel tagged
-  `file-dialog` opens at the size and place the last file dialog was left
-  at), `xdg_toplevel_icon_manager_v1`, `zxdg_exporter_v1`/`zxdg_importer_v1`,
+  `file-dialog` opens at the size and place its app's last file dialog was
+  left at, its owner's app for a dialog with an owner), `xdg_toplevel_icon_manager_v1`, `zxdg_exporter_v1`/`zxdg_importer_v1`,
   `zxdg_exporter_v2`/`zxdg_importer_v2`, `xwayland_shell_v1`,
   `xdg_system_bell_v1` (a ring plays the `[sounds] theme`'s bell unless
   `[sounds] bell` is off, at most one per 100 ms, and flashes the task button of
@@ -102,8 +102,10 @@ confinement holds, every motion goes through as it comes.
 - **Access**, the generic permission prompt
 - **FileChooser** and **AppChooser:** Reprise's own Open, Save and Open With
   dialogs. Their Tiles and Thumbnails views show pictures as Explorer does,
-  from the same thumbnail cache, and they open in the view, sort, size and
-  place the last Open or Save As dialog was left in
+  from the same thumbnail cache, and they open in the folder, view, sort,
+  size and place the requesting app's last Open or Save As dialog was left
+  in; a `current_folder` or `current_file` the app passes wins over the
+  folder
 - **Notification**
 - **Inhibit:** idle, suspend and log off
 - **Background:** which apps run without a window and the prompt asking

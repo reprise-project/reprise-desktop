@@ -20,7 +20,7 @@ use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 const MSGBOX: WinId = WinId::named("msgbox");
@@ -102,6 +102,13 @@ impl Pick {
     }
 
     fn finish(&mut self, paths: Vec<PathBuf>) -> Reply {
+        let dir = match self.input.folder_mode {
+            true => paths.first().map(PathBuf::as_path),
+            false => paths.first().and_then(|p| p.parent()),
+        };
+        if let Some(dir) = dir {
+            self.host.keep_folder(dir);
+        }
         let choices = self
             .dlg
             .extra()
@@ -354,7 +361,7 @@ pub fn run_dialog() {
     let theme = reprisekit::theme::Theme::default();
     let text = TextRenderer::load(&theme.fonts);
     let px = theme.fonts.size_px;
-    repriseapp::filedlg::remember_views();
+    repriseapp::filedlg::remember_as(&input.app_id);
     let mut host = Host::default();
     host.icons.prime(&mut dialog::icons());
     let mode = if input.folder_mode {
@@ -371,8 +378,11 @@ pub fn run_dialog() {
         mode,
         multiple: input.multiple,
     };
-    let start = PathBuf::from(OsStr::from_bytes(&input.start));
-    let mut dlg = host.open(&start, fields, dialog::start_forms().text);
+    let u = dialog::start_forms().text;
+    let mut dlg = match input.start.is_empty() {
+        true => host.open_last(&crate::filechooser::default_start(), fields, u),
+        false => host.open(Path::new(OsStr::from_bytes(&input.start)), fields, u),
+    };
     dlg.set_file_name(&input.name);
     if let Some(raw) = &input.name_raw {
         host.alias(input.name.clone(), OsStr::from_bytes(raw).to_os_string());
