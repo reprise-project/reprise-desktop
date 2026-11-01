@@ -49,10 +49,8 @@ pub fn draw_field(
 
 /// Render `d` at `theme.scale`; `layout` is the logical layout, `icon` the
 /// dialog's 32 px (times scale) icon, `caption_icon` the same icon at the
-/// theme's icon size for a styled caption, `button_icons` those of a
-/// Welcome panel's buttons (parallel to `d.buttons`), `row_icons` the
-/// chooser's row icons or a Properties sheet's Opens with icon (the
-/// first), and `logo` the Welcome panel's logo.
+/// theme's icon size for a styled caption, and `row_icons` the chooser's
+/// row icons or a Properties sheet's Opens with icon (the first).
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     theme: &Theme,
@@ -60,9 +58,7 @@ pub fn draw(
     layout: &DialogLayout,
     icon: Option<&Canvas>,
     caption_icon: Option<&Canvas>,
-    button_icons: &[Option<Canvas>],
     row_icons: &[Option<&Canvas>],
-    logo: Option<&Canvas>,
     d: &Dialog,
     caret: bool,
     lit: Lit<usize>,
@@ -73,8 +69,8 @@ pub fn draw(
     preedit: Option<&reprisekit::textedit::Preedit>,
 ) -> Canvas {
     // Under a look with glass the panel has a frame and draws as a dialog.
-    if let (Style::Welcome, None) = (&d.style, &layout.frame) {
-        return draw_welcome(theme, text, layout, button_icons, logo, d, lit, cues);
+    if let (Style::Welcome(w), Some(lay)) = (&d.style, &layout.power) {
+        return draw_welcome(theme, text, lay, w, lit, cues);
     }
     let s = theme.scale.max(1);
     let cs = &theme.colors;
@@ -189,24 +185,13 @@ pub fn draw(
             (Some(_), Some(f)) => (f == i, f == i && dots),
             (Some(_), None) => (b.default, false),
         };
-        if b.icon.is_some() {
-            let icon = button_icons.get(i).and_then(|o| o.as_ref());
+        if b.choice.is_some() {
             let look = IconButton {
                 default: ring && active,
                 ptr: lit_of(lit, i),
                 focus,
             };
-            draw_icon_button(
-                &mut c,
-                theme,
-                text,
-                &paint,
-                r.scaled(s),
-                b,
-                icon,
-                look,
-                cues,
-            );
+            draw_icon_button(&mut c, theme, text, &paint, r.scaled(s), b, look, cues);
             continue;
         }
         draw_button(

@@ -18,6 +18,9 @@ use crate::wallpapers::{self, Builtin, Design};
 use crate::{blue, controls, glass};
 use std::sync::Arc;
 
+mod powerpanel;
+pub use powerpanel::{draw_power_panel, power_panel_variant};
+
 pub fn default_wallpaper(i: Interface) -> Option<Builtin> {
     match i {
         Interface::Classic => None,

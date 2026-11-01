@@ -317,7 +317,8 @@ are.
   battery alarms, power profiles, and clamshell mode: close the lid with a
   monitor plugged in and the laptop screen steps aside.
 - **A Turn Off dialog** that dims the desktop behind it. Shutting down used
-  to have a little gravity.
+  to have a little gravity. Hold Shift and Stand By turns into Hibernate;
+  an empty `[power] standby` greys Stand By.
 - **Save prompts.** Log Off, Turn Off and Restart ask every window to close
   and wait, so programs can ask to save. After 5 seconds a list shows who's
   still holding things up, with End Now and Cancel. Turn Off and Restart ask

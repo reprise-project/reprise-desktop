@@ -11,27 +11,9 @@ pub(super) fn button(label: &str, action: DialogAction, default: bool) -> Dialog
         label: label.into(),
         action,
         default,
-        icon: None,
+        choice: None,
         enabled: true,
         tip: None,
-    }
-}
-
-fn icon_button(
-    label: &str,
-    icon: &str,
-    tip: &str,
-    action: DialogAction,
-    default: bool,
-    enabled: bool,
-) -> DialogButton {
-    DialogButton {
-        label: label.into(),
-        action,
-        default,
-        icon: Some(icon.into()),
-        enabled,
-        tip: Some(tip.into()),
     }
 }
 
@@ -850,65 +832,57 @@ impl Dialog {
         }
     }
 
-    /// The "Log Off Reprise" panel: Switch User (there is no one to
-    /// switch to, so greyed out) and Log Off, which runs the `exit` action
-    /// and holds the focus.
+    /// The Log Off panel: Switch User, greyed as Reprise has no other session to switch to, and
+    /// Log Off, which runs the `exit` action and holds the focus.
     pub fn log_off() -> Dialog {
-        Dialog {
-            buttons: vec![
-                icon_button(
-                    "&Switch User",
-                    "system-switch-user",
-                    "Lets another user log on while your programs and files remain open.",
-                    DialogAction::Cancel,
-                    false,
-                    false,
-                ),
-                icon_button(
-                    "&Log Off",
-                    "gnome-session-logout",
-                    "Closes your programs and ends your Reprise session.",
-                    DialogAction::Act(Action::Exit),
-                    true,
-                    true,
-                ),
-                button("Cancel", DialogAction::Cancel, false),
-            ],
-            ..Dialog::new("Log Off Reprise", Style::Welcome, Placement::UpperThird)
-        }
+        Dialog::welcome(Welcome {
+            panel: Panel::log_off(false),
+            actions: vec![(Choice::LogOff, DialogAction::Act(Action::Exit))],
+            always_blue: false,
+        })
     }
 
+    /// The Turn off computer panel running the `[power]` commands: Stand By (Hibernate with
+    /// Shift held), greyed while its command is unset, Turn Off and Restart.
     pub fn turn_off(power: &PowerConfig) -> Dialog {
-        Dialog {
-            buttons: vec![
-                icon_button(
-                    "&Stand By",
-                    "system-suspend",
-                    "Keeps your session in memory and puts the computer in a low-power \
-                     state so that you can quickly resume working.",
+        let set = |cmd: &str| !cmd.trim().is_empty();
+        Dialog::welcome(Welcome {
+            panel: Panel::turn_off(set(&power.standby), set(&power.hibernate)),
+            actions: vec![
+                (
+                    Choice::StandBy,
                     DialogAction::StandBy(power.standby.clone()),
-                    false,
-                    true,
                 ),
-                icon_button(
-                    "T&urn Off",
-                    "system-shutdown",
-                    "Shuts down Reprise so that you can safely turn off the computer.",
+                (
+                    Choice::Hibernate,
+                    DialogAction::Hibernate(power.hibernate.clone()),
+                ),
+                (
+                    Choice::TurnOff,
                     DialogAction::EndSession(Goal::TurnOff, power.poweroff.clone()),
-                    true,
-                    true,
                 ),
-                icon_button(
-                    "&Restart",
-                    "system-restart",
-                    "Shuts down Reprise and then starts Reprise again.",
+                (
+                    Choice::Restart,
                     DialogAction::EndSession(Goal::Restart, power.reboot.clone()),
-                    false,
-                    true,
                 ),
-                button("Cancel", DialogAction::Cancel, false),
             ],
-            ..Dialog::new("Turn off computer", Style::Welcome, Placement::UpperThird)
+            always_blue: false,
+        })
+    }
+
+    fn welcome(w: Welcome) -> Dialog {
+        let title = w.panel.title.clone();
+        let mut d = Dialog::new(title, Style::Welcome(Box::new(w)), Placement::UpperThird);
+        d.sync_welcome();
+        d
+    }
+
+    /// A Welcome panel drawn Blue under glass too.
+    #[allow(dead_code)]
+    pub fn always_blue(mut self) -> Dialog {
+        if let Style::Welcome(w) = &mut self.style {
+            w.always_blue = true;
         }
+        self
     }
 }

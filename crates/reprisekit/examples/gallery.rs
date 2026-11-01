@@ -14,6 +14,8 @@ mod gallery_doctabs;
 mod gallery_p3;
 #[path = "gallery_parts/mod.rs"]
 mod gallery_parts;
+#[path = "gallery_power/mod.rs"]
+mod gallery_power;
 
 use reprisekit::art::glyph::Glyph;
 use reprisekit::art::{signalbars, viewsicon};
@@ -81,6 +83,10 @@ fn main() {
             "reprisekit-gallery-orb-glow-glass.png",
         );
         write_volume_popups(true, n.max(1));
+        write_preview(
+            &gallery_power::render(n.max(1)),
+            &format!("reprisekit-gallery-power@{}.png", n.max(1)),
+        );
         write_preview(
             &gallery_doctabs::render(n.max(1)),
             &format!("reprisekit-gallery-doc-tabs@{}.png", n.max(1)),
@@ -232,6 +238,7 @@ fn main() {
         &gallery_doctabs::render(1),
         "reprisekit-gallery-doc-tabs@1.png",
     );
+    write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
     if with_blue {
         write_preview(
             &render_tray_arrow_schemes(1),

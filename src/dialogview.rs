@@ -9,6 +9,7 @@ mod browse;
 mod draw;
 mod input;
 mod outcome;
+mod power;
 mod properties;
 mod stack;
 
@@ -199,7 +200,7 @@ fn refit_origin(
     size: (i32, i32),
     area: Rect,
 ) -> Option<(i32, i32)> {
-    if area.width <= 0 || matches!(d.style, Style::Welcome) {
+    if area.width <= 0 || matches!(d.style, Style::Welcome(_)) {
         return None;
     }
     Some(keep_inside(origin, size, area))
@@ -275,15 +276,11 @@ fn pressed_button(hit: Option<DialogHit>) -> Option<usize> {
 struct IconKey {
     scale: i32,
     icon: Option<String>,
-    buttons: Vec<Option<String>>,
-    logo: bool,
 }
 
 struct DialogIcons {
     icon: Option<Canvas>,
     caption: Option<Canvas>,
-    buttons: Vec<Option<Canvas>>,
-    logo: Option<Canvas>,
     /// Row icons by name and logical size at the key's scale; `None` for a name the theme lacks.
     rows: HashMap<(String, i32), Option<Canvas>>,
 }
@@ -346,8 +343,6 @@ fn icon_key(d: &Dialog, scale: i32) -> IconKey {
     IconKey {
         scale,
         icon: d.icon.clone(),
-        buttons: d.buttons.iter().map(|b| b.icon.clone()).collect(),
-        logo: matches!(d.style, Style::Welcome),
     }
 }
 
