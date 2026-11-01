@@ -1,5 +1,5 @@
 //! The progress dialogs' host half, for a put (copy, move), a removal (delete, Empty, Restore) and an
-//! extraction:
+//! extraction or compression:
 //! when each comes up, its window and events, Pause and Cancel on its job, the task button's
 //! progress for all of them together, and the balloon for a job that ends while its dialog is not looked at.
 

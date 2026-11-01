@@ -14,7 +14,7 @@ pub(crate) use erase::{erase_counted, erase_stepped};
 pub(crate) use fileio::read_opened;
 pub use fileio::{copy_xattrs, create_temp_beside, read_regular, write_atomic};
 pub use mounts::{is_mount_point, mount_root, refuse_holding_mount, refuse_mount_point};
-pub(crate) use put::{Landing, merge_clashes, put_in_until, sync_landed};
+pub(crate) use put::{Landing, merge_clashes, put_in_until, rename2, sync_landed, unsupported};
 pub use put::{PutError, put_in, put_in_with, same_device, same_folder};
 
 use std::ffi::{OsStr, OsString};
@@ -154,23 +154,34 @@ pub fn create_new_numbered(dir: &Path, name: &str) -> io::Result<(std::fs::File,
 /// `@archive` among the names even past `--`, so a name starting with `-`
 /// or `@` goes in as `./name`.
 pub fn zip_argv(paths: &[PathBuf], zip: &Path) -> Vec<OsString> {
-    let dir = paths
-        .first()
-        .and_then(|p| p.parent())
-        .unwrap_or(Path::new("."));
+    let (dir, names) = members(paths);
     let mut argv: Vec<OsString> = ["bsdtar", "-a", "-cf"].map(OsString::from).into();
     argv.push(zip.into());
     argv.push("-C".into());
     argv.push(dir.into());
     argv.push("--".into());
-    argv.extend(paths.iter().map(|p| {
-        let name = p.file_name().unwrap_or_default();
-        match name.as_encoded_bytes().first() {
-            Some(b'-' | b'@') => Path::new(".").join(name).into_os_string(),
-            _ => name.to_os_string(),
-        }
-    }));
+    argv.extend(names);
     argv
+}
+
+/// The folder of `paths`, items of one folder, and their names as bsdtar takes them after
+/// `-C folder --`: a name starting with `-` or `@` goes in as `./name`.
+pub(crate) fn members(paths: &[PathBuf]) -> (&Path, Vec<OsString>) {
+    let dir = paths
+        .first()
+        .and_then(|p| p.parent())
+        .unwrap_or(Path::new("."));
+    let names = paths
+        .iter()
+        .map(|p| {
+            let name = p.file_name().unwrap_or_default();
+            match name.as_encoded_bytes().first() {
+                Some(b'-' | b'@') => Path::new(".").join(name).into_os_string(),
+                _ => name.to_os_string(),
+            }
+        })
+        .collect();
+    (dir, names)
 }
 
 /// Delete `path`: into its drive's trash ([`crate::trash::trash`]), or

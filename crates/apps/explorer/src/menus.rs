@@ -14,6 +14,7 @@ use reprisekit::controls::menu::MenuItem;
 use reprisekit::controls::menubar::Bar;
 use reprisekit::controls::shellview::Mode;
 use reprisekit::raster::Canvas;
+use reprisekit::text::escape_mnemonic;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MenuState {
@@ -38,6 +39,8 @@ pub struct MenuState {
     pub extract: Option<String>,
     /// Every selected item has a local path, for Copy as Path.
     pub local_paths: bool,
+    /// The zip the item menu's Compress to row makes; `None` hides the row.
+    pub compress: Option<String>,
 }
 
 impl Default for MenuState {
@@ -57,6 +60,7 @@ impl Default for MenuState {
             can_forward: false,
             extract: None,
             local_paths: false,
+            compress: None,
         }
     }
 }
@@ -458,6 +462,10 @@ pub fn item_menu(
                 Command::Extract { here: false },
             );
         }
+    }
+    if let Some(zip) = &state.compress {
+        let label = format!("Compr&ess to '{}'", escape_mnemonic(zip));
+        m.row(row(&label, true), Command::Compress);
     }
     m.sub(
         row("Se&nd To", !send_to.is_empty() && writable),

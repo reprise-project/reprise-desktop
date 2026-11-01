@@ -1,21 +1,29 @@
-//! Extract Here and Extract to on an archive's menu: an [`ExtractJob`] with its progress dialog
-//! and the Skip, Retry and Cancel box on an archive that fails.
+//! Extract Here and Extract to on an archive's menu, and Compress to on any items: an
+//! [`ArchiveJob`] with its progress dialog. An archive that fails asks Skip, Retry or Cancel; a zip
+//! that fails shows an error box.
 
 use crate::Explorer;
 use crate::copydlg::Progress;
 use crate::place::Place;
 use repriseapp::{Ctx, Reply};
-use reprisefs::extract::{self, Archive, ExtractEvent, ExtractJob};
+use reprisefs::compress::{self, Compress};
+use reprisefs::extract::{self, Archive, ArchiveEvent, ArchiveJob};
 use reprisefs::listing::Item;
 use reprisekit::controls::copyprogress::Kind;
 use std::path::PathBuf;
 
-/// The extraction running, with its dialog.
+/// The extraction or compression running, with its dialog.
 pub(crate) struct Extracting {
-    pub job: ExtractJob,
+    pub job: ArchiveJob,
     pub progress: Progress,
-    /// The folders archives came out into so far.
+    /// The folders archives came out into so far, or the zip.
     landed: Vec<PathBuf>,
+}
+
+/// One run of the job: archives to extract, or items to zip.
+pub(crate) enum Batch {
+    Extract(Vec<Archive>),
+    Compress(Compress),
 }
 
 /// What Extract to names after an archive, `name/`.
@@ -66,28 +74,79 @@ impl Explorer {
                 here,
             })
             .collect();
-        match self.extracting {
-            Some(_) => self.extract_queue.push_back(batch),
-            None => self.start_extract(batch, ctx),
+        self.queue_archive_job(Batch::Extract(batch), ctx);
+        Reply::none()
+    }
+
+    /// The zip Compress to and Send To make of the selection: `name.zip`, numbered past a name
+    /// the folder lists. None in a read-only place, or for items of several folders.
+    pub(crate) fn compress_target(&self) -> Option<Compress> {
+        if self.place.read_only() {
+            return None;
+        }
+        let picked: Vec<&Item> = (self.sv.selection.set.iter())
+            .filter_map(|&i| self.items.get(i))
+            .collect();
+        let dir = picked.first()?.path.parent()?;
+        if picked.iter().any(|it| it.path.parent() != Some(dir)) {
+            return None;
+        }
+        let paths: Vec<PathBuf> = picked.iter().map(|it| it.path.clone()).collect();
+        let one_folder = matches!(picked.as_slice(), [it] if it.is_folder());
+        let wanted = compress::zip_name(&paths, one_folder);
+        let name = reprisefs::names::first_free(&wanted, |c| {
+            (self.items.iter()).any(|it| it.path == dir.join(c))
+        });
+        Some(Compress {
+            zip: dir.join(name),
+            paths,
+        })
+    }
+
+    /// The item menu's Compress to row names the zip.
+    pub(crate) fn compress_label(&self) -> Option<String> {
+        let c = self.compress_target()?;
+        Some(c.zip.file_name()?.to_string_lossy().into_owned())
+    }
+
+    /// Compress to, or Send To > Compressed (zipped) Folder: the selection goes into a new zip
+    /// on a job, after the one running.
+    pub(crate) fn compress(&mut self, ctx: &mut Ctx) -> Reply {
+        if let Some(c) = self.compress_target() {
+            self.queue_archive_job(Batch::Compress(c), ctx);
         }
         Reply::none()
     }
 
-    fn start_extract(&mut self, batch: Vec<Archive>, ctx: &Ctx) {
-        let from = batch
-            .first()
-            .and_then(|a| a.src.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let to = batch
-            .first()
-            .and_then(|a| a.src.parent())
-            .and_then(|d| d.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+    fn queue_archive_job(&mut self, batch: Batch, ctx: &Ctx) {
+        match self.extracting {
+            Some(_) => self.extract_queue.push_back(batch),
+            None => self.start_archive_job(batch, ctx),
+        }
+    }
+
+    fn start_archive_job(&mut self, batch: Batch, ctx: &Ctx) {
+        let name = |p: Option<&std::path::Path>| {
+            p.and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        };
         let wake = ctx.wake.clone();
-        let job = ExtractJob::start(batch, move || wake.wake());
-        let progress = Progress::new(job.meter().clone(), Kind::Extract, from, to);
+        let wake = move || wake.wake();
+        let (job, kind, from, to) = match batch {
+            Batch::Extract(batch) => {
+                let src = batch.first().map(|a| a.src.as_path());
+                let (from, to) = (name(src), name(src.and_then(|s| s.parent())));
+                (ArchiveJob::extract(batch, wake), Kind::Extract, from, to)
+            }
+            Batch::Compress(c) => {
+                let from = name(c.zip.parent());
+                let to = name(Some(&c.zip));
+                (ArchiveJob::compress(c, wake), Kind::Compress, from, to)
+            }
+        };
+        let progress = Progress::new(job.meter().clone(), kind, from, to);
+        crate::fileops::wake_to_show(ctx);
         self.extracting = Some(Extracting {
             job,
             progress,
@@ -95,40 +154,48 @@ impl Explorer {
         });
     }
 
-    /// Takes the extraction's events: a failed archive asks Skip, Retry or Cancel; the end lists
-    /// the folder again with the new folders selected and starts the next batch.
+    /// Takes the job's events: a failed archive asks Skip, Retry or Cancel, a failed zip shows an
+    /// error box; the end lists the folder again with the new folders or zip selected and starts
+    /// the next batch.
     pub(crate) fn poll_extract(&mut self, ctx: &mut Ctx) -> Option<Reply> {
         let ex = self.extracting.as_mut()?;
+        let zipping = ex.progress.kind == Kind::Compress;
         let mut ask = None;
         let mut finished = false;
         for ev in ex.job.poll() {
             match ev {
-                ExtractEvent::Landed { into, .. } => ex.landed.push(into),
-                ExtractEvent::Failed { text, .. } => ask = Some(text),
-                ExtractEvent::Finished => finished = true,
+                ArchiveEvent::Landed { into, .. } => ex.landed.push(into),
+                ArchiveEvent::Failed { text, .. } => ask = Some(text),
+                ArchiveEvent::Finished => finished = true,
             }
         }
-        if let Some(text) = ask {
+        if let Some(text) = ask.take_if(|_| !zipping) {
             let meter = ex.job.meter().clone();
             return Some(self.ask_failed(meter, extract::FAILURE_TITLE, text, ctx));
         }
+        let failed = ask.map(|text| (compress::FAILURE_TITLE, text));
+        let boxed = (failed.clone()).map(|(title, text)| self.message_box(title, text, ctx));
         if !finished {
-            return None;
+            return boxed;
         }
         let ex = self.extracting.take()?;
-        ex.progress.ended(ex.landed.len(), None);
+        let done = match zipping {
+            true => ex.job.meter().snapshot().items as usize,
+            false => ex.landed.len(),
+        };
+        ex.progress.ended(done, failed.as_ref());
         self.publish_task_progress();
         let shown = self.place.path();
-        let folders: Vec<PathBuf> = ex
+        let landed: Vec<PathBuf> = ex
             .landed
             .into_iter()
             .filter(|p| shown.as_deref() != Some(p))
             .collect();
-        if let Some(dir) = folders.first().and_then(|f| f.parent()) {
+        if !zipping && let Some(dir) = landed.first().and_then(|f| f.parent()) {
             self.refill_tree_node(&Place::from_path(dir), ctx);
         }
         let reply = self.refresh(ctx);
-        let here: Vec<PathBuf> = (folders.iter())
+        let here: Vec<PathBuf> = (landed.iter())
             .filter(|f| f.parent() == shown.as_deref())
             .cloned()
             .collect();
@@ -137,13 +204,16 @@ impl Explorer {
             self.refresh_chrome(ctx);
         }
         if let Some(next) = self.extract_queue.pop_front() {
-            self.start_extract(next, ctx);
+            self.start_archive_job(next, ctx);
         }
-        Some(reply)
+        Some(match boxed {
+            Some(b) => reply.and(b),
+            None => reply,
+        })
     }
 
-    /// Cancel on the dialog: the running extraction stops and the batches queued behind it
-    /// never start.
+    /// Cancel on the dialog: the running job stops and the batches queued behind it never
+    /// start.
     pub(crate) fn cancel_extracts(&mut self) {
         self.extract_queue.clear();
         if let Some(ex) = &self.extracting {

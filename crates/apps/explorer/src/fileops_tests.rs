@@ -1342,23 +1342,19 @@ fn undo_of_a_move_lists_a_hidden_item_again() {
 }
 
 #[test]
-fn send_to_zip_packs_the_set_into_one_archive_named_after_the_focus() {
-    let dir = tempfile::tempdir().expect("a temp dir");
-    std::fs::write(dir.path().join("a.txt"), "1").expect("write");
-    std::fs::write(dir.path().join("b.txt"), "2").expect("write");
-    std::fs::write(dir.path().join("b.zip"), "").expect("write");
+fn send_to_zip_packs_the_set_into_one_zip_named_after_the_folder() {
+    let tmp = tempfile::tempdir().expect("a temp dir");
+    let d = tmp.path().join("Photos");
+    std::fs::create_dir(&d).expect("mkdir");
+    std::fs::write(d.join("a.txt"), "1").expect("write");
+    std::fs::write(d.join("b.txt"), "2").expect("write");
+    std::fs::write(d.join("Photos.zip"), "").expect("write");
     let mut ctx = test_ctx();
-    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
-    let at = |name: &str| {
-        ex.items
-            .iter()
-            .position(|it| it.path.ends_with(name))
-            .unwrap()
-    };
+    let mut ex = crate::tests::test_explorer(Place::Folder(d.clone()), &mut ctx);
+    let at = |name: &str| ex.index_of(&d.join(name)).unwrap();
     let (a, b) = (at("a.txt"), at("b.txt"));
     ex.sv.selection.set_only(Some(a));
     ex.sv.selection.set.insert(b);
-    ex.sv.selection.focus = Some(b);
     ex.send_to = vec![SendToRow {
         label: "Compressed (zipped) Folder".into(),
         icon: "application-zip",
@@ -1367,22 +1363,21 @@ fn send_to_zip_packs_the_set_into_one_archive_named_after_the_focus() {
     }];
 
     let reply = ex.send_to(0, &mut ctx);
-    let d = dir.path();
-    assert_eq!(
-        reply.spawn,
-        vec![vec![
-            OsString::from("bsdtar"),
-            "-a".into(),
-            "-cf".into(),
-            d.join("b (2).zip").into(),
-            "-C".into(),
-            d.into(),
-            "--".into(),
-            "b.txt".into(),
-            "a.txt".into(),
-        ]],
-        "one archive, the focused item first and naming it"
-    );
+    assert!(reply.spawn.is_empty(), "the zip is made on a job");
+    ex.finish_extracts(reprisefs::progress::Decision::Abort, &mut ctx);
+    let zip = d.join("Photos (2).zip");
+    let listed = std::process::Command::new("bsdtar")
+        .arg("-tf")
+        .arg(&zip)
+        .output()
+        .expect("bsdtar runs");
+    let mut names: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .map(String::from)
+        .collect();
+    names.sort();
+    assert_eq!(names, ["a.txt", "b.txt"]);
+    assert_eq!(ex.selected_paths(), [zip], "the new zip is selected");
 }
 
 #[test]

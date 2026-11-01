@@ -42,6 +42,8 @@ pub enum Command {
     Extract {
         here: bool,
     },
+    /// Into a new zip beside the selected items.
+    Compress,
     MoveTo,
     CopyTo,
     Drop(reprisefs::ops::DropOp),
@@ -455,6 +457,7 @@ impl Explorer {
             Command::CreateShortcut => self.create_shortcut(ctx),
             Command::SendTo(i) => self.send_to(i, ctx),
             Command::Extract { here } => self.extract(here, ctx),
+            Command::Compress => self.compress(ctx),
             Command::MoveTo => self.open_browse(true, ctx),
             Command::CopyTo => self.open_browse(false, ctx),
             Command::Drop(op) => self.drop_pending(op, ctx),
