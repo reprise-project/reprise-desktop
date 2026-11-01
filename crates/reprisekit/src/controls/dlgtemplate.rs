@@ -315,6 +315,24 @@ pub fn layout(
 
 pub const BUTTON_IDS: [&str; 4] = ["btn0", "btn1", "btn2", "btn3"];
 
+pub const YES: &str = "&Yes";
+pub const NO: &str = "&No";
+
+/// The label of the button Enter presses on a delete prompt: Yes when the Recycle Bin can give
+/// the items back, No when `erase` deletes them for good.
+pub fn delete_default(erase: bool) -> &'static str {
+    if erase { NO } else { YES }
+}
+
+/// Where [`delete_default`]'s button sits in `buttons`; the first when it is not among them.
+pub fn delete_default_index(buttons: &[impl AsRef<str>], erase: bool) -> usize {
+    let label = delete_default(erase);
+    buttons
+        .iter()
+        .position(|b| b.as_ref() == label)
+        .unwrap_or(0)
+}
+
 /// A form over a client-side `lay` with no field: the icon, top-aligned text and `buttons` left to
 /// right, the `default`-th ringed and focused. Panics past four buttons.
 pub fn form(lay: &Layout, icon: Option<Canvas>, buttons: &[String], default: usize) -> Form {
@@ -499,6 +517,39 @@ mod tests {
                 lines.x - icon.right(),
                 EXPECTED_GAP,
                 "{pct}%: the form's gap"
+            );
+        }
+    }
+
+    #[test]
+    fn a_delete_prompt_defaults_to_yes_unless_it_erases() {
+        let two = [YES, NO];
+        let four = [YES, "Yes to &All", NO, "Cancel"];
+        assert_eq!(delete_default_index(&two, false), 0, "recycling: Yes");
+        assert_eq!(delete_default_index(&two, true), 1, "erasing: No");
+        assert_eq!(delete_default_index(&four, true), 2, "erasing a batch: No");
+        assert_eq!(delete_default_index(&["&Run", "Cancel"], true), 0);
+    }
+
+    #[test]
+    fn enter_on_an_erasing_delete_prompt_presses_no() {
+        use crate::controls::form::{Event, Key};
+        let (text, px) = rend();
+        let buttons = [YES.to_string(), NO.to_string()];
+        let f = Fields {
+            text: "Are you sure you want to delete 'a'?",
+            icon: true,
+            field: false,
+            buttons: &buttons,
+            text_h: None,
+        };
+        let lay = layout(Template::MessageBox, &text, px, &f, TextUnits::ONE).client();
+        for (erase, pressed) in [(false, BUTTON_IDS[0]), (true, BUTTON_IDS[1])] {
+            let mut form = form(&lay, None, &buttons, delete_default_index(&buttons, erase));
+            assert_eq!(
+                form.key(Key::Enter),
+                Event::Pressed(pressed),
+                "erase {erase}"
             );
         }
     }

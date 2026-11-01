@@ -255,7 +255,7 @@ fn an_arrow_moves_the_delete_prompt_s_focus_and_enter_presses_it() {
     let mut ctx = test_ctx();
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.sv.selection.set_only(Some(0));
-    ex.run(Command::Delete { erase: true }, &mut ctx);
+    ex.run(Command::Delete { erase: false }, &mut ctx);
     assert!(matches!(ex.dialog, Some(Dialog::Confirm(_))), "Delete asks");
     ex.dialog_event(right(), &mut ctx);
     assert!(
@@ -266,6 +266,35 @@ fn an_arrow_moves_the_delete_prompt_s_focus_and_enter_presses_it() {
     ex.finish_puts(&mut ctx);
     assert!(ex.dialog.is_none(), "Enter on No closes the prompt");
     assert!(dir.path().join("a.txt").exists(), "Enter on No keeps a.txt");
+}
+
+/// Shift+Delete's prompt opens on No, so Enter keeps the file; Delete's opens on Yes.
+#[test]
+fn enter_on_the_shift_delete_prompt_keeps_the_file() {
+    use reprisekit::controls::dlgtemplate::BUTTON_IDS;
+    let _guard = lock(&TRASH_ENV);
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("a.txt"), "1").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.sv.selection.set_only(Some(0));
+    let focused = |ex: &Explorer| {
+        let f = ex.box_form().expect("the prompt's form");
+        f.focus().map(|i| f.items[i].id)
+    };
+    ex.run(Command::Delete { erase: false }, &mut ctx);
+    assert_eq!(focused(&ex), Some(BUTTON_IDS[0]), "Delete opens on Yes");
+    ex.dialog = None;
+    ex.run(Command::Delete { erase: true }, &mut ctx);
+    assert_eq!(
+        focused(&ex),
+        Some(BUTTON_IDS[1]),
+        "Shift+Delete opens on No"
+    );
+    ex.dialog_event(enter(), &mut ctx);
+    ex.finish_puts(&mut ctx);
+    assert!(ex.dialog.is_none(), "Enter closes the prompt");
+    assert!(dir.path().join("a.txt").exists(), "Enter keeps a.txt");
 }
 
 /// A drive's node offers no file rows: Cut, Copy and Delete do nothing.

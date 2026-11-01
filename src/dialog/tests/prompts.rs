@@ -245,6 +245,11 @@ fn confirm_delete_trashes_on_yes_only() {
     ));
     assert_eq!(
         e.key(Key::Enter),
+        Outcome::Close,
+        "Enter keeps what Yes would erase"
+    );
+    assert_eq!(
+        e.key(Key::Edit(EditKey::Insert("y".into()))),
         Outcome::Delete {
             paths: vec![path.to_path_buf()],
             erase: true,
@@ -278,7 +283,8 @@ fn too_big_asks_with_the_batch_buttons() {
         asker: Box::new(asker.clone()),
         answer,
     };
-    assert_eq!(d.key(Key::Enter), answer(Answer::Yes));
+    assert_eq!(d.key(Key::Enter), answer(Answer::No));
+    assert_eq!(d.press(0), answer(Answer::Yes));
     assert_eq!(d.press(1), answer(Answer::YesToAll));
     assert_eq!(d.press(2), answer(Answer::No));
     assert_eq!(d.press(3), Outcome::Close);
@@ -335,7 +341,11 @@ fn confirm_delete_many_counts_the_items_and_trashes_them_all() {
             ..
         }
     ));
-    assert_eq!(e.key(Key::Enter), Outcome::Delete { paths, erase: true });
+    assert_eq!(e.key(Key::Enter), Outcome::Close);
+    assert_eq!(
+        e.key(Key::Edit(EditKey::Insert("y".into()))),
+        Outcome::Delete { paths, erase: true }
+    );
 }
 
 /// Yes deletes the path by its bytes: a name that is not UTF-8 reaches
@@ -354,7 +364,10 @@ fn confirm_delete_keeps_a_name_that_is_not_utf8() {
     );
     let paths = vec![path, std::path::PathBuf::from("/d/c.txt")];
     let mut m = Dialog::confirm_delete_many(&paths, true, BinLack::None);
-    assert_eq!(m.key(Key::Enter), Outcome::Delete { paths, erase: true });
+    assert_eq!(
+        m.key(Key::Edit(EditKey::Insert("y".into()))),
+        Outcome::Delete { paths, erase: true }
+    );
 }
 
 #[test]
@@ -387,7 +400,11 @@ fn confirm_empty_bin_names_one_item_or_counts_them() {
     let mut many = Dialog::confirm_empty_bin(3, Some("a"));
     assert_eq!(many.title, "Confirm Multiple File Delete");
     assert_eq!(many.text, "Are you sure you want to delete these 3 items?");
-    assert_eq!(many.key(Key::Enter), Outcome::EmptyBin);
+    assert_eq!(many.key(Key::Enter), Outcome::Close, "Enter keeps the bin");
+    assert_eq!(
+        many.key(Key::Edit(EditKey::Insert("y".into()))),
+        Outcome::EmptyBin
+    );
 }
 
 #[test]
