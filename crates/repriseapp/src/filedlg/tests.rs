@@ -1419,3 +1419,138 @@ fn the_folder_shown_renamed_lists_under_its_new_name() {
     assert_eq!(shown, new);
     assert!(has(&dlg, "inside"));
 }
+
+fn press(sym: u32, ctrl: bool, shift: bool, utf8: Option<&str>) -> Event {
+    Event::Key(crate::KeyInput {
+        sym,
+        utf8: utf8.map(str::to_string),
+        mods: crate::Mods {
+            ctrl,
+            shift,
+            alt: false,
+        },
+        edit: reprisekit::textedit::key_for(sym, ctrl, shift, utf8),
+    })
+}
+
+/// [`Host::event`] with the test's renderer and theme, in a client its opening size.
+fn send(h: &mut Host, dlg: &mut FileDlg, ev: &Event) -> Step {
+    let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
+    let theme = Theme::default();
+    h.event(dlg, ev, &text, &theme, CLIENT, &theme.metrics)
+}
+
+#[test]
+fn new_folder_rename_and_delete_work_on_the_folder_shown() {
+    use reprisekit::textedit::keysym;
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("docs");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "").unwrap();
+    reprisefs::trash::set_mount_table(Some(PathBuf::from("/dev/null")));
+    reprisefs::trash::set_home_trash(Some(t.path().join("trash")));
+    let mut h = host_in(&dir);
+    let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+    let mut dlg = open_dlg(&mut h);
+    h.thumbs_on(&crate::Waker::noop());
+    h.ensure_listed(&mut dlg, &mut icons, &|_: &Item| true);
+
+    send(&mut h, &mut dlg, &press('N' as u32, true, true, Some("N")));
+    assert!(
+        dir.join("New Folder").is_dir(),
+        "Ctrl+Shift+N makes the folder"
+    );
+    until(&mut h, &mut dlg, &mut icons, |d| {
+        d.focused_edit().is_some_and(|e| e.text == "New Folder")
+    });
+    for ch in ["P", "a", "p", "e", "r", "s"] {
+        send(
+            &mut h,
+            &mut dlg,
+            &press(ch.chars().next().unwrap() as u32, false, false, Some(ch)),
+        );
+    }
+    send(&mut h, &mut dlg, &press(keysym::RETURN, false, false, None));
+    assert!(dir.join("Papers").is_dir(), "Enter renames it");
+    until(&mut h, &mut dlg, &mut icons, |d| {
+        d.selected().iter().map(|e| e.name.as_str()).eq(["Papers"])
+    });
+
+    send(&mut h, &mut dlg, &press(keysym::DELETE, false, false, None));
+    assert!(!dir.join("Papers").exists(), "Delete moves it out");
+    assert!(
+        t.path().join("trash/files/Papers").is_dir(),
+        "into the Recycle Bin"
+    );
+    until(&mut h, &mut dlg, &mut icons, |d| !has(d, "Papers"));
+
+    assert!(dlg.select_named("a.txt"));
+    send(&mut h, &mut dlg, &press(keysym::F2, false, false, None));
+    send(&mut h, &mut dlg, &press(keysym::END, false, false, None));
+    send(
+        &mut h,
+        &mut dlg,
+        &press('/' as u32, false, false, Some("/")),
+    );
+    send(&mut h, &mut dlg, &press(keysym::RETURN, false, false, None));
+    assert_eq!(
+        dlg.focused_edit().map(|e| e.text.as_str()),
+        Some("a.txt/"),
+        "a refused name comes back in the box"
+    );
+    assert!(dir.join("a.txt").is_file());
+    reprisefs::trash::set_home_trash(None);
+    reprisefs::trash::set_mount_table(None);
+}
+
+#[test]
+fn f5_and_ctrl_r_read_the_folder_again_and_a_right_press_opens_the_list_menu() {
+    use reprisekit::textedit::keysym;
+    let t = tempfile::tempdir().unwrap();
+    std::fs::write(t.path().join("a.txt"), "").unwrap();
+    let mut h = host_in(t.path());
+    let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+    let mut dlg = open_dlg(&mut h);
+    h.ensure_listed(&mut dlg, &mut icons, &|_: &Item| true);
+    std::fs::write(t.path().join("b.txt"), "").unwrap();
+    for key in [
+        press(keysym::F5, false, false, None),
+        press('r' as u32, true, false, Some("r")),
+    ] {
+        send(&mut h, &mut dlg, &key);
+        assert!(h.reading.is_some(), "{key:?} reads the folder again");
+        for _ in 0..1000 {
+            h.take_thumbs(&mut dlg, &mut icons);
+            if h.reading.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(has(&dlg, "b.txt"));
+    }
+
+    let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
+    dlg.draw(
+        &mut Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32),
+        &text,
+        &Theme::default().paint(),
+        Rect::new(0, 0, CLIENT.0, CLIENT.1),
+        11,
+    );
+    let (x, y) = (300, 300);
+    let right = Event::Pointer(PointerInput::Press {
+        x,
+        y,
+        button: crate::BTN_RIGHT,
+        time: 0,
+        mods: crate::Mods::default(),
+    });
+    assert!(matches!(send(&mut h, &mut dlg, &right), Step::Redraw));
+    let popped = reprisekit::controls::filedlg::Popped {
+        dlg: &mut dlg,
+        text: std::rc::Rc::new(text),
+        px: 11,
+    };
+    use reprisekit::controls::hosted::Hosted;
+    assert_eq!(popped.spots().len(), 1, "the background's menu is up");
+}

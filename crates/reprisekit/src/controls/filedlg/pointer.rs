@@ -41,7 +41,18 @@ fn combo_click(combo: &mut Combo, h: combo::Hit) {
 impl FileDlg {
     pub fn hit(&self, text: &TextRenderer, px: u32, r: Rect, x: i32, y: i32) -> Option<Hit> {
         let lay_cm = self.drawn.0.get();
+        let levels = self.context_levels(text, px, r, lay_cm.text);
+        if let Some(h) = self.context_hit(&levels, x, y) {
+            return Some(h);
+        }
         let lay = self.layout(text, px, r, &lay_cm);
+        if let Some((i, _)) = &self.shell.edit
+            && shellview::rename_rect(&self.shell, &lay.shell, *i, text, px)
+                .is_some_and(|b| b.contains(x, y))
+        {
+            let at = shellview::edit_index_at(&self.shell, &lay.shell, x, y, text, px);
+            return Some(Hit::Rename(at.unwrap_or(0)));
+        }
         if let Some((p, menu)) = &lay.views {
             return menu.hit(x - p.x, y - p.y).map(Hit::ViewsItem);
         }
@@ -180,6 +191,17 @@ impl FileDlg {
     }
 
     fn click_inner(&mut self, r: Rect, hit: Option<Hit>, mods: Mods, cm: &ControlMetrics) -> Event {
+        if self.context.is_some() {
+            return self.context_click(hit);
+        }
+        if let Some((_, ed)) = &mut self.shell.edit {
+            // A press outside the rename box closes it on the name typed, and goes no further.
+            let Some(Hit::Rename(at)) = hit else {
+                return self.commit_rename();
+            };
+            ed.set_selection(at, at);
+            return Event::Redraw;
+        }
         if self.views_open {
             self.views_open = false;
             return match hit {
@@ -227,7 +249,7 @@ impl FileDlg {
                 let lay = self.shell_layout(r, cm);
                 self.shell_click(h, &lay, mods)
             }
-            Some(Hit::ViewsItem(_)) => Event::None,
+            Some(Hit::ViewsItem(_) | Hit::Menu { .. } | Hit::Rename(_)) => Event::None,
             Some(Hit::Extra(h)) => {
                 self.focus = Focus::Extra;
                 let Some((f, _)) = &mut self.extra else {
@@ -317,7 +339,8 @@ impl FileDlg {
     /// A double click on an entry enters a folder, or accepts a file
     /// (outside folder mode); anywhere else it is one more click.
     pub fn double_click(&mut self, r: Rect, hit: Option<Hit>) -> Event {
-        let Some(Hit::Shell(shellview::Hit::Entry(i))) = hit else {
+        let busy = self.context.is_some() || self.shell.edit.is_some();
+        let (false, Some(Hit::Shell(shellview::Hit::Entry(i)))) = (busy, hit) else {
             return self.click(r, hit, Mods::default());
         };
         let Some(entry) = self.shell.entries.get(i) else {
@@ -347,7 +370,7 @@ impl FileDlg {
 
     fn wheel_inner(&mut self, r: Rect, hit: Option<Hit>, rows: i32) -> Event {
         let redraw = |moved: bool| if moved { Event::Redraw } else { Event::None };
-        if self.views_open {
+        if self.views_open || self.context.is_some() {
             return Event::None;
         }
         for c in [&mut self.lookin, &mut self.filetype] {
@@ -422,6 +445,42 @@ impl FileDlg {
         }
     }
 
+    /// A right press at `at` on `hit`: on an entry it selects the entry unless it is selected
+    /// already and opens the entries' menu, on the list's background it clears the selection and
+    /// opens the background's, on File name the field takes the focus for the host's edit menu.
+    /// An open rename box closes on the name typed, an open menu closes first.
+    pub fn right_click(&mut self, r: Rect, hit: Option<Hit>, at: (i32, i32)) -> Event {
+        self.context = None;
+        if self.shell.edit.is_some() {
+            return match hit {
+                Some(Hit::Rename(_)) => Event::None,
+                _ => self.commit_rename(),
+            };
+        }
+        match hit {
+            Some(Hit::Shell(shellview::Hit::Entry(i))) if i < self.shell.entries.len() => {
+                self.focus = Focus::Shell;
+                if self.shell.selection.is(i) {
+                    self.shell.selection.focus = Some(i);
+                } else {
+                    self.shell.selection.set_only(Some(i));
+                    self.sync_name_field();
+                }
+                self.open_context(true, at, false);
+                Event::Redraw
+            }
+            Some(Hit::Shell(shellview::Hit::Background)) => {
+                self.focus = Focus::Shell;
+                self.shell.selection.clear();
+                self.sync_name_field();
+                self.open_context(false, at, false);
+                Event::Redraw
+            }
+            Some(Hit::FileName) => self.click(r, hit, Mods::default()),
+            _ => Event::None,
+        }
+    }
+
     /// (`x`, `y`) in `r` as the extra rows' form takes it.
     fn extra_point(&self, r: Rect, x: i32, y: i32) -> (i32, i32) {
         let (ox, oy) = self.extra_origin(r);
@@ -447,6 +506,9 @@ impl FileDlg {
     /// [`FileDlg::motion`] for a host that hit-tested the point already.
     /// An open combo's highlight follows the pointer down its list.
     pub fn hover(&mut self, hit: Option<Hit>) -> Event {
+        if self.context.is_some() {
+            return self.context_hover(hit);
+        }
         let followed = match hit {
             Some(Hit::LookIn(combo::Hit::Row(i))) => self.lookin.hover(i),
             Some(Hit::FileType(combo::Hit::Row(i))) => self.filetype.hover(i),

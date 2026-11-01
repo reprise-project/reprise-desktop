@@ -127,8 +127,6 @@ impl Notepad {
         match out {
             FileEvent::None => Reply::none(),
             FileEvent::Redraw => Reply::redraw(),
-            // New Folder isn't wired up: naming one needs a dialog that isn't built.
-            FileEvent::CreateFolder(_) => Reply::none(),
             FileEvent::Accept(names) => match names.first() {
                 Some(name) => self.open_accept(name, icons),
                 None => Reply::none(),
@@ -141,6 +139,10 @@ impl Notepad {
             | FileEvent::FilterChanged(_)
             | FileEvent::Wildcard { .. }
             | FileEvent::NeedPlace(_)
+            | FileEvent::CreateFolder(_)
+            | FileEvent::Refresh
+            | FileEvent::Rename { .. }
+            | FileEvent::Delete(_)
             | FileEvent::Resize => Reply::none(),
         }
     }
@@ -219,7 +221,6 @@ impl Notepad {
         match out {
             FileEvent::None => Reply::none(),
             FileEvent::Redraw => Reply::redraw(),
-            FileEvent::CreateFolder(_) => Reply::none(),
             FileEvent::Accept(names) => match names.first() {
                 Some(name) => self.saveas_accept(name, icons),
                 None => Reply::none(),
@@ -233,6 +234,10 @@ impl Notepad {
             | FileEvent::FilterChanged(_)
             | FileEvent::Wildcard { .. }
             | FileEvent::NeedPlace(_)
+            | FileEvent::CreateFolder(_)
+            | FileEvent::Refresh
+            | FileEvent::Rename { .. }
+            | FileEvent::Delete(_)
             | FileEvent::Resize => Reply::none(),
         }
     }

@@ -17,7 +17,7 @@ pub use layout::{
     ARROW_RIGHT_INSET, BULLET_X, CHECK_X, ContextBitmaps, MenuLayout, MenuStyle, place_popup,
     place_submenu, place_submenu_inset, relist, submenu_max_rows,
 };
-pub use popup::{Level, MenuAction, MenuCtx, MenuKey, MenuTree, PopupMenu};
+pub use popup::{Level, MenuAction, MenuCtx, MenuKey, MenuTree, PopupMenu, submenu_anchor};
 pub use shadow::{
     draw_menu_shadow, draw_shadow, draw_shadow_above, draws_own_shadow, level_shadow, shadow_reach,
 };
@@ -139,7 +139,8 @@ impl MenuItem {
         ch.and_then(|c| c.to_lowercase().next())
     }
 
-    fn selectable(&self) -> bool {
+    /// An enabled entry: a row a key or a click can pick.
+    pub fn selectable(&self) -> bool {
         matches!(self, MenuItem::Entry { enabled: true, .. })
     }
 }

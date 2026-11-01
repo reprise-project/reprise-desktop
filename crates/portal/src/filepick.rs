@@ -239,7 +239,7 @@ impl App for Pick {
             },
             Step::Redraw => Reply::redraw(),
             Step::Resize => Reply::resize(),
-            Step::None | Step::Out(FileEvent::CreateFolder(_)) => Reply::none(),
+            Step::None => Reply::none(),
             Step::Out(FileEvent::NeedListing(id)) => {
                 self.list(id, ctx);
                 Reply::redraw()
