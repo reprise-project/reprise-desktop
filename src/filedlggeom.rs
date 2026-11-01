@@ -108,10 +108,7 @@ pub fn opening(
 ) -> Opening {
     let (w, h) = g.size_at(text_size);
     let bar = Rect::new(g.x, g.y, w + pad.0, caption);
-    let on = screens
-        .outputs
-        .iter()
-        .find(|(b, _)| b.width > 0 && bar.intersects(*b));
+    let on = crate::window::landing(bar, &screens.outputs);
     let area = on.map_or(screens.fallback, |(_, a)| *a);
     let most = (area.width - pad.0, area.height - pad.1);
     let client = (w.min(most.0).max(min.0), h.min(most.1).max(min.1));

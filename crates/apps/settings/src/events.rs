@@ -73,6 +73,15 @@ impl SettingsApp {
                     });
                     Reply::none()
                 }
+                pages::FORGET_FRAMES => {
+                    // Off the loop: the call waits on the compositor.
+                    std::thread::spawn(|| {
+                        if let Err(e) = reprisebus::tray::forget_window_frames() {
+                            log::warn!("Forget Positions: {e}");
+                        }
+                    });
+                    Reply::none()
+                }
                 pages::ADD => {
                     self.open_add(Pick::Autostart);
                     Reply::redraw_all()

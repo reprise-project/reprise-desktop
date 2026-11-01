@@ -113,7 +113,13 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   kept on top and the shaken window's own dialogs stay. On by default under
   Glass (`[windows] shake`, or the Windows page of Reprise Settings).
 - **Window memory.** A program opens where its last window closed: same
-  screen, same size, maximized if it was.
+  screen, same size, maximized if it was. A second window of it cascades
+  from the first. Docked and undocked layouts each keep their own places
+  (per set of connected screens, by make, model and serial), in
+  `$XDG_STATE_HOME/reprise/windows.toml`. A place left off every screen opens
+  at the default place instead. Window rules that set a size or position
+  win. Forget Positions on the Windows page of Reprise Settings drops them
+  all (`[windows] remember`).
 - **Window rules** in the config match windows by app id and title, with
   globs, and pin their size, position, screen, desktop, state, always-on-top
   or sticky flag. `tab_group = "name"` puts every window its rules name the

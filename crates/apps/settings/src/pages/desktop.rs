@@ -1,7 +1,7 @@
 //! Taskbar, Launcher, Switcher, Desktops and Windows.
 
 use super::{Area, GX, TRAY_CUSTOMIZE, X, button, choice, edit, group, spin};
-use reprisekit::classic::widgets::{BUTTON_W, LINE_H};
+use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::raster::Rect;
 
@@ -59,7 +59,7 @@ pub fn windows(a: Area) -> Form {
             gw,
             "Empty for the built-in six, e.g. 1|1 2|1 1:2|1:2",
         ),
-        group(a, "tabs_group", 228, 96, "Tabs and Placement"),
+        group(a, "tabs_group", 228, 126, "Tabs and Placement"),
         Item::check(
             "window_tabs",
             GX,
@@ -72,15 +72,27 @@ pub fn windows(a: Area) -> Form {
             274,
             "Re&member where each program's window was closed",
         ),
+        Item::button(
+            FORGET_FRAMES,
+            Rect::new(GX, 296, 110, BUTTON_H),
+            "&Forget Positions",
+            true,
+            false,
+        )
+        .under_check(),
         Item::check(
             "window_shake",
             GX,
-            298,
+            328,
             "&Shake a window by its title bar to minimize the others",
         ),
     ]);
     Form::new(items)
 }
+
+/// The Windows page's Forget Positions under the remember check: the compositor drops every
+/// window place it kept, for every set of screens.
+pub const FORGET_FRAMES: &str = "forget_window_frames";
 
 /// The Windows page controls that grey with drag snapping off.
 pub(super) const DRAG_SNAP_CONTROLS: [&str; 4] = [
