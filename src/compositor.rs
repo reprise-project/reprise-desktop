@@ -690,7 +690,7 @@ impl State {
             water: crate::waterview::WaterCtx::new(),
             reblur: None,
             owed_reblur: None,
-            wm: crate::placement::Wm::from_persisted(&persisted, session),
+            wm: crate::placement::Wm::new(session),
             tabs: Default::default(),
             dialogs: Default::default(),
             caret: Default::default(),

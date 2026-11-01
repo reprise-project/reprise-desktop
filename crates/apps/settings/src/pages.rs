@@ -29,7 +29,7 @@ mod system;
 
 pub use appearance::{effects, fonts_and_icons, night_light};
 pub use bind::{fill_layouts, follow, layout_selection, read_one, write, write_form, write_forms};
-pub use desktop::{desktops, launcher, switcher, taskbar, windows};
+pub use desktop::{FORGET_FRAMES, desktops, launcher, switcher, taskbar, windows};
 pub use input::{accessibility, keyboard, mouse, pointers, preview_size};
 pub use lists::{
     draw_list, fill_list, fill_locations, fill_shortcuts, fit_list_columns, fit_location_columns,

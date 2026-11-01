@@ -1,4 +1,4 @@
-//! The compositor's own tray calls on the session bus: Customize..., Identify, screen saver Preview, tablet pads, the window icon a sound program borrows, and reprise-power's critical battery turn-off.
+//! The compositor's own tray calls on the session bus: Customize..., Identify, screen saver Preview, Forget Positions, tablet pads, the window icon a sound program borrows, and reprise-power's critical battery turn-off.
 
 pub const NAME: &str = "org.reprise.Tray";
 pub const PATH: &str = "/org/reprise/Tray";
@@ -71,6 +71,13 @@ pub fn tablet_pads() -> zbus::Result<Vec<Pad>> {
 pub fn identify(outputs: &[String]) -> zbus::Result<()> {
     let conn = crate::session()?;
     crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "Identify", &(outputs,)))?;
+    Ok(())
+}
+
+/// Ask the compositor to forget where every program's windows were closed, on every set of screens. Blocks for at most [`crate::METHOD_TIMEOUT`].
+pub fn forget_window_frames() -> zbus::Result<()> {
+    let conn = crate::session()?;
+    crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "ForgetWindowFrames", &()))?;
     Ok(())
 }
 

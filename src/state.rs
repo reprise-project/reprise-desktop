@@ -31,8 +31,6 @@ pub struct Persisted {
     /// A place icon's label after an F2 rename, by its `system_icons` name; absent means the
     /// default label.
     pub system_icon_names: BTreeMap<String, String>,
-    /// Each app's last normal frame, by app id (`placement`).
-    pub window_geometry: BTreeMap<String, crate::windowrules::Remembered>,
     /// Recycle Bin Properties as an older session kept it here: moved once into `[recycle_bin]` in
     /// `config.toml`, then dropped (`dialogview::setup`).
     pub bin: Option<crate::binprops::OldBinSettings>,
@@ -160,25 +158,6 @@ pub fn save_desktop(auto_arrange: bool, positions: &BTreeMap<String, (i32, i32)>
     let path = path();
     let keys = desktop_keys(auto_arrange, positions);
     run_in_order(move || patch(&path, keys));
-}
-
-/// Queue a write of `window_geometry` into the file, leaving every other key as it is.
-pub fn save_window_geometry(geometry: &BTreeMap<String, crate::windowrules::Remembered>) {
-    let path = path();
-    let keys = window_geometry_keys(geometry);
-    run_in_order(move || patch(&path, keys));
-}
-
-fn window_geometry_keys(
-    geometry: &BTreeMap<String, crate::windowrules::Remembered>,
-) -> toml::Table {
-    match toml::Table::try_from(geometry) {
-        Ok(t) => toml::Table::from_iter([("window_geometry".to_string(), t.into())]),
-        Err(e) => {
-            log::warn!("state: could not serialize the window geometry: {e}");
-            toml::Table::new()
-        }
-    }
 }
 
 /// Queue a write of the apps and tab groups the session ended with (`session`, `session_tabs`),
@@ -495,37 +474,6 @@ mod tests {
             ]),
             "a cell already kept under the new label stays"
         );
-    }
-
-    #[test]
-    fn a_window_geometry_save_round_trips_and_keeps_the_desktop() {
-        let dir = scratch("geometry");
-        let path = dir.join("state.toml");
-        std::fs::write(&path, "auto_arrange = true\n").unwrap();
-        let geometry = BTreeMap::from([(
-            "org.example.App".to_string(),
-            crate::windowrules::Remembered {
-                output: "DP-1".into(),
-                x: -4,
-                y: 30,
-                width: 640,
-                height: 480,
-                maximized: true,
-                text_size: 100,
-            },
-        )]);
-        let p = path.clone();
-        let g = geometry.clone();
-        run_in_order(move || patch(&p, window_geometry_keys(&g)));
-        flush();
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            text.contains("[window_geometry.\"org.example.App\"]"),
-            "{text}"
-        );
-        let back = load_from(&path);
-        assert_eq!(back.window_geometry, geometry);
-        assert!(back.auto_arrange);
     }
 
     #[test]
