@@ -229,6 +229,11 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   size and stays inside the screen; a place whose title bar is off every
   screen opens where the dialog would have opened. A maximized dialog leaves
   its restored size.
+- **File dialogs follow their folder.** A file or folder made, deleted or
+  renamed in the folder an Open or Save As dialog shows lists at once, the
+  selection and scroll staying where their entries still are. The folder
+  shown, renamed or moved, is followed; deleted, the dialog moves to the
+  nearest folder above it.
 - **Programs and scripts.** A file with its Executable box ticked
   (Properties) that holds a script (`#!`) or a binary runs when you open it,
   in its own folder, here and in Explorer. The first time you open a

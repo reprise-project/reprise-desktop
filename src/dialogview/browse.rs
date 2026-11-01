@@ -3,6 +3,19 @@
 use std::collections::BTreeSet;
 
 use crate::compositor::State;
+
+/// The ping every Browse dialog's folder watch wakes the loop with.
+pub(super) fn watch_on_loop(state: &mut State) {
+    let (ping, source) = match smithay::reexports::calloop::ping::make_ping() {
+        Ok(p) => p,
+        Err(e) => return log::warn!("browse: no folder watch ping: {e}"),
+    };
+    let added = (state.handle).insert_source(source, |_, _, state| state.pickers_changed());
+    match added {
+        Ok(_) => state.dialogs.picker_wake = Some(ping),
+        Err(e) => log::warn!("browse: {}", e.error),
+    }
+}
 use crate::dialog::{self, Dialog, DialogLayout, Outcome, Placement};
 
 impl State {
@@ -63,7 +76,13 @@ impl State {
     }
 
     /// Opens Browse dialog `d` over the top dialog, moved to `kept` once it shows.
-    fn open_browse(&mut self, d: Dialog, kept: Option<(i32, i32)>) {
+    fn open_browse(&mut self, mut d: Dialog, kept: Option<(i32, i32)>) {
+        if let (Some(ping), Some(p)) = (self.dialogs.picker_wake.clone(), d.picker_mut()) {
+            match reprisefs::folderwatch::Watch::new(move || ping.ping()) {
+                Ok(w) => p.watch_with(w),
+                Err(e) => log::warn!("browse: no folder watch: {e}"),
+            }
+        }
         let before = self.dialogs.views.len();
         self.open_dialog_over(d);
         let top = self.dialogs.views.len();
@@ -99,6 +118,20 @@ impl State {
         for (id, (generation, px, paths)) in pictures {
             let to_loop = self.fsjobs.sender();
             self.pickthumbs.want(to_loop, id, generation, px, paths);
+        }
+    }
+
+    /// Lists each Browse dialog again whose folder watch saw an entry change, or follows its
+    /// folder where it went.
+    pub(crate) fn pickers_changed(&mut self) {
+        let mut any = false;
+        for v in &mut self.dialogs.views {
+            if let Some(p) = v.dialog.picker_mut() {
+                any |= p.watch_due();
+            }
+        }
+        if any {
+            self.run_picker_requests();
         }
     }
 

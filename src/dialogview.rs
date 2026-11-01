@@ -44,6 +44,8 @@ pub struct Dialogs {
     /// The top dialog has the keyboard until a window takes the focus.
     pub active: bool,
     pub run_history: Vec<String>,
+    /// Wakes the loop once a Browse dialog's folder watch saw a change ([`State::pickers_changed`]).
+    pub picker_wake: Option<smithay::reexports::calloop::ping::Ping>,
 }
 
 pub struct DialogView {
@@ -133,6 +135,7 @@ pub fn setup(state: &mut State) {
         crate::state::drop_key("bin");
     }
     crate::fsjobs::setup(state);
+    browse::watch_on_loop(state);
 }
 
 /// Hide the underlines of every dialog but the one at stack index `keyboard`, which has the keyboard.

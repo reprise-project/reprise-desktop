@@ -1,12 +1,11 @@
-//! The folder watch: inotify on the folder the view shows, so a file written by something else
+//! The folder watch: inotify on the folder a view shows, so a file written by something else
 //! appears without an F5.
 //!
-//! The thread owns the `Inotify`; the window keeps the [`Watches`] handle, so the watch moves with
+//! The thread owns the `Inotify`; the view keeps the [`Watches`] handle, so the watch moves with
 //! the view while the thread sits in its read. The thread ends, freeing its inotify instance, once
 //! the [`Watch`] drops.
 
 use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask, Watches};
-use repriseapp::Waker;
 use reprisebus::mutex::lock;
 use std::ffi::OsString;
 use std::io;
@@ -39,7 +38,7 @@ fn mask() -> WatchMask {
         | WatchMask::CLOSE_WRITE
 }
 
-/// What the thread and the window share: the watches that count only events naming one entry (with
+/// What the thread and the view share: the watches that count only events naming one entry (with
 /// that entry), and the folder [`Watch::watch`] shows.
 #[derive(Default)]
 struct Shared {
@@ -136,12 +135,16 @@ pub struct Watch {
     wd: Vec<WatchDescriptor>,
     shared: Arc<Mutex<Shared>>,
     changed: Arc<AtomicBool>,
-    wake: Waker,
+    wake: Wake,
 }
 
+/// What the watch thread calls once a change has settled: the host wakes its loop.
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
 impl Watch {
-    /// The inotify instance and the thread that reads it.
-    pub fn new(wake: Waker) -> io::Result<Watch> {
+    /// The inotify instance and the thread that reads it; `wake` runs on that thread.
+    pub fn new(wake: impl Fn() + Send + Sync + 'static) -> io::Result<Watch> {
+        let wake: Wake = Arc::new(wake);
         let mut inotify = Inotify::init()?;
         let watches = inotify.watches();
         let changed = Arc::new(AtomicBool::new(false));
@@ -189,7 +192,7 @@ impl Watch {
                         return;
                     };
                     flag.store(true, Ordering::SeqCst);
-                    waker.wake();
+                    waker();
                     last_wake = Some(Instant::now());
                 }
             })?;
@@ -207,7 +210,7 @@ impl Watch {
     }
 
     /// Watch `dir` instead of whatever was being watched, and notice it or a folder above it
-    /// leaving ([`Watch::take_gone`]); a `dir` already gone (the window deleted it itself) is gone
+    /// leaving ([`Watch::take_gone`]); a `dir` already gone (the view deleted it itself) is gone
     /// at once, on a wake of its own. Each level up costs one inotify watch.
     pub fn watch(&mut self, dir: &Path) {
         self.clear();
@@ -225,7 +228,7 @@ impl Watch {
                         leaving: None,
                         gone: Some(dir.to_path_buf()),
                     });
-                    self.wake.wake();
+                    (self.wake)();
                 }
                 return;
             }
@@ -284,7 +287,7 @@ impl Watch {
         }
     }
 
-    /// Stop watching anything (Computer and the other places that are not a folder on disk).
+    /// Stop watching anything.
     pub fn clear(&mut self) {
         *self.shared() = Shared::default();
         for wd in self.wd.drain(..) {
@@ -351,10 +354,10 @@ mod tests {
     use super::*;
 
     /// The thread's half of the coalescing: however many events it sees, it sets one flag, and the
-    /// window takes it exactly once.
+    /// view takes it exactly once.
     #[test]
     fn the_changed_flag_is_set_once_and_taken_once() {
-        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let mut watch = Watch::new(|| {}).expect("inotify");
         assert!(!watch.take_changed());
         let flag = watch.flag();
         flag.store(true, Ordering::SeqCst);
@@ -375,7 +378,7 @@ mod tests {
     /// that removal as an event on the fd.
     #[test]
     fn rewatching_a_folder_is_not_a_change() {
-        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let mut watch = Watch::new(|| {}).expect("inotify");
         let dir = tempfile::tempdir().expect("tempdir");
         watch.watch(dir.path());
         watch.watch(dir.path());
@@ -397,7 +400,7 @@ mod tests {
     #[test]
     fn writes_to_an_open_file_wait_for_its_close() {
         use std::io::Write;
-        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let mut watch = Watch::new(|| {}).expect("inotify");
         let dir = tempfile::tempdir().expect("tempdir");
         watch.watch(dir.path());
         let mut f = std::fs::File::create(dir.path().join("big.bin")).expect("create");
@@ -416,7 +419,7 @@ mod tests {
     /// A folder watched for one entry wakes for that entry only.
     #[test]
     fn a_named_watch_counts_only_its_entry() {
-        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let mut watch = Watch::new(|| {}).expect("inotify");
         let dir = tempfile::tempdir().expect("tempdir");
         watch.watch_all(&[(dir.path().to_path_buf(), Some("Trash".into()))]);
         std::fs::write(dir.path().join("recently-used.xbel"), "x").expect("write");
@@ -428,7 +431,7 @@ mod tests {
         assert!(watch.take_changed(), "the named entry is");
     }
 
-    /// Each window's watch is an inotify instance, and a user gets max_user_instances of them.
+    /// Each view's watch is an inotify instance, and a user gets max_user_instances of them.
     #[test]
     fn a_dropped_watch_frees_its_inotify_instance() {
         let limit: usize = std::fs::read_to_string("/proc/sys/fs/inotify/max_user_instances")
@@ -437,14 +440,14 @@ mod tests {
             .unwrap_or(128);
         let dir = tempfile::tempdir().expect("tempdir");
         for _ in 0..limit + 1 {
-            let mut watch = Watch::new(Waker::noop()).expect("inotify");
+            let mut watch = Watch::new(|| {}).expect("inotify");
             watch.watch(dir.path());
         }
     }
 
     #[test]
     fn a_folder_that_is_not_there_is_logged_not_fatal() {
-        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let mut watch = Watch::new(|| {}).expect("inotify");
         watch.watch(Path::new("/definitely/not/a/folder"));
         assert!(watch.wd.is_empty());
         let dir = tempfile::tempdir().expect("tempdir");
@@ -460,7 +463,7 @@ mod tests {
 
     #[test]
     fn a_folder_renamed_in_place_is_gone_to_its_new_name() {
-        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let mut watch = Watch::new(|| {}).expect("inotify");
         let top = tempfile::tempdir().expect("tempdir");
         let (old, new) = (top.path().join("old"), top.path().join("new"));
         std::fs::create_dir(&old).expect("mkdir");
@@ -486,7 +489,7 @@ mod tests {
 
     #[test]
     fn a_folder_moved_elsewhere_or_deleted_is_gone_from_its_old_path() {
-        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let mut watch = Watch::new(|| {}).expect("inotify");
         let top = tempfile::tempdir().expect("tempdir");
         let shown = top.path().join("a").join("shown");
         std::fs::create_dir_all(&shown).expect("mkdir");
@@ -509,7 +512,7 @@ mod tests {
 
     #[test]
     fn a_folder_already_gone_when_watched_is_gone_at_once() {
-        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let mut watch = Watch::new(|| {}).expect("inotify");
         let top = tempfile::tempdir().expect("tempdir");
         let shown = top.path().join("shown");
         watch.watch(&shown);
@@ -522,7 +525,7 @@ mod tests {
         let top = tempfile::tempdir().expect("tempdir");
         let shown = top.path().join("a").join("b").join("shown");
         std::fs::create_dir_all(&shown).expect("mkdir");
-        let mut watch = Watch::new(Waker::noop()).expect("inotify");
+        let mut watch = Watch::new(|| {}).expect("inotify");
         watch.watch(&shown);
         (top, watch, shown)
     }

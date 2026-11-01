@@ -13,6 +13,7 @@ pub mod extract;
 pub mod fileclip;
 pub mod flatpak;
 pub mod folders;
+pub mod folderwatch;
 pub mod gvfsmeta;
 pub mod hidden;
 pub mod history;

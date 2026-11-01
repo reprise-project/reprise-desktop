@@ -404,6 +404,24 @@ pub struct FileDlg {
     text: TextUnits,
 }
 
+/// [`FileDlg::kept_view`]: the view a relist of the folder shown carries over.
+struct KeptView {
+    selected: Vec<String>,
+    focus: Option<String>,
+    anchor: Option<String>,
+    edit: Option<(String, TextEdit)>,
+    scroll: (i32, usize),
+    thumbs: Vec<KeptThumb>,
+}
+
+/// A thumbnail with the Tiles lines it brought, by its entry's name and stamp.
+struct KeptThumb {
+    name: String,
+    mtime: Option<i64>,
+    thumb: Canvas,
+    detail: Vec<String>,
+}
+
 /// The sizes a `FileDlg` was last drawn with, whether its look lights
 /// the pointer's part, and the shell view's last layout. Not dialog state: it compares equal and
 /// debug-prints as nothing.
@@ -500,9 +518,11 @@ impl FileDlg {
     }
 
     /// Replaces the listing, pushing the outgoing folder onto history (onto
-    /// forward after Back; nothing for a relist) and resetting selection
-    /// and scroll.
+    /// forward after Back) and resetting selection and scroll. A relist of the
+    /// folder shown keeps them instead, by name ([`FileDlg::kept_view`]).
     pub fn set_listing(&mut self, folder: Folder) {
+        let kept = (self.folder == Some(folder.id) && !self.shell.entries.is_empty())
+            .then(|| self.kept_view());
         if let Some(prev) = self.folder
             && prev != folder.id
         {
@@ -528,18 +548,81 @@ impl FileDlg {
         self.folder = Some(folder.id);
         self.shell.entries = folder.entries;
         shellview::sort(&mut self.shell);
-        // Folder mode starts with nothing selected, so Accept picks the
-        // folder just opened rather than its first subfolder.
-        self.shell.selection.set_only(
-            if self.shell.entries.is_empty() || self.fields.mode == DlgMode::Folder {
-                None
-            } else {
-                Some(0)
-            },
-        );
-        self.shell.left = 0;
-        self.shell.top = 0;
+        match kept {
+            Some(kept) => self.restore_view(kept),
+            None => {
+                // Folder mode starts with nothing selected, so Accept picks the
+                // folder just opened rather than its first subfolder.
+                self.shell.selection.set_only(
+                    if self.shell.entries.is_empty() || self.fields.mode == DlgMode::Folder {
+                        None
+                    } else {
+                        Some(0)
+                    },
+                );
+                self.shell.edit = None;
+                self.shell.left = 0;
+                self.shell.top = 0;
+            }
+        }
         self.sync_toolbar();
+    }
+
+    /// What a relist keeps of the view, by entry name: the selection, focus and anchor, a rename
+    /// in progress, the scroll, and each picture's thumbnail until its new one arrives.
+    fn kept_view(&self) -> KeptView {
+        let sv = &self.shell;
+        let name = |i: Option<usize>| Some(sv.entries.get(i?)?.name.clone());
+        KeptView {
+            selected: (sv.selection.set.iter())
+                .filter_map(|&i| name(Some(i)))
+                .collect(),
+            focus: name(sv.selection.focus),
+            anchor: name(sv.selection.anchor),
+            edit: (sv.edit.as_ref()).and_then(|(i, ed)| Some((name(Some(*i))?, ed.clone()))),
+            scroll: (sv.left, sv.top),
+            thumbs: (sv.entries.iter())
+                .filter_map(|e| {
+                    Some(KeptThumb {
+                        name: e.name.clone(),
+                        mtime: e.mtime,
+                        thumb: e.thumb.clone()?,
+                        detail: e.detail.clone(),
+                    })
+                })
+                .collect(),
+        }
+    }
+
+    fn restore_view(&mut self, kept: KeptView) {
+        let sv = &mut self.shell;
+        let at = |name: &str| sv.entries.iter().position(|e| e.name == name);
+        let selection = crate::selection::Selection {
+            set: kept.selected.iter().filter_map(|n| at(n)).collect(),
+            focus: kept.focus.as_deref().and_then(at),
+            anchor: kept.anchor.as_deref().and_then(at),
+        };
+        sv.edit = kept.edit.and_then(|(n, ed)| Some((at(&n)?, ed)));
+        let lost = selection.set.len() < kept.selected.len();
+        sv.selection = selection;
+        for e in &mut sv.entries {
+            if e.thumb.is_none()
+                && let Some(k) =
+                    (kept.thumbs.iter()).find(|k| k.name == e.name && k.mtime == e.mtime)
+            {
+                e.thumb = Some(k.thumb.clone());
+                e.detail = k.detail.clone();
+            }
+        }
+        (sv.left, sv.top) = kept.scroll;
+        let cm = self.drawn.0.get();
+        let lay = self.shell_layout(Rect::new(0, 0, self.size.0, self.size.1), &cm);
+        shellview::scroll(&mut self.shell, 0, &lay);
+        shellview::hscroll(&mut self.shell, 0, &lay);
+        // File name shows the selection: an entry that left takes its name out.
+        if lost {
+            self.sync_name_field();
+        }
     }
 
     /// Host extra rows of `h` px under the Files of type row, laid out from
@@ -793,6 +876,27 @@ impl FileDlg {
 
     pub fn entries(&self) -> &[shellview::Entry] {
         &self.shell.entries
+    }
+
+    /// The selected entries, in listing order.
+    pub fn selected(&self) -> Vec<&shellview::Entry> {
+        let sv = &self.shell;
+        sv.selection
+            .set
+            .iter()
+            .filter_map(|&i| sv.entries.get(i))
+            .collect()
+    }
+
+    /// Selects and focuses the entry named `name` alone, File name following; false when the
+    /// listing has none.
+    pub fn select_named(&mut self, name: &str) -> bool {
+        let Some(i) = self.shell.entries.iter().position(|e| e.name == name) else {
+            return false;
+        };
+        self.shell.selection.set_only(Some(i));
+        self.sync_name_field();
+        true
     }
 
     /// For a host filling in what arrives after the listing, such as a picture's thumbnail.
