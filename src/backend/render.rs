@@ -273,6 +273,9 @@ pub(super) fn render(state: &mut State, head: Head) {
     if !flipping {
         finish(state, head, &output, false, empty, held, started);
     }
+    if flipping && modeset {
+        crate::sessionfade::modeset(state, &output);
+    }
     if let Some(wait) = owed {
         state.arm_catch_up(&output, wait);
     }
@@ -483,6 +486,9 @@ pub(super) fn committed(state: &mut State, head: Head, done: commit::Done<Out>) 
     }
     if gamma_failed {
         crate::nightlight::gamma_failed(state, &output);
+    }
+    if ok && done.kind == commit::Kind::Retrain {
+        crate::sessionfade::modeset(state, &output);
     }
     match after.vblank {
         Some(flip) => flipped(state, head, flip),
