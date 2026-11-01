@@ -292,6 +292,45 @@ fn a_list_with_no_room_below_goes_over_the_field_and_scrolls() {
     assert_eq!((lay.rows, lay.list.y), (5, field.bottom()));
 }
 
+#[test]
+fn the_wheel_scrolls_a_list_with_more_matches_than_rows_and_keys_bring_the_highlight_back() {
+    let names: Vec<String> = (0..10).map(|i| format!("f{i}")).collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut pc = PathComplete::new(Scope::Rooted);
+    let mut edit = TextEdit::new("", false);
+    typed(&mut pc, &mut edit, "/tmp/");
+    serve(&mut pc, &mut edit, &[("/tmp/", &names)]);
+    assert!(!pc.wheel(10, 3), "every row shows: nothing to scroll");
+    assert!(pc.wheel(4, 3));
+    assert_eq!(pc.top(4), 3);
+    assert!(pc.wheel(4, 30));
+    assert_eq!(pc.top(4), 6, "no further than the last row");
+    let cm = Theme::default().controls();
+    let field = Rect::new(0, 0, 200, 21);
+    let lay = layout(
+        &pc,
+        field,
+        Some(Rect::new(0, 0, 200, 21 + 4 * cm.combo_row + 2)),
+        &cm,
+    );
+    assert_eq!(lay.rows, 4);
+    assert_eq!(
+        hit(&pc, &lay, 20, lay.list.y + 1),
+        Some(6),
+        "the top row in view"
+    );
+    pc.nav(&mut edit, Key::Down);
+    assert_eq!(
+        (pc.hot, pc.top(4)),
+        (Some(0), 0),
+        "Down brings row 0 back in view"
+    );
+    assert!(pc.wheel(4, -3), "up at the top still takes the wheel");
+    assert_eq!(pc.top(4), 0);
+    pc.close();
+    assert!(!pc.wheel(4, 3), "a closed list leaves it");
+}
+
 fn pc_for_draw() -> PathComplete {
     let mut pc = PathComplete::new(Scope::Rooted);
     let mut edit = TextEdit::new("", false);

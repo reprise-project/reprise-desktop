@@ -917,3 +917,38 @@ fn run_completes_a_typed_path_in_a_list_inside_the_dialog() {
         "~/Documents/"
     );
 }
+
+#[test]
+fn the_wheel_scrolls_runs_completion_list_when_it_has_a_scrollbar() {
+    use reprisekit::controls::pathcomplete::Entry;
+    let theme = Theme::default();
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut d = Dialog::run(&[]);
+    for ch in "~/f".chars() {
+        d.key(Key::Edit(EditKey::Insert(ch.to_string())));
+    }
+    let f = d.field.as_mut().unwrap();
+    let want = f.complete.take_want().expect("Run lists the typed folder");
+    let entries = (0..10)
+        .map(|i| Entry {
+            name: format!("f{i}"),
+            dir: false,
+        })
+        .collect();
+    f.complete
+        .set_listing(f.combo.edit.as_mut().unwrap(), &want, entries);
+    let l = DialogLayout::compute(&theme, &text, &d);
+    let (_, list) = l.completion(&d).expect("the list shows");
+    assert!(list.scrollbar.is_some(), "ten matches, {} rows", list.rows);
+    assert!(d.wheel_completion(list.rows, 3));
+    let row = list.list.y + 1 + list.row_h / 2;
+    assert_eq!(
+        l.hit(&d, list.list.x + 10, row, &text, theme.fonts.size_px),
+        Some(DialogHit::Completion(3)),
+        "three rows down"
+    );
+    assert!(
+        !d.wheel_completion(10, 3),
+        "every row shown: the wheel goes on"
+    );
+}
