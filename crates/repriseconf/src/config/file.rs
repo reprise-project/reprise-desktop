@@ -576,6 +576,7 @@ pub struct FileTaskbar {
     pub show_desktop_button: Option<bool>,
     pub peek: Option<bool>,
     pub tray_overflow: Option<bool>,
+    pub badges: Option<bool>,
     pub auto_hide: Option<bool>,
     pub reveal_on_edge: Option<bool>,
     pub reveal_on_keys: Option<bool>,

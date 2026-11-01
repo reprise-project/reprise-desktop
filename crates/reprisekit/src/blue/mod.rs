@@ -13,6 +13,7 @@ pub mod powerpanel;
 pub mod scheme;
 mod start;
 pub mod startpanel;
+mod taskbadge;
 mod taskbutton;
 mod taskprogress;
 mod trayarrow;
@@ -177,6 +178,7 @@ fn build(v: Variant, scale: i32) -> Style {
     .with_controls(controls(v))
     .with_copy_flight(copyflight::paint)
     .with_task_progress(taskprogress::painter(v))
+    .with_task_badge(std::sync::Arc::new(taskbadge::paint))
     .with_flat_menus()
     .with_painted_group(&[Part::MenuFrame, Part::MenuItem], move || {
         menus::parts(v.scheme(), scale)

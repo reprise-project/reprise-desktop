@@ -307,6 +307,7 @@ fn taskbar_defaults_follow_the_interface() {
             show_desktop_button: true,
             peek: true,
             tray_overflow: true,
+            badges: true,
             auto_hide: false,
             reveal_on_edge: true,
             reveal_on_keys: true,
@@ -316,6 +317,15 @@ fn taskbar_defaults_follow_the_interface() {
         }
     );
     assert_eq!(glass, TaskbarConfig::default_for(Interface::Glass));
+}
+
+#[test]
+fn badges_are_on_by_default_and_take_their_key() {
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        assert!(TaskbarConfig::default_for(i).badges, "{i:?}");
+    }
+    let c = Config::parse("[taskbar]\nbadges = false\n").unwrap();
+    assert!(!c.taskbar.badges);
 }
 
 #[test]

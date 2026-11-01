@@ -8,12 +8,14 @@ use std::sync::Arc;
 
 mod access;
 mod attention;
+mod badge;
 mod draw;
 mod hit;
 mod layout;
 
 pub use access::{ATTENTION, QUICK_MORE_NAME, TaskbarNames, access};
 pub use attention::{Attention, FLASH_HALF};
+pub use badge::BadgeArt;
 pub use draw::{
     draw_chevron, draw_clock_lines, draw_more, draw_tray_arrow, draw_tray_arrow_side,
     quick_icon_origin,
@@ -33,6 +35,38 @@ pub struct TaskProgress {
 /// laid over the button's face under its icon and label.
 pub type ProgressPainter =
     Arc<dyn Fn(&TaskProgress, &crate::theme::ColorScheme, i32, i32, i32) -> Canvas + Send + Sync>;
+
+/// A look's art for a task button's unread badge: the badge alone around `text` at `d` device px
+/// per design px, set in the button's top-right corner ([`badge_at`]).
+pub type BadgePainter = Arc<dyn Fn(&str, &crate::theme::ColorScheme, i32) -> Canvas + Send + Sync>;
+
+/// From a task button's top and right edges to its badge, in design px.
+pub const BADGE_INSET: i32 = 3;
+/// The space a badge keeps from the label before it, in design px.
+const BADGE_GAP: i32 = 2;
+
+/// The text a badge shows for `count`: the number, `99+` above 99.
+pub fn badge_text(count: u32) -> String {
+    if count > 99 {
+        "99+".into()
+    } else {
+        count.to_string()
+    }
+}
+
+/// Where a badge `badge_w` device px wide goes on `button` (device px) at `d`.
+pub fn badge_at(button: Rect, badge_w: i32, d: i32) -> (i32, i32) {
+    (
+        button.right() - BADGE_INSET * d - badge_w,
+        button.y + BADGE_INSET * d,
+    )
+}
+
+/// `label` cut short of a badge at `badge_x` (device px) at `d`.
+pub fn label_before_badge(label: Rect, badge_x: i32, d: i32) -> Rect {
+    let right = label.right().min(badge_x - BADGE_GAP * d);
+    Rect::new(label.x, label.y, (right - label.x).max(0), label.height)
+}
 
 pub struct TaskEntry {
     pub title: String,
@@ -151,6 +185,8 @@ pub struct TaskbarState {
     pub task_float: Option<(usize, i32)>,
     /// Per task button, its program's progress; empty or None draws none.
     pub task_progress: Vec<Option<TaskProgress>>,
+    /// Per task button, its program's unread count; empty or None draws no badge.
+    pub task_badge: Vec<Option<u32>>,
     pub show_desktop_hot: bool,
     pub more: PopupCell,
     pub chevron: PopupCell,
@@ -195,6 +231,7 @@ impl TaskbarState {
             task_shift,
             task_float,
             task_progress,
+            task_badge,
             show_desktop_hot,
             more,
             chevron,
@@ -226,6 +263,7 @@ impl TaskbarState {
             && *task_shift == other.task_shift
             && *task_float == other.task_float
             && *task_progress == other.task_progress
+            && *task_badge == other.task_badge
             && *show_desktop_hot == other.show_desktop_hot
             && *more == other.more
             && *chevron == other.chevron

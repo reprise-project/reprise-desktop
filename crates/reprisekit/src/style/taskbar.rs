@@ -195,6 +195,18 @@ pub fn draw_taskbar(
         let (r, edges) = &fronts[i];
         let task = &state.tasks[i];
         let held = state.task_pressed == Some(i);
+        let badge = (style.task_badge.as_ref())
+            .zip(state.task_badge.get(i).copied().flatten())
+            .map(|(paint, n)| {
+                let art = paint(&crate::taskbar::badge_text(n), &theme.colors, s);
+                let at = crate::taskbar::badge_at(*r, art.width as i32, s);
+                (art, at)
+            });
+        let draw_badge = |canvas: &mut Canvas| {
+            if let Some((art, (x, y))) = &badge {
+                canvas.blit_over(*x, *y, art);
+            }
+        };
         if layout.pinned_idle(i) {
             let bare = if held {
                 Some(State::Pressed)
@@ -220,6 +232,7 @@ pub fn draw_taskbar(
             );
             let ic = task.icon.as_deref();
             blit_icon(canvas, theme, ic, &mut task_fallback, task_px, at);
+            draw_badge(canvas);
             continue;
         }
         let button_state = states[i];
@@ -284,16 +297,20 @@ pub fn draw_taskbar(
             let ic = task.icon.as_deref();
             blit_icon(canvas, theme, ic, &mut task_fallback, task_px, icon_at);
         }
+        draw_badge(canvas);
         if layout.icons_only {
             continue;
         }
         let label_x = r.x + lb.text_x * s + o;
-        let label = Rect::new(
+        let mut label = Rect::new(
             label_x,
             r.y + o,
             (r.right() - 4 * s - label_x).max(0),
             r.height,
         );
+        if let Some((_, (x, _))) = badge {
+            label = crate::taskbar::label_before_badge(label, x, s);
+        }
         let title = text.ellipsize(&task.title, label.width, false, size);
         // A look may ink the label per button state (dark on a light face,
         // light on a dark checked one); the bar's own ink otherwise.

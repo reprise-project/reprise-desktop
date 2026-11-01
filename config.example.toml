@@ -151,6 +151,8 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 #                            # the desktop or that window alone
 # tray_overflow = true       # Passive tray items wait behind an arrow (a ^
 #                            # flyout in Glass); Customize... sets single items apart
+# badges = true              # a program's unread count (LauncherEntry count)
+#                            # shows in a badge on its task buttons, 99+ above 99
 # auto_hide = false          # the bar slides off its edge when unused, leaving
 #                            # a 2 px line; windows take the rest of the screen
 # reveal_on_edge = true      # it comes back when the pointer rests on that
