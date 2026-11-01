@@ -165,6 +165,8 @@ impl Page {
                 "layouts",
                 "tabs",
                 "tab groups",
+                "window position",
+                "placement",
             ],
             Page::Keyboard => &[
                 "shortcuts",

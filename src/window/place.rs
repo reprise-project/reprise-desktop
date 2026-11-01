@@ -61,6 +61,14 @@ pub fn keep_inside(origin: (i32, i32), size: (i32, i32), area: Rect) -> (i32, i3
     (origin.0.clamp(area.x, max_x), origin.1.clamp(area.y, max_y))
 }
 
+/// The first of `outputs` (each a layout box and what else the caller pairs with it) that a
+/// kept frame's title bar `bar` lands on.
+pub fn landing<T>(bar: Rect, outputs: &[(Rect, T)]) -> Option<&(Rect, T)> {
+    outputs
+        .iter()
+        .find(|(b, _)| b.width > 0 && bar.intersects(*b))
+}
+
 pub fn below_top_bar(y: i32, p: &crate::barplace::BarPlacement) -> i32 {
     match p.edge {
         reprisekit::taskbar::Edge::Top => y.max(p.reserved.bottom()),

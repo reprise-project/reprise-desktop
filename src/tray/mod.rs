@@ -120,6 +120,8 @@ pub enum TrayEvent {
     CriticalTurnOff,
     Identify(Vec<String>),
     PreviewScreenSaver(reprisekit::saver::Kind),
+    /// `org.reprise.Tray.ForgetWindowFrames`: Settings' Forget Positions.
+    ForgetWindowFrames,
     /// Whether any `org.freedesktop.ScreenSaver` cookie is held: the idle
     /// timer is paused while one is.
     ScreenSaverInhibited(bool),
@@ -681,6 +683,10 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
         }
         TrayEvent::PreviewScreenSaver(kind) => {
             crate::saverview::start(state, kind, true);
+            false
+        }
+        TrayEvent::ForgetWindowFrames => {
+            state.forget_window_frames();
             false
         }
         TrayEvent::CloseRequest(id) => {

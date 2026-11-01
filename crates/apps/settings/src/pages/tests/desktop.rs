@@ -467,10 +467,11 @@ fn the_windows_page_geometry() {
         Rect::new(242, 142, 30, 13)
     );
     assert_eq!(rect(&s, p, "snap_layouts"), Rect::new(120, 166, 246, 20));
-    assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 228, 358, 96));
+    assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 228, 358, 126));
     assert_eq!(rect(&s, p, "window_tabs"), Rect::new(32, 250, 13, 13));
     assert_eq!(rect(&s, p, "remember_windows"), Rect::new(32, 274, 13, 13));
-    assert_eq!(rect(&s, p, "window_shake"), Rect::new(32, 298, 13, 13));
+    assert_eq!(rect(&s, p, FORGET_FRAMES), Rect::new(50, 296, 110, 23));
+    assert_eq!(rect(&s, p, "window_shake"), Rect::new(32, 328, 13, 13));
     inside_page(&s, p);
 }
 

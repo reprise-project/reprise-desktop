@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::time::Duration;
 
 use smithay::reexports::calloop::RegistrationToken;
@@ -14,20 +13,20 @@ use crate::window::{Kind, Window, WindowId, area_client, first_configure_size, x
 use crate::windowrules::{Remembered, Want, WindowState};
 
 pub struct Wm {
-    pub remembered: BTreeMap<String, Remembered>,
+    pub kept: crate::keptframes::KeptFrames,
     pub snap: crate::snapview::Snapping,
     pub shake: crate::shakeview::Shaking,
     pub file_dialog: crate::filedlggeom::Kept,
-    /// Armed while `remembered` has changes not yet queued for the state file.
+    /// Armed while `kept` has changes not yet queued for its file.
     save: Option<RegistrationToken>,
 }
 
-/// How long changes to the remembered frames gather before they are written.
+/// How long changes to the kept frames gather before they are written.
 const SAVE_DELAY: Duration = Duration::from_secs(3);
 
 impl Wm {
-    /// `p`'s remembered frames; the file dialogs' kept place is read only for a `session`.
-    pub fn from_persisted(p: &crate::state::Persisted, session: bool) -> Wm {
+    /// The kept frames and the file dialogs' kept place are read only for a `session`.
+    pub fn new(session: bool) -> Wm {
         let file_dialog = if session {
             crate::filedlggeom::Kept::load()
         } else {
@@ -37,7 +36,11 @@ impl Wm {
             )
         };
         Wm {
-            remembered: p.window_geometry.clone(),
+            kept: if session {
+                crate::keptframes::KeptFrames::load()
+            } else {
+                crate::keptframes::KeptFrames::empty(crate::keptframes::path())
+            },
             snap: Default::default(),
             shake: Default::default(),
             file_dialog,
@@ -135,9 +138,16 @@ impl State {
         let mut base = Want::default();
         if self.config.remember_windows
             && !fixed
-            && let Some(m) = self.wm.remembered.get(app_id)
+            && let Some(m) = self.wm.kept.get(&self.output_set(), app_id)
         {
-            base = m.want(first, self.config.accessibility.text_size);
+            base = match self.kept_on_screen(m) {
+                Some(m) => m.want(first, self.config.accessibility.text_size),
+                None => Want {
+                    position: None,
+                    output: None,
+                    ..m.want(first, self.config.accessibility.text_size)
+                },
+            };
         }
         if !fixed
             && let Some(f) = self
@@ -169,6 +179,28 @@ impl State {
             want.size = None;
         }
         (want != Want::default()).then_some(want)
+    }
+
+    /// Kept frame `m` relative to the output its title bar lands on; None when its output is
+    /// gone or its title bar is on no output.
+    fn kept_on_screen(&self, m: &Remembered) -> Option<Remembered> {
+        let boxes: Vec<(crate::raster::Rect, Output)> = (self.scene.outputs().iter())
+            .map(|o| (self.layout_box(Some(o)), o.clone()))
+            .collect();
+        let (b, _) = boxes
+            .iter()
+            .find(|(b, o)| o.name() == m.output && b.width > 0)?;
+        let (x, y) = (b.x + m.x, b.y + m.y);
+        let metrics = &self.config.theme.metrics;
+        let bar =
+            crate::raster::Rect::new(x, y, m.width, metrics.caption_height + metrics.frame_width);
+        let (on, out) = crate::window::landing(bar, &boxes)?;
+        Some(Remembered {
+            output: out.name(),
+            x: x - on.x,
+            y: y - on.y,
+            ..m.clone()
+        })
     }
 
     /// A restored tab group's frame `f` as a placement: on its output, or
@@ -364,9 +396,9 @@ impl State {
         let Some(entry) = self.frame_of(w) else {
             return;
         };
-        if self.wm.remembered.get(&app_id) != Some(&entry) {
-            log::info!("window {app_id:?}: remembered {entry:?}");
-            self.wm.remembered.insert(app_id, entry);
+        let set = self.output_set();
+        if self.wm.kept.store(&set, &app_id, entry.clone()) {
+            log::info!("window {app_id:?}: remembered {entry:?} for {set:?}");
             self.save_remembered_soon();
         }
     }
@@ -378,12 +410,12 @@ impl State {
         let timer = Timer::from_duration(SAVE_DELAY);
         let armed = self.handle.insert_source(timer, |_, _, state| {
             state.wm.save = None;
-            crate::state::save_window_geometry(&state.wm.remembered);
+            state.wm.kept.save();
             TimeoutAction::Drop
         });
         match armed {
             Ok(t) => self.wm.save = Some(t),
-            Err(_) => crate::state::save_window_geometry(&self.wm.remembered),
+            Err(_) => self.wm.kept.save(),
         }
     }
 
@@ -391,8 +423,18 @@ impl State {
     pub fn save_remembered(&mut self) {
         if let Some(t) = self.wm.save.take() {
             self.handle.remove(t);
-            crate::state::save_window_geometry(&self.wm.remembered);
+            self.wm.kept.save();
         }
+    }
+
+    /// Drops every kept frame, for every set of screens, and writes the empty file.
+    pub fn forget_window_frames(&mut self) {
+        if let Some(t) = self.wm.save.take() {
+            self.handle.remove(t);
+        }
+        self.wm.kept.clear();
+        self.wm.kept.save();
+        log::info!("window frames forgotten");
     }
 }
 
