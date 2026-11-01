@@ -197,6 +197,23 @@ impl FileDlg {
 
         crate::look::widgets::draw_size_grip(c, p, lay.grip.scaled(s));
 
+        let underline = p.access_keys || self.context.as_ref().is_some_and(|m| m.keys);
+        for l in self.context_levels(text, px, r, self.drawn.0.get().text) {
+            if self.hosted {
+                break;
+            }
+            crate::controls::menu::draw_menu_at(
+                c,
+                (l.rect.x * s, l.rect.y * s),
+                &Theme::for_draw(p, px),
+                text,
+                &l.layout.scaled(s),
+                &l.items,
+                l.hot,
+                "",
+                underline,
+            );
+        }
         if let Some((at, menu)) = lay.views.as_ref().filter(|_| !self.hosted) {
             crate::controls::menu::draw_menu_at(
                 c,

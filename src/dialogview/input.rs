@@ -347,6 +347,7 @@ impl State {
             return;
         }
         let px = self.top_dialog_px();
+        let pos = self.pointer_location();
         let State { dialogs, text, .. } = self;
         let Some(v) = dialogs.views.last_mut() else {
             return;
@@ -355,6 +356,11 @@ impl State {
             (Some(DialogHit::Browse(filedlg::Hit::FileName)), Some(p), Some(client)) => {
                 p.click(client, Some(filedlg::Hit::FileName));
                 true
+            }
+            (Some(DialogHit::Browse(h)), Some(p), Some(client)) => {
+                let out = p.right_click(client, Some(h), to_local(pos.x, pos.y, (v.x, v.y)));
+                self.apply_dialog(out);
+                return;
             }
             _ => v.dialog.right_press(text, px, hit),
         };
@@ -691,6 +697,20 @@ impl State {
         }
         let ctrl = k.mods & MOD_CTRL != 0;
         let shift = k.mods & MOD_SHIFT != 0;
+        let shortcut = match self.dialogs.views.last_mut() {
+            Some(v) => match (v.dialog.picker_mut(), v.layout.page) {
+                (Some(p), Some(client)) => {
+                    (k.syms.iter()).find_map(|&sym| p.shortcut(client, sym, ctrl, shift, alt))
+                }
+                _ => None,
+            },
+            None => None,
+        };
+        if let Some(outcome) = shortcut {
+            self.restart_caret();
+            self.apply_dialog(outcome);
+            return;
+        }
         // The table every repriseapp program reads; Ctrl+Tab cycles pages.
         let special = k
             .syms

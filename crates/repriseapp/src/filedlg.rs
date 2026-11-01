@@ -643,7 +643,6 @@ impl Host {
         size: (i32, i32),
         metrics: &Metrics,
     ) -> Step {
-        use reprisekit::controls::filedlg::Event as E;
         let (w, h) = dlg.client();
         let r = Rect::new(0, 0, w, h);
         let mods = |m: &crate::Mods| Mods {
@@ -658,6 +657,10 @@ impl Host {
                 return Step::Redraw;
             }
             Event::Key(k) => {
+                let m = &k.mods;
+                if let Some(ev) = dlg.shortcut(r, k.sym, m.ctrl, m.shift, m.alt) {
+                    return self.outcome(dlg, ev);
+                }
                 // Ctrl makes no key text, so it has no edit key: read it off the keysym.
                 let key = if k.mods.ctrl && k.sym == keysym::SPACE {
                     Some(form::Key::Space)
@@ -684,21 +687,17 @@ impl Host {
                     dlg.click(r, hit, mods(m))
                 }
             }
-            // File name takes the focus for the edit menu the host opens over it.
+            // File name takes the focus for the edit menu the host opens over it; the list opens
+            // its context menu.
             Event::Pointer(PointerInput::Press {
                 x,
                 y,
                 button: crate::BTN_RIGHT,
-                mods: m,
                 ..
-            }) => match dlg.hit(text, px, r, *x, *y) {
-                Some(reprisekit::controls::filedlg::Hit::FileName) => dlg.click(
-                    r,
-                    Some(reprisekit::controls::filedlg::Hit::FileName),
-                    mods(m),
-                ),
-                _ => return Step::None,
-            },
+            }) => {
+                let hit = dlg.hit(text, px, r, *x, *y);
+                dlg.right_click(r, hit, (*x, *y))
+            }
             Event::Pointer(PointerInput::Press { button, .. }) => {
                 match reprisekit::pointer::nav_button(*button) {
                     Some(nav) => dlg.nav(nav),
@@ -717,7 +716,22 @@ impl Host {
             }
             _ => return Step::None,
         };
+        self.outcome(dlg, out)
+    }
+
+    /// What the dialog asked for: a place's folder, a typed pattern's, or work on the folder
+    /// shown are the host's own; the rest go to the program.
+    fn outcome(&mut self, dlg: &mut FileDlg, out: reprisekit::controls::filedlg::Event) -> Step {
+        use reprisekit::controls::filedlg::Event as E;
         match out {
+            E::Refresh => {
+                self.refresh();
+                Step::None
+            }
+            E::CreateFolder(_) | E::Rename { .. } | E::Delete(_) => {
+                self.change(dlg, out);
+                Step::Redraw
+            }
             E::NeedPlace(i) => match self.place(i) {
                 Some(id) => Step::Out(E::NeedListing(id)),
                 None => Step::None,
@@ -734,6 +748,71 @@ impl Host {
             E::Resize => Step::Resize,
             out => Step::Out(out),
         }
+    }
+
+    /// Reads the folder shown again, unless a read is under way.
+    fn refresh(&mut self) {
+        if let Some((_, path, _)) = &self.again {
+            let due = BTreeSet::from([path.clone()]);
+            self.read_again(&due, &BTreeSet::new());
+        }
+    }
+
+    /// New Folder, a rename or Delete in the folder shown, waited on for [`RESOLVE_WAIT`]: a
+    /// folder that does not answer by then is left to its watch. The folder is read again, and
+    /// a new folder opens in the rename box once listed; a refused name opens the box again.
+    fn change(&mut self, dlg: &mut FileDlg, ev: reprisekit::controls::filedlg::Event) {
+        use reprisefs::dialogops;
+        use reprisekit::controls::filedlg::Event as E;
+        let Some(dir) = self
+            .folder
+            .and_then(|id| self.folders.path(id))
+            .map(Path::to_path_buf)
+        else {
+            return;
+        };
+        if reprisefs::places::is_recent(&dir) {
+            return;
+        }
+        let taken: Vec<String> = dlg.entries().iter().map(|e| e.name.clone()).collect();
+        let path_of = |name: &str| match self.aliases.get(name) {
+            Some(raw) => dir.join(raw),
+            None => dir.join(name),
+        };
+        match ev {
+            E::CreateFolder(base) => {
+                let at = dir.clone();
+                let job = Job::spawn(None, move || dialogops::new_folder(&at, &base, &taken));
+                match waited(&dir, job) {
+                    Some(Ok(name)) => dlg.expect(&name, true),
+                    Some(Err(e)) => {
+                        log::warn!("file dialog: no new folder in {}: {e}", dir.display())
+                    }
+                    None => {}
+                }
+            }
+            E::Rename { from, to } => {
+                let (path, old, typed) = (path_of(&from), from.clone(), to.clone());
+                let job = Job::spawn(None, move || dialogops::rename(&path, &old, &typed, &taken));
+                match waited(&dir, job) {
+                    Some(Ok(name)) => dlg.expect(&name, false),
+                    Some(Err(why)) => {
+                        log::warn!("file dialog: {why}");
+                        dlg.resume_rename(&from, &to);
+                    }
+                    None => {}
+                }
+            }
+            E::Delete(names) => {
+                let paths: Vec<PathBuf> = names.iter().map(|n| path_of(n)).collect();
+                let job = Job::spawn(None, move || dialogops::trash(&paths));
+                for (path, why) in waited(&dir, job).unwrap_or_default() {
+                    log::warn!("file dialog: left {}: {why}", path.display());
+                }
+            }
+            _ => return,
+        }
+        self.refresh();
     }
 
     pub fn place(&mut self, i: usize) -> Option<FolderId> {
@@ -946,6 +1025,15 @@ impl Host {
             )),
         }
     }
+}
+
+/// `job`'s answer within [`RESOLVE_WAIT`], else none, logged against folder `dir`.
+fn waited<T: Send + 'static>(dir: &Path, job: Job<T>) -> Option<T> {
+    let done = job.wait(RESOLVE_WAIT);
+    if done.is_none() {
+        log::warn!("file dialog: {} is not responding", dir.display());
+    }
+    done
 }
 
 /// How long [`Host::resolve`] waits on a typed path's folders before it calls them dead.
