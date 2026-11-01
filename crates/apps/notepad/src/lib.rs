@@ -48,7 +48,7 @@ use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::{EditKey, TextEdit, keysym};
-use reprisekit::theme::{FontConfig, Theme};
+use reprisekit::theme::Theme;
 use reprisekit::tr;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;

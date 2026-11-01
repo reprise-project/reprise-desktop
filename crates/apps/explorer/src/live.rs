@@ -175,6 +175,7 @@ impl Explorer {
             clashed,
             self.take_asking(ctx),
             self.take_drag_art(ctx),
+            self.take_preview(),
         ]
         .into_iter()
         .flatten()

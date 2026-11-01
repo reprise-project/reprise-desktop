@@ -5,26 +5,7 @@ use super::*;
 pub(crate) const EDIT_PX: u32 = 13;
 
 pub(crate) fn edit_font() -> TextRenderer {
-    let cfg = |antialias| FontConfig {
-        family: vec![
-            "Lucida Console".into(),
-            "Liberation Mono".into(),
-            "DejaVu Sans Mono".into(),
-        ],
-        size_px: EDIT_PX,
-        antialias,
-        italic: false,
-        full_hinting: false,
-        shell_dlg: None,
-    };
-    // The first face is drawn hinted monochrome; a fallback mono blotches that way at 13 px, so it
-    // is antialiased.
-    let mono = TextRenderer::load(&cfg(false));
-    if mono.has_face("Lucida Console") {
-        mono
-    } else {
-        TextRenderer::load(&cfg(true))
-    }
+    TextRenderer::monospace(EDIT_PX)
 }
 
 fn local_stamp(secs: i64) -> String {
