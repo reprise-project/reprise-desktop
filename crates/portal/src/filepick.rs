@@ -187,13 +187,22 @@ impl Pick {
     }
 }
 
+/// The dialog toplevel's app id: the requesting app's, so the compositor keeps a parentless
+/// dialog's geometry with that app's folder and view, else the portal's own.
+fn window_app_id(requesting: &str) -> String {
+    match requesting {
+        "" => "reprise.portal".into(),
+        app => app.into(),
+    }
+}
+
 impl App for Pick {
     fn title(&self) -> String {
         self.input.title.clone()
     }
 
     fn app_id(&self) -> String {
-        "reprise.portal".into()
+        window_app_id(&self.input.app_id)
     }
 
     fn initial_size(&self) -> (i32, i32) {
@@ -431,6 +440,12 @@ mod tests {
         let mut h = Host::default();
         h.folder = Some(h.folders.id(t));
         h
+    }
+
+    #[test]
+    fn the_dialog_takes_the_requesting_app_s_id_when_known() {
+        assert_eq!(window_app_id("org.gnome.Zenity"), "org.gnome.Zenity");
+        assert_eq!(window_app_id(""), "reprise.portal");
     }
 
     #[test]

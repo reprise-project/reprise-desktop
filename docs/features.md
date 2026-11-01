@@ -227,7 +227,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   portal's, opens in the folder that app's last dialog was confirmed in, in
   its view and Details sort, and at the size and place it was left at
   (`$XDG_STATE_HOME/reprise/filedialog.toml`, a table per app id; a portal
-  dialog counts as the app that asked for it, Run's Browse as `reprise`, and
+  dialog counts as the app that asked for it and takes its app id, grouping
+  with it on the taskbar under its icon, Run's Browse as `reprise`, and
   dialogs whose app is unknown share `""`; the 32 apps written last are
   kept). A folder the program or the portal's caller names wins over the
   last one. The size grows with the text size and stays inside the screen.
