@@ -114,6 +114,7 @@ impl State {
             urgent: false,
             activate_on_map: false,
             launch: None,
+            layout: None,
             desktop: 0,
             sticky: false,
             tab_hidden: false,

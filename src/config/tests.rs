@@ -496,6 +496,9 @@ fn keyboard_section_parses_and_defaults() {
     assert_eq!(xkb.layout, "hu");
     assert_eq!(xkb.options, None, "no options picks the defaults");
     assert_eq!(Config::default().keyboard.layout, "");
+    assert!(!Config::default().keyboard.layout_per_window);
+    let c = Config::parse("[keyboard]\nlayout_per_window = true\n").unwrap();
+    assert!(c.keyboard.layout_per_window);
 }
 
 #[test]

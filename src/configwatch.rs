@@ -65,7 +65,10 @@ pub fn diff(old: &Config, new: &Config) -> Changes {
         desktop: old.system_icons != new.system_icons
             || old.desktop_icons != new.desktop_icons
             || old.desktop_extensions != new.desktop_extensions,
-        keyboard: old.keyboard != new.keyboard,
+        keyboard: crate::config::KeyboardConfig {
+            layout_per_window: new.keyboard.layout_per_window,
+            ..old.keyboard.clone()
+        } != new.keyboard,
         cursor: old.cursor != new.cursor,
         pointers: old.mouse != new.mouse
             || old.touchpad != new.touchpad
@@ -930,6 +933,12 @@ mod tests {
         let mut new = old.clone();
         new.keyboard.repeat_rate = old.keyboard.repeat_rate + 1;
         assert!(diff(&old, &new).keyboard);
+        let mut new = old.clone();
+        new.keyboard.layout_per_window = true;
+        assert!(
+            !diff(&old, &new).keyboard,
+            "layout_per_window compiles no keymap, which would reset the layout"
+        );
     }
 
     #[test]

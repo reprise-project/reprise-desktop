@@ -26,7 +26,7 @@ fn layouts(a: Area) -> Rect {
 
 pub fn keyboard(a: Area) -> Form {
     let gw = a.gw();
-    let mut items = vec![group(a, "keyboard_group", 44, 190, "Keyboard")];
+    let mut items = vec![group(a, "keyboard_group", 44, 210, "Keyboard")];
     let row = |label_id, id, y, text| {
         [
             Item::label_at(label_id, GX, y, 80, text),
@@ -54,13 +54,19 @@ pub fn keyboard(a: Area) -> Form {
     items.push(button(KB_ADD, bx, LAYOUTS_Y, "Add..."));
     items.push(button(KB_REMOVE, bx, LAYOUTS_Y + step, "Remo&ve"));
     items.push(button(KB_UP, bx, LAYOUTS_Y + 2 * step, "Move &Up"));
-    items.extend(row("model_label", "kb_model", 150, "&Model:"));
-    items.extend(row("options_label", "kb_options", 176, "&Options:"));
+    items.push(Item::check(
+        "layout_per_window",
+        GX + 84,
+        146,
+        "Remember a layout for each &window",
+    ));
+    items.extend(row("model_label", "kb_model", 170, "&Model:"));
+    items.extend(row("options_label", "kb_options", 196, "&Options:"));
     items.extend(spin(
         "rate_label",
         "repeat_rate",
         GX,
-        202,
+        222,
         80,
         "&Repeat rate:",
         (1, 255),
@@ -69,31 +75,31 @@ pub fn keyboard(a: Area) -> Form {
         "delay_label",
         "repeat_delay",
         GX + 170,
-        202,
+        222,
         44,
         "Dela&y:",
         (0, 9999),
     ));
     // The Shortcuts list is a `ListView` the host draws over the page; the page carries its buttons only.
-    items.push(group(a, "shortcuts_group", 242, 138 + a.dh, "Shortcuts"));
+    items.push(group(a, "shortcuts_group", 262, 138 + a.dh, "Shortcuts"));
     items.push(Item::check(
         "shortcut_overlay",
         GX,
-        260,
+        280,
         "Hold Super to &show them after",
     ));
     let (min, max) = repriseconf::config::ShortcutOverlay::DELAY_MS.into_inner();
     items.push(updown(
         "shortcut_overlay_ms",
         GX + 218,
-        256,
+        276,
         min as i32,
         max as i32,
     ));
     items.push(Item::label_at(
         "shortcut_overlay_ms_unit",
         GX + 272,
-        260,
+        280,
         20,
         "ms",
     ));
@@ -112,7 +118,7 @@ pub fn keyboard(a: Area) -> Form {
         "&Edit...",
     ));
     items.push(button(SC_REMOVE, r - BUTTON_W, y, "&Delete"));
-    let y = 388 + a.dh;
+    let y = 408 + a.dh;
     items.push(group(a, "osd_group", y, 62, "On-screen display"));
     items.push(Item::check(
         "osd_caps_lock",

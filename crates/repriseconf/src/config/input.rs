@@ -7,6 +7,8 @@ pub struct KeyboardConfig {
     pub options: String,
     pub repeat_rate: i32,
     pub repeat_delay: i32,
+    /// Each window keeps the layout last active while it had the keyboard.
+    pub layout_per_window: bool,
 }
 
 impl Default for KeyboardConfig {
@@ -19,6 +21,7 @@ impl Default for KeyboardConfig {
             options: String::new(),
             repeat_rate: 25,
             repeat_delay: 600,
+            layout_per_window: false,
         }
     }
 }

@@ -178,6 +178,7 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Text(k("keyboard", "options"), lens!(kb_options)),
         Field::Int(k("keyboard", "repeat_rate"), lens!(repeat_rate)),
         Field::Int(k("keyboard", "repeat_delay"), lens!(repeat_delay)),
+        Field::Flag(k("keyboard", "layout_per_window"), lens!(layout_per_window)),
         Field::Flag(k("shortcut_overlay", "enabled"), lens!(shortcut_overlay)),
         Field::Int(
             k("shortcut_overlay", "delay_ms"),
