@@ -223,7 +223,15 @@ fn the_keyboard_page_geometry() {
         rect(&s, Page::Keyboard, "shortcuts_group"),
         Rect::new(20, 242, 358, 138)
     );
-    assert_eq!(shortcuts(Area::MIN), Rect::new(32, 260, 334, 92));
+    assert_eq!(
+        rect(&s, Page::Keyboard, "shortcut_overlay"),
+        Rect::new(32, 260, 13, 13)
+    );
+    assert_eq!(
+        rect(&s, Page::Keyboard, "shortcut_overlay_ms"),
+        Rect::new(250, 256, 50, 20)
+    );
+    assert_eq!(shortcuts(Area::MIN), Rect::new(32, 278, 334, 74));
     assert_eq!(
         rect(&s, Page::Keyboard, SC_ADD),
         Rect::new(129, 356, 75, 23)
@@ -256,7 +264,7 @@ fn the_keyboard_page_geometry() {
         shortcuts(Area::MIN),
         &reprisekit::controls::metrics::ControlMetrics::CLASSIC,
     );
-    assert_eq!(lay.rows, 4, "four rows of 17 px under the header");
+    assert_eq!(lay.rows, 3, "three rows of 17 px under the header");
     // The default list is longer than four rows, so the vertical bar is up; at 16 or 17 px the columns leave it room and no horizontal one appears.
     for (scroll, action) in [(16, 194), (17, 193)] {
         let cm = reprisekit::controls::metrics::ControlMetrics {
@@ -270,7 +278,7 @@ fn the_keyboard_page_geometry() {
         let lay = listview::layout(&full, shortcuts(Area::MIN), &cm);
         assert!(lay.scrollbar.is_some());
         assert!(lay.hscroll.is_none(), "no horizontal bar at {scroll}");
-        assert_eq!(lay.rows, 4);
+        assert_eq!(lay.rows, 3);
     }
 }
 
@@ -505,4 +513,22 @@ fn a_cursor_theme_and_size_the_lists_lack_still_show() {
     let mut got = Settings::default();
     read_all(&sheet, &mut got);
     assert_eq!((got.cursor_theme.as_str(), got.cursor_size), ("gone", 40));
+}
+
+#[test]
+fn shortcut_sheet_values_go_in_and_come_back_out() {
+    let want = Settings {
+        shortcut_overlay: false,
+        shortcut_overlay_ms: 600,
+        ..Settings::default()
+    };
+    let s = with(&want);
+    let page = &s.pages[Page::Keyboard.index()];
+    assert_eq!(page.checked("shortcut_overlay"), Some(false));
+    let mut got = Settings::default();
+    read_all(&s, &mut got);
+    assert_eq!(
+        (got.shortcut_overlay, got.shortcut_overlay_ms),
+        (false, 600)
+    );
 }

@@ -244,6 +244,8 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Text("kb_options", lens!(kb_options)),
         Bind::Num("repeat_rate", lens!(repeat_rate)),
         Bind::Num("repeat_delay", lens!(repeat_delay)),
+        Bind::Flag("shortcut_overlay", lens!(shortcut_overlay)),
+        Bind::Num("shortcut_overlay_ms", lens!(shortcut_overlay_ms)),
         Bind::Text("standby", lens!(standby)),
         Bind::Text("poweroff", lens!(poweroff)),
         Bind::Text("reboot", lens!(reboot)),

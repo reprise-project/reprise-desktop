@@ -448,6 +448,12 @@ are.
 
 - **Keyboard layouts,** switched with Left Alt+Shift or from the layout
   square in the tray.
+- **Shortcut sheet.** Hold Super on its own for a second and a sheet lists
+  every shortcut in force, yours and programs' included, grouped as windows,
+  desktops, launching, screenshots and so on. Let go and it's gone; press
+  another key and the sheet goes while that shortcut runs. A quick tap on
+  Super still opens Start. `[shortcut_overlay]` turns it off or changes the
+  wait, as does the Keyboard page in Reprise Settings.
 - **Input methods.** fcitx5 and ibus work in programs and in Reprise's own
   fields: Run, the launcher, the Start menu's search, a desktop rename and
   the dialogs. Spin boxes take digits only and leave the input method off.

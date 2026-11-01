@@ -94,6 +94,10 @@ fn main() {
             &format!("reprisekit-gallery-launcher-windows@{}.png", n.max(1)),
         );
         write_preview(
+            &gallery_keys::key_sheet(n.max(1)),
+            &format!("reprisekit-gallery-key-sheet@{}.png", n.max(1)),
+        );
+        write_preview(
             &gallery_power::render(n.max(1)),
             &format!("reprisekit-gallery-power@{}.png", n.max(1)),
         );
@@ -285,6 +289,10 @@ fn main() {
         write_preview(
             &gallery_keys::launcher_windows(1),
             "reprisekit-gallery-launcher-windows@1.png",
+        );
+        write_preview(
+            &gallery_keys::key_sheet(1),
+            "reprisekit-gallery-key-sheet@1.png",
         );
         write_preview(
             &render_tray_arrow_schemes(1),

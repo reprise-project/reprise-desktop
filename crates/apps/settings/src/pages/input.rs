@@ -3,7 +3,7 @@
 use super::{
     Area, CURSOR_DEFAULT_ROW, CURSOR_PREVIEW, DELAY_STEPS, GX, KB_ADD, KB_LAYOUTS, KB_REMOVE,
     KB_UP, MK_ACCEL, MK_SPEED, SC_ADD, SC_EDIT, SC_REMOVE, SPEED_STEPS, TRACK_MAX, X, button,
-    combo, edit, ends_track, group, shortcuts, spin,
+    combo, edit, ends_track, group, shortcuts, spin, updown,
 };
 use crate::model::{CURSOR_SIZES, TEXT_SIZES};
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
@@ -76,6 +76,27 @@ pub fn keyboard(a: Area) -> Form {
     ));
     // The Shortcuts list is a `ListView` the host draws over the page; the page carries its buttons only.
     items.push(group(a, "shortcuts_group", 242, 138 + a.dh, "Shortcuts"));
+    items.push(Item::check(
+        "shortcut_overlay",
+        GX,
+        260,
+        "Hold Super to &show them after",
+    ));
+    let (min, max) = repriseconf::config::ShortcutOverlay::DELAY_MS.into_inner();
+    items.push(updown(
+        "shortcut_overlay_ms",
+        GX + 218,
+        256,
+        min as i32,
+        max as i32,
+    ));
+    items.push(Item::label_at(
+        "shortcut_overlay_ms_unit",
+        GX + 272,
+        260,
+        20,
+        "ms",
+    ));
     let y = shortcuts(a).bottom() + 4;
     let r = shortcuts(a).right();
     items.push(button(

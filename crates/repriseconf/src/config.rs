@@ -78,6 +78,7 @@ pub struct Config {
     pub location: bool,
     pub capture_border: bool,
     pub debug: DebugConfig,
+    pub shortcut_overlay: ShortcutOverlay,
     pub launcher_files: bool,
     /// `[launcher] windows`: the launcher finds open windows.
     pub launcher_windows: bool,
@@ -149,6 +150,7 @@ impl Default for Config {
             location: true,
             capture_border: true,
             debug: DebugConfig::default(),
+            shortcut_overlay: ShortcutOverlay::default(),
             launcher_files: true,
             launcher_windows: true,
             night_light: NightLightConfig::default(),

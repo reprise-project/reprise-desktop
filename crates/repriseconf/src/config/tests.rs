@@ -620,6 +620,23 @@ fn the_launcher_searches_files_unless_turned_off() {
 }
 
 #[test]
+fn the_shortcut_overlay_is_on_after_a_second_and_its_delay_is_bounded() {
+    let d = Config::default().shortcut_overlay;
+    assert!(d.enabled);
+    assert_eq!(d.delay_ms, 1000);
+    let c = Config::parse("[shortcut_overlay]\nenabled = false\ndelay_ms = 600\n").unwrap();
+    assert_eq!(
+        c.shortcut_overlay,
+        ShortcutOverlay {
+            enabled: false,
+            delay_ms: 600
+        }
+    );
+    assert!(Config::parse("[shortcut_overlay]\ndelay_ms = 50\n").is_err());
+    assert!(Config::parse("[shortcut_overlay]\ndelay_ms = 6000\n").is_err());
+}
+
+#[test]
 fn the_launcher_finds_open_windows_unless_turned_off() {
     assert!(Config::default().launcher_windows);
     let off = Config::parse("[launcher]\nwindows = false\n").unwrap();

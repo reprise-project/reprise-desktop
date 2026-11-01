@@ -198,8 +198,11 @@ mod tests {
             SceneOwner::Calendar => Some(Popup::Calendar),
             SceneOwner::Displays => Some(Popup::Displays),
             // Shown beside the pointer's work, never closed by a press
-            // elsewhere: the balloons, the OSD, the debug panel.
-            SceneOwner::Notification | SceneOwner::Osd | SceneOwner::Debug => None,
+            // elsewhere: the balloons, the OSD, the debug panel, the shortcut sheet.
+            SceneOwner::Notification
+            | SceneOwner::Osd
+            | SceneOwner::Debug
+            | SceneOwner::KeySheet => None,
             SceneOwner::Window(_)
             | SceneOwner::Taskbar(_)
             | SceneOwner::Desktop
@@ -227,6 +230,7 @@ mod tests {
             (SceneOwner::Notification, None),
             (SceneOwner::Osd, None),
             (SceneOwner::Debug, None),
+            (SceneOwner::KeySheet, None),
             (SceneOwner::Desktop, None),
             (SceneOwner::Layer, None),
             (SceneOwner::Dialog(0), None),

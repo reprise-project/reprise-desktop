@@ -154,6 +154,7 @@ mod inputproto;
 mod keptframes;
 mod keyroute;
 mod keys;
+mod keysheetview;
 mod launcherview;
 mod launches;
 mod layer;
