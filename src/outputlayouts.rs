@@ -46,9 +46,14 @@ fn file() -> std::path::PathBuf {
 
 /// The ids of `heads`' monitors, in their order.
 fn ids_of(heads: &[HeadState]) -> Vec<String> {
-    let props: Vec<_> = heads
-        .iter()
-        .map(|h| (h.output.name(), h.output.physical_properties()))
+    let outputs: Vec<&Output> = heads.iter().map(|h| &h.output).collect();
+    monitor_ids(&outputs)
+}
+
+/// `outputs`' monitor ids (`displays::monitor_ids`), in their order.
+pub fn monitor_ids(outputs: &[&Output]) -> Vec<String> {
+    let props: Vec<_> = (outputs.iter())
+        .map(|o| (o.name(), o.physical_properties()))
         .collect();
     let monitors: Vec<Monitor> = (props.iter())
         .map(|(name, p)| Monitor {
