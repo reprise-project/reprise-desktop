@@ -174,6 +174,33 @@ pub struct FilePicker {
     view_file: Option<PathBuf>,
     /// The stored view is still to come with the first listing, and no view was picked yet.
     view_awaited: bool,
+    /// Watches the folder shown, so entries made, deleted or renamed there list without an F5
+    /// ([`FilePicker::watch_due`]); `watched` is the folder it is on.
+    watch: FolderWatch,
+    watched: Option<PathBuf>,
+}
+
+/// A picker's folder watch. Not dialog state: a clone watches nothing, it compares equal and
+/// debug-prints as nothing.
+#[derive(Default)]
+struct FolderWatch(Option<reprisefs::folderwatch::Watch>);
+
+impl Clone for FolderWatch {
+    fn clone(&self) -> FolderWatch {
+        FolderWatch(None)
+    }
+}
+
+impl PartialEq for FolderWatch {
+    fn eq(&self, _: &FolderWatch) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for FolderWatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FolderWatch")
+    }
 }
 
 /// The listed pictures and how far their thumbnails have got.
@@ -344,6 +371,8 @@ impl FilePicker {
             remembered: Default::default(),
             view_file: None,
             view_awaited: false,
+            watch: FolderWatch::default(),
+            watched: None,
         };
         let id = picker.folders.id(start);
         picker.list(id);
@@ -577,6 +606,37 @@ impl FilePicker {
         true
     }
 
+    /// Watches the folder shown from now on with `w`, whose wake leads the host to
+    /// [`FilePicker::watch_due`].
+    pub fn watch_with(&mut self, mut w: reprisefs::folderwatch::Watch) {
+        if let Some(dir) = self.current() {
+            w.watch(dir);
+            self.watched = Some(dir.to_path_buf());
+        }
+        self.watch = FolderWatch(Some(w));
+    }
+
+    /// Lists the folder shown again once the watch saw an entry in it change, or the folder where
+    /// it went once it or one above it was renamed or moved (the nearest folder still there above
+    /// it once deleted); true when that queued a request.
+    pub fn watch_due(&mut self) -> bool {
+        let Some(w) = &mut self.watch.0 else {
+            return false;
+        };
+        let changed = w.take_changed();
+        if let Some(gone) = w.take_gone()
+            && let Some(dir) = gone.ancestors().find(|p| p.is_dir())
+        {
+            let id = self.folders.id(dir);
+            self.list(id);
+            return true;
+        }
+        match self.watched.clone() {
+            Some(dir) if changed && self.listing.is_none() => self.relist(&BTreeSet::from([dir])),
+            _ => false,
+        }
+    }
+
     pub fn current(&self) -> Option<&Path> {
         self.dlg.folder().and_then(|id| self.folders.path(id))
     }
@@ -655,6 +715,12 @@ impl FilePicker {
     /// still to come.
     fn show(&mut self, id: FolderId, path: &Path, entries: Vec<Entry>) {
         self.restyling = None;
+        if let Some(w) = &mut self.watch.0
+            && self.watched.as_deref() != Some(path)
+        {
+            w.watch(path);
+            self.watched = Some(path.to_path_buf());
+        }
         let generation = self.pictures.generation + 1;
         self.pictures = Pictures {
             generation,
@@ -1314,6 +1380,42 @@ mod tests {
         for r in again {
             assert_eq!(p.reply(r.run(), &mut cache(), 1), Outcome::Redraw);
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Calls [`FilePicker::watch_due`] as the loop does on each wake of the watch, running what
+    /// it queues, until `done` holds of the picker.
+    fn until_watched(p: &mut FilePicker, done: impl Fn(&FilePicker) -> bool) {
+        for _ in 0..1000 {
+            if p.watch_due() {
+                settle(p);
+            }
+            if done(p) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the picker never caught up with the folder");
+    }
+
+    #[test]
+    fn a_folder_made_in_the_folder_shown_lists_and_the_folder_follows_its_rename() {
+        let dir = sandbox("watch");
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        p.watch_with(reprisefs::folderwatch::Watch::new(|| {}).unwrap());
+        settle(&mut p);
+        assert!(p.dlg.select_named("dunes"));
+        std::fs::create_dir(dir.join("made")).unwrap();
+        until_watched(&mut p, |p| names(p).contains(&"made"));
+        let picked: Vec<&str> = p.dlg.selected().iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(picked, ["dunes"], "the selection stays on its entry");
+
+        let pictures = p.folders.id(&dir.join("Pictures"));
+        p.event(Event::NeedListing(pictures));
+        settle(&mut p);
+        std::fs::rename(dir.join("Pictures"), dir.join("Photos")).unwrap();
+        let inside = p.folders.id(&dir.join("Photos"));
+        until_watched(&mut p, |p| p.dlg.folder() == Some(inside));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

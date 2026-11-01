@@ -2366,3 +2366,46 @@ fn hits_on_an_unchanged_dialog_lay_the_shell_view_out_once() {
         "a scroll lays it out again"
     );
 }
+
+#[test]
+fn a_relist_of_the_folder_shown_keeps_the_selection_rename_and_scroll_by_name() {
+    let mut d = multi(DlgMode::Open, true);
+    d.shell.set_mode(Mode::Details);
+    d.click(R, entry_hit(1), Mods::default());
+    d.click(R, entry_hit(3), CTRL);
+    d.shell.edit = Some((3, TextEdit::rename("c.txt", false)));
+    d.shell.top = 1;
+    d.set_listing(folder(
+        1,
+        None,
+        vec![file("0.txt"), dir("sub"), file("a.txt"), file("c.txt")],
+    ));
+    let picked: Vec<&str> = d.selected().iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(picked, ["a.txt", "c.txt"], "b.txt left, the rest kept");
+    let name = |i: Option<usize>| i.map(|i| d.entries()[i].name.as_str());
+    assert_eq!(name(d.shell.selection.focus), Some("c.txt"));
+    assert_eq!(name(d.shell.selection.anchor), Some("a.txt"));
+    assert_eq!(name(d.shell.edit.as_ref().map(|(i, _)| *i)), Some("c.txt"));
+    assert_eq!(
+        d.shell.top, 0,
+        "the scroll is clamped to the shorter listing"
+    );
+
+    assert_eq!(d.file_name(), "\"c.txt\" \"a.txt\"");
+    d.set_listing(folder(1, None, vec![dir("sub"), file("a.txt")]));
+    assert!(d.shell.edit.is_none(), "the entry being renamed left");
+    assert_eq!(d.file_name(), "a.txt", "File name loses the name that left");
+    let picked: Vec<&str> = d.selected().iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(picked, ["a.txt"]);
+    assert_eq!(d.shell.selection.focus, None);
+}
+
+#[test]
+fn another_folder_starts_on_its_first_entry() {
+    let mut d = multi(DlgMode::Open, false);
+    d.click(R, entry_hit(2), Mods::default());
+    d.shell.edit = Some((2, TextEdit::rename("b.txt", false)));
+    d.set_listing(folder(2, Some(1), vec![file("b.txt"), file("x.txt")]));
+    assert_eq!(d.shell.selection.set, [0].into());
+    assert!(d.shell.edit.is_none());
+}

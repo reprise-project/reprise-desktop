@@ -363,7 +363,8 @@ pub fn remember_views() {
     VIEW_FILE.get_or_init(repriseconf::filedialog::path);
 }
 
-type StartRead = Box<dyn Fn() -> Job<Read>>;
+/// Starts a read of a folder with the last [`Host::list`]'s filter and sizes.
+type StartRead = Box<dyn Fn(&Path) -> Job<Read>>;
 
 #[derive(Default)]
 pub struct Host {
@@ -388,9 +389,13 @@ pub struct Host {
     /// The shown folder read again for a new icon theme's icons ([`Host::restyle`]).
     restyling: Option<Job<Read>>,
     /// The last [`Host::list`] and how to start it again: a link it listed unfollowed that
-    /// answers since (`relist`), or a gvfs metadata change in the folder (`gvfs`, a folder icon
-    /// `gio set` gives), reads the folder anew.
+    /// answers since (`relist`), a gvfs metadata change in the folder (`gvfs`, a folder icon
+    /// `gio set` gives), or an entry made, deleted or renamed in it (`watch`), reads the folder
+    /// anew.
     again: Option<(ReadKey, PathBuf, StartRead)>,
+    watch: Option<reprisefs::folderwatch::Watch>,
+    /// The folder `watch` is on.
+    watched: Option<PathBuf>,
     relist: Option<reprisefs::listing::Relist>,
     gvfs: Option<reprisefs::gvfsmeta::Changes>,
     /// A typed path whose folders did not answer within [`RESOLVE_WAIT`]; the next resolve of
@@ -428,6 +433,11 @@ impl Host {
     /// draws it with that theme and sizes its window from [`FileDlg::client`].
     pub fn open(&mut self, dir: &Path, fields: Fields, u: TextUnits) -> FileDlg {
         self.folder = Some(self.folders.id(dir));
+        self.watched = None;
+        if let Some(w) = &mut self.watch {
+            w.clear();
+            w.take_changed();
+        }
         self.follow_cache(repriseconf::thumbnail_cache());
         let mut dlg = self.icons.dialog(fields);
         self.icons_scale = 0;
@@ -474,6 +484,13 @@ impl Host {
             let wake = wake.clone();
             reprisefs::gvfsmeta::Changes::new(move || wake.wake())
         });
+        if self.watch.is_none() {
+            let wake = wake.clone();
+            match reprisefs::folderwatch::Watch::new(move || wake.wake()) {
+                Ok(w) => self.watch = Some(w),
+                Err(e) => log::warn!("file dialog: no folder watch: {e}"),
+            }
+        }
         if self.thumbs.is_some() {
             return;
         }
@@ -535,8 +552,8 @@ impl Host {
             && !Arc::ptr_eq(had, &theme)
         {
             self.listed_theme = Some(theme);
-            if let Some((_, _, start)) = &self.again {
-                self.restyling = Some(start());
+            if let Some((_, path, start)) = &self.again {
+                self.restyling = Some(start(path));
             }
         }
         let list = shellview::list_icon_px(dlg.text());
@@ -554,6 +571,7 @@ impl Host {
     /// `cache` too: true when one did.
     fn take_thumbs(&mut self, dlg: &mut FileDlg, cache: &mut IconCache) -> bool {
         self.read_due();
+        self.follow_gone();
         if let Some((id, read)) = self
             .reading
             .as_ref()
@@ -745,12 +763,12 @@ impl Host {
         };
         let key = ReadKey::of(dlg, id, icons.scale());
         let start = {
-            let (path, keep, scale, list) = (path.clone(), keep.clone(), key.scale, key.list);
+            let (keep, scale, list) = (keep.clone(), key.scale, key.list);
             let (folders_only, typed) = (key.folders_only, key.typed.clone());
             let wake = self.wake.clone();
-            move || {
+            move |path: &Path| {
                 let (path, keep) = (
-                    path.clone(),
+                    path.to_path_buf(),
                     picks(folders_only, typed.clone(), keep.clone()),
                 );
                 Job::spawn(wake.as_ref(), move || read(path, keep, scale, list))
@@ -758,7 +776,7 @@ impl Host {
         };
         let job = match self.reading.take() {
             Some((k, job)) if k == key => job,
-            _ => start(),
+            _ => start(&path),
         };
         self.again = Some((key.clone(), path, Box::new(start)));
         match job.wait(LIST_WAIT) {
@@ -767,29 +785,63 @@ impl Host {
         }
     }
 
-    /// Reads the last listed folder again once a link it listed unfollowed has answered or gvfs
-    /// metadata changed for a file in it.
+    /// Reads the last listed folder again once a link it listed unfollowed has answered, gvfs
+    /// metadata changed for a file in it, or the watch saw an entry in it change.
     fn read_due(&mut self) {
-        let due = self.relist.as_ref().map(|r| r.take()).unwrap_or_default();
+        let mut due = self.relist.as_ref().map(|r| r.take()).unwrap_or_default();
         let changed = self.gvfs.as_ref().map(|g| g.take()).unwrap_or_default();
+        if self.watch.as_mut().is_some_and(|w| w.take_changed())
+            && let Some(dir) = &self.watched
+        {
+            due.insert(dir.clone());
+        }
         self.read_again(&due, &changed);
     }
 
-    /// Reads the last listed folder again when it is one of `due` or holds one of `changed`.
+    /// Reads the last listed folder again when it is one of `due` or holds one of `changed`,
+    /// unless a read is under way already.
     fn read_again(&mut self, due: &BTreeSet<PathBuf>, changed: &BTreeSet<PathBuf>) {
-        if let Some((key, path, start)) = &self.again
+        if self.reading.is_none()
+            && let Some((key, path, start)) = &self.again
             && (due.contains(path) || changed.iter().any(|f| f.parent() == Some(path)))
         {
-            self.reading = Some((key.clone(), start()));
+            self.reading = Some((key.clone(), start(path)));
         }
     }
 
+    /// Once the folder shown, or one above it, was renamed, moved or deleted: lists it where it
+    /// went, else the nearest folder above its old path that is still there.
+    fn follow_gone(&mut self) {
+        let Some(gone) = self.watch.as_mut().and_then(|w| w.take_gone()) else {
+            return;
+        };
+        let Some(dir) = gone.ancestors().find(|p| p.is_dir()).map(Path::to_path_buf) else {
+            return;
+        };
+        let Some((key, _, start)) = self.again.take() else {
+            return;
+        };
+        let key = ReadKey {
+            id: self.folders.id(&dir),
+            ..key
+        };
+        self.reading = Some((key.clone(), start(&dir)));
+        self.again = Some((key, dir, start));
+    }
+
     fn show_read(&mut self, dlg: &mut FileDlg, id: FolderId, read: Read, icons: &mut IconCache) {
+        let path = read.path.clone();
         let mut l = listing(&mut self.folders, id, read, icons);
         for c in &mut l.folder.crumbs {
             c.icon = self.icons.folder.clone();
         }
         self.folder = Some(id);
+        if let Some(w) = &mut self.watch
+            && self.watched.as_ref() != Some(&path)
+        {
+            w.watch(&path);
+            self.watched = Some(path);
+        }
         self.aliases.clear();
         self.aliases.extend(l.aliases);
         self.list_icons.listed(l.icons, icons.scale());

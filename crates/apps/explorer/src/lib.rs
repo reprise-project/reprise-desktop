@@ -29,7 +29,6 @@ mod sendreads;
 mod settings;
 mod tree;
 mod volumes;
-mod watch;
 mod window;
 
 use dialogs::{DIALOG, Dialog, PROGRAM_BROWSE};
@@ -46,6 +45,7 @@ use repriseapp::{
     App, BTN_LEFT, BTN_RIGHT, Child, Ctx, DropForm, Event, FileDrop, MAIN, PointerInput, Reply,
     WinId,
 };
+use reprisefs::folderwatch::Watch;
 use reprisefs::history::History;
 use reprisefs::listing::Item;
 use reprisefs::program::{Confirm, ScriptOpen};
@@ -73,7 +73,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use watch::Watch;
 use window::Popup;
 
 /// Index of the Folders button in [`Explorer::toolbar`]'s items, for the latched state.
@@ -553,7 +552,10 @@ impl Explorer {
             going: None,
             opening: Vec::new(),
             selecting: None,
-            watch: match Watch::new(ctx.wake.clone()) {
+            watch: match Watch::new({
+                let wake = ctx.wake.clone();
+                move || wake.wake()
+            }) {
                 Ok(w) => Some(w),
                 Err(e) => {
                     log::warn!("no folder watch: {e}");
