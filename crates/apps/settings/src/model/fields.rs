@@ -120,6 +120,7 @@ pub(super) fn fields() -> Vec<Field> {
             lens!(debug_overlay_in_captures),
         ),
         Field::Flag(k("launcher", "search_files"), lens!(launcher_files)),
+        Field::Flag(k("launcher", "windows"), lens!(launcher_windows)),
         Field::Flag(k("thumbnail_cache", "enabled"), lens!(thumbnail_cache)),
         Field::Int(k("thumbnail_cache", "max_mb"), lens!(thumbnail_max_mb)),
         Field::Int(k("workspaces", "count"), lens!(desktops)),

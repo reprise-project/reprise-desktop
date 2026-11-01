@@ -698,6 +698,7 @@ fn save_round_trips_every_field() {
         debug_overlay: true,
         debug_overlay_in_captures: true,
         launcher_files: false,
+        launcher_windows: false,
         thumbnail_cache: false,
         thumbnail_max_mb: 64,
         desktops: 1,

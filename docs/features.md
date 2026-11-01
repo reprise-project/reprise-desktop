@@ -88,6 +88,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   nothing crawls your disk in the background. Right-click a row, or press
   the menu key, for the Start menu's program menu or a file's menu; Open
   file location (or Ctrl+Enter) shows the file selected in its folder.
+  Open windows show up too, by title or program name, on any desktop:
+  Enter brings one back, restoring it if minimized. When a window matches
+  as well as a program, it comes first, so "fire" Enter goes back to the
+  browser you have open. `[launcher] windows = false` turns that off.
 - **Run...** for when you know exactly what you want. A folder's path (`~/Documents`) opens it in Explorer.
 
 ## Windows

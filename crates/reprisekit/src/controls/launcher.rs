@@ -3,7 +3,9 @@
 //! top match inline when it starts with what was typed, keeping the typed
 //! prefix's casing, with the completed tail selected so the next key replaces it.
 //! Over the app rows, when the text is a sum, the calculator's row with its
-//! answer ("= 14"). Under them, a greyed "Settings" heading with an etched rule
+//! answer ("= 14"). Open windows hang under a "Windows" heading, above the app
+//! rows (then headed "Programs") when the host ranks them first, else under them.
+//! Then a greyed "Settings" heading with an etched rule
 //! over the settings rows, and once the host has found files, a "Files" heading
 //! the same way with the folder dimmed after each name. Arrows step over headings.
 //! The panel grows with the text size; the icons and bevels keep their size.
@@ -16,7 +18,7 @@
 //! "Settings (n)" and "Files (n)" group headers with rules.
 //!
 //! Pure: the host works out the rows and hands them back through `set_calc`,
-//! `set_settings`, `set_rows` and `set_files`.
+//! `set_windows`, `set_settings`, `set_rows` and `set_files`.
 
 use crate::access::accesskit;
 use crate::classic::widgets::{ROW_H as FIELD_H, edit_first_visible};
@@ -36,6 +38,9 @@ use crate::theme::{TextUnits, Theme};
 pub const MAX_ROWS: usize = 8;
 pub const MAX_SETTINGS: usize = 4;
 pub const MAX_FILES: usize = 8;
+pub const MAX_WINDOWS: usize = 5;
+pub const WINDOWS_HEADING: &str = "Windows";
+pub const PROGRAMS_HEADING: &str = "Programs";
 pub const SETTINGS_HEADING: &str = "Settings";
 pub const FILES_HEADING: &str = "Files";
 /// What a reader calls the field.
@@ -59,6 +64,7 @@ pub struct FileRow {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
     Calc,
+    Window(usize),
     App(usize),
     Setting(usize),
     File(usize),
@@ -80,6 +86,9 @@ pub struct Launcher {
     pub list: ListBox,
     pub icons: Vec<Option<Canvas>>,
     calc: Option<Row>,
+    windows: Vec<Row>,
+    /// The window rows go above the app rows.
+    windows_first: bool,
     apps: Vec<Row>,
     settings: Vec<Row>,
     files: Vec<FileRow>,
@@ -102,7 +111,7 @@ pub enum Key {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     None,
-    /// `query()` changed: call `set_calc`, `set_settings` and `set_rows`,
+    /// `query()` changed: call `set_calc`, `set_windows`, `set_settings` and `set_rows`,
     /// in that order (and `set_files` when the files come in).
     QueryChanged,
     Launch(Pick),
@@ -125,6 +134,8 @@ impl Launcher {
             list: ListBox::new(Vec::new(), None),
             icons: Vec::new(),
             calc: None,
+            windows: Vec::new(),
+            windows_first: false,
             apps: Vec::new(),
             settings: Vec::new(),
             files: Vec::new(),
@@ -149,7 +160,23 @@ impl Launcher {
         if self.calc.is_some() {
             v.push(Line::Row(Pick::Calc));
         }
+        let windows = |v: &mut Vec<Line>| {
+            if !self.windows.is_empty() {
+                v.push(Line::Heading(WINDOWS_HEADING));
+                v.extend((0..self.windows.len()).map(|i| Line::Row(Pick::Window(i))));
+            }
+        };
+        let lead = self.windows_lead();
+        if lead {
+            windows(&mut v);
+            if !self.apps.is_empty() {
+                v.push(Line::Heading(PROGRAMS_HEADING));
+            }
+        }
         v.extend((0..self.apps.len()).map(|i| Line::Row(Pick::App(i))));
+        if !lead {
+            windows(&mut v);
+        }
         if !self.settings.is_empty() {
             v.push(Line::Heading(SETTINGS_HEADING));
             v.extend((0..self.settings.len()).map(|i| Line::Row(Pick::Setting(i))));
@@ -169,11 +196,16 @@ impl Launcher {
     }
 
     fn heading_rows(&self, h: &str) -> usize {
-        if h == SETTINGS_HEADING {
-            self.settings.len()
-        } else {
-            self.files.len()
+        match h {
+            WINDOWS_HEADING => self.windows.len(),
+            PROGRAMS_HEADING => self.apps.len(),
+            SETTINGS_HEADING => self.settings.len(),
+            _ => self.files.len(),
         }
+    }
+
+    fn windows_lead(&self) -> bool {
+        self.windows_first && !self.windows.is_empty()
     }
 
     pub fn pick(&self, i: usize) -> Option<Pick> {
@@ -213,6 +245,10 @@ impl Launcher {
                     let r = self.calc.as_ref().expect("a calc line has its row");
                     (r.name.clone(), r.icon.clone(), String::new())
                 }
+                Line::Row(Pick::Window(i)) => {
+                    let r = &self.windows[i];
+                    (r.name.clone(), r.icon.clone(), String::new())
+                }
                 Line::Row(Pick::App(i)) => {
                     let r = &self.apps[i];
                     (r.name.clone(), r.icon.clone(), String::new())
@@ -243,6 +279,15 @@ impl Launcher {
     /// Call before `set_rows`, which does not complete the field while it is shown.
     pub fn set_calc(&mut self, row: Option<Row>) {
         self.calc = row;
+        self.rebuild(None);
+    }
+
+    /// The open windows matching the query, best first; `first` puts them above the
+    /// app rows, where they take the highlight and the field is not completed. Call
+    /// before `set_rows`.
+    pub fn set_windows(&mut self, rows: Vec<Row>, first: bool) {
+        self.windows = rows.into_iter().take(MAX_WINDOWS).collect();
+        self.windows_first = first;
         self.rebuild(None);
     }
 
@@ -340,7 +385,7 @@ impl Launcher {
     fn context_of(p: Pick) -> Event {
         match p {
             Pick::App(_) | Pick::File(_) => Event::Context(p),
-            Pick::Calc | Pick::Setting(_) => Event::None,
+            Pick::Calc | Pick::Window(_) | Pick::Setting(_) => Event::None,
         }
     }
 
@@ -381,6 +426,7 @@ impl Launcher {
         let top = self.apps.first().map(|r| r.name.clone());
         let completes = self.inline.completing()
             && self.calc.is_none()
+            && !self.windows_lead()
             && !query.is_empty()
             && top.as_deref().is_some_and(|t| {
                 t.to_lowercase().starts_with(&query.to_lowercase()) && t.len() > query.len()
@@ -1549,6 +1595,67 @@ mod tests {
         l.key(Key::Up);
         l.key(Key::Up);
         assert_eq!(l.picked(), Some(Pick::Calc));
+    }
+
+    #[test]
+    fn windows_ranked_first_lead_under_their_heading_and_programs_get_one() {
+        let mut l = Launcher::new();
+        typed(&mut l, "fire");
+        l.set_calc(None);
+        l.set_windows(rows(&["Mozilla Firefox"]), true);
+        l.set_settings(Vec::new());
+        l.set_rows(rows(&["Firefox"]));
+        assert_eq!(
+            l.list.items,
+            [
+                WINDOWS_HEADING,
+                "Mozilla Firefox",
+                PROGRAMS_HEADING,
+                "Firefox"
+            ]
+        );
+        assert_eq!(l.list.greyed, [true, false, true, false]);
+        assert_eq!(l.picked(), Some(Pick::Window(0)));
+        assert_eq!(l.edit.text, "fire", "no completion while a window leads");
+        assert_eq!(l.key(Key::Enter), Event::Launch(Pick::Window(0)));
+        assert_eq!(l.key(Key::Menu), Event::None, "a window row has no menu");
+        l.key(Key::Down);
+        assert_eq!(l.picked(), Some(Pick::App(0)), "over the Programs heading");
+        l.key(Key::Up);
+        l.key(Key::Up);
+        assert_eq!(l.picked(), Some(Pick::Window(0)), "the heading above stays");
+    }
+
+    #[test]
+    fn windows_ranked_after_the_programs_hang_under_them_and_the_field_completes() {
+        let mut l = Launcher::new();
+        typed(&mut l, "te");
+        l.set_calc(None);
+        l.set_windows(rows(&["notes.txt - Editor"]), false);
+        l.set_settings(rows(&["Keyboard"]));
+        l.set_rows(rows(&["Terminal"]));
+        assert_eq!(
+            l.list.items,
+            [
+                "Terminal",
+                WINDOWS_HEADING,
+                "notes.txt - Editor",
+                SETTINGS_HEADING,
+                "Keyboard"
+            ]
+        );
+        assert_eq!(l.picked(), Some(Pick::App(0)));
+        assert_eq!(l.edit.text, "terminal", "completed in the typed casing");
+        l.key(Key::Down);
+        assert_eq!(l.picked(), Some(Pick::Window(0)));
+        l.set_windows(Vec::new(), true);
+        assert!(
+            !l.list
+                .items
+                .iter()
+                .any(|i| i == WINDOWS_HEADING || i == PROGRAMS_HEADING),
+            "no window rows, no headings for them"
+        );
     }
 
     #[test]

@@ -79,6 +79,8 @@ pub struct Config {
     pub capture_border: bool,
     pub debug: DebugConfig,
     pub launcher_files: bool,
+    /// `[launcher] windows`: the launcher finds open windows.
+    pub launcher_windows: bool,
     pub night_light: NightLightConfig,
     pub workspaces: usize,
     pub workspace_animation: SwitchAnimation,
@@ -148,6 +150,7 @@ impl Default for Config {
             capture_border: true,
             debug: DebugConfig::default(),
             launcher_files: true,
+            launcher_windows: true,
             night_light: NightLightConfig::default(),
             workspaces: WORKSPACES_DEFAULT,
             workspace_animation: SwitchAnimation::default(),
