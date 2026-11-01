@@ -25,6 +25,8 @@ pub enum Press {
 #[derive(Default)]
 pub struct DisplayHost {
     pub model: Display,
+    /// `repriseconf::displays::path()`; a scratch file in tests.
+    pub layouts: std::path::PathBuf,
     pub flow: Flow,
     /// The button pressed; the flow starts once the event is back in
     /// `App::event`, which has the `Ctx`.
@@ -35,6 +37,7 @@ pub struct DisplayHost {
 impl SettingsApp {
     pub(crate) fn heads_changed(&mut self, heads: Vec<Head>) -> Reply {
         self.display.model.set_heads(heads);
+        self.display.model.layouts_saved = self.display.layouts.exists();
         displaypage::refresh(&mut self.sheet, &self.display.model);
         let effects = self.display.flow.heads_changed(&self.display.model);
         let mut r = self.display_effects(effects);
@@ -59,6 +62,21 @@ impl SettingsApp {
             }
         });
         Reply::none()
+    }
+
+    /// Forget saved layouts: the compositor places the next set of monitors from `[[outputs]]`.
+    pub(crate) fn forget_layouts(&mut self) -> Reply {
+        match std::fs::remove_file(&self.display.layouts) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                log::warn!("{}: {e}", self.display.layouts.display());
+                self.fail("The saved layouts could not be forgotten.");
+                return Reply::redraw();
+            }
+        }
+        self.display.model.layouts_saved = false;
+        self.display_changed()
     }
 
     pub(crate) fn start_display(&mut self, press: Press, req: &mut HeadRequests) -> Reply {
@@ -139,18 +157,24 @@ impl SettingsApp {
     pub(crate) fn display_effects(&mut self, effects: Vec<Effect>) -> Reply {
         let mut r = Reply::none();
         let mut failed = false;
+        // The compositor saves the layout once it has reloaded what was written.
+        let mut saved = false;
         for e in effects {
             match e {
                 Effect::Save(name, keys) => {
                     if let Err(why) = outputwrite::save(&self.path, &name, &keys) {
                         self.fail(why);
                         failed = true;
+                    } else {
+                        saved = true;
                     }
                 }
                 Effect::SavePrimary(name) => {
                     if let Err(why) = outputwrite::save_primary(&self.path, &name) {
                         self.fail(why);
                         failed = true;
+                    } else {
+                        saved = true;
                     }
                 }
                 Effect::Fail(why) => {
@@ -159,6 +183,11 @@ impl SettingsApp {
                 }
                 Effect::Quit => r.quit = !failed,
             }
+        }
+        if saved && !self.display.model.layouts_saved {
+            self.display.model.layouts_saved = true;
+            displaypage::refresh(&mut self.sheet, &self.display.model);
+            r.redraw = true;
         }
         r
     }

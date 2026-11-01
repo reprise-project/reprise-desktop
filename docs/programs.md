@@ -122,7 +122,8 @@ One window, 23 pages, four headings. Only one runs at a time.
   - **Display:** arrange monitors by dragging them, or pick one with the
     arrows and move it with Ctrl+arrows to the next edge that way, Identify,
     the primary screen, and each screen's resolution, refresh rate, orientation, scale
-    and adaptive sync.
+    and adaptive sync. Forget saved layouts drops the layouts the desktop
+    remembers per set of monitors.
   - **Night Light:** warmth, and sunset to sunrise or a schedule.
   - **Fonts & Icons:** the UI and dialog fonts, the icon theme, frame and
     caption sizes, and how GTK and Qt programs are themed.

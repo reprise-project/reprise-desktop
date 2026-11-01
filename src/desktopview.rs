@@ -348,13 +348,13 @@ pub fn relist_on_loop(state: &mut State) {
 }
 
 impl State {
-    /// The primary output: the one `[[outputs]] primary` names while in the layout,
-    /// else the first with a non-empty layout box. Icons sit on it; balloons and the
+    /// The primary output: the one the saved layout or else `[[outputs]] primary` names while in
+    /// the layout, else the first with a non-empty layout box. Icons sit on it; balloons and the
     /// media panel show there.
     pub(crate) fn first_output(&self) -> Option<Output> {
         let shown = |o: &&Output| self.layout_box(Some(o)).width > 0;
         let outputs = self.scene.outputs();
-        let primary = self.config.primary_output_name();
+        let primary = (self.saved_primary()).or_else(|| self.config.primary_output_name());
         outputs
             .iter()
             .filter(shown)

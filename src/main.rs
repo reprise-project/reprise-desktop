@@ -167,6 +167,7 @@ mod migrate;
 mod mutex;
 mod osdview;
 mod output;
+mod outputlayouts;
 mod outputset;
 mod pickthumbs;
 mod placement;

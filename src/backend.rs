@@ -76,8 +76,10 @@ use devices::{DeviceSet, Head, pick_gpu, secondaries};
 use gamma::{Gamma, Lut, write_gamma};
 pub use gamma::{gamma_size, set_gamma};
 use links::LINK_GOOD;
+pub use outputs::{
+    HeadState, disable, enable, heads, output_power, set_mode, set_output_power, set_vrr,
+};
 use outputs::{Probe, asks_scan, connector_disconnected, scan_connectors};
-pub use outputs::{disable, enable, heads, output_power, set_mode, set_output_power, set_vrr};
 pub use render::{answer_frames, take_stats};
 use render::{committed, retired, vblank};
 #[cfg(test)]

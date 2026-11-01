@@ -1333,3 +1333,27 @@ fn forget_drops_a_location_answer_from_the_file() {
     assert_eq!(app.locations.rows[0].cells[0], "org.example.NoSuchWeather");
     assert!(!app.dirty(), "Forget leaves nothing for Apply");
 }
+
+#[test]
+fn forget_saved_layouts_drops_the_file_and_greys_the_button() {
+    let mut app = app("forget-layouts");
+    let mut ctx = test_ctx();
+    app.display.layouts = tmp("forget-layouts").join("displays.toml");
+    std::fs::write(&app.display.layouts, "outputs_seen = \"0\"\n").unwrap();
+    app.event(
+        MAIN,
+        Event::Heads(vec![displaypage::test_head("DP-1")]),
+        &mut ctx,
+    );
+    let forget = |app: &SettingsApp| match app.sheet.pages[Page::Display.index()]
+        .item(displaypage::FORGET)
+        .map(|it| &it.control)
+    {
+        Some(form::Control::Button { enabled, .. }) => *enabled,
+        other => panic!("Forget is a button: {other:?}"),
+    };
+    assert!(forget(&app), "lit while layouts are saved");
+    app.forget_layouts();
+    assert!(!app.display.layouts.exists());
+    assert!(!forget(&app), "greyed once forgotten");
+}
