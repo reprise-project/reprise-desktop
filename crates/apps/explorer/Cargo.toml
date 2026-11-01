@@ -24,7 +24,6 @@ reprisebus = { path = "../../reprisebus" }
 repriseconf = { path = "../../repriseconf" }
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true
-inotify.workspace = true
 log.workspace = true
 
 [dev-dependencies]

@@ -1357,3 +1357,65 @@ fn the_dialog_draws_tiles_icons_and_thumbnails_pictures() {
     let r = found(&thumbnails, TEXT).expect("a 32 px icon");
     assert_eq!((r.width, r.height), (32, 32));
 }
+
+/// Calls [`Host::take_thumbs`] until `done` holds of the dialog, as the program's loop does on
+/// each wake.
+fn until(h: &mut Host, dlg: &mut FileDlg, icons: &mut IconCache, done: impl Fn(&FileDlg) -> bool) {
+    for _ in 0..1000 {
+        h.take_thumbs(dlg, icons);
+        if done(dlg) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("the dialog never caught up with the folder");
+}
+
+fn has(dlg: &FileDlg, name: &str) -> bool {
+    dlg.entries().iter().any(|e| e.name == name)
+}
+
+#[test]
+fn a_folder_made_or_removed_in_the_folder_shown_lists_without_a_refresh() {
+    let t = tempfile::tempdir().unwrap();
+    std::fs::create_dir(t.path().join("sub")).unwrap();
+    std::fs::write(t.path().join("a.txt"), "").unwrap();
+    let mut h = host_in(t.path());
+    let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+    let mut dlg = open_dlg(&mut h);
+    h.thumbs_on(&crate::Waker::noop());
+    h.ensure_listed(&mut dlg, &mut icons, &|_: &Item| true);
+    assert!(dlg.select_named("sub"));
+
+    std::fs::create_dir(t.path().join("made")).unwrap();
+    until(&mut h, &mut dlg, &mut icons, |d| has(d, "made"));
+    let picked: Vec<&str> = dlg.selected().iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(picked, ["sub"], "the selection stays on its entry");
+
+    std::fs::remove_file(t.path().join("a.txt")).unwrap();
+    until(&mut h, &mut dlg, &mut icons, |d| !has(d, "a.txt"));
+    std::fs::rename(t.path().join("made"), t.path().join("renamed")).unwrap();
+    until(&mut h, &mut dlg, &mut icons, |d| {
+        has(d, "renamed") && !has(d, "made")
+    });
+}
+
+#[test]
+fn the_folder_shown_renamed_lists_under_its_new_name() {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("old");
+    std::fs::create_dir_all(dir.join("inside")).unwrap();
+    let mut h = host_in(&dir);
+    let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+    let mut dlg = open_dlg(&mut h);
+    h.thumbs_on(&crate::Waker::noop());
+    h.ensure_listed(&mut dlg, &mut icons, &|_: &Item| true);
+
+    let old = dlg.folder();
+    let new = t.path().join("new");
+    std::fs::rename(&dir, &new).unwrap();
+    until(&mut h, &mut dlg, &mut icons, |d| d.folder() != old);
+    let shown = h.folders.path(dlg.folder().unwrap()).unwrap().to_path_buf();
+    assert_eq!(shown, new);
+    assert!(has(&dlg, "inside"));
+}

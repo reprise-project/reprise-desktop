@@ -2352,7 +2352,6 @@ dependencies = [
 name = "reprise-explorer"
 version = "0.1.0"
 dependencies = [
- "inotify",
  "log",
  "repriseapp",
  "reprisebus",
@@ -2643,6 +2642,7 @@ dependencies = [
  "async-io",
  "futures-util",
  "hmac",
+ "inotify",
  "libc",
  "log",
  "md5",
