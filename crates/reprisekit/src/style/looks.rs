@@ -118,6 +118,8 @@ pub struct MenuLook {
     pub ring: Option<Color>,
     /// None: the scheme's menu colour.
     pub face: Option<Color>,
+    /// How far in from the menu's edges its rows sit, frame included.
+    pub inset: Insets,
     pub row: i32,
     pub separator: i32,
     pub gutter: i32,

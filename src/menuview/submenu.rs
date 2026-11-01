@@ -10,7 +10,7 @@ use crate::{
     config::{MenuEntry, MenuTarget},
     desktopview::DesktopCommand,
     raster::Rect,
-    startmenu::{MenuItem, MenuStyle, place_submenu_inset},
+    startmenu::{MenuItem, MenuStyle, place_submenu_beside, place_submenu_inset},
     taskbar::{JumpRow, TaskbarCommand, WindowListRow},
     window::WindowId,
     winmenu::WindowMenuRow,
@@ -364,21 +364,33 @@ impl State {
         );
         let parent_inset = parent.layout.inset.right;
         let output = parent.output.clone();
-        let usable = self.usable_area(Some(&output));
-        let style = if context {
-            MenuStyle::context_for(&self.config.theme, &items)
-        } else {
-            MenuStyle::submenu(&self.config.theme)
+        // A folder in a Blue Start menu's menu opens in its look; other submenus in the theme's.
+        let skin = match parent.skin {
+            Skin::BlueStart => Skin::BlueStart,
+            _ => Skin::Theme,
         };
-        let layout = style.layout_in(&self.config.theme, &self.text, &items, usable);
-        let (x, y) = place_submenu_inset(
-            parent_rect,
-            row_rect,
-            (layout.width, layout.height),
-            usable,
-            parent_inset,
-            layout.inset,
-        );
+        let usable = self.usable_area(Some(&output));
+        let theme = self.menu_theme(skin, 1);
+        let style = if context || skin == Skin::BlueStart {
+            MenuStyle::context_for(&theme, &items)
+        } else {
+            MenuStyle::submenu(&theme)
+        };
+        let layout = style.layout_in(&theme, &self.text, &items, usable);
+        let size = (layout.width, layout.height);
+        let (x, y) = match skin {
+            Skin::BlueStart => {
+                place_submenu_beside(parent_rect, row_rect, size, usable, layout.inset)
+            }
+            _ => place_submenu_inset(
+                parent_rect,
+                row_rect,
+                size,
+                usable,
+                parent_inset,
+                layout.inset,
+            ),
+        };
         let start_open = self
             .bars
             .iter()
@@ -398,6 +410,7 @@ impl State {
         if let Some(m) = self.menus.last_mut() {
             m.parent_row = Some(row);
             m.shadow_floor = floor;
+            m.skin = skin;
         }
         self.set_row_icons(depth + 1, waits);
         self.redraw_menu(depth + 1);

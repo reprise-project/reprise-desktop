@@ -97,7 +97,7 @@ impl MenuStyle {
                 icon_x: ml.icon_x,
                 separator_h: ml.separator,
                 right_pad: ml.right_pad,
-                inset: INSET,
+                inset: ml.inset,
                 separator_x: 0,
                 lit_arrow_menu_text: false,
                 shortcut_pad: ml.shortcut_end,
@@ -437,6 +437,19 @@ pub fn place_popup(at: (i32, i32), size: (i32, i32), usable: Rect) -> (i32, i32)
 
 pub fn place_submenu(parent: Rect, row: Rect, size: (i32, i32), usable: Rect) -> (i32, i32) {
     place_submenu_inset(parent, row, size, usable, BORDER, INSET)
+}
+
+/// [`place_submenu_inset`] for a look whose submenus stand beside their parent, frame to frame,
+/// the child's first row (`child` in from its top) level with `row`.
+pub fn place_submenu_beside(
+    parent: Rect,
+    row: Rect,
+    size: (i32, i32),
+    usable: Rect,
+    child: Insets,
+) -> (i32, i32) {
+    let child = Insets::new(0, child.top, 0, 0);
+    place_submenu_inset(parent, row, size, usable, 0, child)
 }
 
 /// [`place_submenu`] for menus with their own borders: the parent's rows

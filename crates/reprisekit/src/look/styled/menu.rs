@@ -4,8 +4,13 @@ use crate::raster::{Canvas, Rect};
 use crate::style::{MenuLook, Part, State, Style};
 use crate::theme::Color;
 
-/// The menu's face, frame and ring over `r`; `face` stands in for a look without its own.
-pub fn draw_frame(m: &MenuLook, c: &mut Canvas, r: Rect, face: Color, s: i32) {
+/// The menu's face, frame and ring over `r`: the style's [`Part::MenuFrame`] when it has one,
+/// else `m`'s colours, `face` standing in for a look without its own.
+pub fn draw_frame(st: &Style, m: &MenuLook, c: &mut Canvas, r: Rect, face: Color, s: i32) {
+    if st.part(Part::MenuFrame).is_some() {
+        st.draw(c, r, Part::MenuFrame, State::Normal, s);
+        return;
+    }
     c.fill_rect(r, m.face.unwrap_or(face));
     c.ring_t(r, m.frame, m.frame, s);
     if let Some(ring) = m.ring {

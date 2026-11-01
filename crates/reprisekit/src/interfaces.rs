@@ -311,6 +311,18 @@ pub fn draw_blue_start_panel(
     blue::startpanel::draw(canvas, variant.scheme(), text, p, l, pressed);
 }
 
+/// `theme` for the menus the Blue Start menu opens, in `variant`'s colours: Blue's style at
+/// `theme`'s scale with [`blue::menus::look`] as its menu look. Fonts and metrics stay `theme`'s.
+pub fn blue_start_menus(theme: &Theme, variant: blue::Variant) -> Theme {
+    let st = blue::style_for(variant).at_scale(theme.scale);
+    let look = blue::menus::look(variant.scheme());
+    Theme {
+        colors: st.colors.clone(),
+        look: Look::Styled(Arc::new((*st).clone().with_menu(look))),
+        ..theme.clone()
+    }
+}
+
 pub fn start_panel_text(_theme: &Theme) -> TextRenderer {
     TextRenderer::load(&glass::startpanel::font())
 }
