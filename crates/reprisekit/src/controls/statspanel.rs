@@ -64,7 +64,7 @@ pub fn draw(theme: &Theme, text: &TextRenderer, p: &StatsPanel) -> Canvas {
     let (cs, s) = (paint.cs, paint.s);
     let h = height(p.rows.len());
     if let Some((style, spec)) = panel::glass(theme) {
-        return panel::draw(style, spec, W, h, s, |c| {
+        return panel::draw_inked(style, spec, W, h, s, |c| {
             body(c, paint, text, theme.fonts.size_px, p, Some(panel::INK))
         });
     }

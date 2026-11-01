@@ -707,7 +707,7 @@ mod tests {
             })
     }
 
-    const CRISP: [Part; 30] = [
+    const CRISP: [Part; 31] = [
         Part::StartMagnifier,
         Part::StartClear,
         Part::StartTriangleLeft,
@@ -735,6 +735,7 @@ mod tests {
         Part::SwitcherHot,
         Part::SwitcherShadow,
         Part::PreviewFrame,
+        Part::InkPanel,
         Part::PreviewThumb,
         Part::PreviewClose,
         Part::Tooltip,
