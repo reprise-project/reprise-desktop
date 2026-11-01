@@ -41,6 +41,30 @@ fn access_names_the_buttons_and_presses_the_active_task() {
 }
 
 #[test]
+fn a_badged_task_button_reads_its_unread_count_after_the_title() {
+    let l = TaskbarLayout::compute(
+        &Metrics::default(),
+        &TaskbarShape::CLASSIC,
+        800,
+        true,
+        counts(0, 2, 0),
+        40,
+    );
+    let names = TaskbarNames {
+        tasks: vec![("Mail".into(), false), ("Notes".into(), false)],
+        badges: vec![Some(3), None],
+        ..TaskbarNames::default()
+    };
+    let mut t = Tree::window("Taskbar", (l.width, l.height));
+    access(&l, &names, &mut t, access::ROOT);
+    assert!(t.find(Role::Button, "Mail, 3 unread").is_some());
+    assert!(
+        t.find(Role::Button, "Notes").is_some(),
+        "no badge, the title alone"
+    );
+}
+
+#[test]
 fn a_reader_meets_the_bands_in_the_order_they_are_drawn() {
     let c = TaskbarCounts {
         quick: 2,
