@@ -334,6 +334,24 @@ pub(crate) fn take_thumbs(
         .collect()
 }
 
+/// Whether the marquee in window `win`'s file dialog is past the list's edge, so the window
+/// ticks ([`marquee_tick`]).
+pub(crate) fn marquee_scrolls(app: &mut dyn crate::App, win: crate::WinId) -> bool {
+    app.drop_file_dialog(win).is_some_and(|f| {
+        let (w, h) = f.dlg.client();
+        f.dlg.marquee_scrolls(Rect::new(0, 0, w, h))
+    })
+}
+
+/// A tick on window `win` while its file dialog's marquee is past the list's edge: the list
+/// scrolls a step. True when the dialog took the tick.
+pub(crate) fn marquee_tick(app: &mut dyn crate::App, win: crate::WinId) -> bool {
+    app.drop_file_dialog(win).is_some_and(|f| {
+        let (w, h) = f.dlg.client();
+        f.dlg.marquee_tick(Rect::new(0, 0, w, h))
+    })
+}
+
 pub fn type_keep(dlg: &FileDlg) -> impl Fn(&Item) -> bool + Clone + Send + 'static {
     let pattern = dlg.picked_pattern();
     move |i| {
@@ -743,7 +761,7 @@ impl Host {
                 if self.clicks.press(hit, metrics.click(*x, *y, *time)) {
                     dlg.double_click(r, hit)
                 } else {
-                    dlg.click(r, hit, mods(m))
+                    dlg.click_at(r, hit, mods(m), (*x, *y))
                 }
             }
             // File name takes the focus for the edit menu the host opens over it; the list opens

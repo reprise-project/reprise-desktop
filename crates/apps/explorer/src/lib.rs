@@ -252,11 +252,8 @@ pub struct Explorer {
     /// The last input was a key, not a pointer press: a dialog opened now shows keyboard cues from the start.
     keyed: bool,
     dragging: bool,
-    /// A marquee drag in the view: where the press landed, what was selected
-    /// then, and whether Ctrl was held (the band toggles against that set instead
-    /// of replacing it). The rectangle lives in `sv.marquee`, appearing once the
-    /// pointer has moved [`DRAG_SLOP`] px.
-    marquee_from: Option<((i32, i32), std::collections::BTreeSet<usize>, bool)>,
+    /// A marquee drag in the view; its rectangle lives in `sv.marquee`.
+    marquee_from: Option<shellview::MarqueeDrag>,
     /// A Details column divider drag: the column, the press position and the column's 100% width then.
     resizing: Option<(usize, i32, i32)>,
     thumb: ThumbDrag,

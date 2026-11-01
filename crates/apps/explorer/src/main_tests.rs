@@ -1058,7 +1058,14 @@ fn escape_abandons_a_marquee_and_a_divider_drag() {
 
     let base: std::collections::BTreeSet<usize> = [0].into_iter().collect();
     ex.sv.selection.set = base.clone();
-    ex.marquee_from = Some(((10, 10), base.clone(), true));
+    let frame = ex.layout(&ctx).view;
+    let sl = ex.view_layout(frame, &ctx);
+    ex.marquee_from = Some(reprisekit::controls::shellview::MarqueeDrag::press(
+        &ex.sv,
+        &sl,
+        (10, 10),
+        true,
+    ));
     ex.sv.marquee = Some(reprisekit::raster::Rect::new(10, 10, 50, 50));
     ex.sv.selection.set = [0, 1].into_iter().collect();
     ex.key(escape(), &mut ctx);

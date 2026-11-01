@@ -22,7 +22,6 @@ use reprisekit::controls::treeview;
 use reprisekit::look::widgets::item;
 use reprisekit::pointer::Nav;
 use reprisekit::raster::Rect;
-use reprisekit::selection;
 
 type BarPart = (Axis, ScrollHit);
 
@@ -38,11 +37,8 @@ impl Explorer {
         if self.cancel_item_drag() {
             return true;
         }
-        if let Some((_, base, _)) = self.marquee_from.take() {
-            self.sv.marquee = None;
-            self.sv.selection.set = base;
-            self.sv.selection.focus = self.sv.selection.set.iter().next().copied();
-            self.sv.selection.anchor = self.sv.selection.focus;
+        if let Some(m) = self.marquee_from.take() {
+            m.cancel(&mut self.sv);
             return true;
         }
         if let Some((col, _, width)) = self.resizing.take() {
@@ -331,9 +327,12 @@ impl Explorer {
                     if !mods.ctrl {
                         self.sv.selection.clear();
                     }
-                    // The marquee starts here and only becomes visible
-                    // once the pointer has moved `DRAG_SLOP` px.
-                    self.marquee_from = Some(((x, y), self.sv.selection.set.clone(), mods.ctrl));
+                    self.marquee_from = Some(shellview::MarqueeDrag::press(
+                        &self.sv,
+                        &sl,
+                        (x, y),
+                        mods.ctrl,
+                    ));
                     self.clicks.reset();
                 }
                 shellview::Hit::Header(i) => return self.run(Command::Sort(i), ctx),
@@ -709,23 +708,20 @@ impl Explorer {
                 Reply::none()
             };
         }
-        if let Some((origin, base, ctrl)) = self.marquee_from.clone() {
-            if (x - origin.0).abs() < crate::DRAG_SLOP && (y - origin.1).abs() < crate::DRAG_SLOP {
-                return Reply::none();
-            }
+        if let Some(mut m) = self.marquee_from.take() {
             let frame = self.layout(ctx).view;
             let sl = self.view_layout(frame, ctx);
-            let band = selection::band(origin, (x, y));
-            // `marquee` builds the set from `base` alone, so the old set is
-            // free to take for the comparison. The chrome reads only the
-            // set, and most moves leave it as it was.
-            let before = std::mem::take(&mut self.sv.selection.set);
-            self.sv.selection.marquee(&sl.cells, band, &base, ctrl);
-            self.sv.marquee = Some(band);
+            let before = self.sv.selection.set.clone();
+            let changed = m.motion(&mut self.sv, &sl, (x, y));
+            self.marquee_from = Some(m);
             if self.sv.selection.set != before {
                 self.refresh_chrome(ctx);
             }
-            return Reply::redraw();
+            return if changed {
+                Reply::redraw()
+            } else {
+                Reply::none()
+            };
         }
         if self.dragging {
             // The view keeps at least 200 px, the width the task pane

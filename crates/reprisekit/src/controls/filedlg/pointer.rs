@@ -186,11 +186,27 @@ impl FileDlg {
     pub fn click(&mut self, r: Rect, hit: Option<Hit>, mods: Mods) -> Event {
         let before = self.filetype.selected;
         let cm = self.drawn.0.get();
-        let ev = self.click_inner(r, hit, mods, &cm);
+        let ev = self.click_inner(r, hit, mods, None, &cm);
         self.filter_event(before, ev)
     }
 
-    fn click_inner(&mut self, r: Rect, hit: Option<Hit>, mods: Mods, cm: &ControlMetrics) -> Event {
+    /// [`FileDlg::click`] pressed at `at`: in a dialog that picks several, a press on the list's
+    /// background arms a marquee that the pointer drags out ([`FileDlg::motion`]).
+    pub fn click_at(&mut self, r: Rect, hit: Option<Hit>, mods: Mods, at: (i32, i32)) -> Event {
+        let before = self.filetype.selected;
+        let cm = self.drawn.0.get();
+        let ev = self.click_inner(r, hit, mods, Some(at), &cm);
+        self.filter_event(before, ev)
+    }
+
+    fn click_inner(
+        &mut self,
+        r: Rect,
+        hit: Option<Hit>,
+        mods: Mods,
+        at: Option<(i32, i32)>,
+        cm: &ControlMetrics,
+    ) -> Event {
         if self.context.is_some() {
             return self.context_click(hit, mods.shift);
         }
@@ -247,6 +263,11 @@ impl FileDlg {
                     shellview::sort_by_column(&mut self.shell, i);
                 }
                 let lay = self.shell_layout(r, cm);
+                if let (shellview::Hit::Background, Some(at)) = (h, at)
+                    && self.multi()
+                {
+                    return self.marquee_press(&lay, at, mods);
+                }
                 self.shell_click(h, &lay, mods)
             }
             Some(Hit::ViewsItem(_) | Hit::Menu { .. } | Hit::Rename(_)) => Event::None,
@@ -418,9 +439,83 @@ impl FileDlg {
         }
     }
 
-    /// Ends a press on a toolbar button, a Details column title or a place, the only
+    /// A press on the list's background at `at`: the selection clears (unless Ctrl is held)
+    /// and a marquee waits for the pointer to move.
+    fn marquee_press(&mut self, lay: &shellview::Layout, at: (i32, i32), mods: Mods) -> Event {
+        self.focus = Focus::Shell;
+        if !mods.ctrl {
+            self.shell.selection.clear();
+            self.sync_name_field();
+        }
+        self.marquee = Some(shellview::MarqueeDrag::press(
+            &self.shell,
+            lay,
+            at,
+            mods.ctrl,
+        ));
+        Event::Redraw
+    }
+
+    /// The marquee follows the pointer at `at`.
+    fn marquee_motion(&mut self, r: Rect, at: (i32, i32)) -> Event {
+        let cm = self.drawn.0.get();
+        let lay = self.shell_layout(r, &cm);
+        let Some(m) = &mut self.marquee else {
+            return Event::None;
+        };
+        if !m.motion(&mut self.shell, &lay, at) {
+            return Event::None;
+        }
+        self.sync_name_field();
+        Event::Redraw
+    }
+
+    /// Whether a marquee's pointer is past the list's edge, so a host ticks
+    /// [`FileDlg::marquee_tick`].
+    pub fn marquee_scrolls(&self, r: Rect) -> bool {
+        let Some(m) = &self.marquee else {
+            return false;
+        };
+        let lay = self.shell_layout(r, &self.drawn.0.get());
+        m.edge(&self.shell, &lay).is_some()
+    }
+
+    /// A host's tick while [`FileDlg::marquee_scrolls`]: the list scrolls a step toward the
+    /// pointer and the band takes what scrolled in. True when it scrolled.
+    pub fn marquee_tick(&mut self, r: Rect) -> bool {
+        let cm = self.drawn.0.get();
+        let lay = self.shell_layout(r, &cm);
+        let Some(m) = &mut self.marquee else {
+            return false;
+        };
+        if !m.scroll_step(&mut self.shell, &lay) {
+            return false;
+        }
+        let lay = self.shell_layout(r, &cm);
+        if let Some(m) = &mut self.marquee {
+            m.follow(&mut self.shell, &lay);
+        }
+        self.sync_name_field();
+        true
+    }
+
+    /// Escape during a marquee: the selection the press found comes back.
+    pub(super) fn cancel_marquee(&mut self) -> bool {
+        let Some(m) = self.marquee.take() else {
+            return false;
+        };
+        m.cancel(&mut self.shell);
+        self.sync_name_field();
+        true
+    }
+
+    /// Ends a press on a toolbar button, a Details column title, a place or a marquee, the
     /// presses the dialog tracks.
     pub fn release(&mut self) -> Event {
+        if let Some(m) = self.marquee.take() {
+            m.release(&mut self.shell);
+            return Event::Redraw;
+        }
         let column = self.shell.header.holding();
         self.shell.header.release();
         let place = self.places.pressed.take().is_some();
@@ -436,6 +531,9 @@ impl FileDlg {
     /// that changed and the look draws it lit.
     /// The pointer resting on a cut label of the extra rows times its tip ([`FileDlg::blink`]).
     pub fn motion(&mut self, text: &TextRenderer, px: u32, r: Rect, x: i32, y: i32) -> Event {
+        if self.marquee.is_some() {
+            return self.marquee_motion(r, (x, y));
+        }
         let hit = self.hit(text, px, r, x, y);
         let at = self.extra_point(r, x, y);
         let hid = (self.extra.as_mut()).is_some_and(|(f, _)| f.rest_pointer(Some(at)));
