@@ -114,6 +114,16 @@ pub fn pause_until(now: i64, nights: &[(i64, i64)]) -> i64 {
         .unwrap_or(now + DAY)
 }
 
+/// Whether `now` lies inside one of `nights`, edges taken sharp, and the next edge after `now`.
+pub fn inside(now: i64, nights: &[(i64, i64)]) -> (bool, Option<i64>) {
+    let on = nights.iter().any(|&(start, end)| start <= now && now < end);
+    let next = (nights.iter())
+        .flat_map(|&(start, end)| [start, end])
+        .filter(|&t| t > now)
+        .min();
+    (on, next)
+}
+
 pub fn next_start(now: i64, nights: &[(i64, i64)]) -> Option<i64> {
     nights
         .iter()
@@ -211,6 +221,40 @@ mod tests {
             next_start(MIDNIGHT + 21 * H, &n),
             Some(MIDNIGHT + DAY + 21 * H)
         );
+    }
+
+    #[test]
+    fn inside_takes_the_edges_sharp_across_midnight_and_names_the_next() {
+        let n = fixed(19 * 60, 7 * 60, MIDNIGHT + 12 * H);
+        let at = |h: i64, m: i64| inside(MIDNIGHT + h * H + m * 60, &n);
+        assert_eq!(at(18, 59), (false, Some(MIDNIGHT + 19 * H)));
+        assert_eq!(at(19, 0), (true, Some(MIDNIGHT + DAY + 7 * H)));
+        assert_eq!(at(26, 0), (true, Some(MIDNIGHT + DAY + 7 * H)), "02:00");
+        assert_eq!(at(31, 0), (false, Some(MIDNIGHT + DAY + 19 * H)), "07:00");
+        assert_eq!(at(3, 0), (true, Some(MIDNIGHT + 7 * H)));
+        let day = fixed(9 * 60, 17 * 60, MIDNIGHT + 12 * H);
+        assert_eq!(
+            inside(MIDNIGHT + 12 * H, &day),
+            (true, Some(MIDNIGHT + 17 * H)),
+            "hours within one day"
+        );
+    }
+
+    #[test]
+    fn inside_follows_sunset_and_sunrise() {
+        let now = 1_718_884_800;
+        let (lat, lon) = (51.5074, -0.1278);
+        let n = sun_nights(lat, lon, now);
+        let Sun::Normal { set, .. } = sun(day_of(now, lon), lat, lon) else {
+            panic!("London has a sunset");
+        };
+        assert_eq!(
+            inside(now, &n),
+            (false, Some(set)),
+            "noon: light until sunset"
+        );
+        let (on, next) = inside(set, &n);
+        assert!(on && next.is_some_and(|rise| rise > set), "{next:?}");
     }
 
     #[test]

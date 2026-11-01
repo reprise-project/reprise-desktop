@@ -378,6 +378,7 @@ pub struct State {
     pub saver: crate::saverview::SaverState,
     pub power: crate::power::PowerState,
     pub night: crate::nightlight::NightLight,
+    pub dark_mode: crate::darkmode::DarkMode,
     /// wlr-layer-shell: panels, docks, launchers, backgrounds (`layer`).
     pub layers_shell: crate::layer::LayerShell,
     /// The lock screen and ext-session-lock (`lockview`, `sessionlock`).
@@ -722,6 +723,7 @@ impl State {
             saver: Default::default(),
             power: crate::power::PowerState::default(),
             night: crate::nightlight::NightLight::new(&dh),
+            dark_mode: Default::default(),
             layers_shell: crate::layer::LayerShell::new(&dh),
             lock: crate::lockview::LockScreen::new(&dh),
             launcher: None,

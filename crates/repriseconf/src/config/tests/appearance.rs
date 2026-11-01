@@ -156,7 +156,34 @@ fn glass_mode_parses_light_and_dark() {
     );
     assert!(
         Config::parse("[glass]\nmode = \"dim\"\n").is_err(),
-        "a mode other than light or dark is an error"
+        "a mode other than light, dark, night or hours is an error"
+    );
+}
+
+#[test]
+fn glass_mode_night_or_hours_sets_a_schedule_and_leaves_the_mode_light() {
+    use super::super::{DarkSchedule, GlassDark};
+    use reprisekit::glass::Mode;
+    assert_eq!(Config::default().glass_dark, GlassDark::default());
+    let c = Config::parse("[glass]\nmode = \"night\"\n").unwrap();
+    assert_eq!(
+        (c.glass_dark.schedule, c.glass.mode),
+        (DarkSchedule::Night, Mode::Light)
+    );
+    let c = Config::parse("[glass]\nmode = \"hours\"\ndark_from = \"20:30\"\ndark_to = \"6:15\"\n")
+        .unwrap();
+    assert_eq!(
+        c.glass_dark,
+        GlassDark {
+            schedule: DarkSchedule::Hours,
+            from: 20 * 60 + 30,
+            to: 6 * 60 + 15,
+        }
+    );
+    assert!(Config::parse("[glass]\ndark_from = \"25:00\"\n").is_err());
+    assert!(
+        Config::parse("[glass]\ndark_from = \"07:00\"\n").is_err(),
+        "equal to the default dark_to"
     );
 }
 

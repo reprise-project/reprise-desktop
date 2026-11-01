@@ -2,7 +2,7 @@
 //! output whose gamma another client holds is left to it; one with no gamma table is tinted by a last pass (`tint`).
 
 mod color;
-mod schedule;
+pub mod schedule;
 mod sun;
 pub mod tint;
 mod zone;
@@ -47,8 +47,7 @@ pub struct NightLight {
     /// When the warming now on is gone (the night's end plus its fade); None while not warming.
     warm_until: Option<i64>,
     next_start: Option<i64>,
-    zone: Option<String>,
-    zone_place: Option<(f64, f64)>,
+    zone: Zone,
     told_no_place: bool,
     outputs: Vec<OutputGamma>,
     pub control: GammaControlState,
@@ -62,8 +61,7 @@ impl NightLight {
             kelvin: None,
             warm_until: None,
             next_start: None,
-            zone: None,
-            zone_place: None,
+            zone: Zone::default(),
             told_no_place: false,
             outputs: Vec::new(),
             control: GammaControlState::new::<State, _>(
@@ -74,7 +72,7 @@ impl NightLight {
     }
 }
 
-struct Local;
+pub struct Local;
 
 impl LocalClock for Local {
     fn date(&self, t: i64) -> (i32, i32, i32) {
@@ -88,7 +86,7 @@ impl LocalClock for Local {
     }
 }
 
-fn now() -> i64 {
+pub fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
@@ -114,49 +112,61 @@ pub fn setup(state: &mut State) {
     update(state);
 }
 
-/// Where sunset is worked out for: the configured place, else the time
-/// zone's city.
-fn place(nl: &mut NightLight) -> Option<(f64, f64)> {
-    if let Some(p) = nl.cfg.location {
-        return Some(p);
-    }
-    let zone = zone::system_zone();
-    if zone != nl.zone {
-        nl.zone_place = zone.as_deref().and_then(zone::coordinates);
-        match (&zone, nl.zone_place) {
-            (Some(z), Some((lat, lon))) => {
-                log::info!("night light: sunset for {z} ({lat:.2}, {lon:.2})")
-            }
-            (z, _) => log::info!("night light: no coordinates for time zone {z:?}"),
-        }
-        nl.zone = zone;
-    }
-    nl.zone_place
+/// The time zone last looked up and its city's place.
+#[derive(Default)]
+pub struct Zone {
+    name: Option<String>,
+    place: Option<(f64, f64)>,
 }
 
-/// The plan the config asks for. Sunset without a place falls back to
-/// the fixed times.
-fn plan(nl: &mut NightLight) -> Plan {
+impl Zone {
+    /// Where sunset is worked out for: `location` when set, else the time zone's city.
+    fn place(&mut self, location: Option<(f64, f64)>) -> Option<(f64, f64)> {
+        if location.is_some() {
+            return location;
+        }
+        let zone = zone::system_zone();
+        if zone != self.name {
+            self.place = zone.as_deref().and_then(zone::coordinates);
+            match (&zone, self.place) {
+                (Some(z), Some((lat, lon))) => {
+                    log::info!("sunset and sunrise for {z} ({lat:.2}, {lon:.2})")
+                }
+                (z, _) => log::info!("no coordinates for time zone {z:?}"),
+            }
+            self.name = zone;
+        }
+        self.place
+    }
+}
+
+/// The plan `cfg` asks for, whether or not night light is on. Sunset without a place falls back to
+/// the fixed times; `told` is whether that was said in the log already.
+pub fn plan_of(cfg: &NightLightConfig, zone: &mut Zone, told: &mut bool) -> Plan {
     let fixed = Plan::Fixed {
-        from: nl.cfg.from,
-        to: nl.cfg.to,
+        from: cfg.from,
+        to: cfg.to,
     };
-    if nl.cfg.schedule == NightSchedule::Fixed {
+    if cfg.schedule == NightSchedule::Fixed {
         return fixed;
     }
-    match place(nl) {
+    match zone.place(cfg.location) {
         Some((lat, lon)) => Plan::Sun { lat, lon },
         None => {
-            if !nl.told_no_place {
+            if !*told {
                 log::warn!(
                     "night light: no place to work out sunset for; set [night_light] latitude \
                      and longitude. Using the from and to times meanwhile."
                 );
-                nl.told_no_place = true;
+                *told = true;
             }
             fixed
         }
     }
+}
+
+fn plan(nl: &mut NightLight) -> Plan {
+    plan_of(&nl.cfg, &mut nl.zone, &mut nl.told_no_place)
 }
 
 /// Work out the temperature for now and put it on every output that does

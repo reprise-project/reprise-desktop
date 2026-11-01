@@ -105,8 +105,13 @@ pub const FONT_SMOOTHINGS: &Choices = &[
     ("none", "None"),
 ];
 
-/// `[glass] mode`. Mirrors `glass::Mode::as_str`.
-pub const GLASS_MODES: &Choices = &[("light", "Light"), ("dark", "Dark")];
+/// `[glass] mode`: `glass::Mode::as_str`, then `DarkSchedule::name`.
+pub const GLASS_MODES: &Choices = &[
+    ("light", "Light"),
+    ("dark", "Dark"),
+    ("night", "Dark at night"),
+    ("hours", "Dark at set hours"),
+];
 
 /// `[glass] material`. Mirrors `glass::Material::as_str`.
 pub const GLASS_MATERIALS: &Choices = &[
