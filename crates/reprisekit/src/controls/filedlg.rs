@@ -35,6 +35,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 mod access_tree;
+mod context;
 mod drag;
 mod draw;
 mod keys;
@@ -258,6 +259,13 @@ pub enum Hit {
     ViewsItem(usize),
     Extra(form::Hit),
     Grip,
+    /// The context menu's level and row; `None` on its border or a separator.
+    Menu {
+        level: usize,
+        row: Option<usize>,
+    },
+    /// In the rename box, at this byte of its text.
+    Rename(usize),
 }
 
 /// What happened after a key or a click. `Redraw` is a change to this
@@ -269,7 +277,19 @@ pub enum Event {
     NeedListing(FolderId),
     /// The places bar tile at this index, in the order `new` took them.
     NeedPlace(usize),
+    /// New Folder: the host makes a folder of this name, numbered past the names taken, and
+    /// hands it to [`FileDlg::expect`] to be renamed.
     CreateFolder(String),
+    /// F5, Ctrl+R or the menu's Refresh: the host lists the folder again.
+    Refresh,
+    /// The rename box closed on a new name for the entry `from`. The host renames it, then
+    /// hands `to` to [`FileDlg::expect`], or [`FileDlg::resume_rename`] when it cannot.
+    Rename {
+        from: String,
+        to: String,
+    },
+    /// Delete on these entries: the host moves them to the Recycle Bin.
+    Delete(Vec<String>),
     /// The names to accept: one typed or selected name, several quoted
     /// ones in the File name field's order, or `.` for the open folder in
     /// folder mode.
@@ -396,6 +416,9 @@ pub struct FileDlg {
     wildcard: Option<String>,
     /// A drag resting on File name: its logical x, and the first byte shown while it rests.
     name_drop: Option<(i32, usize)>,
+    context: Option<context::Context>,
+    /// An entry to select once a listing has it, and whether to rename it ([`FileDlg::expect`]).
+    expected: Option<(String, bool)>,
     /// The look's control sizes of the last `draw`, which `hit`, `access`,
     /// the keys and the clicks lay the dialog out with, and whether that
     /// look lights what the pointer rests on.
@@ -511,6 +534,8 @@ impl FileDlg {
             typed: String::new(),
             wildcard: None,
             name_drop: None,
+            context: None,
+            expected: None,
             drawn: Drawn::default(),
             text: TextUnits::ONE,
             fields,
@@ -521,8 +546,11 @@ impl FileDlg {
     /// forward after Back) and resetting selection and scroll. A relist of the
     /// folder shown keeps them instead, by name ([`FileDlg::kept_view`]).
     pub fn set_listing(&mut self, folder: Folder) {
-        let kept = (self.folder == Some(folder.id) && !self.shell.entries.is_empty())
-            .then(|| self.kept_view());
+        let same = self.folder == Some(folder.id);
+        let kept = (same && !self.shell.entries.is_empty()).then(|| self.kept_view());
+        if !same {
+            self.expected = None;
+        }
         if let Some(prev) = self.folder
             && prev != folder.id
         {
@@ -548,6 +576,7 @@ impl FileDlg {
         self.folder = Some(folder.id);
         self.shell.entries = folder.entries;
         shellview::sort(&mut self.shell);
+        self.context = None;
         match kept {
             Some(kept) => self.restore_view(kept),
             None => {
@@ -565,7 +594,53 @@ impl FileDlg {
                 self.shell.top = 0;
             }
         }
+        if let Some((name, rename)) = self.expected.take()
+            && !self.take_expected(&name, rename)
+        {
+            self.expected = Some((name, rename));
+        }
         self.sync_toolbar();
+    }
+
+    /// Selects the entry `name` once a listing has it, now if this one does, and with `rename`
+    /// opens its rename box: a folder the host just made, or the new name of one it renamed.
+    pub fn expect(&mut self, name: &str, rename: bool) {
+        self.expected = None;
+        if !self.take_expected(name, rename) {
+            self.expected = Some((name.to_string(), rename));
+        }
+    }
+
+    fn take_expected(&mut self, name: &str, rename: bool) -> bool {
+        if !self.select_named(name) {
+            return false;
+        }
+        self.focus = Focus::Shell;
+        let cm = self.drawn.0.get();
+        let lay = self.shell_layout(Rect::new(0, 0, self.size.0, self.size.1), &cm);
+        if let Some(i) = self.shell.selection.focus {
+            shellview::ensure_visible(&mut self.shell, i, &lay);
+        }
+        if rename {
+            self.begin_rename();
+        }
+        true
+    }
+
+    /// Opens the rename box on `name` again holding `typed`, all of it selected: the host could
+    /// not rename the entry to it.
+    pub fn resume_rename(&mut self, name: &str, typed: &str) -> bool {
+        if !self.select_named(name) {
+            return false;
+        }
+        let Some(i) = self.shell.selection.focus else {
+            return false;
+        };
+        self.focus = Focus::Shell;
+        let mut ed = TextEdit::rename(typed, true);
+        ed.select_all();
+        self.shell.edit = Some((i, ed));
+        true
     }
 
     /// What a relist keeps of the view, by entry name: the selection, focus and anchor, a rename
@@ -870,7 +945,11 @@ impl FileDlg {
         &self.filename.text
     }
 
+    /// The rename box while it is open, else File name while it has the focus.
     pub fn focused_edit(&self) -> Option<&TextEdit> {
+        if let Some((_, ed)) = &self.shell.edit {
+            return Some(ed);
+        }
         (self.focus == Focus::FileName).then_some(&self.filename)
     }
 

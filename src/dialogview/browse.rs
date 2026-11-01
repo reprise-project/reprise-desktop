@@ -109,6 +109,16 @@ impl State {
                 Box::new(move |state| state.picker_reply(id, reply))
             });
         }
+        let ops: Vec<(u64, crate::filepick::Op)> = (self.dialogs.views.iter_mut())
+            .filter_map(|v| Some((v.id, v.dialog.picker_mut()?.take_ops())))
+            .flat_map(|(id, ops)| ops.into_iter().map(move |op| (id, op)))
+            .collect();
+        for (id, op) in ops {
+            self.spawn_fs_job(move || {
+                let done = op.run();
+                Box::new(move |state| state.picker_op_done(id, done))
+            });
+        }
         let pictures: Vec<_> = self
             .dialogs
             .views
@@ -165,6 +175,19 @@ impl State {
         if p.thumbs(generation, done) {
             self.redraw_dialog(i);
         }
+    }
+
+    /// Work on Browse dialog `id`'s folder is done: its folder is read again.
+    fn picker_op_done(&mut self, id: u64, done: crate::filepick::OpDone) {
+        let Some(i) = self.dialog_index(id) else {
+            return;
+        };
+        let Some(p) = self.dialogs.views[i].dialog.picker_mut() else {
+            return;
+        };
+        p.op_done(done);
+        self.run_picker_requests();
+        self.redraw_dialog(i);
     }
 
     /// A folder read for Browse dialog `id` is done; a pick acts as if the dialog were on top.

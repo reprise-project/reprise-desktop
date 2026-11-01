@@ -480,12 +480,16 @@ impl PopupMenu {
     /// flipped, its right edge on the rect's left end, as [`place_submenu`] puts it.
     pub fn submenu_anchor(&self, i: usize) -> Option<(Rect, i32)> {
         let child = self.levels.get(i).filter(|_| i > 0)?;
-        let parent = &self.levels[i - 1];
-        let row = parent.layout.rows.get(*child.path.last()?)?;
-        let overlap = BORDER + INSET.left;
-        let w = (parent.layout.width - 2 * overlap).max(1);
-        Some((Rect::new(overlap, row.y, w, row.height), -INSET.top))
+        submenu_anchor(&self.levels[i - 1].layout, *child.path.last()?)
     }
+}
+
+/// [`PopupMenu::submenu_anchor`] for the submenu of row `row` of a level laid out as `parent`.
+pub fn submenu_anchor(parent: &MenuLayout, row: usize) -> Option<(Rect, i32)> {
+    let row = parent.rows.get(row)?;
+    let overlap = BORDER + INSET.left;
+    let w = (parent.width - 2 * overlap).max(1);
+    Some((Rect::new(overlap, row.y, w, row.height), -INSET.top))
 }
 
 impl Chain for PopupMenu {

@@ -49,9 +49,13 @@ impl FileDlg {
         true
     }
 
-    /// The clipboard's text into File name while it has the focus, its first line as
-    /// [`TextEdit::paste`] takes it. `true` when the field changed.
+    /// The clipboard's text into the rename box while it is open (no `/`), else into File name
+    /// while it has the focus, its first line as [`TextEdit::paste`] takes it. `true` when the
+    /// field changed.
     pub fn paste(&mut self, text: &str) -> bool {
+        if let Some((_, ed)) = &mut self.shell.edit {
+            return ed.paste(text, &['/']);
+        }
         if self.focus != Focus::FileName || !self.filename.paste(text, &[]) {
             return false;
         }

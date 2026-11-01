@@ -46,6 +46,13 @@ filedlg-view-tiles = Tiles
 filedlg-view-icons = Icons
 filedlg-view-list = List
 filedlg-view-details = Details
+filedlg-menu-select = &Select
+filedlg-menu-delete = &Delete
+filedlg-menu-rename = Rena&me
+filedlg-menu-view = &View
+filedlg-menu-refresh = R&efresh
+filedlg-menu-new = Ne&w
+filedlg-menu-new-folder = &Folder
 
 ## About boxes
 about-copy = &Copy

@@ -178,6 +178,69 @@ pub struct FilePicker {
     /// ([`FilePicker::watch_due`]); `watched` is the folder it is on.
     watch: FolderWatch,
     watched: Option<PathBuf>,
+    /// New Folder, renames and Deletes asked for since the host last took them ([`Op::run`]).
+    ops: Vec<Op>,
+}
+
+/// Work on the folder shown that the host runs off the loop with [`Op::run`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Op {
+    dir: PathBuf,
+    /// The folder's names as listed.
+    taken: Vec<String>,
+    work: Work,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Work {
+    NewFolder(String),
+    Rename {
+        from: PathBuf,
+        old: String,
+        typed: String,
+    },
+    Trash(Vec<PathBuf>),
+}
+
+/// What an [`Op`] did, for [`FilePicker::op_done`].
+#[derive(Debug)]
+pub enum OpDone {
+    /// A folder made, or an entry renamed: its name, and whether it opens in the rename box.
+    Named(String, bool),
+    /// A rename refused: the entry and the name typed.
+    Refused(String, String),
+    Nothing,
+}
+
+impl Op {
+    /// Does the work. Blocks for as long as the file system does.
+    pub fn run(self) -> OpDone {
+        use reprisefs::dialogops;
+        match self.work {
+            Work::NewFolder(base) => match dialogops::new_folder(&self.dir, &base, &self.taken) {
+                Ok(name) => OpDone::Named(name, true),
+                Err(e) => {
+                    log::warn!("browse: no new folder in {}: {e}", self.dir.display());
+                    OpDone::Nothing
+                }
+            },
+            Work::Rename { from, old, typed } => {
+                match dialogops::rename(&from, &old, &typed, &self.taken) {
+                    Ok(name) => OpDone::Named(name, false),
+                    Err(why) => {
+                        log::warn!("browse: {why}");
+                        OpDone::Refused(old, typed)
+                    }
+                }
+            }
+            Work::Trash(paths) => {
+                for (path, why) in dialogops::trash(&paths) {
+                    log::warn!("browse: left {}: {why}", path.display());
+                }
+                OpDone::Nothing
+            }
+        }
+    }
 }
 
 /// A picker's folder watch. Not dialog state: a clone watches nothing, it compares equal and
@@ -373,6 +436,7 @@ impl FilePicker {
             view_awaited: false,
             watch: FolderWatch::default(),
             watched: None,
+            ops: Vec::new(),
         };
         let id = picker.folders.id(start);
         picker.list(id);
@@ -635,6 +699,72 @@ impl FilePicker {
             Some(dir) if changed && self.listing.is_none() => self.relist(&BTreeSet::from([dir])),
             _ => false,
         }
+    }
+
+    /// The work on the folder shown asked for since the last call, for the host to run off the
+    /// loop.
+    pub fn take_ops(&mut self) -> Vec<Op> {
+        std::mem::take(&mut self.ops)
+    }
+
+    /// An [`Op`] finished: the folder is read again, a new folder opening in the rename box once
+    /// listed, a renamed entry selected, a refused name back in the box. True when that queued a
+    /// request.
+    pub fn op_done(&mut self, done: OpDone) -> bool {
+        match done {
+            OpDone::Named(name, rename) => self.dlg.expect(&name, rename),
+            OpDone::Refused(old, typed) => {
+                self.dlg.resume_rename(&old, &typed);
+            }
+            OpDone::Nothing => {}
+        }
+        self.refresh()
+    }
+
+    /// Reads the folder shown again, unless its listing is still to come.
+    fn refresh(&mut self) -> bool {
+        match self.current().map(Path::to_path_buf) {
+            Some(dir) if self.listing.is_none() => self.relist(&BTreeSet::from([dir])),
+            _ => false,
+        }
+    }
+
+    /// Queues `work` on the folder shown; none in My Recent Documents, which holds links to
+    /// files elsewhere.
+    fn queue(&mut self, work: Work) {
+        let Some(dir) = self.current().map(Path::to_path_buf) else {
+            return;
+        };
+        if reprisefs::places::is_recent(&dir) {
+            return;
+        }
+        let taken = self.dlg.entries().iter().map(|e| e.name.clone()).collect();
+        self.ops.push(Op { dir, taken, work });
+    }
+
+    /// A key press read as a file-dialog key before [`FilePicker::key`]
+    /// ([`FileDlg::shortcut`]); `None` leaves it to `key`.
+    pub fn shortcut(
+        &mut self,
+        client: Rect,
+        sym: u32,
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+    ) -> Option<Outcome> {
+        let ev = self.dlg.shortcut(client, sym, ctrl, shift, alt)?;
+        Some(self.event(ev))
+    }
+
+    /// A right press at `at` on `hit`: the list's context menu, or File name's focus.
+    pub fn right_click(
+        &mut self,
+        client: Rect,
+        hit: Option<filedlg::Hit>,
+        at: (i32, i32),
+    ) -> Outcome {
+        let ev = self.dlg.right_click(client, hit, at);
+        self.event(ev)
     }
 
     pub fn current(&self) -> Option<&Path> {
@@ -900,7 +1030,30 @@ impl FilePicker {
                 }
                 Outcome::Redraw
             }
-            Event::CreateFolder(_) => Outcome::Nothing,
+            Event::Refresh => {
+                self.refresh();
+                Outcome::Redraw
+            }
+            Event::CreateFolder(base) => {
+                self.queue(Work::NewFolder(base));
+                Outcome::Redraw
+            }
+            Event::Rename { from, to } => {
+                let path = self.typed_path(&from);
+                if let Some(path) = path {
+                    self.queue(Work::Rename {
+                        from: path,
+                        old: from,
+                        typed: to,
+                    });
+                }
+                Outcome::Redraw
+            }
+            Event::Delete(names) => {
+                let paths: Vec<PathBuf> = names.iter().filter_map(|n| self.typed_path(n)).collect();
+                self.queue(Work::Trash(paths));
+                Outcome::Redraw
+            }
             Event::Resize => Outcome::Size(Edges::BOTTOM | Edges::RIGHT),
             Event::FilterChanged(_) => Outcome::Redraw,
             // A typed pattern lists the open folder, or looks its folder
@@ -1416,6 +1569,47 @@ mod tests {
         std::fs::rename(dir.join("Pictures"), dir.join("Photos")).unwrap();
         let inside = p.folders.id(&dir.join("Photos"));
         until_watched(&mut p, |p| p.dlg.folder() == Some(inside));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_file_dialog_keys_make_rename_and_relist_off_the_loop() {
+        use reprisekit::textedit::keysym;
+        let dir = sandbox("keys");
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        settle(&mut p);
+        assert_eq!(
+            p.shortcut(R, keysym::F5, false, false, false),
+            Some(Outcome::Redraw)
+        );
+        let again = p.take_requests();
+        assert_eq!(again.len(), 1, "F5 reads the folder again");
+        for r in again {
+            p.reply(r.run(), &mut cache(), 1);
+        }
+
+        let n = 'N' as u32;
+        assert_eq!(p.shortcut(R, n, true, true, false), Some(Outcome::Redraw));
+        let ops = p.take_ops();
+        assert_eq!(ops.len(), 1, "the folder is made off the loop");
+        for op in ops {
+            p.op_done(op.run());
+        }
+        settle(&mut p);
+        assert!(dir.join("New Folder").is_dir());
+        assert_eq!(
+            p.dlg.focused_edit().map(|e| e.text.as_str()),
+            Some("New Folder")
+        );
+        p.key(R, Key::Edit(EditKey::Insert("Art".into())));
+        p.key(R, Key::Enter);
+        for op in p.take_ops() {
+            p.op_done(op.run());
+        }
+        settle(&mut p);
+        assert!(dir.join("Art").is_dir(), "Enter renames it");
+        let picked: Vec<&str> = p.dlg.selected().iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(picked, ["Art"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -1,0 +1,6 @@
+item menu 1 597437a71f4f8a75
+view submenu 1 1d88784230d7a81c
+rename box 1 0da2edc049c0f640
+item menu 2 117645673b81ae48
+view submenu 2 f59cba03ea797bb5
+rename box 2 12764b2aa15cea54

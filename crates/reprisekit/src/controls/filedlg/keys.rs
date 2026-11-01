@@ -4,10 +4,11 @@ use crate::controls::form;
 use crate::controls::iconview::IconMove;
 use crate::controls::metrics::ControlMetrics;
 use crate::controls::shellview;
+use crate::pointer::Nav;
 use crate::raster::Rect;
 use crate::selection::Mods;
 use crate::text::access_key;
-use crate::textedit::EditKey;
+use crate::textedit::{EditKey, TextEdit, keysym};
 
 fn combo_key(combo: &mut Combo, key: form::Key) -> Event {
     match key {
@@ -216,6 +217,12 @@ impl FileDlg {
         mods: Mods,
         cm: &ControlMetrics,
     ) -> Event {
+        if self.context.is_some() {
+            return self.context_key(key);
+        }
+        if self.shell.edit.is_some() {
+            return self.rename_key(key);
+        }
         if self.views_open {
             return match key {
                 form::Key::Escape | form::Key::Drop => {
@@ -335,6 +342,134 @@ impl FileDlg {
                 let lay = self.shell_layout(r, cm);
                 self.shell_key(key, ch, &lay, mods)
             }
+        }
+    }
+
+    /// The file-dialog key `sym` with its modifiers, read before [`FileDlg::key`]: F5 and Ctrl+R
+    /// refresh, Alt+Left and Alt+Right go back and forward, Alt+Up goes up and Ctrl+Shift+N
+    /// makes a folder wherever the focus is. In the list, F2 renames the selected entry, Delete
+    /// deletes the selection, Shift+F10 and the Menu key open the context menu, and Ctrl+A
+    /// selects every entry of a dialog that picks several. `None` leaves the key to `key`, so
+    /// File name keeps its editing keys (Ctrl+A selecting its text), and so do the rename box,
+    /// the menu and an open list.
+    pub fn shortcut(
+        &mut self,
+        r: Rect,
+        sym: u32,
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+    ) -> Option<Event> {
+        let busy = self.context.is_some()
+            || self.shell.edit.is_some()
+            || self.views_open
+            || self.lookin.open.is_some()
+            || self.filetype.open.is_some()
+            || self.extra_list_open();
+        if busy {
+            return None;
+        }
+        let letter = |c: char| char::from_u32(sym | 0x20) == Some(c);
+        let plain = !ctrl && !shift && !alt;
+        match sym {
+            keysym::F5 if !ctrl && !alt => return Some(Event::Refresh),
+            _ if ctrl && !shift && !alt && letter('r') => return Some(Event::Refresh),
+            keysym::LEFT | keysym::KP_LEFT if alt && !ctrl => return Some(self.nav(Nav::Back)),
+            keysym::RIGHT | keysym::KP_RIGHT if alt && !ctrl => {
+                return Some(self.nav(Nav::Forward));
+            }
+            keysym::UP | keysym::KP_UP if alt && !ctrl => return Some(self.up()),
+            _ if ctrl && shift && !alt && letter('n') => {
+                return Some(Event::CreateFolder(tr!("filedlg-new-folder")));
+            }
+            _ => {}
+        }
+        if self.focus != Focus::Shell {
+            return None;
+        }
+        match sym {
+            keysym::F2 if plain => Some(self.begin_rename()),
+            keysym::DELETE | keysym::KP_DELETE if plain => Some(self.delete_selected()),
+            keysym::MENU => Some(self.context_from_keys(r)),
+            keysym::F10 if shift && !ctrl && !alt => Some(self.context_from_keys(r)),
+            _ if ctrl && !shift && !alt && letter('a') => {
+                if !self.multi() {
+                    return Some(Event::None);
+                }
+                self.shell.selection.select_all(self.shell.entries.len());
+                self.sync_name_field();
+                Some(Event::Redraw)
+            }
+            _ => None,
+        }
+    }
+
+    /// Opens the rename box on the one selected entry, its name but the extension selected.
+    pub(super) fn begin_rename(&mut self) -> Event {
+        let Some(i) = self.shell.selection.single() else {
+            return Event::None;
+        };
+        let Some(e) = self.shell.entries.get(i) else {
+            return Event::None;
+        };
+        self.focus = Focus::Shell;
+        self.shell.edit = Some((i, TextEdit::rename(&e.name, e.is_dir)));
+        Event::Redraw
+    }
+
+    /// Closes the rename box: a new name goes to the host, the same name or none changes nothing.
+    pub(super) fn commit_rename(&mut self) -> Event {
+        let Some((i, ed)) = self.shell.edit.take() else {
+            return Event::None;
+        };
+        let to = ed.text.trim();
+        match self.shell.entries.get(i) {
+            Some(e) if !to.is_empty() && to != e.name => Event::Rename {
+                from: e.name.clone(),
+                to: to.to_string(),
+            },
+            _ => Event::Redraw,
+        }
+    }
+
+    /// The rename box takes every key: Enter and Tab close it on the name typed, Escape on the
+    /// old one, and the rest edit it.
+    fn rename_key(&mut self, key: form::Key) -> Event {
+        let ek = match key {
+            form::Key::Enter | form::Key::NewLine | form::Key::Tab { .. } => {
+                return self.commit_rename();
+            }
+            form::Key::Escape => {
+                self.shell.edit = None;
+                return Event::Redraw;
+            }
+            form::Key::Edit(ek) => ek,
+            form::Key::Backspace => EditKey::Backspace { word: false },
+            form::Key::Space => EditKey::Insert(" ".into()),
+            form::Key::Char(c) => EditKey::Insert(c.to_string()),
+            form::Key::Left => EditKey::Left {
+                select: false,
+                word: false,
+            },
+            form::Key::Right => EditKey::Right {
+                select: false,
+                word: false,
+            },
+            form::Key::Home => EditKey::Home { select: false },
+            form::Key::End => EditKey::End { select: false },
+            _ => return Event::None,
+        };
+        let changed = self.shell.edit.as_mut().is_some_and(|(_, ed)| ed.key(ek));
+        if changed { Event::Redraw } else { Event::None }
+    }
+
+    /// Delete on the selection: its names to the host, nothing with none selected.
+    pub(super) fn delete_selected(&self) -> Event {
+        let names: Vec<String> = self.selected().iter().map(|e| e.name.clone()).collect();
+        if names.is_empty() {
+            Event::None
+        } else {
+            Event::Delete(names)
         }
     }
 
