@@ -192,7 +192,7 @@ impl FileDlg {
 
     fn click_inner(&mut self, r: Rect, hit: Option<Hit>, mods: Mods, cm: &ControlMetrics) -> Event {
         if self.context.is_some() {
-            return self.context_click(hit);
+            return self.context_click(hit, mods.shift);
         }
         if let Some((_, ed)) = &mut self.shell.edit {
             // A press outside the rename box closes it on the name typed, and goes no further.

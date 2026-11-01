@@ -162,11 +162,17 @@ impl Host {
         self.app.follow_scale(id, scale, &mut self.ctx);
         let paste = self.edit_menu.is_pending(id) && self.clipboard_text();
         let within = self.menu_within((w, h));
+        let box_owner = (self.file_box.as_ref())
+            .filter(|_| id == crate::filebox::FILE_BOX)
+            .map(|(o, _)| *o);
         let app = &mut self.app;
         let menu = &mut self.edit_menu;
         let last_tip = &mut self.slots[i].tip;
         let spot = self.ctx.at_scale(scale, |ctx| {
-            app.draw(id, &mut canvas, ctx);
+            match box_owner {
+                Some(owner) => Host::draw_file_box(&mut **app, owner, &mut canvas, ctx),
+                None => app.draw(id, &mut canvas, ctx),
+            }
             // A form's label tip goes over everything; a kept canvas would keep its pixels.
             if app.keeps_canvas(id) {
                 canvas.take_tip();

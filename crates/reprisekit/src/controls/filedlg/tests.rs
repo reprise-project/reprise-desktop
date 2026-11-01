@@ -2522,14 +2522,45 @@ mod shortcuts {
         d.click(R, entry_hit(1), Mods::default());
         d.click(R, entry_hit(2), CTRL);
         match press(&mut d, keysym::DELETE, false, false, false) {
-            Some(Event::Delete(names)) => assert_eq!(names, ["a.txt", "b.txt"]),
+            Some(Event::Delete { names, erase }) => {
+                assert_eq!(names, ["a.txt", "b.txt"]);
+                assert!(!erase, "Delete goes to the Recycle Bin");
+            }
             other => panic!("Delete hands the names over, got {other:?}"),
         }
+        assert!(
+            matches!(
+                press(&mut d, keysym::DELETE, false, true, false),
+                Some(Event::Delete { erase: true, .. })
+            ),
+            "Shift+Delete deletes for good"
+        );
         d.shell.selection.clear();
         assert!(matches!(
             press(&mut d, keysym::KP_DELETE, false, false, false),
             Some(Event::None)
         ));
+    }
+
+    #[test]
+    fn the_menus_delete_clicked_with_shift_held_deletes_for_good() {
+        const DELETE_ROW: usize = 2;
+        let delete_row = Some(Hit::Menu {
+            level: 0,
+            row: Some(DELETE_ROW),
+        });
+        for (mods, erase) in [(Mods::default(), false), (SHIFT, true)] {
+            let mut d = multi(DlgMode::Open, false);
+            d.click(R, entry_hit(1), Mods::default());
+            d.right_click(R, entry_hit(1), (100, 100));
+            match d.click(R, delete_row, mods) {
+                Event::Delete { names, erase: got } => {
+                    assert_eq!(names, ["a.txt"]);
+                    assert_eq!(got, erase, "{mods:?}");
+                }
+                other => panic!("the menu's Delete hands the name over, got {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -2895,6 +2926,96 @@ mod context_menu {
             got.push((format!("rename box {s}"), fnv(&shot(&d))));
         }
         crate::pins::check("filedlg_menu", &got);
+    }
+
+    /// The boxes a host shows over the dialog: Delete's questions on the shell's delete
+    /// templates, and an error on a message box.
+    #[test]
+    fn the_boxes_over_the_dialog_are_drawn_as_pinned() {
+        use crate::controls::dlgtemplate::{self, Template};
+        use crate::controls::msgbox;
+        use crate::theme::TextUnits;
+        if !crate::text::test_tahoma() {
+            return;
+        }
+        let text = text();
+        let yes_no = ["&Yes".to_string(), "&No".to_string()];
+        let mut icon = Canvas::new(32, 32);
+        icon.fill_rect(icon.bounds(), crate::theme::Color::rgb(0xc0, 0x40, 0x20));
+        let prompt = |template, question: &str, text_h| {
+            let lay = dlgtemplate::layout(
+                template,
+                &text,
+                11,
+                &dlgtemplate::Fields {
+                    text: question,
+                    icon: true,
+                    field: false,
+                    buttons: &yes_no,
+                    text_h,
+                },
+                TextUnits::ONE,
+            )
+            .client();
+            (
+                lay.size,
+                dlgtemplate::form(&lay, Some(icon.clone()), &yes_no, 0),
+            )
+        };
+        let error = msgbox::Fields {
+            text: "A file name cannot contain any of the following characters:\n/".into(),
+            icon: Some(icon.clone()),
+            buttons: vec!["OK".into()],
+            default: 0,
+            min_text_h: None,
+            min_w: 0,
+            max_w: 0,
+        };
+        let boxes = [
+            (
+                "erase file",
+                prompt(
+                    Template::MessageBox,
+                    "Are you sure you want to delete 'a.txt'?",
+                    None,
+                ),
+            ),
+            (
+                "erase folder",
+                prompt(
+                    Template::MessageBox,
+                    "Are you sure you want to remove the folder 'Reports' and all its contents?",
+                    Some(dlgtemplate::FOLDER_TEXT_H),
+                ),
+            ),
+            (
+                "erase several",
+                prompt(
+                    Template::MultiDelete,
+                    "Are you sure you want to delete these 3 items?",
+                    None,
+                ),
+            ),
+            (
+                "error",
+                (
+                    msgbox::client(&error, &text, 11, TextUnits::ONE),
+                    msgbox::form(&error, &text, 11, TextUnits::ONE),
+                ),
+            ),
+        ];
+        let cs = ColorScheme::default();
+        let mut got = Vec::new();
+        for s in [1, 2] {
+            let p = classic_paint(&cs, s);
+            for (name, ((w, h), f)) in &boxes {
+                let mut c = Canvas::new((w * s) as u32, (h * s) as u32);
+                c.fill_rect(c.bounds(), cs.button_face);
+                crate::controls::form::draw(&mut c, &text, &p, f, true, 11);
+                got.push((format!("{name} {s}"), fnv(&c)));
+            }
+        }
+        crate::pins::check("filedlg_box", &got);
     }
 
     fn fnv(c: &Canvas) -> u64 {

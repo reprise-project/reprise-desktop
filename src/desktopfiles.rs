@@ -114,10 +114,21 @@ impl State {
 
     /// Delete `paths`, asking first as `delete_mode` says (Delete, or Shift+Delete with `shift`). Each item's fate (`Bins::fate`) is read off the loop first: it stats the paths and their mounts, which a hung network mount would stall.
     pub(crate) fn ask_delete(&mut self, paths: Vec<PathBuf>, label: Option<String>, shift: bool) {
+        self.ask_delete_over(paths, label, shift, None);
+    }
+
+    /// [`State::ask_delete`] with its question over dialog `over` (a Browse dialog's Delete).
+    pub(crate) fn ask_delete_over(
+        &mut self,
+        paths: Vec<PathBuf>,
+        label: Option<String>,
+        shift: bool,
+        over: Option<u64>,
+    ) {
         let action = Action::reads("Error Deleting File or Folder");
         self.spawn_fs_action(action, move |_| -> OnLoop {
             use reprisefs::bincap::BinLack;
-            let mode = session_delete_mode(&paths, shift);
+            let mode = reprisefs::dialogops::delete_mode(&paths, shift);
             // A symlink to a folder deletes as a file: only the link goes.
             let is_dir = matches!(paths.as_slice(), [one] if one.is_dir() && !one.is_symlink());
             Box::new(move |state| {
@@ -139,7 +150,7 @@ impl State {
                     }
                     _ => Dialog::confirm_delete_many(&paths, erase, mode.no_bin),
                 };
-                state.open_dialog(dialog);
+                state.open_dialog_over_id(dialog, over);
             })
         });
     }
@@ -455,21 +466,6 @@ fn glance_aimed(
     }
 }
 
-/// How Delete (Shift+Delete with `shift`) treats `paths` under the session's Recycle Bins and
-/// their `[recycle_bin]` settings. Reads the disk, so it runs on a file job.
-fn session_delete_mode(paths: &[PathBuf], shift: bool) -> reprisefs::bincap::DeleteMode {
-    use reprisefs::bincap::{Fate, Policy, delete_mode};
-    let bins = reprisefs::trash::Bins::system();
-    let fates: Vec<Fate> = paths
-        .iter()
-        .map(|p| bins.as_ref().map_or(Fate::NoBin, |b| b.fate(p)))
-        .collect();
-    let confirm = bins
-        .as_ref()
-        .map_or(Policy::default().confirm, |b| b.policy.confirm);
-    delete_mode(confirm, &fates, shift)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -626,7 +622,7 @@ mod tests {
         std::fs::write(&file, "a").expect("write");
         let settings = |keys: &str| home.settings(keys);
         let mode = |erase, ask, no_bin| DeleteMode { erase, ask, no_bin };
-        let delete = |shift| session_delete_mode(std::slice::from_ref(&file), shift);
+        let delete = |shift| reprisefs::dialogops::delete_mode(std::slice::from_ref(&file), shift);
 
         assert_eq!(delete(false), mode(false, true, BinLack::None));
         assert_eq!(delete(true), mode(true, true, BinLack::None));
@@ -636,7 +632,7 @@ mod tests {
         assert_eq!(delete(false), mode(true, false, BinLack::None));
         let off_drive = [file.clone(), PathBuf::from("/proc/version")];
         assert_eq!(
-            session_delete_mode(&off_drive, false),
+            reprisefs::dialogops::delete_mode(&off_drive, false),
             mode(true, true, BinLack::Some),
             "a file on a drive with no Recycle Bin asks even with confirm off"
         );
@@ -670,6 +666,37 @@ mod tests {
             );
             h.run_for(5);
         }
+    }
+
+    #[test]
+    fn a_browse_delete_asks_over_its_dialog_and_yes_leaves_the_dialog_open() {
+        let home = SystemBin::new();
+        let mut h = with_file_jobs(crate::fsjobs::ACTION_DEADLINE);
+        let a = home.0.join("a.txt");
+        std::fs::write(&a, "a").expect("write");
+        h.state.open_dialog(Dialog::error("Browse", String::new()));
+        let browse = h.state.dialogs.views[0].id;
+
+        h.state.apply_dialog(crate::dialog::Outcome::AskDelete {
+            paths: vec![a.clone()],
+            shift: true,
+        });
+        run_until(&mut h, "the prompt", |h| titles(h).len() == 2);
+        let asked = &h.state.dialogs.views[1];
+        assert_eq!(asked.dialog.title, "Confirm File Delete");
+        assert_eq!(
+            asked.dialog.text,
+            "Are you sure you want to delete 'a.txt'?"
+        );
+        assert_eq!(asked.parent, Some(browse), "asked over the dialog");
+
+        h.state.apply_dialog(crate::dialog::Outcome::Delete {
+            paths: vec![a.clone()],
+            erase: true,
+        });
+        run_until(&mut h, "the erase", |_| !a.exists());
+        assert!(!home.0.join("Trash/files/a.txt").exists());
+        assert_eq!(titles(&h), ["Browse"], "the dialog stays");
     }
 
     #[test]

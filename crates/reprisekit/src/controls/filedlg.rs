@@ -288,8 +288,12 @@ pub enum Event {
         from: String,
         to: String,
     },
-    /// Delete on these entries: the host moves them to the Recycle Bin.
-    Delete(Vec<String>),
+    /// Delete on these entries: the host deletes them as Explorer's Delete does, asking first
+    /// as its Recycle Bin settings say; `erase` (Shift+Delete) deletes them for good.
+    Delete {
+        names: Vec<String>,
+        erase: bool,
+    },
     /// The names to accept: one typed or selected name, several quoted
     /// ones in the File name field's order, or `.` for the open folder in
     /// folder mode.

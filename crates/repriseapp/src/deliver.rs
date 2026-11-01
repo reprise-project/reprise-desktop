@@ -18,7 +18,7 @@ impl Host {
     /// The modal child gating `win`: the newest over `win`'s own window.
     fn modal(&self, win: WinId) -> Option<WinId> {
         let slots = self.slots.iter().map(|s| (s.id, s.modal));
-        modal_over(win, slots, |w| self.app.parent(w))
+        modal_over(win, slots, |w| self.parent_of(w))
     }
 
     pub(crate) fn gated(&self, win: WinId, ev: &Event) -> bool {
@@ -45,6 +45,9 @@ impl Host {
             for s in &mut self.slots {
                 s.access.state.dirty = true;
             }
+        }
+        if win == crate::filebox::FILE_BOX {
+            return self.file_box_event(ev);
         }
         let blink = ev == Event::Blink;
         if self.edit_menu_event(win, &ev) {
@@ -304,6 +307,7 @@ impl Host {
             self.arm_tick(win);
         }
         self.sync_main();
+        self.follow_file_box(win);
         self.sync_children();
         self.sync_flyout();
         self.sync_inhibitor();

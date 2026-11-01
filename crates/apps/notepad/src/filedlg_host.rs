@@ -142,7 +142,7 @@ impl Notepad {
             | FileEvent::CreateFolder(_)
             | FileEvent::Refresh
             | FileEvent::Rename { .. }
-            | FileEvent::Delete(_)
+            | FileEvent::Delete { .. }
             | FileEvent::Resize => Reply::none(),
         }
     }
@@ -237,7 +237,7 @@ impl Notepad {
             | FileEvent::CreateFolder(_)
             | FileEvent::Refresh
             | FileEvent::Rename { .. }
-            | FileEvent::Delete(_)
+            | FileEvent::Delete { .. }
             | FileEvent::Resize => Reply::none(),
         }
     }

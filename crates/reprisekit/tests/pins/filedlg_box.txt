@@ -1,0 +1,8 @@
+erase file 1 704fd8a5f2dec6c3
+erase folder 1 49e090b0ac7a3b27
+erase several 1 da033482e60e94dd
+error 1 00118325a0405210
+erase file 2 0a9c8edfb00f9d00
+erase folder 2 1103e5710c848e29
+erase several 2 e67dcc65542b2f28
+error 2 76308948d0376eb7
