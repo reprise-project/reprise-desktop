@@ -60,12 +60,13 @@ impl Explorer {
 
         // The address list's keys come ahead of the accelerators: open, it owns the keyboard
         // as a menu does, and F4 or Alt+Down open it from the field.
+        let completing = self.address.complete.is_open() || self.address.complete.shows_tail();
         if (self.focus == Focus::Address || self.address.combo.open.is_some())
             && let Some(key) = form::special_key(k.sym, k.mods.shift, k.mods.alt)
             && let Some(ev) = self.address.list_key(&key)
         {
             // The arrows filled the field with the rows they passed.
-            if key == form::Key::Escape {
+            if key == form::Key::Escape && !completing {
                 let icon = ctx.icons.get(self.place.icon_name(), 16);
                 self.address.set_place(&self.place.address(), icon);
             }
@@ -106,8 +107,8 @@ impl Explorer {
                 return Reply::redraw();
             }
             if let Some(ek) = k.edit.clone() {
-                self.address.key(ek);
-                return Reply::redraw();
+                let ev = self.address.key(ek);
+                return self.address_event(ev, ctx);
             }
         }
 
@@ -398,9 +399,22 @@ impl Explorer {
                 }
                 None => Reply::redraw(),
             },
-            addressbar::Event::Redraw => Reply::redraw(),
+            addressbar::Event::Redraw => {
+                self.address_job
+                    .start(&mut self.address.complete, None, &ctx.wake);
+                Reply::redraw()
+            }
             addressbar::Event::None => Reply::none(),
         }
+    }
+
+    /// The address completion's folder read answered: the field and its list take it.
+    pub(crate) fn land_address_completion(&mut self, ctx: &Ctx) -> bool {
+        let Some(edit) = self.address.combo.edit.as_mut() else {
+            return false;
+        };
+        self.address_job
+            .land(&mut self.address.complete, edit, None, &ctx.wake)
     }
 }
 

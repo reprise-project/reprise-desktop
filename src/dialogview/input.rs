@@ -334,6 +334,7 @@ impl State {
             other => self.press_dialog_body(other, time_msec),
         };
         self.apply_dialog(outcome);
+        self.run_path_completions();
     }
 
     /// A right press on dialog `index` at `at`: a field under it takes the keyboard (the caret
@@ -682,6 +683,7 @@ impl State {
             None => return,
         };
         self.apply_dialog(outcome);
+        self.run_path_completions();
     }
 
     /// A key press for the top dialog; always consumed.
@@ -757,5 +759,6 @@ impl State {
         };
         self.restart_caret();
         self.apply_dialog(outcome);
+        self.run_path_completions();
     }
 }

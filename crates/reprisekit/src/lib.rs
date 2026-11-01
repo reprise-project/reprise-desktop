@@ -43,6 +43,7 @@ pub mod blue;
 pub mod boxdraw;
 pub mod classic;
 pub mod colorfilter;
+pub mod completion;
 pub mod controls;
 pub mod copyart;
 pub mod cues;

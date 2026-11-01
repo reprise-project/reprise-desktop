@@ -303,6 +303,13 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Emoji picker.** Super+. opens a grid of emoji at the text caret. Search
   by name or shortcode, and Enter types it without touching the clipboard.
   It wants a colour emoji font.
+- **Path completion.** Typing a path (`~/Doc`, `/usr/sh`) in Run, Explorer's
+  address bar or a file dialog's File name completes the name inline, the
+  completed part selected so typing goes on over it, and lists the matches
+  under the box: folders first, ending in `/`. Up and Down pick one, Enter or
+  Tab take it, Escape closes the list. Hidden names show once the typed name
+  starts with a dot; matching is case-sensitive. File name completes from the
+  dialog's folder, Run from a word starting with `/` or `~`.
 - **Clipboard managers work,** and so does middle-click paste.
 - **Edit menu.** A right-click in a text field, Shift+F10 or the Menu key
   opens Undo, Redo, Cut, Copy, Paste, Delete and Select All: in Run and the other

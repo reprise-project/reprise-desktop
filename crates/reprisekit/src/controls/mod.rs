@@ -48,6 +48,7 @@ pub mod openwith;
 pub mod osd;
 pub mod overview;
 pub mod pagelist;
+pub mod pathcomplete;
 pub mod placesbar;
 pub mod propsheet;
 pub mod rebar;
