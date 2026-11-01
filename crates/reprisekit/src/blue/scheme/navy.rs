@@ -2045,4 +2045,15 @@ pub const NAVY: Scheme = Scheme {
             ),
         ],
     },
+    start_menu: StartMenu {
+        band: stops![0.0: 0x4D8FEA, 0.08: 0x3479E4, 0.5: 0x2163D8, 0.92: 0x1C57CC, 1.0: 0x1546AE],
+        edge: Color::rgb(0x1F, 0x5C, 0xCB),
+        accent: Color::rgb(0xF3, 0xA4, 0x4E),
+        band_ink: Color::rgb(0xFF, 0xFF, 0xFF),
+        band_shadow: Color::rgb(0x15, 0x3C, 0x8E),
+        places: Color::rgb(0xD6, 0xE6, 0xFA),
+        places_edge: Color::rgb(0x98, 0xBC, 0xEC),
+        places_ink: Color::rgb(0x0C, 0x2A, 0x74),
+        rule: Color::rgb(0xD6, 0xD3, 0xC6),
+    },
 };

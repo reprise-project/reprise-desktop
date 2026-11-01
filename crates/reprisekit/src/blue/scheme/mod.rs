@@ -1465,6 +1465,26 @@ impl PlacesBarFaces {
     }
 }
 
+/// The Start menu's colours; rows lit and the left column take the [`System`] colours.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StartMenu {
+    /// Down the bands over and under the columns.
+    pub band: Grad,
+    /// The frame beside the columns.
+    pub edge: Color,
+    /// The line under the top band, at its middle.
+    pub accent: Color,
+    /// The user's name and the bottom buttons' labels, over `band_shadow` 1 px down and right.
+    pub band_ink: Color,
+    pub band_shadow: Color,
+    /// The right column, its left edge and rules, and its labels.
+    pub places: Color,
+    pub places_edge: Color,
+    pub places_ink: Color,
+    /// The left column's rules.
+    pub rule: Color,
+}
+
 /// Corner radii in design px, for parts whose rounding differs by scheme.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Radii {
@@ -1541,6 +1561,7 @@ pub struct Scheme {
     pub explorer_bar_close: ExplorerBarCloseFaces,
     pub places_bar: PlacesBarFaces,
     pub tray_arrow: ArrowRecipe,
+    pub start_menu: StartMenu,
 }
 
 impl Scheme {

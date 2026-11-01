@@ -4,13 +4,13 @@
 use crate::compositor::State;
 use crate::dialog::Dialog;
 
-// The Blue Start menu's Log Off and Turn Off Computer buttons call these.
-#[allow(dead_code)]
 impl State {
+    /// The Blue Start menu's Log Off button, after the menu closed.
     pub fn blue_log_off(&mut self) {
         self.open_dialog(Dialog::log_off().always_blue());
     }
 
+    /// The Blue Start menu's Turn Off Computer button, after the menu closed.
     pub fn blue_turn_off(&mut self) {
         let d = Dialog::turn_off(&self.config.power).always_blue();
         self.open_dialog(d);

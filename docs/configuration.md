@@ -159,8 +159,9 @@ With the taskbar unlocked, dragging empty bar space to another edge writes
 bar stacks its buttons one a row and puts the ones that don't fit behind a »
 button.
 
-The Start Menu page of Reprise Settings edits the Classic Start menu and the
-Quick Launch buttons. The buttons and their order live in
+`startmenu_style` picks the Start menu: `classic`, `blue` or `glass`, by
+default the interface's own. The Start Menu page of Reprise Settings edits the
+Classic Start menu and the Quick Launch buttons. The buttons and their order live in
 `~/.config/reprise/quicklaunch/`.
 
 ## Effects

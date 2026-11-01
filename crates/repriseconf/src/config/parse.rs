@@ -346,7 +346,7 @@ impl Config {
         cfg.startmenu_style = StartMenuStyle::default_for(cfg.interface);
         if let Some(s) = &file.startmenu_style {
             cfg.startmenu_style = StartMenuStyle::parse(s)
-                .ok_or_else(|| format!("startmenu_style = {s:?} is not classic or glass"))?;
+                .ok_or_else(|| format!("startmenu_style = {s:?} is not classic, blue or glass"))?;
         }
         cfg.switcher = SwitcherConfig::default_for(cfg.interface);
         cfg.window_shake = cfg.interface == Interface::Glass;

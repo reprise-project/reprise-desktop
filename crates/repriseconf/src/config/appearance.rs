@@ -150,6 +150,7 @@ impl TaskbarButtons {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StartMenuStyle {
     Classic,
+    Blue,
     Glass,
 }
 
@@ -157,15 +158,16 @@ impl StartMenuStyle {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "classic" => Some(Self::Classic),
+            "blue" => Some(Self::Blue),
             "glass" => Some(Self::Glass),
             _ => None,
         }
     }
     pub fn default_for(i: Interface) -> Self {
-        if i == Interface::Glass {
-            Self::Glass
-        } else {
-            Self::Classic
+        match i {
+            Interface::Classic => Self::Classic,
+            Interface::Blue => Self::Blue,
+            Interface::Glass => Self::Glass,
         }
     }
 }

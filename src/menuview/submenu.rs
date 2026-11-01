@@ -175,16 +175,9 @@ impl State {
             MenuTarget::Programs => match folder {
                 Some(apps) => (app_items(self, &apps), MenuKind::Programs(apps)),
                 None => {
-                    let apps: Rc<[AppEntry]> = Rc::from(self.app_index.as_slice());
-                    let groups = reprisefs::apps::group(&apps);
-                    let items = (groups.iter().enumerate())
-                        .map(|(row, g)| {
-                            MenuItem::entry(g.name.clone())
-                                .icon(self.menu_icon(row, "folder", px, &mut waits))
-                                .submenu(true)
-                        })
-                        .collect();
-                    (items, MenuKind::Groups { apps, groups })
+                    let (items, kind, icons) = self.program_groups_rows(px);
+                    waits = icons;
+                    (items, kind)
                 }
             },
             MenuTarget::Settings => {
@@ -212,6 +205,21 @@ impl State {
             MenuTarget::Action(_) => return None,
         };
         Some((items, kind, false, waits))
+    }
+
+    /// The Programs menu's rows: a folder per program group, each opening its programs.
+    pub(crate) fn program_groups_rows(&mut self, px: i32) -> (Vec<MenuItem>, MenuKind, RowIcons) {
+        let apps: Rc<[AppEntry]> = Rc::from(self.app_index.as_slice());
+        let groups = reprisefs::apps::group(&apps);
+        let mut icons = RowIcons::default();
+        let items = (groups.iter().enumerate())
+            .map(|(row, g)| {
+                MenuItem::entry(g.name.clone())
+                    .icon(self.menu_icon(row, "folder", px, &mut icons))
+                    .submenu(true)
+            })
+            .collect();
+        (items, MenuKind::Groups { apps, groups }, icons)
     }
 
     /// A Documents menu's rows from the last recent read and check: with `with_dirs` the document

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use reprisekit::startpanel::layout;
-use reprisekit::startpanel::{Button, Event, Key, Mode, Spot, StartPanel};
+use reprisekit::startpanel::{Button, Event, Key, Mode, Shape, Spot, StartPanel};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::compositor::State;
@@ -66,18 +66,24 @@ impl State {
         };
         // Right on All Programs lights the tree's first row as it enters
         // Programs, so the rows must exist before the key.
+        let Some(shape) = self.start_panel.as_ref().map(|v| v.model.shape) else {
+            return;
+        };
         let enters = key == Key::Right
+            && shape == Shape::Glass
             && self.start_panel.as_ref().is_some_and(|v| {
                 v.model.mode() != Mode::Programs && v.model.lit() == Some(Spot::AllPrograms)
             });
         if enters {
             self.list_start_tree();
         }
-        if let Key::Char(e) = &key {
-            self.clip_edit_key(e);
+        if shape == Shape::Glass {
+            if let Key::Char(e) = &key {
+                self.clip_edit_key(e);
+            }
+            self.restart_caret();
         }
-        self.restart_caret();
-        let menu = key == Key::Menu;
+        let menu = key == Key::Menu && shape == Shape::Glass;
         let mut row_menu = false;
         self.start_panel_event_with(enters, |m| {
             let event = m.key(key);
@@ -124,6 +130,9 @@ impl State {
     }
 
     pub fn start_panel_pointer(&mut self, spot: Option<Spot>) {
+        if spot.is_some() && spot != self.start_flyout() {
+            self.close_start_flyout();
+        }
         if !self.menus.is_empty() {
             return;
         }
@@ -291,9 +300,18 @@ impl State {
                     self.open_recent_with(Some(&e), &p);
                 }
             }
+            Spot::AllPrograms => self.open_all_programs(),
+            Spot::Shutdown if v.model.shape == Shape::Blue => {
+                self.close_start_panel();
+                self.blue_turn_off();
+            }
             Spot::Shutdown => {
                 self.close_start_panel();
                 crate::power::run_action(self, PowerAction::TurnOff);
+            }
+            Spot::LogOff => {
+                self.close_start_panel();
+                self.blue_log_off();
             }
             Spot::Tree(i) => {
                 let entry = v

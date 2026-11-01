@@ -11,13 +11,13 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use reprisekit::anim::UnrollFrom;
-use reprisekit::startpanel::{Spot, StartPanel};
+use reprisekit::startpanel::{Shape, Spot, StartPanel};
 use reprisescene::{BufferId, TreeId};
 use smithay::output::Output;
 use smithay::reexports::calloop::RegistrationToken;
 
 use crate::compositor::{SceneOwner, State};
-use crate::config::{MenuAnimation, MenuEntry};
+use crate::config::{MenuAnimation, MenuEntry, StartMenuStyle};
 use crate::glass::Backdrop;
 use crate::raster::Rect;
 use crate::search::{FileSearch, Setting};
@@ -122,12 +122,18 @@ impl State {
         if self.layout_box(Some(&output)).width <= 0 {
             return;
         }
-        let px = PICTURE * self.draw_scale_at(Some(&output)).max(1);
+        let scale = self.draw_scale_at(Some(&output)).max(1);
+        let px = PICTURE * scale;
         let user = crate::lock::current_user();
         let mut model = StartPanel::new();
+        model.shape = match self.config.startmenu_style {
+            StartMenuStyle::Blue => Shape::Blue,
+            _ => Shape::Glass,
+        };
+        model.user = user.clone();
         model.text = self.config.theme.text;
         self.refresh_recent();
-        let (rows, places) = self.start_places(px, &user);
+        let (rows, places) = self.start_places(model.shape, scale, &user);
         model.places = rows;
         model.user_picture = self.start_user_picture(px);
         let opening = self.config.menu_opening();
@@ -180,7 +186,16 @@ impl State {
         });
         self.read_user_pictures(vec![px]);
         self.list_start_programs();
-        self.restart_caret();
+        // The Blue menu has no field to blink a caret in.
+        if self
+            .start_panel
+            .as_ref()
+            .is_some_and(|v| v.model.shape == Shape::Glass)
+        {
+            self.restart_caret();
+        } else {
+            self.stop_caret();
+        }
         if let Some(b) = self.bar_mut(bar) {
             b.start_pressed = true;
         }

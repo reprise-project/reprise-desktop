@@ -2003,4 +2003,15 @@ pub const SLATE: Scheme = Scheme {
             ),
         ],
     },
+    start_menu: StartMenu {
+        band: stops![0.0: 0x5AA2DA, 0.08: 0x3C88C4, 0.5: 0x1C639B, 0.92: 0x0B4A80, 1.0: 0x023056],
+        edge: Color::rgb(0x0D, 0x46, 0x75),
+        accent: Color::rgb(0x8F, 0xD0, 0xF4),
+        band_ink: Color::rgb(0xFF, 0xFF, 0xFF),
+        band_shadow: Color::rgb(0x02, 0x22, 0x3F),
+        places: Color::rgb(0xDD, 0xEA, 0xF6),
+        places_edge: Color::rgb(0x9E, 0xC1, 0xE0),
+        places_ink: Color::rgb(0x0A, 0x35, 0x58),
+        rule: Color::rgb(0xD5, 0xDC, 0xE3),
+    },
 };

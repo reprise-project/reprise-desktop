@@ -869,3 +869,18 @@ fn chooser_groups_put_the_type_s_programs_and_default_first_and_the_rest_by_name
         (vec![1], vec![2, 0])
     );
 }
+
+#[test]
+fn a_subtitle_is_the_generic_name_else_the_comment_never_the_name_again() {
+    let entry = |extra: &str| format!("[Desktop Entry]\nType=Application\nName=Firefox\n{extra}");
+    assert_eq!(
+        subtitle(&entry("Comment=Browse the web\nGenericName=Web Browser\n")).as_deref(),
+        Some("Web Browser")
+    );
+    assert_eq!(
+        subtitle(&entry("Comment=Browse the web\n")).as_deref(),
+        Some("Browse the web")
+    );
+    assert_eq!(subtitle(&entry("GenericName=Firefox\n")), None);
+    assert_eq!(subtitle(&entry("GenericName= \n")), None);
+}

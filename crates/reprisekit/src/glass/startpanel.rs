@@ -493,7 +493,7 @@ fn draw_contents(
                     }
                 }
             }
-            Spot::Clear | Spot::ShutdownArrow => {}
+            Spot::Clear | Spot::ShutdownArrow | Spot::LogOff => {}
         }
     }
 
@@ -578,6 +578,7 @@ mod tests {
 
     fn prog(name: &str, jump: bool) -> ProgramRow {
         ProgramRow {
+            detail: None,
             name: name.into(),
             icon: None,
             jump,

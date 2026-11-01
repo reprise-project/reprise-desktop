@@ -14,7 +14,7 @@ impl State {
     pub fn toggle_start(&mut self, bar: TreeId) {
         match self.config.startmenu_style {
             StartMenuStyle::Classic => self.classic_toggle_start_menu(bar),
-            StartMenuStyle::Glass => self.toggle_start_panel(bar),
+            StartMenuStyle::Blue | StartMenuStyle::Glass => self.toggle_start_panel(bar),
         }
     }
 
@@ -31,7 +31,7 @@ impl State {
         }
         match self.config.startmenu_style {
             StartMenuStyle::Classic => self.classic_toggle_start_menu_from_keys(),
-            StartMenuStyle::Glass => self.toggle_start_panel_from_keys(),
+            StartMenuStyle::Blue | StartMenuStyle::Glass => self.toggle_start_panel_from_keys(),
         }
     }
 
@@ -40,7 +40,7 @@ impl State {
     pub fn close_start(&mut self) {
         match self.config.startmenu_style {
             StartMenuStyle::Classic => self.close_menu(),
-            StartMenuStyle::Glass => self.close_start_panel(),
+            StartMenuStyle::Blue | StartMenuStyle::Glass => self.close_start_panel(),
         }
     }
 }
@@ -51,63 +51,98 @@ impl State {
 /// recent_files`), Computer, a rule, Control Panel, Printers, Run... and
 /// Help and Support. Each row has an icon and an infotip.
 pub fn places(recent: bool, dirs: &[(std::path::PathBuf, &str)]) -> Vec<MenuEntry> {
-    use crate::config::{CONTROL_PANEL_TIP, HELP, MenuTarget, PRINTERS, PRINTERS_TIP};
     use reprisefs::places::ShellPlace;
     let mut v = vec![
         MenuEntry::spawn("{user}", "user-home", "reprise-explorer \"$HOME\"")
             .tipped(ShellPlace::Home.tip()),
     ];
-    for (dir, icon) in dirs {
-        if !matches!(
-            *icon,
-            "folder-documents" | "folder-pictures" | "folder-music"
-        ) {
-            continue;
-        }
-        let (Some(name), Some(path)) = (dir.file_name(), dir.to_str()) else {
-            continue;
-        };
-        let cmd = format!("reprise-explorer {}", reprisefs::ops::shell_quote(path));
-        let row = MenuEntry::spawn(&name.to_string_lossy(), icon, &cmd);
-        v.push(match crate::desktop::document_tip(icon) {
-            Some(tip) => row.tipped(tip),
-            None => row,
-        });
-    }
+    v.extend(
+        ["folder-documents", "folder-pictures", "folder-music"]
+            .iter()
+            .filter_map(|icon| document_row(dirs, icon)),
+    );
     v.push(MenuEntry::Separator);
     if recent {
-        v.push(
-            MenuEntry::item(
-                "Recent Items",
-                "document-open-recent",
-                MenuTarget::Documents,
-            )
-            .tipped(RECENT_TIP),
-        );
+        v.push(recent_row());
     }
-    v.push(
-        MenuEntry::spawn("Computer", "computer", "reprise-explorer Computer")
-            .tipped(ShellPlace::Computer.tip()),
-    );
+    v.push(computer_row());
     v.push(MenuEntry::Separator);
-    v.push(
-        MenuEntry::spawn("Control Panel", "preferences-system", "reprise-settings")
-            .tipped(CONTROL_PANEL_TIP),
-    );
-    v.push(MenuEntry::spawn("Printers", "printer", PRINTERS).tipped(PRINTERS_TIP));
-    v.push(
-        MenuEntry::item(
-            "Run...",
-            "system-run",
-            MenuTarget::Action(crate::config::Action::Run),
-        )
-        .tipped(RUN_TIP),
-    );
-    v.push(MenuEntry::spawn("Help and Support", "help-browser", HELP).tipped(HELP_TIP));
+    v.extend([control_panel_row(), printers_row(), run_row(), help_row()]);
     v
 }
 
-/// The infotips of the Glass Start menu's places that have no Classic
+/// The Blue Start menu's right column: Documents, Recent Items (with `recent`), Pictures, Music,
+/// Computer, a rule, Control Panel, Printers, a rule, Help and Support, Run.... Rows as in [`places`].
+pub fn blue_places(recent: bool, dirs: &[(std::path::PathBuf, &str)]) -> Vec<MenuEntry> {
+    let mut v: Vec<MenuEntry> = document_row(dirs, "folder-documents").into_iter().collect();
+    if recent {
+        v.push(recent_row());
+    }
+    v.extend(
+        ["folder-pictures", "folder-music"]
+            .iter()
+            .filter_map(|icon| document_row(dirs, icon)),
+    );
+    v.push(computer_row());
+    v.push(MenuEntry::Separator);
+    v.extend([control_panel_row(), printers_row()]);
+    v.push(MenuEntry::Separator);
+    v.extend([help_row(), run_row()]);
+    v
+}
+
+/// The row opening the document folder of `dirs` whose icon is `icon`, if it exists.
+fn document_row(dirs: &[(std::path::PathBuf, &str)], icon: &str) -> Option<MenuEntry> {
+    let (dir, icon) = dirs.iter().find(|(_, i)| *i == icon)?;
+    let (name, path) = (dir.file_name()?, dir.to_str()?);
+    let cmd = format!("reprise-explorer {}", reprisefs::ops::shell_quote(path));
+    let row = MenuEntry::spawn(&name.to_string_lossy(), icon, &cmd);
+    Some(match crate::desktop::document_tip(icon) {
+        Some(tip) => row.tipped(tip),
+        None => row,
+    })
+}
+
+fn recent_row() -> MenuEntry {
+    use crate::config::MenuTarget;
+    MenuEntry::item(
+        "Recent Items",
+        "document-open-recent",
+        MenuTarget::Documents,
+    )
+    .tipped(RECENT_TIP)
+}
+
+fn computer_row() -> MenuEntry {
+    MenuEntry::spawn("Computer", "computer", "reprise-explorer Computer")
+        .tipped(reprisefs::places::ShellPlace::Computer.tip())
+}
+
+fn control_panel_row() -> MenuEntry {
+    MenuEntry::spawn("Control Panel", "preferences-system", "reprise-settings")
+        .tipped(crate::config::CONTROL_PANEL_TIP)
+}
+
+fn printers_row() -> MenuEntry {
+    use crate::config::{PRINTERS, PRINTERS_TIP};
+    MenuEntry::spawn("Printers", "printer", PRINTERS).tipped(PRINTERS_TIP)
+}
+
+fn run_row() -> MenuEntry {
+    use crate::config::MenuTarget;
+    MenuEntry::item(
+        "Run...",
+        "system-run",
+        MenuTarget::Action(crate::config::Action::Run),
+    )
+    .tipped(RUN_TIP)
+}
+
+fn help_row() -> MenuEntry {
+    MenuEntry::spawn("Help and Support", "help-browser", crate::config::HELP).tipped(HELP_TIP)
+}
+
+/// The infotips of the two-column Start menus' places that have no Classic
 /// counterpart's.
 const RECENT_TIP: &str = "Lists the files you opened most recently.";
 const RUN_TIP: &str = "Opens a program, folder, document or web site by its name.";
@@ -444,5 +479,40 @@ mod tests {
                 .all(|e| matches!(e, MenuEntry::Item { label, .. } if label == "Recent Items")),
             "only Recent Items opens a list of its own"
         );
+    }
+
+    #[test]
+    fn the_blue_places_put_recent_items_under_documents_and_run_last() {
+        let dirs = [
+            (std::path::PathBuf::from("/h/Documents"), "folder-documents"),
+            (std::path::PathBuf::from("/h/Music"), "folder-music"),
+            (std::path::PathBuf::from("/h/Pictures"), "folder-pictures"),
+        ];
+        let labels = |recent| -> Vec<String> {
+            blue_places(recent, &dirs)
+                .iter()
+                .map(|e| match e {
+                    MenuEntry::Separator => "-".to_string(),
+                    MenuEntry::Item { label, .. } => label.clone(),
+                })
+                .collect()
+        };
+        assert_eq!(
+            labels(true),
+            [
+                "Documents",
+                "Recent Items",
+                "Pictures",
+                "Music",
+                "Computer",
+                "-",
+                "Control Panel",
+                "Printers",
+                "-",
+                "Help and Support",
+                "Run..."
+            ]
+        );
+        assert!(!labels(false).iter().any(|r| r == "Recent Items"));
     }
 }

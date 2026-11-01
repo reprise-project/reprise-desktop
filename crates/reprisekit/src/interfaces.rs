@@ -299,6 +299,18 @@ fn with_icons<'a>(cells: &[ThumbCell<'a>], fallback: Option<&'a Canvas>) -> Vec<
         .collect()
 }
 
+/// Draws the Blue Start menu `p` laid out as `l` onto a clear `canvas`, in `variant`'s colours.
+pub fn draw_blue_start_panel(
+    canvas: &mut Canvas,
+    variant: blue::Variant,
+    text: &TextRenderer,
+    p: &StartPanel,
+    l: &startpanel::layout::Layout,
+    pressed: Option<startpanel::Spot>,
+) {
+    blue::startpanel::draw(canvas, variant.scheme(), text, p, l, pressed);
+}
+
 pub fn start_panel_text(_theme: &Theme) -> TextRenderer {
     TextRenderer::load(&glass::startpanel::font())
 }
