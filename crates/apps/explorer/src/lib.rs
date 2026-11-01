@@ -671,6 +671,7 @@ impl Explorer {
             can_back: self.history.can_back(),
             can_forward: self.history.can_forward(),
             extract: None,
+            local_paths: self.selected_local().is_some(),
         }
     }
 

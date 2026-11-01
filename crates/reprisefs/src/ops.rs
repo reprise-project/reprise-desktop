@@ -26,6 +26,40 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// Copy as Path's text: one path per line, each in double quotes when a shell would split or
+/// expand it unquoted, with `"`, `\\`, `$` and `` ` `` escaped inside the quotes. A name that is not
+/// UTF-8 is copied lossily.
+pub fn path_lines<'a>(paths: impl IntoIterator<Item = &'a Path>) -> String {
+    let lines: Vec<String> = paths
+        .into_iter()
+        .map(|p| {
+            let s = p.to_string_lossy();
+            if s.chars().all(shell_plain) {
+                return s.into_owned();
+            }
+            let mut q = String::with_capacity(s.len() + 2);
+            q.push('"');
+            for c in s.chars() {
+                if matches!(c, '"' | '\\' | '$' | '`') {
+                    q.push('\\');
+                }
+                q.push(c);
+            }
+            q.push('"');
+            q
+        })
+        .collect();
+    lines.join("\n")
+}
+
+/// A character a shell reads as itself anywhere in a word: ASCII letters, digits and
+/// `/ . _ - + , : @ % =`, and non-ASCII characters that are not whitespace.
+fn shell_plain(c: char) -> bool {
+    c.is_ascii_alphanumeric()
+        || matches!(c, '/' | '.' | '_' | '-' | '+' | ',' | ':' | '@' | '%' | '=')
+        || (!c.is_ascii() && !c.is_whitespace())
+}
+
 /// How deep [`copy_dir_all`] recurses before giving up: a backstop for a tree
 /// that grows under the walk.
 const MAX_DEPTH: usize = 256;
