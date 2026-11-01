@@ -562,6 +562,10 @@ action = "close"             # on the desktop, with no window focused, opens Tur
 keys = "Alt+Tab"
 action = "cycle"
 
+[[keybinds]]                 # Alt+Tab over the focused app's windows alone; Shift goes back.
+keys = "Alt+grave"           # "grave" is the key above Tab on any layout
+action = "cycle-app"
+
 [[keybinds]]                 # the 3D switcher under Glass ([switcher] flip), else as Alt+Tab
 keys = "Super+Tab"
 action = "flip"

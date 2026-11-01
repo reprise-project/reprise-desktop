@@ -26,6 +26,7 @@ fn press(sym: u32, mods: u32) -> KeyPress {
         lower: vec![lower],
         mods,
         pressed: true,
+        place: None,
     }
 }
 
@@ -494,6 +495,7 @@ fn a_menu_skips_a_super_keysym_for_its_own_key() {
         lower: vec![KEY_Super_L, KEY_Down],
         mods: MOD_LOGO,
         pressed: true,
+        place: None,
     };
     assert_eq!(r(&m, &k), KeyRoute::Menu(KEY_Down));
     assert_eq!(r(&m, &press(KEY_Super_L, MOD_LOGO)), KeyRoute::Swallow);
@@ -1752,5 +1754,45 @@ fn a_global_chord_beats_the_icon_keys_and_the_notification_history() {
     assert_eq!(
         route(&center, &ctrl_delete, &binds(), &[]).route,
         KeyRoute::NotifyCenter(KEY_Delete)
+    );
+}
+
+#[test]
+fn the_place_keysym_binds_only_when_the_layouts_own_is_unbound() {
+    let bind = |keys, action| {
+        let (mods, keysym) = crate::config::parse_keybind(keys).unwrap();
+        Keybind {
+            mods,
+            keysym,
+            action,
+        }
+    };
+    let binds = vec![
+        bind("Alt+grave", Action::CycleApp),
+        bind("Super+grave", Action::Tab(false)),
+        bind("Super+0", Action::Zoom(crate::magnifier::ZoomStep::Reset)),
+    ];
+    let on = |sym, mods| {
+        let k = KeyPress {
+            place: Some(KEY_grave),
+            ..press(sym, mods)
+        };
+        route(&Modes::default(), &k, &binds, &[]).route
+    };
+    assert_eq!(on(KEY_0, MOD_ALT), KeyRoute::Binds(vec![Action::CycleApp]));
+    assert_eq!(
+        on(KEY_0, MOD_LOGO),
+        KeyRoute::Binds(vec![Action::Zoom(crate::magnifier::ZoomStep::Reset)]),
+        "Super+0 is the layout's, and the key above Tab runs it alone"
+    );
+    assert_eq!(
+        on(KEY_section, MOD_ALT | MOD_SHIFT),
+        KeyRoute::Binds(vec![Action::CycleApp]),
+        "Shift added runs cycle-app backwards"
+    );
+    assert_eq!(
+        on(KEY_section, MOD_LOGO | MOD_SHIFT),
+        KeyRoute::Client,
+        "tab-next takes no Shift"
     );
 }

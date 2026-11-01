@@ -52,6 +52,12 @@ pub fn function_key_for(xkb_code: u32) -> Option<u32> {
         .then(|| KEY_F13 + (xkb_code - 191))
 }
 
+/// `grave` for the key above Tab (evdev `KEY_GRAVE`), which other layouts give another keysym:
+/// a bind on "grave" still fires from that key.
+pub fn place_key_for(xkb_code: u32) -> Option<u32> {
+    (xkb_code == 41 + 8).then_some(KEY_grave)
+}
+
 /// The keysym a name like "Return" or "a" spells, matched without case; None for a name xkb does
 /// not know.
 pub fn from_name(name: &str) -> Option<u32> {

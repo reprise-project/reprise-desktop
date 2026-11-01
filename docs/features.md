@@ -217,6 +217,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   list, the desktop can be too, and resting on an entry peeks at it. Four
   picture sizes, for big screens and bad eyes. Pressed over an open Start
   menu, menu or popup, it closes that and switches.
+- **Alt+` (the key above Tab on any layout)** switches between the windows
+  of the focused app alone, most recent first, in the same panel. Shift goes
+  the other way.
 - **3D switcher.** Glass only: Super+Tab tilts every window into a stack. See
   [interfaces](interfaces.md#glass-only).
 - **Window overview.** Super+W, a hot corner (`[overview] hot_corner`) or

@@ -226,6 +226,7 @@ fn escape_in_a_start_panel_popup_closes_the_popup_only() {
         lower: vec![keys::KEY_Escape],
         mods: 0,
         pressed: true,
+        place: None,
     };
     assert_eq!(
         route(&modes, &escape, &[], &[]).route,

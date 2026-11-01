@@ -113,6 +113,7 @@ fn describe(a: &Action) -> (&'static str, String) {
         Action::Exec { app, .. } => return (PROGRAMS, format!("Start {app}")),
         Action::Close => (WINDOWS, "Close the window"),
         Action::Cycle => (WINDOWS, "Switch windows"),
+        Action::CycleApp => (WINDOWS, "Switch the app's windows"),
         Action::Flip => (WINDOWS, "Switch windows in 3D"),
         Action::Maximize => (WINDOWS, "Maximize"),
         Action::Minimize => (WINDOWS, "Minimize"),
@@ -541,6 +542,10 @@ mod tests {
             Some("Super, Ctrl+Esc")
         );
         assert_eq!(row(LAUNCH, "Launcher").as_deref(), Some("Super+Space"));
+        assert_eq!(
+            row(WINDOWS, "Switch the app's windows").as_deref(),
+            Some("Alt+`")
+        );
         assert_eq!(
             row(SYSTEM, "Next keyboard layout").as_deref(),
             Some("Shift+Left Alt")
