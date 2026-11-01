@@ -125,6 +125,7 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Flag(k("launcher", "windows"), lens!(launcher_windows)),
         Field::Flag(k("thumbnail_cache", "enabled"), lens!(thumbnail_cache)),
         Field::Int(k("thumbnail_cache", "max_mb"), lens!(thumbnail_max_mb)),
+        Field::Int(k("storage", "low_space_percent"), lens!(low_space_percent)),
         Field::Int(k("workspaces", "count"), lens!(desktops)),
         Field::Text(k("workspaces", "animation"), lens!(desktop_animation)),
         Field::Int(k("workspaces", "animation_ms"), lens!(desktop_animation_ms)),
