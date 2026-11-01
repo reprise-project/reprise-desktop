@@ -2025,4 +2025,15 @@ pub const OBSIDIAN: Scheme = Scheme {
             ),
         ],
     },
+    start_menu: StartMenu {
+        band: stops![0.0: 0x8A939B, 0.08: 0x6D7880, 0.5: 0x4B5767, 0.92: 0x2B3346, 1.0: 0x1A2030],
+        edge: Color::rgb(0x2E, 0x36, 0x48),
+        accent: Color::rgb(0x9D, 0xBC, 0xE3),
+        band_ink: Color::rgb(0xFF, 0xFF, 0xFF),
+        band_shadow: Color::rgb(0x10, 0x14, 0x1F),
+        places: Color::rgb(0xE5, 0xE8, 0xEC),
+        places_edge: Color::rgb(0xB3, 0xBA, 0xC2),
+        places_ink: Color::rgb(0x1F, 0x27, 0x33),
+        rule: Color::rgb(0xD8, 0xDB, 0xDF),
+    },
 };

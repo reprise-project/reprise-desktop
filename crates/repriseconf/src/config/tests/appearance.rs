@@ -540,6 +540,8 @@ fn the_start_menu_style_follows_the_interface_unless_set() {
     assert_eq!(glass.startmenu_style, StartMenuStyle::Glass);
     let classic = Config::parse("").unwrap();
     assert_eq!(classic.startmenu_style, StartMenuStyle::Classic);
+    let blue = Config::parse("[appearance]\ninterface = \"blue\"\n").unwrap();
+    assert_eq!(blue.startmenu_style, StartMenuStyle::Blue);
     let set = Config::parse("startmenu_style = \"classic\"\n[appearance]\ninterface = \"glass\"\n")
         .unwrap();
     assert_eq!(set.startmenu_style, StartMenuStyle::Classic);

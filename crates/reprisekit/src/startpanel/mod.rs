@@ -1,7 +1,9 @@
-//! The Glass Start panel as a model: the rows it lists in each mode, the
+//! The two-column Start panel as a model: the rows it lists in each mode, the
 //! keyboard's walk over them, the pointer's hot spot and its hover delays.
+//! [`Shape`] picks the Glass or the Blue menu.
 
 pub mod access;
+pub mod bluelayout;
 pub mod layout;
 pub mod search;
 
@@ -13,6 +15,8 @@ pub const ALL_PROGRAMS: &str = "All Programs";
 pub const BACK: &str = "Back";
 pub const SHUT_DOWN: &str = "Shut down";
 pub const SHUT_DOWN_OPTIONS: &str = "Shut down options";
+pub const LOG_OFF: &str = "Log Off";
+pub const TURN_OFF: &str = "Turn Off Computer";
 pub const SEARCH_CUE: &str = "Search programs and files";
 pub const CLEAR: &str = "Clear";
 /// The program the user picture opens.
@@ -20,20 +24,19 @@ pub const USER_ACCOUNTS: &str = "User Accounts";
 pub const NO_RESULTS: &str = "No items match your search.";
 pub const MAX_RESULTS: usize = 8;
 
-/// A pinned or frequent program. `jump` marks a row with a jump list (it
-/// draws an arrow and opens the list on hover or Right); `new_pin` a
-/// newly pinned one, drawn in its own box.
+/// A pinned or frequent program. `jump` marks a row with a jump list; `new_pin` a newly pinned
+/// one, drawn in its own box; `detail` the grey line under a Blue pinned row's name.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProgramRow {
     pub name: String,
     pub icon: Option<Canvas>,
     pub jump: bool,
     pub new_pin: bool,
+    pub detail: Option<String>,
 }
 
-/// A row of the right column. `picture` is the 48 px picture shown in the
-/// frame while the row is lit; `rule_before` draws a rule above the row;
-/// `submenu` marks a row that opens a menu of its own.
+/// A row of the right column. `picture` is Glass's 48 px picture for the lit row, or Blue's 24 px
+/// icon; `rule_before` draws a rule above the row; `submenu` marks a row with a menu of its own.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaceRow {
     pub label: String,
@@ -75,6 +78,15 @@ pub struct ResultGroup {
 /// What the panel shows. `Jump(i)` shows the jump list of program row `i`
 /// (an index into [`StartPanel::programs`]); that row is drawn lit for as
 /// long as the mode lasts, whatever else is lit.
+/// Which Start menu the panel is. Blue has no search, jump lists or tree: it stays in
+/// [`Mode::Home`], All Programs and Recent Items open menus, a letter jumps to a row.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Shape {
+    #[default]
+    Glass,
+    Blue,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Home,
@@ -96,6 +108,7 @@ pub enum Spot {
     Clear,
     Shutdown,
     ShutdownArrow,
+    LogOff,
 }
 
 /// A key the host routes to the panel. `Left`, `Right`, `Home` and `End`
@@ -137,6 +150,9 @@ pub enum Event {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StartPanel {
+    pub shape: Shape,
+    /// The name the Blue menu's band shows.
+    pub user: String,
     pub pinned: Vec<ProgramRow>,
     pub frequent: Vec<ProgramRow>,
     pub places: Vec<PlaceRow>,
@@ -152,6 +168,9 @@ pub struct StartPanel {
     /// The most width and height the panel may stand at its text size, the user picture's
     /// overhang left out; None: no limit. Set through [`StartPanel::fit`].
     pub room: Option<(i32, i32)>,
+    /// The Blue bottom band's Log Off and Turn Off Computer label widths at 100% text, design px:
+    /// the buttons are sized from them. The host measures them after [`StartPanel::fit`].
+    pub foot_labels: [i32; 2],
     /// Private so every write goes through `key` or `paste`, which keep
     /// the mode in step with the query.
     edit: TextEdit,
@@ -179,6 +198,8 @@ enum Step {
 impl StartPanel {
     pub fn new() -> Self {
         StartPanel {
+            shape: Shape::Glass,
+            user: String::new(),
             pinned: Vec::new(),
             frequent: Vec::new(),
             places: Vec::new(),
@@ -190,6 +211,7 @@ impl StartPanel {
             jump_title: String::new(),
             text: TextUnits::default(),
             room: None,
+            foot_labels: [0; 2],
             edit: TextEdit::new("", false),
             mode: Mode::Home,
             before_search: Mode::Home,
@@ -203,7 +225,11 @@ impl StartPanel {
     /// Lays the panel out for `room` (width, height): `text` steps down, never under 100%, until
     /// the Home panel is no wider than the room; program rows come off until it is no taller.
     pub fn fit(&mut self, text: TextUnits, room: (i32, i32)) {
-        self.text = text.fitting(layout::W, room.0);
+        let w = match self.shape {
+            Shape::Glass => layout::W,
+            Shape::Blue => bluelayout::W,
+        };
+        self.text = text.fitting(w, room.0);
         self.room = Some(room);
     }
 
@@ -235,7 +261,7 @@ impl StartPanel {
     }
 
     /// The place whose picture the picture spot shows in place of the
-    /// user picture: the last place lit. Lighting any other spot brings
+    /// user picture (Glass only): the last place lit. Lighting any other spot brings
     /// the user picture back; lighting nothing (a rule, a gap, off the
     /// panel) keeps the place's.
     pub fn picture(&self) -> Option<usize> {
@@ -279,6 +305,9 @@ impl StartPanel {
     }
 
     pub fn key(&mut self, k: Key) -> Event {
+        if self.shape == Shape::Blue {
+            return self.blue_key(k);
+        }
         let in_field = self.mode == Mode::Search && self.focus == Spot::Search;
         match k {
             Key::Char(ek) => self.edit_key(ek),
@@ -342,8 +371,14 @@ impl StartPanel {
                 Event::ArmHover(Spot::AllPrograms)
             }
             Some(Spot::ShutdownArrow) => Event::ArmHover(Spot::ShutdownArrow),
+            Some(s @ Spot::Place(i)) if self.opens_on_hover(i) => Event::ArmHover(s),
             _ => Event::Redraw,
         }
+    }
+
+    /// Whether place `i` opens its menu after the hover delay: the Blue menu's Recent Items.
+    fn opens_on_hover(&self, i: usize) -> bool {
+        self.shape == Shape::Blue && self.places.get(i).is_some_and(|p| p.submenu)
     }
 
     pub fn press(&mut self, at: Spot, button: Button) -> Event {
@@ -379,13 +414,15 @@ impl StartPanel {
 
     /// The hover delay armed for `at` ran out. A row with a jump list
     /// opens it (another row closes an open one), All Programs opens the
-    /// tree, the arrow opens the Shut down options. A fire for a spot the
-    /// pointer has left does nothing.
+    /// tree (Blue: its menu, as Recent Items does), the arrow opens the Shut
+    /// down options. A fire for a spot the pointer has left does nothing.
     pub fn hover_fired(&mut self, at: Spot) -> Event {
         if self.hot != Some(at) {
             return Event::None;
         }
         match at {
+            Spot::AllPrograms if self.shape == Shape::Blue => Event::Activate(at),
+            Spot::Place(i) if self.opens_on_hover(i) => Event::Activate(at),
             Spot::Program(i) => {
                 let jump = self.program(i).is_some_and(|r| r.jump);
                 match self.mode {
@@ -561,6 +598,9 @@ impl StartPanel {
     }
 
     fn follow_lit(&mut self) {
+        if self.shape == Shape::Blue {
+            return;
+        }
         match self.lit() {
             Some(Spot::Place(i)) => self.pictured = Some(i),
             Some(_) => self.pictured = None,
@@ -573,7 +613,7 @@ impl StartPanel {
         self.lit = Some(s);
         self.follow_lit();
         self.focus = match s {
-            Spot::Place(_) | Spot::Shutdown | Spot::ShutdownArrow => s,
+            Spot::Place(_) | Spot::Shutdown | Spot::ShutdownArrow | Spot::LogOff => s,
             _ => Spot::Search,
         };
         if let Spot::Tree(i) = s {
@@ -607,9 +647,7 @@ impl StartPanel {
                 col
             }
             Mode::Home | Mode::Jump(_) => {
-                let mut col: Vec<Spot> = (0..layout::programs_shown(self))
-                    .map(Spot::Program)
-                    .collect();
+                let mut col: Vec<Spot> = (0..self.programs_shown()).map(Spot::Program).collect();
                 col.push(Spot::AllPrograms);
                 col
             }
@@ -623,14 +661,26 @@ impl StartPanel {
         } else {
             Vec::new()
         };
+        if self.shape == Shape::Blue {
+            col.push(Spot::LogOff);
+        }
         col.push(Spot::Shutdown);
         col
+    }
+
+    fn programs_shown(&self) -> usize {
+        match self.shape {
+            Shape::Glass => layout::programs_shown(self),
+            Shape::Blue => bluelayout::programs_shown(self),
+        }
     }
 
     fn walk(&mut self, step: Step) -> Event {
         let from = self.lit();
         let col = match from {
-            Some(Spot::Place(_) | Spot::Shutdown | Spot::ShutdownArrow) => self.right_column(),
+            Some(Spot::Place(_) | Spot::Shutdown | Spot::ShutdownArrow | Spot::LogOff) => {
+                self.right_column()
+            }
             Some(Spot::Jump(_)) => (0..layout::jumps_shown(self)).map(Spot::Jump).collect(),
             _ => self.left_column(),
         };
@@ -775,6 +825,7 @@ impl StartPanel {
 
     fn activate(&mut self, s: Spot) -> Event {
         match s {
+            Spot::AllPrograms if self.shape == Shape::Blue => Event::Activate(s),
             Spot::AllPrograms => {
                 let to = if self.mode == Mode::Programs {
                     Mode::Home
@@ -803,12 +854,138 @@ impl StartPanel {
     }
 }
 
+/// The Blue menu's keys: the arrows walk and cross the columns and bottom band, Tab steps between
+/// them, a letter jumps.
+impl StartPanel {
+    fn blue_key(&mut self, k: Key) -> Event {
+        match k {
+            Key::Char(EditKey::Insert(s)) => match s.chars().next() {
+                Some(c) if !c.is_control() && !c.is_whitespace() => self.letter(c),
+                _ => Event::None,
+            },
+            Key::Char(_) => Event::None,
+            Key::Up => self.walk(Step::By(-1)),
+            Key::Down => self.walk(Step::By(1)),
+            Key::Home => self.walk(Step::First),
+            Key::End => self.walk(Step::Last),
+            Key::Left => self.blue_left(),
+            Key::Right => self.blue_right(),
+            Key::Tab => self.blue_tab(),
+            Key::Enter => self.enter(),
+            Key::Escape => self.escape(),
+            Key::Menu => match self.lit() {
+                Some(s) if self.has_context(s) => Event::Context(s),
+                _ => Event::None,
+            },
+        }
+    }
+
+    /// Every row a letter can reach, top to bottom, left column first.
+    fn rows_in_order(&self) -> Vec<Spot> {
+        let mut v = self.left_column();
+        v.extend(self.right_column());
+        v
+    }
+
+    fn label(&self, s: Spot) -> Option<&str> {
+        match s {
+            Spot::Program(i) => self.program(i).map(|r| r.name.as_str()),
+            Spot::AllPrograms => Some(ALL_PROGRAMS),
+            Spot::Place(i) => self.places.get(i).map(|p| p.label.as_str()),
+            Spot::LogOff => Some(LOG_OFF),
+            Spot::Shutdown => Some(TURN_OFF),
+            _ => None,
+        }
+    }
+
+    /// The rows whose label starts with `c`: the one row runs; with more, the next one after the
+    /// lit row lights, wrapping round.
+    fn letter(&mut self, c: char) -> Event {
+        let low: Vec<char> = c.to_lowercase().collect();
+        let starts = |l: &str| {
+            l.chars()
+                .next()
+                .is_some_and(|f| f.to_lowercase().eq(low.iter().copied()))
+        };
+        let hits: Vec<Spot> = self
+            .rows_in_order()
+            .into_iter()
+            .filter(|&s| self.label(s).is_some_and(starts))
+            .collect();
+        match hits.as_slice() {
+            [] => Event::None,
+            &[only] => {
+                self.light(only);
+                self.activate(only)
+            }
+            _ => {
+                let at = self.lit().and_then(|l| hits.iter().position(|&h| h == l));
+                let next = at.map_or(0, |k| (k + 1) % hits.len());
+                self.light(hits[next]);
+                Event::Redraw
+            }
+        }
+    }
+
+    fn blue_right(&mut self) -> Event {
+        match self.lit() {
+            Some(s @ Spot::AllPrograms) => return self.activate(s),
+            Some(s @ Spot::Place(i)) if self.places.get(i).is_some_and(|p| p.submenu) => {
+                return Event::Activate(s);
+            }
+            Some(Spot::Place(_)) => self.light(Spot::LogOff),
+            Some(Spot::LogOff) => self.light(Spot::Shutdown),
+            Some(Spot::Shutdown) => return Event::None,
+            _ => match self.right_column().first() {
+                Some(&s) => self.light(s),
+                None => return Event::None,
+            },
+        }
+        Event::Redraw
+    }
+
+    fn blue_left(&mut self) -> Event {
+        let to = match self.lit() {
+            Some(Spot::Shutdown) => Some(Spot::LogOff),
+            Some(Spot::LogOff) => self.left_column().last().copied(),
+            Some(Spot::Place(_)) => self.left_column().first().copied(),
+            _ => None,
+        };
+        match to {
+            Some(s) => {
+                self.light(s);
+                Event::Redraw
+            }
+            None => Event::None,
+        }
+    }
+
+    fn blue_tab(&mut self) -> Event {
+        let left = self.left_column().first().copied();
+        let places = self.right_column().first().copied();
+        let next = match self.lit() {
+            Some(Spot::Program(_) | Spot::AllPrograms) => places,
+            Some(Spot::Place(_)) => Some(Spot::LogOff),
+            Some(Spot::LogOff) => Some(Spot::Shutdown),
+            _ => left,
+        };
+        match next {
+            Some(s) => {
+                self.light(s);
+                Event::Redraw
+            }
+            None => Event::None,
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
 
     pub(crate) fn prow(name: &str, jump: bool) -> ProgramRow {
         ProgramRow {
+            detail: None,
             name: name.into(),
             icon: None,
             jump,
@@ -1387,5 +1564,98 @@ pub(crate) mod tests {
         assert_eq!(p.scroll_tree(100), Event::Redraw);
         assert_eq!(p.tree_top, 30 - cap, "scrolling stops at the last row");
         assert_eq!(p.scroll_tree(1), Event::None);
+    }
+
+    fn blue() -> StartPanel {
+        let mut p = StartPanel::new();
+        p.shape = Shape::Blue;
+        p.pinned = vec![prow("Files", false)];
+        p.frequent = vec![prow("Notepad", false), prow("Nautilus", false)];
+        p.places = ["Documents", "Recent Items", "Computer"]
+            .iter()
+            .map(|&l| PlaceRow {
+                submenu: l == "Recent Items",
+                ..place(l)
+            })
+            .collect();
+        p
+    }
+
+    #[test]
+    fn a_blue_letter_cycles_its_rows_or_runs_the_only_one() {
+        let mut p = blue();
+        assert_eq!(p.key(typed("n")), Event::Redraw);
+        assert_eq!(p.lit(), Some(Spot::Program(1)));
+        assert_eq!(p.key(typed("N")), Event::Redraw);
+        assert_eq!(p.lit(), Some(Spot::Program(2)), "the next N row");
+        p.key(typed("n"));
+        assert_eq!(p.lit(), Some(Spot::Program(1)), "round to the first");
+        assert_eq!(p.key(typed("f")), Event::Activate(Spot::Program(0)));
+        assert_eq!(p.key(typed("t")), Event::Activate(Spot::Shutdown));
+        assert_eq!(p.key(typed("q")), Event::None);
+        assert_eq!(p.mode(), Mode::Home, "typing never searches");
+        assert_eq!(p.query(), "");
+    }
+
+    #[test]
+    fn blue_arrows_cross_the_columns_and_reach_the_bottom_buttons() {
+        let mut p = blue();
+        p.key(Key::Down);
+        assert_eq!(p.lit(), Some(Spot::Program(0)));
+        p.key(Key::Right);
+        assert_eq!(p.lit(), Some(Spot::Place(0)));
+        p.key(Key::Right);
+        assert_eq!(p.lit(), Some(Spot::LogOff));
+        p.key(Key::Right);
+        assert_eq!(p.lit(), Some(Spot::Shutdown));
+        assert_eq!(p.key(Key::Right), Event::None);
+        p.key(Key::Left);
+        p.key(Key::Left);
+        assert_eq!(p.lit(), Some(Spot::AllPrograms));
+        p.key(Key::End);
+        assert_eq!(p.lit(), Some(Spot::AllPrograms));
+        assert_eq!(p.key(Key::Right), Event::Activate(Spot::AllPrograms));
+        assert_eq!(p.key(Key::Enter), Event::Activate(Spot::AllPrograms));
+        p.key(Key::Tab);
+        assert_eq!(p.lit(), Some(Spot::Place(0)));
+        p.key(Key::Down);
+        assert_eq!(p.key(Key::Right), Event::Activate(Spot::Place(1)));
+        p.key(Key::End);
+        assert_eq!(p.lit(), Some(Spot::Shutdown), "the column ends at Turn Off");
+        p.key(Key::Up);
+        assert_eq!(p.lit(), Some(Spot::LogOff));
+        assert_eq!(p.key(Key::Escape), Event::Close);
+    }
+
+    #[test]
+    fn blue_all_programs_and_recent_items_open_after_the_hover_delay() {
+        let mut p = blue();
+        assert_eq!(
+            p.pointer(Some(Spot::AllPrograms)),
+            Event::ArmHover(Spot::AllPrograms)
+        );
+        assert_eq!(
+            p.hover_fired(Spot::AllPrograms),
+            Event::Activate(Spot::AllPrograms)
+        );
+        assert_eq!(p.mode(), Mode::Home, "no tree in place");
+        assert_eq!(
+            p.press(Spot::AllPrograms, Button::Left),
+            Event::Activate(Spot::AllPrograms)
+        );
+        assert_eq!(
+            p.pointer(Some(Spot::Place(1))),
+            Event::ArmHover(Spot::Place(1))
+        );
+        assert_eq!(
+            p.hover_fired(Spot::Place(1)),
+            Event::Activate(Spot::Place(1))
+        );
+        assert_eq!(p.pointer(Some(Spot::Place(0))), Event::Redraw);
+        assert_eq!(
+            p.hover_fired(Spot::Place(1)),
+            Event::None,
+            "the pointer left"
+        );
     }
 }

@@ -523,7 +523,7 @@ fn the_start_menu_style_defaults_follow_the_interface() {
         Settings::for_interface("classic").startmenu_style,
         "classic"
     );
-    assert_eq!(Settings::for_interface("blue").startmenu_style, "classic");
+    assert_eq!(Settings::for_interface("blue").startmenu_style, "blue");
 }
 
 #[test]
@@ -629,7 +629,7 @@ fn save_round_trips_every_field() {
         confirm_scripts: false,
         task_manager: "htop".into(),
         startmenu_banner: "Reprise".into(),
-        startmenu_style: "classic".into(),
+        startmenu_style: "glass".into(),
         desktop_icons: false,
         desktop_extensions: "hide_launchers".into(),
         start_icon: false,

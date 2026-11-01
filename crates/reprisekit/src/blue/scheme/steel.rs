@@ -2047,4 +2047,15 @@ pub const STEEL: Scheme = Scheme {
             ),
         ],
     },
+    start_menu: StartMenu {
+        band: stops![0.0: 0xA8B8C9, 0.08: 0x92A4B7, 0.5: 0x7F91A4, 0.92: 0x6C7E92, 1.0: 0x56677A],
+        edge: Color::rgb(0x67, 0x78, 0x8A),
+        accent: Color::rgb(0xE6, 0xA2, 0x4E),
+        band_ink: Color::rgb(0xFF, 0xFF, 0xFF),
+        band_shadow: Color::rgb(0x34, 0x42, 0x4F),
+        places: Color::rgb(0xE6, 0xEC, 0xF2),
+        places_edge: Color::rgb(0xB6, 0xC4, 0xD3),
+        places_ink: Color::rgb(0x22, 0x38, 0x4E),
+        rule: Color::rgb(0xD7, 0xDC, 0xE1),
+    },
 };

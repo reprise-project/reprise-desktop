@@ -2063,4 +2063,15 @@ pub const SAPPHIRE: Scheme = Scheme {
             ),
         ],
     },
+    start_menu: StartMenu {
+        band: stops![0.0: 0xA4CDF3, 0.08: 0x84BDEC, 0.5: 0x4C8AD8, 0.92: 0x3263BC, 1.0: 0x24479A],
+        edge: Color::rgb(0x3A, 0x6C, 0xC2),
+        accent: Color::rgb(0xF4, 0xAA, 0x52),
+        band_ink: Color::rgb(0xFF, 0xFF, 0xFF),
+        band_shadow: Color::rgb(0x1D, 0x3A, 0x7C),
+        places: Color::rgb(0xDD, 0xEB, 0xFA),
+        places_edge: Color::rgb(0x9D, 0xC0, 0xEC),
+        places_ink: Color::rgb(0x14, 0x3A, 0x80),
+        rule: Color::rgb(0xD5, 0xDA, 0xE3),
+    },
 };

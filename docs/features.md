@@ -63,11 +63,12 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 
 ## Start menu and launcher
 
-- **Start.** A tap on Super, Ctrl+Esc or the Start button. Classic and Blue
-  have the cascading menu with Programs, Documents and Settings; Glass has
-  the two-column menu with search and pinned programs
-  (`startmenu_style` picks either under any look). Program rows drag out
-  of the menu.
+- **Start.** A tap on Super, Ctrl+Esc or the Start button. Classic has the
+  cascading menu with Programs, Documents and Settings; Blue has two
+  columns of pinned programs and places with All Programs as cascading
+  menus; Glass has two columns with search and pinned programs
+  (`startmenu_style` picks any of them under any look). Program rows drag
+  out of the menu.
 - **Your menu.** The Start Menu page of Reprise Settings edits the menu as a
   tree and Quick Launch as a list. Quick Launch is a folder of ordinary
   `.desktop` files in `~/.config/reprise/quicklaunch/`, and the taskbar

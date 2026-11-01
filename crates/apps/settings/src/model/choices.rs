@@ -12,7 +12,8 @@ pub const TASKBAR_BUTTONS: &Choices = &[
 ];
 
 /// The Start menu styles. Mirrors `StartMenuStyle::parse` in `repriseconf::config`.
-pub const STARTMENU_STYLES: &Choices = &[("glass", "Glass"), ("classic", "Classic")];
+pub const STARTMENU_STYLES: &Choices =
+    &[("glass", "Glass"), ("blue", "Blue"), ("classic", "Classic")];
 
 /// The edges the taskbar can sit on. Mirrors `Edge::name` in
 /// `crates/reprisekit/src/taskbar.rs`.

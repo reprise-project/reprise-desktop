@@ -1993,4 +1993,15 @@ pub const EMBER: Scheme = Scheme {
             ),
         ],
     },
+    start_menu: StartMenu {
+        band: stops![0.0: 0x8E8E8E, 0.08: 0x707070, 0.5: 0x4E4E4E, 0.92: 0x2E2E2E, 1.0: 0x1C1C1C],
+        edge: Color::rgb(0x2C, 0x2C, 0x2C),
+        accent: Color::rgb(0xEE, 0x7A, 0x2E),
+        band_ink: Color::rgb(0xFF, 0xFF, 0xFF),
+        band_shadow: Color::rgb(0x0E, 0x0E, 0x0E),
+        places: Color::rgb(0xEB, 0xEB, 0xEB),
+        places_edge: Color::rgb(0xBD, 0xBD, 0xBD),
+        places_ink: Color::rgb(0x1E, 0x1E, 0x1E),
+        rule: Color::rgb(0xDA, 0xDA, 0xDA),
+    },
 };

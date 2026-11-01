@@ -306,11 +306,19 @@ fn panel_origin_follows_the_dock() {
     let (bottom, area) = bar_on(screen, Edge::Bottom);
     let h = layout::layout(&StartPanel::new()).panel.height;
     assert_eq!(
-        panel_origin(StartMenuDock::OnTop, &bottom, (0, 0), area, (layout::W, h)),
+        panel_origin(
+            StartMenuDock::OnTop,
+            &bottom,
+            (0, 0),
+            area,
+            (layout::W, h),
+            layout::OVERHANG
+        ),
         (0, 1040 - h)
     );
     let mut p = StartPanel::new();
     let row = ProgramRow {
+        detail: None,
         name: "Notepad".into(),
         icon: None,
         jump: false,
@@ -326,7 +334,8 @@ fn panel_origin_follows_the_dock() {
             &bottom,
             (0, 0),
             area,
-            (layout::W, tall)
+            (layout::W, tall),
+            layout::OVERHANG
         )
         .1,
         1040 - h - 4
@@ -337,7 +346,8 @@ fn panel_origin_follows_the_dock() {
             &bottom,
             (0, 0),
             area,
-            (layout::W, h)
+            (layout::W, h),
+            layout::OVERHANG
         )
         .1,
         1044 - h
@@ -350,13 +360,22 @@ fn panel_origin_follows_the_dock() {
             (0, 0),
             area,
             (layout::W, height),
+            layout::OVERHANG,
         )
         .1;
         assert_eq!(y, 40, "a {height} px panel hangs from the bar");
         assert_eq!(y - layout::OVERHANG, 14, "the picture is on the screen");
     }
     assert_eq!(
-        panel_origin(StartMenuDock::Into(4), &top, (0, 0), area, (layout::W, h)).1,
+        panel_origin(
+            StartMenuDock::Into(4),
+            &top,
+            (0, 0),
+            area,
+            (layout::W, h),
+            layout::OVERHANG
+        )
+        .1,
         36,
         "a dock into the bar reaches up into it"
     );
@@ -368,6 +387,7 @@ fn panel_origin_follows_the_dock() {
         (0, 0),
         thin_area,
         (layout::W, h),
+        layout::OVERHANG,
     )
     .1;
     assert_eq!((y, y - layout::OVERHANG), (26, 0));
@@ -382,8 +402,8 @@ fn a_panel_of_its_room_stands_whole_with_its_picture_on_the_screen() {
         let (p, area) = bar_on(screen, edge);
         let start = (p.shown.x, p.shown.y);
         for dock in [StartMenuDock::OnTop, StartMenuDock::Into(4)] {
-            let h = panel_room(dock, &p, area);
-            let (_, y) = panel_origin(dock, &p, start, area, (layout::W, h));
+            let h = panel_room(dock, &p, area, layout::OVERHANG);
+            let (_, y) = panel_origin(dock, &p, start, area, (layout::W, h), layout::OVERHANG);
             assert!(
                 y - layout::OVERHANG >= 0,
                 "{edge:?} {dock:?}: picture at {y}"
@@ -393,11 +413,14 @@ fn a_panel_of_its_room_stands_whole_with_its_picture_on_the_screen() {
     }
     let (bottom, area) = bar_on(screen, Edge::Bottom);
     assert_eq!(
-        panel_room(StartMenuDock::OnTop, &bottom, area),
+        panel_room(StartMenuDock::OnTop, &bottom, area, layout::OVERHANG),
         728 - layout::OVERHANG
     );
     let (top, area) = bar_on(screen, Edge::Top);
-    assert_eq!(panel_room(StartMenuDock::OnTop, &top, area), 768 - 40);
+    assert_eq!(
+        panel_room(StartMenuDock::OnTop, &top, area, layout::OVERHANG),
+        768 - 40
+    );
 }
 
 #[test]
@@ -407,7 +430,7 @@ fn a_hidden_bars_panel_stands_on_its_reveal_line() {
     let at = |edge, dock| {
         let p = crate::barplace::place_hiding(screen, edge, 40, Some(1.0));
         let area = crate::barplace::usable(screen, &p);
-        panel_origin(dock, &p, (0, 0), area, (layout::W, h)).1
+        panel_origin(dock, &p, (0, 0), area, (layout::W, h), layout::OVERHANG).1
     };
     for dock in [StartMenuDock::Into(4), StartMenuDock::OnTop] {
         assert_eq!(
@@ -425,7 +448,15 @@ fn a_hidden_bars_panel_stands_on_its_reveal_line() {
     let shown = crate::barplace::place_hiding(screen, Edge::Bottom, 40, Some(0.0));
     let area = crate::barplace::usable(screen, &shown);
     assert_eq!(
-        panel_origin(StartMenuDock::Into(4), &shown, (0, 0), area, (layout::W, h)).1,
+        panel_origin(
+            StartMenuDock::Into(4),
+            &shown,
+            (0, 0),
+            area,
+            (layout::W, h),
+            layout::OVERHANG
+        )
+        .1,
         1044 - h
     );
 }
@@ -442,13 +473,21 @@ fn the_panel_stays_inside_the_usable_area() {
                 &p,
                 (3150, 0),
                 area,
-                (layout::JUMP_W, h)
+                (layout::JUMP_W, h),
+                layout::OVERHANG
             )
             .0,
             1920 + 1280 - layout::JUMP_W,
             "{edge:?}"
         );
-        let (x, y) = panel_origin(StartMenuDock::OnTop, &p, (1900, 0), area, (layout::W, h));
+        let (x, y) = panel_origin(
+            StartMenuDock::OnTop,
+            &p,
+            (1900, 0),
+            area,
+            (layout::W, h),
+            layout::OVERHANG,
+        );
         assert_eq!(x, 1920, "{edge:?}");
         assert!(
             y >= area.y && y + h <= area.bottom(),
@@ -483,7 +522,15 @@ fn a_short_area_keeps_the_panels_bottom_inside() {
     let h = layout::layout(&StartPanel::new()).panel.height;
     let at = |screen: Rect, edge| {
         let (p, area) = bar_on(screen, edge);
-        panel_origin(StartMenuDock::OnTop, &p, (0, 0), area, (layout::W, h)).1
+        panel_origin(
+            StartMenuDock::OnTop,
+            &p,
+            (0, 0),
+            area,
+            (layout::W, h),
+            layout::OVERHANG,
+        )
+        .1
     };
     // 493 tall over a 40 px bottom bar: the panel ends on the area's bottom
     // and the picture rises 9 px past its top.
@@ -499,13 +546,29 @@ fn a_short_area_keeps_the_panels_bottom_inside() {
     let (bottom, _) = bar_on(screen, Edge::Bottom);
     let above = Rect::new(0, 0, 1920, 1000);
     assert_eq!(
-        panel_origin(StartMenuDock::OnTop, &bottom, (0, 0), above, (layout::W, h)).1,
+        panel_origin(
+            StartMenuDock::OnTop,
+            &bottom,
+            (0, 0),
+            above,
+            (layout::W, h),
+            layout::OVERHANG
+        )
+        .1,
         1000 - h
     );
     let (top, _) = bar_on(screen, Edge::Top);
     let below = Rect::new(0, 80, 1920, 1000);
     assert_eq!(
-        panel_origin(StartMenuDock::OnTop, &top, (0, 0), below, (layout::W, h)).1,
+        panel_origin(
+            StartMenuDock::OnTop,
+            &top,
+            (0, 0),
+            below,
+            (layout::W, h),
+            layout::OVERHANG
+        )
+        .1,
         80
     );
 }
@@ -728,6 +791,7 @@ fn the_buffer_is_the_panel_and_the_picture_above_it() {
 
 fn panels() -> Vec<StartPanel> {
     let row = |jump| ProgramRow {
+        detail: None,
         name: "Notepad".into(),
         icon: None,
         jump,
@@ -820,16 +884,39 @@ fn beside_a_side_bar_the_panel_hangs_level_with_start_its_picture_on_the_screen(
     let h = layout::layout(&StartPanel::new()).panel.height;
     let (left, area) = bar_on(screen, Edge::Left);
     assert_eq!(
-        panel_origin(StartMenuDock::OnTop, &left, (3, 0), area, (layout::W, h)),
+        panel_origin(
+            StartMenuDock::OnTop,
+            &left,
+            (3, 0),
+            area,
+            (layout::W, h),
+            layout::OVERHANG
+        ),
         (40, layout::OVERHANG),
         "on the bar's right edge, the picture's top the output's"
     );
     assert_eq!(
-        panel_origin(StartMenuDock::Into(4), &left, (3, 0), area, (layout::W, h)).0,
+        panel_origin(
+            StartMenuDock::Into(4),
+            &left,
+            (3, 0),
+            area,
+            (layout::W, h),
+            layout::OVERHANG
+        )
+        .0,
         36
     );
     assert_eq!(
-        panel_origin(StartMenuDock::OnTop, &left, (3, 1000), area, (layout::W, h)).1,
+        panel_origin(
+            StartMenuDock::OnTop,
+            &left,
+            (3, 1000),
+            area,
+            (layout::W, h),
+            layout::OVERHANG
+        )
+        .1,
         1080 - h,
         "kept above the output's foot"
     );
@@ -840,7 +927,8 @@ fn beside_a_side_bar_the_panel_hangs_level_with_start_its_picture_on_the_screen(
             &right,
             (1883, 0),
             area,
-            (layout::W, h)
+            (layout::W, h),
+            layout::OVERHANG
         )
         .0,
         1880 - layout::W,
@@ -854,7 +942,8 @@ fn beside_a_side_bar_the_panel_hangs_level_with_start_its_picture_on_the_screen(
             &right,
             (2283, 0),
             area,
-            (layout::W, h)
+            (layout::W, h),
+            layout::OVERHANG
         )
         .0,
         1920,
@@ -862,14 +951,30 @@ fn beside_a_side_bar_the_panel_hangs_level_with_start_its_picture_on_the_screen(
     );
     let (left, area) = bar_on(narrow, Edge::Left);
     assert_eq!(
-        panel_origin(StartMenuDock::OnTop, &left, (1923, 0), area, (layout::W, h)).0,
+        panel_origin(
+            StartMenuDock::OnTop,
+            &left,
+            (1923, 0),
+            area,
+            (layout::W, h),
+            layout::OVERHANG
+        )
+        .0,
         1920,
         "a left bar's panel stops at the output's left edge"
     );
     let wide = Rect::new(0, 0, 440, 1080);
     let (left, area) = bar_on(wide, Edge::Left);
     assert_eq!(
-        panel_origin(StartMenuDock::OnTop, &left, (3, 0), area, (layout::W, h)).0,
+        panel_origin(
+            StartMenuDock::OnTop,
+            &left,
+            (3, 0),
+            area,
+            (layout::W, h),
+            layout::OVERHANG
+        )
+        .0,
         440 - layout::W,
         "a left bar's panel stops at the output's right edge"
     );
@@ -881,7 +986,8 @@ fn beside_a_side_bar_the_panel_hangs_level_with_start_its_picture_on_the_screen(
             &hidden,
             (3, 0),
             area,
-            (layout::W, h)
+            (layout::W, h),
+            layout::OVERHANG
         )
         .0,
         2,
@@ -977,4 +1083,33 @@ fn opening_and_closing_start_asks_only_its_output_for_frames() {
             "open {open}: only TEST-1, Start's output: {asked:?}"
         );
     }
+}
+
+#[test]
+fn the_blue_menu_hangs_all_programs_off_its_row_and_drops_it_on_another_row() {
+    let config = crate::config::Config::parse("[appearance]\ninterface = \"blue\"\n").unwrap();
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.state.app_index = vec![app("Notepad", "Utility"), app("Paint", "Graphics")];
+    let bar = h.state.bars[0].tree;
+    h.state.toggle_start(bar);
+    let v = h.state.start_panel.as_ref().expect("the menu opened");
+    assert_eq!(v.model.shape, reprisekit::startpanel::Shape::Blue);
+    assert!(v.model.places.iter().any(|p| p.label == "Computer"));
+    let lay = layout::layout(&v.model);
+    assert_eq!(lay.canvas, lay.panel, "no picture stands above the panel");
+    h.state.start_panel_click(Spot::AllPrograms);
+    assert_eq!(h.state.start_flyout(), Some(Spot::AllPrograms));
+    let row = h.state.start_spot_rect(Spot::AllPrograms).unwrap();
+    let m = &h.state.menus[0];
+    assert_eq!(
+        (m.x, m.y + m.layout.height),
+        (row.right(), row.bottom()),
+        "beside the row, level with its bottom"
+    );
+    h.state.start_panel_pointer(Some(Spot::AllPrograms));
+    assert_eq!(h.state.menus.len(), 1, "back on its row it stays");
+    h.state.start_panel_pointer(Some(Spot::Place(0)));
+    assert!(h.state.menus.is_empty(), "another row closes it");
+    assert!(h.state.start_panel.is_some(), "the menu stays open");
 }

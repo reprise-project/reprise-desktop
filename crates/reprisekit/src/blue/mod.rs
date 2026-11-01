@@ -11,6 +11,7 @@ pub mod overview;
 pub mod powerpanel;
 pub mod scheme;
 mod start;
+pub mod startpanel;
 mod taskbutton;
 mod taskprogress;
 mod trayarrow;

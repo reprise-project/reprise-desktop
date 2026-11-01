@@ -2025,4 +2025,15 @@ pub const CARBON: Scheme = Scheme {
             ),
         ],
     },
+    start_menu: StartMenu {
+        band: stops![0.0: 0x6E6C6A, 0.08: 0x5A5856, 0.5: 0x3E3C3A, 0.92: 0x1E1C1A, 1.0: 0x0D0B0A],
+        edge: Color::rgb(0x24, 0x22, 0x1F),
+        accent: Color::rgb(0xD4, 0x8C, 0x30),
+        band_ink: Color::rgb(0xFF, 0xFF, 0xFF),
+        band_shadow: Color::rgb(0x05, 0x04, 0x03),
+        places: Color::rgb(0xEE, 0xEC, 0xE9),
+        places_edge: Color::rgb(0xC4, 0xC0, 0xBA),
+        places_ink: Color::rgb(0x3B, 0x24, 0x05),
+        rule: Color::rgb(0xDB, 0xD8, 0xD3),
+    },
 };

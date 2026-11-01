@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use reprisefs::apps::{AppEntry, Group};
-use reprisekit::startpanel::{Mode, PlaceRow, ProgramRow, ResultRow, Spot, StartPanel, TreeRow};
+use reprisekit::startpanel::{
+    Mode, PlaceRow, ProgramRow, ResultRow, Shape, Spot, StartPanel, TreeRow,
+};
 
 use crate::compositor::State;
 use crate::config::MenuEntry;
@@ -77,6 +79,12 @@ pub(super) fn frequent_rows(
     (rows, n)
 }
 
+/// The grey line under a pinned row's name in the Blue menu ([`reprisefs::apps::subtitle`]).
+fn subtitle(a: &AppEntry) -> Option<String> {
+    let file = reprisefs::apps::find_file(&a.id)?;
+    reprisefs::apps::subtitle(&reprisefs::apps::read_desktop_file(&file).ok()?)
+}
+
 /// An app's icon for a panel row, its file never read on the loop ([`crate::icon::unread`]).
 pub(super) fn app_icon(
     icons: &mut crate::icontheme::IconCache,
@@ -144,14 +152,29 @@ pub(super) fn replace_tree(model: &mut StartPanel, rows: Vec<TreeRow>) {
 }
 
 impl State {
-    /// The panel's places for the document folders the last check left, with their `px`
-    /// pictures, and `startmenu::places()` without its rules.
-    pub(super) fn start_places(&mut self, px: i32, user: &str) -> (Vec<PlaceRow>, Vec<MenuEntry>) {
+    /// The panel's places for the document folders the last check left, with their pictures at
+    /// `scale` (the Blue menu's 24 px icons), and `startmenu::places()` or `blue_places()` without
+    /// its rules.
+    pub(super) fn start_places(
+        &mut self,
+        shape: Shape,
+        scale: i32,
+        user: &str,
+    ) -> (Vec<PlaceRow>, Vec<MenuEntry>) {
         let dirs = self.recent.document_dirs();
+        let recent = self.config.recent_files;
+        let (entries, px) = match shape {
+            Shape::Glass => (crate::startmenu::places(recent, &dirs), PICTURE),
+            Shape::Blue => (
+                crate::startmenu::blue_places(recent, &dirs),
+                reprisekit::blue::startpanel::PLACE_ICON_PX,
+            ),
+        };
+        let px = px * scale;
         let mut rows = Vec::new();
         let mut places = Vec::new();
         let mut rule = false;
-        for e in crate::startmenu::places(self.config.recent_files, &dirs) {
+        for e in entries {
             let MenuEntry::Item { label, icon, .. } = &e else {
                 rule = true;
                 continue;
@@ -174,8 +197,11 @@ impl State {
         let Some(output) = self.start_panel.as_ref().map(|v| v.output.clone()) else {
             return;
         };
-        let px = PICTURE * self.draw_scale_at(Some(&output)).max(1);
-        let (rows, places) = self.start_places(px, &crate::lock::current_user());
+        let scale = self.draw_scale_at(Some(&output)).max(1);
+        let Some(shape) = self.start_panel.as_ref().map(|v| v.model.shape) else {
+            return;
+        };
+        let (rows, places) = self.start_places(shape, scale, &crate::lock::current_user());
         let Some(v) = self.start_panel.as_mut() else {
             return;
         };
@@ -230,10 +256,11 @@ impl State {
             &pinned,
         );
         let programs: Vec<usize> = pinned.iter().chain(&frequent).copied().collect();
+        let blue = v.model.shape == Shape::Blue;
         v.jumps = programs
             .iter()
             .map(|&i| {
-                if config.recent_files {
+                if config.recent_files && !blue {
                     recent.for_app(crate::taskbar::JUMP_RECENT, &app_index[i])
                 } else {
                     Vec::new()
@@ -247,11 +274,13 @@ impl State {
             .enumerate()
             .map(|(k, (&i, jumps))| {
                 let a = &app_index[i];
+                let pin = k < pinned.len();
                 ProgramRow {
                     name: a.name.clone(),
                     icon: app_icon(icons, a, px),
                     jump: !jumps.is_empty(),
-                    new_pin: k < pinned.len() && v.new_pins.contains(&a.id),
+                    new_pin: pin && v.new_pins.contains(&a.id),
+                    detail: (blue && pin).then(|| subtitle(a)).flatten(),
                 }
             });
         v.model.pinned = rows.by_ref().take(pinned.len()).collect();

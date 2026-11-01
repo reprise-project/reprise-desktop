@@ -2,8 +2,10 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use reprisekit::anim::Unroll;
+use reprisekit::blue::Variant;
+use reprisekit::interface::Interface;
 use reprisekit::startpanel::layout::{self, Layout};
-use reprisekit::startpanel::{self, Mode, Spot, StartPanel};
+use reprisekit::startpanel::{self, Mode, Shape, Spot, StartPanel};
 use reprisekit::taskbar::{Edge, StartMenuDock};
 use reprisekit::textedit::{Preedit, TextSpot};
 use reprisescene::Input;
@@ -74,12 +76,14 @@ pub(super) struct Crossfade {
     start: Instant,
 }
 
+/// Where a `w` x `h` panel by bar `p` stands on `area`, its picture `overhang` px above its top.
 pub(super) fn panel_origin(
     dock: StartMenuDock,
     p: &BarPlacement,
     start: (i32, i32),
     area: Rect,
     (w, h): (i32, i32),
+    overhang: i32,
 ) -> (i32, i32) {
     let x = start.0.min(area.right() - w).max(area.x);
     let (dock, bar) = p.start_dock(dock);
@@ -87,7 +91,7 @@ pub(super) fn panel_origin(
         Edge::Bottom => {
             let y = dock
                 .menu_at(p.edge, (bar.y, bar.bottom()), h)
-                .max(area.y + layout::OVERHANG)
+                .max(area.y + overhang)
                 .min(dock.menu_at(Edge::Bottom, (area.bottom(), area.bottom()), h))
                 .max(area.y);
             (x, y)
@@ -96,7 +100,7 @@ pub(super) fn panel_origin(
             let y = dock
                 .menu_at(p.edge, (bar.y, bar.bottom()), h)
                 .max(dock.menu_at(Edge::Top, (area.y, area.y), h))
-                .max(bar.y + layout::OVERHANG)
+                .max(bar.y + overhang)
                 .min(area.bottom() - h)
                 .max(bar.y);
             (x, y)
@@ -104,7 +108,7 @@ pub(super) fn panel_origin(
         Edge::Left | Edge::Right => {
             let y = start
                 .1
-                .max(area.y + layout::OVERHANG)
+                .max(area.y + overhang)
                 .min(area.bottom() - h)
                 .max(area.y);
             let x = dock.menu_at(p.edge, (bar.x, bar.right()), w);
@@ -114,21 +118,21 @@ pub(super) fn panel_origin(
 }
 
 /// The most height a panel by bar `p` stands in at [`panel_origin`] whole on `area`, with the
-/// user picture's overhang on the screen.
-pub(super) fn panel_room(dock: StartMenuDock, p: &BarPlacement, area: Rect) -> i32 {
+/// user picture's `overhang` on the screen.
+pub(super) fn panel_room(dock: StartMenuDock, p: &BarPlacement, area: Rect, overhang: i32) -> i32 {
     let (dock, bar) = p.start_dock(dock);
     let (top, bottom) = match p.edge {
         Edge::Bottom => (
-            area.y + layout::OVERHANG,
+            area.y + overhang,
             dock.menu_at(p.edge, (bar.y, bar.bottom()), 0),
         ),
         Edge::Top => (
             dock.menu_at(p.edge, (bar.y, bar.bottom()), 0)
                 .max(area.y)
-                .max(bar.y + layout::OVERHANG),
+                .max(bar.y + overhang),
             area.bottom(),
         ),
-        Edge::Left | Edge::Right => (area.y + layout::OVERHANG, area.bottom()),
+        Edge::Left | Edge::Right => (area.y + overhang, area.bottom()),
     };
     bottom - top
 }
@@ -248,10 +252,23 @@ impl State {
         let p = self.bar_placement(&v.output);
         let area = self.usable_area(Some(&v.output));
         let dock = self.config.theme.taskbar_shape().start_menu;
-        let room = (area.width, panel_room(dock, &p, area));
+        let overhang = match v.model.shape {
+            Shape::Glass => layout::OVERHANG,
+            Shape::Blue => 0,
+        };
+        let room = (area.width, panel_room(dock, &p, area, overhang));
         let text = self.config.theme.text;
+        let scale = self.draw_scale_at(Some(&v.output)).max(1);
         if let Some(v) = self.start_panel.as_mut() {
             v.model.fit(text, room);
+            if v.model.shape == Shape::Blue {
+                let g = startpanel::search::Grow {
+                    s: scale,
+                    u: v.model.text,
+                };
+                v.model.foot_labels =
+                    reprisekit::blue::startpanel::foot_labels(self.text.for_output(scale), g);
+            }
         }
         let Some(v) = self.start_panel.as_ref() else {
             return;
@@ -263,36 +280,52 @@ impl State {
             (p.shown.x + start.x, p.shown.y + start.y),
             area,
             (lay.panel.width, lay.panel.height),
+            overhang,
         );
-        let scale = self.draw_scale_at(Some(&v.output)).max(1);
-        let pane = crate::glass::wanted(&self.config).then(|| panel_pane(&lay));
+        let blue = v.model.shape == Shape::Blue;
+        let pane = (crate::glass::wanted(&self.config) && !blue).then(|| panel_pane(&lay));
         let sl = lay.scaled(scale);
         let fades = self.config.menu_opening() != MenuAnimation::None;
         let ms = self.config.theme.metrics.menu_fade_ms.max(1) as f32;
         let key = RasterKey {
             model: v.model.clone(),
             pressed: v.pressed,
-            caret: self.caret.on,
+            caret: self.caret.on && !blue,
             preedit: self.ime_field_preedit(crate::caret::Editor::StartPanel),
             scale,
         };
         let (raster, spot) = match v.rasters.find(&key) {
             Some(drawn) => drawn,
             None => {
-                let theme = self.config.theme.scaled(scale);
                 let mut canvas = Canvas::new(sl.canvas.width as u32, sl.canvas.height as u32);
-                canvas.set_preedit(key.preedit.clone());
-                reprisekit::interfaces::draw_start_panel_backed(
-                    &mut self.start_backing,
-                    &mut canvas,
-                    &theme,
-                    &self.config.glass,
-                    self.start_panel_text.for_output(scale),
-                    &v.model,
-                    &sl,
-                    v.pressed,
-                    self.caret.on,
-                );
+                if blue {
+                    let variant = match self.config.interface {
+                        Interface::Blue => self.config.blue_variant,
+                        _ => Variant::Blue,
+                    };
+                    reprisekit::interfaces::draw_blue_start_panel(
+                        &mut canvas,
+                        variant,
+                        self.text.for_output(scale),
+                        &v.model,
+                        &sl,
+                        v.pressed,
+                    );
+                } else {
+                    let theme = self.config.theme.scaled(scale);
+                    canvas.set_preedit(key.preedit.clone());
+                    reprisekit::interfaces::draw_start_panel_backed(
+                        &mut self.start_backing,
+                        &mut canvas,
+                        &theme,
+                        &self.config.glass,
+                        self.start_panel_text.for_output(scale),
+                        &v.model,
+                        &sl,
+                        v.pressed,
+                        self.caret.on,
+                    );
+                }
                 let spot = canvas.take_spot();
                 let raster = Rc::new(canvas);
                 if let Some(v) = self.start_panel.as_mut() {

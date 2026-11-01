@@ -60,6 +60,8 @@ impl State {
             KeyAct::CloseSubmenu => {
                 if depth > 0 {
                     self.close_menus_above(depth - 1);
+                } else if self.start_flyout().is_some() {
+                    self.close_menu();
                 }
             }
             KeyAct::OpenSubmenu(row) => self.key_open_submenu(depth, row),
@@ -132,7 +134,7 @@ impl State {
         }
     }
 
-    fn set_menu_hover(&mut self, depth: usize, idx: Option<usize>) {
+    pub(crate) fn set_menu_hover(&mut self, depth: usize, idx: Option<usize>) {
         let changed = match self.menus.get_mut(depth) {
             Some(m) if m.hovered != idx => {
                 m.hovered = idx;

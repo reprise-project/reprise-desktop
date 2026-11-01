@@ -2063,4 +2063,15 @@ pub const COBALT: Scheme = Scheme {
             ),
         ],
     },
+    start_menu: StartMenu {
+        band: stops![0.0: 0xB1C8E6, 0.08: 0x9AB6DD, 0.5: 0x6E99D4, 0.92: 0x5684C3, 1.0: 0x416DAA],
+        edge: Color::rgb(0x50, 0x7D, 0xBA),
+        accent: Color::rgb(0xF2, 0xA8, 0x52),
+        band_ink: Color::rgb(0xFF, 0xFF, 0xFF),
+        band_shadow: Color::rgb(0x20, 0x3F, 0x75),
+        places: Color::rgb(0xE3, 0xED, 0xF9),
+        places_edge: Color::rgb(0xA9, 0xC2, 0xE4),
+        places_ink: Color::rgb(0x00, 0x33, 0x7C),
+        rule: Color::rgb(0xD6, 0xDB, 0xE3),
+    },
 };
