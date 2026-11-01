@@ -1615,8 +1615,21 @@ fn focus_list(h: &mut Host, dlg: &mut FileDlg) {
 
 /// A key on the box over the dialog.
 fn answer(h: &mut Host, sym: u32) -> Outcome {
+    box_key(h, press(sym, false, false, None))
+}
+
+/// Alt+Y on the box over the dialog: Yes, whichever button Enter presses.
+fn answer_yes(h: &mut Host) -> Outcome {
+    let Event::Key(mut k) = press('y' as u32, false, false, Some("y")) else {
+        unreachable!()
+    };
+    k.mods.alt = true;
+    box_key(h, Event::Key(k))
+}
+
+fn box_key(h: &mut Host, ev: Event) -> Outcome {
     let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
-    h.box_event(&press(sym, false, false, None), &text, &Theme::default())
+    h.box_event(&ev, &text, &Theme::default())
 }
 
 #[test]
@@ -1730,7 +1743,12 @@ fn shift_delete_asks_then_deletes_for_good_and_a_failure_says_why() {
 
     send(&mut h, &mut dlg, &shift_delete);
     asked(&mut h, &mut dlg, &mut icons);
-    answer(&mut h, keysym::RETURN);
+    assert_eq!(answer(&mut h, keysym::RETURN), Outcome::Closed(Some(1)));
+    assert!(dir.join("a.txt").is_file(), "Enter presses No and keeps it");
+
+    send(&mut h, &mut dlg, &shift_delete);
+    asked(&mut h, &mut dlg, &mut icons);
+    answer_yes(&mut h);
     settle(&mut h, &mut dlg, &mut icons, |_| {
         !dir.join("a.txt").exists()
     });
@@ -1743,7 +1761,7 @@ fn shift_delete_asks_then_deletes_for_good_and_a_failure_says_why() {
     send(&mut h, &mut dlg, &shift_delete);
     asked(&mut h, &mut dlg, &mut icons);
     std::fs::remove_file(dir.join("b.txt")).unwrap();
-    answer(&mut h, keysym::RETURN);
+    answer_yes(&mut h);
     let (title, text) = asked(&mut h, &mut dlg, &mut icons);
     assert_eq!(title, "Error Deleting File or Folder");
     assert!(text.starts_with("Cannot delete b.txt: "), "{text}");
@@ -1771,10 +1789,18 @@ fn delete_asks_before_deleting_for_good_what_the_recycle_bin_cannot_take() {
         "'big.iso' is too big for the Recycle Bin. Do you want to delete it permanently?"
     );
     answer(&mut h, keysym::ESCAPE);
-    assert!(t.path().join("big.iso").is_file(), "No keeps it");
+    assert!(t.path().join("big.iso").is_file(), "Escape keeps it");
     send(&mut h, &mut dlg, &delete);
     asked(&mut h, &mut dlg, &mut icons);
     answer(&mut h, keysym::RETURN);
+    settle(&mut h, &mut dlg, &mut icons, |h| h.deleting.is_none());
+    assert!(
+        t.path().join("big.iso").is_file(),
+        "Enter presses No and keeps it"
+    );
+    send(&mut h, &mut dlg, &delete);
+    asked(&mut h, &mut dlg, &mut icons);
+    answer_yes(&mut h);
     settle(&mut h, &mut dlg, &mut icons, |_| {
         !t.path().join("big.iso").exists()
     });

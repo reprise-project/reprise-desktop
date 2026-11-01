@@ -42,7 +42,7 @@ pub struct Confirm {
     /// they were listed when the prompt went up.
     pub bin: Option<Vec<crate::fileops::BinItem>>,
     /// The button Tab and the arrows moved the focus to, which each
-    /// event's new form gets back; `None` (Yes) when the prompt opens.
+    /// event's new form gets back; `None` ([`Confirm::default_button`]) when the prompt opens.
     pub focus: Option<&'static str>,
     /// The question is about an item too big for its Recycle Bin: Yes
     /// erases it and No leaves it, and a batch of more than one item
@@ -67,10 +67,15 @@ impl Confirm {
         let labels: &[&str] = match &self.too_big {
             _ if self.script.is_some() => &reprisefs::program::ASK_BUTTONS,
             _ if self.job.is_some() => &FAILED_BUTTONS,
-            Some(q) if q.many() => &["&Yes", "Yes to &All", "&No", "Cancel"],
-            _ => &["&Yes", "&No"],
+            Some(q) if q.many() => &[dlgtemplate::YES, "Yes to &All", dlgtemplate::NO, "Cancel"],
+            _ => &[dlgtemplate::YES, dlgtemplate::NO],
         };
         labels.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The button Enter presses when the box opens: No on a delete that erases.
+    pub(crate) fn default_button(&self) -> usize {
+        dlgtemplate::delete_default_index(&self.buttons(), self.erase)
     }
 
     /// The box's client layout for text `text` sets at `px`, which grows by `u`.
@@ -506,7 +511,7 @@ impl Explorer {
     /// The form of whichever text box is up, focus on the button the keys left it on.
     pub fn box_form(&self) -> Option<Form> {
         if let (Some(lay), Some(Dialog::Confirm(c))) = (self.confirm_layout(), &self.dialog) {
-            let mut f = dlgtemplate::form(&lay, c.icon.clone(), &c.buttons(), 0);
+            let mut f = dlgtemplate::form(&lay, c.icon.clone(), &c.buttons(), c.default_button());
             if let Some(id) = c.focus {
                 f.focus_id(id);
             }

@@ -23,7 +23,7 @@ use reprisefs::bincap::{self, ConfirmKind, Plan, TooBig, TooBigStep};
 use reprisefs::dialogops;
 use reprisefs::folders::FolderTable;
 use reprisekit::art::viewsicon;
-use reprisekit::controls::dlgtemplate::{FOLDER_TEXT_H, Template};
+use reprisekit::controls::dlgtemplate::{self, FOLDER_TEXT_H, Template};
 use reprisekit::controls::filedlg::{Crumb, Fields, FileDlg, Folder, FolderId, Hit, Remembered};
 use reprisekit::controls::msgbox;
 use reprisekit::controls::placesbar::{self, Place};
@@ -977,9 +977,11 @@ impl Host {
                     ConfirmKind::Multiple => Template::MultiDelete,
                     ConfirmKind::File | ConfirmKind::Folder => Template::MessageBox,
                 };
+                let buttons = [dlgtemplate::YES, dlgtemplate::NO];
                 let fields = msgbox::Fields {
                     min_text_h: (kind == ConfirmKind::Folder).then_some(FOLDER_TEXT_H),
-                    ..box_fields(text, &["&Yes", "&No"])
+                    default: dlgtemplate::delete_default_index(&buttons, mode.erase),
+                    ..box_fields(text, &buttons)
                 };
                 self.ask = Some(Ask {
                     msg: MsgBox::on_template(title, template, fields),
@@ -1036,12 +1038,16 @@ impl Host {
             false => "Confirm File Delete",
         };
         let buttons: &[&str] = match asker.many() {
-            true => &["&Yes", "Yes to &All", "&No", "Cancel"],
-            false => &["&Yes", "&No"],
+            true => &[dlgtemplate::YES, "Yes to &All", dlgtemplate::NO, "Cancel"],
+            false => &[dlgtemplate::YES, dlgtemplate::NO],
         };
         let text = bincap::too_big_text(&bincap::label(&path));
+        let fields = msgbox::Fields {
+            default: dlgtemplate::delete_default_index(buttons, true),
+            ..box_fields(text, buttons)
+        };
         self.ask = Some(Ask {
-            msg: MsgBox::on_template(title, Template::MessageBox, box_fields(text, buttons)),
+            msg: MsgBox::on_template(title, Template::MessageBox, fields),
             icon: ERASE_ICON,
             then: Then::TooBig(asker, dirs),
         });
