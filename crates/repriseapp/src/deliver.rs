@@ -65,6 +65,15 @@ impl Host {
             return;
         }
         filedlg::thumbs_on(&mut *self.app, win, &self.ctx.wake);
+        if ev == Event::Tick && filedlg::marquee_tick(&mut *self.app, win) {
+            let tick = filedlg::marquee_scrolls(&mut *self.app, win);
+            let reply = Reply {
+                redraw: true,
+                tick,
+                ..Reply::default()
+            };
+            return self.apply(win, reply);
+        }
         // Read off the live offer: sctk calls `selection` for a new offer but not for a cleared one.
         let offer = self.selection_offer();
         CLIPBOARD_TEXT.set(
@@ -78,7 +87,7 @@ impl Host {
             .app
             .event(win, ev, &mut self.ctx)
             .with_clipboard(keys::take_clipboard());
-        reply.tick |= self.ctx.want_tick.take();
+        reply.tick |= self.ctx.want_tick.take() || filedlg::marquee_scrolls(&mut *self.app, win);
         let tip = keys::take_tip_waits();
         if let Some(s) = self.slot_mut(win) {
             // A program answers a blink by ticking its forms itself, past this note.
