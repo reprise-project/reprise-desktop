@@ -26,6 +26,7 @@ use smithay::{
         },
         wayland_server::{
             Resource,
+            backend::ClientId,
             protocol::{
                 wl_data_device_manager::DndAction as WlDndAction, wl_data_source::WlDataSource,
                 wl_surface::WlSurface,
@@ -397,6 +398,9 @@ pub struct Dnd {
     /// of it took, set again once it ends.
     held_popup: crate::popupgrab::Held<PopupGrab<State>>,
     pub(crate) drops: crate::dnddrop::Drops,
+    /// The client the last drag was dropped on, and when: it may raise its window for a moment
+    /// (`activation`).
+    pub(crate) dropped_on: Option<(ClientId, std::time::Instant)>,
 }
 
 impl Dnd {
@@ -1124,6 +1128,10 @@ impl State {
         };
         log::debug!("drag ended");
         let own_drop = dropped && d.source.learnt().reprise;
+        if dropped && !own_drop {
+            let client = d.focus.as_ref().and_then(|f| f.client());
+            self.dnd.dropped_on = client.map(|c| (c.id(), std::time::Instant::now()));
+        }
         self.own_drag_ended(own_drop);
         self.drop_drag_ended(&d.source, own_drop);
         if let Some(t) = d.timer {

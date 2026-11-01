@@ -1,7 +1,7 @@
 //! xdg-activation-v1. A trusted token focuses the window; any other only flags
 //! the taskbar button. Trust is stamped at mint.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay::{
     input::Seat,
@@ -38,6 +38,20 @@ fn client_token_trusted(
     serial_ok && token_client.is_some() && token_client == focus_client
 }
 
+/// How long the client a drag was dropped on may raise the window it took it with: the drop
+/// is the user's intent, though the keyboard is still on the drag's source.
+const DROP_GRACE: Duration = Duration::from_secs(3);
+
+fn drop_target_trusted<C: PartialEq>(
+    dropped_on: Option<&(C, Instant)>,
+    token_client: Option<&C>,
+    now: Instant,
+) -> bool {
+    dropped_on.is_some_and(|(c, at)| {
+        Some(c) == token_client && now.saturating_duration_since(*at) < DROP_GRACE
+    })
+}
+
 impl XdgActivationHandler for State {
     fn activation_state(&mut self) -> &mut XdgActivationState {
         &mut self.activation
@@ -68,7 +82,15 @@ impl XdgActivationHandler for State {
             .and_then(|k| k.current_focus())
             .and_then(|s| s.client())
             .map(|c| c.id());
-        if client_token_trusted(serial_ok, token_client, focus_client) {
+        let dropped = drop_target_trusted(
+            self.dnd.dropped_on.as_ref(),
+            token_client.as_ref(),
+            Instant::now(),
+        );
+        if dropped {
+            self.dnd.dropped_on = None;
+        }
+        if dropped || client_token_trusted(serial_ok, token_client, focus_client) {
             data.user_data.insert_if_missing(|| Trusted);
         }
         true
@@ -335,6 +357,27 @@ mod tests {
         }
         h.roundtrip(&mut c);
         assert_eq!(h.state.activation.tokens().count(), TOKENS_PER_CLIENT);
+    }
+
+    #[test]
+    fn a_drop_target_may_raise_its_window_for_a_moment() {
+        let at = Instant::now();
+        let dropped = Some(&(1, at));
+        assert!(drop_target_trusted(
+            dropped,
+            Some(&1),
+            at + Duration::from_secs(1)
+        ));
+        assert!(
+            !drop_target_trusted(dropped, Some(&2), at),
+            "another client"
+        );
+        assert!(!drop_target_trusted(dropped, None, at), "no surface");
+        assert!(
+            !drop_target_trusted(dropped, Some(&1), at + DROP_GRACE),
+            "the moment has passed"
+        );
+        assert!(!drop_target_trusted::<i32>(None, Some(&1), at));
     }
 
     #[test]

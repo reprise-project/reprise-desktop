@@ -154,7 +154,8 @@ A new window takes the keyboard when it maps if any of these holds:
 
 - it presents a trusted activation token, which Reprise mints when it
   starts a program or you click a tray icon or a notification, and which a
-  program can mint only from an input event in its own focused window
+  program can mint only from an input event in its own focused window, or
+  within 3 s of a drag dropped on one of its windows
 - Reprise started its program (Start menu, launcher, desktop, Run, a key
   bind, a tray icon or a notification) within the last 30 s
 - it shares a Wayland connection with the focused window
