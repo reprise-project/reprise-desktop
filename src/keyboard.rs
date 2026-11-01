@@ -398,6 +398,7 @@ impl State {
             KeyRoute::SnapPicker(sym) => crate::snappickerview::key(self, sym),
             KeyRoute::Taskbar(sym) => self.bar_key(sym, k.mods & keys::MOD_SHIFT != 0),
             KeyRoute::NotifyCenter(sym) => crate::notifycenter::key(self, sym, k.mods),
+            KeyRoute::Region(sym) if self.panels.colorpick.is_some() => self.color_pick_key(sym),
             KeyRoute::Region(sym) => self.region_key(sym),
             KeyRoute::CalendarClose => crate::calendarview::close(self),
             KeyRoute::Rename => self.rename_key(code, &k.syms),
@@ -582,7 +583,7 @@ impl State {
             notify_reply_focused: crate::notifyview::reply_focused(self),
             clipview_open: self.panels.clipview.is_some(),
             emojiview_open: self.panels.emojiview.is_some(),
-            region_open: self.panels.region.is_some(),
+            region_open: self.panels.takes_pointer(),
             calendar_open: crate::calendarview::is_open(self),
             displays_open: crate::displaysview::is_open(self),
             dragging: self.drag_running(),
@@ -766,6 +767,7 @@ impl State {
             Action::ScreenshotWindow => self.screenshot(true),
             Action::ScreenshotContent => self.screenshot_content(),
             Action::ScreenshotRegion => self.open_region(),
+            Action::ColorPicker => self.open_color_pick(crate::colorpickview::Asker::Bind),
             Action::VolumeUp
             | Action::VolumeDown
             | Action::Mute

@@ -439,7 +439,7 @@ impl State {
             self.flip_wheel(frame.v120.map_or(0, |v| v.1), frame.axis.1);
             return;
         }
-        if self.switcher.panel.is_some() || self.panels.region.is_some() {
+        if self.switcher.panel.is_some() || self.panels.takes_pointer() {
             return;
         }
         if self.tray_axis(&frame) {

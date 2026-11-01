@@ -209,6 +209,18 @@ fn print_screen_is_bound_by_default() {
 }
 
 #[test]
+fn the_colour_picker_is_bound_to_super_shift_c() {
+    let (mods, keysym) = parse_keybind("Super+Shift+c").unwrap();
+    assert!(
+        Config::default()
+            .keybinds
+            .iter()
+            .any(|b| b.mods == mods && b.keysym == keysym && b.action == Action::ColorPicker)
+    );
+    assert_eq!(Action::ColorPicker.name(), Some("color-picker"));
+}
+
+#[test]
 fn the_emoji_picker_is_bound_to_super_period() {
     let (mods, keysym) = parse_keybind("Super+period").unwrap();
     assert!(

@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 use crate::compositor::{SceneOwner, State};
 use crate::glass::{Backdrop, Pane};
 use crate::notifylog::{Log, Suppress, shows_balloon};
-use crate::raster::Rect;
+use crate::raster::{Canvas, Rect};
 use crate::startmenu::MenuItem;
 use crate::theme::Color;
 use crate::tray::notify::{DEFAULT_ACTION, INLINE_REPLY, Urgency};
@@ -434,22 +434,29 @@ const OWN_APP: &str = "Reprise";
 /// Show a notice from the compositor itself, up for the longest time a balloon stays.
 pub fn notice(state: &mut State, summary: &str, body: &str) {
     state.notify.own_click = None;
-    show_own(state, summary, body, false);
+    show_own(state, summary, body, false, None);
+}
+
+/// `notice` with `image` beside its text.
+pub fn notice_with_image(state: &mut State, summary: &str, body: &str, image: Canvas) {
+    state.notify.own_click = None;
+    show_own(state, summary, body, false, Some(image));
 }
 
 /// `notice`, and a click on the balloon runs `argv`.
 pub fn notice_opening(state: &mut State, summary: &str, body: &str, argv: Vec<OsString>) {
     state.notify.own_click = Some(argv);
-    show_own(state, summary, body, true);
+    show_own(state, summary, body, true, None);
 }
 
-fn show_own(state: &mut State, summary: &str, body: &str, opens: bool) {
+fn show_own(state: &mut State, summary: &str, body: &str, opens: bool, image: Option<Canvas>) {
     let mut n = Notification::new(OWN_ID, summary.to_string(), body.to_string());
     n.app = OWN_APP.to_string();
     n.expire_timeout = 0;
     if opens {
         n.actions = vec![(DEFAULT_ACTION.to_string(), String::new())];
     }
+    n.image = image.into_iter().map(Into::into).collect();
     show(state, n);
 }
 

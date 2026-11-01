@@ -1,5 +1,5 @@
 //! The portal's dialogs. Each runs as our own child (`reprise-portal --pick`,
-//! `--permit <kind>`, `--access`, `--file`, `--appchoose`, `--pickcolor`), so
+//! `--permit <kind>`, `--access`, `--file`, `--appchoose`), so
 //! its Wayland connection closes with it and a toolkit failure cannot take
 //! the daemon down. `run_toml` is the parent's end for most: the child reads
 //! one TOML document on stdin (`read_input`), including the asking window's
