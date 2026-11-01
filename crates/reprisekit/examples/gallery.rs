@@ -3617,6 +3617,22 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
     for (i, mods) in [(1, Default::default()), (3, ctrl)] {
         multi.click(r, Some(filedlg::Hit::Shell(shellview::Hit::Entry(i))), mods);
     }
+    // A Ctrl marquee from the list's background up over b.txt, mid-drag.
+    let find = |d: &filedlg::FileDlg, want: shellview::Hit| {
+        (0..r.height).rev().step_by(2).find_map(|y| {
+            (0..r.width).rev().step_by(4).find_map(|x| {
+                (d.hit(&text, px, r, x, y) == Some(filedlg::Hit::Shell(want))).then_some((x, y))
+            })
+        })
+    };
+    if let (Some(from), Some(to)) = (
+        find(&multi, shellview::Hit::Background),
+        find(&multi, shellview::Hit::Entry(2)),
+    ) {
+        let background = Some(filedlg::Hit::Shell(shellview::Hit::Background));
+        multi.click_at(r, background, ctrl, from);
+        multi.motion(&text, px, r, to.0, to.1);
+    }
     draw_dialog(&mut c, &multi, 7140);
     let folder_dlg = dialog_in(filedlg::DlgMode::Folder, "Select Folder", false, true);
     draw_dialog(&mut c, &folder_dlg, 7600);

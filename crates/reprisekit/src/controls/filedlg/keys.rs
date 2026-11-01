@@ -217,6 +217,9 @@ impl FileDlg {
         mods: Mods,
         cm: &ControlMetrics,
     ) -> Event {
+        if matches!(key, form::Key::Escape) && self.cancel_marquee() {
+            return Event::Redraw;
+        }
         if self.context.is_some() {
             return self.context_key(key);
         }

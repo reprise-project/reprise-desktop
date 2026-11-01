@@ -246,6 +246,12 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   entry's menu (Select, Delete, Rename) or the background's (View, Refresh,
   New > Folder). A refused rename or a failed delete says why in a box.
   File name keeps its editing keys.
+- **File dialog band select.** In an Open dialog that picks several files, a
+  drag from the list's background draws a band that selects every entry it
+  touches; with Ctrl it adds them to the selection (or takes off those
+  already in it), Escape puts the selection back, and past the list's edge
+  the list scrolls toward the pointer. Ctrl+click and Shift+click pick
+  several as in Explorer.
 - **Programs and scripts.** A file with its Executable box ticked
   (Properties) that holds a script (`#!`) or a binary runs when you open it,
   in its own folder, here and in Explorer. The first time you open a

@@ -421,6 +421,8 @@ pub struct FileDlg {
     /// A drag resting on File name: its logical x, and the first byte shown while it rests.
     name_drop: Option<(i32, usize)>,
     context: Option<context::Context>,
+    /// A marquee drag in the list of a dialog that picks several ([`FileDlg::click_at`]).
+    marquee: Option<shellview::MarqueeDrag>,
     /// An entry to select once a listing has it, and whether to rename it ([`FileDlg::expect`]).
     expected: Option<(String, bool)>,
     /// The look's control sizes of the last `draw`, which `hit`, `access`,
@@ -539,6 +541,7 @@ impl FileDlg {
             wildcard: None,
             name_drop: None,
             context: None,
+            marquee: None,
             expected: None,
             drawn: Drawn::default(),
             text: TextUnits::ONE,
@@ -581,6 +584,8 @@ impl FileDlg {
         self.shell.entries = folder.entries;
         shellview::sort(&mut self.shell);
         self.context = None;
+        self.marquee = None;
+        self.shell.marquee = None;
         match kept {
             Some(kept) => self.restore_view(kept),
             None => {
