@@ -2033,4 +2033,15 @@ pub const OLIVE: Scheme = Scheme {
             ),
         ],
     },
+    start_menu: StartMenu {
+        band: stops![0.0: 0xC9D9A4, 0.08: 0xAEC284, 0.5: 0x99AE70, 0.92: 0x8BA063, 1.0: 0x6F8450],
+        edge: Color::rgb(0x8F, 0xA3, 0x6A),
+        accent: Color::rgb(0xE4, 0xB8, 0x5C),
+        band_ink: Color::rgb(0xFF, 0xFF, 0xFF),
+        band_shadow: Color::rgb(0x4F, 0x5F, 0x33),
+        places: Color::rgb(0xEE, 0xF2, 0xDF),
+        places_edge: Color::rgb(0xC2, 0xCF, 0xA0),
+        places_ink: Color::rgb(0x3A, 0x47, 0x21),
+        rule: Color::rgb(0xD6, 0xD8, 0xC4),
+    },
 };

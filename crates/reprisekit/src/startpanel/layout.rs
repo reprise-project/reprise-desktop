@@ -4,7 +4,7 @@
 //! On a screen too short for the panel ([`StartPanel::room`]) program rows come off the list, 38 px each, and everything from All Programs down moves up with them; the places close up to fit above Shut down.
 //! On a screen too narrow for it the text size steps down ([`StartPanel::fit`]) and the jump pane narrows; at 100% the right column narrows by up to 40 px, then the left one by up to 51 px.
 
-use super::{Mode, Spot, StartPanel};
+use super::{Mode, Shape, Spot, StartPanel};
 use crate::raster::Rect;
 
 pub const W: i32 = 411;
@@ -265,7 +265,10 @@ pub fn jumps_shown(p: &StartPanel) -> usize {
 /// ([`crate::theme::TextUnits::rect`]). Rules keep their thickness, the tree's bar its width at the rows' right,
 /// and the user picture's frame its size, centred where the grown frame would be.
 pub fn layout(p: &StartPanel) -> Layout {
-    let l = layout_100(p);
+    let l = match p.shape {
+        Shape::Glass => layout_100(p),
+        Shape::Blue => super::bluelayout::layout_100(p),
+    };
     let u = p.text;
     if u.is_one() {
         return l;

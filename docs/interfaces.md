@@ -46,8 +46,12 @@ tabs, trackbars and the rest have their own Blue art.
 
 ![Reprise Blue in the Blue scheme](screenshots/blue.png)
 
-The Start menu keeps the Classic layout and band, in Blue's flat menus; the
-band takes its colours from the scheme.
+Blue opens a two-column Start menu under a band with your picture and name.
+The left side has pinned and frequent programs and All Programs, which opens
+the program folders as cascading menus. The right side has Documents, Recent
+Items, Pictures, Music, Computer, Control Panel, Printers, Help and Support
+and Run. Log Off and Turn Off Computer sit in the bottom band. Type a letter
+to jump to the row it starts. Every colour comes from the scheme.
 
 Colour schemes: **Blue** (the default), Olive Green, Silver, Slate, Sapphire,
 Obsidian, Ember, Cobalt, Carbon and Steel. Each brings its own art. None of
@@ -149,7 +153,7 @@ every default you haven't set.
 | --- | --- | --- |
 | `[taskbar] buttons` | `when_full` | `combine` |
 | `[taskbar] pinned`, `show_desktop_button`, `peek` | off | on |
-| `startmenu_style` | `classic` | `glass` |
+| `startmenu_style` | Classic `classic`, Blue `blue` | `glass` |
 | `[switcher] style` | `icons` | `thumbnails` |
 | `[switcher] desktop`, `peek`, `flip` | off | on |
 | `[effects] window_animation`, `hover_fade`, `taskbar_slide` | off | on |
@@ -160,6 +164,8 @@ Classic gets pinned programs, jump lists, Peek, a Show desktop strip,
 thumbnails in Alt+Tab, window animations, or the two-column Start menu
 (`startmenu_style = "glass"`, drawn as opaque glass). It works the other way
 as well: Glass can have the Classic Start menu and labelled task buttons.
+`startmenu_style = "blue"` gives any interface the Blue Start menu, in the
+Blue scheme outside Blue.
 
 Tray overflow, auto-hide, taskbar position, live previews, the overview,
 snapping, virtual desktops, the wallpaper, water and the screen savers work

@@ -215,6 +215,15 @@ pub fn read_desktop_file(path: &Path) -> std::io::Result<String> {
     String::from_utf8(bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
+/// A desktop entry's line under its name in a list: `GenericName`, else `Comment`; None when it has
+/// neither or that line says what the name does.
+pub fn subtitle(text: &str) -> Option<String> {
+    let kv = desktop_entry_kv(text);
+    let get = |k: &str| kv.get(k).map(|v| v.trim()).filter(|v| !v.is_empty());
+    let line = get("GenericName").or_else(|| get("Comment"))?;
+    (Some(line) != get("Name")).then(|| line.to_string())
+}
+
 pub fn parse_desktop(text: &str, id: &str) -> Option<AppEntry> {
     parse_desktop_any(text, id).filter(|e| e.shown)
 }

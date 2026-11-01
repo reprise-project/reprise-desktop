@@ -1,10 +1,11 @@
 //! The popups the panel opens: a row's menu, shutdown options, Recent Items.
 
-use reprisekit::startpanel::Spot;
+use reprisekit::startpanel::{Shape, Spot};
 use reprisekit::taskbar::Edge;
 
 use crate::compositor::State;
 use crate::config::{Action, PowerAction};
+use crate::menuview::MenuKind;
 use crate::raster::Rect;
 use crate::startmenu::{MenuItem, StartRow, place_popup};
 
@@ -120,6 +121,72 @@ impl State {
         let (items, kind, icons) = self.documents_rows(px, false);
         self.push_start_popup((row.right(), row.y), items, kind, place_popup, false);
         self.set_row_icons(0, icons);
+        self.light_flyout_from_keys(Spot::Place(i));
+    }
+
+    /// The Blue menu's All Programs: the program folders in a menu beside the row, its bottom
+    /// level with the row's.
+    pub(super) fn open_all_programs(&mut self) {
+        let Some(row) = self.start_spot_rect(Spot::AllPrograms) else {
+            return;
+        };
+        let Some(output) = self.start_panel_output() else {
+            return;
+        };
+        let px = crate::startmenu::MenuStyle::context(
+            &self.config.theme,
+            crate::startmenu::ContextBitmaps::Icons,
+        )
+        .icon_px()
+            * self.draw_scale_at(Some(&output)).max(1);
+        let (items, kind, icons) = self.program_groups_rows(px);
+        let place = |_, size: (i32, i32), usable| {
+            place_popup((row.right(), row.bottom() - size.1), size, usable)
+        };
+        self.push_start_popup((row.right(), row.y), items, kind, place, false);
+        self.set_row_icons(0, icons);
+        self.light_flyout_from_keys(Spot::AllPrograms);
+    }
+
+    /// A Blue flyout the keyboard opened (its row is lit but not under the pointer) starts on its
+    /// first row.
+    fn light_flyout_from_keys(&mut self, row: Spot) {
+        let keys = self
+            .start_panel
+            .as_ref()
+            .is_some_and(|v| v.model.shape == Shape::Blue && v.model.hot() != Some(row));
+        if keys && !self.menus.is_empty() {
+            self.set_menu_hover(0, Some(0));
+        }
+    }
+
+    /// The Blue menu's row whose menu stands open beside the panel: All Programs or Recent Items.
+    pub(crate) fn start_flyout(&self) -> Option<Spot> {
+        let v = self.start_panel.as_ref()?;
+        if v.model.shape != Shape::Blue {
+            return None;
+        }
+        let m = self.menus.first()?;
+        if m.from != crate::menuview::MenuFrom::StartPanel {
+            return None;
+        }
+        match m.kind {
+            MenuKind::Groups { .. } => Some(Spot::AllPrograms),
+            MenuKind::Documents { dirs: false, .. } => v
+                .model
+                .places
+                .iter()
+                .position(|p| p.submenu)
+                .map(Spot::Place),
+            _ => None,
+        }
+    }
+
+    /// Closes the menu [`State::start_flyout`] names, as the pointer moved to another row.
+    pub(super) fn close_start_flyout(&mut self) {
+        if self.start_flyout().is_some() {
+            self.close_menu();
+        }
     }
 
     pub(crate) fn quick_file_of(&self, id: &str) -> Option<String> {

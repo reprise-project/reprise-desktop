@@ -3,8 +3,8 @@
 
 use super::layout::Layout;
 use super::{
-    ALL_PROGRAMS, BACK, CLEAR, Mode, SEARCH_CUE, SHUT_DOWN, SHUT_DOWN_OPTIONS, Spot, StartPanel,
-    TreeRow, USER_ACCOUNTS,
+    ALL_PROGRAMS, BACK, CLEAR, LOG_OFF, Mode, SEARCH_CUE, SHUT_DOWN, SHUT_DOWN_OPTIONS, Shape,
+    Spot, StartPanel, TURN_OFF, TreeRow, USER_ACCOUNTS,
 };
 use crate::access::accesskit::{HasPopup, Node, NodeId, Role};
 use crate::access::{self, Tree};
@@ -77,6 +77,11 @@ fn spot_node(p: &StartPanel, s: Spot, r: Rect) -> Option<Node> {
             }
             n
         }
+        Spot::AllPrograms if p.shape == Shape::Blue => {
+            let mut n = item(r, ALL_PROGRAMS);
+            n.set_has_popup(HasPopup::Menu);
+            n
+        }
         Spot::AllPrograms => item(
             r,
             if p.mode() == Mode::Programs {
@@ -112,7 +117,9 @@ fn spot_node(p: &StartPanel, s: Spot, r: Rect) -> Option<Node> {
             n
         }
         Spot::Clear => access::button(r, CLEAR, true, false),
+        Spot::Shutdown if p.shape == Shape::Blue => access::button(r, TURN_OFF, true, false),
         Spot::Shutdown => access::button(r, SHUT_DOWN, true, false),
+        Spot::LogOff => access::button(r, LOG_OFF, true, false),
         Spot::ShutdownArrow => {
             let mut n = access::button(r, SHUT_DOWN_OPTIONS, true, false);
             n.set_has_popup(HasPopup::Menu);
@@ -196,5 +203,27 @@ mod tests {
             .1;
         assert_eq!(field.value(), Some("no"));
         assert!(t.find(Role::Button, CLEAR).is_some());
+    }
+
+    #[test]
+    fn the_blue_menu_lists_its_rows_and_both_bottom_buttons_and_focuses_the_menu() {
+        let mut p = StartPanel::new();
+        p.shape = Shape::Blue;
+        p.frequent = vec![prow("Notepad", false)];
+        p.places = vec![place("Documents")];
+        let (t, focus) = build(&p);
+        assert_eq!(t.get(focus).unwrap().role(), Role::Menu, "nothing lit");
+        assert!(
+            !t.nodes().any(|(_, n)| n.role() == Role::SearchInput),
+            "no search field"
+        );
+        let all = t.find(Role::MenuItem, ALL_PROGRAMS).unwrap();
+        assert_eq!(t.get(all).unwrap().has_popup(), Some(HasPopup::Menu));
+        assert!(t.find(Role::Button, LOG_OFF).is_some());
+        assert!(t.find(Role::Button, TURN_OFF).is_some());
+        assert!(t.find(Role::Button, SHUT_DOWN).is_none());
+        p.key(Key::Down);
+        let (t, focus) = build(&p);
+        assert_eq!(Some(focus), t.find(Role::MenuItem, "Notepad"));
     }
 }

@@ -2047,4 +2047,15 @@ pub const SILVER: Scheme = Scheme {
             ),
         ],
     },
+    start_menu: StartMenu {
+        band: stops![0.0: 0xFBFBFD, 0.08: 0xE7E7EF, 0.5: 0xC9C9D6, 0.92: 0xB4B4C6, 1.0: 0x9393A8],
+        edge: Color::rgb(0xA9, 0xA9, 0xBC),
+        accent: Color::rgb(0xE8, 0x9E, 0x46),
+        band_ink: Color::rgb(0x1F, 0x1F, 0x33),
+        band_shadow: Color::rgb(0xFF, 0xFF, 0xFF),
+        places: Color::rgb(0xF0, 0xF0, 0xF5),
+        places_edge: Color::rgb(0xC9, 0xC9, 0xD6),
+        places_ink: Color::rgb(0x1F, 0x1F, 0x33),
+        rule: Color::rgb(0xD9, 0xD9, 0xE0),
+    },
 };

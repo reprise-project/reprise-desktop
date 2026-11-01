@@ -32,8 +32,8 @@ pub struct Settings {
     pub confirm_scripts: bool,
     pub task_manager: String,
     pub startmenu_banner: String,
-    /// `startmenu_style`: one of [`STARTMENU_STYLES`]' values. Glass under
-    /// the Glass interface, Classic otherwise (`for_interface`).
+    /// `startmenu_style`: one of [`STARTMENU_STYLES`]' values, by default the
+    /// interface's own (`for_interface`).
     pub startmenu_style: String,
     pub desktop_icons: bool,
     /// `desktop_extensions`: one of [`DESKTOP_EXTENSIONS`]' values.
