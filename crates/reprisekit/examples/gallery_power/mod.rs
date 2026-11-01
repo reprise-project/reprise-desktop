@@ -1,5 +1,5 @@
-//! The Log Off and Turn off computer panels in three Blue schemes, at rest, with the pointer on a
-//! button, pressed and with Shift held, written to `target/reprisekit-gallery-power@<scale>.png`.
+//! The Log Off and Turn off computer panels in three Blue schemes and with Classic's Cancel, at
+//! rest, hot, pressed and with Shift held, written to `target/reprisekit-gallery-power@<scale>.png`.
 
 use reprisekit::blue::Variant;
 use reprisekit::cues::Cues;
@@ -35,7 +35,13 @@ pub fn render(scale: i32) -> Canvas {
         ),
         (shifted, Some((Part::Big(0), Interaction::Hot)), Cues::ALL),
     ];
-    let schemes = [Variant::Blue, Variant::Olive, Variant::Silver];
+    let classic = theme.paint();
+    let schemes = [
+        (Variant::Blue, None),
+        (Variant::Olive, None),
+        (Variant::Silver, None),
+        (Variant::Blue, Some(&classic)),
+    ];
     let (w, h) = layout(&cases[0].0, TextUnits::ONE).size;
     let cols = cases.len() as i32;
     let rows = schemes.len() as i32;
@@ -44,7 +50,7 @@ pub fn render(scale: i32) -> Canvas {
         ((rows * (h + GAP) + GAP) * scale) as u32,
     );
     c.fill_rect(c.bounds(), Color::rgb(0x60, 0x60, 0x60));
-    for (row, v) in schemes.into_iter().enumerate() {
+    for (row, (v, cancel)) in schemes.into_iter().enumerate() {
         for (col, (p, lit, cues)) in cases.iter().enumerate() {
             let lay = layout(p, TextUnits::ONE);
             let mut panel = Canvas::new((w * scale) as u32, (h * scale) as u32);
@@ -52,6 +58,7 @@ pub fn render(scale: i32) -> Canvas {
                 &mut panel,
                 text.for_output(scale),
                 v,
+                cancel,
                 p,
                 &lay,
                 *lit,

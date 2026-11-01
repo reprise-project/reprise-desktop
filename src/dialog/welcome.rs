@@ -214,7 +214,8 @@ impl Dialog {
     }
 }
 
-/// The Blue panel in `theme`'s Blue scheme (navy outside Blue), on a canvas at `theme.scale`.
+/// The Blue panel in `theme`'s Blue scheme (navy outside Blue), on a canvas at `theme.scale`, with
+/// Cancel in `theme`'s look unless the panel is always Blue.
 pub(super) fn draw_welcome(
     theme: &Theme,
     text: &TextRenderer,
@@ -227,10 +228,12 @@ pub(super) fn draw_welcome(
     let (cw, ch) = (lay.size.0 * s, lay.size.1 * s);
     let mut c = Canvas::new(cw.max(1) as u32, ch.max(1) as u32);
     let lit = lit.map(|(i, how)| (part_of(w, i), how));
+    let cancel = (!w.always_blue).then(|| theme.paint());
     reprisekit::interfaces::draw_power_panel(
         &mut c,
         text,
         reprisekit::interfaces::power_panel_variant(&theme.look),
+        cancel.as_ref(),
         &w.panel,
         lay,
         lit,
