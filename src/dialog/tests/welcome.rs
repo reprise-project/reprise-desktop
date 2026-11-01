@@ -116,30 +116,28 @@ fn under_glass_the_panels_are_framed_unless_they_are_always_blue() {
     }
 }
 
-#[test]
-fn the_panel_draws_as_the_blue_power_panel_with_the_pointer_on_its_parts() {
+fn assert_draws_as_the_power_panel(theme: &Theme, d: &Dialog, cancel: Option<&Theme>) {
     use reprisekit::powerpanel::Part;
-    let theme = Theme::default();
     let text = TextRenderer::load(&theme.fonts);
-    let d = Dialog::turn_off(&power());
-    let l = DialogLayout::compute(&theme, &text, &d);
+    let l = DialogLayout::compute(theme, &text, d);
     let lay = l.power.as_ref().unwrap();
     let Style::Welcome(w) = &d.style else {
         unreachable!("a Welcome panel");
     };
+    let paint = cancel.map(Theme::paint);
     for lit in [
         None,
         Some((2, Interaction::Hot)),
         Some((3, Interaction::Pressed)),
     ] {
         let c = draw(
-            &theme,
+            theme,
             &text,
             &l,
             None,
             None,
             &[],
-            &d,
+            d,
             true,
             lit,
             Cues::ALL,
@@ -151,7 +149,8 @@ fn the_panel_draws_as_the_blue_power_panel_with_the_pointer_on_its_parts() {
         draw_power_panel(
             &mut want,
             &text,
-            reprisekit::blue::Variant::Blue,
+            reprisekit::interfaces::power_panel_variant(&theme.look),
+            paint.as_ref(),
             &w.panel,
             lay,
             part,
@@ -161,6 +160,22 @@ fn the_panel_draws_as_the_blue_power_panel_with_the_pointer_on_its_parts() {
         );
         assert_eq!(c.pixels, want.pixels, "{lit:?}");
     }
+}
+
+#[test]
+fn under_classic_the_panel_draws_classics_cancel_unless_always_blue() {
+    let classic = Theme::default();
+    let d = Dialog::turn_off(&power());
+    assert_draws_as_the_power_panel(&classic, &d, Some(&classic));
+    assert_draws_as_the_power_panel(&classic, &d.always_blue(), None);
+}
+
+#[test]
+fn under_blue_the_panel_draws_blues_cancel() {
+    let blue = theme_for(Interface::Blue);
+    let d = Dialog::turn_off(&power());
+    assert_draws_as_the_power_panel(&blue, &d, None);
+    assert_draws_as_the_power_panel(&blue, &d.always_blue(), None);
 }
 
 fn focused(d: &Dialog) -> Option<usize> {

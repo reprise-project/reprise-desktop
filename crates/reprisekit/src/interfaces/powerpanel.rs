@@ -1,5 +1,5 @@
-//! The Log Off and Turn off computer panels put together: Blue's painter and Blue's push button
-//! for Cancel, under whichever interface is on.
+//! The Log Off and Turn off computer panels put together: Blue's painter, with Cancel drawn as
+//! Blue's push button or the active look's.
 
 use crate::blue::{self, Variant};
 use crate::cues::Cues;
@@ -18,13 +18,15 @@ pub fn power_panel_variant(look: &Look) -> Variant {
 }
 
 /// Panel `p` laid out as `lay` onto `c`, a device-px canvas at scale 1 for output scale `s`, in
-/// `v`'s colours; `text` is the host's renderer for `s` and `px` its device size. Cancel wears the
-/// default ring while it has the focus, and the dotted rectangle too while `cues` shows it.
+/// `v`'s colours; `text` is the host's renderer for `s` and `px` its device size. Cancel is the
+/// push button of `cancel`'s look, Blue's in `v` when it is `None`. It wears the default ring while
+/// it has the focus, and the dotted rectangle too while `cues` shows it.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_power_panel(
     c: &mut Canvas,
     text: &TextRenderer,
     v: Variant,
+    cancel: Option<&Paint>,
     p: &Panel,
     lay: &Layout,
     lit: Lit<Part>,
@@ -35,7 +37,7 @@ pub fn draw_power_panel(
     blue::powerpanel::draw(c, text, v, p, lay, lit, cues, px, s);
     let style = blue::style_for(v).at_scale(s);
     let look = Look::Styled(style.clone());
-    let paint = Paint {
+    let blue = Paint {
         cs: &style.colors,
         look: &look,
         s,
@@ -44,6 +46,14 @@ pub fn draw_power_panel(
         text: lay.units,
         access_keys: cues.keys,
     };
+    let paint = cancel.map_or(blue, |p| Paint {
+        s,
+        back: Backdrop::Face,
+        active: true,
+        text: lay.units,
+        access_keys: cues.keys,
+        ..*p
+    });
     let focused = p.focus == Part::Cancel;
     look::widgets::draw_button(
         c,
@@ -85,14 +95,27 @@ mod tests {
     }
 
     fn drawn(v: Variant, p: &Panel, lit: Lit<Part>, cues: Cues, s: i32) -> Canvas {
+        drawn_with(v, None, p, lit, cues, s)
+    }
+
+    fn drawn_with(
+        v: Variant,
+        cancel: Option<&Theme>,
+        p: &Panel,
+        lit: Lit<Part>,
+        cues: Cues,
+        s: i32,
+    ) -> Canvas {
         let theme = Theme::default().scaled(s);
         let text = TextRenderer::load(&theme.fonts);
         let lay = layout(p, TextUnits::ONE);
         let mut c = Canvas::new((lay.size.0 * s) as u32, (lay.size.1 * s) as u32);
+        let paint = cancel.map(|t| t.paint());
         draw_power_panel(
             &mut c,
             text.for_output(s),
             v,
+            paint.as_ref(),
             p,
             &lay,
             lit,
@@ -162,6 +185,68 @@ mod tests {
             }
         }
         crate::pins::check("interfaces/power_panel", &got);
+    }
+
+    #[test]
+    fn classics_cancel_pins_per_state_and_scale() {
+        if !crate::text::test_tahoma() {
+            crate::pins::skip!("no Tahoma for the labels");
+        }
+        let classic = Theme::default();
+        let mut got = Vec::new();
+        for s in [1, 2] {
+            let theme = classic.scaled(s);
+            let mut t = Panel::turn_off(false, true);
+            t.title = String::new();
+            let mut add = |name: &str, p: &Panel, lit: Lit<Part>, cues: Cues| {
+                let c = drawn_with(Variant::Blue, Some(&theme), p, lit, cues, s);
+                got.push((format!("Classic {s} {name}"), fnv(&c)));
+            };
+            add("turn off", &t, None, Cues::NONE);
+            add(
+                "cancel hot",
+                &t,
+                Some((Part::Cancel, Interaction::Hot)),
+                Cues::NONE,
+            );
+            t.focus = Part::Cancel;
+            add("cancel focused", &t, None, Cues::ALL);
+            add(
+                "cancel pressed",
+                &t,
+                Some((Part::Cancel, Interaction::Pressed)),
+                Cues::ALL,
+            );
+        }
+        crate::pins::check("interfaces/power_panel_classic", &got);
+    }
+
+    #[test]
+    fn cancel_takes_the_classic_face_under_classic_and_blues_otherwise() {
+        let p = Panel::turn_off(false, true);
+        let lay = layout(&p, TextUnits::ONE);
+        let classic = Theme::default();
+        let r = lay.cancel;
+        let at = (r.x + 4, r.y + r.height / 2);
+        let face = classic.colors.button_face.argb() & 0xFF_FFFF;
+        let under_classic = drawn_with(Variant::Blue, Some(&classic), &p, None, Cues::NONE, 1);
+        assert_eq!(
+            under_classic.get(at.0, at.1) & 0xFF_FFFF,
+            face,
+            "Classic's Cancel is the button face"
+        );
+        let blue = drawn(Variant::Blue, &p, None, Cues::NONE, 1);
+        assert_ne!(
+            blue.get(at.0, at.1) & 0xFF_FFFF,
+            face,
+            "Blue's Cancel is its own push button"
+        );
+        let outside = (r.x - 6, r.y + r.height / 2);
+        assert_eq!(
+            under_classic.get(outside.0, outside.1),
+            blue.get(outside.0, outside.1),
+            "the band around Cancel stays Blue's"
+        );
     }
 
     #[test]
