@@ -79,6 +79,7 @@ impl Explorer {
                     }
                 }
                 BTN_RIGHT => self.right_press(x, y, ctx),
+                crate::tabs::BTN_MIDDLE => self.middle_press(x, y, ctx),
                 b => match reprisekit::pointer::nav_button(b) {
                     Some(nav) => self.nav_press(nav, ctx),
                     None => Reply::none(),
@@ -92,6 +93,9 @@ impl Explorer {
                 Reply::none()
             }
             PointerInput::Release { x, y, .. } => {
+                if let Some(reply) = self.tab_strip_release(x, y, ctx) {
+                    return reply;
+                }
                 self.tree.bars.release_bar();
                 self.sv.bars.release_bar();
                 self.sv.header.release();
@@ -124,6 +128,7 @@ impl Explorer {
                 // is the compositor's.
                 self.cancel_item_drag();
                 self.close_drop_menu();
+                self.tab_strip_leave();
                 self.toolbar.hot = None;
                 self.bar.leave();
                 self.explorer_bar.hot_close = false;
@@ -178,6 +183,9 @@ impl Explorer {
         let lay = self.layout(ctx);
         if self.address_press_outside(x, y, ctx) {
             return Reply::redraw();
+        }
+        if let Some(reply) = self.tab_strip_press(x, y, BTN_LEFT, ctx) {
+            return reply;
         }
         // A click outside the view commits an in-place rename; inside
         // it, the view branch below decides.
@@ -558,6 +566,18 @@ impl Explorer {
     }
 
     fn motion(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
+        let lit = match self.tab_strip_motion(x, y, ctx) {
+            Ok(reply) => return reply,
+            Err(lit) => lit,
+        };
+        let reply = self.motion_off_strip(x, y, ctx);
+        Reply {
+            redraw: reply.redraw || lit,
+            ..reply
+        }
+    }
+
+    fn motion_off_strip(&mut self, x: i32, y: i32, ctx: &mut Ctx) -> Reply {
         if self.drag.is_some() {
             return self.drag_motion(x, y, ctx);
         }

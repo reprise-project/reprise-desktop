@@ -15,6 +15,7 @@ pub mod combo;
 pub mod copyprogress;
 pub mod displaypanel;
 pub mod dlgtemplate;
+pub mod doctabs;
 pub mod editmenu;
 pub mod emojipicker;
 pub mod endsession;

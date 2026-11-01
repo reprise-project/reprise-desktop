@@ -82,6 +82,16 @@ pub enum Command {
     CloseBar,
     About,
     SystemInformation,
+    /// Ctrl+T: the folder shown in a new tab.
+    NewTab,
+    /// Ctrl+W: the open tab closes, the window with the last one.
+    CloseTab,
+    /// Ctrl+Tab, or Ctrl+Shift+Tab with `back`.
+    NextTab {
+        back: bool,
+    },
+    /// The selected folder in a tab behind the open one.
+    OpenInNewTab,
     Nothing,
 }
 
@@ -172,6 +182,9 @@ pub fn command_for_key(sym: u32, ctrl: bool, shift: bool, alt: bool) -> Command 
         F2 => Command::Rename,
         keysym::F3 => Command::SearchFocus,
         keysym::DELETE | keysym::KP_DELETE => Command::Delete { erase: shift },
+        keysym::TAB | keysym::ISO_LEFT_TAB if ctrl && !alt => Command::NextTab {
+            back: shift || sym == keysym::ISO_LEFT_TAB,
+        },
         _ if !ctrl => Command::Nothing,
         _ => match letter(sym) {
             Some('x') => Command::Cut,
@@ -180,6 +193,8 @@ pub fn command_for_key(sym: u32, ctrl: bool, shift: bool, alt: bool) -> Command 
             Some('z') => Command::Undo,
             Some('a') => Command::SelectAll,
             Some('f') => Command::SearchFocus,
+            Some('t') => Command::NewTab,
+            Some('w') => Command::CloseTab,
             _ => Command::Nothing,
         },
     }
@@ -219,6 +234,9 @@ fn address_allows(cmd: &Command) -> bool {
             | Command::AddressFocus
             | Command::SearchFocus
             | Command::Properties
+            | Command::NewTab
+            | Command::CloseTab
+            | Command::NextTab { .. }
             | Command::Nothing
     )
 }
@@ -230,6 +248,13 @@ impl Explorer {
         match cmd {
             Command::Nothing => Reply::none(),
             Command::Close => self.close(ctx),
+            Command::NewTab => self.new_tab(ctx),
+            Command::CloseTab => self.close_tab(self.tabs.strip.open, ctx),
+            Command::NextTab { back } => self.cycle_tab(back, ctx),
+            Command::OpenInNewTab => match self.selected_dir() {
+                Some(p) => self.open_in_new_tab(p),
+                None => Reply::none(),
+            },
             Command::About => self.about_box(ctx),
             Command::SystemInformation => Reply {
                 spawn: vec![vec!["reprise-about".into()]],
@@ -529,6 +554,22 @@ mod tests {
             "Alt+Enter is Properties, a bare Enter opens"
         );
         assert_eq!(k(keysym::RETURN, false, false, false), Command::Nothing);
+        assert_eq!(k(u32::from(b't'), true, false, false), Command::NewTab);
+        assert_eq!(k(u32::from(b'w'), true, false, false), Command::CloseTab);
+        assert_eq!(
+            k(keysym::TAB, true, false, false),
+            Command::NextTab { back: false }
+        );
+        assert_eq!(
+            k(keysym::ISO_LEFT_TAB, true, true, false),
+            Command::NextTab { back: true }
+        );
+        assert_eq!(k(keysym::TAB, false, false, false), Command::Nothing);
+        assert_eq!(
+            command_for_key_in(keysym::TAB, true, false, false, Focus::Address, false),
+            Command::NextTab { back: false },
+            "Ctrl+Tab leaves the Address field for the next tab"
+        );
         assert_eq!(k('x' as u32, true, false, false), Command::Cut);
         assert_eq!(k('c' as u32, true, false, false), Command::Copy);
         assert_eq!(k('v' as u32, true, false, false), Command::Paste);
