@@ -489,7 +489,7 @@ impl AccountsApp {
                 "All Files (*.*)".into(),
             ],
         };
-        self.browse = Some(self.browse_host.open(&dir, fields, u));
+        self.browse = Some(self.browse_host.open_last(&dir, fields, u));
     }
 
     fn browse_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {

@@ -30,14 +30,19 @@ fn pick_keep(
 }
 
 impl SettingsApp {
-    /// Open the file dialog for `pick`: Add... at home, Browse... at Pictures or, for a program, its folder.
+    /// Open the file dialog for `pick`: Add... and Browse... where Settings' last dialog was
+    /// confirmed (else at home and Pictures), Browse for Folder at the slide show's folder and,
+    /// for a program, its folder.
     pub(crate) fn open_add(&mut self, pick: Pick) {
         self.add_for = pick;
-        let (dir, fields) = match pick {
+        let slides = wallpapers::expand(&self.want.slideshow).filter(|p| p.is_dir());
+        // `last`: the dialog opens where Settings' last one was confirmed, `dir` without one.
+        let (dir, last, fields) = match pick {
             Pick::Autostart => (
                 std::env::var_os("HOME")
                     .map(PathBuf::from)
                     .unwrap_or_else(|| PathBuf::from("/")),
+                true,
                 Fields {
                     title: "Add".into(),
                     accept_label: "Open".into(),
@@ -51,6 +56,7 @@ impl SettingsApp {
             ),
             Pick::Wallpaper => (
                 wallpapers::start_dir(),
+                true,
                 Fields {
                     title: "Browse".into(),
                     accept_label: "Open".into(),
@@ -60,9 +66,8 @@ impl SettingsApp {
                 },
             ),
             Pick::SlideFolder => (
-                wallpapers::expand(&self.want.slideshow)
-                    .filter(|p| p.is_dir())
-                    .unwrap_or_else(wallpapers::start_dir),
+                slides.clone().unwrap_or_else(wallpapers::start_dir),
+                slides.is_none(),
                 Fields {
                     title: "Browse for Folder".into(),
                     accept_label: "OK".into(),
@@ -73,12 +78,16 @@ impl SettingsApp {
             ),
             Pick::Program => (
                 PathBuf::from(repriseapp::openwith::PROGRAMS_DIR),
+                false,
                 repriseapp::openwith::browse_fields(),
             ),
         };
         // The sheet's last draw carries the text size the dialog grows by.
         let u = self.sheet.open().units();
-        self.add = Some(self.add_host.open(&dir, fields, u));
+        self.add = Some(match last {
+            true => self.add_host.open_last(&dir, fields, u),
+            false => self.add_host.open(&dir, fields, u),
+        });
     }
 
     fn close_add(&mut self) -> Reply {

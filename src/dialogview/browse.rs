@@ -19,10 +19,11 @@ pub(super) fn watch_on_loop(state: &mut State) {
 use crate::dialog::{self, Dialog, DialogLayout, Outcome, Placement};
 
 impl State {
-    /// Run's Browse...: on the home folder, in the corner by the Start button, 3 px in from the screen edge.
+    /// Run's Browse...: on the folder the last one picked from, else the home folder, in the
+    /// corner by the Start button, 3 px in from the screen edge.
     pub(super) fn browse_run(&mut self) {
-        let start = std::env::var_os("HOME")
-            .map(std::path::PathBuf::from)
+        let start = (self.wm.file_dialog.folder.clone())
+            .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
             .filter(|p| p.is_dir())
             .unwrap_or_else(|| std::path::PathBuf::from("/"));
         let pos = self.pointer_location();

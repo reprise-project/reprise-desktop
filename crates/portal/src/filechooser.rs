@@ -32,7 +32,12 @@ pub struct Input {
     pub accept_label: String,
     pub filters: Vec<Filter>,
     pub filter: usize,
+    /// The folder the caller asked to start in; empty opens where the app's last dialog was
+    /// confirmed.
     pub start: Vec<u8>,
+    /// The requesting app's id, empty when unknown: what the dialog keeps its folder and view
+    /// under.
+    pub app_id: String,
     pub name: String,
     /// `name`'s real bytes, when it is not UTF-8.
     pub name_raw: Option<Vec<u8>>,
@@ -78,13 +83,21 @@ fn asked_folders(o: &HashMap<String, Variant<'_>>) -> Vec<PathBuf> {
     current_file_dir.into_iter().chain(current_folder).collect()
 }
 
-/// The first of `asked`, Documents and home that is a folder. Blocking:
-/// a caller's path may sit on a hung mount.
-fn start_in(asked: Vec<PathBuf>) -> PathBuf {
-    let mut candidates: Vec<Option<PathBuf>> = asked.into_iter().map(Some).collect();
-    candidates.push(reprisefs::places::user_dir("DOCUMENTS", "Documents"));
-    candidates.push(std::env::var_os("HOME").map(PathBuf::from));
-    start_folder(&candidates)
+/// The first of `asked` that is a folder, as bytes; empty when none is. Blocking: a caller's
+/// path may sit on a hung mount.
+fn start_in(asked: Vec<PathBuf>) -> Vec<u8> {
+    (asked.into_iter().find(|p| p.is_dir()))
+        .map(|p| p.into_os_string().into_vec())
+        .unwrap_or_default()
+}
+
+/// Where a dialog with no asked folder and no last one opens: the first of Documents and home
+/// that is a folder.
+pub fn default_start() -> PathBuf {
+    start_folder(&[
+        reprisefs::places::user_dir("DOCUMENTS", "Documents"),
+        std::env::var_os("HOME").map(PathBuf::from),
+    ])
 }
 
 pub fn start_folder(candidates: &[Option<PathBuf>]) -> PathBuf {
@@ -239,6 +252,7 @@ fn base_input(
         filters: if folder_mode { Vec::new() } else { filters },
         filter,
         start: Vec::new(),
+        app_id: String::new(),
         name: String::new(),
         name_raw: None,
         files: Vec::new(),
@@ -256,12 +270,14 @@ impl FileChooser {
         handle: &ObjectPath<'_>,
         mut input: Input,
         asked: Vec<PathBuf>,
+        app_id: String,
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
+        input.app_id = app_id;
         let cancel = Arc::new(AtomicBool::new(false));
         crate::export_request(server, handle, cancel.clone(), &self.frontend).await?;
         let filters = input.filters.clone();
         let out: Output = blocking::unblock(move || {
-            input.start = start_in(asked).into_os_string().into_vec();
+            input.start = start_in(asked);
             dialog::run_toml(&["--file"], &input, &cancel)
                 .and_then(|s| {
                     toml::from_str(&s)
@@ -296,6 +312,7 @@ impl FileChooser {
             &handle,
             base_input(Kind::Open, &parent_window, title, &options),
             asked_folders(&options),
+            app_id,
         )
         .await
     }
@@ -315,7 +332,7 @@ impl FileChooser {
         log::info!("SaveFile for {app_id:?}");
         let mut input = base_input(Kind::Save, &parent_window, title, &options);
         (input.name, input.name_raw) = start_name(&options);
-        self.run(server, &handle, input, asked_folders(&options))
+        self.run(server, &handle, input, asked_folders(&options), app_id)
             .await
     }
 
@@ -355,7 +372,7 @@ impl FileChooser {
             return Ok((crate::RESPONSE_OTHER, HashMap::new()));
         }
         input.files = files;
-        self.run(server, &handle, input, asked_folders(&options))
+        self.run(server, &handle, input, asked_folders(&options), app_id)
             .await
     }
 }

@@ -1,7 +1,9 @@
-//! The size and place every file dialog opens at: programs' toplevels tagged `file-dialog` and
-//! the compositor's own Browse dialogs share one [`Geometry`] in `repriseconf::filedialog`'s file.
+//! The size and place file dialogs open at, per app: programs' toplevels tagged `file-dialog`
+//! and the compositor's own Browse dialogs each keep a [`Geometry`] under their app's table in
+//! `repriseconf::filedialog`'s file.
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use repriseconf::filedialog::Geometry;
 
@@ -12,32 +14,64 @@ use smithay::output::Output;
 
 use crate::window::{Window, WindowId};
 
-/// The geometry last stored, read once at start: the compositor is its only writer.
+/// The app id the compositor's own Browse dialogs keep their folder, view and geometry under.
+pub const OWN_APP: &str = "reprise";
+
+/// Each app's geometry and the Browse dialogs' last folder, read once at start: the compositor
+/// is their only writer.
 pub struct Kept {
     pub path: PathBuf,
-    pub geometry: Option<Geometry>,
+    pub geometry: BTreeMap<String, Geometry>,
+    pub folder: Option<PathBuf>,
 }
 
 impl Kept {
     pub fn load() -> Kept {
         let path = repriseconf::filedialog::path();
+        Kept::parse(path.clone(), &repriseconf::filedialog::load_from(&path))
+    }
+
+    /// What `text`, the file at `path`, keeps.
+    pub fn parse(path: PathBuf, text: &str) -> Kept {
+        let sections = repriseconf::filedialog::sections(text);
         Kept {
-            geometry: Geometry::parse(&repriseconf::filedialog::load_from(&path)),
+            geometry: (sections.iter())
+                .filter_map(|(app, s)| Some((app.clone(), Geometry::parse(s)?)))
+                .collect(),
+            folder: (sections.iter())
+                .find(|(app, _)| app == OWN_APP)
+                .and_then(|(_, s)| repriseconf::filedialog::folder(s)),
             path,
         }
     }
 
-    /// Keeps `g` and writes it on the state writer thread, once it differs from the last.
-    fn store(&mut self, g: Geometry) {
-        if self.geometry == Some(g) {
+    /// Keeps `g` for `app` and writes it on the state writer thread, once it differs from the
+    /// last.
+    fn store(&mut self, app: String, g: Geometry) {
+        if self.geometry.get(&app) == Some(&g) {
             return;
         }
-        self.geometry = Some(g);
+        self.geometry.insert(app.clone(), g);
+        self.write(app, g.text());
+    }
+
+    /// Keeps `dir` as the folder the next Browse dialog opens in.
+    pub fn keep_folder(&mut self, dir: &Path) {
+        if self.folder.as_deref() == Some(dir) {
+            return;
+        }
+        self.folder = Some(dir.to_path_buf());
+        if let Some(line) = repriseconf::filedialog::folder_text(dir) {
+            self.write(OWN_APP.into(), line);
+        }
+    }
+
+    fn write(&self, app: String, lines: String) {
         let path = self.path.clone();
         crate::state::run_in_order(move || {
-            if let Err(e) = repriseconf::filedialog::save_to(&path, &g.text()) {
+            if let Err(e) = repriseconf::filedialog::save_to(&path, &app, &lines) {
                 log::warn!(
-                    "file dialog: could not store its geometry in {}: {e}",
+                    "file dialog: could not store {app:?}'s in {}: {e}",
                     path.display()
                 );
             }
@@ -89,15 +123,16 @@ pub fn opening(
 }
 
 impl State {
-    /// [`opening`] on the current outputs; `fallback` is the output the dialog opens on
-    /// without a kept place.
+    /// [`opening`] of `app`'s geometry on the current outputs; `fallback` is the output the
+    /// dialog opens on without a kept place.
     fn file_dialog_opening(
         &self,
+        app: &str,
         min: (i32, i32),
         pad: (i32, i32),
         fallback: Option<&Output>,
     ) -> Option<Opening> {
-        let g = self.wm.file_dialog.geometry?;
+        let g = *self.wm.file_dialog.geometry.get(app)?;
         let m = &self.config.theme.metrics;
         let screens = Screens {
             outputs: (self.scene.outputs().iter())
@@ -121,12 +156,20 @@ impl State {
         (total.0, total.1)
     }
 
+    /// The app a `file-dialog` toplevel `w` keeps its geometry under: its owner's, so a portal's
+    /// dialog counts as the app's that asked for it, else its own.
+    fn file_dialog_app(&self, w: WindowId) -> String {
+        let owner = self.parent_window(w).and_then(|p| self.win(p));
+        owner.or(self.win(w)).map(Window::app).unwrap_or_default()
+    }
+
     /// The client size a `file-dialog` toplevel `w` asks first.
     pub fn file_dialog_size(&self, w: WindowId) -> Option<(i32, i32)> {
         let win = self.win(w).filter(|x| x.file_dialog && x.is_resizable())?;
         let pad = self.frame_pad(win.chrome());
         let out = self.placement_output(None);
-        let o = self.file_dialog_opening(win.size_limits().min, pad, out.as_ref())?;
+        let app = self.file_dialog_app(w);
+        let o = self.file_dialog_opening(&app, win.size_limits().min, pad, out.as_ref())?;
         Some(o.client)
     }
 
@@ -141,7 +184,8 @@ impl State {
     ) -> Option<(i32, i32)> {
         let win = self.win(w).filter(|x| x.file_dialog)?;
         let pad = self.frame_pad(win.chrome());
-        let kept = self.file_dialog_opening(win.size_limits().min, pad, None);
+        let app = self.file_dialog_app(w);
+        let kept = self.file_dialog_opening(&app, win.size_limits().min, pad, None);
         if let Some(at) = kept.and_then(|o| o.at) {
             return Some(at);
         }
@@ -174,7 +218,8 @@ impl State {
             client,
             self.config.accessibility.text_size,
         );
-        self.wm.file_dialog.store(g);
+        let app = self.file_dialog_app(w);
+        self.wm.file_dialog.store(app, g);
     }
 
     /// Sizes Browse dialog `p`, `pad` smaller than its frame, from the kept geometry; the place
@@ -187,7 +232,7 @@ impl State {
         p.dlg.set_text(self.config.theme.text);
         let pos = self.pointer_location();
         let out = self.output_at(pos.x, pos.y);
-        let o = self.file_dialog_opening(p.dlg.min_client(), pad, out.as_ref())?;
+        let o = self.file_dialog_opening(OWN_APP, p.dlg.min_client(), pad, out.as_ref())?;
         p.dlg.set_size(o.client);
         o.at
     }
@@ -205,7 +250,7 @@ impl State {
             p.dlg.client(),
             self.config.accessibility.text_size,
         );
-        self.wm.file_dialog.store(g);
+        self.wm.file_dialog.store(OWN_APP.into(), g);
     }
 }
 
@@ -276,6 +321,60 @@ mod tests {
         let again = h.map_dialog(&mut c, "test.app", Some(main), FILE_DIALOG_TAG, (600, 400));
         let f = h.state.win(again.id).unwrap().frame_rect();
         assert_eq!((f.x, f.y), (40, 60), "the next one opens there");
+    }
+
+    #[test]
+    fn each_app_keeps_its_own_dialog_place_and_a_dialog_counts_as_its_owners_app() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "org.example.A", 300, 200);
+        let b = h.map_toplevel(&mut c, "org.example.B", 300, 200);
+        let dialog = |h: &mut Harness, c: &mut crate::harness::TestClient, app, owner| {
+            let d = h.map_dialog(c, app, Some(owner), FILE_DIALOG_TAG, (600, 400));
+            let f = h.state.win(d.id).unwrap().frame_rect();
+            (d, (f.x, f.y))
+        };
+        let (d, centred) = dialog(&mut h, &mut c, "org.example.A", a);
+        h.state.move_to(d.id, 40, 60);
+        c.destroy(d);
+        h.roundtrip(&mut c);
+        let (d, at) = dialog(&mut h, &mut c, "org.example.B", b);
+        assert_eq!(at, centred, "B has nothing kept");
+        h.state.move_to(d.id, 300, 100);
+        c.destroy(d);
+        h.roundtrip(&mut c);
+        let (d, at) = dialog(&mut h, &mut c, "reprise.portal", a);
+        assert_eq!(
+            at,
+            (40, 60),
+            "a dialog opened for A opens where A's was left"
+        );
+        c.destroy(d);
+        h.roundtrip(&mut c);
+        assert_eq!(dialog(&mut h, &mut c, "org.example.B", b).1, (300, 100));
+        let apps: Vec<&String> = h.state.wm.file_dialog.geometry.keys().collect();
+        assert_eq!(apps, ["org.example.A", "org.example.B"]);
+    }
+
+    #[test]
+    fn the_kept_file_gives_each_apps_geometry_and_browses_folder() {
+        let text = "[\"org.example.A\"]\nx = 5\ny = 6\nwidth = 600\nheight = 400\n\
+                    [\"org.example.B\"]\nview = \"icons\"\n\
+                    [reprise]\nfolder = \"/home/u/bin\"\nx = 1\ny = 2\nwidth = 3\nheight = 4\n";
+        let k = Kept::parse(PathBuf::from("/nowhere"), text);
+        assert_eq!(
+            k.geometry.get("org.example.A"),
+            Some(&Geometry {
+                x: 5,
+                y: 6,
+                width: 600,
+                height: 400
+            })
+        );
+        assert_eq!(k.geometry.get("org.example.B"), None, "no geometry kept");
+        assert!(k.geometry.contains_key(OWN_APP));
+        assert_eq!(k.folder, Some(PathBuf::from("/home/u/bin")));
     }
 
     #[test]

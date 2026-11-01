@@ -52,7 +52,10 @@ fn the_next_dialog_opens_in_the_view_and_sort_the_last_one_left() {
         multiple: false,
     };
     let host = || Host {
-        view_file: Some(file.clone()),
+        memory: Some(Memory {
+            file: file.clone(),
+            app: "test.app".into(),
+        }),
         ..Host::default()
     };
     let theme = Theme::default();
@@ -87,6 +90,100 @@ fn the_next_dialog_opens_in_the_view_and_sort_the_last_one_left() {
     std::fs::write(&file, [0xff, 0xfe, 0]).unwrap();
     let dlg = host().open(t.path(), fields(), theme.text);
     assert_eq!(dlg.remembered(), Remembered::default(), "a bad file");
+}
+
+fn open_fields() -> Fields {
+    Fields {
+        title: "Open".into(),
+        accept_label: "Open".into(),
+        filters: vec![],
+        mode: DlgMode::Open,
+        multiple: false,
+    }
+}
+
+fn host_of(file: &Path, app: &str) -> Host {
+    Host {
+        memory: Some(Memory {
+            file: file.to_path_buf(),
+            app: app.into(),
+        }),
+        ..Host::default()
+    }
+}
+
+fn shown(h: &Host) -> PathBuf {
+    let id = h.folder.expect("a folder");
+    h.folders.path(id).expect("its path").to_path_buf()
+}
+
+#[test]
+fn each_app_opens_in_its_own_last_folder_and_view() {
+    let t = tempfile::tempdir().unwrap();
+    let file = t.path().join("filedialog.toml");
+    let (docs, music) = (t.path().join("docs"), t.path().join("music"));
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::create_dir_all(&music).unwrap();
+    std::fs::write(docs.join("a.txt"), "").unwrap();
+    std::fs::write(music.join("b.ogg"), "").unwrap();
+    let u = Theme::default().text;
+
+    let mut editor = host_of(&file, "org.example.Editor");
+    editor.open_last(t.path(), open_fields(), u);
+    editor.folder = Some(editor.folders.id(&docs));
+    assert_eq!(
+        editor.resolve("a.txt"),
+        Ok(Resolved::File(docs.join("a.txt")))
+    );
+    let mut dlg = editor.open_last(t.path(), open_fields(), u);
+    dlg.restore(Remembered {
+        mode: Mode::Icons,
+        ..Remembered::default()
+    });
+    editor.remember(&dlg);
+
+    let mut player = host_of(&file, "org.example.Player");
+    player.open_last(t.path(), open_fields(), u);
+    player.folder = Some(player.folders.id(&music));
+    assert_eq!(
+        player.resolve("b.ogg"),
+        Ok(Resolved::File(music.join("b.ogg")))
+    );
+
+    let mut editor = host_of(&file, "org.example.Editor");
+    let dlg = editor.open_last(t.path(), open_fields(), u);
+    assert_eq!(shown(&editor), docs, "the editor's last folder");
+    assert_eq!(dlg.remembered().mode, Mode::Icons, "and its view");
+    let mut player = host_of(&file, "org.example.Player");
+    let dlg = player.open_last(t.path(), open_fields(), u);
+    assert_eq!(shown(&player), music, "the player's last folder");
+    assert_eq!(dlg.remembered(), Remembered::default(), "and its own view");
+    let mut fresh = host_of(&file, "org.example.New");
+    fresh.open_last(t.path(), open_fields(), u);
+    assert_eq!(
+        shown(&fresh),
+        t.path(),
+        "an app with nothing kept opens at the fallback"
+    );
+}
+
+#[test]
+fn a_start_folder_the_caller_names_wins_over_the_last_one() {
+    let t = tempfile::tempdir().unwrap();
+    let file = t.path().join("filedialog.toml");
+    let (docs, own) = (t.path().join("docs"), t.path().join("own"));
+    std::fs::create_dir_all(&docs).unwrap();
+    std::fs::create_dir_all(&own).unwrap();
+    let u = Theme::default().text;
+    let mut h = host_of(&file, "test.app");
+    h.keep_folder(&docs);
+    h.open(&own, open_fields(), u);
+    assert_eq!(shown(&h), own);
+    h.open_last(&own, open_fields(), u);
+    assert_eq!(shown(&h), docs);
+    std::fs::remove_dir(&docs).unwrap();
+    h.open_last(&own, open_fields(), u);
+    assert_eq!(shown(&h), own, "a last folder since removed falls back");
 }
 
 #[test]

@@ -358,7 +358,7 @@ impl NetApp {
 
     fn open_import(&mut self, u: TextUnits) {
         self.browse_for = None;
-        self.import = Some(self.import_host.open(
+        self.import = Some(self.import_host.open_last(
             &home_dir(),
             Fields {
                 title: "Import".into(),
@@ -388,23 +388,22 @@ impl NetApp {
         };
         let start = current
             .and_then(|p| p.parent().map(PathBuf::from))
-            .filter(|d| d.is_dir())
-            .unwrap_or_else(home_dir);
+            .filter(|d| d.is_dir());
         self.browse_for = Some(to);
-        self.import = Some(self.import_host.open(
-            &start,
-            Fields {
-                title: BROWSE_TITLE.into(),
-                accept_label: "Open".into(),
-                mode: DlgMode::Open,
-                multiple: false,
-                filters: vec![
-                    "Certificates and Keys (*.crt;*.pem;*.key)".into(),
-                    "All Files (*.*)".into(),
-                ],
-            },
-            u,
-        ));
+        let fields = Fields {
+            title: BROWSE_TITLE.into(),
+            accept_label: "Open".into(),
+            mode: DlgMode::Open,
+            multiple: false,
+            filters: vec![
+                "Certificates and Keys (*.crt;*.pem;*.key)".into(),
+                "All Files (*.*)".into(),
+            ],
+        };
+        self.import = Some(match start {
+            Some(dir) => self.import_host.open(&dir, fields, u),
+            None => self.import_host.open_last(&home_dir(), fields, u),
+        });
     }
 
     fn file_title(&self) -> &'static str {

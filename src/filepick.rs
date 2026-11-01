@@ -12,6 +12,7 @@
 //! come the same way: [`FilePicker::take_pictures`], then [`FilePicker::thumbs`].
 
 use crate::dialog::Outcome;
+use crate::filedlggeom::OWN_APP;
 use crate::raster::{Canvas, Rect};
 use reprisefs::listing::Row;
 use reprisekit::art::viewsicon;
@@ -327,7 +328,8 @@ impl Request {
             _ => Vec::new(),
         };
         let view = (self.view_file.as_deref())
-            .map(|f| filedlg::Remembered::parse(&repriseconf::filedialog::load_from(f)));
+            .map(repriseconf::filedialog::load_from)
+            .map(|t| filedlg::Remembered::parse(&repriseconf::filedialog::section(&t, OWN_APP)));
         Reply {
             view,
             seq: self.seq,
@@ -984,7 +986,7 @@ impl FilePicker {
         // A view picked before the stored one arrives wins over it.
         self.view_awaited = false;
         crate::state::run_in_order(move || {
-            if let Err(e) = repriseconf::filedialog::save_to(&file, &now.text()) {
+            if let Err(e) = repriseconf::filedialog::save_to(&file, OWN_APP, &now.text()) {
                 log::warn!(
                     "browse: could not store the view in {}: {e}",
                     file.display()
@@ -1276,13 +1278,14 @@ mod tests {
     }
 
     #[test]
-    fn browse_shares_the_view_the_last_file_dialog_stored() {
+    fn browse_opens_in_the_view_its_own_table_keeps() {
         let dir = sandbox("remember");
         let file = dir.join("state").join("filedialog.toml");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(
             &file,
-            "view = \"details\"\nsort = \"size\"\nascending = false\n",
+            "[reprise]\nview = \"details\"\nsort = \"size\"\nascending = false\n\
+             [other]\nview = \"icons\"\n",
         )
         .unwrap();
         let mut p = FilePicker::run_command(&dir, Icons::default(), true);
@@ -1293,9 +1296,15 @@ mod tests {
         p.click(R, Some(filedlg::Hit::ToolBar(3)));
         p.click(R, Some(filedlg::Hit::ViewsItem(0)));
         crate::state::flush();
+        let text = std::fs::read_to_string(&file).unwrap();
+        let mine = repriseconf::filedialog::section(&text, OWN_APP);
+        assert!(
+            mine.contains("view = \"thumbnails\"\n") && mine.contains("sort = \"size\"\n"),
+            "{text}"
+        );
         assert_eq!(
-            std::fs::read_to_string(&file).unwrap(),
-            "view = \"thumbnails\"\nsort = \"size\"\nascending = false\n"
+            repriseconf::filedialog::section(&text, "other"),
+            "view = \"icons\"\n"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1305,7 +1314,7 @@ mod tests {
         let dir = sandbox("remember-early");
         let file = dir.join("state").join("filedialog.toml");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(&file, "view = \"details\"\n").unwrap();
+        std::fs::write(&file, "[reprise]\nview = \"details\"\n").unwrap();
         let mut p = FilePicker::run_command(&dir, Icons::default(), true);
         p.remember_in(file.clone());
         let replies: Vec<Reply> = p.take_requests().into_iter().map(Request::run).collect();
@@ -1316,11 +1325,10 @@ mod tests {
         }
         assert_eq!(p.dlg.view(), Mode::Thumbnails);
         crate::state::flush();
+        let text = std::fs::read_to_string(&file).unwrap();
         assert!(
-            std::fs::read_to_string(&file)
-                .unwrap()
-                .starts_with("view = \"thumbnails\"\n"),
-            "the picked view is stored"
+            repriseconf::filedialog::section(&text, OWN_APP).contains("view = \"thumbnails\"\n"),
+            "the picked view is stored: {text}"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
