@@ -916,6 +916,25 @@ fn window_shake_is_on_under_glass_alone_unless_set() {
 }
 
 #[test]
+fn title_double_click_maximizes_by_default_and_takes_each_value() {
+    assert_eq!(
+        Config::default().title_double_click,
+        TitleDoubleClick::Maximize
+    );
+    for (word, want) in [
+        ("maximize", TitleDoubleClick::Maximize),
+        ("shade", TitleDoubleClick::Shade),
+        ("minimize", TitleDoubleClick::Minimize),
+        ("none", TitleDoubleClick::None),
+    ] {
+        let c = Config::parse(&format!("[windows]\ntitle_double_click = \"{word}\"\n")).unwrap();
+        assert_eq!(c.title_double_click, want, "{word}");
+    }
+    let bad = Config::parse("[windows]\ntitle_double_click = \"roll\"\n").unwrap_err();
+    assert!(bad.contains("title_double_click"), "{bad}");
+}
+
+#[test]
 fn the_snap_layout_picker_reads_its_switch_and_layouts() {
     let c = Config::parse("[window_snapping]\npicker = false\nlayouts = [\"1|1\", \"3|1:2\"]\n")
         .unwrap();

@@ -1145,3 +1145,172 @@ fn every_pair_of_window_states_keeps_the_state_invariants() {
         }
     }
 }
+
+fn shade_setup() -> (
+    crate::harness::Harness,
+    crate::harness::TestClient,
+    crate::harness::Toplevel,
+) {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    h.roundtrip(&mut c);
+    (h, c, t)
+}
+
+#[test]
+fn rolling_up_keeps_the_width_and_client_size_and_asks_the_client_nothing() {
+    let (mut h, mut c, t) = shade_setup();
+    let m = h.state.config.theme.metrics.clone();
+    let before = h.state.win(t.id).unwrap().frame_rect();
+    let serial = h.state.win(t.id).unwrap().size_serial;
+    h.state.set_shaded(t.id, true);
+    h.roundtrip(&mut c);
+    let win = h.state.win(t.id).unwrap();
+    assert!(win.shaded);
+    let r = win.frame_rect();
+    assert_eq!((r.x, r.y, r.width), (before.x, before.y, before.width));
+    assert_eq!(r.height, m.caption_height + 2 * m.frame_width);
+    assert_eq!((win.client_w, win.client_h), (300, 200));
+    assert_eq!(
+        win.normal_frame(),
+        before,
+        "it restores and is remembered rolled down"
+    );
+    assert_eq!(win.size_serial, serial, "no size was asked for");
+    assert_eq!(c.side.shells[t.shell].size, (300, 200));
+    assert!(
+        !h.state.scene.enabled(win.content),
+        "the client is not drawn"
+    );
+
+    h.state.set_shaded(t.id, false);
+    h.roundtrip(&mut c);
+    let win = h.state.win(t.id).unwrap();
+    assert!(!win.shaded);
+    assert_eq!(win.frame_rect(), before);
+    assert!(h.state.scene.enabled(win.content));
+    assert_eq!(c.side.shells[t.shell].size, (300, 200));
+}
+
+#[test]
+fn a_rolled_up_window_gives_its_client_no_input_and_keeps_its_caption() {
+    use reprisekit::classic::frame::FrameHit;
+    let (mut h, mut c, t) = shade_setup();
+    let surface = c.side.shells[t.shell].surface.clone();
+    assert_eq!(c.side.keyboard_focus.as_ref(), Some(&surface));
+    let r = h.state.win(t.id).unwrap().frame_rect();
+    h.state.set_shaded(t.id, true);
+    h.roundtrip(&mut c);
+    assert_eq!(c.side.keyboard_focus, None, "the keys leave the client");
+    assert_eq!(h.state.focused, Some(t.id), "the frame stays active");
+    let server_side = h.state.win(t.id).unwrap().wl_surface().clone();
+    h.state.enter_keyboard(Some(server_side));
+    h.roundtrip(&mut c);
+    assert_eq!(
+        c.side.keyboard_focus, None,
+        "a menu handing the keys back does not give them to a rolled-up window"
+    );
+
+    h.state.set_shaded(t.id, false);
+    h.roundtrip(&mut c);
+    assert_eq!(
+        c.side.keyboard_focus.as_ref(),
+        Some(&surface),
+        "the keys come back"
+    );
+
+    h.state.set_shaded(t.id, true);
+    let (x, y) = (f64::from(r.x + r.width / 2), f64::from(r.y + r.height / 2));
+    h.click(x, y);
+    h.roundtrip(&mut c);
+    assert!(
+        c.side.buttons.is_empty(),
+        "a click where the client was misses it"
+    );
+
+    let win = h.state.win(t.id).unwrap();
+    let m = h.state.config.theme.metrics.clone();
+    let foot = f64::from(win.y + win.frame_rect().height - 1);
+    assert_eq!(
+        win.hit_at(x, foot, &m),
+        FrameHit::Title,
+        "the bottom edge moves rather than sizes"
+    );
+    h.state
+        .begin_resize(t.id, reprisekit::classic::frame::Edges::BOTTOM);
+    assert_eq!(h.state.interaction, crate::input::Interaction::Idle);
+}
+
+#[test]
+fn maximizing_or_fullscreening_a_rolled_up_window_rolls_it_down_first() {
+    let (mut h, mut c, t) = shade_setup();
+    let before = h.state.win(t.id).unwrap().frame_rect();
+    h.state.set_shaded(t.id, true);
+    h.state.set_maximized(t.id, true);
+    h.roundtrip(&mut c);
+    let win = h.state.win(t.id).unwrap();
+    assert!(win.maximized && !win.shaded);
+    assert_eq!(
+        win.saved,
+        Some(before),
+        "it restores to its rolled-down frame"
+    );
+    h.state.set_shaded(t.id, true);
+    assert!(
+        !h.state.win(t.id).unwrap().shaded,
+        "a maximized window does not roll up"
+    );
+    h.state.set_maximized(t.id, false);
+    h.roundtrip(&mut c);
+
+    h.state.set_shaded(t.id, true);
+    h.state.set_fullscreen(t.id, true);
+    h.roundtrip(&mut c);
+    let win = h.state.win(t.id).unwrap();
+    assert!(win.fullscreen && !win.shaded);
+    assert!(h.state.scene.enabled(win.content));
+}
+
+#[test]
+fn a_title_double_click_does_what_the_setting_says() {
+    use crate::config::TitleDoubleClick;
+    let (mut h, _c, t) = shade_setup();
+    let w = t.id;
+    h.state.config.title_double_click = TitleDoubleClick::Shade;
+    h.state.title_double_click(w);
+    assert!(h.state.win(w).unwrap().shaded);
+    h.state.title_double_click(w);
+    assert!(!h.state.win(w).unwrap().shaded);
+
+    h.state.config.title_double_click = TitleDoubleClick::None;
+    h.state.title_double_click(w);
+    let win = h.state.win(w).unwrap();
+    assert!(!win.shaded && !win.maximized && !win.minimized);
+
+    h.state.config.title_double_click = TitleDoubleClick::Maximize;
+    h.state.title_double_click(w);
+    assert!(h.state.win(w).unwrap().maximized);
+    h.state.title_double_click(w);
+    assert!(!h.state.win(w).unwrap().maximized);
+
+    h.state.config.title_double_click = TitleDoubleClick::Minimize;
+    h.state.title_double_click(w);
+    assert!(h.state.win(w).unwrap().minimized);
+}
+
+#[test]
+fn bringing_a_rolled_up_window_up_from_its_task_button_rolls_it_down() {
+    let (mut h, _c, t) = shade_setup();
+    h.state.set_shaded(t.id, true);
+    h.state.set_minimized(t.id, true);
+    assert!(
+        h.state.win(t.id).unwrap().shaded,
+        "minimizing keeps it rolled up"
+    );
+    h.state.bring_up(t.id);
+    let win = h.state.win(t.id).unwrap();
+    assert!(!win.shaded && !win.minimized);
+    assert_eq!(h.state.focused, Some(t.id));
+}

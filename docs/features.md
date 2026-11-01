@@ -101,11 +101,18 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 ## Windows
 
 - **Frames that work.** Minimize, maximize and close. Double-click the
-  caption to maximize, the icon for the window menu, or double-click the icon
-  to close. Super and a left drag moves a window by its body.
+  caption to maximize (or roll up, minimize or nothing: `[windows]
+  title_double_click`, or the Windows page of Reprise Settings), the icon for
+  the window menu, or double-click the icon to close. Super and a left drag
+  moves a window by its body.
 - **Window menu.** Alt+Space, or a right-click on the caption: Restore,
-  Move, Size, Minimize, Maximize, Always on Top, Show on All Desktops, Move to
-  Desktop, the tab commands and Close. Move and Size work from the keyboard.
+  Move, Size, Minimize, Maximize, Roll Up, Always on Top, Show on All
+  Desktops, Move to Desktop, the tab commands and Close. Move and Size work
+  from the keyboard.
+- **Roll up.** Roll Up in the window menu (or a caption double-click set to
+  it) leaves only the window's title bar, at its width; the program keeps
+  running at its size and gets no input. It moves like any window. Roll Down,
+  its task button, maximizing, snapping or going fullscreen brings it back.
 - **Window tabs.** Drag a window by its caption onto another window's caption
   and hold it there: the two share one frame, their titles as tabs. A ghost
   tab shows where it lands, between two tabs or at either end. Click a

@@ -2,7 +2,9 @@
 //!
 //! The defaults are [`repriseconf::config::Config`]'s, the ones the compositor runs with.
 
-use repriseconf::config::{FontSmoothing, StartMenuStyle, TaskbarButtons, switcher_size};
+use repriseconf::config::{
+    FontSmoothing, StartMenuStyle, TaskbarButtons, TitleDoubleClick, switcher_size,
+};
 use reprisekit::interface::Interface;
 use shortcuts::default_shortcuts;
 
@@ -201,6 +203,8 @@ pub struct Settings {
     pub window_tabs: bool,
     /// `[windows] shake`; "auto" reads as the interface's default.
     pub window_shake: bool,
+    /// `[windows] title_double_click`: one of [`TITLE_DOUBLE_CLICKS`]' values.
+    pub title_double_click: String,
     /// `[session] restore`.
     pub session_restore: bool,
     /// `[session] end_processes`.
@@ -490,6 +494,11 @@ impl Settings {
             remember_windows: c.remember_windows,
             window_tabs: c.window_tabs,
             window_shake: c.window_shake,
+            title_double_click: named(
+                TITLE_DOUBLE_CLICKS,
+                TitleDoubleClick::parse,
+                &c.title_double_click,
+            ),
             session_restore: c.session.restore,
             session_end_processes: c.session.end_processes,
 

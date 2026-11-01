@@ -88,6 +88,7 @@ impl State {
             mapped: false,
             maximized: false,
             minimized: false,
+            shaded: false,
             fullscreen: false,
             saved: None,
             saved_fullscreen: None,

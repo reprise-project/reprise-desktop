@@ -134,6 +134,9 @@ impl State {
     }
 
     pub(crate) fn start_resize(&mut self, w: WindowId, edges: Edges, keyboard: bool) {
+        if self.win(w).is_some_and(|x| x.shaded) {
+            return;
+        }
         if self.interaction != Interaction::Idle {
             self.end_interaction();
         }

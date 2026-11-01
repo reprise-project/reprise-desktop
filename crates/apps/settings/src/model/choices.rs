@@ -11,6 +11,14 @@ pub const TASKBAR_BUTTONS: &Choices = &[
     ("group", "Group, never combine"),
 ];
 
+/// What a title bar double click does. Mirrors `TitleDoubleClick::parse` in `repriseconf::config`.
+pub const TITLE_DOUBLE_CLICKS: &Choices = &[
+    ("maximize", "Maximize"),
+    ("shade", "Roll up"),
+    ("minimize", "Minimize"),
+    ("none", "Do nothing"),
+];
+
 /// The Start menu styles. Mirrors `StartMenuStyle::parse` in `repriseconf::config`.
 pub const STARTMENU_STYLES: &Choices =
     &[("glass", "Glass"), ("blue", "Blue"), ("classic", "Classic")];

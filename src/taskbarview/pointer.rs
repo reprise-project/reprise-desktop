@@ -683,8 +683,8 @@ impl State {
             [w] => {
                 let w = *w;
                 let Some(win) = self.win(w) else { return };
-                if win.minimized {
-                    self.set_minimized(w, false);
+                if win.minimized || win.shaded {
+                    self.bring_up(w);
                 } else if self.focused == Some(w) {
                     self.set_minimized(w, true);
                 } else {
@@ -709,7 +709,9 @@ impl State {
         }
     }
 
+    /// Show `w` from its task button: restored if minimized, rolled down if rolled up, focused.
     pub(crate) fn bring_up(&mut self, w: WindowId) {
+        self.set_shaded(w, false);
         if self.win(w).is_some_and(|x| x.minimized) {
             self.set_minimized(w, false);
         } else {

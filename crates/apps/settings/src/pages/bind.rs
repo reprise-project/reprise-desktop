@@ -26,7 +26,7 @@ use crate::model::{
     CURSOR_SIZES, Choices, DESKTOPS_DEFAULT, FONT_SMOOTHINGS, HOT_CORNERS, INTERFACES,
     MENU_ANIMATIONS, PAGER_MARKS, POSITIONS, QT_PLATFORM_THEMES, STARTMENU_STYLES,
     SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES, Settings, TASKBAR_BUTTONS,
-    TASKBAR_POSITIONS, TEXT_SIZES, WATER_STYLES,
+    TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, WATER_STYLES,
 };
 
 pub(super) enum Bind {
@@ -177,6 +177,11 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag("remember_windows", lens!(remember_windows)),
         Bind::Flag("window_tabs", lens!(window_tabs)),
         Bind::Flag("window_shake", lens!(window_shake)),
+        Bind::Named(
+            "title_double_click",
+            lens!(title_double_click),
+            TITLE_DOUBLE_CLICKS,
+        ),
         Bind::Flag("session_restore", lens!(session_restore)),
         Bind::Flag("session_end_processes", lens!(session_end_processes)),
         Bind::Named(

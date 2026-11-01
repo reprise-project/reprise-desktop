@@ -39,7 +39,8 @@ impl State {
             true => crate::clientglass::glass_top(&win.blur, cw),
             false => 0,
         };
-        win.geom = FrameGeometry::layout(&m, cw, ch, win.maximized, win.chrome())
+        let shown_h = if win.shaded { 0 } else { ch };
+        win.geom = FrameGeometry::layout(&m, cw, shown_h, win.maximized, win.chrome())
             .with_glass_top(glass_top);
         let (tree, content, surface, frame, on) = (
             win.tree,

@@ -744,6 +744,7 @@ fn save_round_trips_every_field() {
         remember_windows: false,
         window_tabs: false,
         window_shake: true,
+        title_double_click: "shade".into(),
         session_restore: true,
         session_end_processes: false,
         font_family: "Verdana".into(),

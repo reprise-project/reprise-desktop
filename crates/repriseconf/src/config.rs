@@ -94,6 +94,7 @@ pub struct Config {
     pub window_tabs: bool,
     /// `[windows] shake`, resolved against the interface.
     pub window_shake: bool,
+    pub title_double_click: TitleDoubleClick,
     pub session: SessionConfig,
     pub icons: IconsConfig,
     pub cursor: CursorConfig,
@@ -167,6 +168,7 @@ impl Default for Config {
             remember_windows: true,
             window_tabs: true,
             window_shake: false,
+            title_double_click: TitleDoubleClick::Maximize,
             session: SessionConfig::default(),
             icons: IconsConfig::default(),
             cursor: CursorConfig::default(),

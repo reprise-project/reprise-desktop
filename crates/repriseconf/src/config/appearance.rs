@@ -147,6 +147,29 @@ impl TaskbarButtons {
     }
 }
 
+/// What a double click on a title bar does: `[windows] title_double_click`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TitleDoubleClick {
+    #[default]
+    Maximize,
+    /// Rolls the window up to its title bar, or back down.
+    Shade,
+    Minimize,
+    None,
+}
+
+impl TitleDoubleClick {
+    pub fn parse(s: &str) -> Option<TitleDoubleClick> {
+        match s {
+            "maximize" => Some(TitleDoubleClick::Maximize),
+            "shade" => Some(TitleDoubleClick::Shade),
+            "minimize" => Some(TitleDoubleClick::Minimize),
+            "none" => Some(TitleDoubleClick::None),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StartMenuStyle {
     Classic,
