@@ -214,6 +214,7 @@ pub struct State {
     pub activation: smithay::wayland::xdg_activation::XdgActivationState,
     pub outputs_mgmt: crate::outputmgmt::OutputMgmt,
     pub output_places: crate::output::Places,
+    pub saved_layouts: crate::outputlayouts::SavedLayouts,
     /// Globals no handler reads back, kept for as long as the display.
     #[allow(dead_code)]
     pub globals: Globals,
@@ -583,6 +584,7 @@ impl State {
             ),
             outputs_mgmt: crate::outputmgmt::OutputMgmt::new(&dh),
             output_places: Default::default(),
+            saved_layouts: Default::default(),
             clip,
             dnd: Default::default(),
             drags: Default::default(),

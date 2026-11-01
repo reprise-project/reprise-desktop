@@ -4,7 +4,8 @@
 //! module decides what they run.
 //!
 //! Outputs line up left to right in the order they came, at y 0, unless
-//! `[[outputs]] position` or output management placed them: placed outputs
+//! a saved layout (`outputlayouts`), `[[outputs]] position` or output
+//! management placed them: placed outputs
 //! keep their position and the others follow right of the rightmost placed
 //! one (`place`). An output that leaves and comes back without a configured
 //! position returns to where it was placed (`Places`).
@@ -190,6 +191,14 @@ pub fn transform(t: crate::config::Transform) -> Transform {
     }
 }
 
+/// The config transform naming `t`.
+pub fn config_transform(t: Transform) -> crate::config::Transform {
+    use crate::config::Transform as T;
+    (T::ALL.into_iter())
+        .find(|c| transform(*c) == t)
+        .unwrap_or_default()
+}
+
 /// What one head of an output-management configuration asks for (`outputmgmt`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeadRequest {
@@ -261,6 +270,11 @@ impl State {
         if self.scene.outputs().contains(output) {
             return;
         }
+        if self.saved_layout_of(output).is_some_and(|m| !m.enabled) {
+            log::info!("output {name}: off in the saved layout");
+            crate::outputmgmt::publish(self);
+            return;
+        }
         let at = self.back_place(output);
         set_placement(output, at.map(Point::from));
         if !self.enable_configured(output) {
@@ -271,8 +285,12 @@ impl State {
         self.output_added(output);
     }
 
-    /// Where `output` goes as it comes back into the layout (`Places::back`).
+    /// Where `output` goes as it comes back into the layout: the saved layout's place, else
+    /// `Places::back`.
     fn back_place(&self, output: &Output) -> Option<(i32, i32)> {
+        if let Some(m) = self.saved_layout_of(output) {
+            return Some(m.position);
+        }
         let name = output.name();
         let others: Vec<_> = (self.scene.outputs().iter())
             .filter(|o| *o != output)
@@ -294,8 +312,8 @@ impl State {
         }
     }
 
-    /// Drive the parked `output` with the config's mode, scale, transform
-    /// and adaptive sync; falls back to the preferred mode at scale 1
+    /// Drive the parked `output` with the saved layout's or else the config's mode, scale and
+    /// transform, and the config's adaptive sync; falls back to the preferred mode at scale 1
     /// untransformed when refused. Returns whether either went through.
     fn enable_configured(&mut self, output: &Output) -> bool {
         let name = output.name();
@@ -305,7 +323,11 @@ impl State {
         else {
             return false;
         };
-        let want = self.config.mode_for_output_name(&name);
+        let saved = self.saved_layout_of(output).cloned();
+        let want = match &saved {
+            Some(m) => m.mode,
+            None => self.config.mode_for_output_name(&name),
+        };
         let Some(index) = pick_mode(&head.modes, want.as_ref()) else {
             return false;
         };
@@ -318,8 +340,14 @@ impl State {
                 want.height
             );
         }
-        let scale = quarter_scale(self.config.scale_for_output_name(&name));
-        let t = transform(self.config.transform_for_output_name(&name));
+        let (scale, t) = match &saved {
+            Some(m) => (m.scale, m.transform),
+            None => (
+                self.config.scale_for_output_name(&name),
+                self.config.transform_for_output_name(&name),
+            ),
+        };
+        let (scale, t) = (quarter_scale(scale), transform(t));
         output.change_current_state(
             None,
             Some(t),
@@ -381,7 +409,10 @@ impl State {
             Some(i) => crate::backend::enable(self, output, i),
             None => {
                 let heads = crate::backend::heads(self);
-                let want = self.config.mode_for_output_name(&name);
+                let want = match self.saved_layout_of(output) {
+                    Some(m) => m.mode,
+                    None => self.config.mode_for_output_name(&name),
+                };
                 heads
                     .iter()
                     .find(|h| &h.output == output)
@@ -479,6 +510,7 @@ impl State {
                 geometry_changed = true;
             }
         }
+        self.outputs_reloaded();
         geometry_changed
     }
 

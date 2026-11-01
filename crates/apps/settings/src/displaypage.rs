@@ -71,6 +71,8 @@ pub struct Display {
     places: Vec<(i32, i32)>,
     primary_saved: Option<String>,
     primary: Option<String>,
+    /// Whether the compositor has saved layouts in `displays.toml`, which Forget drops.
+    pub layouts_saved: bool,
 }
 
 /// A mode's size as the layout sees it under `transform` and `scale`: turned a quarter swaps the
@@ -503,6 +505,7 @@ pub const REFRESH: &str = "refresh_rate";
 pub const ORIENTATION: &str = "orientation";
 pub const SCALE: &str = "scale";
 pub const VRR: &str = "vrr";
+pub const FORGET: &str = "forget_layouts";
 
 const X: i32 = crate::pages::X;
 const RX: i32 = 203;
@@ -629,6 +632,13 @@ pub fn page(d: &Display, a: Area) -> Form {
             .checked(pick.vrr)
             .enabled(head.adaptive_sync != AdaptiveSync::Unsupported),
     );
+    items.push(Item::button(
+        FORGET,
+        Rect::new(a.right() - 125, 242 + dy, 125, 23),
+        "&Forget saved layouts",
+        d.layouts_saved,
+        false,
+    ));
     Form::new(items)
 }
 
@@ -1083,6 +1093,7 @@ mod tests {
         assert_eq!(at(&two, ORIENTATION), Rect::new(20, 299, 173, 21));
         assert_eq!(at(&two, SCALE), Rect::new(203, 299, 175, 21));
         assert_eq!(at(&two, VRR), Rect::new(20, 332, 13, 13));
+        assert_eq!(at(&two, FORGET), Rect::new(253, 352, 125, 23));
         for it in &two.items {
             let r = it.placed(&ControlMetrics::CLASSIC);
             assert!(
@@ -1116,7 +1127,7 @@ mod tests {
         keys.sort();
         assert_eq!(
             keys,
-            vec!['c', 'i', 'o', 'p', 'r', 'v'],
+            vec!['c', 'f', 'i', 'o', 'p', 'r', 'v'],
             "Screen resolution's S is its group's"
         );
     }

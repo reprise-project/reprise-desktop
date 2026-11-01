@@ -261,7 +261,9 @@ fn connector_connected(
             head.node
         );
     } else if into_layout {
-        state.set_in_layout(&output, true);
+        if !state.monitors_changed() {
+            state.set_in_layout(&output, true);
+        }
     } else {
         log::debug!("{}: no modes yet; parked", output.name());
         crate::outputmgmt::publish(state);
@@ -347,6 +349,7 @@ pub(super) fn connector_disconnected(state: &mut State, head: Head) {
         && b.parked.remove(&head).is_some()
     {
         crate::outputmgmt::publish(state);
+        state.monitors_changed();
     }
 }
 

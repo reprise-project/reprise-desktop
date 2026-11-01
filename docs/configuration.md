@@ -43,7 +43,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[debug]` | the debug overlay |
 | `[[keybinds]]` | shortcuts, layered over the defaults; `action = "none"` unbinds a chord |
 | `[[startmenu]]`, `startmenu_style` | the Classic Start menu's rows, and which Start menu you get |
-| `[[outputs]]` | per-monitor mode, scale, rotation and position |
+| `[[outputs]]` | per-monitor mode, scale, rotation and position; a layout saved for the connected set of monitors wins over them ([features.md](features.md#displays)) |
 | `[display]` | `gpu`: which GPU draws and drives the monitors; `all_gpus`: also open the other GPUs. Both read when Reprise starts |
 | `terminal`, `script_open`, `script_terminal`, `confirm_scripts` | the terminal, and how opening a script runs it and whether it asks first |
 
