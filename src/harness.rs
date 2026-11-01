@@ -301,6 +301,40 @@ impl Harness {
     /// An xdg toplevel of `w`x`h` from `c`, configured and mapped with its first buffer. Its
     /// client draws each size a configure asks for.
     pub fn map_toplevel(&mut self, c: &mut TestClient, app_id: &str, w: i32, h: i32) -> Toplevel {
+        self.map_toplevel_after(c, app_id, w, h, |_, _, _| {})
+    }
+
+    /// [`Harness::map_toplevel`] for a dialog owned by `parent` and tagged `tag` before it
+    /// maps, as a program's file dialog is.
+    pub fn map_dialog(
+        &mut self,
+        c: &mut TestClient,
+        app_id: &str,
+        parent: Option<Toplevel>,
+        tag: &str,
+        (w, h): (i32, i32),
+    ) -> Toplevel {
+        self.map_toplevel_after(c, app_id, w, h, |hs, c, t| {
+            if let Some(p) = parent {
+                let owner = c.side.shells[p.shell].toplevel.clone();
+                c.side.shells[t.shell].toplevel.set_parent(Some(&owner));
+                hs.roundtrip(c);
+            }
+            hs.state.set_tag(t.id, tag);
+            hs.roundtrip(c);
+        })
+    }
+
+    /// [`Harness::map_toplevel`] running `setup` between the initial commit and the first
+    /// buffer.
+    fn map_toplevel_after(
+        &mut self,
+        c: &mut TestClient,
+        app_id: &str,
+        w: i32,
+        h: i32,
+        setup: impl FnOnce(&mut Harness, &mut TestClient, Toplevel),
+    ) -> Toplevel {
         let before: Vec<WindowId> = self.state.windows.iter().map(|w| w.id).collect();
         let shell = c.toplevel(app_id);
         self.roundtrip(c);
@@ -308,6 +342,7 @@ impl Harness {
             .map(|w| w.id)
             .find(|id| !before.contains(id))
             .expect("the toplevel's window");
+        setup(self, c, Toplevel { id, shell });
         c.side.shells[shell].size = (w, h);
         let surface = c.side.shells[shell].surface.clone();
         attach(

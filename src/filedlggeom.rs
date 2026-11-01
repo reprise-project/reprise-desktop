@@ -10,7 +10,7 @@ use crate::raster::Rect;
 use reprisekit::classic::frame::{Chrome, FrameGeometry};
 use smithay::output::Output;
 
-use crate::window::WindowId;
+use crate::window::{Window, WindowId};
 
 /// The geometry last stored, read once at start: the compositor is its only writer.
 pub struct Kept {
@@ -130,12 +130,29 @@ impl State {
         Some(o.client)
     }
 
-    /// Where a `file-dialog` toplevel `w` maps, when the kept place is on an output.
-    pub fn file_dialog_position(&self, w: WindowId) -> Option<(i32, i32)> {
+    /// Where a `file-dialog` toplevel `w` with frame size `total` maps: the kept place while it
+    /// is on an output, else centred in the work area of its owner's output, or of `out` for a
+    /// dialog with no owner.
+    pub fn file_dialog_position(
+        &self,
+        w: WindowId,
+        total: (i32, i32),
+        out: Option<&Output>,
+    ) -> Option<(i32, i32)> {
         let win = self.win(w).filter(|x| x.file_dialog)?;
         let pad = self.frame_pad(win.chrome());
-        self.file_dialog_opening(win.size_limits().min, pad, None)?
-            .at
+        let kept = self.file_dialog_opening(win.size_limits().min, pad, None);
+        if let Some(at) = kept.and_then(|o| o.at) {
+            return Some(at);
+        }
+        let owner = (self.parent_window(w).and_then(|p| self.win(p)))
+            .filter(|p| p.mapped)
+            .map(Window::frame_rect)
+            .and_then(|r| {
+                self.output_at(f64::from(r.x + r.width / 2), f64::from(r.y + r.height / 2))
+            });
+        let area = self.usable_area(owner.as_ref().or(out));
+        Some(crate::window::centre_on(area, total, area))
     }
 
     /// Keeps where `file-dialog` toplevel `w` is and its normal client size for the next one.
@@ -221,6 +238,44 @@ mod tests {
 
     fn at(x: i32, y: i32) -> Geometry {
         Geometry { x, y, ..G }
+    }
+
+    use crate::harness::Harness;
+    use crate::window::FILE_DIALOG_TAG;
+
+    #[test]
+    fn a_dialog_with_nothing_kept_opens_centred_on_its_owners_output() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let two = h.output("TEST-2", 1280, 1024);
+        let mut c = h.connect();
+        let main = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let b = h.state.layout_box(Some(&two));
+        h.state.move_to(main.id, b.x + 20, b.y + 20);
+        let d = h.map_dialog(&mut c, "test.app", Some(main), FILE_DIALOG_TAG, (600, 400));
+        let area = h.state.usable_area(Some(&two));
+        let f = h.state.win(d.id).unwrap().frame_rect();
+        assert_eq!(
+            (f.x + f.width / 2, f.y + f.height / 2),
+            (area.x + area.width / 2, area.y + area.height / 2),
+            "centred on the second output, where its owner is"
+        );
+    }
+
+    #[test]
+    fn a_dialog_its_client_closes_keeps_where_it_was_left() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let main = h.map_toplevel(&mut c, "test.app", 300, 200);
+        let d = h.map_dialog(&mut c, "test.app", Some(main), FILE_DIALOG_TAG, (600, 400));
+        h.state.move_to(d.id, 40, 60);
+        c.destroy(d);
+        h.roundtrip(&mut c);
+        assert!(h.state.win(d.id).is_none(), "the dialog went");
+        let again = h.map_dialog(&mut c, "test.app", Some(main), FILE_DIALOG_TAG, (600, 400));
+        let f = h.state.win(again.id).unwrap().frame_rect();
+        assert_eq!((f.x, f.y), (40, 60), "the next one opens there");
     }
 
     #[test]
