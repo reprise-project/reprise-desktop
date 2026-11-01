@@ -259,6 +259,8 @@ pub struct State {
     /// frame or their window's next commit.
     pub captures: Captures,
     pub desktops: crate::desktops::Desktops,
+    /// The part of a wheel notch or touchpad travel over the pager or the desktop not yet a desktop step.
+    pub desktop_wheel: (i32, f64),
     pub workspaces: crate::workspaces::Workspaces,
     /// reprise_tabs_v1, advertised while `[windows] tabs` is on.
     pub tabs_global: Option<smithay::reexports::wayland_server::backend::GlobalId>,
@@ -634,6 +636,7 @@ impl State {
             pointers: crate::pointers::Pointers::new(&dh),
             captures: Captures::default(),
             desktops: crate::desktops::Desktops::new(config.workspaces),
+            desktop_wheel: (0, 0.0),
             tabs_global,
             workspaces: crate::workspaces::Workspaces::new(
                 &dh,

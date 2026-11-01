@@ -104,13 +104,14 @@ pub(super) const DRAG_SNAP_CONTROLS: [&str; 4] = [
 
 /// The virtual desktop controls that grey with one desktop; the duration's also grey without an
 /// animation, and the preview rate's while nothing shows a live picture.
-pub(super) const DESKTOP_CONTROLS: [&str; 6] = [
+pub(super) const DESKTOP_CONTROLS: [&str; 7] = [
     "desktops_label",
     "desktops",
     "animation_label",
     "desktop_animation",
     "pager_mark_label",
     "pager_mark",
+    "wheel_on_desktop",
 ];
 
 pub(super) const DURATION_CONTROLS: [&str; 3] =
@@ -119,7 +120,7 @@ pub(super) const DURATION_CONTROLS: [&str; 3] =
 pub(super) const FPS_CONTROLS: [&str; 3] = ["fps_label", "previews_fps", "fps_units"];
 
 pub fn desktops(a: Area) -> Form {
-    let mut items = vec![group(a, "desktops_group", 44, 168, "Virtual Desktops")];
+    let mut items = vec![group(a, "desktops_group", 44, 194, "Virtual Desktops")];
     items.push(Item::check("use_desktops", GX, 64, "&Use virtual desktops"));
     // Indented under the check box they depend on: `ix` is the box's x, and each item starts at its label's column.
     let ix = GX;
@@ -165,20 +166,26 @@ pub fn desktops(a: Area) -> Form {
         "Current desktop on the &Glass taskbar:",
     ));
     indented.push(choice("pager_mark", ix, 184, 134, PAGER_MARKS));
+    indented.push(Item::check(
+        "wheel_on_desktop",
+        ix,
+        214,
+        "Switch desktops with the wheel over the des&ktop",
+    ));
     items.extend(indented.into_iter().map(Item::under_check));
 
-    items.push(group(a, "previews_group", 222, 76, "Window Pictures"));
+    items.push(group(a, "previews_group", 248, 76, "Window Pictures"));
     items.push(Item::check(
         "preview_taskbar",
         GX,
-        246,
+        272,
         "Show live &window pictures over taskbar buttons",
     ));
     items.extend(spin(
         "fps_label",
         "previews_fps",
         GX,
-        272,
+        298,
         110,
         "Re&fresh rate:",
         (1, PREVIEW_FPS_MAX as i32),
@@ -186,7 +193,7 @@ pub fn desktops(a: Area) -> Form {
     items.push(Item::label_at(
         "fps_units",
         GX + 170,
-        272,
+        298,
         100,
         "times a second",
     ));

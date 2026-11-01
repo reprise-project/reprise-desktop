@@ -169,6 +169,43 @@ fn every_dialog_fits_its_text_under_every_interface() {
     assert!(over.is_empty(), "{}", over.join("\n"));
 }
 
+/// A hash of `row` of `form` drawn in each of Classic, Blue and Glass; None without the test fonts.
+fn row_pins(form: &form::Form, row: Rect) -> Option<[u64; 3]> {
+    if !reprisekit::text::test_tahoma() {
+        return None;
+    }
+    use reprisekit::interface::Interface;
+    let mut got = [0; 3];
+    for (k, i) in [Interface::Classic, Interface::Blue, Interface::Glass]
+        .into_iter()
+        .enumerate()
+    {
+        let theme = Theme {
+            access_keys: true,
+            ..reprisekit::interfaces::theme_for(i)
+        };
+        let text = TextRenderer::load(&theme.fonts);
+        let mut c = Canvas::new(row.right() as u32, row.bottom() as u32);
+        c.fill_rect(c.bounds(), theme.colors.button_face);
+        form::draw(
+            &mut c,
+            &text,
+            &theme.paint(),
+            form,
+            false,
+            theme.fonts.size_px,
+        );
+        got[k] = c
+            .copy_rect(row)
+            .pixels
+            .iter()
+            .fold(0xcbf29ce484222325, |h, p| {
+                (h ^ *p as u64).wrapping_mul(0x100000001b3)
+            });
+    }
+    Some(got)
+}
+
 fn under(interface: &str) -> PropSheet {
     with(&Settings {
         interface: interface.into(),

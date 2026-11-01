@@ -887,6 +887,9 @@ impl Config {
                     )
                 })?;
             }
+            if let Some(on) = w.wheel_on_desktop {
+                cfg.wheel_on_desktop = on;
+            }
             if let Some(ms) = w.animation_ms {
                 cfg.workspace_animation.ms = u32::try_from(ms)
                     .ok()

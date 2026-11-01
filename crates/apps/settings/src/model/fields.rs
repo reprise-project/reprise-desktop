@@ -127,6 +127,7 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Text(k("workspaces", "animation"), lens!(desktop_animation)),
         Field::Int(k("workspaces", "animation_ms"), lens!(desktop_animation_ms)),
         Field::Text(k("workspaces", "pager"), lens!(pager_mark)),
+        Field::Flag(k("workspaces", "wheel_on_desktop"), lens!(wheel_on_desktop)),
         Field::Flag(k("windows", "remember"), lens!(remember_windows)),
         Field::Flag(k("windows", "tabs"), lens!(window_tabs)),
         Field::Flag(k("windows", "shake"), lens!(window_shake)),
