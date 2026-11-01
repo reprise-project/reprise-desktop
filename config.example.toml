@@ -377,11 +377,14 @@ suspend_after = 0            # run [power] standby
 # [recycle_bin.drives.home]  # the drive the home folder's Recycle Bin is on; another
 # max_percent = 5            # drive by its file system UUID, else its mount point
 
-# [thumbnail_cache]          # pictures' thumbnails in Explorer and every file dialog, kept in
+# [thumbnail_cache]          # thumbnails in Explorer and every file dialog, kept in
 #                            # ~/.cache/thumbnails and shared with other file managers
 # enabled = true             # false decodes each picture every time it is shown and keeps nothing
 # max_mb = 512               # 1 to 4096: the cap; past it the least recently used thumbnails go,
 #                            # whichever program wrote them. Read as a window or dialog opens
+# external_thumbnailers = true
+#                            # PDFs, videos, fonts and other types get thumbnails from the
+#                            # installed freedesktop thumbnailers; false: pictures only
 
 # [launcher]                 # the Super+Space launcher
 # search_files = true        # false finds programs only; true also lists files and folders

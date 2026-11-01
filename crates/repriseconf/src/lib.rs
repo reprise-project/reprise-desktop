@@ -272,12 +272,16 @@ pub struct ThumbnailCache {
     pub enabled: bool,
     /// The cap in MiB; past it the least recently used thumbnails go, whichever program wrote them.
     pub max_mb: u32,
+    /// `external_thumbnailers`: files Reprise cannot decode (PDFs, videos, fonts) get thumbnails
+    /// from the installed freedesktop thumbnailers.
+    pub external_thumbnailers: bool,
 }
 
 impl ThumbnailCache {
     pub const DEFAULT: ThumbnailCache = ThumbnailCache {
         enabled: true,
         max_mb: 512,
+        external_thumbnailers: true,
     };
     /// A thumbnail is at most 64 KiB of pixels at scale 1, 256 KiB at scale 2 and 1 MiB
     /// at its largest.
@@ -310,6 +314,9 @@ fn thumbnail_cache_in(text: &str) -> ThumbnailCache {
             .map_or(d.max_mb, |v| {
                 v.clamp(i64::from(*mb.start()), i64::from(*mb.end())) as u32
             }),
+        external_thumbnailers: get(&doc, &key("thumbnail_cache", "external_thumbnailers"))
+            .and_then(Item::as_bool)
+            .unwrap_or(d.external_thumbnailers),
     }
 }
 
@@ -842,8 +849,12 @@ mod tests {
             thumbnail_cache_in("[thumbnail_cache]\nenabled = false\n"),
             ThumbnailCache {
                 enabled: false,
-                max_mb: 512
+                ..ThumbnailCache::DEFAULT
             }
+        );
+        assert!(
+            !thumbnail_cache_in("[thumbnail_cache]\nexternal_thumbnailers = false\n")
+                .external_thumbnailers
         );
         let cap =
             |v: &str| thumbnail_cache_in(&format!("[thumbnail_cache]\nmax_mb = {v}\n")).max_mb;

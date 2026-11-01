@@ -71,6 +71,15 @@ impl Item {
                 .as_deref()
                 .is_some_and(|m| m.starts_with("image/"))
     }
+
+    /// A file Thumbnails and Tiles show a thumbnail of: a picture, or a type an installed
+    /// thumbnailer takes ([`crate::thumbnailers`]).
+    pub fn thumbnailable(&self) -> bool {
+        self.is_image()
+            || !self.is_dir
+                && (self.mime.as_deref())
+                    .is_some_and(|m| crate::thumbnailers::installed().for_mime(m).is_some())
+    }
 }
 
 /// Everything in `dir`, folders ([`Item::is_folder`]) first then

@@ -142,7 +142,10 @@ pub fn exec_quote(arg: &str) -> String {
 /// [`exec_argv`]'s splitting, with field code `%c` replaced by `field('c')`: one value goes
 /// inside its argument, several stand as arguments of their own (`%i`), and none drops it, an
 /// argument that was only the code going with it.
-fn split_exec(exec: &str, mut field: impl FnMut(char) -> Vec<OsString>) -> Vec<OsString> {
+pub(crate) fn split_exec(
+    exec: &str,
+    mut field: impl FnMut(char) -> Vec<OsString>,
+) -> Vec<OsString> {
     let mut argv = Vec::new();
     let mut arg = OsString::new();
     let mut have = false;
@@ -270,12 +273,18 @@ pub fn parse_desktop_any(text: &str, id: &str) -> Option<AppEntry> {
 }
 
 pub fn desktop_entry_kv(text: &str) -> HashMap<&str, Cow<'_, str>> {
+    group_kv(text, "[Desktop Entry]")
+}
+
+/// The keys of `text`'s `group` (its header line, brackets included), values unescaped; the first
+/// of a repeated key wins.
+pub(crate) fn group_kv<'a>(text: &'a str, group: &str) -> HashMap<&'a str, Cow<'a, str>> {
     let mut in_entry = false;
     let mut kv: HashMap<&str, Cow<'_, str>> = HashMap::new();
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with('[') {
-            in_entry = line == "[Desktop Entry]";
+            in_entry = line == group;
             continue;
         }
         if !in_entry || line.is_empty() || line.starts_with('#') {

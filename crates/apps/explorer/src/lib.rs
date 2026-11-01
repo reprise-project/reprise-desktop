@@ -428,7 +428,7 @@ impl Explorer {
         ctx: &mut Ctx,
     ) -> Explorer {
         let (jobs_tx, jobs_rx) = std::sync::mpsc::channel();
-        let thumb_cache = thumbs::configured_cache();
+        let thumb_setting = repriseconf::thumbnail_cache();
         let mut sv = ShellView {
             mode: commands::mode_from_name(&settings.mode),
             sort: Some(settings.sort),
@@ -547,7 +547,8 @@ impl Explorer {
             closing: false,
             thumbs: Thumbs::new(
                 Arc::new(Decoders::default_set()),
-                thumb_cache,
+                thumbs::cache_for(thumb_setting),
+                thumb_setting.external_thumbnailers,
                 ctx.wake.clone(),
             ),
             generation: 0,
