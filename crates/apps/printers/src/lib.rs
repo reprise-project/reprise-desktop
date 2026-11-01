@@ -678,7 +678,7 @@ impl PrintersApp {
                 let start = std::env::var_os("HOME")
                     .map(std::path::PathBuf::from)
                     .unwrap_or_else(|| "/".into());
-                let dlg = host.open(
+                let dlg = host.open_last(
                     Path::new(&start),
                     FileFields {
                         title: "Have Disk".into(),

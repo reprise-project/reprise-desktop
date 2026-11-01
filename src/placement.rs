@@ -31,10 +31,10 @@ impl Wm {
         let file_dialog = if session {
             crate::filedlggeom::Kept::load()
         } else {
-            crate::filedlggeom::Kept {
-                path: crate::state::path().with_file_name("filedialog.toml"),
-                geometry: None,
-            }
+            crate::filedlggeom::Kept::parse(
+                crate::state::path().with_file_name("filedialog.toml"),
+                "",
+            )
         };
         Wm {
             remembered: p.window_geometry.clone(),
@@ -58,7 +58,7 @@ pub(crate) struct Subject {
 impl Window {
     /// Whether the window rules and the app's remembered frame place this
     /// window: a top-level window of an app that names itself. Dialogs
-    /// keep their own placement (file dialogs the shared one, `filedlggeom`),
+    /// keep their own placement (file dialogs their app's, `filedlggeom`),
     /// X11 menus and tooltips their own place.
     pub fn placeable(&self) -> bool {
         !self.override_redirect

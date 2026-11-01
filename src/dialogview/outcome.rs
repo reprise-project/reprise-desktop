@@ -123,6 +123,9 @@ impl State {
                 if !self.close_to_parent() {
                     return;
                 }
+                if let Some(dir) = path.parent() {
+                    self.wm.file_dialog.keep_folder(dir);
+                }
                 // The field holds text, so a non-UTF-8 name cannot go into it.
                 let Some(picked) = path.to_str() else {
                     self.open_dialog_over(Dialog::not_utf8_program("Run", &path));

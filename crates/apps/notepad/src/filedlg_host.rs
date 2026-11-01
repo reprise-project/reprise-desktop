@@ -43,45 +43,42 @@ pub(crate) fn default_dir() -> PathBuf {
 }
 
 impl Notepad {
-    /// Where a fresh dialog starts: the current document's folder, or `default_dir()` for an Untitled one.
-    pub(crate) fn start_dir(&self) -> PathBuf {
+    /// Where a fresh dialog starts: the current document's folder; None for an Untitled one,
+    /// which opens where Notepad's last dialog was confirmed, else in `default_dir()`.
+    pub(crate) fn start_dir(&self) -> Option<PathBuf> {
         self.path
             .as_ref()
             .and_then(|p| p.parent())
             .map(Path::to_path_buf)
-            .unwrap_or_else(default_dir)
+    }
+
+    fn open_at_start(&mut self, fields: Fields) -> FileDlg {
+        match self.start_dir() {
+            Some(dir) => self.host.open(&dir, fields, self.forms.text),
+            None => self.host.open_last(&default_dir(), fields, self.forms.text),
+        }
     }
 
     /// Declares the Open dialog open, on `start_dir()`. The listing waits for the first event, which has the icon cache.
     pub(crate) fn open_dialog(&mut self) {
-        let dir = self.start_dir();
-        let dlg = self.host.open(
-            &dir,
-            Fields {
-                title: tr!("title-open"),
-                accept_label: tr!("open-button"),
-                mode: DlgMode::Open,
-                multiple: false,
-                filters: vec![tr!("filter-text"), tr!("filter-all")],
-            },
-            self.forms.text,
-        );
+        let dlg = self.open_at_start(Fields {
+            title: tr!("title-open"),
+            accept_label: tr!("open-button"),
+            mode: DlgMode::Open,
+            multiple: false,
+            filters: vec![tr!("filter-text"), tr!("filter-all")],
+        });
         self.open = Some(dlg);
     }
 
     pub(crate) fn saveas_dialog(&mut self) {
-        let dir = self.start_dir();
-        let mut dlg = self.host.open(
-            &dir,
-            Fields {
-                title: tr!("title-save-as"),
-                accept_label: tr!("save-button"),
-                mode: DlgMode::Save,
-                multiple: false,
-                filters: vec![tr!("filter-text"), tr!("filter-all")],
-            },
-            self.forms.text,
-        );
+        let mut dlg = self.open_at_start(Fields {
+            title: tr!("title-save-as"),
+            accept_label: tr!("save-button"),
+            mode: DlgMode::Save,
+            multiple: false,
+            filters: vec![tr!("filter-text"), tr!("filter-all")],
+        });
         dlg.set_extra(
             encoding_row(self.format),
             ENCODING_ROW_H,

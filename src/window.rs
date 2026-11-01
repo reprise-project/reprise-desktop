@@ -200,7 +200,7 @@ pub struct Window {
     /// Frame hidden by the `toggleframe` bind; the client fills the old outer rect.
     pub frameless: bool,
     pub dialog_tag: DialogTag,
-    /// Tagged `file-dialog`: opens at and keeps the shared file dialog geometry (`filedlggeom`).
+    /// Tagged `file-dialog`: opens at and keeps its app's file dialog geometry (`filedlggeom`).
     pub file_dialog: bool,
     pub modal: bool,
     pub on_top: bool,
