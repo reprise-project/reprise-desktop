@@ -199,7 +199,6 @@ enum Work {
         old: String,
         typed: String,
     },
-    Trash(Vec<PathBuf>),
 }
 
 /// What an [`Op`] did, for [`FilePicker::op_done`].
@@ -207,8 +206,12 @@ enum Work {
 pub enum OpDone {
     /// A folder made, or an entry renamed: its name, and whether it opens in the rename box.
     Named(String, bool),
-    /// A rename refused: the entry and the name typed.
-    Refused(String, String),
+    /// A rename refused: the entry, the name typed and why, worded for the user.
+    Refused {
+        old: String,
+        typed: String,
+        why: String,
+    },
     Nothing,
 }
 
@@ -227,17 +230,8 @@ impl Op {
             Work::Rename { from, old, typed } => {
                 match dialogops::rename(&from, &old, &typed, &self.taken) {
                     Ok(name) => OpDone::Named(name, false),
-                    Err(why) => {
-                        log::warn!("browse: {why}");
-                        OpDone::Refused(old, typed)
-                    }
+                    Err(why) => OpDone::Refused { old, typed, why },
                 }
-            }
-            Work::Trash(paths) => {
-                for (path, why) in dialogops::trash(&paths) {
-                    log::warn!("browse: left {}: {why}", path.display());
-                }
-                OpDone::Nothing
             }
         }
     }
@@ -713,7 +707,7 @@ impl FilePicker {
     pub fn op_done(&mut self, done: OpDone) -> bool {
         match done {
             OpDone::Named(name, rename) => self.dlg.expect(&name, rename),
-            OpDone::Refused(old, typed) => {
+            OpDone::Refused { old, typed, .. } => {
                 self.dlg.resume_rename(&old, &typed);
             }
             OpDone::Nothing => {}
@@ -1049,10 +1043,18 @@ impl FilePicker {
                 }
                 Outcome::Redraw
             }
-            Event::Delete(names) => {
+            Event::Delete { names, erase } => {
                 let paths: Vec<PathBuf> = names.iter().filter_map(|n| self.typed_path(n)).collect();
-                self.queue(Work::Trash(paths));
-                Outcome::Redraw
+                match self
+                    .current()
+                    .is_some_and(|d| !reprisefs::places::is_recent(d))
+                {
+                    true => Outcome::AskDelete {
+                        paths,
+                        shift: erase,
+                    },
+                    false => Outcome::Nothing,
+                }
             }
             Event::Resize => Outcome::Size(Edges::BOTTOM | Edges::RIGHT),
             Event::FilterChanged(_) => Outcome::Redraw,
@@ -1610,6 +1612,28 @@ mod tests {
         assert!(dir.join("Art").is_dir(), "Enter renames it");
         let picked: Vec<&str> = p.dlg.selected().iter().map(|e| e.name.as_str()).collect();
         assert_eq!(picked, ["Art"]);
+        for shift in [false, true] {
+            assert_eq!(
+                p.shortcut(R, keysym::DELETE, false, shift, false),
+                Some(Outcome::AskDelete {
+                    paths: vec![dir.join("Art")],
+                    shift,
+                }),
+                "Delete asks as the desktop does"
+            );
+        }
+
+        assert_eq!(
+            p.shortcut(R, keysym::F2, false, false, false),
+            Some(Outcome::Redraw)
+        );
+        p.key(R, Key::Edit(EditKey::Insert("/".into())));
+        p.key(R, Key::Enter);
+        let done: Vec<OpDone> = p.take_ops().into_iter().map(Op::run).collect();
+        assert!(
+            matches!(&done[..], [OpDone::Refused { why, .. }] if why.starts_with("A file name cannot")),
+            "{done:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

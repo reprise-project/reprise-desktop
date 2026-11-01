@@ -53,6 +53,10 @@ impl State {
                 self.close_dialog();
                 self.delete_paths(paths, erase);
             }
+            Outcome::AskDelete { paths, shift } => {
+                let over = self.dialogs.views.last().map(|v| v.id);
+                self.ask_delete_over(paths, None, shift, over);
+            }
             Outcome::EmptyBin => {
                 self.close_dialog();
                 self.empty_bin();

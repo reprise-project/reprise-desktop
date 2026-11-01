@@ -496,6 +496,12 @@ pub enum Outcome {
         erase: bool,
     },
     EmptyBin,
+    /// Delete (Shift+Delete with `shift`) in Browse's list: asked over the dialog as the desktop
+    /// asks ([`crate::compositor::State::ask_delete`]).
+    AskDelete {
+        paths: Vec<std::path::PathBuf>,
+        shift: bool,
+    },
     Notice(Box<Dialog>),
     /// [`DialogAction::Script`].
     Script {

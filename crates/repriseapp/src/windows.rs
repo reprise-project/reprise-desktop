@@ -211,7 +211,7 @@ impl Host {
                 (self.app.min_size(MAIN).map_or(MIN_SIZE, sane_size), None)
             }
         } else {
-            let c = self.app.children().into_iter().find(|c| c.id == id)?;
+            let c = self.children().into_iter().find(|c| c.id == id)?;
             let size = sane_size(c.size);
             match c.fixed {
                 true => (size, Some(size)),
@@ -227,7 +227,7 @@ impl Host {
         if id == MAIN {
             return Some(opening_size(&*self.app).0);
         }
-        let c = self.app.children().into_iter().find(|c| c.id == id)?;
+        let c = self.children().into_iter().find(|c| c.id == id)?;
         Some(sane_size(c.size))
     }
 
@@ -285,7 +285,6 @@ impl Host {
         // `MAIN` is the host's: a `Child` claiming that id is dropped
         // here, so it can never retitle the main window or make it modal.
         let want: Vec<Child> = self
-            .app
             .children()
             .into_iter()
             .filter(|c| c.id != MAIN)
@@ -320,7 +319,7 @@ impl Host {
             if self.slots.iter().any(|s| s.id == c.id) {
                 continue;
             }
-            let wanted = self.app.parent(c.id);
+            let wanted = self.parent_of(c.id);
             let parent_slot = wanted.and_then(|p| self.slots.iter().find(|s| s.id == p));
             let parent = match placement(wanted, parent_slot.map(|s| s.mapped)) {
                 // xdg-shell drops a parent that is not mapped yet; `draw` calls back here once
@@ -351,7 +350,7 @@ impl Host {
             if wanted.is_none() {
                 self.join_tabs(&window, c.id);
             }
-            let caption = self.app.caption(c.id);
+            let caption = self.caption_of(c.id);
             self.send_tag(&window, c.id, caption);
             window.commit();
             let mut slot = self.new_slot(
@@ -369,7 +368,7 @@ impl Host {
         let mut resized = Vec::new();
         for c in &want {
             self.reparent(c.id);
-            let caption = self.app.caption(c.id);
+            let caption = self.caption_of(c.id);
             let tag = match self
                 .slots
                 .iter()
@@ -406,7 +405,7 @@ impl Host {
     /// Move child `id` over the window [`Extended::parent`](crate::Extended::parent) names now, once that one
     /// is mapped.
     fn reparent(&mut self, id: WinId) {
-        let want = self.app.parent(id);
+        let want = self.parent_of(id);
         let Some(s) = self.slots.iter().find(|s| s.id == id) else {
             return;
         };

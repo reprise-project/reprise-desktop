@@ -170,6 +170,9 @@ impl Host {
         };
         let (size, modal) = (s.size, s.modal);
         self.ctx.aim(s);
+        let box_owner = (self.file_box.as_ref())
+            .filter(|_| id == crate::filebox::FILE_BOX)
+            .map(|(o, _)| *o);
         let (app, ctx) = (&mut self.app, &self.ctx);
         let menu = self.edit_menu.menu(id);
         let acc = &mut self.slots[i].access;
@@ -182,7 +185,10 @@ impl Host {
                 root.set_role(accesskit::Role::Dialog);
                 root.set_modal();
             }
-            app.access(id, &mut tree, ctx);
+            match box_owner {
+                Some(owner) => Host::access_file_box(&mut **app, owner, &mut tree, ctx),
+                None => app.access(id, &mut tree, ctx),
+            }
             if let Some(menu) = menu {
                 let node = menu.access(&mut tree, reprisekit::access::ROOT);
                 tree.set_focus(node);

@@ -1,5 +1,5 @@
 //! What an Open or Save As dialog does to the folder it shows besides listing it: New Folder,
-//! a rename and Delete. Each blocks for as long as the file system does, so a host runs it off
+//! a rename, Delete and Shift+Delete. Each blocks for as long as the file system does, so a host runs it off
 //! its loop.
 
 use crate::{bincap, hidden, names, trash};
@@ -37,33 +37,44 @@ pub fn rename(from: &Path, old: &str, typed: &str, taken: &[String]) -> Result<S
     }
 }
 
-/// Moves each of `paths` to its Recycle Bin. One without a bin, too big for its bin or on a bin
-/// set to remove at once is left where it is: the dialog has no box to ask before erasing it.
-/// Returns those left, with why.
-pub fn trash(paths: &[PathBuf]) -> Vec<(PathBuf, String)> {
-    let Some(bins) = trash::Bins::system() else {
-        let why = "there is no Recycle Bin".to_string();
-        return paths.iter().map(|p| (p.clone(), why.clone())).collect();
-    };
-    let mut left = Vec::new();
-    for path in paths {
-        if bins.fate(path) != bincap::Fate::Recycle {
-            left.push((path.clone(), "it would be deleted for good".to_string()));
-            continue;
-        }
-        let measured = bins.measure(path);
-        if measured.as_ref().is_some_and(bincap::Measured::too_big) {
-            left.push((
-                path.clone(),
-                "it is too big for the Recycle Bin".to_string(),
-            ));
-            continue;
-        }
-        if let Err(e) = bins.trash_measured(path, measured) {
-            left.push((path.clone(), e.to_string()));
+/// How Delete (or Shift+Delete, `shift`) treats `paths` ([`bincap::delete_mode`]): it stats
+/// each item and its mount, so a host runs it off its loop.
+pub fn delete_mode(paths: &[PathBuf], shift: bool) -> bincap::DeleteMode {
+    mode_in(trash::Bins::system().as_ref(), paths, shift)
+}
+
+fn mode_in(bins: Option<&trash::Bins>, paths: &[PathBuf], shift: bool) -> bincap::DeleteMode {
+    let fates: Vec<bincap::Fate> = (paths.iter())
+        .map(|p| bins.map_or(bincap::Fate::NoBin, |b| b.fate(p)))
+        .collect();
+    let confirm = bins.map_or(bincap::Policy::default().confirm, |b| b.policy.confirm);
+    bincap::delete_mode(confirm, &fates, shift)
+}
+
+/// Delete to the Recycle Bin on `paths`: each measured against its bin's cap, which walks a
+/// folder, so a host runs it off its loop. The asker holds the items too big for their bin.
+pub fn measure(paths: Vec<PathBuf>) -> bincap::TooBig {
+    let bins = trash::Bins::system();
+    let measured = (paths.iter())
+        .map(|p| bins.as_ref().and_then(|b| b.measure(p)))
+        .collect();
+    bincap::TooBig::new(paths, measured)
+}
+
+/// Deletes each item as `plan` says, to its Recycle Bin or for good, stopping at the first
+/// failure, which it returns.
+pub fn delete(plan: Vec<(PathBuf, bincap::Plan)>) -> Result<(), (PathBuf, io::Error)> {
+    for (path, how) in plan {
+        if let Err(e) = crate::ops::delete(&path, how) {
+            return Err((path, e));
         }
     }
-    left
+    Ok(())
+}
+
+/// The error box's text for `path`, which a delete could not take.
+pub fn delete_failed_text(path: &Path, e: &io::Error) -> String {
+    format!("Cannot delete {}: {e}", bincap::label(path))
 }
 
 #[cfg(test)]
@@ -90,5 +101,57 @@ mod tests {
         assert!(rename(&from, "a.txt", "/x", &[]).is_err());
         assert_eq!(rename(&from, "a.txt", " c.txt ", &[]), Ok("c.txt".into()));
         assert!(t.path().join("c.txt").is_file());
+    }
+
+    #[test]
+    fn shift_delete_erases_after_asking_and_delete_erases_what_has_no_bin() {
+        let t = tempfile::tempdir().unwrap();
+        let home = t.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let home = home.canonicalize().unwrap();
+        std::fs::write(home.join("a.txt"), "").unwrap();
+        let bins = trash::Bins::new(home.join(".trash"), vec![home.clone()]);
+        let item = vec![home.join("a.txt")];
+        let shift = mode_in(Some(&bins), &item, true);
+        assert!(shift.erase && shift.ask, "{shift:?}");
+        let plain = mode_in(Some(&bins), &item, false);
+        assert!(!plain.erase, "{plain:?}");
+        let none = mode_in(None, &item, false);
+        assert!(none.erase && none.ask, "{none:?}");
+        assert_eq!(none.no_bin, bincap::BinLack::All);
+    }
+
+    #[test]
+    fn an_erase_removes_a_folder_with_its_contents_and_only_a_link_itself() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("Reports");
+        std::fs::create_dir_all(dir.join("2026")).unwrap();
+        std::fs::write(dir.join("2026/q1.txt"), "q1").unwrap();
+        let kept = t.path().join("kept");
+        std::fs::create_dir(&kept).unwrap();
+        std::fs::write(kept.join("b.txt"), "b").unwrap();
+        let link = t.path().join("link");
+        std::os::unix::fs::symlink(&kept, &link).unwrap();
+        let erase = |p: &Path| (p.to_path_buf(), bincap::Plan::Erase);
+        assert!(delete(vec![erase(&dir), erase(&link)]).is_ok());
+        assert!(!dir.exists());
+        assert!(std::fs::symlink_metadata(&link).is_err());
+        assert!(kept.join("b.txt").is_file(), "the link's folder stays");
+    }
+
+    #[test]
+    fn a_failed_erase_stops_the_rest_and_says_which_item() {
+        let t = tempfile::tempdir().unwrap();
+        let gone = t.path().join("gone.txt");
+        let after = t.path().join("after.txt");
+        std::fs::write(&after, "").unwrap();
+        let plan = vec![
+            (gone.clone(), bincap::Plan::Erase),
+            (after.clone(), bincap::Plan::Erase),
+        ];
+        let (path, e) = delete(plan).unwrap_err();
+        assert_eq!(path, gone);
+        assert!(after.is_file(), "the item after the failure stays");
+        assert!(delete_failed_text(&path, &e).starts_with("Cannot delete gone.txt: "));
     }
 }

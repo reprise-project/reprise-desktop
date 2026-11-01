@@ -219,12 +219,12 @@ impl FileDlg {
 
     /// A press while the menu is open: a row picks, its border does nothing, anywhere else closes
     /// the menu and goes no further.
-    pub(super) fn context_click(&mut self, hit: Option<Hit>) -> Event {
+    pub(super) fn context_click(&mut self, hit: Option<Hit>, shift: bool) -> Event {
         match hit {
             Some(Hit::Menu {
                 level,
                 row: Some(row),
-            }) => self.context_pick(level, row),
+            }) => self.context_pick(level, row, shift),
             Some(Hit::Menu { row: None, .. }) => Event::None,
             _ => {
                 self.context = None;
@@ -287,7 +287,7 @@ impl FileDlg {
                 set(self, &|c| c.hot[depth] = hot)
             }
             form::Key::Right if depth == 0 => match c.hot[0] {
-                Some(r) if opens_sub(items, r) => self.context_pick(0, r),
+                Some(r) if opens_sub(items, r) => self.context_pick(0, r, false),
                 _ => Event::None,
             },
             form::Key::Left | form::Key::Escape if depth == 1 => set(self, &|c| {
@@ -300,11 +300,11 @@ impl FileDlg {
                 Event::Redraw
             }
             form::Key::Enter | form::Key::Space => match enter_row(items, c.hot[depth]) {
-                Some(r) => self.context_pick(depth, r),
+                Some(r) => self.context_pick(depth, r, false),
                 None => Event::None,
             },
             form::Key::Char(ch) | form::Key::Access(ch) => match rows_for_key(items, ch).next() {
-                Some(r) => self.context_pick(depth, r),
+                Some(r) => self.context_pick(depth, r, false),
                 None => Event::None,
             },
             _ => Event::None,
@@ -313,7 +313,8 @@ impl FileDlg {
 
     /// Row `row` of level `level` picked: a submenu's row opens it, lighting its first row, a
     /// greyed row or a separator does nothing, and any other closes the menu and does its work.
-    fn context_pick(&mut self, level: usize, row: usize) -> Event {
+    /// Delete clicked with Shift held deletes for good.
+    fn context_pick(&mut self, level: usize, row: usize, shift: bool) -> Event {
         let Some(c) = self.context.clone() else {
             return Event::None;
         };
@@ -326,7 +327,7 @@ impl FileDlg {
         }
         if let Some(cmd) = cmds.get(row).copied().flatten() {
             self.context = None;
-            return self.run_cmd(cmd);
+            return self.run_cmd(cmd, shift);
         }
         if level != 0 || !opens_sub(items, row) {
             return Event::None;
@@ -343,13 +344,13 @@ impl FileDlg {
         Event::Redraw
     }
 
-    fn run_cmd(&mut self, cmd: Cmd) -> Event {
+    fn run_cmd(&mut self, cmd: Cmd, shift: bool) -> Event {
         match cmd {
             Cmd::Select => {
                 self.focus = Focus::Shell;
                 self.activate(false)
             }
-            Cmd::Delete => self.delete_selected(),
+            Cmd::Delete => self.delete_selected(shift),
             Cmd::Rename => self.begin_rename(),
             Cmd::Refresh => Event::Refresh,
             Cmd::NewFolder => Event::CreateFolder(tr!("filedlg-new-folder")),
