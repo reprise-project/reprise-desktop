@@ -17,10 +17,15 @@ use reprisekit::textedit::keysym;
 
 use crate::listicons::{ListIcons, ReadIcons};
 use crate::listjob::Job;
+use crate::oneshot::{MsgBox, Outcome};
 use crate::thumbs::{self, Thumbs};
+use reprisefs::bincap::{self, ConfirmKind, Plan, TooBig, TooBigStep};
+use reprisefs::dialogops;
 use reprisefs::folders::FolderTable;
 use reprisekit::art::viewsicon;
+use reprisekit::controls::dlgtemplate::{FOLDER_TEXT_H, Template};
 use reprisekit::controls::filedlg::{Crumb, Fields, FileDlg, Folder, FolderId, Hit, Remembered};
+use reprisekit::controls::msgbox;
 use reprisekit::controls::placesbar::{self, Place};
 use reprisekit::controls::shellview::{self, Entry, Mode};
 use reprisekit::icontheme::{self, IconCache, IconTheme, ListingIcons};
@@ -363,6 +368,41 @@ pub fn remember_views() {
     VIEW_FILE.get_or_init(repriseconf::filedialog::path);
 }
 
+/// A step of Delete done off the loop, for [`Host::deleted`].
+enum Deleting {
+    /// How the items go and whether that is asked first; `is_dir` for a lone folder.
+    Mode {
+        paths: Vec<PathBuf>,
+        name: String,
+        mode: bincap::DeleteMode,
+        is_dir: bool,
+    },
+    /// Measured against their Recycle Bins, with the folders among them.
+    Measured(TooBig, Vec<PathBuf>),
+    /// Deleted, up to the first failure.
+    Done(Result<(), (PathBuf, std::io::Error)>),
+}
+
+/// The box over the dialog: Delete's question, or why a rename or a delete failed.
+pub(crate) struct Ask {
+    pub(crate) msg: MsgBox,
+    icon: &'static str,
+    then: Then,
+}
+
+/// What the box's answer does.
+enum Then {
+    Nothing,
+    /// Yes deletes these, to the Recycle Bin or (`erase`) for good.
+    Delete {
+        paths: Vec<PathBuf>,
+        erase: bool,
+    },
+    /// The answer about the item too big for its bin goes to the asker; the folders are the
+    /// batch's.
+    TooBig(TooBig, Vec<PathBuf>),
+}
+
 /// Starts a read of a folder with the last [`Host::list`]'s filter and sizes.
 type StartRead = Box<dyn Fn(&Path) -> Job<Read>>;
 
@@ -401,6 +441,10 @@ pub struct Host {
     /// A typed path whose folders did not answer within [`RESOLVE_WAIT`]; the next resolve of
     /// the same path waits on it again instead of starting another probe.
     probing: Option<(PathBuf, Job<(bool, bool)>)>,
+    /// Delete's work under way off the loop; [`Host::take_thumbs`] takes each step.
+    deleting: Option<Job<Deleting>>,
+    /// The box the dialog shows over itself ([`Host::asking`]).
+    ask: Option<Ask>,
     /// The view and sort the open dialog last stored ([`Host::remember`]).
     remembered: Remembered,
     /// Where they are stored; None is [`VIEW_FILE`].
@@ -434,6 +478,8 @@ impl Host {
     pub fn open(&mut self, dir: &Path, fields: Fields, u: TextUnits) -> FileDlg {
         self.folder = Some(self.folders.id(dir));
         self.watched = None;
+        self.ask = None;
+        self.deleting = None;
         if let Some(w) = &mut self.watch {
             w.clear();
             w.take_changed();
@@ -570,6 +616,19 @@ impl Host {
     /// Hands the thumbnails and icon files that arrived to their entries, the icon files to
     /// `cache` too: true when one did.
     fn take_thumbs(&mut self, dlg: &mut FileDlg, cache: &mut IconCache) -> bool {
+        let stepped = match self.deleting.as_ref().and_then(Job::take) {
+            Some(step) => {
+                self.deleting = None;
+                self.deleted(step);
+                true
+            }
+            None => false,
+        };
+        self.take_listed(dlg, cache) || stepped
+    }
+
+    /// [`Host::take_thumbs`]' listings, icons and thumbnails.
+    fn take_listed(&mut self, dlg: &mut FileDlg, cache: &mut IconCache) -> bool {
         self.read_due();
         self.follow_gone();
         if let Some((id, read)) = self
@@ -728,7 +787,7 @@ impl Host {
                 self.refresh();
                 Step::None
             }
-            E::CreateFolder(_) | E::Rename { .. } | E::Delete(_) => {
+            E::CreateFolder(_) | E::Rename { .. } | E::Delete { .. } => {
                 self.change(dlg, out);
                 Step::Redraw
             }
@@ -758,11 +817,11 @@ impl Host {
         }
     }
 
-    /// New Folder, a rename or Delete in the folder shown, waited on for [`RESOLVE_WAIT`]: a
-    /// folder that does not answer by then is left to its watch. The folder is read again, and
-    /// a new folder opens in the rename box once listed; a refused name opens the box again.
+    /// New Folder or a rename in the folder shown, waited on for [`RESOLVE_WAIT`]: a folder that
+    /// does not answer by then is left to its watch. The folder is read again, and a new folder
+    /// opens in the rename box once listed; a refused name opens the box again under a box
+    /// saying why. Delete runs off the loop ([`Host::delete`]).
     fn change(&mut self, dlg: &mut FileDlg, ev: reprisekit::controls::filedlg::Event) {
-        use reprisefs::dialogops;
         use reprisekit::controls::filedlg::Event as E;
         let Some(dir) = self
             .folder
@@ -797,22 +856,184 @@ impl Host {
                 match waited(&dir, job) {
                     Some(Ok(name)) => dlg.expect(&name, false),
                     Some(Err(why)) => {
-                        log::warn!("file dialog: {why}");
                         dlg.resume_rename(&from, &to);
+                        self.ask = Some(error_box("Rename", why));
                     }
                     None => {}
                 }
             }
-            E::Delete(names) => {
+            E::Delete { names, erase } => {
                 let paths: Vec<PathBuf> = names.iter().map(|n| path_of(n)).collect();
-                let job = Job::spawn(None, move || dialogops::trash(&paths));
-                for (path, why) in waited(&dir, job).unwrap_or_default() {
-                    log::warn!("file dialog: left {}: {why}", path.display());
-                }
+                let name = names.into_iter().next().unwrap_or_default();
+                return self.delete(paths, name, erase);
             }
             _ => return,
         }
         self.refresh();
+    }
+
+    /// Delete on `paths` (for good with `shift`), the first of them listed as `name`: asked
+    /// first as Explorer's Delete asks ([`dialogops::delete_mode`]). One Delete at a time.
+    fn delete(&mut self, paths: Vec<PathBuf>, name: String, shift: bool) {
+        if self.deleting.is_some() || self.ask.is_some() || paths.is_empty() {
+            return;
+        }
+        self.spawn_delete(move || {
+            let mode = dialogops::delete_mode(&paths, shift);
+            let is_dir = matches!(paths.as_slice(), [one] if one.is_dir() && !one.is_symlink());
+            Deleting::Mode {
+                paths,
+                name,
+                mode,
+                is_dir,
+            }
+        });
+    }
+
+    fn spawn_delete(&mut self, work: impl FnOnce() -> Deleting + Send + 'static) {
+        self.deleting = Some(Job::spawn(self.wake.as_ref(), work));
+    }
+
+    /// Delete's next step, back from off the loop.
+    fn deleted(&mut self, step: Deleting) {
+        match step {
+            Deleting::Mode { paths, .. } if paths.is_empty() => {}
+            Deleting::Mode {
+                paths,
+                name,
+                mode,
+                is_dir,
+            } => {
+                if !mode.ask {
+                    return self.delete_now(paths, mode.erase);
+                }
+                let kind = ConfirmKind::of(paths.len(), is_dir);
+                let (title, text) =
+                    bincap::delete_prompt(kind, &name, paths.len(), mode.erase, mode.no_bin);
+                let template = match kind {
+                    ConfirmKind::Multiple => Template::MultiDelete,
+                    ConfirmKind::File | ConfirmKind::Folder => Template::MessageBox,
+                };
+                let fields = msgbox::Fields {
+                    min_text_h: (kind == ConfirmKind::Folder).then_some(FOLDER_TEXT_H),
+                    ..box_fields(text, &["&Yes", "&No"])
+                };
+                self.ask = Some(Ask {
+                    msg: MsgBox::on_template(title, template, fields),
+                    icon: if mode.erase {
+                        ERASE_ICON
+                    } else {
+                        "user-trash-full"
+                    },
+                    then: Then::Delete {
+                        paths,
+                        erase: mode.erase,
+                    },
+                });
+            }
+            Deleting::Measured(asker, dirs) => self.too_big_step(asker, dirs),
+            Deleting::Done(done) => {
+                if let Err((path, e)) = done {
+                    log::warn!("file dialog: could not delete {}: {e}", path.display());
+                    let text = dialogops::delete_failed_text(&path, &e);
+                    self.ask = Some(error_box("Error Deleting File or Folder", text));
+                }
+                self.refresh();
+            }
+        }
+    }
+
+    /// Deletes `paths` for good with `erase`, else to their Recycle Bins once each is measured
+    /// against its bin's cap.
+    fn delete_now(&mut self, paths: Vec<PathBuf>, erase: bool) {
+        if erase {
+            let plan = paths.into_iter().map(|p| (p, Plan::Erase)).collect();
+            return self.spawn_delete(move || Deleting::Done(dialogops::delete(plan)));
+        }
+        self.spawn_delete(move || {
+            let dirs = (paths.iter())
+                .filter(|p| p.is_dir() && !p.is_symlink())
+                .cloned()
+                .collect();
+            Deleting::Measured(dialogops::measure(paths), dirs)
+        });
+    }
+
+    /// Asks about the next item too big for its Recycle Bin, or deletes the batch as answered.
+    fn too_big_step(&mut self, asker: TooBig, dirs: Vec<PathBuf>) {
+        let path = match asker.step() {
+            TooBigStep::Ask(path) => path.to_path_buf(),
+            TooBigStep::Done(plan) => {
+                return self.spawn_delete(move || Deleting::Done(dialogops::delete(plan)));
+            }
+            TooBigStep::Cancelled => return,
+        };
+        let title = match dirs.contains(&path) {
+            true => "Confirm Folder Delete",
+            false => "Confirm File Delete",
+        };
+        let buttons: &[&str] = match asker.many() {
+            true => &["&Yes", "Yes to &All", "&No", "Cancel"],
+            false => &["&Yes", "&No"],
+        };
+        let text = bincap::too_big_text(&bincap::label(&path));
+        self.ask = Some(Ask {
+            msg: MsgBox::on_template(title, Template::MessageBox, box_fields(text, buttons)),
+            icon: ERASE_ICON,
+            then: Then::TooBig(asker, dirs),
+        });
+    }
+
+    /// The box over the dialog, asking before Delete or saying why a rename or a delete failed.
+    /// The repriseapp host shows it as a child window of the dialog's ([`crate::filebox`]).
+    pub(crate) fn asking(&self) -> Option<&MsgBox> {
+        self.ask.as_ref().map(|a| &a.msg)
+    }
+
+    /// Gives the box its icon from `icons`, once.
+    pub(crate) fn prime_box(&mut self, icons: &mut IconCache) {
+        if let Some(a) = &mut self.ask
+            && a.msg.fields.icon.is_none()
+        {
+            a.msg.fields.icon = icons.get(a.icon, 32);
+        }
+    }
+
+    /// An event on the box's window. Closing it carries out its answer: Yes deletes, an answer
+    /// about an item too big for its bin goes on to the next.
+    pub(crate) fn box_event(&mut self, ev: &Event, text: &TextRenderer, theme: &Theme) -> Outcome {
+        let Some(a) = &mut self.ask else {
+            return Outcome::None;
+        };
+        let out = a.msg.event(ev, text, theme);
+        if let Outcome::Closed(button) = out
+            && let Some(a) = self.ask.take()
+        {
+            self.answered(a.then, button);
+        }
+        out
+    }
+
+    /// Button `button` pressed on the box, None for Escape or the close box.
+    fn answered(&mut self, then: Then, button: Option<usize>) {
+        use reprisefs::replace::Answer;
+        match then {
+            Then::Nothing => {}
+            Then::Delete { paths, erase } => {
+                if button == Some(0) {
+                    self.delete_now(paths, erase);
+                }
+            }
+            Then::TooBig(mut asker, dirs) => {
+                let answers: &[Answer] = match asker.many() {
+                    true => &[Answer::Yes, Answer::YesToAll, Answer::No, Answer::Cancel],
+                    false => &[Answer::Yes, Answer::No],
+                };
+                let a = button.and_then(|i| answers.get(i).copied());
+                asker.answer(a.unwrap_or(Answer::Cancel));
+                self.too_big_step(asker, dirs);
+            }
+        }
     }
 
     pub fn place(&mut self, i: usize) -> Option<FolderId> {
@@ -1024,6 +1245,32 @@ impl Host {
                 path.parent().unwrap_or(&path).display()
             )),
         }
+    }
+}
+
+/// The icon of a question whose Yes deletes for good.
+const ERASE_ICON: &str = "dialog-warning";
+
+/// A box's fields: `text` over `buttons`, the first the default; its icon comes later
+/// ([`Host::prime_box`]).
+fn box_fields(text: String, buttons: &[&str]) -> msgbox::Fields {
+    msgbox::Fields {
+        text,
+        icon: None,
+        buttons: buttons.iter().map(|b| b.to_string()).collect(),
+        default: 0,
+        min_text_h: None,
+        min_w: 0,
+        max_w: crate::dialog_max_w(),
+    }
+}
+
+/// An OK box titled `title` saying `text`.
+fn error_box(title: &str, text: String) -> Ask {
+    Ask {
+        msg: MsgBox::new(title, box_fields(text, &["OK"])),
+        icon: "dialog-error",
+        then: Then::Nothing,
     }
 }
 

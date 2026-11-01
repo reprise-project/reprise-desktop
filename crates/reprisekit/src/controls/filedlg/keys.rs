@@ -348,7 +348,7 @@ impl FileDlg {
     /// The file-dialog key `sym` with its modifiers, read before [`FileDlg::key`]: F5 and Ctrl+R
     /// refresh, Alt+Left and Alt+Right go back and forward, Alt+Up goes up and Ctrl+Shift+N
     /// makes a folder wherever the focus is. In the list, F2 renames the selected entry, Delete
-    /// deletes the selection, Shift+F10 and the Menu key open the context menu, and Ctrl+A
+    /// deletes the selection (Shift+Delete for good), Shift+F10 and the Menu key open the context menu, and Ctrl+A
     /// selects every entry of a dialog that picks several. `None` leaves the key to `key`, so
     /// File name keeps its editing keys (Ctrl+A selecting its text), and so do the rename box,
     /// the menu and an open list.
@@ -389,7 +389,9 @@ impl FileDlg {
         }
         match sym {
             keysym::F2 if plain => Some(self.begin_rename()),
-            keysym::DELETE | keysym::KP_DELETE if plain => Some(self.delete_selected()),
+            keysym::DELETE | keysym::KP_DELETE if !ctrl && !alt => {
+                Some(self.delete_selected(shift))
+            }
             keysym::MENU => Some(self.context_from_keys(r)),
             keysym::F10 if shift && !ctrl && !alt => Some(self.context_from_keys(r)),
             _ if ctrl && !shift && !alt && letter('a') => {
@@ -463,13 +465,14 @@ impl FileDlg {
         if changed { Event::Redraw } else { Event::None }
     }
 
-    /// Delete on the selection: its names to the host, nothing with none selected.
-    pub(super) fn delete_selected(&self) -> Event {
+    /// Delete on the selection (for good with `erase`): its names to the host, nothing with none
+    /// selected.
+    pub(super) fn delete_selected(&self, erase: bool) -> Event {
         let names: Vec<String> = self.selected().iter().map(|e| e.name.clone()).collect();
         if names.is_empty() {
             Event::None
         } else {
-            Event::Delete(names)
+            Event::Delete { names, erase }
         }
     }
 

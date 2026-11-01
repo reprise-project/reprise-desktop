@@ -177,7 +177,8 @@ impl State {
         }
     }
 
-    /// Work on Browse dialog `id`'s folder is done: its folder is read again.
+    /// Work on Browse dialog `id`'s folder is done: its folder is read again, and a refused
+    /// rename says why in a box over the dialog.
     fn picker_op_done(&mut self, id: u64, done: crate::filepick::OpDone) {
         let Some(i) = self.dialog_index(id) else {
             return;
@@ -185,9 +186,16 @@ impl State {
         let Some(p) = self.dialogs.views[i].dialog.picker_mut() else {
             return;
         };
+        let refused = match &done {
+            crate::filepick::OpDone::Refused { why, .. } => Some(why.clone()),
+            _ => None,
+        };
         p.op_done(done);
         self.run_picker_requests();
         self.redraw_dialog(i);
+        if let Some(why) = refused {
+            self.open_dialog_over_id(crate::dialog::Dialog::error("Rename", why), Some(id));
+        }
     }
 
     /// A folder read for Browse dialog `id` is done; a pick acts as if the dialog were on top.

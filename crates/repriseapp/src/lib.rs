@@ -16,6 +16,7 @@ mod draw;
 mod editmenu;
 mod event;
 pub mod fielddrop;
+mod filebox;
 pub mod filedlg;
 mod hangup;
 pub mod heads;
@@ -247,6 +248,8 @@ struct Host {
     /// The edit menu's popups while it is open.
     menu_popups: Option<menupopup::MenuPopups>,
     asked_drop: Option<Asked>,
+    /// The file dialog's box ([`filebox`]) and the window of the dialog it is over.
+    file_box: Option<(WinId, Child)>,
     ticking: Vec<WinId>,
     /// Where a document portal call's thread sends what to do with its
     /// answer (`reprisebus::filetransfer`).

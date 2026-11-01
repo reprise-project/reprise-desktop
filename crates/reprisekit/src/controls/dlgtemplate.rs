@@ -13,6 +13,8 @@ use crate::theme::TextUnits;
 pub const FRAME: i32 = 3;
 pub const CAPTION_H: i32 = 18;
 pub const ICON_PX: i32 = 32;
+/// Confirm Folder Delete's text box height, however short the question.
+pub const FOLDER_TEXT_H: i32 = 51;
 /// The 100% room each side of a button's label: it clears the focus ring 4 px inside the edge.
 const BUTTON_LABEL_PAD: i32 = 6;
 

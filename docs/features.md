@@ -237,12 +237,15 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **File dialog keys and menu.** In an Open or Save As dialog F5 and Ctrl+R
   list the folder again, Alt+Left and Alt+Right go back and forward, Alt+Up
   goes up a folder and Ctrl+Shift+N makes a new folder, named in place. In
-  the list F2 renames the selected entry in place, Delete moves the
-  selection to the Recycle Bin (an entry that would be deleted for good
-  stays), Ctrl+A selects every file where several can be picked, and a
-  right click, Shift+F10 or the Menu key opens the entry's menu (Select,
-  Delete, Rename) or the background's (View, Refresh, New > Folder). File
-  name keeps its editing keys.
+  the list F2 renames the selected entry in place, Delete deletes the
+  selection as Explorer's Delete does (asking first as the Recycle Bin's
+  settings say, and asking before deleting for good what the Recycle Bin
+  cannot take), Shift+Delete, or the menu's Delete clicked with Shift held,
+  deletes it for good once asked, Ctrl+A selects every file where several
+  can be picked, and a right click, Shift+F10 or the Menu key opens the
+  entry's menu (Select, Delete, Rename) or the background's (View, Refresh,
+  New > Folder). A refused rename or a failed delete says why in a box.
+  File name keeps its editing keys.
 - **Programs and scripts.** A file with its Executable box ticked
   (Properties) that holds a script (`#!`) or a binary runs when you open it,
   in its own folder, here and in Explorer. The first time you open a

@@ -225,6 +225,7 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         edit_menu: Default::default(),
         menu_popups: None,
         asked_drop: None,
+        file_box: None,
         ticking: Vec::new(),
         portal_done,
         press_serial: 0,
@@ -322,7 +323,9 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
             let wins: Vec<WinId> = host.slots.iter().map(|s| s.id).collect();
             for win in filedlg::take_thumbs(&mut *host.app, wins, &mut host.ctx.icons) {
                 host.mark_dirty(win);
+                host.follow_file_box(win);
             }
+            host.sync_children();
         })
         .expect("ping source");
     loop_handle

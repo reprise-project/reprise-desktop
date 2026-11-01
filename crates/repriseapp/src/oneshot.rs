@@ -6,6 +6,7 @@
 use crate::keys::dialog_key;
 use crate::{BTN_LEFT, Child, Event, PointerInput, WinId};
 use reprisekit::access::{Tree, accesskit::NodeId};
+use reprisekit::controls::dlgtemplate::{self, Template};
 use reprisekit::controls::form::{self, Form};
 use reprisekit::controls::msgbox::{self, Fields};
 use reprisekit::controls::propsheet::PropSheet;
@@ -100,30 +101,82 @@ pub fn msgbox_event(
     fields: &mut Fields,
     shown: &Shown,
 ) -> Step {
+    let (px, u) = (theme.fonts.size_px, theme.text);
+    box_event(ev, text, theme, fields, shown, |f| {
+        msgbox::form(f, text, px, u)
+    })
+}
+
+/// [`msgbox_event`] for a box whose form `build` makes from `fields`.
+fn box_event(
+    ev: &Event,
+    text: &TextRenderer,
+    theme: &Theme,
+    fields: &mut Fields,
+    shown: &Shown,
+    build: impl Fn(&Fields) -> Form,
+) -> Step {
     if let Some(step) = shown.event(ev) {
         return step;
     }
-    let (px, u) = (theme.fonts.size_px, theme.text);
     let Event::Key(k) = ev else {
-        return event(ev, text, theme, || msgbox::form(fields, text, px, u));
+        return event(ev, text, theme, || build(fields));
     };
     let Some(key) = dialog_key(k) else {
         return Step::None;
     };
-    let mut f = msgbox::form(fields, text, px, u);
+    let mut f = build(fields);
     let out = f.key(key);
     if let Some(i) = f.focus() {
         let id = f.items[i].id;
-        if let Some(b) = (0..fields.buttons.len()).find(|&b| msgbox::button_id(b) == id) {
+        if let Some(b) = (0..fields.buttons.len()).find(|&b| button_is(b, id)) {
             fields.default = b;
         }
     }
     Step::Out(out)
 }
 
+/// Whether `id` is button `i`'s: a message box's and a template's buttons share their ids.
+fn button_is(i: usize, id: &str) -> bool {
+    dlgtemplate::BUTTON_IDS.get(i) == Some(&id)
+}
+
+/// A box's client size at 100% and its form, for text at `theme`'s size: a message box, or one
+/// laid out on `template`.
+fn built(
+    f: &Fields,
+    template: Option<Template>,
+    text: &TextRenderer,
+    theme: &Theme,
+) -> ((i32, i32), Form) {
+    let (px, u) = (theme.fonts.size_px, theme.text);
+    let Some(template) = template else {
+        return (msgbox::client(f, text, px, u), msgbox::form(f, text, px, u));
+    };
+    let lay = dlgtemplate::layout(
+        template,
+        text,
+        px,
+        &dlgtemplate::Fields {
+            text: &f.text,
+            icon: true,
+            field: false,
+            buttons: &f.buttons,
+            text_h: f.min_text_h,
+        },
+        u,
+    )
+    .client();
+    let form = dlgtemplate::form(&lay, f.icon.clone(), &f.buttons, f.default);
+    (lay.size, form)
+}
+
 pub struct MsgBox {
     pub title: String,
     pub fields: Fields,
+    /// Laid out on this shell template ([`dlgtemplate`]) instead of as a message box: the
+    /// delete prompts, which wear the template Explorer's do.
+    template: Option<Template>,
     shown: Shown,
 }
 
@@ -142,46 +195,62 @@ impl MsgBox {
         MsgBox {
             title,
             fields,
+            template: None,
+            shown: Shown::default(),
+        }
+    }
+
+    /// A box laid out on `template`, its text box at least `fields.min_text_h` tall. Its
+    /// buttons are at most four.
+    pub fn on_template(title: impl Into<String>, template: Template, fields: Fields) -> MsgBox {
+        MsgBox {
+            title: title.into(),
+            fields,
+            template: Some(template),
             shown: Shown::default(),
         }
     }
 
     pub fn child(&self, id: WinId, text: &TextRenderer, theme: &Theme) -> Child {
-        let u = theme.text;
         Child {
             id,
             title: self.title.clone(),
-            size: u.size(msgbox::client(&self.fields, text, theme.fonts.size_px, u)),
+            size: theme
+                .text
+                .size(built(&self.fields, self.template, text, theme).0),
             fixed: true,
             modal: true,
         }
     }
 
     pub fn event(&mut self, ev: &Event, text: &TextRenderer, theme: &Theme) -> Outcome {
-        match msgbox_event(ev, text, theme, &mut self.fields, &self.shown) {
+        let template = self.template;
+        let step = box_event(ev, text, theme, &mut self.fields, &self.shown, |f| {
+            built(f, template, text, theme).1
+        });
+        match step {
             Step::Closed => Outcome::Closed(None),
             Step::Redraw => Outcome::Redraw,
             Step::None => Outcome::None,
             Step::Out(form::Event::Cancel) => Outcome::Closed(None),
             Step::Out(form::Event::Default) => Outcome::Closed(Some(self.fields.default)),
-            Step::Out(form::Event::Pressed(id)) => Outcome::Closed(
-                (0..self.fields.buttons.len()).find(|&i| msgbox::button_id(i) == id),
-            ),
+            Step::Out(form::Event::Pressed(id)) => {
+                Outcome::Closed((0..self.fields.buttons.len()).find(|&i| button_is(i, id)))
+            }
             Step::Out(form::Event::None) => Outcome::None,
             Step::Out(_) => Outcome::Redraw,
         }
     }
 
     pub fn draw(&self, c: &mut Canvas, theme: &Theme, text: &TextRenderer) {
-        let f = msgbox::form(&self.fields, text, theme.fonts.size_px, theme.text);
+        let f = built(&self.fields, self.template, text, theme).1;
         self.shown.draw(c, theme, text, f);
     }
 
     pub fn access(&self, tree: &mut Tree, text: &TextRenderer, theme: &Theme) {
-        let px = theme.fonts.size_px;
-        let f = msgbox::form(&self.fields, text, px, theme.text);
+        let f = built(&self.fields, self.template, text, theme).1;
         f.drawn_with(&theme.paint());
-        access_form(&f, tree, text, px);
+        access_form(&f, tree, text, theme.fonts.size_px);
     }
 }
 

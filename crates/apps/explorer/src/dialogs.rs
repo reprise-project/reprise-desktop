@@ -10,7 +10,7 @@ use repriseapp::unlock::{self, Unlock};
 use repriseapp::{Caption, Child, Ctx, Event, PointerInput, Reply, WinId};
 use reprisekit::controls::aboutbox;
 use reprisekit::controls::browsefolder;
-use reprisekit::controls::dlgtemplate::{self, Template};
+use reprisekit::controls::dlgtemplate::{self, FOLDER_TEXT_H, Template};
 use reprisekit::controls::filedlg::FileDlg;
 use reprisekit::controls::form::{self, Form};
 use reprisekit::controls::msgbox;
@@ -24,10 +24,6 @@ use std::path::PathBuf;
 pub const DIALOG: WinId = WinId::named("dialog");
 
 pub const PROGRAM_BROWSE: WinId = WinId::named("program browse");
-
-/// The text height Confirm Folder Delete reserves, whatever the folder
-/// is called (the 51 in `src/dialog.rs`'s `confirm_delete`).
-const FOLDER_TEXT_H: i32 = 51;
 
 pub use reprisefs::bincap::ConfirmKind;
 

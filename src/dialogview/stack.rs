@@ -59,7 +59,7 @@ impl State {
     }
 
     /// Show `d` as the child of `parent`, raised first; on its own when `parent` is closed or None.
-    pub(super) fn open_dialog_over_id(&mut self, d: Dialog, parent: Option<u64>) {
+    pub(crate) fn open_dialog_over_id(&mut self, d: Dialog, parent: Option<u64>) {
         match parent.and_then(|id| self.dialog_index(id)) {
             Some(i) => {
                 self.raise_dialog(i);

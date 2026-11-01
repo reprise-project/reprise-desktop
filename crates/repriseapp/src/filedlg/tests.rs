@@ -1440,6 +1440,88 @@ fn send(h: &mut Host, dlg: &mut FileDlg, ev: &Event) -> Step {
     h.event(dlg, ev, &text, &theme, CLIENT, &theme.metrics)
 }
 
+/// The Recycle Bins and `[recycle_bin]` settings a test deletes under: the home trash in `t`, no
+/// other drive, `settings` in a config of its own. One test holds them at a time.
+struct FakeBins(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+fn fake_bins(t: &Path, settings: &str) -> FakeBins {
+    static HELD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+    let config = t.join("config.toml");
+    std::fs::write(&config, format!("[recycle_bin]\n{settings}")).unwrap();
+    reprisefs::bincap::set_config_path(Some(config));
+    reprisefs::trash::set_mount_table(Some(PathBuf::from("/dev/null")));
+    reprisefs::trash::set_home_trash(Some(t.join("trash")));
+    FakeBins(held)
+}
+
+impl Drop for FakeBins {
+    fn drop(&mut self) {
+        reprisefs::bincap::set_config_path(None);
+        reprisefs::trash::set_home_trash(None);
+        reprisefs::trash::set_mount_table(None);
+    }
+}
+
+/// Takes the host's work off the loop until `done` holds.
+fn settle(h: &mut Host, dlg: &mut FileDlg, icons: &mut IconCache, done: impl Fn(&Host) -> bool) {
+    for _ in 0..1000 {
+        h.take_thumbs(dlg, icons);
+        if done(h) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("the host never got there");
+}
+
+/// The box's title and text, once it is up. A box a step off the loop puts up tells the
+/// runtime to look at the dialog's window again.
+fn asked(h: &mut Host, dlg: &mut FileDlg, icons: &mut IconCache) -> (String, String) {
+    for _ in 0..1000 {
+        if h.asking().is_some() {
+            break;
+        }
+        let woke = h.take_thumbs(dlg, icons);
+        if h.asking().is_some() {
+            assert!(
+                woke,
+                "the step that put the box up asks for the window again"
+            );
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let m = h.asking().expect("a box");
+    (m.title.clone(), m.fields.text.clone())
+}
+
+/// A press on the list's background, which takes the keyboard there.
+fn focus_list(h: &mut Host, dlg: &mut FileDlg) {
+    let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
+    dlg.draw(
+        &mut Canvas::new(CLIENT.0 as u32, CLIENT.1 as u32),
+        &text,
+        &Theme::default().paint(),
+        Rect::new(0, 0, CLIENT.0, CLIENT.1),
+        11,
+    );
+    let press = Event::Pointer(PointerInput::Press {
+        x: 300,
+        y: 300,
+        button: crate::BTN_LEFT,
+        time: 0,
+        mods: crate::Mods::default(),
+    });
+    send(h, dlg, &press);
+}
+
+/// A key on the box over the dialog.
+fn answer(h: &mut Host, sym: u32) -> Outcome {
+    let text = TextRenderer::load(&reprisekit::theme::FontConfig::default());
+    h.box_event(&press(sym, false, false, None), &text, &Theme::default())
+}
+
 #[test]
 fn new_folder_rename_and_delete_work_on_the_folder_shown() {
     use reprisekit::textedit::keysym;
@@ -1447,8 +1529,7 @@ fn new_folder_rename_and_delete_work_on_the_folder_shown() {
     let dir = t.path().join("docs");
     std::fs::create_dir(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "").unwrap();
-    reprisefs::trash::set_mount_table(Some(PathBuf::from("/dev/null")));
-    reprisefs::trash::set_home_trash(Some(t.path().join("trash")));
+    let _bins = fake_bins(t.path(), "");
     let mut h = host_in(&dir);
     let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
     let mut dlg = open_dlg(&mut h);
@@ -1477,10 +1558,25 @@ fn new_folder_rename_and_delete_work_on_the_folder_shown() {
     });
 
     send(&mut h, &mut dlg, &press(keysym::DELETE, false, false, None));
-    assert!(!dir.join("Papers").exists(), "Delete moves it out");
+    assert_eq!(
+        asked(&mut h, &mut dlg, &mut icons),
+        (
+            "Confirm Folder Delete".to_string(),
+            "Are you sure you want to remove the folder 'Papers' and move all its contents to \
+             the Recycle Bin?"
+                .to_string()
+        )
+    );
+    assert!(matches!(
+        answer(&mut h, keysym::RETURN),
+        Outcome::Closed(Some(0))
+    ));
+    settle(&mut h, &mut dlg, &mut icons, |_| {
+        !dir.join("Papers").exists()
+    });
     assert!(
         t.path().join("trash/files/Papers").is_dir(),
-        "into the Recycle Bin"
+        "Yes moves it to the Recycle Bin"
     );
     until(&mut h, &mut dlg, &mut icons, |d| !has(d, "Papers"));
 
@@ -1498,9 +1594,107 @@ fn new_folder_rename_and_delete_work_on_the_folder_shown() {
         Some("a.txt/"),
         "a refused name comes back in the box"
     );
+    let (title, text) = asked(&mut h, &mut dlg, &mut icons);
+    assert_eq!(title, "Rename");
+    assert!(text.starts_with("A file name cannot contain"), "{text}");
     assert!(dir.join("a.txt").is_file());
-    reprisefs::trash::set_home_trash(None);
-    reprisefs::trash::set_mount_table(None);
+}
+
+#[test]
+fn shift_delete_asks_then_deletes_for_good_and_a_failure_says_why() {
+    use reprisekit::textedit::keysym;
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("docs");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "a").unwrap();
+    std::fs::write(dir.join("b.txt"), "b").unwrap();
+    let _bins = fake_bins(t.path(), "");
+    let mut h = host_in(&dir);
+    let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+    let mut dlg = open_dlg(&mut h);
+    h.thumbs_on(&crate::Waker::noop());
+    h.ensure_listed(&mut dlg, &mut icons, &|_: &Item| true);
+    let shift_delete = press(keysym::DELETE, false, true, None);
+    focus_list(&mut h, &mut dlg);
+
+    assert!(dlg.select_named("a.txt"));
+    send(&mut h, &mut dlg, &shift_delete);
+    assert_eq!(
+        asked(&mut h, &mut dlg, &mut icons),
+        (
+            "Confirm File Delete".to_string(),
+            "Are you sure you want to delete 'a.txt'?".to_string()
+        ),
+        "Shift+Delete asks to delete for good"
+    );
+    assert_eq!(answer(&mut h, keysym::ESCAPE), Outcome::Closed(None));
+    assert!(h.asking().is_none());
+    assert!(dir.join("a.txt").is_file(), "No keeps it");
+
+    send(&mut h, &mut dlg, &shift_delete);
+    asked(&mut h, &mut dlg, &mut icons);
+    answer(&mut h, keysym::RETURN);
+    settle(&mut h, &mut dlg, &mut icons, |_| {
+        !dir.join("a.txt").exists()
+    });
+    assert!(
+        !t.path().join("trash/files/a.txt").exists(),
+        "Yes deletes it for good"
+    );
+
+    assert!(dlg.select_named("b.txt"));
+    send(&mut h, &mut dlg, &shift_delete);
+    asked(&mut h, &mut dlg, &mut icons);
+    std::fs::remove_file(dir.join("b.txt")).unwrap();
+    answer(&mut h, keysym::RETURN);
+    let (title, text) = asked(&mut h, &mut dlg, &mut icons);
+    assert_eq!(title, "Error Deleting File or Folder");
+    assert!(text.starts_with("Cannot delete b.txt: "), "{text}");
+}
+
+#[test]
+fn delete_asks_before_deleting_for_good_what_the_recycle_bin_cannot_take() {
+    use reprisekit::textedit::keysym;
+    let t = tempfile::tempdir().unwrap();
+    std::fs::write(t.path().join("big.iso"), "big").unwrap();
+    std::fs::write(t.path().join("now.txt"), "now").unwrap();
+    let _bins = fake_bins(t.path(), "confirm = false\nmax_percent = 0\n");
+    let mut h = host_in(t.path());
+    let mut icons = IconCache::new(reprisekit::icontheme::IconTheme::load("test", &[]));
+    let mut dlg = open_dlg(&mut h);
+    h.thumbs_on(&crate::Waker::noop());
+    h.ensure_listed(&mut dlg, &mut icons, &|_: &Item| true);
+    let delete = press(keysym::DELETE, false, false, None);
+    focus_list(&mut h, &mut dlg);
+
+    assert!(dlg.select_named("big.iso"));
+    send(&mut h, &mut dlg, &delete);
+    assert_eq!(
+        asked(&mut h, &mut dlg, &mut icons).1,
+        "'big.iso' is too big for the Recycle Bin. Do you want to delete it permanently?"
+    );
+    answer(&mut h, keysym::ESCAPE);
+    assert!(t.path().join("big.iso").is_file(), "No keeps it");
+    send(&mut h, &mut dlg, &delete);
+    asked(&mut h, &mut dlg, &mut icons);
+    answer(&mut h, keysym::RETURN);
+    settle(&mut h, &mut dlg, &mut icons, |_| {
+        !t.path().join("big.iso").exists()
+    });
+    assert!(!t.path().join("trash/files/big.iso").exists());
+
+    std::fs::write(
+        t.path().join("config.toml"),
+        "[recycle_bin]\nremove_immediately = true\n",
+    )
+    .unwrap();
+    assert!(dlg.select_named("now.txt"));
+    send(&mut h, &mut dlg, &delete);
+    assert_eq!(
+        asked(&mut h, &mut dlg, &mut icons).1,
+        "Are you sure you want to delete 'now.txt'?",
+        "a bin set to delete at once asks to delete for good"
+    );
 }
 
 #[test]
