@@ -4,7 +4,7 @@ use super::*;
 use crate::config::PowerConfig;
 use crate::theme::TextUnits;
 use reprisekit::controls::copyprogress;
-use reprisekit::controls::dlgtemplate::KEY_AID_TEXT_H;
+use reprisekit::controls::dlgtemplate::{KEY_AID_TEXT_H, NO, YES, delete_default};
 
 pub(super) fn button(label: &str, action: DialogAction, default: bool) -> DialogButton {
     DialogButton {
@@ -15,6 +15,11 @@ pub(super) fn button(label: &str, action: DialogAction, default: bool) -> Dialog
         enabled: true,
         tip: None,
     }
+}
+
+/// A delete prompt's button, the default when it is [`delete_default`]'s for `erase`.
+fn delete_button(label: &str, action: DialogAction, erase: bool) -> DialogButton {
+    button(label, action, label == delete_default(erase))
 }
 
 impl Dialog {
@@ -489,8 +494,8 @@ impl Dialog {
             icon: Some(icon.into()),
             text,
             buttons: vec![
-                button("&Yes", yes, true),
-                button("&No", DialogAction::Cancel, false),
+                delete_button(YES, yes, erase),
+                delete_button(NO, DialogAction::Cancel, erase),
             ],
             ..Dialog::new(
                 title,
@@ -525,8 +530,8 @@ impl Dialog {
             icon: Some(icon.into()),
             text,
             buttons: vec![
-                button("&Yes", yes, true),
-                button("&No", DialogAction::Cancel, false),
+                delete_button(YES, yes, erase),
+                delete_button(NO, DialogAction::Cancel, erase),
             ],
             ..Dialog::new(
                 title,
@@ -552,18 +557,18 @@ impl Dialog {
     ) -> Dialog {
         use reprisefs::replace::Answer;
         let asker = Box::new(asker);
-        let answer = |label: &str, answer: Answer, default: bool| {
+        let answer = |label: &str, answer: Answer| {
             let action = DialogAction::TooBig {
                 asker: asker.clone(),
                 answer,
             };
-            button(label, action, default)
+            delete_button(label, action, true)
         };
-        let mut buttons = vec![answer("&Yes", Answer::Yes, true)];
+        let mut buttons = vec![answer(YES, Answer::Yes)];
         if asker.many() {
-            buttons.push(answer("Yes to &All", Answer::YesToAll, false));
+            buttons.push(answer("Yes to &All", Answer::YesToAll));
         }
-        buttons.push(answer("&No", Answer::No, false));
+        buttons.push(answer(NO, Answer::No));
         if asker.many() {
             buttons.push(button("Cancel", DialogAction::Cancel, false));
         }
@@ -817,8 +822,8 @@ impl Dialog {
             icon: Some("user-trash-full".into()),
             text,
             buttons: vec![
-                button("&Yes", DialogAction::EmptyBin, true),
-                button("&No", DialogAction::Cancel, false),
+                delete_button(YES, DialogAction::EmptyBin, true),
+                delete_button(NO, DialogAction::Cancel, true),
             ],
             ..Dialog::new(
                 title,

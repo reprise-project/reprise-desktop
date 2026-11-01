@@ -2939,7 +2939,7 @@ mod context_menu {
             return;
         }
         let text = text();
-        let yes_no = ["&Yes".to_string(), "&No".to_string()];
+        let yes_no = [dlgtemplate::YES.to_string(), dlgtemplate::NO.to_string()];
         let mut icon = Canvas::new(32, 32);
         icon.fill_rect(icon.bounds(), crate::theme::Color::rgb(0xc0, 0x40, 0x20));
         let prompt = |template, question: &str, text_h| {
@@ -2959,7 +2959,12 @@ mod context_menu {
             .client();
             (
                 lay.size,
-                dlgtemplate::form(&lay, Some(icon.clone()), &yes_no, 0),
+                dlgtemplate::form(
+                    &lay,
+                    Some(icon.clone()),
+                    &yes_no,
+                    dlgtemplate::delete_default_index(&yes_no, true),
+                ),
             )
         };
         let error = msgbox::Fields {
