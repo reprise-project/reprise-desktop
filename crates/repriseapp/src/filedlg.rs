@@ -540,6 +540,8 @@ impl Host {
         }
         self.follow_cache(repriseconf::thumbnail_cache());
         let mut dlg = self.icons.dialog(fields);
+        let tiles = dialog_places().into_iter();
+        dlg.set_place_folders(tiles.map(|p| p.dir.map(|d| self.folders.id(&d))).collect());
         self.icons_scale = 0;
         dlg.set_text(u);
         self.remembered = Remembered::parse(&kept);
