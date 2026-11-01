@@ -385,6 +385,8 @@ struct Layout {
 pub struct FileDlg {
     fields: Fields,
     places: PlacesBar,
+    /// Each tile's folder, in the order `new` took the tiles: the tile the folder shown is lights.
+    place_folders: Vec<Option<FolderId>>,
     toolbar: ToolBar,
     lookin: Combo,
     shell: ShellView,
@@ -525,6 +527,7 @@ impl FileDlg {
                 places,
                 ..PlacesBar::default()
             },
+            place_folders: Vec::new(),
             folder: None,
             parent: None,
             crumbs: vec![],
@@ -581,6 +584,7 @@ impl FileDlg {
         self.lookin = Combo::with_items(items, selected, 8);
         self.crumbs = folder.crumbs;
         self.folder = Some(folder.id);
+        self.light_place();
         self.shell.entries = folder.entries;
         shellview::sort(&mut self.shell);
         self.context = None;
@@ -887,6 +891,23 @@ impl FileDlg {
                 toolbar::Item::Separator => {}
             }
         }
+    }
+
+    /// Names each tile's folder, in the order `new` took the tiles, so the bar lights the tile
+    /// of whichever folder is shown, however it was reached.
+    pub fn set_place_folders(&mut self, folders: Vec<Option<FolderId>>) {
+        self.place_folders = folders;
+        self.light_place();
+    }
+
+    /// Lights the shown folder's tile; a host that names no folders keeps the tile last picked.
+    fn light_place(&mut self) {
+        if self.place_folders.is_empty() {
+            return;
+        }
+        let shown = self.folder;
+        self.places.selected =
+            shown.and_then(|f| self.place_folders.iter().position(|p| *p == Some(f)));
     }
 
     /// Replace the places tiles' icons, in the order `new` took the tiles.

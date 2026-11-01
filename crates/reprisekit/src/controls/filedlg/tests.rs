@@ -2042,6 +2042,49 @@ fn arrow_keys_skip_a_disabled_place() {
     assert_eq!(key(&mut d, form::Key::Up), Some(1));
 }
 
+/// The lit tile is the shown folder's, whether a tile, Back, Up or a typed path reached it.
+#[test]
+fn the_places_bar_lights_the_tile_of_the_folder_shown() {
+    const RECENT: FolderId = 10;
+    const DESKTOP: FolderId = 11;
+    const OTHER: FolderId = 12;
+    let place = |label: &str| Place {
+        label: label.into(),
+        icon: None,
+        enabled: true,
+    };
+    let mut d = FileDlg::new(
+        Fields {
+            title: "Open".into(),
+            accept_label: "Open".into(),
+            mode: DlgMode::Open,
+            multiple: false,
+            filters: vec!["All Files (*.*)".into()],
+        },
+        vec![place("My Recent Documents"), place("Desktop")],
+    );
+    d.set_listing(folder(DESKTOP, Some(OTHER), vec![]));
+    d.set_place_folders(vec![Some(RECENT), Some(DESKTOP)]);
+    assert_eq!(d.places.selected, Some(1), "opening on Desktop lights it");
+
+    assert!(matches!(
+        d.click(R, Some(Hit::Places(0)), Mods::default()),
+        Event::NeedPlace(0)
+    ));
+    d.set_listing(folder(RECENT, None, vec![]));
+    assert_eq!(d.places.selected, Some(0));
+
+    assert!(matches!(d.nav(Nav::Back), Event::NeedListing(DESKTOP)));
+    d.set_listing(folder(DESKTOP, Some(OTHER), vec![]));
+    assert_eq!(d.places.selected, Some(1), "Back to Desktop lights Desktop");
+
+    d.set_listing(folder(OTHER, None, vec![]));
+    assert_eq!(
+        d.places.selected, None,
+        "a folder no tile names lights none"
+    );
+}
+
 /// Left, Right, Home and End arrive as edit keys and walk the view's cells as the arrows do.
 #[test]
 fn edit_arrow_keys_walk_the_icon_view() {

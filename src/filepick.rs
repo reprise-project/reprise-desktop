@@ -434,6 +434,11 @@ impl FilePicker {
             watched: None,
             ops: Vec::new(),
         };
+        let tiles = picker.place_dirs.iter();
+        let folders = tiles
+            .map(|d| d.as_ref().map(|d| picker.folders.id(d)))
+            .collect();
+        picker.dlg.set_place_folders(folders);
         let id = picker.folders.id(start);
         picker.list(id);
         picker
