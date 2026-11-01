@@ -142,12 +142,6 @@ impl State {
                     get(&key.icon, px)
                 },
                 caption: get(&key.icon, theme.icon_size()),
-                buttons: key.buttons.iter().map(|n| get(n, px)).collect(),
-                logo: if key.logo {
-                    cache.get("start-here", px)
-                } else {
-                    None
-                },
                 rows: HashMap::new(),
             };
             v.icons = Some((key, icons));
@@ -177,9 +171,7 @@ impl State {
             &v.layout,
             icons.icon.as_ref(),
             icons.caption.as_ref(),
-            &icons.buttons,
             &row_icons,
-            icons.logo.as_ref(),
             &v.dialog,
             false,
             v.dialog.lit(),
@@ -330,7 +322,7 @@ impl State {
         let (w, h) = v.layout.size;
         let rect = Rect::new(v.x, v.y, w, h);
         let mut tree = crate::access::root(Role::Dialog, &v.dialog.title, rect);
-        if matches!(v.dialog.style, Style::Welcome)
+        if matches!(v.dialog.style, Style::Welcome(_))
             && let Some(n) = tree.get_mut(ROOT)
         {
             n.set_modal();

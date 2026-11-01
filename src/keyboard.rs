@@ -324,6 +324,9 @@ impl State {
             self.ime_grab_modifiers();
         }
         self.follow_layout();
+        if keyboard.modifier_state().shift != mods_before.shift {
+            self.dialog_shift(keyboard.modifier_state().shift);
+        }
         if keyboard.modifier_state().shift != mods_before.shift
             && let Some(window) = self.moving_window()
         {

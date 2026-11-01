@@ -59,3 +59,19 @@ endsession-intro-turn-off = These programs must close before the computer can tu
 endsession-intro-restart = These programs must close before the computer can restart. Save your work and close them.
 endsession-outro = To end the programs now, click End Now. Anything they have not saved will be lost. To go back to your programs, click Cancel.
 endsession-end-now = &End Now
+
+## The Log Off and Turn off computer panels
+powerpanel-title-log-off = Log Off Reprise
+powerpanel-title-turn-off = Turn off computer
+powerpanel-switch-user = &Switch User
+powerpanel-switch-user-tip = Lets another user log on while your programs and files remain open.
+powerpanel-log-off = &Log Off
+powerpanel-log-off-tip = Closes your programs and ends your Reprise session.
+powerpanel-stand-by = &Stand By
+powerpanel-stand-by-tip = Keeps your session in memory and puts the computer in a low-power state so that you can quickly resume working.
+powerpanel-hibernate = &Hibernate
+powerpanel-hibernate-tip = Saves your session to disk and turns off the computer. When you turn it on again, your session is restored.
+powerpanel-turn-off = T&urn Off
+powerpanel-turn-off-tip = Shuts down Reprise so that you can safely turn off the computer.
+powerpanel-restart = &Restart
+powerpanel-restart-tip = Shuts down Reprise and then starts Reprise again.

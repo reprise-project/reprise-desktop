@@ -434,7 +434,7 @@ fn every_dialog_fits_its_text_under_every_interface() {
                     {
                         put(&d.title, format!("{:?} over", f.label));
                     }
-                    if matches!(d.style, Style::Welcome) {
+                    if matches!(d.style, Style::Welcome(_)) {
                         continue;
                     }
                     for (b, r) in d.buttons.iter().zip(&l.buttons) {

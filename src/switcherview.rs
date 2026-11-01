@@ -142,7 +142,7 @@ impl State {
             .views
             .iter()
             .rev()
-            .filter(|v| !matches!(v.dialog.style, crate::dialog::Style::Welcome))
+            .filter(|v| !matches!(v.dialog.style, crate::dialog::Style::Welcome(_)))
             .map(|v| Entry::Dialog(v.id))
             .collect();
         let desktop = self.config.switcher.desktop.then_some(Entry::Desktop);

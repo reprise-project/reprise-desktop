@@ -31,8 +31,6 @@ fn render_browse_preview() {
         None,
         None,
         &[],
-        &[],
-        None,
         &d,
         false,
         None,
@@ -63,8 +61,6 @@ fn render_key_aid_preview() {
                 None,
                 None,
                 &[],
-                &[],
-                None,
                 &d,
                 true,
                 None,
@@ -156,21 +152,13 @@ fn dialogs_preview(theme: &Theme, file: &str) {
                 .icon
                 .as_deref()
                 .and_then(|n| icons.get(n, theme.icon_size()));
-            let button_icons: Vec<Option<Canvas>> = d
-                .buttons
-                .iter()
-                .map(|b| b.icon.as_deref().and_then(|n| icons.get(n, ICON_PX)))
-                .collect();
-            let logo = icons.get("start-here", ICON_PX);
             draw(
                 &theme,
                 &text,
                 &l,
                 icon.as_ref(),
                 caption.as_ref(),
-                &button_icons,
                 &[],
-                logo.as_ref(),
                 d,
                 true,
                 None,
@@ -251,8 +239,6 @@ fn render_sheets_preview() {
                     None,
                     None,
                     &[],
-                    &[],
-                    None,
                     &d,
                     false,
                     None,

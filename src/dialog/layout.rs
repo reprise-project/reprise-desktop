@@ -42,6 +42,8 @@ pub struct DialogLayout {
     /// `scrollbar` and `access` lay the Run list, the chooser and the
     /// Browse dialog out with.
     pub controls: ControlMetrics,
+    /// A Blue Welcome panel's own layout, which `buttons` repeats: its cells, then Cancel.
+    pub power: Option<reprisekit::powerpanel::Layout>,
 }
 
 /// What a point on a dialog lands on.
@@ -158,8 +160,10 @@ impl DialogLayout {
 
     fn compute_body(theme: &Theme, text: &TextRenderer, d: &Dialog) -> DialogLayout {
         let body = match &d.style {
-            Style::Welcome if theme.glass().is_some() => Self::compute_welcome_glass(d),
-            Style::Welcome => return Self::compute_welcome(d, theme.text),
+            Style::Welcome(w) if theme.glass().is_some() && !w.always_blue => {
+                Self::compute_welcome_glass(d)
+            }
+            Style::Welcome(w) => return Self::compute_welcome(w, theme.text),
             Style::Form(f) => return Self::compute_form(theme, text, d, f),
             Style::Chooser(_) => Self::compute_chooser(),
             Style::TrayCustomize(t) => {
@@ -436,7 +440,7 @@ impl DialogLayout {
         }
         // The caption, less the buttons already taken out of it above: the
         // grip a dialog is dragged by. Welcome panels are not draggable.
-        if !matches!(d.style, Style::Welcome) && self.caption.contains(x, y) {
+        if !matches!(d.style, Style::Welcome(_)) && self.caption.contains(x, y) {
             return Some(DialogHit::Caption);
         }
         if let Some(f) = d.form() {

@@ -27,7 +27,7 @@ impl State {
     /// under the 3D switcher joins its stack (`flip_join`) and stays hidden until its cards land
     /// (`flip_hide_dialog`).
     pub fn open_dialog(&mut self, d: Dialog) {
-        if matches!(d.style, Style::Welcome) {
+        if matches!(d.style, Style::Welcome(_)) {
             self.switcher_cancel();
             self.close_all_dialogs();
             self.open_view(d, None);
@@ -105,7 +105,7 @@ impl State {
             }
             Placement::At(x, y) => keep_inside((x, y), layout.size, area),
         };
-        let welcome = matches!(d.style, Style::Welcome);
+        let welcome = matches!(d.style, Style::Welcome(_));
         let tree = self.scene.tree_create(dialog_layer(&d, &self.layers));
         self.scene
             .set_data(tree, Some(SceneOwner::Dialog(self.dialogs.views.len())));
@@ -278,7 +278,7 @@ impl State {
     /// Whether the top dialog has the keyboard; a Welcome panel always does, a minimised one never.
     pub fn dialog_has_keyboard(&self) -> bool {
         self.dialogs.views.last().is_some_and(|v| {
-            !v.minimized && (self.dialogs.active || matches!(v.dialog.style, Style::Welcome))
+            !v.minimized && (self.dialogs.active || matches!(v.dialog.style, Style::Welcome(_)))
         })
     }
 
@@ -296,7 +296,7 @@ impl State {
         self.dialogs
             .views
             .last()
-            .is_some_and(|v| matches!(v.dialog.style, Style::Welcome))
+            .is_some_and(|v| matches!(v.dialog.style, Style::Welcome(_)))
     }
 
     /// Redraw the taskbars after the stack or keyboard changed, when some dialog has a button or
