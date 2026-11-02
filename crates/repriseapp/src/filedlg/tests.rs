@@ -851,6 +851,7 @@ fn thumbs_without_cache(h: &mut Host) {
     h.thumbs = Some(Thumbs::new(
         std::sync::Arc::new(crate::decode::Decoders::default_set()),
         None,
+        false,
         crate::Waker::noop(),
     ));
 }

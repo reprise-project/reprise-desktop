@@ -183,6 +183,8 @@ pub struct Settings {
     /// ([`repriseconf::ThumbnailCache::MAX_MB`]; the up-down clamps a value outside it).
     pub thumbnail_cache: bool,
     pub thumbnail_max_mb: i64,
+    /// `[thumbnail_cache] external_thumbnailers`.
+    pub external_thumbnailers: bool,
     /// `[storage] low_space_percent`, 0 to [`repriseconf::LOW_SPACE_MAX`]; 0 turns the warning off.
     pub low_space_percent: i64,
 
@@ -484,6 +486,7 @@ impl Settings {
             launcher_windows: c.launcher_windows,
             thumbnail_cache: repriseconf::ThumbnailCache::DEFAULT.enabled,
             thumbnail_max_mb: repriseconf::ThumbnailCache::DEFAULT.max_mb as i64,
+            external_thumbnailers: repriseconf::ThumbnailCache::DEFAULT.external_thumbnailers,
             low_space_percent: repriseconf::LOW_SPACE_PERCENT.into(),
 
             desktops: c.workspaces as i64,

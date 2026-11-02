@@ -63,7 +63,7 @@ impl Explorer {
         reply
     }
 
-    /// Queues decodes for images without a thumbnail at the window's `scale` (Thumbnails and
+    /// Queues thumbnails for files ([`Item::thumbnailable`]) without one at the window's `scale` (Thumbnails and
     /// Tiles only). One made at another scale shows until its replacement arrives.
     pub fn request_thumbs(&mut self, scale: i32) {
         if !matches!(self.sv.mode, Mode::Thumbnails | Mode::Tiles) {
@@ -74,7 +74,9 @@ impl Explorer {
             .items
             .iter()
             .zip(&self.sv.entries)
-            .filter(|(it, e)| it.is_image() && e.thumb.as_ref().is_none_or(|t| t.scale() != scale))
+            .filter(|(it, e)| {
+                it.thumbnailable() && e.thumb.as_ref().is_none_or(|t| t.scale() != scale)
+            })
             .map(|(it, _)| it.path.clone())
             .collect();
         for path in wanted {
@@ -149,11 +151,15 @@ impl Explorer {
             let Some(&i) = self.item_index.get(&done.path) else {
                 continue;
             };
-            self.image_dims.insert(done.path.clone(), done.dims);
             let kind = self.items[i].kind.clone();
             if let Some(e) = self.sv.entries.get_mut(i) {
                 e.thumb = Some(shellview::frame_thumb(done.thumb, done.dims, done.scale));
-                e.detail = shellview::image_detail(done.dims, &kind);
+                if done.sized {
+                    e.detail = shellview::image_detail(done.dims, &kind);
+                }
+            }
+            if done.sized {
+                self.image_dims.insert(done.path.clone(), done.dims);
             }
             arrived.push(done.path);
             dirty = true;
@@ -821,6 +827,7 @@ mod tests {
         assert!(before[0].starts_with("Type: "), "{before:?}");
 
         ex.thumbs.deliver(Done {
+            sized: true,
             path,
             thumb: Canvas::new(4, 3),
             dims: (800, 600),
@@ -888,6 +895,7 @@ mod tests {
         assert_ne!(a, before, "the sort moved a.png");
 
         ex.thumbs.deliver(Done {
+            sized: true,
             path: dir.path().join("a.png"),
             thumb: Canvas::new(4, 3),
             dims: (800, 600),
@@ -909,6 +917,7 @@ mod tests {
         let path = dir.path().join("a.png");
         let deliver = |ex: &mut Explorer, ctx: &mut Ctx, scale: i32| {
             ex.thumbs.deliver(Done {
+                sized: true,
                 path: path.clone(),
                 thumb: Canvas::new(400, 300),
                 dims: (800, 600),
@@ -1352,6 +1361,7 @@ mod tests {
         ex.refresh(&mut ctx);
         for name in ["a.png", "c.png"] {
             ex.thumbs.deliver(Done {
+                sized: true,
                 path: dir.path().join(name),
                 thumb: Canvas::new(4, 3),
                 dims: (800, 600),

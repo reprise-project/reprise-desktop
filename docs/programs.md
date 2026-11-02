@@ -72,7 +72,11 @@ The file manager, and the default for folders.
   Select several files for one sheet that covers them all.
 - **Thumbnails** decode in the background into the freedesktop thumbnail
   cache, shared with other file managers: its 128 px `normal` size at scale
-  1, its 256 px `large` size at scale 2. The Browse... dialogs of Run and
+  1, its 256 px `large` size at scale 2. Files Reprise does not decode
+  itself (PDFs, videos, fonts) get theirs from the freedesktop thumbnailers
+  installed in `share/thumbnailers`, two at a time at idle priority, each
+  stopped after 10 seconds; a file one fails on is not tried again until
+  it changes. The Browse... dialogs of Run and
   Open With read the same cache and leave the pictures it lacks to Explorer,
   so the desktop itself never decodes a picture. Folders update by
   themselves, no F5 needed.
@@ -196,7 +200,8 @@ One window, 23 pages, four headings. Only one runs at a time.
     desktop entry.
   - **Advanced:** clipboard history, screenshots, recent files, location,
     desktop water, the debug overlay, the thumbnail cache (Clear removes
-    only the thumbnails Reprise kept and says how much went), and an Edit File... button for when
+    only the thumbnails Reprise kept and says how much went), thumbnails from
+    the installed thumbnailers, and an Edit File... button for when
     you'd rather just open `config.toml`.
 
 When `config.toml` changes while Settings is open (an editor, or a key aid's

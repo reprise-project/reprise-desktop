@@ -40,7 +40,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[notifications]` | balloon sounds, quiet hours, Do Not Disturb during full screen and screen sharing |
 | `[sounds]` | the sound theme balloons and the bell play from, and whether the bell sounds |
 | `[privacy]` | recent files and location |
-| `[thumbnail_cache]` | whether pictures' thumbnails are kept, and the cap |
+| `[thumbnail_cache]` | whether thumbnails are kept, the cap, and whether installed thumbnailers make them for PDFs, videos and fonts |
 | `[storage]` | the low disk space warning |
 | `[debug]` | the debug overlay |
 | `[osd]` | `caps_lock`, `num_lock`: whether the key's on or off shows on screen when it changes, both on by default (Settings > Keyboard) |
