@@ -108,6 +108,7 @@ pub fn key_press(syms: Vec<u32>, mods: u32, pressed: bool) -> KeyPress {
         lower,
         mods: mods & !(keys::MOD_CAPS | keys::MOD_MOD2),
         pressed,
+        place: None,
     }
 }
 
@@ -158,7 +159,8 @@ impl State {
             syms.push(f);
         }
         let mods_before = keyboard.modifier_state();
-        let k = key_press(syms, keys::mask(&mods_before), pressed);
+        let mut k = key_press(syms, keys::mask(&mods_before), pressed);
+        k.place = keys::place_key_for(keycode).filter(|s| !k.lower.contains(s));
         if from_seat && !self.aids_key(keycode, &k) {
             return;
         }
@@ -659,7 +661,7 @@ impl State {
                     self.close(w);
                 }
             }
-            Action::Cycle | Action::Flip => {
+            Action::Cycle | Action::CycleApp | Action::Flip => {
                 // The keys reach here past an open menu, popup, overview or
                 // snap picker (`keyroute::switch_bind`); it closes first.
                 self.close_menu();
@@ -669,7 +671,10 @@ impl State {
                 self.close_emoji();
                 self.close_overview();
                 crate::snappickerview::hide(self);
-                if *a == Action::Flip && bind_mods != 0 && self.flip_wanted() {
+                if *a == Action::CycleApp {
+                    let held = bind_mods & !keys::MOD_SHIFT;
+                    self.cycle_app(held, bind_mods & keys::MOD_SHIFT != 0);
+                } else if *a == Action::Flip && bind_mods != 0 && self.flip_wanted() {
                     self.open_flip(bind_mods);
                 } else if bind_mods != 0
                     && self.switcher_start(self.switch_entries().len()).is_some()

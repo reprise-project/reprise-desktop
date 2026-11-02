@@ -100,6 +100,7 @@ pub const DEFAULTS: &[(&str, &str)] = &[
     ("Super+grave", "tab-next"),
     ("Super+Page_Down", "tab-next"),
     ("Super+Page_Up", "tab-prev"),
+    ("Alt+grave", "cycle-app"),
 ];
 
 pub const MODIFIER_KEYS: &[&str] = &[
