@@ -15,7 +15,7 @@ use reprisekit::trackbar::{self, TrackBar};
 
 use crate::profiles::{self, Profiles};
 use crate::settings::Settings;
-use crate::tray::clock;
+use crate::tray::{clock, held};
 use crate::upower::{Power, State};
 
 /// The sheet's fixed client size: a 404x448 window less the frame.
@@ -417,10 +417,11 @@ impl Sheet {
             ),
             Some(b) => {
                 let status = match b.state {
-                    State::Charging => "Charging",
-                    State::Discharging => "Discharging",
-                    State::Full => "Fully charged",
-                    State::Unknown => "Unknown",
+                    _ if b.held => held(b),
+                    State::Charging => "Charging".into(),
+                    State::Discharging => "Discharging".into(),
+                    State::Full => "Fully charged".into(),
+                    State::Unknown => "Unknown".into(),
                 };
                 let remaining = match b.state {
                     State::Discharging if b.time_to_empty > 0 => clock(b.time_to_empty),
@@ -430,7 +431,7 @@ impl Sheet {
                     State::Full => "-".to_string(),
                     _ => "Unknown".to_string(),
                 };
-                (status.to_string(), format!("{}%", b.percent), remaining)
+                (status, format!("{}%", b.percent), remaining)
             }
         };
         set_text(page, "status_value", &status, true);
@@ -992,6 +993,7 @@ mod tests {
                 percent: 45,
                 time_to_empty: 7800,
                 time_to_full: 0,
+                ..Battery::default()
             }),
         });
         let p = &s.sheet.pages[TAB_METER];

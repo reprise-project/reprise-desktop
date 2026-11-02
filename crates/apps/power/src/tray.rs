@@ -4,7 +4,7 @@
 use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
 use crate::profiles::{self, Profiles};
-use crate::upower::{Power, State};
+use crate::upower::{Battery, Power, State};
 
 pub const BUS_NAME: &str = "reprise.power";
 
@@ -54,11 +54,21 @@ pub fn clock(seconds: u64) -> String {
     format!("{}:{:02}", minutes / 60, minutes % 60)
 }
 
+/// What a battery the charge limit holds is doing: "Charging limited to 80%".
+pub fn held(b: &Battery) -> String {
+    match b.stops_at {
+        Some(end) => format!("Charging limited to {end}%"),
+        None => "Charging limited".to_string(),
+    }
+}
+
 pub fn tooltip(p: &Power) -> String {
     let Some(b) = &p.battery else {
         return "On AC power".to_string();
     };
     match b.state {
+        _ if b.held && b.stops_at.is_some() => held(b),
+        _ if b.held => format!("{} ({}%)", held(b), b.percent),
         State::Full => format!("Fully charged ({}%)", b.percent),
         State::Charging => format!("Charging ({}%)", b.percent),
         State::Discharging if b.time_to_empty > 0 => {
@@ -106,7 +116,6 @@ pub fn start(waker: repriseapp::Waker) -> reprisetray::Started {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::upower::Battery;
 
     fn power(state: State, percent: u8, empty: u64, on_battery: bool) -> Power {
         Power {
@@ -116,6 +125,7 @@ mod tests {
                 percent,
                 time_to_empty: empty,
                 time_to_full: 0,
+                ..Battery::default()
             }),
         }
     }
@@ -142,6 +152,29 @@ mod tests {
         assert_eq!(
             tooltip(&power(State::Unknown, 80, 0, false)),
             "On AC power (80%)"
+        );
+    }
+
+    #[test]
+    fn a_battery_held_by_the_charge_limit_says_where_it_stops() {
+        let held = |stops_at| Power {
+            on_battery: false,
+            battery: Some(Battery {
+                state: State::Charging,
+                percent: 79,
+                held: true,
+                stops_at,
+                ..Battery::default()
+            }),
+        };
+        assert_eq!(tooltip(&held(Some(80))), "Charging limited to 80%");
+        assert_eq!(tooltip(&held(None)), "Charging limited (79%)");
+        let mut charging = held(Some(80));
+        charging.battery.as_mut().unwrap().held = false;
+        assert_eq!(
+            tooltip(&charging),
+            "Charging (79%)",
+            "below the limit, charging"
         );
     }
 

@@ -113,6 +113,7 @@ impl SettingsApp {
                 changed = true;
             }
         }
+        changed |= self.charge_done();
         let cleared = match &self.clearing {
             Some(rx) => match take(rx) {
                 Ok(c) => c.map(pages::Clearing::Done),

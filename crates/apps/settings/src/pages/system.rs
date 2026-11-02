@@ -6,6 +6,7 @@ use super::{
     X, button, choice, combo, edit, field, group, list, locations, spin,
 };
 use crate::model::WATER_STYLES;
+use reprisebus::charge::ChargeLimit;
 use repriseconf::ThumbnailCache;
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
@@ -180,7 +181,18 @@ pub(super) const BELL: &str = "bell";
 /// The sound theme's label and combo, greyed while nothing plays a sound.
 pub(super) const SOUND_CONTROLS: [&str; 2] = ["sound_theme_label", "sound_theme"];
 
-pub fn power(a: Area) -> Form {
+/// The battery charge limit's check box, there only while UPower offers a limit.
+pub const CHARGE_LIMIT: &str = "charge_limit";
+
+pub fn charge_label(limit: &ChargeLimit) -> String {
+    match limit.end {
+        Some(end) => format!("Limit charging to protect the &battery (stops at {end}%)"),
+        None => "Limit charging to protect the &battery".to_string(),
+    }
+}
+
+/// The Power page; `charge` adds the charge limit's check box under Low Disk Space.
+pub fn power(a: Area, charge: Option<&ChargeLimit>) -> Form {
     let gw = a.gw();
     // One row per command: the label, then its field 4 px above the label's row, as on the Keyboard page.
     let command = |label_id, id, y, text| {
@@ -282,6 +294,9 @@ pub fn power(a: Area) -> Form {
         gw,
         "For the disks of your home folder and /. 0 turns it off.",
     ));
+    if let Some(limit) = charge {
+        items.push(Item::check(CHARGE_LIMIT, X, 472, &charge_label(limit)).checked(limit.enabled));
+    }
     Form::new(items)
 }
 

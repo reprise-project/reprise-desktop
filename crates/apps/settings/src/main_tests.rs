@@ -1357,3 +1357,56 @@ fn forget_saved_layouts_drops_the_file_and_greys_the_button() {
     assert!(!app.display.layouts.exists());
     assert!(!forget(&app), "greyed once forgotten");
 }
+
+fn charged(
+    a: &mut SettingsApp,
+    limit: Option<reprisebus::charge::ChargeLimit>,
+    failed: Option<Option<String>>,
+) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(chargehost::Charged { limit, failed }).unwrap();
+    a.charging = Some(rx);
+    assert!(a.charge_done());
+}
+
+fn charge_row(a: &SettingsApp) -> Option<bool> {
+    match &a.sheet.pages[Page::Power.index()]
+        .item(pages::CHARGE_LIMIT)?
+        .control
+    {
+        form::Control::Check { checked, .. } => Some(*checked),
+        _ => None,
+    }
+}
+
+#[test]
+fn the_charge_limit_row_follows_what_upower_says() {
+    let mut a = app("charge");
+    a.want.low_space_percent = 9;
+    let limit = |enabled| reprisebus::charge::ChargeLimit {
+        device: "/org/freedesktop/UPower/devices/battery_BAT0".into(),
+        enabled,
+        end: Some(80),
+    };
+    charged(&mut a, Some(limit(false)), None);
+    assert_eq!(charge_row(&a), Some(false));
+    match &a.sheet.pages[Page::Power.index()]
+        .item("low_space_percent")
+        .unwrap()
+        .control
+    {
+        form::Control::UpDown(u) => assert_eq!(u.value(), 9, "the rebuilt page keeps what it held"),
+        c => panic!("an up-down, not {c:?}"),
+    }
+    charged(&mut a, Some(limit(true)), None);
+    assert_eq!(charge_row(&a), Some(true));
+    assert!(a.error.is_none());
+    charged(
+        &mut a,
+        Some(limit(true)),
+        Some(Some("Not Authorized".into())),
+    );
+    assert!(a.error.is_some(), "a refused toggle says why");
+    charged(&mut a, None, None);
+    assert_eq!(charge_row(&a), None, "the battery went away");
+}

@@ -392,6 +392,10 @@ are.
 - **Laptop things.** Lid, power and sleep button actions, low and critical
   battery alarms, power profiles, and clamshell mode: close the lid with a
   monitor plugged in and the laptop screen steps aside.
+- **Battery charge limit.** On a laptop whose battery driver supports one,
+  Settings > Power has "Limit charging to protect the battery", which turns
+  UPower's charge limit on or off at once. The thresholds are UPower's and the
+  kernel's; the row shows where charging stops.
 - **A Turn Off dialog** that dims the desktop behind it. Shutting down used
   to have a little gravity. Hold Shift and Stand By turns into Hibernate;
   an empty `[power] standby` greys Stand By.

@@ -9,6 +9,7 @@
 //! but it follows the owner through `NameOwnerChanged` messages it takes
 //! from any peer.
 //!
+//! [`charge`] reads and sets UPower's battery charge limit.
 //! [`a11y`] reports keys to the accessibility bus's registry for a screen
 //! reader. [`fprint`] asks fprintd whether a user has a finger enrolled.
 //! [`instance`] keeps a program to one running copy.
@@ -25,6 +26,7 @@
 
 pub mod a11y;
 pub mod appearance;
+pub mod charge;
 pub mod filetransfer;
 pub mod fprint;
 pub mod instance;
