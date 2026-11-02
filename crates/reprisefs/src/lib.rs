@@ -7,6 +7,7 @@ pub mod autostart;
 pub mod batchrename;
 pub mod bincap;
 pub mod complete;
+pub mod compress;
 pub mod deadline;
 pub mod dialogops;
 pub mod dirchange;

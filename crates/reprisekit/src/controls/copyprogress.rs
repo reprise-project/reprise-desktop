@@ -30,6 +30,8 @@ pub enum Kind {
     Restore,
     /// Out of an archive into a folder.
     Extract,
+    /// Into a new zip.
+    Compress,
 }
 
 impl Kind {
@@ -40,7 +42,10 @@ impl Kind {
 
     /// Whether the job names where its items go as well as where they come from.
     fn has_dest(self) -> bool {
-        matches!(self, Kind::Copy | Kind::Move | Kind::Extract)
+        matches!(
+            self,
+            Kind::Copy | Kind::Move | Kind::Extract | Kind::Compress
+        )
     }
 }
 
@@ -139,6 +144,7 @@ impl CopyProgress {
             Kind::Empty => "Emptying the Recycle Bin...",
             Kind::Restore => "Restoring...",
             Kind::Extract => "Extracting...",
+            Kind::Compress => "Compressing...",
         }
     }
 
@@ -268,6 +274,7 @@ impl CopyProgress {
             Kind::Empty => "Emptying",
             Kind::Restore => "Restoring",
             Kind::Extract => "Extracting",
+            Kind::Compress => "Compressing",
         }
     }
 
@@ -281,7 +288,7 @@ impl CopyProgress {
         Flight {
             ms: self.anim_ms,
             fraction: self.fraction(),
-            moving: !matches!(self.kind, Kind::Copy | Kind::Extract),
+            moving: !matches!(self.kind, Kind::Copy | Kind::Extract | Kind::Compress),
             stage: match self.status.phase {
                 Phase::Preparing => Stage::Preparing,
                 Phase::Copying => Stage::Flying,
@@ -292,7 +299,9 @@ impl CopyProgress {
                 _ => End::Folder,
             },
             to: match self.kind {
-                Kind::Copy | Kind::Move | Kind::Restore | Kind::Extract => End::Folder,
+                Kind::Copy | Kind::Move | Kind::Restore | Kind::Extract | Kind::Compress => {
+                    End::Folder
+                }
                 Kind::Delete => End::Bin,
                 Kind::Erase | Kind::Empty => End::Gone,
             },
@@ -416,6 +425,7 @@ impl CopyProgress {
             Kind::Delete | Kind::Erase => ("Deleted", format!("from {}", self.from)),
             Kind::Restore => ("Restored", format!("from {}", self.from)),
             Kind::Extract => ("Extracted", format!("to {}", self.to)),
+            Kind::Compress => ("Compressed", format!("into {}", self.to)),
             Kind::Empty => {
                 return (
                     "Emptied the Recycle Bin".into(),
@@ -449,6 +459,7 @@ impl CopyProgress {
             (Phase::Preparing, Kind::Move) => "Preparing to move...".to_string(),
             (Phase::Preparing, Kind::Restore) => "Preparing to restore...".to_string(),
             (Phase::Preparing, Kind::Extract) => "Preparing to extract...".to_string(),
+            (Phase::Preparing, Kind::Compress) => "Preparing to compress...".to_string(),
             (Phase::Preparing, _) => "Preparing to delete...".to_string(),
             _ => self.status.current.clone(),
         };
@@ -917,6 +928,21 @@ mod tests {
             )
         );
         assert!(!cp.flight().moving, "the archive stays where it is");
+    }
+
+    #[test]
+    fn a_compression_counts_items_and_names_its_zip() {
+        let cp = CopyProgress::new(Kind::Compress, "Documents", "Reports.zip", SKY);
+        assert!(Kind::Compress.by_items());
+        assert_eq!(cp.title(), "Compressing...");
+        assert_eq!(
+            cp.ended_note(1),
+            (
+                "Compressed 1 item".to_string(),
+                "Compressed 1 item into Reports.zip".to_string()
+            )
+        );
+        assert!(!cp.flight().moving, "the items stay where they are");
     }
 
     fn fnv(c: &Canvas) -> u64 {

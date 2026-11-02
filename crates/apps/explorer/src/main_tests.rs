@@ -205,6 +205,72 @@ fn extract_to_lands_a_zip_in_a_folder_named_after_it_and_selects_it() {
 }
 
 #[test]
+fn compress_to_names_the_zip_on_the_menu_and_selects_it() {
+    let tmp = tempfile::tempdir().expect("a temp dir");
+    let d = tmp.path().join("Work");
+    std::fs::create_dir_all(d.join("v1.2/sub")).expect("mkdir");
+    std::fs::write(d.join("v1.2/sub/a.txt"), "a").expect("write");
+    std::fs::write(d.join("report.txt"), "r").expect("write");
+    std::fs::write(d.join("report.zip"), "").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(d.clone()), &mut ctx);
+    ex.select_paths(&[d.join("report.txt")]);
+    assert_eq!(ex.compress_label().as_deref(), Some("report (2).zip"));
+    ex.select_paths(&[d.join("v1.2")]);
+    assert_eq!(ex.compress_label().as_deref(), Some("v1.2.zip"));
+    ex.select_paths(&[d.join("v1.2"), d.join("report.txt")]);
+    assert_eq!(ex.compress_label().as_deref(), Some("Work.zip"));
+
+    ex.select_paths(&[d.join("v1.2")]);
+    ex.run(Command::Compress, &mut ctx);
+    ex.finish_extracts(reprisefs::progress::Decision::Abort, &mut ctx);
+    let zip = d.join("v1.2.zip");
+    let listed = std::process::Command::new("bsdtar")
+        .arg("-tf")
+        .arg(&zip)
+        .output()
+        .expect("bsdtar runs");
+    assert_eq!(
+        String::from_utf8_lossy(&listed.stdout),
+        "v1.2/\nv1.2/sub/\nv1.2/sub/a.txt\n"
+    );
+    assert_eq!(ex.selected_paths(), [zip], "the new zip is selected");
+    assert_eq!(
+        Explorer::compress_label(&test_explorer(Place::Computer, &mut ctx)),
+        None,
+        "a read-only place compresses nothing"
+    );
+}
+
+#[test]
+fn a_zip_that_cannot_be_written_shows_an_error_box_and_leaves_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("a temp dir");
+    let d = tmp.path().join("ro");
+    std::fs::create_dir(&d).expect("mkdir");
+    std::fs::write(d.join("a.txt"), "a").expect("write");
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Folder(d.clone()), &mut ctx);
+    ex.select_paths(&[d.join("a.txt")]);
+    std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o555)).expect("chmod");
+    ex.run(Command::Compress, &mut ctx);
+    ex.finish_extracts(reprisefs::progress::Decision::Abort, &mut ctx);
+    std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    match &ex.dialog {
+        Some(crate::dialogs::Dialog::Message { title, text }) => {
+            assert_eq!(title, "Error Compressing File");
+            assert!(text.starts_with("Cannot compress a.zip: "), "{text}");
+        }
+        _ => panic!("an error box is up"),
+    }
+    let left: Vec<_> = std::fs::read_dir(&d)
+        .expect("ls")
+        .map(|e| e.expect("entry").file_name())
+        .collect();
+    assert_eq!(left, ["a.txt"]);
+}
+
+#[test]
 fn navigating_to_the_current_address_re_lists_the_folder() {
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(dir.path().join("one.txt"), "1").expect("write");
