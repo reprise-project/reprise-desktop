@@ -8,7 +8,7 @@ use repriseapp::listjob::Job;
 use repriseapp::{Ctx, Reply};
 use reprisefs::ops::DropOp;
 use reprisefs::places::{self, MountedDrives};
-use reprisefs::sendto::{Dirs, Drives, SendToRow};
+use reprisefs::sendto::{self, Dirs, Drives, SendToRow};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -86,7 +86,9 @@ impl Explorer {
         }
         let until = Instant::now() + self.list_wait();
         self.land_send_reads(Some(until), ctx);
-        self.send.drives.send_to_rows(&self.send.dirs)
+        let mut rows = self.send.drives.send_to_rows(&self.send.dirs);
+        rows.extend(sendto::phone_rows());
+        rows
     }
 
     fn scan_send_drives(&mut self, ctx: &Ctx) {

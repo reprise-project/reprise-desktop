@@ -30,6 +30,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'dnsmasq: sharing the connection from a hotspot in Network Connections'
             'networkmanager-openvpn: OpenVPN connections, and importing .ovpn files in Network Connections'
             'bluez: reprise-bluetooth, the Bluetooth tray icon and Bluetooth Devices'
+            'kdeconnect: reprise-phone, the phone tray icon (battery, Ring phone, Send files), and phones in Send To'
             'udisks2: reprise-drives (drives mounted as they are plugged in, Safely Remove Hardware), and unmounted drives and Eject in Computer'
             'packagekit: reprise-updates, the updates tray icon and Software Updates'
             'flatpak: Flatpak application and runtime updates in Software Updates'
@@ -86,11 +87,11 @@ package() {
   install -Dm755 target/release/reprise "$pkgdir/usr/bin/reprise"
   # One binary holds every program; each name links to it.
   install -Dm755 target/release/reprise-apps "$pkgdir/usr/bin/reprise-apps"
-  for app in reprise-notepad reprise-explorer reprise-about reprise-sound reprise-volume reprise-settings reprise-power reprise-datetime reprise-accounts reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers reprise-terminal; do
+  for app in reprise-notepad reprise-explorer reprise-about reprise-sound reprise-volume reprise-settings reprise-power reprise-datetime reprise-accounts reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers reprise-terminal reprise-phone; do
     ln -s reprise-apps "$pkgdir/usr/bin/$app"
     install -Dm644 "data/apps/$app.desktop" "$pkgdir/usr/share/applications/$app.desktop"
   done
-  for app in reprise-sound reprise-power reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers; do
+  for app in reprise-sound reprise-power reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers reprise-phone; do
     install -Dm644 "data/autostart/$app.desktop" "$pkgdir/etc/xdg/autostart/$app.desktop"
   done
   install -Dm755 target/release/reprise-portal "$pkgdir/usr/bin/reprise-portal"

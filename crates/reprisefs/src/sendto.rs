@@ -3,6 +3,10 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, Once};
+
+use reprisebus::kdeconnect::{self, Device};
+use reprisebus::mutex::lock;
 
 use crate::compress::Compress;
 use crate::{names, places};
@@ -13,6 +17,8 @@ pub enum SendTo {
     DesktopShortcut,
     Mail,
     Folder(PathBuf),
+    /// A phone KDE Connect reaches, by its device id.
+    Phone(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -190,6 +196,53 @@ impl Drives {
     }
 }
 
+/// The phones [`follow_phones`] last heard of; none in a process that never called it.
+static PHONES: Mutex<Vec<Device>> = Mutex::new(Vec::new());
+static FOLLOWING: Once = Once::new();
+
+/// Keeps the phone rows up to date with kdeconnectd from now on, on a thread of its own.
+pub fn follow_phones() {
+    FOLLOWING.call_once(|| kdeconnect::follow(|d| *lock(&PHONES) = d.unwrap_or_default()));
+}
+
+/// A row per reachable device that takes files, after the drives.
+pub fn phone_rows() -> Vec<SendToRow> {
+    rows_for_phones(&lock(&PHONES))
+}
+
+fn rows_for_phones(devices: &[Device]) -> Vec<SendToRow> {
+    (devices.iter())
+        .filter(|d| d.share)
+        .map(|d| SendToRow {
+            label: d.name.clone(),
+            icon: "phone",
+            dest: SendTo::Phone(d.id.clone()),
+            enabled: true,
+        })
+        .collect()
+}
+
+/// Hands `paths` to KDE Connect for phone `id`, on a thread of its own; KDE Connect shows the
+/// transfer's progress and failure.
+pub fn send_to_phone(id: String, paths: &[PathBuf]) {
+    let urls: Vec<String> = paths
+        .iter()
+        .map(|p| crate::thumbnails::file_uri(p))
+        .collect();
+    let sent = std::thread::Builder::new()
+        .name("reprise-send-phone".into())
+        .spawn(move || {
+            let result = reprisebus::session()
+                .and_then(|conn| reprisebus::wait(kdeconnect::share(&conn, &id, &urls)));
+            if let Err(e) = result {
+                log::warn!("send to phone {id}: {e}");
+            }
+        });
+    if let Err(e) = sent {
+        log::warn!("send to phone: {e}");
+    }
+}
+
 pub fn mail_argv(paths: &[PathBuf]) -> Vec<OsString> {
     let mut argv = vec![OsString::from("xdg-email")];
     for p in paths {
@@ -239,6 +292,28 @@ mod tests {
         let bare = super::rows(false, None, &[]);
         assert_eq!(bare.len(), 3);
         assert!(!bare[1].enabled);
+    }
+
+    #[test]
+    fn a_phone_that_takes_files_gets_a_row_named_after_it() {
+        let phone = |id: &str, name: &str, share: bool| Device {
+            id: id.into(),
+            name: name.into(),
+            share,
+            ..Device::default()
+        };
+        let rows = rows_for_phones(&[phone("p1", "Pixel", true), phone("w1", "Watch", false)]);
+        assert_eq!(
+            rows,
+            [SendToRow {
+                label: "Pixel".into(),
+                icon: "phone",
+                dest: SendTo::Phone("p1".into()),
+                enabled: true,
+            }],
+            "a device without the share plugin takes no files"
+        );
+        assert!(phone_rows().is_empty(), "nothing followed, no phones");
     }
 
     #[test]

@@ -14,6 +14,7 @@ fn entry(program: &str) -> Option<fn(Vec<OsString>)> {
         "reprise-explorer" => reprise_explorer::main,
         "reprise-network" => reprise_network::main,
         "reprise-notepad" => reprise_notepad::main,
+        "reprise-phone" => reprise_phone::main,
         "reprise-polkit" => reprise_polkit::main,
         "reprise-power" => reprise_power::main,
         "reprise-printers" => reprise_printers::main,

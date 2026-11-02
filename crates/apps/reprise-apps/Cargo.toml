@@ -21,6 +21,7 @@ reprise-drives = { path = "../drives" }
 reprise-explorer = { path = "../explorer" }
 reprise-network = { path = "../network" }
 reprise-notepad = { path = "../notepad" }
+reprise-phone = { path = "../phone" }
 reprise-polkit = { path = "../polkit" }
 reprise-power = { path = "../power" }
 reprise-printers = { path = "../printers" }

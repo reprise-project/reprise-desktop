@@ -25,7 +25,7 @@ impl State {
 
     /// Send To row `row` (of the rows the submenu last listed) for `sources`:
     /// a zip named apart from `existing`, a desktop shortcut on the cell
-    /// nearest `beside` (else the first free one), a mail or a copy.
+    /// nearest `beside` (else the first free one), a mail, a copy or a share to a phone.
     pub(crate) fn send_sources_to(
         &mut self,
         row: usize,
@@ -54,6 +54,7 @@ impl State {
                 self.perform_all(sources, &target, crate::dragview::DropOp::Shortcut);
             }
             SendTo::Mail => self.spawn_argv_activated(&reprisefs::sendto::mail_argv(&paths)),
+            SendTo::Phone(id) => reprisefs::sendto::send_to_phone(id, &paths),
             SendTo::Folder(dir) => {
                 use crate::dragview::{DropOp, DropTarget};
                 // A copy onto a drive that stopped answering would hold a file action until it

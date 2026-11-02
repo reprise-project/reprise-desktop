@@ -5,7 +5,8 @@
 //! programs' drops are `dnddrop`'s; rename, the file clipboard and icon keys are
 //! `iconedit`'s; Delete, Properties, Open With and Empty Recycle Bin are
 //! `desktopfiles`'. Send To lists its destinations as the submenu opens,
-//! from what the desktop read and the drive stats found (`sendto::Drives::send_to_rows`).
+//! from what the desktop read and the drive stats found (`sendto::Drives::send_to_rows`), then
+//! the phones KDE Connect reaches (`sendto::phone_rows`).
 
 mod commands;
 mod drives;
@@ -214,6 +215,7 @@ pub fn setup(state: &mut State) {
             None
         }
     };
+    reprisefs::sendto::follow_phones();
     create(state, dir, crate::state::load(), watch);
     state.rescan_desktop();
     state.scan_drives();
