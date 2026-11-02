@@ -43,7 +43,8 @@ pub struct StartPanelView {
     /// Parallel to `model.tree`; None for a folder.
     tree_apps: Vec<Option<usize>>,
     result_apps: Vec<usize>,
-    answer: Option<String>,
+    /// The answer row's text and what Enter copies, from `search::calc_row`.
+    answer: Option<(String, String)>,
     result_settings: Vec<Setting>,
     result_kinds: Vec<ResultKind>,
     pub search: FileSearch,
