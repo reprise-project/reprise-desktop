@@ -130,6 +130,11 @@ impl State {
             return true;
         }
         let rows = -steps * reprisekit::pointer::WHEEL_ROWS;
+        let shown = v.layout.completion(&v.dialog).map(|(_, l)| l.rows);
+        if shown.is_some_and(|n| v.dialog.wheel_completion(n, rows)) {
+            self.redraw_dialog(index);
+            return true;
+        }
         match v.dialog.wheel(over, rows) {
             Outcome::Nothing => {}
             Outcome::Redraw => self.redraw_dialog(index),
