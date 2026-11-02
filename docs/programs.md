@@ -186,6 +186,27 @@ Paint opens PNG, JPEG, BMP, GIF, WebP and the other formats Reprise reads, and s
 saves the picture and makes it the wallpaper. Paint is offered for pictures in Open With without
 becoming their default.
 
+## Calculator
+
+Standard and Scientific, picked on the View menu. Standard works each
+operator as you press it, so 2 + 3 × 4 = is 20; Scientific keeps the whole
+expression and works it with precedence and parentheses, so the same keys
+give 14, the answer the launcher gives for `2+3*4`. Both show the operation
+in progress above the number and an M while the memory holds a value.
+
+- **Keys:** digits, `.`, `+ - * /`, Enter or `=`, Escape (C), Delete (CE),
+  Backspace, `%`, `@` (square root), `r` (1/x) and F9 (±). In Scientific
+  also `^` or `y` (xʸ), `q` (x²), `!`, `s`, `o`, `t` (sin, cos, tan in the
+  degrees, radians or grads picked beside the keys), `n` (ln), `l` (log),
+  `p` (π), `e` and parentheses. Ctrl+L, Ctrl+R, Ctrl+M, Ctrl+P and Ctrl+Q are
+  MC, MR, MS, M+ and M−.
+- **Clipboard:** Ctrl+C copies the number shown; Ctrl+V pastes a number, or
+  in Scientific works out a pasted expression.
+- **History** (View > History, Ctrl+H): every answer, with what was asked.
+  Click one to bring its answer back.
+
+Answers are shown to 12 significant digits.
+
 ## Terminal
 
 A tabbed terminal, `reprise-terminal`. It opens in the directory it was

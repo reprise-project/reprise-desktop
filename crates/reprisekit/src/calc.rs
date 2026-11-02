@@ -1,4 +1,5 @@
-//! An arithmetic expression needs an operator between two operands or a function call: `42`, `2024-10-06` and `file-1` are not one.
+//! The arithmetic the launcher and Calculator share. To [`evaluate`] an expression needs an
+//! operator between two operands or a function call: `42`, `2024-10-06` and `file-1` are not one.
 //! `^` binds tightest and to the right, under a unary minus (`-2^2` is -4).
 
 pub fn answer(text: &str) -> Option<String> {
@@ -9,11 +10,13 @@ pub fn evaluate(text: &str) -> Option<f64> {
     parse(text).and_then(|(v, ops)| (ops > 0).then_some(v))
 }
 
-/// Like `evaluate`, but a plain number counts too: the amount in front of a unit.
+/// The finite value of `text`, a plain number included: what Calculator's `=` shows and the
+/// amount in front of a unit.
 pub fn value(text: &str) -> Option<f64> {
     parse(text).map(|(v, _)| v)
 }
 
+/// The value of `text` and how many operators and calls it took.
 fn parse(text: &str) -> Option<(f64, usize)> {
     let tokens = tokenize(text)?;
     let mut p = Parser {
@@ -23,6 +26,19 @@ fn parse(text: &str) -> Option<(f64, usize)> {
     };
     let v = p.expr()?;
     (p.at == p.tokens.len() && v.is_finite()).then_some((v, p.ops))
+}
+
+/// `a op b` for `op` one of `+ - * / % ^` (`%` is the remainder); NaN for any other `op`.
+pub fn apply(op: char, a: f64, b: f64) -> f64 {
+    match op {
+        '+' => a + b,
+        '-' => a - b,
+        '*' => a * b,
+        '/' => a / b,
+        '%' => a % b,
+        '^' => a.powf(b),
+        _ => f64::NAN,
+    }
 }
 
 /// `v` to 12 significant digits, without trailing zeros; huge and tiny
@@ -159,7 +175,7 @@ impl Parser {
             self.at += 1;
             self.ops += 1;
             let r = self.term()?;
-            v = if op == '+' { v + r } else { v - r };
+            v = apply(op, v, r);
         }
         Some(v)
     }
@@ -171,11 +187,7 @@ impl Parser {
             self.at += 1;
             self.ops += 1;
             let r = self.unary()?;
-            v = match op {
-                '*' => v * r,
-                '/' => v / r,
-                _ => v % r,
-            };
+            v = apply(op, v, r);
         }
         Some(v)
     }
@@ -201,7 +213,7 @@ impl Parser {
         if matches!(self.peek(), Some(Tok::Op('^'))) {
             self.at += 1;
             self.ops += 1;
-            return Some(base.powf(self.unary()?));
+            return Some(apply('^', base, self.unary()?));
         }
         Some(base)
     }
