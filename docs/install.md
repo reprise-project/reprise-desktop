@@ -114,7 +114,7 @@ desktop and stays out of the way when it's missing.
 - KDE Connect (`kdeconnect`), for the phone icon (battery, Ring phone, Send
   files) and phones in Send To
 - UDisks2, for mounting drives as they're plugged in, Safely Remove
-  Hardware, and unmounted drives and Eject in Computer
+  Hardware, unmounted drives and Eject in Computer, and mounting disk images
 - ddcutil and the i2c-dev module, for external monitors' brightness over
   DDC/CI (the keys and the displays icon). Load i2c-dev at boot with
   `echo i2c-dev | sudo tee /etc/modules-load.d/i2c-dev.conf`; ddcutil's udev

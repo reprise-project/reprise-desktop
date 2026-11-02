@@ -686,6 +686,7 @@ impl Explorer {
             extract: None,
             local_paths: self.selected_local().is_some(),
             compress: None,
+            disk_image: false,
         }
     }
 
@@ -1204,10 +1205,14 @@ impl Explorer {
         ctx: &mut Ctx,
     ) {
         self.scanning = None;
+        let before = std::mem::take(&mut self.drive_mounts);
         self.drives = drives;
         self.drive_mounts = place::drive_mounts(&self.drives);
         self.mounts_seen = mounts;
         self.sync_volumes();
+        if self.drive_mounts != before {
+            self.refill_tree_node(&Place::Computer, ctx);
+        }
         self.build_address(ctx);
     }
 
@@ -1223,7 +1228,8 @@ impl Explorer {
     }
 
     /// Read UDisks2 again and mark the mounted drives it calls removable:
-    /// `/proc/mounts` alone takes an unlocked stick's cleartext volume for a fixed disk.
+    /// `/proc/mounts` alone takes an unlocked stick's cleartext volume for a fixed disk, and leaves
+    /// mounted disk images out.
     fn sync_volumes(&mut self) {
         if let Some(u) = &self.udisks {
             self.volumes = u.snapshot();
@@ -1233,6 +1239,7 @@ impl Explorer {
                 d.removable = true;
             }
         }
+        self.merge_image_drives();
     }
 
     pub(crate) fn selected_dir(&self) -> Option<Place> {
@@ -1264,6 +1271,9 @@ impl Explorer {
         };
         if let Some(v) = self.selected_unmounted() {
             return self.mount_and_open(v, ctx);
+        }
+        if self.selected_disk_image().is_some() {
+            return self.mount_image(ctx);
         }
         if let Some(place) = folder_place(&it) {
             return self.go(place, ctx);

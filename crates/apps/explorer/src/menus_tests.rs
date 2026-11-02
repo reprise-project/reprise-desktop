@@ -397,6 +397,26 @@ fn compress_to_names_its_zip_above_send_to_on_files_and_folders() {
 }
 
 #[test]
+fn a_disk_images_menu_mounts_by_default_and_still_opens() {
+    let bold = |m: &Menu, i: usize| matches!(&m.items()[i], MenuItem::Entry { bold: true, .. });
+    let s = MenuState {
+        disk_image: true,
+        ..MenuState::default()
+    };
+    let m = item_menu(&s, ItemKind::File, false, &[], &[]);
+    assert_eq!(label(m.items(), 0), "Mount");
+    assert!(bold(&m, 0), "the default row");
+    assert_eq!(m.command(&[0]), Command::MountImage);
+    assert_eq!(label(m.items(), 1), "Open");
+    assert!(!bold(&m, 1));
+    assert_eq!(m.command(&[1]), Command::Open);
+    let plain = item_menu(&MenuState::default(), ItemKind::File, false, &[], &[]);
+    assert_eq!(label(plain.items(), 0), "Open");
+    assert!(bold(&plain, 0));
+    assert_eq!(label(plain.items(), 1), "Run as...", "no Mount row");
+}
+
+#[test]
 fn a_launcher_has_paste_under_copy_and_no_open_with() {
     let s = MenuState {
         selection: 1,

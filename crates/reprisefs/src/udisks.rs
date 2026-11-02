@@ -3,10 +3,11 @@
 //! `GetManagedObjects` returns without a bus, so it is testable; [`Udisks`]
 //! is a blocking client over the system bus for callers without an
 //! executor of their own; [`follow`] posts a fresh [`Snapshot`] after each
-//! change. Polkit decides every call; the session's agent prompts when it has to.
+//! change. Polkit decides every call; the session's agent prompts when it has to. A disk image
+//! is set up read-only on a loop device ([`Udisks::mount_image`]) and stands in for a drive.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use zbus::{ObjectPath, OwnedObjectPath, OwnedVariant, Variant};
@@ -17,11 +18,32 @@ pub const BLOCK_IFACE: &str = "org.freedesktop.UDisks2.Block";
 pub const FILESYSTEM_IFACE: &str = "org.freedesktop.UDisks2.Filesystem";
 pub const ENCRYPTED_IFACE: &str = "org.freedesktop.UDisks2.Encrypted";
 pub const DRIVE_IFACE: &str = "org.freedesktop.UDisks2.Drive";
+pub const LOOP_IFACE: &str = "org.freedesktop.UDisks2.Loop";
+pub const PARTITION_IFACE: &str = "org.freedesktop.UDisks2.Partition";
+pub const MANAGER: &str = "/org/freedesktop/UDisks2/Manager";
+pub const MANAGER_IFACE: &str = "org.freedesktop.UDisks2.Manager";
 const OBJECT_MANAGER: &str = "org.freedesktop.DBus.ObjectManager";
 
 /// How long a call waits: a mount or an unlock can hold on a polkit
 /// prompt the user is still reading.
 const CALL_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// How long a new loop device's file systems take to be probed and announced.
+const PROBE_WAIT: Duration = Duration::from_secs(5);
+const PROBE_POLL: Duration = Duration::from_millis(100);
+
+/// The types Explorer mounts as disk images, under their current and their older names.
+pub const IMAGE_MIMES: [&str; 5] = [
+    "application/vnd.efi.iso",
+    "application/x-cd-image",
+    "application/x-iso9660-image",
+    "application/vnd.efi.img",
+    "application/x-raw-disk-image",
+];
+
+pub fn is_disk_image(mime: &str) -> bool {
+    IMAGE_MIMES.contains(&mime)
+}
 
 /// One interface's properties as `GetManagedObjects` returns them.
 pub type Props = HashMap<String, OwnedVariant>;
@@ -87,6 +109,16 @@ pub struct Volume {
     pub system: bool,
     /// `HintAuto`: fine to mount on its own when it appears.
     pub auto: bool,
+    /// The disk image this user set up the volume's loop device on, the volume itself or a
+    /// partition of it.
+    pub image: Option<Image>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Image {
+    pub file: PathBuf,
+    /// The loop device's block object.
+    pub loop_path: String,
 }
 
 impl Volume {
@@ -96,8 +128,10 @@ impl Volume {
     }
 
     pub fn name(&self, disk: Option<&Disk>) -> String {
+        let image = self.image.as_ref().and_then(|i| i.file.file_name());
         match &self.label {
             Some(l) => l.clone(),
+            None if image.is_some() => image.unwrap_or_default().to_string_lossy().into_owned(),
             None if disk.is_some_and(|d| d.optical) => "CD Drive".into(),
             None => "Removable Disk".into(),
         }
@@ -140,10 +174,50 @@ impl Snapshot {
         v.disk.as_deref().and_then(|p| self.disk(p))
     }
 
-    /// Whether `v` is the user's to mount and remove: shown, not the
-    /// system's, on a removable drive.
+    /// Whether `v` is the user's to mount and remove: shown, and on a disk image the user set up
+    /// or not the system's on a removable drive.
     pub fn removable(&self, v: &Volume) -> bool {
-        !v.ignore && !v.system && self.disk_of(v).is_some_and(|d| d.removable)
+        !v.ignore
+            && (v.image.is_some() || (!v.system && self.disk_of(v).is_some_and(|d| d.removable)))
+    }
+
+    /// The loop device this user set up on `file`, if there is one.
+    pub fn image_of(&self, file: &Path) -> Option<&str> {
+        self.volumes
+            .iter()
+            .filter_map(|v| v.image.as_ref())
+            .find(|i| i.file == file)
+            .map(|i| i.loop_path.as_str())
+    }
+
+    /// The file systems on loop device `loop_path`: its own, or else each partition's.
+    pub fn image_volumes(&self, loop_path: &str) -> Vec<&Volume> {
+        self.volumes
+            .iter()
+            .filter(|v| v.filesystem && !v.ignore)
+            .filter(|v| v.image.as_ref().is_some_and(|i| i.loop_path == loop_path))
+            .collect()
+    }
+
+    /// A drive for every mounted disk image volume, which `/proc/mounts` alone leaves out with
+    /// every other loop device.
+    pub fn image_drives(&self) -> Vec<crate::places::Drive> {
+        self.volumes
+            .iter()
+            .filter(|v| v.image.is_some() && !v.ignore)
+            .filter_map(|v| {
+                Some(crate::places::Drive {
+                    mount: v.mounts.first()?.clone(),
+                    device: v.device.clone(),
+                    fs: v.fs_type.clone(),
+                    label: Some(v.name(None)),
+                    removable: true,
+                    optical: matches!(v.fs_type.as_str(), "iso9660" | "udf"),
+                    total: v.size,
+                    free: 0,
+                })
+            })
+            .collect()
     }
 
     /// Removable volumes with a file system that is not mounted, and
@@ -244,13 +318,31 @@ fn volume_of(path: &str, ifaces: &HashMap<String, Props>, block: &Props) -> Volu
         ignore: flag(block, "HintIgnore"),
         system: flag(block, "HintSystem"),
         auto: flag(block, "HintAuto"),
+        image: None,
     }
+}
+
+/// The image file behind a loop device this user set up.
+fn own_loop(lp: &Props, uid: u32) -> Option<PathBuf> {
+    let by = lp
+        .get("SetupByUID")
+        .and_then(|v| u32::try_from(v.clone()).ok());
+    let file = dev_name(lp, "BackingFile");
+    (by == Some(uid) && !file.is_empty()).then(|| PathBuf::from(file))
 }
 
 /// Every drive and block device in `objects`. A cleartext volume takes
 /// the drive and the hints of the container it was unlocked from: UDisks2
 /// gives it no drive, so it would otherwise read as the system's.
+///
+/// A loop device `uid` set up carries its [`Image`], and so do its partitions; when the image's
+/// whole device holds a file system (a hybrid ISO), its partitions are ignored.
 pub fn fold(objects: &Objects) -> Snapshot {
+    // SAFETY: getuid cannot fail and touches no memory.
+    fold_for(objects, unsafe { libc::getuid() })
+}
+
+fn fold_for(objects: &Objects, uid: u32) -> Snapshot {
     let mut disks: Vec<Disk> = objects
         .iter()
         .filter_map(|(p, ifaces)| ifaces.get(DRIVE_IFACE).map(|d| disk_of(p.as_str(), d)))
@@ -269,12 +361,37 @@ pub fn fold(objects: &Objects) -> Snapshot {
         .filter(|v| v.encrypted)
         .map(|v| (v.path.clone(), v.clone()))
         .collect();
+    let images: HashMap<String, (PathBuf, bool)> = objects
+        .iter()
+        .filter_map(|(p, ifaces)| {
+            let file = own_loop(ifaces.get(LOOP_IFACE)?, uid)?;
+            Some((p.to_string(), (file, ifaces.contains_key(FILESYSTEM_IFACE))))
+        })
+        .collect();
+    let tables: HashMap<String, String> = objects
+        .iter()
+        .filter_map(|(p, ifaces)| {
+            Some((
+                p.to_string(),
+                object(ifaces.get(PARTITION_IFACE)?, "Table")?,
+            ))
+        })
+        .collect();
     for v in &mut volumes {
         if let Some(c) = v.backing.as_ref().and_then(|b| containers.get(b)) {
             v.disk = v.disk.take().or_else(|| c.disk.clone());
             v.ignore = c.ignore;
             v.system = c.system;
             v.auto = c.auto;
+        }
+        let table = tables.get(&v.path).cloned();
+        let whole = table.as_deref().unwrap_or(&v.path);
+        if let Some((file, whole_fs)) = images.get(whole) {
+            v.image = Some(Image {
+                file: file.clone(),
+                loop_path: whole.to_string(),
+            });
+            v.ignore |= table.is_some() && *whole_fs;
         }
     }
     volumes.sort_by(|a, b| a.device.cmp(&b.device));
@@ -338,6 +455,13 @@ impl From<zbus::Error> for Error {
                 message: other.to_string(),
             },
         }
+    }
+}
+
+fn io_error(e: std::io::Error) -> Error {
+    Error {
+        kind: ErrorKind::Other,
+        message: e.to_string(),
     }
 }
 
@@ -515,6 +639,98 @@ impl Udisks {
     pub fn lock(&self, volume: &str) -> Result<(), Error> {
         self.call(volume, ENCRYPTED_IFACE, "Lock", &(no_options(),))
             .map(|_| ())
+    }
+
+    /// Set disk image `file` up read-only on a loop device and mount its file system, or each
+    /// partition's when the whole image holds none; where the first went. An image already set up
+    /// by this user is reused. With nothing mountable on it the loop device is removed again.
+    pub fn mount_image(&self, file: &Path) -> Result<PathBuf, Error> {
+        let file = std::fs::canonicalize(file).map_err(io_error)?;
+        let loop_path = match self.snapshot().image_of(&file) {
+            Some(l) => l.to_string(),
+            None => self.loop_setup(&file)?,
+        };
+        let volumes = self.probed(&loop_path);
+        let mut first: Option<Result<PathBuf, Error>> = None;
+        for v in &volumes {
+            let at = match v.mounts.first() {
+                Some(m) => Ok(m.clone()),
+                None => self.mount(&v.path),
+            };
+            if let Err(e) = &at {
+                log::info!("mounting {} of {}: {e}", v.device, file.display());
+            }
+            first = match first {
+                Some(Ok(at)) => Some(Ok(at)),
+                _ => Some(at),
+            };
+        }
+        let failed = match first {
+            Some(Ok(at)) => return Ok(at),
+            Some(Err(e)) => e,
+            None => Error {
+                kind: ErrorKind::Other,
+                message: format!(
+                    "{} holds no file system that can be opened.",
+                    file.file_name().unwrap_or_default().to_string_lossy()
+                ),
+            },
+        };
+        if let Err(e) = self.delete_loop(&loop_path) {
+            log::info!("{loop_path} stayed set up: {e}");
+        }
+        Err(failed)
+    }
+
+    fn loop_setup(&self, file: &Path) -> Result<String, Error> {
+        let f = std::fs::File::open(file).map_err(io_error)?;
+        let options = HashMap::from([("read-only", Variant::from(true))]);
+        let reply = self.call(
+            MANAGER,
+            MANAGER_IFACE,
+            "LoopSetup",
+            &(zbus::Fd::from(&f), options),
+        )?;
+        let o: OwnedObjectPath = reply.body().deserialize()?;
+        Ok(o.as_str().to_string())
+    }
+
+    /// The file systems on a new loop device once probed: UDisks2 announces its partitions and
+    /// their file systems a moment after the setup returns.
+    fn probed(&self, loop_path: &str) -> Vec<Volume> {
+        let end = std::time::Instant::now() + PROBE_WAIT;
+        loop {
+            let found = !self.snapshot().image_volumes(loop_path).is_empty();
+            if found || std::time::Instant::now() >= end {
+                if found {
+                    std::thread::sleep(SETTLE);
+                }
+                let snap = self.snapshot();
+                return snap.image_volumes(loop_path).into_iter().cloned().collect();
+            }
+            std::thread::sleep(PROBE_POLL);
+        }
+    }
+
+    fn delete_loop(&self, loop_path: &str) -> Result<(), Error> {
+        self.call(loop_path, LOOP_IFACE, "Delete", &(no_options(),))
+            .map(|_| ())
+    }
+
+    /// Eject a disk image: unmount every file system on loop device `loop_path`, partitions
+    /// first, then remove the loop device.
+    pub fn eject_image(&self, snap: &Snapshot, loop_path: &str) -> Result<(), Error> {
+        let mut on: Vec<&Volume> = snap
+            .volumes
+            .iter()
+            .filter(|v| v.image.as_ref().is_some_and(|i| i.loop_path == loop_path))
+            .filter(|v| !v.mounts.is_empty())
+            .collect();
+        on.sort_by_key(|v| v.path == loop_path);
+        for v in on {
+            self.unmount(&v.path)?;
+        }
+        self.delete_loop(loop_path)
     }
 
     /// Make drive `disk` safe to pull out: unmount every file system on
@@ -803,6 +1019,165 @@ pub(crate) mod tests {
         assert_ne!(Error::from(other).message, reprisebus::polkit::TIMED_OUT);
     }
 
+    fn u(v: u32) -> OwnedVariant {
+        OwnedVariant::from(v)
+    }
+
+    /// Loop device `name` set up on `file` by `uid`, with an iso9660 file system when `fs`.
+    fn loop_dev(name: &str, file: &str, uid: u32, fs: bool) -> HashMap<String, Props> {
+        let mut ifaces = HashMap::from([
+            (
+                BLOCK_IFACE.to_string(),
+                block(
+                    &format!("/dev/{name}"),
+                    "/",
+                    "",
+                    if fs { "iso9660" } else { "" },
+                    true,
+                ),
+            ),
+            (
+                LOOP_IFACE.to_string(),
+                props(vec![("BackingFile", ay(file)), ("SetupByUID", u(uid))]),
+            ),
+        ]);
+        if fs {
+            let block = ifaces.get_mut(BLOCK_IFACE).unwrap();
+            block.insert("IdLabel".into(), s("DEBIAN_13"));
+            ifaces.insert(
+                FILESYSTEM_IFACE.to_string(),
+                props(vec![("MountPoints", aay(&[]))]),
+            );
+        }
+        ifaces
+    }
+
+    fn partition(
+        name: &str,
+        table: &str,
+        fs_type: &str,
+        mounted: &[&str],
+    ) -> HashMap<String, Props> {
+        HashMap::from([
+            (
+                BLOCK_IFACE.to_string(),
+                block(&format!("/dev/{name}"), "/", "", fs_type, true),
+            ),
+            (
+                PARTITION_IFACE.to_string(),
+                props(vec![("Table", o(&format!("{BD}/{table}")))]),
+            ),
+            (
+                FILESYSTEM_IFACE.to_string(),
+                props(vec![("MountPoints", aay(mounted))]),
+            ),
+        ])
+    }
+
+    fn uid() -> u32 {
+        // SAFETY: getuid cannot fail and touches no memory.
+        unsafe { libc::getuid() }
+    }
+
+    #[test]
+    fn a_loop_device_this_user_set_up_is_a_removable_image_and_anyone_elses_is_not() {
+        let path = |p: &str| OwnedObjectPath::try_from(p.to_string()).unwrap();
+        let mut m = Objects::new();
+        m.insert(
+            path(&format!("{BD}/loop0")),
+            loop_dev("loop0", "/home/u/debian.iso", uid(), true),
+        );
+        m.insert(
+            path(&format!("{BD}/loop1")),
+            loop_dev("loop1", "/var/lib/snapd/snaps/core.snap", uid() + 1, true),
+        );
+        let snap = fold(&m);
+        let iso = snap.volume_by_device("/dev/loop0").unwrap();
+        assert_eq!(
+            iso.image,
+            Some(Image {
+                file: "/home/u/debian.iso".into(),
+                loop_path: format!("{BD}/loop0"),
+            })
+        );
+        assert!(snap.removable(iso), "though UDisks2 calls it the system's");
+        assert_eq!(iso.name(None), "DEBIAN_13");
+        let other = snap.volume_by_device("/dev/loop1").unwrap();
+        assert_eq!(other.image, None);
+        assert!(!snap.removable(other));
+        assert_eq!(
+            snap.image_of(Path::new("/home/u/debian.iso")),
+            Some(&*format!("{BD}/loop0"))
+        );
+        assert_eq!(
+            snap.image_of(Path::new("/var/lib/snapd/snaps/core.snap")),
+            None
+        );
+        let names: Vec<&str> = snap.unmounted().iter().map(|v| v.device.as_str()).collect();
+        assert_eq!(
+            names,
+            ["/dev/loop0"],
+            "an image not mounted yet is listed like a stick"
+        );
+    }
+
+    #[test]
+    fn a_partitioned_images_partitions_carry_it_and_a_hybrid_isos_are_ignored() {
+        let path = |p: &str| OwnedObjectPath::try_from(p.to_string()).unwrap();
+        let mut m = Objects::new();
+        m.insert(
+            path(&format!("{BD}/loop0")),
+            loop_dev("loop0", "/home/u/disk.img", uid(), false),
+        );
+        m.insert(
+            path(&format!("{BD}/loop0p1")),
+            partition("loop0p1", "loop0", "vfat", &["/run/media/u/BOOT"]),
+        );
+        m.insert(
+            path(&format!("{BD}/loop0p2")),
+            partition("loop0p2", "loop0", "ext4", &[]),
+        );
+        m.insert(
+            path(&format!("{BD}/loop1")),
+            loop_dev("loop1", "/home/u/hybrid.iso", uid(), true),
+        );
+        m.insert(
+            path(&format!("{BD}/loop1p1")),
+            partition("loop1p1", "loop1", "iso9660", &[]),
+        );
+        let snap = fold(&m);
+        let parts: Vec<&str> = snap
+            .image_volumes(&format!("{BD}/loop0"))
+            .iter()
+            .map(|v| v.device.as_str())
+            .collect();
+        assert_eq!(parts, ["/dev/loop0p1", "/dev/loop0p2"]);
+        assert_eq!(
+            snap.volume_by_device("/dev/loop0p2").unwrap().name(None),
+            "disk.img",
+            "an unlabelled partition is named after its image"
+        );
+        let hybrid: Vec<&str> = snap
+            .image_volumes(&format!("{BD}/loop1"))
+            .iter()
+            .map(|v| v.device.as_str())
+            .collect();
+        assert_eq!(hybrid, ["/dev/loop1"], "the whole ISO, not its partition");
+        let drives = snap.image_drives();
+        assert_eq!(drives.len(), 1, "only what is mounted");
+        assert_eq!(drives[0].mount, PathBuf::from("/run/media/u/BOOT"));
+        assert_eq!(drives[0].device, "/dev/loop0p1");
+        assert!(drives[0].removable && !drives[0].optical);
+    }
+
+    #[test]
+    fn disk_images_are_told_by_their_current_and_older_types() {
+        assert!(is_disk_image("application/vnd.efi.iso"));
+        assert!(is_disk_image("application/x-cd-image"));
+        assert!(is_disk_image("application/x-raw-disk-image"));
+        assert!(!is_disk_image("application/zip"));
+    }
+
     #[test]
     fn a_volume_without_a_label_is_named_by_its_drive() {
         let v = Volume::default();
@@ -812,5 +1187,267 @@ pub(crate) mod tests {
             ..Disk::default()
         };
         assert_eq!(v.name(Some(&cd)), "CD Drive");
+    }
+
+    /// A fake UDisks2 on a private bus: the calls `mount_image` and `eject_image` make, in order.
+    mod bus {
+        use super::*;
+        use std::io::{BufRead, BufReader};
+        use std::process::{Child, Command, Stdio};
+        use std::sync::{Arc, Mutex};
+
+        struct Bus(Child, String);
+
+        impl Drop for Bus {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        fn bus() -> Option<Bus> {
+            let mut child = Command::new("dbus-daemon")
+                .args(["--session", "--nofork", "--print-address"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()?;
+            let mut line = String::new();
+            BufReader::new(child.stdout.take()?)
+                .read_line(&mut line)
+                .ok()?;
+            Some(Bus(child, line.trim().to_string()))
+        }
+
+        #[derive(Clone, Copy, PartialEq)]
+        enum Image {
+            Iso,
+            Partitioned,
+            Blank,
+        }
+
+        struct State {
+            image: Image,
+            file: String,
+            set_up: bool,
+            mounted: Vec<String>,
+            calls: Vec<String>,
+        }
+
+        type Shared = Arc<Mutex<State>>;
+
+        fn mounts_of(st: &State, name: &str) -> OwnedVariant {
+            let at = format!("/run/media/u/{name}");
+            let list: Vec<&str> = match st.mounted.iter().any(|m| m == name) {
+                true => vec![at.as_str()],
+                false => vec![],
+            };
+            aay(&list)
+        }
+
+        fn objects(st: &State) -> Objects {
+            let path = |p: &str| OwnedObjectPath::try_from(p.to_string()).unwrap();
+            let mut m = Objects::new();
+            if !st.set_up {
+                return m;
+            }
+            let mut whole = loop_dev("loop0", &st.file, uid(), st.image == Image::Iso);
+            if let Some(fs) = whole.get_mut(FILESYSTEM_IFACE) {
+                fs.insert("MountPoints".into(), mounts_of(st, "loop0"));
+            }
+            m.insert(path(&format!("{BD}/loop0")), whole);
+            if st.image == Image::Partitioned {
+                for p in ["loop0p1", "loop0p2"] {
+                    let mut part = partition(p, "loop0", "vfat", &[]);
+                    let fs = part.get_mut(FILESYSTEM_IFACE).unwrap();
+                    fs.insert("MountPoints".into(), mounts_of(st, p));
+                    m.insert(path(&format!("{BD}/{p}")), part);
+                }
+            }
+            m
+        }
+
+        struct ObjectManager(Shared);
+
+        #[zbus::interface(name = "org.freedesktop.DBus.ObjectManager")]
+        impl ObjectManager {
+            fn get_managed_objects(&self) -> Objects {
+                objects(&self.0.lock().unwrap())
+            }
+        }
+
+        struct Manager(Shared);
+
+        #[zbus::interface(name = "org.freedesktop.UDisks2.Manager")]
+        impl Manager {
+            fn loop_setup(
+                &self,
+                _fd: zbus::OwnedFd,
+                options: HashMap<String, OwnedVariant>,
+            ) -> OwnedObjectPath {
+                let ro = options
+                    .get("read-only")
+                    .and_then(|v| bool::try_from(v.clone()).ok());
+                let mut st = self.0.lock().unwrap();
+                st.calls.push(format!("LoopSetup read-only={ro:?}"));
+                st.set_up = true;
+                OwnedObjectPath::try_from(format!("{BD}/loop0")).unwrap()
+            }
+        }
+
+        struct Filesystem(Shared, &'static str);
+
+        #[zbus::interface(name = "org.freedesktop.UDisks2.Filesystem")]
+        impl Filesystem {
+            fn mount(&self, _options: HashMap<String, OwnedVariant>) -> String {
+                let mut st = self.0.lock().unwrap();
+                st.calls.push(format!("Mount {}", self.1));
+                st.mounted.push(self.1.to_string());
+                format!("/run/media/u/{}", self.1)
+            }
+
+            fn unmount(&self, _options: HashMap<String, OwnedVariant>) {
+                let mut st = self.0.lock().unwrap();
+                st.calls.push(format!("Unmount {}", self.1));
+                st.mounted.retain(|m| m != self.1);
+            }
+        }
+
+        struct Loop(Shared);
+
+        #[zbus::interface(name = "org.freedesktop.UDisks2.Loop")]
+        impl Loop {
+            fn delete(&self, _options: HashMap<String, OwnedVariant>) {
+                let mut st = self.0.lock().unwrap();
+                st.calls.push("Delete loop0".into());
+                st.set_up = false;
+                st.mounted.clear();
+            }
+        }
+
+        struct Fake {
+            udisks: Udisks,
+            state: Shared,
+            file: PathBuf,
+            _service: zbus::Connection,
+            _dir: tempfile::TempDir,
+            _bus: Bus,
+        }
+
+        fn fake(image: Image, set_up: bool) -> Option<Fake> {
+            let Some(bus) = bus() else {
+                eprintln!("no dbus-daemon; skipped");
+                return None;
+            };
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("disk.img");
+            std::fs::write(&file, b"image").unwrap();
+            let file = std::fs::canonicalize(&file).unwrap();
+            let state = Arc::new(Mutex::new(State {
+                image,
+                file: file.to_string_lossy().into_owned(),
+                set_up,
+                mounted: Vec::new(),
+                calls: Vec::new(),
+            }));
+            let service = zbus::block_on(async {
+                let mut b = zbus::connection::Builder::address(bus.1.as_str())
+                    .name(NAME)
+                    .serve_at(ROOT, ObjectManager(state.clone()))
+                    .serve_at(MANAGER, Manager(state.clone()))
+                    .serve_at(format!("{BD}/loop0"), Loop(state.clone()));
+                for name in ["loop0", "loop0p1", "loop0p2"] {
+                    b = b.serve_at(format!("{BD}/{name}"), Filesystem(state.clone(), name));
+                }
+                b.build().await.expect("serve")
+            });
+            let client = zbus::block_on(async {
+                zbus::connection::Builder::address(bus.1.as_str())
+                    .build()
+                    .await
+                    .expect("connect")
+            });
+            Some(Fake {
+                udisks: Udisks::on(client),
+                state,
+                file,
+                _service: service,
+                _dir: dir,
+                _bus: bus,
+            })
+        }
+
+        fn calls(f: &Fake) -> Vec<String> {
+            f.state.lock().unwrap().calls.clone()
+        }
+
+        #[test]
+        fn an_iso_is_set_up_read_only_and_its_file_system_mounted() {
+            let Some(f) = fake(Image::Iso, false) else {
+                return;
+            };
+            let at = f.udisks.mount_image(&f.file).expect("mounted");
+            assert_eq!(at, PathBuf::from("/run/media/u/loop0"));
+            assert_eq!(calls(&f), ["LoopSetup read-only=Some(true)", "Mount loop0"]);
+        }
+
+        #[test]
+        fn a_partitioned_image_mounts_each_partition_and_goes_to_the_first() {
+            let Some(f) = fake(Image::Partitioned, false) else {
+                return;
+            };
+            let at = f.udisks.mount_image(&f.file).expect("mounted");
+            assert_eq!(at, PathBuf::from("/run/media/u/loop0p1"));
+            assert_eq!(
+                calls(&f),
+                [
+                    "LoopSetup read-only=Some(true)",
+                    "Mount loop0p1",
+                    "Mount loop0p2"
+                ]
+            );
+        }
+
+        #[test]
+        fn an_image_already_set_up_gets_no_second_loop_device() {
+            let Some(f) = fake(Image::Iso, true) else {
+                return;
+            };
+            f.udisks.mount_image(&f.file).expect("mounted");
+            assert_eq!(calls(&f), ["Mount loop0"]);
+        }
+
+        #[test]
+        fn an_image_with_no_file_system_is_refused_and_its_loop_device_removed() {
+            let Some(f) = fake(Image::Blank, false) else {
+                return;
+            };
+            let e = f.udisks.mount_image(&f.file).expect_err("nothing to mount");
+            assert_eq!(
+                e.message,
+                "disk.img holds no file system that can be opened."
+            );
+            assert_eq!(
+                calls(&f),
+                ["LoopSetup read-only=Some(true)", "Delete loop0"]
+            );
+        }
+
+        #[test]
+        fn eject_unmounts_the_partitions_then_removes_the_loop_device() {
+            let Some(f) = fake(Image::Partitioned, false) else {
+                return;
+            };
+            f.udisks.mount_image(&f.file).expect("mounted");
+            f.state.lock().unwrap().calls.clear();
+            let snap = f.udisks.snapshot();
+            f.udisks
+                .eject_image(&snap, &format!("{BD}/loop0"))
+                .expect("ejected");
+            assert_eq!(
+                calls(&f),
+                ["Unmount loop0p1", "Unmount loop0p2", "Delete loop0"]
+            );
+        }
     }
 }

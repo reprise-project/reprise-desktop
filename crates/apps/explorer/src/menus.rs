@@ -41,6 +41,8 @@ pub struct MenuState {
     pub local_paths: bool,
     /// The zip the item menu's Compress to row makes; `None` hides the row.
     pub compress: Option<String>,
+    /// The selection is one disk image: the item menu's default row mounts it.
+    pub disk_image: bool,
 }
 
 impl Default for MenuState {
@@ -61,6 +63,7 @@ impl Default for MenuState {
             extract: None,
             local_paths: false,
             compress: None,
+            disk_image: false,
         }
     }
 }
@@ -437,6 +440,10 @@ pub fn item_menu(
                     Command::Run(o),
                 );
             }
+        }
+        ItemKind::File if state.disk_image => {
+            m.row(bold("Mo&unt", true), Command::MountImage);
+            m.row(row("&Open", true), Command::Open);
         }
         _ => m.row(bold("&Open", true), Command::Open),
     }

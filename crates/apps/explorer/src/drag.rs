@@ -456,6 +456,7 @@ impl Explorer {
         let state = crate::menus::MenuState {
             extract: self.extract_label(),
             compress: self.compress_label(),
+            disk_image: self.selected_disk_image().is_some(),
             ..self.menu_state()
         };
         let menu = crate::menus::item_menu(&state, kind, eject, &open_with, &send_to);
