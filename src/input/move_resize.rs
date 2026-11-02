@@ -257,6 +257,9 @@ impl State {
             Interaction::DialogMove { index, .. } | Interaction::DialogResize { index, .. } => {
                 self.remember_browse(index)
             }
+            was @ (Interaction::MiniMove { .. } | Interaction::MiniResize { .. }) => {
+                crate::miniview::released(self, was)
+            }
             Interaction::Idle => {}
         }
         self.interaction = Interaction::Idle;
@@ -322,6 +325,8 @@ impl State {
             }
             Interaction::DisplaysSlide => crate::displaysview::release(self),
             Interaction::FieldDrag { .. } => {}
+            // A moved or sized mini view stays as it is, and no click lands.
+            Interaction::MiniMove { .. } | Interaction::MiniResize { .. } => {}
         }
         self.restore_keyboard(was);
         self.set_cursor("default");

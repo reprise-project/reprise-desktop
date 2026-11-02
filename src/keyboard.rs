@@ -716,6 +716,11 @@ impl State {
                     self.set_on_top(w, on);
                 }
             }
+            Action::MiniView => {
+                if let Some(w) = self.focused {
+                    crate::miniview::toggle(self, w);
+                }
+            }
             Action::Tab(backwards) => self.step_tab(*backwards),
             Action::Center => {
                 if let Some(w) = self.focused {

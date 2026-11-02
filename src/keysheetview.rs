@@ -121,6 +121,7 @@ fn describe(a: &Action) -> (&'static str, String) {
         Action::ShowDesktop => (WINDOWS, "Show the desktop"),
         Action::ToggleFrame => (WINDOWS, "Hide or show the frame"),
         Action::AlwaysOnTop => (WINDOWS, "Always on top"),
+        Action::MiniView => (WINDOWS, "Mini view"),
         Action::Center => (WINDOWS, "Centre the window"),
         Action::Tab(false) => (WINDOWS, "Next tab"),
         Action::Tab(true) => (WINDOWS, "Previous tab"),

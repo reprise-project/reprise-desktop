@@ -29,6 +29,8 @@ pub enum Action {
     /// Hide or show the focused window's border and caption; it keeps its outer rect.
     ToggleFrame,
     AlwaysOnTop,
+    /// Open or close the focused window's mini view.
+    MiniView,
     Center,
     Tab(bool),
     Desktop(crate::desktops::Step),
@@ -90,6 +92,7 @@ impl Action {
             Action::ShowDesktop => "showdesktop",
             Action::ToggleFrame => "toggleframe",
             Action::AlwaysOnTop => "alwaysontop",
+            Action::MiniView => "mini-view",
             Action::Center => "center",
             Action::Tab(false) => "tab-next",
             Action::Tab(true) => "tab-prev",
@@ -168,6 +171,7 @@ impl Action {
             "showdesktop" => Action::ShowDesktop,
             "toggleframe" => Action::ToggleFrame,
             "alwaysontop" => Action::AlwaysOnTop,
+            "mini-view" => Action::MiniView,
             "center" => Action::Center,
             "tab-next" => Action::Tab(false),
             "tab-prev" => Action::Tab(true),
