@@ -290,6 +290,30 @@ impl State {
         self.repoint(self.pointer_location(), InputTime::now());
     }
 
+    /// Desktop `n`'s name, "Desktop n+1" without one.
+    pub fn desktop_name(&self, n: usize) -> String {
+        crate::config::desktop_name(&self.config.workspace_names, n)
+    }
+
+    /// Name desktop `n` (empty for its number) at once and in `config.toml`.
+    pub fn rename_desktop(&mut self, n: usize, name: String) {
+        let names = &mut self.config.workspace_names;
+        if names.get(n).map_or("", |s| s.trim()) == name {
+            return;
+        }
+        if names.len() <= n {
+            names.resize(n + 1, String::new());
+        }
+        names[n] = name;
+        while names.last().is_some_and(|s| s.trim().is_empty()) {
+            names.pop();
+        }
+        let saved: toml_edit::Array = names.iter().map(String::as_str).collect();
+        let key = repriseconf::key("workspaces", "names");
+        crate::configwrite::save_value(&self.config_path, key, toml_edit::Value::Array(saved));
+        self.redraw_taskbars();
+    }
+
     pub fn pager_buttons(&self) -> Vec<reprisekit::taskbar::PagerButton> {
         let d = self.desktops;
         if !d.enabled() {
@@ -343,6 +367,28 @@ mod tests {
             }
         );
         assert!(!d.resized(1).enabled());
+    }
+
+    #[test]
+    fn a_renamed_desktop_shows_its_name_and_an_emptied_one_its_number() {
+        let mut h = crate::harness::Harness::new();
+        assert_eq!(h.state.desktop_name(1), "Desktop 2");
+        h.state.rename_desktop(1, "Chat".into());
+        assert_eq!(h.state.config.workspace_names, ["", "Chat"]);
+        assert_eq!(h.state.desktop_name(1), "Chat");
+        assert_eq!(h.state.desktop_name(0), "Desktop 1");
+        h.state.rename_desktop(0, "Work".into());
+        h.state.rename_desktop(1, String::new());
+        assert_eq!(
+            h.state.config.workspace_names,
+            ["Work"],
+            "trailing empty names go"
+        );
+        h.output("A-1", 800, 600);
+        let bar = h.state.bars[0].tree;
+        let tip =
+            crate::tooltip::label_for(&h.state, bar, reprisekit::taskbar::TaskbarHit::Pager(0));
+        assert_eq!(tip.as_deref(), Some("Work"));
     }
 
     #[test]

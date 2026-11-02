@@ -51,8 +51,13 @@ impl State {
             {
                 let window = *window;
                 let own = self.win(self.home(window)).map_or(0, |h| h.desktop);
-                let (items, rows) =
-                    crate::winmenu::move_to_menu(self.desktops.count, own, WindowMenuRow::MoveTo);
+                let names = &self.config.workspace_names;
+                let (items, rows) = crate::winmenu::move_to_menu(
+                    self.desktops.count,
+                    own,
+                    names,
+                    WindowMenuRow::MoveTo,
+                );
                 return Some((
                     items,
                     MenuKind::Window { window, rows },
@@ -85,8 +90,9 @@ impl State {
                 button,
             } if rows.get(row).cloned().flatten() == Some(JumpRow::MoveToMenu) => {
                 let d = self.desktops;
+                let names = &self.config.workspace_names;
                 let (items, rows) =
-                    crate::winmenu::move_to_menu(d.count, d.current, JumpRow::MoveTo);
+                    crate::winmenu::move_to_menu(d.count, d.current, names, JumpRow::MoveTo);
                 let kind = MenuKind::JumpList {
                     rows,
                     target: target.clone(),
@@ -100,8 +106,9 @@ impl State {
                 button,
             } if rows.get(row).copied().flatten() == Some(WindowListRow::MoveToMenu) => {
                 let d = self.desktops;
+                let names = &self.config.workspace_names;
                 let (items, rows) =
-                    crate::winmenu::move_to_menu(d.count, d.current, WindowListRow::MoveTo);
+                    crate::winmenu::move_to_menu(d.count, d.current, names, WindowListRow::MoveTo);
                 let kind = MenuKind::WindowList {
                     windows: windows.clone(),
                     rows,

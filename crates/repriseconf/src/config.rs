@@ -85,6 +85,8 @@ pub struct Config {
     pub launcher_windows: bool,
     pub night_light: NightLightConfig,
     pub workspaces: usize,
+    /// `[workspaces] names`: entry n names desktop n; see [`desktop_name`].
+    pub workspace_names: Vec<String>,
     pub workspace_animation: SwitchAnimation,
     pub pager_mark: reprisekit::taskbar::PagerMark,
     /// `[workspaces] wheel_on_desktop`: the wheel over the desktop steps desktops as over the pager.
@@ -164,6 +166,7 @@ impl Default for Config {
             launcher_windows: true,
             night_light: NightLightConfig::default(),
             workspaces: WORKSPACES_DEFAULT,
+            workspace_names: Vec::new(),
             workspace_animation: SwitchAnimation::default(),
             pager_mark: reprisekit::taskbar::PagerMark::default(),
             wheel_on_desktop: false,

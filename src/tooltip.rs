@@ -486,7 +486,7 @@ pub(crate) fn label_for(state: &State, bar: TreeId, hit: TaskbarHit) -> Option<S
         TaskbarHit::Start => Some("Click here to begin".to_string()),
         TaskbarHit::Quick(i) => state.quicklaunch.get(i).map(|q| q.entry.label.clone()),
         TaskbarHit::Clock => Some(crate::taskbar::date_text()),
-        TaskbarHit::Pager(i) => Some(format!("Desktop {}", i + 1)),
+        TaskbarHit::Pager(i) => Some(state.desktop_name(i)),
         TaskbarHit::ShowDesktop => Some("Show desktop".to_string()),
         TaskbarHit::Chevron => {
             let open = state.bar(bar).is_some_and(|b| b.tray_open);

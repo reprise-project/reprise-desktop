@@ -9,6 +9,8 @@ pub struct TaskbarNames {
     pub start_open: bool,
     pub quick: Vec<String>,
     pub desktop: usize,
+    /// Each pager button's desktop name; "Desktop n" past the list.
+    pub pager: Vec<String>,
     pub pager_attention: Vec<bool>,
     pub tasks: Vec<(String, bool)>,
     pub attention: Vec<bool>,
@@ -84,7 +86,9 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
         if !layout.pager.is_empty() {
             let id = bar(tree, "pager", &layout.pager, "Desktops");
             for (i, r) in layout.pager.iter().enumerate() {
-                let mut n = button(*r, &format!("Desktop {}", i + 1));
+                let name =
+                    (names.pager.get(i).cloned()).unwrap_or_else(|| format!("Desktop {}", i + 1));
+                let mut n = button(*r, &name);
                 n.set_toggled((i == names.desktop).into());
                 wants(&mut n, names.pager_attention.get(i));
                 mark(TaskbarHit::Pager(i), tree.push(id, i, n));

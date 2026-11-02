@@ -189,14 +189,11 @@ impl State {
                 self.redraw_taskbar(tree);
             }
             TaskbarHit::Quick(index) if button == BTN_RIGHT => self.open_quick_menu(index, at),
-            TaskbarHit::Nothing
-            | TaskbarHit::Resize
-            | TaskbarHit::Clock
-            | TaskbarHit::Meter
-            | TaskbarHit::Pager(_)
+            TaskbarHit::Pager(i) if button == BTN_RIGHT => self.open_taskbar_menu(at, Some(i)),
+            TaskbarHit::Nothing | TaskbarHit::Resize | TaskbarHit::Clock | TaskbarHit::Meter
                 if button == BTN_RIGHT =>
             {
-                self.open_taskbar_menu(at)
+                self.open_taskbar_menu(at, None)
             }
             TaskbarHit::ShowDesktop if button == BTN_LEFT => self.toggle_show_desktop(),
             TaskbarHit::More if button == BTN_LEFT => {

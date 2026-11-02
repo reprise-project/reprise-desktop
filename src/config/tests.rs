@@ -176,7 +176,7 @@ fn four_desktops_by_default_and_count_is_checked() {
     );
     assert!(Config::parse("[workspaces]\ncount = 0\n").is_err());
     assert!(Config::parse("[workspaces]\ncount = 17\n").is_err());
-    assert!(Config::parse("[workspaces]\nnames = []\n").is_err());
+    assert!(Config::parse("[workspaces]\nnamez = []\n").is_err());
 }
 
 #[test]

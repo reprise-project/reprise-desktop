@@ -47,6 +47,8 @@ pub enum DialogAction {
     Cancel,
     /// Run the text field's content; inert while it is empty.
     RunField,
+    /// Name desktop n the text field's content; empty gives back its number.
+    RenameDesktop(usize),
     /// Run's Browse...: open Browse, the pick lands in the field.
     BrowseRun,
     Spawn(String),
@@ -522,6 +524,8 @@ pub enum Outcome {
     /// Run what the user typed in the field: spawned like `Spawn`, and
     /// remembered in the Run history.
     Run(String),
+    /// [`DialogAction::RenameDesktop`] with the field's trimmed text.
+    RenameDesktop(usize, String),
     Act(Action),
     /// A Properties sheet's OK or Apply: rename `path` to `name` when the
     /// name or the Hidden box changed, write the attributes whose boxes
