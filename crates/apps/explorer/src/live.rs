@@ -183,6 +183,7 @@ impl Explorer {
             self.take_asking(ctx),
             self.take_drag_art(ctx),
             self.take_preview(),
+            self.take_checksums(),
         ]
         .into_iter()
         .flatten()

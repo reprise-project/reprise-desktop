@@ -4,6 +4,7 @@
 
 mod acting;
 mod browse;
+mod checksums;
 mod chrome;
 mod commands;
 mod copydlg;

@@ -8,6 +8,7 @@ use crate::text::DialogFont;
 
 mod attrs;
 mod bin;
+mod checksums;
 mod customize;
 mod general;
 mod inert;
@@ -20,6 +21,10 @@ pub use attrs::{
     attr_tree_picked, robots_chosen, robots_moves, robots_states,
 };
 pub use bin::{BIN_SHEET_H, BinFacts, RESTORE, bin_page};
+pub use checksums::{
+    SUMS_CALCULATE, SUMS_COMPARE, SUMS_COPY_MD5, SUMS_COPY_SHA256, SumsState, checksums_of,
+    checksums_page, compare_text, show_sums, show_verdict,
+};
 pub use customize::{
     CHANGE_ICON, CHANGE_ICON_CANCEL, CHANGE_ICON_LIST, CHANGE_ICON_OK, CHANGE_ICON_RESTORE,
     CHANGE_ICON_SIZE, CUSTOM_ICON, CUSTOM_PREVIEW, FOLDER_ICON_NAMES, PREVIEW_PX,
@@ -256,6 +261,7 @@ pub enum Tab {
     Customize,
     Shortcut,
     WebDocument,
+    Checksums,
 }
 
 impl Tab {
@@ -267,6 +273,7 @@ impl Tab {
             Tab::Customize => "Customize",
             Tab::Shortcut => "Shortcut",
             Tab::WebDocument => "Web Document",
+            Tab::Checksums => "Checksums",
         }
     }
 
@@ -275,7 +282,7 @@ impl Tab {
             Tab::Summary | Tab::NoSummary => SUMMARY_SHEET_H,
             Tab::Shortcut | Tab::WebDocument => SHORTCUT_SHEET_H,
             Tab::Compatibility => COMPAT_SHEET_H,
-            Tab::Sharing | Tab::Customize => FOLDER_SHEET_H,
+            Tab::Sharing | Tab::Customize | Tab::Checksums => FOLDER_SHEET_H,
         }
     }
 }
@@ -300,7 +307,7 @@ pub enum Over {
 
 pub fn sheet_tabs(over: Over) -> Vec<Tab> {
     match over {
-        Over::File { shortcut: false } => vec![Tab::Summary],
+        Over::File { shortcut: false } => vec![Tab::Summary, Tab::Checksums],
         Over::File { shortcut: true } => vec![],
         Over::Launcher | Over::Symlink { runs: true } => vec![Tab::Shortcut, Tab::Compatibility],
         Over::Symlink { runs: false } => vec![Tab::Shortcut],
@@ -345,6 +352,7 @@ pub fn sheet(
             Tab::Sharing => sharing_page(None, None),
             Tab::Customize => customize_page(),
             Tab::Compatibility => compat_page(),
+            Tab::Checksums => checksums_page(),
         });
         h = h.max(tab.height());
     }

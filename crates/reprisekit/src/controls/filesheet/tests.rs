@@ -486,7 +486,10 @@ fn each_kind_of_sheet_gets_its_tabs() {
             folder,
         })
     };
-    assert_eq!(sheet_tabs(Over::File { shortcut: false }), [Tab::Summary]);
+    assert_eq!(
+        sheet_tabs(Over::File { shortcut: false }),
+        [Tab::Summary, Tab::Checksums]
+    );
     assert_eq!(sheet_tabs(Over::File { shortcut: true }), []);
     assert_eq!(
         sheet_tabs(Over::Launcher),
@@ -1548,4 +1551,110 @@ fn a_blue_advanced_group_title_inks_like_a_group_box() {
     let label = crate::blue::Variant::Blue.scheme().inks.group_label.argb();
     assert!(count(label) > 0, "the title inks the group box label");
     assert_eq!(count(cs.button_text.argb()), 0, "no black in the title");
+}
+
+fn sums_done() -> SumsState {
+    SumsState::Done {
+        sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into(),
+        md5: "900150983cd24fb0d6963f7d28e17f72".into(),
+    }
+}
+
+fn enabled_of(page: &Form, id: &str) -> bool {
+    match &page.item(id).unwrap().control {
+        Control::Button { enabled, .. } => *enabled,
+        other => panic!("{id} is {other:?}"),
+    }
+}
+
+#[test]
+fn the_checksums_page_greys_copy_until_done_and_calculate_while_working() {
+    let mut page = checksums_page();
+    assert!(enabled_of(&page, SUMS_CALCULATE));
+    assert!(!enabled_of(&page, SUMS_COPY_SHA256) && !enabled_of(&page, SUMS_COPY_MD5));
+    page.focus_id(SUMS_CALCULATE);
+    show_sums(&mut page, &SumsState::Working(42));
+    assert_eq!(label_of(&page, "sums_status"), "Calculating... 42%");
+    assert!(!enabled_of(&page, SUMS_CALCULATE));
+    assert_eq!(
+        page.focus(),
+        page.index_of(SUMS_COMPARE),
+        "focus leaves the greyed Calculate for Compare with"
+    );
+    show_sums(&mut page, &sums_done());
+    assert_eq!(label_of(&page, "sums_status"), "");
+    assert!(enabled_of(&page, SUMS_COPY_SHA256) && enabled_of(&page, SUMS_COPY_MD5));
+    assert!(
+        !enabled_of(&page, SUMS_CALCULATE),
+        "nothing left to calculate"
+    );
+    let Some(Control::Lines(sha)) = page.item("sums_sha").map(|i| &i.control) else {
+        panic!("the SHA-256 is a note");
+    };
+    assert_eq!(
+        sha,
+        &[
+            "ba7816bf8f01cfea414140de5dae2223",
+            "b00361a396177a9cb410ff61f20015ad"
+        ],
+        "a SHA-256 splits into two lines of 32 digits"
+    );
+    show_sums(
+        &mut page,
+        &SumsState::Failed("Cannot read the file.".into()),
+    );
+    assert_eq!(label_of(&page, "sums_status"), "Cannot read the file.");
+    assert!(
+        enabled_of(&page, SUMS_CALCULATE),
+        "a failed read can be tried again"
+    );
+}
+
+#[test]
+fn the_checksums_values_fit_the_page() {
+    let t = text();
+    if !crate::text::test_tahoma() {
+        return;
+    }
+    let mut page = checksums_page();
+    show_sums(&mut page, &sums_done());
+    show_verdict(&mut page, "Not a SHA-256 or MD5 hash");
+    page.lay_out_notes(&t, 1, px());
+    assert_eq!(page.overflows(&t, px()), [], "nothing runs past its rect");
+}
+
+#[test]
+fn the_checksums_page_pins_in_each_look_at_scale_1_and_2() {
+    use crate::interface::Interface;
+    if !crate::text::test_tahoma() {
+        return;
+    }
+    let mut done = checksums_page();
+    show_sums(&mut done, &sums_done());
+    show_verdict(&mut done, "Matches SHA-256");
+    let mut working = checksums_page();
+    show_sums(&mut working, &SumsState::Working(42));
+    let looks = [
+        ("Classic", crate::interfaces::theme_for(Interface::Classic)),
+        ("Blue", crate::interfaces::theme_for(Interface::Blue)),
+        ("Glass", crate::interfaces::theme_for(Interface::Glass)),
+    ];
+    let mut got = Vec::new();
+    for (name, theme) in &looks {
+        for (state, page) in [("done", &done), ("working", &working)] {
+            for s in [1, 2] {
+                let theme = Theme {
+                    access_keys: true,
+                    ..theme.scaled(s)
+                };
+                let t = TextRenderer::load(&theme.fonts);
+                let p = theme.paint();
+                let mut c = Canvas::new((SHEET_W * s) as u32, (FOLDER_SHEET_H * s) as u32);
+                c.fill_rect(c.bounds(), p.cs.button_face);
+                crate::controls::form::draw(&mut c, &t, &p, page, true, theme.fonts.size_px);
+                got.push((format!("{name} {state} {s}"), fnv_in(&c, c.bounds())));
+            }
+        }
+    }
+    crate::pins::check("checksums_page", &got);
 }

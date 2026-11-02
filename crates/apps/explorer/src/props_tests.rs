@@ -186,6 +186,7 @@ fn props(info: FileInfo) -> Props {
         summary: None,
         own_icon: None,
         icon_chosen: None,
+        checksums: Default::default(),
         info,
         sheet,
     }
@@ -1156,7 +1157,7 @@ fn a_files_summary_writes_its_fields() {
     let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
     ex.open_properties(&f, "a.txt", "a.txt", &mut ctx);
     let p = ex.props.as_mut().expect("the sheet");
-    assert_eq!(p.sheet.tabs.labels, ["General", "Summary"]);
+    assert_eq!(p.sheet.tabs.labels, ["General", "Summary", "Checksums"]);
     p.sheet.open_tab(1);
     let page = p.sheet.open_mut();
     assert!(matches!(

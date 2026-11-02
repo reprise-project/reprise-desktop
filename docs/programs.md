@@ -67,8 +67,12 @@ The file manager, and the default for folders.
   program, with Restore and the original location of everything in it.
 - **Properties** (Alt+Enter): size, dates, Read-only, Hidden and
   Executable, a Summary tab whose title, author and keywords live in the
-  file's extended attributes, a Shortcut tab for launchers and a Change Icon
-  for folders.
+  file's extended attributes, a Checksums tab, a Shortcut tab for launchers
+  and a Change Icon for folders. The Checksums tab shows a file's SHA-256
+  and MD5 with Copy buttons: a file up to 100 MB is hashed as the tab opens,
+  a larger one at Calculate, with its progress, and closing the sheet stops
+  it. Paste a hash into Compare with and it says "Matches SHA-256",
+  "Matches MD5" or "No match".
   Select several files for one sheet that covers them all.
 - **Thumbnails** decode in the background into the freedesktop thumbnail
   cache, shared with other file managers: its 128 px `normal` size at scale

@@ -20,12 +20,13 @@ inotify.workspace = true
 libc.workspace = true
 log.workspace = true
 # The thumbnail cache: entry names are the MD5 of a file URI, and
-# entries are PNGs with text chunks.
+# entries are PNGs with text chunks. Properties' Checksums tab too.
 md5 = "0.8"
 png.workspace = true
 reprisebus = { path = "../reprisebus" }
 rustc-hash = "2"
 serde.workspace = true
+# The trust marker, and Properties' Checksums tab.
 sha2 = "0.11"
 # `[recycle_bin]` in config.toml, which every host's Delete reads.
 toml_edit.workspace = true
