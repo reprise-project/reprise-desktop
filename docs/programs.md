@@ -403,10 +403,10 @@ network time.
   folder and `/` are every two minutes. When one has less free than
   `[storage] low_space_percent` of its size (5 % by default, set on
   Settings > Power; 0 turns it off) or than 1 GiB (a tenth of a disk under
-  10 GiB), a balloon says so once, with Open, which opens the disk, Show
-  Usage, which opens Disk Usage on it, and Empty Recycle Bin while the bin
-  holds something, which asks first as the
-  bin's own menu does. It warns again after the disk climbs a point past the
+  10 GiB), a balloon says so once, with Open, which opens the disk, and
+  Empty Recycle Bin while the bin holds something, which asks first as the
+  bin's own menu does, or else Show Usage, which opens Disk Usage on it. It
+  warns again after the disk climbs a point past the
   limit and falls back.
   Nothing happens on its own while the session is locked, and drives already
   plugged in when the session starts are left as they are.

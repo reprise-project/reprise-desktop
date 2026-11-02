@@ -79,7 +79,7 @@ pub struct SheetLayout {
     app_box: Rect,
     title: String,
     /// Each pill's label; None shows its action's icon.
-    labels: Vec<Option<String>>,
+    pub labels: Vec<Option<String>>,
     line_h: i32,
     pill_px: u32,
 }
