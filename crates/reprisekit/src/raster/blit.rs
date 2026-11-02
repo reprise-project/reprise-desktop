@@ -62,17 +62,25 @@ impl Canvas {
     /// opaque chrome).
     pub fn blit_canvas(&mut self, x: i32, y: i32, src: &Canvas) {
         let clip = self.area();
-        self.blit_rows(x, y, src, clip, |s, d| {
-            let a = (s >> 24) & 0xFF;
-            if a == 0xFF {
-                return s;
+        self.blit_rows(x, y, src, clip, opaque_over);
+    }
+
+    /// Paint device rect `to`, cut to the clip, with `px(x, y)` for each device pixel in it:
+    /// premultiplied ARGB over what is there, the alpha forced opaque as [`Canvas::blit_canvas`]
+    /// does. A zoomed picture samples only the pixels it covers this way.
+    pub fn compose_device(&mut self, to: Rect, px: impl Fn(i32, i32) -> u32) {
+        let to = to.intersect(&self.area().scaled(self.scale));
+        let dw = self.device_size().0 as usize;
+        for y in to.y..to.bottom() {
+            let row = y as usize * dw;
+            for x in to.x..to.right() {
+                let s = px(x, y);
+                if s >> 24 != 0 {
+                    let d = &mut self.pixels[row + x as usize];
+                    *d = opaque_over(s, *d);
+                }
             }
-            let blend = |sc: u32, dc: u32| -> u32 { sc + dc * (255 - a) / 255 };
-            let r = blend((s >> 16) & 0xFF, (d >> 16) & 0xFF);
-            let g = blend((s >> 8) & 0xFF, (d >> 8) & 0xFF);
-            let b = blend(s & 0xFF, d & 0xFF);
-            0xFF00_0000 | r << 16 | g << 8 | b
-        });
+        }
     }
 
     /// Compose `src` over this canvas at logical (x, y) inside `clip`:
@@ -251,4 +259,17 @@ impl Canvas {
             }
         }
     }
+}
+
+/// Premultiplied `s` over `d` with the result opaque.
+fn opaque_over(s: u32, d: u32) -> u32 {
+    let a = (s >> 24) & 0xFF;
+    if a == 0xFF {
+        return s;
+    }
+    let blend = |sc: u32, dc: u32| -> u32 { sc + dc * (255 - a) / 255 };
+    let r = blend((s >> 16) & 0xFF, (d >> 16) & 0xFF);
+    let g = blend((s >> 8) & 0xFF, (d >> 8) & 0xFF);
+    let b = blend(s & 0xFF, d & 0xFF);
+    0xFF00_0000 | r << 16 | g << 8 | b
 }

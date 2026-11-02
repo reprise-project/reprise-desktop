@@ -1,0 +1,29 @@
+[package]
+name = "reprise-imageviewer"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Image Viewer: pictures one at a time, zoomed, turned, full screen or as a slideshow"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-imageviewer"
+path = "src/bin/reprise-imageviewer.rs"
+test = false
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisefs = { path = "../../reprisefs" }
+repriseconf = { path = "../../repriseconf" }
+reprisebus = { path = "../../reprisebus" }
+log.workspace = true
+toml_edit.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

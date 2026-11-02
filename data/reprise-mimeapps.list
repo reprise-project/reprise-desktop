@@ -1,8 +1,8 @@
 # The desktop's own defaults (mime-apps spec: $XDG_CURRENT_DESKTOP-mimeapps.list).
 # xdg-open, gio and the desktop's Open verb read this after the user's
 # ~/.config/mimeapps.list and before mimeinfo.cache, so a double-click on
-# a text file lands in Notepad unless the user picked something else in
-# Open With.
+# a text file lands in Notepad and a picture in Image Viewer unless the user
+# picked something else in Open With.
 [Default Applications]
 text/plain=reprise-notepad.desktop
 inode/directory=reprise-explorer.desktop
@@ -13,3 +13,19 @@ font/woff=reprise-fonts.desktop
 font/woff2=reprise-fonts.desktop
 application/x-font-ttf=reprise-fonts.desktop
 application/x-font-otf=reprise-fonts.desktop
+image/png=reprise-imageviewer.desktop
+image/apng=reprise-imageviewer.desktop
+image/jpeg=reprise-imageviewer.desktop
+image/gif=reprise-imageviewer.desktop
+image/bmp=reprise-imageviewer.desktop
+image/x-bmp=reprise-imageviewer.desktop
+image/webp=reprise-imageviewer.desktop
+image/tiff=reprise-imageviewer.desktop
+image/x-icon=reprise-imageviewer.desktop
+image/qoi=reprise-imageviewer.desktop
+image/x-portable-bitmap=reprise-imageviewer.desktop
+image/x-portable-graymap=reprise-imageviewer.desktop
+image/x-portable-pixmap=reprise-imageviewer.desktop
+image/x-portable-anymap=reprise-imageviewer.desktop
+image/vnd.radiance=reprise-imageviewer.desktop
+image/x-exr=reprise-imageviewer.desktop

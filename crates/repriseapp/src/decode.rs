@@ -126,6 +126,78 @@ impl ImageDecoder for ImageCrateDecoder {
     }
 }
 
+/// The file extensions [`ImageCrateDecoder`] reads, lower case.
+pub const EXTS: [&str; 19] = [
+    "png", "apng", "jpg", "jpeg", "jfif", "gif", "bmp", "webp", "tif", "tiff", "ico", "qoi", "pbm",
+    "pgm", "ppm", "pnm", "pam", "hdr", "exr",
+];
+
+/// Whether `path`'s extension is one of [`EXTS`], in any case.
+pub fn is_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| EXTS.iter().any(|x| x.eq_ignore_ascii_case(e)))
+}
+
+/// One frame of a moving picture, composed onto the ones before it, and how long it shows.
+pub struct Frame {
+    pub canvas: Canvas,
+    pub delay_ms: u32,
+}
+
+/// A frame delay of less than this many ms shows for [`SHORT_DELAY_MS`], as GIFs made for
+/// browsers expect.
+const MIN_DELAY_MS: u32 = 20;
+const SHORT_DELAY_MS: u32 = 100;
+
+/// The frames of an animated GIF, PNG or WebP at full size. `None` for a still picture, another
+/// format, or frames that together pass [`MAX_DECODED_BYTES`]: the caller shows the first frame
+/// alone from [`Decoders::decode`].
+pub fn frames(bytes: &[u8]) -> Option<Vec<Frame>> {
+    use image::AnimationDecoder as _;
+    use image::codecs::{gif::GifDecoder, png::PngDecoder, webp::WebPDecoder};
+    let cur = std::io::Cursor::new(bytes);
+    let frames = match image::guess_format(bytes).ok()? {
+        image::ImageFormat::Gif => GifDecoder::new(cur).ok()?.into_frames(),
+        image::ImageFormat::Png => {
+            let d = PngDecoder::new(cur).ok()?;
+            if !d.is_apng().ok()? {
+                return None;
+            }
+            d.apng().ok()?.into_frames()
+        }
+        image::ImageFormat::WebP => {
+            let d = WebPDecoder::new(cur).ok()?;
+            if !d.has_animation() {
+                return None;
+            }
+            d.into_frames()
+        }
+        _ => return None,
+    };
+    let mut out = Vec::new();
+    let mut spent = 0u64;
+    for f in frames {
+        let f = f.ok()?;
+        let (n, d) = f.delay().numer_denom_ms();
+        let ms = n.checked_div(d).unwrap_or(0);
+        let buf = f.into_buffer();
+        spent += u64::from(buf.width()) * u64::from(buf.height()) * 4;
+        if spent > MAX_DECODED_BYTES {
+            return None;
+        }
+        out.push(Frame {
+            canvas: fit_buffer(&buf, buf.width(), buf.height()),
+            delay_ms: if ms < MIN_DELAY_MS {
+                SHORT_DELAY_MS
+            } else {
+                ms
+            },
+        });
+    }
+    (out.len() > 1).then_some(out)
+}
+
 /// An `image` decoder for `bytes` that has read the header, `None` when the
 /// format is unknown or the decoded pixels would pass [`MAX_DECODED_BYTES`].
 fn open_capped(bytes: &[u8]) -> Option<impl image::ImageDecoder + '_> {
@@ -237,6 +309,51 @@ mod tests {
         assert_eq!((decoded.canvas.width, decoded.canvas.height), (4, 2));
         let argb = 0x8000_0000 | (200u32 << 16) | (100 << 8) | 50;
         assert_eq!(decoded.canvas.get(0, 0), premultiply(argb));
+    }
+
+    #[test]
+    fn every_listed_extension_is_a_format_the_decoder_reads() {
+        for e in EXTS {
+            let f = image::ImageFormat::from_extension(e).unwrap_or_else(|| panic!("{e}"));
+            assert!(f.reading_enabled(), "{e}");
+        }
+        assert!(is_image(Path::new("/home/u/Pictures/Beach.JPG")));
+        assert!(!is_image(Path::new("/home/u/notes.txt")));
+    }
+
+    /// A two-frame GIF plays as two frames with their delays; a 0 ms delay shows for 100 ms. A
+    /// still GIF and a PNG have no frames.
+    #[test]
+    fn an_animated_gif_has_its_frames_and_a_still_one_none() {
+        use image::codecs::gif::{GifEncoder, Repeat};
+        let frame = |rgba: [u8; 4], ms: u32| {
+            image::Frame::from_parts(
+                image::RgbaImage::from_pixel(2, 2, image::Rgba(rgba)),
+                0,
+                0,
+                image::Delay::from_numer_denom_ms(ms, 1),
+            )
+        };
+        let gif = |frames: Vec<image::Frame>| {
+            let mut bytes = Vec::new();
+            {
+                let mut enc = GifEncoder::new(&mut bytes);
+                enc.set_repeat(Repeat::Infinite).unwrap();
+                enc.encode_frames(frames).unwrap();
+            }
+            bytes
+        };
+        let two = gif(vec![
+            frame([255, 0, 0, 255], 250),
+            frame([0, 0, 255, 255], 0),
+        ]);
+        let got = frames(&two).expect("two frames");
+        assert_eq!(got.len(), 2);
+        assert_eq!((got[0].delay_ms, got[1].delay_ms), (250, 100));
+        assert_eq!(got[0].canvas.get(0, 0), 0xFFFF_0000);
+        assert_eq!(got[1].canvas.get(1, 1), 0xFF00_00FF);
+        assert!(frames(&gif(vec![frame([0, 255, 0, 255], 100)])).is_none());
+        assert!(frames(&encode_png(1, 1, &[0, 0, 0, 255])).is_none());
     }
 
     #[test]
