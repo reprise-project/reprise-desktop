@@ -2293,6 +2293,7 @@ dependencies = [
  "reprise-drives",
  "reprise-explorer",
  "reprise-fonts",
+ "reprise-imageviewer",
  "reprise-network",
  "reprise-notepad",
  "reprise-notes",
@@ -2388,6 +2389,20 @@ dependencies = [
  "reprisebus",
  "reprisekit",
  "tempfile",
+]
+
+[[package]]
+name = "reprise-imageviewer"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "repriseapp",
+ "reprisebus",
+ "repriseconf",
+ "reprisefs",
+ "reprisekit",
+ "tempfile",
+ "toml_edit",
 ]
 
 [[package]]

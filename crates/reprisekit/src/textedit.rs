@@ -980,7 +980,12 @@ pub mod keysym {
     pub const F4: u32 = 0xffc1;
     pub const F5: u32 = 0xffc2;
     pub const F10: u32 = 0xffc7;
+    pub const F11: u32 = 0xffc8;
     pub const MENU: u32 = 0xff67;
+    pub const CONTROL_L: u32 = 0xffe3;
+    pub const CONTROL_R: u32 = 0xffe4;
+    pub const KP_ADD: u32 = 0xffab;
+    pub const KP_SUBTRACT: u32 = 0xffad;
     pub const ALT_L: u32 = 0xffe9;
     pub const ALT_R: u32 = 0xffea;
     /// A seat sends Shift+Tab as this keysym rather than Tab with Shift.
