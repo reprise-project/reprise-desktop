@@ -2,6 +2,7 @@ use super::{CLIENT, FileDlg, Focus, MARGIN, cancel_label, lookin_icon};
 use crate::classic::widgets::{self, edit_first_visible};
 use crate::controls::combo;
 use crate::controls::form;
+use crate::controls::pathcomplete;
 use crate::controls::placesbar;
 use crate::controls::shellview;
 use crate::controls::toolbar;
@@ -196,6 +197,10 @@ impl FileDlg {
         }
 
         crate::look::widgets::draw_size_grip(c, p, lay.grip.scaled(s));
+        if !self.hosted {
+            let complete = self.completion_layout(&lay, Some(r));
+            pathcomplete::draw(&self.complete, c, text, p, &complete, px);
+        }
 
         let underline = p.access_keys || self.context.as_ref().is_some_and(|m| m.keys);
         for l in self.context_levels(text, px, r, self.drawn.0.get().text) {

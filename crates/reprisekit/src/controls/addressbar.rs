@@ -5,6 +5,7 @@ use crate::access::{self, Tree, accesskit};
 use crate::controls::combo::{self, Combo, ListItem};
 use crate::controls::form::Key;
 use crate::controls::metrics::ControlMetrics;
+use crate::controls::pathcomplete::{self, PathComplete, Scope};
 use crate::look::Paint;
 use crate::look::widgets::toolbar;
 use crate::raster::{Canvas, Rect};
@@ -40,6 +41,8 @@ const GO_TEXT_X: i32 = GO_ICON_X + GO_ICON + 4;
 #[derive(Clone, Debug)]
 pub struct AddressBar {
     pub combo: Combo,
+    /// A typed path's completion; the host lists what it wants.
+    pub complete: PathComplete,
     pub go_icon: Option<Canvas>,
     pub go_hot: bool,
 }
@@ -55,6 +58,7 @@ impl AddressBar {
         combo.icon = combo.items.get(selected).and_then(|i| i.icon.clone());
         AddressBar {
             combo,
+            complete: PathComplete::new(Scope::Rooted),
             go_icon,
             go_hot: false,
         }
@@ -65,6 +69,7 @@ impl AddressBar {
     }
 
     pub fn set_place(&mut self, text: &str, icon: Option<Canvas>) {
+        self.complete.reset();
         self.combo.set_text(text);
         self.combo.icon = icon;
     }
@@ -74,7 +79,7 @@ impl AddressBar {
     pub fn key(&mut self, k: EditKey) -> Event {
         match self.combo.edit.as_mut() {
             Some(edit) => {
-                edit.key(k);
+                self.complete.edit(edit, k);
                 Event::Redraw
             }
             None => Event::None,
@@ -123,6 +128,12 @@ impl AddressBar {
                 Event::Redraw
             }
             Hit::Combo(combo::Hit::Thumb(_)) => Event::Redraw,
+            Hit::Completion(i) => {
+                if let Some(edit) = self.combo.edit.as_mut() {
+                    self.complete.take(edit, i);
+                }
+                Event::Redraw
+            }
             Hit::Go => Event::Navigate(self.text().to_string()),
             Hit::Nothing => Event::None,
         }
@@ -132,6 +143,12 @@ impl AddressBar {
     /// scroll, Enter takes the row, Escape, Tab and the drop key close the list. With the list
     /// closed only the drop key (F4, Alt+Down) answers, opening it. `None` for any other key.
     pub fn list_key(&mut self, key: &Key) -> Option<Event> {
+        if let (Some(nav), Some(edit)) = (pathcomplete::nav_key(key), self.combo.edit.as_mut())
+            && self.combo.open.is_none()
+            && self.complete.nav(edit, nav)
+        {
+            return Some(Event::Redraw);
+        }
         let rows = self.combo.rows as i32;
         match (self.combo.open, key) {
             (None, Key::Drop) => {
@@ -169,6 +186,13 @@ impl AddressBar {
                     | combo::Hit::Thumb(_)
             )
         );
+        if matches!(hit, Hit::Completion(_)) {
+            return false;
+        }
+        if self.complete.is_open() {
+            self.complete.close();
+            return true;
+        }
         if self.combo.open.is_none() || inside {
             return false;
         }
@@ -181,6 +205,11 @@ impl AddressBar {
     pub fn hover(&mut self, hit: Hit) -> bool {
         match hit {
             Hit::Combo(combo::Hit::Row(i)) => self.combo.hover(i),
+            Hit::Completion(i) => {
+                let moved = self.complete.hot != Some(i);
+                self.complete.hot = Some(i);
+                moved
+            }
             _ => false,
         }
     }
@@ -227,6 +256,7 @@ pub struct Layout {
     pub label: Rect,
     pub field: Rect,
     pub combo: combo::Layout,
+    pub complete: pathcomplete::Layout,
     pub go: Rect,
 }
 
@@ -252,6 +282,7 @@ pub fn layout(
         label,
         field,
         combo: combo::layout(&ab.combo, field, cm),
+        complete: pathcomplete::layout(&ab.complete, field, None, cm),
         go,
     }
 }
@@ -259,11 +290,17 @@ pub fn layout(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Combo(combo::Hit),
+    /// A row of the completion list.
+    Completion(usize),
     Go,
     Nothing,
 }
 
 pub fn hit(ab: &AddressBar, lay: &Layout, x: i32, y: i32) -> Hit {
+    if ab.complete.is_open() && lay.complete.list.contains(x, y) {
+        return pathcomplete::hit(&ab.complete, &lay.complete, x, y)
+            .map_or(Hit::Nothing, Hit::Completion);
+    }
     if let Some(h) = combo::hit(&ab.combo, &lay.combo, x, y) {
         return Hit::Combo(h);
     }
@@ -403,6 +440,9 @@ pub fn draw_list(
     lay: &Layout,
     px: u32,
 ) {
+    if ab.complete.is_open() && !ab.complete.hosted {
+        pathcomplete::draw(&ab.complete, c, text, p, &lay.complete, px);
+    }
     if ab.combo.open.is_none() || ab.combo.hosted {
         return;
     }
@@ -443,6 +483,7 @@ pub fn access(
     if let Some(n) = tree.get_mut(Tree::id_of(combo, "edit")) {
         n.set_label(ADDRESS);
     }
+    pathcomplete::access(&ab.complete, &lay.complete, tree, combo);
     tree.push(bar, "go", access::button(lay.go, "Go", true, false));
     focus
 }

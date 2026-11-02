@@ -862,3 +862,58 @@ fn combo_draws_help_button_selection_and_list() {
     assert_eq!(c.get(sb.x + 8, sb.y + 20), cs.button_face.argb());
     assert_eq!(c.get(sb.x + 8, sb.y + 16 + 7 + 7), cs.button_text.argb());
 }
+
+#[test]
+fn run_completes_a_typed_path_in_a_list_inside_the_dialog() {
+    use reprisekit::controls::pathcomplete::Entry;
+    let theme = Theme::default();
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut d = Dialog::run(&["notepad".into()]);
+    for ch in "~/Do".chars() {
+        d.key(Key::Edit(EditKey::Insert(ch.to_string())));
+    }
+    let f = d.field.as_mut().unwrap();
+    let want = f.complete.take_want().expect("Run lists the typed folder");
+    assert_eq!(want.dir, "~/");
+    let names = [
+        ("Documents", true),
+        ("Downloads", true),
+        ("Docs.txt", false),
+    ];
+    let entries = names
+        .iter()
+        .map(|&(n, dir)| Entry {
+            name: n.into(),
+            dir,
+        })
+        .collect();
+    f.complete
+        .set_listing(f.combo.edit.as_mut().unwrap(), &want, entries);
+    d.key(Key::Edit(EditKey::Insert("w".into())));
+    assert_eq!(
+        d.field.as_ref().unwrap().edit().unwrap().text,
+        "~/Downloads/"
+    );
+
+    d.key(Key::Edit(EditKey::Backspace { word: false }));
+    d.key(Key::Edit(EditKey::Backspace { word: false }));
+    let l = DialogLayout::compute(&theme, &text, &d);
+    let (_, list) = l.completion(&d).expect("the list shows");
+    let (w, h) = l.size;
+    assert!(Rect::new(0, 0, w, h).contains(list.list.x, list.list.bottom() - 1));
+    let row = list.list.y + 1 + list.row_h / 2;
+    assert_eq!(
+        l.hit(&d, list.list.x + 10, row, &text, theme.fonts.size_px),
+        Some(DialogHit::Completion(0))
+    );
+    assert_eq!(d.key(Key::Down), Outcome::Redraw, "the list takes Down");
+    assert_eq!(
+        d.key(Key::Enter),
+        Outcome::Redraw,
+        "Enter takes the row, not OK"
+    );
+    assert_eq!(
+        d.field.as_ref().unwrap().edit().unwrap().text,
+        "~/Documents/"
+    );
+}

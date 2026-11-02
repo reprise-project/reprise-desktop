@@ -90,6 +90,14 @@ impl Dialog {
                 _ => {}
             }
         }
+        if self.button_focus.is_none()
+            && let Some(f) = self.field.as_mut().filter(|f| f.combo.open.is_none())
+            && let Some(k) = pathcomplete::nav_key(&key)
+            && let Some(e) = f.combo.edit.as_mut()
+            && f.complete.nav(e, k)
+        {
+            return Outcome::Redraw;
+        }
         if self.field.is_some()
             && let Some(out) = self.field_focus_key(&key)
         {
@@ -124,26 +132,28 @@ impl Dialog {
                 Some(f) => redraw_if(f.combo.toggle()),
                 None => Outcome::Nothing,
             },
-            Key::Backspace => match self.field.as_mut().and_then(Field::edit_mut) {
-                Some(e) => redraw_if(e.key(EditKey::Backspace { word: false })),
+            Key::Backspace => match self.field.as_mut() {
+                Some(f) => redraw_if(f.edit_key(EditKey::Backspace { word: false })),
                 None => Outcome::Nothing,
             },
             // Typed text goes into the field. Without one the default
             // button has the focus, so a space presses it and a letter
             // is a button's access key.
-            Key::Edit(EditKey::Insert(s)) => match self.field.as_mut().and_then(Field::edit_mut) {
-                Some(e) => {
-                    e.key(EditKey::Insert(s));
-                    Outcome::Redraw
+            Key::Edit(EditKey::Insert(s)) => {
+                match self.field.as_mut().filter(|f| f.edit().is_some()) {
+                    Some(f) => {
+                        f.edit_key(EditKey::Insert(s));
+                        Outcome::Redraw
+                    }
+                    None if s == " " => match self.buttons.iter().position(|b| b.default) {
+                        Some(i) => self.press(i),
+                        None => Outcome::Nothing,
+                    },
+                    None => self.press_access(&s),
                 }
-                None if s == " " => match self.buttons.iter().position(|b| b.default) {
-                    Some(i) => self.press(i),
-                    None => Outcome::Nothing,
-                },
-                None => self.press_access(&s),
-            },
-            Key::Edit(k) => match self.field.as_mut().and_then(Field::edit_mut) {
-                Some(e) => redraw_if(e.key(k)),
+            }
+            Key::Edit(k) => match self.field.as_mut() {
+                Some(f) => redraw_if(f.edit_key(k)),
                 None => Outcome::Nothing,
             },
             Key::Char(c) => self.key(Key::Edit(EditKey::Insert(c.to_string()))),
@@ -277,6 +287,14 @@ impl Dialog {
         let Some(f) = self.field.as_mut() else {
             return Outcome::Nothing;
         };
+        if let (Some(DialogHit::Completion(i)), Some(e)) = (hit, f.combo.edit.as_mut()) {
+            f.complete.take(e, i);
+            return Outcome::Redraw;
+        }
+        if f.complete.is_open() {
+            f.complete.close();
+            return Outcome::Redraw;
+        }
         let c = &mut f.combo;
         let open = c.open.is_some();
         match hit {
@@ -375,8 +393,10 @@ impl Dialog {
             return Outcome::Nothing;
         };
         let i = f.combo.edit_index(text, px, x);
+        let closed = f.complete.is_open();
+        f.complete.close();
         let placed = f.edit_mut().is_some_and(|e| e.place(i, extend));
-        redraw_if(self.button_focus.take().is_some() || placed)
+        redraw_if(self.button_focus.take().is_some() || placed || closed)
     }
 
     /// A right press, ahead of the edit menu: the field or a page's edit field under it takes
@@ -573,9 +593,16 @@ impl Dialog {
             let ev = form.paste(text.to_string());
             return f.event(ev);
         }
-        match self.field.as_mut().and_then(Field::edit_mut) {
-            Some(e) => redraw_if(e.paste(text, &[])),
-            None => Outcome::Nothing,
+        match self.field.as_mut() {
+            Some(Field {
+                combo: Combo { edit: Some(e), .. },
+                complete,
+                ..
+            }) => {
+                complete.paste(e, text);
+                Outcome::Redraw
+            }
+            _ => Outcome::Nothing,
         }
     }
 

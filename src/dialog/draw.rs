@@ -213,6 +213,9 @@ pub fn draw(
     ) {
         draw_list(&mut c, &paint, text, f, l, layout.scrollbar(d), px);
     }
+    if let Some((f, l)) = layout.completion(d) {
+        pathcomplete::draw(&f.complete, &mut c, text, &paint, &l, px);
+    }
     c
 }
 
@@ -331,6 +334,9 @@ pub fn access(
         let combo_id = reprisekit::access::Tree::id_of(ROOT, "field");
         if let (Some(l), Some(n)) = (label, tree.get_mut(combo_id)) {
             n.push_labelled_by(l);
+        }
+        if let Some((f, l)) = layout.completion(d) {
+            pathcomplete::access(&f.complete, &l, tree, combo_id);
         }
     }
     let mut default = None;

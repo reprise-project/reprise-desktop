@@ -6,6 +6,7 @@ use crate::classic::widgets::BarHit;
 use crate::controls::combo::{self, Combo};
 use crate::controls::form;
 use crate::controls::metrics::ControlMetrics;
+use crate::controls::pathcomplete;
 use crate::controls::placesbar;
 use crate::controls::shellview;
 use crate::controls::toolbar;
@@ -46,6 +47,10 @@ impl FileDlg {
             return Some(h);
         }
         let lay = self.layout(text, px, r, &lay_cm);
+        let complete = self.completion_layout(&lay, (!self.hosted).then_some(r));
+        if self.complete.is_open() && complete.list.contains(x, y) {
+            return pathcomplete::hit(&self.complete, &complete, x, y).map(Hit::Completion);
+        }
         if let Some((i, _)) = &self.shell.edit
             && shellview::rename_rect(&self.shell, &lay.shell, *i, text, px)
                 .is_some_and(|b| b.contains(x, y))
@@ -207,6 +212,9 @@ impl FileDlg {
         at: Option<(i32, i32)>,
         cm: &ControlMetrics,
     ) -> Event {
+        if !matches!(hit, Some(Hit::Completion(_))) {
+            self.complete.close();
+        }
         if self.context.is_some() {
             return self.context_click(hit, mods.shift);
         }
@@ -231,6 +239,11 @@ impl FileDlg {
             };
         }
         match hit {
+            Some(Hit::Completion(i)) => {
+                self.complete.take(&mut self.filename, i);
+                self.typed = self.filename.text.clone();
+                Event::Redraw
+            }
             Some(Hit::ToolBar(i)) => self.toolbar_click(i),
             Some(Hit::FileName) => {
                 self.focus = Focus::FileName;

@@ -56,6 +56,7 @@ use reprisekit::controls::combo::{self, ListItem};
 use reprisekit::controls::explorerbar::ExplorerBar;
 use reprisekit::controls::hosted::Hosted;
 use reprisekit::controls::menubar::{self, Bar, Key};
+use reprisekit::controls::pathcomplete;
 use reprisekit::controls::scrollbar::ThumbDrag;
 use reprisekit::controls::searchfield::SearchField;
 use reprisekit::controls::shellview::{self, Entry, Field, Group, LayoutCache, ShellView};
@@ -191,6 +192,8 @@ pub struct Explorer {
     pub bar: Bar,
     pub toolbar: ToolBar,
     pub address: AddressBar,
+    /// The folder read the address bar's completion asked for.
+    address_job: repriseapp::pathjob::PathJob,
     pub address_places: Vec<Place>,
     /// The toolbar's Search field ([`search`]).
     pub search_field: SearchField,
@@ -464,6 +467,7 @@ impl Explorer {
                 big: true,
             },
             address: AddressBar::new(vec![ListItem::new("")], 0, None),
+            address_job: Default::default(),
             address_places: Vec::new(),
             search_field: SearchField::default(),
             search: search::Search::default(),
@@ -1683,10 +1687,20 @@ impl repriseapp::Extended for Lazy {
         if ex.popup.is_some() {
             return Some(Box::new(&mut ex.popup));
         }
-        ex.address.combo.open?;
+        if !ex.address.complete.is_open() {
+            ex.address.combo.open?;
+        }
         let r = ex.layout(ctx).address?;
         let (px, cm) = (ctx.theme.fonts.size_px, ctx.theme.controls());
         let field = addressbar::layout(&ex.address, &ctx.text, px, r, &cm).field;
+        if ex.address.complete.is_open() {
+            return Some(Box::new(pathcomplete::Popped {
+                pc: &mut ex.address.complete,
+                field,
+                cm,
+                px,
+            }));
+        }
         Some(Box::new(combo::Popped {
             combo: &mut ex.address.combo,
             field,

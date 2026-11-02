@@ -3,6 +3,7 @@ use crate::controls::combo::Combo;
 use crate::controls::form;
 use crate::controls::iconview::IconMove;
 use crate::controls::metrics::ControlMetrics;
+use crate::controls::pathcomplete;
 use crate::controls::shellview;
 use crate::pointer::Nav;
 use crate::raster::Rect;
@@ -238,6 +239,12 @@ impl FileDlg {
         if let form::Key::Access(ch) = key {
             return self.access_press(ch);
         }
+        if self.focus == Focus::FileName
+            && let Some(k) = pathcomplete::nav_key(&key)
+            && self.complete.nav(&mut self.filename, k)
+        {
+            return Event::Redraw;
+        }
         // A dropped list owns Enter and Escape: Enter commits the row (Look in
         // navigates to the crumb), Escape closes the list. Neither may reach
         // `activate` or `combo_key`.
@@ -310,7 +317,7 @@ impl FileDlg {
         match self.focus {
             Focus::FileName => match key {
                 form::Key::Edit(ek) => {
-                    if self.filename.key(ek) {
+                    if self.complete.edit(&mut self.filename, ek) {
                         self.typed = self.filename.text.clone();
                         Event::Redraw
                     } else {

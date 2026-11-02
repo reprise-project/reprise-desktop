@@ -5,7 +5,7 @@ use self::Kind as FormKind;
 use crate::config::Action;
 use crate::raster::Rect;
 use crate::text::{DialogFont, TextRenderer};
-use crate::textedit::TextEdit;
+use crate::textedit::{EditKey, TextEdit};
 use crate::theme::Theme;
 use reprisekit::classic::widgets::CheckState;
 use reprisekit::controls::combo::Combo;
@@ -13,6 +13,7 @@ use reprisekit::controls::copyprogress::CopyProgress;
 use reprisekit::controls::dlgtemplate::Template;
 use reprisekit::controls::endsession::Goal;
 use reprisekit::controls::openwith;
+use reprisekit::controls::pathcomplete::{self, PathComplete};
 use reprisekit::controls::scrollbar::ThumbDrag;
 use reprisekit::controls::traycustomize::{self, TrayCustomize};
 use reprisekit::frame::{CaptionButton, Edges};
@@ -104,6 +105,8 @@ pub struct Field {
     pub label: String,
     pub combo: Combo,
     pub thumb: ThumbDrag,
+    /// A typed path's completion.
+    pub complete: PathComplete,
 }
 
 pub const HISTORY_MAX: usize = 26;
@@ -117,6 +120,14 @@ impl Field {
 
     fn edit_mut(&mut self) -> Option<&mut TextEdit> {
         self.combo.edit.as_mut()
+    }
+
+    /// An editing key into the field, through its completion.
+    fn edit_key(&mut self, k: EditKey) -> bool {
+        match self.combo.edit.as_mut() {
+            Some(e) => self.complete.edit(e, k),
+            None => false,
+        }
     }
 }
 

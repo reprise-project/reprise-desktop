@@ -478,6 +478,8 @@ pub struct Host {
     remembered: Remembered,
     /// Where they are stored; None is [`MEMORY`].
     memory: Option<Memory>,
+    /// The folder read File name's completion asked for.
+    completing: crate::pathjob::PathJob,
 }
 
 /// How long the dialog waits for a listing before it goes on. Tests wait as long as it takes.
@@ -678,6 +680,22 @@ impl Host {
         }
     }
 
+    /// Lands File name's completion read and starts the next it wants, from the open folder;
+    /// true when the field or its list changed.
+    fn complete(&mut self, dlg: &mut FileDlg) -> bool {
+        let Some(wake) = self.wake.clone() else {
+            return false;
+        };
+        let base = self
+            .folder
+            .and_then(|id| self.folders.path(id))
+            .map(Path::to_path_buf);
+        let (pc, edit) = dlg.completion();
+        let landed = self.completing.land(pc, edit, base.as_deref(), &wake);
+        self.completing.start(pc, base.as_deref(), &wake);
+        landed
+    }
+
     /// Hands the thumbnails and icon files that arrived to their entries, the icon files to
     /// `cache` too: true when one did.
     fn take_thumbs(&mut self, dlg: &mut FileDlg, cache: &mut IconCache) -> bool {
@@ -696,6 +714,9 @@ impl Host {
     fn take_listed(&mut self, dlg: &mut FileDlg, cache: &mut IconCache) -> bool {
         self.read_due();
         self.follow_gone();
+        if self.complete(dlg) {
+            return true;
+        }
         if let Some((id, read)) = self
             .reading
             .as_ref()
@@ -752,7 +773,10 @@ impl Host {
             dlg.set_text(forms.text);
             return Step::Redraw;
         }
-        let step = self.event_inner(dlg, ev, text, forms.fonts.size_px, size, metrics);
+        let mut step = self.event_inner(dlg, ev, text, forms.fonts.size_px, size, metrics);
+        if self.complete(dlg) && matches!(step, Step::None) {
+            step = Step::Redraw;
+        }
         self.remember(dlg);
         self.ask_thumbs(dlg);
         step

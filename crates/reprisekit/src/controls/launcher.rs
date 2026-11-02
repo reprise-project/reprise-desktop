@@ -20,6 +20,7 @@
 
 use crate::access::accesskit;
 use crate::classic::widgets::{ROW_H as FIELD_H, edit_first_visible};
+use crate::completion::Inline;
 use crate::controls::listbox;
 use crate::controls::listbox::ListBox;
 use crate::look::panel;
@@ -71,7 +72,7 @@ enum Line {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Launcher {
-    /// Private because `tail` indexes into its text: every write goes through `key`
+    /// Private because `inline`'s tail indexes into its text: every write goes through `key`
     /// or `paste`.
     edit: TextEdit,
     /// The calculator's row, the app names, then the settings and files each under
@@ -82,13 +83,8 @@ pub struct Launcher {
     apps: Vec<Row>,
     settings: Vec<Row>,
     files: Vec<FileRow>,
-    /// Off after Backspace or Delete until the next typed char, so deleting the tail
-    /// does not bring it straight back.
-    completing: bool,
-    /// The byte index in `edit.text` where a shown completion starts, `None` when
-    /// nothing is completed. The only source of truth for "a completion is shown",
-    /// never inferred from `edit`'s selection.
-    tail: Option<usize>,
+    /// The top match's tail shown in `edit`.
+    inline: Inline,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,16 +128,12 @@ impl Launcher {
             apps: Vec::new(),
             settings: Vec::new(),
             files: Vec::new(),
-            completing: true,
-            tail: None,
+            inline: Inline::default(),
         }
     }
 
     pub fn query(&self) -> &str {
-        match self.tail {
-            Some(i) => &self.edit.text[..i],
-            None => &self.edit.text,
-        }
+        self.inline.query(&self.edit)
     }
 
     pub fn edit(&self) -> &TextEdit {
@@ -295,58 +287,12 @@ impl Launcher {
         self.rebuild(keep);
     }
 
-    fn drop_tail(&mut self, i: usize) {
-        self.edit.text.truncate(i);
-        let (anchor, caret) = (self.edit.anchor(), self.edit.caret());
-        self.edit.set_selection(anchor, caret);
-    }
-
     pub fn key(&mut self, k: Key) -> Event {
         match k {
             Key::Char(ek) => {
                 let before = self.query().to_string();
-                let tail = self.tail;
-                let is_insert = matches!(ek, EditKey::Insert(_));
-                let eats = matches!(
-                    ek,
-                    EditKey::Backspace { .. } | EditKey::Delete { .. } | EditKey::Cut
-                );
-                // Keys that neither insert nor delete drop the tail; any
-                // non-insert disables completion until the next Insert.
-                let drops_tail = tail.is_some() && !is_insert && !eats;
-                if let Some(i) = tail {
-                    let moves = matches!(
-                        ek,
-                        EditKey::Left { .. }
-                            | EditKey::Right { .. }
-                            | EditKey::Home { .. }
-                            | EditKey::End { .. }
-                            | EditKey::SelectAll
-                            | EditKey::Copy
-                    );
-                    if moves {
-                        self.edit.key(ek);
-                        self.drop_tail(i);
-                    } else {
-                        // The completion was never typed, so it goes before any edit lands and
-                        // the edit's undo log holds typing alone. Undo, Backspace, Delete and Cut
-                        // over it take just the completion.
-                        self.drop_tail(i);
-                        if !eats && !matches!(ek, EditKey::Undo) {
-                            self.edit.key(ek);
-                        }
-                    }
-                    self.tail = None;
-                } else {
-                    self.edit.key(ek);
-                }
-                self.completing = if is_insert {
-                    true
-                } else if eats || drops_tail {
-                    false
-                } else {
-                    self.completing
-                };
+                let tail = self.inline.tail();
+                self.inline.key(&mut self.edit, ek);
                 if self.query() != before || tail.is_some() {
                     Event::QueryChanged
                 } else {
@@ -401,11 +347,7 @@ impl Launcher {
     /// A host's paste: replaces a shown completion as a typed insert would.
     pub fn paste(&mut self, text: &str) -> Event {
         let before = self.query().to_string();
-        if let Some(i) = self.tail.take() {
-            self.drop_tail(i);
-        }
-        self.edit.paste(text, &[]);
-        self.completing = true;
+        self.inline.paste(&mut self.edit, text);
         if self.query() != before {
             Event::QueryChanged
         } else {
@@ -421,8 +363,7 @@ impl Launcher {
         }
         let before = self.query().to_string();
         self.edit = edit;
-        self.tail = None;
-        self.completing = true;
+        self.inline.reset();
         match self.query() == before {
             true => Event::None,
             false => Event::QueryChanged,
@@ -438,7 +379,7 @@ impl Launcher {
         self.rebuild(None);
         let query = self.query().to_string();
         let top = self.apps.first().map(|r| r.name.clone());
-        let completes = self.completing
+        let completes = self.inline.completing()
             && self.calc.is_none()
             && !query.is_empty()
             && top.as_deref().is_some_and(|t| {
@@ -451,14 +392,10 @@ impl Launcher {
             // walk `t` to the same number of chars instead.
             let n = query.chars().count();
             let split = t.char_indices().nth(n).map_or(t.len(), |(i, _)| i);
-            self.edit.text = format!("{query}{}", &t[split..]);
-            let end = self.edit.text.len();
-            self.edit.set_selection(query.len(), end);
-            self.tail = Some(query.len());
-        } else if let Some(i) = self.tail {
+            self.inline.offer(&mut self.edit, &query, &t[split..]);
+        } else {
             // A stale completion with no matching top row: back to the query.
-            self.drop_tail(i);
-            self.tail = None;
+            self.inline.drop_tail(&mut self.edit);
         }
     }
 }
@@ -1296,10 +1233,10 @@ mod tests {
     fn a_drop_replaces_the_query_and_a_shown_completion() {
         let mut l = Launcher::new();
         typed(&mut l, "n");
-        l.tail = Some(1);
+        l.inline.offer(&mut l.edit, "n", "");
         assert_eq!(l.drop_query("foot\nbar"), Event::QueryChanged);
         assert_eq!(
-            (l.query(), l.edit.text.as_str(), l.tail),
+            (l.query(), l.edit.text.as_str(), l.inline.tail()),
             ("foot", "foot", None)
         );
         assert_eq!(l.drop_query("foot"), Event::None, "the same query");

@@ -60,6 +60,8 @@ pub enum DialogHit {
     Resize(reprisekit::frame::Edges),
     /// The text field itself, with the point's x from the text's origin.
     Field(i32),
+    /// A row of Run's completion list.
+    Completion(usize),
     ListBar(BarHit),
     Drop,
     Row(usize),
@@ -401,6 +403,21 @@ impl DialogLayout {
         .with_frame(g, d.help)
     }
 
+    /// Run's open completion list and its place, inside the dialog under its caption.
+    pub fn completion<'d>(&self, d: &'d Dialog) -> Option<(&'d Field, pathcomplete::Layout)> {
+        let f = d.field.as_ref().filter(|f| f.complete.is_open())?;
+        let (w, h) = self.size;
+        let top = self.caption.bottom();
+        let room = Rect::new(
+            DIALOG_FRAME,
+            top,
+            w - 2 * DIALOG_FRAME,
+            h - top - DIALOG_FRAME,
+        );
+        let lay = pathcomplete::layout(&f.complete, self.field?, Some(room), &self.controls);
+        Some((f, lay))
+    }
+
     pub fn scrollbar(&self, d: &Dialog) -> Option<Rect> {
         self.list?;
         let f = d.field.as_ref()?;
@@ -474,6 +491,11 @@ impl DialogLayout {
                 return Some(DialogHit::CopyDetails);
             }
             return c.cp.form.hit(lx, ly, text, px).map(DialogHit::Control);
+        }
+        if let Some((f, lay)) = self.completion(d)
+            && lay.list.contains(x, y)
+        {
+            return pathcomplete::hit(&f.complete, &lay, x, y).map(DialogHit::Completion);
         }
         if let (Some(f), Some(fr)) = (d.field.as_ref(), self.field)
             && f.combo.open.is_some()
