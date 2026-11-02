@@ -104,6 +104,23 @@ impl Pick {
     }
 }
 
+/// The loupe as a reader sees it: a colour well on the output under the point, valued by the
+/// pixel there.
+pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
+    pick_access(&state.panels.colorpick.as_ref()?.pick)
+}
+
+fn pick_access(pick: &Pick) -> Option<reprisekit::access::Tree> {
+    use reprisekit::access::{ROOT, accesskit::Role};
+    let p = pick.point()?;
+    let (r, still) = still_at(&pick.stills, p)?;
+    let mut local = ColorPick::default();
+    local.motion((p.0 - r.x, p.1 - r.y));
+    let mut tree = crate::access::root(Role::Window, "Colour picker", *r);
+    colorpick::access(&local, still, (r.width, r.height), &mut tree, ROOT)?;
+    Some(tree)
+}
+
 impl State {
     /// The bind, or a portal's PickColor: open the picker. One already open,
     /// the region overlay or the lock turn the asker away.
@@ -164,6 +181,7 @@ impl State {
 
     fn close_color_pick(&mut self) -> Option<ColorPickView> {
         let v = self.panels.colorpick.take()?;
+        crate::access::touch(self);
         self.scene.destroy(v.tree);
         self.set_cursor("default");
         self.redraw_all();
@@ -246,6 +264,7 @@ impl State {
     }
 
     fn redraw_color_pick(&mut self) {
+        crate::access::touch(self);
         let Some(v) = self.panels.colorpick.as_ref() else {
             return;
         };
@@ -305,6 +324,20 @@ mod tests {
         };
         v.motion(p);
         v
+    }
+
+    #[test]
+    fn the_loupe_reads_as_a_colour_well_valued_by_the_pixel_on_the_output_under_the_point() {
+        use reprisekit::access::accesskit::Role;
+        let t = pick_access(&view((120, 100))).expect("a tree");
+        let (_, well) = (t.nodes())
+            .find(|(_, n)| n.role() == Role::ColorWell)
+            .expect("the loupe");
+        assert_eq!(well.value(), Some("#aabbcc"));
+        assert!(
+            pick_access(&view((5, 5))).is_none(),
+            "no output under the point"
+        );
     }
 
     #[test]

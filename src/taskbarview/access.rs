@@ -29,6 +29,25 @@ impl State {
         }
     }
 
+    /// The unread count a task button of `app`'s windows, or of Quick Launch pin `pin`, shows.
+    pub(super) fn task_badge(&self, app: &str, pin: Option<usize>) -> Option<u32> {
+        let pin = pin
+            .and_then(|p| self.quicklaunch.get(p))
+            .map(|q| q.file.as_str());
+        let keys = crate::launcherentry::app_keys(app, pin, &self.app_index);
+        self.launcher_entries.badge(&keys)
+    }
+
+    fn task_button_badge(&self, bar: &Bar, i: usize) -> Option<u32> {
+        if !self.config.taskbar.badges || bar.dialogs.get(i).copied().flatten().is_some() {
+            return None;
+        }
+        let app = (bar.buttons.get(i)?.first())
+            .and_then(|&w| self.win(w))
+            .map_or_else(String::new, |w| w.app_id());
+        self.task_badge(&app, bar.pins.get(i).copied().flatten())
+    }
+
     fn tray_cell_name(&self, bar: TreeId, i: usize) -> String {
         let revealed = self.bar(bar).map_or(0, |b| b.layout.tray_hidden);
         let tray = self.tray.as_ref();
@@ -73,6 +92,9 @@ impl State {
                     (bar.buttons.get(i).into_iter().flatten())
                         .any(|&w| self.win(w).is_some_and(|w| w.attention.is_some()))
                 })
+                .collect(),
+            badges: (0..l.tasks.len())
+                .map(|i| self.task_button_badge(bar, i))
                 .collect(),
             focus: self.bar_focus(bar),
             tray: (0..l.tray.len())

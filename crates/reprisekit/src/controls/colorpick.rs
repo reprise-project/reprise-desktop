@@ -213,8 +213,9 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, px: u32, still: &Still, p: (i32
     text.draw(c, lay.label, &hex(argb), false, WHITE, Align::Left, px);
 }
 
-/// The picker's `access` part: the loupe as a focused colour well valued by
-/// the pixel under the point as `#rrggbb`. Nothing without a point.
+/// The picker's `access` part: the loupe as a focused colour well named and valued by
+/// the pixel under the point as `#rrggbb` (AT-SPI shows a colour well's name, not its
+/// value). Nothing without a point.
 pub fn access(
     m: &ColorPick,
     still: &Still,
@@ -224,7 +225,9 @@ pub fn access(
 ) -> Option<NodeId> {
     let p = m.point?;
     let mut n = access::node(Role::ColorWell, layout(p, size).loupe);
-    n.set_value(hex(still.sample(p)).to_lowercase());
+    let value = hex(still.sample(p)).to_lowercase();
+    n.set_label(value.as_str());
+    n.set_value(value);
     let id = tree.push(parent, "loupe", n);
     tree.set_focus(id);
     Some(id)
@@ -363,6 +366,7 @@ mod tests {
         let n = tree.get(id).unwrap();
         assert_eq!(n.role(), Role::ColorWell);
         assert_eq!(n.value(), Some("#00140a"));
+        assert_eq!(n.label(), Some("#00140a"), "a reader speaks the name");
         assert_eq!(tree.focus(), id);
     }
 }

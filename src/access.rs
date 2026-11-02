@@ -1,4 +1,4 @@
-//! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history, the balloons and each framed window's caption, speaking AT-SPI on the session's accessibility bus.
+//! Screen reader side of the compositor's own surfaces: one AccessKit adapter per taskbar, menu stack, switcher, dialog, launcher, clipboard history, emoji picker, calendar, displays panel, tray flyout, task preview panel, notification history, the balloons, the shortcut sheet, the colour picker's loupe and each framed window's caption, speaking AT-SPI on the session's accessibility bus.
 //! `accesskit_unix` runs its D-Bus side on its own thread and calls the handlers (`reprisekit::access::Handler`) there; they post a `Msg` to a calloop channel, so the loop never waits on the bus. Trees are built on the loop, in an idle pass [`touch`] queues, only for adapters a reader holds.
 //! Bounds are layout coordinates: a tree's root carries its surface's place as a transform and its controls lay out surface-local. A tree claims the focus only while its surface has the keyboard (see [`focus_of`]). The lock screen has no tree, so its password field's text stays here.
 //! A reader's action on a node runs as the click a user would give it ([`click`], `reprisekit::access::gesture`) through the pointer's press and release paths, a client's flyout over the node closed first; focusing a taskbar item gives the bar the keyboard (`barkeys`), a switcher, overview or launcher row takes the selection, a dialog's button or a Start panel spot takes it unpressed; ScrollIntoView on a row out of view scrolls its list ([`reveal`]); any other action there scrolls it in, then acts on it.
@@ -42,6 +42,10 @@ pub enum Surface {
     /// Always there (see `notifyview::access`), so a balloon's alert is announced.
     Balloons,
     NotifyCenter,
+    /// The Super-hold shortcut sheet; it takes no keys, so never the focus.
+    KeySheet,
+    /// The colour picker's loupe.
+    ColorPick,
     /// A framed window's caption: its buttons, window menu and tabs. It never claims the
     /// focus; the client's own tree has it.
     Frame(WindowId),
@@ -159,6 +163,8 @@ impl Access {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Keyboard {
+    /// The colour picker takes every key while open.
+    pub color_pick: bool,
     /// The lock, an input capture, the region overlay or a keyboard move
     /// holds it: none of the trees.
     pub elsewhere: bool,
@@ -183,7 +189,9 @@ pub struct Keyboard {
 /// The calendar takes no keys but Escape, so it claims the focus only
 /// while no client has the keyboard.
 pub fn focus_of(k: &Keyboard) -> Option<Surface> {
-    if k.elsewhere {
+    if k.color_pick {
+        Some(Surface::ColorPick)
+    } else if k.elsewhere {
         None
     } else if k.switcher {
         Some(Surface::Switcher)
@@ -220,6 +228,7 @@ pub fn focus_of(k: &Keyboard) -> Option<Surface> {
 
 fn keyboard(state: &State) -> Keyboard {
     Keyboard {
+        color_pick: state.panels.colorpick.is_some(),
         elsewhere: state.is_locked()
             || state.inputproto.gated()
             || state.panels.takes_pointer()
@@ -302,6 +311,8 @@ fn surfaces(state: &State) -> Vec<Surface> {
         (state.task_preview.is_shown(), Surface::TaskPreview),
         (state.snap_picker.is_shown(), Surface::SnapPicker),
         (crate::notifycenter::is_open(state), Surface::NotifyCenter),
+        (crate::keysheetview::is_shown(state), Surface::KeySheet),
+        (state.panels.colorpick.is_some(), Surface::ColorPick),
         (true, Surface::Balloons),
     ];
     v.extend(open.into_iter().filter_map(|(on, x)| on.then_some(x)));
@@ -363,6 +374,8 @@ fn tree(state: &State, surface: Surface) -> Option<Tree> {
         Surface::Calendar => crate::calendarview::access(state),
         Surface::Displays => crate::displaysview::access(state),
         Surface::NotifyCenter => crate::notifycenter::access(state),
+        Surface::KeySheet => crate::keysheetview::access(state),
+        Surface::ColorPick => crate::colorpickview::access(state),
         Surface::Balloons => Some(crate::notifyview::access(state)),
         Surface::Frame(w) => frame_tree(state, w),
     }
@@ -948,6 +961,17 @@ mod tests {
             ..Keyboard::default()
         };
         assert_eq!(focus_of(&locked), None, "the lock screen has no tree");
+        let picking = Keyboard {
+            color_pick: true,
+            elsewhere: true,
+            dialog: Some(3),
+            ..Keyboard::default()
+        };
+        assert_eq!(
+            focus_of(&picking),
+            Some(Surface::ColorPick),
+            "the loupe takes every key"
+        );
     }
 
     #[test]
