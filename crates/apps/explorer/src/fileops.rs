@@ -1373,7 +1373,7 @@ impl Explorer {
     }
 
     /// The icon of a file or folder already known to be one or the other; it reads nothing on disk.
-    fn icon_name_as(&self, path: &Path, is_dir: bool, ctx: &mut Ctx) -> String {
+    pub(crate) fn icon_name_as(&self, path: &Path, is_dir: bool, ctx: &mut Ctx) -> String {
         if is_dir {
             return "folder".to_string();
         }

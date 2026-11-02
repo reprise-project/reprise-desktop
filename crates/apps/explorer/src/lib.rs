@@ -20,6 +20,7 @@ mod openwith;
 mod pane;
 mod place;
 mod pointer;
+mod preview;
 mod props_dialog;
 mod props_host;
 mod removing;
@@ -234,6 +235,10 @@ pub struct Explorer {
     pub dialog: Option<Dialog>,
     /// The Properties sheet, in its own modeless window: it and a box can be up at once.
     pub props: Option<Props>,
+    /// Space's preview of the selected item, in its own modeless window.
+    pub(crate) preview: Option<preview::Preview>,
+    /// The main window's client size at its last draw: the preview's arrows lay the view out by it.
+    main_size: (i32, i32),
     error_icon: Option<Canvas>,
     /// `children(&self)` has no `Ctx` to borrow a renderer from.
     dialog_text: Rc<TextRenderer>,
@@ -494,6 +499,8 @@ impl Explorer {
             send: sendreads::SendReads::default(),
             dialog: None,
             props: None,
+            preview: None,
+            main_size: ctx.size,
             error_icon: None,
             dialog_text: ctx.text.clone(),
             dialog_px: Theme::default().fonts.size_px,
@@ -1517,6 +1524,9 @@ impl App for Lazy {
         if win == PROPS {
             return ex.props_event(ev, ctx);
         }
+        if win == preview::PREVIEW {
+            return ex.preview_event(ev, ctx);
+        }
         if [copydlg::COPY, copydlg::REMOVE, copydlg::EXTRACT].contains(&win) {
             return ex.progress_event(win, ev, ctx);
         }
@@ -1625,10 +1635,15 @@ impl App for Lazy {
             ex.draw_props(c, ctx);
             return;
         }
+        if win == preview::PREVIEW {
+            ex.draw_preview(c, ctx);
+            return;
+        }
         if [copydlg::COPY, copydlg::REMOVE, copydlg::EXTRACT].contains(&win) {
             ex.draw_progress(win, c);
             return;
         }
+        ex.main_size = ctx.size;
         ex.status.grip = !ctx.maximized;
         // A look that boxes its items greys the unfocused pane's selection; Classic keeps the highlight.
         let boxed = item::boxed(&ctx.theme.paint());
@@ -1730,6 +1745,7 @@ impl repriseapp::Extended for Lazy {
             copydlg::COPY | copydlg::REMOVE | copydlg::EXTRACT => ex.access_progress(win, tree),
             PROGRAM_BROWSE => ex.access_program_browse(tree),
             browse::ERROR => ex.access_browse_error(tree),
+            preview::PREVIEW => ex.access_preview(tree, ctx),
             PROPS => {
                 if let Some(p) = &ex.props {
                     let px = ctx.forms().fonts.size_px;

@@ -50,6 +50,13 @@ The file manager, and the default for folders.
   Ctrl+Z undoes the last one, a whole Rename dialog's worth at once;
   undoing a copy its Recycle Bin can't take (a drive set to remove files
   immediately, or too big) asks before deleting it permanently.
+- **Preview** (Space): a window over Explorer shows the one selected file:
+  a picture fitted to the screen, the first 256 KB of a text file, the
+  thumbnail another program left in the shared cache (a PDF's, a video's),
+  else its icon, type, size and date. The arrows step to the previous and
+  next item in the view's order and move the selection with it; Enter opens
+  the file, Space or Escape closes the preview. A file on a mount that
+  stopped answering shows its card until the read comes back.
 - **Drag and drop** between Explorer windows, the desktop and other
   programs, Flatpaks included. A right-drag asks whether to copy, move or
   make a shortcut. Drop a link from a browser and you get a link file.

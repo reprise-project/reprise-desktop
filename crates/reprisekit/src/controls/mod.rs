@@ -21,6 +21,7 @@ pub mod emojipicker;
 pub mod endsession;
 pub mod explorerbar;
 pub mod filedlg;
+pub mod filepreview;
 pub mod filesheet;
 pub mod finddlg;
 mod fit;

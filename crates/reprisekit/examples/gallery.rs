@@ -114,6 +114,10 @@ fn main() {
             &format!("reprisekit-gallery-termgrid@{}.png", n.max(1)),
         );
         write_preview(
+            &render_file_preview(n.max(1)),
+            &format!("reprisekit-gallery-filepreview@{}.png", n.max(1)),
+        );
+        write_preview(
             &render_grid_drag(n.max(1)),
             &format!("reprisekit-gallery-grid-drag@{}.png", n.max(1)),
         );
@@ -210,6 +214,10 @@ fn main() {
     }
     write_preview(&render_file_dialog(), "reprisekit-gallery-file-dialog.png");
     write_preview(&render_termgrid(1), "reprisekit-gallery-termgrid.png");
+    write_preview(
+        &render_file_preview(1),
+        "reprisekit-gallery-filepreview.png",
+    );
     write_preview(&render_grid_drag(1), "reprisekit-gallery-grid-drag.png");
     write_preview(
         &render_label_ellipsis(1),
@@ -1358,6 +1366,57 @@ fn render_show_desktop() -> Canvas {
 }
 
 /// A terminal screen: a prompt, the 16 colours, attributes, box frames, blocks and wide chars.
+/// The file preview's picture, text and card, a row per interface.
+fn render_file_preview(scale: i32) -> Canvas {
+    use reprisekit::controls::filepreview::{self, Body, Facts, FilePreview};
+    use reprisekit::controls::multiedit::{Metrics, MultiEdit};
+    let text = TextRenderer::load(&FontConfig::default());
+    let mono = TextRenderer::monospace(13);
+    let (cell_w, cell_h) = (380, 220);
+    let mut out = Canvas::with_scale(3 * cell_w as u32, 3 * cell_h as u32, scale);
+    out.fill_rect(out.bounds(), Color::rgb(0x40, 0x40, 0x40));
+    for (row, i) in [Interface::Classic, Interface::Blue, Interface::Glass]
+        .into_iter()
+        .enumerate()
+    {
+        let mut theme = interfaces::theme_for(i);
+        theme.look = theme.look.at_scale(scale);
+        let p = theme.paint();
+        let mut m = Metrics {
+            bars_always: false,
+            ..Metrics::default()
+        };
+        m.follow_look(&theme.look.controls());
+        let (pw, ph) = (180 * scale as u32, 120 * scale as u32);
+        let pixels = (0..pw * ph)
+            .map(|k| 0xFF00_0000 | ((k % pw) * 255 / pw) << 16 | ((k / pw) * 255 / ph) << 8 | 0x60)
+            .collect();
+        let picture = Canvas::from_pixels(pw, ph, pixels).at_scale(scale);
+        let doc = "[appearance]\ninterface = \"glass\"\n\n# Space shows a file;\n# the arrows walk the folder.";
+        let bodies = [
+            Body::Picture(picture),
+            Body::Text(MultiEdit::new(doc)),
+            Body::Card,
+        ];
+        for (col, body) in bodies.into_iter().enumerate() {
+            let facts = Facts {
+                name: "Holiday report.odt".into(),
+                kind: "OpenDocument Text".into(),
+                size: Some("48.2 KB".into()),
+                modified: "10/3/2026 4:05 PM".into(),
+            };
+            let mut qv = FilePreview::new(facts, None);
+            qv.set_body(body);
+            let (w, h) = qv.size(&mono, &m, (cell_w - 20, cell_h - 20));
+            let mut c = Canvas::with_scale(w as u32, h as u32, scale);
+            let r = Rect::new(0, 0, w, h);
+            filepreview::draw(&mut c, &p, &text, 11, &mono, &m, &qv, r);
+            out.blit_canvas(col as i32 * cell_w + 10, row as i32 * cell_h + 10, &c);
+        }
+    }
+    out
+}
+
 fn render_termgrid(scale: i32) -> Canvas {
     use reprisekit::controls::termgrid::{self, CursorShape, Flags, Snapshot};
     let text = TextRenderer::load(&FontConfig {

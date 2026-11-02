@@ -213,6 +213,30 @@ fn coverage(bm: &freetype::Bitmap) -> Vec<u8> {
 }
 
 impl TextRenderer {
+    /// The fixed-pitch face plain text is set in at `px`: Lucida Console drawn hinted monochrome,
+    /// else Liberation Mono or DejaVu Sans Mono antialiased, as a fallback mono blotches
+    /// monochrome at 13 px.
+    pub fn monospace(px: u32) -> TextRenderer {
+        let cfg = |antialias| FontConfig {
+            family: vec![
+                "Lucida Console".into(),
+                "Liberation Mono".into(),
+                "DejaVu Sans Mono".into(),
+            ],
+            size_px: px,
+            antialias,
+            italic: false,
+            full_hinting: false,
+            shell_dlg: None,
+        };
+        let mono = TextRenderer::load(&cfg(false));
+        if mono.has_face("Lucida Console") {
+            mono
+        } else {
+            TextRenderer::load(&cfg(true))
+        }
+    }
+
     pub fn load(cfg: &FontConfig) -> TextRenderer {
         let library = match Library::init() {
             Ok(l) => Some(l),

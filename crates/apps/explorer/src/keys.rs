@@ -313,8 +313,8 @@ impl Explorer {
             return self.open_selected(ctx);
         }
         // Ctrl+Space: the focused entry joins or leaves the
-        // selection without disturbing the rest. A bare space is a
-        // type-ahead character, so it goes on below.
+        // selection without disturbing the rest. A bare Space is the
+        // preview's: type-ahead takes letters and digits alone.
         if k.sym == SPACE
             && k.mods.ctrl
             && let Some(i) = self.sv.selection.focus
@@ -328,6 +328,9 @@ impl Explorer {
             );
             self.refresh_chrome(ctx);
             return Reply::redraw();
+        }
+        if k.sym == SPACE && !k.mods.alt {
+            return self.toggle_preview(ctx);
         }
         let ch = k
             .utf8
