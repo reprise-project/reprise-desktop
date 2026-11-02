@@ -1,6 +1,6 @@
 //! The Browse dialog's thumbnails, fetched on one worker thread: a hit in the shared thumbnail
 //! cache is read there, a miss goes to the thumbnail helper (`reprisefs::thumbpipe`), so no
-//! picture decoder runs in the compositor. Batches reach the loop through the fsjobs channel.
+//! picture decoder or thumbnailer runs in the compositor. Batches reach the loop through the fsjobs channel.
 
 use crate::fsjobs::OnLoop;
 use crate::raster::Canvas;
@@ -15,8 +15,9 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
-/// A picture, its thumbnail at scale 1 and its own size.
-pub type Done = (PathBuf, Canvas, (u32, u32));
+/// A file, its thumbnail at scale 1 and the picture's size (`None` when its thumbnailer gave
+/// none).
+pub type Done = (PathBuf, Canvas, Option<(u32, u32)>);
 
 /// How long fetched thumbnails wait for company before they go to the loop: each batch
 /// redraws the dialog once.
@@ -161,7 +162,7 @@ struct Batch {
 }
 
 impl Batch {
-    fn push(&mut self, job: Job, thumb: Canvas, dims: (u32, u32)) {
+    fn push(&mut self, job: Job, thumb: Canvas, dims: Option<(u32, u32)>) {
         self.dialog = job.dialog;
         self.generation = job.generation;
         self.done.push((job.path, thumb, dims));
@@ -259,17 +260,17 @@ fn cache_for(setting: repriseconf::ThumbnailCache) -> Option<Thumbnails> {
 
 /// `path`'s thumbnail fitted inside an `edge` square and the picture's size, from `cache`. An
 /// entry for an older copy of the file, or without the picture's size (Tiles shows it), is a
-/// miss.
+/// miss: the helper answers those, a document's without a size.
 fn cached(
     cache: Option<&Thumbnails>,
     path: &Path,
     meta: &std::fs::Metadata,
     edge: u32,
-) -> Option<(Canvas, (u32, u32))> {
+) -> Option<(Canvas, Option<(u32, u32)>)> {
     let hit = cache?.get(path, meta, edge)?;
     let dims = hit.dims?;
     let thumb = reprisekit::icontheme::png_to_canvas(&hit.png, edge).ok()?;
-    Some((thumb, dims))
+    Some((thumb, Some(dims)))
 }
 
 /// A picture's stat on a thread of its own, given up after `within`: a picture on a dead mount
@@ -337,7 +338,7 @@ impl Fetcher {
         }
     }
 
-    fn fetch(&mut self, path: &Path, edge: u32) -> Option<(Canvas, (u32, u32))> {
+    fn fetch(&mut self, path: &Path, edge: u32) -> Option<(Canvas, Option<(u32, u32)>)> {
         if self.failures >= GIVE_UP {
             return None;
         }
@@ -544,7 +545,7 @@ mod tests {
     fn fetched(f: &mut Fetcher, path: &str) -> bool {
         f.fetch(Path::new(path), 128)
             .inspect(|(thumb, dims)| {
-                assert_eq!(*dims, (2, 3));
+                assert_eq!(*dims, Some((2, 3)));
                 assert_eq!(thumb.pixels, [0xff00_00ff]);
             })
             .is_some()
@@ -684,7 +685,7 @@ mod tests {
         let cache = cache_with(&dir, &pic, (640, 320));
         let meta = |p: &Path| std::fs::metadata(p).unwrap();
         let (thumb, dims) = cached(Some(&cache), &pic, &meta(&pic), 128).expect("a hit");
-        assert_eq!(dims, (640, 320));
+        assert_eq!(dims, Some((640, 320)));
         assert_eq!((thumb.width, thumb.height), (2, 1));
         assert_eq!(thumb.pixels, [0xffff_0000, 0xff00_00ff]);
         assert!(

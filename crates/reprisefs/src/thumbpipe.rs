@@ -1,7 +1,7 @@
-//! The pipe to the thumbnail helper, which decodes pictures in a process of its own so its
-//! host never runs a picture decoder. The host writes the square to fit (a little-endian word),
-//! the picture's path and a NUL on the helper's stdin; the helper answers each path in order on
-//! its stdout with a [`Thumb`], or an empty answer for a file it cannot decode.
+//! The pipe to the thumbnail helper, which makes thumbnails in a process of its own so its host
+//! never runs a picture decoder or a thumbnailer. The host writes the square to fit (a
+//! little-endian word), the file's path and a NUL on the helper's stdin; the helper answers each
+//! path in order on its stdout with a [`Thumb`], or an empty answer for a file it has none of.
 
 use std::ffi::OsString;
 use std::io::{self, BufRead, Read, Write};
@@ -12,14 +12,14 @@ use std::path::{Path, PathBuf};
 pub const PROGRAM: &str = "reprise-explorer";
 pub const FLAG: &str = "--thumbnailer";
 
-/// A thumbnail of a picture `dims` in size: `width` x `height` premultiplied ARGB words, row by
-/// row.
+/// A thumbnail: `width` x `height` premultiplied ARGB words, row by row. `dims` is the picture's
+/// size, `None` for a file whose thumbnailer gave none (a PDF's page).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Thumb {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u32>,
-    pub dims: (u32, u32),
+    pub dims: Option<(u32, u32)>,
 }
 
 pub fn write_request(w: &mut impl Write, path: &Path, edge: u32) -> io::Result<()> {
@@ -46,14 +46,15 @@ pub fn read_request(r: &mut impl BufRead) -> io::Result<Option<(PathBuf, u32)>> 
     Ok(Some((path, u32::from_le_bytes(edge))))
 }
 
-/// Four little-endian words (width, height, the picture's width and height), then the pixels as
-/// little-endian words. A zero width is no thumbnail.
+/// Four little-endian words (width, height, the picture's width and height, both 0 for none),
+/// then the pixels as little-endian words. A zero width is no thumbnail.
 pub fn write_reply(w: &mut impl Write, thumb: Option<&Thumb>) -> io::Result<()> {
     let Some(t) = thumb.filter(|t| t.pixels.len() == t.width as usize * t.height as usize) else {
         w.write_all(&[0; 16])?;
         return w.flush();
     };
-    let head = [t.width, t.height, t.dims.0, t.dims.1];
+    let (dw, dh) = t.dims.unwrap_or((0, 0));
+    let head = [t.width, t.height, dw, dh];
     let mut bytes = Vec::with_capacity(16 + t.pixels.len() * 4);
     bytes.extend(head.iter().chain(&t.pixels).flat_map(|v| v.to_le_bytes()));
     w.write_all(&bytes)?;
@@ -66,7 +67,8 @@ pub fn read_reply(r: &mut impl Read, max_edge: u32) -> io::Result<Option<Thumb>>
     let mut head = [0u8; 16];
     r.read_exact(&mut head)?;
     let word = |i: usize| u32::from_le_bytes(head[i * 4..i * 4 + 4].try_into().expect("4 bytes"));
-    let (width, height, dims) = (word(0), word(1), (word(2), word(3)));
+    let (width, height) = (word(0), word(1));
+    let dims = Some((word(2), word(3))).filter(|&(w, h)| w > 0 && h > 0);
     if width == 0 {
         return Ok(None);
     }
@@ -123,7 +125,7 @@ mod tests {
             width: 2,
             height: 1,
             pixels: vec![0xff00_00ff, 0x8000_4000],
-            dims: (640, 320),
+            dims: Some((640, 320)),
         };
         let mut pipe = Vec::new();
         write_reply(&mut pipe, Some(&t)).unwrap();
@@ -143,7 +145,7 @@ mod tests {
             width: 129,
             height: 1,
             pixels: vec![0; 129],
-            dims: (1000, 8),
+            dims: Some((1000, 8)),
         };
         let mut pipe = Vec::new();
         write_reply(&mut pipe, Some(&big)).unwrap();
