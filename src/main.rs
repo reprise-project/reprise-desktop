@@ -71,6 +71,7 @@ mod location;
 mod logbridge;
 mod media;
 mod menuview;
+mod miniview;
 mod mousekeys;
 mod netspeed;
 mod nightlight;

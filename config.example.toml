@@ -680,6 +680,12 @@ action = "desktop-carry-next"
 #keys = "Super+t"
 #action = "alwaysontop"
 
+# Open a mini view of the focused window, or close it; the window menu's
+# Mini View row does the same. Not bound by default.
+#[[keybinds]]
+#keys = "Super+Shift+m"
+#action = "mini-view"
+
 # Turn Do Not Disturb on or off: only critical notifications raise a
 # balloon, the rest still go into the history behind the tray's bell. The
 # history's check box does the same; the bell's right-click menu also turns it

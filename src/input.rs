@@ -107,6 +107,11 @@ pub enum Hit {
     Displays {
         hit: reprisekit::controls::displaypanel::Hit,
     },
+    /// Mini view `id` and its part the point lands on.
+    MiniView {
+        id: u64,
+        part: Option<reprisekit::controls::miniview::Part>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -269,6 +274,23 @@ pub enum Interaction {
     NotifyPress,
     /// A slider on the displays panel held: it follows the pointer until the release.
     DisplaysSlide,
+    /// Mini view `id` held by its picture, `dx`/`dy` from its top-left: it follows the pointer
+    /// once `moved` past `desktop::DRAG_PX` from `press`; a release that never moved is a click.
+    MiniMove {
+        id: u64,
+        dx: f64,
+        dy: f64,
+        press: (f64, f64),
+        moved: bool,
+    },
+    /// Mini view `id` held by its corner: its frame from `start` follows the pointer's travel
+    /// from (`cx`, `cy`).
+    MiniResize {
+        id: u64,
+        start: Rect,
+        cx: f64,
+        cy: f64,
+    },
 }
 
 impl Interaction {
@@ -300,6 +322,8 @@ impl Interaction {
             | Interaction::DialogPress
             | Interaction::NotifyPress
             | Interaction::DisplaysSlide
+            | Interaction::MiniMove { .. }
+            | Interaction::MiniResize { .. }
             | Interaction::Idle => false,
         }
     }

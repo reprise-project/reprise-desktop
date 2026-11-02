@@ -40,6 +40,7 @@ pub mod listview;
 pub mod locationprompt;
 pub mod menu;
 pub mod menubar;
+pub mod miniview;
 pub mod mixer;
 pub mod msgbox;
 pub mod multiedit;

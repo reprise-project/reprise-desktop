@@ -107,11 +107,13 @@ pub enum SceneOwner {
     Debug,
     /// The keyboard shortcut sheet (`keysheetview`); it takes no pointer input.
     KeySheet,
+    /// A mini view (`miniview`) by its id; hits resolve to its parts.
+    MiniView(u64),
 }
 
 /// The scene's layer trees, bottom to top: the background (wallpaper),
-/// layer-shell's bottom layer, the windows, the windows kept on top,
-/// layer-shell's top layer, the taskbar, a fullscreen window, the desktop
+/// layer-shell's bottom layer, the windows, the windows kept on top, the
+/// mini views, layer-shell's top layer, the taskbar, a fullscreen window, the desktop
 /// switch animation, the menu tree, Start's orb over its menu, the
 /// layer-shell overlay tree, and finally the lock screen, above everything
 /// else. The overlay tree is left out of the glass backdrop: what lies on
@@ -124,6 +126,8 @@ pub struct Layers {
     /// windows they own. `State::restack` moves trees between this and
     /// `windows`.
     pub on_top: TreeId,
+    /// Mini views (`miniview`), above every window.
+    pub minis: TreeId,
     pub top: TreeId,
     pub taskbar: TreeId,
     /// Holds the focused window's tree while it is fullscreen, so it
@@ -149,6 +153,7 @@ impl Layers {
             bottom: t(),
             windows: t(),
             on_top: t(),
+            minis: t(),
             top: t(),
             taskbar: t(),
             fullscreen: t(),
@@ -401,6 +406,7 @@ pub struct State {
     pub identify: crate::identifyview::IdentifyView,
     pub live_previews: crate::livepreview::LivePreviews,
     pub task_preview: crate::taskpreview::TaskPreviewView,
+    pub mini_views: crate::miniview::MiniViews,
     pub snap_picker: crate::snappickerview::SnapPickerView,
     pub snap_bar: crate::snapbarview::SnapBarView,
     /// Each bar's auto-hide (`autohideview`).
@@ -744,6 +750,7 @@ impl State {
             identify: Default::default(),
             live_previews: Default::default(),
             task_preview: Default::default(),
+            mini_views: Default::default(),
             snap_picker: Default::default(),
             snap_bar: Default::default(),
             bar_hide: Default::default(),
