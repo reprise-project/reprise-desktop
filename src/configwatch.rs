@@ -485,6 +485,7 @@ pub fn reload(state: &mut State, cfg: Config) {
         // transform: the usable areas move.
         state.update_layout();
     }
+    crate::miniview::restyle(state);
     // The panels follow `[debug]` and are redrawn for the new look.
     crate::debugview::config_changed(state);
     if changes.bar_moved || changes.bar_hide {

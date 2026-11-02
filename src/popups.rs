@@ -207,7 +207,8 @@ mod tests {
             | SceneOwner::Taskbar(_)
             | SceneOwner::Desktop
             | SceneOwner::Layer
-            | SceneOwner::Dialog(_) => None,
+            | SceneOwner::Dialog(_)
+            | SceneOwner::MiniView(_) => None,
         }
     }
 

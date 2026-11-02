@@ -134,6 +134,7 @@ fn action_names_round_trip() {
         "showdesktop",
         "toggleframe",
         "alwaysontop",
+        "mini-view",
         "launcher",
         "overview",
         "snap-layouts",

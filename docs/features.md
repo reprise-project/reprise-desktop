@@ -111,13 +111,22 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   the window menu, or double-click the icon to close. Super and a left drag
   moves a window by its body.
 - **Window menu.** Alt+Space, or a right-click on the caption: Restore,
-  Move, Size, Minimize, Maximize, Roll Up, Always on Top, Show on All
-  Desktops, Move to Desktop, the tab commands and Close. Move and Size work
+  Move, Size, Minimize, Maximize, Roll Up, Always on Top, Mini View, Show
+  on All Desktops, Move to Desktop, the tab commands and Close. Move and Size work
   from the keyboard.
 - **Roll up.** Roll Up in the window menu (or a caption double-click set to
   it) leaves only the window's title bar, at its width; the program keeps
   running at its size and gets no input. It moves like any window. Roll Down,
   its task button, maximizing, snapping or going fullscreen brings it back.
+- **Mini view.** Mini View in the window menu (or a `mini-view` bind, unbound
+  by default) opens a small live picture of the window, 320 pixels wide in
+  the lower-right corner of its screen, above every window and on every
+  desktop. Drag it to move it, drag its lower-right corner to size it (it
+  keeps the window's shape); a click brings the window up, and a
+  double-click or its close box closes it. It keeps following a minimized
+  window. Several windows can each have one; Mini View again, or closing the
+  window, closes it. Screenshots and screen sharing show it like anything
+  else on screen.
 - **Window tabs.** Drag a window by its caption onto another window's caption
   and hold it there: the two share one frame, their titles as tabs. A ghost
   tab shows where it lands, between two tabs or at either end. Click a

@@ -39,6 +39,7 @@ pub enum Surface {
     TrayFlyout,
     SnapPicker,
     TaskPreview,
+    MiniView(u64),
     /// Always there (see `notifyview::access`), so a balloon's alert is announced.
     Balloons,
     NotifyCenter,
@@ -316,6 +317,7 @@ fn surfaces(state: &State) -> Vec<Surface> {
         (true, Surface::Balloons),
     ];
     v.extend(open.into_iter().filter_map(|(on, x)| on.then_some(x)));
+    v.extend(state.mini_views.ids().map(Surface::MiniView));
     v.extend(
         (state.dialogs.views.iter())
             .filter(|d| !d.minimized)
@@ -368,6 +370,7 @@ fn tree(state: &State, surface: Surface) -> Option<Tree> {
         Surface::StartPanel => state.start_panel_access(),
         Surface::TrayFlyout => crate::trayflyout::access(state),
         Surface::TaskPreview => crate::taskpreview::access(state),
+        Surface::MiniView(id) => crate::miniview::access(state, id),
         Surface::SnapPicker => crate::snappickerview::access(state),
         Surface::ClipView => state.clipview_access(),
         Surface::EmojiView => state.emoji_access(),
@@ -557,6 +560,7 @@ fn lands_on(state: &State, surface: Surface, hit: &Hit) -> bool {
             state.dialogs.views.get(*index).is_some_and(|v| v.id == id)
         }
         (Surface::Frame(w), Hit::Frame { window, .. }) => *window == w,
+        (Surface::MiniView(m), Hit::MiniView { id, .. }) => *id == m,
         (Surface::Menus, Hit::Menu { .. })
         | (Surface::Switcher, Hit::Switcher { .. })
         | (Surface::Overview, Hit::Overview { .. })
