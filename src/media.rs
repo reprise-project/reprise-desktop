@@ -18,7 +18,9 @@ const STEP_PCT: i32 = 5;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Job {
-    VolumeStep(i32),
+    /// Steps of the default sink's volume, kept at or under the top (1.0, or 1.5 with
+    /// `[sounds] allow_boost`).
+    VolumeStep(i32, f64),
     Mute,
     MicMute,
     Kbd(i32),
@@ -147,7 +149,10 @@ pub fn coalesce(jobs: Vec<Job>) -> Vec<Job> {
     let mut out: Vec<Job> = Vec::new();
     for j in jobs {
         match (out.last_mut(), j) {
-            (Some(Job::VolumeStep(a)), Job::VolumeStep(b)) => *a += b,
+            (Some(Job::VolumeStep(a, top)), Job::VolumeStep(b, t)) => {
+                *a += b;
+                *top = t;
+            }
             (Some(Job::Kbd(a)), Job::Kbd(b)) => *a += b,
             (_, j) => out.push(j),
         }
@@ -160,7 +165,7 @@ pub fn parse_wpctl_volume(out: &str) -> Option<(f64, bool)> {
     let mut parts = rest.split_whitespace();
     let level: f64 = parts.next()?.parse().ok()?;
     let muted = parts.any(|p| p == "[MUTED]");
-    Some((level.clamp(0.0, 1.0), muted))
+    Some((level.clamp(0.0, repriseaudio::BOOST_TOP), muted))
 }
 
 /// `cur` stepped by STEP_PCT of `max` (at least 1 unit), clamped to `floor..=max`; a down press never raises a level already under `floor`.
@@ -611,9 +616,10 @@ async fn pick_player(conn: &Connection) -> Option<(String, String)> {
 
 async fn perform(buses: &mut Buses, job: Job) -> Option<Report> {
     match job {
-        Job::VolumeStep(n) => {
+        Job::VolumeStep(n, top) => {
             let arg = format!("{}%{}", (n.abs() * STEP_PCT), if n < 0 { "-" } else { "+" });
-            wpctl(&["set-volume", "@DEFAULT_AUDIO_SINK@", &arg, "-l", "1.0"]).await?;
+            let limit = format!("{top:.2}");
+            wpctl(&["set-volume", "@DEFAULT_AUDIO_SINK@", &arg, "-l", &limit]).await?;
             let (level, muted) =
                 parse_wpctl_volume(&wpctl(&["get-volume", "@DEFAULT_AUDIO_SINK@"]).await?)?;
             Some(Report::Volume { level, muted })
@@ -915,10 +921,15 @@ impl State {
         }
     }
 
+    /// The loudest a volume key steps the default sink to.
+    fn volume_top(&self) -> f64 {
+        repriseaudio::top(self.config.sounds.allow_boost)
+    }
+
     pub fn run_media(&mut self, a: &Action) {
         let job = match a {
-            Action::VolumeUp => Job::VolumeStep(1),
-            Action::VolumeDown => Job::VolumeStep(-1),
+            Action::VolumeUp => Job::VolumeStep(1, self.volume_top()),
+            Action::VolumeDown => Job::VolumeStep(-1, self.volume_top()),
             Action::Mute => Job::Mute,
             Action::MicMute => Job::MicMute,
             Action::BrightnessUp | Action::BrightnessDown => {
@@ -954,21 +965,15 @@ mod tests {
 
     #[test]
     fn a_held_volume_key_folds_into_one_step() {
-        let jobs = vec![
-            Job::VolumeStep(1),
-            Job::VolumeStep(1),
-            Job::VolumeStep(-1),
-            Job::Mute,
-            Job::VolumeStep(1),
-        ];
-        assert_eq!(
-            coalesce(jobs),
-            vec![Job::VolumeStep(1), Job::Mute, Job::VolumeStep(1)]
-        );
+        let step = |n| Job::VolumeStep(n, 1.0);
+        let jobs = vec![step(1), step(1), step(-1), Job::Mute, step(1)];
+        assert_eq!(coalesce(jobs), vec![step(1), Job::Mute, step(1)]);
         // A burst that cancels out still runs, so the OSD shows.
+        assert_eq!(coalesce(vec![step(1), step(-1)]), vec![step(0)]);
         assert_eq!(
-            coalesce(vec![Job::VolumeStep(1), Job::VolumeStep(-1)]),
-            vec![Job::VolumeStep(0)]
+            coalesce(vec![step(1), Job::VolumeStep(1, 1.5)]),
+            vec![Job::VolumeStep(2, 1.5)],
+            "the burst takes the latest top"
         );
     }
 
@@ -1027,7 +1032,8 @@ mod tests {
             parse_wpctl_volume("Volume: 1.00 [MUTED]"),
             Some((1.0, true))
         );
-        assert_eq!(parse_wpctl_volume("Volume: 1.20"), Some((1.0, false)));
+        assert_eq!(parse_wpctl_volume("Volume: 1.20"), Some((1.2, false)));
+        assert_eq!(parse_wpctl_volume("Volume: 2.00"), Some((1.5, false)));
         assert_eq!(parse_wpctl_volume("garbage"), None);
     }
 

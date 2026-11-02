@@ -45,6 +45,8 @@ pub struct TrackMarks {
     pub end_len_v: i32,
     pub sparse: bool,
     pub ink: Color,
+    /// A volume slider's channel past 100 % and its marks at 100 %.
+    pub boost: Color,
 }
 
 impl TrackMarks {
@@ -56,6 +58,7 @@ impl TrackMarks {
         end_len_v: 4,
         sparse: false,
         ink: Color::rgb(0x80, 0x80, 0x80),
+        boost: Color::rgb(0xF0, 0x8A, 0x24),
     };
 }
 

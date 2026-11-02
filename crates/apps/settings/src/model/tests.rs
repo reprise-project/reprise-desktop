@@ -721,6 +721,7 @@ fn save_round_trips_every_field() {
         notification_sound: false,
         sound_theme: "ocean".into(),
         bell: false,
+        allow_boost: true,
         taskbar_position: "top".into(),
         taskbar_auto_hide: true,
         taskbar_reveal_on_edge: false,

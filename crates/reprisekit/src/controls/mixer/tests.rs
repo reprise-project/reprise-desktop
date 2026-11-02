@@ -11,6 +11,7 @@ fn line(key: &str, volume: usize, balance: Option<usize>, check: Check) -> Line 
         check,
         checked: false,
         live: true,
+        boost: false,
     }
 }
 

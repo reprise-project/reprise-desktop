@@ -608,7 +608,12 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
     let on = |p: Page| names(&keys_of(&s.pages[p.index()]));
     assert_eq!(
         on(Page::Sounds),
-        ["notifications.sound", "sounds.theme", "sounds.bell"]
+        [
+            "notifications.sound",
+            "sounds.theme",
+            "sounds.bell",
+            "sounds.allow_boost"
+        ]
     );
     assert_eq!(on(Page::Pointers), ["cursor.theme", "cursor.size"]);
     assert_eq!(

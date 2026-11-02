@@ -75,9 +75,14 @@ enum Level {
 /// moved slider is read: a volume keeps the node's balance and vice versa,
 /// so neither snaps to the other's steps. A node with no left and right
 /// takes no balance.
-fn level_write(ch: &repriseaudio::Channels, slid: Slid, vpos: usize, bpos: usize) -> Option<Level> {
+fn level_write(
+    ch: &repriseaudio::Channels,
+    slid: Slid,
+    (vpos, bpos): (usize, usize),
+    boost: bool,
+) -> Option<Level> {
     match slid {
-        Slid::Volume => Some(Level::Volume(view::volume_of(vpos))),
+        Slid::Volume => Some(Level::Volume(view::scale(boost).volume(vpos))),
         Slid::Balance if ch.stereo() => {
             Some(Level::Levels(ch.at(ch.volume(), mixer::balance_of(bpos))))
         }
@@ -110,6 +115,8 @@ fn menus(advanced: bool) -> Vec<(&'static str, Vec<MenuItem>)> {
 struct Volume {
     opts: Options,
     snapshots: Option<repriseaudio::Watch>,
+    /// The config file, for `[sounds] allow_boost`.
+    config: Option<repriseconf::ConfigWatch>,
     snapshot: Snapshot,
     mixer: Mixer,
     recent: Recent,
@@ -138,6 +145,7 @@ impl Volume {
         let opts = Options {
             hidden: state.hidden,
             advanced: state.advanced,
+            boost: repriseconf::allow_boost(),
             ..Options::new(view)
         };
         let lines = view::lines(&snapshot, &opts, &Recent::default());
@@ -149,6 +157,7 @@ impl Volume {
             bar: Bar::new(menus(opts.advanced)),
             opts,
             snapshots: None,
+            config: None,
             snapshot,
             recent: Recent::default(),
             alt_arm: AltArm::default(),
@@ -268,9 +277,13 @@ impl Volume {
             }
         }
         let refused = self.refused.try_iter().count() > 0;
-        let moved = fresh.is_some();
+        let edited = self.config.as_mut().is_some_and(|w| w.take_changed());
+        let moved = fresh.is_some() || edited;
         if let Some(s) = fresh {
             self.snapshot = s;
+        }
+        if moved {
+            self.opts.boost = repriseconf::allow_boost();
         }
         Reply {
             size: (moved || refused).then(|| self.resync(ctx)).flatten(),
@@ -313,7 +326,7 @@ impl Volume {
         self.recent
             .note(key.to_string(), (vpos, bpos), Instant::now());
         for (id, ch) in view::nodes(&self.snapshot, &self.opts, key) {
-            match level_write(ch, slid, vpos, bpos) {
+            match level_write(ch, slid, (vpos, bpos), self.opts.boost) {
                 Some(Level::Volume(v)) => repriseaudio::set_volume(&self.snapshot, id, v),
                 Some(Level::Levels(l)) => repriseaudio::set_levels(&self.snapshot, id, &l),
                 None => continue,
@@ -663,6 +676,8 @@ impl App for Volume {
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         self.waker = Some(waker.clone());
+        let w = waker.clone();
+        self.config = repriseconf::watch(move || w.wake());
         self.snapshots = Some(repriseaudio::watch(move || waker.wake()));
         repriseapp::Start::Continue
     }
@@ -895,11 +910,13 @@ mod tests {
     fn a_slider_write_leaves_the_other_axis_as_the_node_has_it() {
         let ch = stereo(0.8, 0.76);
         assert_eq!(
-            level_write(&ch, Slid::Volume, 45, mixer::BALANCE_CENTRE),
+            level_write(&ch, Slid::Volume, (45, mixer::BALANCE_CENTRE), false),
             Some(Level::Volume(0.75)),
             "a volume write keeps each channel's share"
         );
-        let Some(Level::Levels(l)) = level_write(&stereo(0.83, 0.83), Slid::Balance, 0, 15) else {
+        let Some(Level::Levels(l)) =
+            level_write(&stereo(0.83, 0.83), Slid::Balance, (0, 15), false)
+        else {
             panic!("a stereo node takes the balance");
         };
         assert!(
@@ -911,7 +928,12 @@ mod tests {
             levels: vec![0.5],
             shares: Vec::new(),
         };
-        assert_eq!(level_write(&mono, Slid::Balance, 10, 15), None);
+        assert_eq!(level_write(&mono, Slid::Balance, (10, 15), false), None);
+        assert_eq!(
+            level_write(&ch, Slid::Volume, (72, mixer::BALANCE_CENTRE), true),
+            Some(Level::Volume(1.2)),
+            "a boosted slider writes past 100 %"
+        );
     }
 
     #[test]

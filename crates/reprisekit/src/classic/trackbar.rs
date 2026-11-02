@@ -2,8 +2,11 @@
 
 use crate::paint::Paint;
 use crate::raster::{Canvas, EdgeStyle, Rect};
-use crate::theme::ColorScheme;
-use crate::trackbar::{Layout, THUMB_H, THUMB_W, vertical_ticks};
+use crate::theme::{Color, ColorScheme};
+use crate::trackbar::{Layout, THUMB_H, THUMB_W, boost_zone, vertical_ticks};
+
+/// A volume slider's channel past 100 % and its marks at 100 %.
+const BOOST: Color = Color::rgb(0xC0, 0x28, 0x18);
 
 const TICK_Y: i32 = 22;
 
@@ -14,7 +17,7 @@ pub fn draw(c: &mut Canvas, p: &Paint, lay: &Layout, enabled: bool) {
 pub fn draw_held(c: &mut Canvas, p: &Paint, lay: &Layout, enabled: bool, held: bool) {
     let speckled = !enabled || held;
     if lay.vertical {
-        return draw_vertical(c, p, lay, !speckled);
+        return draw_vertical(c, p, lay, !speckled, enabled);
     }
     let Paint { cs, s, .. } = *p;
     let ch = lay.channel.scaled(s);
@@ -32,13 +35,20 @@ pub fn draw_held(c: &mut Canvas, p: &Paint, lay: &Layout, enabled: bool, held: b
     draw_thumb(c, cs, lay.thumb, !speckled, s);
 }
 
-fn draw_vertical(c: &mut Canvas, p: &Paint, lay: &Layout, enabled: bool) {
+/// `live` is whether the trackbar takes input; a held thumb is drawn speckled all the same.
+fn draw_vertical(c: &mut Canvas, p: &Paint, lay: &Layout, enabled: bool, live: bool) {
     let Paint { cs, s, .. } = *p;
     let ch = lay.channel.scaled(s);
     c.fill_rect(ch, cs.button_face);
     c.edge_t(ch, EdgeStyle::ButtonSunken, cs, s);
     for tick in vertical_ticks(lay, lay.tick_every, 3, 4) {
         c.fill_rect(tick.scaled(s), cs.button_text);
+    }
+    if let Some((shade, marks)) = boost_zone(lay, 4) {
+        let ink = if live { BOOST } else { cs.button_shadow };
+        for r in std::iter::once(shade).chain(marks) {
+            c.fill_rect(r.scaled(s), ink);
+        }
     }
     let t = lay.thumb;
     c.fill_rect(t.scaled(s), cs.button_face);

@@ -207,7 +207,15 @@ impl Page {
                 "magnifier",
                 "zoom",
             ],
-            Page::Sounds => &["sound theme", "notification sounds", "bell", "beep"],
+            Page::Sounds => &[
+                "sound theme",
+                "notification sounds",
+                "bell",
+                "beep",
+                "volume",
+                "boost",
+                "louder",
+            ],
             Page::Power => &[
                 "idle",
                 "sleep",
