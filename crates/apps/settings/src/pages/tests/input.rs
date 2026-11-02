@@ -236,6 +236,18 @@ fn the_keyboard_page_geometry() {
         rect(&s, Page::Keyboard, SC_REMOVE),
         Rect::new(291, 356, 75, 23)
     );
+    assert_eq!(
+        rect(&s, Page::Keyboard, "osd_group"),
+        Rect::new(20, 388, 358, 62)
+    );
+    assert_eq!(
+        rect(&s, Page::Keyboard, "osd_caps_lock"),
+        Rect::new(32, 406, 13, 13)
+    );
+    assert_eq!(
+        rect(&s, Page::Keyboard, "osd_num_lock"),
+        Rect::new(32, 426, 13, 13)
+    );
     inside_page(&s, Page::Keyboard);
 
     let lv = new_shortcut_list();
