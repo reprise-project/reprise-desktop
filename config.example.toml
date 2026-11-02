@@ -677,7 +677,8 @@ action = "desktop-carry-next"
 
 # Turn Do Not Disturb on or off: only critical notifications raise a
 # balloon, the rest still go into the history behind the tray's bell. The
-# history's check box does the same. Not bound by default.
+# history's check box does the same; the bell's right-click menu also turns it
+# on for an hour or until tomorrow. Not bound by default.
 #[[keybinds]]
 #keys = "Super+n"
 #action = "do-not-disturb"

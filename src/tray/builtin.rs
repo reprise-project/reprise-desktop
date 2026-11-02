@@ -117,7 +117,8 @@ pub fn label(state: &State, b: Builtin) -> Option<String> {
                 manual: log.dnd,
                 ..state.notify.quiet
             };
-            Some(bell_tip(log.unseen, quiet))
+            let until = log.dnd_until.map(crate::taskbar::time_text);
+            Some(bell_tip(log.unseen, quiet, until.as_deref()))
         }
         Builtin::Sharing => Some(state.privacy.sharing_tip()),
         Builtin::Microphone => Some(state.privacy.mic_tip()),
@@ -126,20 +127,21 @@ pub fn label(state: &State, b: Builtin) -> Option<String> {
     }
 }
 
-fn bell_tip(unseen: usize, quiet: Suppress) -> String {
+/// `until`: the end time of a timed Do Not Disturb.
+fn bell_tip(unseen: usize, quiet: Suppress, until: Option<&str>) -> String {
     let count = match unseen {
         0 => "Notifications".to_string(),
         1 => "1 new notification".to_string(),
         n => format!("{n} new notifications"),
     };
     let why = if quiet.manual {
-        ""
+        until.map(|t| format!(" until {t}")).unwrap_or_default()
     } else if quiet.fullscreen_focus {
-        " while a full-screen window has focus"
+        " while a full-screen window has focus".into()
     } else if quiet.sharing {
-        " while the screen is shared"
+        " while the screen is shared".into()
     } else if quiet.scheduled {
-        " during quiet hours"
+        " during quiet hours".into()
     } else {
         return count;
     };
@@ -155,8 +157,12 @@ pub fn click(state: &mut State, output: &Output, b: Builtin, cell: Rect, button:
             crate::displaysview::close(state);
             crate::nightlight::open_menu(state, output, cell)
         }
-        Builtin::Notifications if matches!(button, BTN_LEFT | BTN_RIGHT) => {
+        Builtin::Notifications if button == BTN_LEFT => {
             crate::notifycenter::toggle(state, output, cell)
+        }
+        Builtin::Notifications if button == BTN_RIGHT => {
+            crate::notifycenter::close(state);
+            crate::notifydnd::open_from_bell(state, output, cell)
         }
         Builtin::StickyKeys if button == BTN_LEFT => {
             state.spawn_argv_activated(&crate::keyfilter::Aid::StickyKeys.settings_argv())
@@ -196,6 +202,7 @@ pub fn menu_open(state: &State, b: Builtin) -> bool {
         (b, state.menus.first().map(|m| &m.kind)),
         (Builtin::Layout, Some(MenuKind::Layouts))
             | (Builtin::Displays, Some(MenuKind::NightLight(_)))
+            | (Builtin::Notifications, Some(MenuKind::Dnd(_)))
     )
 }
 
@@ -206,16 +213,20 @@ mod tests {
     #[test]
     fn the_bell_tip_counts_what_is_new() {
         let none = Suppress::default();
-        assert_eq!(bell_tip(0, none), "Notifications");
-        assert_eq!(bell_tip(1, none), "1 new notification");
+        assert_eq!(bell_tip(0, none, None), "Notifications");
+        assert_eq!(bell_tip(1, none, None), "1 new notification");
         let manual = Suppress {
             manual: true,
             sharing: true,
             ..none
         };
         assert_eq!(
-            bell_tip(4, manual),
+            bell_tip(4, manual, None),
             "4 new notifications\nDo not disturb is on"
+        );
+        assert_eq!(
+            bell_tip(0, manual, Some("09:00")),
+            "Notifications\nDo not disturb is on until 09:00"
         );
     }
 
@@ -223,7 +234,7 @@ mod tests {
     fn the_bell_tip_says_why_do_not_disturb_turned_itself_on() {
         let none = Suppress::default();
         let tip = |s| {
-            bell_tip(0, s)
+            bell_tip(0, s, None)
                 .lines()
                 .nth(1)
                 .unwrap_or_default()

@@ -61,6 +61,8 @@ pub struct Log {
     pub entries: Vec<Entry>,
     pub unseen: usize,
     pub dnd: bool,
+    /// When a timed Do Not Disturb ends, seconds since the epoch; None while off or on for good.
+    pub dnd_until: Option<i64>,
     /// Balloons waiting for the automatic Do Not Disturb to end, oldest first.
     pub held: VecDeque<Notification>,
 }

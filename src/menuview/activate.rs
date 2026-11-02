@@ -87,6 +87,7 @@ impl State {
             MenuPick::NotifyAction { id, key } => crate::notifyview::invoke(self, id, &key),
             MenuPick::Layout(i) => self.set_layout(i),
             MenuPick::NightLight(row) => crate::nightlight::pick(self, row),
+            MenuPick::Dnd(row) => crate::notifydnd::pick(self, row),
             MenuPick::StartPanel(row) => self.start_row(row),
             MenuPick::QuickOverflow(file) => {
                 if let Some(k) = self.quicklaunch.iter().position(|q| q.file == file) {
