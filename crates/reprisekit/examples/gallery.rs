@@ -962,6 +962,7 @@ fn text_size_panes(theme: &Theme, text: &TextRenderer) -> Canvas {
         check,
         checked: false,
         live: true,
+        boost: false,
     };
     let m = mixer::Mixer::new(
         &[
@@ -3785,11 +3786,20 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             check,
             checked,
             live: true,
+            boost: false,
         };
+        // The playback view with volumes past 100 %: Firefox at 120 %.
+        let boosted = |l: mixer::Line| mixer::Line { boost: true, ..l };
         let playback = [
-            line("Volume Control", 42, Some(10), mixer::Check::MuteAll, false),
-            line("Firefox", 48, Some(6), mixer::Check::Mute, false),
-            line("mpv", 24, None, mixer::Check::Mute, true),
+            boosted(line(
+                "Volume Control",
+                42,
+                Some(10),
+                mixer::Check::MuteAll,
+                false,
+            )),
+            boosted(line("Firefox", 72, Some(6), mixer::Check::Mute, false)),
+            boosted(line("mpv", 24, None, mixer::Check::Mute, true)),
         ];
         let mut speaker = Canvas::new(16, 16);
         speaker.fill_rect(Rect::new(4, 4, 6, 8), Color::rgb(64, 64, 64));
@@ -4141,20 +4151,8 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
     }
 
     let osds = [
-        (
-            "Volume",
-            Some(osd::Meter {
-                fraction: 0.45,
-                enabled: true,
-            }),
-        ),
-        (
-            "Muted",
-            Some(osd::Meter {
-                fraction: 0.45,
-                enabled: false,
-            }),
-        ),
+        ("Volume", Some(osd::Meter::new(0.45, true))),
+        ("Muted", Some(osd::Meter::new(0.45, false))),
         ("Caps Lock On", None),
         ("Music Player: Next", None),
     ];
@@ -7998,12 +7996,13 @@ fn sample_mix(apps: usize) -> volumepopup::Mix {
                 }
             })
             .collect(),
+        boost: false,
     }
 }
 
 /// The speaker's volume popup in `theme` at scale `n`, 950x840: seven programs scrolled by one
-/// with a player's strip, then two programs with the focus ring on a thumb, and the Output list
-/// open.
+/// with a player's strip, then two programs running past 100 % with master at 120 % and the focus
+/// ring on a thumb, and the Output list open.
 fn render_volume_popup(theme: &Theme, n: i32) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
     // As a program draws: logical lengths on a canvas `n` device px each, the look's parts at `n`.
@@ -8028,7 +8027,10 @@ fn render_volume_popup(theme: &Theme, n: i32) -> Canvas {
     vp.first = 1;
     let lay = volumepopup::layout(&vp, theme, &text, (475, 455), edge, c.bounds());
     volumepopup::draw(&mut c, theme, &text, &vp, &lay);
-    let mut vp = volumepopup::VolumePopup::new(&sample_mix(2));
+    let mut boosted = sample_mix(2);
+    boosted.boost = true;
+    boosted.master.pos = 24;
+    let mut vp = volumepopup::VolumePopup::new(&boosted);
     vp.focus = volumepopup::Focus::Thumb(1);
     vp.cues = true;
     let lay = volumepopup::layout(&vp, theme, &text, (237, 830), edge, c.bounds());
@@ -9778,7 +9780,7 @@ fn render_glass_popups() -> Canvas {
     let m = reprisekit::look::panel::margin(&theme);
     let mut icon = Canvas::new(32, 32);
     icon.fill_rect(Rect::new(4, 6, 24, 20), Color::rgb(80, 193, 255));
-    let meter = |fraction: f64, enabled: bool| Some(osd::Meter { fraction, enabled });
+    let meter = |fraction: f64, enabled: bool| Some(osd::Meter::new(fraction, enabled));
     let osds = [
         ("Volume", meter(0.45, true)),
         ("Muted", meter(0.45, false)),

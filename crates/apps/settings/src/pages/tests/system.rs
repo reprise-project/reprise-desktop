@@ -16,6 +16,8 @@ fn the_sounds_page_geometry() {
         Rect::new(GX, 128, 13, 13)
     );
     assert_eq!(rect(&s, p, "bell"), Rect::new(GX, 154, 13, 13));
+    assert_eq!(rect(&s, p, "volume_group"), Rect::new(20, 190, 358, 74));
+    assert_eq!(rect(&s, p, "allow_boost"), Rect::new(GX, 212, 13, 13));
     inside_page(&s, p);
 }
 

@@ -39,11 +39,17 @@ struct Panel {
     backdrop: Backdrop,
 }
 
-/// The panel for `r`; None for a report that shows no panel of its own.
-fn describe(r: &Report) -> Option<(Osd, &'static str)> {
-    let meter = |fraction: f64, enabled: bool| Some(Meter { fraction, enabled });
+/// The panel for `r`; None for a report that shows no panel of its own. With `boost` (or a volume
+/// already past 100 %) the volume bar runs to 150 %.
+fn describe(r: &Report, boost: bool) -> Option<(Osd, &'static str)> {
+    let meter = |fraction: f64, enabled: bool| Some(Meter::new(fraction, enabled));
     Some(match r {
         Report::Volume { level, muted } => {
+            let top = if boost || *level > 1.0 {
+                repriseaudio::BOOST_TOP
+            } else {
+                1.0
+            };
             let icon = if *muted {
                 "audio-volume-muted"
             } else if *level < 0.34 {
@@ -57,7 +63,10 @@ fn describe(r: &Report) -> Option<(Osd, &'static str)> {
             (
                 Osd {
                     title: title.into(),
-                    meter: meter(*level, !*muted),
+                    meter: Some(Meter {
+                        top,
+                        ..Meter::new(*level, !*muted)
+                    }),
                 },
                 icon,
             )
@@ -135,7 +144,7 @@ fn panel_origin(usable: Rect, size: (i32, i32)) -> (i32, i32) {
 impl State {
     /// Show (or replace) the panel for `r` and restart the hide timer.
     pub fn show_osd(&mut self, r: &Report) {
-        let Some((osd, icon_name)) = describe(r) else {
+        let Some((osd, icon_name)) = describe(r, self.config.sounds.allow_boost) else {
             return;
         };
         let Some((theme, scale)) = self.osd_theme() else {
@@ -292,18 +301,35 @@ mod tests {
 
     #[test]
     fn a_muted_sink_greys_the_meter_and_says_so() {
-        let (osd, icon) = describe(&Report::Volume {
-            level: 0.4,
-            muted: true,
-        })
+        let (osd, icon) = describe(
+            &Report::Volume {
+                level: 0.4,
+                muted: true,
+            },
+            false,
+        )
         .unwrap();
         assert_eq!(osd.title, "Muted");
         assert_eq!(icon, "audio-volume-muted");
+        assert_eq!(osd.meter, Some(Meter::new(0.4, false)));
+    }
+
+    #[test]
+    fn a_boosted_volume_fills_its_bar_to_150() {
+        let (osd, _) = describe(
+            &Report::Volume {
+                level: 1.2,
+                muted: false,
+            },
+            true,
+        )
+        .unwrap();
         assert_eq!(
             osd.meter,
             Some(Meter {
-                fraction: 0.4,
-                enabled: false
+                fraction: 1.2,
+                enabled: true,
+                top: 1.5
             })
         );
     }
@@ -311,10 +337,13 @@ mod tests {
     #[test]
     fn the_volume_icon_follows_the_level() {
         let name = |level: f64| {
-            describe(&Report::Volume {
-                level,
-                muted: false,
-            })
+            describe(
+                &Report::Volume {
+                    level,
+                    muted: false,
+                },
+                false,
+            )
             .unwrap()
             .1
         };
@@ -325,10 +354,13 @@ mod tests {
 
     #[test]
     fn a_player_report_reads_as_a_sentence_without_a_meter() {
-        let (osd, icon) = describe(&Report::Player {
-            name: "Rhythmbox".into(),
-            verb: "PlayPause",
-        })
+        let (osd, icon) = describe(
+            &Report::Player {
+                name: "Rhythmbox".into(),
+                verb: "PlayPause",
+            },
+            false,
+        )
         .unwrap();
         assert_eq!(osd.title, "Rhythmbox: Play / Pause");
         assert_eq!(osd.meter, None);
@@ -337,11 +369,11 @@ mod tests {
 
     #[test]
     fn the_mic_says_which_way_it_went_and_shows_no_meter() {
-        let (osd, icon) = describe(&Report::Mic { muted: true }).unwrap();
+        let (osd, icon) = describe(&Report::Mic { muted: true }, false).unwrap();
         assert_eq!(osd.title, "Microphone muted");
         assert_eq!(osd.meter, None);
         assert_eq!(icon, "microphone-sensitivity-muted");
-        let (osd, icon) = describe(&Report::Mic { muted: false }).unwrap();
+        let (osd, icon) = describe(&Report::Mic { muted: false }, false).unwrap();
         assert_eq!(osd.title, "Microphone on");
         assert_eq!(osd.meter, None);
         assert_eq!(icon, "microphone-sensitivity-high");
@@ -349,25 +381,19 @@ mod tests {
 
     #[test]
     fn the_keyboard_backlight_gets_a_live_meter() {
-        let (osd, icon) = describe(&Report::Kbd { level: 0.5 }).unwrap();
+        let (osd, icon) = describe(&Report::Kbd { level: 0.5 }, false).unwrap();
         assert_eq!(osd.title, "Keyboard backlight");
-        assert_eq!(
-            osd.meter,
-            Some(Meter {
-                fraction: 0.5,
-                enabled: true
-            })
-        );
+        assert_eq!(osd.meter, Some(Meter::new(0.5, true)));
         assert_eq!(icon, "keyboard-brightness");
     }
 
     #[test]
     fn the_radio_reads_on_or_off_without_a_meter() {
-        let (osd, icon) = describe(&Report::Wifi { on: true }).unwrap();
+        let (osd, icon) = describe(&Report::Wifi { on: true }, false).unwrap();
         assert_eq!(osd.title, "Wireless on");
         assert_eq!(osd.meter, None);
         assert_eq!(icon, "network-wireless");
-        let (osd, _) = describe(&Report::Wifi { on: false }).unwrap();
+        let (osd, _) = describe(&Report::Wifi { on: false }, false).unwrap();
         assert_eq!(osd.title, "Wireless off");
     }
 

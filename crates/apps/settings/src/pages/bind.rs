@@ -5,7 +5,7 @@ use super::desktop::{
     DESKTOP_CONTROLS, DRAG_SNAP_CONTROLS, DURATION_CONTROLS, FPS_CONTROLS, REVEAL_CONTROLS,
 };
 use super::input::{MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS};
-use super::system::{BELL, NOTIFICATION_SOUND, SOUND_CONTROLS};
+use super::system::{ALLOW_BOOST, BELL, NOTIFICATION_SOUND, SOUND_CONTROLS};
 use super::{
     CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN, GTK_FIXED_ROWS,
     KB_ADD, KB_LAYOUTS, KB_REMOVE, KB_UP, KELVIN_MAX, KELVIN_MIN, KELVIN_STEP, MK_ACCEL, MK_SPEED,
@@ -200,6 +200,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag(NOTIFICATION_SOUND, lens!(notification_sound)),
         Bind::Choice(SOUND_CONTROLS[1], lens!(sound_theme)),
         Bind::Flag(BELL, lens!(bell)),
+        Bind::Flag(ALLOW_BOOST, lens!(allow_boost)),
         Bind::Flag("taskbar_auto_hide", lens!(taskbar_auto_hide)),
         Bind::Flag("taskbar_reveal_on_edge", lens!(taskbar_reveal_on_edge)),
         Bind::Flag("taskbar_reveal_on_keys", lens!(taskbar_reveal_on_keys)),

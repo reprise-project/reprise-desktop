@@ -196,7 +196,8 @@ pub fn backup(a: Area) -> Form {
     ])
 }
 
-/// The sound theme picked from `sound_themes`, then the events that play from it.
+/// The sound theme picked from `sound_themes`, the events that play from it, then the volume's
+/// reach.
 pub fn sounds(a: Area, sound_themes: &[String]) -> Form {
     Form::new(vec![
         group(a, "sound_theme_group", 44, 52, "Sound Theme"),
@@ -217,11 +218,21 @@ pub fn sounds(a: Area, sound_themes: &[String]) -> Form {
             "&Play a sound for notifications",
         ),
         Item::check(BELL, GX, 154, "Play a &sound when a program rings the bell"),
+        group(a, "volume_group", 190, 74, "Volume"),
+        Item::check(ALLOW_BOOST, GX, 212, "Allow volume &above 100%"),
+        Item::label_at(
+            "allow_boost_note",
+            GX + 18,
+            232,
+            a.gw() - 18,
+            "Sliders and the volume keys go on to 150%.",
+        ),
     ])
 }
 
 pub(super) const NOTIFICATION_SOUND: &str = "notification_sound";
 pub(super) const BELL: &str = "bell";
+pub(super) const ALLOW_BOOST: &str = "allow_boost";
 
 /// The sound theme's label and combo, greyed while nothing plays a sound.
 pub(super) const SOUND_CONTROLS: [&str; 2] = ["sound_theme_label", "sound_theme"];

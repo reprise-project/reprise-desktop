@@ -5,7 +5,7 @@ use crate::look::Paint;
 use crate::pointer::Interaction;
 use crate::raster::{Canvas, Rect};
 use crate::style::{Part, State, Style};
-use crate::trackbar::{Layout, vertical_ticks};
+use crate::trackbar::{Layout, boost_zone, vertical_ticks};
 
 /// `false` when `st` lacks the track or thumb part; horizontal only.
 pub fn draw_trackbar(
@@ -67,6 +67,12 @@ pub fn draw_vertical_trackbar(
     let every = if m.sparse { lay.tick_every } else { 1 };
     for tick in vertical_ticks(lay, every, m.tick_len, m.end_len_v) {
         c.fill_rect(tick.scaled(s), m.ink);
+    }
+    if let Some((shade, marks)) = boost_zone(lay, m.end_len_v) {
+        let ink = if enabled { m.boost } else { m.ink };
+        for r in std::iter::once(shade).chain(marks) {
+            c.fill_rect(r.scaled(s), ink);
+        }
     }
     let thumb = thumb_state(p, enabled, focused, thumb);
     st.draw(c, lay.thumb.scaled(s), Part::TrackbarThumbV, thumb, s);
@@ -399,5 +405,74 @@ mod tests {
             assert_eq!(run(y, right.clone()), len, "tick {i}, right");
         }
         assert_eq!(TrackMarks::LOW.end_len, 3, "a horizontal end tick");
+    }
+
+    /// A volume slider at 120 % of 150 %, as the speaker popup draws it: logical lengths on a
+    /// canvas `n` device px each, the look's parts at `n`.
+    fn boosted(look: Interface, n: i32, enabled: bool) -> (Canvas, trackbar::Layout) {
+        let theme = theme_for(look);
+        let look = theme.look.at_scale(n);
+        let p = crate::look::Paint {
+            s: 1,
+            look: &look,
+            ..theme.paint()
+        };
+        let tb = trackbar::TrackBar::new(24, 31)
+            .paged(4, 2)
+            .untick()
+            .boosted(Some(20));
+        let lay = trackbar::layout_vertical(&tb, 4, 4, 140);
+        let mut c = Canvas::with_scale(40, 150, n);
+        c.fill_rect(c.bounds(), theme.colors.button_face);
+        crate::look::widgets::draw_vertical_trackbar(
+            &mut c,
+            &p,
+            &lay,
+            enabled,
+            false,
+            Interaction::Idle,
+        );
+        (c, lay)
+    }
+
+    /// Every device pixel's hash.
+    fn fnv(c: &Canvas) -> u64 {
+        c.to_argb_be().iter().fold(0xcbf29ce484222325, |h, &b| {
+            (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
+        })
+    }
+
+    #[test]
+    fn a_boosted_volume_slider_is_shaded_past_100_in_every_look_at_scale_1_and_2() {
+        let pins = [
+            (Interface::Classic, [0x7e1b0487d120a40e, 0x1f1281fad1f4f9f5]),
+            (Interface::Blue, [0x0bd51e4d2ed21e42, 0x0103b9bb31134787]),
+            (Interface::Glass, [0xfc4d915bc32389c0, 0xf5b3c4f086ed8a09]),
+        ];
+        let mut got = Vec::new();
+        for (look, want) in pins {
+            for (i, n) in [1, 2].into_iter().enumerate() {
+                let (c, lay) = boosted(look, n, true);
+                got.push((look, n, fnv(&c), want[i]));
+                let ch = lay.channel;
+                let (x, full) = (ch.x + 1, lay.ticks[20]);
+                let shade = c.get(x, ch.y + 6);
+                assert_ne!(
+                    shade,
+                    c.get(x, full + 4),
+                    "{look:?} x{n}: shaded only past 100 %"
+                );
+                assert_eq!(
+                    shade,
+                    c.get(lay.bounds.x, full),
+                    "{look:?} x{n}: the 100 % mark is in the shade's colour"
+                );
+                let (grey, _) = boosted(look, n, false);
+                assert_ne!(grey.get(x, ch.y + 6), shade, "{look:?} x{n}: greyed");
+            }
+        }
+        for (look, n, hash, want) in got {
+            assert_eq!(hash, want, "{look:?} at scale {n}: {hash:#x}");
+        }
     }
 }

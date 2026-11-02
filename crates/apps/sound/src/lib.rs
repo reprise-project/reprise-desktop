@@ -72,6 +72,9 @@ struct Sound {
     recent: pipewire::Recent<u32, f64>,
     players: Option<mpris::Watch>,
     playing: mpris::Pick,
+    /// `[sounds] allow_boost`, reread when the config file changes.
+    boost: bool,
+    config: Option<repriseconf::ConfigWatch>,
 }
 
 struct Open {
@@ -84,9 +87,23 @@ fn interval(ctx: &Ctx) -> Duration {
     Duration::from_millis(ctx.theme.metrics.double_click_ms.max(0) as u64)
 }
 
-fn track_pos(volume: f64) -> usize {
-    let last = (volumepopup::STEPS - 1) as f64;
-    (volume * last).round().clamp(0.0, last) as usize
+/// The popup's trackbar positions, on to 150 % with `boost`.
+fn scale(boost: bool) -> pipewire::Scale {
+    pipewire::Scale::new(volumepopup::STEPS - 1, boost)
+}
+
+/// The playback nodes louder than 100 %: what turning boost off brings back down.
+fn over_full(snap: &pipewire::Snapshot) -> Vec<u32> {
+    let sinks = snap.sinks.iter().map(|d| (d.id, d.volume));
+    let streams = snap
+        .apps
+        .iter()
+        .flat_map(|a| a.streams.iter().map(|s| (s.id, s.channels.volume())));
+    sinks
+        .chain(streams)
+        .filter(|&(_, v)| v > 1.0 + 0.5 / 100.0)
+        .map(|(id, _)| id)
+        .collect()
 }
 
 fn pick(list: &[pipewire::Device], name: Option<&str>) -> Option<usize> {
@@ -96,7 +113,12 @@ fn pick(list: &[pipewire::Device], name: Option<&str>) -> Option<usize> {
 
 /// The popup's view of a snapshot: master is the tray's sink, programs
 /// carry their 32 px icon from `icons` (keyed by `App::key`).
-fn mix(snap: &pipewire::Snapshot, icons: &BTreeMap<String, appicons::AppIcon>) -> volumepopup::Mix {
+fn mix(
+    snap: &pipewire::Snapshot,
+    icons: &BTreeMap<String, appicons::AppIcon>,
+    boost: bool,
+) -> volumepopup::Mix {
+    let track_pos = |v| scale(boost).pos(v);
     let output = pick(&snap.sinks, snap.default_sink.as_deref());
     let master = output.map_or_else(Default::default, |i| volumepopup::Level {
         pos: track_pos(snap.sinks[i].volume),
@@ -112,6 +134,7 @@ fn mix(snap: &pipewire::Snapshot, icons: &BTreeMap<String, appicons::AppIcon>) -
         inputs: labels(&snap.sources),
         input: pick(&snap.sources, snap.default_source.as_deref()),
         playing: None,
+        boost,
         apps: snap
             .apps
             .iter()
@@ -209,7 +232,8 @@ impl Sound {
     /// each channel's unsettled write over its volume, and the player's
     /// track.
     fn popup_mix(&self) -> volumepopup::Mix {
-        let mut m = mix(&self.snapshot, &self.icons);
+        let mut m = mix(&self.snapshot, &self.icons, self.boost);
+        let track_pos = |v| scale(self.boost).pos(v);
         m.master.icon = self.speaker.clone();
         m.playing = self.playing.as_ref().map(|(_, np)| np.clone());
         if m.master.live
@@ -239,7 +263,10 @@ impl Sound {
     fn wheel_volume(&self, steps: i32) -> Option<(u32, f64)> {
         let d = self.default_sink()?;
         let base = self.recent.get(&d.id).unwrap_or(d.volume);
-        Some((d.id, (base + 0.05 * f64::from(steps)).clamp(0.0, 1.0)))
+        Some((
+            d.id,
+            pipewire::stepped(base, 0.05 * f64::from(steps), self.boost),
+        ))
     }
 
     /// The node ids a channel's writes go to: the default sink for master,
@@ -389,7 +416,7 @@ impl Sound {
                 Reply::redraw()
             }
             E::Volume(ch, pos) => {
-                let v = pos as f64 / (volumepopup::STEPS - 1) as f64;
+                let v = scale(self.boost).volume(pos);
                 for id in self.note_volume(&ch, v) {
                     pipewire::set_volume(&self.snapshot, id, v);
                 }
@@ -420,7 +447,22 @@ impl Sound {
         }
     }
 
+    /// Reread `[sounds] allow_boost`; turned off, every playback node past 100 % comes back to it.
+    /// Returns whether it changed.
+    fn reread_boost(&mut self) -> bool {
+        let was = std::mem::replace(&mut self.boost, repriseconf::allow_boost());
+        if was && !self.boost {
+            for id in over_full(&self.snapshot) {
+                pipewire::set_volume(&self.snapshot, id, 1.0);
+                self.recent.note(id, 1.0, Instant::now());
+            }
+        }
+        was != self.boost
+    }
+
     fn wake(&mut self, ctx: &mut Ctx) -> Reply {
+        let boost_moved =
+            self.config.as_mut().is_some_and(|w| w.take_changed()) && self.reread_boost();
         let mut fresh = None;
         if let Some(rx) = &self.snapshots {
             while let Ok(snapshot) = rx.try_recv() {
@@ -434,7 +476,7 @@ impl Sound {
             }
         }
         let landed = self.app_icons.take_landed();
-        let resync = fresh.is_some() || player.is_some() || landed;
+        let resync = fresh.is_some() || player.is_some() || landed || boost_moved;
         if let Some(p) = player {
             self.playing = p;
         }
@@ -611,6 +653,9 @@ impl App for Sound {
             Err(code) => return repriseapp::Start::Exit(code),
         }
         self.players = Some(mpris::watch(waker.clone()));
+        self.boost = repriseconf::allow_boost();
+        let w = waker.clone();
+        self.config = repriseconf::watch(move || w.wake());
         self.snapshots = Some(pipewire::watch(move || waker.wake()));
         repriseapp::Start::Continue
     }
@@ -811,7 +856,7 @@ mod tests {
 
     #[test]
     fn mix_takes_the_defaults_and_each_program() {
-        let m = mix(&snap(), &BTreeMap::new());
+        let m = mix(&snap(), &BTreeMap::new(), false);
         assert_eq!(m.outputs, ["HDMI", "SPEAKERS"]);
         assert_eq!(m.output, Some(1));
         assert_eq!(m.input, Some(0));
@@ -832,7 +877,7 @@ mod tests {
     fn output_falls_back_to_the_first_sink() {
         let mut s = snap();
         s.default_sink = Some("gone".into());
-        let m = mix(&s, &BTreeMap::new());
+        let m = mix(&s, &BTreeMap::new(), false);
         assert_eq!(m.output, Some(0));
         assert!(m.master.live);
     }
@@ -841,7 +886,7 @@ mod tests {
     fn no_sinks_greys_master_and_output() {
         let mut s = snap();
         s.sinks.clear();
-        let m = mix(&s, &BTreeMap::new());
+        let m = mix(&s, &BTreeMap::new(), false);
         assert_eq!(m.output, None);
         assert!(!m.master.live);
     }
@@ -851,9 +896,39 @@ mod tests {
         let mut s = snap();
         s.sinks[1].mute = true;
         s.sinks[1].volume = 1.4;
-        let m = mix(&s, &BTreeMap::new());
+        let m = mix(&s, &BTreeMap::new(), false);
         assert!(m.master.mute);
         assert_eq!(m.master.pos, volumepopup::STEPS - 1, "clamped to the top");
+        let m = mix(&s, &BTreeMap::new(), true);
+        assert!(m.boost);
+        assert_eq!(m.master.pos, 28, "140 % with boost on");
+    }
+
+    #[test]
+    fn with_boost_the_wheel_goes_on_to_150() {
+        let mut s = Sound {
+            snapshot: snap(),
+            ..Default::default()
+        };
+        s.snapshot.sinks[1].volume = 1.0;
+        assert_eq!(percent(s.wheel_volume(1)), Some((41, 100)));
+        s.boost = true;
+        assert_eq!(percent(s.wheel_volume(1)), Some((41, 105)));
+        assert_eq!(percent(s.wheel_volume(20)), Some((41, 150)));
+        assert_eq!(scale(true).volume(26), 1.3, "a popup write past 100 %");
+    }
+
+    #[test]
+    fn turning_boost_off_finds_every_playback_node_past_100() {
+        let mut s = snap();
+        s.sinks[0].volume = 1.2;
+        s.sinks[1].volume = 1.004;
+        s.apps[1].streams[0].channels = pipewire::Channels {
+            map: Vec::new(),
+            levels: vec![1.3],
+            shares: Vec::new(),
+        };
+        assert_eq!(over_full(&s), [40, 92]);
     }
 
     #[test]
@@ -866,7 +941,7 @@ mod tests {
                 large: Some(icon.clone()),
             },
         )]);
-        let m = mix(&snap(), &icons);
+        let m = mix(&snap(), &icons, false);
         assert_eq!(m.apps[0].icon, None);
         assert_eq!(m.apps[1].icon, Some(icon));
     }
@@ -881,7 +956,7 @@ mod tests {
             .unwrap(),
         );
         let snap = store.snapshot();
-        let m = mix(&snap, &BTreeMap::new());
+        let m = mix(&snap, &BTreeMap::new(), false);
         let labels: Vec<_> = snap.sinks.iter().map(|d| d.label.clone()).collect();
         assert!(!labels.is_empty(), "the dump has a sink");
         assert_eq!(m.outputs, labels);

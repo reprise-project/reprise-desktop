@@ -4,10 +4,12 @@
 
 mod channels;
 mod recent;
+mod scale;
 pub mod sounds;
 
 pub use channels::{Channels, Side, side};
 pub use recent::{Recent, SETTLE};
+pub use scale::{BOOST_TOP, Scale, stepped, top};
 
 use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
