@@ -8,11 +8,12 @@ use std::path::Path;
 
 pub const BINARY: &str = "reprise-apps";
 
-pub const PROGRAMS: [&str; 23] = [
+pub const PROGRAMS: [&str; 24] = [
     "reprise-about",
     "reprise-accounts",
     "reprise-bluetooth",
     "reprise-calc",
+    "reprise-charmap",
     "reprise-datetime",
     "reprise-diskusage",
     "reprise-drives",

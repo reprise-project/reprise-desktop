@@ -207,6 +207,17 @@ in progress above the number and an M while the memory holds a value.
 
 Answers are shown to 12 significant digits.
 
+## Character Map
+
+Every character a font has, in a grid. Pick the font (every family
+installed), narrow the grid to one Unicode block, or search: a word or
+several finds the characters whose names hold them all ("left arrow"), a
+code finds its character (`U+20AC` or `20ac`), and a single character finds
+itself. Click a character to see it large with its name and code; double-click
+it, press Enter or Select to add it to Characters to copy, and Copy puts
+that line on the clipboard. The arrows, Page Up, Page Down, Home and End move
+in the grid, Ctrl+C copies the one picked, and Tab goes round the controls.
+
 ## Terminal
 
 A tabbed terminal, `reprise-terminal`. It opens in the directory it was

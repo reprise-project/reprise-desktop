@@ -115,11 +115,13 @@ pub(crate) fn system_fonts(families: &[String]) -> Arc<Database> {
     fonts.insert(Arc::new(db)).clone()
 }
 
-/// The family names of the fonts installed, sorted, each once.
+/// The family names of the fonts installed, sorted, each once; a family whose name starts with a
+/// dot is the system's own and left out.
 pub fn families() -> Vec<String> {
     let mut out: Vec<String> = system_fonts(&[])
         .faces()
         .filter_map(|f| f.families.first().map(|(name, _)| name.clone()))
+        .filter(|n| !n.starts_with('.'))
         .collect();
     out.sort_by_cached_key(|n| (n.to_lowercase(), n.clone()));
     out.dedup();
