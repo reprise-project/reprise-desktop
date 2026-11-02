@@ -171,6 +171,11 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # repeat_rate = 25           # keys per second
 # repeat_delay = 600         # milliseconds before repeat starts
 
+# [shortcut_overlay]         # hold Super alone: a sheet of every shortcut in force
+# enabled = true
+# delay_ms = 1000            # 200 to 5000: how long Super is held first; a quicker
+#                            # release is a tap and opens Start
+
 [mouse]                      # every libinput pointer that cannot tap
 # speed = 0.0                # -1.0 (slowest) to 1.0 (fastest)
 # acceleration = true        # false is libinput's flat profile: raw motion

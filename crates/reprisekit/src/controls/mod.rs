@@ -33,6 +33,7 @@ pub mod hotkey;
 pub mod iconlist;
 pub mod iconview;
 pub mod infotip;
+pub mod keysheet;
 pub mod launcher;
 pub mod listbox;
 pub mod listview;

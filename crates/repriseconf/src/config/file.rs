@@ -259,6 +259,13 @@ pub struct FileDebug {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub struct FileShortcutOverlay {
+    pub enabled: Option<bool>,
+    pub delay_ms: Option<i64>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FileLauncher {
     pub search_files: Option<bool>,
     pub windows: Option<bool>,
@@ -659,6 +666,7 @@ pub struct FileConfig {
     pub privacy: Option<FilePrivacy>,
     pub debug: Option<FileDebug>,
     pub launcher: Option<FileLauncher>,
+    pub shortcut_overlay: Option<FileShortcutOverlay>,
     pub night_light: Option<FileNightLight>,
     pub workspaces: Option<FileWorkspaces>,
     pub effects: Option<FileEffects>,

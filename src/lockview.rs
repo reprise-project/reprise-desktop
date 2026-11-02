@@ -450,6 +450,7 @@ pub fn engage(state: &mut State) {
     crate::displaysview::close(state);
     // The panel would sit under the lock cover but its caret timer would keep redrawing it.
     state.close_launcher();
+    state.hide_key_sheet();
     state.close_start_panel();
     // The emoji picker and clipboard history would type or paste into whatever has the keyboard after
     // unlock; the region overlay would take the pointer from the lock dialog.

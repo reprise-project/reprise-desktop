@@ -221,6 +221,11 @@ impl State {
         }
         if let Some(arm) = routed.arm_super {
             self.key_input.super_tap_armed = arm;
+            if arm {
+                self.super_hold_pressed();
+            } else {
+                self.super_hold_cancelled();
+            }
         }
         let start_tap = routed.fire_super && !self.key_input.aids.filter.config().sticky_keys;
         if start_tap
@@ -231,7 +236,8 @@ impl State {
         }
         if routed.fire_super {
             self.key_input.super_tap_armed = false;
-            if start_tap {
+            // A hold that brought up the shortcut sheet only takes it down.
+            if self.super_hold_released() && start_tap {
                 self.toggle_start_from_keys();
             }
         }
@@ -616,6 +622,7 @@ impl State {
     /// rectangles.
     pub fn keys_saw_button(&mut self) {
         self.key_input.super_tap_armed = false;
+        self.super_hold_cancelled();
         self.key_input.last_key_input = false;
         self.key_input.chord.spoil();
         self.aids_button();

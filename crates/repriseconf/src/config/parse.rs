@@ -4,9 +4,9 @@ use super::file::{AutoFlag, FileAppearance, FileConfig};
 use super::{
     CURSOR_SIZE_MAX, Config, EFFECTS_MS_MAX, EffectsConfig, FontSmoothing, HotCorner,
     IdleOverrides, MAX_POSITION, MenuAnimation, OutputConfig, OutputMode, PREVIEW_FPS_MAX,
-    PointerConfig, PowerAction, SNAP_DISTANCE_MAX, SWITCH_MS_MAX, StartMenuStyle, SwitchStyle,
-    SwitcherConfig, TabletConfig, TaskbarButtons, TaskbarConfig, Transform, WORKSPACES_MAX,
-    quarter_scale, switcher_size,
+    PointerConfig, PowerAction, SNAP_DISTANCE_MAX, SWITCH_MS_MAX, ShortcutOverlay, StartMenuStyle,
+    SwitchStyle, SwitcherConfig, TabletConfig, TaskbarButtons, TaskbarConfig, Transform,
+    WORKSPACES_MAX, quarter_scale, switcher_size,
 };
 use reprisekit::interface::Interface;
 use reprisekit::theme::{Color, FontConfig};
@@ -822,6 +822,24 @@ impl Config {
             }
             if let Some(v) = d.overlay_in_captures {
                 cfg.debug.overlay_in_captures = v;
+            }
+        }
+        if let Some(o) = file.shortcut_overlay {
+            if let Some(v) = o.enabled {
+                cfg.shortcut_overlay.enabled = v;
+            }
+            if let Some(ms) = o.delay_ms {
+                let range = ShortcutOverlay::DELAY_MS;
+                cfg.shortcut_overlay.delay_ms = u32::try_from(ms)
+                    .ok()
+                    .filter(|ms| range.contains(ms))
+                    .ok_or_else(|| {
+                        format!(
+                            "shortcut_overlay: delay_ms must be between {} and {}, got {ms}",
+                            range.start(),
+                            range.end()
+                        )
+                    })?;
             }
         }
         if let Some(l) = file.launcher {

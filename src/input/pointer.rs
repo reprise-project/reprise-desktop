@@ -155,7 +155,7 @@ impl State {
             // A layer surface or one of its popups: no window of ours.
             Some(SceneOwner::Layer) => None,
             // Its buffer lets the pointer through; never reached.
-            Some(SceneOwner::Debug) => None,
+            Some(SceneOwner::Debug | SceneOwner::KeySheet) => None,
             Some(SceneOwner::Dialog(index)) => {
                 return Hit::Dialog {
                     index,

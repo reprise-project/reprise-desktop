@@ -105,6 +105,8 @@ pub enum SceneOwner {
     Displays,
     /// A debug overlay panel (`debugview`); it takes no pointer input.
     Debug,
+    /// The keyboard shortcut sheet (`keysheetview`); it takes no pointer input.
+    KeySheet,
 }
 
 /// The scene's layer trees, bottom to top: the background (wallpaper),
@@ -387,6 +389,7 @@ pub struct State {
     pub start_pictures: crate::startpanelview::UserPictures,
     pub panels: crate::panels::Panels,
     pub osd: crate::osdview::OsdView,
+    pub key_sheet: crate::keysheetview::KeySheetView,
     pub displays: crate::displays::Displays,
     pub debug: crate::debugview::DebugView,
     pub identify: crate::identifyview::IdentifyView,
@@ -725,6 +728,7 @@ impl State {
             start_pictures: Default::default(),
             panels: Default::default(),
             osd: Default::default(),
+            key_sheet: Default::default(),
             displays: Default::default(),
             debug: Default::default(),
             identify: Default::default(),
