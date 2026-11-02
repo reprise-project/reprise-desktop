@@ -143,6 +143,11 @@ impl State {
                 }
             }
             Dc::OpenFileLocation => self.open_file_location(&path),
+            Dc::OpenTerminal => {
+                if facts.is_dir {
+                    self.spawn_terminal_in(&path);
+                }
+            }
             Dc::Print | Dc::Edit => self.print_or_edit(vec![path], cmd == Dc::Print),
             Dc::OpenWithApp(app) => self.open_files_with(vec![path], &app),
             Dc::ChooseProgram => {
@@ -332,7 +337,7 @@ mod tests {
             at(false, Some("text/plain")),
             Some(DesktopCommand::OpenWith)
         );
-        assert_eq!(at(true, None), Some(DesktopCommand::Explore));
+        assert_eq!(at(true, None), Some(DesktopCommand::OpenTerminal));
         let (_, desktop) = icon_menu(IconMenu::default());
         assert!(
             !desktop.contains(&Some(DesktopCommand::OpenFileLocation)),
@@ -350,6 +355,7 @@ mod tests {
             None,
         );
         assert!(commands.contains(&Some(DesktopCommand::Explore)));
+        assert!(commands.contains(&Some(DesktopCommand::OpenTerminal)));
         assert!(commands.contains(&Some(DesktopCommand::PasteInto)));
         assert!(!commands.contains(&Some(DesktopCommand::OpenWith)));
         let rename = commands

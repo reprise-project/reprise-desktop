@@ -58,6 +58,10 @@ impl Default for MenuState {
     }
 }
 
+/// Shown on a folder and on the background of a place with a folder on disk, which Computer and
+/// the Recycle Bin are not.
+const TERMINAL: &str = "Open in Termina&l";
+
 fn row(label: &str, enabled: bool) -> MenuItem {
     MenuItem::item(label).enabled(enabled)
 }
@@ -397,7 +401,8 @@ impl ItemKind {
 }
 
 /// The right-click menu of an entry in the view. A script has Run and Run in terminal in place
-/// of Open. "Run as..." sits greyed under them for every file. A folder has Paste under Copy, into it. A launcher has
+/// of Open. "Run as..." sits greyed under them for every file. A folder has Open in Terminal under
+/// Explore and Paste under Copy, into it. A launcher has
 /// no Open With and has Paste under Copy, opening the clipboard's files in its
 /// program. `eject` adds Eject, in a group above Cut and Copy, for a removable drive.
 pub fn item_menu(
@@ -430,6 +435,9 @@ pub fn item_menu(
     }
     if kind == ItemKind::Folder {
         m.row(row("E&xplore", true), Command::Explore);
+        if writable {
+            m.row(row(TERMINAL, true), Command::OpenTerminal);
+        }
         m.row(row("Sharing and Security...", false), Command::Nothing);
     } else {
         m.row(row("Run &as...", false), Command::Nothing);
@@ -495,6 +503,9 @@ pub fn background_menu(state: &MenuState) -> Menu {
     m.sep();
     m.sub(row("Arrange &Icons By", true), arrange_menu(state));
     m.row(row("R&efresh", true), Command::Refresh);
+    if writable {
+        m.row(row(TERMINAL, true), Command::OpenTerminalHere);
+    }
     m.sep();
     m.row(row("C&ustomize This Folder...", false), Command::Nothing);
     m.sep();

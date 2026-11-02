@@ -160,6 +160,15 @@ impl State {
         crate::spawn::spawn_in(cmd, app.as_deref(), &self.env, Some(&launch))
     }
 
+    /// The configured terminal on its own in `dir`, in its [`crate::spawn::command_app`] scope.
+    pub fn spawn_terminal_in(&mut self, dir: &std::path::Path) {
+        let terminal = self.config.terminal.clone();
+        let app = crate::spawn::command_app(&terminal, &self.app_index);
+        let launch = self.new_launch();
+        let argv = reprisefs::apps::terminal_argv(&terminal);
+        crate::spawn::spawn_argv_in(&argv, app.as_deref(), Some(dir), &self.env, Some(&launch));
+    }
+
     /// The Run dialog's line: one that names a folder opens it in Explorer, anything else runs
     /// as [`State::spawn_command_activated`], a document it names going into the recent files. The
     /// path is checked off the loop on a [`State::spawn_job`], so a mount that does not answer

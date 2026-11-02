@@ -592,6 +592,7 @@ fn recycle_bin_menu_greys_empty_and_entry_cannot_be_trashed() {
     let folder_rows = vec![
         Some(Open),
         Some(Explore),
+        Some(OpenTerminal),
         None,
         Some(Copy),
         None,
@@ -674,22 +675,23 @@ fn recycle_bin_menu_greys_empty_and_entry_cannot_be_trashed() {
 #[test]
 fn a_slideshow_adds_next_desktop_background_after_refresh() {
     let (items, commands) = desktop_menu(false, true, true);
-    assert_eq!(items.len(), 11);
+    assert_eq!(items.len(), 12);
     assert_eq!(commands[1], Some(DesktopCommand::Refresh));
     assert_eq!(commands[2], Some(DesktopCommand::NextBackground));
+    assert_eq!(commands[3], Some(DesktopCommand::OpenTerminal));
     assert!(matches!(
         &items[2],
         MenuItem::Entry { label, mnemonic: Some(13), enabled: true, .. }
             if label == "Next desktop background"
     ));
-    assert!(matches!(items[3], MenuItem::Separator));
-    assert_eq!(desktop_menu(false, true, false).0.len(), 10);
+    assert!(matches!(items[4], MenuItem::Separator));
+    assert_eq!(desktop_menu(false, true, false).0.len(), 11);
 }
 
 #[test]
 fn with_the_files_off_the_desktop_menu_greys_new_and_paste() {
     let (items, commands) = desktop_menu(true, false, false);
-    for i in [3, 4, 6] {
+    for i in [4, 5, 7] {
         assert!(
             matches!(items[i], MenuItem::Entry { enabled: false, .. }),
             "row {i} is greyed with the desktop's files off"
@@ -697,40 +699,46 @@ fn with_the_files_off_the_desktop_menu_greys_new_and_paste() {
         assert_eq!(commands[i], None, "row {i} does nothing");
     }
     // New keeps its submenu arrow, greyed.
-    assert!(matches!(items[6], MenuItem::Entry { submenu: true, .. }));
-    for i in [0, 1, 8, 9] {
+    assert!(matches!(items[7], MenuItem::Entry { submenu: true, .. }));
+    for i in [0, 1, 2, 9, 10] {
         assert!(matches!(items[i], MenuItem::Entry { enabled: true, .. }));
     }
     assert_eq!(commands[1], Some(DesktopCommand::Refresh));
-    assert_eq!(commands[8], Some(DesktopCommand::Settings));
-    assert_eq!(commands[9], Some(DesktopCommand::AboutReprise));
+    assert_eq!(commands[2], Some(DesktopCommand::OpenTerminal));
+    assert_eq!(commands[9], Some(DesktopCommand::Settings));
+    assert_eq!(commands[10], Some(DesktopCommand::AboutReprise));
 }
 
 #[test]
 fn desktop_menu_lists_its_commands_with_separators() {
     let (items, commands) = desktop_menu(false, true, false);
-    assert_eq!(items.len(), 10);
+    assert_eq!(items.len(), 11);
     assert_eq!(commands[0], Some(DesktopCommand::ArrangeIcons));
     assert!(matches!(items[0], MenuItem::Entry { submenu: true, .. }));
     assert_eq!(commands[1], Some(DesktopCommand::Refresh));
-    assert!(matches!(items[2], MenuItem::Separator));
+    assert_eq!(commands[2], Some(DesktopCommand::OpenTerminal));
+    assert!(matches!(
+        &items[2],
+        MenuItem::Entry { label, mnemonic: Some(15), .. } if label == "Open in Terminal"
+    ));
+    assert!(matches!(items[3], MenuItem::Separator));
     // Paste and Paste Shortcut are there, greyed out with nothing
     // copied.
-    assert!(matches!(items[3], MenuItem::Entry { enabled: false, .. }));
     assert!(matches!(items[4], MenuItem::Entry { enabled: false, .. }));
-    assert_eq!(commands[3], None);
-    assert!(matches!(items[5], MenuItem::Separator));
-    assert_eq!(commands[6], Some(DesktopCommand::New));
-    assert!(matches!(items[6], MenuItem::Entry { submenu: true, .. }));
-    assert!(matches!(items[7], MenuItem::Separator));
-    assert_eq!(commands[8], Some(DesktopCommand::Settings));
-    assert!(matches!(
-        &items[8],
-        MenuItem::Entry { label, mnemonic: Some(0), .. } if label == "Reprise Settings"
-    ));
-    assert_eq!(commands[9], Some(DesktopCommand::AboutReprise));
+    assert!(matches!(items[5], MenuItem::Entry { enabled: false, .. }));
+    assert_eq!(commands[4], None);
+    assert!(matches!(items[6], MenuItem::Separator));
+    assert_eq!(commands[7], Some(DesktopCommand::New));
+    assert!(matches!(items[7], MenuItem::Entry { submenu: true, .. }));
+    assert!(matches!(items[8], MenuItem::Separator));
+    assert_eq!(commands[9], Some(DesktopCommand::Settings));
     assert!(matches!(
         &items[9],
+        MenuItem::Entry { label, mnemonic: Some(0), .. } if label == "Reprise Settings"
+    ));
+    assert_eq!(commands[10], Some(DesktopCommand::AboutReprise));
+    assert!(matches!(
+        &items[10],
         MenuItem::Entry { label, mnemonic: Some(0), .. } if label == "About Reprise"
     ));
     let (items, commands) = new_menu();
@@ -754,11 +762,11 @@ fn desktop_menu_lists_its_commands_with_separators() {
     ));
     // With something on the clipboard the Paste pair comes alive.
     let (items, commands) = desktop_menu(true, true, false);
-    assert!(matches!(items[3], MenuItem::Entry { enabled: true, .. }));
-    assert_eq!(commands[3], Some(DesktopCommand::Paste));
-    assert_eq!(commands[4], Some(DesktopCommand::PasteShortcut));
+    assert!(matches!(items[4], MenuItem::Entry { enabled: true, .. }));
+    assert_eq!(commands[4], Some(DesktopCommand::Paste));
+    assert_eq!(commands[5], Some(DesktopCommand::PasteShortcut));
     let (items, _) = desktop_menu(false, true, false);
-    for i in [0, 1, 3, 4, 6, 8, 9] {
+    for i in [0, 1, 2, 4, 5, 7, 9, 10] {
         assert!(matches!(
             items[i],
             MenuItem::Entry {
@@ -805,14 +813,16 @@ fn icon_menu_has_its_rows_with_open_bold() {
     });
     assert_eq!(commands[1], Some(Explore));
     assert!(matches!(&items[1], MenuItem::Entry { label, .. } if label == "Explore"));
-    assert!(matches!(&items[2], MenuItem::Separator));
+    assert_eq!(commands[2], Some(OpenTerminal));
+    assert!(matches!(&items[2], MenuItem::Entry { label, .. } if label == "Open in Terminal"));
+    assert!(matches!(&items[3], MenuItem::Separator));
     assert!(matches!(
-        &items[3],
+        &items[4],
         MenuItem::Entry { label, enabled: false, .. } if label == "Sharing and Security..."
     ));
-    assert_eq!(commands[3], None);
-    assert_eq!(commands[5], Some(SendTo));
-    assert_eq!(commands[7], Some(Cut));
+    assert_eq!(commands[4], None);
+    assert_eq!(commands[6], Some(SendTo));
+    assert_eq!(commands[8], Some(Cut));
     // A file gets Open With, a submenu, there instead, with its verbs
     // before it: Print, then Edit.
     let (items, commands) = icon_menu(IconMenu::default());
@@ -988,6 +998,7 @@ fn an_icon_in_a_set_keeps_its_own_menu_less_sharing() {
         vec![
             Some(Open),
             Some(Explore),
+            Some(OpenTerminal),
             None,
             Some(SendTo),
             None,
@@ -1179,4 +1190,44 @@ fn a_marquee_asks_for_frames_only_on_the_outputs_its_band_covers_or_covered() {
             "{look}: only TEST-1: {asked:?}"
         );
     }
+}
+
+#[test]
+fn open_in_terminal_starts_the_terminal_in_the_folder_icon_or_the_desktop() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = std::env::temp_dir().join(format!("reprise-desk-terminal-{}", std::process::id()));
+    let desk = home.join("Desktop");
+    let folder = desk.join("Projects");
+    std::fs::create_dir_all(&folder).unwrap();
+    let term = home.join("term");
+    std::fs::write(&term, "#!/bin/sh\n[ $# -eq 0 ] && touch opened-here\n").unwrap();
+    std::fs::set_permissions(&term, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.state.config.terminal = term.display().to_string();
+    create(&mut h.state, desk.clone(), Default::default(), None);
+    let mut entry = file("Projects");
+    entry.path = folder.clone();
+    entry.target = Target::Open(folder.clone());
+    entry.is_dir = true;
+    h.state.desktop.as_mut().unwrap().entries.push(entry);
+    let opened = |dir: &std::path::Path| {
+        let marker = dir.join("opened-here");
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !marker.exists() {
+            assert!(
+                std::time::Instant::now() < end,
+                "the terminal opened in {dir:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    h.state.desktop_command(
+        DesktopCommand::OpenTerminal,
+        Some(desktop::IconId::File(folder.clone())),
+    );
+    opened(&folder);
+    h.state.desktop_command(DesktopCommand::OpenTerminal, None);
+    opened(&desk);
+    std::fs::remove_dir_all(&home).unwrap();
 }

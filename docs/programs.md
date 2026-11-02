@@ -17,6 +17,9 @@ The file manager, and the default for folders.
   by name anywhere under the folder shown, through plocate or fd, and lists
   them in the view with an In Folder column. The usual right-click menu works
   on them. Escape, or going to another folder, brings the folder back.
+- **Open in Terminal** on a folder's right-click menu, and on the
+  background's in any folder but Computer and the Recycle Bin, starts your
+  `terminal` in that folder.
 - **Places:** Desktop, Documents, Home, Computer and the Recycle Bin.
   Computer lists your drives, unmounted and locked removable ones included:
   open one to mount it (a locked one asks for its passphrase first), Eject to

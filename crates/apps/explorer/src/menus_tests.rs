@@ -280,8 +280,8 @@ fn the_context_menus_answer_for_their_submenu_rows() {
     let m = background_menu(&s);
     assert_eq!(m.command(&[0, 4]), Command::Mode(Mode::Details));
     assert_eq!(m.command(&[2, 1]), Command::Sort(1));
-    assert_eq!(m.command(&[11, 0]), Command::NewFolder);
-    assert_eq!(m.command(&[11, 3]), Command::NewTextDocument);
+    assert_eq!(m.command(&[12, 0]), Command::NewFolder);
+    assert_eq!(m.command(&[12, 3]), Command::NewTextDocument);
 }
 
 #[test]
@@ -329,7 +329,7 @@ fn a_folders_menu_explores_and_a_files_opens_with() {
     let m = item_menu(&s, ItemKind::Folder, false, &[], &[]);
     assert_eq!(label(m.items(), 1), "Explore");
     assert_eq!(m.command(&[1]), Command::Explore);
-    assert_eq!(label(m.items(), 2), "Sharing and Security...");
+    assert_eq!(label(m.items(), 3), "Sharing and Security...");
     let m = item_menu(&s, ItemKind::File, false, &[("Notepad".into(), None)], &[]);
     assert_eq!(label(m.items(), 1), "Run as...");
     assert!(!enabled(m.items(), 1));
@@ -661,4 +661,54 @@ fn a_scripts_menu_runs_it_in_place_of_open_with_the_default_bold() {
         "Open",
         "a binary or document keeps Open"
     );
+}
+
+#[test]
+fn open_in_terminal_shows_on_a_folder_and_the_background_of_a_place_on_disk() {
+    let rows = |m: &Menu| -> Vec<(String, Command)> {
+        (0..m.items().len())
+            .map(|i| (label(m.items(), i).to_string(), m.command(&[i])))
+            .collect()
+    };
+    let has = |m: &Menu, cmd: Command| rows(m).contains(&("Open in Terminal".into(), cmd));
+    let s = MenuState::default();
+    let folder = item_menu(&s, ItemKind::Folder, false, &[], &[]);
+    assert_eq!(
+        rows(&folder)[2],
+        ("Open in Terminal".into(), Command::OpenTerminal)
+    );
+    assert!(enabled(folder.items(), 2));
+    let back = background_menu(&s);
+    assert_eq!(
+        rows(&back)[4],
+        ("Open in Terminal".into(), Command::OpenTerminalHere)
+    );
+    for kind in [
+        ItemKind::File,
+        ItemKind::Launcher,
+        ItemKind::Script(ScriptOpen::Run),
+    ] {
+        assert!(
+            !has(&item_menu(&s, kind, false, &[], &[]), Command::OpenTerminal),
+            "{kind:?}"
+        );
+    }
+
+    let computer = MenuState {
+        read_only: true,
+        ..MenuState::default()
+    };
+    assert!(!has(&background_menu(&computer), Command::OpenTerminalHere));
+    let drive = item_menu(&computer, ItemKind::Folder, true, &[], &[]);
+    assert!(!has(&drive, Command::OpenTerminal));
+    let bin = MenuState {
+        read_only: true,
+        bin: Some(1),
+        ..MenuState::default()
+    };
+    assert!(!has(&background_menu(&bin), Command::OpenTerminalHere));
+    assert!(!has(
+        &item_menu(&bin, ItemKind::Folder, false, &[], &[]),
+        Command::OpenTerminal
+    ));
 }

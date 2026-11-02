@@ -126,6 +126,17 @@ impl State {
         });
     }
 
+    /// The folder icon `index` opens: a folder's or a place's, None for any other icon.
+    fn icon_folder(&self, index: usize) -> Option<PathBuf> {
+        let entry = self.desktop.as_ref()?.entries.get(index)?;
+        match &entry.target {
+            Target::Open(dir) if entry.is_dir || matches!(entry.kind, desktop::Kind::Place(_)) => {
+                Some(dir.clone())
+            }
+            _ => None,
+        }
+    }
+
     pub fn open_icon(&mut self, index: usize) {
         let how = Confirm::on_open(self.config.confirm_scripts);
         self.open_icon_as(index, self.config.script_open, how);
@@ -352,6 +363,15 @@ impl State {
             Dc::Explore => {
                 if let Some(i) = target {
                     self.open_icon(i);
+                }
+            }
+            Dc::OpenTerminal => {
+                let dir = match target {
+                    Some(i) => self.icon_folder(i),
+                    None => self.desktop.as_ref().map(|v| v.dir.clone()),
+                };
+                if let Some(dir) = dir {
+                    self.spawn_terminal_in(&dir);
                 }
             }
             Dc::Trash => {
