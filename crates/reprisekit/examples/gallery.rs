@@ -14,6 +14,8 @@ mod gallery_checksums;
 mod gallery_doctabs;
 #[path = "gallery_keys/mod.rs"]
 mod gallery_keys;
+#[path = "gallery_miniview/mod.rs"]
+mod gallery_miniview;
 #[path = "gallery_p3/mod.rs"]
 mod gallery_p3;
 #[path = "gallery_parts/mod.rs"]
@@ -114,6 +116,10 @@ fn main() {
         write_preview(
             &gallery_checksums::render(n.max(1)),
             &format!("reprisekit-gallery-checksums@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_miniview::render(n.max(1)),
+            &format!("reprisekit-gallery-mini-view@{}.png", n.max(1)),
         );
         write_preview(
             &render_copy_progress(true, n.max(1)),
@@ -295,6 +301,10 @@ fn main() {
         "reprisekit-gallery-checksums@1.png",
     );
     write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
+    write_preview(
+        &gallery_miniview::render(1),
+        "reprisekit-gallery-mini-view@1.png",
+    );
     if with_blue {
         write_preview(
             &gallery_keys::launcher_windows(1),

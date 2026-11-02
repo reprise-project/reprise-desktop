@@ -281,6 +281,12 @@ impl State {
         })
     }
 
+    /// Whether picture `id` waits to draw what its window committed.
+    #[cfg(test)]
+    pub(crate) fn thumb_marked(&self, id: ThumbId) -> bool {
+        (self.live_previews.thumbs.iter()).any(|t| t.id == id && t.marked)
+    }
+
     /// The shortest time between two draws of a live picture: one frame
     /// of `[previews] fps`.
     pub fn preview_period(&self) -> Duration {
