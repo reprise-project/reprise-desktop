@@ -145,6 +145,7 @@ impl Explorer {
             summary: None,
             own_icon: None,
             icon_chosen: None,
+            checksums: Default::default(),
             sheet,
         });
         Reply::redraw_all()
@@ -221,6 +222,7 @@ impl Explorer {
                 None => info.own_icon.clone(),
             },
             icon_chosen: None,
+            checksums: Default::default(),
             info,
             sheet,
         }
@@ -305,6 +307,7 @@ impl Explorer {
             summary: None,
             own_icon: None,
             icon_chosen: None,
+            checksums: Default::default(),
             set: Some(set),
             sheet,
         })
@@ -456,7 +459,8 @@ impl Explorer {
                 None => propsheet::Event::None,
             },
         };
-        self.props_outcome(out, ctx).with_clipboard(clip)
+        let reply = self.props_outcome(out, ctx).with_clipboard(clip);
+        reply.and(self.checksums_opened(ctx))
     }
 
     pub(crate) fn props_outcome(&mut self, out: propsheet::Event, ctx: &mut Ctx) -> Reply {
@@ -470,6 +474,9 @@ impl Explorer {
             propsheet::Event::Ok => self.apply_props(true, ctx),
             propsheet::Event::Apply => self.apply_props(false, ctx),
             propsheet::Event::Page(_, ev) => {
+                if let Some(r) = self.checksums_event(ev, ctx) {
+                    return r;
+                }
                 if let form::Event::Pressed(CHANGE) = ev {
                     let path = self.props.as_ref().map(|p| p.info.path.clone());
                     if let Some(path) = path {

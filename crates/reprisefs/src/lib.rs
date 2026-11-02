@@ -6,6 +6,7 @@ pub mod apps;
 pub mod autostart;
 pub mod batchrename;
 pub mod bincap;
+pub mod checksum;
 pub mod complete;
 pub mod compress;
 pub mod deadline;
