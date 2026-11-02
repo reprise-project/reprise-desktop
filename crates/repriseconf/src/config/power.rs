@@ -79,6 +79,44 @@ impl Default for PowerConfig {
     }
 }
 
+/// `[lock]`: the paired Bluetooth device whose going away locks the session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LockConfig {
+    /// A Bluetooth address (upper case) or a BlueZ device object path; empty is off.
+    pub away_device: String,
+    /// Seconds the device stays disconnected before the lock.
+    pub away_after_s: u32,
+}
+
+impl Default for LockConfig {
+    fn default() -> Self {
+        LockConfig {
+            away_device: String::new(),
+            away_after_s: 30,
+        }
+    }
+}
+
+/// `v` as `[lock] away_device` stores it: trimmed, an address in upper case. None when it is
+/// neither an address like `AA:BB:CC:DD:EE:FF` nor an object path.
+pub fn away_device(v: &str) -> Option<String> {
+    let v = v.trim();
+    if v.is_empty() || (v.starts_with('/') && object_path_ok(v)) {
+        return Some(v.to_string());
+    }
+    let parts: Vec<&str> = v.split(':').collect();
+    let hex = |p: &&str| p.len() == 2 && p.bytes().all(|b| b.is_ascii_hexdigit());
+    (parts.len() == 6 && parts.iter().all(hex)).then(|| v.to_ascii_uppercase())
+}
+
+/// D-Bus object path syntax: `/`-separated non-empty `[A-Za-z0-9_]` elements.
+fn object_path_ok(v: &str) -> bool {
+    v == "/"
+        || v[1..]
+            .split('/')
+            .all(|e| !e.is_empty() && e.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+}
+
 /// Idle timeouts in seconds; zero disables the step. All pause while a client holds an idle inhibitor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IdleConfig {

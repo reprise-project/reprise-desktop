@@ -563,3 +563,16 @@ fn a_startup_list_that_scrolls_draws_only_the_vertical_bar() {
         }
     }
 }
+
+#[test]
+fn the_lock_when_away_group_sits_under_the_screen_saver() {
+    let s = built();
+    let p = Page::ScreenSaver;
+    assert_eq!(rect(&s, p, "away_group"), Rect::new(20, 338, 358, 118));
+    assert_eq!(rect(&s, p, "away_label"), Rect::new(32, 358, 334, 13));
+    assert_eq!(rect(&s, p, "away_device"), Rect::new(32, 374, 200, 21));
+    assert_eq!(rect(&s, p, "away_after_s"), Rect::new(76, 404, 50, 20));
+    assert_eq!(rect(&s, p, "away_units"), Rect::new(132, 408, 60, 13));
+    assert_eq!(rect(&s, p, "away_note"), Rect::new(32, 432, 334, 13));
+    inside_page(&s, p);
+}

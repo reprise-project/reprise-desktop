@@ -389,6 +389,11 @@ are.
   own timeout, and separate timeouts on battery.
 - **Lock on sleep.** The screen locks before the machine suspends, whatever
   asked it to.
+- **Lock when away.** Pick your phone on the Screen Saver page and the
+  session locks once it has been disconnected for `[lock] away_after_s`
+  (30 s). The phone has to keep a Bluetooth connection while you're near,
+  as it does for calls or KDE Connect ([configuration.md](configuration.md#lock-when-away)).
+  It never unlocks.
 - **Laptop things.** Lid, power and sleep button actions, low and critical
   battery alarms, power profiles, and clamshell mode: close the lid with a
   monitor plugged in and the laptop screen steps aside.

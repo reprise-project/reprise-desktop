@@ -6,6 +6,7 @@ mod appindex;
 mod attention;
 mod autohideview;
 mod autostart;
+mod awaylock;
 mod backend;
 mod barkeys;
 mod bell;
@@ -351,6 +352,7 @@ fn run(
         },
     )?;
     power::setup(&mut state);
+    awaylock::setup(&mut state);
     nightlight::setup(&mut state);
     notifyview::config_changed(&mut state);
     idle::setup(&mut state);

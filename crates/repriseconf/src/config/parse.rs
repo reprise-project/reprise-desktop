@@ -688,6 +688,19 @@ impl Config {
         if let Some(v) = file.screenshot.and_then(|s| s.save) {
             cfg.screenshot.save = v;
         }
+        if let Some(l) = file.lock {
+            if let Some(v) = l.away_device {
+                cfg.lock.away_device = super::away_device(&v).ok_or_else(|| {
+                    format!(
+                        "lock.away_device {v:?} is neither a Bluetooth address like \"AA:BB:CC:DD:EE:FF\" nor a BlueZ object path"
+                    )
+                })?;
+            }
+            if let Some(s) = l.away_after_s {
+                cfg.lock.away_after_s = u32::try_from(s)
+                    .map_err(|_| format!("lock.away_after_s must be 0..={}, got {s}", u32::MAX))?;
+            }
+        }
         if let Some(o) = file.osd {
             if let Some(v) = o.caps_lock {
                 cfg.osd.caps_lock = v;

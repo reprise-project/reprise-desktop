@@ -1079,3 +1079,29 @@ fn a_table_whose_keys_fail_only_together_is_dropped_whole() {
     assert_eq!(keys, ["night_light"]);
     assert_eq!(c.night_light, NightLightConfig::default());
 }
+
+#[test]
+fn lock_away_device_takes_an_address_or_a_path() {
+    let d = Config::default().lock;
+    assert_eq!((d.away_device.as_str(), d.away_after_s), ("", 30));
+    let c =
+        Config::parse("[lock]\naway_device = \" aa:bb:cc:dd:ee:0f \"\naway_after_s = 0\n").unwrap();
+    assert_eq!(c.lock.away_device, "AA:BB:CC:DD:EE:0F");
+    assert_eq!(c.lock.away_after_s, 0);
+    let path = "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_0F";
+    let c = Config::parse(&format!("[lock]\naway_device = \"{path}\"\n")).unwrap();
+    assert_eq!(c.lock.away_device, path);
+    for bad in [
+        "phone",
+        "AA:BB:CC:DD:EE",
+        "AA:BB:CC:DD:EE:GG",
+        "/org//bluez",
+        "/org/blu-ez",
+    ] {
+        assert!(
+            Config::parse(&format!("[lock]\naway_device = \"{bad}\"\n")).is_err(),
+            "{bad} is refused"
+        );
+    }
+    assert!(Config::parse("[lock]\naway_after_s = -1\n").is_err());
+}

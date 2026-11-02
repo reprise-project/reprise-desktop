@@ -23,6 +23,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[wallpaper]` | picture, slideshow, lock screen picture, water |
 | `[screensaver]`, `[idle]` | savers and the idle steps |
 | `[power]` | Turn Off commands, lid and buttons, battery alarms, external locker |
+| `[lock]` | `away_device`, `away_after_s`: lock when a paired Bluetooth device goes away ([features.md](features.md#lock-power-and-session)) |
 | `[taskbar]` | position, button modes, pinned programs, auto-hide |
 | `[effects]` | animations and fades |
 | `[switcher]`, `[overview]` | Alt+Tab, the 3D switcher, the window overview |
@@ -129,6 +130,26 @@ window leaves fullscreen; the lock, screen off and suspend steps keep their
 timeouts unless a program inhibits idle.
 `speed` (1 to 10), `stars`, `shapes`, `cycle_colors`, `folder` (for Photos;
 Pictures when left out) and `photo_seconds` tune them.
+
+## Lock when away
+
+`[lock] away_device` names a paired Bluetooth device, by address
+(`"AA:BB:CC:DD:EE:FF"`) or BlueZ object path; empty (the default) turns it off.
+Once BlueZ has seen it connected, it disconnecting for `away_after_s`
+seconds (30 by default, 0 locks at once) locks the session. The Screen Saver
+page of Reprise Settings lists the paired devices.
+
+- The device must stay connected while it is near: a phone paired for calls
+  or audio, or one that KDE Connect reaches over Bluetooth. A phone that is
+  only paired drops the link when idle and locks you out each time. Signal
+  strength is not used: BlueZ reports it only while scanning, and it jumps
+  around.
+- A device not connected when Reprise starts or the setting changes counts
+  only once it connects.
+- Bluetooth turned off, the adapter gone, BlueZ stopped and the device
+  unpaired all count as gone.
+- It never unlocks. Nothing holds it off: a playing video or another idle
+  inhibitor holds off the idle lock only.
 
 ## Taskbar
 
