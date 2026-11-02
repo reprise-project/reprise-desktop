@@ -41,6 +41,15 @@ impl Config {
         repriseconf::config::lenient_over(text, base, Config::from_file)
     }
 
+    /// The config `table` (as [`Config::parse_over`] returns it) builds.
+    pub fn from_table(table: toml::Table) -> Result<Config, String> {
+        Config::from_file(
+            table
+                .try_into()
+                .map_err(|e: toml::de::Error| e.to_string())?,
+        )
+    }
+
     fn from_file(mut file: FileConfig) -> Result<Config, String> {
         let keybinds = file.keybinds.take();
         let globals = file.global_shortcuts.take();

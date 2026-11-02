@@ -64,6 +64,84 @@ fn glass_shows_a_mode_combo_that_writes_glass_mode() {
 }
 
 #[test]
+fn the_mode_combo_offers_the_schedules_and_the_hours_grey_unless_picked() {
+    let p = Page::Appearance;
+    let mut got = Settings {
+        interface: "glass".into(),
+        ..Settings::default()
+    };
+    let mut s = with(&got);
+    assert_eq!(
+        rows(&s, p, "glass_mode"),
+        (
+            vec![
+                "Light".to_string(),
+                "Dark".into(),
+                "Dark at night".into(),
+                "Dark at set hours".into()
+            ],
+            0
+        )
+    );
+    for id in appearancepage::DARK_HOURS {
+        assert!(!enabled_on(&s, p, id), "{id} greys under Light");
+    }
+    pick(&mut s, &mut got, p, "glass_mode", 2);
+    assert_eq!(got.glass_mode, "night");
+    assert!(!enabled_on(&s, p, "glass_dark_from"));
+    pick(&mut s, &mut got, p, "glass_mode", 3);
+    assert_eq!(got.glass_mode, "hours");
+    for id in appearancepage::DARK_HOURS {
+        assert!(enabled_on(&s, p, id), "{id} comes back under set hours");
+    }
+    assert_eq!(
+        rect(&s, p, "dark_hours_label"),
+        Rect::new(232, 452, 146, 13)
+    );
+    assert_eq!(rect(&s, p, "glass_dark_from"), Rect::new(232, 468, 62, 20));
+    assert_eq!(rect(&s, p, "glass_dark_to"), Rect::new(316, 468, 62, 20));
+    inside_page(&s, p);
+    if let Some(Control::Time(tf)) = s.pages[p.index()]
+        .item_mut("glass_dark_from")
+        .map(|i| &mut i.control)
+    {
+        tf.set(21, 30, 0);
+    }
+    read_one(&s, "glass_dark_from", &mut got);
+    assert_eq!(
+        (got.glass_dark_from.as_str(), got.glass_dark_to.as_str()),
+        ("21:30", "07:00")
+    );
+}
+
+#[test]
+fn the_dark_hours_row_pins_its_pixels_in_every_look() {
+    let s = Settings {
+        interface: "glass".into(),
+        glass_mode: "hours".into(),
+        ..Settings::default()
+    };
+    let mut f = appearancepage::page(&s, Area::MIN);
+    write_form(&mut f, &s);
+    let row = Rect::new(232, 452, 146, 36);
+    let Some(on) = row_pins(&f, row) else {
+        return;
+    };
+    for id in appearancepage::DARK_HOURS {
+        f.set_enabled(id, false);
+    }
+    let greyed = row_pins(&f, row).unwrap();
+    assert_eq!(
+        [on, greyed],
+        [
+            [0xb4fcf7204ea63d7b, 0x323384d5b3200cfc, 0x1781092ffc19ffa8],
+            [0x5f51dddb632fa990, 0x3669d0d95b7e2026, 0x35300c73a2610fac],
+        ],
+        "set hours, greyed; Classic, Blue, Glass"
+    );
+}
+
+#[test]
 fn glass_material_and_frame_combos_write_their_keys() {
     let p = Page::Appearance;
     let mut got = Settings {

@@ -129,6 +129,8 @@ pub(super) fn binds() -> Vec<Bind> {
         ),
         Bind::GlassColor(crate::appearancepage::GLASS_COLOR, lens!(glass_color)),
         Bind::Named("glass_mode", lens!(glass_mode), crate::model::GLASS_MODES),
+        Bind::Time("glass_dark_from", lens!(glass_dark_from)),
+        Bind::Time("glass_dark_to", lens!(glass_dark_to)),
         Bind::Named(
             "glass_material",
             lens!(glass_material),

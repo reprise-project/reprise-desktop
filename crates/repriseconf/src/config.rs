@@ -102,6 +102,8 @@ pub struct Config {
     pub color_scheme: Option<String>,
     pub blue_variant: reprisekit::blue::Variant,
     pub glass: reprisekit::glass::Settings,
+    /// `glass.mode` is the mode in force; under a schedule the compositor sets it (`darkmode`).
+    pub glass_dark: GlassDark,
     pub taskbar: TaskbarConfig,
 }
 
@@ -173,6 +175,7 @@ impl Default for Config {
             color_scheme: None,
             blue_variant: reprisekit::blue::Variant::Blue,
             glass: reprisekit::glass::Settings::default(),
+            glass_dark: GlassDark::default(),
             taskbar: TaskbarConfig::default_for(Interface::Classic),
         }
     }
