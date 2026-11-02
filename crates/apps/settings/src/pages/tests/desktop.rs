@@ -525,11 +525,19 @@ fn the_windows_page_geometry() {
         Rect::new(242, 142, 30, 13)
     );
     assert_eq!(rect(&s, p, "snap_layouts"), Rect::new(120, 166, 246, 20));
-    assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 228, 358, 126));
+    assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 228, 358, 154));
     assert_eq!(rect(&s, p, "window_tabs"), Rect::new(32, 250, 13, 13));
     assert_eq!(rect(&s, p, "remember_windows"), Rect::new(32, 274, 13, 13));
     assert_eq!(rect(&s, p, FORGET_FRAMES), Rect::new(50, 296, 110, 23));
     assert_eq!(rect(&s, p, "window_shake"), Rect::new(32, 328, 13, 13));
+    assert_eq!(
+        rect(&s, p, "title_double_click_label"),
+        Rect::new(32, 356, 150, 13)
+    );
+    assert_eq!(
+        rect(&s, p, "title_double_click"),
+        Rect::new(186, 352, 120, 21)
+    );
     inside_page(&s, p);
 }
 
@@ -543,10 +551,15 @@ fn the_windows_page_reads_back_tabs_shaking_the_picker_the_bar_the_distance_and_
         snap_distance: 15,
         remember_windows: false,
         window_shake: true,
+        title_double_click: "shade".into(),
         ..Settings::default()
     };
     let s = with(&want);
     let p = &s.pages[Page::Windows.index()];
+    match &p.item("title_double_click").unwrap().control {
+        Control::Combo(c) => assert_eq!(c.items[c.selected].text, "Roll up"),
+        _ => panic!("title_double_click is a combo"),
+    }
     assert_eq!(p.checked("window_tabs"), Some(false));
     assert_eq!(p.checked("window_shake"), Some(true));
     assert_eq!(p.checked("snap_picker"), Some(false));

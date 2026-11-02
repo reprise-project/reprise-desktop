@@ -8,14 +8,14 @@ use reprisekit::raster::Rect;
 use crate::model::{
     DESKTOPS_MAX, HOT_CORNERS, PAGER_MARKS, PREVIEW_FPS_MAX, SNAP_DISTANCE_MAX, STARTMENU_STYLES,
     SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES, SWITCHER_STYLES, TASKBAR_BUTTONS,
-    TASKBAR_POSITIONS,
+    TASKBAR_POSITIONS, TITLE_DOUBLE_CLICKS,
 };
 
 /// How windows snap, tab and come back: the Snapping group holds
 /// `[window_snapping]`'s drag snapping and how near an edge it starts (greyed
 /// with drag snapping off), the snap layouts on the maximize button, the snap
 /// bar a drag shows (greyed too) and the layouts they offer; Tabs and Placement
-/// holds `[windows]`, shaking included.
+/// holds `[windows]`, shaking and the title bar double click included.
 pub fn windows(a: Area) -> Form {
     let gw = a.gw();
     let mut items = vec![
@@ -59,7 +59,7 @@ pub fn windows(a: Area) -> Form {
             gw,
             "Empty for the built-in six, e.g. 1|1 2|1 1:2|1:2",
         ),
-        group(a, "tabs_group", 228, 126, "Tabs and Placement"),
+        group(a, "tabs_group", 228, 154, "Tabs and Placement"),
         Item::check(
             "window_tabs",
             GX,
@@ -85,6 +85,20 @@ pub fn windows(a: Area) -> Form {
             GX,
             328,
             "&Shake a window by its title bar to minimize the others",
+        ),
+        Item::label_at(
+            "title_double_click_label",
+            GX,
+            356,
+            150,
+            "Double-clic&king a title bar:",
+        ),
+        choice(
+            "title_double_click",
+            GX + 154,
+            352,
+            120,
+            TITLE_DOUBLE_CLICKS,
         ),
     ]);
     Form::new(items)

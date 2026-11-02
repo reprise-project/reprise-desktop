@@ -5,8 +5,8 @@ use super::{
     CURSOR_SIZE_MAX, Config, EFFECTS_MS_MAX, EffectsConfig, FontSmoothing, HotCorner,
     IdleOverrides, MAX_POSITION, MenuAnimation, OutputConfig, OutputMode, PREVIEW_FPS_MAX,
     PointerConfig, PowerAction, SNAP_DISTANCE_MAX, SWITCH_MS_MAX, ShortcutOverlay, StartMenuStyle,
-    SwitchStyle, SwitcherConfig, TabletConfig, TaskbarButtons, TaskbarConfig, Transform,
-    WORKSPACES_MAX, quarter_scale, switcher_size,
+    SwitchStyle, SwitcherConfig, TabletConfig, TaskbarButtons, TaskbarConfig, TitleDoubleClick,
+    Transform, WORKSPACES_MAX, quarter_scale, switcher_size,
 };
 use reprisekit::interface::Interface;
 use reprisekit::theme::{Color, FontConfig};
@@ -1006,6 +1006,13 @@ impl Config {
                     ));
                 }
                 None => {}
+            }
+            if let Some(v) = w.title_double_click {
+                cfg.title_double_click = TitleDoubleClick::parse(&v).ok_or_else(|| {
+                    format!(
+                        "[windows] title_double_click = {v:?} is not \"maximize\", \"shade\", \"minimize\" or \"none\""
+                    )
+                })?;
             }
         }
         if let Some(s) = file.session {

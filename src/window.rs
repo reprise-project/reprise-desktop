@@ -182,6 +182,9 @@ pub struct Window {
     pub mapped: bool,
     pub maximized: bool,
     pub minimized: bool,
+    /// Rolled up to its caption: the frame keeps its width, the client keeps its size and is
+    /// neither drawn nor given input (`State::set_shaded`).
+    pub shaded: bool,
     /// The client asked for fullscreen: no chrome; its tree sits in `layers.fullscreen` while
     /// focused. `maximized` keeps its value underneath.
     pub fullscreen: bool,
@@ -253,11 +256,23 @@ impl Window {
             (_, true) => self.saved,
             _ => None,
         }
-        .unwrap_or(self.frame_rect())
+        .unwrap_or_else(|| self.unshaded_frame())
+    }
+
+    /// The frame as it is when rolled down: [`Window::frame_rect`] with the client's height back.
+    pub fn unshaded_frame(&self) -> Rect {
+        let mut r = self.frame_rect();
+        if self.shaded {
+            r.height += self.client_h;
+        }
+        r
     }
 
     pub fn hit_at(&self, lx: f64, ly: f64, m: &Metrics) -> FrameHit {
-        self.geom.hit(lx as i32 - self.x, ly as i32 - self.y, m)
+        match self.geom.hit(lx as i32 - self.x, ly as i32 - self.y, m) {
+            FrameHit::Resize(_) if self.shaded => FrameHit::Title,
+            hit => hit,
+        }
     }
 
     pub fn wl_surface(&self) -> &WlSurface {

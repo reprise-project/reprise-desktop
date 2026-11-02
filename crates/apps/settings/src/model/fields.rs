@@ -135,6 +135,10 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Flag(k("windows", "remember"), lens!(remember_windows)),
         Field::Flag(k("windows", "tabs"), lens!(window_tabs)),
         Field::Flag(k("windows", "shake"), lens!(window_shake)),
+        Field::Text(
+            k("windows", "title_double_click"),
+            lens!(title_double_click),
+        ),
         Field::Flag(k("session", "restore"), lens!(session_restore)),
         Field::Flag(k("session", "end_processes"), lens!(session_end_processes)),
         Field::List(k("fonts", "family"), lens!(font_family)),

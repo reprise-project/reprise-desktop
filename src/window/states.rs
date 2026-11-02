@@ -30,8 +30,41 @@ impl State {
         }
     }
 
+    /// Whether `w` can roll up: mapped with its own frame, in its normal state, and in no tab
+    /// group.
+    pub fn can_shade(&self, w: WindowId) -> bool {
+        self.win(w).is_some_and(|x| {
+            x.mapped && x.has_frame() && !x.maximized && !x.minimized && !x.tab_hidden
+        }) && self.tabs.groups.group_of(w).is_none()
+    }
+
+    /// Roll `w` up to its caption or back down. The frame keeps its width and place; the client
+    /// is sent nothing, keeps its size and is neither drawn nor given input while rolled up.
+    pub fn set_shaded(&mut self, w: WindowId, on: bool) {
+        if self.win(w).is_none_or(|x| x.shaded == on) || (on && !self.can_shade(w)) {
+            return;
+        }
+        self.cancel_interaction_for(w);
+        let Some(win) = self.win_mut(w) else {
+            return;
+        };
+        win.shaded = on;
+        let content = win.content;
+        self.scene.set_enabled(content, !on);
+        self.relayout(w);
+        if self.focused == Some(w) {
+            self.claim_keyboard(w);
+        }
+        let at = self.pointer_location();
+        self.repoint(at, smithay::backend::input::InputTime::now());
+        self.redraw_all();
+    }
+
     /// Switch between our frame and the client's; the client area keeps its layout position.
     pub fn set_csd(&mut self, w: WindowId, csd: bool) {
+        if csd {
+            self.set_shaded(w, false);
+        }
         let Some(win) = self.win_mut(w) else {
             return;
         };
@@ -57,6 +90,9 @@ impl State {
     /// Hide or show the frame at the user's request; the outer rect stays and the client resizes to
     /// fill it.
     pub fn set_frameless(&mut self, w: WindowId, on: bool) {
+        if on {
+            self.set_shaded(w, false);
+        }
         let m = self.config.theme.metrics.clone();
         let Some(win) = self.win_mut(w) else {
             return;
@@ -101,6 +137,9 @@ impl State {
         // Fullscreen owns the geometry; ignored until it ends.
         if win.fullscreen {
             return;
+        }
+        if on {
+            self.set_shaded(w, false);
         }
         self.cancel_interaction_for(w);
         self.toplevels.dirty = true;
@@ -178,6 +217,9 @@ impl State {
     pub fn set_fullscreen(&mut self, w: WindowId, on: bool) {
         if self.win(w).is_none_or(|x| x.fullscreen == on) {
             return;
+        }
+        if on {
+            self.set_shaded(w, false);
         }
         self.cancel_interaction_for(w);
         self.toplevels.dirty = true;
@@ -272,6 +314,10 @@ impl State {
         };
         let was_minimized = win.minimized;
         win.enter(Change::Reset);
+        if std::mem::take(&mut win.shaded) {
+            let content = win.content;
+            self.scene.set_enabled(content, true);
+        }
         if was_minimized {
             self.show_children(w, self.on_current_desktop(w));
         }

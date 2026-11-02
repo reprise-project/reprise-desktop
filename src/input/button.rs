@@ -239,8 +239,7 @@ impl State {
                     }
                     FrameHit::Title => {
                         if double {
-                            let maximized = self.win(window).is_some_and(|w| w.maximized);
-                            self.set_maximized(window, !maximized);
+                            self.title_double_click(window);
                         } else {
                             self.begin_move(window, true);
                         }
@@ -443,6 +442,23 @@ pub(super) fn desktop_left(stirs: bool, index: Option<usize>, double: bool) -> D
         (None, false, _) => DesktopLeft::Marquee,
         (None, true, false) => DesktopLeft::Stir,
         (None, true, true) => DesktopLeft::Clear,
+    }
+}
+
+impl State {
+    /// A double click on `w`'s title bar does what `[windows] title_double_click` says.
+    pub(crate) fn title_double_click(&mut self, w: WindowId) {
+        use crate::config::TitleDoubleClick;
+        let Some(win) = self.win(w) else {
+            return;
+        };
+        let (maximized, shaded) = (win.maximized, win.shaded);
+        match self.config.title_double_click {
+            TitleDoubleClick::Maximize => self.set_maximized(w, !maximized),
+            TitleDoubleClick::Shade => self.set_shaded(w, !shaded),
+            TitleDoubleClick::Minimize => self.set_minimized(w, true),
+            TitleDoubleClick::None => {}
+        }
     }
 }
 

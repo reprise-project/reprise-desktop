@@ -244,7 +244,8 @@ impl State {
     }
 
     /// Send the seat's keyboard focus to `surface`, or take it from every surface
-    /// with None. While locked, every surface but the locker's own is ignored.
+    /// with None. While locked, every surface but the locker's own is ignored; a rolled-up
+    /// window's surface gets None.
     pub fn enter_keyboard(
         &mut self,
         surface: Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
@@ -255,6 +256,8 @@ impl State {
         {
             return;
         }
+        let surface =
+            surface.filter(|s| !(self.windows.iter()).any(|w| w.shaded && w.wl_surface() == s));
         // Whoever takes the keyboard takes it from the taskbar.
         if surface.is_some() {
             self.end_bar_keys();
