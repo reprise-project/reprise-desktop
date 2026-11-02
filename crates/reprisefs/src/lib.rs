@@ -4,6 +4,7 @@
 //! `config.toml`; nothing here knows about a display, a seat or the compositor.
 pub mod apps;
 pub mod autostart;
+pub mod batchrename;
 pub mod bincap;
 pub mod deadline;
 pub mod dialogops;

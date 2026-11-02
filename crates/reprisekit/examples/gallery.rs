@@ -16,6 +16,8 @@ mod gallery_p3;
 mod gallery_parts;
 #[path = "gallery_power/mod.rs"]
 mod gallery_power;
+#[path = "gallery_rename/mod.rs"]
+mod gallery_rename;
 
 use reprisekit::art::glyph::Glyph;
 use reprisekit::art::{signalbars, viewsicon};
@@ -90,6 +92,10 @@ fn main() {
         write_preview(
             &gallery_doctabs::render(n.max(1)),
             &format!("reprisekit-gallery-doc-tabs@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_rename::render(n.max(1)),
+            &format!("reprisekit-gallery-rename@{}.png", n.max(1)),
         );
         write_preview(
             &render_copy_progress(true, n.max(1)),
@@ -245,6 +251,10 @@ fn main() {
     write_preview(
         &gallery_doctabs::render(1),
         "reprisekit-gallery-doc-tabs@1.png",
+    );
+    write_preview(
+        &gallery_rename::render(1),
+        "reprisekit-gallery-rename@1.png",
     );
     write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
     if with_blue {
