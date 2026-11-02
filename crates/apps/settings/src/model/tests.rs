@@ -745,6 +745,7 @@ fn save_round_trips_every_field() {
         desktop_animation_ms: 350,
         pager_mark: "tile".into(),
         wheel_on_desktop: true,
+        desktop_names: vec!["Work".into(), "".into(), "Chat".into()],
         remember_windows: false,
         window_tabs: false,
         window_shake: true,

@@ -73,6 +73,8 @@ pub(super) enum Bind {
     /// gives and stays empty while the button still shows it, so reading an untouched button back writes nothing.
     Hex(&'static str, Lens<Settings, String>),
     Icon(&'static str, Lens<Settings, Vec<String>>),
+    /// An edit holding the list's entries apart by commas, an empty entry kept as one.
+    Names(&'static str, Lens<Settings, Vec<String>>),
 }
 
 pub(super) fn binds() -> Vec<Bind> {
@@ -174,6 +176,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Num("desktop_animation_ms", lens!(desktop_animation_ms)),
         Bind::Named("pager_mark", lens!(pager_mark), PAGER_MARKS),
         Bind::Flag("wheel_on_desktop", lens!(wheel_on_desktop)),
+        Bind::Names(super::desktop::DESKTOP_NAMES, lens!(desktop_names)),
         Bind::Flag("remember_windows", lens!(remember_windows)),
         Bind::Flag("window_tabs", lens!(window_tabs)),
         Bind::Flag("window_shake", lens!(window_shake)),
@@ -362,7 +365,8 @@ impl Bind {
             | Bind::GlassColor(id, _)
             | Bind::Level(id, _, _)
             | Bind::Hex(id, _)
-            | Bind::Icon(id, _) => id,
+            | Bind::Icon(id, _)
+            | Bind::Names(id, _) => id,
         }
     }
 
@@ -392,6 +396,7 @@ impl Bind {
             | Bind::Level(_, at, _) => *at.get_mut(s) += 1,
             Bind::Flag(_, at) => *at.get_mut(s) ^= true,
             Bind::Icon(_, at) => at.get_mut(s).push(String::new()),
+            Bind::Names(_, at) => at.get_mut(s).push("\u{1}".into()),
         }
     }
 }
@@ -473,6 +478,10 @@ pub fn write_form(form: &mut Form, s: &Settings) {
         match (&b, &mut item.control) {
             (Bind::Text(_, at), Control::Edit { edit, first, .. }) => {
                 *edit = TextEdit::new(at.get(s).clone(), false);
+                first.set(0);
+            }
+            (Bind::Names(_, at), Control::Edit { edit, first, .. }) => {
+                *edit = TextEdit::new(at.get(s).join(", "), false);
                 first.set(0);
             }
             (Bind::Num(_, at), Control::UpDown(u)) => {
@@ -748,6 +757,9 @@ pub fn read_one(sheet: &PropSheet, id: &str, s: &mut Settings) {
                 (Bind::Text(_, at), Control::Edit { edit, .. }) => {
                     *at.get_mut(s) = edit.text.clone()
                 }
+                (Bind::Names(_, at), Control::Edit { edit, .. }) => {
+                    *at.get_mut(s) = names(&edit.text)
+                }
                 (Bind::Num(_, at), Control::UpDown(u)) => *at.get_mut(s) = u.value() as i64,
                 (Bind::Flag(_, at), Control::Check { checked, .. }) => *at.get_mut(s) = *checked,
                 (Bind::Choice(_, at), Control::Combo(c)) => {
@@ -868,4 +880,14 @@ pub fn read_one(sheet: &PropSheet, id: &str, s: &mut Settings) {
             }
         }
     }
+}
+
+/// `text`'s entries apart by commas, trimmed, an empty one kept in its place and the empty ones
+/// at the end dropped.
+pub(crate) fn names(text: &str) -> Vec<String> {
+    let mut list: Vec<String> = text.split(',').map(|s| s.trim().to_string()).collect();
+    while list.last().is_some_and(String::is_empty) {
+        list.pop();
+    }
+    list
 }

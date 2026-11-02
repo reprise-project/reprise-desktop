@@ -939,6 +939,15 @@ impl Config {
             if let Some(on) = w.wheel_on_desktop {
                 cfg.wheel_on_desktop = on;
             }
+            if let Some(names) = w.names {
+                if names.len() > WORKSPACES_MAX {
+                    return Err(format!(
+                        "workspaces.names has {} names, more than {WORKSPACES_MAX} desktops",
+                        names.len()
+                    ));
+                }
+                cfg.workspace_names = names;
+            }
             if let Some(ms) = w.animation_ms {
                 cfg.workspace_animation.ms = u32::try_from(ms)
                     .ok()

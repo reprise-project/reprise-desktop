@@ -163,22 +163,29 @@ pub fn window_menu(
 }
 
 /// The Move to Desktop submenu of windows on desktop `own`: every other of
-/// the `count` desktops, each doing `row(n)`. Shared with the jump list.
+/// the `count` desktops by its name in `names`, each doing `row(n)`. Shared with the jump list.
 pub fn move_to_menu<R>(
     count: usize,
     own: usize,
+    names: &[String],
     row: impl Fn(usize) -> R,
 ) -> (Vec<MenuItem>, Vec<Option<R>>) {
     (0..count)
         .filter(|&n| n != own)
         .map(|n| {
-            let label = if n < 9 {
-                format!("Desktop &{}", n + 1)
+            let named = names.get(n).is_some_and(|s| !s.trim().is_empty());
+            let item = if named {
+                MenuItem::entry(crate::config::desktop_name(names, n))
             } else {
-                format!("Desktop {}", n + 1)
+                let label = if n < 9 {
+                    format!("Desktop &{}", n + 1)
+                } else {
+                    format!("Desktop {}", n + 1)
+                };
+                let (label, mnemonic) = split_mnemonic(&label);
+                MenuItem::entry(label).mnemonic(mnemonic)
             };
-            let (label, mnemonic) = split_mnemonic(&label);
-            (MenuItem::entry(label).mnemonic(mnemonic), Some(row(n)))
+            (item, Some(row(n)))
         })
         .unzip()
 }
@@ -494,7 +501,7 @@ mod tests {
 
     #[test]
     fn move_to_desktop_lists_the_other_desktops() {
-        let (items, rows) = move_to_menu(4, 1, WindowMenuRow::MoveTo);
+        let (items, rows) = move_to_menu(4, 1, &[], WindowMenuRow::MoveTo);
         let labels: Vec<&str> = (0..items.len()).map(|i| row(&items, i).0).collect();
         assert_eq!(labels, ["Desktop 1", "Desktop 3", "Desktop 4"]);
         assert_eq!(
@@ -512,9 +519,25 @@ mod tests {
                 ..
             }
         ));
-        let (items, _) = move_to_menu(12, 0, WindowMenuRow::MoveTo);
+        let (items, _) = move_to_menu(12, 0, &[], WindowMenuRow::MoveTo);
         assert_eq!(row(&items, 10).0, "Desktop 12");
         assert!(matches!(&items[10], MenuItem::Entry { mnemonic: None, .. }));
+    }
+
+    #[test]
+    fn move_to_desktop_names_the_named_desktops() {
+        let names = ["Work".to_string(), String::new(), "Chat & Mail".into()];
+        let (items, _) = move_to_menu(4, 1, &names, WindowMenuRow::MoveTo);
+        let labels: Vec<&str> = (0..items.len()).map(|i| row(&items, i).0).collect();
+        assert_eq!(labels, ["Work", "Chat & Mail", "Desktop 4"]);
+        assert!(matches!(&items[0], MenuItem::Entry { mnemonic: None, .. }));
+        assert!(matches!(
+            &items[2],
+            MenuItem::Entry {
+                mnemonic: Some(8),
+                ..
+            }
+        ));
     }
 
     #[test]

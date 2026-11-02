@@ -23,15 +23,22 @@ pub enum TaskbarCommand {
     TaskManager,
     LockTaskbar,
     Properties,
+    /// Name the pager's desktop n.
+    RenameDesktop(usize),
 }
 
 /// The taskbar's right-click menu rows and, parallel to them, what each does (None at a separator).
+/// Over the pager's desktop `pager` it starts with Rename Desktop.
 pub fn taskbar_menu(
     locked: bool,
     has_windows: bool,
+    pager: Option<usize>,
 ) -> (Vec<MenuItem>, Vec<Option<TaskbarCommand>>) {
     use TaskbarCommand::*;
+    let rename = pager.map(|n| ("Rena&me Desktop...", false, true, false, RenameDesktop(n)));
     let rows = [
+        rename,
+        None,
         Some(("&Toolbars", false, true, true, Toolbars)),
         None,
         Some(("Casca&de Windows", false, has_windows, false, Cascade)),
@@ -56,6 +63,7 @@ pub fn taskbar_menu(
         Some(("&Lock the Taskbar", locked, true, false, LockTaskbar)),
         Some(("P&roperties", false, true, false, Properties)),
     ];
+    let rows = &rows[if pager.is_some() { 0 } else { 2 }..];
     let items = rows
         .iter()
         .map(|r| match r {

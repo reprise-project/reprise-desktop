@@ -245,7 +245,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   desktop too with `[workspaces] wheel_on_desktop = true`. The
   switch can slide, fade, zoom or wipe, and three fingers sideways drag the
   slide along with them. A change to the number of desktops applies as soon
-  as you save.
+  as you save. Each desktop can have a name (`[workspaces] names`): the
+  pager's tip and the Move to desktop menus show it, and right-clicking a
+  pager button offers Rename Desktop.
 
 ## Desktop
 

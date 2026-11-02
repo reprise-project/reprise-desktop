@@ -1141,7 +1141,7 @@ fn the_blue_menus_menus_and_their_folders_wear_its_look_and_other_menus_keep_the
     assert_eq!(sub.layout.rows[0].x, 6);
     h.state.close_menu();
     h.state.close_start_panel();
-    h.state.open_taskbar_menu((10, 760));
+    h.state.open_taskbar_menu((10, 760), None);
     assert_eq!(
         h.state.menus[0].skin,
         Skin::Theme,
