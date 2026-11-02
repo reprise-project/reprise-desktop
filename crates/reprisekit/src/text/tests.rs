@@ -937,3 +937,12 @@ fn coverage_unpacks_every_bitmap_depth() {
     );
     assert_eq!(expand(FT_PIXEL_MODE_GRAY, 5, want.clone()), want);
 }
+
+#[test]
+fn families_are_sorted_each_once() {
+    let all = super::families();
+    let mut sorted = all.clone();
+    sorted.sort_by_cached_key(|n| (n.to_lowercase(), n.clone()));
+    sorted.dedup();
+    assert_eq!(all, sorted);
+}

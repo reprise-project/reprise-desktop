@@ -115,6 +115,17 @@ pub(crate) fn system_fonts(families: &[String]) -> Arc<Database> {
     fonts.insert(Arc::new(db)).clone()
 }
 
+/// The family names of the fonts installed, sorted, each once.
+pub fn families() -> Vec<String> {
+    let mut out: Vec<String> = system_fonts(&[])
+        .faces()
+        .filter_map(|f| f.families.first().map(|(name, _)| name.clone()))
+        .collect();
+    out.sort_by_cached_key(|n| (n.to_lowercase(), n.clone()));
+    out.dedup();
+    out
+}
+
 /// The directory `REPRISE_TEST_FONTS` names (filled by `scripts/test-fonts.sh`), whose faces
 /// replace the system's faces of the same family so pixel tests render alike on every machine.
 pub(super) fn test_fonts_dir() -> Option<PathBuf> {
