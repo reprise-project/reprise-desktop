@@ -170,10 +170,12 @@ impl State {
         }
     }
 
-    pub fn open_taskbar_menu(&mut self, at: (i32, i32)) {
+    /// The taskbar's menu at `at`; over the pager's desktop `pager` it offers to rename it.
+    pub fn open_taskbar_menu(&mut self, at: (i32, i32), pager: Option<usize>) {
         self.close_menu();
         let has_windows = !self.task_windows().is_empty();
-        let (items, commands) = crate::taskbar::taskbar_menu(self.bar_shared.locked, has_windows);
+        let (items, commands) =
+            crate::taskbar::taskbar_menu(self.bar_shared.locked, has_windows, pager);
         self.push_context_menu(at, items, MenuKind::Taskbar { commands }, MenuFrom::Bar);
     }
 

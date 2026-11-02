@@ -47,7 +47,7 @@ fn switcher_values_go_in_and_come_back_out() {
 fn the_desktops_page_geometry() {
     let s = built();
     let p = Page::Desktops;
-    assert_eq!(rect(&s, p, "desktops_group"), Rect::new(20, 44, 358, 194));
+    assert_eq!(rect(&s, p, "desktops_group"), Rect::new(20, 44, 358, 244));
     assert_eq!(rect(&s, p, "use_desktops"), Rect::new(32, 64, 13, 13));
     assert_eq!(rect(&s, p, "desktops_label"), Rect::new(50, 88, 206, 13));
     assert_eq!(rect(&s, p, "desktops"), Rect::new(260, 84, 50, 20));
@@ -63,10 +63,19 @@ fn the_desktops_page_geometry() {
     assert_eq!(rect(&s, p, "pager_mark_label"), Rect::new(50, 166, 190, 13));
     assert_eq!(rect(&s, p, "pager_mark"), Rect::new(50, 184, 134, 21));
     assert_eq!(rect(&s, p, "wheel_on_desktop"), Rect::new(50, 214, 13, 13));
-    assert_eq!(rect(&s, p, "previews_group"), Rect::new(20, 248, 358, 76));
-    assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(32, 272, 13, 13));
-    assert_eq!(rect(&s, p, "previews_fps"), Rect::new(146, 294, 50, 20));
-    assert_eq!(rect(&s, p, "fps_units"), Rect::new(202, 298, 100, 13));
+    assert_eq!(
+        rect(&s, p, "desktop_names_label"),
+        Rect::new(50, 242, 90, 13)
+    );
+    assert_eq!(rect(&s, p, DESKTOP_NAMES), Rect::new(144, 238, 222, 20));
+    assert_eq!(
+        rect(&s, p, "desktop_names_note"),
+        Rect::new(50, 264, 316, 13)
+    );
+    assert_eq!(rect(&s, p, "previews_group"), Rect::new(20, 298, 358, 76));
+    assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(32, 322, 13, 13));
+    assert_eq!(rect(&s, p, "previews_fps"), Rect::new(146, 344, 50, 20));
+    assert_eq!(rect(&s, p, "fps_units"), Rect::new(202, 348, 100, 13));
     for id in ["session_restore", "session_end_processes"] {
         assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Startup");
     }
@@ -98,6 +107,62 @@ fn the_wheel_on_desktop_box_writes_its_key_and_greys_with_one_desktop() {
         ..Settings::default()
     });
     assert!(!enabled_on(&one, p, "wheel_on_desktop"));
+}
+
+#[test]
+fn desktop_names_go_in_apart_by_commas_and_come_back_entry_for_entry() {
+    let p = Page::Desktops;
+    let mut s = with(&Settings {
+        desktop_names: vec!["Work".into(), "".into(), "Chat".into()],
+        ..Settings::default()
+    });
+    assert_eq!(s.pages[p.index()].edit_text(DESKTOP_NAMES), "Work, , Chat");
+    if let Some(Control::Edit { edit, .. }) = s.pages[p.index()]
+        .item_mut(DESKTOP_NAMES)
+        .map(|i| &mut i.control)
+    {
+        *edit = reprisekit::textedit::TextEdit::new(" Mail ,,Music, , ".to_string(), false);
+    }
+    let mut got = Settings::default();
+    read_one(&s, DESKTOP_NAMES, &mut got);
+    assert_eq!(got.desktop_names, ["Mail", "", "Music"]);
+    let one = with(&Settings {
+        desktops: 1,
+        ..Settings::default()
+    });
+    assert!(!enabled_on(&one, p, DESKTOP_NAMES));
+}
+
+/// The names row and its note, filled, empty and greyed.
+#[test]
+fn the_desktop_names_rows_pin_their_pixels_in_every_look() {
+    let row = Rect::new(46, 236, 332, 42);
+    let mut pins = Vec::new();
+    for names in [vec!["Work".to_string(), "Chat".into()], Vec::new()] {
+        let mut f = desktops(Area::MIN);
+        if let Some(Control::Edit { edit, .. }) = f.item_mut(DESKTOP_NAMES).map(|i| &mut i.control)
+        {
+            *edit = reprisekit::textedit::TextEdit::new(names.join(", "), false);
+        }
+        let Some(h) = row_pins(&f, row) else {
+            return;
+        };
+        pins.push(h);
+    }
+    let mut f = desktops(Area::MIN);
+    for id in ["desktop_names_label", DESKTOP_NAMES, "desktop_names_note"] {
+        f.set_enabled(id, false);
+    }
+    pins.push(row_pins(&f, row).unwrap());
+    assert_eq!(
+        pins,
+        [
+            [0x175f6ce3e5c88b48, 0x8384de64ca166860, 0xf350274c9b867d96],
+            [0x667aef5cce7654be, 0xf23a3bb9df410796, 0x8319f5382979e4ac],
+            [0xef8f79758ce43c65, 0x761da2a50ec9ebd8, 0x620c1f5c0d189658],
+        ],
+        "named, empty, greyed; Classic, Blue, Glass"
+    );
 }
 
 #[test]

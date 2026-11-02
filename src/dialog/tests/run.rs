@@ -952,3 +952,24 @@ fn the_wheel_scrolls_runs_completion_list_when_it_has_a_scrollbar() {
         "every row shown: the wheel goes on"
     );
 }
+
+#[test]
+fn rename_desktop_opens_on_the_name_and_ok_gives_the_new_one() {
+    let mut d = Dialog::rename_desktop(1, Some(&"Work".to_string()));
+    assert_eq!(d.title, "Rename Desktop");
+    assert_eq!(d.field.as_ref().map(|f| f.combo.text()), Some("Work"));
+    assert_eq!(d.buttons.len(), 2, "OK and Cancel");
+    assert_eq!(
+        d.key(Key::Edit(EditKey::Insert(" Chat ".into()))),
+        Outcome::Redraw,
+        "typing replaces the selected name"
+    );
+    assert_eq!(d.key(Key::Enter), Outcome::RenameDesktop(1, "Chat".into()));
+    let mut d = Dialog::rename_desktop(3, None);
+    assert_eq!(
+        d.key(Key::Enter),
+        Outcome::RenameDesktop(3, String::new()),
+        "an empty name gives back the number"
+    );
+    assert_eq!(d.press(1), Outcome::Close);
+}

@@ -197,6 +197,42 @@ impl Dialog {
         }
     }
 
+    /// Rename Desktop for desktop `n`: Run's box with its `name` (if any) in the field, selected.
+    pub fn rename_desktop(n: usize, name: Option<&String>) -> Dialog {
+        let name = name.map_or("", |s| s.trim());
+        Dialog {
+            icon: Some("preferences-desktop".into()),
+            text: format!(
+                "Type a name for desktop {}. With no name it is called Desktop {}.",
+                n + 1,
+                n + 1
+            ),
+            field: Some(Field {
+                label: "&Name:".into(),
+                combo: {
+                    let mut c = Combo::new(&[], 0, LIST_ROWS);
+                    c.edit = Some(TextEdit::new(name.to_string(), !name.is_empty()));
+                    c
+                },
+                thumb: ThumbDrag::default(),
+                complete: PathComplete::new(Scope::Rooted),
+            }),
+            buttons: vec![
+                button("OK", DialogAction::RenameDesktop(n), true),
+                button("Cancel", DialogAction::Cancel, false),
+            ],
+            ..Dialog::new(
+                "Rename Desktop",
+                Style::Classic {
+                    template: Template::Run,
+                    text_h: None,
+                    delete_badge: false,
+                },
+                Placement::Center,
+            )
+        }
+    }
+
     /// The Open With chooser for `path`: programs registered for its type under "Recommended
     /// Programs:", the rest under "Other Programs:", `pick` (the type's default) picked, else the
     /// first. `set_default` (the sheet's Change...) ticks and greys the box; OK then only writes

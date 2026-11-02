@@ -1045,6 +1045,10 @@ impl Dialog {
                 asker: asker.clone(),
                 answer: *answer,
             },
+            DialogAction::RenameDesktop(n) => Outcome::RenameDesktop(
+                *n,
+                (self.field.as_ref()).map_or(String::new(), |f| f.combo.text().trim().to_string()),
+            ),
             DialogAction::RunField => {
                 let cmd = self
                     .field

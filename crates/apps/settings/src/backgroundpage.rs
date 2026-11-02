@@ -226,7 +226,7 @@ pub fn target(form: &Form) -> Option<usize> {
     form.combo_selected(USE_FOR)?.checked_sub(1)
 }
 
-/// The Use for combo's rows: all desktops, then each of the `s.desktops`.
+/// The Use for combo's rows: all desktops, then each of the `s.desktops` by name.
 pub fn use_for_rows(s: &Settings) -> Vec<String> {
     let n = if s.desktops > 1 {
         s.desktops as usize
@@ -234,7 +234,7 @@ pub fn use_for_rows(s: &Settings) -> Vec<String> {
         0
     };
     std::iter::once(ALL_DESKTOPS.to_string())
-        .chain((1..=n).map(|i| format!("Desktop {i}")))
+        .chain((0..n).map(|i| repriseconf::config::desktop_name(&s.desktop_names, i)))
         .collect()
 }
 
@@ -485,7 +485,7 @@ pub fn show(form: &mut Form, s: &Settings, want: &str, picture: Option<&Picture>
 pub fn follow(form: &mut Form, s: &Settings) {
     let rows = use_for_rows(s);
     if let Some(Control::Combo(c)) = form.item_mut(USE_FOR).map(|i| &mut i.control)
-        && c.items.len() != rows.len()
+        && !c.items.iter().map(|i| &i.text).eq(rows.iter())
     {
         let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
         c.items = reprisekit::controls::combo::Combo::new(&rows, 0, rows.len()).items;
@@ -586,6 +586,7 @@ mod tests {
             wallpaper: "~/w/a.jpg".into(),
             slideshow: "~/Slides".into(),
             wallpaper_desktops: vec!["".into(), "reprise:tarn/dusk".into()],
+            desktop_names: vec!["Work".into()],
             ..Settings::default()
         };
         assert_eq!(view(&s, None).slideshow, "~/Slides");
@@ -599,7 +600,7 @@ mod tests {
         assert_eq!(view(&s, Some(2)).wallpaper, "~/w/a.jpg");
         assert_eq!(
             use_for_rows(&s),
-            [ALL_DESKTOPS, "Desktop 1", "Desktop 2", "Desktop 3"]
+            [ALL_DESKTOPS, "Work", "Desktop 2", "Desktop 3"]
         );
         set_for_desktop(&mut s, 2, "/p/c.png".into());
         assert_eq!(s.wallpaper_desktops, ["", "reprise:tarn/dusk", "/p/c.png"]);

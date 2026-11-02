@@ -307,3 +307,11 @@ impl Default for SoundsConfig {
 pub const WORKSPACES_DEFAULT: usize = 4;
 
 pub const WORKSPACES_MAX: usize = 16;
+
+/// Desktop `n`'s name in `names` (`[workspaces] names`), "Desktop n+1" without one.
+pub fn desktop_name(names: &[String], n: usize) -> String {
+    match names.get(n).map(|s| s.trim()) {
+        Some(name) if !name.is_empty() => name.to_string(),
+        _ => format!("Desktop {}", n + 1),
+    }
+}

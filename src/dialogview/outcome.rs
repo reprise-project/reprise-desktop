@@ -68,6 +68,10 @@ impl State {
                 crate::state::save_dialogs(&self.dialogs.run_history);
                 self.run_line_activated(&cmd);
             }
+            Outcome::RenameDesktop(n, name) => {
+                self.close_dialog();
+                self.rename_desktop(n, name);
+            }
             Outcome::Act(a) => {
                 self.close_dialog();
                 self.run_action(&a, 0);
