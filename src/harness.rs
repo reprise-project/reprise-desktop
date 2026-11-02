@@ -308,6 +308,20 @@ impl Harness {
         self.map_toplevel_after(c, app_id, w, h, |_, _, _| {})
     }
 
+    /// [`Harness::map_toplevel`] titled `title` before it maps.
+    pub fn map_titled(
+        &mut self,
+        c: &mut TestClient,
+        app_id: &str,
+        title: &str,
+        (w, h): (i32, i32),
+    ) -> Toplevel {
+        self.map_toplevel_after(c, app_id, w, h, |hs, c, t| {
+            c.side.shells[t.shell].toplevel.set_title(title.into());
+            hs.roundtrip(c);
+        })
+    }
+
     /// [`Harness::map_toplevel`] for a dialog owned by `parent` and tagged `tag` before it
     /// maps, as a program's file dialog is.
     pub fn map_dialog(

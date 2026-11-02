@@ -766,3 +766,87 @@ impl State {
         self.focus_window(w);
     }
 }
+
+impl State {
+    /// The snap groups to keep for the next login, by monitor id; windows in a tab group are
+    /// left to the tab group's own restore.
+    pub(crate) fn snap_arrangements(&self) -> Vec<crate::sessionsnap::SavedSnap> {
+        let outs: Vec<&Output> = self.scene.outputs().iter().collect();
+        let ids = crate::outputlayouts::monitor_ids(&outs);
+        let monitor = |name: &str| {
+            (outs.iter().zip(&ids)).find_map(|(o, id)| (o.name() == name).then(|| id.clone()))
+        };
+        (self.wm.snap.arrangements())
+            .filter_map(|(output, desktop, layout, members)| {
+                let members = (members.iter())
+                    .filter_map(|&(zone, m)| {
+                        let win = self.win(m).filter(|x| x.mapped && x.placeable())?;
+                        if self.tabs.groups.group_of(m).is_some() {
+                            return None;
+                        }
+                        Some(crate::sessionsnap::SavedZone {
+                            zone,
+                            app: win.app(),
+                            title: win.title(),
+                        })
+                    })
+                    .collect();
+                Some(crate::sessionsnap::SavedSnap {
+                    monitor: monitor(output)?,
+                    desktop,
+                    columns: layout.columns,
+                    bands: layout.bands.clone(),
+                    members,
+                })
+            })
+            .collect()
+    }
+
+    /// The connected output with monitor id `id`.
+    pub(crate) fn output_of_monitor(&self, id: &str) -> Option<Output> {
+        let outs: Vec<&Output> = (self.scene.outputs().iter())
+            .filter(|o| self.layout_box(Some(o)).width > 0)
+            .collect();
+        let ids = crate::outputlayouts::monitor_ids(&outs);
+        (outs.into_iter().zip(ids)).find_map(|(o, m)| (m == id).then(|| o.clone()))
+    }
+
+    /// A window that just mapped and is in no tab group, nor waiting in a restored one's slot,
+    /// goes back into the zone a restored session's snap group kept for it (`sessionsnap`), when
+    /// its monitor is still there.
+    pub(crate) fn snap_on_map(&mut self, w: WindowId) {
+        if self.tabs.groups.group_of(w).is_some() || self.session.regrouping.holds(w) {
+            return;
+        }
+        let Some((app, title)) = self.win(w).map(|x| (x.app(), x.title())) else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        let Some(r) = self.session.resnapping.claim(&app, &title, w, now) else {
+            return;
+        };
+        let Some(out) = self.output_of_monitor(&r.monitor) else {
+            log::info!(
+                "session: {app} {title:?} not snapped back, monitor {} is gone",
+                r.monitor
+            );
+            return;
+        };
+        if !self.win(w).is_some_and(Window::snappable) {
+            return;
+        }
+        let work = self.usable_area(Some(&out));
+        let desktop = self.win(w).map_or(self.desktops.current, |x| x.desktop);
+        let zones = (self.wm.snap).rejoin(w, &out.name(), desktop, &r.layout, work, r.zone, r.with);
+        let Some(&zone) = zones.get(r.zone) else {
+            return;
+        };
+        log::info!(
+            "session: {app} {title:?} back in zone {} on {} (matched by {:?})",
+            r.zone,
+            out.name(),
+            r.matched
+        );
+        self.snap_commit(w, zone);
+    }
+}

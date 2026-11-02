@@ -105,6 +105,7 @@ mod session;
 mod sessionend;
 mod sessionfade;
 mod sessionlock;
+mod sessionsnap;
 mod shake;
 mod shakeview;
 mod shmtex;

@@ -135,6 +135,7 @@ impl State {
         }
         let (app_id, title, fixed) = (&s.app, &s.title, s.fixed);
         let first = self.newest_of_app(app_id, w).is_none();
+        let now = std::time::Instant::now();
         let mut base = Want::default();
         if self.config.remember_windows
             && !fixed
@@ -166,10 +167,15 @@ impl State {
         {
             base.desktop = Some(d);
         }
-        if let Some(d) = self
-            .session
-            .regrouping
-            .desktop(app_id, title, std::time::Instant::now())
+        if let Some((d, monitor)) = (self.session.resnapping).place(app_id, title, now) {
+            if d < self.desktops.count {
+                base.desktop = Some(d);
+            }
+            if let Some(out) = self.output_of_monitor(monitor) {
+                base.output = Some(out.name());
+            }
+        }
+        if let Some(d) = self.session.regrouping.desktop(app_id, title, now)
             && d < self.desktops.count
         {
             base.desktop = Some(d);
