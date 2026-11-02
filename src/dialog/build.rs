@@ -396,20 +396,21 @@ impl Dialog {
         let shown = filesheet::shown_name(&info.file_name(), &info.hidden_ext, info.hidden);
         let (page, height) = filesheet::general_page(&filesheet::rows(&facts), &shown, None, None);
         let over = sheet_over(info);
-        let sheet = filesheet::sheet(page, height, &filesheet::sheet_tabs(over), |tab| {
-            match (tab, &info.launcher) {
-                (filesheet::Tab::Shortcut, Some(l)) => {
-                    filesheet::shortcut_page(&shortcut_facts(&info.name, l), None)
-                }
-                (filesheet::Tab::WebDocument, Some(l)) => filesheet::web_page(
-                    &filesheet::WebFacts {
-                        name: info.name.clone(),
-                        url: l.target.clone(),
-                    },
-                    None,
-                ),
-                _ => filesheet::summary_page(info.summary.as_ref()),
+        // Explorer's sheet alone hashes a file, so the compositor's has no Checksums tab.
+        let mut tabs = filesheet::sheet_tabs(over);
+        tabs.retain(|t| *t != filesheet::Tab::Checksums);
+        let sheet = filesheet::sheet(page, height, &tabs, |tab| match (tab, &info.launcher) {
+            (filesheet::Tab::Shortcut, Some(l)) => {
+                filesheet::shortcut_page(&shortcut_facts(&info.name, l), None)
             }
+            (filesheet::Tab::WebDocument, Some(l)) => filesheet::web_page(
+                &filesheet::WebFacts {
+                    name: info.name.clone(),
+                    url: l.target.clone(),
+                },
+                None,
+            ),
+            _ => filesheet::summary_page(info.summary.as_ref()),
         });
         let base = SheetBase {
             path: info.path.clone(),

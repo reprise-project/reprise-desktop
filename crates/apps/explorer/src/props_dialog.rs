@@ -117,6 +117,7 @@ pub struct Props {
     pub summary: Option<[String; 6]>,
     pub own_icon: Option<String>,
     pub icon_chosen: Option<Option<String>>,
+    pub(crate) checksums: crate::checksums::Checksums,
 }
 
 pub fn bin_facts(info: &FileInfo, t: Option<&Trashed>, is_12h: bool) -> filesheet::BinFacts {

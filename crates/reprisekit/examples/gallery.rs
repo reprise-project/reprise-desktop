@@ -8,6 +8,8 @@
 //! only a message box, a property sheet, window controls, panes and the shell
 //! view's icon modes in each look at that text size, About's system view and the caption tabs.
 
+#[path = "gallery_checksums/mod.rs"]
+mod gallery_checksums;
 #[path = "gallery_doctabs/mod.rs"]
 mod gallery_doctabs;
 #[path = "gallery_keys/mod.rs"]
@@ -108,6 +110,10 @@ fn main() {
         write_preview(
             &gallery_rename::render(n.max(1)),
             &format!("reprisekit-gallery-rename@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_checksums::render(n.max(1)),
+            &format!("reprisekit-gallery-checksums@{}.png", n.max(1)),
         );
         write_preview(
             &render_copy_progress(true, n.max(1)),
@@ -283,6 +289,10 @@ fn main() {
     write_preview(
         &gallery_rename::render(1),
         "reprisekit-gallery-rename@1.png",
+    );
+    write_preview(
+        &gallery_checksums::render(1),
+        "reprisekit-gallery-checksums@1.png",
     );
     write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
     if with_blue {
