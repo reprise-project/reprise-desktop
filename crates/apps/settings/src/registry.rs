@@ -24,9 +24,9 @@ pub struct Sources<'a> {
 }
 
 /// Page `p` for area `a` before any value is pushed in. The Appearance,
-/// Display and Tablet pages depend on what they show; the host rebuilds
+/// Display, Tablet and Power pages depend on what they show; the host rebuilds
 /// those ([`crate::appearancepage::follow`], [`crate::displaypage::refresh`],
-/// `tabletpage::page`).
+/// `tabletpage::page`, `chargehost`).
 pub fn build(p: Page, src: &Sources, a: Area) -> Form {
     match p {
         Page::Appearance => crate::appearancepage::page(&Settings::default(), a),
@@ -54,7 +54,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::Accessibility => pages::accessibility(a),
         Page::Vision => crate::visionpage::page(a),
         Page::Sounds => pages::sounds(a, src.sound_themes),
-        Page::Power => pages::power(a),
+        Page::Power => pages::power(a, None),
         Page::Startup => pages::startup(a),
         Page::DefaultPrograms => crate::defaultspage::page(a),
         Page::Advanced => pages::advanced(a),

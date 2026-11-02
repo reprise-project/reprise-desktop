@@ -30,6 +30,10 @@ impl SettingsApp {
                 if p == Page::Tablet.index() {
                     return self.tablet_changed(id);
                 }
+                if id == pages::CHARGE_LIMIT {
+                    self.charge_toggled();
+                    return Reply::redraw();
+                }
                 // Only the control just worked is read back: reading all would write clamped values for keys the control cannot show.
                 let from = self.want.interface.clone();
                 pages::read_one(&self.sheet, id, &mut self.want);
