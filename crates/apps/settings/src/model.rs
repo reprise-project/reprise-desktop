@@ -116,6 +116,9 @@ pub struct Settings {
     pub wallpaper_water: String,
     /// `[drives] on_insert`: one of [`DRIVE_INSERTS`]' values.
     pub drive_insert: String,
+    /// `[wallpaper] desktops`: entry n is desktop n's own picture, spelled as `wallpaper` is;
+    /// empty for `wallpaper`.
+    pub wallpaper_desktops: Vec<String>,
     /// `[wallpaper] slideshow`: the folder whose pictures take turns;
     /// empty shows `wallpaper` alone.
     pub slideshow: String,
@@ -460,6 +463,7 @@ impl Settings {
             ),
             wallpaper_water: c.wallpaper.water.name().into(),
             drive_insert: repriseconf::DRIVES_ON_INSERT.into(),
+            wallpaper_desktops: Vec::new(),
             slideshow: String::new(),
             slideshow_interval: c.wallpaper.interval.into(),
             slideshow_shuffle: c.wallpaper.shuffle,

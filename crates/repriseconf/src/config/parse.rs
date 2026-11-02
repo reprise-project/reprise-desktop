@@ -502,16 +502,28 @@ impl Config {
                 cfg.wallpaper.lock_screen = v;
             }
             image_set = w.image.is_some();
-            cfg.wallpaper.image = match w.image {
-                Some(s) => match reprisekit::wallpapers::Builtin::from_uri(&s) {
-                    Some(b) => Some(builtin_path(
-                        b.map_err(|e| format!("wallpaper.image {e}"))?,
-                        &cfg.glass,
-                    )),
-                    None => wallpaper_image(&s, std::env::var_os("HOME").as_deref())?,
-                },
-                None => None,
+            let picture = |s: &str| match reprisekit::wallpapers::Builtin::from_uri(s) {
+                Some(b) => Ok(Some(builtin_path(
+                    b.map_err(|e| format!("wallpaper.image {e}"))?,
+                    &cfg.glass,
+                ))),
+                None => wallpaper_image(s, std::env::var_os("HOME").as_deref()),
             };
+            cfg.wallpaper.image = w.image.as_deref().map(picture).transpose()?.flatten();
+            if let Some(list) = w.desktops {
+                if list.len() > WORKSPACES_MAX {
+                    return Err(format!(
+                        "wallpaper.desktops has {} entries, more than {WORKSPACES_MAX} desktops",
+                        list.len()
+                    ));
+                }
+                cfg.wallpaper.desktops = list
+                    .iter()
+                    .map(|s| {
+                        picture(s).map_err(|e| e.replace("wallpaper.image", "wallpaper.desktops"))
+                    })
+                    .collect::<Result<_, _>>()?;
+            }
             if let Some(p) = w.position {
                 cfg.wallpaper.position =
                     reprisekit::wallpaper::Position::parse(&p).ok_or_else(|| {

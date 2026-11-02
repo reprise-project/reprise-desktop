@@ -61,6 +61,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `slideshow` | a folder whose pictures take turns, fading into each other | none |
 | `interval` | minutes per picture, 1 to 1440 | 30 |
 | `shuffle` | random order instead of by name | `false` |
+| `desktops` | each virtual desktop's own picture, spelled as `image` is: entry 1 is desktop 1; `""` shows the picture above | none |
 | `lock_screen` | the picture behind the lock dialog too | off under Classic, on under Blue and Glass |
 | `water` | `off`, `calm`, `lively`, `rain`, `ink`, `glow`, `sparks` or `neon` | `off` |
 | `water_rate` | `refresh` (each screen's refresh rate) or 30 to 240 times a second | `refresh` |
@@ -96,6 +97,13 @@ about 30 frames a second, each running the steps since the last, so its
 ripples keep their speed; a wake, click or moving window brings back a frame
 per step for two seconds. The desktop menu's Next desktop background skips the
 slideshow ahead.
+
+With `desktops`, a desktop with its own picture shows it in place of `image`
+or the slideshow, and switching desktops fades from one picture to the next
+over `[workspaces] animation_ms` (a quarter second with no animation). Only
+the desktop on screen holds its picture: the next one is decoded or drawn when
+the switch happens, so a desktop shows the picture before for that long.
+`position` and `water` apply to every desktop.
 
 `ink`, `glow`, `sparks` and `neon` swap the ripples for a fluid that the
 pointer and fingers stir. Ink is soft coloured dye with a glow; it alternates
