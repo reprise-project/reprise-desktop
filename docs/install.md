@@ -71,6 +71,9 @@ URL, so download it first and install the local file:
   `fluent-langneg`, `unic-langid`), built in; they need no runtime library
 - Text fields find grapheme clusters with the `unicode-segmentation` crate,
   built in; it needs no runtime library
+- Character Map names characters and groups them by block with the
+  `unicode_names2` and `unicode-blocks` crates, built in; they need no runtime
+  library
 
 ### To run
 

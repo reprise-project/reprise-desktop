@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Character Map
+Comment=Selects special characters and copies them to your document.
+Exec=reprise-charmap
+Icon=accessories-character-map
+Categories=Utility;
+StartupWMClass=reprise.charmap
+Terminal=false
