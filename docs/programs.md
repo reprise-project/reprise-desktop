@@ -118,6 +118,10 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 - **Paste:** control characters other than tab and line ends are dropped
   from a paste. A paste holding a line end into a program that has not
   turned on bracketed paste asks first, showing its first lines.
+- **Drop:** files dropped on the window type their paths into the open tab,
+  quoted for the shell where needed, and web links their address, each
+  followed by a space; dropped text types as it came. A drop goes in as a
+  paste and brings the window to the front.
 - **Options** (Settings): the shell, cursor shape and blinking, the
   multi-line paste question, scrollback lines (10000 by default, at most
   100000) and where tabs go on General; the font, size in pixels,

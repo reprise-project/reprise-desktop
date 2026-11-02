@@ -32,15 +32,15 @@ use smithay_client_toolkit::{
 use wayland_client::{Connection, QueueHandle, protocol::wl_output};
 
 impl Host {
-    /// Ask for a token on the last input for the keyboard's window, which `new_token` presents
-    /// for window `id`.
+    /// Ask for a token on the last input for the keyboard's window, else for window `id` (a drop
+    /// target the compositor trusts for a moment), which `new_token` presents for window `id`.
     pub(crate) fn raise(&self, id: WinId) {
         let (Some(activation), Some(seat)) = (&self.activation, &self.seat) else {
             return;
         };
-        let surface = self
-            .focus
-            .and_then(|f| self.slots.iter().find(|s| s.id == f))
+        let slot = |w: WinId| self.slots.iter().find(|s| s.id == w);
+        let surface = (self.focus.and_then(slot))
+            .or_else(|| slot(id))
             .map(|s| s.window.wl_surface().clone());
         activation.request_token(
             &self.qh,
