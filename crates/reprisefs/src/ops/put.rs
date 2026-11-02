@@ -147,7 +147,7 @@ fn copy_numbered(src: &Path, dir: &Path, name: &OsStr, stop: &AtomicBool) -> io:
 }
 
 /// `renameat2(a, b, flags)`.
-fn rename2(a: &Path, b: &Path, flags: libc::c_uint) -> io::Result<()> {
+pub(crate) fn rename2(a: &Path, b: &Path, flags: libc::c_uint) -> io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     let (Ok(a), Ok(b)) = (
         std::ffi::CString::new(a.as_os_str().as_bytes()),
@@ -177,7 +177,7 @@ fn rename2(a: &Path, b: &Path, flags: libc::c_uint) -> io::Result<()> {
 }
 
 /// Whether an error says the file system has no `renameat2` flags.
-fn unsupported(e: &io::Error) -> bool {
+pub(crate) fn unsupported(e: &io::Error) -> bool {
     matches!(e.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS))
 }
 

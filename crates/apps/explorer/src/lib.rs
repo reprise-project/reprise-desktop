@@ -284,8 +284,8 @@ pub struct Explorer {
     pub(crate) removing: Option<removing::Removing>,
     pub(crate) remove_queue: std::collections::VecDeque<removing::PendingRemoval>,
     pub(crate) extracting: Option<extracting::Extracting>,
-    /// Extractions asked for while one runs, oldest first.
-    pub(crate) extract_queue: std::collections::VecDeque<Vec<reprisefs::extract::Archive>>,
+    /// Extractions and compressions asked for while one runs, oldest first.
+    pub(crate) extract_queue: std::collections::VecDeque<extracting::Batch>,
     /// The whole percent and paused state last put on the task button.
     pub(crate) task_progress: Option<(u32, bool)>,
     /// While a replace prompt is up: the batches whose prompts come next, and
@@ -683,6 +683,7 @@ impl Explorer {
             can_forward: self.history.can_forward(),
             extract: None,
             local_paths: self.selected_local().is_some(),
+            compress: None,
         }
     }
 

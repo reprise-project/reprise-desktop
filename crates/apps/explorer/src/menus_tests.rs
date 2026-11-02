@@ -365,6 +365,38 @@ fn an_archives_menu_extracts_here_or_into_its_folder() {
 }
 
 #[test]
+fn compress_to_names_its_zip_above_send_to_on_files_and_folders() {
+    let rows = |m: &Menu| {
+        (0..m.items().len())
+            .map(|i| label(m.items(), i).to_string())
+            .collect::<Vec<_>>()
+    };
+    let plain = item_menu(&MenuState::default(), ItemKind::File, false, &[], &[]);
+    assert!(!rows(&plain).iter().any(|r| r.starts_with("Compress")));
+    let s = MenuState {
+        extract: Some("pack/".into()),
+        compress: Some("R&D.zip".into()),
+        ..MenuState::default()
+    };
+    for kind in [ItemKind::File, ItemKind::Folder] {
+        let m = item_menu(&s, kind, false, &[], &[]);
+        let at = rows(&m)
+            .iter()
+            .position(|r| r == "Compress to 'R&D.zip'")
+            .expect("Compress to");
+        assert_eq!(m.command(&[at]), Command::Compress);
+        assert_eq!(label(m.items(), at + 1), "Send To", "{kind:?}");
+    }
+    let m = item_menu(&s, ItemKind::File, false, &[], &[]);
+    let at = rows(&m).iter().position(|r| r == "Extract to pack/");
+    assert_eq!(
+        at.map(|i| label(m.items(), i + 1)),
+        Some("Compress to 'R&D.zip'"),
+        "under Extract"
+    );
+}
+
+#[test]
 fn a_launcher_has_paste_under_copy_and_no_open_with() {
     let s = MenuState {
         selection: 1,

@@ -77,8 +77,8 @@ pub struct Archive {
 }
 
 #[derive(Debug)]
-pub enum ExtractEvent {
-    /// Archive `index` is out, into `into`.
+pub enum ArchiveEvent {
+    /// Archive `index` is out, into `into`; a compression's zip landed at `into`.
     Landed {
         index: usize,
         into: PathBuf,
@@ -91,15 +91,16 @@ pub enum ExtractEvent {
     Finished,
 }
 
-pub struct ExtractJob {
-    events: Receiver<ExtractEvent>,
+/// An extraction or a compression on its thread.
+pub struct ArchiveJob {
+    events: Receiver<ArchiveEvent>,
     meter: Arc<Meter>,
     finished: bool,
 }
 
 /// Why an archive did not come out.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Failure {
+pub(crate) enum Failure {
     Climbs(String),
     Tool(String),
     Cancelled,
@@ -117,27 +118,40 @@ impl Failure {
     }
 }
 
-impl ExtractJob {
+impl ArchiveJob {
     /// Lists every archive first (the totals, and a `..` entry refuses its archive), then extracts
     /// each in order on a thread. A failed archive holds the job for a [`Decision`].
-    pub fn start(items: Vec<Archive>, wake: impl Fn() + Send + 'static) -> ExtractJob {
+    pub fn extract(items: Vec<Archive>, wake: impl Fn() + Send + 'static) -> ArchiveJob {
         let meter = Arc::new(Meter::default());
         meter.ask_on_failure();
+        ArchiveJob::on_thread("reprisefs-extract", meter, wake, move |m, send| {
+            run(&items, m, send)
+        })
+    }
+
+    /// Runs `body` on a thread named `name`, counting into `meter`; each event it sends wakes
+    /// the host. A send returns false once the host dropped the job.
+    pub(crate) fn on_thread(
+        name: &str,
+        meter: Arc<Meter>,
+        wake: impl Fn() + Send + 'static,
+        body: impl FnOnce(&Meter, &dyn Fn(ArchiveEvent) -> bool) + Send + 'static,
+    ) -> ArchiveJob {
         let (tx, events) = mpsc::channel();
         let m = meter.clone();
         let spawned = std::thread::Builder::new()
-            .name("reprisefs-extract".into())
+            .name(name.into())
             .spawn(move || {
-                run(&items, &m, |ev| {
+                body(&m, &|ev| {
                     let sent = tx.send(ev).is_ok();
                     wake();
                     sent
                 })
             });
         if let Err(e) = spawned {
-            log::error!("reprisefs: cannot spawn the extract thread: {e}");
+            log::error!("reprisefs: cannot spawn {name}: {e}");
         }
-        ExtractJob {
+        ArchiveJob {
             events,
             meter,
             finished: false,
@@ -148,13 +162,13 @@ impl ExtractJob {
         &self.meter
     }
 
-    pub fn poll(&mut self) -> Vec<ExtractEvent> {
+    pub fn poll(&mut self) -> Vec<ArchiveEvent> {
         let mut out = Vec::new();
         while !self.finished {
             match self.events.try_recv() {
-                Ok(ExtractEvent::Finished) | Err(TryRecvError::Disconnected) => {
+                Ok(ArchiveEvent::Finished) | Err(TryRecvError::Disconnected) => {
                     self.finished = true;
-                    out.push(ExtractEvent::Finished);
+                    out.push(ArchiveEvent::Finished);
                 }
                 Ok(ev) => out.push(ev),
                 Err(TryRecvError::Empty) => break,
@@ -168,14 +182,14 @@ impl ExtractJob {
     }
 }
 
-fn run(items: &[Archive], m: &Meter, send: impl Fn(ExtractEvent) -> bool) {
+fn run(items: &[Archive], m: &Meter, send: &dyn Fn(ArchiveEvent) -> bool) {
     let name = |a: &Archive| a.src.file_name().unwrap_or_default().to_owned();
     let mut lists: Vec<Result<u64, Failure>> = Vec::new();
     for a in items {
         m.set_current(&name(a));
         let listed = list(&a.src, m);
         if listed == Err(Failure::Cancelled) {
-            send(ExtractEvent::Finished);
+            send(ArchiveEvent::Finished);
             return;
         }
         if let Ok(n) = listed {
@@ -204,14 +218,14 @@ fn run(items: &[Archive], m: &Meter, send: impl Fn(ExtractEvent) -> bool) {
             Err(e) => Err(e.clone()),
         };
         let ev = match r {
-            Ok(into) => ExtractEvent::Landed { index, into },
+            Ok(into) => ArchiveEvent::Landed { index, into },
             Err(_) if m.cancelled() => break,
-            Err(e) => ExtractEvent::Failed {
+            Err(e) => ArchiveEvent::Failed {
                 index,
                 text: e.text(&name(a).to_string_lossy()),
             },
         };
-        let failed = matches!(ev, ExtractEvent::Failed { .. });
+        let failed = matches!(ev, ArchiveEvent::Failed { .. });
         if failed {
             m.ask();
         }
@@ -237,7 +251,7 @@ fn run(items: &[Archive], m: &Meter, send: impl Fn(ExtractEvent) -> bool) {
         }
         index += 1;
     }
-    send(ExtractEvent::Finished);
+    send(ArchiveEvent::Finished);
 }
 
 /// How many entries `archive` lists, refusing one that climbs out.
@@ -248,7 +262,7 @@ fn list(archive: &Path, m: &Meter) -> Result<u64, Failure> {
 /// Counts the lines `argv` prints, draining its stderr on a thread so a chatty listing cannot
 /// fill that pipe and stall.
 fn count(argv: &[OsString], m: &Meter) -> Result<u64, Failure> {
-    let mut child = spawn(argv, true)?;
+    let mut child = spawn(argv, true, None)?;
     let out = child.stdout.take().ok_or_else(no_pipe)?;
     let mut err = child.stderr.take().ok_or_else(no_pipe)?;
     let drain = std::thread::spawn(move || tail(&mut err, STDERR_TAIL));
@@ -269,7 +283,7 @@ fn count(argv: &[OsString], m: &Meter) -> Result<u64, Failure> {
     }
     match status? {
         true => Ok(n),
-        false => Err(Failure::Tool(said(&stderr))),
+        false => Err(Failure::Tool(said(&stderr, UNREAD))),
     }
 }
 
@@ -293,7 +307,7 @@ fn extract(a: &Archive, m: &Meter, before: u64) -> Result<PathBuf, Failure> {
         e
     };
     let argv = extract_argv(&a.src, &into, a.here);
-    let mut child = spawn(&argv, false).map_err(undo)?;
+    let mut child = spawn(&argv, false, None).map_err(undo)?;
     let err = child.stderr.take().ok_or_else(no_pipe).map_err(undo)?;
     let mut n = 0;
     let mut last = String::new();
@@ -313,7 +327,7 @@ fn extract(a: &Archive, m: &Meter, before: u64) -> Result<PathBuf, Failure> {
     });
     let ok = finish(child, &read).map_err(undo)?;
     if !ok {
-        return Err(undo(Failure::Tool(said(last.as_bytes()))));
+        return Err(undo(Failure::Tool(said(last.as_bytes(), UNREAD))));
     }
     Ok(into)
 }
@@ -331,15 +345,15 @@ fn make_folder(dir: &Path, name: &OsStr) -> Result<PathBuf, Failure> {
     }
 }
 
-fn no_pipe() -> Failure {
+pub(crate) fn no_pipe() -> Failure {
     Failure::Tool("bsdtar gave no output".into())
 }
 
 /// The bytes of a tool's stderr kept for [`said`], which reads only its last line.
-const STDERR_TAIL: usize = 4096;
+pub(crate) const STDERR_TAIL: usize = 4096;
 
 /// Reads `r` to its end, keeping only its last `cap` bytes.
-fn tail(r: &mut impl Read, cap: usize) -> Vec<u8> {
+pub(crate) fn tail(r: &mut impl Read, cap: usize) -> Vec<u8> {
     let mut kept = Vec::new();
     let mut buf = [0; 8192];
     loop {
@@ -358,24 +372,37 @@ fn tail(r: &mut impl Read, cap: usize) -> Vec<u8> {
     kept
 }
 
-/// bsdtar's message without its own name, or a stand-in when it said nothing.
-fn said(stderr: &[u8]) -> String {
+const UNREAD: &str = "bsdtar could not read it.";
+
+/// The line bsdtar ends on after an error it went past, which says nothing of the error.
+pub(crate) const DELAYED: &str = "Error exit delayed from previous errors";
+
+/// bsdtar's message without its own name, or `fallback` when it said nothing.
+pub(crate) fn said(stderr: &[u8], fallback: &str) -> String {
     let text = String::from_utf8_lossy(stderr);
     let line = text
         .lines()
         .rev()
-        .find(|l| !l.trim().is_empty())
+        .find(|l| !l.trim().is_empty() && !l.contains(DELAYED))
         .unwrap_or("");
     let line = line.strip_prefix("bsdtar: ").unwrap_or(line).trim();
     match line.is_empty() {
-        true => "bsdtar could not read it.".into(),
+        true => fallback.into(),
         false => line.to_string(),
     }
 }
 
-/// Starts `argv` with stderr piped, and stdout too when `stdout`.
-fn spawn(argv: &[OsString], stdout: bool) -> Result<Child, Failure> {
+/// Starts `argv` with stderr piped, and stdout too when `stdout`; `path` replaces the `PATH` it
+/// is looked up in.
+pub(crate) fn spawn(
+    argv: &[OsString],
+    stdout: bool,
+    path: Option<&OsStr>,
+) -> Result<Child, Failure> {
     let mut cmd = Command::new(&argv[0]);
+    if let Some(path) = path {
+        cmd.env("PATH", path);
+    }
     cmd.args(&argv[1..])
         .stdin(Stdio::null())
         .stderr(Stdio::piped());
@@ -392,7 +419,7 @@ fn spawn(argv: &[OsString], stdout: bool) -> Result<Child, Failure> {
 
 /// Feeds each line of `out` to `each` until it ends, `each` says stop or `m` is cancelled
 /// (`Ok(false)`). The child is stopped while `m` is paused.
-fn lines(
+pub(crate) fn lines(
     child: &mut Child,
     mut out: impl Read + AsRawFd,
     m: &Meter,
@@ -460,7 +487,7 @@ fn lines(
 
 /// Reaps `child` after [`lines`] read it to `read`: whether it exited cleanly. A child cut
 /// short is killed first and counts as cancelled.
-fn finish(mut child: Child, read: &std::io::Result<bool>) -> Result<bool, Failure> {
+pub(crate) fn finish(mut child: Child, read: &std::io::Result<bool>) -> Result<bool, Failure> {
     if !matches!(read, Ok(true)) {
         let _ = child.kill();
         let _ = child.wait();
@@ -486,9 +513,9 @@ mod tests {
         assert!(st.success(), "bsdtar {args:?}");
     }
 
-    fn run_job(items: Vec<Archive>, pick: Decision) -> Vec<ExtractEvent> {
+    fn run_job(items: Vec<Archive>, pick: Decision) -> Vec<ArchiveEvent> {
         let (wtx, woke) = mpsc::channel();
-        let mut job = ExtractJob::start(items, move || {
+        let mut job = ArchiveJob::extract(items, move || {
             let _ = wtx.send(());
         });
         let mut all = Vec::new();
@@ -496,7 +523,7 @@ mod tests {
             woke.recv_timeout(std::time::Duration::from_secs(30))
                 .expect("a wake");
             for ev in job.poll() {
-                if matches!(ev, ExtractEvent::Failed { .. }) {
+                if matches!(ev, ArchiveEvent::Failed { .. }) {
                     job.meter().decide(pick);
                 }
                 all.push(ev);
@@ -605,7 +632,7 @@ mod tests {
             Decision::Abort,
         );
         assert!(
-            matches!(&got[..], [ExtractEvent::Failed { index: 0, text }, ExtractEvent::Finished]
+            matches!(&got[..], [ArchiveEvent::Failed { index: 0, text }, ArchiveEvent::Finished]
                 if text.contains("../evil")),
             "{got:?}"
         );
@@ -643,9 +670,9 @@ mod tests {
             matches!(
                 &got[..],
                 [
-                    ExtractEvent::Failed { index: 0, .. },
-                    ExtractEvent::Landed { index: 1, into },
-                    ExtractEvent::Finished,
+                    ArchiveEvent::Failed { index: 0, .. },
+                    ArchiveEvent::Landed { index: 1, into },
+                    ArchiveEvent::Finished,
                 ] if *into == d.join("pack (2)")
             ),
             "{got:?}"
@@ -687,8 +714,8 @@ mod tests {
             matches!(
                 &got[..],
                 [
-                    ExtractEvent::Failed { index: 0, .. },
-                    ExtractEvent::Finished
+                    ArchiveEvent::Failed { index: 0, .. },
+                    ArchiveEvent::Finished
                 ]
             ),
             "{got:?}"
@@ -717,7 +744,7 @@ mod tests {
             Decision::Abort,
         );
         assert!(
-            matches!(&got[..], [ExtractEvent::Landed { into, .. }, ExtractEvent::Finished] if into == d),
+            matches!(&got[..], [ArchiveEvent::Landed { into, .. }, ArchiveEvent::Finished] if into == d),
             "{got:?}"
         );
         assert_eq!(std::fs::read_to_string(d.join("a.txt")).unwrap(), "old");

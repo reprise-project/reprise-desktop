@@ -126,21 +126,6 @@ pub fn plan_paste(cut: bool, shortcut: bool, src: &Path, dir: &Path) -> Option<D
     (src.parent() != Some(dir)).then_some(DropOp::Move)
 }
 
-/// Display names already in `dir`, for "Copy of" and "Shortcut to" numbering; an unreadable folder
-/// answers nothing since `unique_path` still refuses to clobber.
-fn existing_names(dir: &Path) -> Vec<String> {
-    match std::fs::read_dir(dir) {
-        Ok(rd) => rd
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect(),
-        Err(e) => {
-            log::warn!("explorer: cannot list {}: {e}", dir.display());
-            Vec::new()
-        }
-    }
-}
-
 pub(crate) fn file_label(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -1037,7 +1022,7 @@ impl Explorer {
             .collect()
     }
 
-    /// A read-only place sends nothing; the zip row writes beside the zipped file. Copies and
+    /// A read-only place sends nothing; the zip row runs [`Explorer::compress`]. Copies and
     /// desktop shortcuts go through [`Explorer::put_all`].
     pub fn send_to(&mut self, i: usize, ctx: &mut Ctx) -> Reply {
         if self.place.read_only() {
@@ -1051,29 +1036,7 @@ impl Explorer {
             return Reply::none();
         }
         let (dir, op) = match dest {
-            // zip is bsdtar's work: one process for the whole selection, named after the focused
-            // item.
-            SendTo::Zip => {
-                let mut paths = paths;
-                let focus = self.sv.selection.focus.and_then(|i| self.items.get(i));
-                if let Some(at) = focus.and_then(|f| paths.iter().position(|p| *p == f.path)) {
-                    paths[..=at].rotate_right(1);
-                }
-                let dir = paths[0].parent().map(Path::to_path_buf);
-                let work = move |_: &Gate| dir.as_deref().map(existing_names).unwrap_or_default();
-                return self.act(
-                    ctx,
-                    Action::reads("Send To"),
-                    work,
-                    move |ex, existing, ctx| {
-                        let spawn = sendto::zip_argv(&paths, &existing).into_iter().collect();
-                        Reply {
-                            spawn,
-                            ..ex.refresh(ctx)
-                        }
-                    },
-                );
-            }
+            SendTo::Zip => return self.compress(ctx),
             SendTo::Mail => {
                 return Reply {
                     spawn: vec![sendto::mail_argv(&paths)],
