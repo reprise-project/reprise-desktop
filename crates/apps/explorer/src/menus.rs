@@ -43,6 +43,9 @@ pub struct MenuState {
     pub compress: Option<String>,
     /// The selection is one disk image: the item menu's default row mounts it.
     pub disk_image: bool,
+    /// A lone folder under the item menu: whether it is pinned (Unpin from Places) or not (Pin
+    /// to Places).
+    pub pinned: Option<bool>,
 }
 
 impl Default for MenuState {
@@ -64,6 +67,7 @@ impl Default for MenuState {
             local_paths: false,
             compress: None,
             disk_image: false,
+            pinned: None,
         }
     }
 }
@@ -412,7 +416,7 @@ impl ItemKind {
 
 /// The right-click menu of an entry in the view. A script has Run and Run in terminal in place
 /// of Open. "Run as..." sits greyed under them for every file. A folder has Open in Terminal under
-/// Explore and Paste under Copy, into it. A launcher has
+/// Explore, Pin to Places (or Unpin, `state.pinned`) and Paste under Copy, into it. A launcher has
 /// no Open With and has Paste under Copy, opening the clipboard's files in its
 /// program. `eject` adds Eject, in a group above Cut and Copy, for a removable drive.
 pub fn item_menu(
@@ -454,6 +458,11 @@ pub fn item_menu(
         m.row(row("E&xplore", true), Command::Explore);
         if writable {
             m.row(row(TERMINAL, true), Command::OpenTerminal);
+        }
+        match state.pinned {
+            Some(false) => m.row(row("P&in to Places", true), Command::Pin(true)),
+            Some(true) => m.row(row("Unp&in from Places", true), Command::Pin(false)),
+            None => {}
         }
         m.row(row("Sharing and Security...", false), Command::Nothing);
     } else {

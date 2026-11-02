@@ -136,6 +136,9 @@ impl Notepad {
             | FileEvent::FilterChanged(_)
             | FileEvent::Wildcard { .. }
             | FileEvent::NeedPlace(_)
+            | FileEvent::PinEntry { .. }
+            | FileEvent::UnpinPlace(_)
+            | FileEvent::ShiftPlace { .. }
             | FileEvent::CreateFolder(_)
             | FileEvent::Refresh
             | FileEvent::Rename { .. }
@@ -231,6 +234,9 @@ impl Notepad {
             | FileEvent::FilterChanged(_)
             | FileEvent::Wildcard { .. }
             | FileEvent::NeedPlace(_)
+            | FileEvent::PinEntry { .. }
+            | FileEvent::UnpinPlace(_)
+            | FileEvent::ShiftPlace { .. }
             | FileEvent::CreateFolder(_)
             | FileEvent::Refresh
             | FileEvent::Rename { .. }

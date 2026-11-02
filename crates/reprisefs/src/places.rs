@@ -167,8 +167,11 @@ pub fn dialog_label(dir: &Path) -> String {
 pub struct DialogPlace {
     pub label: String,
     pub icon: &'static str,
-    /// None without a home directory: drawn greyed and never entered.
+    /// None without a home directory, or for a pinned folder that is not there: drawn greyed
+    /// and never entered.
     pub dir: Option<PathBuf>,
+    /// The folder a pinned tile stands for, there or not ([`crate::pins`]).
+    pub pin: Option<PathBuf>,
 }
 
 /// "<user>'s Home", or "Home" without `$USER`.
@@ -190,6 +193,7 @@ pub fn dialog_places(recent: bool) -> Vec<DialogPlace> {
         label: label.to_string(),
         icon,
         dir,
+        pin: None,
     };
     vec![
         place(
@@ -215,6 +219,18 @@ pub fn dialog_places(recent: bool) -> Vec<DialogPlace> {
         ),
         place("Computer", "computer", Some(PathBuf::from("/"))),
     ]
+}
+
+/// [`dialog_places`] and then a tile for each of `pins`, greyed where its folder is not there.
+pub fn dialog_places_with(recent: bool, pins: &[crate::pins::Pin]) -> Vec<DialogPlace> {
+    let mut places = dialog_places(recent);
+    places.extend(pins.iter().map(|p| DialogPlace {
+        label: p.label.clone(),
+        icon: "folder",
+        dir: p.present.then(|| p.path.clone()),
+        pin: Some(p.path.clone()),
+    }));
+    places
 }
 
 /// Writable mount points under `/run/media/<user>` and `/media`, sorted by name.

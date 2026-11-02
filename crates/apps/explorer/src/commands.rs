@@ -19,6 +19,8 @@ pub enum Command {
     /// The terminal in the selected folder, or in the place shown (`OpenTerminalHere`).
     OpenTerminal,
     OpenTerminalHere,
+    /// Pin to Places (true) or Unpin from Places on the selected folder.
+    Pin(bool),
     Eject,
     MountImage,
     Cut,
@@ -318,6 +320,13 @@ impl Explorer {
                 Some(dir) => self.open_terminal(&dir),
                 None => Reply::none(),
             },
+            Command::Pin(pin) => {
+                if let Some(dir) = self.selected_dir().and_then(|p| p.path()) {
+                    let file = reprisefs::pins::bookmarks_file();
+                    reprisefs::pins::set_pinned(&file, &dir, pin);
+                }
+                Reply::none()
+            }
             Command::OpenTerminalHere => match self.place.path() {
                 Some(dir) if !self.place.read_only() => self.open_terminal(&dir),
                 _ => Reply::none(),

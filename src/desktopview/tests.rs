@@ -1231,3 +1231,25 @@ fn open_in_terminal_starts_the_terminal_in_the_folder_icon_or_the_desktop() {
     opened(&desk);
     std::fs::remove_dir_all(&home).unwrap();
 }
+
+#[test]
+fn a_lone_folder_pins_or_unpins_from_its_menu() {
+    use DesktopCommand::*;
+    for (pinned, label, cmd) in [
+        (false, "Pin to Places", Pin(true)),
+        (true, "Unpin from Places", Pin(false)),
+    ] {
+        let (items, commands) = icon_menu(IconMenu {
+            is_dir: true,
+            pinned: Some(pinned),
+            ..Default::default()
+        });
+        assert_eq!(commands[3], Some(cmd));
+        assert!(matches!(&items[3], MenuItem::Entry { label: l, .. } if l == label));
+    }
+    let (_, commands) = icon_menu(IconMenu {
+        is_dir: true,
+        ..Default::default()
+    });
+    assert!(!commands.iter().any(|c| matches!(c, Some(Pin(_)))));
+}

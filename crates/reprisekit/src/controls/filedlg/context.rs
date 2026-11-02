@@ -1,5 +1,5 @@
-//! The list's context menu: an entry's (Select, Delete, Rename) or the background's (View, Refresh,
-//! New). Laid out with the dialog like the Views menu, so its keys need no text renderer; one
+//! The list's context menu: an entry's (Select, Pin to Places, Delete, Rename) or the
+//! background's (View, Refresh, New), and a pinned places tile's (Open, Unpin, Move Up/Down). Laid out with the dialog like the Views menu, so its keys need no text renderer; one
 //! submenu level.
 
 use super::{Event, FileDlg, Focus, Hit, views_items};
@@ -22,6 +22,10 @@ pub(super) enum Cmd {
     Refresh,
     NewFolder,
     View(Mode),
+    Pin(bool),
+    OpenPlace,
+    Unpin,
+    Shift(bool),
 }
 
 /// A row: its item, and what it does or the rows of the submenu it opens.
@@ -45,6 +49,8 @@ impl Row {
 pub(super) struct Context {
     /// The selected entries' menu, else the background's.
     on_item: bool,
+    /// A pinned places tile's menu, which wins over `on_item`.
+    pub(super) place: Option<usize>,
     /// Where it was asked for: its top-left corner, slid inside the client.
     pub(super) at: (i32, i32),
     /// Where a host showing the levels on popups put each ([`super::Popped`]).
@@ -84,23 +90,60 @@ fn label(key: &str) -> String {
         "view" => tr!("filedlg-menu-view"),
         "refresh" => tr!("filedlg-menu-refresh"),
         "new" => tr!("filedlg-menu-new"),
+        "open" => tr!("filedlg-menu-open"),
+        "pin" => tr!("filedlg-menu-pin"),
+        "unpin" => tr!("filedlg-menu-unpin"),
+        "up" => tr!("filedlg-menu-move-up"),
+        "down" => tr!("filedlg-menu-move-down"),
         _ => tr!("filedlg-menu-new-folder"),
     }
 }
 
 impl FileDlg {
-    fn context_rows(&self, on_item: bool) -> Vec<Row> {
-        if on_item {
-            let n = self.shell.selection.len();
+    fn context_rows(&self, c: &Context) -> Vec<Row> {
+        if let Some(i) = c.place {
+            let pinned = |i: usize| self.places.places.get(i).is_some_and(|p| p.pinned);
+            let open = self.places.places.get(i).is_some_and(|p| p.enabled);
             return vec![
+                Row::Cmd(
+                    MenuItem::item(&label("open")).bold(true).enabled(open),
+                    Cmd::OpenPlace,
+                ),
+                Row::Separator,
+                Row::Cmd(MenuItem::item(&label("unpin")), Cmd::Unpin),
+                Row::Separator,
+                Row::Cmd(
+                    MenuItem::item(&label("up")).enabled(i > 0 && pinned(i - 1)),
+                    Cmd::Shift(true),
+                ),
+                Row::Cmd(
+                    MenuItem::item(&label("down")).enabled(pinned(i + 1)),
+                    Cmd::Shift(false),
+                ),
+            ];
+        }
+        if c.on_item {
+            let n = self.shell.selection.len();
+            let mut rows = vec![
                 Row::Cmd(MenuItem::item(&label("select")).bold(true), Cmd::Select),
                 Row::Separator,
+            ];
+            if let Some(pinned) = self.pinnable() {
+                let (key, cmd) = if pinned {
+                    ("unpin", Cmd::Pin(false))
+                } else {
+                    ("pin", Cmd::Pin(true))
+                };
+                rows.extend([Row::Cmd(MenuItem::item(&label(key)), cmd), Row::Separator]);
+            }
+            rows.extend([
                 Row::Cmd(MenuItem::item(&label("delete")).enabled(n > 0), Cmd::Delete),
                 Row::Cmd(
                     MenuItem::item(&label("rename")).enabled(n == 1),
                     Cmd::Rename,
                 ),
-            ];
+            ]);
+            return rows;
         }
         let views = views_items()
             .into_iter()
@@ -125,7 +168,7 @@ impl FileDlg {
 
     /// Each open level's rows, root first.
     pub(super) fn context_items(&self, c: &Context) -> Vec<(Vec<MenuItem>, Vec<Option<Cmd>>)> {
-        let rows = self.context_rows(c.on_item);
+        let rows = self.context_rows(c);
         let mut levels = vec![(
             rows.iter().map(Row::item).collect(),
             rows.iter()
@@ -144,6 +187,23 @@ impl FileDlg {
         levels
     }
 
+    /// Whether the one selected entry is a folder the menu can pin, and if so whether it is
+    /// pinned; None for a file, a shortcut or several entries.
+    fn pinnable(&self) -> Option<bool> {
+        let i = self.shell.selection.single()?;
+        let e = self.shell.entries.get(i).filter(|e| e.is_dir && !e.link)?;
+        Some(self.pinned_entries.contains(&e.name))
+    }
+
+    /// Opens pinned tile `i`'s menu with its corner at `at`.
+    pub(super) fn open_place_context(&mut self, i: usize, at: (i32, i32), keys: bool) {
+        self.open_context(false, at, keys);
+        if let Some(c) = &mut self.context {
+            c.place = Some(i);
+            c.hot[0] = if keys { Some(0) } else { None };
+        }
+    }
+
     /// Opens the entries' menu (`on_item`) or the background's with its corner at `at`.
     pub(super) fn open_context(&mut self, on_item: bool, at: (i32, i32), keys: bool) {
         self.lookin.open = None;
@@ -151,6 +211,7 @@ impl FileDlg {
         self.views_open = false;
         let mut c = Context {
             on_item,
+            place: None,
             at,
             placed: [None; 2],
             sub: None,
@@ -327,6 +388,9 @@ impl FileDlg {
         }
         if let Some(cmd) = cmds.get(row).copied().flatten() {
             self.context = None;
+            if let Some(tile) = c.place {
+                return self.run_place_cmd(tile, cmd);
+            }
             return self.run_cmd(cmd, shift);
         }
         if level != 0 || !opens_sub(items, row) {
@@ -344,6 +408,19 @@ impl FileDlg {
         Event::Redraw
     }
 
+    fn run_place_cmd(&mut self, tile: usize, cmd: Cmd) -> Event {
+        match cmd {
+            Cmd::OpenPlace => {
+                self.focus = Focus::Places;
+                self.places.selected = Some(tile);
+                Event::NeedPlace(tile)
+            }
+            Cmd::Unpin => Event::UnpinPlace(tile),
+            Cmd::Shift(up) => Event::ShiftPlace { tile, up },
+            _ => Event::None,
+        }
+    }
+
     fn run_cmd(&mut self, cmd: Cmd, shift: bool) -> Event {
         match cmd {
             Cmd::Select => {
@@ -358,6 +435,19 @@ impl FileDlg {
                 self.shell.set_mode(mode);
                 Event::Redraw
             }
+            Cmd::Pin(pin) => match self
+                .shell
+                .selection
+                .single()
+                .and_then(|i| self.shell.entries.get(i))
+            {
+                Some(e) => Event::PinEntry {
+                    name: e.name.clone(),
+                    pin,
+                },
+                None => Event::None,
+            },
+            Cmd::OpenPlace | Cmd::Unpin | Cmd::Shift(_) => Event::None,
         }
     }
 

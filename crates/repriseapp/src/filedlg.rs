@@ -8,12 +8,15 @@ use std::sync::Arc;
 
 use crate::{Event, PointerInput};
 use reprisefs::listing::{Item, Row};
+use reprisefs::pins::{Pin, Pins};
+use reprisefs::places::DialogPlace;
 use reprisekit::controls::filedlg::DlgMode;
 use reprisekit::controls::form;
 use reprisekit::raster::Rect;
 use reprisekit::selection::Mods;
 use reprisekit::text::TextRenderer;
 use reprisekit::textedit::keysym;
+use std::sync::Mutex;
 
 use crate::listicons::{ListIcons, ReadIcons};
 use crate::listjob::Job;
@@ -33,24 +36,36 @@ use reprisekit::pointer::DoubleClick;
 use reprisekit::raster::Canvas;
 use reprisekit::theme::{Metrics, TextUnits, Theme};
 
-fn dialog_places() -> Vec<reprisefs::places::DialogPlace> {
-    reprisefs::places::dialog_places(repriseconf::recent_files())
+fn dialog_places(pins: &[Pin]) -> Vec<DialogPlace> {
+    reprisefs::places::dialog_places_with(repriseconf::recent_files(), pins)
 }
 
-pub fn place_dir(i: usize) -> Option<PathBuf> {
-    dialog_places().into_iter().nth(i)?.dir
-}
-
+/// The built-in tiles, without icons or pinned folders.
 pub fn places() -> Vec<Place> {
-    dialog_places()
-        .into_iter()
-        .map(|p| Place {
+    tiles(&dialog_places(&[]), |_| None)
+}
+
+/// The tiles for `places`, each wearing the icon `icon` gives its index.
+fn tiles(places: &[DialogPlace], icon: impl Fn(usize) -> Option<Canvas>) -> Vec<Place> {
+    places
+        .iter()
+        .enumerate()
+        .map(|(i, p)| Place {
             enabled: p.dir.is_some(),
-            label: p.label,
-            icon: None,
+            label: p.label.clone(),
+            icon: icon(i),
+            pinned: p.pin.is_some(),
         })
         .collect()
 }
+
+/// How long a dialog opening waits for the pinned folders' first read; tests wait as long as it
+/// takes.
+const PINS_WAIT: std::time::Duration = if cfg!(test) {
+    std::time::Duration::from_secs(60)
+} else {
+    std::time::Duration::from_millis(100)
+};
 
 /// The toolbar's icon names in `FileDlg::set_toolbar_icons`' order (Back, Up, New Folder, Views).
 /// `view-list` may not resolve; then Views gets the drawn icon ([`viewsicon::draw16_near`]).
@@ -61,6 +76,8 @@ const TOOLBAR_PX: i32 = 16;
 #[derive(Default)]
 pub struct Icons {
     pub places: [Option<Canvas>; 6],
+    /// A pinned folder's tile icon.
+    pub pinned: Option<Canvas>,
     pub toolbar: [Option<Canvas>; 4],
     /// The Look in field's folder, grown with the text like the toolbar's.
     pub folder: Option<Canvas>,
@@ -96,10 +113,14 @@ impl Icons {
             let icon = icons.get(name, px)?;
             Some(icontheme::grown_icon(icon, px, u))
         };
-        for (icon, place) in self.places.iter_mut().zip(dialog_places()) {
+        let place_px = u.len(placesbar::ICON_PX);
+        for (icon, place) in self.places.iter_mut().zip(dialog_places(&[])) {
             if icon.is_none() {
-                *icon = get(icons, place.icon, u.len(placesbar::ICON_PX));
+                *icon = get(icons, place.icon, place_px);
             }
+        }
+        if self.pinned.is_none() {
+            self.pinned = get(icons, "folder", place_px);
         }
         let px = u.len(TOOLBAR_PX);
         for (i, (icon, name)) in self.toolbar.iter_mut().zip(TOOLBAR_ICONS).enumerate() {
@@ -122,16 +143,32 @@ impl Icons {
                 .is_some_and(|t| Arc::ptr_eq(t, &icons.theme()))
     }
 
-    pub fn places(&self) -> Vec<Place> {
-        let mut places = places();
-        for (place, icon) in places.iter_mut().zip(&self.places) {
-            place.icon = icon.clone();
-        }
-        places
+    /// The icon of each of `places`' tiles.
+    fn place_icons(&self, places: &[DialogPlace]) -> Vec<Option<Canvas>> {
+        let icon = |(i, p): (usize, &DialogPlace)| match p.pin {
+            Some(_) => self.pinned.clone(),
+            None => self.places.get(i).cloned().flatten(),
+        };
+        places.iter().enumerate().map(icon).collect()
     }
 
+    /// The built-in tiles with their icons.
+    pub fn places(&self) -> Vec<Place> {
+        self.places_for(&dialog_places(&[]))
+    }
+
+    fn places_for(&self, places: &[DialogPlace]) -> Vec<Place> {
+        let icons = self.place_icons(places);
+        tiles(places, |i| icons[i].clone())
+    }
+
+    /// The dialog with the built-in tiles.
     pub fn dialog(&self, fields: Fields) -> FileDlg {
-        let mut dlg = FileDlg::new(fields, self.places());
+        self.dialog_with(fields, &dialog_places(&[]))
+    }
+
+    fn dialog_with(&self, fields: Fields, places: &[DialogPlace]) -> FileDlg {
+        let mut dlg = FileDlg::new(fields, self.places_for(places));
         self.set_toolbar(&mut dlg);
         dlg
     }
@@ -480,6 +517,15 @@ pub struct Host {
     memory: Option<Memory>,
     /// The folder read File name's completion asked for.
     completing: crate::pathjob::PathJob,
+    /// The pinned folders, read off the loop; its wake goes through `pins_wake`, filled once the
+    /// loop's waker is known.
+    pins: Option<Pins>,
+    pins_wake: Arc<Mutex<Option<crate::Waker>>>,
+    /// The pinned folders the dialog's tiles show.
+    shown_pins: Arc<Vec<Pin>>,
+    /// The bookmarks file a test reads instead of the user's; this crate's tests without one
+    /// show no pinned folders.
+    pins_at: Option<PathBuf>,
 }
 
 /// How long the dialog waits for a listing before it goes on. Tests wait as long as it takes.
@@ -541,14 +587,121 @@ impl Host {
             w.take_changed();
         }
         self.follow_cache(repriseconf::thumbnail_cache());
-        let mut dlg = self.icons.dialog(fields);
-        let tiles = dialog_places().into_iter();
-        dlg.set_place_folders(tiles.map(|p| p.dir.map(|d| self.folders.id(&d))).collect());
+        self.start_pins();
+        let tiles = self.tiles();
+        let mut dlg = self.icons.dialog_with(fields, &tiles);
+        dlg.set_place_folders(self.place_folders(&tiles));
         self.icons_scale = 0;
         dlg.set_text(u);
         self.remembered = Remembered::parse(&kept);
         dlg.restore(self.remembered);
         dlg
+    }
+
+    /// Starts reading the pinned folders, waiting [`PINS_WAIT`] for the first read; later opens
+    /// read them again, for a drive that came or went.
+    fn start_pins(&mut self) {
+        match &self.pins {
+            Some(p) => p.refresh(),
+            None => {
+                if cfg!(test) && self.pins_at.is_none() {
+                    return;
+                }
+                let file = self.pins_file();
+                let slot = self.pins_wake.clone();
+                let p = Pins::start_at(file, move || {
+                    if let Some(w) = slot.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                        w.wake();
+                    }
+                });
+                p.wait_first(PINS_WAIT);
+                self.pins = Some(p);
+            }
+        }
+        if let Some(p) = &mut self.pins {
+            p.take_changed();
+            self.shown_pins = p.current();
+        }
+    }
+
+    fn pins_file(&self) -> PathBuf {
+        (self.pins_at.clone()).unwrap_or_else(reprisefs::pins::bookmarks_file)
+    }
+
+    fn tiles(&self) -> Vec<DialogPlace> {
+        dialog_places(&self.shown_pins)
+    }
+
+    fn place_folders(&mut self, tiles: &[DialogPlace]) -> Vec<Option<FolderId>> {
+        (tiles.iter())
+            .map(|p| p.dir.as_ref().map(|d| self.folders.id(d)))
+            .collect()
+    }
+
+    /// Shows the pinned folders anew once their read changed; true when it did.
+    fn follow_pins(&mut self, dlg: &mut FileDlg) -> bool {
+        let Some(p) = &mut self.pins else {
+            return false;
+        };
+        if !p.take_changed() {
+            return false;
+        }
+        self.shown_pins = p.current();
+        let tiles = self.tiles();
+        let folders = self.place_folders(&tiles);
+        dlg.set_places(self.icons.places_for(&tiles), folders);
+        self.mark_pinned(dlg);
+        true
+    }
+
+    /// Tells the dialog which of the shown folder's entries are pinned.
+    fn mark_pinned(&self, dlg: &mut FileDlg) {
+        let Some(dir) = self.folder.and_then(|id| self.folders.path(id)) else {
+            return;
+        };
+        let names = (dlg.entries().iter())
+            .filter(|e| e.is_dir)
+            .filter(|e| {
+                let path = self.entry_path(dir, &e.name);
+                reprisefs::pins::is_pinned(&self.shown_pins, &path)
+            })
+            .map(|e| e.name.clone())
+            .collect();
+        dlg.set_pinned_entries(names);
+    }
+
+    fn entry_path(&self, dir: &Path, name: &str) -> PathBuf {
+        match self.aliases.get(name) {
+            Some(raw) => dir.join(raw),
+            None => dir.join(name),
+        }
+    }
+
+    /// Pin to Places, Unpin from Places and Move Up/Down: the bookmarks file changes, and its
+    /// watch shows the change in every window.
+    fn pin(&mut self, ev: reprisekit::controls::filedlg::Event) {
+        use reprisekit::controls::filedlg::Event as E;
+        let tile = |i: usize| self.tiles().into_iter().nth(i).and_then(|p| p.pin);
+        let file = self.pins_file();
+        match ev {
+            E::PinEntry { name, pin } => {
+                let Some(dir) = self.folder.and_then(|id| self.folders.path(id)) else {
+                    return;
+                };
+                reprisefs::pins::set_pinned(&file, &self.entry_path(dir, &name), pin);
+            }
+            E::UnpinPlace(i) => {
+                if let Some(dir) = tile(i) {
+                    reprisefs::pins::set_pinned(&file, &dir, false);
+                }
+            }
+            E::ShiftPlace { tile: i, up } => {
+                if let Some(dir) = tile(i) {
+                    reprisefs::pins::shift(&file, &dir, up);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn memory(&self) -> Option<Memory> {
@@ -589,6 +742,9 @@ impl Host {
     /// fires as they arrive and [`Host::take_thumbs`] shows them.
     fn thumbs_on(&mut self, wake: &crate::Waker) {
         self.wake.get_or_insert_with(|| wake.clone());
+        let mut slot = self.pins_wake.lock().unwrap_or_else(|e| e.into_inner());
+        slot.get_or_insert_with(|| wake.clone());
+        drop(slot);
         self.relist.get_or_insert_with(|| {
             let wake = wake.clone();
             reprisefs::listing::Relist::new(move || wake.wake())
@@ -657,7 +813,7 @@ impl Host {
         let rescaled = std::mem::replace(&mut self.icons_scale, scale) != scale;
         if rescaled || !self.icons.fetched_from(icons, dlg.text()) {
             self.icons.prime_at(icons, dlg.text());
-            dlg.set_place_icons(self.icons.places.to_vec());
+            dlg.set_place_icons(self.icons.place_icons(&self.tiles()));
             self.icons.set_toolbar(dlg);
             dlg.set_crumb_icons(vec![self.icons.folder.clone()]);
         }
@@ -708,7 +864,8 @@ impl Host {
             }
             None => false,
         };
-        self.take_listed(dlg, cache) || stepped
+        let pinned = self.follow_pins(dlg);
+        self.take_listed(dlg, cache) || stepped || pinned
     }
 
     /// [`Host::take_thumbs`]' listings, icons and thumbnails.
@@ -882,6 +1039,10 @@ impl Host {
             E::CreateFolder(_) | E::Rename { .. } | E::Delete { .. } => {
                 self.change(dlg, out);
                 Step::Redraw
+            }
+            E::PinEntry { .. } | E::UnpinPlace(_) | E::ShiftPlace { .. } => {
+                self.pin(out);
+                Step::None
             }
             E::NeedPlace(i) => match self.place(i) {
                 Some(id) => Step::Out(E::NeedListing(id)),
@@ -1135,7 +1296,8 @@ impl Host {
     }
 
     pub fn place(&mut self, i: usize) -> Option<FolderId> {
-        place_dir(i).map(|dir| self.folders.id(&dir))
+        let dir = self.tiles().into_iter().nth(i)?.dir?;
+        Some(self.folders.id(&dir))
     }
 
     fn wildcard_folder(&mut self, dir: &str) -> Option<FolderId> {
@@ -1258,6 +1420,7 @@ impl Host {
             t.cancel_all();
         }
         dlg.set_listing(l.folder);
+        self.mark_pinned(dlg);
         self.ask_thumbs(dlg);
     }
 

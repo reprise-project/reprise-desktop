@@ -16,7 +16,7 @@
 //! bullet on the current mode.
 
 use crate::art::viewsicon;
-use crate::classic::widgets::BUTTON_W;
+use crate::classic::widgets::{BUTTON_W, BarHit};
 use crate::controls::combo::{self, Combo};
 use crate::controls::form;
 use crate::controls::menu::MenuLayout;
@@ -254,6 +254,8 @@ pub enum Hit {
     Accept,
     Cancel,
     Places(usize),
+    /// The places bar's scrollbar, shown once pinned tiles overflow it.
+    PlacesBar(BarHit),
     Shell(shellview::Hit),
     LookIn(combo::Hit),
     ToolBar(usize),
@@ -285,6 +287,18 @@ pub enum Event {
     CreateFolder(String),
     /// F5, Ctrl+R or the menu's Refresh: the host lists the folder again.
     Refresh,
+    /// Pin to Places (`pin`) or Unpin from Places on the shown folder's entry `name`.
+    PinEntry {
+        name: String,
+        pin: bool,
+    },
+    /// Unpin from Places on the pinned tile at this index.
+    UnpinPlace(usize),
+    /// Move Up (`up`) or Move Down on the pinned tile at this index.
+    ShiftPlace {
+        tile: usize,
+        up: bool,
+    },
     /// The rename box closed on a new name for the entry `from`. The host renames it, then
     /// hands `to` to [`FileDlg::expect`], or [`FileDlg::resume_rename`] when it cannot.
     Rename {
@@ -390,6 +404,8 @@ pub struct FileDlg {
     places: PlacesBar,
     /// Each tile's folder, in the order `new` took the tiles: the tile the folder shown is lights.
     place_folders: Vec<Option<FolderId>>,
+    /// The shown folder's entries that are pinned ([`FileDlg::set_pinned_entries`]).
+    pinned_entries: Vec<String>,
     toolbar: ToolBar,
     lookin: Combo,
     shell: ShellView,
@@ -545,6 +561,7 @@ impl FileDlg {
                 ..PlacesBar::default()
             },
             place_folders: Vec::new(),
+            pinned_entries: Vec::new(),
             folder: None,
             parent: None,
             crumbs: vec![],
@@ -809,13 +826,14 @@ impl FileDlg {
     }
 
     /// How far the dialog lays out shorter than `min_client`: the places bar down to its
-    /// last tile at its least ([`PlacesMetrics::least_tiles`]), the shell view down to half its
-    /// opening height.
+    /// last built-in tile at its least ([`PlacesMetrics::least_tiles`]; pinned tiles scroll), the
+    /// shell view down to half its opening height.
     ///
     /// [`PlacesMetrics::least_tiles`]: crate::metrics::PlacesMetrics::least_tiles
     fn shrink(&self, cm: &ControlMetrics) -> i32 {
         let u = |v: i32| cm.text.len(v);
-        let tiles = cm.places.least_tiles(self.places.places.len());
+        let built_in = self.places.places.iter().filter(|p| !p.pinned).count();
+        let tiles = cm.places.least_tiles(built_in);
         let places = u(SHELL_Y + PLACES_H) - u(SHELL_Y) - tiles;
         let shell = (u(SHELL_Y + SHELL_H) - u(SHELL_Y)) / 2;
         places.min(shell).max(0)
@@ -916,6 +934,32 @@ impl FileDlg {
     pub fn set_place_folders(&mut self, folders: Vec<Option<FolderId>>) {
         self.place_folders = folders;
         self.light_place();
+    }
+
+    /// Replaces the tiles (the pinned folders changed) and names their folders as
+    /// [`FileDlg::set_place_folders`] does.
+    pub fn set_places(&mut self, places: Vec<Place>, folders: Vec<Option<FolderId>>) {
+        let pb = &mut self.places;
+        if pb.top >= places.len() {
+            pb.top = 0;
+        }
+        (pb.places, pb.hot, pb.pressed) = (places, None, None);
+        if let Some(c) = &self.context
+            && c.place
+                .is_some_and(|i| !self.places.places.get(i).is_some_and(|p| p.pinned))
+        {
+            self.context = None;
+        }
+        self.set_place_folders(folders);
+    }
+
+    pub fn places(&self) -> &[Place] {
+        &self.places.places
+    }
+
+    /// Names the entries of the shown folder that are pinned, so their menu offers Unpin.
+    pub fn set_pinned_entries(&mut self, names: Vec<String>) {
+        self.pinned_entries = names;
     }
 
     /// Lights the shown folder's tile; a host that names no folders keeps the tile last picked.

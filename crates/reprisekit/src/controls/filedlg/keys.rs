@@ -343,6 +343,8 @@ impl FileDlg {
                 match next {
                     Some(i) => {
                         self.places.selected = Some(i);
+                        let bar = self.places_rect(r, cm);
+                        self.places.reveal(i, bar, cm);
                         Event::Redraw
                     }
                     None => Event::None,

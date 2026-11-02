@@ -357,6 +357,9 @@ pub struct Explorer {
     /// The `--select` entry or a renamed item, and its folder, waiting on that folder's listing.
     selecting: Option<(Place, PathBuf)>,
     watch: Option<Watch>,
+    /// The pinned folders, for the task pane's Pinned group and the item menu; None in tests
+    /// that read none.
+    pub(crate) pins: Option<reprisefs::pins::Pins>,
     /// Lists the place again once a link it listed unfollowed answers.
     relist: reprisefs::listing::Relist,
     /// Lists the folder again when gvfs metadata (a folder icon Nautilus sets) changes in it.
@@ -568,6 +571,10 @@ impl Explorer {
             going: None,
             opening: Vec::new(),
             selecting: None,
+            pins: (!cfg!(test)).then(|| {
+                let wake = ctx.wake.clone();
+                reprisefs::pins::Pins::start(move || wake.wake())
+            }),
             watch: match Watch::new({
                 let wake = ctx.wake.clone();
                 move || wake.wake()
@@ -687,7 +694,13 @@ impl Explorer {
             local_paths: self.selected_local().is_some(),
             compress: None,
             disk_image: false,
+            pinned: None,
         }
+    }
+
+    /// The pinned folders as last read.
+    pub(crate) fn pinned(&self) -> std::sync::Arc<Vec<reprisefs::pins::Pin>> {
+        self.pins.as_ref().map(|p| p.current()).unwrap_or_default()
     }
 
     pub(crate) fn flush_settings(&mut self) {

@@ -800,3 +800,19 @@ fn open_in_terminal_shows_on_a_folder_and_the_background_of_a_place_on_disk() {
         Command::OpenTerminal
     ));
 }
+
+#[test]
+fn a_lone_folders_menu_pins_or_unpins_it() {
+    let pinned = |p| MenuState {
+        pinned: p,
+        ..MenuState::default()
+    };
+    let m = item_menu(&pinned(Some(false)), ItemKind::Folder, false, &[], &[]);
+    assert_eq!(label(m.items(), 4), "Pin to Places");
+    assert_eq!(m.command(&[4]), Command::Pin(true));
+    let m = item_menu(&pinned(Some(true)), ItemKind::Folder, false, &[], &[]);
+    assert_eq!(label(m.items(), 4), "Unpin from Places");
+    assert_eq!(m.command(&[4]), Command::Pin(false));
+    let m = item_menu(&pinned(None), ItemKind::Folder, false, &[], &[]);
+    assert_eq!(label(m.items(), 4), "Sharing and Security...");
+}
