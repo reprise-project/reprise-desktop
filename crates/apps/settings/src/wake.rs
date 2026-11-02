@@ -90,7 +90,7 @@ impl SettingsApp {
             if let Some(t) = drawn {
                 self.thumbing = None;
                 self.thumbs = t;
-                if !backgroundpage::slideshow(&self.want) {
+                if !backgroundpage::slideshow(&self.bg()) {
                     backgroundpage::set_thumbs(
                         &mut self.sheet.pages[Page::Background.index()],
                         &self.thumbs,

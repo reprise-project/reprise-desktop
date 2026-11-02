@@ -409,6 +409,7 @@ fn unbound() -> [(&'static str, Nudge); 7] {
         (crate::backgroundpage::WALLPAPER, |s| {
             s.wallpaper.push('\u{1}');
             s.slideshow.push('\u{1}');
+            s.wallpaper_desktops.push("\u{1}".into());
         }),
         (crate::saverpage::SAVER, |s| {
             s.saver.push('\u{1}');

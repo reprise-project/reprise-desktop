@@ -6,7 +6,8 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use reprisekit::wallpapers::Builtin;
@@ -50,6 +51,10 @@ pub struct Wallpaper {
     /// it runs.
     fading: Vec<BufferId>,
     fade: Option<(RegistrationToken, Instant)>,
+    /// How long this picture takes to fade in over the one before.
+    fade_for: Duration,
+    /// Its number in [`Jobs`]; a decode or drawing for a wallpaper since replaced is skipped.
+    serial: u64,
     /// The Alt+Tab desktop entry's last picture and what it was composed for; a picture
     /// landing drops it.
     still: Option<(StillKey, Rc<Canvas>)>,
@@ -101,6 +106,8 @@ impl Wallpaper {
             nodes: Vec::new(),
             fading: Vec::new(),
             fade: None,
+            fade_for: FADE,
+            serial: 0,
             still: None,
         }
     }
@@ -220,8 +227,31 @@ pub enum LockWall {
 /// step of that fade.
 const FADE: Duration = Duration::from_millis(1200);
 const FADE_TICK: Duration = Duration::from_millis(33);
+/// A desktop switch's fade to the next desktop's picture when no switch animation is set.
+const DESKTOP_FADE: Duration = Duration::from_millis(250);
 /// How long after a picture lands Alt+Tab's desktop still is composed: past `FADE`.
 const STILL_WARM_DELAY: Duration = Duration::from_secs(2);
+
+/// The wallpaper's decodes and drawings, run one at a time: switching desktops through several
+/// pictures holds the one showing, the one fading out and at most one in the making.
+#[derive(Default)]
+pub struct Jobs {
+    /// The serial of the wallpaper set last.
+    latest: AtomicU64,
+    one: Mutex<()>,
+}
+
+impl Jobs {
+    fn next(&self) -> u64 {
+        self.latest.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    /// `f`, once no other job runs, unless wallpaper `serial` was replaced by then.
+    fn run<T>(&self, serial: u64, f: impl FnOnce() -> T) -> Option<T> {
+        let _one = self.one.lock().unwrap_or_else(|e| e.into_inner());
+        (self.latest.load(Ordering::Acquire) == serial).then(f)
+    }
+}
 
 /// The running `[wallpaper] slideshow`: its folder, the timer for the
 /// next change, and whether a pick is on its way from the thread.
@@ -229,6 +259,8 @@ pub struct Slideshow {
     folder: PathBuf,
     timer: Option<RegistrationToken>,
     picking: bool,
+    /// The picture last picked, which every desktop without its own shows.
+    shown: Option<PathBuf>,
 }
 
 struct WallpaperNode {
@@ -307,9 +339,16 @@ impl State {
         }
         if !same {
             self.clear_wallpaper();
-            self.wallpaper = path.map(Wallpaper::new);
+            self.wallpaper = path.map(|p| self.new_wallpaper(p));
         }
         self.refit_wallpaper();
+    }
+
+    fn new_wallpaper(&self, path: &Path) -> Wallpaper {
+        Wallpaper {
+            serial: self.wallpaper_jobs.next(),
+            ..Wallpaper::new(path)
+        }
     }
 
     /// Decode the wallpaper cut to `cut` on a thread. On the loop it
@@ -347,12 +386,19 @@ impl State {
             log::warn!("wallpaper: {}", e.error);
             return;
         }
-        let file = self.wallpaper.as_ref().map(|w| w.path.clone());
+        let Some((file, serial)) = self.wallpaper.as_ref().map(|w| (w.path.clone(), w.serial))
+        else {
+            return;
+        };
+        let jobs = self.wallpaper_jobs.clone();
         let spawned = std::thread::Builder::new()
             .name("wallpaper".into())
             .spawn(move || {
-                let loaded = file.and_then(|f| crate::wallpaper::load(&f, Some(cut)));
-                let _ = tx.send(loaded);
+                // A skipped decode sends nothing: the wallpaper that wanted it is gone.
+                if let Some(loaded) = jobs.run(serial, || crate::wallpaper::load(&file, Some(cut)))
+                {
+                    let _ = tx.send(loaded);
+                }
             });
         if let Err(e) = spawned {
             log::warn!("wallpaper: no decode thread: {e}");
@@ -400,11 +446,15 @@ impl State {
             return;
         }
         let uploads = self.uploads();
+        let serial = self.wallpaper.as_ref().map_or(0, |w| w.serial);
+        let jobs = self.wallpaper_jobs.clone();
         let spawned = std::thread::Builder::new()
             .name("wallpaper".into())
             .spawn(move || {
                 for (w, h) in sizes {
-                    let picture = crate::wallpaper::draw(b, w, h);
+                    let Some(picture) = jobs.run(serial, || crate::wallpaper::draw(b, w, h)) else {
+                        return;
+                    };
                     let staged = Staged::new(uploads.as_ref(), &picture);
                     if tx.send((picture, staged)).is_err() {
                         return;
@@ -441,10 +491,15 @@ impl State {
     /// until the new picture is decoded and has faded in over them. With
     /// nothing showing, `path` simply shows.
     pub fn fade_wallpaper_to(&mut self, path: &Path) {
+        self.fade_wallpaper_over(path, FADE);
+    }
+
+    fn fade_wallpaper_over(&mut self, path: &Path, fade_for: Duration) {
         if self.wallpaper.as_ref().is_some_and(|w| w.path == path) {
             return;
         }
-        let mut next = Wallpaper::new(path);
+        let mut next = self.new_wallpaper(path);
+        next.fade_for = fade_for;
         if let Some(old) = self.wallpaper.take() {
             self.end_fade(old.fading, old.fade);
             next.fading = old.nodes.into_iter().map(|(_, n)| n.buffer).collect();
@@ -461,7 +516,7 @@ impl State {
                     return TimeoutAction::Drop;
                 };
                 let t = w.fade.map_or(1.0, |(_, at)| {
-                    at.elapsed().as_secs_f32() / FADE.as_secs_f32()
+                    at.elapsed().as_secs_f32() / w.fade_for.as_secs_f32().max(0.001)
                 });
                 let t = t.min(1.0);
                 for (_, n) in &w.nodes {
@@ -503,13 +558,16 @@ impl State {
             if let Some(t) = self.slideshow.take().and_then(|s| s.timer) {
                 self.handle.remove(t);
             }
-            let paper = self.config.wallpaper.image.clone();
+            let paper = (self.config.wallpaper)
+                .for_desktop(self.desktops.current)
+                .map(Path::to_path_buf);
             self.set_wallpaper(paper.as_deref());
             return;
         };
         if self.slideshow.as_ref().is_some_and(|s| s.folder == folder) {
             // The interval may have changed: count it from now.
             self.arm_slideshow();
+            self.follow_desktop_wallpaper(FADE);
             return;
         }
         if let Some(t) = self.slideshow.take().and_then(|s| s.timer) {
@@ -519,8 +577,46 @@ impl State {
             folder,
             timer: None,
             picking: false,
+            shown: None,
         });
+        self.follow_desktop_wallpaper(FADE);
         self.next_slide();
+    }
+
+    /// What the current desktop shows: its own picture, else the slideshow's pick, else
+    /// `[wallpaper] image`. None while a slideshow has picked nothing yet.
+    fn desktop_wallpaper(&self) -> Option<Option<PathBuf>> {
+        let own = self.config.wallpaper.desktop(self.desktops.current);
+        match (own, &self.slideshow) {
+            (Some(p), _) => Some(Some(p.to_path_buf())),
+            (None, Some(show)) => show.shown.clone().map(Some),
+            (None, None) => Some(self.config.wallpaper.image.clone()),
+        }
+    }
+
+    /// Fade to the current desktop's picture over `fade_for` when it is not the one showing.
+    fn follow_desktop_wallpaper(&mut self, fade_for: Duration) {
+        let Some(want) = self.desktop_wallpaper() else {
+            return;
+        };
+        if self.wallpaper.as_ref().map(|w| &w.path) == want.as_ref() {
+            return;
+        }
+        match want {
+            Some(p) if self.wallpaper.is_some() => self.fade_wallpaper_over(&p, fade_for),
+            p => self.set_wallpaper(p.as_deref()),
+        }
+    }
+
+    /// A desktop switch: the new desktop's picture fades in over the switch animation's
+    /// duration, or [`DESKTOP_FADE`] without one.
+    pub fn desktop_wallpaper_switched(&mut self) {
+        let a = self.config.workspace_animation;
+        let fade_for = match a.enabled() {
+            true => Duration::from_millis(a.ms.into()),
+            false => DESKTOP_FADE,
+        };
+        self.follow_desktop_wallpaper(fade_for);
     }
 
     /// Whether `out` shows its wallpaper, or has none to wait for.
@@ -543,10 +639,10 @@ impl State {
     /// while a pick is under way.
     pub fn next_slide(&mut self) {
         let shuffle = self.config.wallpaper.shuffle;
-        let current = self.wallpaper.as_ref().map(|w| w.path.clone());
         let Some(show) = self.slideshow.as_mut() else {
             return;
         };
+        let current = show.shown.clone();
         if show.picking {
             return;
         }
@@ -562,7 +658,10 @@ impl State {
             };
             show.picking = false;
             match pick {
-                Some(p) => state.fade_wallpaper_to(&p),
+                Some(p) => {
+                    show.shown = Some(p);
+                    state.follow_desktop_wallpaper(FADE);
+                }
                 None => log::info!("slideshow: no pictures in {}", show.folder.display()),
             }
             state.arm_slideshow();
@@ -980,6 +1079,94 @@ mod tests {
             );
         }
         assert!(staged_of(&staged, (1280, 1024)).is_none());
+    }
+
+    #[test]
+    fn a_job_for_a_replaced_wallpaper_is_skipped() {
+        let jobs = Jobs::default();
+        let first = jobs.next();
+        assert_eq!(jobs.run(first, || 1), Some(1));
+        let second = jobs.next();
+        assert_eq!(
+            jobs.run(first, || 1),
+            None,
+            "the first wallpaper was replaced"
+        );
+        assert_eq!(jobs.run(second, || 2), Some(2));
+    }
+
+    /// Desktops 2 and 3 have their own built-ins, desktop 1 the main one.
+    fn three_desktops() -> crate::harness::Harness {
+        let mut config = crate::config::Config::parse(
+            "[workspaces]\ncount = 3\n[wallpaper]\nimage = \"reprise:tarn/blue\"\n\
+             desktops = [\"\", \"reprise:tarn/dusk\", \"reprise:fold/sand\"]\n",
+        )
+        .unwrap();
+        config.workspace_animation.ms = 0;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("A-1", 320, 200);
+        h.state.apply_wallpaper_config();
+        h
+    }
+
+    fn shown(h: &crate::harness::Harness) -> Option<&Path> {
+        h.state.wallpaper.as_ref().map(|w| w.path.as_path())
+    }
+
+    #[test]
+    fn each_desktop_fades_to_its_own_picture_and_one_without_to_the_main_one() {
+        let mut h = three_desktops();
+        assert_eq!(shown(&h), Some(Path::new("reprise:tarn/blue")));
+        h.state.switch_desktop(1);
+        assert_eq!(shown(&h), Some(Path::new("reprise:tarn/dusk")));
+        let w = h.state.wallpaper.as_ref().unwrap();
+        assert_eq!(
+            w.fade_for, DESKTOP_FADE,
+            "no switch animation: a short fade"
+        );
+        h.state.switch_desktop(0);
+        assert_eq!(shown(&h), Some(Path::new("reprise:tarn/blue")));
+    }
+
+    #[test]
+    fn switching_through_desktops_keeps_two_pictures_at_most() {
+        let mut h = three_desktops();
+        for _ in 0..200 {
+            if h.state.wallpaper_ready(&h.state.scene.outputs()[0].clone()) {
+                break;
+            }
+            h.run_for(10);
+        }
+        for n in [1, 2, 0, 2, 1] {
+            h.state.switch_desktop(n);
+            let w = h.state.wallpaper.as_ref().unwrap();
+            assert!(
+                w.fading.len() <= 1,
+                "one output: the picture fading out is one buffer, got {}",
+                w.fading.len()
+            );
+        }
+        assert_eq!(shown(&h), Some(Path::new("reprise:tarn/dusk")));
+        for _ in 0..200 {
+            let drawn = |w: &Wallpaper| w.builtin.as_ref().is_some_and(|(_, d)| d.any().is_some());
+            if h.state
+                .wallpaper
+                .as_ref()
+                .is_some_and(|w| w.fading.is_empty() && drawn(w))
+            {
+                break;
+            }
+            h.run_for(10);
+        }
+        let w = h.state.wallpaper.as_ref().unwrap();
+        assert!(
+            w.fading.is_empty(),
+            "the fade ends and drops the picture before"
+        );
+        assert!(
+            w.builtin.as_ref().is_some_and(|(_, d)| d.any().is_some()),
+            "the last desktop's picture is drawn though the ones before were skipped"
+        );
     }
 
     #[test]

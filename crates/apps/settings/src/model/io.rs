@@ -65,6 +65,14 @@ pub fn load(text: &str) -> Settings {
                     *at.get_mut(&mut s) = ((v * 10.0).round() as i64).clamp(*lo, *hi);
                 }
             }
+            Field::Strings(_, at) => {
+                if let Some(arr) = item.as_array() {
+                    *at.get_mut(&mut s) = arr
+                        .iter()
+                        .map(|v| v.as_str().unwrap_or_default().to_string())
+                        .collect();
+                }
+            }
             // An older file's icon names read as the current ones.
             Field::Names(_, at) => {
                 if let Some(arr) = item.as_array() {

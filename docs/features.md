@@ -313,7 +313,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   executable file opens as usual. Its Properties sheet has no Opens with row
   and shows its name as the Description.
 - **Wallpaper** centred, tiled or stretched, or a slideshow of a folder that
-  crossfades every so often. The desktop menu skips to the next picture.
+  crossfades every so often. The desktop menu skips to the next picture. Each
+  virtual desktop can have a picture of its own, faded in as you switch.
 - **Desktop water.** The wallpaper ripples like a pond: the pointer leaves a
   wake, clicks and windows make waves, and `rain` drops one every second or
   so. Entirely unnecessary. Very relaxing. `ink`, `glow`, `sparks` and `neon`

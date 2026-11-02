@@ -4,6 +4,7 @@
 //! and thumbnails run on threads) and hands in the decoded or drawn picture;
 //! this module lays the page out and composes the monitor's screen.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use reprisekit::classic::assets::MONITOR_SCREEN;
@@ -25,6 +26,10 @@ pub const MONITOR: &str = "monitor";
 pub const MODE: &str = "wallpaper_mode";
 pub const WALLPAPER: &str = "wallpaper";
 pub const BROWSE: &str = "browse";
+/// Which desktops a pick is for: all, or one with a picture of its own.
+pub const USE_FOR: &str = "wallpaper_for";
+const USE_FOR_LABEL: &str = "use_for_label";
+pub const ALL_DESKTOPS: &str = "All desktops";
 /// The file name extensions combo and its label, greyed while the desktop shows no files.
 pub const EXTENSIONS: &str = "desktop_extensions";
 const EXTENSIONS_LABEL: &str = "extensions_label";
@@ -172,6 +177,15 @@ pub fn page(a: Area) -> Form {
                 schemes::PALETTE.to_vec(),
             )),
         ),
+        Item::label_at(USE_FOR_LABEL, RX, 356 + dh, 44, "Use &for:"),
+        Item::combo(
+            USE_FOR,
+            RX + 48,
+            352 + dh,
+            rw(Area::MIN) - 48,
+            &[ALL_DESKTOPS],
+            1,
+        ),
         Item::group("icons_group", Rect::new(X, 222, 191, 160), "Desktop icons"),
         Item::check("documents", GX, 244, "&Documents"),
         Item::check("computer", GX, 266, "Co&mputer"),
@@ -205,6 +219,54 @@ pub fn page(a: Area) -> Form {
 
 pub fn slideshow(s: &Settings) -> bool {
     !s.slideshow.is_empty()
+}
+
+/// The desktop the Use for combo picks, None for all of them.
+pub fn target(form: &Form) -> Option<usize> {
+    form.combo_selected(USE_FOR)?.checked_sub(1)
+}
+
+/// The Use for combo's rows: all desktops, then each of the `s.desktops`.
+pub fn use_for_rows(s: &Settings) -> Vec<String> {
+    let n = if s.desktops > 1 {
+        s.desktops as usize
+    } else {
+        0
+    };
+    std::iter::once(ALL_DESKTOPS.to_string())
+        .chain((1..=n).map(|i| format!("Desktop {i}")))
+        .collect()
+}
+
+/// `s` as the page shows it for `desktop`: that desktop's picture (its own, else the one for
+/// all), never a slideshow.
+pub fn view(s: &Settings, desktop: Option<usize>) -> Cow<'_, Settings> {
+    let Some(n) = desktop else {
+        return Cow::Borrowed(s);
+    };
+    let own = s.wallpaper_desktops.get(n).filter(|p| !p.is_empty());
+    Cow::Owned(Settings {
+        wallpaper: own.unwrap_or(&s.wallpaper).clone(),
+        slideshow: String::new(),
+        ..s.clone()
+    })
+}
+
+/// Give desktop `n` the picture `picked`; the picture for all desktops (or none) leaves it
+/// without one of its own. Trailing empty entries are dropped.
+pub fn set_for_desktop(s: &mut Settings, n: usize, picked: String) {
+    let shared = picked.is_empty()
+        || (!slideshow(s)
+            && (picked == s.wallpaper
+                || (builtin(&picked).is_none() && expand(&picked) == expand(&s.wallpaper))));
+    let list = &mut s.wallpaper_desktops;
+    if list.len() <= n {
+        list.resize(n + 1, String::new());
+    }
+    list[n] = if shared { String::new() } else { picked };
+    while list.last().is_some_and(String::is_empty) {
+        list.pop();
+    }
 }
 
 /// The folders the slideshow list offers: each folder holding one of
@@ -421,6 +483,20 @@ pub fn show(form: &mut Form, s: &Settings, want: &str, picture: Option<&Picture>
 /// on the Color button the desktop colour `s` gives while `[colors]
 /// background` is unset.
 pub fn follow(form: &mut Form, s: &Settings) {
+    let rows = use_for_rows(s);
+    if let Some(Control::Combo(c)) = form.item_mut(USE_FOR).map(|i| &mut i.control)
+        && c.items.len() != rows.len()
+    {
+        let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+        c.items = reprisekit::controls::combo::Combo::new(&rows, 0, rows.len()).items;
+        c.rows = rows.len();
+        c.selected = c.selected.min(rows.len() - 1);
+    }
+    form.set_enabled(USE_FOR_LABEL, rows.len() > 1);
+    form.set_enabled(USE_FOR, rows.len() > 1);
+    let desktop = target(form);
+    form.set_enabled(MODE, desktop.is_none());
+    let s = &*view(s, desktop);
     let show = slideshow(s);
     form.set_combo(MODE, show as usize);
     let has = (!s.wallpaper.is_empty() && builtin(&s.wallpaper).is_none()) || show;
@@ -501,6 +577,115 @@ mod tests {
             ],
             "Classic, Blue, Glass: shown, greyed"
         );
+    }
+
+    #[test]
+    fn a_desktop_shows_its_own_picture_else_the_one_for_all() {
+        let mut s = Settings {
+            desktops: 3,
+            wallpaper: "~/w/a.jpg".into(),
+            slideshow: "~/Slides".into(),
+            wallpaper_desktops: vec!["".into(), "reprise:tarn/dusk".into()],
+            ..Settings::default()
+        };
+        assert_eq!(view(&s, None).slideshow, "~/Slides");
+        assert_eq!(view(&s, Some(0)).wallpaper, "~/w/a.jpg");
+        assert_eq!(
+            view(&s, Some(0)).slideshow,
+            "",
+            "a desktop shows one picture"
+        );
+        assert_eq!(view(&s, Some(1)).wallpaper, "reprise:tarn/dusk");
+        assert_eq!(view(&s, Some(2)).wallpaper, "~/w/a.jpg");
+        assert_eq!(
+            use_for_rows(&s),
+            [ALL_DESKTOPS, "Desktop 1", "Desktop 2", "Desktop 3"]
+        );
+        set_for_desktop(&mut s, 2, "/p/c.png".into());
+        assert_eq!(s.wallpaper_desktops, ["", "reprise:tarn/dusk", "/p/c.png"]);
+        set_for_desktop(&mut s, 2, String::new());
+        assert_eq!(
+            s.wallpaper_desktops,
+            ["", "reprise:tarn/dusk"],
+            "(None) drops it"
+        );
+        s.slideshow.clear();
+        set_for_desktop(&mut s, 1, "~/w/a.jpg".into());
+        assert!(
+            s.wallpaper_desktops.is_empty(),
+            "the picture for all drops it"
+        );
+        s.desktops = 1;
+        assert_eq!(use_for_rows(&s), [ALL_DESKTOPS]);
+    }
+
+    /// The Use for row with all desktops picked, with a desktop picked, and greyed with one desktop.
+    #[test]
+    fn the_use_for_row_pins_its_pixels_in_every_look() {
+        if !reprisekit::text::test_tahoma() {
+            return;
+        }
+        use reprisekit::controls::form;
+        use reprisekit::interface::Interface;
+        fn fnv(c: &Canvas) -> u64 {
+            c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
+                (h ^ *p as u64).wrapping_mul(0x100000001b3)
+            })
+        }
+        let row = Rect::new(RX, 350, rw(Area::MIN), 25);
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = reprisekit::theme::Theme {
+                access_keys: true,
+                ..reprisekit::interfaces::theme_for(i)
+            };
+            let text = reprisekit::text::TextRenderer::load(&theme.fonts);
+            let mut hashes = [0; 3];
+            for (k, (desktops, pick)) in [(4, 0), (4, 2), (1, 0)].into_iter().enumerate() {
+                let mut f = page(Area::MIN);
+                let s = Settings {
+                    desktops,
+                    ..Settings::default()
+                };
+                follow(&mut f, &s);
+                f.set_combo(USE_FOR, pick);
+                let mut c = Canvas::new(row.right() as u32, row.bottom() as u32);
+                c.fill_rect(c.bounds(), theme.colors.button_face);
+                form::draw(
+                    &mut c,
+                    &text,
+                    &theme.paint(),
+                    &f,
+                    false,
+                    theme.fonts.size_px,
+                );
+                hashes[k] = fnv(&c.copy_rect(row));
+            }
+            assert!(
+                hashes[0] != hashes[1] && hashes[0] != hashes[2],
+                "{i:?}: a desktop's name and the greyed row differ from all desktops"
+            );
+            got.push(hashes);
+        }
+        assert_eq!(
+            got,
+            [
+                [0x2ac2b0dea059c84a, 0xaef6ac0e84b368c8, 0x8849be0e3abeae21],
+                [0xfbc4252134d4cfc4, 0xb25e3195d143dafe, 0xc524ec18713de715],
+                [0xf343c5d2f9bc2b17, 0xdfcf6be66dbe208a, 0xa5cda079c1ef2cba],
+            ],
+            "Classic, Blue, Glass: all, Desktop 2, greyed"
+        );
+    }
+
+    #[test]
+    fn the_use_for_row_sits_between_the_colour_and_the_slideshow() {
+        let f = page(Area::MIN);
+        let combo = f.item(USE_FOR).unwrap().rect;
+        let colour = f.item("background").unwrap().rect;
+        assert_eq!(combo, Rect::new(RX + 48, 352, rw(Area::MIN) - 48, 21));
+        assert!(combo.y > colour.bottom() && combo.bottom() < SLIDE_Y);
+        assert!(combo.right() <= Area::MIN.right());
     }
 
     #[test]

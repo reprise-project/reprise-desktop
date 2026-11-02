@@ -624,6 +624,7 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
             "wallpaper.image",
             "wallpaper.position",
             "wallpaper.slideshow",
+            "wallpaper.desktops",
             "wallpaper.interval",
             "wallpaper.shuffle",
             "colors.background",
