@@ -9,9 +9,17 @@ pub struct Panels {
     pub history: crate::cliphistory::Recorder,
     pub clipview: Option<crate::clipview::ClipView>,
     pub region: Option<crate::regionview::RegionView>,
+    pub colorpick: Option<crate::colorpickview::ColorPickView>,
     /// The wheel's sub-notch remainder over the emoji picker or the
     /// clipboard history.
     pub wheel: i32,
+}
+
+impl Panels {
+    /// The region overlay or the colour picker is up, taking the pointer and the keys.
+    pub fn takes_pointer(&self) -> bool {
+        self.region.is_some() || self.colorpick.is_some()
+    }
 }
 
 impl State {
@@ -36,5 +44,6 @@ impl State {
         self.close_emoji();
         self.close_clipview();
         self.close_region();
+        self.cancel_color_pick();
     }
 }

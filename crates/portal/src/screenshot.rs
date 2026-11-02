@@ -2,16 +2,16 @@
 //! the layout, or the output or window picked in the share dialog for an
 //! interactive call, as a PNG returned as a `file://` URI. The files are a
 //! hand-over to the app, kept in the runtime dir for `KEEP` up to `MAX_KEPT_BYTES`. PickColor
-//! needs no prompt; the click is the consent.
+//! opens the compositor's colour picker and needs no prompt; the click is the consent.
 
-use crate::colorpick::{Output, grab};
+use crate::stills::{Output, grab};
 use crate::wayland::{Target, Wayland};
 use reprisekit::controls::colorpick::Still;
 use reprisekit::raster::Rect;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 use zbus::{ObjectPath, OwnedVariant, Variant};
 
@@ -24,6 +24,7 @@ const MAX_PIXELS: u64 = 1 << 26;
 
 pub struct Screenshot {
     pub frontend: crate::Frontend,
+    pub link: Option<crate::inputlink::Link>,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Screenshot")]
@@ -105,20 +106,37 @@ impl Screenshot {
     ) -> zbus::fdo::Result<(u32, HashMap<String, OwnedVariant>)> {
         self.frontend.check(&hdr).await?;
         log::info!("PickColor for {app_id:?}");
+        let Some(pick) = crate::inputlink::live(&self.link).and_then(|l| l.pick_color()) else {
+            log::warn!("PickColor: the compositor has no colour picker");
+            return Ok((crate::RESPONSE_OTHER, HashMap::new()));
+        };
         let cancel = Arc::new(AtomicBool::new(false));
         crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
-        let color = blocking::unblock(move || crate::colorpick::pick(&cancel)).await;
+        let rgb = futures_lite::future::or(pick.answer(), closed(&cancel)).await;
         let _ = server.remove::<crate::Request, _>(handle.clone()).await;
-        let Some(color) = color else {
-            return Ok((crate::RESPONSE_CANCELLED, HashMap::new()));
-        };
-        let mut r = HashMap::new();
-        r.insert(
-            "color".to_string(),
-            Variant::from(color).try_to_owned().expect("struct"),
-        );
-        Ok((crate::RESPONSE_OK, r))
+        Ok(picked(rgb))
     }
+}
+
+/// None once the frontend closes the request.
+async fn closed(cancel: &AtomicBool) -> Option<u32> {
+    while !cancel.load(Ordering::Relaxed) {
+        async_io::Timer::after(Duration::from_millis(100)).await;
+    }
+    None
+}
+
+/// PickColor's answer to a pick of 0xRRGGBB, None for a cancel: the channels are 0-1.
+fn picked(rgb: Option<u32>) -> (u32, HashMap<String, OwnedVariant>) {
+    let Some(rgb) = rgb else {
+        return (crate::RESPONSE_CANCELLED, HashMap::new());
+    };
+    let [_, r, g, b] = rgb.to_be_bytes();
+    let unit = |v: u8| f64::from(v) / 255.0;
+    let color = Variant::from((unit(r), unit(g), unit(b)));
+    let mut out = HashMap::new();
+    out.insert("color".to_string(), color.try_to_owned().expect("struct"));
+    (crate::RESPONSE_OK, out)
 }
 
 /// False only when the frontend already settled the `screenshot`
@@ -156,7 +174,7 @@ fn pick(app_id: &str, parent: Option<String>, cancel: Arc<AtomicBool>) -> Option
 fn take(target: Option<Target>) -> Result<PathBuf, String> {
     let shot = match target {
         Some(t) => grab(&mut Wayland::connect()?, &t, true)?,
-        None => desktop(&crate::colorpick::capture(true)?)?,
+        None => desktop(&crate::stills::capture(true)?)?,
     };
     let dir = shot_dir()?;
     let now = SystemTime::now();
@@ -317,6 +335,17 @@ fn write_png(file: std::fs::File, shot: &Still) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pick_answers_with_unit_channels_and_a_cancel_with_nothing() {
+        let (code, r) = picked(Some(0x0080_00ff));
+        assert_eq!(code, crate::RESPONSE_OK);
+        let (red, green, blue): (f64, f64, f64) = r["color"].clone().try_into().unwrap();
+        assert!((red - 128.0 / 255.0).abs() < 1e-9);
+        assert_eq!((green, blue), (0.0, 1.0));
+        assert_eq!(r["color"].value_signature(), "(ddd)");
+        assert_eq!(picked(None), (crate::RESPONSE_CANCELLED, HashMap::new()));
+    }
 
     fn opts(pairs: &[(&str, bool)]) -> HashMap<String, Variant<'static>> {
         pairs

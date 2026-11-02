@@ -1,12 +1,12 @@
-//! The colour picker: a still of one output with a loupe beside the point
-//! being picked. The loupe is a black box, 110 x 132: a 9 x 9 grid of 12 px
-//! cells, one per device pixel around the point, inside a 1 px frame, the
-//! centre cell ringed white inside black; under it a readout strip with a
-//! 15 px swatch of the centre pixel in a white ring and its `#RRGGBB` in
-//! white. It sits 20 px below right of the point, on the other side of each
-//! axis where it would leave the output.
+//! The colour picker: a loupe beside the point being picked on a still of
+//! the screens. The loupe is a black box, 110 x 132: a 9 x 9 grid of 12 px
+//! cells, one per device pixel of the still around the point, inside a 1 px
+//! frame, the centre cell ringed white inside black; under it a readout
+//! strip with a 15 px swatch of the centre pixel in a white ring and its
+//! `#RRGGBB` in white. It sits 20 px below right of the point, on the other
+//! side of each axis where it would leave the output.
 //!
-//! The overlay takes every pointer event: motion moves the point, a primary
+//! The picker takes every pointer event: motion moves the point, a primary
 //! press picks the pixel under it, a secondary press cancels. Enter picks,
 //! Escape cancels and the arrow keys nudge the point a pixel.
 
@@ -63,14 +63,6 @@ impl Still {
     pub fn sample(&self, p: (i32, i32)) -> u32 {
         let (x, y) = self.device_point(p);
         self.pixel(x, y)
-    }
-
-    /// The still box-resampled to `w` x `h` device pixels: the overlay's backdrop.
-    pub fn backdrop(&self, w: u32, h: u32) -> Vec<u32> {
-        Canvas::resample_box_from(self.width, self.height, w, h, |x, y| {
-            self.pixels[y as usize * self.width as usize + x as usize]
-        })
-        .pixels
     }
 }
 
@@ -146,6 +138,7 @@ pub struct Layout {
     pub label: Rect,
 }
 
+/// The loupe for `point` on an output of logical `size`, placed beside it.
 pub fn layout(point: (i32, i32), size: (i32, i32)) -> Layout {
     let place = |p: i32, len: i32, room: i32| {
         if p + GAP + len <= room {
@@ -154,7 +147,16 @@ pub fn layout(point: (i32, i32), size: (i32, i32)) -> Layout {
             (p - GAP - len).max(0)
         }
     };
-    let loupe = Rect::new(place(point.0, W, size.0), place(point.1, H, size.1), W, H);
+    parts(Rect::new(
+        place(point.0, W, size.0),
+        place(point.1, H, size.1),
+        W,
+        H,
+    ))
+}
+
+/// The parts of a loupe drawn at `loupe`.
+fn parts(loupe: Rect) -> Layout {
     let grid = Rect::new(loupe.x + 1, loupe.y + 1, CELL, CELL);
     let half = CELLS / 2;
     let center = Rect::new(grid.x + half * CELL, grid.y + half * CELL, CELL, CELL);
@@ -190,23 +192,10 @@ fn color(argb: u32) -> Color {
     Color::rgb(r, g, b)
 }
 
-/// The overlay over `c`: `backdrop` (from [`Still::backdrop`] at `c`'s
-/// device size), then the loupe when there is a point.
-pub fn draw(
-    c: &mut Canvas,
-    text: &TextRenderer,
-    px: u32,
-    m: &ColorPick,
-    still: &Still,
-    backdrop: &[u32],
-) {
-    if backdrop.len() == c.pixels.len() {
-        c.pixels.copy_from_slice(backdrop);
-    }
-    let Some(p) = m.point else {
-        return;
-    };
-    let lay = layout(p, (c.width as i32, c.height as i32));
+/// The loupe for logical point `p` of `still`, filling `c` (`W` x `H`
+/// logical, at any scale): a cell is a device pixel of the still at every scale.
+pub fn draw(c: &mut Canvas, text: &TextRenderer, px: u32, still: &Still, p: (i32, i32)) {
+    let lay = parts(Rect::new(0, 0, W, H));
     let (cx, cy) = still.device_point(p);
     let half = CELLS / 2;
     c.fill_rect(lay.loupe, BLACK);
@@ -287,37 +276,63 @@ mod tests {
         );
     }
 
+    /// The count of pure white pixels in device rect `r` of `c`.
+    fn lit(c: &Canvas, r: Rect) -> usize {
+        let w = c.device_size().0 as i32;
+        (r.y..r.bottom())
+            .flat_map(|y| (r.x..r.right()).map(move |x| (x, y)))
+            .filter(|&(x, y)| c.pixels[(y * w + x) as usize] == 0xffff_ffff)
+            .count()
+    }
+
     #[test]
     fn the_loupe_shows_the_pixels_round_the_point_with_a_readout() {
         let text = TextRenderer::load(&FontConfig::default());
         let still = ramp((200, 190), 200, 190);
-        let mut m = ColorPick::default();
-        m.motion((40, 30));
-        let mut c = Canvas::new(200, 190);
-        draw(&mut c, &text, 11, &m, &still, &still.backdrop(200, 190));
-        // The backdrop is the still, 1:1; the loupe spans (60, 50) to (170, 182).
-        assert_eq!(c.get(5, 5), 0xff00_0505);
-        assert_eq!(c.get(59, 49), 0xff00_313b);
+        let mut c = Canvas::new(W as u32, H as u32);
+        draw(&mut c, &text, 11, &still, (40, 30));
         // The frame is black; cell (0, 0) is the pixel 4 up and 4 left.
-        assert_eq!(c.get(60, 50), 0xff00_0000);
-        assert_eq!(c.get(61, 51), 0xff00_1a24);
-        assert_eq!(c.get(61 + 8 * CELL + 11, 51 + 8 * CELL + 11), 0xff00_222c);
+        assert_eq!(c.get(0, 0), 0xff00_0000);
+        assert_eq!(c.get(1, 1), 0xff00_1a24);
+        assert_eq!(c.get(1 + 8 * CELL + 11, 1 + 8 * CELL + 11), 0xff00_222c);
         // The centre cell: white ring, black ring outside it, the point's
         // pixel inside.
-        assert_eq!(c.get(109, 99), 0xffff_ffff);
-        assert_eq!(c.get(108, 98), 0xff00_0000);
-        assert_eq!(c.get(110, 100), 0xff00_1e28);
+        assert_eq!(c.get(49, 49), 0xffff_ffff);
+        assert_eq!(c.get(48, 48), 0xff00_0000);
+        assert_eq!(c.get(50, 50), 0xff00_1e28);
         // The swatch: white ring round the point's pixel, on black.
-        assert_eq!(c.get(64, 163), 0xffff_ffff);
-        assert_eq!(c.get(65, 164), 0xff00_1e28);
-        assert_eq!(c.get(63, 162), 0xff00_0000);
-        // The label is white text on black.
-        let label = Rect::new(85, 160, 84, 21);
-        let lit = (label.y..label.bottom())
-            .flat_map(|y| (label.x..label.right()).map(move |x| (x, y)))
-            .filter(|&(x, y)| c.get(x, y) == 0xffff_ffff)
-            .count();
-        assert!(lit > 20, "the label draws white glyphs, got {lit} px");
+        assert_eq!(c.get(4, 113), 0xffff_ffff);
+        assert_eq!(c.get(5, 114), 0xff00_1e28);
+        assert_eq!(c.get(3, 112), 0xff00_0000);
+        let label = Rect::new(25, 110, 84, 21);
+        assert!(lit(&c, label) > 20, "the label draws white glyphs");
+    }
+
+    #[test]
+    fn at_scale_2_a_cell_is_still_one_device_pixel_of_the_still() {
+        let text = TextRenderer::load(&FontConfig::default());
+        // A 100x95 output captured at scale 2.
+        let still = ramp((100, 95), 200, 190);
+        let mut c = Canvas::with_scale(W as u32, H as u32, 2);
+        draw(&mut c, &text, 11, &still, (20, 15));
+        let at = |x: i32, y: i32| c.pixels[(y * 2 * W + x) as usize];
+        assert_eq!(c.device_size(), (220, 264));
+        assert_eq!(at(1, 1), 0xff00_0000, "the frame is 2 device px");
+        // Logical (20, 15) is device (40, 30): cell (0, 0) is device (36, 26),
+        // 24 device px a side, the next cell the next device pixel.
+        assert_eq!(at(2, 2), 0xff00_1a24);
+        assert_eq!(at(25, 25), 0xff00_1a24);
+        assert_eq!(at(26, 2), 0xff00_1a25);
+        // The centre cell: a 2 px white ring inside a 2 px black one.
+        assert_eq!(at(97, 97), 0xff00_0000);
+        assert_eq!(at(98, 98), 0xffff_ffff);
+        assert_eq!(at(99, 99), 0xffff_ffff);
+        assert_eq!(at(100, 100), 0xff00_1e28);
+        assert_eq!(at(10, 228), 0xff00_1e28, "the swatch");
+        assert!(
+            lit(&c, Rect::new(50, 220, 168, 42)) > 80,
+            "the label at scale 2"
+        );
     }
 
     #[test]

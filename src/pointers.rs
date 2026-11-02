@@ -247,7 +247,7 @@ impl State {
         if self.inputproto.gated()
             || self.is_locked()
             || self.switcher.is_open()
-            || self.panels.region.is_some()
+            || self.panels.takes_pointer()
         {
             return;
         }
@@ -333,7 +333,7 @@ impl State {
                 let free = !self.inputproto.gated()
                     && !self.is_locked()
                     && self.switcher.panel.is_none()
-                    && self.panels.region.is_none();
+                    && !self.panels.takes_pointer();
                 if g.enabled && free && event.fingers() == g.fingers {
                     self.overview_fade_settle();
                     self.pointers.swipe = Some(KeptSwipe {

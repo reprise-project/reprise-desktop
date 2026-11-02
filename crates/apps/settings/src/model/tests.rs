@@ -907,7 +907,7 @@ fn validate_refuses_a_snap_layout_the_compositor_would() {
 #[test]
 fn shortcuts_default_to_the_compositors_list() {
     let s = load("");
-    assert_eq!(s.shortcuts.len(), 40);
+    assert_eq!(s.shortcuts.len(), 41);
     assert_eq!(
         s.shortcuts[0],
         Shortcut::new("Super+Return", "terminal", "")

@@ -8,7 +8,6 @@ mod appchooser;
 mod background;
 mod cast;
 mod choices;
-mod colorpick;
 mod dialog;
 mod filechooser;
 mod filepick;
@@ -26,6 +25,7 @@ mod picker;
 mod remotedesktop;
 mod screenshot;
 mod shortcutconf;
+mod stills;
 mod wallpaper;
 mod wayland;
 
@@ -972,6 +972,7 @@ async fn serve(
             PATH,
             screenshot::Screenshot {
                 frontend: frontend(),
+                link: link.clone(),
             },
         )
         .serve_at(
@@ -1075,10 +1076,6 @@ fn main() {
         appchoose::run_dialog();
         return;
     }
-    if std::env::args().any(|a| a == "--pickcolor") {
-        colorpick::run_dialog();
-        return;
-    }
     if std::env::args().any(|a| a == "--probe") {
         match Wayland::connect() {
             Ok(wl) => {
@@ -1140,13 +1137,13 @@ fn main() {
     }
     log::info!("serving {BUS_NAME}: source types {source_types}");
     // The compositor's input link backs RemoteDesktop, InputCapture,
-    // GlobalShortcuts and Background; without it those interfaces answer
+    // GlobalShortcuts, Background and PickColor; without it those interfaces answer
     // but grant nothing.
     let link = match inputlink::Link::start() {
         Ok(l) => Some(l),
         Err(e) => {
             log::warn!(
-                "input link: {e}; RemoteDesktop, InputCapture, GlobalShortcuts and Background disabled"
+                "input link: {e}; RemoteDesktop, InputCapture, GlobalShortcuts, Background and PickColor disabled"
             );
             None
         }

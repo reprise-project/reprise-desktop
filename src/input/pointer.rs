@@ -97,7 +97,7 @@ impl State {
         matches!(self.interaction, Interaction::Idle)
             && !self.is_locked()
             && !self.drag_running()
-            && self.panels.region.is_none()
+            && !self.panels.takes_pointer()
             && !Popup::open(self).any(Popup::owns_pointer)
     }
 
@@ -310,6 +310,11 @@ impl State {
         if self.panels.region.is_some() {
             self.pointer_motion(None, pos, time);
             self.region_motion(pos.x, pos.y);
+            return;
+        }
+        if self.panels.colorpick.is_some() {
+            self.pointer_motion(None, pos, time);
+            self.color_pick_motion(pos.x, pos.y);
             return;
         }
         match self.interaction {

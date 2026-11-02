@@ -222,7 +222,7 @@ fn keyboard(state: &State) -> Keyboard {
     Keyboard {
         elsewhere: state.is_locked()
             || state.inputproto.gated()
-            || state.panels.region.is_some()
+            || state.panels.takes_pointer()
             || state.interaction.is_keyboard(),
         switcher: state.switcher.is_open(),
         overview: state.overview.view.is_some(),

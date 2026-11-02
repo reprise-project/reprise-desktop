@@ -90,7 +90,7 @@ pub struct Modes {
     pub notify_center_open: bool,
     /// A notification balloon's reply field has the keyboard.
     pub notify_reply_focused: bool,
-    /// Shift+PrtSc's region overlay is up.
+    /// Shift+PrtSc's region overlay or the colour picker is up.
     pub region_open: bool,
     /// The clock's month popup is open.
     pub calendar_open: bool,
@@ -724,6 +724,7 @@ fn passes_dialog(a: &Action) -> bool {
             | Action::ScreenshotWindow
             | Action::ScreenshotRegion
             | Action::ScreenshotContent
+            | Action::ColorPicker
             | Action::VolumeUp
             | Action::VolumeDown
             | Action::Mute
@@ -756,6 +757,7 @@ pub fn opens_surface(a: &Action) -> bool {
             | Action::Cycle
             | Action::Flip
             | Action::ScreenshotRegion
+            | Action::ColorPicker
             | Action::FocusTaskbar
             | Action::FocusTray
             | Action::Run
