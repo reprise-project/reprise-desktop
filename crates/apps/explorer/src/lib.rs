@@ -27,6 +27,7 @@ mod rename;
 mod search;
 mod sendreads;
 mod settings;
+mod tabs;
 mod tree;
 mod volumes;
 mod window;
@@ -355,6 +356,11 @@ pub struct Explorer {
     pub tip: Option<Tip>,
     pub folder_tip: Option<(PathBuf, Vec<String>)>,
     pub tip_walk: Option<live::TipWalk>,
+    /// The window's tabs; the open one's state is the window's own.
+    pub(crate) tabs: reprisekit::controls::doctabs::Tabs<tabs::TabState>,
+    pub(crate) tab_press: Option<tabs::TabPress>,
+    /// The selection and scroll a tab that opened gets back once its folder is listed.
+    tab_view: Option<(Place, Vec<PathBuf>, (usize, i32))>,
 }
 
 /// The installed programs, scanned the first time something reads them.
@@ -571,6 +577,18 @@ impl Explorer {
             tip: None,
             folder_tip: None,
             tip_walk: None,
+            tabs: {
+                let mut tabs = reprisekit::controls::doctabs::Tabs::new();
+                tabs.strip.adder_menu = false;
+                let label = start.title();
+                tabs.open(
+                    tabs::TabState::at(start, shellview::Mode::Details, None),
+                    label,
+                );
+                tabs
+            },
+            tab_press: None,
+            tab_view: None,
         }
     }
 
@@ -594,11 +612,16 @@ impl Explorer {
     }
 
     pub fn layout(&self, ctx: &Ctx) -> window::Layout {
+        let strip = match self.tabs.list.len() {
+            0 | 1 => 0,
+            _ => reprisekit::controls::tabstrip::doc_height(ctx.theme.text),
+        };
         window::layout(
             ctx.size,
             &self.settings,
             self.explorer_bar.width,
             statusbar::height(&ctx.theme.controls()),
+            strip,
             &ctx.theme.controls(),
         )
     }
@@ -611,7 +634,7 @@ impl Explorer {
         }
         let lay = self.layout(ctx);
         match lay.rebar.y == lay.client.y {
-            true => lay.rebar.bottom() - lay.client.y,
+            true => lay.etch_y - lay.client.y,
             false => 0,
         }
     }
@@ -939,6 +962,7 @@ impl Explorer {
             self.read_again(ctx);
         }
         self.select_pending(ctx);
+        self.follow_tab_view(ctx);
         Some(reply)
     }
 
@@ -1066,6 +1090,7 @@ impl Explorer {
             self.props = None;
         }
         self.place = place.clone();
+        self.tabs.set_label(place.title());
         self.resort();
 
         let icon = ctx.icons.get(place.icon_name(), 16);
@@ -1195,7 +1220,7 @@ impl Explorer {
         }
     }
 
-    fn selected_dir(&self) -> Option<Place> {
+    pub(crate) fn selected_dir(&self) -> Option<Place> {
         let i = self.sv.selection.single()?;
         folder_place(self.items.get(i)?)
     }

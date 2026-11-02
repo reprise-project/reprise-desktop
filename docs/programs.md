@@ -13,6 +13,13 @@ The file manager, and the default for folders.
   size, type or date. A folder tree or a task pane down the side, Back and
   Forward with their history, Up and an address bar (Alt+D). It remembers
   your view and window size.
+- **Tabs:** Ctrl+T opens the folder shown in a new tab, Ctrl+W closes one
+  (the last closes the window), Ctrl+Tab and Ctrl+Shift+Tab go round them.
+  Middle-click a folder, or pick Open in New Tab on its menu, to open it in
+  a tab behind; middle-click a tab to close it, drag one to move it. Each
+  tab keeps its own folder, history, view, selection and scroll, and the
+  title bar and taskbar show the open one's folder. The strip under the
+  address bar shows from the second tab on.
 - **Search** (Ctrl+F or F3): the box at the toolbar's right end finds files
   by name anywhere under the folder shown, through plocate or fd, and lists
   them in the view with an In Folder column. The usual right-click menu works

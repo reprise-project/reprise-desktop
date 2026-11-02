@@ -707,7 +707,7 @@ pub fn draw_doc_tab(
 }
 
 /// The new-tab button after a document strip's tabs: one closed tab over its + part `add` and
-/// its menu part `menu` (device px), each part lit on its own as a close box is.
+/// its menu part `menu` (device px, empty for none), each part lit on its own as a close box is.
 #[expect(clippy::too_many_arguments)]
 pub fn draw_doc_adder(
     c: &mut Canvas,
@@ -721,7 +721,8 @@ pub fn draw_doc_adder(
     px: u32,
 ) {
     let s = p.s;
-    let body = add.union(&menu);
+    let has_menu = !menu.is_empty();
+    let body = if has_menu { add.union(&menu) } else { add };
     let hot = add_ptr != Interaction::Idle || menu_ptr != Interaction::Idle;
     match p.look.style() {
         Some(st) if glass => {
@@ -733,7 +734,9 @@ pub fn draw_doc_adder(
     let well = |r: Rect| Rect::new(r.x + 2 * s, r.y + 3 * s, r.width - 4 * s, r.height - 5 * s);
     let (add, menu) = (well(add), well(menu));
     draw_lit(c, p, add, add_ptr, ink);
-    draw_lit(c, p, menu, menu_ptr, ink);
+    if has_menu {
+        draw_lit(c, p, menu, menu_ptr, ink);
+    }
     let shift = |r: Rect, ptr: Interaction| {
         let d = if ptr == Interaction::Pressed && p.look.style().is_none() {
             s
@@ -743,14 +746,18 @@ pub fn draw_doc_adder(
         Rect::new(r.x + d, r.y + d, r.width, r.height)
     };
     let (plus, arrow) = (shift(add, add_ptr), shift(menu, menu_ptr));
-    inked(c, p, glass, plus.union(&arrow), |c, o| {
+    let glyphs = if has_menu { plus.union(&arrow) } else { plus };
+    inked(c, p, glass, glyphs, |c, o| {
         let at = |r: Rect| Rect::new(r.x - o.0, r.y - o.1, r.width, r.height);
         let (plus, arrow) = (at(plus), at(arrow));
         match p.look.style() {
             Some(_) => {
                 styled::doctab::draw_glyph(c, plus, shape::Glyph::Plus, 8, ink, s);
-                styled::doctab::draw_glyph(c, arrow, shape::Glyph::ArrowDown, 7, ink, s);
+                if has_menu {
+                    styled::doctab::draw_glyph(c, arrow, shape::Glyph::ArrowDown, 7, ink, s);
+                }
             }
+            None if !has_menu => classic::widgets::draw_doc_plus(c, plus, s, ink),
             None => {
                 classic::widgets::draw_doc_plus(c, plus, s, ink);
                 let (x, y) = (
