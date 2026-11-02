@@ -127,8 +127,9 @@ DejaVu Sans.
 
 Glass opens a two-column Start menu. The left side has pinned and frequent
 programs, All Programs and a search box that finds programs, settings pages
-and files, and does sums. The right side has your home folder, Documents,
-Pictures, Music, Recent Items, Computer, Control Panel, Printers and Run.
+and files, and does sums and unit conversions. The right side has your home
+folder, Documents, Pictures, Music, Recent Items, Computer, Control Panel,
+Printers and Run.
 Hover a program for its jump list. The Shut down button turns the computer
 off, and the arrow next to it offers Log off, Lock, Restart, Sleep and
 Hibernate.

@@ -137,9 +137,13 @@ pub fn rank_settings(
         .collect()
 }
 
+/// The answer row's text and what Enter copies: a sum (`= 14`, `14`) or a unit conversion
+/// (`5 km = 3.10686 mi`, `3.10686`).
 pub fn calc_row(query: &str) -> Option<(String, String)> {
-    let answer = crate::calc::answer(query)?;
-    Some((format!("= {answer}"), answer))
+    match crate::calc::answer(query) {
+        Some(answer) => Some((format!("= {answer}"), answer)),
+        None => crate::units::answer(query),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -535,6 +539,10 @@ mod tests {
         assert_eq!(calc_row("2+3*4"), Some(("= 14".into(), "14".into())));
         assert_eq!(calc_row("42"), None);
         assert_eq!(calc_row("notes"), None);
+        assert_eq!(
+            calc_row("5 km in mi"),
+            Some(("5 km = 3.10686 mi".into(), "3.10686".into()))
+        );
     }
 
     #[test]

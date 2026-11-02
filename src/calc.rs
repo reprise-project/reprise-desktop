@@ -6,6 +6,15 @@ pub fn answer(text: &str) -> Option<String> {
 }
 
 pub fn evaluate(text: &str) -> Option<f64> {
+    parse(text).and_then(|(v, ops)| (ops > 0).then_some(v))
+}
+
+/// Like `evaluate`, but a plain number counts too: the amount in front of a unit.
+pub fn value(text: &str) -> Option<f64> {
+    parse(text).map(|(v, _)| v)
+}
+
+fn parse(text: &str) -> Option<(f64, usize)> {
     let tokens = tokenize(text)?;
     let mut p = Parser {
         tokens,
@@ -13,16 +22,21 @@ pub fn evaluate(text: &str) -> Option<f64> {
         ops: 0,
     };
     let v = p.expr()?;
-    (p.at == p.tokens.len() && p.ops > 0 && v.is_finite()).then_some(v)
+    (p.at == p.tokens.len() && v.is_finite()).then_some((v, p.ops))
 }
 
 /// `v` to 12 significant digits, without trailing zeros; huge and tiny
 /// values in exponent form.
 pub fn format(v: f64) -> String {
+    format_sig(v, 12)
+}
+
+/// `v` to `sig` significant digits, as `format`.
+pub fn format_sig(v: f64, sig: usize) -> String {
     if v == 0.0 {
         return "0".into();
     }
-    let digits = 12 - (v.abs().log10().floor() as i32 + 1);
+    let digits = sig as i32 - (v.abs().log10().floor() as i32 + 1);
     let r = if (0..=300).contains(&digits) {
         let m = 10f64.powi(digits);
         (v * m).round() / m
@@ -33,7 +47,7 @@ pub fn format(v: f64) -> String {
         return "0".into();
     }
     if r.abs() >= 1e16 || r.abs() < 1e-6 {
-        let s = format!("{:.11e}", r);
+        let s = format!("{:.*e}", sig - 1, r);
         let (m, e) = s.split_once('e').unwrap_or((&s, "0"));
         let m = m.trim_end_matches('0').trim_end_matches('.');
         format!("{m}e{e}")
