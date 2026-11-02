@@ -1,5 +1,6 @@
 use super::*;
 use crate::menu::{row, title};
+use reprisekit::theme::FontConfig;
 
 #[test]
 fn go_to_fits_its_text_under_every_interface() {

@@ -615,6 +615,7 @@ impl Explorer {
             });
         }
         out.extend(self.props_child());
+        out.extend(self.preview_child());
         out.extend(self.progress_children());
         out
     }
