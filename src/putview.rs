@@ -1,10 +1,12 @@
 //! The desktop's file work on `reprisefs` jobs polled on the loop: a drop's or paste's put, one
-//! per folder, and deletes and Empty Recycle Bin, each with the progress dialog once it runs past
-//! [`copyprogress::SHOW_AFTER`].
+//! per folder, deletes and Empty Recycle Bin, and Send To's zips, each with the progress dialog
+//! once it runs past [`copyprogress::SHOW_AFTER`].
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use reprisefs::compress::{self, Compress};
+use reprisefs::extract::{ArchiveEvent, ArchiveJob};
 use reprisefs::jobs::{PutEvent, PutItem, PutJob};
 use reprisefs::ops::DropOp;
 use reprisefs::progress::{Phase as JobPhase, Snapshot};
@@ -42,6 +44,17 @@ pub struct Removing {
     failed: Option<Failure>,
 }
 
+/// A zip being made.
+pub struct Zipping {
+    job: ArchiveJob,
+    from: String,
+    to: String,
+    ident: PathBuf,
+    started: Instant,
+    dialog: Option<u64>,
+    failed: Option<Failure>,
+}
+
 /// The batch running into one folder.
 pub struct Running {
     job: PutJob,
@@ -69,6 +82,12 @@ fn status(s: Snapshot, waiting: usize) -> Status {
         current: s.current,
         waiting,
     }
+}
+
+/// A number of its own for a removal or a zip.
+fn next_key() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 fn folder_name(p: &Path) -> String {
@@ -296,8 +315,8 @@ impl State {
 
     /// The progress dialog `id`'s Pause or Resume.
     pub(crate) fn pause_put(&mut self, id: u64, on: bool) {
-        if let Some(r) = self.drags.removals.values().find(|r| r.dialog == Some(id)) {
-            r.job.meter().set_paused(on);
+        if let Some(m) = self.meter_of_dialog(id) {
+            m.set_paused(on);
             return;
         }
         if let Some(dir) = self.put_of_dialog(id) {
@@ -311,9 +330,9 @@ impl State {
     /// The copy dialog `id`'s Cancel: the put stops inside its file and the batches waiting for
     /// the same folder never start.
     pub(crate) fn cancel_put(&mut self, id: u64) {
-        if let Some(r) = self.drags.removals.values().find(|r| r.dialog == Some(id)) {
-            r.job.meter().set_paused(false);
-            r.job.meter().cancel();
+        if let Some(m) = self.meter_of_dialog(id) {
+            m.set_paused(false);
+            m.cancel();
             return;
         }
         let Some(dir) = self.put_of_dialog(id) else {
@@ -326,6 +345,16 @@ impl State {
             run.job.set_paused(false);
             run.job.cancel();
         }
+    }
+
+    /// The meter of the removal or zip whose progress dialog is `id`.
+    fn meter_of_dialog(&self, id: u64) -> Option<&std::sync::Arc<reprisefs::progress::Meter>> {
+        let d = &self.drags;
+        let removal = d.removals.values().find(|r| r.dialog == Some(id));
+        removal.map(|r| r.job.meter()).or_else(|| {
+            let zip = d.zips.values().find(|z| z.dialog == Some(id));
+            zip.map(|z| z.job.meter())
+        })
     }
 
     fn put_of_dialog(&self, id: u64) -> Option<PathBuf> {
@@ -345,11 +374,10 @@ impl State {
         bins: Option<Bins>,
         kind: Kind,
     ) {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         if items.is_empty() {
             return;
         }
-        let key = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let key = next_key();
         let job = RemoveJob::start(items, bins, || {});
         let r = Removing {
             job,
@@ -433,5 +461,136 @@ impl State {
             r.dialog = dialog;
         }
         true
+    }
+
+    /// Zips `c` on a job with the progress dialog; a failure shows an error box and leaves no zip.
+    pub(crate) fn start_zip(&mut self, c: Compress) {
+        let key = next_key();
+        let name = |p: Option<&Path>| p.map(folder_name).unwrap_or_default();
+        let z = Zipping {
+            from: name(c.zip.parent()),
+            to: name(Some(&c.zip)),
+            ident: c.zip.clone(),
+            job: ArchiveJob::compress(c, || {}),
+            started: Instant::now(),
+            dialog: None,
+            failed: None,
+        };
+        self.drags.zips.insert(key, z);
+        let added = self
+            .handle
+            .insert_source(Timer::from_duration(TICK), move |_, _, state| {
+                if state.poll_zip(key) {
+                    TimeoutAction::ToDuration(TICK)
+                } else {
+                    TimeoutAction::Drop
+                }
+            });
+        if let Err(e) = added {
+            log::warn!("desktop: no timer for a zip's progress: {}", e.error);
+        }
+    }
+
+    /// Take zip `key`'s news into its dialog; at the end close it and say why it failed. False
+    /// once it is over.
+    fn poll_zip(&mut self, key: u64) -> bool {
+        let Some(z) = self.drags.zips.get_mut(&key) else {
+            return false;
+        };
+        let mut finished = false;
+        for ev in z.job.poll() {
+            match ev {
+                ArchiveEvent::Landed { .. } => {}
+                ArchiveEvent::Failed { text, .. } => {
+                    z.failed = Some((compress::FAILURE_TITLE, text));
+                }
+                ArchiveEvent::Finished => finished = true,
+            }
+        }
+        if finished {
+            let Some(z) = self.drags.zips.remove(&key) else {
+                return false;
+            };
+            let m = z.job.meter();
+            let done = m.snapshot().items as usize;
+            self.close_progress(z.dialog, done, m.cancelled(), z.failed.as_ref());
+            self.show_drop_failure(z.failed);
+            return false;
+        }
+        let job = Shown {
+            started: z.started,
+            dialog: z.dialog,
+            kind: Kind::Compress,
+            from: z.from.clone(),
+            to: z.to.clone(),
+            ident: z.ident.clone(),
+        };
+        let st = status(z.job.meter().snapshot(), 0);
+        let dialog = self.present(job, st);
+        if let Some(z) = self.drags.zips.get_mut(&key) {
+            z.dialog = dialog;
+        }
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use reprisefs::compress::Compress;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    fn sandbox(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("reprise-zip-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn run_zip(h: &mut crate::harness::Harness, c: Compress) {
+        h.state.start_zip(c);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !h.state.drags.zips.is_empty() {
+            assert!(std::time::Instant::now() < end, "the zip ends");
+            h.run_for(20);
+        }
+    }
+
+    #[test]
+    fn send_to_zip_runs_on_a_job_and_lands_the_zip() {
+        let dir = sandbox("lands");
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        std::fs::create_dir(dir.join("b")).unwrap();
+        let paths = vec![dir.join("a.txt"), dir.join("b")];
+        let c = reprisefs::sendto::zip_target(&paths, &[]).unwrap();
+        let zip = c.zip.clone();
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        run_zip(&mut h, c);
+        assert_eq!(zip, dir.join("a.zip"));
+        assert!(zip.is_file(), "the zip landed");
+        assert!(h.state.dialogs.views.is_empty(), "no error box");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_zip_that_cannot_be_written_shows_an_error_box_and_leaves_no_file() {
+        let dir = sandbox("read-only");
+        let src = dir.join("a.txt");
+        std::fs::write(&src, "a").unwrap();
+        let ro = std::fs::Permissions::from_mode(0o555);
+        std::fs::set_permissions(&dir, ro).unwrap();
+        let c = reprisefs::sendto::zip_target(&[src], &[]).unwrap();
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        run_zip(&mut h, c);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let titles: Vec<_> = (h.state.dialogs.views.iter())
+            .map(|v| v.dialog.title.clone())
+            .collect();
+        assert_eq!(titles, [reprisefs::compress::FAILURE_TITLE]);
+        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
+        assert_eq!(left.len(), 1, "only the source is left");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

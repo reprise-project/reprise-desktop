@@ -4,7 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use crate::{names, ops, places};
+use crate::compress::Compress;
+use crate::{names, places};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SendTo {
@@ -198,12 +199,14 @@ pub fn mail_argv(paths: &[PathBuf]) -> Vec<OsString> {
     argv
 }
 
-/// The zip row's command for `paths`, items of one folder whose other names are `existing`: one
+/// The zip row's job for `paths`, items of one folder whose other names are `existing`: one
 /// archive named after the first item and numbered past an existing name. None for an empty
 /// selection.
-pub fn zip_argv(paths: &[PathBuf], existing: &[String]) -> Option<Vec<OsString>> {
-    let zip = names::zip_path(paths.first()?, existing);
-    Some(ops::zip_argv(paths, &zip))
+pub fn zip_target(paths: &[PathBuf], existing: &[String]) -> Option<Compress> {
+    Some(Compress {
+        zip: names::zip_path(paths.first()?, existing),
+        paths: paths.to_vec(),
+    })
 }
 
 #[cfg(test)]
@@ -241,23 +244,10 @@ mod tests {
     #[test]
     fn zip_takes_the_whole_set_into_one_archive_named_after_the_first() {
         let paths: Vec<PathBuf> = vec!["/d/b2.txt".into(), "/d/a1.txt".into(), "/d/c3".into()];
-        let argv = zip_argv(&paths, &["b2.zip".into()]).unwrap();
-        assert_eq!(
-            argv,
-            [
-                "bsdtar",
-                "-a",
-                "-cf",
-                "/d/b2 (2).zip",
-                "-C",
-                "/d",
-                "--",
-                "b2.txt",
-                "a1.txt",
-                "c3"
-            ]
-        );
-        assert_eq!(zip_argv(&[], &[]), None);
+        let c = zip_target(&paths, &["b2.zip".into()]).unwrap();
+        assert_eq!(c.zip, Path::new("/d/b2 (2).zip"));
+        assert_eq!(c.paths, paths);
+        assert!(zip_target(&[], &[]).is_none());
     }
 
     #[test]

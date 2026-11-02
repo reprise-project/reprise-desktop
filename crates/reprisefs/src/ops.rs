@@ -147,25 +147,9 @@ pub fn create_new_numbered(dir: &Path, name: &str) -> io::Result<(std::fs::File,
     Err(last.expect("the loop ran"))
 }
 
-/// The argument vector that zips `paths`, items of one folder, into one
-/// archive `zip` with bsdtar, which every libarchive install has. The
-/// archive holds each item under its own name. Run with no shell, so each
-/// path reaches bsdtar as its own bytes. bsdtar reads `-C dir` and
-/// `@archive` among the names even past `--`, so a name starting with `-`
-/// or `@` goes in as `./name`.
-pub fn zip_argv(paths: &[PathBuf], zip: &Path) -> Vec<OsString> {
-    let (dir, names) = members(paths);
-    let mut argv: Vec<OsString> = ["bsdtar", "-a", "-cf"].map(OsString::from).into();
-    argv.push(zip.into());
-    argv.push("-C".into());
-    argv.push(dir.into());
-    argv.push("--".into());
-    argv.extend(names);
-    argv
-}
-
 /// The folder of `paths`, items of one folder, and their names as bsdtar takes them after
-/// `-C folder --`: a name starting with `-` or `@` goes in as `./name`.
+/// `-C folder --`: bsdtar reads `-C dir` and `@archive` among the names even past `--`, so a
+/// name starting with `-` or `@` goes in as `./name`.
 pub(crate) fn members(paths: &[PathBuf]) -> (&Path, Vec<OsString>) {
     let dir = paths
         .first()
