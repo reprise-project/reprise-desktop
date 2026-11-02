@@ -105,7 +105,7 @@ impl EditMenu {
             return match step {
                 Step::None => Outcome::Taken,
                 Step::Redraw => Outcome::Redraw,
-                Step::Close => {
+                Step::Close | Step::Extra(_) => {
                     self.open = None;
                     Outcome::Redraw
                 }
