@@ -1,0 +1,27 @@
+[package]
+name = "reprise-notes"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Sticky Notes: small coloured notes on the desktop"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-notes"
+path = "src/bin/reprise-notes.rs"
+test = false
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisefs = { path = "../../reprisefs" }
+reprisebus = { path = "../../reprisebus" }
+log.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

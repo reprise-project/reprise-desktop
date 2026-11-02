@@ -54,9 +54,12 @@ impl Host {
     }
 
     fn send_tag(&mut self, window: &Window, id: WinId, caption: Caption) {
-        let tag = self.tag_of(id, caption);
+        let tag = match self.tag_of(id, caption) {
+            "" if caption == Caption::Window => self.app.place_tag(id).unwrap_or_default(),
+            tag => tag.to_string(),
+        };
         if !tag.is_empty() {
-            send_tag(self.tag_manager.as_ref(), window, tag);
+            send_tag(self.tag_manager.as_ref(), window, &tag);
         }
     }
 

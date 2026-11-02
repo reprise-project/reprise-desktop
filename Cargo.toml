@@ -12,6 +12,7 @@ members = [
     "crates/reprisescene",
     "crates/reprisefx",
     "crates/apps/notepad",
+    "crates/apps/notes",
     "crates/apps/about",
     "crates/apps/explorer",
     "crates/apps/sound",
