@@ -26,16 +26,22 @@ pub fn paste_fits(have: usize, more: usize) -> bool {
 /// a password, so no buffer that held them is freed unwiped: growth moves
 /// to a bigger buffer and zeroizes the old one, and drop zeroizes.
 #[derive(Default)]
-pub struct PasteBuf(Vec<u8>);
+pub struct PasteBuf(Vec<u8>, Option<usize>);
 
 impl PasteBuf {
+    /// A buffer that takes up to `max` bytes instead of [`MAX_PASTE_BYTES`], for a picture.
+    pub fn capped(max: usize) -> PasteBuf {
+        PasteBuf(Vec::new(), Some(max))
+    }
+
     pub fn push(&mut self, more: &[u8]) -> bool {
-        if !paste_fits(self.0.len(), more.len()) {
+        let max = self.1.unwrap_or(MAX_PASTE_BYTES);
+        if self.0.len().saturating_add(more.len()) > max {
             return false;
         }
         let need = self.0.len() + more.len();
         if need > self.0.capacity() {
-            let cap = need.max(2 * self.0.capacity()).min(MAX_PASTE_BYTES);
+            let cap = need.max(2 * self.0.capacity()).min(max);
             let mut grown = Vec::with_capacity(cap);
             grown.extend_from_slice(&self.0);
             std::mem::replace(&mut self.0, grown).zeroize();
@@ -498,5 +504,13 @@ mod tests {
         assert!(paste_fits(MAX_PASTE_BYTES - 1, 1));
         assert!(!paste_fits(MAX_PASTE_BYTES, 1));
         assert!(!paste_fits(usize::MAX, 1));
+        let mut text = PasteBuf::default();
+        assert!(!text.push(&vec![0; MAX_PASTE_BYTES + 1]));
+        let mut picture = PasteBuf::capped(MAX_PASTE_BYTES + 2);
+        assert!(picture.push(&vec![0; MAX_PASTE_BYTES + 1]));
+        assert!(
+            !picture.push(&[0, 0]),
+            "a capped buffer stops at its own cap"
+        );
     }
 }

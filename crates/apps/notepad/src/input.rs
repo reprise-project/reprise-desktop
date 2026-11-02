@@ -338,6 +338,7 @@ impl Notepad {
             Event::Tick if self.dragging.is_some() => self.select_drag(true, ctx),
             Event::Tick => self.drop_event(ev, ctx),
             Event::PastedFiles(_)
+            | Event::PastedImage(_)
             | Event::PastedPrimary(_)
             | Event::FieldDropped(_)
             | Event::Wake
