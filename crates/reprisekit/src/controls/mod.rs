@@ -35,6 +35,7 @@ pub mod hosted;
 pub mod hotkey;
 pub mod iconlist;
 pub mod iconview;
+pub mod imageview;
 pub mod infotip;
 pub mod keysheet;
 pub mod launcher;

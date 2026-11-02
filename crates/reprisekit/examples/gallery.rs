@@ -160,6 +160,10 @@ fn main() {
             &format!("reprisekit-gallery-filepreview@{}.png", n.max(1)),
         );
         write_preview(
+            &render_image_view(n.max(1)),
+            &format!("reprisekit-gallery-imageview@{}.png", n.max(1)),
+        );
+        write_preview(
             &render_grid_drag(n.max(1)),
             &format!("reprisekit-gallery-grid-drag@{}.png", n.max(1)),
         );
@@ -264,6 +268,7 @@ fn main() {
         &render_file_preview(1),
         "reprisekit-gallery-filepreview.png",
     );
+    write_preview(&render_image_view(1), "reprisekit-gallery-imageview.png");
     write_preview(&render_grid_drag(1), "reprisekit-gallery-grid-drag.png");
     write_preview(
         &render_label_ellipsis(1),
@@ -1487,6 +1492,60 @@ fn render_file_preview(scale: i32) -> Canvas {
             let r = Rect::new(0, 0, w, h);
             filepreview::draw(&mut c, &p, &text, 11, &mono, &m, &qv, r);
             out.blit_canvas(col as i32 * cell_w + 10, row as i32 * cell_h + 10, &c);
+        }
+    }
+    out
+}
+
+fn render_image_view(scale: i32) -> Canvas {
+    use reprisekit::controls::imageview::{self, ImageView, Source, Zoom};
+    let (cell_w, cell_h) = (260, 200);
+    let mut out = Canvas::with_scale(3 * cell_w as u32, 3 * cell_h as u32, scale);
+    out.fill_rect(out.bounds(), Color::rgb(0x40, 0x40, 0x40));
+    let (pw, ph) = (480u32, 320u32);
+    let pixels = (0..pw * ph)
+        .map(|k| {
+            let (x, y) = (k % pw, k / pw);
+            let ring = ((x as i32 - 240).pow(2) + (y as i32 - 160).pow(2)) / 900 % 2;
+            0xFF00_0000 | (x * 255 / pw) << 16 | (y * 255 / ph) << 8 | (0x40 + 0x80 * ring as u32)
+        })
+        .collect();
+    let picture = Canvas::from_pixels(pw, ph, pixels);
+    for (row, i) in [Interface::Classic, Interface::Blue, Interface::Glass]
+        .into_iter()
+        .enumerate()
+    {
+        let mut theme = interfaces::theme_for(i);
+        theme.look = theme.look.at_scale(scale);
+        let p = theme.paint();
+        // Fitted, at 100% and panned, turned a quarter turn at 200%.
+        for col in 0..3 {
+            let mut v = ImageView::new((pw, ph));
+            let r = Rect::new(0, 0, cell_w - 20, cell_h - 20);
+            match col {
+                0 => {}
+                1 => v.zoom = Zoom::Scale(1.0),
+                _ => {
+                    v.zoom = Zoom::Scale(2.0);
+                    v.turn(true);
+                }
+            }
+            let lay = imageview::layout(&v, r, scale, &theme.controls());
+            v.pan(120, 90, &lay);
+            let rendered = (lay.scale < 1.0).then(|| {
+                imageview::render(
+                    &picture,
+                    v.turns,
+                    (lay.content.0 as u32, lay.content.1 as u32),
+                )
+            });
+            let mut c = Canvas::with_scale(r.width as u32, r.height as u32, scale);
+            let src = Source {
+                picture: &picture,
+                rendered: rendered.as_ref(),
+            };
+            imageview::draw(&mut c, &p, &v, src, &lay, theme.colors.window);
+            out.blit_canvas(col * cell_w + 10, row as i32 * cell_h + 10, &c);
         }
     }
     out
