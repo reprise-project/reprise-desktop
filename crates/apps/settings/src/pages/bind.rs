@@ -259,6 +259,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Num("screen_off_after", lens!(screen_off_after)),
         Bind::Num("blank_after", lens!(blank_after)),
         Bind::Num("lock_fade", lens!(lock_fade)),
+        Bind::Num("low_space_percent", lens!(low_space_percent)),
         Bind::Track("mouse_speed", lens!(mouse_speed)),
         Bind::Flag("mouse_accel", lens!(mouse_accel)),
         Bind::Flag("mouse_natural", lens!(mouse_natural)),

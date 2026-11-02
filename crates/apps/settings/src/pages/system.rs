@@ -251,6 +251,31 @@ pub fn power(a: Area) -> Form {
         352,
         "Show the &wallpaper on the lock screen",
     ));
+
+    items.push(group(a, "storage_group", 388, 74, "Low Disk Space"));
+    items.extend(spin(
+        "low_space_label",
+        "low_space_percent",
+        GX,
+        412,
+        114,
+        "Warn bel&ow:",
+        (0, repriseconf::LOW_SPACE_MAX.into()),
+    ));
+    items.push(Item::label_at(
+        "low_space_units",
+        GX + 174,
+        412,
+        gw - 174,
+        "% free",
+    ));
+    items.push(Item::label_at(
+        "low_space_note",
+        GX,
+        438,
+        gw,
+        "For the disks of your home folder and /. 0 turns it off.",
+    ));
     Form::new(items)
 }
 

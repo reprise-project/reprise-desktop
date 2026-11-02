@@ -1,10 +1,12 @@
 //! reprise-drives: removable drives for the session. Does what `[drives]
 //! on_insert` says with plugged-in drives (asks in a balloon, mounts through
 //! UDisks2, opens a window, raises the passphrase box for locked ones) and
-//! lists them in the Safely Remove Hardware tray menu. No main window; the
-//! process is autostarted for the session.
+//! lists them in the Safely Remove Hardware tray menu, and warns when the disk of
+//! `$HOME` or `/` runs low on space (`space`). No main window; the process is
+//! autostarted for the session.
 
 mod model;
+mod space;
 mod tray;
 mod watch;
 
@@ -79,6 +81,10 @@ struct DrivesApp {
     /// cleartext volume when it unlocks.
     open_after: HashSet<String>,
     next_tag: u32,
+    space: Option<Receiver<Vec<space::Reading>>>,
+    warned: space::Warned,
+    /// Low disk space balloons by tag, kept for the history's buttons.
+    space_asks: HashMap<u32, space::Reading>,
 }
 
 impl DrivesApp {
@@ -192,6 +198,37 @@ impl DrivesApp {
             }
             Arrival::Unlock(_) if !v.locked() => {}
             _ => self.go(a, open),
+        }
+    }
+
+    /// `[storage] low_space_percent` is read at each round, so a change applies to the next.
+    fn space_read(&mut self, round: &[space::Reading]) {
+        let low = self.warned.feed(round, repriseconf::low_space_percent());
+        for r in low {
+            let (summary, body) = space::balloon(r);
+            log::info!("{body}");
+            let tag = self.tag();
+            self.space_asks.insert(tag, r.clone());
+            if let Some(t) = &self.tray {
+                t.notify_buttons(&summary, &body, tag, &space::buttons(r));
+            }
+        }
+    }
+
+    /// Button `i` of low disk space balloon `tag`: 0 opens the disk, 1 asks to empty the bin.
+    fn space_answered(&mut self, tag: u32, i: usize) {
+        let Some(r) = self.space_asks.get(&tag) else {
+            return;
+        };
+        match i {
+            0 => self.open_path(&r.mount.clone()),
+            _ => {
+                std::thread::spawn(|| {
+                    if let Err(e) = reprisebus::tray::empty_recycle_bin() {
+                        log::warn!("could not ask to empty the Recycle Bin: {e}");
+                    }
+                });
+            }
         }
     }
 
@@ -339,6 +376,9 @@ impl DrivesApp {
                 watch::Msg::Removed { disk, result } => self.removed(&disk, result),
             }
         }
+        while let Some(round) = self.space.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.space_read(&round);
+        }
         while let Some(raw) = self.msgs.as_ref().and_then(|rx| rx.try_recv().ok()) {
             match tray::translate(raw, &self.entries) {
                 Some(tray::TrayMsg::Open(x, y)) if !self.entries.is_empty() => {
@@ -363,6 +403,9 @@ impl DrivesApp {
                     }
                 }
                 Some(tray::TrayMsg::Balloon(tag)) => self.open_folder(tag),
+                Some(tray::TrayMsg::Button(tag, i)) if self.space_asks.contains_key(&tag) => {
+                    self.space_answered(tag, i)
+                }
                 Some(tray::TrayMsg::Button(tag, i)) => self.ask_answered(tag, i),
                 _ => {}
             }
@@ -510,6 +553,9 @@ impl App for DrivesApp {
             Ok(None) => {}
             Err(code) => return repriseapp::Start::Exit(code),
         }
+        let (poster, rx) = repriseapp::Poster::channel(waker.clone());
+        space::watch(poster);
+        self.space = Some(rx);
         let (rx, calls) = watch::watch(waker);
         self.bus = Some(rx);
         self.calls = Some(calls);

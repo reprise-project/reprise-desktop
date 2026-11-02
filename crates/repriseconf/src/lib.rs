@@ -313,6 +313,28 @@ fn thumbnail_cache_in(text: &str) -> ThumbnailCache {
     }
 }
 
+/// `[storage] low_space_percent`: reprise-drives warns when the disk of `$HOME` or `/` has less
+/// free than this share of its size; 0 turns the warning off.
+pub const LOW_SPACE_PERCENT: u8 = 5;
+pub const LOW_SPACE_MAX: u8 = 50;
+
+/// `[storage] low_space_percent`, read now: unset or not an integer keeps
+/// [`LOW_SPACE_PERCENT`], and it is clamped to 0..=[`LOW_SPACE_MAX`].
+pub fn low_space_percent() -> u8 {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    low_space_percent_in(&text)
+}
+
+fn low_space_percent_in(text: &str) -> u8 {
+    parsed(text)
+        .and_then(|doc| {
+            get(&doc, &key("storage", "low_space_percent"))
+                .and_then(Item::as_integer)
+                .map(|v| v.clamp(0, i64::from(LOW_SPACE_MAX)) as u8)
+        })
+        .unwrap_or(LOW_SPACE_PERCENT)
+}
+
 /// A refresh in Hz with the decimals it needs: `60`, `59.94`.
 pub fn hz_string(refresh_mhz: i32) -> String {
     let hz = format!("{:.3}", refresh_mhz as f64 / 1000.0);
@@ -800,6 +822,17 @@ mod tests {
         assert!(confirm_scripts_in(""));
         assert!(!confirm_scripts_in("confirm_scripts = false\n"));
         assert!(confirm_scripts_in("confirm_scripts = \"no\"\n"));
+    }
+
+    #[test]
+    fn low_space_warns_below_5_percent_unless_set() {
+        let pct = |v: &str| low_space_percent_in(&format!("[storage]\nlow_space_percent = {v}\n"));
+        assert_eq!(low_space_percent_in(""), 5);
+        assert_eq!(pct("10"), 10);
+        assert_eq!(pct("0"), 0, "0 turns it off");
+        assert_eq!(pct("-1"), 0);
+        assert_eq!(pct("90"), 50);
+        assert_eq!(pct("\"low\""), 5);
     }
 
     #[test]

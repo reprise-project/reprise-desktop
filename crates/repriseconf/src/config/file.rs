@@ -633,6 +633,9 @@ pub struct FileConfig {
     /// `[drives]` is read by reprise-drives; accepted here so the file parses.
     #[allow(dead_code)]
     pub drives: Option<serde::de::IgnoredAny>,
+    /// `[storage]` is read by `crate::low_space_percent`; accepted here so the file parses.
+    #[allow(dead_code)]
+    pub storage: Option<serde::de::IgnoredAny>,
     /// `[thumbnail_cache]` is read by `crate::thumbnail_cache`; accepted here so the file parses.
     #[allow(dead_code)]
     pub thumbnail_cache: Option<serde::de::IgnoredAny>,

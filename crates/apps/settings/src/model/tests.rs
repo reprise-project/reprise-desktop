@@ -734,6 +734,7 @@ fn save_round_trips_every_field() {
         launcher_windows: false,
         thumbnail_cache: false,
         thumbnail_max_mb: 64,
+        low_space_percent: 0,
         desktops: 1,
         desktop_animation: "slide-vertical".into(),
         desktop_animation_ms: 350,
