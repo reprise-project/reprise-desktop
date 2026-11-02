@@ -1,7 +1,7 @@
-//! A context menu on popups of its own ([`repriseapp::Extended::popup`]): the tree it walks, the
+//! A context menu on popups of its own ([`crate::Extended::popup`]): the tree it walks, the
 //! chain reprisekit lays out, and what each row does.
 
-use repriseapp::{Ctx, KeyInput};
+use crate::{Ctx, KeyInput};
 use reprisekit::access::Tree;
 use reprisekit::access::accesskit::NodeId;
 use reprisekit::controls::hosted::Chain;

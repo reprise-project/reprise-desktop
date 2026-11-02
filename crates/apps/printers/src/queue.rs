@@ -13,8 +13,8 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::textedit::keysym;
 
 use crate::cups::{Job, JobOp, JobState, PrinterState, Snapshot};
-use crate::list::{List, Press};
-use crate::popup::{Popup, Step, item};
+use repriseapp::ctxmenu::{Popup, Step, item};
+use repriseapp::detailslist::{List, Press};
 
 pub const CLIENT: (i32, i32) = (640, 300);
 

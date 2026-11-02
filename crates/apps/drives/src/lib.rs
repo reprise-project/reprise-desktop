@@ -11,6 +11,7 @@ mod tray;
 mod watch;
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 
@@ -215,20 +216,24 @@ impl DrivesApp {
         }
     }
 
-    /// Button `i` of low disk space balloon `tag`: 0 opens the disk, 1 asks to empty the bin.
+    /// Button `i` of low disk space balloon `tag`: Open opens the disk, Show Usage opens Disk
+    /// Usage on it, Empty Recycle Bin asks to empty the bin.
     fn space_answered(&mut self, tag: u32, i: usize) {
         let Some(r) = self.space_asks.get(&tag) else {
             return;
         };
-        match i {
-            0 => self.open_path(&r.mount.clone()),
-            _ => {
+        let mount = r.mount.clone();
+        match space::buttons(r).get(i).copied() {
+            Some(space::OPEN) => self.open_path(&mount),
+            Some(space::SHOW_USAGE) => self.spawn_with_token("reprise-diskusage", [&mount]),
+            Some(space::EMPTY_BIN) => {
                 std::thread::spawn(|| {
                     if let Err(e) = reprisebus::tray::empty_recycle_bin() {
                         log::warn!("could not ask to empty the Recycle Bin: {e}");
                     }
                 });
             }
+            _ => {}
         }
     }
 
@@ -351,9 +356,18 @@ impl DrivesApp {
     /// A window on `at`, presented with the token a balloon click or button press left.
     fn open_path(&self, at: &Path) {
         let argv = reprisefs::apps::open_argv_for(at);
+        self.spawn_with_token(&argv[0], &argv[1..]);
+    }
+
+    /// Starts `program` with `args` and the tray's activation token, so its window comes up.
+    fn spawn_with_token(
+        &self,
+        program: impl AsRef<OsStr>,
+        args: impl IntoIterator<Item = impl AsRef<OsStr>>,
+    ) {
         let token = self.tray.as_ref().and_then(|t| t.take_activation_token());
-        let mut cmd = std::process::Command::new(&argv[0]);
-        cmd.args(&argv[1..]);
+        let mut cmd = std::process::Command::new(program.as_ref());
+        cmd.args(args);
         if let Some(t) = token {
             cmd.env("XDG_ACTIVATION_TOKEN", t);
         }
@@ -361,7 +375,7 @@ impl DrivesApp {
             Ok(mut child) => {
                 std::thread::spawn(move || child.wait());
             }
-            Err(e) => log::warn!("could not open {}: {e}", at.display()),
+            Err(e) => log::warn!("could not start {:?}: {e}", program.as_ref()),
         }
     }
 

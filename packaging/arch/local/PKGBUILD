@@ -110,7 +110,7 @@ package() {
   install -Dm755 "$srcdir/target/release/reprise" "$pkgdir/usr/bin/reprise"
   # One binary holds every program; each name links to it.
   install -Dm755 "$srcdir/target/release/reprise-apps" "$pkgdir/usr/bin/reprise-apps"
-  for app in reprise-notepad reprise-explorer reprise-about reprise-sound reprise-volume reprise-settings reprise-power reprise-datetime reprise-accounts reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers reprise-terminal reprise-phone; do
+  for app in reprise-notepad reprise-explorer reprise-about reprise-sound reprise-volume reprise-settings reprise-power reprise-datetime reprise-accounts reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers reprise-terminal reprise-phone reprise-diskusage; do
     ln -s reprise-apps "$pkgdir/usr/bin/$app"
     install -Dm644 "data/apps/$app.desktop" "$pkgdir/usr/share/applications/$app.desktop"
   done

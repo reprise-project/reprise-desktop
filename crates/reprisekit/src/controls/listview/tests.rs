@@ -1399,3 +1399,110 @@ fn a_blue_lists_lit_bar_part_draws_hot_or_pressed() {
         "the up arrow at rest"
     );
 }
+
+/// Rows whose second cell is a bar of the share in `shares`.
+#[derive(Default)]
+struct Shares(Vec<f64>);
+
+impl Rows for Shares {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    fn icon(&self, _: usize) -> Option<&Canvas> {
+        None
+    }
+    fn cell(&self, _: usize, _: usize) -> Cow<'_, str> {
+        Cow::Borrowed("")
+    }
+    fn bar(&self, row: usize, col: usize) -> Option<f64> {
+        (col == 1).then(|| self.0[row])
+    }
+}
+
+/// FNV-1a over the pixels, for pins.
+fn hash(c: &Canvas) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for y in 0..c.height as i32 {
+        for x in 0..c.width as i32 {
+            for b in c.get(x, y).to_le_bytes() {
+                h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+    }
+    h
+}
+
+/// A bar cell fills its share of the cell less 6 px each side (to a whole Classic block), 3 px
+/// clear above and below, in every look and at scale 2.
+#[test]
+fn a_bar_cell_fills_its_share_in_every_look_and_scale() {
+    use crate::interface::Interface;
+    let text = TextRenderer::load(&FontConfig::default());
+    let lv: ListView<Shares> = ListView {
+        columns: vec![Column::new("", 40), Column::new("", 120)],
+        rows: Shares(vec![1.0, 0.5, 0.0, 2.0]),
+        frame: false,
+        ..Default::default()
+    };
+    let r = Rect::new(0, 0, 180, 100);
+    let mut pins = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for s in [1, 2] {
+            let mut theme = crate::interfaces::theme_for(i);
+            theme.look = theme.look.at_scale(s);
+            let lay = layout(&lv, r, &theme.look.controls());
+            let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
+            let p = Paint { s, ..theme.paint() };
+            draw(&mut c, &text, &p, &lv, &lay, None, 11);
+            let window = theme.colors.window.argb();
+            let body = lay.body.scaled(s);
+            let row_h = lay.row_h() * s;
+            let cell_x = body.x + lay.col_w(&lv.columns[0]) * s;
+            let cell_w = lay.col_w(&lv.columns[1]) * s;
+            assert_eq!(cell_w, 120 * s, "{i:?} x{s}");
+            // How far right row `row`'s middle differs from the empty bar's, from the bar's left.
+            let filled = |row: i32| {
+                let at = |r: i32, x: i32| c.get(x, body.y + r * row_h + row_h / 2);
+                (cell_x..cell_x + cell_w)
+                    .filter(|&x| at(row, x) != at(2, x))
+                    .max()
+                    .map_or(0, |x| x + 1 - cell_x - CELL_X * s)
+            };
+            let full = filled(0);
+            assert!(
+                full > 96 * s && full <= 108 * s,
+                "{i:?} x{s}: the full bar {full}"
+            );
+            assert!(
+                (filled(1) - full / 2).abs() <= 8 * s,
+                "{i:?} x{s}: half the bar, {} of {full}",
+                filled(1)
+            );
+            assert_eq!(filled(3), full, "{i:?} x{s}: a share past 1 is a full bar");
+            assert!(
+                (cell_x..cell_x + 120 * s)
+                    .any(|x| c.get(x, body.y + 2 * row_h + row_h / 2) != window),
+                "{i:?} x{s}: an empty bar still draws its frame"
+            );
+            let clear = |y: i32| (cell_x..cell_x + 120 * s).all(|x| c.get(x, y) == window);
+            assert!(clear(body.y + 2 * s), "{i:?} x{s}: clear above the bar");
+            assert!(
+                clear(body.y + row_h - 3 * s),
+                "{i:?} x{s}: clear below the bar"
+            );
+            pins.push(hash(&c));
+        }
+    }
+    assert_eq!(
+        pins,
+        [
+            4876715914481314308,
+            11173558624458108821,
+            16508500649778898160,
+            10870395863740515825,
+            1556155106020882762,
+            17444408658169601235
+        ],
+        "Classic, Blue and Glass at scale 1 and 2"
+    );
+}
