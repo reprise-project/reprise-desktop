@@ -343,6 +343,12 @@ impl Dialog {
         self.click(hit)
     }
 
+    /// The wheel turned `rows` rows (down is positive) while Run's completion list shows
+    /// `shown` rows: true when the list has a scrollbar and scrolled, so nothing under it does.
+    pub fn wheel_completion(&mut self, shown: usize, rows: i32) -> bool {
+        (self.field.as_mut()).is_some_and(|f| f.complete.wheel(shown, rows))
+    }
+
     /// The wheel turned `rows` rows (down is positive) over `hit`. A form's page takes it as
     /// `Form::wheel` does, a page's scroll bar as `PropSheet::wheel` does, the chooser's list
     /// scrolls while the pointer is on it, Run's open drop list scrolls anywhere. Not the tray

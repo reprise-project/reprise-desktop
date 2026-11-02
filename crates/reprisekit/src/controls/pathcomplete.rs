@@ -77,6 +77,10 @@ pub struct PathComplete {
     rows: Vec<String>,
     /// The highlighted row; none until Up or Down.
     pub hot: Option<usize>,
+    /// The first row in view as the wheel left it; Up and Down bring the highlight back in view.
+    first: usize,
+    /// Up or Down moved the highlight since the wheel last turned.
+    follow: bool,
     inline: Inline,
     /// The edit's text as the model last left it: any other text was set from outside, and a
     /// tail or list over it is stale.
@@ -99,6 +103,8 @@ impl PathComplete {
             era: 0,
             rows: Vec::new(),
             hot: None,
+            first: 0,
+            follow: true,
             inline: Inline::default(),
             seen: String::new(),
             typed: false,
@@ -124,6 +130,8 @@ impl PathComplete {
     pub fn close(&mut self) {
         self.rows.clear();
         self.hot = None;
+        self.first = 0;
+        self.follow = true;
         self.list_at = None;
     }
 
@@ -196,6 +204,9 @@ impl PathComplete {
     pub fn nav(&mut self, edit: &mut TextEdit, key: Key) -> bool {
         self.sync(edit);
         let open = self.is_open();
+        if open && matches!(key, Key::Up | Key::Down) {
+            self.follow = true;
+        }
         match key {
             Key::Down if open => {
                 let last = self.rows.len() - 1;
@@ -243,9 +254,28 @@ impl PathComplete {
         self.refresh(edit);
     }
 
-    /// The first row in view when `rows` show: the top, or as far down as the highlight needs.
+    /// The first row in view when `rows` show: where the wheel left it, moved as little as
+    /// keeping a highlight Up or Down moved in view needs.
     pub fn top(&self, rows: usize) -> usize {
-        self.hot.map_or(0, |h| (h + 1).saturating_sub(rows.max(1)))
+        let rows = rows.max(1);
+        let top = self.first.min(self.rows.len().saturating_sub(rows));
+        match self.hot.filter(|_| self.follow) {
+            Some(h) if h < top => h,
+            Some(h) if h >= top + rows => h + 1 - rows,
+            _ => top,
+        }
+    }
+
+    /// The wheel turned `lines` rows (down is positive) while `rows` show: true when the list
+    /// scrolls (it has more matches than rows), so the host keeps the wheel from what lies under it.
+    pub fn wheel(&mut self, rows: usize, lines: i32) -> bool {
+        if !self.is_open() || rows >= self.rows.len() {
+            return false;
+        }
+        let top = self.top(rows) as i64 + i64::from(lines);
+        self.first = top.clamp(0, (self.rows.len() - rows) as i64) as usize;
+        self.follow = false;
+        true
     }
 
     fn sync(&mut self, edit: &TextEdit) {
