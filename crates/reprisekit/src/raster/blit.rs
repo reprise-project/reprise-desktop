@@ -203,6 +203,15 @@ impl Canvas {
         });
     }
 
+    /// `color` at `src`'s alpha, `src`'s device pixels laid 1:1 from device pixel (x, y): a glyph
+    /// drawn white at the output scale, inked in any colour.
+    pub fn blit_alpha(&mut self, x: i32, y: i32, src: &Canvas, color: Color) {
+        let (w, h) = src.device_size();
+        let mask: Vec<u8> = src.pixels.iter().map(|p| (p >> 24) as u8).collect();
+        let clip = self.area();
+        self.blit_mask(x, y, w as usize, h as usize, &mask, color, true, clip);
+    }
+
     /// [`Canvas::blit_mask`] for a translucent canvas: `color` at each
     /// pixel's coverage laid over the premultiplied pixel beneath, alpha
     /// included.

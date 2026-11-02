@@ -1,0 +1,24 @@
+classic 1 rest 88d6354abfaab33e
+classic 1 hot ba2f309090abea63
+classic 1 pressed 2709f43a362114e3
+classic 1 no options 990dca76ef5fd976
+classic 2 rest ccc7d3832bf149b0
+classic 2 hot 79c630722213e120
+classic 2 pressed cb7c59bc919ee200
+classic 2 no options a3ad83d20d1736b0
+blue 1 rest e490a16f1d635d75
+blue 1 hot becd7d3140175ec7
+blue 1 pressed 01492ca3d7bac0a1
+blue 1 no options 15a69e69e0fc781d
+blue 2 rest d46c1b3d2e2b6680
+blue 2 hot 8afe1b78a512c56a
+blue 2 pressed 7e76c9601770ebac
+blue 2 no options 17c56e1070f61e60
+glass 1 rest 30d64a9ac84ebedd
+glass 1 hot f0b3c907e0e43d28
+glass 1 pressed 244c70aad8af53ba
+glass 1 no options 1857b096073c2225
+glass 2 rest 3008a6c98d477c19
+glass 2 hot 0765ecc170527731
+glass 2 pressed 42763c2e63f06eb0
+glass 2 no options 16b69c7272773449
