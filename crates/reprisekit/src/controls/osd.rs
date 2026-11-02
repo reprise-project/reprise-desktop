@@ -69,7 +69,7 @@ pub fn draw(theme: &Theme, text: &TextRenderer, osd: &Osd, icon: Option<&Canvas>
     let (cs, s) = (p.cs, p.s);
     let px = theme.fonts.size_px;
     if let Some((style, spec)) = panel::glass(theme) {
-        return panel::draw(style, spec, W, H, s, |c| {
+        return panel::draw_inked(style, spec, W, H, s, |c| {
             body(c, p, text, px, osd, icon, true)
         });
     }
@@ -221,7 +221,7 @@ pub fn draw_lines(theme: &Theme, text: &TextRenderer, lines: &Lines) -> Canvas {
     let (cs, s) = (p.cs, p.s);
     let (w, h) = lines_size(lines.lines.len());
     if let Some((style, spec)) = panel::glass(theme) {
-        return panel::draw(style, spec, w, h, s, |c| {
+        return panel::draw_inked(style, spec, w, h, s, |c| {
             lines_body(c, p, text, theme.fonts.size_px, lines, true)
         });
     }
@@ -466,10 +466,10 @@ mod tests {
             (Blue, 1, Num, false, 0x4caeee78092d8b8f),
             (Blue, 2, Caps, true, 0x834487477c12d82a),
             (Blue, 2, Num, false, 0x331c0af8ef624fa2),
-            (Glass, 1, Caps, true, 0x19b24c2f9002fd6f),
-            (Glass, 1, Num, false, 0x1a30af69ac06111e),
-            (Glass, 2, Caps, true, 0xfe6f96700d8f0928),
-            (Glass, 2, Num, false, 0x9dce89ece8625b92),
+            (Glass, 1, Caps, true, 0xa26ba80c2891d195),
+            (Glass, 1, Num, false, 0xa68c4ab6187f0ede),
+            (Glass, 2, Caps, true, 0x7a4fcb21215308aa),
+            (Glass, 2, Num, false, 0xae425babd4292107),
         ]
     };
 

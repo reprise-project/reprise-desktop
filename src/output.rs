@@ -839,13 +839,14 @@ impl State {
 }
 
 /// The parts of the popups a key, click or hover opens, painted ahead by `warm_popup_parts`.
-const POPUP_PARTS: [Part; 11] = [
+const POPUP_PARTS: [Part; 12] = [
     Part::SwitcherFrame,
     Part::SwitcherIconFrame,
     Part::SwitcherSelect,
     Part::SwitcherHot,
     Part::SwitcherShadow,
     Part::PreviewFrame,
+    Part::InkPanel,
     Part::PreviewThumb,
     Part::PreviewClose,
     Part::SnapFrame,

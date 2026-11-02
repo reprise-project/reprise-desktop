@@ -3,8 +3,9 @@
 
 use reprisekit::controls::keysheet::{self, Binding, Group, KeySheet};
 use reprisekit::controls::launcher::{self, Key, Launcher, Row};
+use reprisekit::glass::{Mode, Settings};
 use reprisekit::interface::Interface;
-use reprisekit::interfaces::theme_for;
+use reprisekit::interfaces::{theme_for, theme_with};
 use reprisekit::look::panel;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::TextRenderer;
@@ -123,11 +124,39 @@ fn key_sheet_sample() -> KeySheet {
     }
 }
 
-/// The sheet laid out for a short output, so it takes columns.
+/// The sheet laid out for a short output, so it takes columns: each look over the stripes,
+/// then Glass light and dark over white.
 pub fn key_sheet(scale: i32) -> Canvas {
     let k = key_sheet_sample();
-    side_by_side(scale, |theme, text| {
+    let sheet = |theme: &Theme, text: &TextRenderer| {
         let lay = keysheet::layout(&k, theme, text, (900, 500));
         keysheet::draw(theme, text, &k, &lay)
-    })
+    };
+    let striped = side_by_side(scale, sheet);
+    let gap = 30 * scale;
+    let glass: Vec<(Canvas, i32, i32)> = [Mode::Light, Mode::Dark]
+        .into_iter()
+        .map(|mode| {
+            let g = Settings {
+                mode,
+                ..Default::default()
+            };
+            let theme = theme_with(Interface::Glass, Default::default(), &g).scaled(scale);
+            let text = TextRenderer::load(&theme.fonts);
+            let m = panel::margin(&theme);
+            (sheet(&theme, &text), m.left * scale, m.top * scale)
+        })
+        .collect();
+    let row_h = glass.iter().map(|p| p.0.height as i32).max().unwrap_or(0) + gap;
+    let w =
+        (striped.width as i32).max(glass.iter().map(|p| p.0.width as i32 + gap).sum::<i32>() + gap);
+    let mut c = Canvas::new(w as u32, striped.height + row_h as u32);
+    c.fill_rect(c.bounds(), Color::rgb(0xFF, 0xFF, 0xFF));
+    c.blit_over(0, 0, &striped);
+    let mut x = gap;
+    for (p, left, top) in &glass {
+        c.blit_over(x - left, striped.height as i32 - top, p);
+        x += p.width as i32 + gap;
+    }
+    c
 }

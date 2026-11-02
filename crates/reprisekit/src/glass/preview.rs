@@ -48,12 +48,30 @@ pub const THUMB_HOT: LightBox = LightBox {
     fade: Fade::Box,
 };
 
+pub fn frame_part(s: &Settings, d: i32) -> PartImage {
+    nine_grid(&PANEL, s, d)
+}
+
+/// [`PANEL`] under black glass covering [`INK_DENSITY`] of what it lets through, for
+/// white text over a pale backdrop.
+pub const INK_PANEL: Panel = Panel {
+    density: INK_DENSITY,
+    ..PANEL
+};
+
+pub const INK_DENSITY: f64 = 0.45;
+
+/// [`INK_PANEL`] nine-gridded as the popup's frame.
+pub fn ink_part(s: &Settings, d: i32) -> PartImage {
+    nine_grid(&INK_PANEL, s, d)
+}
+
 /// Drawn a row of cells tall and nine-gridded with `EDGE` px fixed at each
 /// side, so the glass keeps its fade on a panel of another height.
-pub fn frame_part(s: &Settings, d: i32) -> PartImage {
+fn nine_grid(p: &Panel, s: &Settings, d: i32) -> PartImage {
     let h = 2 * GRID.pad + GRID.cell.1;
     panel::part(
-        &PANEL,
+        p,
         s,
         2 * EDGE + 1,
         h,
