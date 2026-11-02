@@ -77,6 +77,7 @@ pub fn diff(old: &Config, new: &Config) -> Changes {
         wallpaper: if old.wallpaper.image != new.wallpaper.image
             || old.wallpaper.slideshow != new.wallpaper.slideshow
             || old.wallpaper.interval != new.wallpaper.interval
+            || old.wallpaper.desktops != new.wallpaper.desktops
         {
             WallpaperChange::Image
         } else if old.wallpaper != new.wallpaper {

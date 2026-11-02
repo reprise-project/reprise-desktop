@@ -281,6 +281,7 @@ pub struct State {
     pub wallpaper: Option<Wallpaper>,
     /// `[wallpaper] slideshow` while it runs.
     pub slideshow: Option<crate::wallpaperview::Slideshow>,
+    pub wallpaper_jobs: std::sync::Arc<crate::wallpaperview::Jobs>,
     pub bars: Vec<Bar>,
     /// What the bars share: the lock, the bands, the Quick Launch drag.
     pub bar_shared: crate::taskbarview::BarShared,
@@ -666,11 +667,11 @@ impl State {
             // A slideshow picks its first picture once the loop runs.
             wallpaper: config
                 .wallpaper
-                .image
-                .as_deref()
+                .for_desktop(0)
                 .filter(|_| config.wallpaper.slideshow.is_none())
                 .map(Wallpaper::new),
             slideshow: None,
+            wallpaper_jobs: Default::default(),
             bars: Vec::new(),
             bar_shared: crate::taskbarview::BarShared::from_persisted(&persisted),
             clock_timer: None,

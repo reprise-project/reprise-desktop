@@ -699,6 +699,7 @@ fn save_round_trips_every_field() {
         wallpaper_position: "tile".into(),
         wallpaper_water: "rain".into(),
         drive_insert: "open".into(),
+        wallpaper_desktops: vec!["".into(), "reprise:tarn/dusk".into()],
         slideshow: "~/Pictures/Slides".into(),
         slideshow_interval: 5,
         slideshow_shuffle: true,

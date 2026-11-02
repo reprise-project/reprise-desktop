@@ -608,6 +608,7 @@ pub struct FileWallpaper {
     pub shuffle: Option<bool>,
     pub water: Option<String>,
     pub water_rate: Option<toml::Value>,
+    pub desktops: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Default)]

@@ -676,6 +676,42 @@ fn wallpaper_reads_image_and_position() {
 }
 
 #[test]
+fn each_desktop_shows_its_own_picture_or_the_main_one() {
+    let c = Config::parse(
+        "[wallpaper]\nimage = \"/w/a.jpg\"\ndesktops = [\"\", \"reprise:tarn/dusk\", \"/w/c.png\"]\n",
+    )
+    .unwrap();
+    let w = &c.wallpaper;
+    assert_eq!(
+        w.desktop(0),
+        None,
+        "an empty entry has no picture of its own"
+    );
+    assert_eq!(w.for_desktop(0), Some(Path::new("/w/a.jpg")));
+    assert_eq!(w.for_desktop(1), Some(Path::new("reprise:tarn/dusk")));
+    assert_eq!(w.for_desktop(2), Some(Path::new("/w/c.png")));
+    assert_eq!(
+        w.for_desktop(3),
+        Some(Path::new("/w/a.jpg")),
+        "past the list"
+    );
+    let none = Config::parse("[wallpaper]\nimage = \"\"\ndesktops = [\"/w/b.jpg\"]\n").unwrap();
+    assert_eq!(none.wallpaper.for_desktop(0), Some(Path::new("/w/b.jpg")));
+    assert_eq!(none.wallpaper.for_desktop(1), None, "the colour alone");
+}
+
+#[test]
+fn desktop_pictures_are_checked_like_the_main_one() {
+    let e = Config::parse("[wallpaper]\ndesktops = [\"reprise:lake\"]\n").unwrap_err();
+    assert!(e.contains("wallpaper.desktops"), "{e}");
+    let many = format!(
+        "[wallpaper]\ndesktops = [{}]\n",
+        vec!["\"\""; 17].join(", ")
+    );
+    assert!(Config::parse(&many).is_err(), "17 entries for 16 desktops");
+}
+
+#[test]
 fn wallpaper_defaults_to_none_stretched() {
     let c = Config::default();
     assert_eq!(c.wallpaper.image, None);

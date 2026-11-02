@@ -262,6 +262,20 @@ pub struct WallpaperConfig {
     pub shuffle: bool,
     pub water: reprisekit::water::Water,
     pub water_rate: reprisekit::water::Rate,
+    /// `desktops`: entry n is desktop n's own picture, None for the one above.
+    pub desktops: Vec<Option<PathBuf>>,
+}
+
+impl WallpaperConfig {
+    /// Desktop `n`'s own picture, if it has one.
+    pub fn desktop(&self, n: usize) -> Option<&std::path::Path> {
+        self.desktops.get(n)?.as_deref()
+    }
+
+    /// What desktop `n` shows: its own picture, else `image`.
+    pub fn for_desktop(&self, n: usize) -> Option<&std::path::Path> {
+        self.desktop(n).or(self.image.as_deref())
+    }
 }
 
 impl Default for WallpaperConfig {
@@ -275,6 +289,7 @@ impl Default for WallpaperConfig {
             shuffle: false,
             water: Default::default(),
             water_rate: Default::default(),
+            desktops: Vec::new(),
         }
     }
 }
