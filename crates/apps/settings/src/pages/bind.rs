@@ -182,6 +182,7 @@ pub(super) fn binds() -> Vec<Bind> {
             lens!(title_double_click),
             TITLE_DOUBLE_CLICKS,
         ),
+        Bind::Num("dim_inactive", lens!(dim_inactive)),
         Bind::Flag("session_restore", lens!(session_restore)),
         Bind::Flag("session_end_processes", lens!(session_end_processes)),
         Bind::Named(

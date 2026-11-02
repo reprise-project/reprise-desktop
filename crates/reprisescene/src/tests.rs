@@ -890,6 +890,21 @@ fn a_subtree_renders_alone_where_it_stands_whatever_hides_it() {
 }
 
 #[test]
+fn a_node_left_out_of_pictures_draws_on_screen_only() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let w = s.tree_create(root);
+    s.rect_create(w, (10, 10), RED);
+    let shade = s.rect_create(w, (10, 10), [0.0, 0.0, 0.0, 0.2]);
+    s.set_in_pictures(shade, false);
+    let v = view(100, 100);
+    assert_eq!(s.render_elements(&mut TestRenderer, &v).len(), 2);
+    assert_eq!(s.render_elements_of(&mut TestRenderer, w, &v).len(), 1);
+    s.set_in_pictures(shade, true);
+    assert_eq!(s.render_elements_of(&mut TestRenderer, w, &v).len(), 2);
+}
+
+#[test]
 fn opacity_multiplies_down_and_zero_draws_nothing() {
     let mut s = TestScene::new();
     let root = s.root();

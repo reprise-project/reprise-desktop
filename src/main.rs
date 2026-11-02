@@ -143,6 +143,7 @@ mod desktopview;
 mod dialog;
 mod dialogdrop;
 mod dialogview;
+mod dim;
 mod dirwatch;
 mod dragview;
 mod editkeys;

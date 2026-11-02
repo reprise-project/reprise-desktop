@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use reprisekit::anim::HoverFade;
 use reprisekit::classic::frame::{CaptionButton, Chrome, FrameGeometry, FrameHit};
 use reprisekit::icon::IconSource;
-use reprisescene::{BufferId, SurfaceId, TreeId};
+use reprisescene::{BufferId, RectId, SurfaceId, TreeId};
 use smithay::{
     desktop::utils::bbox_from_surface_tree,
     reexports::wayland_server::{Client, Resource, protocol::wl_surface::WlSurface},
@@ -171,6 +171,9 @@ pub struct Window {
     /// above.
     pub content: TreeId,
     pub surface: SurfaceId,
+    /// Over the surface, under the popups: `dim`'s shade.
+    pub dim: RectId,
+    pub dim_shade: crate::dim::Shade,
     popups: Vec<(WlSurface, SurfaceId)>,
     pub x: i32,
     pub y: i32,
