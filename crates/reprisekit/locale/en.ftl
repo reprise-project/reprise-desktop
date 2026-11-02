@@ -98,3 +98,13 @@ powerpanel-turn-off = T&urn Off
 powerpanel-turn-off-tip = Shuts down Reprise so that you can safely turn off the computer.
 powerpanel-restart = &Restart
 powerpanel-restart-tip = Shuts down Reprise and then starts Reprise again.
+
+## Calculator
+calc-degrees = &Degrees
+calc-radians = &Radians
+calc-grads = &Grads
+calc-clear-history = Clear &History
+calc-divide-by-zero = Cannot divide by zero
+calc-invalid = Invalid input
+calc-overflow = Result is too large
+

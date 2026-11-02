@@ -1,0 +1,24 @@
+[package]
+name = "reprise-calc"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Calculator: standard and scientific arithmetic"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-calc"
+path = "src/bin/reprise-calc.rs"
+test = false
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+log.workspace = true
+reprisebus = { path = "../../reprisebus" }
+

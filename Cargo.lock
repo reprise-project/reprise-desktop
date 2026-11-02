@@ -2288,6 +2288,7 @@ dependencies = [
  "reprise-about",
  "reprise-accounts",
  "reprise-bluetooth",
+ "reprise-calc",
  "reprise-datetime",
  "reprise-diskusage",
  "reprise-drives",
@@ -2324,6 +2325,16 @@ dependencies = [
  "reprisetray",
  "zbus 6.2.0",
  "zruntime",
+]
+
+[[package]]
+name = "reprise-calc"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "repriseapp",
+ "reprisebus",
+ "reprisekit",
 ]
 
 [[package]]

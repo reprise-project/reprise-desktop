@@ -6,6 +6,7 @@ pub mod addressbar;
 pub mod arrange;
 pub mod batchrename;
 pub mod browsefolder;
+pub mod calculator;
 pub mod calendar;
 pub mod captiontabs;
 pub mod cliphistory;
