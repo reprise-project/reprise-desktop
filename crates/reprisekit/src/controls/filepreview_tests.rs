@@ -59,7 +59,7 @@ fn metrics(theme: &Theme) -> Metrics {
 }
 
 #[test]
-fn types_route_to_picture_text_or_a_sniff() {
+fn types_route_to_picture_text_font_or_a_sniff() {
     assert_eq!(route(Some("image/png")), Route::Picture);
     assert_eq!(route(Some("image/jpeg")), Route::Picture);
     assert_eq!(
@@ -72,6 +72,9 @@ fn types_route_to_picture_text_or_a_sniff() {
     assert_eq!(route(Some("application/json")), Route::Text);
     assert_eq!(route(Some("application/x-shellscript")), Route::Text);
     assert_eq!(route(Some("application/xhtml+xml")), Route::Text);
+    assert_eq!(route(Some("font/ttf")), Route::Font);
+    assert_eq!(route(Some("font/collection")), Route::Font);
+    assert_eq!(route(Some("application/x-font-otf")), Route::Font);
     assert_eq!(route(Some("application/pdf")), Route::Other);
     assert_eq!(route(Some("application/zip")), Route::Other);
     assert_eq!(route(None), Route::Other);

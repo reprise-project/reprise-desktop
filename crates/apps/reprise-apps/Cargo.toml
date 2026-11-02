@@ -20,6 +20,7 @@ reprise-datetime = { path = "../datetime" }
 reprise-diskusage = { path = "../diskusage" }
 reprise-drives = { path = "../drives" }
 reprise-explorer = { path = "../explorer" }
+reprise-fonts = { path = "../fonts" }
 reprise-network = { path = "../network" }
 reprise-notepad = { path = "../notepad" }
 reprise-phone = { path = "../phone" }

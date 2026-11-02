@@ -32,12 +32,13 @@ pub const TEXT_ROWS: i32 = 30;
 const CARD_GAP: i32 = 12;
 const CARD_LINE: i32 = 16;
 
-/// How a file's preview is read: decoded as a picture, read as text, or sniffed and then shown by
-/// its cached thumbnail or its card.
+/// How a file's preview is read: decoded as a picture, read as text, set as a font's sample, or
+/// sniffed and then shown by its cached thumbnail or its card.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Route {
     Picture,
     Text,
+    Font,
     Other,
 }
 
@@ -60,8 +61,15 @@ pub fn route(mime: Option<&str>) -> Route {
         "application/sql",
         "application/x-subrip",
     ];
+    let font_app = [
+        "application/x-font-ttf",
+        "application/x-font-otf",
+        "application/vnd.ms-opentype",
+    ];
     if m == "image/svg+xml" {
         Route::Text
+    } else if m.starts_with("font/") || font_app.contains(&m) {
+        Route::Font
     } else if m.starts_with("image/") {
         Route::Picture
     } else if m.starts_with("text/") || text_app.contains(&m) || m.ends_with("+xml") {

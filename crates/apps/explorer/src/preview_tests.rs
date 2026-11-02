@@ -55,6 +55,7 @@ fn a_picture_decodes_fitted_text_reads_its_head_and_the_rest_keeps_the_card() {
         ("blob.bin", Route::Other),
         ("empty", Route::Other),
         ("broken.png", Route::Picture),
+        ("broken.png", Route::Font),
         ("missing", Route::Text),
     ] {
         assert!(
@@ -66,6 +67,29 @@ fn a_picture_decodes_fitted_text_reads_its_head_and_the_rest_keeps_the_card() {
         matches!(read_at(d, Route::Other), Loaded::Nothing),
         "a folder is not opened"
     );
+}
+
+#[test]
+fn a_font_file_reads_as_its_sample_inside_the_max() {
+    let Some(dir) = std::env::var_os("REPRISE_TEST_FONTS") else {
+        return;
+    };
+    let tahoma = std::path::PathBuf::from(dir).join("tahoma.ttf");
+    match read_at(&tahoma, Route::Font) {
+        Loaded::Picture(c) => {
+            assert!(
+                c.width <= 400 && c.height <= 300,
+                "{}x{}",
+                c.width,
+                c.height
+            );
+            assert!(
+                c.height > 200,
+                "the sample's rows down to the 72 px pangram"
+            );
+        }
+        _ => panic!("tahoma.ttf has a sample"),
+    }
 }
 
 #[test]

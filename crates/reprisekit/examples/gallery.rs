@@ -12,6 +12,8 @@
 mod gallery_checksums;
 #[path = "gallery_doctabs/mod.rs"]
 mod gallery_doctabs;
+#[path = "gallery_fonts/mod.rs"]
+mod gallery_fonts;
 #[path = "gallery_keys/mod.rs"]
 mod gallery_keys;
 #[path = "gallery_miniview/mod.rs"]
@@ -132,6 +134,10 @@ fn main() {
         write_preview(
             &gallery_notes::render(n.max(1)),
             &format!("reprisekit-gallery-notes@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_fonts::render(n.max(1)),
+            &format!("reprisekit-gallery-fonts@{}.png", n.max(1)),
         );
         write_preview(
             &render_copy_progress(true, n.max(1)),
@@ -317,6 +323,7 @@ fn main() {
         "reprisekit-gallery-desk-widgets@1.png",
     );
     write_preview(&gallery_notes::render(1), "reprisekit-gallery-notes@1.png");
+    write_preview(&gallery_fonts::render(1), "reprisekit-gallery-fonts@1.png");
     write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
     write_preview(
         &gallery_miniview::render(1),
