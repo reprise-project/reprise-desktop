@@ -284,6 +284,16 @@ Pair with the Add Bluetooth Device Wizard, connect and disconnect, rename a
 device, see its battery, and turn Bluetooth or discoverability on and off.
 Pairing requests from a device show up as a prompt.
 
+The tray icon's menu lists the connected devices with their battery
+("Headphones — 80%"), and a click on one opens its Properties; its tooltip
+lists them the same way. The battery is what BlueZ reports as `Battery1`:
+some headsets report it only with bluetoothd's experimental features on. When
+a connected device's battery drops to `[bluetooth] battery_warning` (15 % by
+default, set on the Options tab; 0 turns it off), a balloon with the device's
+icon says so once; it warns again after the battery charges 5 points past
+that. `REPRISE_BLUEZ_BUS=session` reads BlueZ off the session bus, for a
+stand-in service in a test.
+
 ## Power Options
 
 Power profile, monitor and standby timeouts on mains and on battery, low and
