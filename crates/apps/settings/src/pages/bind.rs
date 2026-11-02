@@ -198,6 +198,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag("taskbar_peek", lens!(taskbar_peek)),
         Bind::Flag("taskbar_tray_overflow", lens!(taskbar_tray_overflow)),
         Bind::Flag("taskbar_badges", lens!(taskbar_badges)),
+        Bind::Flag("taskbar_network_meter", lens!(taskbar_network_meter)),
         Bind::Flag(NOTIFICATION_SOUND, lens!(notification_sound)),
         Bind::Choice(SOUND_CONTROLS[1], lens!(sound_theme)),
         Bind::Flag(BELL, lens!(bell)),

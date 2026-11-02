@@ -65,6 +65,7 @@ pub mod interfaces;
 pub mod look;
 pub mod metrics;
 mod mutex;
+pub mod netmeter;
 pub mod overview;
 pub mod paint;
 #[doc(hidden)]

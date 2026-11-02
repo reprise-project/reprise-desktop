@@ -718,6 +718,7 @@ fn save_round_trips_every_field() {
         taskbar_peek: true,
         taskbar_tray_overflow: true,
         taskbar_badges: false,
+        taskbar_network_meter: true,
         notification_sound: false,
         sound_theme: "ocean".into(),
         bell: false,

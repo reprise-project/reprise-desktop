@@ -193,6 +193,8 @@ pub struct TaskbarState {
     pub tasks: Vec<TaskEntry>,
     pub tray_icons: Vec<Option<Arc<Canvas>>>,
     pub clock: String,
+    /// The network meter's download and upload readings; None draws the meter empty.
+    pub meter: Option<[String; 2]>,
 }
 
 impl TaskbarState {
@@ -238,6 +240,7 @@ impl TaskbarState {
             tasks,
             tray_icons,
             clock,
+            meter,
         } = self;
         let same_task = |a: &TaskEntry, b: &TaskEntry| {
             a.title == b.title
@@ -271,6 +274,7 @@ impl TaskbarState {
             && tasks.iter().zip(&other.tasks).all(|(a, b)| same_task(a, b))
             && icons(tray_icons, &other.tray_icons)
             && *clock == other.clock
+            && *meter == other.meter
     }
 }
 
@@ -292,6 +296,7 @@ pub enum TaskbarHit {
     Task(usize),
     Chevron,
     Tray(usize),
+    Meter,
     Clock,
     ShowDesktop,
     Grip(usize),
@@ -341,6 +346,8 @@ pub struct TaskbarCounts {
     pub hidden: usize,
     /// Px the run has opened, 0..=[`reveal_width`]; ignored without a tray arrow.
     pub reveal: i32,
+    /// The network meter's text block ([`crate::netmeter::size`]); None: no meter.
+    pub meter: Option<(i32, i32)>,
 }
 
 /// How a look lays its bar out; describes a Bottom bar, other edges turn it.
@@ -600,6 +607,8 @@ pub struct TaskbarLayout {
     /// items that fit on the bar, whatever the run's `reveal`.
     pub run_width: i32,
     pub tray_arrow: bool,
+    /// The network meter between the tray and the clock.
+    pub meter: Option<Rect>,
     pub clock: Rect,
     pub notification: Rect,
     pub show_desktop: Option<Rect>,

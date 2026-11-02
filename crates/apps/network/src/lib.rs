@@ -16,6 +16,7 @@ mod import;
 mod keydlg;
 mod nm;
 mod ovpn;
+mod speed;
 mod stations;
 mod status;
 mod tray;
@@ -119,6 +120,9 @@ struct NetApp {
     key: Option<keydlg::KeyDialog>,
     eap: Option<keydlg::eap::EapDialog>,
     status: Option<status::Status>,
+    /// Reads the Status sheet's interface counters while the sheet is open.
+    speed: Option<speed::Ticker>,
+    waker: Option<repriseapp::Waker>,
     vpn: Option<VpnWin>,
     import: Option<FileDlg>,
     import_host: Host,
@@ -174,6 +178,12 @@ impl NetApp {
         };
         self.close_status();
         self.status = Some(next);
+        let iface = (self.snapshot.devices.iter())
+            .find(|d| d.path == path)
+            .map(|d| d.iface.clone());
+        if let (Some(iface), Some(w)) = (iface, self.waker.clone()) {
+            self.speed = Some(speed::start(iface, move || w.wake()));
+        }
         self.send(nm::Cmd::Stats {
             device: path.into(),
             on: true,
@@ -184,6 +194,7 @@ impl NetApp {
     /// device that has gone away takes its statistics interface with it,
     /// so there is nothing left to write to.
     fn close_status(&mut self) {
+        self.speed = None;
         let Some(s) = self.status.take() else {
             return;
         };
@@ -482,6 +493,11 @@ impl NetApp {
     /// Drain the store's and the tray's channels. Quits only on the
     /// tray's Exit.
     fn wake(&mut self) -> Reply {
+        while let Some((at, c)) = self.speed.as_ref().and_then(|t| t.rx.try_recv().ok()) {
+            if let Some(s) = &mut self.status {
+                s.counters(at, c);
+            }
+        }
         let mut latest = None;
         while let Some(msg) = self.nm_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
             match msg {
@@ -1229,6 +1245,7 @@ impl App for NetApp {
             Ok(None) => {}
             Err(code) => return repriseapp::Start::Exit(code),
         }
+        self.waker = Some(waker.clone());
         let station_waker = waker.clone();
         stations::watch(move || station_waker.wake());
         let (rx, handle) = nm::watch(waker);

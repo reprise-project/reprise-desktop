@@ -368,6 +368,7 @@ pub fn reload(state: &mut State, cfg: Config) {
     if old.taskbar.tray_overflow != state.config.taskbar.tray_overflow {
         crate::tray::replace_all(state);
     }
+    crate::netspeed::sync(state);
     if old.session.restore != state.config.session.restore {
         crate::session::restore_changed(state);
     }

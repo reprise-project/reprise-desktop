@@ -72,6 +72,7 @@ mod logbridge;
 mod media;
 mod menuview;
 mod mousekeys;
+mod netspeed;
 mod nightlight;
 mod notifycenter;
 mod notifydnd;
@@ -359,6 +360,7 @@ fn run(
     notifyview::config_changed(&mut state);
     idle::setup(&mut state);
     debugview::config_changed(&mut state);
+    netspeed::sync(&mut state);
     state.apply_wallpaper_config();
 
     log::info!(

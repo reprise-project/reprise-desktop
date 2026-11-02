@@ -92,6 +92,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
             entry("Calculator", false),
         ],
         tray_icons: vec![Some(indicator::draw_record(16).into())],
+        meter: None,
         clock: clock.into(),
     };
     let mut bar = Canvas::new(r.width as u32, layout.height as u32);
