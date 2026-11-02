@@ -416,9 +416,9 @@ impl ItemKind {
 
 /// The right-click menu of an entry in the view. A script has Run and Run in terminal in place
 /// of Open. "Run as..." sits greyed under them for every file. A folder has Open in Terminal under
-/// Explore, Pin to Places (or Unpin, `state.pinned`) and Paste under Copy, into it. A launcher has
-/// no Open With and has Paste under Copy, opening the clipboard's files in its
-/// program. `eject` adds Eject, in a group above Cut and Copy, for a removable drive.
+/// Explore, then Pin to Places (or Unpin, `state.pinned`) and Disk Usage, and Paste under Copy,
+/// into it. A launcher has no Open With and has Paste under Copy, opening the clipboard's files
+/// in its program. `eject` adds Eject, in a group above Cut and Copy, for a removable drive.
 pub fn item_menu(
     state: &MenuState,
     kind: ItemKind,
@@ -464,6 +464,7 @@ pub fn item_menu(
             Some(true) => m.row(row("Unp&in from Places", true), Command::Pin(false)),
             None => {}
         }
+        m.row(row("Disk &Usage", true), Command::DiskUsage);
         m.row(row("Sharing and Security...", false), Command::Nothing);
     } else {
         m.row(row("Run &as...", false), Command::Nothing);

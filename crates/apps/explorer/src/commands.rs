@@ -21,6 +21,8 @@ pub enum Command {
     OpenTerminalHere,
     /// Pin to Places (true) or Unpin from Places on the selected folder.
     Pin(bool),
+    /// Disk Usage on the selected folder or drive.
+    DiskUsage,
     Eject,
     MountImage,
     Cut,
@@ -327,6 +329,13 @@ impl Explorer {
                 }
                 Reply::none()
             }
+            Command::DiskUsage => match self.selected_dir().and_then(|p| p.path()) {
+                Some(dir) => Reply {
+                    spawn: vec![vec!["reprise-diskusage".into(), dir.into()]],
+                    ..Reply::none()
+                },
+                None => Reply::none(),
+            },
             Command::OpenTerminalHere => match self.place.path() {
                 Some(dir) if !self.place.read_only() => self.open_terminal(&dir),
                 _ => Reply::none(),

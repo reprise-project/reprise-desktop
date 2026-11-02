@@ -1,0 +1,27 @@
+[package]
+name = "reprise-diskusage"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Disk Usage: what takes a folder's or a drive's space"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-diskusage"
+path = "src/bin/reprise-diskusage.rs"
+test = false
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisefs = { path = "../../reprisefs" }
+reprisebus = { path = "../../reprisebus" }
+log.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
