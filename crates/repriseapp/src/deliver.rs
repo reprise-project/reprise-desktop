@@ -1,6 +1,6 @@
 //! Handing an event to the program and carrying out its `Reply`; a modal child gates input.
 
-use crate::clipboard::{CLIPBOARD_FILES, CLIPBOARD_TEXT, text_mime};
+use crate::clipboard::{CLIPBOARD_FILES, CLIPBOARD_IMAGE, CLIPBOARD_TEXT, image_mime, text_mime};
 use crate::sizing::{bounded, sane_size};
 use crate::windows::send_tag;
 use crate::{
@@ -81,8 +81,12 @@ impl Host {
                 .as_ref()
                 .is_some_and(|o| o.with_mime_types(text_mime).is_some()),
         );
-        CLIPBOARD_FILES
-            .set(offer.is_some_and(|o| o.with_mime_types(reprisefs::fileclip::source).is_some()));
+        CLIPBOARD_FILES.set(
+            offer
+                .as_ref()
+                .is_some_and(|o| o.with_mime_types(reprisefs::fileclip::source).is_some()),
+        );
+        CLIPBOARD_IMAGE.set(offer.is_some_and(|o| o.with_mime_types(image_mime).is_some()));
         let mut reply = self
             .app
             .event(win, ev, &mut self.ctx)
@@ -260,6 +264,12 @@ impl Host {
         }
         if reply.paste_files {
             self.paste_files(win);
+        }
+        if let Some(png) = reply.copy_image {
+            self.copy_image(png);
+        }
+        if reply.paste_image {
+            self.paste_image(win);
         }
         for argv in reply.spawn {
             self.spawn(&reprisefs::scope::in_scope(

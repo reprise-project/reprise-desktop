@@ -71,6 +71,10 @@ pub struct Reply {
     pub copy_files: Option<FileClip>,
     /// Arrives as `Event::PastedFiles` on the window this reply is for.
     pub paste_files: bool,
+    /// PNG bytes offered on the clipboard as `image/png`.
+    pub copy_image: Option<std::sync::Arc<Vec<u8>>>,
+    /// Arrives as `Event::PastedImage` on the window this reply is for.
+    pub paste_image: bool,
     /// What another process handed over with a request to show a window, and
     /// that window: its token is presented for it, so the compositor focuses
     /// it, and a start by key brings out its cues. Dropped while that window
@@ -182,6 +186,8 @@ impl Reply {
             spawn_app,
             copy_files,
             paste_files,
+            copy_image,
+            paste_image,
             activate,
             start_drag,
             redraw_drag,
@@ -221,6 +227,8 @@ impl Reply {
             spawn_app,
             copy_files: self.copy_files.or(copy_files),
             paste_files: self.paste_files || paste_files,
+            copy_image: self.copy_image.or(copy_image),
+            paste_image: self.paste_image || paste_image,
             activate: self.activate.or(activate),
             start_drag: self.start_drag.or(start_drag),
             redraw_drag: self.redraw_drag || redraw_drag,
