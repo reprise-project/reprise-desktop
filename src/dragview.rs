@@ -185,6 +185,8 @@ pub struct Drags {
     pub(crate) running: HashMap<PathBuf, crate::putview::Running>,
     /// Deletes and Empty Recycle Bin running, by a number of their own.
     pub(crate) removals: HashMap<u64, crate::putview::Removing>,
+    /// Send To > Compressed (zipped) Folder runs, by the same numbers.
+    pub(crate) zips: HashMap<u64, crate::putview::Zipping>,
 }
 
 /// What a left drop of `grabbed` on `target` does with no modifier: move an icon about the desktop or

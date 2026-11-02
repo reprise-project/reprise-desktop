@@ -109,35 +109,14 @@ fn path_lines_quote_only_paths_a_shell_would_split_or_expand() {
 }
 
 #[test]
-fn zip_argv_runs_bsdtar() {
-    assert_eq!(
-        zip_argv(
-            &["/home/u/Desktop/Reports".into()],
-            Path::new("/home/u/Desktop/Reports.zip")
-        ),
-        [
-            "bsdtar",
-            "-a",
-            "-cf",
-            "/home/u/Desktop/Reports.zip",
-            "-C",
-            "/home/u/Desktop",
-            "--",
-            "Reports"
-        ]
-    );
-}
-
-#[test]
-fn zip_argv_keeps_a_name_that_is_not_utf8() {
+fn zip_members_keep_a_name_that_is_not_utf8() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
     let path = Path::new(OsStr::from_bytes(b"/d/\xff dir/a\xff.txt"));
-    let zip = Path::new(OsStr::from_bytes(b"/d/\xff dir/a\xff.zip"));
-    let argv = zip_argv(&[path.to_path_buf()], zip);
-    assert_eq!(argv[3], zip.as_os_str());
-    assert_eq!(argv[5], OsStr::from_bytes(b"/d/\xff dir"));
-    assert_eq!(argv[7], OsStr::from_bytes(b"a\xff.txt"));
+    let paths = [path.to_path_buf()];
+    let (dir, names) = members(&paths);
+    assert_eq!(dir.as_os_str(), OsStr::from_bytes(b"/d/\xff dir"));
+    assert_eq!(names, [OsStr::from_bytes(b"a\xff.txt")]);
 }
 
 /// A moved item leaves its old folder's `.hidden`, and the new
@@ -1182,28 +1161,16 @@ fn copy_dir_all_leaves_an_existing_destination_alone() {
 /// A name that looks like an option or an archive to include is an
 /// operand: bsdtar reads `-C` and `@` even past the double dash.
 #[test]
-fn zip_argv_takes_a_name_like_an_option_as_a_name() {
-    let z = zip_argv(
-        &[
-            "/d/-x".into(),
-            "/d/-Cy".into(),
-            "/d/@z".into(),
-            "/d/a-b".into(),
-        ],
-        Path::new("/d/-x.zip"),
-    );
-    assert_eq!(z[6..], ["--", "./-x", "./-Cy", "./@z", "a-b"]);
-}
-
-#[test]
-fn zip_argv_puts_every_item_into_one_archive() {
-    let z = zip_argv(&["/d/a.txt".into(), "/d/b".into()], Path::new("/d/a.zip"));
-    assert_eq!(
-        z,
-        [
-            "bsdtar", "-a", "-cf", "/d/a.zip", "-C", "/d", "--", "a.txt", "b"
-        ]
-    );
+fn zip_members_take_a_name_like_an_option_as_a_name() {
+    let paths: [PathBuf; 4] = [
+        "/d/-x".into(),
+        "/d/-Cy".into(),
+        "/d/@z".into(),
+        "/d/a-b".into(),
+    ];
+    let (dir, names) = members(&paths);
+    assert_eq!(dir, Path::new("/d"));
+    assert_eq!(names, ["./-x", "./-Cy", "./@z", "a-b"]);
 }
 
 #[test]

@@ -43,8 +43,8 @@ impl State {
         let paths: Vec<PathBuf> = sources.iter().map(|s| s.path().to_path_buf()).collect();
         match dest {
             SendTo::Zip => {
-                if let Some(argv) = reprisefs::sendto::zip_argv(&paths, existing) {
-                    self.spawn_argv_activated(&argv);
+                if let Some(c) = reprisefs::sendto::zip_target(&paths, existing) {
+                    self.start_zip(c);
                 }
             }
             SendTo::DesktopShortcut => {
