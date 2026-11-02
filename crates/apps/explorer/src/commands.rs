@@ -22,6 +22,8 @@ pub enum Command {
     Eject,
     Cut,
     Copy,
+    /// Ctrl+Shift+C: the selected items' full paths as text ([`reprisefs::ops::path_lines`]).
+    CopyAsPath,
     Paste,
     PasteShortcut,
     /// Paste on the item menu's entry: into a folder, or a launcher opens the clipboard's files.
@@ -188,6 +190,7 @@ pub fn command_for_key(sym: u32, ctrl: bool, shift: bool, alt: bool) -> Command 
         _ if !ctrl => Command::Nothing,
         _ => match letter(sym) {
             Some('x') => Command::Cut,
+            Some('c') if shift => Command::CopyAsPath,
             Some('c') => Command::Copy,
             Some('v') => Command::Paste,
             Some('z') => Command::Undo,
@@ -440,6 +443,7 @@ impl Explorer {
 
             Command::Cut => self.clipboard(true, ctx),
             Command::Copy => self.clipboard(false, ctx),
+            Command::CopyAsPath => self.copy_as_path(),
             Command::Paste => self.begin_paste(false),
             Command::PasteShortcut => self.begin_paste(true),
             Command::PasteOnItem => self.begin_paste_on_item(),
@@ -579,6 +583,7 @@ mod tests {
             assert_eq!(k(c as u32, false, false, false), Command::Nothing);
         }
         assert_eq!(k('X' as u32, true, true, false), Command::Cut);
+        assert_eq!(k('C' as u32, true, true, false), Command::CopyAsPath);
         assert_eq!(k('[' as u32, true, false, false), Command::Nothing);
         assert_eq!(k('e' as u32, true, false, false), Command::Nothing);
         assert_eq!(k('f' as u32, true, false, false), Command::SearchFocus);

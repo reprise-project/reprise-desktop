@@ -481,6 +481,29 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_shift_c_copies_the_selected_paths_one_per_line() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        for name in ["a b.txt", "c.txt"] {
+            std::fs::write(dir.path().join(name), "x").expect("write");
+        }
+        let mut ctx = test_ctx();
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        ex.sv.selection.select_all(2);
+
+        let reply = ex.key_inner(key('C' as u32, Some("C"), true, true, false), &mut ctx);
+        let d = dir.path().display();
+        assert_eq!(reply.copy, Some(format!("\"{d}/a b.txt\"\n{d}/c.txt")));
+        assert!(
+            reply.copy_files.is_none(),
+            "the files themselves are not copied"
+        );
+
+        ex.sv.selection.clear();
+        let reply = ex.key_inner(key('C' as u32, Some("C"), true, true, false), &mut ctx);
+        assert_eq!(reply.copy, None, "nothing selected, nothing copied");
+    }
+
+    #[test]
     fn the_context_menu_key_opens_at_the_focused_entrys_cell() {
         let dir = tempfile::tempdir().expect("a temp dir");
         for name in ["a.txt", "b.txt"] {
