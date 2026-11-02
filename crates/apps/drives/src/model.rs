@@ -75,8 +75,9 @@ pub fn act(arrival: Arrival, mode: OnInsert) -> Act {
 /// without being asked. A cleartext volume carries its container's hints.
 /// `HintAuto` is ignored: e2fsprogs and xfsprogs clear it on every volume of
 /// their kind, and arrivals under a lock are already left alone (watch.rs).
+/// A disk image is Explorer's to mount, which set it up to.
 fn auto(snap: &Snapshot, v: &Volume) -> bool {
-    snap.removable(v)
+    snap.removable(v) && v.image.is_none()
 }
 
 /// What appeared between `prev` and `next` that the applet mounts or
@@ -294,6 +295,21 @@ mod tests {
             arrivals(Some(&before), &after),
             [Arrival::Mount("sdb1".into())]
         );
+    }
+
+    #[test]
+    fn a_disk_image_explorer_set_up_is_no_arrival() {
+        let before = snap(vec![], vec![]);
+        let iso = Volume {
+            disk: None,
+            image: Some(reprisefs::udisks::Image {
+                file: "/home/u/debian.iso".into(),
+                loop_path: "loop0".into(),
+            }),
+            ..fat("loop0", "", false)
+        };
+        let after = snap(vec![], vec![iso]);
+        assert!(arrivals(Some(&before), &after).is_empty());
     }
 
     #[test]

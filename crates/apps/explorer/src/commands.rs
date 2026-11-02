@@ -20,6 +20,7 @@ pub enum Command {
     OpenTerminal,
     OpenTerminalHere,
     Eject,
+    MountImage,
     Cut,
     Copy,
     /// Ctrl+Shift+C: the selected items' full paths as text ([`reprisefs::ops::path_lines`]).
@@ -266,6 +267,7 @@ impl Explorer {
                 ..Default::default()
             },
             Command::Eject => self.eject_selected(ctx),
+            Command::MountImage => self.mount_image(ctx),
             Command::AddressFocus => {
                 self.focus = Focus::Address;
                 if let Some(edit) = self.address.combo.edit.as_mut() {
@@ -299,7 +301,7 @@ impl Explorer {
             Command::GoTo(p) => self.go(p, ctx),
             Command::Navigate(text) => self.navigate(&text, |d| d.is_dir(), ctx),
             Command::Refresh => self.refresh(ctx),
-            Command::Open => self.open_selected(ctx),
+            Command::Open => self.open_in_program(ctx),
             Command::Run(open) => self.open_selected_as(open, ctx),
             Command::Explore => {
                 if let Some(v) = self.selected_unmounted() {

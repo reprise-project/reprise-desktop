@@ -1,6 +1,7 @@
 //! Computer's removable drives through UDisks2: opening an unmounted volume
 //! mounts it first (a locked one asks for its passphrase and unlocks it
-//! before that), and Eject safely removes the row's drive. The calls can
+//! before that), and Eject safely removes the row's drive. A disk image
+//! opens by mounting it and shows in Computer until ejected. The calls can
 //! wait on a polkit prompt, so they run as jobs and finish at a wake.
 
 use crate::Explorer;
@@ -8,6 +9,7 @@ use crate::dialogs::Dialog;
 use crate::place::{self, Place};
 use repriseapp::unlock::{self, Outcome, Unlock};
 use repriseapp::{Ctx, Event, Reply};
+use reprisefs::listing::Item;
 use reprisefs::udisks::{Error, ErrorKind, Snapshot, Volume};
 
 impl Explorer {
@@ -43,6 +45,9 @@ impl Explorer {
         };
         let moved = mounts(&snap) != mounts(&self.volumes);
         self.volumes = snap;
+        if self.merge_image_drives() {
+            self.refill_tree_node(&Place::Computer, ctx);
+        }
         if self.place == Place::Computer || (moved && self.place == Place::RecycleBin) {
             return self.refresh(ctx);
         }
@@ -158,7 +163,64 @@ impl Explorer {
         }
     }
 
-    /// Eject: safely remove the drive under the single selected row, then re-read the drives.
+    /// The mounted disk image volumes as drives beside what `/proc/mounts` gave, which leaves
+    /// out every loop device; whether the drives changed.
+    pub(crate) fn merge_image_drives(&mut self) -> bool {
+        let images = self.volumes.image_drives();
+        let was = std::mem::take(&mut self.drive_mounts);
+        self.drives.retain(|d| !d.device.starts_with("/dev/loop"));
+        self.drives.extend(images);
+        self.drive_mounts = place::drive_mounts(&self.drives);
+        self.drive_mounts != was
+    }
+
+    /// The single selected file, when it is a disk image.
+    pub(crate) fn selected_disk_image(&self) -> Option<&Item> {
+        if self.place == Place::RecycleBin {
+            return None;
+        }
+        let it = self.items.get(self.sv.selection.single()?)?;
+        let image = !it.is_folder()
+            && it
+                .mime
+                .as_deref()
+                .is_some_and(reprisefs::udisks::is_disk_image);
+        image.then_some(it)
+    }
+
+    /// Mount: the selected disk image set up read-only and mounted, then its folder shown. A
+    /// refusal or an image with nothing to mount raises a box.
+    pub(crate) fn mount_image(&mut self, ctx: &mut Ctx) -> Reply {
+        let Some(it) = self.selected_disk_image() else {
+            return Reply::none();
+        };
+        let (path, name) = (it.path.clone(), it.label().to_string());
+        let title = format!("Could not mount {name}");
+        let Some(udisks) = self.udisks.clone() else {
+            return self.message_box(&title, "UDisks2 is not running.".into(), ctx);
+        };
+        self.spawn_job(ctx, move || {
+            let mounted = udisks.mount_image(&path);
+            Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| match mounted {
+                Ok(at) => ex.go(Place::Folder(at), ctx),
+                Err(e) => ex.udisks_failed(&title, &e, ctx),
+            })
+        });
+        Reply::redraw()
+    }
+
+    /// The item menu's Open on a disk image: its program, past the Mount default.
+    pub(crate) fn open_in_program(&mut self, ctx: &mut Ctx) -> Reply {
+        let Some(it) = self.selected_disk_image() else {
+            return self.open_selected(ctx);
+        };
+        let (path, exec) = (it.path.clone(), it.exec);
+        let how = reprisefs::program::Confirm::on_open(repriseconf::confirm_scripts());
+        self.open_file(&path, exec, repriseconf::script_open(), how, ctx)
+    }
+
+    /// Eject: safely remove the drive under the single selected row, or unmount and detach the
+    /// disk image, then re-read the drives.
     pub(crate) fn eject_selected(&mut self, ctx: &mut Ctx) -> Reply {
         let Some(udisks) = self.udisks.clone() else {
             return Reply::none();
@@ -169,12 +231,21 @@ impl Explorer {
         let Some((v, disk)) = place::eject_target(&self.volumes, it) else {
             return Reply::none();
         };
-        let title = format!("Problem Ejecting {}", disk.name());
-        let volume = v.name(Some(disk));
-        let disk = disk.path.clone();
+        let title = format!(
+            "Problem Ejecting {}",
+            disk.map_or_else(|| v.name(None), |d| d.name())
+        );
+        let volume = v.name(disk);
+        let image = v.image.as_ref().map(|i| i.loop_path.clone());
+        let disk = disk.map(|d| d.path.clone());
         self.spawn_job(ctx, move || {
             // Read again on the job: what is mounted or unlocked now is what has to come off.
-            let removed = udisks.safely_remove(&udisks.snapshot(), &disk);
+            let snap = udisks.snapshot();
+            let removed = match (disk, image) {
+                (Some(disk), _) => udisks.safely_remove(&snap, &disk),
+                (None, Some(image)) => udisks.eject_image(&snap, &image),
+                (None, None) => Ok(()),
+            };
             Box::new(move |ex: &mut Explorer, ctx: &mut Ctx| {
                 let reply = ex.rescan(ctx);
                 match removed {

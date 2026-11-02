@@ -3056,6 +3056,46 @@ fn computer_gains_and_loses_a_locked_stick_as_udisks_reports_it() {
     assert!(!listed(&ex), "the stick's row goes once it is pulled out");
 }
 
+#[test]
+fn computer_and_the_folders_tree_gain_and_lose_a_mounted_disk_image() {
+    use reprisefs::udisks::{Image, Snapshot, Volume};
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Computer, &mut ctx);
+    let mount = PathBuf::from("/run/media/u/DEBIAN_13");
+    let mounted = Snapshot {
+        disks: vec![],
+        volumes: vec![Volume {
+            path: "/block/loop0".into(),
+            device: "/dev/loop0".into(),
+            label: Some("DEBIAN_13".into()),
+            fs_type: "iso9660".into(),
+            filesystem: true,
+            mounts: vec![mount.clone()],
+            image: Some(Image {
+                file: "/home/u/debian.iso".into(),
+                loop_path: "/block/loop0".into(),
+            }),
+            ..Default::default()
+        }],
+    };
+    let listed = |ex: &Explorer| {
+        ex.items
+            .iter()
+            .any(|it| it.path == mount && it.drive.is_some())
+    };
+
+    ex.volumes_changed(mounted, &mut ctx);
+    assert!(listed(&ex), "the image is a drive row in Computer");
+    assert!(
+        ex.drive_mounts.contains(&mount),
+        "and under Computer in the tree"
+    );
+
+    ex.volumes_changed(Snapshot::default(), &mut ctx);
+    assert!(!listed(&ex), "ejected, its row goes");
+    assert!(!ex.drive_mounts.contains(&mount));
+}
+
 /// Long enough for the watch's one-second gap between wakes and its coalescing.
 fn wait_for_watch() {
     std::thread::sleep(std::time::Duration::from_millis(1500));

@@ -284,11 +284,17 @@ pub fn unmounted_volume<'a>(volumes: &'a Snapshot, it: &Item) -> Option<&'a Volu
     row_volume(volumes, it).filter(|v| v.mounts.is_empty())
 }
 
-/// What Eject on row `it` removes: its volume and the removable drive holding it.
-/// `None` for a fixed disk or a drive UDisks2 does not know.
-pub fn eject_target<'a>(volumes: &'a Snapshot, it: &Item) -> Option<(&'a Volume, &'a Disk)> {
+/// What Eject on row `it` removes: its volume and the removable drive holding it, or no drive for
+/// a disk image. `None` for a fixed disk or a drive UDisks2 does not know.
+pub fn eject_target<'a>(
+    volumes: &'a Snapshot,
+    it: &Item,
+) -> Option<(&'a Volume, Option<&'a Disk>)> {
     let v = row_volume(volumes, it).filter(|v| volumes.removable(v))?;
-    Some((v, volumes.disk_of(v)?))
+    match (volumes.disk_of(v), &v.image) {
+        (None, None) => None,
+        (disk, _) => Some((v, disk)),
+    }
 }
 
 fn empty_listed() -> Listed {
@@ -459,7 +465,8 @@ fn drive_item(d: &Drive) -> Item {
 /// becomes once mounted, with its device where the mount point would be.
 fn volume_item(volumes: &Snapshot, v: &Volume) -> Item {
     let disk = volumes.disk_of(v);
-    let kind = if disk.is_some_and(|d| d.optical) {
+    let optical = matches!(v.fs_type.as_str(), "iso9660" | "udf");
+    let kind = if disk.is_some_and(|d| d.optical) || (v.image.is_some() && optical) {
         DriveKind::Optical
     } else {
         DriveKind::Removable
@@ -931,7 +938,7 @@ mod tests {
         let folder = row("/run/media/u/CARD", None);
 
         assert_eq!(
-            eject_target(&snap, &card).map(|(v, d)| (v.device.as_str(), d.path.as_str())),
+            eject_target(&snap, &card).map(|(v, d)| (v.device.as_str(), d.unwrap().path.as_str())),
             Some(("/dev/sdc1", "/card"))
         );
         assert_eq!(
@@ -951,6 +958,34 @@ mod tests {
             unmounted_volume(&snap, &card).is_none(),
             "the card is mounted"
         );
+    }
+
+    #[test]
+    fn a_mounted_disk_image_is_listed_with_the_removable_drives_and_ejects_without_a_drive() {
+        let mut snap = Snapshot::default();
+        snap.volumes.push(Volume {
+            path: "/loop0".into(),
+            device: "/dev/loop0".into(),
+            label: Some("DEBIAN_13".into()),
+            fs_type: "iso9660".into(),
+            filesystem: true,
+            mounts: vec![PathBuf::from("/run/media/u/DEBIAN_13")],
+            system: true,
+            image: Some(reprisefs::udisks::Image {
+                file: "/home/u/debian.iso".into(),
+                loop_path: "/loop0".into(),
+            }),
+            ..Volume::default()
+        });
+        let listed = build_computer(snap.image_drives(), &snap, None);
+        assert_eq!(
+            listed.groups,
+            [("Devices with Removable Storage".to_string(), 0)]
+        );
+        let row = &listed.items[0];
+        assert_eq!(row.drive, Some(DriveKind::Optical));
+        let (v, disk) = eject_target(&snap, row).expect("Eject");
+        assert_eq!((v.device.as_str(), disk), ("/dev/loop0", None));
     }
 
     #[test]
