@@ -153,6 +153,8 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 #                            # flyout in Glass); Customize... sets single items apart
 # badges = true              # a program's unread count (LauncherEntry count)
 #                            # shows in a badge on its task buttons, 99+ above 99
+# network_meter = false      # download and upload speed on two lines between
+#                            # the tray icons and the clock, once a second
 # auto_hide = false          # the bar slides off its edge when unused, leaving
 #                            # a 2 px line; windows take the rest of the screen
 # reveal_on_edge = true      # it comes back when the pointer rests on that

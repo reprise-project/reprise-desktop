@@ -584,7 +584,9 @@ are.
   OpenVPN have their own editors (gateway, sign-in, certificates and keys,
   passwords), other VPNs import through NetworkManager's plugins, and Create
   Hotspot shares your connection. A captive portal gets a "Sign in to the
-  network" balloon.
+  network" balloon. The network icon's tooltip and the Status sheet show the
+  current download and upload speed, and an optional meter beside the clock
+  shows it all the time (`[taskbar] network_meter`).
 - **Bluetooth.** Pairing, connections and device batteries, from the tray.
 - **Drives** mount when you plug them in, ask for a passphrase if they're
   encrypted, and eject from the tray or from Computer.

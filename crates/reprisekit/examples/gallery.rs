@@ -1384,6 +1384,7 @@ fn render_show_desktop() -> Canvas {
                 chevron: Default::default(),
                 tasks: vec![],
                 tray_icons: vec![Some(indicator::draw_record(16).into())],
+                meter: None,
                 clock: "3:45 PM".into(),
             };
             let mut bar = Canvas::new(320, layout.height as u32);
@@ -1822,6 +1823,10 @@ fn render_taskbar_top() -> Canvas {
             tasks: 2,
             tray: 1,
             show_desktop: true,
+            meter: Some(reprisekit::netmeter::size(
+                &text,
+                reprisekit::netmeter::font_px(theme.fonts.size_px, 1),
+            )),
             ..TaskbarCounts::default()
         };
         let clock = "3:45 PM";
@@ -1878,6 +1883,7 @@ fn render_taskbar_top() -> Canvas {
                 task("Command Prompt", false, indicator::draw_microphone(16)),
             ],
             tray_icons: vec![Some(indicator::draw_record(16).into())],
+            meter: Some(["\u{2193} 2.4 MB/s".into(), "\u{2191} 120 KB/s".into()]),
             clock: clock.into(),
         };
         let mut bar = Canvas::new(640, layout.height as u32);
@@ -1953,6 +1959,7 @@ fn render_taskbar_edges() -> Canvas {
             task("Command Prompt", false, indicator::draw_microphone(icon_px)),
         ],
         tray_icons: vec![Some(indicator::draw_record(16).into())],
+        meter: None,
         clock: if two_lines {
             format!("{time}\n{date}")
         } else {
@@ -2124,6 +2131,7 @@ fn render_taskbar_cells() -> Canvas {
             })
             .collect(),
         tray_icons: vec![Some(indicator::draw_record(16).into())],
+        meter: None,
         clock: "3:45 PM".into(),
     };
     // Draws `l` in `theme` at `at` of `c` with the orb's buffer over it.
@@ -2243,6 +2251,7 @@ fn render_quick_more() -> Canvas {
         chevron: Default::default(),
         tasks: vec![],
         tray_icons: vec![],
+        meter: None,
         clock: "3:45 PM".into(),
     };
     let lay = |theme: &Theme, span: BarSpan| {
@@ -2362,6 +2371,7 @@ fn render_tray_arrow() -> Canvas {
         chevron: cell,
         tasks: vec![],
         tray_icons: vec![Some(indicator::draw_record(16).into()); icons],
+        meter: None,
         clock: "3:45 PM".into(),
     };
     let cell = |hot, open, held| PopupCell { hot, open, held };
@@ -2523,6 +2533,7 @@ fn render_tray_arrow_schemes(n: i32) -> Canvas {
                 chevron: cell,
                 tasks: vec![],
                 tray_icons: vec![Some(indicator::draw_record(16 * n).into()); l.tray.len()],
+                meter: None,
                 clock: "3:45 PM".into(),
             };
             let mut bar = Canvas::new(l.width as u32, l.height as u32);
@@ -2598,6 +2609,7 @@ fn render_orb_glow(n: i32) -> Canvas {
                     chevron: Default::default(),
                     tasks: vec![],
                     tray_icons: vec![],
+                    meter: None,
                     clock: "3:45 PM".into(),
                 };
                 let mut bar = Canvas::new(l.width as u32, l.height as u32);
@@ -2716,6 +2728,7 @@ fn render_taskbar_keys() -> Canvas {
                     })
                     .collect(),
                 tray_icons: vec![Some(indicator::draw_record(16).into())],
+                meter: None,
                 clock: "3:45 PM".into(),
             };
             let mut bar = Canvas::new(layout.width as u32, layout.height as u32);
@@ -2792,6 +2805,7 @@ fn render_taskbar_hidden() -> Canvas {
                 chevron: Default::default(),
                 tasks: vec![],
                 tray_icons: vec![Some(indicator::draw_record(16).into())],
+                meter: None,
                 clock: clock.into(),
             };
             let mut bar = Canvas::new(640, layout.height as u32);
@@ -5212,6 +5226,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
                 Some(indicator::draw_record(16).into()),
                 Some(indicator::draw_microphone(16).into()),
             ],
+            meter: None,
             clock: "3:45 PM".into(),
         };
         let mut bar = Canvas::new(800, 30);
@@ -6497,6 +6512,7 @@ fn glass_scale2_bars(c: &mut Canvas, rows: &[reprisekit::glass::Settings], top: 
                 task("Pictures (3)", false, indicator::draw_microphone(px)),
             ],
             tray_icons: vec![Some(indicator::draw_record(32).into())],
+            meter: None,
             clock: "3:45 PM".into(),
         };
         let two = theme.scaled(2);
@@ -6582,6 +6598,7 @@ fn render_glass_dark_bar(theme: &Theme) -> Canvas {
         task_badge: Vec::new(),
         tasks: vec![entry("xclock", false), entry("xeyes", true)],
         tray_icons: vec![],
+        meter: None,
         clock: "3:45 PM".into(),
         show_desktop_hot: false,
         more: Default::default(),
@@ -8716,6 +8733,7 @@ fn render_glass_frames() -> Canvas {
                     Some(indicator::draw_record(16).into()),
                     Some(indicator::draw_microphone(16).into()),
                 ],
+                meter: None,
                 clock: clock.into(),
                 show_desktop_hot: false,
                 more: Default::default(),
@@ -8774,6 +8792,7 @@ fn render_glass_frames() -> Canvas {
                 Some(indicator::draw_record(16).into()),
                 Some(indicator::draw_microphone(16).into()),
             ],
+            meter: None,
             clock: "3:45 PM".into(),
             show_desktop_hot: false,
             more: Default::default(),
@@ -9069,6 +9088,7 @@ fn render_glass_task_rows() -> Canvas {
             task_badge: Vec::new(),
             tasks,
             tray_icons: vec![],
+            meter: None,
             clock: clock.into(),
             show_desktop_hot: lit,
             more: Default::default(),
@@ -9189,6 +9209,7 @@ fn render_glass_spots() -> Canvas {
             task_badge: Vec::new(),
             tasks,
             tray_icons: vec![],
+            meter: None,
             clock: clock.into(),
             show_desktop_hot: false,
             more: Default::default(),

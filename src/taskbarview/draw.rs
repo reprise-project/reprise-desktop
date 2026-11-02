@@ -198,6 +198,10 @@ impl State {
                 chevron,
                 hidden,
                 reveal,
+                meter: self.config.taskbar.network_meter.then(|| {
+                    let px = reprisekit::netmeter::font_px(base.fonts.size_px, 1);
+                    reprisekit::netmeter::size(&self.text, px)
+                }),
             },
             clock_text,
             bands,
@@ -397,6 +401,7 @@ impl State {
             tasks: entries,
             tray_icons,
             clock,
+            meter: crate::netspeed::lines(self),
         };
         let layout = bar.layout.scaled(scale);
         let (text, start_text) = (

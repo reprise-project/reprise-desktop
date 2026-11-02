@@ -64,6 +64,7 @@ fn state_with_tasks(titles: &[&str]) -> TaskbarState {
             })
             .collect(),
         tray_icons: vec![],
+        meter: None,
         clock: String::new(),
     }
 }

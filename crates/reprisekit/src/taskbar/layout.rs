@@ -171,6 +171,7 @@ impl TaskbarLayout {
             chevron,
             hidden: counts_hidden,
             reveal,
+            meter: meter_size,
         } = counts;
         if span.edge.is_side() {
             return Self::column(m, shape, span, locked, counts, clock, bands);
@@ -212,7 +213,8 @@ impl TaskbarLayout {
         let pitch = icon + shape.tray_gap;
         let arrow = shape.tray_arrow.filter(|_| chevron);
         let shown_n = tray_count as i32;
-        let foot = clock.x - 6;
+        let meter = meter_size.map(|(w, _)| Rect::new(clock.x - 6 - w, shape.button_top, w, btn_h));
+        let foot = meter.map_or(clock.x - 6, |r| r.x - 4);
         let cell_x = |k: i32| foot - icon - k * pitch;
         let quick_w = quick_count as i32 * QUICK_W;
         let pager_gap = if quick_count > 0 && pager_count > 0 {
@@ -273,7 +275,7 @@ impl TaskbarLayout {
         // 4 px before the tray row, or 6 px before the clock without a tray.
         let limit = match row_x {
             Some(x) => x - 4,
-            None => clock.x - 6,
+            None => foot,
         };
         let a = arrange_bands(
             band_x,
@@ -310,7 +312,9 @@ impl TaskbarLayout {
             (Some(a), Some(_)) => a.well_lead,
             _ => shape.well_lead,
         };
-        let well_x = row_x.map(|x| x - lead).unwrap_or(clock.x);
+        let well_x = row_x
+            .map(|x| x - lead)
+            .unwrap_or(meter.map_or(clock.x, |r| r.x));
         let notification = if shape.well_full_height {
             Rect::new(well_x, 0, end - well_x, height)
         } else {
@@ -333,6 +337,7 @@ impl TaskbarLayout {
             tray_hidden,
             run_width,
             tray_arrow: shape.tray_arrow.is_some(),
+            meter,
             tasks_x: a.tasks,
             tasks_end: a.tasks_end,
             band_x,
@@ -382,6 +387,7 @@ impl TaskbarLayout {
             chevron,
             hidden: counts_hidden,
             reveal,
+            meter: meter_size,
         } = counts;
         let (t, len) = (span.thickness, span.length);
         let btn = m.taskbar_height - shape.button_top - shape.button_bottom;
@@ -448,7 +454,8 @@ impl TaskbarLayout {
             shape.side_tray_inset
         };
         let per_row = ((room - 2 * margin + shape.tray_gap) / pitch).max(1);
-        let foot = clock_r.y - 6;
+        let meter = meter_size.map(|(_, h)| Rect::new(left, clock_r.y - 6 - h, room, h));
+        let foot = meter.map_or(clock_r.y - 6, |r| r.y - 4);
         // An open run lays the hidden cells ahead of the shown ones, so the grid grows up from the clock.
         let arrow = shape.tray_arrow.filter(|_| chevron);
         let per_line = (room / QUICK_W).max(1);
@@ -527,10 +534,10 @@ impl TaskbarLayout {
         let row_y = chevron.or(tray.first().copied()).map(|r| r.y);
         let limit = match row_y {
             Some(y) => y - 4,
-            None => clock_r.y - 6,
+            None => foot,
         };
         let lead = arrow.map_or(shape.well_lead, |a| a.side_lead);
-        let well_y = row_y.map_or(clock_r.y, |y| y - lead);
+        let well_y = row_y.map_or(meter.map_or(clock_r.y, |r| r.y), |y| y - lead);
         let notification = if shape.well_full_height {
             Rect::new(0, well_y, t, (end - well_y).max(0))
         } else {
@@ -587,6 +594,7 @@ impl TaskbarLayout {
             tray_hidden,
             run_width,
             tray_arrow: shape.tray_arrow.is_some(),
+            meter,
             clock: clock_r,
             notification,
             show_desktop: strip,
@@ -777,7 +785,7 @@ impl TaskbarLayout {
         let end = if self.bands.tasks_first {
             let tray = match self.chevron.or(self.tray.first().copied()) {
                 Some(t) => along(t).x - 4,
-                None => along(self.clock).x - 6,
+                None => along(self.meter.unwrap_or(self.clock)).x - 6,
             };
             tray.max(last.or(pager_end).unwrap_or(tray))
         } else {
@@ -903,6 +911,7 @@ impl TaskbarLayout {
             tasks: all(self.tasks),
             chevron: self.chevron.map(m),
             tray: all(self.tray),
+            meter: self.meter.map(m),
             clock: m(self.clock),
             notification: m(self.notification),
             show_desktop: self.show_desktop.map(m),
@@ -933,6 +942,7 @@ impl TaskbarLayout {
             tray_hidden: self.tray_hidden,
             run_width: self.run_width * n,
             tray_arrow: self.tray_arrow,
+            meter: self.meter.map(|r| r.scaled(n)),
             clock: self.clock.scaled(n),
             notification: self.notification.scaled(n),
             show_desktop: self.show_desktop.map(|r| r.scaled(n)),

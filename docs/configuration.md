@@ -164,6 +164,7 @@ page of Reprise Settings lists the paired devices.
 | `peek` | resting on a preview or the strip fades the other windows | by interface |
 | `small_icons` | a 30 px bar (Glass only) | `false` |
 | `tray_overflow` | quiet tray icons wait behind an arrow or a ^ | `true` |
+| `network_meter` | download and upload speed (`↓ 2.4 MB/s` over `↑ 120 KB/s`, in thousands of bytes) on two lines between the tray icons and the clock, read once a second while shown | `false` |
 | `badges` | a program's unread count (LauncherEntry `count`) shows as a badge in its task buttons' top-right corner, `99+` above 99 | `true` |
 | `auto_hide` | the bar slides away when nothing needs it | `false` |
 | `reveal_on_edge` | the pointer resting on, clicking or dragging onto the 2 px line brings it back | `true` |

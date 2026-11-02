@@ -389,6 +389,7 @@ impl Config {
                 (t.peek, &mut cfg.taskbar.peek),
                 (t.tray_overflow, &mut cfg.taskbar.tray_overflow),
                 (t.badges, &mut cfg.taskbar.badges),
+                (t.network_meter, &mut cfg.taskbar.network_meter),
                 (t.auto_hide, &mut cfg.taskbar.auto_hide),
                 (t.reveal_on_edge, &mut cfg.taskbar.reveal_on_edge),
                 (t.reveal_on_keys, &mut cfg.taskbar.reveal_on_keys),

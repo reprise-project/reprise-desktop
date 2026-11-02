@@ -1035,6 +1035,7 @@ fn a_dialogs_button_draws_as_a_task_button() {
                 dialog_entry("End Program - signal-desktop", active),
             ],
             tray_icons: vec![],
+            meter: None,
             clock: "00:00".into(),
         };
         let mut c = Canvas::new(800, 28);

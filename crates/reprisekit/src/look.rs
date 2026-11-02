@@ -749,6 +749,7 @@ mod tests {
             chevron: Default::default(),
             tasks: vec![],
             tray_icons: vec![],
+            meter: None,
             clock: "00:00".into(),
         }
     }

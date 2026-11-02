@@ -336,22 +336,23 @@ fn the_taskbar_page_geometry() {
         "taskbar_peek",
         "taskbar_badges",
         "taskbar_tray_overflow",
+        "taskbar_network_meter",
     ]
     .into_iter()
     .enumerate()
     {
         assert_eq!(
             rect(&s, p, id),
-            Rect::new(20, 100 + 20 * i as i32, 13, 13),
+            Rect::new(20, 100 + 18 * i as i32, 13, 13),
             "{id} is row {i}"
         );
     }
-    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 220, 358, 26));
-    assert_eq!(rect(&s, p, "taskbar_auto_hide"), Rect::new(20, 250, 13, 13));
+    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 228, 358, 26));
+    assert_eq!(rect(&s, p, "taskbar_auto_hide"), Rect::new(20, 258, 13, 13));
     for (i, id) in REVEAL_CONTROLS.into_iter().enumerate() {
         assert_eq!(
             rect(&s, p, id),
-            Rect::new(38, 272 + 22 * i as i32, 13, 13),
+            Rect::new(38, 278 + 20 * i as i32, 13, 13),
             "{id} sits under the auto-hide label"
         );
     }
@@ -387,6 +388,7 @@ fn taskbar_values_go_in_and_come_back_out() {
         taskbar_peek: true,
         taskbar_tray_overflow: true,
         taskbar_badges: false,
+        taskbar_network_meter: true,
         recent_files: false,
         start_icon: false,
         startmenu_banner: "Reprise".into(),
@@ -419,6 +421,7 @@ fn taskbar_values_go_in_and_come_back_out() {
     assert_eq!(tb.checked("taskbar_reveal_on_edge"), Some(false));
     assert_eq!(tb.checked("taskbar_reveal_on_keys"), Some(true));
     assert_eq!(tb.checked("taskbar_badges"), Some(false));
+    assert_eq!(tb.checked("taskbar_network_meter"), Some(true));
     let mut got = Settings::default();
     read_all(&s, &mut got);
     assert_eq!(got, want);
