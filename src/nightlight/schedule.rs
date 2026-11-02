@@ -104,14 +104,24 @@ pub fn kelvin(level: f64, target: u32) -> u32 {
     (n - level * (n - target as f64)).round() as u32
 }
 
-/// When a pause taken at `now` ends: once the night now fading in or on
-/// (else the next one) has faded out.
-pub fn pause_until(now: i64, nights: &[(i64, i64)]) -> i64 {
+/// Where a pause until tomorrow ends with no night to end it: 06:00 local, in minutes.
+const MORNING: u32 = 6 * 60;
+
+/// When a pause until tomorrow taken at `now` ends: once the night now fading in or on (else the
+/// next one) has faded out; with no night ahead, the next local 06:00.
+pub fn pause_until(now: i64, nights: &[(i64, i64)], clock: &dyn LocalClock) -> i64 {
     nights
         .iter()
         .map(|&(_, end)| end + HALF)
         .find(|&t| t > now)
-        .unwrap_or(now + DAY)
+        .unwrap_or_else(|| {
+            let today = clock.at(clock.date(now), MORNING);
+            if today > now {
+                today
+            } else {
+                clock.at(clock.date(now + DAY), MORNING)
+            }
+        })
 }
 
 /// Whether `now` lies inside one of `nights`, edges taken sharp, and the next edge after `now`.
@@ -151,8 +161,10 @@ mod tests {
     const H: i64 = 3600;
     const MIDNIGHT: i64 = 20_000 * DAY - 2 * H;
 
+    const CLOCK: Offset = Offset(2 * H);
+
     fn fixed(from: u32, to: u32, now: i64) -> Vec<(i64, i64)> {
-        nights(Plan::Fixed { from, to }, now, &Offset(2 * H))
+        nights(Plan::Fixed { from, to }, now, &CLOCK)
     }
 
     #[test]
@@ -204,12 +216,33 @@ mod tests {
     fn a_pause_lasts_until_the_night_has_faded_out() {
         let n = fixed(21 * 60, 7 * 60, MIDNIGHT + 12 * H);
         let tomorrow_7 = MIDNIGHT + DAY + 7 * H + 15 * 60;
-        assert_eq!(pause_until(MIDNIGHT + 23 * H, &n), tomorrow_7);
-        assert_eq!(pause_until(MIDNIGHT + 20 * H + 50 * 60, &n), tomorrow_7);
-        assert_eq!(pause_until(MIDNIGHT + 12 * H, &n), tomorrow_7);
+        assert_eq!(pause_until(MIDNIGHT + 23 * H, &n, &CLOCK), tomorrow_7);
         assert_eq!(
-            pause_until(MIDNIGHT + 3 * H, &n),
+            pause_until(MIDNIGHT + 20 * H + 50 * 60, &n, &CLOCK),
+            tomorrow_7
+        );
+        assert_eq!(pause_until(MIDNIGHT + 12 * H, &n, &CLOCK), tomorrow_7);
+        assert_eq!(
+            pause_until(MIDNIGHT + 3 * H, &n, &CLOCK),
             MIDNIGHT + 7 * H + 15 * 60
+        );
+    }
+
+    #[test]
+    fn with_no_night_a_pause_lasts_until_the_next_six_in_the_morning() {
+        assert_eq!(
+            pause_until(MIDNIGHT + 3 * H, &[], &CLOCK),
+            MIDNIGHT + 6 * H,
+            "03:00 waits for this morning"
+        );
+        assert_eq!(
+            pause_until(MIDNIGHT + 6 * H, &[], &CLOCK),
+            MIDNIGHT + DAY + 6 * H,
+            "06:00 itself waits for tomorrow's"
+        );
+        assert_eq!(
+            pause_until(MIDNIGHT + 15 * H, &[], &CLOCK),
+            MIDNIGHT + DAY + 6 * H
         );
     }
 
