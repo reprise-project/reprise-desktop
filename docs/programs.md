@@ -441,6 +441,26 @@ you when it's done, or when it isn't. A document that failed stays in its
 queue, counted in the folder and flagged on the tray icon, until you restart
 or cancel it.
 
+## Task Manager
+
+Ctrl+Shift+Escape, or Task Manager on the taskbar's menu, opens it (`task_manager` picks
+another program).
+
+- **Applications:** each program started from the Start menu, the launcher or a
+  desktop icon, with its icon and name. End Task asks the program and its
+  helpers to close; one still running a few seconds later gets an End Now
+  prompt. Switch To (or a double click) brings its window up.
+- **Processes:** your processes with their PID, user, share of the CPU and
+  resident memory; click a column title to sort by it, rest the pointer on a
+  row for its command line. Show processes from all users lists everyone's,
+  read only. End Process asks first.
+- **Performance:** the CPU's load and the memory in use, now and over the
+  last hundred samples, swap drawn over memory. View > CPU History draws a
+  graph per core. Totals, memory and swap figures sit underneath.
+- **Updates** every second; View > Update Speed sets High (half a second),
+  Normal, Low (four seconds) or Paused, and F5 refreshes at once. Nothing is
+  sampled while the window is minimized.
+
 ## User Accounts
 
 Change your name, picture and password. With admin rights, add and remove

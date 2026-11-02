@@ -136,6 +136,7 @@ fn action_names_round_trip() {
         "alwaysontop",
         "mini-view",
         "launcher",
+        "task-manager",
         "overview",
         "snap-layouts",
         "focus-taskbar",

@@ -78,7 +78,7 @@ const COMMENTED: &str = "\
 # Reprise configuration. Every key is optional.
 
 terminal = \"foot\"
-# task_manager = \"gnome-system-monitor\"   # default: top in the terminal
+# task_manager = \"gnome-system-monitor\"   # default: Task Manager
 desktop_icons = false         # the desktop shows no icons
 
 [metrics]
@@ -920,7 +920,7 @@ fn validate_refuses_a_snap_layout_the_compositor_would() {
 #[test]
 fn shortcuts_default_to_the_compositors_list() {
     let s = load("");
-    assert_eq!(s.shortcuts.len(), 42);
+    assert_eq!(s.shortcuts.len(), 43);
     assert_eq!(
         s.shortcuts[0],
         Shortcut::new("Super+Return", "terminal", "")
@@ -933,17 +933,17 @@ fn shortcuts_default_to_the_compositors_list() {
         s.shortcuts[11],
         Shortcut::new("Super+space", "launcher", "")
     );
-    assert_eq!(s.shortcuts[12], Shortcut::new("Super+c", "center", ""));
+    assert_eq!(s.shortcuts[13], Shortcut::new("Super+c", "center", ""));
     assert_eq!(
-        s.shortcuts[16],
+        s.shortcuts[17],
         Shortcut::new("Super+Down", "snap-down", "")
     );
     assert_eq!(
-        s.shortcuts[20],
+        s.shortcuts[21],
         Shortcut::new("Super+Ctrl+Shift+Right", "desktop-carry-next", "")
     );
     assert_eq!(
-        s.shortcuts[22],
+        s.shortcuts[23],
         Shortcut::new("Alt+Sys_Req", "screenshot-window", "")
     );
     assert_eq!(validate(&s, &Settings::default()), Ok(()));

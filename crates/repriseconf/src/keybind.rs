@@ -71,6 +71,7 @@ pub const DEFAULTS: &[(&str, &str)] = &[
     ("Alt+space", "windowmenu"),
     ("Super+Shift+b", "toggleframe"),
     ("Super+space", "launcher"),
+    ("Ctrl+Shift+Escape", "task-manager"),
     ("Super+c", "center"),
     ("Super+Left", "snap-left"),
     ("Super+Right", "snap-right"),

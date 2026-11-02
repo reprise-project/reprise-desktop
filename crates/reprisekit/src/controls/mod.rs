@@ -58,6 +58,7 @@ pub mod overview;
 pub mod pagelist;
 pub mod palette;
 pub mod pathcomplete;
+pub mod perfgraph;
 pub mod placesbar;
 pub mod propsheet;
 pub mod rebar;

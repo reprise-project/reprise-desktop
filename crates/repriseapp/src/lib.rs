@@ -148,6 +148,8 @@ struct Slot {
     /// keyboard. A new toplevel counts as active until a configure after its
     /// first buffer says otherwise: focus is decided after that buffer.
     activated: bool,
+    /// The compositor marked the toplevel suspended (minimized): nothing of it is shown.
+    suspended: bool,
     configured: bool,
     dirty: bool,
     /// The last buffer is not shown yet; `draw` waits for its frame

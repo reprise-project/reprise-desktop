@@ -70,6 +70,7 @@ mod mutex;
 pub mod netmeter;
 pub mod overview;
 pub mod paint;
+pub mod perfart;
 #[doc(hidden)]
 pub mod pins;
 pub mod pointer;

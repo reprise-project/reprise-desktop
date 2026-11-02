@@ -83,6 +83,8 @@ pub struct Style {
     pub(crate) copy_flight: Option<crate::copyart::FlightPainter>,
     /// The copy dialog drawn as a page with a throughput graph instead of the flight.
     pub copy_graph: Option<crate::copyart::GraphLook>,
+    /// The performance graphs and meters; None draws Classic's.
+    pub(crate) perf: Option<crate::perfart::PerfLook>,
     pub(crate) client_glass_edges: Option<ClientGlassEdges>,
     pub chrome_colors: Option<ColorScheme>,
     rescale: Option<Rescale>,
@@ -202,6 +204,7 @@ impl Style {
             clock_face: None,
             copy_flight: None,
             copy_graph: None,
+            perf: None,
             client_glass_edges: None,
             chrome_colors: None,
             balloon: None,
@@ -507,6 +510,11 @@ impl Style {
 
     pub(crate) fn with_copy_flight(mut self, paint: crate::copyart::FlightPainter) -> Style {
         self.copy_flight = Some(paint);
+        self
+    }
+
+    pub(crate) fn with_perf(mut self, look: crate::perfart::PerfLook) -> Style {
+        self.perf = Some(look);
         self
     }
 
