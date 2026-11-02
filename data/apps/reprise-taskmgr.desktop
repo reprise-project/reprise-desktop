@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Task Manager
+Comment=See the running programs and processes, end one that hangs, and watch CPU and memory use.
+Exec=reprise-taskmgr
+Icon=utilities-system-monitor
+Categories=System;Monitor;
+StartupWMClass=reprise.taskmgr
+Terminal=false

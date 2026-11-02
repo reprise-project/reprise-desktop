@@ -132,6 +132,7 @@ impl Host {
             wanted: size,
             picked: size,
             activated: true,
+            suspended: false,
             configured: false,
             dirty: true,
             frame_pending: false,
@@ -617,6 +618,13 @@ impl WindowHandler for Host {
         s.own = own;
         if s.mapped {
             s.activated = configure.is_activated();
+        }
+        let suspended = configure
+            .state
+            .contains(smithay_client_toolkit::reexports::csd_frame::WindowState::SUSPENDED);
+        let suspend_changed = std::mem::replace(&mut s.suspended, suspended) != suspended;
+        if suspend_changed {
+            self.send(id, Event::Suspended(suspended));
         }
         if moved_bounds {
             self.declare_limits(id);

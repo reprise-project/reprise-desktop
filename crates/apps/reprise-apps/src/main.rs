@@ -27,6 +27,7 @@ fn entry(program: &str) -> Option<fn(Vec<OsString>)> {
         "reprise-printers" => reprise_printers::main,
         "reprise-settings" => reprise_settings::main,
         "reprise-sound" => reprise_sound::main,
+        "reprise-taskmgr" => reprise_taskmgr::main,
         "reprise-terminal" => reprise_terminal::main,
         "reprise-updates" => reprise_updates::main,
         "reprise-volume" => reprise_volume::main,

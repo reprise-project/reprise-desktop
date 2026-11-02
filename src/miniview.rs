@@ -472,6 +472,28 @@ mod tests {
         );
     }
 
+    fn suspended(h: &Harness, t: Toplevel) -> bool {
+        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State;
+        let win = h.state.win(t.id).unwrap();
+        (win.xdg().unwrap()).with_pending_state(|p| p.states.contains(State::Suspended))
+    }
+
+    #[test]
+    fn a_minimized_window_with_a_mini_view_is_not_suspended() {
+        let (mut h, _c, t) = desk();
+        let id = open(&mut h, t);
+        h.state.set_minimized(t.id, true);
+        assert!(!suspended(&h, t), "its picture needs the client drawing");
+        super::toggle(&mut h.state, t.id);
+        assert_eq!(h.state.mini_views.of(t.id), None);
+        assert!(suspended(&h, t), "closing the Mini View suspends it");
+        let id2 = open(&mut h, t);
+        assert_ne!(id, id2);
+        assert!(!suspended(&h, t), "a new Mini View wakes it");
+        h.state.set_minimized(t.id, false);
+        assert!(!suspended(&h, t));
+    }
+
     #[test]
     fn the_mini_view_closes_with_its_window() {
         let (mut h, mut c, t) = desk();

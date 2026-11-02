@@ -11,6 +11,9 @@ use crate::{
 
 use super::*;
 
+/// What the taskbar menu's Task Manager row and the task-manager bind start without a `task_manager` key.
+const TASK_MANAGER: &str = "reprise-taskmgr";
+
 impl State {
     pub fn menu_activate(&mut self, depth: usize, idx: usize) {
         if self.is_tray_menu(depth) {
@@ -115,20 +118,19 @@ impl State {
         reprisefs::props::open_file(path, default, &self.config.terminal)
     }
 
+    /// The `task_manager` command, else Reprise's Task Manager.
+    pub fn start_task_manager(&mut self) {
+        let cmd = (self.config.task_manager.clone()).unwrap_or_else(|| TASK_MANAGER.into());
+        self.spawn_activated(&cmd);
+    }
+
     fn taskbar_command(&mut self, cmd: TaskbarCommand) {
         use TaskbarCommand as Tc;
         match cmd {
             Tc::Cascade | Tc::TileHorizontal | Tc::TileVertical => self.arrange_windows(cmd),
             Tc::ShowDesktop => self.toggle_show_desktop(),
             Tc::Toolbars => {}
-            Tc::TaskManager => {
-                let cmd = self
-                    .config
-                    .task_manager
-                    .clone()
-                    .unwrap_or_else(|| format!("{} -e top", self.config.terminal));
-                self.spawn_activated(&cmd);
-            }
+            Tc::TaskManager => self.start_task_manager(),
             Tc::Properties => {
                 self.spawn_argv_activated(&["reprise-settings", "--page", "taskbar"]);
             }

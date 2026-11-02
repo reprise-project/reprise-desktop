@@ -28,6 +28,8 @@ mod gallery_paint;
 mod gallery_parts;
 #[path = "gallery_pathcomplete/mod.rs"]
 mod gallery_pathcomplete;
+#[path = "gallery_perf/mod.rs"]
+mod gallery_perf;
 #[path = "gallery_power/mod.rs"]
 mod gallery_power;
 #[path = "gallery_programs/mod.rs"]
@@ -154,6 +156,10 @@ fn main() {
         write_preview(
             &gallery_programs::charmap(n.max(1)),
             &format!("reprisekit-gallery-charmap@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_perf::render(n.max(1)),
+            &format!("reprisekit-gallery-perf@{}.png", n.max(1)),
         );
         write_preview(
             &render_copy_progress(true, n.max(1)),
@@ -359,6 +365,7 @@ fn main() {
         "reprisekit-gallery-mini-view@1.png",
     );
     write_preview(&gallery_paint::render(1), "reprisekit-gallery-paint@1.png");
+    write_preview(&gallery_perf::render(1), "reprisekit-gallery-perf@1.png");
     if with_blue {
         write_preview(
             &gallery_keys::launcher_windows(1),

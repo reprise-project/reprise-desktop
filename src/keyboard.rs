@@ -766,6 +766,7 @@ impl State {
             Action::Zoom(step) => self.zoom(*step),
             Action::ColorFilter => self.toggle_color_filter(),
             Action::Launcher => self.toggle_launcher(),
+            Action::TaskManager => self.start_task_manager(),
             Action::Overview => self.toggle_overview(),
             Action::SnapLayouts => crate::snappickerview::toggle(self),
             Action::FocusTaskbar => self.focus_taskbar(false),

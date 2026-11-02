@@ -1,0 +1,30 @@
+[package]
+name = "reprise-taskmgr"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Task Manager: running programs, processes, and CPU and memory history"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-taskmgr"
+path = "src/bin/reprise-taskmgr.rs"
+test = false
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisefs = { path = "../../reprisefs" }
+reprisebus = { path = "../../reprisebus" }
+libc.workspace = true
+log.workspace = true
+wayland-client.workspace = true
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+
+[dev-dependencies]
+tempfile.workspace = true

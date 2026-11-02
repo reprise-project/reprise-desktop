@@ -241,6 +241,29 @@ impl State {
         crate::idle::inhibition_changed(self);
     }
 
+    /// Sets xdg-shell's `suspended` on `w` when it is minimized and no live picture shows it
+    /// (Mini View, a task button's panel, Alt+Tab): a suspended client may stop drawing. Returns
+    /// whether the state changed; the caller sends the configure.
+    pub(crate) fn mark_suspended(&self, w: WindowId) -> bool {
+        let Some(win) = self.win(w) else {
+            return false;
+        };
+        let want = win.minimized && !self.live_previews.shows(w);
+        let Some(t) = win.xdg() else {
+            return false;
+        };
+        t.with_pending_state(|p| {
+            if p.states.contains(xdg_toplevel::State::Suspended) == want {
+                return false;
+            }
+            match want {
+                true => p.states.set(xdg_toplevel::State::Suspended),
+                false => p.states.unset(xdg_toplevel::State::Suspended),
+            };
+            true
+        })
+    }
+
     pub fn set_minimized(&mut self, w: WindowId, on: bool) {
         let w = if on { self.tabs.groups.shown_of(w) } else { w };
         let shown = self.ripple_frame(w);
@@ -263,6 +286,8 @@ impl State {
             self.water_ring(r);
         }
         self.show_children(w, !on && here);
+        self.mark_suspended(w);
+        self.send_configure(w);
         crate::idle::inhibition_changed(self);
         if on {
             self.set_activated(w, false);
@@ -411,6 +436,7 @@ impl Window {
                     Change::Reset => {
                         put(xdg_toplevel::State::Maximized, false);
                         put(xdg_toplevel::State::Fullscreen, false);
+                        put(xdg_toplevel::State::Suspended, false);
                         s.size = None;
                         false
                     }

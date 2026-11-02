@@ -139,6 +139,7 @@ fn describe(a: &Action) -> (&'static str, String) {
         Action::Launcher => (LAUNCH, "Launcher"),
         Action::StartMenu => (LAUNCH, "Start menu"),
         Action::Run => (LAUNCH, "Run"),
+        Action::TaskManager => (LAUNCH, "Task Manager"),
         Action::Terminal => (LAUNCH, "Terminal"),
         Action::ClipboardHistory => (LAUNCH, "Clipboard history"),
         Action::EmojiPicker => (LAUNCH, "Emoji picker"),
