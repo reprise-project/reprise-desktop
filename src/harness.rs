@@ -100,7 +100,7 @@ impl Harness {
     pub fn with_config(config: Config) -> Harness {
         let event_loop: EventLoop<'static, State> = EventLoop::try_new().expect("event loop");
         let config_path = scratch().join("config.toml");
-        let state = State::on_display(
+        let mut state = State::on_display(
             config,
             config_path,
             event_loop.handle(),
@@ -109,6 +109,9 @@ impl Harness {
             Host::Bare,
         )
         .expect("headless state");
+        // A lock would start the fingerprint conversation in /proc/self/exe, the test binary,
+        // whenever the machine has the PAM service.
+        state.lock.helpers.finger = |_| None;
         Harness { event_loop, state }
     }
 
