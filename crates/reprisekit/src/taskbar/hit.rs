@@ -78,6 +78,9 @@ impl TaskbarLayout {
         if self.clock.contains(x, y) {
             return TaskbarHit::Clock;
         }
+        if self.meter.is_some_and(|r| r.contains(x, y)) {
+            return TaskbarHit::Meter;
+        }
         if self.show_desktop.is_some_and(|r| r.contains(x, y)) {
             return TaskbarHit::ShowDesktop;
         }

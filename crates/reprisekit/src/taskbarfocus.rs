@@ -65,7 +65,7 @@ fn group(h: TaskbarHit) -> u8 {
         TaskbarHit::Quick(_) | TaskbarHit::QuickMore => 2,
         TaskbarHit::Task(_) | TaskbarHit::More => 3,
         TaskbarHit::Chevron | TaskbarHit::Tray(_) => 4,
-        TaskbarHit::Clock => 5,
+        TaskbarHit::Meter | TaskbarHit::Clock => 5,
         TaskbarHit::ShowDesktop => 6,
         TaskbarHit::Grip(_) | TaskbarHit::Resize | TaskbarHit::Nothing => 7,
     }
@@ -148,6 +148,7 @@ pub fn focus_ring(layout: &TaskbarLayout, h: TaskbarHit, s: i32) -> Option<Rect>
         TaskbarHit::Pager(i) => (get(&layout.pager, i), 0),
         TaskbarHit::Chevron => (layout.chevron, 0),
         TaskbarHit::Tray(i) => (get(&layout.tray, i), 0),
+        TaskbarHit::Meter => (layout.meter, 1),
         TaskbarHit::Grip(_) | TaskbarHit::Resize | TaskbarHit::Nothing => (None, 0),
     };
     let r = r?;

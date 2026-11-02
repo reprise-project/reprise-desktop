@@ -151,6 +151,8 @@ pub struct Settings {
     pub taskbar_tray_overflow: bool,
     /// `[taskbar] badges`.
     pub taskbar_badges: bool,
+    /// `[taskbar] network_meter`.
+    pub taskbar_network_meter: bool,
     /// `[notifications] sound`.
     pub notification_sound: bool,
     /// `[sounds] theme`, `bell` and `allow_boost`.
@@ -478,6 +480,7 @@ impl Settings {
             taskbar_peek: c.taskbar.peek,
             taskbar_tray_overflow: c.taskbar.tray_overflow,
             taskbar_badges: c.taskbar.badges,
+            taskbar_network_meter: c.taskbar.network_meter,
             notification_sound: c.notifications.sound,
             sound_theme: c.sounds.theme.clone(),
             bell: c.sounds.bell,

@@ -60,6 +60,8 @@ pub struct TooltipView {
     /// pointer rests on another, so a click whose target moves or changes
     /// its text (the tray arrow) leaves no stale tip behind.
     pressed: Option<Target>,
+    /// The pointer where the shown tip opened, so a tip whose text changes redraws in place.
+    at: (i32, i32),
 }
 
 impl TooltipView {
@@ -242,6 +244,7 @@ fn rest_on(state: &mut State, target: Target, tip: impl FnOnce(&State) -> Option
         state.tooltip.pending = Some((target, tip));
         arm(state, u64::from(SHOW_MS));
     }
+    crate::netspeed::sync(state);
 }
 
 pub fn press(state: &mut State) {
@@ -263,6 +266,7 @@ fn take_down(state: &mut State) {
         state.destroy_redrawn(tree);
     }
     arm(state, 0);
+    crate::netspeed::sync(state);
 }
 
 fn fired(state: &mut State) {
@@ -270,10 +274,20 @@ fn fired(state: &mut State) {
         take_down(state);
         return;
     }
-    let Some((target, tip)) = state.tooltip.pending.take() else {
+    let Some((target, mut tip)) = state.tooltip.pending.take() else {
         return;
     };
+    // The speed was first read when the pointer came to rest: read it again for a rate.
+    if let Target::Taskbar { bar, hit } = target
+        && speed_target(state, target)
+    {
+        crate::netspeed::sample(state);
+        if let Some(label) = label_for(state, bar, hit) {
+            tip = Tip::Label(label);
+        }
+    }
     if !state.menus.is_empty() && !matches!(target, Target::Menu { .. } | Target::StartPanel(_)) {
+        crate::netspeed::sync(state);
         return;
     }
     let cursor = state.pointer_location();
@@ -286,16 +300,64 @@ fn fired(state: &mut State) {
         Target::Caption(..) | Target::Notify(..) => state.output_at(cursor.x, cursor.y),
     };
     let Some(output) = output else {
+        crate::netspeed::sync(state);
         return;
     };
-    show_tip(
-        state,
-        target,
-        &tip,
-        &output,
-        (cursor.x as i32, cursor.y as i32),
-    );
+    state.tooltip.at = (cursor.x as i32, cursor.y as i32);
+    show_tip(state, target, &tip, &output, state.tooltip.at);
     arm(state, HIDE_MS);
+}
+
+/// Whether `target`'s tip carries the network speed: the meter's, and the network icon's.
+fn speed_target(state: &State, target: Target) -> bool {
+    let Target::Taskbar { bar, hit } = target else {
+        return false;
+    };
+    match hit {
+        TaskbarHit::Meter => true,
+        TaskbarHit::Tray(i) => {
+            tray_item(state, bar, i).is_some_and(|it| it.key == crate::netspeed::NETWORK_ITEM)
+        }
+        _ => false,
+    }
+}
+
+/// Whether a tip carrying the network speed is up or waiting to show.
+pub fn shows_speed(state: &State) -> bool {
+    state.tooltip.any(|&t| speed_target(state, t))
+}
+
+/// The speed changed: a tip showing it is drawn again in place, its hide timer left running.
+pub fn speed_changed(state: &mut State) {
+    let Some((target, tree)) = state.tooltip.shown else {
+        return;
+    };
+    let Target::Taskbar { bar, hit } = target else {
+        return;
+    };
+    if !speed_target(state, target) {
+        return;
+    }
+    let (Some(label), Some(output)) = (
+        label_for(state, bar, hit),
+        state.bar(bar).map(|b| b.output.clone()),
+    ) else {
+        return;
+    };
+    state.destroy_redrawn(tree);
+    show_tip(state, target, &Tip::Label(label), &output, state.tooltip.at);
+}
+
+fn tray_item(state: &State, bar: TreeId, i: usize) -> Option<&crate::tray::TrayItem> {
+    let tray = state.tray.as_ref()?;
+    match crate::tray::cell_at(state, bar, i) {
+        crate::tray::Cell::Hidden(_) => {
+            let revealed = state.bar(bar).map_or(0, |b| b.layout.tray_hidden);
+            tray.item_at(revealed, 0, i)
+        }
+        crate::tray::Cell::Item(i) => tray.items.get(i),
+        crate::tray::Cell::Builtin(_) => None,
+    }
 }
 
 fn show_tip(state: &mut State, target: Target, tip: &Tip, output: &Output, cursor: (i32, i32)) {
@@ -432,23 +494,24 @@ pub(crate) fn label_for(state: &State, bar: TreeId, hit: TaskbarHit) -> Option<S
         }
         TaskbarHit::More => Some("Show more windows".to_string()),
         TaskbarHit::QuickMore => Some(reprisekit::taskbar::QUICK_MORE_NAME.to_string()),
+        TaskbarHit::Meter => Some(match crate::netspeed::line(state) {
+            Some(line) => format!("Network speed\n{line}"),
+            None => "Network speed".to_string(),
+        }),
         TaskbarHit::Tray(i) => match crate::tray::cell_at(state, bar, i) {
-            crate::tray::Cell::Hidden(_) => {
-                let revealed = state.bar(bar).map_or(0, |b| b.layout.tray_hidden);
-                (state.tray.as_ref())
-                    .and_then(|t| t.item_at(revealed, 0, i))
-                    .map(|it| it.tooltip.clone())
-                    .filter(|s| !s.is_empty())
-            }
-            crate::tray::Cell::Item(i) => state
-                .tray
-                .as_ref()
-                .and_then(|t| t.items.get(i))
-                .map(|it| it.tooltip.clone())
-                .filter(|s| !s.is_empty()),
             crate::tray::Cell::Builtin(b) => crate::tray::builtin::shown(state)
                 .get(b)
                 .and_then(|&b| crate::tray::builtin::label(state, b)),
+            _ => {
+                let item = tray_item(state, bar, i).filter(|it| !it.tooltip.is_empty())?;
+                let speed = (item.key == crate::netspeed::NETWORK_ITEM)
+                    .then(|| crate::netspeed::line(state))
+                    .flatten();
+                Some(match speed {
+                    Some(line) => format!("{}\n{line}", item.tooltip),
+                    None => item.tooltip.clone(),
+                })
+            }
         },
         TaskbarHit::Task(i) => {
             let b = state.bar(bar)?;
@@ -586,6 +649,26 @@ mod tests {
             h.state.tooltip.shown.is_none() && h.state.tooltip.pending.is_none(),
             "the pointer rests on the dialog, so the icon's tip stays down"
         );
+    }
+
+    #[test]
+    fn a_speed_tip_reads_the_counters_only_while_it_is_pending_or_up() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let bar = h.state.bars[0].tree;
+        let meter = Target::Taskbar {
+            bar,
+            hit: TaskbarHit::Meter,
+        };
+        rest_on(&mut h.state, meter, |s| {
+            label_for(s, bar, TaskbarHit::Meter).map(Tip::Label)
+        });
+        assert!(crate::netspeed::sampling(&h.state), "pending");
+        h.run_for(u64::from(SHOW_MS) + 200);
+        assert!(h.state.tooltip.shown.is_some());
+        assert!(crate::netspeed::sampling(&h.state), "shown");
+        hide(&mut h.state);
+        assert!(!crate::netspeed::sampling(&h.state), "hidden");
     }
 
     #[test]

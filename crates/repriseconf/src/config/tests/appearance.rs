@@ -314,9 +314,19 @@ fn taskbar_defaults_follow_the_interface() {
             reveal_on_attention: true,
             attention_flash: 30,
             side_width: 0,
+            network_meter: false,
         }
     );
     assert_eq!(glass, TaskbarConfig::default_for(Interface::Glass));
+}
+
+#[test]
+fn the_network_meter_is_off_by_default_and_takes_its_key() {
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        assert!(!TaskbarConfig::default_for(i).network_meter, "{i:?}");
+    }
+    let c = Config::parse("[taskbar]\nnetwork_meter = true\n").unwrap();
+    assert!(c.taskbar.network_meter);
 }
 
 #[test]

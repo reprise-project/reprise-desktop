@@ -69,6 +69,7 @@ fn drawing_basics() {
             },
         ],
         tray_icons: vec![],
+        meter: None,
         clock: "00:00".into(),
     };
     let mut c = Canvas::new(800, 30);
@@ -151,6 +152,7 @@ fn a_150_percent_bar_grows_around_its_titles_and_clock() {
             glow: None,
         }],
         tray_icons: vec![],
+        meter: None,
         clock: "12:00 PM".into(),
     };
     let mut c = Canvas::new(800, 35);
@@ -229,6 +231,7 @@ fn drawing_at_scale_two_is_twice_the_pixels() {
             glow: None,
         }],
         tray_icons: vec![],
+        meter: None,
         clock: "00:00".into(),
     };
     let mut c = Canvas::new(1600, 60);
@@ -310,6 +313,7 @@ fn a_pinned_app_without_windows_is_a_bare_icon() {
         chevron: Default::default(),
         tasks: vec![entry(""), entry("Two")],
         tray_icons: vec![],
+        meter: None,
         clock: "00:00".into(),
     };
     let draw = |state: &TaskbarState| {
@@ -378,6 +382,7 @@ fn an_attention_button_is_pushed_in_the_selection_colours_while_lit() {
             glow: None,
         }],
         tray_icons: vec![],
+        meter: None,
         clock: "00:00".into(),
     };
     use crate::taskbar::Attention;
@@ -460,6 +465,7 @@ fn tray_icons_are_drawn_at_their_rects() {
         chevron: Default::default(),
         tasks: vec![],
         tray_icons: vec![Some(icon.into())],
+        meter: None,
         clock: "00:00".into(),
     };
     let mut c = Canvas::new(800, 30);
@@ -528,6 +534,7 @@ fn pager_pushes_the_current_desktop_and_marks_attention() {
         chevron: Default::default(),
         tasks: vec![],
         tray_icons: vec![],
+        meter: None,
         clock: "00:00".into(),
     };
     let mut c = Canvas::new(800, 30);
@@ -598,6 +605,7 @@ fn keyboard_opened_start_menu_rings_the_start_label() {
         chevron: Default::default(),
         tasks: vec![],
         tray_icons: vec![],
+        meter: None,
         clock: "00:00".into(),
     };
     let mut c = Canvas::new(800, 30);
@@ -663,6 +671,7 @@ fn start_button_shows_the_theme_icon_in_place_of_the_mark() {
         chevron: Default::default(),
         tasks: vec![],
         tray_icons: vec![],
+        meter: None,
         clock: "00:00".into(),
     };
     let mut c = Canvas::new(800, 30);
@@ -733,6 +742,7 @@ fn pressed_quick_launch_button_is_sunken_and_a_drag_marks_its_slot() {
         chevron: Default::default(),
         tasks: vec![],
         tray_icons: vec![],
+        meter: None,
         clock: "00:00".into(),
     };
     let mut c = Canvas::new(800, 30);
@@ -804,6 +814,7 @@ fn hot_quick_launch_button_gets_a_thin_raised_frame() {
         chevron: Default::default(),
         tasks: vec![],
         tray_icons: vec![],
+        meter: None,
         clock: "00:00".into(),
     };
     let mut c = Canvas::new(800, 30);
@@ -872,6 +883,7 @@ fn the_show_desktop_strip_is_a_thin_raised_button_after_the_clock() {
                 glow: None,
             }],
             tray_icons: vec![],
+            meter: None,
             clock: "00:00".into(),
         };
         let mut canvas = Canvas::new(1920, 28);
@@ -946,6 +958,7 @@ fn classic_row(
             })
             .collect(),
         tray_icons: vec![],
+        meter: None,
         clock: "00:00".into(),
     };
     edit(&mut state, &mut l);
@@ -1041,6 +1054,7 @@ fn classic_bar_on(edge: Edge, chevron: bool) -> (Canvas, TaskbarLayout) {
         chevron: Default::default(),
         tasks: vec![entry("One", true), entry("Two", false)],
         tray_icons: vec![None],
+        meter: None,
         clock: "00:00".into(),
     };
     let mut c = Canvas::new(800, 28);
@@ -1326,6 +1340,7 @@ fn classic_side_with(
             .map(|i| entry(["One", "Two"].get(i).unwrap_or(&"Three"), i == 0))
             .collect(),
         tray_icons: vec![None],
+        meter: None,
         clock: clock.into(),
     };
     let mut c = Canvas::new(l.width as u32, l.height as u32);
@@ -1527,6 +1542,7 @@ fn classic_popup_cells(
             })
             .collect(),
         tray_icons: vec![None],
+        meter: None,
         clock: String::new(),
     };
     let draw = |l: &TaskbarLayout, st: &TaskbarState| {

@@ -103,6 +103,7 @@ impl State {
             hidden_open: self.chevron_open(bar),
             more_open: self.more_open(bar.tree),
             quick_more_open: self.quick_more_open(bar.tree),
+            meter: crate::netspeed::line(self).unwrap_or_default(),
             clock: crate::taskbar::clock_text(),
             date: crate::taskbar::date_text(),
         };

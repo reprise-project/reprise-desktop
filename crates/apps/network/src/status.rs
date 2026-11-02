@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use reprisefs::netspeed::{self, Counters, Meter};
+
 use reprisefs::props::thousands;
 use reprisekit::art::neticon::{self, NetIcon};
 use reprisekit::art::signalbars;
@@ -55,6 +57,7 @@ pub struct Status {
     /// The pages are cut once for the device the window opened on, so a refresh writes the Wi-Fi
     /// rows only if it built them.
     wifi: bool,
+    meter: Meter,
 }
 
 impl Status {
@@ -68,6 +71,7 @@ impl Status {
             sheet: propsheet::close_only(&TABS, pages, CLIENT),
             device_path: d.path.clone(),
             wifi,
+            meter: Meter::default(),
         };
         for page in &mut s.sheet.pages {
             page.focus_id(propsheet::OK);
@@ -114,6 +118,17 @@ impl Status {
         p.set_text("mask", &mask);
         p.set_text("gateway", &gateway);
         p.set_lines("note", &note(d));
+    }
+
+    /// The device's counters read at `now`: from the second reading on, the Per second row
+    /// shows how fast they grew.
+    pub fn counters(&mut self, now: Instant, c: Counters) {
+        let Some(rate) = self.meter.sample(now, &[(String::new(), c)]) else {
+            return;
+        };
+        let g = &mut self.sheet.pages[TAB_GENERAL];
+        g.set_text("rate_sent", &netspeed::format(rate.up));
+        g.set_text("rate_received", &netspeed::format(rate.down));
     }
 
     pub fn event(&mut self, ev: propsheet::Event) -> Outcome {
@@ -263,6 +278,9 @@ fn general_page(wifi: bool) -> Form {
         Item::label_at("bytes_l", ROW_X, 269, 60, "Bytes:"),
         Item::value_at("sent", 103, 269, 80, ""),
         Item::value_at("received", 246, 269, 80, ""),
+        Item::label_at("rate_l", ROW_X, 291, 64, "Per second:"),
+        Item::value_at("rate_sent", 103, 291, 80, ""),
+        Item::value_at("rate_received", 246, 291, 80, ""),
         Item::button_at("properties", GX, BTN_Y, 75, "&Properties...", false),
         Item::button_at("disable", 100, BTN_Y, BTN_W, "Disa&ble", true),
     ]);
@@ -491,6 +509,9 @@ mod tests {
         assert_eq!(rect(p, "bytes_l"), Rect::new(37, 269, 60, 13));
         assert_eq!(rect(p, "sent"), Rect::new(103, 269, 80, 13));
         assert_eq!(rect(p, "received"), Rect::new(246, 269, 80, 13));
+        assert_eq!(rect(p, "rate_l"), Rect::new(37, 291, 64, 13));
+        assert_eq!(rect(p, "rate_sent").x, rect(p, "sent").x);
+        assert_eq!(rect(p, "rate_received").x, rect(p, "received").x);
         assert!(p.item("view_wireless").is_none(), "a wire has no chooser");
         assert!(p.item("signal").is_none(), "a wire has no bars");
         assert!(matches!(
@@ -587,6 +608,26 @@ mod tests {
         assert_eq!(text(p, "mask"), "");
         assert_eq!(text(p, "gateway"), "");
         assert_eq!(note_lines(p)[0], "Not connected");
+    }
+
+    #[test]
+    fn the_per_second_row_fills_from_the_second_reading() {
+        let mut s = Status::new(&wired());
+        let t = Instant::now();
+        s.counters(t, Counters { rx: 0, tx: 0 });
+        let g = &s.sheet.pages[TAB_GENERAL];
+        assert_eq!(text(g, "rate_received"), "");
+        let later = t + std::time::Duration::from_secs(1);
+        s.counters(
+            later,
+            Counters {
+                rx: 2_400_000,
+                tx: 120_000,
+            },
+        );
+        let g = &s.sheet.pages[TAB_GENERAL];
+        assert_eq!(text(g, "rate_received"), "2.4 MB/s");
+        assert_eq!(text(g, "rate_sent"), "120 KB/s");
     }
 
     #[test]

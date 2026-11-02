@@ -189,7 +189,11 @@ impl State {
                 self.redraw_taskbar(tree);
             }
             TaskbarHit::Quick(index) if button == BTN_RIGHT => self.open_quick_menu(index, at),
-            TaskbarHit::Nothing | TaskbarHit::Resize | TaskbarHit::Clock | TaskbarHit::Pager(_)
+            TaskbarHit::Nothing
+            | TaskbarHit::Resize
+            | TaskbarHit::Clock
+            | TaskbarHit::Meter
+            | TaskbarHit::Pager(_)
                 if button == BTN_RIGHT =>
             {
                 self.open_taskbar_menu(at)

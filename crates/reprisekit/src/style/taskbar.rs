@@ -372,6 +372,10 @@ pub fn draw_taskbar(
             size,
         ),
     }
+    if let (Some(r), Some(lines)) = (layout.meter, &state.meter) {
+        let px = crate::netmeter::font_px(size, s);
+        crate::netmeter::draw(canvas, text, r, lines, style.bar_text, px);
+    }
     if let Some(r) = layout.show_desktop {
         let st = if state.show_desktop_hot {
             State::Hot

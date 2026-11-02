@@ -271,6 +271,7 @@ pub struct State {
     pub capture_border: crate::captureborder::CaptureBorder,
     /// The geoclue agent: its prompts and the location pin (`location`).
     pub location: crate::location::Location,
+    pub netspeed: crate::netspeed::NetSpeed,
     /// Programs' progress for their task buttons (`launcherentry`).
     pub launcher_entries: crate::launcherentry::Entries,
     /// The DRM session, GPU and connectors; None only while starting.
@@ -650,6 +651,7 @@ impl State {
                 Default::default()
             },
             capture_border: Default::default(),
+            netspeed: Default::default(),
             location: if session {
                 crate::location::Location::start(&handle, config.location)
             } else {

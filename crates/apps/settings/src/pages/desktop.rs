@@ -253,19 +253,23 @@ pub fn taskbar(a: Area) -> Form {
         ),
         ("taskbar_badges", "Show unread &counts on task buttons"),
         ("taskbar_tray_overflow", "Hide &idle notification icons"),
+        (
+            "taskbar_network_meter",
+            "Show n&etwork speed beside the clock",
+        ),
     ];
     for (i, (id, text)) in checks.into_iter().enumerate() {
-        items.push(Item::check(id, X, 100 + 20 * i as i32, text));
+        items.push(Item::check(id, X, 100 + 18 * i as i32, text));
     }
     items.push(button(
         TRAY_CUSTOMIZE,
         a.right() - BUTTON_W,
-        195,
+        185,
         "C&ustomize...",
     ));
     items.push(Item::new(
         "taskbar_note",
-        Rect::new(X, 220, a.w, 2 * LINE_H),
+        Rect::new(X, 228, a.w, 2 * LINE_H),
         Control::Lines(vec![
             "Left unchanged, these follow the interface: Glass".into(),
             "combines buttons and turns on all but small icons.".into(),
@@ -274,7 +278,7 @@ pub fn taskbar(a: Area) -> Form {
     items.push(Item::check(
         "taskbar_auto_hide",
         X,
-        250,
+        258,
         "Auto-&hide the taskbar",
     ));
     let reveals = [
@@ -283,7 +287,7 @@ pub fn taskbar(a: Area) -> Form {
         "Show when a window needs &attention",
     ];
     for (i, (id, text)) in REVEAL_CONTROLS.into_iter().zip(reveals).enumerate() {
-        items.push(Item::check(id, X, 272 + 22 * i as i32, text).under_check());
+        items.push(Item::check(id, X, 278 + 20 * i as i32, text).under_check());
     }
     items.push(group(a, "start_group", 338, 94, "Start Button"));
     items.push(Item::check(

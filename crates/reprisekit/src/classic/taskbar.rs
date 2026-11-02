@@ -316,6 +316,10 @@ pub fn draw_taskbar(
             size,
         ),
     }
+    if let (Some(r), Some(lines)) = (layout.meter, &state.meter) {
+        let px = crate::netmeter::font_px(size, s);
+        crate::netmeter::draw(canvas, text, r, lines, cs.button_text, px);
+    }
     if let Some(r) = layout.show_desktop {
         canvas.edge_t(r, EdgeStyle::ThinRaised, cs, s);
     }

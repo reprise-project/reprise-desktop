@@ -19,6 +19,8 @@ pub struct TaskbarNames {
     pub hidden_open: bool,
     pub more_open: bool,
     pub quick_more_open: bool,
+    /// The network meter's readings on one line.
+    pub meter: String,
     pub clock: String,
     pub date: String,
     pub focus: Option<TaskbarHit>,
@@ -148,6 +150,14 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
         for (i, (r, name)) in layout.tray.iter().zip(&names.tray).enumerate() {
             mark(TaskbarHit::Tray(i), tree.push(id, i, button(*r, name)));
         }
+    }
+    if let Some(r) = layout.meter {
+        let mut n = access::node(Role::Label, r);
+        n.set_label("Network speed");
+        if !names.meter.is_empty() {
+            n.set_description(names.meter.as_str());
+        }
+        tree.push(parent, "meter", n);
     }
     let mut clock = button(layout.clock, &names.clock);
     if !names.date.is_empty() {
