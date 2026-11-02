@@ -83,6 +83,11 @@ impl Shell {
         emit(&self.events, self.eventfd, TrayEvent::CriticalTurnOff);
     }
 
+    /// Asks to empty the Recycle Bin, as its desktop icon's menu does.
+    async fn empty_recycle_bin(&self) {
+        emit(&self.events, self.eventfd, TrayEvent::EmptyRecycleBin);
+    }
+
     async fn identify(&self, outputs: Vec<String>) {
         emit(&self.events, self.eventfd, TrayEvent::Identify(outputs));
     }

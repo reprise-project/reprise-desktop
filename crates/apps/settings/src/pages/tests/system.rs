@@ -420,6 +420,12 @@ fn the_power_page_geometry() {
     assert_eq!(rect(&s, p, "idle_note"), Rect::new(32, 308, 334, 13));
     assert_eq!(rect(&s, p, "lock_on_sleep"), Rect::new(32, 330, 13, 13));
     assert_eq!(rect(&s, p, "lock_wallpaper"), Rect::new(32, 352, 13, 13));
+    assert_eq!(rect(&s, p, "storage_group"), Rect::new(20, 388, 358, 74));
+    assert_eq!(
+        rect(&s, p, "low_space_percent"),
+        Rect::new(150, 408, 50, 20)
+    );
+    assert_eq!(rect(&s, p, "low_space_note"), Rect::new(32, 438, 334, 13));
     inside_page(&s, p);
 }
 

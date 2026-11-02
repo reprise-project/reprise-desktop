@@ -205,7 +205,16 @@ impl Page {
                 "zoom",
             ],
             Page::Sounds => &["sound theme", "notification sounds", "bell", "beep"],
-            Page::Power => &["idle", "sleep", "suspend", "standby", "lid", "screen off"],
+            Page::Power => &[
+                "idle",
+                "sleep",
+                "suspend",
+                "standby",
+                "lid",
+                "screen off",
+                "free space",
+                "storage",
+            ],
             Page::Startup => &["autostart", "login", "session", "startup programs"],
             Page::DefaultPrograms => &[
                 "default",

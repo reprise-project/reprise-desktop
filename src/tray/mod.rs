@@ -118,6 +118,8 @@ pub enum TrayEvent {
     /// `org.reprise.Tray.CriticalTurnOff`: a critical battery turns the
     /// computer off without the session-end prompt.
     CriticalTurnOff,
+    /// `org.reprise.Tray.EmptyRecycleBin`: the low disk space warning's button.
+    EmptyRecycleBin,
     Identify(Vec<String>),
     PreviewScreenSaver(reprisekit::saver::Kind),
     /// `org.reprise.Tray.ForgetWindowFrames`: Settings' Forget Positions.
@@ -675,6 +677,10 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
         TrayEvent::CriticalTurnOff => {
             let cmd = state.config.power.poweroff.clone();
             crate::sessionend::begin_critical(state, cmd);
+            false
+        }
+        TrayEvent::EmptyRecycleBin => {
+            state.ask_empty_bin();
             false
         }
         TrayEvent::Identify(names) => {

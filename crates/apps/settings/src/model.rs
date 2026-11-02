@@ -179,6 +179,8 @@ pub struct Settings {
     /// ([`repriseconf::ThumbnailCache::MAX_MB`]; the up-down clamps a value outside it).
     pub thumbnail_cache: bool,
     pub thumbnail_max_mb: i64,
+    /// `[storage] low_space_percent`, 0 to [`repriseconf::LOW_SPACE_MAX`]; 0 turns the warning off.
+    pub low_space_percent: i64,
 
     /// `[workspaces] count`, 1 to [`DESKTOPS_MAX`]; 1 turns virtual
     /// desktops off.
@@ -475,6 +477,7 @@ impl Settings {
             launcher_windows: c.launcher_windows,
             thumbnail_cache: repriseconf::ThumbnailCache::DEFAULT.enabled,
             thumbnail_max_mb: repriseconf::ThumbnailCache::DEFAULT.max_mb as i64,
+            low_space_percent: repriseconf::LOW_SPACE_PERCENT.into(),
 
             desktops: c.workspaces as i64,
             desktop_animation: c.workspace_animation.style.name().into(),
