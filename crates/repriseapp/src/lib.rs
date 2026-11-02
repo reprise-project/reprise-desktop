@@ -97,7 +97,8 @@ pub use app::{
     window_id,
 };
 pub use clipboard::{
-    clipboard_has_files, clipboard_has_text, fake_clipboard_files, fake_clipboard_text,
+    clipboard_has_files, clipboard_has_image, clipboard_has_text, fake_clipboard_files,
+    fake_clipboard_image, fake_clipboard_text,
 };
 pub use ctx::{Ctx, Poster, Waker};
 pub use deliver::TICK_MS;

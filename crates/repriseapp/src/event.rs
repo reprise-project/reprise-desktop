@@ -86,6 +86,9 @@ pub enum Event {
     /// The primary selection's text, asked for with `Reply::paste_primary`.
     PastedPrimary(String),
     PastedFiles(FileClip),
+    /// The clipboard's picture in the file format it was offered in, asked for with
+    /// `Reply::paste_image`; empty when the clipboard holds no picture.
+    PastedImage(Vec<u8>),
     Focus(bool),
     /// The compositor took its shortcuts back from the window that held
     /// them ([`Extended::shortcuts_inhibited`](crate::Extended::shortcuts_inhibited)), on the user's

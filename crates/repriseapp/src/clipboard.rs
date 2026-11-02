@@ -165,6 +165,40 @@ impl Host {
         });
     }
 
+    pub(crate) fn copy_image(&mut self, png: Arc<Vec<u8>>) {
+        let (Some(manager), Some(device)) = (&self.data_device_manager, &self.data_device) else {
+            return;
+        };
+        let source = manager.create_copy_paste_source(&self.qh, [PNG_MIME]);
+        source.set_selection(device, self.last_serial);
+        self.copy_clip = Some(vec![(PNG_MIME, png.to_vec())]);
+        self.copy_text = Arc::default();
+        self.copy_source = Some(source);
+    }
+
+    /// Read the clipboard's picture for `win`; an empty `Event::PastedImage` when there is none
+    /// or it is past [`MAX_IMAGE_BYTES`].
+    pub(crate) fn paste_image(&mut self, win: WinId) {
+        let pipe = self.selection_offer().and_then(|offer| {
+            let mime = offer.with_mime_types(image_mime)?;
+            offer.receive(mime.to_string()).ok()
+        });
+        let Some(pipe) = pipe else {
+            self.send(win, Event::PastedImage(Vec::new()));
+            return;
+        };
+        read_capped_in(
+            &self.loop_handle,
+            pipe,
+            reprisefs::pipe::PASTE_TIMEOUT,
+            PasteBuf::capped(MAX_IMAGE_BYTES),
+            move |host: &mut Host, buf| {
+                let bytes = buf.map(|b| b.bytes().to_vec()).unwrap_or_default();
+                host.send(win, Event::PastedImage(bytes));
+            },
+        );
+    }
+
     pub(crate) fn selection_offer(&self) -> Option<SelectionOffer> {
         self.data_device.as_ref()?.data().selection_offer()
     }
@@ -198,6 +232,17 @@ pub(crate) fn read_capped<D: 'static>(
     timeout: Duration,
     done: impl FnOnce(&mut D, Option<PasteBuf>) + 'static,
 ) {
+    read_capped_in(handle, pipe, timeout, PasteBuf::default(), done);
+}
+
+/// [`read_capped`] into `buf`, whose cap holds.
+fn read_capped_in<D: 'static>(
+    handle: &LoopHandle<'static, D>,
+    pipe: ReadPipe,
+    timeout: Duration,
+    mut buf: PasteBuf,
+    done: impl FnOnce(&mut D, Option<PasteBuf>) + 'static,
+) {
     type Done<D> = Rc<RefCell<Option<Box<dyn FnOnce(&mut D, Option<PasteBuf>)>>>>;
     let done: Done<D> = Rc::new(RefCell::new(Some(Box::new(done))));
     let finish = |done: &Done<D>, data: &mut D, buf: Option<PasteBuf>| {
@@ -206,7 +251,6 @@ pub(crate) fn read_capped<D: 'static>(
             f(data, buf);
         }
     };
-    let mut buf = PasteBuf::default();
     let on_read = done.clone();
     let token = handle.insert_source(pipe, move |_, pipe, data: &mut D| {
         let mut chunk = Zeroizing::new([0u8; 4096]);
@@ -234,6 +278,31 @@ pub(crate) fn read_capped<D: 'static>(
     });
 }
 
+const PNG_MIME: &str = "image/png";
+
+/// The largest picture a paste reads.
+const MAX_IMAGE_BYTES: usize = 256 << 20;
+
+/// The picture types an image paste reads, best first: PNG, then the others the decoders read.
+const IMAGE_MIMES: [&str; 9] = [
+    PNG_MIME,
+    "image/bmp",
+    "image/x-bmp",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/tiff",
+    "image/x-portable-pixmap",
+    "image/x-icon",
+];
+
+/// The type an image paste reads out of a selection offering `types`, if it offers a picture.
+pub(crate) fn image_mime(types: &[String]) -> Option<&'static str> {
+    IMAGE_MIMES
+        .into_iter()
+        .find(|m| types.iter().any(|t| t == m))
+}
+
 /// The text types a paste reads, best first; `STRING` is X11's Latin-1 one.
 const PASTE_MIMES: [&str; 5] = [TEXT_MIME, "text/plain", "UTF8_STRING", "TEXT", "STRING"];
 
@@ -258,6 +327,8 @@ thread_local! {
     pub(crate) static CLIPBOARD_TEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Set alongside `CLIPBOARD_TEXT`.
     pub(crate) static CLIPBOARD_FILES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Set alongside `CLIPBOARD_TEXT`.
+    pub(crate) static CLIPBOARD_IMAGE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Whether the clipboard holds text a paste ([`Reply::paste`]) would read, as of the event being
@@ -282,4 +353,36 @@ pub fn clipboard_has_files() -> bool {
 #[doc(hidden)]
 pub fn fake_clipboard_files(on: bool) {
     CLIPBOARD_FILES.set(on);
+}
+
+/// Whether the clipboard holds a picture a [`Reply::paste_image`] would read, as of the event
+/// being handled; false before a window first had the keyboard.
+pub fn clipboard_has_image() -> bool {
+    CLIPBOARD_IMAGE.get()
+}
+
+/// Stands in for the compositor's offer in a program's tests, on the calling thread.
+#[doc(hidden)]
+pub fn fake_clipboard_image(on: bool) {
+    CLIPBOARD_IMAGE.set(on);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn types(t: &[&str]) -> Vec<String> {
+        t.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn an_image_paste_takes_png_first_and_skips_text() {
+        let both = types(&["image/jpeg", TEXT_MIME, PNG_MIME]);
+        assert_eq!(image_mime(&both), Some(PNG_MIME));
+        assert_eq!(
+            image_mime(&types(&["text/html", "image/bmp"])),
+            Some("image/bmp")
+        );
+        assert_eq!(image_mime(&types(&[TEXT_MIME, "image/svg+xml"])), None);
+    }
 }
