@@ -124,6 +124,13 @@ pub struct FileIdleBattery {
     pub suspend_after: Option<i64>,
 }
 
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct FileLock {
+    pub away_device: Option<String>,
+    pub away_after_s: Option<i64>,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FilePower {
@@ -666,6 +673,7 @@ pub struct FileConfig {
     pub screenshot: Option<FileScreenshot>,
     pub previews: Option<FilePreviews>,
     pub osd: Option<FileOsd>,
+    pub lock: Option<FileLock>,
     pub switcher: Option<FileSwitcher>,
     pub overview: Option<FileOverview>,
     pub gestures: Option<FileGestures>,

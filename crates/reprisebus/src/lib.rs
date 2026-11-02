@@ -22,10 +22,12 @@
 //! The last six share a program's one session bus connection ([`session`]),
 //! as does [`units`], which lists the programs the systemd user manager starts
 //! with the session. Synchronous callers [`wait`] on it.
+//! [`bluez`] lists BlueZ's paired devices and follows whether one is connected.
 //! [`mutex`] locks a mutex even when its holder panicked.
 
 pub mod a11y;
 pub mod appearance;
+pub mod bluez;
 pub mod charge;
 pub mod filetransfer;
 pub mod fprint;

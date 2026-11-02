@@ -63,6 +63,7 @@ impl SettingsApp {
 
     pub(crate) fn sync_apply(&mut self) {
         self.sync_remove();
+        self.follow_away();
         self.sync_forget();
         menupage::sync(
             &mut self.sheet.pages[Page::StartMenu.index()],

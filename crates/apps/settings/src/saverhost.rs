@@ -95,6 +95,29 @@ impl SettingsApp {
         true
     }
 
+    /// List the paired devices when the Screen Saver page comes up. Whether the page changed.
+    pub(crate) fn ensure_away_devices(&mut self) -> bool {
+        if crate::registry::open(&self.sheet) != Page::ScreenSaver {
+            self.away_fresh = false;
+            return false;
+        }
+        if self.away_fresh {
+            return false;
+        }
+        self.away_fresh = true;
+        self.away_devices = reprisebus::bluez::paired();
+        self.follow_away();
+        true
+    }
+
+    pub(crate) fn follow_away(&mut self) {
+        saverpage::follow_away(
+            &mut self.sheet.pages[Page::ScreenSaver.index()],
+            &self.away_devices,
+            &self.want,
+        );
+    }
+
     fn want_saver_photos(&mut self) {
         let Some((p, _)) = &self.saver_preview else {
             return;

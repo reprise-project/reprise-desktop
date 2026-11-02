@@ -314,6 +314,9 @@ struct SettingsApp {
     saver_dlg: Option<saverdlg::SaverDialog>,
     saver_preview: Option<(saverpage::Preview, std::time::Instant)>,
     saver_ticking: bool,
+    /// BlueZ's paired devices, listed each time the Screen Saver page opens.
+    away_devices: Vec<reprisebus::bluez::Device>,
+    away_fresh: bool,
     saver_photos: Option<(String, Receiver<Vec<PathBuf>>)>,
     /// The Photos preview's next picture, decoding.
     saver_photo: Option<Receiver<Option<(PathBuf, Canvas)>>>,
@@ -552,6 +555,8 @@ impl SettingsApp {
             saver_dlg: None,
             saver_preview: None,
             saver_ticking: false,
+            away_devices: Vec::new(),
+            away_fresh: false,
             saver_photos: None,
             saver_photo: None,
             menu_icons_due: true,
@@ -794,6 +799,7 @@ impl App for SettingsApp {
             reply.tick = true;
         }
         reply.redraw |= self.ensure_pads();
+        reply.redraw |= self.ensure_away_devices();
         self.prime_icons(ctx);
         if reply.quit {
             self.save_window();
