@@ -1,0 +1,28 @@
+[package]
+name = "reprise-paint"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Paint: a raster picture editor"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-paint"
+path = "src/bin/reprise-paint.rs"
+test = false
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisefs = { path = "../../reprisefs" }
+repriseconf = { path = "../../repriseconf" }
+reprisebus = { path = "../../reprisebus" }
+image.workspace = true
+log.workspace = true
+tempfile.workspace = true
+toml_edit.workspace = true
