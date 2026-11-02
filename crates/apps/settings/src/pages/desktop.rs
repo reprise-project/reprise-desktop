@@ -128,7 +128,10 @@ pub(super) const DRAG_SNAP_CONTROLS: [&str; 4] = [
 
 /// The virtual desktop controls that grey with one desktop; the duration's also grey without an
 /// animation, and the preview rate's while nothing shows a live picture.
-pub(super) const DESKTOP_CONTROLS: [&str; 7] = [
+pub(super) const DESKTOP_CONTROLS: [&str; 10] = [
+    "desktop_names_label",
+    DESKTOP_NAMES,
+    "desktop_names_note",
     "desktops_label",
     "desktops",
     "animation_label",
@@ -143,8 +146,11 @@ pub(super) const DURATION_CONTROLS: [&str; 3] =
 
 pub(super) const FPS_CONTROLS: [&str; 3] = ["fps_label", "previews_fps", "fps_units"];
 
+/// The desktops' names, apart by commas.
+pub const DESKTOP_NAMES: &str = "desktop_names";
+
 pub fn desktops(a: Area) -> Form {
-    let mut items = vec![group(a, "desktops_group", 44, 194, "Virtual Desktops")];
+    let mut items = vec![group(a, "desktops_group", 44, 244, "Virtual Desktops")];
     items.push(Item::check("use_desktops", GX, 64, "&Use virtual desktops"));
     // Indented under the check box they depend on: `ix` is the box's x, and each item starts at its label's column.
     let ix = GX;
@@ -196,20 +202,36 @@ pub fn desktops(a: Area) -> Form {
         214,
         "Switch desktops with the wheel over the des&ktop",
     ));
+    let iw = a.gw() - 18;
+    indented.push(Item::label_at(
+        "desktop_names_label",
+        ix,
+        242,
+        90,
+        "Desktop na&mes:",
+    ));
+    indented.push(edit(DESKTOP_NAMES, ix + 94, 238, iw - 94));
+    indented.push(Item::label_at(
+        "desktop_names_note",
+        ix,
+        264,
+        iw,
+        "Apart by commas; an empty one keeps its number",
+    ));
     items.extend(indented.into_iter().map(Item::under_check));
 
-    items.push(group(a, "previews_group", 248, 76, "Window Pictures"));
+    items.push(group(a, "previews_group", 298, 76, "Window Pictures"));
     items.push(Item::check(
         "preview_taskbar",
         GX,
-        272,
+        322,
         "Show live &window pictures over taskbar buttons",
     ));
     items.extend(spin(
         "fps_label",
         "previews_fps",
         GX,
-        298,
+        348,
         110,
         "Re&fresh rate:",
         (1, PREVIEW_FPS_MAX as i32),
@@ -217,7 +239,7 @@ pub fn desktops(a: Area) -> Form {
     items.push(Item::label_at(
         "fps_units",
         GX + 170,
-        298,
+        348,
         100,
         "times a second",
     ));

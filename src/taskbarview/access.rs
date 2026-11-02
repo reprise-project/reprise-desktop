@@ -83,6 +83,7 @@ impl State {
                 .map(|i| (self.quicklaunch.get(i)).map_or(String::new(), |q| q.entry.label.clone()))
                 .collect(),
             desktop: self.desktops.current,
+            pager: (0..l.pager.len()).map(|i| self.desktop_name(i)).collect(),
             pager_attention: (self.pager_buttons().iter()).map(|p| p.attention).collect(),
             tasks: (0..l.tasks.len())
                 .map(|i| self.task_button_name(bar, i).unwrap_or_default())

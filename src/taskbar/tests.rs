@@ -43,7 +43,7 @@ fn render_taskbar_menu() {
     use crate::theme::{FontConfig, Theme};
     let theme = Theme::default();
     let text = TextRenderer::load(&FontConfig::default());
-    let (items, _) = taskbar_menu(true, false);
+    let (items, _) = taskbar_menu(true, false, None);
     let style =
         MenuStyle::context_for(&theme, &items).fit(&text, &items, theme.fonts.size_px, i32::MAX);
     let layout = MenuLayout::compute_styled(&style, &items, usize::MAX);
@@ -72,8 +72,18 @@ fn render_window_list() {
 }
 
 #[test]
+fn the_pager_menu_starts_with_rename_desktop() {
+    let (items, commands) = taskbar_menu(true, true, Some(2));
+    assert_eq!(items.len(), 13);
+    assert_eq!(commands[0], Some(TaskbarCommand::RenameDesktop(2)));
+    assert!(matches!(&items[0], MenuItem::Entry { label, .. } if label == "Rename Desktop..."));
+    assert!(matches!(items[1], MenuItem::Separator));
+    assert_eq!(commands[2], Some(TaskbarCommand::Toolbars));
+}
+
+#[test]
 fn taskbar_menu_lists_its_rows() {
-    let (items, commands) = taskbar_menu(true, true);
+    let (items, commands) = taskbar_menu(true, true, None);
     assert_eq!(items.len(), 11);
     assert_eq!(commands[0], Some(TaskbarCommand::Toolbars));
     assert!(matches!(items[0], MenuItem::Entry { submenu: true, .. }));
@@ -89,7 +99,7 @@ fn taskbar_menu_lists_its_rows() {
     for it in &items[2..6] {
         assert!(matches!(it, MenuItem::Entry { enabled: true, .. }));
     }
-    let (items, _) = taskbar_menu(false, false);
+    let (items, _) = taskbar_menu(false, false, None);
     assert!(matches!(items[9], MenuItem::Entry { checked: false, .. }));
     for it in &items[2..5] {
         assert!(matches!(it, MenuItem::Entry { enabled: false, .. }));

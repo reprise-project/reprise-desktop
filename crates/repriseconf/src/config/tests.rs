@@ -547,6 +547,22 @@ fn desktop_switches_are_instant_by_default_and_the_animation_is_checked() {
 }
 
 #[test]
+fn desktops_take_their_names_and_fall_back_to_their_numbers() {
+    let c = Config::parse("[workspaces]\nnames = [\"Work\", \"\", \" Chat \"]\n").unwrap();
+    let name = |n| desktop_name(&c.workspace_names, n);
+    assert_eq!(name(0), "Work");
+    assert_eq!(name(1), "Desktop 2", "an empty name");
+    assert_eq!(name(2), "Chat", "trimmed");
+    assert_eq!(name(3), "Desktop 4", "past the list");
+    assert_eq!(
+        desktop_name(&Config::default().workspace_names, 0),
+        "Desktop 1"
+    );
+    let many = format!("[workspaces]\nnames = [{}]\n", vec!["\"a\""; 17].join(", "));
+    assert!(Config::parse(&many).is_err());
+}
+
+#[test]
 fn the_wheel_on_the_desktop_is_off_unless_set() {
     assert!(!Config::default().wheel_on_desktop);
     let c = Config::parse("[workspaces]\nwheel_on_desktop = true\n").unwrap();

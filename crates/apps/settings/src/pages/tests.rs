@@ -1,5 +1,5 @@
 use super::bind::binds;
-use super::desktop::{DRAG_SNAP_CONTROLS, FPS_CONTROLS, REVEAL_CONTROLS};
+use super::desktop::{DESKTOP_NAMES, DRAG_SNAP_CONTROLS, FPS_CONTROLS, REVEAL_CONTROLS};
 use super::*;
 use crate::model::{Settings, Shortcut, WATER_STYLES};
 use crate::registry::Page;

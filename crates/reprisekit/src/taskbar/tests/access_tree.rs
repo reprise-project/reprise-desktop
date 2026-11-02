@@ -65,6 +65,32 @@ fn a_badged_task_button_reads_its_unread_count_after_the_title() {
 }
 
 #[test]
+fn the_pager_buttons_read_as_the_desktops_names() {
+    let c = TaskbarCounts {
+        pager: 3,
+        ..TaskbarCounts::default()
+    };
+    let l = TaskbarLayout::compute_with(
+        &Metrics::default(),
+        &TaskbarShape::CLASSIC,
+        800,
+        true,
+        c,
+        40,
+        Bands::default(),
+    );
+    let names = TaskbarNames {
+        pager: vec!["Work".into(), "Desktop 2".into()],
+        ..TaskbarNames::default()
+    };
+    let mut t = Tree::window("Taskbar", (l.width, l.height));
+    access(&l, &names, &mut t, access::ROOT);
+    for name in ["Work", "Desktop 2", "Desktop 3"] {
+        assert!(t.find(Role::Button, name).is_some(), "{name}");
+    }
+}
+
+#[test]
 fn a_reader_meets_the_bands_in_the_order_they_are_drawn() {
     let c = TaskbarCounts {
         quick: 2,

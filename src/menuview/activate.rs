@@ -134,6 +134,11 @@ impl State {
             }
             Tc::QuickLaunch => self.toggle_quick_shown(),
             Tc::LockTaskbar => self.toggle_taskbar_lock(),
+            Tc::RenameDesktop(n) => {
+                let d =
+                    crate::dialog::Dialog::rename_desktop(n, self.config.workspace_names.get(n));
+                self.open_dialog(d);
+            }
         }
     }
 

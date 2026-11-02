@@ -138,6 +138,7 @@ pub(super) fn fields() -> Vec<Field> {
         ),
         Field::Int(k("storage", "low_space_percent"), lens!(low_space_percent)),
         Field::Int(k("workspaces", "count"), lens!(desktops)),
+        Field::Strings(k("workspaces", "names"), lens!(desktop_names)),
         Field::Text(k("workspaces", "animation"), lens!(desktop_animation)),
         Field::Int(k("workspaces", "animation_ms"), lens!(desktop_animation_ms)),
         Field::Text(k("workspaces", "pager"), lens!(pager_mark)),
