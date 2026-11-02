@@ -128,7 +128,9 @@ GeoClue2 agent. It follows `com.canonical.Unity.LauncherEntry`'s `Update`
 signal: `progress` and `progress-visible` draw on the task buttons of the
 windows whose app id or desktop file matches the entry's
 `application://<id>.desktop`, and Reprise's own `progress-paused` key shows the
-progress as paused.
+progress as paused. `count` and `count-visible` badge every task button of the
+app, pinned ones included, and `urgent` turning on asks for attention on the
+app's unfocused windows.
 
 ## The session
 

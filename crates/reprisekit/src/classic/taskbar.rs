@@ -181,6 +181,16 @@ pub fn draw_taskbar(
             _ => layout.moved_along(slot, state.task_shift.get(i).copied().unwrap_or(0) * s),
         };
         canvas.fill_rect(*r, cs.button_face);
+        let badge = state.task_badge.get(i).copied().flatten().map(|n| {
+            let art = crate::classic::taskbadge::paint(&crate::taskbar::badge_text(n), cs, s);
+            let at = crate::taskbar::badge_at(*r, art.width as i32, s);
+            (art, at)
+        });
+        let draw_badge = |canvas: &mut Canvas| {
+            if let Some((art, (x, y))) = &badge {
+                canvas.blit_over(*x, *y, art);
+            }
+        };
         if layout.pinned_idle(i) {
             if state.task_hot == Some(i) || floated(i) {
                 canvas.edge_t(*r, EdgeStyle::ThinRaised, cs, s);
@@ -190,6 +200,7 @@ pub fn draw_taskbar(
                 r.y + (r.height - icon_px) / 2,
             );
             blit_icon(canvas, theme, &mut fallback, at, task.icon.as_deref());
+            draw_badge(canvas);
             continue;
         }
         let asks = task.attention.lit() && !task.active;
@@ -210,15 +221,19 @@ pub fn draw_taskbar(
         let o = if pressed { s } else { 0 };
         let icon_at = (r.x + 4 * s + o, r.y + (r.height - icon_px) / 2 + o);
         blit_icon(canvas, theme, &mut fallback, icon_at, task.icon.as_deref());
+        draw_badge(canvas);
         if layout.icons_only {
             continue;
         }
-        let label = Rect::new(
+        let mut label = Rect::new(
             r.x + 24 * s + o,
             r.y + o,
             (r.width - 28 * s).max(0),
             r.height,
         );
+        if let Some((_, (x, _))) = badge {
+            label = crate::taskbar::label_before_badge(label, x, s);
+        }
         let title = text.ellipsize(&task.title, label.width, pressed, size);
         text.draw(
             canvas,

@@ -38,6 +38,7 @@ mod startparts;
 mod statusbar;
 pub mod streak;
 pub mod switcher;
+mod taskbadge;
 pub mod taskbutton;
 mod taskprogress;
 pub mod tint;
@@ -503,6 +504,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     .with_clock_face(clock::painter(s.mode))
     .with_copy_graph(copygraph::look(s.mode))
     .with_task_progress(std::sync::Arc::new(taskprogress::paint))
+    .with_task_badge(std::sync::Arc::new(taskbadge::paint))
     .with_painted_task_spot(move || taskbutton::task_spot(&owned, scale))
     .without_task_nudge()
     .with_greyed_field_frame()

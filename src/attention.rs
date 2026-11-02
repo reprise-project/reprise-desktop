@@ -64,6 +64,32 @@ impl State {
     }
 }
 
+impl State {
+    /// A program's launcher entry turned `urgent` on for the app key `app`: each of the app's
+    /// windows that is mapped and unfocused asks for attention.
+    pub fn launcher_urgent(&mut self, app: &str) {
+        let index = &self.app_index;
+        let asks: Vec<WindowId> = (self.windows.iter())
+            .filter(|w| w.mapped && self.focused != Some(w.id))
+            .filter(|w| {
+                crate::launcherentry::app_keys(&w.app_id(), None, index)
+                    .iter()
+                    .any(|k| k == app)
+            })
+            .map(|w| w.id)
+            .collect();
+        if asks.is_empty() {
+            return;
+        }
+        log::info!("launcher entry: {app} is urgent");
+        for w in asks {
+            self.ask_attention(w);
+        }
+        self.redraw_taskbars();
+        self.redraw_all();
+    }
+}
+
 pub fn flash_for(state: &State) -> Duration {
     Duration::from_secs(state.config.taskbar.attention_flash.into())
 }
@@ -206,6 +232,27 @@ mod tests {
         assert!(
             h.state.win(b.id).unwrap().attention.is_none(),
             "the focused window does not ask"
+        );
+    }
+
+    #[test]
+    fn a_launcher_entry_turning_urgent_flashes_the_apps_unfocused_windows() {
+        let (mut h, a, b) = two_windows();
+        h.state.launcher_urgent("test.a");
+        assert!(h.state.win(a.id).unwrap().attention.is_some());
+        h.state.launcher_urgent("test.b");
+        assert!(
+            h.state.win(b.id).unwrap().attention.is_none(),
+            "the focused window does not ask"
+        );
+        h.state.launcher_urgent("test.c");
+        assert!(
+            h.state
+                .windows
+                .iter()
+                .filter(|w| w.attention.is_some())
+                .count()
+                == 1
         );
     }
 

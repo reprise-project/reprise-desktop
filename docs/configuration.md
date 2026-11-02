@@ -142,6 +142,7 @@ Pictures when left out) and `photo_seconds` tune them.
 | `peek` | resting on a preview or the strip fades the other windows | by interface |
 | `small_icons` | a 30 px bar (Glass only) | `false` |
 | `tray_overflow` | quiet tray icons wait behind an arrow or a ^ | `true` |
+| `badges` | a program's unread count (LauncherEntry `count`) shows as a badge in its task buttons' top-right corner, `99+` above 99 | `true` |
 | `auto_hide` | the bar slides away when nothing needs it | `false` |
 | `reveal_on_edge` | the pointer resting on, clicking or dragging onto the 2 px line brings it back | `true` |
 | `reveal_on_keys` | the Start key, Ctrl+Esc and Alt+Tab bring it back | `true` |

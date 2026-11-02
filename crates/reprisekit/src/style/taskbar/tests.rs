@@ -49,6 +49,7 @@ fn state_with_tasks(titles: &[&str]) -> TaskbarState {
         task_shift: Vec::new(),
         task_float: None,
         task_progress: Vec::new(),
+        task_badge: Vec::new(),
         show_desktop_hot: false,
         more: Default::default(),
         chevron: Default::default(),

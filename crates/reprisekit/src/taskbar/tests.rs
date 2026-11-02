@@ -105,3 +105,30 @@ fn arrow_counts(tray: usize, hidden: usize, reveal: i32) -> TaskbarCounts {
         ..TaskbarCounts::default()
     }
 }
+
+#[test]
+fn a_badge_shows_the_count_up_to_99_then_99_plus() {
+    use crate::taskbar::badge_text;
+    assert_eq!(badge_text(1), "1");
+    assert_eq!(badge_text(99), "99");
+    assert_eq!(badge_text(100), "99+");
+    assert_eq!(badge_text(u32::MAX), "99+");
+}
+
+#[test]
+fn a_badge_sits_in_the_buttons_top_right_corner_and_the_label_stops_before_it() {
+    use crate::taskbar::{badge_at, label_before_badge};
+    let button = Rect::new(100, 10, 160, 24);
+    assert_eq!(badge_at(button, 11, 1), (246, 13));
+    assert_eq!(badge_at(button.scaled(2), 22, 2), (492, 26));
+    let label = Rect::new(124, 10, 132, 24);
+    assert_eq!(
+        label_before_badge(label, 246, 1),
+        Rect::new(124, 10, 120, 24)
+    );
+    assert_eq!(
+        label_before_badge(label, 100, 1).width,
+        0,
+        "a badge over the whole label leaves none"
+    );
+}

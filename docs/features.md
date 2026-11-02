@@ -44,6 +44,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   copying or deleting, any program using the LauncherEntry convention) fills
   its task button as it goes: a soft green fill in Glass, a thin bar along the
   bottom in Classic and Blue, amber or grey while paused.
+- **Unread badges.** A program that reports an unread count through the
+  LauncherEntry convention shows it in a small badge in its task buttons'
+  corner, pinned and grouped buttons included (`99+` above 99; `[taskbar]
+  badges`). One that marks itself urgent flashes its windows' buttons.
 - **Spring-loaded buttons.** Drag a file over a task button, wait half a
   second, and its window comes up so you can drop into it.
 - **Cascade and tile.** The taskbar's menu cascades or tiles the windows,

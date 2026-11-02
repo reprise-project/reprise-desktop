@@ -50,6 +50,52 @@ fn a_tasks_progress_draws_inside_its_button() {
     }
 }
 
+/// An unread count lands in its button's top-right corner, its numerals white, in Blue and Glass.
+#[test]
+fn a_tasks_badge_draws_in_its_buttons_corner() {
+    use crate::taskbar::{BADGE_INSET, TaskRow};
+    for iface in [Interface::Blue, Interface::Glass] {
+        let theme = theme_for(iface);
+        let s = theme.look.style().unwrap();
+        let counts = TaskbarCounts {
+            tasks: 2,
+            ..TaskbarCounts::default()
+        };
+        let mut layout = TaskbarLayout::compute(&theme.metrics, &s.taskbar, 800, true, counts, 40);
+        layout.lay_tasks(&theme.metrics, &s.taskbar, &[0, 1], TaskRow::Shared);
+        let h = layout.height as u32;
+        let text = TextRenderer::load(&FontConfig::default());
+        let start = TextRenderer::load(&s.start_text.font());
+        let draw = |st: &TaskbarState| {
+            let mut c = Canvas::new(800, h);
+            draw_taskbar(&mut c, s, &theme, &text, &start, &layout, st);
+            c
+        };
+        let mut st = state_with_tasks(&["One", "Two"]);
+        let plain = draw(&st);
+        st.task_badge = vec![None, Some(8)];
+        let shown = draw(&st);
+        let b = layout.tasks[1];
+        let changed: Vec<(i32, i32)> = (0..h as i32)
+            .flat_map(|y| (0..800).map(move |x| (x, y)))
+            .filter(|&(x, y)| plain.get(x, y) != shown.get(x, y))
+            .collect();
+        assert!(!changed.is_empty(), "{iface:?} draws the badge");
+        assert!(
+            changed.iter().all(|&(x, y)| x >= b.x + b.width / 2
+                && x < b.right() - BADGE_INSET
+                && y >= b.y + BADGE_INSET),
+            "{iface:?} keeps it in the second button's top-right corner"
+        );
+        let (bx, by) = (b.right() - BADGE_INSET - 11, b.y + BADGE_INSET);
+        assert_eq!(
+            shown.get(bx + 5, by + 5) | 0xFF00_0000,
+            0xFFFF_FFFF,
+            "{iface:?}: the 8's middle bar is white"
+        );
+    }
+}
+
 #[test]
 fn a_pinned_app_without_windows_draws_no_button_until_hot() {
     use crate::taskbar::TaskRow;

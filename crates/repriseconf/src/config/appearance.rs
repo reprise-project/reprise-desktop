@@ -185,6 +185,8 @@ pub struct TaskbarConfig {
     pub show_desktop_button: bool,
     pub peek: bool,
     pub tray_overflow: bool,
+    /// A task button shows its program's unread count (`LauncherEntry` `count`).
+    pub badges: bool,
     pub auto_hide: bool,
     pub reveal_on_edge: bool,
     pub reveal_on_keys: bool,
@@ -212,6 +214,7 @@ impl TaskbarConfig {
             show_desktop_button: glass,
             peek: glass,
             tray_overflow: true,
+            badges: true,
             auto_hide: false,
             reveal_on_edge: true,
             reveal_on_keys: true,
