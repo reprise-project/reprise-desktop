@@ -3364,6 +3364,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             label: (*l).into(),
             icon: None,
             enabled: true,
+            pinned: false,
         })
         .collect(),
         selected: Some(3),
@@ -3376,6 +3377,27 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         &Paint { s, ..theme.paint() },
         &places,
         places_r,
+        px,
+    );
+    // The same bar with two pinned folders, the second missing, scrolled to its end.
+    let mut pinned = places.clone();
+    for (label, enabled) in [("Projects", true), ("Stick", false)] {
+        pinned.places.push(placesbar::Place {
+            label: label.into(),
+            enabled,
+            pinned: true,
+            ..Default::default()
+        });
+    }
+    pinned.selected = Some(5);
+    let pinned_r = Rect { x: 800, ..places_r };
+    pinned.scroll(9, pinned_r, &theme.look.controls().grown(theme.text));
+    placesbar::draw(
+        &mut c,
+        &text,
+        &Paint { s, ..theme.paint() },
+        &pinned,
+        pinned_r,
         px,
     );
 
@@ -3642,6 +3664,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             label: (*l).into(),
             icon: None,
             enabled: true,
+            pinned: false,
         })
         .collect(),
     );
@@ -7914,6 +7937,7 @@ fn render_glass_popup_parts(theme: &Theme) -> Canvas {
         label: l.into(),
         icon: Some(icon.clone()),
         enabled: true,
+        pinned: false,
     };
     let tile = theme.look.controls().places.tile;
     for (i, (selected, hot, pressed)) in [(1, 0, None), (1, 1, Some(0))].into_iter().enumerate() {
@@ -7922,6 +7946,7 @@ fn render_glass_popup_parts(theme: &Theme) -> Canvas {
             selected: Some(selected),
             hot: Some(hot),
             pressed,
+            top: 0,
         };
         let r = Rect::new(740 + i as i32 * 95, 10, placesbar::WIDTH, 2 * tile);
         placesbar::draw(&mut c, &text, &p, &places, r, px);

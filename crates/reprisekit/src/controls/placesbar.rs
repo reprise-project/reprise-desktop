@@ -10,9 +10,10 @@
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::draw_disabled_label;
+use crate::classic::widgets::{BarHit, ScrollParts, scrollbar_parts};
 use crate::controls::iconview::wrap_label;
 use crate::look::Paint;
-use crate::metrics::PlacesMetrics;
+use crate::metrics::{ControlMetrics, PlacesMetrics};
 use crate::raster::{Canvas, Rect};
 use crate::style::State;
 use crate::text::{Align, TextRenderer};
@@ -35,22 +36,57 @@ const BORDER: i32 = 2;
 
 /// One tile: its label, the icon the host looked up for it (`None` draws only
 /// the label) and whether it has anywhere to go. A tile with `enabled: false`
-/// draws its label in `gray_text` and refuses selection and activation.
-#[derive(Clone, Debug, PartialEq)]
+/// draws its label in `gray_text` and refuses selection and activation. A
+/// `pinned` tile is a folder the user pinned, which has its own menu.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Place {
     pub label: String,
     pub icon: Option<Canvas>,
     pub enabled: bool,
+    pub pinned: bool,
 }
 
-/// The bar's state: its places, which one is selected, which one is under the pointer and
-/// which one the held button went down on.
+/// The bar's state: its places, which one is selected, which one is under the pointer, which
+/// one the held button went down on, and the first tile in view when they overflow the bar.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlacesBar {
     pub places: Vec<Place>,
     pub selected: Option<usize>,
     pub hot: Option<usize>,
     pub pressed: Option<usize>,
+    pub top: usize,
+}
+
+/// The tiles' metrics fitted to `r` ([`PlacesMetrics::fit`]), the scrollbar down its right side
+/// inside the border when pinned tiles make them overflow it, and the first tile in view:
+/// [`PlacesBar::top`] held to the tiles there are now, 0 without a scrollbar.
+fn fitted(pb: &PlacesBar, r: Rect, cm: &ControlMetrics) -> (PlacesMetrics, Option<Rect>, usize) {
+    let pm = cm.places.fit(pb.places.len(), r.height);
+    let pinned = pb.places.iter().any(|p| p.pinned);
+    let over = pinned && pb.places.len() as i32 * pm.tile > r.height;
+    let bar = over.then(|| {
+        Rect::new(
+            r.right() - BORDER - cm.scroll,
+            r.y + BORDER,
+            cm.scroll,
+            r.height - 2 * BORDER,
+        )
+    });
+    let top = pb.top.min(last_top(pb, &pm, bar, r));
+    (pm, bar, top)
+}
+
+/// The furthest [`PlacesBar::top`] goes: the last tile ends the view.
+fn last_top(pb: &PlacesBar, pm: &PlacesMetrics, bar: Option<Rect>, r: Rect) -> usize {
+    match bar {
+        Some(_) => pb.places.len().saturating_sub(in_view(pm, r)),
+        None => 0,
+    }
+}
+
+/// How many whole tiles show in `r`, at least one.
+fn in_view(pm: &PlacesMetrics, r: Rect) -> usize {
+    (r.height / pm.tile.max(1)).max(1) as usize
 }
 
 impl PlacesBar {
@@ -71,15 +107,81 @@ impl PlacesBar {
         let i = i.filter(|&i| self.places.get(i).is_some_and(|p| p.enabled));
         std::mem::replace(&mut self.hot, i) != i
     }
+
+    /// The first tile in view moved to `top`, held to the tiles there are; true when it moved.
+    fn scroll_to(&mut self, top: isize, r: Rect, cm: &ControlMetrics) -> bool {
+        let (pm, bar, _) = fitted(self, r, cm);
+        let most = last_top(self, &pm, bar, r);
+        let top = (top.max(0) as usize).min(most);
+        std::mem::replace(&mut self.top, top) != top
+    }
+
+    /// Scrolls `by` tiles (down is positive); true when the view moved.
+    pub fn scroll(&mut self, by: isize, r: Rect, cm: &ControlMetrics) -> bool {
+        let top = fitted(self, r, cm).2;
+        self.scroll_to(top as isize + by, r, cm)
+    }
+
+    /// Scrolls as little as it takes for tile `i` to show whole; true when the view moved.
+    pub fn reveal(&mut self, i: usize, r: Rect, cm: &ControlMetrics) -> bool {
+        let (pm, _, now) = fitted(self, r, cm);
+        let n = in_view(&pm, r);
+        let top = if i < now {
+            i
+        } else if i >= now + n {
+            i + 1 - n
+        } else {
+            now
+        };
+        self.scroll_to(top as isize, r, cm)
+    }
+
+    /// Holds `top` inside the tiles after they or `r` changed.
+    pub fn clamp(&mut self, r: Rect, cm: &ControlMetrics) {
+        self.scroll_to(self.top as isize, r, cm);
+    }
+
+    /// A press on part `hit` of the scrollbar: an arrow steps a tile, the track a view.
+    pub fn bar_press(&mut self, hit: BarHit, r: Rect, cm: &ControlMetrics) -> bool {
+        let (pm, _, _) = fitted(self, r, cm);
+        let page = in_view(&pm, r) as isize;
+        let by = match hit {
+            BarHit::Back => -1,
+            BarHit::Forward => 1,
+            BarHit::PageBack => -page,
+            BarHit::PageForward => page,
+            BarHit::Thumb(_) | BarHit::Track => 0,
+        };
+        self.scroll(by, r, cm)
+    }
 }
 
-/// Each tile's rect inside `r`, stacked top to bottom, shrunk to fit it
-/// ([`PlacesMetrics::fit`]). The panel's border belongs to `draw`, so a click anywhere in a
-/// tile's band selects it.
-pub fn layout(pb: &PlacesBar, r: Rect, pm: &PlacesMetrics) -> Vec<Rect> {
-    let pm = pm.fit(pb.places.len(), r.height);
+/// The scrollbar's parts when the tiles overflow `r`.
+pub fn bar_parts(pb: &PlacesBar, r: Rect, cm: &ControlMetrics) -> Option<ScrollParts> {
+    let (pm, bar, top) = fitted(pb, r, cm);
+    let n = pb.places.len();
+    Some(scrollbar_parts(
+        bar?,
+        1,
+        top,
+        in_view(&pm, r),
+        n,
+        false,
+        cm.thumb_min,
+    ))
+}
+
+/// Each tile's rect inside `r`, stacked top to bottom from [`PlacesBar::top`], shrunk to fit it
+/// ([`PlacesMetrics::fit`]) and cut to `r`, so a tile out of view is empty. The panel's border
+/// belongs to `draw`, so a click anywhere in a tile's band selects it.
+pub fn layout(pb: &PlacesBar, r: Rect, cm: &ControlMetrics) -> Vec<Rect> {
+    let (pm, bar, top) = fitted(pb, r, cm);
+    let w = bar.map_or(r.width, |b| b.x - r.x);
     (0..pb.places.len())
-        .map(|i| Rect::new(r.x, r.y + i as i32 * pm.tile, r.width, pm.tile))
+        .map(|i| {
+            let y = r.y + (i as i32 - top as i32) * pm.tile;
+            Rect::new(r.x, y, w, pm.tile).intersect(&r)
+        })
         .collect()
 }
 
@@ -88,71 +190,88 @@ pub fn hit(rects: &[Rect], x: i32, y: i32) -> Option<usize> {
     rects.iter().position(|r| r.contains(x, y))
 }
 
-/// The bar: the look's panel, then each tile's frame for its [`PlacesBar::state`], icon and
-/// up to two centred label lines (`iconview::wrap_label`). An icon larger than a shrunk tile's
-/// draws resampled to it.
+/// The bar: the look's panel, then each tile in view: its frame for its [`PlacesBar::state`],
+/// icon and up to two centred label lines (`iconview::wrap_label`), and the scrollbar when they
+/// overflow. An icon larger than a shrunk tile's draws resampled to it.
 pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, pb: &PlacesBar, r: Rect, px: u32) {
     let Paint { cs, s, .. } = *p;
-    let pm = p
-        .look
-        .controls()
-        .grown(p.text)
-        .places
-        .fit(pb.places.len(), r.height);
+    let cm = p.look.controls().grown(p.text);
+    let (pm, bar, top) = fitted(pb, r, &cm);
     let sr = r.scaled(s);
     crate::look::widgets::placesbar::draw_panel(c, p, sr);
     let content_x = sr.x + BORDER * s;
-    let content_w = sr.width - 2 * BORDER * s;
+    let content_w = sr.width - 2 * BORDER * s - bar.map_or(0, |b| b.width * s);
+    let band_w = sr.width - bar.map_or(0, |b| (b.width + BORDER) * s);
     let step = px as i32 + 2 * s;
     let stride = px as i32 + pm.line_lead * s;
-    for (i, place) in pb.places.iter().enumerate() {
-        let tile_y = sr.y + i as i32 * pm.tile * s;
-        let tile_h = pm.tile * s;
-        if let Some(state) = pb.state(i) {
-            let band = Rect::new(sr.x, tile_y, sr.width, tile_h);
-            crate::look::widgets::placesbar::draw_tile(c, p, band, state);
-        }
-        if let Some(icon) = &place.icon {
-            let side = pm.icon * s;
-            let shrunk = (icon.device_size().0 as i32 > side).then(|| {
-                let w = (side / icon.scale()) as u32;
-                icon.resample_box(w, w)
-            });
-            let icon = shrunk.as_ref().unwrap_or(icon);
-            let ix = content_x + (content_w - icon.width as i32) / 2;
-            let iy = tile_y + pm.icon_top * s;
-            c.blit_over(ix, iy, icon);
-        }
-        let max_w = content_w - 4 * s;
-        let lines = wrap_label(text, &place.label, max_w, px);
-        let label_y = tile_y + (pm.icon_top + pm.icon + pm.label_gap) * s;
-        for (j, line) in lines.iter().enumerate() {
-            let ly = label_y + j as i32 * stride;
-            let lr = Rect::new(content_x, ly, content_w, step);
-            if place.enabled {
-                text.draw(c, lr, line, false, cs.button_text, Align::Center, px);
-            } else {
-                // Etched: gray_text equals this panel's button_shadow fill.
-                draw_disabled_label(c, text, p, lr, line, Align::Center, px);
+    let inner = Rect::new(
+        sr.x,
+        sr.y + BORDER * s,
+        sr.width,
+        sr.height - 2 * BORDER * s,
+    );
+    let tiles = |c: &mut Canvas| {
+        for (i, place) in pb.places.iter().enumerate().skip(top) {
+            let tile_y = sr.y + (i - top) as i32 * pm.tile * s;
+            if tile_y >= sr.bottom() {
+                break;
+            }
+            let tile_h = pm.tile * s;
+            if let Some(state) = pb.state(i) {
+                let band = Rect::new(sr.x, tile_y, band_w, tile_h);
+                crate::look::widgets::placesbar::draw_tile(c, p, band, state);
+            }
+            if let Some(icon) = &place.icon {
+                let side = pm.icon * s;
+                let shrunk = (icon.device_size().0 as i32 > side).then(|| {
+                    let w = (side / icon.scale()) as u32;
+                    icon.resample_box(w, w)
+                });
+                let icon = shrunk.as_ref().unwrap_or(icon);
+                let ix = content_x + (content_w - icon.width as i32) / 2;
+                let iy = tile_y + pm.icon_top * s;
+                c.blit_over(ix, iy, icon);
+            }
+            let max_w = content_w - 4 * s;
+            let lines = wrap_label(text, &place.label, max_w, px);
+            let label_y = tile_y + (pm.icon_top + pm.icon + pm.label_gap) * s;
+            for (j, line) in lines.iter().enumerate() {
+                let ly = label_y + j as i32 * stride;
+                let lr = Rect::new(content_x, ly, content_w, step);
+                if place.enabled {
+                    text.draw(c, lr, line, false, cs.button_text, Align::Center, px);
+                } else {
+                    // Etched: gray_text equals this panel's button_shadow fill.
+                    draw_disabled_label(c, text, p, lr, line, Align::Center, px);
+                }
             }
         }
+    };
+    // Only a scrolled bar cuts its tiles at the border: a fitted one's last band may touch it.
+    match bar {
+        Some(_) => c.with_clip(inner, tiles),
+        None => tiles(c),
+    }
+    if let Some(bar) = bar {
+        let n = pb.places.len();
+        let shown = in_view(&pm, r);
+        crate::look::widgets::draw_scrollbar(c, p, bar.scaled(s), top, shown, n, None);
     }
 }
 
 /// How far the label lines reaching furthest run past their tile's bottom in `r` with text at
 /// `px`, at 1x, as `draw` sets them: for an audit.
-pub fn overflow(pb: &PlacesBar, text: &TextRenderer, r: Rect, pm: &PlacesMetrics, px: u32) -> i32 {
-    let pm = &pm.fit(pb.places.len(), r.height);
-    let max_w = r.width - 2 * BORDER - 4;
+pub fn overflow(pb: &PlacesBar, text: &TextRenderer, r: Rect, cm: &ControlMetrics, px: u32) -> i32 {
+    let (pm, bar, _) = fitted(pb, r, cm);
+    let max_w = r.width - 2 * BORDER - 4 - bar.map_or(0, |b| b.width);
     let step = px as i32 + 2;
     let stride = px as i32 + pm.line_lead;
-    layout(pb, r, pm)
+    pb.places
         .iter()
-        .zip(&pb.places)
-        .map(|(tile, place)| {
+        .map(|place| {
             let lines = wrap_label(text, &place.label, max_w, px).len() as i32;
             let label = (lines - 1) * stride + step;
-            tile.y + pm.icon_top + pm.icon + pm.label_gap + label - tile.bottom()
+            pm.icon_top + pm.icon + pm.label_gap + label - pm.tile
         })
         .max()
         .unwrap_or(0)
@@ -164,7 +283,7 @@ pub fn overflow(pb: &PlacesBar, text: &TextRenderer, r: Rect, pm: &PlacesMetrics
 pub fn access(
     pb: &PlacesBar,
     r: Rect,
-    pm: &PlacesMetrics,
+    cm: &ControlMetrics,
     tree: &mut Tree,
     parent: NodeId,
     key: impl std::hash::Hash,
@@ -173,7 +292,7 @@ pub fn access(
     access::focusable(&mut n, true);
     let id = tree.push(parent, key, n);
     let mut focus = id;
-    for (i, (place, tile)) in pb.places.iter().zip(layout(pb, r, pm)).enumerate() {
+    for (i, (place, tile)) in pb.places.iter().zip(layout(pb, r, cm)).enumerate() {
         let mut o = access::named(Role::ListBoxOption, tile, &place.label);
         if !place.enabled {
             o.set_disabled();
@@ -214,7 +333,7 @@ mod tests {
         let r = Rect::new(0, 0, WIDTH, 5 * TILE_H);
         let mut c = Canvas::new(WIDTH as u32, (5 * TILE_H) as u32);
         draw(&mut c, &text, &classic_paint(cs, 1), &pb, r, px);
-        let rects = layout(&pb, r, &PlacesMetrics::CLASSIC);
+        let rects = layout(&pb, r, &ControlMetrics::CLASSIC);
         // Only the label area each tile actually writes into: the panel's
         // own sunken border is `button_hilight` down the right edge, which
         // would otherwise read as an etched label on every tile.
@@ -249,7 +368,7 @@ mod tests {
         const EXPECTED_WIDTH: i32 = 87;
         let pb = sample();
         let r = Rect::new(0, 0, EXPECTED_WIDTH, 5 * EXPECTED_TILE_H);
-        let rects = layout(&pb, r, &PlacesMetrics::CLASSIC);
+        let rects = layout(&pb, r, &ControlMetrics::CLASSIC);
         assert_eq!(rects.len(), 5);
         assert_eq!(rects[0].height, EXPECTED_TILE_H);
         assert_eq!(rects[1].y, rects[0].bottom());
@@ -270,7 +389,7 @@ mod tests {
         let r = Rect::new(0, 0, WIDTH, 5 * TILE_H);
         let mut c = Canvas::new(WIDTH as u32, (5 * TILE_H) as u32);
         draw(&mut c, &text, &classic_paint(cs, 1), &pb, r, px);
-        let rects = layout(&pb, r, &PlacesMetrics::CLASSIC);
+        let rects = layout(&pb, r, &ControlMetrics::CLASSIC);
         let t = rects[2];
         assert_eq!(
             c.get(t.x + EXPECTED_BORDER, t.y),
@@ -294,7 +413,7 @@ mod tests {
     fn hit_picks_the_tile() {
         let pb = sample();
         let r = Rect::new(0, 0, WIDTH, 5 * TILE_H);
-        let rects = layout(&pb, r, &PlacesMetrics::CLASSIC);
+        let rects = layout(&pb, r, &ControlMetrics::CLASSIC);
         assert_eq!(hit(&rects, 4, rects[0].y + 2), Some(0));
         assert_eq!(hit(&rects, 4, rects[3].y + 2), Some(3));
         assert_eq!(hit(&rects, 4, r.bottom() + 5), None);
@@ -315,8 +434,7 @@ mod tests {
             p.icon = Some(icon.clone());
         }
         let r = Rect::new(0, 0, WIDTH, 338);
-        let pm = theme.look.controls().places;
-        let rects = layout(&pb, r, &pm);
+        let rects = layout(&pb, r, &theme.look.controls());
         assert_eq!(rects[1], Rect::new(0, 71, WIDTH, 71));
         let mut c = Canvas::new(WIDTH as u32, 338);
         draw(&mut c, &text, &theme.paint(), &pb, r, theme.fonts.size_px);
@@ -371,7 +489,8 @@ mod tests {
         use crate::theme::Color;
         const ICON: Color = Color::rgb(1, 2, 3);
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
-        let pm = theme.look.controls().places;
+        let cm = theme.look.controls();
+        let pm = cm.places;
         assert_eq!((pm.tile, pm.icon_top, pm.label_gap), (59, 2, 1));
         let text = TextRenderer::load(&theme.fonts);
         let mut pb = sample();
@@ -381,9 +500,9 @@ mod tests {
             p.icon = Some(icon.clone());
         }
         let r = Rect::new(0, 0, WIDTH, 5 * 59);
-        assert_eq!(layout(&pb, r, &pm)[1], Rect::new(0, 59, WIDTH, 59));
+        assert_eq!(layout(&pb, r, &cm)[1], Rect::new(0, 59, WIDTH, 59));
         let px = theme.fonts.size_px;
-        assert!(overflow(&pb, &text, r, &pm, px) <= 0, "two-line labels fit");
+        assert!(overflow(&pb, &text, r, &cm, px) <= 0, "two-line labels fit");
         let mut c = Canvas::new(WIDTH as u32, (5 * 59) as u32);
         draw(&mut c, &text, &theme.paint(), &pb, r, px);
         let x = WIDTH / 2;
@@ -407,7 +526,8 @@ mod tests {
             text: u,
             ..classic_paint(&theme.colors, 1)
         };
-        let pm = p.look.controls().grown(u).places;
+        let cm = p.look.controls().grown(u);
+        let pm = cm.places;
         assert_eq!((pm.tile, pm.icon), (127, 64));
         let text = TextRenderer::load(&FontConfig::default());
         let mut pb = sample();
@@ -433,7 +553,7 @@ mod tests {
             "the label starts at {label_top}, under the icon"
         );
         assert!(
-            overflow(&pb, &text, r, &pm, 22) <= 0,
+            overflow(&pb, &text, r, &cm, 22) <= 0,
             "the labels fit their tiles"
         );
 
@@ -510,9 +630,181 @@ mod tests {
                 label: (*l).into(),
                 icon: None,
                 enabled: true,
+                pinned: false,
             })
             .collect(),
             ..PlacesBar::default()
         }
+    }
+
+    /// The six built-in tiles and `pins` pinned folders, the last pinned one missing.
+    fn with_pins(pins: usize) -> PlacesBar {
+        let mut pb = sample();
+        pb.places.push(Place {
+            label: "Computer".into(),
+            enabled: true,
+            ..Place::default()
+        });
+        for i in 0..pins {
+            pb.places.push(Place {
+                label: format!("Pin {i}"),
+                enabled: i + 1 < pins,
+                pinned: true,
+                ..Place::default()
+            });
+        }
+        pb
+    }
+
+    const BAR: Rect = Rect::new(0, 0, WIDTH, 403);
+
+    #[test]
+    fn pins_past_the_built_in_tiles_scroll_under_a_bar() {
+        let cm = ControlMetrics::CLASSIC;
+        let mut pb = with_pins(4);
+        let rects = layout(&pb, BAR, &cm);
+        let bar_x = WIDTH - BORDER - cm.scroll;
+        assert_eq!(
+            rects[0],
+            Rect::new(0, 0, bar_x, 65),
+            "tiles stop at the bar"
+        );
+        assert_eq!(
+            rects[6],
+            Rect::new(0, 390, bar_x, 13),
+            "the seventh shows cut"
+        );
+        assert!(rects[7].is_empty(), "the eighth is out of view");
+        let parts = bar_parts(&pb, BAR, &cm).expect("a scrollbar");
+        assert_eq!(parts.back.x, bar_x);
+
+        assert!(pb.scroll(1, BAR, &cm));
+        assert_eq!(pb.top, 1);
+        assert!(layout(&pb, BAR, &cm)[0].is_empty());
+        assert!(pb.scroll(100, BAR, &cm));
+        assert_eq!(pb.top, 4, "ten tiles, six in view");
+        assert!(!pb.scroll(1, BAR, &cm));
+        assert!(pb.reveal(0, BAR, &cm));
+        assert_eq!(pb.top, 0);
+        assert!(pb.reveal(8, BAR, &cm));
+        assert_eq!(pb.top, 3, "the ninth tile ends the view");
+        assert!(pb.bar_press(BarHit::PageBack, BAR, &cm));
+        assert_eq!(pb.top, 0);
+        assert!(pb.bar_press(BarHit::Forward, BAR, &cm));
+        assert_eq!(pb.top, 1);
+
+        pb.places.truncate(6);
+        assert_eq!(
+            layout(&pb, BAR, &cm)[0],
+            Rect::new(0, 0, WIDTH, 65),
+            "unpinned down to the built-in tiles, the bar shows from the first again"
+        );
+        pb.clamp(BAR, &cm);
+        assert_eq!(pb.top, 0, "nothing to scroll once they fit");
+        let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
+        let blue = blue.look.controls();
+        assert!(6 * blue.places.tile > 403);
+        assert!(
+            bar_parts(&pb, BAR, &blue).is_none(),
+            "the built-in tiles alone never scroll"
+        );
+        assert!(bar_parts(&pb, BAR, &cm).is_none());
+        assert_eq!(layout(&pb, BAR, &cm)[0].width, WIDTH);
+    }
+
+    /// FNV-1a over the pixels.
+    fn hash(c: &Canvas) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for p in &c.pixels {
+            for b in p.to_le_bytes() {
+                h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    /// A bar of nine tiles drawn under each interface at 1x and 2x, scrolled to its end with a
+    /// pinned tile selected. Labels are left blank so the pins hold under any font.
+    #[test]
+    fn a_scrolled_bar_draws_its_tiles_and_scrollbar_in_every_interface() {
+        use crate::interface::Interface;
+        use crate::theme::Color;
+        const ICON: Color = Color::rgb(0xE8, 0xC0, 0x50);
+        let want = [
+            (Interface::Classic, 1, 13370575589722211660),
+            (Interface::Classic, 2, 13839850585171954949),
+            (Interface::Blue, 1, 15596967453792755634),
+            (Interface::Blue, 2, 13641811894776302826),
+            (Interface::Glass, 1, 891772286779187367),
+            (Interface::Glass, 2, 11945213783426164471),
+        ];
+        let mut got = Vec::new();
+        for (i, scale, _) in want {
+            let theme = crate::interfaces::theme_for(i).scaled(scale);
+            let text = TextRenderer::load(&theme.fonts);
+            let p = theme.paint();
+            let cm = p.look.controls().grown(p.text);
+            let mut pb = with_pins(3);
+            let mut icon = Canvas::new((ICON_PX * scale) as u32, (ICON_PX * scale) as u32);
+            icon.fill_rect(icon.bounds(), ICON);
+            for place in &mut pb.places {
+                place.label.clear();
+                place.icon = Some(icon.clone());
+            }
+            pb.selected = Some(7);
+            pb.scroll(100, BAR, &cm);
+            assert_eq!(pb.top, 9 - (403 / cm.places.tile) as usize, "{i:?}@{scale}");
+            let mut c = Canvas::new((WIDTH * scale) as u32, (403 * scale) as u32);
+            draw(&mut c, &text, &p, &pb, BAR, theme.fonts.size_px);
+            let bar = bar_parts(&pb, BAR, &cm).expect("a scrollbar");
+            let thumb = bar.thumb.expect("a thumb");
+            assert!(
+                thumb.y > bar.track.y,
+                "{i:?}@{scale}: scrolled down, the thumb is low"
+            );
+            let tile = layout(&pb, BAR, &cm)[pb.top];
+            assert_eq!(tile.y, 0, "{i:?}@{scale}");
+            let ink = c.get((tile.x + tile.width / 2) * scale, (tile.y + 10) * scale);
+            assert_eq!(
+                ink,
+                ICON.argb(),
+                "{i:?}@{scale}: the first tile in view tops it"
+            );
+            got.push((i, scale, hash(&c)));
+        }
+        let want: Vec<_> = want.to_vec();
+        assert_eq!(got, want);
+    }
+
+    /// Writes target/placesbar-pinned-preview.png: nine tiles with labels under Classic, Blue
+    /// and Glass, scrolled one tile down, a pinned tile selected and the last one greyed.
+    #[test]
+    #[ignore]
+    fn render_placesbar_pinned() {
+        use crate::interface::Interface;
+        let mut out = Canvas::new((3 * WIDTH + 20) as u32, 403);
+        for (k, i) in [Interface::Classic, Interface::Blue, Interface::Glass]
+            .into_iter()
+            .enumerate()
+        {
+            let theme = crate::interfaces::theme_for(i);
+            let text = TextRenderer::load(&theme.fonts);
+            let p = theme.paint();
+            let cm = p.look.controls().grown(p.text);
+            let mut pb = with_pins(3);
+            let mut icon = Canvas::new(ICON_PX as u32, ICON_PX as u32);
+            icon.fill_rect(
+                Rect::new(3, 5, 26, 22),
+                crate::theme::Color::rgb(0xE8, 0xC0, 0x50),
+            );
+            for place in &mut pb.places {
+                place.icon = Some(icon.clone());
+            }
+            pb.selected = Some(6);
+            pb.scroll(1, BAR, &cm);
+            let r = Rect::new(k as i32 * (WIDTH + 10), 0, WIDTH, 403);
+            draw(&mut out, &text, &p, &pb, r, theme.fonts.size_px);
+        }
+        crate::raster::write_preview(&out, "placesbar-pinned-preview.png");
     }
 }

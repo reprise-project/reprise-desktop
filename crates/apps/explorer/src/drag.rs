@@ -453,10 +453,17 @@ impl Explorer {
         };
         let send_to = self.build_send_to(ctx);
         let eject = self.ejectable(i);
+        let pinned = match (&self.menu_paste, self.sv.selection.len()) {
+            (Some(PasteTo::Folder(dir)), 1) => {
+                Some(reprisefs::pins::is_pinned(&self.pinned(), dir))
+            }
+            _ => None,
+        };
         let state = crate::menus::MenuState {
             extract: self.extract_label(),
             compress: self.compress_label(),
             disk_image: self.selected_disk_image().is_some(),
+            pinned,
             ..self.menu_state()
         };
         let menu = crate::menus::item_menu(&state, kind, eject, &open_with, &send_to);

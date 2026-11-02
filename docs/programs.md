@@ -27,6 +27,9 @@ The file manager, and the default for folders.
 - **Open in Terminal** on a folder's right-click menu, and on the
   background's in any folder but Computer and the Recycle Bin, starts your
   `terminal` in that folder.
+- **Pinned folders:** Pin to Places on a folder's menu adds it to the
+  task pane's Pinned group and to every file dialog's places bar (see
+  Pinned folders in features.md).
 - **Places:** Desktop, Documents, Home, Computer and the Recycle Bin.
   Computer lists your drives, unmounted and locked removable ones included:
   open one to mount it (a locked one asks for its passphrase first), Eject to

@@ -35,6 +35,7 @@ pub mod names;
 pub mod netspeed;
 pub mod ops;
 pub mod pictures;
+pub mod pins;
 pub mod pipe;
 pub mod places;
 pub mod program;

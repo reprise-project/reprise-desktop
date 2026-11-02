@@ -22,6 +22,8 @@ fn disabled_row(label: &str) -> MenuItem {
 }
 
 const TERMINAL: &str = "Open in Termina&l";
+const PIN: &str = "P&in to Places";
+const UNPIN: &str = "Unp&in from Places";
 
 /// A menu's rows, each with what it does, so a row and its command cannot drift.
 type Rows = Vec<(MenuItem, Option<DesktopCommand>)>;
@@ -152,13 +154,15 @@ pub struct IconMenu {
     pub in_set: bool,
     /// An executable script, which runs as this default when opened.
     pub script: Option<ScriptOpen>,
+    /// For a lone folder, whether it is pinned to the places bar: Pin to Places or Unpin.
+    pub pinned: Option<bool>,
 }
 
 /// A file's or folder's context menu. A script has Run and Run in terminal in place of
 /// Open. A file gets its verbs (`print`, `edit`) and Open With, and Allow Launching with `allow_launching`. A launcher gets a greyed
 /// Run as... under Open (a program runs in the session of the logged-in user and
 /// another user's program cannot reach its display), no Open With, and Paste under
-/// Copy. A folder gets Explore, Open in Terminal, the greyed Sharing and Security... (no sheet
+/// Copy. A folder gets Explore, Open in Terminal, Pin to Places (or Unpin) when alone, the greyed Sharing and Security... (no sheet
 /// behind it), and Paste under Copy. On
 /// an icon `in_set` of a multi-selection it is the same menu less Sharing and
 /// Security..., its rows acting on the whole set but for Explore, Open in Terminal, Paste,
@@ -178,6 +182,11 @@ pub fn icon_menu(m: IconMenu) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     if m.is_dir {
         rows.push((entry("E&xplore"), Some(Explore)));
         rows.push((entry(TERMINAL), Some(OpenTerminal)));
+        match m.pinned {
+            Some(false) => rows.push((entry(PIN), Some(Pin(true)))),
+            Some(true) => rows.push((entry(UNPIN), Some(Pin(false)))),
+            None => {}
+        }
         if !m.in_set {
             rows.extend([SEP, (disabled_row("S&haring and Security..."), None)]);
         }
@@ -345,6 +354,10 @@ impl State {
                     in_set: self.selection_around(index).len() > 1,
                     script: matches!(entry.target, Target::Run(_, Program::Script))
                         .then_some(self.config.script_open),
+                    pinned: (is_dir && self.selection_around(index).len() <= 1)
+                        .then_some(self.dialogs.pins.as_ref())
+                        .flatten()
+                        .map(|p| reprisefs::pins::is_pinned(&p.current(), &entry.path)),
                 })
             }
         })

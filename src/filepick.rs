@@ -70,6 +70,27 @@ impl Purpose {
     }
 }
 
+/// The tiles for `tiles`, pinned ones wearing `icons.pinned`.
+fn tile_places(tiles: &[reprisefs::places::DialogPlace], icons: &Icons) -> Vec<Place> {
+    (tiles.iter().zip(tile_icons(tiles, icons)))
+        .map(|(p, icon)| Place {
+            enabled: p.dir.is_some(),
+            label: p.label.clone(),
+            icon,
+            pinned: p.pin.is_some(),
+        })
+        .collect()
+}
+
+fn tile_icons(tiles: &[reprisefs::places::DialogPlace], icons: &Icons) -> Vec<Option<Canvas>> {
+    (tiles.iter().enumerate())
+        .map(|(i, p)| match p.pin {
+            Some(_) => icons.pinned.clone(),
+            None => icons.places.get(i).cloned().flatten(),
+        })
+        .collect()
+}
+
 /// The dialog's own icons, fetched by the host: the places tiles at 32 px in
 /// `reprisefs::places::dialog_places`' order, the toolbar's buttons at 16 in `TOOLBAR`'s and the
 /// Look in folder at 16, all grown with the text size. The dialog draws on device pixels, so each
@@ -78,6 +99,8 @@ impl Purpose {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Icons {
     pub places: Vec<Option<Canvas>>,
+    /// A pinned folder's tile icon.
+    pub pinned: Option<Canvas>,
     pub toolbar: Vec<Option<Canvas>>,
     pub folder: Option<Canvas>,
     pub scale: i32,
@@ -124,6 +147,7 @@ pub fn icons(cache: &mut IconCache, scale: i32, u: TextUnits) -> Icons {
             .iter()
             .map(|p| get(p.icon, u.len(placesbar::ICON_PX) * scale))
             .collect(),
+        pinned: get("folder", u.len(placesbar::ICON_PX) * scale),
         toolbar: TOOLBAR
             .iter()
             .map(|i| get(i, tool_px))
@@ -147,6 +171,10 @@ pub struct FilePicker {
     purpose: Purpose,
     /// Where each places tile points; None is a greyed tile.
     place_dirs: Vec<Option<PathBuf>>,
+    /// The pinned folders the tiles after the built-in ones show, and whether My Recent
+    /// Documents is live, to build the tiles again from.
+    pins: Vec<reprisefs::pins::Pin>,
+    recent_tile: bool,
     folders: reprisefs::folders::FolderTable,
     icons: Icons,
     /// The Files of type filter the listing was built for; a change
@@ -402,15 +430,7 @@ impl FilePicker {
     fn new(purpose: Purpose, start: &Path, mut icons: Icons, recent: bool) -> FilePicker {
         icons.scale = icons.scale.max(1);
         let tiles = reprisefs::places::dialog_places(recent);
-        let places = tiles
-            .iter()
-            .enumerate()
-            .map(|(i, p)| Place {
-                enabled: p.dir.is_some(),
-                label: p.label.clone(),
-                icon: icons.places.get(i).cloned().flatten(),
-            })
-            .collect();
+        let places = tile_places(&tiles, &icons);
         let mut dlg = FileDlg::new(purpose.fields(), places);
         let tb = |i: usize| icons.toolbar.get(i).cloned().flatten();
         dlg.set_toolbar_icons(tb(0), tb(1), tb(2), tb(3));
@@ -418,6 +438,8 @@ impl FilePicker {
             dlg,
             purpose,
             place_dirs: tiles.into_iter().map(|p| p.dir).collect(),
+            pins: Vec::new(),
+            recent_tile: recent,
             folders: reprisefs::folders::FolderTable::default(),
             icons,
             filter: 0,
@@ -579,7 +601,8 @@ impl FilePicker {
             || self.list_px() != shellview::list_icon_px(u);
         if rescaled || self.icons.text != u {
             self.icons = icons(cache, scale, u);
-            self.dlg.set_place_icons(self.icons.places.clone());
+            let tiles = self.tiles();
+            self.dlg.set_place_icons(tile_icons(&tiles, &self.icons));
             let tb = |i: usize| self.icons.toolbar.get(i).cloned().flatten();
             self.dlg.set_toolbar_icons(tb(0), tb(1), tb(2), tb(3));
             self.dlg.set_crumb_icons(vec![self.icons.folder.clone()]);
@@ -875,6 +898,65 @@ impl FilePicker {
             }],
             entries,
         });
+        self.mark_pinned();
+    }
+
+    fn tiles(&self) -> Vec<reprisefs::places::DialogPlace> {
+        reprisefs::places::dialog_places_with(self.recent_tile, &self.pins)
+    }
+
+    /// Shows `pins` after the built-in tiles; true when they changed.
+    pub fn set_pins(&mut self, pins: &[reprisefs::pins::Pin]) -> bool {
+        if self.pins == pins {
+            return false;
+        }
+        self.pins = pins.to_vec();
+        let tiles = self.tiles();
+        let folders = (tiles.iter())
+            .map(|p| p.dir.as_ref().map(|d| self.folders.id(d)))
+            .collect();
+        self.dlg
+            .set_places(tile_places(&tiles, &self.icons), folders);
+        self.place_dirs = tiles.into_iter().map(|p| p.dir).collect();
+        self.mark_pinned();
+        true
+    }
+
+    /// Tells the dialog which of the shown folder's entries are pinned.
+    fn mark_pinned(&mut self) {
+        let Some(dir) = self.current().map(Path::to_path_buf) else {
+            return;
+        };
+        let names = (self.dlg.entries().iter())
+            .filter(|e| e.is_dir && reprisefs::pins::is_pinned(&self.pins, &dir.join(&e.name)))
+            .map(|e| e.name.clone())
+            .collect();
+        self.dlg.set_pinned_entries(names);
+    }
+
+    /// Pin to Places, Unpin from Places and Move Up/Down, written off the loop; the bookmarks
+    /// watch brings the change back to every dialog.
+    fn pin(&self, ev: Event) {
+        let tile = |i: usize| self.tiles().into_iter().nth(i).and_then(|p| p.pin);
+        let file = reprisefs::pins::bookmarks_file();
+        let write: Box<dyn FnOnce() + Send> = match ev {
+            Event::PinEntry { name, pin } => {
+                let Some(dir) = self.current().map(|d| d.join(name)) else {
+                    return;
+                };
+                Box::new(move || reprisefs::pins::set_pinned(&file, &dir, pin))
+            }
+            Event::UnpinPlace(i) => {
+                let Some(dir) = tile(i) else { return };
+                Box::new(move || reprisefs::pins::set_pinned(&file, &dir, false))
+            }
+            Event::ShiftPlace { tile: i, up } => {
+                let Some(dir) = tile(i) else { return };
+                Box::new(move || reprisefs::pins::shift(&file, &dir, up))
+            }
+            _ => return,
+        };
+        crate::state::run_in_order(write);
     }
 
     /// A key from the dialog view. Typed text goes in as an edit so the
@@ -1021,6 +1103,10 @@ impl FilePicker {
             Event::None => Outcome::Nothing,
             Event::Redraw => Outcome::Redraw,
             Event::NeedPlace(_) => Outcome::Nothing,
+            Event::PinEntry { .. } | Event::UnpinPlace(_) | Event::ShiftPlace { .. } => {
+                self.pin(ev);
+                Outcome::Nothing
+            }
             Event::NeedListing(id) => {
                 // Entering a folder by its typed name empties the field;
                 // a name typed for something else stays.
@@ -1317,6 +1403,29 @@ mod tests {
             "view = \"icons\"\n"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pinned_folders_follow_the_built_in_tiles() {
+        let dir = sandbox("pins");
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        let built_in = p.dlg.places().len();
+        let pin = |path: PathBuf, present| reprisefs::pins::Pin {
+            label: reprisefs::places::dialog_label(&path),
+            path,
+            present,
+        };
+        let pins = [pin(dir.clone(), true), pin(dir.join("gone"), false)];
+        assert!(p.set_pins(&pins));
+        assert!(!p.set_pins(&pins), "the same pins change nothing");
+        let tiles: Vec<(bool, bool)> = (p.dlg.places().iter())
+            .map(|t| (t.enabled, t.pinned))
+            .collect();
+        assert_eq!(tiles[built_in..], [(true, true), (false, true)]);
+        assert_eq!(p.event(Event::NeedPlace(built_in + 1)), Outcome::Nothing);
+        assert_eq!(p.event(Event::NeedPlace(built_in)), Outcome::Redraw);
+        assert!(p.set_pins(&[]));
+        assert_eq!(p.dlg.places().len(), built_in);
     }
 
     #[test]
