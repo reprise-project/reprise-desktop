@@ -18,7 +18,10 @@ pub(super) enum Field {
     /// A `Settings` integer in tenths against a TOML float (`mouse.speed`),
     /// read back into its range of tenths.
     Tenths(Key, Lens<Settings, i64>, (i64, i64)),
+    /// The system icon names, an older file's read as the current ones.
     Names(Key, Lens<Settings, Vec<String>>),
+    /// A TOML array of strings kept entry for entry, empty ones included.
+    Strings(Key, Lens<Settings, Vec<String>>),
 }
 
 pub(crate) const INTERFACE: Key = k("appearance", "interface");
@@ -73,6 +76,7 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Text(k("wallpaper", "water"), lens!(wallpaper_water)),
         Field::Text(k("drives", "on_insert"), lens!(drive_insert)),
         Field::Text(k("wallpaper", "slideshow"), lens!(slideshow)),
+        Field::Strings(k("wallpaper", "desktops"), lens!(wallpaper_desktops)),
         Field::Int(k("wallpaper", "interval"), lens!(slideshow_interval)),
         Field::Flag(k("wallpaper", "shuffle"), lens!(slideshow_shuffle)),
         Field::Text(k("screensaver", "name"), lens!(saver)),
@@ -274,7 +278,8 @@ impl Field {
             | Field::List(k, _)
             | Field::Words(k, _)
             | Field::Tenths(k, _, _)
-            | Field::Names(k, _) => k,
+            | Field::Names(k, _)
+            | Field::Strings(k, _) => k,
         }
     }
 
@@ -288,7 +293,7 @@ impl Field {
             }
             Field::Words(_, at) => Value::Array(words(at.get(s)).collect::<Array>()),
             Field::Tenths(_, at, _) => Value::from(*at.get(s) as f64 / 10.0),
-            Field::Names(_, at) => {
+            Field::Names(_, at) | Field::Strings(_, at) => {
                 Value::Array(at.get(s).iter().map(String::as_str).collect::<Array>())
             }
         }
@@ -299,7 +304,7 @@ impl Field {
             Field::Text(_, at) | Field::List(_, at) | Field::Words(_, at) => at.get(a) == at.get(b),
             Field::Int(_, at) | Field::Tenths(_, at, _) => at.get(a) == at.get(b),
             Field::Flag(_, at) => at.get(a) == at.get(b),
-            Field::Names(_, at) => at.get(a) == at.get(b),
+            Field::Names(_, at) | Field::Strings(_, at) => at.get(a) == at.get(b),
         }
     }
 
@@ -310,7 +315,7 @@ impl Field {
             }
             Field::Int(_, at) | Field::Tenths(_, at, _) => *at.get_mut(to) = *at.get(from),
             Field::Flag(_, at) => *at.get_mut(to) = *at.get(from),
-            Field::Names(_, at) => *at.get_mut(to) = at.get(from).clone(),
+            Field::Names(_, at) | Field::Strings(_, at) => *at.get_mut(to) = at.get(from).clone(),
         }
     }
 }

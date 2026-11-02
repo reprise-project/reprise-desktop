@@ -1,26 +1,44 @@
 use crate::registry::Page;
 use crate::{SettingsApp, backgroundpage, pages, wallpapers, winstate};
 use repriseapp::decode::{Decoded, Decoders};
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 impl SettingsApp {
+    /// The pending settings as the Background page shows them, for the desktop Use for picks.
+    pub(crate) fn bg(&self) -> Cow<'_, crate::model::Settings> {
+        let page = &self.sheet.pages[Page::Background.index()];
+        backgroundpage::view(&self.want, backgroundpage::target(page))
+    }
+
+    /// Make `picked` the pending wallpaper of the desktop Use for picks, or of all of them.
+    fn set_wallpaper(&mut self, picked: String) {
+        match backgroundpage::target(&self.sheet.pages[Page::Background.index()]) {
+            Some(n) => backgroundpage::set_for_desktop(&mut self.want, n, picked),
+            None => self.want.wallpaper = picked,
+        }
+    }
+
     /// Refill the Background list from `wallpapers` with the pending one picked and scrolled into view (once, when the scan lands).
     pub(crate) fn fill_wallpapers(&mut self) {
         let folders = self.slide_folders();
+        let (slides, slideshow, wallpaper) = {
+            let v = self.bg();
+            (
+                backgroundpage::slideshow(&v),
+                v.slideshow.clone(),
+                v.wallpaper.clone(),
+            )
+        };
         let page = &mut self.sheet.pages[Page::Background.index()];
-        if backgroundpage::slideshow(&self.want) {
-            backgroundpage::fill_folders(
-                page,
-                &folders,
-                &self.want.slideshow,
-                self.folder_icon.as_ref(),
-            );
+        if slides {
+            backgroundpage::fill_folders(page, &folders, &slideshow, self.folder_icon.as_ref());
         } else {
             backgroundpage::fill(
                 page,
                 &self.wallpapers,
-                &self.want.wallpaper,
+                &wallpaper,
                 self.wallpaper_icons.as_ref(),
                 &self.thumbs,
             );
@@ -32,10 +50,11 @@ impl SettingsApp {
     }
 
     pub(crate) fn show_monitor(&mut self) {
-        let file = backgroundpage::monitor_file(&self.want, self.listed());
+        let bg = self.bg().into_owned();
+        let file = backgroundpage::monitor_file(&bg, self.listed());
         backgroundpage::show(
             &mut self.sheet.pages[Page::Background.index()],
-            &self.want,
+            &bg,
             &file,
             self.picture.as_ref(),
             self.listing.is_some() || self.decoding.is_some(),
@@ -94,7 +113,7 @@ impl SettingsApp {
     /// A Background row was picked; the file the config already names keeps its spelling (`~/...`).
     pub(crate) fn pick_wallpaper(&mut self) {
         let row = backgroundpage::selected(&self.sheet.pages[Page::Background.index()]);
-        if backgroundpage::slideshow(&self.want) {
+        if backgroundpage::slideshow(&self.bg()) {
             let folders = self.slide_folders();
             if let Some(f) = row.and_then(|i| folders.get(i))
                 && wallpapers::expand(&self.want.slideshow).as_ref() != Some(f)
@@ -105,18 +124,20 @@ impl SettingsApp {
         }
         let picked = match row.map(backgroundpage::row) {
             Some(backgroundpage::Row::Builtin(b)) => {
-                self.want.wallpaper = b.uri();
+                self.set_wallpaper(b.uri());
                 return;
             }
-            Some(backgroundpage::Row::Picture(i)) => self.wallpapers.get(i),
+            Some(backgroundpage::Row::Picture(i)) => self.wallpapers.get(i).cloned(),
             _ => None,
         };
-        if picked.is_some() && picked.cloned() == wallpapers::expand(&self.want.wallpaper) {
+        if picked.is_some() && picked == wallpapers::expand(&self.bg().wallpaper) {
             return;
         }
-        self.want.wallpaper = picked
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        self.set_wallpaper(
+            picked
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        );
     }
 
     /// Browse... picked `path`: it joins the list if absent and becomes pending, keeping the config's spelling.
@@ -124,8 +145,8 @@ impl SettingsApp {
         // The dialog has just listed `path`, and the rows it is held to
         // are local folders the scan read, so the disk answers at once.
         wallpapers::place(&mut self.wallpapers, &path);
-        if wallpapers::expand(&self.want.wallpaper).as_ref() != Some(&path) {
-            self.want.wallpaper = path.to_string_lossy().into_owned();
+        if wallpapers::expand(&self.bg().wallpaper).as_ref() != Some(&path) {
+            self.set_wallpaper(path.to_string_lossy().into_owned());
         }
         self.fill_wallpapers();
         self.want_preview();
@@ -147,7 +168,7 @@ impl SettingsApp {
     /// Decode the pending wallpaper for the monitor unless shown or a decode is under way; that one's end calls this again. A slideshow folder is listed first.
     pub(crate) fn want_preview(&mut self) {
         self.list_slide_folder();
-        let want = backgroundpage::monitor_file(&self.want, self.listed());
+        let want = backgroundpage::monitor_file(&self.bg(), self.listed());
         let Some(file) = backgroundpage::next_decode(
             &want,
             self.picture.as_ref().map(|p| p.path.as_str()),

@@ -65,6 +65,11 @@ impl SettingsApp {
                     self.pick_wallpaper();
                     self.want_preview();
                 }
+                if id == backgroundpage::USE_FOR {
+                    pages::follow(&mut self.sheet, &self.want);
+                    self.fill_wallpapers();
+                    self.want_preview();
+                }
                 pages::follow(&mut self.sheet, &self.want);
                 self.show_monitor();
                 self.sync_apply();
@@ -124,7 +129,7 @@ impl SettingsApp {
                     Reply::none()
                 }
                 backgroundpage::BROWSE => {
-                    let pick = if backgroundpage::slideshow(&self.want) {
+                    let pick = if backgroundpage::slideshow(&self.bg()) {
                         Pick::SlideFolder
                     } else {
                         Pick::Wallpaper

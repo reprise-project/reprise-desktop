@@ -171,6 +171,7 @@ impl State {
         }
         self.desktops.current = n;
         self.desktops_changed();
+        self.desktop_wallpaper_switched();
         true
     }
 
@@ -282,6 +283,7 @@ impl State {
         self.desktops = d;
         self.workspaces_resized();
         self.desktops_changed();
+        self.desktop_wallpaper_switched();
         if self.focused.is_none() {
             self.focus_top();
         }
