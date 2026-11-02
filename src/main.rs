@@ -74,6 +74,7 @@ mod menuview;
 mod mousekeys;
 mod nightlight;
 mod notifycenter;
+mod notifydnd;
 mod notifylog;
 mod notifyview;
 mod offscreen;

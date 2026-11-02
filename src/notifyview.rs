@@ -163,6 +163,8 @@ pub struct NotifyView {
     tick_timer: Option<RegistrationToken>,
     /// Wakes at each minute boundary while `[notifications] quiet_hours` is set.
     minute_timer: Option<RegistrationToken>,
+    /// Ends a timed Do Not Disturb.
+    dnd_timer: Option<RegistrationToken>,
     /// The bar edge the stack was last placed by.
     edge: Option<Edge>,
     /// The output the stack was last placed on; its sheets and chip draw only inside it.
@@ -594,10 +596,18 @@ fn dismiss_cleared(state: &mut State, ids: Vec<u32>) {
     changed(state);
 }
 
-/// Do Not Disturb on or off. Turning it on takes down the balloons it holds back, which stay open
-/// in the history, and the sheets still leaving.
+/// Do Not Disturb on for good or off: the keybind and the history's check box.
 pub fn set_dnd(state: &mut State, on: bool) {
+    set_dnd_until(state, on, None);
+}
+
+/// Do Not Disturb on until `until` (seconds since the epoch; None for good) or off. Turning it on
+/// takes down the balloons it holds back, which stay open in the history, and the sheets still
+/// leaving.
+pub fn set_dnd_until(state: &mut State, on: bool, until: Option<i64>) {
     state.notify.log.dnd = on;
+    state.notify.log.dnd_until = until.filter(|_| on);
+    arm_dnd_timer(state);
     if on {
         let v = &mut state.notify;
         v.log.held.clear();
@@ -620,8 +630,41 @@ pub fn set_dnd(state: &mut State, on: bool) {
         drop_leaving(state);
         display_next(state);
     }
-    log::info!("do not disturb {}", if on { "on" } else { "off" });
+    match state.notify.log.dnd_until {
+        Some(t) => log::info!("do not disturb on until {}", crate::taskbar::time_text(t)),
+        None => log::info!("do not disturb {}", if on { "on" } else { "off" }),
+    }
     changed(state);
+}
+
+/// Wake when a timed Do Not Disturb ends, and at least each minute so a clock change or a resume
+/// is caught; no timer while none is timed.
+fn arm_dnd_timer(state: &mut State) {
+    use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+    if let Some(t) = state.notify.dnd_timer.take() {
+        state.handle.remove(t);
+    }
+    let Some(until) = state.notify.log.dnd_until else {
+        return;
+    };
+    let wait = |until: i64| Duration::from_secs((until - now()).clamp(0, 60) as u64);
+    let timer =
+        state
+            .handle
+            .insert_source(Timer::from_duration(wait(until)), move |_, _, state| {
+                if now() < until {
+                    return TimeoutAction::ToDuration(wait(until));
+                }
+                state.notify.dnd_timer = None;
+                if state.notify.log.dnd_until == Some(until) {
+                    set_dnd(state, false);
+                }
+                TimeoutAction::Drop
+            });
+    match timer {
+        Ok(t) => state.notify.dnd_timer = Some(t),
+        Err(e) => log::warn!("notifications: no do not disturb timer: {}", e.error),
+    }
 }
 
 /// Every balloon and sheet comes down at once with the chip, no exit motion; returns their items.
