@@ -303,6 +303,10 @@ impl State {
                 crate::taskpreview::clicked(self, cell)
             }
             Hit::TaskPreview { .. } => crate::taskpreview::hide(self),
+            Hit::MiniView { id, part } if button == BTN_LEFT => {
+                crate::miniview::press(self, id, part, (pos.x, pos.y), time.millis());
+            }
+            Hit::MiniView { .. } => {}
             Hit::SnapPicker { zone } => crate::snappickerview::press(self, zone, button),
             Hit::Notification => {
                 if crate::notifyview::press(self, pos.x, pos.y, button) {

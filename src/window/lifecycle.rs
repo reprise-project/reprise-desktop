@@ -590,6 +590,7 @@ impl State {
         self.switcher_forget(crate::switcherview::Entry::Window(w));
         self.withdraw_toplevel(w);
         crate::taskpreview::forget_window(self, w);
+        crate::miniview::forget_window(self, w);
         crate::snappickerview::forget_window(self, w);
         crate::snapbarview::forget_window(self, w);
         self.wm.snap.forget_window(w);

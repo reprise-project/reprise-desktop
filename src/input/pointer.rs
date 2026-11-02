@@ -215,6 +215,10 @@ impl State {
                 let hit = crate::displaysview::hit(self, pos.x, pos.y);
                 return Hit::Displays { hit };
             }
+            Some(SceneOwner::MiniView(id)) => {
+                let part = crate::miniview::hit(self, id, pos.x, pos.y);
+                return Hit::MiniView { id, part };
+            }
             None => None,
         };
         if let Some(surface) = h.surface {
@@ -453,6 +457,16 @@ impl State {
                 }
                 return;
             }
+            Interaction::MiniMove { .. } => {
+                self.pointer_motion(None, pos, time);
+                crate::miniview::drag_to(self, pos.x, pos.y);
+                return;
+            }
+            Interaction::MiniResize { id, start, cx, cy } => {
+                self.pointer_motion(None, pos, time);
+                crate::miniview::size_to(self, id, start, (pos.x - cx, pos.y - cy));
+                return;
+            }
             Interaction::DialogMove { index, dx, dy } => {
                 self.pointer_motion(None, pos, time);
                 self.move_dialog(index, (pos.x - dx) as i32, (pos.y - dy) as i32);
@@ -534,6 +548,11 @@ impl State {
             _ => {}
         }
         crate::notifyview::hover(self, pos.x, pos.y, matches!(hit, Hit::Notification));
+        let mini = match hit {
+            Hit::MiniView { id, .. } => Some(id),
+            _ => None,
+        };
+        crate::miniview::hover(self, mini);
         // The Alt+Tab panel owns the pointer while it is up: what lies
         // around it gets neither focus nor hover.
         let owned = (self.switcher.is_open() && !matches!(hit, Hit::Switcher { .. }))
@@ -597,6 +616,10 @@ impl State {
                 self.pointer_motion(None, pos, time);
                 self.set_cursor("default");
                 crate::taskpreview::hover_panel(self, cell);
+            }
+            Hit::MiniView { part, .. } => {
+                self.pointer_motion(None, pos, time);
+                self.set_cursor(crate::miniview::cursor(part));
             }
             Hit::Menu { depth, row } => {
                 self.pointer_motion(None, pos, time);

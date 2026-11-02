@@ -15,6 +15,8 @@ pub enum WindowMenuRow {
     /// Rolls the window up to its caption, or back down.
     Shade,
     AlwaysOnTop,
+    /// Opens or closes the window's mini view (`miniview`).
+    MiniView,
     AllDesktops,
     /// Opens `move_to_menu`, does nothing itself.
     MoveToMenu,
@@ -47,6 +49,8 @@ pub struct WindowMenuState {
     pub resizable: bool,
     /// Always on Top is checked. An owned window shows its owner's state greyed.
     pub on_top: bool,
+    /// Mini View is checked: the window has one open.
+    pub mini: bool,
     pub desktops: usize,
     /// Show on All Desktops is checked and Move to Desktop greyed.
     pub sticky: bool,
@@ -103,7 +107,10 @@ pub fn window_menu(
         let label = if shaded { "Roll Do&wn" } else { "Roll &Up" };
         (Shade, label, shaded || normal, None, None)
     });
-    let mut group = vec![(AlwaysOnTop, "Always on &Top", !state.owned, None, None)];
+    let mut group = vec![
+        (AlwaysOnTop, "Always on &Top", !state.owned, None, None),
+        (MiniView, "M&ini View", true, None, None),
+    ];
     if state.desktops > 1 {
         group.push((
             AllDesktops,
@@ -149,7 +156,9 @@ pub fn window_menu(
             MenuItem::entry(label)
                 .enabled(enabled)
                 .checked(
-                    (row == AlwaysOnTop && state.on_top) || (row == AllDesktops && state.sticky),
+                    (row == AlwaysOnTop && state.on_top)
+                        || (row == MiniView && state.mini)
+                        || (row == AllDesktops && state.sticky),
                 )
                 .submenu(matches!(row, MoveToMenu | TabsOfMenu))
                 .mnemonic(mnemonic)
@@ -267,23 +276,31 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            mini: false,
             desktops: 1,
             sticky: false,
             tabs: None,
             shade: None,
         };
         let (items, actions) = window_menu(st, Some("Alt+F4"));
-        assert_eq!(items.len(), 9);
+        assert_eq!(items.len(), 10);
         assert_eq!(actions[5], None);
-        assert_eq!(actions[7], None);
+        assert_eq!(actions[8], None);
         assert_eq!(row(&items, 0), ("Restore", false, false));
         assert_eq!(row(&items, 1), ("Move", true, false));
         assert_eq!(row(&items, 2), ("Size", true, false));
         assert_eq!(row(&items, 3), ("Minimize", true, false));
         assert_eq!(row(&items, 4), ("Maximize", true, false));
-        assert_eq!(row(&items, 8), ("Close", true, true));
+        assert_eq!(row(&items, 9), ("Close", true, true));
         assert_eq!(row(&items, 6), ("Always on Top", true, false));
         assert_eq!(actions[6], Some(WindowMenuRow::AlwaysOnTop));
+        assert_eq!(row(&items, 7), ("Mini View", true, false));
+        assert_eq!(actions[7], Some(WindowMenuRow::MiniView));
+        let (with_mini, _) = window_menu(WindowMenuState { mini: true, ..st }, None);
+        assert!(matches!(
+            &with_mini[7],
+            MenuItem::Entry { checked: true, .. }
+        ));
         assert!(matches!(
             &items[6],
             MenuItem::Entry {
@@ -293,10 +310,10 @@ mod tests {
             }
         ));
         assert!(matches!(
-            &items[8],
+            &items[9],
             MenuItem::Entry { shortcut: Some(s), mnemonic: Some(0), .. } if s == "Alt+F4"
         ));
-        assert_eq!(actions[8], Some(WindowMenuRow::Close));
+        assert_eq!(actions[9], Some(WindowMenuRow::Close));
     }
 
     #[test]
@@ -308,6 +325,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            mini: false,
             desktops: 1,
             sticky: false,
             tabs: None,
@@ -319,7 +337,7 @@ mod tests {
         assert_eq!(row(&items, 2), ("Size", false, false));
         assert_eq!(row(&items, 3), ("Minimize", true, false));
         assert_eq!(row(&items, 4), ("Maximize", false, false));
-        assert_eq!(row(&items, 8), ("Close", true, false));
+        assert_eq!(row(&items, 9), ("Close", true, false));
     }
 
     #[test]
@@ -331,6 +349,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            mini: false,
             desktops: 1,
             sticky: false,
             tabs: None,
@@ -351,6 +370,7 @@ mod tests {
             owned: true,
             resizable: false,
             on_top: false,
+            mini: false,
             desktops: 1,
             sticky: false,
             tabs: None,
@@ -363,7 +383,7 @@ mod tests {
         assert_eq!(row(&items, 3), ("Minimize", false, false));
         assert_eq!(row(&items, 4), ("Maximize", false, false));
         assert_eq!(row(&items, 6), ("Always on Top", false, false));
-        assert_eq!(row(&items, 8), ("Close", true, true));
+        assert_eq!(row(&items, 9), ("Close", true, true));
     }
 
     #[test]
@@ -375,6 +395,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: true,
+            mini: false,
             desktops: 1,
             sticky: false,
             tabs: None,
@@ -400,20 +421,21 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            mini: false,
             desktops: 4,
             sticky: false,
             tabs: None,
             shade: None,
         };
         let (items, actions) = window_menu(st, Some("Alt+F4"));
-        assert_eq!(items.len(), 11);
+        assert_eq!(items.len(), 12);
         assert_eq!(row(&items, 6), ("Always on Top", true, false));
-        assert_eq!(row(&items, 7), ("Show on All Desktops", true, false));
-        assert_eq!(row(&items, 8), ("Move to Desktop", true, false));
-        assert_eq!(actions[7], Some(WindowMenuRow::AllDesktops));
-        assert_eq!(actions[8], Some(WindowMenuRow::MoveToMenu));
+        assert_eq!(row(&items, 8), ("Show on All Desktops", true, false));
+        assert_eq!(row(&items, 9), ("Move to Desktop", true, false));
+        assert_eq!(actions[8], Some(WindowMenuRow::AllDesktops));
+        assert_eq!(actions[9], Some(WindowMenuRow::MoveToMenu));
         assert!(matches!(
-            &items[8],
+            &items[9],
             MenuItem::Entry {
                 submenu: true,
                 checked: false,
@@ -421,14 +443,14 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(actions[9], None);
-        assert_eq!(row(&items, 10), ("Close", true, true));
+        assert_eq!(actions[10], None);
+        assert_eq!(row(&items, 11), ("Close", true, true));
         let (items, _) = window_menu(WindowMenuState { sticky: true, ..st }, None);
-        assert!(matches!(&items[7], MenuItem::Entry { checked: true, .. }));
-        assert_eq!(row(&items, 8), ("Move to Desktop", false, false));
+        assert!(matches!(&items[8], MenuItem::Entry { checked: true, .. }));
+        assert_eq!(row(&items, 9), ("Move to Desktop", false, false));
         let (items, _) = window_menu(WindowMenuState { owned: true, ..st }, None);
-        assert_eq!(row(&items, 7), ("Show on All Desktops", false, false));
-        assert_eq!(row(&items, 8), ("Move to Desktop", false, false));
+        assert_eq!(row(&items, 8), ("Show on All Desktops", false, false));
+        assert_eq!(row(&items, 9), ("Move to Desktop", false, false));
     }
 
     #[test]
@@ -440,6 +462,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            mini: false,
             desktops: 1,
             sticky: false,
             tabs: Some(TabRows {
@@ -449,14 +472,14 @@ mod tests {
             shade: None,
         };
         let (items, actions) = window_menu(st, None);
-        assert_eq!(items.len(), 11);
+        assert_eq!(items.len(), 12);
         assert_eq!(row(&items, 6), ("Always on Top", true, false));
-        assert_eq!(row(&items, 7), ("Add to Tabs of", true, false));
-        assert_eq!(row(&items, 8), ("Remove from Tab Group", false, false));
-        assert_eq!(actions[7], Some(WindowMenuRow::TabsOfMenu));
-        assert_eq!(actions[8], Some(WindowMenuRow::LeaveTabs));
+        assert_eq!(row(&items, 8), ("Add to Tabs of", true, false));
+        assert_eq!(row(&items, 9), ("Remove from Tab Group", false, false));
+        assert_eq!(actions[8], Some(WindowMenuRow::TabsOfMenu));
+        assert_eq!(actions[9], Some(WindowMenuRow::LeaveTabs));
         assert!(matches!(
-            &items[7],
+            &items[8],
             MenuItem::Entry {
                 submenu: true,
                 mnemonic: Some(9),
@@ -464,20 +487,20 @@ mod tests {
             }
         ));
         assert!(matches!(
-            &items[8],
+            &items[9],
             MenuItem::Entry {
                 mnemonic: Some(16),
                 ..
             }
         ));
-        assert_eq!(row(&items, 10).0, "Close");
+        assert_eq!(row(&items, 11).0, "Close");
         let tabs = Some(TabRows {
             targets: false,
             grouped: true,
         });
         let (items, _) = window_menu(WindowMenuState { tabs, ..st }, None);
-        assert_eq!(row(&items, 7), ("Add to Tabs of", false, false));
-        assert_eq!(row(&items, 8), ("Remove from Tab Group", true, false));
+        assert_eq!(row(&items, 8), ("Add to Tabs of", false, false));
+        assert_eq!(row(&items, 9), ("Remove from Tab Group", true, false));
     }
 
     #[test]
@@ -549,6 +572,7 @@ mod tests {
             owned: false,
             resizable: false,
             on_top: false,
+            mini: false,
             desktops: 1,
             sticky: false,
             tabs: None,
@@ -558,7 +582,7 @@ mod tests {
         assert_eq!(row(&items, 1), ("Move", true, false));
         assert_eq!(row(&items, 2), ("Size", false, false));
         assert_eq!(row(&items, 4), ("Maximize", false, false));
-        assert_eq!(row(&items, 8), ("Close", true, true));
+        assert_eq!(row(&items, 9), ("Close", true, true));
     }
 
     /// Writes target/winmenu-preview.png for a visual check.
@@ -577,6 +601,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            mini: false,
             desktops: 1,
             sticky: false,
             tabs: None,
@@ -611,6 +636,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            mini: false,
             desktops: 1,
             sticky: false,
             tabs: None,
