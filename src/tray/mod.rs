@@ -124,6 +124,8 @@ pub enum TrayEvent {
     PreviewScreenSaver(reprisekit::saver::Kind),
     /// `org.reprise.Tray.ForgetWindowFrames`: Settings' Forget Positions.
     ForgetWindowFrames,
+    /// `org.reprise.Tray.ReloadRemembered`: Settings imported `windows.toml` and `filedialog.toml`.
+    ReloadRemembered,
     /// Whether any `org.freedesktop.ScreenSaver` cookie is held: the idle
     /// timer is paused while one is.
     ScreenSaverInhibited(bool),
@@ -693,6 +695,10 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
         }
         TrayEvent::ForgetWindowFrames => {
             state.forget_window_frames();
+            false
+        }
+        TrayEvent::ReloadRemembered => {
+            state.reload_remembered();
             false
         }
         TrayEvent::CloseRequest(id) => {

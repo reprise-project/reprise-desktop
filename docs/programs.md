@@ -203,6 +203,17 @@ One window, 23 pages, four headings. Only one runs at a time.
     only the thumbnails Reprise kept and says how much went), thumbnails from
     the installed thumbnailers, and an Edit File... button for when
     you'd rather just open `config.toml`.
+  - **Backup:** Export... saves your settings and remembered places in one
+    file (`reprise-settings-YYYY-MM-DD.toml`); Import... puts them back, on
+    this computer or another. The page lists what the file holds:
+    `config.toml` with your shortcuts, Terminal's options, the Quick Launch
+    buttons, where windows open, display arrangements, the file dialogs'
+    folders and views, and Explorer's view settings. The programs a session
+    reopens, the Run and clipboard histories and location answers stay
+    behind. Import shows what it replaces, keeps the current files in
+    `~/.config/reprise/reprise-settings-before-import.toml` (a file Import
+    takes back), writes the new ones, and the desktop picks them up at once.
+    Display arrangements only apply to the same monitors.
 
 When `config.toml` changes while Settings is open (an editor, or a key aid's
 shortcut), the controls you haven't touched show the new values; yours stay
@@ -210,7 +221,9 @@ as you left them, and OK and Apply write only what you changed.
 
 `reprise-settings --page display` opens on a page: its name in lower case,
 spaces as hyphens and `&` as `and` (`fonts-and-icons`, `start-menu`).
-`--focus mouse_keys` puts the keyboard on a control there. A
+`--focus mouse_keys` puts the keyboard on a control there.
+`reprise-settings --export FILE` and `--import FILE` do the Backup page's
+work without a window; `--import` asks nothing. A
 display change applies first, then asks whether to keep it, and reverts after
 15 seconds without an answer.
 

@@ -2484,6 +2484,7 @@ dependencies = [
  "repriseconf",
  "reprisefs",
  "reprisekit",
+ "tempfile",
  "toml_edit",
  "xcursor",
 ]

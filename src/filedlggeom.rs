@@ -17,8 +17,8 @@ use crate::window::{Window, WindowId};
 /// The app id the compositor's own Browse dialogs keep their folder, view and geometry under.
 pub const OWN_APP: &str = "reprise";
 
-/// Each app's geometry and the Browse dialogs' last folder, read once at start: the compositor
-/// is their only writer.
+/// Each app's geometry and the Browse dialogs' last folder, read at start and after Settings
+/// imported the file (`State::reload_remembered`): the compositor is their only other writer.
 pub struct Kept {
     pub path: PathBuf,
     pub geometry: BTreeMap<String, Geometry>,

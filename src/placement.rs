@@ -436,6 +436,21 @@ impl State {
         self.wm.kept.save();
         log::info!("window frames forgotten");
     }
+
+    /// Rereads the kept frames and the file dialogs' kept place from their files, dropping a
+    /// pending write of the old ones.
+    pub fn reload_remembered(&mut self) {
+        if let Some(t) = self.wm.save.take() {
+            self.handle.remove(t);
+        }
+        let path = self.wm.kept.path.clone();
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        self.wm.kept = crate::keptframes::KeptFrames::parse(path, &text);
+        let path = self.wm.file_dialog.path.clone();
+        let text = repriseconf::filedialog::load_from(&path);
+        self.wm.file_dialog = crate::filedlggeom::Kept::parse(path, &text);
+        log::info!("remembered places reread");
+    }
 }
 
 #[cfg(test)]

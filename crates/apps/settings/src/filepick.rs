@@ -1,4 +1,5 @@
-//! The file dialog behind Startup Add..., the Background Browse... buttons and Browse for a program.
+//! The file dialog behind Startup Add..., the Background Browse... buttons, Browse for a program
+//! and the Backup page's Export... and Import....
 
 use crate::{SettingsApp, autostart, wallpapers};
 use repriseapp::filedlg::{Resolved, Step, type_keep};
@@ -14,6 +15,17 @@ pub(crate) enum Pick {
     SlideFolder,
     /// The Open With chooser's Browse...: a program file.
     Program,
+    /// The Backup page's Export... and Import...: a settings bundle.
+    Export,
+    Import,
+}
+
+const BUNDLE_FILTER: &str = "Reprise Settings (*.toml)";
+
+fn home() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// The file dialog's listing filter for `pick`.
@@ -39,9 +51,7 @@ impl SettingsApp {
         // `last`: the dialog opens where Settings' last one was confirmed, `dir` without one.
         let (dir, last, fields) = match pick {
             Pick::Autostart => (
-                std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/")),
+                home(),
                 true,
                 Fields {
                     title: "Add".into(),
@@ -81,13 +91,37 @@ impl SettingsApp {
                 false,
                 repriseapp::openwith::browse_fields(),
             ),
+            Pick::Export | Pick::Import => (
+                home(),
+                true,
+                Fields {
+                    title: if pick == Pick::Export {
+                        "Export"
+                    } else {
+                        "Import"
+                    }
+                    .into(),
+                    accept_label: if pick == Pick::Export { "Save" } else { "Open" }.into(),
+                    mode: if pick == Pick::Export {
+                        DlgMode::Save
+                    } else {
+                        DlgMode::Open
+                    },
+                    multiple: false,
+                    filters: vec![BUNDLE_FILTER.into(), "All Files (*.*)".into()],
+                },
+            ),
         };
         // The sheet's last draw carries the text size the dialog grows by.
         let u = self.sheet.open().units();
-        self.add = Some(match last {
+        let mut d = match last {
             true => self.add_host.open_last(&dir, fields, u),
             false => self.add_host.open(&dir, fields, u),
-        });
+        };
+        if pick == Pick::Export {
+            d.set_file_name(&crate::backup::suggested_name(crate::backup::today()));
+        }
+        self.add = Some(d);
     }
 
     fn close_add(&mut self) -> Reply {
@@ -159,6 +193,7 @@ impl SettingsApp {
                                 return Reply::none();
                             }
                             Pick::Program => self.browsed_program(&path),
+                            Pick::Export | Pick::Import => self.backup_picked(pick, path),
                             Pick::SlideFolder => {}
                         }
                         self.sync_apply();

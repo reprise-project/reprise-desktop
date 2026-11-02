@@ -2,9 +2,10 @@
 
 use crate::registry::Page;
 use crate::{
-    ADD_ITEM_WIN, ADD_WIN, CHOOSER_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN, SAVER_WIN, SHORTCUT_WIN,
-    SettingsApp, additem, appearancepage, backgroundpage, defaultspage, displayhost, displaypage,
-    filepick::Pick, layoutdlg, menupage, pages, quickpage, renamedlg, saverdlg, saverpage,
+    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN, SAVER_WIN,
+    SHORTCUT_WIN, SettingsApp, additem, appearancepage, backgroundpage, defaultspage, displayhost,
+    displaypage, filepick::Pick, layoutdlg, menupage, pages, quickpage, renamedlg, saverdlg,
+    saverpage,
 };
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
@@ -71,6 +72,14 @@ impl SettingsApp {
             }
             propsheet::Event::Page(_, form::Event::Pressed(id)) => match id {
                 pages::EDIT_FILE => self.edit_file(),
+                pages::BACKUP_EXPORT | pages::BACKUP_IMPORT => {
+                    let pick = match id {
+                        pages::BACKUP_EXPORT => Pick::Export,
+                        _ => Pick::Import,
+                    };
+                    self.open_add(pick);
+                    Reply::redraw_all()
+                }
                 displaypage::IDENTIFY => self.identify(),
                 displaypage::FORGET => self.forget_layouts(),
                 pages::TRAY_CUSTOMIZE => {
@@ -261,6 +270,9 @@ impl SettingsApp {
         }
         if win == ERROR_WIN {
             return self.error_event(ev, ctx);
+        }
+        if win == ASK_WIN {
+            return self.ask_event(ev, ctx);
         }
         if win == ADD_WIN {
             return self.add_event(ev, ctx);

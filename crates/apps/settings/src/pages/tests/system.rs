@@ -576,3 +576,41 @@ fn the_lock_when_away_group_sits_under_the_screen_saver() {
     assert_eq!(rect(&s, p, "away_note"), Rect::new(32, 432, 334, 13));
     inside_page(&s, p);
 }
+
+#[test]
+fn the_backup_page_geometry() {
+    let s = built();
+    let p = Page::Backup;
+    assert_eq!(rect(&s, p, "backup_intro"), Rect::new(20, 44, 358, 13));
+    assert_eq!(rect(&s, p, "backup_list"), Rect::new(GX, 66, 346, 91));
+    assert_eq!(rect(&s, p, "backup_left_out"), Rect::new(20, 167, 358, 39));
+    assert_eq!(rect(&s, p, BACKUP_EXPORT), Rect::new(20, 216, 75, 23));
+    assert_eq!(rect(&s, p, BACKUP_IMPORT), Rect::new(101, 216, 75, 23));
+    assert_eq!(rect(&s, p, BACKUP_STATUS), Rect::new(20, 250, 358, 26));
+    inside_page(&s, p);
+}
+
+/// Every line of the Backup page fits its rect in the dialog font.
+#[test]
+fn the_backup_page_lines_fit() {
+    if !reprisekit::text::test_tahoma() {
+        return;
+    }
+    let text = TextRenderer::load(&FontConfig::default());
+    let px = Theme::default().fonts.size_px;
+    let page = backup(Area::MIN);
+    for it in &page.items {
+        let lines = match &it.control {
+            Control::Lines(l) => l.clone(),
+            Control::Label { text, .. } => vec![text.clone()],
+            _ => continue,
+        };
+        for line in lines {
+            assert!(
+                text.measure(&line, false, px) <= it.rect.width,
+                "{}: {line}",
+                it.id
+            );
+        }
+    }
+}
