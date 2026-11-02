@@ -157,7 +157,7 @@ One window, 23 pages, four headings. Only one runs at a time.
   - **Taskbar:** position, button mode, pinned programs, Peek, Show desktop,
     tray overflow, auto-hide, and the Start button and menu style.
   - **Start Menu:** the Start menu tree and the Quick Launch buttons.
-  - **Launcher:** whether it searches your files.
+  - **Launcher:** whether it searches your files and open windows.
   - **Window Switcher:** Alt+Tab's icons or thumbnails, picture size, Peek,
     the 3D switcher and the overview's hot corner.
   - **Desktops:** how many, how they animate, and the taskbar's live

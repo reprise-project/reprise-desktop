@@ -824,8 +824,13 @@ impl Config {
                 cfg.debug.overlay_in_captures = v;
             }
         }
-        if let Some(v) = file.launcher.and_then(|l| l.search_files) {
-            cfg.launcher_files = v;
+        if let Some(l) = file.launcher {
+            if let Some(v) = l.search_files {
+                cfg.launcher_files = v;
+            }
+            if let Some(v) = l.windows {
+                cfg.launcher_windows = v;
+            }
         }
         if let Some(n) = file.night_light {
             n.apply(&mut cfg.night_light)?;

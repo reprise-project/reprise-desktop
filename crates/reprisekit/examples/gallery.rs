@@ -10,6 +10,8 @@
 
 #[path = "gallery_doctabs/mod.rs"]
 mod gallery_doctabs;
+#[path = "gallery_keys/mod.rs"]
+mod gallery_keys;
 #[path = "gallery_p3/mod.rs"]
 mod gallery_p3;
 #[path = "gallery_parts/mod.rs"]
@@ -87,6 +89,10 @@ fn main() {
             "reprisekit-gallery-orb-glow-glass.png",
         );
         write_volume_popups(true, n.max(1));
+        write_preview(
+            &gallery_keys::launcher_windows(n.max(1)),
+            &format!("reprisekit-gallery-launcher-windows@{}.png", n.max(1)),
+        );
         write_preview(
             &gallery_power::render(n.max(1)),
             &format!("reprisekit-gallery-power@{}.png", n.max(1)),
@@ -276,6 +282,10 @@ fn main() {
     );
     write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
     if with_blue {
+        write_preview(
+            &gallery_keys::launcher_windows(1),
+            "reprisekit-gallery-launcher-windows@1.png",
+        );
         write_preview(
             &render_tray_arrow_schemes(1),
             "reprisekit-gallery-tray-arrow-blue-schemes.png",

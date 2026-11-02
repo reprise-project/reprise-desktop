@@ -1,5 +1,6 @@
 //! The application launcher on the scene: one `reprisekit::controls::launcher` panel centred on the output under the pointer, on the menu layer, fed every key press while open. On every change of the typed text it works out the calculator's answer (`search::calc_row`), ranks the Start menu's app index (`State::app_index`, by `search::rank_apps`) and finds settings pages (`search::rank_settings`). Enter on the answer copies it; a program starts as from the Start menu; a settings row opens the settings program on its page.
 //! From two typed characters it also searches the home folder for files through `search::FileSearch`, unless `[launcher] search_files` is off.
+//! Unless `[launcher] windows` is off it finds open windows on every desktop by title or program name (`search::rank_windows`); Enter brings one up as its task button would.
 //! The panel's tree in `layers.menu` is tagged `SceneOwner::Launcher` and holds the glass tree (its `Backdrop` under a glass look), then the buffer, which takes the pointer on the panel only: its shadow lets the pointer through.
 //! A right press or the menu key on a program or file row opens its context menu (`open_launcher_context`); picking a row of it closes the panel.
 //! `Action::Launcher` (Super+Space by default) opens it and its own bind closes it; `KeyRoute::Launcher` hands it every other press. Locking closes it.
@@ -7,6 +8,7 @@
 use std::path::PathBuf;
 
 use reprisekit::controls::launcher::{self, Event, FileRow, Hit, Key, Launcher, Pick, Row};
+use reprisekit::fuzzy;
 use reprisekit::look::panel;
 use reprisescene::{BufferId, Input, TreeId};
 use smithay::utils::Rectangle;
@@ -19,13 +21,16 @@ use crate::menuview::{MenuFrom, MenuKind};
 use crate::output::upload_scaled;
 use crate::raster::Rect;
 use crate::search::{
-    CALC_ICON, FileSearch, SearchOwner, Setting, calc_row, file_icon_name, file_row, rank_apps,
-    rank_settings,
+    CALC_ICON, FileSearch, SearchOwner, Setting, WindowName, calc_row, file_icon_name, file_row,
+    rank_apps, rank_settings, rank_windows, windows_first,
 };
+use crate::window::WindowId;
 
 pub struct LauncherView {
     pub model: Launcher,
     matches: Vec<usize>,
+    /// The windows the window rows show, in order.
+    windows: Vec<WindowId>,
     /// The answer the calculator's row copies, while it is shown.
     answer: Option<String>,
     settings: Vec<Setting>,
@@ -85,6 +90,7 @@ impl State {
         self.launcher = Some(LauncherView {
             model: Launcher::new(),
             matches: Vec::new(),
+            windows: Vec::new(),
             answer: None,
             settings: Vec::new(),
             search: FileSearch::new(),
@@ -242,7 +248,7 @@ impl State {
                     },
                 )
             }
-            Pick::Calc | Pick::Setting(_) => return,
+            Pick::Calc | Pick::Window(_) | Pick::Setting(_) => return,
         };
         self.close_menu();
         self.push_context_menu(at, items, kind, MenuFrom::Elsewhere);
@@ -266,10 +272,12 @@ impl State {
                     File(std::path::PathBuf, crate::desktop::FileFacts),
                     Copy(String),
                     Setting(Setting),
+                    Window(WindowId),
                 }
                 let launch = match pick {
                     Pick::Calc => v.answer.clone().map(Launch::Copy),
                     Pick::Setting(i) => v.settings.get(i).copied().map(Launch::Setting),
+                    Pick::Window(i) => v.windows.get(i).copied().map(Launch::Window),
                     Pick::App(i) => v
                         .matches
                         .get(i)
@@ -288,6 +296,7 @@ impl State {
                     Some(Launch::File(path, facts)) => self.open_found(&path, &facts),
                     Some(Launch::Copy(answer)) => self.clip_copy(&answer),
                     Some(Launch::Setting(s)) => self.open_setting(s),
+                    Some(Launch::Window(w)) => self.bring_up(w),
                     None => {}
                 }
             }
@@ -333,10 +342,16 @@ impl State {
     /// mid-typing is picked up by the next key.
     fn rerank_launcher(&mut self) {
         let scale = self.launcher_scale();
+        let candidates = if self.config.launcher_windows {
+            self.launcher_window_candidates()
+        } else {
+            Vec::new()
+        };
         let State {
             launcher,
             app_index,
             icons,
+            windows,
             ..
         } = self;
         let Some(v) = launcher.as_mut() else {
@@ -344,6 +359,19 @@ impl State {
         };
         let query = v.model.query().to_string();
         let px = 16 * scale;
+        let names: Vec<WindowName> = (candidates.iter())
+            .filter_map(|&id| windows.iter().find(|w| w.id == id))
+            .map(|w| {
+                let app_id = w.app_id();
+                let app = reprisefs::apps::entry_for_app_id(app_index, &app_id, |_| true)
+                    .map_or(app_id.clone(), |e| e.name.clone());
+                WindowName {
+                    title: w.title(),
+                    app,
+                }
+            })
+            .collect();
+        let found = rank_windows(&query, &names, launcher::MAX_WINDOWS);
         let calc = calc_row(&query);
         v.model.set_calc(calc.as_ref().map(|(name, _)| Row {
             name: name.clone(),
@@ -351,6 +379,18 @@ impl State {
         }));
         v.answer = calc.map(|(_, answer)| answer);
         let matches = rank_apps(&query, app_index, launcher::MAX_ROWS);
+        let best_app = (matches.first()).and_then(|&i| fuzzy::tier(&query, &app_index[i].name));
+        let first = windows_first(found.first().map(|h| h.1), best_app);
+        v.windows = found.iter().map(|&(i, _)| candidates[i]).collect();
+        let window_rows = (found.iter())
+            .map(|&(i, _)| Row {
+                name: names[i].title.clone(),
+                icon: (windows.iter().find(|w| w.id == candidates[i]))
+                    .and_then(|w| crate::icon::window_icon(icons, app_index, w, px))
+                    .map(std::sync::Arc::unwrap_or_clone),
+            })
+            .collect();
+        v.model.set_windows(window_rows, first);
         v.settings = rank_settings(&query, app_index, &matches, launcher::MAX_SETTINGS);
         let settings = v
             .settings
@@ -483,6 +523,7 @@ impl State {
             glass,
             text,
             caret,
+            windows,
             ..
         } = self;
         let Some(v) = launcher.as_mut() else {
@@ -502,6 +543,7 @@ impl State {
         let icon_name = match v.model.picked() {
             Some(Pick::Calc) => Some(CALC_ICON.to_string()),
             Some(Pick::Setting(i)) => v.settings.get(i).and_then(|s| s.icon(app_index)),
+            Some(Pick::Window(_)) => None,
             Some(Pick::App(i)) => v
                 .matches
                 .get(i)
@@ -521,7 +563,15 @@ impl State {
             None => None,
         }
         .unwrap_or_else(|| "system-search".to_string());
-        let icon = unread(icons, &icon_name, launcher::ICON * scale)
+        let window_icon = match v.model.picked() {
+            Some(Pick::Window(i)) => (v.windows.get(i))
+                .and_then(|&id| windows.iter().find(|w| w.id == id))
+                .and_then(|w| crate::icon::window_icon(icons, app_index, w, launcher::ICON * scale))
+                .map(std::sync::Arc::unwrap_or_clone),
+            _ => None,
+        };
+        let icon = window_icon
+            .or_else(|| unread(icons, &icon_name, launcher::ICON * scale))
             .unwrap_or_else(|| reprisekit::icon::fallback(&theme, launcher::ICON * scale));
         let mut canvas = launcher::draw(
             &theme,
@@ -537,6 +587,23 @@ impl State {
         self.ime_field_drawn(crate::caret::Editor::Launcher, spot, origin, scale);
         self.redraw_nodes(was, &[tree.into()]);
         crate::access::touch(self);
+    }
+
+    /// The windows the launcher can find, the most recently focused first: those
+    /// with a task button on any desktop.
+    fn launcher_window_candidates(&self) -> Vec<WindowId> {
+        let listed = |w: &crate::window::Window| {
+            w.mapped && !w.is_owned() && (w.minimized || !w.skips_taskbar())
+        };
+        let recent = self.focus_order.iter().rev().copied();
+        let rest = self.windows.iter().map(|w| w.id);
+        let mut out: Vec<WindowId> = Vec::new();
+        for id in recent.chain(rest) {
+            if !out.contains(&id) && self.win(id).is_some_and(listed) {
+                out.push(id);
+            }
+        }
+        out
     }
 
     pub fn launcher_access(&self) -> Option<reprisekit::access::Tree> {
@@ -609,6 +676,69 @@ mod tests {
         );
         let small = Rect::new(10, 20, 300, 100);
         assert_eq!(panel_origin(small, (420, 400)), (10, 20));
+    }
+
+    fn typed(h: &mut crate::harness::Harness, text: &str) {
+        let v = h.state.launcher.as_mut().expect("the launcher is open");
+        let event = v.model.key(Key::Char(EditKey::Insert(text.into())));
+        h.state.apply_launcher(event);
+    }
+
+    /// An editor minimized on desktop 2 and a terminal focused on desktop 1.
+    fn two_windows(h: &mut crate::harness::Harness) -> (crate::harness::TestClient, WindowId) {
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let editor = h.map_toplevel(&mut c, "org.example.Editor", 300, 200);
+        c.side.shells[editor.shell]
+            .toplevel
+            .set_title("notes.txt - Editor".into());
+        c.side.shells[editor.shell].surface.commit();
+        let term = h.map_toplevel(&mut c, "org.example.Term", 300, 200);
+        h.roundtrip(&mut c);
+        h.state.set_minimized(editor.id, true);
+        h.state.move_to_desktop(&[editor.id], 1);
+        h.state.focus_window(term.id);
+        (c, editor.id)
+    }
+
+    #[test]
+    fn typing_finds_an_open_window_and_enter_brings_it_up_on_its_desktop() {
+        let mut h = crate::harness::Harness::new();
+        let (_c, editor) = two_windows(&mut h);
+        h.state.toggle_launcher();
+        typed(&mut h, "notes");
+        let v = h.state.launcher.as_ref().unwrap();
+        assert_eq!(v.windows, [editor], "found by its title");
+        assert_eq!(v.model.picked(), Some(Pick::Window(0)));
+        h.state.apply_launcher(Event::Launch(Pick::Window(0)));
+        assert!(h.state.launcher.is_none(), "the launcher closes");
+        let win = h.state.win(editor).unwrap();
+        assert!(!win.minimized, "the window comes back");
+        assert_eq!(h.state.desktops.current, 1, "on its own desktop");
+        assert_eq!(h.state.focused, Some(editor));
+    }
+
+    #[test]
+    fn with_windows_turned_off_the_launcher_lists_none() {
+        let mut h = crate::harness::Harness::with_config(crate::config::Config {
+            base: repriseconf::config::Config {
+                launcher_windows: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let _c = two_windows(&mut h);
+        h.state.toggle_launcher();
+        typed(&mut h, "notes");
+        let v = h.state.launcher.as_ref().unwrap();
+        assert!(v.windows.is_empty());
+        assert!(
+            !v.model
+                .list
+                .items
+                .iter()
+                .any(|i| i == launcher::WINDOWS_HEADING)
+        );
     }
 
     #[test]

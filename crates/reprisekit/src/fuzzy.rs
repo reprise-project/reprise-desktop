@@ -59,6 +59,12 @@ pub fn score(query: &str, candidate: &str) -> Option<u32> {
     score_lowered(&lower(query), candidate)
 }
 
+/// How well `query` matches `candidate` without the length tie-break, to weigh
+/// matches against names of different lengths.
+pub fn tier(query: &str, candidate: &str) -> Option<u32> {
+    score(query, candidate).map(|s| s / 1024)
+}
+
 fn lower(query: &str) -> Vec<char> {
     query.chars().flat_map(char::to_lowercase).collect()
 }

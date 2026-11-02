@@ -170,6 +170,8 @@ pub struct Settings {
     pub debug_overlay_in_captures: bool,
     /// `[launcher] search_files`.
     pub launcher_files: bool,
+    /// `[launcher] windows`.
+    pub launcher_windows: bool,
     /// `[thumbnail_cache] enabled` and `max_mb`, the cap in MiB
     /// ([`repriseconf::ThumbnailCache::MAX_MB`]; the up-down clamps a value outside it).
     pub thumbnail_cache: bool,
@@ -458,6 +460,7 @@ impl Settings {
             debug_overlay: c.debug.overlay,
             debug_overlay_in_captures: c.debug.overlay_in_captures,
             launcher_files: c.launcher_files,
+            launcher_windows: c.launcher_windows,
             thumbnail_cache: repriseconf::ThumbnailCache::DEFAULT.enabled,
             thumbnail_max_mb: repriseconf::ThumbnailCache::DEFAULT.max_mb as i64,
 

@@ -423,13 +423,14 @@ fn the_launcher_page_geometry() {
     let p = Page::Launcher;
     assert_eq!(
         rect(&s, p, "launcher_search_group"),
-        Rect::new(20, 44, 358, 86)
+        Rect::new(20, 44, 358, 108)
     );
     assert_eq!(
         rect(&s, p, "launcher_search_note"),
         Rect::new(32, 66, 334, 26)
     );
     assert_eq!(rect(&s, p, "launcher_files"), Rect::new(32, 104, 13, 13));
+    assert_eq!(rect(&s, p, "launcher_windows"), Rect::new(32, 126, 13, 13));
     inside_page(&s, p);
 }
 
@@ -437,13 +438,13 @@ fn the_launcher_page_geometry() {
 fn launcher_values_go_in_and_come_back_out() {
     let want = Settings {
         launcher_files: false,
+        launcher_windows: false,
         ..Settings::default()
     };
     let s = with(&want);
-    assert_eq!(
-        s.pages[Page::Launcher.index()].checked("launcher_files"),
-        Some(false)
-    );
+    let page = &s.pages[Page::Launcher.index()];
+    assert_eq!(page.checked("launcher_files"), Some(false));
+    assert_eq!(page.checked("launcher_windows"), Some(false));
     let mut got = Settings::default();
     read_all(&s, &mut got);
     assert_eq!(got, want);
