@@ -62,7 +62,9 @@ pub struct Layout {
     pub menu: Rect,
     pub toolbar: Option<Rect>,
     pub address: Option<Rect>,
-    /// Top row of the line closing the rebar.
+    /// The tab strip under the rebar, with two tabs or more.
+    pub tabs: Option<Rect>,
+    /// Top row of the line closing the rebar and the tab strip.
     pub etch_y: i32,
     pub bar: Option<explorerbar::Layout>,
     pub tree: Option<Rect>,
@@ -95,6 +97,7 @@ pub fn layout(
     settings: &Settings,
     bar_width: i32,
     status_h: i32,
+    strip_h: i32,
     cm: &ControlMetrics,
 ) -> Layout {
     let client = Rect::new(0, 0, size.0.max(1), size.1.max(1));
@@ -119,7 +122,9 @@ pub fn layout(
         rects[next - 1]
     });
 
-    let etch_y = rebar_rect.bottom();
+    let tabs =
+        (strip_h > 0).then(|| Rect::new(client.x, rebar_rect.bottom(), client.width, strip_h));
+    let etch_y = rebar_rect.bottom() + strip_h;
     let top = etch_y + rm.closing;
     let status = settings
         .status_bar
@@ -177,6 +182,7 @@ pub fn layout(
         menu,
         toolbar,
         address,
+        tabs,
         etch_y,
         bar,
         tree,
@@ -335,6 +341,7 @@ pub fn draw(ex: &Explorer, c: &mut Canvas, ctx: &Ctx) {
         }
         draw_field(c);
     }
+    ex.draw_tabs(c, glass, ctx);
     rebar::draw_closing_line(
         c,
         &Paint {
@@ -417,6 +424,7 @@ pub fn access(ex: &Explorer, tree: &mut Tree, ctx: &Ctx) {
             ROOT,
         ));
     }
+    ex.access_tabs(tree, ctx);
     let mut folders = None;
     if let Some(bl) = &lay.bar {
         let pane = tree.push(
@@ -761,6 +769,7 @@ mod tests {
             &s,
             200,
             statusbar::HEIGHT,
+            0,
             &ControlMetrics::CLASSIC,
         );
         assert_eq!(lay.rebar, Rect::new(0, 1, 792, 80));
@@ -791,6 +800,7 @@ mod tests {
             &s,
             200,
             statusbar::HEIGHT,
+            0,
             &ControlMetrics::CLASSIC,
         );
         assert_eq!(lay.status, Some(Rect::new(0, 551, 792, 22)));
@@ -807,7 +817,7 @@ mod tests {
             ..Settings::default()
         };
         let cm = ControlMetrics::CLASSIC.grown(reprisekit::theme::TextUnits::new(22, 11));
-        let lay = layout(client(), &s, 200, statusbar::height(&cm), &cm);
+        let lay = layout(client(), &s, 200, statusbar::height(&cm), 0, &cm);
         assert_eq!(lay.menu, Rect::new(0, 3, 792, 42));
         assert_eq!(lay.toolbar, Some(Rect::new(0, 47, 792, 43)));
         assert_eq!(lay.address, Some(Rect::new(0, 92, 792, 44)));
@@ -827,6 +837,7 @@ mod tests {
             &s,
             200,
             statusbar::HEIGHT,
+            0,
             &ControlMetrics::CLASSIC,
         );
         assert_eq!(lay.rebar.height, 2 + 22 + 2 + 22);
@@ -846,6 +857,7 @@ mod tests {
             &bare,
             200,
             statusbar::HEIGHT,
+            0,
             &ControlMetrics::CLASSIC,
         );
         assert_eq!(lay.rebar.height, 24);
@@ -865,6 +877,7 @@ mod tests {
             &s,
             200,
             statusbar::HEIGHT,
+            0,
             &ControlMetrics::CLASSIC,
         );
         assert!(lay.bar.is_none() && lay.tree.is_none());
@@ -882,7 +895,7 @@ mod tests {
         };
         for (px, w, view_x) in [(17, 309, 324), (22, 400, 420)] {
             let cm = ControlMetrics::CLASSIC.grown(reprisekit::theme::TextUnits::new(px, 11));
-            let lay = layout(client(), &s, 200, statusbar::HEIGHT, &cm);
+            let lay = layout(client(), &s, 200, statusbar::HEIGHT, 0, &cm);
             assert_eq!(lay.tasks.expect("task pane").width, w, "{px} px text");
             assert_eq!(lay.view.inset(FIELD_PAD).x, view_x, "{px} px text");
         }
@@ -897,7 +910,7 @@ mod tests {
             status_bar: true,
             ..Settings::default()
         };
-        let lay = layout((792, 566), &s, 200, 23, &blue.look.controls());
+        let lay = layout((792, 566), &s, 200, 23, 0, &blue.look.controls());
         assert_eq!(lay.rebar, Rect::new(0, 0, 792, 86));
         assert_eq!(lay.menu, Rect::new(0, 0, 792, 22));
         assert_eq!(lay.toolbar, Some(Rect::new(0, 24, 792, 38)));
@@ -916,7 +929,7 @@ mod tests {
             status_bar: false,
             ..Settings::default()
         };
-        let lay = layout((792, 566), &s, 200, 23, &glass.look.controls());
+        let lay = layout((792, 566), &s, 200, 23, 0, &glass.look.controls());
         assert_eq!(lay.rebar, Rect::new(0, 0, 792, 78));
         assert_eq!(lay.menu, Rect::new(0, 0, 792, 22));
         assert_eq!(lay.toolbar, Some(Rect::new(0, 24, 792, 30)));
@@ -932,6 +945,7 @@ mod tests {
             &Settings::default(),
             300,
             statusbar::HEIGHT,
+            0,
             &ControlMetrics::CLASSIC,
         );
         assert_eq!(lay.bar.expect("bar").splitter.x, 300);
@@ -943,7 +957,7 @@ mod tests {
         let cm = reprisekit::theme::Theme::default()
             .with_text_size(200)
             .controls();
-        let lay = layout((1600, 900), &Settings::default(), 150, 23, &cm);
+        let lay = layout((1600, 900), &Settings::default(), 150, 23, 0, &cm);
         let bar = lay.bar.expect("bar");
         assert_eq!(bar.header.width, 300, "150 at 100% draws 300 px at 200%");
         assert_eq!(bar.splitter.x, 300);

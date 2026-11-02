@@ -434,6 +434,9 @@ pub fn item_menu(
         _ => m.row(bold("&Open", true), Command::Open),
     }
     if kind == ItemKind::Folder {
+        m.row(row("Open in New &Tab", true), Command::OpenInNewTab);
+    }
+    if kind == ItemKind::Folder {
         m.row(row("E&xplore", true), Command::Explore);
         if writable {
             m.row(row(TERMINAL, true), Command::OpenTerminal);

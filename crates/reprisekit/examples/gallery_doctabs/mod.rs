@@ -56,6 +56,13 @@ fn states() -> Vec<(&'static str, TabStrip)> {
             }),
         ),
         (
+            "+ alone",
+            with(&|s| {
+                s.adder_menu = false;
+                s.hot_adder = Some(AdderPart::Add);
+            }),
+        ),
+        (
             "many",
             TabStrip::document((0..12).map(|i| format!("shell {i}")).collect(), 3),
         ),

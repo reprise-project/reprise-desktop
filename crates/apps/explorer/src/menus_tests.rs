@@ -327,9 +327,11 @@ fn the_tree_menu_never_acts_on_the_views_selection() {
 fn a_folders_menu_explores_and_a_files_opens_with() {
     let s = MenuState::default();
     let m = item_menu(&s, ItemKind::Folder, false, &[], &[]);
-    assert_eq!(label(m.items(), 1), "Explore");
-    assert_eq!(m.command(&[1]), Command::Explore);
-    assert_eq!(label(m.items(), 3), "Sharing and Security...");
+    assert_eq!(label(m.items(), 1), "Open in New Tab");
+    assert_eq!(m.command(&[1]), Command::OpenInNewTab);
+    assert_eq!(label(m.items(), 2), "Explore");
+    assert_eq!(m.command(&[2]), Command::Explore);
+    assert_eq!(label(m.items(), 4), "Sharing and Security...");
     let m = item_menu(&s, ItemKind::File, false, &[("Notepad".into(), None)], &[]);
     assert_eq!(label(m.items(), 1), "Run as...");
     assert!(!enabled(m.items(), 1));
@@ -535,7 +537,7 @@ fn only_a_removable_drives_menu_has_eject() {
     ));
     assert!(matches!(rows[at - 1], MenuItem::Separator));
     assert!(matches!(rows[at + 1], MenuItem::Separator));
-    assert_eq!(label(rows, 2), "Sharing and Security...");
+    assert_eq!(label(rows, 3), "Sharing and Security...");
     assert_eq!(label(rows, at + 3), "Copy", "Cut then Copy follow Eject");
 }
 
@@ -674,10 +676,10 @@ fn open_in_terminal_shows_on_a_folder_and_the_background_of_a_place_on_disk() {
     let s = MenuState::default();
     let folder = item_menu(&s, ItemKind::Folder, false, &[], &[]);
     assert_eq!(
-        rows(&folder)[2],
+        rows(&folder)[3],
         ("Open in Terminal".into(), Command::OpenTerminal)
     );
-    assert!(enabled(folder.items(), 2));
+    assert!(enabled(folder.items(), 3));
     let back = background_menu(&s);
     assert_eq!(
         rows(&back)[4],

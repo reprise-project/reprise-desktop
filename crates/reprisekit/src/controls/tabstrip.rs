@@ -85,6 +85,8 @@ pub struct TabStrip {
     /// The lit close box or adder part is held down.
     pub held: bool,
     pub dragging: Option<Drag>,
+    /// A document strip's new-tab button has its menu part.
+    pub adder_menu: bool,
 }
 
 impl TabStrip {
@@ -111,6 +113,7 @@ impl TabStrip {
             hot_adder: None,
             held: false,
             dragging: None,
+            adder_menu: true,
         }
     }
 
@@ -429,7 +432,8 @@ pub fn doc_layout(
 ) -> DocLayout {
     let tab_h = u.len(TAB_H);
     let (min, max) = (u.len(DOC_MIN), u.len(DOC_MAX));
-    let adder_w = ADD_W + MENU_W;
+    let menu_w = if strip.adder_menu { MENU_W } else { 0 };
+    let adder_w = ADD_W + menu_w;
     let room = area.width - 4 - adder_w;
     let n = strip.labels.len() as i32;
     let (w, odd) = match n {
@@ -474,7 +478,7 @@ pub fn doc_layout(
         tabs,
         closes,
         add: Rect::new(ax, top, ADD_W, tab_h),
-        menu: Rect::new(ax + ADD_W, top, MENU_W, tab_h),
+        menu: Rect::new(ax + ADD_W, top, menu_w, tab_h),
     }
 }
 
@@ -600,11 +604,13 @@ pub fn doc_access(
         })
         .collect();
     tree.push(list, "add", access::named(Role::Button, l.add, "New Tab"));
-    tree.push(
-        list,
-        "menu",
-        access::named(Role::Button, l.menu, "New Tab Menu"),
-    );
+    if !l.menu.is_empty() {
+        tree.push(
+            list,
+            "menu",
+            access::named(Role::Button, l.menu, "New Tab Menu"),
+        );
+    }
     tabs
 }
 
@@ -1140,6 +1146,35 @@ mod tests {
         assert_eq!(buttons, 4, "two close boxes, + and the menu part");
     }
 
+    #[test]
+    fn a_plain_adder_has_no_menu_part_and_gives_its_room_to_the_tabs() {
+        let (text, px) = doc_text();
+        let area = Rect::new(0, 0, 400, doc_height(TextUnits::ONE));
+        let split = TabStrip::document(vec![String::new(); 3], 0);
+        let plain = TabStrip {
+            adder_menu: false,
+            ..split.clone()
+        };
+        let ls = doc_layout(&text, px, &split, area, TextUnits::ONE);
+        let lp = doc_layout(&text, px, &plain, area, TextUnits::ONE);
+        assert!(lp.menu.is_empty());
+        assert_eq!(lp.add.width, ls.add.width);
+        assert!(
+            lp.tabs[1].width > ls.tabs[1].width,
+            "the tabs share the menu's room"
+        );
+        let y = lp.add.y + 5;
+        assert_eq!(doc_hit(&lp, lp.add.right() + 2, y), DocHit::Empty);
+        assert_eq!(doc_hit(&lp, lp.add.x + 2, y), DocHit::Add);
+        let mut tree = Tree::new(access::node(Role::Window, area));
+        doc_access(&plain, &lp, &mut tree, access::ROOT, "tabs");
+        let buttons = tree
+            .nodes()
+            .filter(|(_, n)| n.role() == Role::Button)
+            .count();
+        assert_eq!(buttons, 4, "three close boxes and +");
+    }
+
     /// One strip per state, labels empty so the hashes hold on any font.
     fn doc_scenes() -> Vec<(&'static str, TabStrip)> {
         let base = TabStrip::document(vec![String::new(); 3], 0);
@@ -1181,6 +1216,14 @@ mod tests {
                         grab: 5,
                         x: 70,
                     })
+                }),
+            ),
+            ("plain adder", with(&|s| s.adder_menu = false)),
+            (
+                "plain adder hot",
+                with(&|s| {
+                    s.adder_menu = false;
+                    s.hot_adder = Some(AdderPart::Add);
                 }),
             ),
         ]
