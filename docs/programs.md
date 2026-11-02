@@ -164,6 +164,28 @@ background, and a large picture is shown from a copy scaled to the window.
 The status bar shows the name, the place in the folder, the size in pixels,
 the file size and the zoom.
 
+## Paint
+
+A picture editor for quick drawings and touch-ups. The tool box holds free-form and rectangle
+select, eraser, fill, pick color, magnifier, pencil, brush, airbrush, text, line, curve,
+rectangle, polygon, ellipse and rounded rectangle; the well under it sets the line width, brush
+tip, eraser or spray size, outline and fill, or whether a selection covers what is under it. The
+left button draws in the first color and the right in the second; a left or right click on the
+color box picks them. Shift keeps lines level or at 45° and shapes square.
+
+A selection moves with the pointer, Ctrl drags a copy, and Cut, Copy and Paste carry pictures on
+the clipboard as PNG; a pasted picture larger than the canvas grows it. The text tool types into
+a box with the font, size and bold set in the Fonts toolbar, and the text goes on the picture when
+you click outside the box. The Image menu flips, rotates, resizes and skews, inverts the colors,
+sets the canvas size (Attributes), clears the picture and crops it to the selection. View zooms
+from 1x to 8x, with a pixel grid from 4x (Ctrl+G turns it off). Ctrl+Z steps back through the
+last 50 changes, fewer when they are large.
+
+Paint opens PNG, JPEG, BMP, GIF, WebP and the other formats Reprise reads, and saves PNG, JPEG
+(the Quality box in Save As) and BMP; transparent pixels open on white. Set as Desktop Background
+saves the picture and makes it the wallpaper. Paint is offered for pictures in Open With without
+becoming their default.
+
 ## Terminal
 
 A tabbed terminal, `reprise-terminal`. It opens in the directory it was
