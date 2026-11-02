@@ -291,6 +291,7 @@ where
                 }
                 let cfg = crate::darkmode::apply(&mut state.dark_mode, cfg, &table);
                 state.config_file = table;
+                reprisefs::binage::poke();
                 reload(state, cfg);
             }
         })

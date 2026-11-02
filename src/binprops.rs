@@ -10,14 +10,15 @@
 //! tab live. A setting is "Do not move files to the Recycle Bin" (Delete
 //! erases on that drive) and the trackbar, the trash's cap as 0 to 100% of
 //! the drive, greyed while files are not moved. "Display delete confirmation
-//! dialog" is global.
+//! dialog" and "Delete items older than N days" are global.
 
 use crate::dialog::{Dialog, FormDialog, Kind, Outcome, Placement, Style};
 use crate::raster::Rect;
 use crate::text::Align;
-use reprisefs::bincap::{Policy, Rule};
+use reprisefs::bincap::{self, Policy, Rule};
 use reprisekit::controls::form::{Control, Event, Form, Item};
 use reprisekit::controls::propsheet::{self, PropSheet};
+use reprisekit::controls::updown::UpDown;
 use reprisekit::trackbar::TrackBar;
 use serde::Deserialize;
 use std::path::Path;
@@ -55,11 +56,15 @@ pub struct BinSheet {
     pub pending: Policy,
     pub applied: Policy,
     pub drives: Vec<Drive>,
+    /// The days box's number, kept while the box is unticked and `older_than_days` is 0.
+    pub days: u16,
 }
 
 const SIZE: (i32, i32) = (338, 376);
 const STOPS: usize = 101;
 const TICK_EVERY: usize = 10;
+/// What the days box offers before a number was picked.
+const DEFAULT_DAYS: u16 = 30;
 
 /// The "Do not move files" pair, trackbar, percentage and caption (one label
 /// per line, at most two) both pages share, with the page's own x for each
@@ -117,10 +122,15 @@ fn size_controls(
 
 impl BinSheet {
     pub fn new(settings: Policy, drives: Vec<Drive>) -> BinSheet {
+        let days = match settings.older_than_days {
+            0 => DEFAULT_DAYS,
+            d => d,
+        };
         BinSheet {
             pending: settings.clone(),
             applied: settings,
             drives,
+            days,
         }
     }
 
@@ -155,6 +165,23 @@ impl BinSheet {
             Item::check("confirm", 30, 242, "&Display delete confirmation dialog")
                 .checked(p.confirm),
         );
+        let aging = p.older_than_days > 0;
+        let mut days = UpDown::new(i32::from(self.days), 1, i32::from(bincap::MAX_DAYS));
+        days.enabled = aging;
+        items.extend([
+            Item::check("aging", 30, 266, "Delete items &older than").checked(aging),
+            Item::new(
+                "days",
+                Rect::new(
+                    190,
+                    262,
+                    reprisekit::controls::updown::WIDTH,
+                    reprisekit::controls::updown::HEIGHT,
+                ),
+                Control::UpDown(days),
+            ),
+            Item::label("days_l", Rect::new(246, 266, 40, 13), "days").enabled(aging),
+        ]);
         Form::new(items)
     }
 
@@ -346,6 +373,26 @@ pub fn event(fd: &mut FormDialog, page: usize, ev: Event) -> Outcome {
             match id {
                 "independent" | "all" => sheet.pending.independent = checked("independent"),
                 "confirm" => sheet.pending.confirm = checked("confirm"),
+                "aging" => {
+                    sheet.pending.older_than_days = match checked("aging") {
+                        true => sheet.days,
+                        false => 0,
+                    }
+                }
+                "days" => {
+                    if let Some(Control::UpDown(u)) = form.item("days").map(|i| &i.control) {
+                        sheet.days = u.value().clamp(1, i32::from(bincap::MAX_DAYS)) as u16;
+                    }
+                    if sheet.pending.older_than_days > 0 {
+                        sheet.pending.older_than_days = sheet.days;
+                    }
+                    // The pages stay: rebuilding them would drop the digits being typed.
+                    let dirty = sheet.dirty();
+                    if let Some(s) = fd.sheet_mut() {
+                        s.set_apply_enabled(dirty);
+                    }
+                    return Outcome::Redraw;
+                }
                 "no_bin" => {
                     if let Some(r) = sheet.rule_mut(page) {
                         r.remove_immediately = checked("no_bin");
@@ -852,6 +899,38 @@ mod tests {
             }
         );
         assert_eq!(event(fd, 0, Event::Cancel), Outcome::Close);
+    }
+
+    /// "Delete items older than" turns the days box on at 30; its arrows step the days, which the
+    /// box keeps while unticked.
+    #[test]
+    fn the_age_box_sets_the_days_old_items_are_kept() {
+        let mut d = dialog(sheet(), (0, 0), "user-trash-full");
+        let days = |d: &Dialog| match &d.form().unwrap().pages()[0].item("days").unwrap().control {
+            Control::UpDown(u) => (u.value(), u.enabled),
+            _ => panic!(),
+        };
+        assert_eq!(days(&d), (30, false), "greyed at 30 while off");
+        press(&mut d, 0, "aging", Key::Space);
+        assert_eq!(sheet_of(&mut d).pending.older_than_days, 30);
+        assert_eq!(days(&d), (30, true));
+        assert_eq!(press(&mut d, 0, "days", Key::Up), Outcome::Redraw);
+        assert_eq!(sheet_of(&mut d).pending.older_than_days, 31);
+        press(&mut d, 0, "aging", Key::Space);
+        assert_eq!(sheet_of(&mut d).pending.older_than_days, 0);
+        assert_eq!(days(&d), (31, false));
+        let fd = d.form_mut().unwrap();
+        let Outcome::BinSettings { settings, .. } = event(fd, 0, Event::Default) else {
+            panic!()
+        };
+        assert_eq!(settings.older_than_days, 0);
+
+        let set = Policy {
+            older_than_days: 7,
+            ..Policy::default()
+        };
+        let d = dialog(BinSheet::new(set, vec![]), (0, 0), "user-trash");
+        assert_eq!(days(&d), (7, true));
     }
 
     /// The trackbar's keys move the cap a percent at a time, ten with Page Down; the label follows.

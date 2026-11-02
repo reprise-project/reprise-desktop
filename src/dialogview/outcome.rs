@@ -243,6 +243,7 @@ impl State {
             }
             Outcome::BinSettings { settings, close } => {
                 crate::configwrite::save_recycle_bin(&self.config_path, settings, true);
+                reprisefs::binage::poke();
                 if close {
                     self.close_dialog();
                 } else {
