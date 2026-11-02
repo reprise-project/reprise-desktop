@@ -22,6 +22,8 @@ mod gallery_miniview;
 mod gallery_notes;
 #[path = "gallery_p3/mod.rs"]
 mod gallery_p3;
+#[path = "gallery_paint/mod.rs"]
+mod gallery_paint;
 #[path = "gallery_parts/mod.rs"]
 mod gallery_parts;
 #[path = "gallery_pathcomplete/mod.rs"]
@@ -110,6 +112,10 @@ fn main() {
         write_preview(
             &gallery_power::render(n.max(1)),
             &format!("reprisekit-gallery-power@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_paint::render(n.max(1)),
+            &format!("reprisekit-gallery-paint@{}.png", n.max(1)),
         );
         write_preview(
             &gallery_doctabs::render(n.max(1)),
@@ -334,6 +340,7 @@ fn main() {
         &gallery_miniview::render(1),
         "reprisekit-gallery-mini-view@1.png",
     );
+    write_preview(&gallery_paint::render(1), "reprisekit-gallery-paint@1.png");
     if with_blue {
         write_preview(
             &gallery_keys::launcher_windows(1),
