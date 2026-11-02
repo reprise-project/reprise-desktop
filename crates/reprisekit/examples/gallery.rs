@@ -30,6 +30,8 @@ mod gallery_parts;
 mod gallery_pathcomplete;
 #[path = "gallery_power/mod.rs"]
 mod gallery_power;
+#[path = "gallery_programs/mod.rs"]
+mod gallery_programs;
 #[path = "gallery_rename/mod.rs"]
 mod gallery_rename;
 #[path = "gallery_widgets/mod.rs"]
@@ -144,6 +146,10 @@ fn main() {
         write_preview(
             &gallery_fonts::render(n.max(1)),
             &format!("reprisekit-gallery-fonts@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_programs::calculator(n.max(1)),
+            &format!("reprisekit-gallery-calculator@{}.png", n.max(1)),
         );
         write_preview(
             &render_copy_progress(true, n.max(1)),
@@ -335,6 +341,10 @@ fn main() {
     );
     write_preview(&gallery_notes::render(1), "reprisekit-gallery-notes@1.png");
     write_preview(&gallery_fonts::render(1), "reprisekit-gallery-fonts@1.png");
+    write_preview(
+        &gallery_programs::calculator(1),
+        "reprisekit-gallery-calculator@1.png",
+    );
     write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
     write_preview(
         &gallery_miniview::render(1),

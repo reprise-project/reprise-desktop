@@ -140,9 +140,9 @@ pub fn rank_settings(
 /// The answer row's text and what Enter copies: a sum (`= 14`, `14`) or a unit conversion
 /// (`5 km = 3.10686 mi`, `3.10686`).
 pub fn calc_row(query: &str) -> Option<(String, String)> {
-    match crate::calc::answer(query) {
+    match reprisekit::calc::answer(query) {
         Some(answer) => Some((format!("= {answer}"), answer)),
-        None => crate::units::answer(query),
+        None => reprisekit::units::answer(query),
     }
 }
 
