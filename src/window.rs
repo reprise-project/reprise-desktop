@@ -222,6 +222,8 @@ pub struct Window {
     pub activate_on_map: bool,
     /// The launch that let this window take focus at map, returned if it withdraws still focused.
     pub launch: Option<crate::mapfocus::Launch>,
+    /// The xkb group last active while it had the keyboard (`[keyboard] layout_per_window`).
+    pub layout: Option<u32>,
     /// Set to the current desktop at each map; a dialog goes with its owner.
     pub desktop: usize,
     pub sticky: bool,

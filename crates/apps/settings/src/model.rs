@@ -256,6 +256,7 @@ pub struct Settings {
     pub kb_options: String,
     pub repeat_rate: i64,
     pub repeat_delay: i64,
+    pub layout_per_window: bool,
     /// `[shortcut_overlay] enabled` and `delay_ms`.
     pub shortcut_overlay: bool,
     pub shortcut_overlay_ms: i64,
@@ -544,6 +545,7 @@ impl Settings {
             kb_options: c.keyboard.options.clone(),
             repeat_rate: c.keyboard.repeat_rate.into(),
             repeat_delay: c.keyboard.repeat_delay.into(),
+            layout_per_window: c.keyboard.layout_per_window,
             shortcut_overlay: c.shortcut_overlay.enabled,
             shortcut_overlay_ms: c.shortcut_overlay.delay_ms.into(),
 

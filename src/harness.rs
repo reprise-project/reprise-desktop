@@ -931,6 +931,8 @@ pub struct ClientSide {
     pub shells: Vec<Shell>,
     /// Each key event the keyboard heard: its evdev code and whether it went down.
     pub keys: Vec<(u32, bool)>,
+    /// The layout group the last `wl_keyboard.modifiers` named.
+    pub group: u32,
     /// Each button event the pointer heard: its evdev code and whether it went down.
     pub buttons: Vec<(u32, bool)>,
     /// Each `reprise_sandboxed_v1` event heard: an app id for `app`, `None` for `done`.
@@ -1129,6 +1131,7 @@ impl wc::Dispatch<wl_keyboard::WlKeyboard, ()> for ClientSide {
                 st.keyboard_focus.take_if(|f| *f == surface);
             }
             wl_keyboard::Event::Keymap { fd, size, .. } => st.keymap = Some((fd, size)),
+            wl_keyboard::Event::Modifiers { group, .. } => st.group = group,
             _ => {}
         }
     }

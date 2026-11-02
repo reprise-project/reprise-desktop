@@ -1121,6 +1121,9 @@ impl Config {
                 }
                 cfg.keyboard.repeat_delay = v;
             }
+            if let Some(v) = k.layout_per_window {
+                cfg.keyboard.layout_per_window = v;
+            }
         }
         if let Some(m) = file.mouse {
             apply_pointer(

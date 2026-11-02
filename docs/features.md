@@ -469,7 +469,8 @@ are.
 ## Input
 
 - **Keyboard layouts,** switched with Left Alt+Shift or from the layout
-  square in the tray.
+  square in the tray. With `[keyboard] layout_per_window`, each window
+  keeps the layout it last had and a new one starts on the first.
 - **Shortcut sheet.** Hold Super on its own for a second and a sheet lists
   every shortcut in force, yours and programs' included, grouped as windows,
   desktops, launching, screenshots and so on. Let go and it's gone; press
