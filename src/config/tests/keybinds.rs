@@ -120,6 +120,7 @@ fn action_names_round_trip() {
         "terminal",
         "close",
         "cycle",
+        "cycle-app",
         "flip",
         "exit",
         "maximize",

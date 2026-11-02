@@ -184,9 +184,43 @@ impl State {
 
     pub fn open_switcher(&mut self, mods: u32) {
         let entries = self.switch_entries();
-        let Some(selected) = self.switcher_start(entries.len()) else {
-            return;
+        if let Some(selected) = self.switcher_start(entries.len()) {
+            self.open_switcher_on(mods, entries, selected);
+        }
+    }
+
+    /// The windows of the focused window's app in `switch_entries` order, the focused one first;
+    /// empty when no window has the keyboard or its app id is empty.
+    pub fn app_switch_entries(&self) -> Vec<Entry> {
+        let Some(app) = (self.focused.and_then(|w| self.win(w)))
+            .map(|w| w.app_id())
+            .filter(|a| !a.is_empty())
+        else {
+            return Vec::new();
         };
+        let same = |w| self.win(w).is_some_and(|x| x.app_id() == app);
+        (self.switch_entries().into_iter())
+            .filter(|e| matches!(*e, Entry::Window(w) if same(w)))
+            .collect()
+    }
+
+    /// The `cycle-app` bind: the panel over `app_switch_entries` on the next window, the last with
+    /// `backwards`; a switch straight there for a bind with no modifier to hold. Nothing with one
+    /// window.
+    pub fn cycle_app(&mut self, mods: u32, backwards: bool) {
+        let entries = self.app_switch_entries();
+        if entries.len() < 2 {
+            return;
+        }
+        let selected = if backwards { entries.len() - 1 } else { 1 };
+        if mods == 0 {
+            self.switch_to(Some(entries[selected]));
+        } else {
+            self.open_switcher_on(mods, entries, selected);
+        }
+    }
+
+    fn open_switcher_on(&mut self, mods: u32, entries: Vec<Entry>, selected: usize) {
         // The panel takes over: a drag or held button under way ends
         // without its release.
         self.cancel_interaction();
@@ -820,7 +854,7 @@ impl State {
 
 #[cfg(test)]
 mod tests {
-    use crate::harness::Harness;
+    use crate::harness::{Harness, TestClient};
 
     type Step = fn(&mut crate::compositor::State);
 
@@ -853,5 +887,119 @@ mod tests {
                 );
             }
         }
+    }
+
+    const ALT: u32 = 56;
+    const SHIFT: u32 = 42;
+    const GRAVE: u32 = 41;
+
+    /// Alt held, the key above Tab tapped `taps` times (with Shift held when `shift`), Alt let go.
+    fn alt_grave(h: &mut Harness, taps: usize, shift: bool) {
+        h.key(ALT, true);
+        if shift {
+            h.key(SHIFT, true);
+        }
+        for _ in 0..taps {
+            h.key(GRAVE, true);
+            h.key(GRAVE, false);
+        }
+        if shift {
+            h.key(SHIFT, false);
+        }
+        h.key(ALT, false);
+    }
+
+    /// Three "note" windows and a "term" one, mapped as note 1, term, note 2, note 3: note 3 has
+    /// the keyboard.
+    fn notes(layout: &str) -> (Harness, TestClient, [crate::window::WindowId; 3]) {
+        let text = format!("[keyboard]\nlayout = \"{layout}\"\n");
+        let mut h = Harness::with_config(crate::config::Config::parse(&text).unwrap());
+        h.state.apply_keyboard();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let n1 = h.map_toplevel(&mut c, "note", 300, 200).id;
+        h.map_toplevel(&mut c, "term", 300, 200);
+        let n2 = h.map_toplevel(&mut c, "note", 300, 200).id;
+        let n3 = h.map_toplevel(&mut c, "note", 300, 200).id;
+        h.dispatch();
+        assert_eq!(h.state.focused, Some(n3));
+        (h, c, [n1, n2, n3])
+    }
+
+    #[test]
+    fn alt_grave_cycles_the_focused_apps_windows_most_recent_first() {
+        let (mut h, _c, [n1, n2, n3]) = notes("us");
+        h.key(ALT, true);
+        h.key(GRAVE, true);
+        let panel = h.state.switcher.panel.as_ref().expect("the panel opens");
+        assert_eq!(
+            panel.entries,
+            [n3, n2, n1].map(super::Entry::Window),
+            "the note windows alone, most recently focused first"
+        );
+        assert_eq!(panel.selected, 1);
+        h.key(GRAVE, false);
+        h.key(ALT, false);
+        assert!(h.state.switcher.panel.is_none());
+        assert_eq!(h.state.focused, Some(n2));
+
+        alt_grave(&mut h, 1, false);
+        assert_eq!(h.state.focused, Some(n3), "back to the one before");
+        alt_grave(&mut h, 2, false);
+        assert_eq!(h.state.focused, Some(n1), "two taps reach the third");
+    }
+
+    #[test]
+    fn shift_alt_grave_cycles_backwards() {
+        let (mut h, _c, [n1, _, n3]) = notes("us");
+        alt_grave(&mut h, 1, true);
+        assert_eq!(h.state.focused, Some(n1), "Shift opens on the least recent");
+        h.key(ALT, true);
+        h.key(GRAVE, true);
+        h.key(SHIFT, true);
+        h.key(GRAVE, true);
+        let panel = h
+            .state
+            .switcher
+            .panel
+            .as_ref()
+            .expect("the panel stays open");
+        assert_eq!(panel.selected, 0, "Shift steps back to the first");
+        h.key(GRAVE, false);
+        h.key(SHIFT, false);
+        h.key(ALT, false);
+        assert_eq!(h.state.focused, Some(n1));
+        alt_grave(&mut h, 1, false);
+        assert_eq!(
+            h.state.focused,
+            Some(n3),
+            "forward again: the one focused before"
+        );
+    }
+
+    #[test]
+    fn alt_grave_is_the_key_above_tab_on_a_layout_without_grave_there() {
+        let (mut h, _c, [_, n2, _]) = notes("hu");
+        alt_grave(&mut h, 1, false);
+        assert_eq!(h.state.focused, Some(n2));
+    }
+
+    #[test]
+    fn alt_grave_with_one_window_of_the_app_does_nothing() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let term = h.map_toplevel(&mut c, "term", 300, 200).id;
+        let note = h.map_toplevel(&mut c, "note", 300, 200).id;
+        h.dispatch();
+        h.key(ALT, true);
+        h.key(GRAVE, true);
+        assert!(h.state.switcher.panel.is_none(), "no panel for one window");
+        h.key(GRAVE, false);
+        h.key(ALT, false);
+        assert_eq!(h.state.focused, Some(note));
+        h.state.focus_window(term);
+        alt_grave(&mut h, 1, false);
+        assert_eq!(h.state.focused, Some(term));
     }
 }

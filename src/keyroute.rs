@@ -30,6 +30,9 @@ pub struct KeyPress {
     pub lower: Vec<u32>,
     pub mods: u32,
     pub pressed: bool,
+    /// The keysym the key's place stands for whatever the layout gives it (`keys::place_key_for`),
+    /// when not among `lower`: binds match it only when no `lower` keysym is bound.
+    pub place: Option<u32>,
 }
 
 impl KeyPress {
@@ -607,7 +610,7 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
 /// A press in the open switcher: Escape cancels it, Tab or a switcher's
 /// bind steps it; anything else (the arrows too) is swallowed.
 fn switcher_key(k: &KeyPress, binds: &[Keybind]) -> KeyRoute {
-    for &lower in &k.lower {
+    for &lower in k.lower.iter().chain(&k.place) {
         if lower == KEY_Escape {
             return KeyRoute::SwitcherCancel;
         }
@@ -618,10 +621,10 @@ fn switcher_key(k: &KeyPress, binds: &[Keybind]) -> KeyRoute {
     KeyRoute::Swallow
 }
 
-/// Whether a bind's action opens a switcher: `cycle` the panel, `flip`
-/// the 3D one.
+/// Whether a bind's action opens a switcher: `cycle` the panel, `cycle-app`
+/// the panel with the focused app's windows, `flip` the 3D one.
 fn opens_switcher(a: &Action) -> bool {
-    matches!(a, Action::Cycle | Action::Flip)
+    matches!(a, Action::Cycle | Action::CycleApp | Action::Flip)
 }
 
 /// The switcher bind `k` matches, as a route, unless a Welcome panel has
@@ -695,6 +698,7 @@ pub fn runs_during_drag(a: &Action) -> bool {
     matches!(
         a,
         Action::Cycle
+            | Action::CycleApp
             | Action::Flip
             | Action::StartMenu
             | Action::Launcher
@@ -755,6 +759,7 @@ pub fn opens_surface(a: &Action) -> bool {
             | Action::SnapLayouts
             | Action::Overview
             | Action::Cycle
+            | Action::CycleApp
             | Action::Flip
             | Action::ScreenshotRegion
             | Action::ColorPicker
@@ -790,15 +795,35 @@ fn desktop_close(mut actions: Vec<Action>, modes: &Modes) -> Vec<Action> {
 }
 
 fn bound(k: &KeyPress, binds: &[Keybind]) -> Vec<Action> {
-    k.lower
-        .iter()
-        .filter_map(|&lower| {
-            binds
-                .iter()
-                .find(|b| !b.is_chord() && b.mods == k.mods && b.keysym == lower)
-                .map(|b| b.action.clone())
-        })
+    let on = |mods: u32, sym: u32| {
+        binds
+            .iter()
+            .find(|b| !b.is_chord() && b.mods == mods && b.keysym == sym)
+    };
+    let found: Vec<Action> = (k.lower.iter())
+        .filter_map(|&lower| on(k.mods, lower).map(|b| b.action.clone()))
+        .collect();
+    if !found.is_empty() {
+        return found;
+    }
+    if let Some(b) = k.place.and_then(|p| on(k.mods, p)) {
+        return vec![b.action.clone()];
+    }
+    // Shift added to a bind that `reverses_with_shift` runs it backwards.
+    if k.mods & MOD_SHIFT == 0 {
+        return Vec::new();
+    }
+    let unshifted = k.mods & !MOD_SHIFT;
+    (k.lower.iter().chain(&k.place))
+        .find_map(|&sym| on(unshifted, sym).filter(|b| reverses_with_shift(&b.action)))
+        .map(|b| b.action.clone())
+        .into_iter()
         .collect()
+}
+
+/// Whether a bind's action also runs with Shift added to its keys, backwards.
+pub fn reverses_with_shift(a: &Action) -> bool {
+    *a == Action::CycleApp
 }
 
 /// The global shortcuts whose chord is `k`.
