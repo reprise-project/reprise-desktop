@@ -391,6 +391,7 @@ fn a_launcher_has_paste_under_copy_and_no_open_with() {
             "Cut",
             "Copy",
             "Paste",
+            "Copy as Path",
             "",
             "Create Shortcut",
             "Delete",
@@ -541,7 +542,7 @@ fn only_a_removable_drives_menu_has_eject() {
     assert_eq!(label(rows, at + 3), "Copy", "Cut then Copy follow Eject");
 }
 
-/// A Recycle Bin item's menu: Restore, greyed Cut, Delete (for good), then
+/// A Recycle Bin item's menu: Restore, greyed Cut and Copy as Path, Delete (for good), then
 /// Properties as the bold default.
 #[test]
 fn a_recycle_bin_items_menu_is_restore_cut_delete_properties() {
@@ -556,21 +557,54 @@ fn a_recycle_bin_items_menu_is_restore_cut_delete_properties() {
     let labels: Vec<&str> = (0..rows.len()).map(|i| label(rows, i)).collect();
     assert_eq!(
         labels,
-        ["Restore", "", "Cut", "", "Delete", "", "Properties"]
+        [
+            "Restore",
+            "",
+            "Cut",
+            "Copy as Path",
+            "",
+            "Delete",
+            "",
+            "Properties"
+        ]
     );
     assert_eq!(m.command(&[0]), Command::Restore);
     assert!(enabled(rows, 0));
     assert!(!enabled(rows, 2), "Cut greys");
-    assert!(enabled(rows, 4));
-    assert_eq!(m.command(&[4]), Command::Delete { erase: true });
-    assert_eq!(m.command(&[6]), Command::Properties);
-    assert!(matches!(rows[6], MenuItem::Entry { bold: true, .. }));
-    for (key, want) in [('e', 0), ('r', 6)] {
+    assert!(
+        !enabled(rows, 3),
+        "Copy as Path greys: the item has no path of its own"
+    );
+    assert!(enabled(rows, 5));
+    assert_eq!(m.command(&[5]), Command::Delete { erase: true });
+    assert_eq!(m.command(&[7]), Command::Properties);
+    assert!(matches!(rows[7], MenuItem::Entry { bold: true, .. }));
+    for (key, want) in [('e', 0), ('r', 7)] {
         assert_eq!(
             reprisekit::controls::menu::rows_for_key(rows, key).next(),
             Some(want),
             "bin item menu + {key}"
         );
+    }
+}
+
+/// Copy as Path sits under a file's Copy (under Paste for a folder), live only when the selection has local paths.
+#[test]
+fn copy_as_path_follows_copy_and_greys_without_local_paths() {
+    for local in [true, false] {
+        let s = MenuState {
+            selection: 1,
+            local_paths: local,
+            ..Default::default()
+        };
+        let m = item_menu(&s, ItemKind::File, false, &[], &[]);
+        let rows = m.items();
+        let copy = (0..rows.len())
+            .find(|&i| label(rows, i) == "Copy")
+            .expect("Copy");
+        assert_eq!(label(rows, copy + 1), "Copy as Path");
+        assert_eq!(m.command(&[copy + 1]), Command::CopyAsPath);
+        assert_eq!(enabled(rows, copy + 1), local);
     }
 }
 

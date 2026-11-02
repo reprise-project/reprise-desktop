@@ -78,6 +78,37 @@ fn shell_quote_wraps_in_single_quotes_and_escapes_them() {
 }
 
 #[test]
+fn path_lines_quote_only_paths_a_shell_would_split_or_expand() {
+    let paths = [
+        Path::new("/home/u/notes-2.txt"),
+        Path::new("/home/u/Café/été.txt"),
+        Path::new("/home/u/My Documents/a.txt"),
+        Path::new("/home/u/a&b(1).txt"),
+        Path::new("/home/u/it's"),
+        Path::new("/home/u/say \"$HOME\" `x` \\"),
+        Path::new("/home/u/*.c"),
+    ];
+    assert_eq!(
+        path_lines(paths),
+        [
+            "/home/u/notes-2.txt",
+            "/home/u/Café/été.txt",
+            "\"/home/u/My Documents/a.txt\"",
+            "\"/home/u/a&b(1).txt\"",
+            "\"/home/u/it's\"",
+            "\"/home/u/say \\\"\\$HOME\\\" \\`x\\` \\\\\"",
+            "\"/home/u/*.c\"",
+        ]
+        .join("\n")
+    );
+    assert_eq!(
+        path_lines([Path::new("/home/u/a\u{a0}b")]),
+        "\"/home/u/a\u{a0}b\""
+    );
+    assert_eq!(path_lines(std::iter::empty()), "");
+}
+
+#[test]
 fn zip_argv_runs_bsdtar() {
     assert_eq!(
         zip_argv(

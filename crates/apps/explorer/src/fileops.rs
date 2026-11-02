@@ -174,6 +174,34 @@ impl Explorer {
         self.clipboard_paths(cut, paths, ctx)
     }
 
+    /// Copy as Path: the selection's paths as text, when every one is a local path.
+    pub fn copy_as_path(&self) -> Reply {
+        let Some(items) = self.selected_local() else {
+            return Reply::none();
+        };
+        Reply {
+            copy: Some(reprisefs::ops::path_lines(
+                items.iter().map(|it| it.path.as_path()),
+            )),
+            ..Default::default()
+        }
+    }
+
+    /// The selected items, when there are some and each stands at a path of its own: an item in
+    /// the Recycle Bin or an unmounted volume (listed by its device) has none to copy.
+    pub(crate) fn selected_local(&self) -> Option<Vec<&reprisefs::listing::Item>> {
+        let items: Vec<_> = (self.sv.selection.set.iter())
+            .filter_map(|&i| self.items.get(i))
+            .collect();
+        let local = |it: &&reprisefs::listing::Item| {
+            it.trashed.is_none()
+                && it.path.is_absolute()
+                && !(it.drive.is_some() && it.path.starts_with("/dev"))
+        };
+        (self.place != Place::RecycleBin && !items.is_empty() && items.iter().all(local))
+            .then_some(items)
+    }
+
     pub fn clipboard_paths(&mut self, cut: bool, paths: Vec<PathBuf>, ctx: &mut Ctx) -> Reply {
         self.refresh_chrome(ctx);
         Reply {

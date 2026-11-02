@@ -36,6 +36,8 @@ pub struct MenuState {
     pub can_forward: bool,
     /// The selection is archives: the item menu's Extract to row names this folder.
     pub extract: Option<String>,
+    /// Every selected item has a local path, for Copy as Path.
+    pub local_paths: bool,
 }
 
 impl Default for MenuState {
@@ -54,6 +56,7 @@ impl Default for MenuState {
             can_back: false,
             can_forward: false,
             extract: None,
+            local_paths: false,
         }
     }
 }
@@ -475,6 +478,7 @@ pub fn item_menu(
         ItemKind::Launcher => m.row(row("&Paste", state.can_paste), Command::PasteOnItem),
         ItemKind::File | ItemKind::Script(_) => {}
     }
+    m.row(row("Cop&y as Path", state.local_paths), Command::CopyAsPath);
     m.sep();
     m.row(row("Create &Shortcut", writable), Command::CreateShortcut);
     m.row(row("&Delete", writable), Command::Delete { erase: false });
@@ -484,13 +488,14 @@ pub fn item_menu(
     m
 }
 
-/// The right-click menu of an item in the Recycle Bin: Restore, Cut (greyed),
+/// The right-click menu of an item in the Recycle Bin: Restore, Cut and Copy as Path (greyed),
 /// Delete for good, then Properties as the default row.
 fn bin_item_menu() -> Menu {
     let mut m = Menu::default();
     m.row(row("R&estore", true), Command::Restore);
     m.sep();
     m.row(row("Cu&t", false), Command::Nothing);
+    m.row(row("Cop&y as Path", false), Command::Nothing);
     m.sep();
     m.row(row("&Delete", true), Command::Delete { erase: true });
     m.sep();
