@@ -215,6 +215,13 @@ One window, 23 pages, four headings. Only one runs at a time.
     takes back), writes the new ones, and the desktop picks them up at once.
     Display arrangements only apply to the same monitors.
 
+Restore Defaults, at the left of the OK, Cancel and Apply row, is on every
+page whose controls write `config.toml` keys. It lists the page's keys that
+are off their defaults and, on OK, takes them out of `config.toml`, so the
+defaults apply; the other pages' unapplied changes stay as they are. It is
+greyed when nothing on the page is off its default. Display, Start Menu,
+Tablet and Backup keep their settings elsewhere and have none.
+
 When `config.toml` changes while Settings is open (an editor, or a key aid's
 shortcut), the controls you haven't touched show the new values; yours stay
 as you left them, and OK and Apply write only what you changed.

@@ -669,6 +669,7 @@ impl SettingsApp {
         app.rescan();
         app.app_names = app_names(&app.want);
         app.fill_shortcuts();
+        app.sync_restore();
         app.quick_reload(None);
         app.show_monitor();
         app

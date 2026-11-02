@@ -208,6 +208,26 @@ pub fn rebase(want: &mut Settings, base: &Settings, fresh: &Settings) {
     follow(&mut want.tablet_pads, &base.tablet_pads, &fresh.tablet_pads);
 }
 
+/// The keys whose values `a` and `b` hold apart, in the field table's order.
+pub fn keys_apart(a: &Settings, b: &Settings) -> Vec<Key> {
+    (fields().iter())
+        .filter(|f| !f.same(a, b))
+        .map(|f| *f.key())
+        .collect()
+}
+
+#[cfg(test)]
+pub fn keys() -> Vec<Key> {
+    fields().iter().map(|f| *f.key()).collect()
+}
+
+/// Copy the fields of `keys` from `from` into `to`.
+pub fn copy_keys(keys: &[Key], from: &Settings, to: &mut Settings) {
+    for f in fields().iter().filter(|f| keys.contains(f.key())) {
+        f.copy(from, to);
+    }
+}
+
 /// The sheet's interface moved from `from` to `s.interface`: the scheme goes back to the new interface's own, and every field `text` leaves unset that held `from`'s default takes the new one's. Moved back to `loaded`'s interface, the scheme and glass colour are `loaded`'s again.
 pub fn switch_interface(s: &mut Settings, from: &str, text: &str, loaded: &Settings) {
     let doc = text

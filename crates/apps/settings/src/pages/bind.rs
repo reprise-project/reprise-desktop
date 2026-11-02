@@ -13,7 +13,7 @@ use super::{
     TRAY_CUSTOMIZE, WATER, WATER_STYLE,
 };
 use crate::registry::Page;
-use repriseconf::{Lens, lens};
+use repriseconf::{Key, Lens, lens};
 use reprisefs::xkb::{Layout, MAX_LAYOUTS};
 use reprisekit::controls::combo;
 use reprisekit::controls::form::{Control, Form};
@@ -362,6 +362,87 @@ impl Bind {
             | Bind::Icon(id, _) => id,
         }
     }
+
+    /// Move the field this control writes off its value in `s`.
+    fn nudge(&self, s: &mut Settings) {
+        match self {
+            Bind::Text(_, at)
+            | Bind::Choice(_, at)
+            | Bind::Named(_, at, _)
+            | Bind::ChoiceOrDefault(_, at, _)
+            | Bind::Water(_, at)
+            | Bind::WaterStyle(_, at)
+            | Bind::Radio(_, at, _)
+            | Bind::Switch(_, at, _, _)
+            | Bind::Time(_, at)
+            | Bind::Scheme(_, at, _)
+            | Bind::GlassColor(_, at)
+            | Bind::Hex(_, at) => at.get_mut(s).push('\u{1}'),
+            Bind::Num(_, at)
+            | Bind::NamedNum(_, at, _)
+            | Bind::UseDesktops(_, at)
+            | Bind::Desktops(_, at)
+            | Bind::Track(_, at)
+            | Bind::Kelvin(_, at)
+            | Bind::Delay(_, at)
+            | Bind::Steps(_, at, _)
+            | Bind::Level(_, at, _) => *at.get_mut(s) += 1,
+            Bind::Flag(_, at) => *at.get_mut(s) ^= true,
+            Bind::Icon(_, at) => at.get_mut(s).push(String::new()),
+        }
+    }
+}
+
+type Nudge = fn(&mut Settings);
+
+/// The controls that write their keys outside [`binds`]: lists, pickers and the dialogs a page
+/// opens, each with what it moves.
+fn unbound() -> [(&'static str, Nudge); 7] {
+    [
+        (KB_LAYOUTS, |s| {
+            s.kb_layout.push('\u{1}');
+            s.kb_variant.push('\u{1}');
+        }),
+        (crate::backgroundpage::WALLPAPER, |s| {
+            s.wallpaper.push('\u{1}');
+            s.slideshow.push('\u{1}');
+        }),
+        (crate::saverpage::SAVER, |s| {
+            s.saver.push('\u{1}');
+            s.saver_folder.push('\u{1}');
+            s.saver_cycle ^= true;
+            for n in [
+                &mut s.saver_speed,
+                &mut s.saver_stars,
+                &mut s.saver_shapes,
+                &mut s.saver_photo_seconds,
+            ] {
+                *n += 1;
+            }
+        }),
+        (crate::saverpage::WAIT, |s| s.blank_after += 1),
+        (crate::saverpage::AWAY, |s| s.away_device.push('\u{1}')),
+        (crate::defaultspage::TERMINAL, |s| s.terminal.push('\u{1}')),
+        (crate::defaultspage::TERMINAL_ARGS, |s| {
+            s.terminal.push('\u{1}')
+        }),
+    ]
+}
+
+/// The config keys `form`'s controls write, in the field table's order: each control's field
+/// nudged off the defaults and the keys that moved read back from the field table.
+pub fn keys_of(form: &Form) -> Vec<Key> {
+    let base = Settings::default();
+    let mut moved = base.clone();
+    for b in binds().iter().filter(|b| form.item(b.id()).is_some()) {
+        b.nudge(&mut moved);
+    }
+    for (id, nudge) in unbound() {
+        if form.item(id).is_some() {
+            nudge(&mut moved);
+        }
+    }
+    crate::model::keys_apart(&base, &moved)
 }
 
 /// Push `s` into every bound control and the Layouts list. Rebuilds the edits,

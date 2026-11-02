@@ -21,7 +21,7 @@ pub(super) enum Field {
     Names(Key, Lens<Settings, Vec<String>>),
 }
 
-pub(super) const INTERFACE: Key = k("appearance", "interface");
+pub(crate) const INTERFACE: Key = k("appearance", "interface");
 
 pub(super) fn fields() -> Vec<Field> {
     vec![

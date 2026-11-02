@@ -1,5 +1,5 @@
-//! The Backup page's Export... and Import..., and the question box that confirms a step before it
-//! writes.
+//! The Backup page's Export... and Import..., and the question box that confirms a step (these
+//! and Restore Defaults) before it writes.
 
 use crate::backup::{self, Bundle, Roots};
 use crate::filepick::Pick;
@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 pub(crate) enum Then {
     Export(PathBuf),
     Import(PathBuf, Bundle),
+    RestoreDefaults(Page),
 }
 
 /// The question box: its text, OK and Cancel, and what OK does.
@@ -78,6 +79,7 @@ impl SettingsApp {
         match then {
             Then::Export(path) => self.export(&path),
             Then::Import(path, bundle) => self.import(&path, &bundle),
+            Then::RestoreDefaults(p) => self.restore_defaults(p),
         }
     }
 
