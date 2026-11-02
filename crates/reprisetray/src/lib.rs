@@ -62,6 +62,8 @@ pub struct Node {
     pub radio: bool,
     /// The menu's default row, drawn bold by the host: what a double click on the icon does. Sent as [`DEFAULT_PROP`].
     pub default: bool,
+    /// False for a greyed row that only tells something.
+    pub enabled: bool,
 }
 
 /// The dbusmenu property marking a menu's default row, a vendor property under the spec's `x-<vendor>-` prefix.
@@ -76,6 +78,7 @@ impl Node {
             toggle: None,
             radio: false,
             default: false,
+            enabled: true,
         }
     }
 
@@ -87,6 +90,15 @@ impl Node {
             toggle: None,
             radio: false,
             default: false,
+            enabled: true,
+        }
+    }
+
+    /// A greyed row: a line of status in the menu, no click.
+    pub fn inert(id: i32, label: impl Into<String>) -> Node {
+        Node {
+            enabled: false,
+            ..Node::row(id, label)
         }
     }
 
@@ -231,7 +243,7 @@ fn props(node: &Node) -> Vec<(&'static str, Variant<'static>)> {
     }
     let mut out = vec![
         ("label", Variant::from(node.label.clone())),
-        ("enabled", Variant::from(true)),
+        ("enabled", Variant::from(node.enabled)),
         ("visible", Variant::from(true)),
     ];
     if let Some(on) = node.toggle {
@@ -1354,5 +1366,7 @@ mod tests {
             node_props(&Node::separator(3)).get("type"),
             Some(&owned(Variant::from("separator")))
         );
+        let inert = node_props(&Node::inert(4, "Phone: 80%"));
+        assert_eq!(inert.get("enabled"), Some(&owned(Variant::from(false))));
     }
 }

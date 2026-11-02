@@ -588,6 +588,8 @@ are.
   current download and upload speed, and an optional meter beside the clock
   shows it all the time (`[taskbar] network_meter`).
 - **Bluetooth.** Pairing, connections and device batteries, from the tray.
+- **Phone.** Through KDE Connect: battery and charging in the tray, Ring
+  phone, and Send files from the tray or Send To.
 - **Drives** mount when you plug them in, ask for a passphrase if they're
   encrypted, and eject from the tray or from Computer.
 - **Printers.** Add, share, pause and manage printers and their queues, with

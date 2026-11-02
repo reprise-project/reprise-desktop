@@ -37,7 +37,7 @@ The file manager, and the default for folders.
   longer than half a second shows its progress with Pause and Cancel, on the
   desktop too. Cut, Copy, Paste (with Yes to All), Paste Shortcut, New Folder,
   rename with F2, Move To, Copy To, Open With, and Send To a zip file, the
-  desktop, a mail or a removable drive. An archive (zip, 7z, tar plain or
+  desktop, a mail, a removable drive or a phone KDE Connect reaches. An archive (zip, 7z, tar plain or
   compressed) has Extract Here, which writes over nothing already there, and
   Extract to, into a new folder named after it; an archive with an entry
   that would land outside that folder is refused. Compress to 'name.zip'
@@ -362,6 +362,14 @@ network time.
   - `"nothing"`: leaves it in Computer.
 
   The key is read as each drive arrives, so a change applies to the next one.
+- **Phone.** With KDE Connect installed, a phone icon shows while
+  `kdeconnectd` runs. Its tooltip and menu list each paired phone in reach
+  with its battery and whether it's charging; the menu rings one (Ring phone,
+  loud even on silent), sends it files picked in an Open dialog (Send
+  files...), and opens KDE Connect, where pairing happens (Open KDE Connect
+  settings, also a left click). With no phone in reach the menu says "No
+  devices". Pair a phone once in KDE Connect and Send To in Explorer and on
+  the desktop lists it too. Low battery warnings come from KDE Connect itself.
 - **Low disk space.** The same program reads how full the disks of your home
   folder and `/` are every two minutes. When one has less free than
   `[storage] low_space_percent` of its size (5 % by default, set on

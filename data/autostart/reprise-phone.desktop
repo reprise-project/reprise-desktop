@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Phone
+Exec=reprise-phone
+TryExec=kdeconnectd
+OnlyShowIn=reprise;
+NoDisplay=true

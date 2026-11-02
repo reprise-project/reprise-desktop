@@ -2293,6 +2293,7 @@ dependencies = [
  "reprise-explorer",
  "reprise-network",
  "reprise-notepad",
+ "reprise-phone",
  "reprise-polkit",
  "reprise-power",
  "reprise-printers",
@@ -2392,6 +2393,20 @@ dependencies = [
  "reprisefs",
  "reprisekit",
  "tempfile",
+]
+
+[[package]]
+name = "reprise-phone"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "log",
+ "repriseapp",
+ "reprisebus",
+ "reprisefs",
+ "reprisekit",
+ "reprisetray",
+ "zbus 6.2.0",
 ]
 
 [[package]]

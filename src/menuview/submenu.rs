@@ -322,7 +322,8 @@ impl State {
             }
             DesktopCommand::SendTo => {
                 let view = self.desktop.as_mut()?;
-                let rows = view.drives.send_to_rows(&view.send_dirs);
+                let mut rows = view.drives.send_to_rows(&view.send_dirs);
+                rows.extend(reprisefs::sendto::phone_rows());
                 let (mut items, commands) = crate::desktopview::send_to_menu(&rows);
                 let names: Vec<&'static str> = rows.iter().map(|r| r.icon).collect();
                 view.send_to = rows;

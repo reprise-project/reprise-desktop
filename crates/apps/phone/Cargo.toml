@@ -1,0 +1,27 @@
+[package]
+name = "reprise-phone"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "The phone icon: the devices KDE Connect reaches, their batteries, Ring phone and Send files"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-phone"
+path = "src/bin/reprise-phone.rs"
+test = false
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisetray = { path = "../../reprisetray" }
+reprisebus = { path = "../../reprisebus" }
+reprisefs = { path = "../../reprisefs" }
+zbus.workspace = true
+futures-util.workspace = true
+log.workspace = true
