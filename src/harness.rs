@@ -84,6 +84,7 @@ pub fn scratch() -> std::path::PathBuf {
     ONCE.call_once(|| unsafe {
         libc::atexit(remove);
     });
+    let _ = std::fs::create_dir_all(dir());
     dir()
 }
 

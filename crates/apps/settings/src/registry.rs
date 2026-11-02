@@ -58,6 +58,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::Startup => pages::startup(a),
         Page::DefaultPrograms => crate::defaultspage::page(a),
         Page::Advanced => pages::advanced(a),
+        Page::Backup => pages::backup(a),
     }
 }
 
@@ -136,6 +137,7 @@ mod tests {
                 "Startup",
                 "Default Programs",
                 "Advanced",
+                "Backup",
             ]
         );
         let headings: Vec<&str> = GROUPS.iter().map(|g| g.0).collect();
@@ -181,8 +183,8 @@ mod tests {
         assert_eq!(open(&s), GROUPS[0].1[0], "the first page opens");
     }
 
-    /// The list's inside is 480 px at the smallest sheet: 28 rows at 488 px, so it scrolls
-    /// until the sheet is 8 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// The list's inside is 480 px at the smallest sheet: 29 rows at 505 px, so it scrolls
+    /// until the sheet is 25 px taller. On a sheet 56 px shorter, a page opened from its end
     /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
@@ -192,39 +194,36 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 28, "four headings over 24 pages");
-        assert_eq!((list.total, list.inner.height), (488, 480));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 8 px");
-        sheet.size.1 += 8;
+        assert_eq!(list.rows.len(), 29, "four headings over 25 pages");
+        assert_eq!((list.total, list.inner.height), (505, 480));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 25 px");
+        sheet.size.1 += 25;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 64;
+        sheet.size.1 -= 81;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (488, 424));
+        assert_eq!((list.total, list.inner.height), (505, 424));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();
-        assert!(
-            last.bottom() > list.inner.bottom(),
-            "Advanced is out of view"
-        );
+        assert!(last.bottom() > list.inner.bottom(), "Backup is out of view");
 
         let row = |s: &PropSheet| {
             let l = s.layout(&text, px).list.unwrap();
             let i = l.rows.len() - 1;
             (l.rows[i], l.inner)
         };
-        sheet.tabs.open = Page::Advanced.index();
+        sheet.tabs.open = Page::Backup.index();
         assert!(sheet.reveal_open());
         let (r, inner) = row(&sheet);
-        assert_eq!(r.bottom(), inner.bottom(), "Advanced at the bottom");
+        assert_eq!(r.bottom(), inner.bottom(), "Backup at the bottom");
         assert_eq!(
             sheet.hit(r.x + 20, r.y + 8, &text, px),
-            Some(Hit::Tab(Page::Advanced.index()))
+            Some(Hit::Tab(Page::Backup.index()))
         );
 
-        sheet.click(Some(Hit::Tab(Page::Advanced.index())));
+        sheet.click(Some(Hit::Tab(Page::Backup.index())));
         assert!(sheet.tabs.focused);
         sheet.key(Key::Home, None);
         let l = sheet.layout(&text, px).list.unwrap();

@@ -27,6 +27,7 @@ pub enum Page {
     Startup,
     DefaultPrograms,
     Advanced,
+    Backup,
 }
 
 pub const GROUPS: &[(&str, &[Page])] = &[
@@ -72,6 +73,7 @@ pub const GROUPS: &[(&str, &[Page])] = &[
             Page::Startup,
             Page::DefaultPrograms,
             Page::Advanced,
+            Page::Backup,
         ],
     ),
 ];
@@ -117,6 +119,7 @@ impl Page {
             Page::Startup => "Startup",
             Page::DefaultPrograms => "Default Programs",
             Page::Advanced => "Advanced",
+            Page::Backup => "Backup",
         }
     }
 
@@ -226,6 +229,7 @@ impl Page {
                 "file types",
             ],
             Page::Advanced => &["screenshots", "task manager", "thumbnails", "cache"],
+            Page::Backup => &["export", "import", "back up", "transfer", "move settings"],
         }
     }
 

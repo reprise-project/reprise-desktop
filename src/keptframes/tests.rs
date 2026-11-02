@@ -300,3 +300,24 @@ fn forgetting_drops_every_kept_place() {
     let t = h.map_toplevel(&mut c, APP, 300, 200);
     assert_ne!((frame_of(&h, t).x, frame_of(&h, t).y), (400, 300));
 }
+
+#[test]
+fn reloading_reads_the_file_and_drops_the_pending_write() {
+    let mut h = one_screen();
+    let mut c = h.connect();
+    leave_at(&mut h, &mut c, (400, 300), (500, 400));
+    let set = h.state.output_set();
+    let mut imported = KeptFrames::empty(h.state.wm.kept.path.clone());
+    let mut frame = h.state.wm.kept.get(&set, APP).cloned().unwrap();
+    (frame.x, frame.y) = (40, 50);
+    imported.store(&set, APP, frame.clone());
+    std::fs::write(&imported.path, imported.text()).unwrap();
+    h.state.reload_remembered();
+    assert_eq!(h.state.wm.kept.get(&set, APP), Some(&frame));
+    h.state.save_remembered();
+    assert_eq!(
+        std::fs::read_to_string(&imported.path).unwrap(),
+        imported.text(),
+        "the write that waited for the old frames is dropped"
+    );
+}

@@ -1,7 +1,7 @@
 use crate::registry::Page;
 use crate::{
-    ADD_ITEM_WIN, ADD_WIN, CHOOSER_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN, SAVER_WIN, SHORTCUT_WIN,
-    SettingsApp, defaultspage, displayhost, pages,
+    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN, SAVER_WIN,
+    SHORTCUT_WIN, SettingsApp, defaultspage, displayhost, pages,
 };
 use repriseapp::oneshot;
 use repriseapp::{Ctx, WinId};
@@ -40,6 +40,13 @@ impl SettingsApp {
         if win == ERROR_WIN {
             if let Some(b) = &self.error {
                 b.draw(c, &self.dialog_theme(&ctx.theme), &self.dialog_text);
+            }
+            return;
+        }
+        if win == ASK_WIN {
+            if let Some(a) = &self.asking {
+                a.msg
+                    .draw(c, &self.dialog_theme(&ctx.theme), &self.dialog_text);
             }
             return;
         }
@@ -177,6 +184,11 @@ impl SettingsApp {
             ERROR_WIN => {
                 if let Some(b) = &self.error {
                     b.access(tree, &self.dialog_text, &self.dialog_theme(&ctx.theme));
+                }
+            }
+            ASK_WIN => {
+                if let Some(a) = &self.asking {
+                    (a.msg).access(tree, &self.dialog_text, &self.dialog_theme(&ctx.theme));
                 }
             }
             SHORTCUT_WIN => {

@@ -36,7 +36,7 @@ pub use lists::{
     fit_shortcut_columns, list_key, new_list, new_location_list, new_shortcut_list,
     show_locations_loading,
 };
-pub use system::{CHARGE_LIMIT, advanced, power, sounds, startup};
+pub use system::{CHARGE_LIMIT, advanced, backup, power, sounds, startup};
 
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).
 pub const CLIENT: (i32, i32) = (398, 528);
@@ -172,6 +172,10 @@ impl Area {
 }
 
 pub const EDIT_FILE: &str = "edit_file";
+/// The Backup page's buttons and the line saying what the last Export or Import did.
+pub const BACKUP_EXPORT: &str = "backup_export";
+pub const BACKUP_IMPORT: &str = "backup_import";
+pub const BACKUP_STATUS: &str = "backup_status";
 /// The Taskbar page's Customize... beside the tray overflow box; the compositor opens the tray's Customize dialog.
 pub const TRAY_CUSTOMIZE: &str = "taskbar_tray_customize";
 pub const ADD: &str = "add";
