@@ -8,8 +8,9 @@
 //! The picker never touches the file system itself: a folder read or a
 //! typed name's lookup can block for good on a dead network mount. It
 //! queues a [`Request`] instead; the host runs it off the loop and hands
-//! the [`Reply`] back through [`FilePicker::reply`]. Pictures' thumbnails
-//! come the same way: [`FilePicker::take_pictures`], then [`FilePicker::thumbs`].
+//! the [`Reply`] back through [`FilePicker::reply`]. Thumbnails, of pictures
+//! and of files an installed thumbnailer takes, come the same way:
+//! [`FilePicker::take_pictures`], then [`FilePicker::thumbs`].
 
 use crate::dialog::Outcome;
 use crate::filedlggeom::OWN_APP;
@@ -261,7 +262,8 @@ impl std::fmt::Debug for FolderWatch {
     }
 }
 
-/// The listed pictures and how far their thumbnails have got.
+/// The listed files with thumbnails ([`reprisefs::listing::Item::thumbnailable`]) and how far
+/// their thumbnails have got.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Pictures {
     /// Picture `i`'s path; its entry's id is `i + 1`.
@@ -623,9 +625,9 @@ impl FilePicker {
         }
     }
 
-    /// Thumbnails fetched for listing `generation`: each picture shows it, and its Tiles lines
-    /// its size. True when one did; a listing replaced meanwhile takes none.
-    pub fn thumbs(&mut self, generation: u64, done: Vec<(PathBuf, Canvas, (u32, u32))>) -> bool {
+    /// Thumbnails fetched for listing `generation`: each file shows it, and its Tiles lines the
+    /// picture's size when known. True when one did; a listing replaced meanwhile takes none.
+    pub fn thumbs(&mut self, generation: u64, done: Vec<crate::pickthumbs::Done>) -> bool {
         if generation != self.pictures.generation {
             return false;
         }
@@ -648,9 +650,12 @@ impl FilePicker {
             };
             let e = &mut self.dlg.entries_mut()[i];
             // The dialog draws on device pixels, so the thumbnail is a scale-1 canvas that size.
-            let thumb = shellview::frame_thumb(thumb, dims, self.pictures.scale).at_scale(1);
+            let frame = dims.unwrap_or_else(|| thumb.device_size());
+            let thumb = shellview::frame_thumb(thumb, frame, self.pictures.scale).at_scale(1);
             e.thumb = Some(thumb);
-            e.detail = shellview::image_detail(dims, &e.kind);
+            if let Some(dims) = dims {
+                e.detail = shellview::image_detail(dims, &e.kind);
+            }
             shown = true;
         }
         shown
@@ -785,7 +790,7 @@ impl FilePicker {
 
     /// `rows` as the dialog's entries, with Explorer's icons and Tiles lines, except that a
     /// program wears the executable's icon; a `folders` handle on every subfolder so entering
-    /// one resolves, and [`Pictures`]' id on every picture. Returns the pictures' paths too.
+    /// one resolves, and [`Pictures`]' id on every file with a thumbnail. Returns their paths too.
     fn entries(
         &mut self,
         rows: Vec<Listed>,
@@ -815,7 +820,7 @@ impl FilePicker {
                 let [icon, icon32, icon48] = shared.get(cache, &name);
                 let id = if it.is_dir {
                     self.folders.id(&it.path)
-                } else if it.is_image() {
+                } else if it.thumbnailable() {
                     pictures.push(it.path.clone());
                     pictures.len() as u64
                 } else {
@@ -1920,7 +1925,7 @@ mod tests {
         let (generation, px, _) = p.take_pictures().expect("Thumbnails fetches the pictures");
         assert_eq!(px, 188, "the frame's inside at scale 2");
         let large = Canvas::from_pixels(256, 128, vec![SAND; 256 * 128]);
-        assert!(p.thumbs(generation, vec![(pic.clone(), large, (800, 400))]));
+        assert!(p.thumbs(generation, vec![(pic.clone(), large, Some((800, 400)))]));
 
         let theme = reprisekit::theme::Theme::default().scaled(2);
         let text = reprisekit::text::TextRenderer::load(&theme.fonts);
@@ -1949,7 +1954,7 @@ mod tests {
         p.click(R, Some(filedlg::Hit::ViewsItem(0)));
         let (generation, px, _) = p.take_pictures().expect("Thumbnails fetches the pictures");
         assert_eq!(px, 94);
-        let thumb = |w| vec![(pic.clone(), Canvas::new(w, w / 2), (800, 400))];
+        let thumb = |w| vec![(pic.clone(), Canvas::new(w, w / 2), Some((800, 400)))];
         assert!(p.thumbs(generation, thumb(94)));
         assert!(!p.follow_scale(1, &mut cache), "the scale it fetched at");
 
@@ -1962,6 +1967,36 @@ mod tests {
         assert!(p.thumbs(again, thumb(188)));
         let e = p.dlg.entries().iter().find(|e| e.thumb.is_some()).unwrap();
         assert_eq!(e.thumb.as_ref().unwrap().device_size(), (188, 94));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A thumbnail without a picture size (a document's page) fills its frame at its own shape
+    /// and leaves the Tiles lines as they were.
+    #[test]
+    fn a_thumbnail_without_a_picture_size_keeps_the_tiles_lines() {
+        let dir = sandbox("thumbs-unsized");
+        let pic = dir.join("dunes.png");
+        std::fs::write(&pic, b"never decoded here").unwrap();
+        let mut p = FilePicker::run_command(&dir, Icons::default(), true);
+        p.dlg.set_filter(1);
+        p.sync_filter();
+        settle(&mut p);
+        p.click(R, Some(filedlg::Hit::ToolBar(3)));
+        p.click(R, Some(filedlg::Hit::ViewsItem(0)));
+        let (generation, ..) = p.take_pictures().expect("Thumbnails fetches the files");
+        let entry = |p: &FilePicker| {
+            (p.dlg.entries().iter())
+                .find(|e| e.name == "dunes.png")
+                .cloned()
+                .unwrap()
+        };
+        let before = entry(&p).detail;
+        let page = Canvas::new(64, 94);
+        assert!(p.thumbs(generation, vec![(pic.clone(), page, None)]));
+        let e = entry(&p);
+        let t = e.thumb.as_ref().expect("the thumbnail");
+        assert_eq!((t.width, t.height), (64, 94));
+        assert_eq!(e.detail, before);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1990,7 +2025,7 @@ mod tests {
             vec![(
                 pic.clone(),
                 Canvas::from_pixels(128, 64, vec![SAND; 128 * 64]),
-                (800, 400),
+                Some((800, 400)),
             )]
         };
         assert!(!p.thumbs(generation + 1, thumb()), "not this listing's");

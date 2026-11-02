@@ -229,7 +229,7 @@ fn serve(
                 width,
                 height,
                 pixels: m.thumb.pixels,
-                dims: m.dims,
+                dims: m.sized.then_some(m.dims),
             }
         });
         thumbpipe::write_reply(&mut output, thumb.as_ref())?;
@@ -653,7 +653,10 @@ mod tests {
         let first = thumbpipe::read_reply(&mut r, 128)
             .unwrap()
             .expect("a thumbnail");
-        assert_eq!((first.width, first.height, first.dims), (2, 1, (640, 320)));
+        assert_eq!(
+            (first.width, first.height, first.dims),
+            (2, 1, Some((640, 320)))
+        );
         assert_eq!(first.pixels, [0xff00_00ff, 0xff00_ff00]);
         assert_eq!(thumbpipe::read_reply(&mut r, 128).unwrap(), None);
         assert_eq!(thumbpipe::read_reply(&mut r, 128).unwrap(), Some(first));
@@ -1020,6 +1023,26 @@ mod tests {
         let again = thumbnail(&mut make, 128, Some(&mut cache), &doc, &fs()).expect("cached");
         assert_eq!(again.thumb, made.thumb);
         assert_eq!(runs(dir.path()), 1, "the second ask is a cache hit");
+    }
+
+    #[test]
+    fn the_helper_answers_a_document_without_a_picture_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let page = dir.path().join("page.png");
+        std::fs::write(&page, png(300, 150)).unwrap();
+        let decoders = Decoders::default_set();
+        let body = format!("cp '{}' \"$2\"", page.display());
+        let mut make = with_thumbnailer(&decoders, dir.path(), &body);
+        let doc = dir.path().join("report.pdf");
+        std::fs::write(&doc, b"%PDF-1.7").unwrap();
+        let mut asked = Vec::new();
+        thumbpipe::write_request(&mut asked, &doc, 128).unwrap();
+        let mut answers = Vec::new();
+        serve(&mut make, None, &asked[..], &mut answers).unwrap();
+        let t = thumbpipe::read_reply(&mut &answers[..], 128)
+            .unwrap()
+            .expect("a thumbnail");
+        assert_eq!((t.width, t.height, t.dims), (128, 64, None));
     }
 
     #[test]
