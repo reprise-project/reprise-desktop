@@ -10,6 +10,7 @@
 //! `bz::Cmd`s and windows.
 
 mod addwiz;
+mod battery;
 mod bz;
 mod devices;
 mod icons;
@@ -59,6 +60,7 @@ struct BtApp {
     connecting: HashSet<String>,
     /// Devices disconnected since their last Connect; a Connect failing for one shows no box.
     disconnected: HashSet<String>,
+    battery: battery::Warner,
     /// Dialog renderer, loaded in `start`: `children` and the wake have no `Ctx` to measure with.
     text: Option<Rc<TextRenderer>>,
     /// The last event's [`Ctx::forms`], which dialogs are built and sized with.
@@ -78,7 +80,7 @@ impl BtApp {
             bz: None,
             snapshot: bz::Snapshot::default(),
             tray_state: None,
-            devices: devices::Devices::new(),
+            devices: devices::Devices::new(repriseconf::bt_battery_warning()),
             wizard: None,
             props: None,
             pair: None,
@@ -87,6 +89,7 @@ impl BtApp {
             icons: icons::Icons::new(),
             connecting: HashSet::new(),
             disconnected: HashSet::new(),
+            battery: battery::Warner::default(),
             text: None,
             forms: Theme::default(),
             asked: None,
@@ -130,6 +133,20 @@ impl BtApp {
         self.tray_state = Some(next);
     }
 
+    /// The key is read only while some device reports a battery, so a change applies to the next
+    /// reading.
+    fn warn_battery(&mut self) {
+        if !self.snapshot.devices.iter().any(|d| d.battery.is_some()) {
+            return;
+        }
+        let level = repriseconf::bt_battery_warning();
+        for w in self.battery.check(&self.snapshot, level) {
+            if let Some(t) = &self.tray {
+                t.notify_with_icon(&w.summary, &w.body, w.icon);
+            }
+        }
+    }
+
     fn snapshot_in(&mut self, s: bz::Snapshot) {
         log::debug!(
             "snapshot: adapter {}, {} devices",
@@ -137,6 +154,7 @@ impl BtApp {
             s.devices.len()
         );
         self.snapshot = s;
+        self.warn_battery();
         self.devices.refresh(&self.snapshot);
         let (text, forms) = self.text_forms();
         if let Some(w) = &mut self.wizard {
@@ -296,6 +314,15 @@ impl BtApp {
                     self.open_wizard();
                     shown = Some(WIZARD);
                 }
+                tray::TrayMsg::Device(i) => {
+                    if let Some(path) = tray::connected(&self.snapshot)
+                        .get(i)
+                        .map(|d| d.path.clone())
+                    {
+                        self.open_props(&path);
+                        shown = Some(PROPS);
+                    }
+                }
                 tray::TrayMsg::TogglePower => {
                     if let Some(a) = &self.snapshot.adapter {
                         self.send(bz::Cmd::SetPowered {
@@ -365,6 +392,11 @@ impl BtApp {
     }
 
     fn apply_options(&self, o: devices::Options) {
+        if o.battery_warning != repriseconf::bt_battery_warning()
+            && let Err(e) = repriseconf::save_bt_battery_warning(o.battery_warning)
+        {
+            log::warn!("could not save the battery warning: {e}");
+        }
         let Some(a) = &self.snapshot.adapter else {
             return;
         };

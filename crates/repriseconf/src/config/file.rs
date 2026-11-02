@@ -643,6 +643,9 @@ pub struct FileConfig {
     /// `[drives]` is read by reprise-drives; accepted here so the file parses.
     #[allow(dead_code)]
     pub drives: Option<serde::de::IgnoredAny>,
+    /// `[bluetooth]` is read by `crate::bt_battery_warning`; accepted here so the file parses.
+    #[allow(dead_code)]
+    pub bluetooth: Option<serde::de::IgnoredAny>,
     /// `[storage]` is read by `crate::low_space_percent`; accepted here so the file parses.
     #[allow(dead_code)]
     pub storage: Option<serde::de::IgnoredAny>,

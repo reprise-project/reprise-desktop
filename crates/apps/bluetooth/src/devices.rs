@@ -1,6 +1,6 @@
 //! Bluetooth Devices, the program's main window: a sheet with two tabs.
-//! Devices lists paired devices by group; Options turns the radio on and off
-//! and makes this computer discoverable. Nothing here reads the bus: the host
+//! Devices lists paired devices by group; Options turns the radio on and off,
+//! makes this computer discoverable and sets the low battery warning. Nothing here reads the bus: the host
 //! feeds it snapshots and acts on the [`Outcome`]s it hands back.
 
 use repriseapp::Ctx;
@@ -11,6 +11,7 @@ use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::controls::tilelist::{self, Entry, Press, TILE_H, Tile, TileList};
+use reprisekit::controls::updown::{self, UpDown};
 use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
@@ -30,6 +31,7 @@ pub const CONNECT: &str = "connect";
 pub const PROPS: &str = "props";
 const POWER: &str = "power";
 const DISCOVERABLE: &str = "discoverable";
+const BATTERY: &str = "battery_warning";
 
 /// The page runs (6, 28) to (392, 388); buttons sit 8 px above its bottom.
 const BTN_Y: i32 = 388 - 8 - BUTTON_H;
@@ -40,6 +42,8 @@ const CONNECT_W: i32 = 88;
 pub struct Options {
     pub powered: bool,
     pub discoverable: bool,
+    /// `[bluetooth] battery_warning`, in percent; 0 is off.
+    pub battery_warning: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,18 +128,48 @@ fn options_page() -> Form {
                 "and ask to pair with it.",
             ],
         ),
+        Item::group("battery_group", Rect::new(14, 176, 370, 70), "Battery"),
+        Item::label_at(
+            "battery_label",
+            26,
+            202,
+            210,
+            "&Warn when a device's battery drops to:",
+        ),
+        Item::new(
+            BATTERY,
+            Rect::new(240, 198, updown::WIDTH, updown::HEIGHT),
+            Control::UpDown(UpDown::new(
+                repriseconf::BT_BATTERY_WARNING.into(),
+                0,
+                repriseconf::BT_BATTERY_MAX.into(),
+            )),
+        ),
+        Item::label_at("battery_units", 240 + updown::WIDTH + 6, 202, 20, "%"),
+        Item::label_at(
+            "battery_note",
+            26,
+            224,
+            340,
+            "For connected devices. 0 turns the warning off.",
+        ),
     ])
 }
 
 impl Devices {
-    pub fn new() -> Devices {
+    /// `battery_warning` is the key's value now.
+    pub fn new(battery_warning: u8) -> Devices {
+        let options = Options {
+            battery_warning,
+            ..Options::default()
+        };
         let mut d = Devices {
             sheet: PropSheet::new(&TABS, vec![devices_page(), options_page()], CLIENT),
             list: TileList::new(TILE_H),
             rows: Vec::new(),
             list_focus: false,
-            applied: Options::default(),
-            pending: Options::default(),
+            applied: options,
+            pending: options,
             adapter: false,
         };
         d.write();
@@ -175,10 +209,11 @@ impl Devices {
             .select_row(keep.and_then(|p| self.rows.iter().position(|d| d.path == p)));
         self.list.clamp(self.list_rect(), self.sheet.open().units());
         self.adapter = s.adapter.is_some();
-        let now = s.adapter.as_ref().map_or(Options::default(), |a| Options {
-            powered: a.powered,
-            discoverable: a.discoverable,
-        });
+        let now = Options {
+            powered: s.adapter.as_ref().is_some_and(|a| a.powered),
+            discoverable: s.adapter.as_ref().is_some_and(|a| a.discoverable),
+            battery_warning: self.applied.battery_warning,
+        };
         let dirty = self.pending != self.applied;
         self.applied = now;
         if !dirty {
@@ -215,6 +250,9 @@ impl Devices {
         page.set_enabled(POWER, self.adapter);
         page.set_check(DISCOVERABLE, self.pending.discoverable);
         page.set_enabled(DISCOVERABLE, self.adapter && self.pending.powered);
+        if let Some(Control::UpDown(u)) = page.item_mut(BATTERY).map(|i| &mut i.control) {
+            u.set(self.pending.battery_warning.into());
+        }
         self.sheet.set_apply_enabled(dirty);
     }
 
@@ -228,6 +266,16 @@ impl Devices {
                     self.pending.powered = on;
                 } else {
                     self.pending.discoverable = on;
+                }
+                self.write();
+                Outcome::Redraw
+            }
+            propsheet::Event::Page(_, form::Event::Changed(BATTERY)) => {
+                if let Some(Control::UpDown(u)) = self.sheet.pages[TAB_OPTIONS]
+                    .item(BATTERY)
+                    .map(|i| &i.control)
+                {
+                    self.pending.battery_warning = u.value().clamp(0, 255) as u8;
                 }
                 self.write();
                 Outcome::Redraw
@@ -474,7 +522,7 @@ mod tests {
     #[test]
     fn the_pages_fit_their_text() {
         let over = reprisekit::interfaces::form_overflows(|_, _, _| {
-            let mut d = Devices::new();
+            let mut d = Devices::new(15);
             d.refresh(&four());
             d.sheet.tabs.labels.into_iter().zip(d.sheet.pages).collect()
         });
@@ -496,7 +544,7 @@ mod tests {
 
     #[test]
     fn paired_devices_are_listed_under_group_headers() {
-        let mut d = Devices::new();
+        let mut d = Devices::new(15);
         d.refresh(&four());
         assert_eq!(
             d.list.entries,
@@ -520,7 +568,7 @@ mod tests {
 
     #[test]
     fn buttons_follow_the_selection() {
-        let mut d = Devices::new();
+        let mut d = Devices::new(15);
         d.refresh(&four());
         assert!(enabled(&d, ADD));
         assert!(!enabled(&d, REMOVE) && !enabled(&d, CONNECT) && !enabled(&d, PROPS));
@@ -534,7 +582,7 @@ mod tests {
 
     #[test]
     fn alt_p_is_properties_and_alt_r_is_remove() {
-        let mut d = Devices::new();
+        let mut d = Devices::new(15);
         d.refresh(&four());
         let (x, y) = entry_point(&d, 1);
         d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
@@ -551,7 +599,7 @@ mod tests {
 
     #[test]
     fn a_vanished_device_drops_its_selection() {
-        let mut d = Devices::new();
+        let mut d = Devices::new(15);
         d.refresh(&four());
         let (x, y) = entry_point(&d, 3);
         d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
@@ -565,7 +613,7 @@ mod tests {
 
     #[test]
     fn the_selection_follows_its_device_across_a_refresh() {
-        let mut d = Devices::new();
+        let mut d = Devices::new(15);
         d.refresh(&four());
         let (x, y) = entry_point(&d, 6);
         d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
@@ -577,7 +625,7 @@ mod tests {
 
     #[test]
     fn radio_off_blanks_the_page() {
-        let mut d = Devices::new();
+        let mut d = Devices::new(15);
         d.refresh(&snap(false, four().devices));
         assert!(!enabled(&d, ADD));
         let (x, y) = (LIST.x + 40, LIST.y + 40);
@@ -592,7 +640,7 @@ mod tests {
 
     #[test]
     fn double_click_toggles_and_enter_opens_properties() {
-        let mut d = Devices::new();
+        let mut d = Devices::new(15);
         d.refresh(&four());
         let (x, y) = entry_point(&d, 1);
         d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
@@ -609,7 +657,7 @@ mod tests {
 
     #[test]
     fn a_hidden_selection_answers_nothing_once_the_radio_goes_off() {
-        let mut d = Devices::new();
+        let mut d = Devices::new(15);
         d.refresh(&four());
         let (x, y) = entry_point(&d, 1);
         d.list_press(at(x, y, 0), &ControlMetrics::CLASSIC);
@@ -623,7 +671,8 @@ mod tests {
             d.event(propsheet::Event::Apply),
             Outcome::Apply(Options {
                 powered: false,
-                discoverable: false
+                discoverable: false,
+                battery_warning: 15
             })
         );
         d.sheet.tabs.open = TAB_DEVICES;
@@ -636,8 +685,37 @@ mod tests {
     }
 
     #[test]
+    fn options_apply_carries_the_battery_warning_and_a_refresh_keeps_it() {
+        let mut d = Devices::new(15);
+        d.refresh(&four());
+        d.sheet.tabs.open = TAB_OPTIONS;
+        let set = |d: &mut Devices, v: i32| {
+            if let Some(Control::UpDown(u)) = d.sheet.pages[TAB_OPTIONS]
+                .item_mut(BATTERY)
+                .map(|i| &mut i.control)
+            {
+                u.set(v);
+            }
+            d.event(propsheet::Event::Page(
+                TAB_OPTIONS,
+                form::Event::Changed(BATTERY),
+            ))
+        };
+        assert_eq!(set(&mut d, 0), Outcome::Redraw);
+        d.refresh(&four());
+        let want = Options {
+            powered: true,
+            discoverable: false,
+            battery_warning: 0,
+        };
+        assert_eq!(d.event(propsheet::Event::Apply), Outcome::Apply(want));
+        d.refresh(&four());
+        assert_eq!(d.pending, want, "the applied level outlives a snapshot");
+    }
+
+    #[test]
     fn options_apply_carries_the_pending_radio_state() {
-        let mut d = Devices::new();
+        let mut d = Devices::new(15);
         d.refresh(&four());
         d.sheet.tabs.open = TAB_OPTIONS;
         d.sheet.pages[TAB_OPTIONS].set_check("discoverable", true);
@@ -652,7 +730,8 @@ mod tests {
             d.event(propsheet::Event::Apply),
             Outcome::Apply(Options {
                 powered: true,
-                discoverable: true
+                discoverable: true,
+                battery_warning: 15
             })
         );
         assert_eq!(
@@ -664,7 +743,7 @@ mod tests {
 
     #[test]
     fn a_snapshot_does_not_overwrite_an_unapplied_change() {
-        let mut d = Devices::new();
+        let mut d = Devices::new(15);
         d.refresh(&four());
         d.sheet.pages[TAB_OPTIONS].set_check("power", false);
         d.event(propsheet::Event::Page(

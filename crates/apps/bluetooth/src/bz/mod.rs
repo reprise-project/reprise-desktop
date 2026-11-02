@@ -153,6 +153,21 @@ impl Kind {
         }
     }
 
+    /// The freedesktop device icon name a balloon about the device carries.
+    pub fn icon_name(self) -> &'static str {
+        match self {
+            Kind::Headphones => "audio-headphones",
+            Kind::Headset => "audio-headset",
+            Kind::Speaker => "audio-speakers",
+            Kind::Gamepad => "input-gaming",
+            Kind::Keyboard => "input-keyboard",
+            Kind::Mouse => "input-mouse",
+            Kind::Phone => "phone",
+            Kind::Computer => "computer",
+            Kind::Other => "bluetooth",
+        }
+    }
+
     pub fn icon(self) -> devicon::Device {
         match self {
             Kind::Headphones => devicon::Device::Headphones,
@@ -275,6 +290,14 @@ pub fn status_line(d: &Device) -> String {
     match d.battery {
         Some(b) => format!("{state}, battery {b}%"),
         None => state.to_string(),
+    }
+}
+
+/// A device as the tray names it: its alias, then its battery when BlueZ reports one.
+pub fn battery_row(d: &Device) -> String {
+    match d.battery {
+        Some(b) => format!("{} \u{2014} {b}%", d.alias),
+        None => d.alias.clone(),
     }
 }
 
@@ -574,6 +597,17 @@ mod tests {
         assert_eq!(status_line(&d), "Connected");
         d.battery = Some(80);
         assert_eq!(status_line(&d), "Connected, battery 80%");
+    }
+
+    #[test]
+    fn battery_row_adds_the_percent_when_known() {
+        let mut d = Device {
+            alias: "Cans".into(),
+            ..Device::default()
+        };
+        assert_eq!(battery_row(&d), "Cans");
+        d.battery = Some(80);
+        assert_eq!(battery_row(&d), "Cans \u{2014} 80%");
     }
 
     #[test]
