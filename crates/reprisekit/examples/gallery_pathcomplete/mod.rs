@@ -19,7 +19,7 @@ pub fn render(scale: i32) -> Canvas {
     let mut c = Canvas::new((W * looks.len() as i32 * scale) as u32, (H * scale) as u32);
     for (i, look) in looks.into_iter().enumerate() {
         let theme = interfaces::theme_for(look).scaled(scale);
-        let mut cell = Canvas::with_scale((W * scale) as u32, (H * scale) as u32, scale);
+        let mut cell = Canvas::new((W * scale) as u32, (H * scale) as u32);
         cell.fill_rect(cell.bounds(), theme.colors.button_face);
         let (mut pc, edit) = completing("~/Do");
         let p = theme.paint();
