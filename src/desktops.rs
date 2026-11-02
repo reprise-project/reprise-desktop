@@ -48,6 +48,14 @@ impl Desktops {
     }
 }
 
+/// The desktop `steps` wheel steps from the current one, positive (up) towards the first; None when it
+/// is the current one. The ends hold, as the keybinds' steps do.
+pub fn wheel_target(d: Desktops, steps: i32) -> Option<usize> {
+    let last = d.count.saturating_sub(1) as i64;
+    let n = (d.current as i64 - i64::from(steps)).clamp(0, last) as usize;
+    (n != d.current).then_some(n)
+}
+
 /// Which of `count` desktops hold a window asking for attention, other than `current`, whose own taskbar shows it. `windows` gives each window's desktop (None: all) and attention flag.
 pub fn attention(
     count: usize,
@@ -195,6 +203,31 @@ impl State {
         self.switch_desktop(n);
     }
 
+    /// Whether the wheel over `hit` steps desktops: the pager always, the empty desktop or its icons with
+    /// `[workspaces] wheel_on_desktop`.
+    pub fn wheels_desktops(&self, hit: &crate::input::Hit) -> bool {
+        use crate::input::Hit;
+        use reprisekit::taskbar::TaskbarHit;
+        self.desktops.enabled()
+            && match hit {
+                Hit::Taskbar {
+                    hit: TaskbarHit::Pager(_),
+                    ..
+                } => true,
+                Hit::Desktop { .. } => self.config.wheel_on_desktop,
+                _ => false,
+            }
+    }
+
+    /// A wheel event over the pager or the desktop: wheel up switches to the previous desktop, down to the next, a
+    /// touchpad every [`crate::displays::TOUCH_STEP`] of travel.
+    pub fn desktop_wheel(&mut self, discrete: i32, continuous: f64) {
+        let steps = crate::displays::wheel_steps(discrete, continuous, &mut self.desktop_wheel);
+        if let Some(n) = wheel_target(self.desktops, steps) {
+            self.switch_desktop(n);
+        }
+    }
+
     /// Put `windows` (with owners and dialogs) on desktop `n`, staying on the current one; one on every desktop stays put. The next window here takes focus if it was theirs.
     pub fn move_to_desktop(&mut self, windows: &[WindowId], n: usize) {
         if n >= self.desktops.count {
@@ -328,6 +361,83 @@ mod tests {
         assert_eq!(d.step(Step::Prev), None);
         assert!(Desktops::new(2).enabled());
         assert_eq!(Desktops::new(0).count, 1);
+    }
+
+    #[test]
+    fn the_wheel_steps_up_to_the_previous_and_down_to_the_next_without_wrapping() {
+        let d = Desktops {
+            count: 4,
+            current: 1,
+        };
+        let mut carried = (0, 0.0);
+        let mut step = |discrete, continuous| {
+            wheel_target(
+                d,
+                crate::displays::wheel_steps(discrete, continuous, &mut carried),
+            )
+        };
+        assert_eq!(step(-120, -15.0), Some(0), "a notch up");
+        assert_eq!(step(120, 15.0), Some(2), "a notch down");
+        assert_eq!(step(360, 45.0), Some(3), "three notches stop at the last");
+        assert_eq!(step(-360, -45.0), Some(0), "and at the first");
+        assert_eq!(wheel_target(d, 0), None);
+        let last = Desktops {
+            count: 4,
+            current: 3,
+        };
+        assert_eq!(wheel_target(last, -1), None, "no wrap past the last");
+    }
+
+    #[test]
+    fn touchpad_travel_and_hi_res_wheels_add_up_to_one_step_a_notch() {
+        let d = Desktops::new(4);
+        let mut carried = (0, 0.0);
+        let mut step = |discrete, continuous| {
+            wheel_target(
+                d,
+                crate::displays::wheel_steps(discrete, continuous, &mut carried),
+            )
+        };
+        assert_eq!(step(0, 6.0), None);
+        assert_eq!(step(0, 6.0), None);
+        assert_eq!(step(0, 6.0), Some(1), "18 of travel passes one step");
+        let mut carried = (0, 0.0);
+        let mut hi_res =
+            |discrete| wheel_target(d, crate::displays::wheel_steps(discrete, 5.0, &mut carried));
+        assert_eq!(hi_res(60), None);
+        assert_eq!(hi_res(60), Some(1), "two half notches make one");
+    }
+
+    #[test]
+    fn the_wheel_over_the_desktop_switches_only_with_wheel_on_desktop() {
+        use smithay::backend::input::{Axis, AxisSource};
+        use smithay::input::pointer::AxisFrame;
+        for on in [false, true] {
+            let mut h = crate::harness::Harness::with_config(crate::config::Config {
+                base: repriseconf::config::Config {
+                    workspaces: 4,
+                    wheel_on_desktop: on,
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            h.output("TEST-1", 1024, 768);
+            h.pointer_to(500.0, 300.0);
+            assert_eq!(
+                h.state.scene_hit(h.state.pointer_location()),
+                crate::input::Hit::Desktop { index: None }
+            );
+            let notch_down = AxisFrame::new(InputTime::now())
+                .source(AxisSource::Wheel)
+                .value(Axis::Vertical, 15.0)
+                .v120(Axis::Vertical, 120);
+            h.state.handle_axis(notch_down);
+            assert_eq!(
+                h.state.desktops.current,
+                usize::from(on),
+                "wheel_on_desktop {on}"
+            );
+        }
     }
 
     #[test]

@@ -294,6 +294,7 @@ pub struct FileWorkspaces {
     pub animation: Option<String>,
     pub animation_ms: Option<i64>,
     pub pager: Option<String>,
+    pub wheel_on_desktop: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

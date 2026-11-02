@@ -705,6 +705,7 @@ fn save_round_trips_every_field() {
         desktop_animation: "slide-vertical".into(),
         desktop_animation_ms: 350,
         pager_mark: "tile".into(),
+        wheel_on_desktop: true,
         remember_windows: false,
         window_tabs: false,
         window_shake: true,

@@ -47,7 +47,7 @@ fn switcher_values_go_in_and_come_back_out() {
 fn the_desktops_page_geometry() {
     let s = built();
     let p = Page::Desktops;
-    assert_eq!(rect(&s, p, "desktops_group"), Rect::new(20, 44, 358, 168));
+    assert_eq!(rect(&s, p, "desktops_group"), Rect::new(20, 44, 358, 194));
     assert_eq!(rect(&s, p, "use_desktops"), Rect::new(32, 64, 13, 13));
     assert_eq!(rect(&s, p, "desktops_label"), Rect::new(50, 88, 206, 13));
     assert_eq!(rect(&s, p, "desktops"), Rect::new(260, 84, 50, 20));
@@ -62,14 +62,68 @@ fn the_desktops_page_geometry() {
     assert_eq!(rect(&s, p, "duration_units"), Rect::new(220, 140, 60, 13));
     assert_eq!(rect(&s, p, "pager_mark_label"), Rect::new(50, 166, 190, 13));
     assert_eq!(rect(&s, p, "pager_mark"), Rect::new(50, 184, 134, 21));
-    assert_eq!(rect(&s, p, "previews_group"), Rect::new(20, 222, 358, 76));
-    assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(32, 246, 13, 13));
-    assert_eq!(rect(&s, p, "previews_fps"), Rect::new(146, 268, 50, 20));
-    assert_eq!(rect(&s, p, "fps_units"), Rect::new(202, 272, 100, 13));
+    assert_eq!(rect(&s, p, "wheel_on_desktop"), Rect::new(50, 214, 13, 13));
+    assert_eq!(rect(&s, p, "previews_group"), Rect::new(20, 248, 358, 76));
+    assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(32, 272, 13, 13));
+    assert_eq!(rect(&s, p, "previews_fps"), Rect::new(146, 294, 50, 20));
+    assert_eq!(rect(&s, p, "fps_units"), Rect::new(202, 298, 100, 13));
     for id in ["session_restore", "session_end_processes"] {
         assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Startup");
     }
     inside_page(&s, p);
+}
+
+#[test]
+fn the_wheel_on_desktop_box_writes_its_key_and_greys_with_one_desktop() {
+    let p = Page::Desktops;
+    let mut got = Settings::default();
+    let s = with(&got);
+    assert_eq!(s.pages[p.index()].checked("wheel_on_desktop"), Some(false));
+    assert!(enabled_on(&s, p, "wheel_on_desktop"));
+    let mut s = with(&Settings {
+        wheel_on_desktop: true,
+        ..Settings::default()
+    });
+    assert_eq!(s.pages[p.index()].checked("wheel_on_desktop"), Some(true));
+    if let Some(Control::Check { checked, .. }) = s.pages[p.index()]
+        .item_mut("wheel_on_desktop")
+        .map(|i| &mut i.control)
+    {
+        *checked = true;
+    }
+    read_one(&s, "wheel_on_desktop", &mut got);
+    assert!(got.wheel_on_desktop);
+    let one = with(&Settings {
+        desktops: 1,
+        ..Settings::default()
+    });
+    assert!(!enabled_on(&one, p, "wheel_on_desktop"));
+}
+
+#[test]
+fn the_wheel_on_desktop_row_pins_its_pixels_in_every_look() {
+    let mut f = desktops(Area::MIN);
+    let row = Rect::new(50, 212, 328, 17);
+    let Some(off) = row_pins(&f, row) else {
+        return;
+    };
+    if let Some(Control::Check { checked, .. }) =
+        f.item_mut("wheel_on_desktop").map(|i| &mut i.control)
+    {
+        *checked = true;
+    }
+    let on = row_pins(&f, row).unwrap();
+    f.set_enabled("wheel_on_desktop", false);
+    let greyed = row_pins(&f, row).unwrap();
+    assert_eq!(
+        [off, on, greyed],
+        [
+            [0x444d64fcbc043bf4, 0x8613c8d92bda6a23, 0x36ce02d14726ecc7],
+            [0x6008f30a911bdf3b, 0xb211584d4f8c711f, 0x78eb9868337e9a80],
+            [0xf69aabd6f21cade1, 0x356b03616b75d2fe, 0x6d40df75f8c1acfa],
+        ],
+        "off, ticked, greyed; Classic, Blue, Glass"
+    );
 }
 
 /// One desktop unticks "Use virtual desktops" and greys the count, animation
