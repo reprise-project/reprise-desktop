@@ -82,6 +82,8 @@ pub enum SceneOwner {
     Taskbar(TreeId),
     Menu(usize),
     Desktop,
+    /// A desktop widget (`deskwidgets`).
+    DeskWidget(reprisekit::controls::deskwidget::Kind),
     Layer,
     Dialog(usize),
     Launcher,
@@ -428,6 +430,7 @@ pub struct State {
     pub ending: Option<crate::sessionend::Ending>,
     pub session_fade: crate::sessionfade::SessionFade,
     pub calendar: crate::calendarview::CalendarState,
+    pub widgets: crate::deskwidgets::DeskWidgets,
     pub displays_view: crate::displaysview::DisplaysViewState,
 }
 
@@ -765,6 +768,7 @@ impl State {
             ending: None,
             session_fade: crate::sessionfade::SessionFade::new(config.effects.session_fade_ms().0),
             calendar: Default::default(),
+            widgets: Default::default(),
             displays_view: Default::default(),
             config,
             config_path,

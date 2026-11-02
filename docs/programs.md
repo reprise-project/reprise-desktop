@@ -183,8 +183,8 @@ One window, 23 pages, four headings. Only one runs at a time.
   - **Launcher:** whether it searches your files and open windows.
   - **Window Switcher:** Alt+Tab's icons or thumbnails, picture size, Peek,
     the 3D switcher and the overview's hot corner.
-  - **Desktops:** how many, how they animate, their names, and the
-    taskbar's live previews.
+  - **Desktops:** how many, how they animate, their names, the taskbar's
+    live previews, and the desktop widgets.
   - **Windows:** snapping, snap layouts, the snap bar, window tabs and window
     memory.
 - **Input**

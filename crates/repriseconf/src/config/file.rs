@@ -672,6 +672,7 @@ pub struct FileConfig {
     pub desktop_extensions: Option<String>,
     pub start_icon: Option<bool>,
     pub system_icons: Option<Vec<String>>,
+    pub desktop_widgets: Option<Vec<String>>,
     pub wallpaper: Option<FileWallpaper>,
     pub screensaver: Option<FileScreensaver>,
     pub display: Option<FileDisplay>,

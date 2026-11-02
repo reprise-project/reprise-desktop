@@ -182,6 +182,14 @@ pub enum DesktopCommand {
     DropMove,
     DropShortcut,
     DropCancel,
+    /// The Widgets submenu, and its check box rows.
+    Widgets,
+    ToggleWidget(reprisekit::controls::deskwidget::Kind),
+    /// A widget's menu: the clock's face and seconds, the meter's look, and Remove.
+    ClockFace(reprisekit::controls::deskwidget::Face),
+    ClockSeconds,
+    MeterLook(reprisekit::controls::deskwidget::MeterStyle),
+    RemoveWidget(reprisekit::controls::deskwidget::Kind),
 }
 
 impl DesktopCommand {
@@ -189,6 +197,7 @@ impl DesktopCommand {
         matches!(
             self,
             DesktopCommand::ArrangeIcons
+                | DesktopCommand::Widgets
                 | DesktopCommand::New
                 | DesktopCommand::OpenWith
                 | DesktopCommand::SendTo

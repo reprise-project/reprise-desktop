@@ -77,19 +77,20 @@ pub fn to_saved(cell: Cell, (c, r): (i32, i32)) -> (i32, i32) {
 }
 
 /// The icons `names` in a grid of `cell`s over `area`: each at its saved position
-/// ([`from_saved`]), or the free cell nearest it when an earlier icon took that cell; the rest,
-/// and those saved past the grid's end, flow into the free cells down the columns.
+/// ([`from_saved`]), or the free cell nearest it when an earlier icon or `blocked` took that
+/// cell; the rest, and those saved past the grid's end, flow into the free cells down the columns.
 pub fn layout_free(
     cell: Cell,
     area: Rect,
     names: &[&str],
     positions: &std::collections::BTreeMap<String, (i32, i32)>,
+    blocked: &std::collections::HashSet<(i32, i32)>,
 ) -> Vec<Rect> {
     let (cols, rows) = (
         columns(cell, area) as i32,
         rows_per_column(cell, area) as i32,
     );
-    let mut taken = std::collections::HashSet::new();
+    let mut taken = blocked.clone();
     let mut cells: Vec<Option<(i32, i32)>> = names
         .iter()
         .map(|n| {
@@ -219,6 +220,22 @@ pub fn layout(cell: Cell, area: Rect, count: usize) -> Vec<Rect> {
     let rows = rows_per_column(cell, area);
     (0..count)
         .map(|i| cell_rect(cell, area, (i / rows) as i32, (i % rows) as i32))
+        .collect()
+}
+
+/// [`layout`] down the columns, stepping over the `blocked` cells.
+pub fn layout_around(
+    cell: Cell,
+    area: Rect,
+    count: usize,
+    blocked: &std::collections::HashSet<(i32, i32)>,
+) -> Vec<Rect> {
+    let rows = rows_per_column(cell, area) as i32;
+    (0..)
+        .map(|i| (i / rows, i % rows))
+        .filter(|c| !blocked.contains(c))
+        .take(count)
+        .map(|(col, row)| cell_rect(cell, area, col, row))
         .collect()
 }
 
@@ -733,6 +750,7 @@ mod tests {
     use super::*;
     use crate::textedit::EditKey;
     use crate::theme::FontConfig;
+    use std::collections::HashSet;
 
     #[test]
     fn free_layout_honours_positions_and_fills_the_rest_column_major() {
@@ -743,21 +761,51 @@ mod tests {
         pos.insert("b".to_string(), (2, 1));
         pos.insert("c".to_string(), (2, 1)); // taken by b: the next free cell down
         pos.insert("d".to_string(), (9, 0)); // off the grid: flows
-        let cells = layout_free(square, area, &["a", "b", "c", "d", "e"], &pos);
+        let cells = layout_free(
+            square,
+            area,
+            &["a", "b", "c", "d", "e"],
+            &pos,
+            &HashSet::new(),
+        );
         assert_eq!(cells[1], cell_rect(square, area, 2, 1));
         assert_eq!(cells[2], cell_rect(square, area, 2, 2));
         assert_eq!(cells[0], cell_rect(square, area, 0, 0));
         assert_eq!(cells[3], cell_rect(square, area, 0, 1));
         assert_eq!(cells[4], cell_rect(square, area, 0, 2));
         assert_eq!(
-            layout_free(square, area, &["a", "b"], &BTreeMap::new()),
+            layout_free(square, area, &["a", "b"], &BTreeMap::new(), &HashSet::new()),
             layout(square, area, 2)
         );
         pos.clear();
         pos.insert("a".to_string(), (0, 1));
-        let cells = layout_free(square, area, &["a", "b", "c"], &pos);
+        let cells = layout_free(square, area, &["a", "b", "c"], &pos, &HashSet::new());
         assert_eq!(cells[1], cell_rect(Cell::square(CELL), area, 0, 0));
         assert_eq!(cells[2], cell_rect(Cell::square(CELL), area, 0, 2));
+    }
+
+    #[test]
+    fn icons_flow_round_blocked_cells_and_one_saved_in_them_moves_to_the_nearest_free() {
+        use std::collections::BTreeMap;
+        let area = Rect::new(0, 0, 400, 240); // 5 columns, 3 rows
+        let square = Cell::square(CELL);
+        let blocked = HashSet::from([(0, 1), (0, 2), (1, 0)]);
+        let at = |c, r| cell_rect(square, area, c, r);
+        assert_eq!(
+            layout_around(square, area, 3, &blocked),
+            vec![at(0, 0), at(1, 1), at(1, 2)]
+        );
+        assert_eq!(
+            layout_around(square, area, 2, &HashSet::new()),
+            layout(square, area, 2)
+        );
+        let pos = BTreeMap::from([("a".to_string(), (0, 2))]);
+        let cells = layout_free(square, area, &["a", "b"], &pos, &blocked);
+        assert_eq!(
+            cells,
+            vec![at(1, 1), at(0, 0)],
+            "a leaves the blocked cell; b flows past it"
+        );
     }
 
     #[test]
@@ -1469,7 +1517,7 @@ mod tests {
             .map(|r| (names[r].to_string(), (0, r as i32)))
             .collect();
         pos.insert("far".into(), (20, 3));
-        let cells = layout_free(big, area, &names, &pos);
+        let cells = layout_free(big, area, &names, &pos, &HashSet::new());
         let at = |i: usize| cell_at(big, area, cells[i].x, cells[i].y);
         assert_eq!(
             (0..5).map(at).collect::<Vec<_>>(),

@@ -495,6 +495,18 @@ impl Config {
         if let Some(v) = file.system_icons {
             cfg.system_icons = crate::system_icons::current_list(v.iter().map(String::as_str));
         }
+        if let Some(v) = file.desktop_widgets {
+            cfg.desktop_widgets = Vec::new();
+            for name in v {
+                use reprisekit::controls::deskwidget::Kind;
+                let kind = Kind::from_name(&name).ok_or_else(|| {
+                    format!("desktop_widgets: {name:?} is not clock, calendar or meter")
+                })?;
+                if !cfg.desktop_widgets.contains(&kind) {
+                    cfg.desktop_widgets.push(kind);
+                }
+            }
+        }
         cfg.wallpaper.lock_screen = cfg.interface != Interface::Classic;
         let mut image_set = false;
         if let Some(w) = file.wallpaper {

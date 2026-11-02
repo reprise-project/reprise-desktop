@@ -75,6 +75,8 @@ pub(super) enum Bind {
     Icon(&'static str, Lens<Settings, Vec<String>>),
     /// An edit holding the list's entries apart by commas, an empty entry kept as one.
     Names(&'static str, Lens<Settings, Vec<String>>),
+    /// A check box ticked while the list holds its name: a desktop widget.
+    Member(&'static str, Lens<Settings, Vec<String>>, &'static str),
 }
 
 pub(super) fn binds() -> Vec<Bind> {
@@ -166,6 +168,9 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Icon("documents", lens!(system_icons)),
         Bind::Icon("computer", lens!(system_icons)),
         Bind::Icon("home", lens!(system_icons)),
+        Bind::Member("widget_clock", lens!(desktop_widgets), "clock"),
+        Bind::Member("widget_calendar", lens!(desktop_widgets), "calendar"),
+        Bind::Member("widget_meter", lens!(desktop_widgets), "meter"),
         Bind::UseDesktops("use_desktops", lens!(desktops)),
         Bind::Desktops("desktops", lens!(desktops)),
         Bind::Named(
@@ -366,7 +371,8 @@ impl Bind {
             | Bind::Level(id, _, _)
             | Bind::Hex(id, _)
             | Bind::Icon(id, _)
-            | Bind::Names(id, _) => id,
+            | Bind::Names(id, _)
+            | Bind::Member(id, _, _) => id,
         }
     }
 
@@ -397,6 +403,13 @@ impl Bind {
             Bind::Flag(_, at) => *at.get_mut(s) ^= true,
             Bind::Icon(_, at) => at.get_mut(s).push(String::new()),
             Bind::Names(_, at) => at.get_mut(s).push("\u{1}".into()),
+            Bind::Member(_, at, name) => {
+                let list = at.get_mut(s);
+                match list.iter().position(|n| n == name) {
+                    Some(i) => drop(list.remove(i)),
+                    None => list.push(name.to_string()),
+                }
+            }
         }
     }
 }
@@ -577,7 +590,7 @@ pub fn write_form(form: &mut Form, s: &Settings) {
                 b.color = Color::parse(at.get(s))
                     .unwrap_or_else(|| crate::appearancepage::theme(s).colors.background);
             }
-            (Bind::Icon(name, at), Control::Check { checked, .. }) => {
+            (Bind::Icon(name, at) | Bind::Member(_, at, name), Control::Check { checked, .. }) => {
                 *checked = at.get(s).iter().any(|n| n == name);
             }
             _ => {}
@@ -875,6 +888,15 @@ pub fn read_one(sheet: &PropSheet, id: &str, s: &mut Settings) {
                 (Bind::Icon(name, at), Control::Check { checked, .. }) => {
                     let icons = crate::model::system_icons_with(at.get(s), name, *checked);
                     *at.get_mut(s) = icons;
+                }
+                (Bind::Member(_, at, name), Control::Check { checked, .. }) => {
+                    let list = at.get_mut(s);
+                    let has = list.iter().any(|n| n == name);
+                    if *checked && !has {
+                        list.push(name.to_string());
+                    } else if !*checked {
+                        list.retain(|n| n != name);
+                    }
                 }
                 _ => {}
             }
