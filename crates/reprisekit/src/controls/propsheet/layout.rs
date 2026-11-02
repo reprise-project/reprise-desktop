@@ -11,8 +11,8 @@ use crate::text::TextRenderer;
 use crate::theme::TextUnits;
 
 use super::{
-    BUTTON_IDS, Buttons, Layout, MARGIN, Nav, PAGE_BOTTOM, PAGE_EDGE, PAGE_TOP, PropSheet, STRIP,
-    buttons, is_button, shift,
+    BUTTON_IDS, Buttons, Layout, MARGIN, Nav, PAGE_BOTTOM, PAGE_EDGE, PAGE_TOP, PropSheet, RESTORE,
+    STRIP, buttons, is_button, shift,
 };
 
 impl PropSheet {
@@ -251,10 +251,13 @@ impl PropSheet {
         self.bars() != (false, false)
     }
 
+    /// The row follows the client's bottom right; Restore Defaults keeps under the page's left edge.
     fn move_buttons(&mut self, dx: i32, dy: i32) {
         for page in &mut self.pages {
             for it in page.items.iter_mut().filter(|it| is_button(it)) {
-                it.rect.x += dx;
+                if it.id != RESTORE {
+                    it.rect.x += dx;
+                }
                 it.rect.y += dy;
             }
         }

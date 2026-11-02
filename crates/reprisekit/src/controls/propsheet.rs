@@ -56,6 +56,11 @@ pub use nav::{StripKey, page_step};
 pub const OK: &str = "ok";
 pub const CANCEL: &str = "cancel";
 pub const APPLY: &str = "apply";
+/// Restore Defaults at the button row's left end, on the pages a host gives it
+/// ([`PropSheet::set_restore`]); pressing it comes back as the page's `Pressed(RESTORE)`.
+pub const RESTORE: &str = "restore_defaults";
+/// Restore Defaults' width, wider than the row's other buttons for its label.
+pub const RESTORE_W: i32 = 96;
 
 const STRIP: (i32, i32) = (6, 8);
 const MARGIN: i32 = 6;
@@ -66,7 +71,7 @@ const BUTTON_BOTTOM: i32 = 7;
 const BUTTON_PITCH: i32 = BUTTON_W + 6;
 /// The page's bevel, which the scrollbar and the scrolled controls keep inside.
 const PAGE_EDGE: i32 = 2;
-const BUTTON_IDS: &[&str] = &[OK, CANCEL, APPLY];
+const BUTTON_IDS: &[&str] = &[OK, CANCEL, APPLY, RESTORE];
 
 /// Which buttons the sheet's row holds. Each set fills the slots from the right,
 /// so OK / Cancel sit where Cancel and Apply would.
@@ -280,11 +285,18 @@ impl PropSheet {
         let Some(old) = self.pages.get(i) else {
             return;
         };
-        let apply = matches!(
-            old.item(APPLY).map(|it| &it.control),
-            Some(Control::Button { enabled: true, .. })
-        );
+        let lit = |id| {
+            matches!(
+                old.item(id).map(|it| &it.control),
+                Some(Control::Button { enabled: true, .. })
+            )
+        };
+        let (apply, restore) = (lit(APPLY), old.item(RESTORE).map(|_| lit(RESTORE)));
         self.pages[i] = self.dress(page, apply);
+        if let Some(on) = restore {
+            self.set_restore(i, true);
+            self.pages[i].set_enabled(RESTORE, on);
+        }
         if self.tabs.focused && i == self.tabs.open {
             self.pages[i].set_focus(None);
         }
@@ -303,6 +315,39 @@ impl PropSheet {
 
     pub fn open_mut(&mut self) -> &mut Form {
         &mut self.pages[self.tabs.open]
+    }
+
+    /// Give page `i` Restore Defaults at the button row's left end, under the page's left edge,
+    /// or take it away. It comes before OK in the tab order and stays put while the page scrolls.
+    pub fn set_restore(&mut self, i: usize, shown: bool) {
+        let at = self.restore_rect();
+        let Some(page) = self.pages.get_mut(i) else {
+            return;
+        };
+        let have = page.items.iter().position(|it| it.id == RESTORE);
+        // Inserting or removing moves the row's indices: the focus is put back by id.
+        let focused = page.focus().map(|f| page.items[f].id);
+        match (have, shown) {
+            (None, true) => {
+                let ok = page.items.iter().position(|it| it.id == OK);
+                let button = Item::button(RESTORE, at, &tr!("restore-defaults"), true, false);
+                page.items.insert(ok.unwrap_or(page.items.len()), button);
+            }
+            (Some(k), false) => {
+                page.items.remove(k);
+            }
+            _ => return,
+        }
+        match focused {
+            Some(RESTORE) if !shown => page.focus_id(OK),
+            Some(id) => page.focus_id(id),
+            None => {}
+        }
+    }
+
+    fn restore_rect(&self) -> Rect {
+        let (ok, ..) = buttons(self.shown());
+        Rect::new(MARGIN + self.page_dx(), ok.y, RESTORE_W, BUTTON_H)
     }
 
     /// Grey or ungrey Apply on every page (the sheet shares one button row).

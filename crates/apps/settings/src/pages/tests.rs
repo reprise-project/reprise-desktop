@@ -595,3 +595,62 @@ fn render_the_pages() {
     propsheet::draw(&mut c, &text, &theme.paint(), &glass, true, px);
     reprisekit::raster::write_preview(&c, "reprise-settings-appearance-glass.png");
 }
+
+fn names(keys: &[repriseconf::Key]) -> Vec<String> {
+    keys.iter()
+        .map(|k| format!("{}.{}", k.table, k.name))
+        .collect()
+}
+
+#[test]
+fn restore_defaults_takes_a_pages_keys_from_its_controls() {
+    let s = built();
+    let on = |p: Page| names(&keys_of(&s.pages[p.index()]));
+    assert_eq!(
+        on(Page::Sounds),
+        ["notifications.sound", "sounds.theme", "sounds.bell"]
+    );
+    assert_eq!(on(Page::Pointers), ["cursor.theme", "cursor.size"]);
+    assert_eq!(
+        on(Page::Background),
+        [
+            ".desktop_icons",
+            ".desktop_extensions",
+            "wallpaper.image",
+            "wallpaper.position",
+            "wallpaper.slideshow",
+            "wallpaper.interval",
+            "wallpaper.shuffle",
+            "colors.background",
+            ".system_icons"
+        ],
+        "the wallpaper list's keys too"
+    );
+    assert!(on(Page::Keyboard).contains(&"keyboard.layout".to_string()));
+    assert!(on(Page::ScreenSaver).contains(&"screensaver.name".to_string()));
+    for p in [Page::Display, Page::StartMenu, Page::Tablet, Page::Backup] {
+        assert_eq!(on(p), Vec::<String>::new(), "{p:?} writes no config key");
+    }
+    let glass = under("glass");
+    let glass_keys = names(&keys_of(&glass.pages[Page::Appearance.index()]));
+    assert!(glass_keys.contains(&"glass.material".to_string()));
+    assert!(!on(Page::Appearance).contains(&"glass.material".to_string()));
+}
+
+/// Every key the field table reads is on a page under one interface or another, so Restore
+/// Defaults reaches it.
+#[test]
+fn every_key_the_sheet_writes_is_on_a_page() {
+    let mut seen = Vec::new();
+    for i in ["classic", "blue", "glass"] {
+        let s = under(i);
+        for p in Page::all() {
+            seen.extend(keys_of(&s.pages[p.index()]));
+        }
+    }
+    let missing: Vec<String> = (crate::model::keys().iter())
+        .filter(|k| !seen.contains(k))
+        .map(|k| format!("{}.{}", k.table, k.name))
+        .collect();
+    assert_eq!(missing, Vec::<String>::new());
+}

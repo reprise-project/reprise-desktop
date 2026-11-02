@@ -1,15 +1,34 @@
 //! OK, Apply and Cancel: writing `config.toml` and the autostart files, and rereading them.
 
-use crate::registry::Page;
+use crate::backuphost::Then;
+use crate::registry::{self, Page};
 use crate::{
     SettingsApp, autostart, defaultspage, displaypage, menupage, model, pages, quickpage,
     read_config,
 };
 use repriseapp::oneshot::{self, MsgBox};
+use repriseconf::Key;
 use reprisekit::controls::msgbox;
+use reprisekit::controls::propsheet;
 use std::path::PathBuf;
 
 use repriseapp::{Ctx, Event, Reply};
+
+/// The question Restore Defaults asks on page `p` before taking `keys` out of `config.toml`.
+pub(crate) fn restore_question(p: Page, keys: &[Key]) -> String {
+    let mut text = format!(
+        "Restore the defaults on the {} page?\nThese settings are taken out of config.toml:\n",
+        p.label()
+    );
+    for k in keys {
+        match k.table {
+            "" => text.push_str(&format!("    {}\n", k.name)),
+            t => text.push_str(&format!("    {t}.{}\n", k.name)),
+        }
+    }
+    text.pop();
+    text
+}
 
 impl SettingsApp {
     pub(crate) fn user_autostart(&self) -> PathBuf {
@@ -82,6 +101,82 @@ impl SettingsApp {
         }
         let dirty = self.dirty();
         self.sheet.set_apply_enabled(dirty);
+        self.sync_restore();
+    }
+
+    /// Restore Defaults on every page whose controls write config keys, greyed where none is
+    /// off its default.
+    pub(crate) fn sync_restore(&mut self) {
+        for p in Page::all() {
+            let i = p.index();
+            let shown = !pages::keys_of(&self.sheet.pages[i]).is_empty();
+            self.sheet.set_restore(i, shown);
+            let on = shown && !self.restorable(p).is_empty();
+            self.sheet.pages[i].set_enabled(propsheet::RESTORE, on);
+        }
+    }
+
+    /// The defaults Restore Defaults puts back for `keys`: the file's interface's, Classic's
+    /// when the interface itself is among them.
+    fn defaults_for(&self, keys: &[Key]) -> model::Settings {
+        let interface = match keys.contains(&model::INTERFACE) {
+            true => "",
+            false => &self.loaded.interface,
+        };
+        model::Settings::for_interface(interface)
+    }
+
+    /// The keys page `p`'s controls write that the file or the sheet holds off their defaults.
+    pub(crate) fn restorable(&self, p: Page) -> Vec<Key> {
+        let keys = pages::keys_of(&self.sheet.pages[p.index()]);
+        let def = self.defaults_for(&keys);
+        let apart = [
+            model::keys_apart(&self.loaded, &def),
+            model::keys_apart(&self.want, &def),
+        ];
+        (keys.into_iter())
+            .filter(|k| apart.iter().any(|a| a.contains(k)))
+            .collect()
+    }
+
+    /// Restore Defaults on the open page: ask with the keys it takes out of `config.toml`.
+    pub(crate) fn ask_restore(&mut self) {
+        let p = registry::open(&self.sheet);
+        let keys = self.restorable(p);
+        if keys.is_empty() {
+            return;
+        }
+        self.ask(restore_question(p, &keys), Then::RestoreDefaults(p));
+    }
+
+    /// Take page `p`'s keys out of `config.toml` the way Apply writes a default, and show the
+    /// defaults on the page; the other pages' unapplied changes stay unapplied.
+    pub(crate) fn restore_defaults(&mut self, p: Page) {
+        let keys = self.restorable(p);
+        let def = self.defaults_for(&keys);
+        let mut next = self.loaded.clone();
+        model::copy_keys(&keys, &def, &mut next);
+        let saved = repriseconf::edit(&self.path, |text| model::save(text, &next, &self.loaded));
+        match saved {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                log::warn!(
+                    "{} does not parse, refusing to rewrite it: {e}",
+                    self.path.display()
+                );
+                return self.fail("config.toml does not parse; nothing was written.");
+            }
+            Err(e) => {
+                log::warn!("write {}: {e}", self.path.display());
+                return self.fail("config.toml could not be written.");
+            }
+        }
+        model::copy_keys(&keys, &def, &mut self.want);
+        self.config_changed();
+        pages::write(&mut self.sheet, &self.want, &self.xkb);
+        self.fill_wallpapers();
+        self.want_preview();
+        self.sync_apply();
     }
 
     /// Write `config.toml` and the autostart files whose check moved. False when a write failed; the sheet stays dirty.
