@@ -342,6 +342,60 @@ fn low_space_percent_in(text: &str) -> u8 {
         .unwrap_or(LOW_SPACE_PERCENT)
 }
 
+/// `[bluetooth] battery_warning`: reprise-bluetooth warns once when a connected device's battery
+/// drops to this percent, again after it charges [`BT_BATTERY_REARM`] points past it; 0 turns the
+/// warning off.
+pub const BT_BATTERY_WARNING: u8 = 15;
+pub const BT_BATTERY_MAX: u8 = 50;
+pub const BT_BATTERY_REARM: u8 = 5;
+
+/// `[bluetooth] battery_warning`, read now: unset or not an integer keeps
+/// [`BT_BATTERY_WARNING`], and it is clamped to 0..=[`BT_BATTERY_MAX`].
+pub fn bt_battery_warning() -> u8 {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    bt_battery_warning_in(&text)
+}
+
+fn bt_battery_warning_in(text: &str) -> u8 {
+    parsed(text)
+        .and_then(|doc| {
+            get(&doc, &key("bluetooth", "battery_warning"))
+                .and_then(Item::as_integer)
+                .map(|v| v.clamp(0, i64::from(BT_BATTERY_MAX)) as u8)
+        })
+        .unwrap_or(BT_BATTERY_WARNING)
+}
+
+/// Write `[bluetooth] battery_warning = percent` into the config file, the default as no key (and
+/// no table once it is empty).
+pub fn save_bt_battery_warning(percent: u8) -> Result<(), String> {
+    let written = edit(&config_path(), |text| {
+        with_bt_battery_warning(text, percent)
+    });
+    match written {
+        Ok(r) => r.map(|_| ()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn with_bt_battery_warning(text: &str, percent: u8) -> Result<String, String> {
+    let mut doc: DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
+    let k = key("bluetooth", "battery_warning");
+    if percent == BT_BATTERY_WARNING {
+        remove(&mut doc, &k);
+        if doc
+            .get(k.table)
+            .and_then(Item::as_table_like)
+            .is_some_and(|t| t.is_empty())
+        {
+            doc.remove(k.table);
+        }
+    } else {
+        set(&mut doc, &k, Value::from(i64::from(percent))).map_err(|e| e.to_string())?;
+    }
+    Ok(doc.to_string())
+}
+
 /// A refresh in Hz with the decimals it needs: `60`, `59.94`.
 pub fn hz_string(refresh_mhz: i32) -> String {
     let hz = format!("{:.3}", refresh_mhz as f64 / 1000.0);
@@ -840,6 +894,27 @@ mod tests {
         assert_eq!(pct("-1"), 0);
         assert_eq!(pct("90"), 50);
         assert_eq!(pct("\"low\""), 5);
+    }
+
+    #[test]
+    fn bt_battery_warns_at_15_percent_unless_set() {
+        let pct = |v: &str| bt_battery_warning_in(&format!("[bluetooth]\nbattery_warning = {v}\n"));
+        assert_eq!(bt_battery_warning_in(""), 15);
+        assert_eq!(pct("20"), 20);
+        assert_eq!(pct("0"), 0, "0 turns it off");
+        assert_eq!(pct("-3"), 0);
+        assert_eq!(pct("80"), 50);
+        assert_eq!(pct("\"low\""), 15);
+    }
+
+    #[test]
+    fn saving_the_bt_battery_warning_drops_the_default() {
+        let set = with_bt_battery_warning("# mine\n", 25).unwrap();
+        assert_eq!(bt_battery_warning_in(&set), 25);
+        assert!(set.contains("# mine\n"), "the rest of the file stays");
+        let back = with_bt_battery_warning(&set, 15).unwrap();
+        assert!(!back.contains("bluetooth"), "{back}");
+        assert!(with_bt_battery_warning("[bluetooth\n", 25).is_err());
     }
 
     #[test]

@@ -5,7 +5,7 @@
 use reprisekit::art::bticon;
 use reprisetray::{Config, Icon, Msg, Node, Raise, Rows, Shown};
 
-use crate::bz::Snapshot;
+use crate::bz::{self, Device, Snapshot};
 
 pub const BUS_NAME: &str = "reprise.bluetooth";
 
@@ -14,7 +14,17 @@ pub enum TrayMsg {
     Show,
     Add,
     TogglePower,
+    /// A connected device's row, by its index into [`connected`]: opens its Properties.
+    Device(usize),
     Exit,
+}
+
+/// The paired devices connected now, in the snapshot's order.
+pub fn connected(s: &Snapshot) -> Vec<&Device> {
+    s.devices
+        .iter()
+        .filter(|d| d.paired && d.connected)
+        .collect()
 }
 
 /// What `msg` means while the menu shows `s`'s rows.
@@ -25,10 +35,19 @@ pub fn translate(msg: Msg, s: &Snapshot) -> Option<TrayMsg> {
     }
 }
 
-/// Show and Exit always; Add while the radio is on; the power row while
-/// there is a radio to turn.
+/// The connected devices with their battery while the radio is on; Show and Exit always; Add
+/// while the radio is on; the power row while there is a radio to turn.
 pub fn menu(s: &Snapshot) -> Rows<TrayMsg> {
     let mut rows = Rows::default();
+    if s.adapter.as_ref().is_some_and(|a| a.powered) {
+        let devices = connected(s);
+        for (i, d) in devices.iter().enumerate() {
+            rows.add(TrayMsg::Device(i), |id| Node::row(id, bz::battery_row(d)));
+        }
+        if !devices.is_empty() {
+            rows.separator();
+        }
+    }
     rows.add(TrayMsg::Show, |id| Node::row(id, "Show Bluetooth Devices"));
     if let Some(a) = &s.adapter {
         if a.powered {
@@ -55,11 +74,17 @@ pub fn tooltip(s: &Snapshot) -> String {
     match &s.adapter {
         None => "No Bluetooth adapter".into(),
         Some(a) if !a.powered => "Bluetooth is off".into(),
-        Some(_) => match s.devices.iter().filter(|d| d.paired && d.connected).count() {
-            0 => "Bluetooth: no devices connected".into(),
-            1 => "Bluetooth: 1 device connected".into(),
-            n => format!("Bluetooth: {n} devices connected"),
-        },
+        Some(_) => {
+            let devices = connected(s);
+            let head = match devices.len() {
+                0 => return "Bluetooth: no devices connected".into(),
+                1 => "Bluetooth: 1 device connected".to_string(),
+                n => format!("Bluetooth: {n} devices connected"),
+            };
+            devices
+                .iter()
+                .fold(head, |tip, d| tip + "\n" + &bz::battery_row(d))
+        }
     }
 }
 
@@ -107,6 +132,7 @@ mod tests {
             devices: (0..connected)
                 .map(|i| Device {
                     path: format!("/a/{i}"),
+                    alias: format!("Dev {i}"),
                     paired: true,
                     connected: true,
                     ..Device::default()
@@ -124,8 +150,44 @@ mod tests {
         assert_eq!(tooltip(&Snapshot::default()), "No Bluetooth adapter");
         assert_eq!(tooltip(&snap(false, 0)), "Bluetooth is off");
         assert_eq!(tooltip(&snap(true, 0)), "Bluetooth: no devices connected");
-        assert_eq!(tooltip(&snap(true, 1)), "Bluetooth: 1 device connected");
-        assert_eq!(tooltip(&snap(true, 3)), "Bluetooth: 3 devices connected");
+        assert_eq!(
+            tooltip(&snap(true, 1)),
+            "Bluetooth: 1 device connected\nDev 0"
+        );
+        assert_eq!(
+            tooltip(&snap(true, 3)),
+            "Bluetooth: 3 devices connected\nDev 0\nDev 1\nDev 2"
+        );
+    }
+
+    #[test]
+    fn connected_devices_show_their_battery_in_the_tooltip_and_the_menu() {
+        let mut s = snap(true, 2);
+        s.devices[0].battery = Some(80);
+        s.devices.push(Device {
+            path: "/a/off".into(),
+            alias: "Away".into(),
+            paired: true,
+            battery: Some(50),
+            ..Device::default()
+        });
+        assert_eq!(
+            tooltip(&s),
+            "Bluetooth: 2 devices connected\nDev 0 \u{2014} 80%\nDev 1"
+        );
+        assert_eq!(
+            labels(&s)[..3],
+            ["Dev 0 \u{2014} 80%", "Dev 1", ""],
+            "a row per connected device, then a separator"
+        );
+        let click = |row| translate(Rows::clicked(&row), &s);
+        assert_eq!(click(TrayMsg::Device(1)), Some(TrayMsg::Device(1)));
+        assert_eq!(connected(&s)[1].path, "/a/1");
+        assert_eq!(
+            labels(&snap(false, 2))[0],
+            "Show Bluetooth Devices",
+            "no device rows while the radio is off"
+        );
     }
 
     #[test]

@@ -79,11 +79,17 @@ enum Wake {
     Quit,
 }
 
+/// `REPRISE_BLUEZ_BUS=session` reads BlueZ off the session bus, for a test's stand-in service.
+fn bus() -> zbus::connection::Builder<'static> {
+    if std::env::var_os("REPRISE_BLUEZ_BUS").is_some_and(|v| v == "session") {
+        zbus::connection::Builder::session()
+    } else {
+        zbus::connection::Builder::system()
+    }
+}
+
 async fn run(poster: Poster, cmds: async_channel::Receiver<Cmd>, done: Sender<()>) {
-    let conn = zbus::connection::Builder::system()
-        .method_timeout(CALL_TIMEOUT)
-        .build()
-        .await;
+    let conn = bus().method_timeout(CALL_TIMEOUT).build().await;
     let conn = match conn {
         Ok(c) => c,
         Err(e) => {

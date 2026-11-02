@@ -43,6 +43,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[privacy]` | recent files and location |
 | `[thumbnail_cache]` | whether thumbnails are kept, the cap, and whether installed thumbnailers make them for PDFs, videos and fonts |
 | `[storage]` | the low disk space warning |
+| `[bluetooth]` | `battery_warning`: the percent a connected device's battery warns at, 15 by default, 0 off (Bluetooth Devices > Options) |
 | `[debug]` | the debug overlay |
 | `[osd]` | `caps_lock`, `num_lock`: whether the key's on or off shows on screen when it changes, both on by default (Settings > Keyboard) |
 | `[[keybinds]]` | shortcuts, layered over the defaults; `action = "none"` unbinds a chord |

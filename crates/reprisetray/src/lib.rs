@@ -272,6 +272,8 @@ enum Cmd {
         body: String,
         tag: Option<u32>,
         buttons: Vec<String>,
+        /// An icon name in place of [`Config::notify_icon`].
+        icon: Option<String>,
     },
 }
 
@@ -296,6 +298,18 @@ impl TrayHandle {
             body: escape_markup(body),
             tag: None,
             buttons: Vec::new(),
+            icon: None,
+        });
+    }
+
+    /// [`TrayHandle::notify`] with icon name `icon` in place of [`Config::notify_icon`].
+    pub fn notify_with_icon(&self, summary: &str, body: &str, icon: &str) {
+        let _ = self.commands.send_blocking(Cmd::Notify {
+            summary: summary.into(),
+            body: escape_markup(body),
+            tag: None,
+            buttons: Vec::new(),
+            icon: Some(icon.into()),
         });
     }
 
@@ -305,6 +319,7 @@ impl TrayHandle {
             body: escape_markup(body),
             tag: Some(tag),
             buttons: Vec::new(),
+            icon: None,
         });
     }
 
@@ -315,6 +330,7 @@ impl TrayHandle {
             body: escape_markup(body),
             tag: Some(tag),
             buttons: buttons.iter().map(|b| b.to_string()).collect(),
+            icon: None,
         });
     }
 
@@ -669,6 +685,7 @@ const BUTTON_KEY: &str = "button";
 async fn notify(
     conn: &Connection,
     config: &Config,
+    icon: &str,
     summary: &str,
     body: &str,
     actions: Vec<String>,
@@ -680,16 +697,7 @@ async fn notify(
     let reply = proxy
         .call_method(
             "Notify",
-            &(
-                config.id,
-                0u32,
-                config.notify_icon,
-                summary,
-                body,
-                actions,
-                hints,
-                -1i32,
-            ),
+            &(config.id, 0u32, icon, summary, body, actions, hints, -1i32),
         )
         .await;
     match reply.and_then(|m| m.body().deserialize::<u32>()) {
@@ -850,9 +858,11 @@ async fn run(conn: Connection, shared: Shared, commands: async_channel::Receiver
                 body,
                 tag,
                 buttons,
+                icon,
             }) => {
                 let actions = actions(tag.is_some(), &buttons);
-                let id = notify(&conn, &config, &summary, &body, actions).await;
+                let icon = icon.as_deref().unwrap_or(config.notify_icon);
+                let id = notify(&conn, &config, icon, &summary, &body, actions).await;
                 if let (Some(id), Some(tag)) = (id, tag) {
                     clickable.0.insert(id, tag);
                 }
@@ -1071,6 +1081,24 @@ mod tests {
             }
             _ => panic!("not a notify"),
         }
+    }
+
+    #[test]
+    fn a_balloon_can_carry_its_own_icon() {
+        let (tx, rx) = async_channel::unbounded::<Cmd>();
+        let tray = TrayHandle {
+            commands: tx,
+            token: Token::default(),
+        };
+        tray.notify_with_icon("Low", "Cans", "audio-headphones");
+        tray.notify("Plain", "");
+        let icons: Vec<Option<String>> = std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|c| match c {
+                Cmd::Notify { icon, .. } => icon,
+                Cmd::Set(_) => panic!("not a notify"),
+            })
+            .collect();
+        assert_eq!(icons, [Some("audio-headphones".into()), None]);
     }
 
     #[test]
