@@ -80,6 +80,8 @@ pub enum Part {
     CalendarFrame,
     ShowDesktop,
     PreviewFrame,
+    /// A floating panel of white text that reads over any backdrop: the popup's glass, denser.
+    InkPanel,
     PreviewThumb,
     PreviewClose,
     SwitcherFrame,

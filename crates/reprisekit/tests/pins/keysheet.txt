@@ -2,5 +2,7 @@ Classic 1 63b08c26b2cd4041
 Classic 2 a36b8962f664a305
 Blue 1 f257839d7adc72a0
 Blue 2 a67ca8e3da741d5d
-Glass 1 2168a327deac043b
-Glass 2 5482bdf14a5d8a77
+Glass 1 4363924185a095f1
+Glass 2 d5241050035e5f78
+Glass Dark 1 4363924185a095f1
+Glass Dark 2 d5241050035e5f78

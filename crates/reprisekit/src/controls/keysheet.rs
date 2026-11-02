@@ -172,7 +172,7 @@ pub fn draw(theme: &Theme, text: &TextRenderer, k: &KeySheet, lay: &Layout) -> C
     let paint = &theme.paint();
     let (cs, s) = (paint.cs, paint.s);
     if let Some((style, spec)) = panel::glass(theme) {
-        return panel::draw(style, spec, lay.width, lay.height, s, |c| {
+        return panel::draw_inked(style, spec, lay.width, lay.height, s, |c| {
             body(
                 c,
                 paint,
@@ -415,7 +415,11 @@ mod tests {
     }
 
     fn drawn(i: Interface, scale: i32) -> (Canvas, Layout, Theme) {
-        let theme = theme_for(i).scaled(scale);
+        drawn_in(theme_for(i), scale)
+    }
+
+    fn drawn_in(theme: Theme, scale: i32) -> (Canvas, Layout, Theme) {
+        let theme = theme.scaled(scale);
         let text = TextRenderer::load(&theme.fonts);
         let k = sample();
         let lay = layout(&k, &theme, &text, (1920, 500));
@@ -484,6 +488,15 @@ mod tests {
             for scale in [1, 2] {
                 got.push((format!("{i:?} {scale}"), hash(&drawn(i, scale).0)));
             }
+        }
+        let g = crate::glass::Settings {
+            mode: crate::glass::Mode::Dark,
+            ..Default::default()
+        };
+        let dark = crate::interfaces::theme_with(Interface::Glass, Default::default(), &g);
+        for scale in [1, 2] {
+            let c = drawn_in(dark.clone(), scale).0;
+            got.push((format!("Glass Dark {scale}"), hash(&c)));
         }
         crate::pins::check("keysheet", &got);
     }

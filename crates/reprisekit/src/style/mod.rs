@@ -42,6 +42,9 @@ pub struct Style {
     pub caption_title: CaptionTitle,
     /// The halo under labels a client draws over its frame's glass ([`Part::ClientGlass`]).
     pub label_glow: Option<TitleGlow>,
+    /// The halo under the white text of a panel that must read over any backdrop
+    /// ([`Part::InkPanel`]).
+    pub panel_halo: Option<TitleGlow>,
     pub task_glow: Option<TaskGlow>,
     pub(crate) task_progress: Option<crate::taskbar::ProgressPainter>,
     pub(crate) task_badge: Option<crate::taskbar::BadgePainter>,
@@ -169,6 +172,7 @@ impl Style {
             glass: None,
             caption_title: CaptionTitle::CENTRED,
             label_glow: None,
+            panel_halo: None,
             task_glow: None,
             task_progress: None,
             task_badge: None,
@@ -391,6 +395,11 @@ impl Style {
 
     pub fn with_label_glow(mut self, g: TitleGlow) -> Style {
         self.label_glow = Some(g);
+        self
+    }
+
+    pub fn with_panel_halo(mut self, g: TitleGlow) -> Style {
+        self.panel_halo = Some(g);
         self
     }
 
