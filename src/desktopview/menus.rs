@@ -34,7 +34,8 @@ fn split(rows: Rows) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     rows.into_iter().unzip()
 }
 
-/// The empty-desktop menu, ending on Reprise Settings and About Reprise. Paste
+/// The empty-desktop menu, the Widgets submenu under Arrange Icons By, ending on Reprise
+/// Settings and About Reprise. Paste
 /// and Paste Shortcut are greyed unless `can_paste`. With `show_files` false, New
 /// and the Paste pair are greyed (what they make would land in ~/Desktop, which
 /// is not shown). While a `slideshow` runs, "Next desktop background" follows
@@ -59,6 +60,7 @@ pub fn desktop_menu(
     };
     let mut rows = vec![
         (entry("Arrange &Icons By").submenu(true), Some(ArrangeIcons)),
+        (entry("Wi&dgets").submenu(true), Some(Widgets)),
         (entry("R&efresh"), Some(Refresh)),
         (entry(TERMINAL), Some(OpenTerminal)),
         SEP,
@@ -71,7 +73,7 @@ pub fn desktop_menu(
         (entry("&About Reprise"), Some(AboutReprise)),
     ];
     if slideshow {
-        rows.insert(2, (entry("Next desktop &background"), Some(NextBackground)));
+        rows.insert(3, (entry("Next desktop &background"), Some(NextBackground)));
     }
     split(rows)
 }

@@ -348,8 +348,19 @@ pub fn draw_calendar_arrow(c: &mut Canvas, p: &Paint, r: Rect, arrow: Arrow, hot
 /// (device px). Classic has none and draws nothing.
 pub fn draw_clock_face(c: &mut Canvas, p: &Paint, r: Rect, time: (u32, u32, u32)) {
     if let Some(paint) = p.look.style().and_then(|st| st.clock_face) {
-        c.blit_over(r.x, r.y, &paint(time, r.width / p.s.max(1), p.s));
+        c.blit_over(r.x, r.y, &paint(time, true, r.width / p.s.max(1), p.s));
     }
+}
+
+/// An analog clock at `time` in the square `r` (device px), its second hand only with `seconds`:
+/// the style's face, else Classic's.
+pub fn draw_analog_clock(c: &mut Canvas, p: &Paint, r: Rect, time: (u32, u32, u32), seconds: bool) {
+    let side = r.width / p.s.max(1);
+    let art = match p.look.style().and_then(|st| st.clock_face) {
+        Some(paint) => paint(time, seconds, side, p.s),
+        None => classic::clockface::paint(p.cs, time, seconds, side, p.s),
+    };
+    c.blit_over(r.x, r.y, &art);
 }
 
 /// The copy dialog's flight in `r` (its height [`crate::copyart::STRIP_H`]): the style's

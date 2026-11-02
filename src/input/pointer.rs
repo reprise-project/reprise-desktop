@@ -145,6 +145,7 @@ impl State {
                     index: self.desktop_hit(pos.x, pos.y),
                 };
             }
+            Some(SceneOwner::DeskWidget(kind)) => return Hit::DeskWidget { kind },
             // A node of no one's: the wallpaper, part of the empty desktop.
             None if h.surface.is_none() => return Hit::Desktop { index: None },
             Some(SceneOwner::Taskbar(bar)) => return self.taskbar_scene_hit(bar, pos.x, pos.y),
@@ -438,6 +439,11 @@ impl State {
                 self.drag_marquee(pos.x, pos.y);
                 return;
             }
+            Interaction::WidgetDrag(_) => {
+                self.pointer_motion(None, pos, time);
+                self.widget_drag((pos.x, pos.y));
+                return;
+            }
             Interaction::Stir => {
                 self.pointer_motion(None, pos, time);
                 self.stir_move(Source::Pointer, pos);
@@ -657,6 +663,11 @@ impl State {
                 self.pointer_motion(None, pos, time);
                 self.set_cursor("default");
                 crate::tooltip::hover_desktop(self, index);
+            }
+            Hit::DeskWidget { .. } => {
+                self.pointer_motion(None, pos, time);
+                self.set_cursor("default");
+                crate::tooltip::hover_desktop(self, None);
             }
             Hit::Nothing
             | Hit::Launcher { .. }

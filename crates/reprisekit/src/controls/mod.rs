@@ -13,6 +13,7 @@ pub mod colorbutton;
 pub mod colorpick;
 pub mod combo;
 pub mod copyprogress;
+pub mod deskwidget;
 pub mod displaypanel;
 pub mod dlgtemplate;
 pub mod doctabs;

@@ -141,6 +141,8 @@ pub struct Settings {
     pub background: String,
     /// `system_icons`: the desktop's system icons, in order.
     pub system_icons: Vec<String>,
+    /// `desktop_widgets`: the widgets standing on the desktop, by name.
+    pub desktop_widgets: Vec<String>,
 
     /// `[taskbar] buttons`: one of [`TASKBAR_BUTTONS`]' values. It and the
     /// five flags after it default to the file's interface's own; see
@@ -478,6 +480,7 @@ impl Settings {
             saver_photo_seconds: c.screensaver.options.photo_seconds.into(),
             background: String::new(),
             system_icons: c.system_icons.clone(),
+            desktop_widgets: c.desktop_widgets.iter().map(|k| k.name().into()).collect(),
 
             taskbar_buttons: named(TASKBAR_BUTTONS, TaskbarButtons::parse, &c.taskbar.buttons),
             taskbar_pinned: c.taskbar.pinned,

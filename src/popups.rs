@@ -206,6 +206,7 @@ mod tests {
             SceneOwner::Window(_)
             | SceneOwner::Taskbar(_)
             | SceneOwner::Desktop
+            | SceneOwner::DeskWidget(_)
             | SceneOwner::Layer
             | SceneOwner::Dialog(_)
             | SceneOwner::MiniView(_) => None,

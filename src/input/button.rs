@@ -391,6 +391,15 @@ impl State {
                     self.drag_arm(sources, button);
                 }
             }
+            // A left press holds a widget for a drag; a right press opens its menu.
+            Hit::DeskWidget { kind } => {
+                self.focus_desktop();
+                match button {
+                    BTN_LEFT => self.widget_press(kind, (pos.x, pos.y)),
+                    BTN_RIGHT => self.open_widget_menu(kind, at),
+                    _ => {}
+                }
+            }
             // The panel is not a target: the click takes it away and
             // stops there rather than falling through to what it covers.
             Hit::Osd => self.hide_osd(),

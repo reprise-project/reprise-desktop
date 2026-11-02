@@ -493,7 +493,9 @@ impl State {
                 }
             }
             // Only ever a submenu opener; picking it does nothing.
-            Dc::ArrangeIcons | Dc::New | Dc::OpenWith | Dc::SendTo => {}
+            Dc::ArrangeIcons | Dc::Widgets | Dc::New | Dc::OpenWith | Dc::SendTo => {}
+            Dc::ToggleWidget(kind) | Dc::RemoveWidget(kind) => self.toggle_widget(kind),
+            Dc::ClockFace(_) | Dc::ClockSeconds | Dc::MeterLook(_) => self.widget_option(&cmd),
             // Only the launcher's file menu (`filemenu`) has this row.
             Dc::OpenFileLocation => {}
             Dc::IconProperties => {

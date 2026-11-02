@@ -12,15 +12,17 @@ use crate::{
 };
 
 /// The cell of `grid` an answer landing `name` at `wanted` takes: `wanted` unless another icon is
-/// laid out there (`cells` runs parallel to `entries`) or an earlier answer landed there since the
-/// last read, else the free cell nearest it. A late answer never evicts an icon. `wanted` and
+/// laid out there (`cells` runs parallel to `entries`), a widget covers it (`blocked`) or an
+/// earlier answer landed there since the last read, else the free cell nearest it. A late answer never evicts an icon. `wanted` and
 /// `landed` are 100% cells ([`desktop::to_saved`]): the grid may have grown since they were picked.
+#[expect(clippy::too_many_arguments)]
 pub(super) fn landing_cell(
     grid: desktop::Cell,
     area: Rect,
     entries: &[DesktopEntry],
     cells: &[Rect],
     landed: &[(i32, i32)],
+    blocked: &std::collections::HashSet<(i32, i32)>,
     name: &str,
     wanted: (i32, i32),
 ) -> (i32, i32) {
@@ -30,6 +32,7 @@ pub(super) fn landing_cell(
         .filter(|(e, _)| e.name != name)
         .map(|(_, r)| desktop::cell_at(grid, area, r.x, r.y))
         .chain(landed.iter().map(|&c| desktop::from_saved(grid, c)))
+        .chain(blocked.iter().copied())
         .collect();
     desktop::free_cell_near(grid, area, &taken, desktop::from_saved(grid, wanted))
 }
@@ -76,7 +79,11 @@ struct Redraw {
 }
 
 impl State {
+    /// Lay out the desktop widgets, then the icons round the cells they cover, and redraw what
+    /// changed.
     pub fn relayout_desktop(&mut self) {
+        self.lay_out_widgets();
+        let blocked = self.icon_blocked();
         let out = self.first_output();
         let (area, scale) = match &out {
             Some(o) => (self.usable_area(Some(o)), self.draw_scale_at(Some(o))),
@@ -98,10 +105,10 @@ impl State {
         view.cells = if out.is_none() {
             Vec::new()
         } else if view.auto_arrange {
-            desktop::layout(grid, area, view.entries.len())
+            desktop::layout_around(grid, area, view.entries.len(), &blocked)
         } else {
             let names: Vec<&str> = view.entries.iter().map(|e| e.name.as_str()).collect();
-            desktop::layout_free(grid, area, &names, &view.positions)
+            desktop::layout_free(grid, area, &names, &view.positions, &blocked)
         };
         let count = view.cells.len();
         let mut changed = view.nodes.len() != count;
@@ -320,6 +327,7 @@ impl State {
     /// when an icon took it while the answer was pending.
     pub(crate) fn land_icon(&mut self, name: &str, saved: (i32, i32)) {
         let (area, grid) = (self.desktop_area(), self.desktop_grid());
+        let blocked = self.icon_blocked();
         let Some(view) = self.desktop.as_mut() else {
             return;
         };
@@ -329,6 +337,7 @@ impl State {
             &view.entries,
             &view.cells,
             &view.landed,
+            &blocked,
             name,
             saved,
         );
