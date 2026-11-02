@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Calculator
+Comment=Performs basic arithmetic and scientific calculations.
+Exec=reprise-calc
+Icon=accessories-calculator
+Categories=Utility;Calculator;
+StartupWMClass=reprise.calc
+Terminal=false

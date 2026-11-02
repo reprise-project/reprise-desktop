@@ -9,6 +9,7 @@ fn entry(program: &str) -> Option<fn(Vec<OsString>)> {
         "reprise-about" => reprise_about::main,
         "reprise-accounts" => reprise_accounts::main,
         "reprise-bluetooth" => reprise_bluetooth::main,
+        "reprise-calc" => reprise_calc::main,
         "reprise-datetime" => reprise_datetime::main,
         "reprise-diskusage" => reprise_diskusage::main,
         "reprise-drives" => reprise_drives::main,
