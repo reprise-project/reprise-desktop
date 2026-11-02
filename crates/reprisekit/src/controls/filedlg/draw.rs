@@ -271,7 +271,7 @@ impl FileDlg {
         put("cancel", button(&cancel_label(), lay.cancel));
         put(
             "places",
-            placesbar::overflow(&self.places, text, lay.places, &cm.places, px),
+            placesbar::overflow(&self.places, text, lay.places, &cm, px),
         );
         if let Some((f, _)) = &self.extra {
             let mut f = f.clone();

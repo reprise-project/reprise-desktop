@@ -152,6 +152,8 @@ pub enum DesktopCommand {
     Explore,
     /// The terminal in the folder under the menu, or in the desktop's own folder.
     OpenTerminal,
+    /// Pin to Places (true) or Unpin from Places on the folder under the menu.
+    Pin(bool),
     OpenFileLocation,
     OpenWith,
     SendTo,

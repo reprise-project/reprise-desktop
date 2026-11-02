@@ -37,6 +37,19 @@ impl FileDlg {
         lay.filename.inset(widgets::FIELD_PAD)
     }
 
+    /// The places bar's rect when the dialog lays out in client `r`.
+    pub(super) fn places_rect(&self, r: Rect, cm: &ControlMetrics) -> Rect {
+        let dy = self.grow(r, cm);
+        let r = rows(r, cm);
+        let u = |v: i32| cm.text.len(v);
+        Rect::new(
+            r.x + u(MARGIN),
+            r.y + u(SHELL_Y),
+            u(MARGIN + placesbar::WIDTH) - u(MARGIN),
+            u(SHELL_Y + PLACES_H) - u(SHELL_Y) + dy,
+        )
+    }
+
     pub(super) fn layout(
         &self,
         text: &TextRenderer,
@@ -95,13 +108,8 @@ impl FileDlg {
             lookin.highlight.width -= shift;
         }
 
-        let places = Rect::new(
-            r.x + u(MARGIN),
-            r.y + u(SHELL_Y),
-            u(MARGIN + placesbar::WIDTH) - u(MARGIN),
-            u(SHELL_Y + PLACES_H) - u(SHELL_Y) + dy,
-        );
-        let places_rects = placesbar::layout(&self.places, places, &cm.places);
+        let places = self.places_rect(client, cm);
+        let places_rects = placesbar::layout(&self.places, places, cm);
 
         let label_w = text
             .measure(&split_mnemonic(&filename_label()).0, false, px)

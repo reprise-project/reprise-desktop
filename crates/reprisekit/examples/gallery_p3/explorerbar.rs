@@ -32,6 +32,7 @@ pub fn draw(c: &mut Canvas, theme: &Theme, text: &TextRenderer, r: Rect) {
                 label: l.into(),
                 icon: None,
                 enabled: true,
+                pinned: false,
             })
             .collect(),
         ..PlacesBar::default()

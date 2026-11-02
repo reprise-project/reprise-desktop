@@ -47,6 +47,8 @@ pub struct Dialogs {
     pub run_history: Vec<String>,
     /// Wakes the loop once a Browse dialog's folder watch saw a change ([`State::pickers_changed`]).
     pub picker_wake: Option<smithay::reexports::calloop::ping::Ping>,
+    /// The pinned folders, for Browse dialogs' places bars and the desktop's folder menus.
+    pub pins: Option<reprisefs::pins::Pins>,
 }
 
 pub struct DialogView {

@@ -291,9 +291,21 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   cannot take), Shift+Delete, or the menu's Delete clicked with Shift held,
   deletes it for good once asked, Ctrl+A selects every file where several
   can be picked, and a right click, Shift+F10 or the Menu key opens the
-  entry's menu (Select, Delete, Rename) or the background's (View, Refresh,
-  New > Folder). A refused rename or a failed delete says why in a box.
+  entry's menu (Select, Pin to Places for a folder, Delete, Rename) or the
+  background's (View, Refresh, New > Folder). A refused rename or a failed
+  delete says why in a box.
   File name keeps its editing keys.
+- **Pinned folders.** Pin to Places on a folder's right-click menu (in
+  Explorer, on the desktop and in a file dialog's list) pins it; Unpin from
+  Places takes it off. Pinned folders sit after the built-in tiles in every
+  file dialog's places bar (Reprise's programs, the portal's dialog, Run's
+  Browse), where a pinned tile's own menu opens, unpins or moves it up and
+  down, and the bar scrolls once they overflow it. Explorer's task pane lists
+  them in a Pinned group at the top. They are the `file://` lines of GTK's
+  bookmarks file (`$XDG_CONFIG_HOME/gtk-3.0/bookmarks`), so GTK programs'
+  sidebars and GTK's file chooser share them, and a change shows in every
+  window at once. Up to 20 are shown; a folder that is not there (an unplugged
+  drive's) shows greyed, and one on a network mount is never looked for.
 - **File dialog band select.** In an Open dialog that picks several files, a
   drag from the list's background draws a band that selects every entry it
   touches; with Ctrl it adds them to the selection (or takes off those

@@ -2,6 +2,7 @@ use crate::Explorer;
 use crate::commands::Command;
 use crate::place::Place;
 use repriseapp::Ctx;
+use reprisefs::pins::Pin;
 use reprisekit::controls::taskpane::{Row, Section};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -43,6 +44,7 @@ const PROGRAMS: &[&str] = &["system-software-install", "applications-other"];
 const SETTINGS: &[&str] = &["preferences-system"];
 const EMPTY_BIN: &[&str] = &["user-trash-full", "user-trash"];
 const RESTORE: &[&str] = &["edit-undo"];
+const FOLDER: &[&str] = &["folder"];
 
 fn row(text: &str, icons: &[&'static str], cmd: Command, enabled: bool) -> PaneRow {
     PaneRow {
@@ -184,8 +186,38 @@ pub fn other_places(place: &Place, parent: Option<Place>) -> PaneSection {
     }
 }
 
-pub fn sections(place: &Place, parent: Option<Place>, sel: Sel, count: usize) -> Vec<PaneSection> {
-    vec![tasks(place, sel, count), other_places(place, parent)]
+/// The pinned folders, each going to its folder; one that is not there is greyed.
+pub fn pinned(pins: &[Pin]) -> PaneSection {
+    let rows = pins
+        .iter()
+        .map(|p| {
+            let go = Command::GoTo(Place::from_path(&p.path));
+            match p.present {
+                true => row(&p.label, FOLDER, go, true),
+                false => dead(&p.label, FOLDER),
+            }
+        })
+        .collect();
+    PaneSection {
+        title: "Pinned".to_string(),
+        rows,
+    }
+}
+
+/// The pane's link groups: Pinned when anything is pinned, the place's tasks, Other Places.
+pub fn sections(
+    place: &Place,
+    parent: Option<Place>,
+    sel: Sel,
+    count: usize,
+    pins: &[Pin],
+) -> Vec<PaneSection> {
+    let mut out = Vec::new();
+    if !pins.is_empty() {
+        out.push(pinned(pins));
+    }
+    out.extend([tasks(place, sel, count), other_places(place, parent)]);
+    out
 }
 
 /// Everything `sections` reads: while it holds, only Details can differ.
@@ -207,7 +239,7 @@ impl Explorer {
             }
             return;
         }
-        let built = sections(&self.place, parent, sel, self.items.len());
+        let built = sections(&self.place, parent, sel, self.items.len(), &self.pinned());
         let mut out = Vec::new();
         let mut cmds = Vec::new();
         let mut tips = Vec::new();
@@ -371,7 +403,7 @@ mod tests {
 
     #[test]
     fn computer_gets_system_tasks_and_two_other_places() {
-        let s = sections(&Place::Computer, Some(Place::Desktop), Sel::None, 4);
+        let s = sections(&Place::Computer, Some(Place::Desktop), Sel::None, 4, &[]);
         assert_eq!(s[0].rows[0].cmd, Command::SystemInformation);
         assert_eq!(
             table(&s[0]),
@@ -520,5 +552,59 @@ mod tests {
         ex.sv.selection.clear();
         ex.refresh_chrome(&mut ctx);
         assert!(ex.taskpane.sections[0].open, "a change of kind rebuilds");
+    }
+
+    #[test]
+    fn pinned_folders_lead_the_pane_and_a_missing_one_greys() {
+        let pin = |path: &str, present| Pin {
+            path: PathBuf::from(path),
+            label: PathBuf::from(path)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into(),
+            present,
+        };
+        let pins = [pin("/home/u/Work", true), pin("/run/media/u/Stick", false)];
+        let s = sections(&folder(), None, Sel::None, 0, &pins);
+        assert_eq!(
+            table(&s[0]),
+            (
+                "Pinned".to_string(),
+                vec![("Work".to_string(), true), ("Stick".to_string(), false)]
+            )
+        );
+        assert_eq!(
+            s[0].rows[0].cmd,
+            Command::GoTo(Place::Folder(PathBuf::from("/home/u/Work")))
+        );
+        assert_eq!(s[0].rows[1].cmd, Command::Nothing);
+        assert_eq!(s[1].title, "File and Folder Tasks");
+        assert_eq!(sections(&folder(), None, Sel::None, 0, &[]).len(), 2);
+    }
+
+    #[test]
+    fn a_pin_written_elsewhere_shows_in_the_pane() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let file = dir.path().join("bookmarks");
+        let mut ctx = crate::tests::test_ctx();
+        let mut ex = crate::tests::test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = std::sync::Mutex::new(tx);
+        ex.pins = Some(reprisefs::pins::Pins::start_at(file.clone(), move || {
+            let _ = tx.lock().unwrap().send(());
+        }));
+        let wait = std::time::Duration::from_secs(30);
+        rx.recv_timeout(wait).expect("the first read");
+        reprisefs::pins::set_pinned(&file, dir.path(), true);
+        while ex.pinned().is_empty() {
+            rx.recv_timeout(wait).expect("the pin's read");
+        }
+        ex.wake(&mut ctx);
+        assert_eq!(ex.taskpane.sections[0].title, "Pinned");
+        assert_eq!(
+            ex.pane_cmds[0][0],
+            Command::GoTo(Place::from_path(dir.path()))
+        );
     }
 }

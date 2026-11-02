@@ -54,6 +54,11 @@ filedlg-menu-view = &View
 filedlg-menu-refresh = R&efresh
 filedlg-menu-new = Ne&w
 filedlg-menu-new-folder = &Folder
+filedlg-menu-open = &Open
+filedlg-menu-pin = P&in to Places
+filedlg-menu-unpin = Unp&in from Places
+filedlg-menu-move-up = Move &Up
+filedlg-menu-move-down = Move &Down
 
 ## About boxes
 about-copy = &Copy
