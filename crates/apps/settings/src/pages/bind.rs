@@ -206,6 +206,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag(DEBUG_OVERLAY, lens!(debug_overlay)),
         Bind::Flag(DEBUG_IN_CAPTURES, lens!(debug_overlay_in_captures)),
         Bind::Flag("launcher_files", lens!(launcher_files)),
+        Bind::Flag("launcher_windows", lens!(launcher_windows)),
         Bind::Flag(THUMBS, lens!(thumbnail_cache)),
         Bind::Num(THUMBS_MB, lens!(thumbnail_max_mb)),
         Bind::Text("font_family", lens!(font_family)),

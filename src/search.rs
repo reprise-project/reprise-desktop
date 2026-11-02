@@ -34,6 +34,35 @@ pub fn rank_apps(query: &str, apps: &[AppEntry], max: usize) -> Vec<usize> {
         .collect()
 }
 
+/// An open window as the launcher finds it: its title and its program's name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowName {
+    pub title: String,
+    pub app: String,
+}
+
+/// The windows `query` finds, best first, at most `max`, each with its tier
+/// ([`reprisekit::fuzzy::tier`]): the better of its title's and its program's.
+/// Ties keep `wins`' order.
+pub fn rank_windows(query: &str, wins: &[WindowName], max: usize) -> Vec<(usize, u32)> {
+    let tier = |n: &str| reprisekit::fuzzy::tier(query, n);
+    let mut hits: Vec<(usize, u32)> = (wins.iter().enumerate())
+        .filter_map(|(i, w)| Some((i, tier(&w.title).max(tier(&w.app))?)))
+        .collect();
+    hits.sort_by_key(|&(_, t)| std::cmp::Reverse(t));
+    hits.truncate(max);
+    hits
+}
+
+/// Whether the window rows go above the program rows: the best window matches at
+/// least as well as the best program, so Enter goes back to a program already open.
+pub fn windows_first(best_window: Option<u32>, best_app: Option<u32>) -> bool {
+    match (best_window, best_app) {
+        (Some(w), Some(a)) => w >= a,
+        (w, _) => w.is_some(),
+    }
+}
+
 /// Whether a word of `name` (split by `fuzzy::is_word_start`) starts with
 /// `query`, the rest of `query` running on from there ("sticky no" fits
 /// "Sticky Notes"). The Start menu lists only such names.
@@ -345,6 +374,48 @@ mod tests {
 
     /// A found row's icon comes from what the search's job found, with no stat: a path that does
     /// not exist wears the folder icon when it was found as a folder.
+    fn win(title: &str, app: &str) -> WindowName {
+        WindowName {
+            title: title.into(),
+            app: app.into(),
+        }
+    }
+
+    #[test]
+    fn a_window_matches_by_title_or_program_name_best_first() {
+        let wins = [
+            win("notes.txt - Text Editor", "Text Editor"),
+            win("Reprise - Mozilla Firefox", "Firefox"),
+            win("Terminal", "Terminal"),
+        ];
+        let found: Vec<usize> = rank_windows("fire", &wins, 5).iter().map(|h| h.0).collect();
+        assert_eq!(found, [1], "the program's name finds Firefox");
+        let found: Vec<usize> = rank_windows("notes", &wins, 5)
+            .iter()
+            .map(|h| h.0)
+            .collect();
+        assert_eq!(found, [0], "the title finds the editor");
+        let found: Vec<usize> = rank_windows("te", &wins, 5).iter().map(|h| h.0).collect();
+        assert_eq!(found, [0, 2], "equal matches in the given order");
+        assert_eq!(rank_windows("te", &wins, 1).len(), 1);
+        assert!(rank_windows("", &wins, 5).is_empty());
+        assert!(rank_windows("zzz", &wins, 5).is_empty());
+    }
+
+    #[test]
+    fn windows_go_first_when_they_match_at_least_as_well_as_the_best_program() {
+        let wins = [win("Reprise - Mozilla Firefox", "Firefox")];
+        let w = rank_windows("fire", &wins, 5).first().map(|h| h.1);
+        let app = reprisekit::fuzzy::tier("fire", "Firefox");
+        assert!(windows_first(w, app), "an open Firefox beats starting one");
+        let w = rank_windows("ff", &wins, 5).first().map(|h| h.1);
+        let app = reprisekit::fuzzy::tier("ff", "FF Tool");
+        assert!(!windows_first(w, app), "a better program match leads");
+        assert!(windows_first(Some(1), None));
+        assert!(!windows_first(None, Some(1)));
+        assert!(!windows_first(None, None));
+    }
+
     #[test]
     fn a_found_rows_icon_asks_no_stat() {
         let theme = reprisekit::icontheme::IconTheme::load("test", &[]);

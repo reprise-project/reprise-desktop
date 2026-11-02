@@ -620,6 +620,14 @@ fn the_launcher_searches_files_unless_turned_off() {
 }
 
 #[test]
+fn the_launcher_finds_open_windows_unless_turned_off() {
+    assert!(Config::default().launcher_windows);
+    let off = Config::parse("[launcher]\nwindows = false\n").unwrap();
+    assert!(!off.launcher_windows);
+    assert!(off.launcher_files, "file search keeps its default");
+}
+
+#[test]
 fn script_terminal_defaults_to_stay_and_reads_close() {
     use reprisefs::program::ScriptEnd;
     assert_eq!(Config::default().script_terminal, ScriptEnd::Stay);

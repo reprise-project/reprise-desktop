@@ -292,10 +292,11 @@ pub(super) const REVEAL_CONTROLS: [&str; 3] = [
     "taskbar_reveal_on_attention",
 ];
 
-/// The Launcher page: the Search group's check for files and folders, with what it adds under it.
+/// The Launcher page: the Search group's checks for files and folders and for open windows, with
+/// what they add under them.
 pub fn launcher(a: Area) -> Form {
     Form::new(vec![
-        group(a, "launcher_search_group", 44, 86, "Search"),
+        group(a, "launcher_search_group", 44, 108, "Search"),
         Item::new(
             "launcher_search_note",
             Rect::new(GX, 66, a.gw(), 2 * LINE_H),
@@ -310,6 +311,7 @@ pub fn launcher(a: Area) -> Form {
             104,
             "Also find &files and folders in my home folder",
         ),
+        Item::check("launcher_windows", GX, 126, "Also find open &windows"),
     ])
 }
 

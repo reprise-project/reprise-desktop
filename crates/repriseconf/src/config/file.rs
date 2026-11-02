@@ -261,6 +261,7 @@ pub struct FileDebug {
 #[serde(deny_unknown_fields)]
 pub struct FileLauncher {
     pub search_files: Option<bool>,
+    pub windows: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

@@ -369,6 +369,8 @@ suspend_after = 0            # run [power] standby
 # [launcher]                 # the Super+Space launcher
 # search_files = true        # false finds programs only; true also lists files and folders
 #                            # in the home folder from two typed characters on
+# windows = true             # also lists open windows by title or program name; Enter
+#                            # brings one up. Above the programs when it matches as well
 
 # [night_light]              # warm the screen by night; a client that sets the gamma takes precedence
 # enabled = false
