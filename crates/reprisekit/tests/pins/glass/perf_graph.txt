@@ -1,0 +1,16 @@
+Light graph @1 3f5ca7ddb00b9704
+Light meter 0 @1 f48327ec7488c3ad
+Light meter 0.37 @1 213af8ad454a52bd
+Light meter 1 @1 c9280ba8c2f2a92d
+Light graph @2 8bff1c6d11d1db85
+Light meter 0 @2 2484f736f6f61829
+Light meter 0.37 @2 df61c928377c6f31
+Light meter 1 @2 bdacfd7b40971221
+Dark graph @1 9f7b5b07b9c8755b
+Dark meter 0 @1 9c904dd06f9ac2d5
+Dark meter 0.37 @1 1d8b891abdb0678f
+Dark meter 1 @1 219ec50d51533fab
+Dark graph @2 febcd176df35afd5
+Dark meter 0 @2 0ecc1bb4193516c9
+Dark meter 0.37 @2 dc61d8155804a017
+Dark meter 1 @2 65d9e421ec0a96bb

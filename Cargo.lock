@@ -2394,6 +2394,7 @@ dependencies = [
  "reprise-printers",
  "reprise-settings",
  "reprise-sound",
+ "reprise-taskmgr",
  "reprise-terminal",
  "reprise-updates",
  "reprise-volume",
@@ -2699,6 +2700,21 @@ dependencies = [
  "reprisetray",
  "serde_json",
  "zbus 6.2.0",
+]
+
+[[package]]
+name = "reprise-taskmgr"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
+ "repriseapp",
+ "reprisebus",
+ "reprisefs",
+ "reprisekit",
+ "tempfile",
+ "wayland-client",
+ "wayland-protocols-wlr",
 ]
 
 [[package]]

@@ -5,6 +5,11 @@ freedesktop conventions for the tray, notifications, screen saver
 inhibition, autostart, the trash and `.desktop` files, and it speaks the
 usual `wlr` and `ext` protocols, so third-party tools work.
 
+A minimized window is told it is suspended (xdg-shell's `suspended` state),
+so it can stop drawing and polling until it comes back. A window a live
+picture shows (Mini View, a task button's panel, Alt+Tab, the 3D switcher)
+is not suspended while the picture is up.
+
 Windows that ask for server-side decorations get Reprise's frames in the
 current interface. Programs that draw their own title bars may look
 different. They've brought their own furniture.

@@ -1,5 +1,6 @@
-//! A Details list in a program's window: the `ListView` and what the pointer and keys do to it
-//! (selection, scrollbars, their lit parts, the wheel), so each window keeps only what its rows mean.
+//! A Details list as a program's window uses it: the `ListView` and what the pointer and keys do to
+//! it (selection, scrollbars, their lit parts, the wheel, a column title), so each window keeps only
+//! what its rows mean.
 
 use crate::{BTN_LEFT, Ctx};
 use reprisekit::classic::widgets::{Axis, BarHit, ScrollHit};
@@ -21,6 +22,8 @@ pub enum Press {
     /// A left double click on the row (Enter's twin).
     Activate(usize),
     Background,
+    /// A left press on column `n`'s title.
+    Column(usize),
     Redraw,
     None,
 }
@@ -104,6 +107,7 @@ impl<R: Rows + Default> List<R> {
                 Press::Background
             }
             _ if button != BTN_LEFT => moved(false),
+            listview::Hit::Header(n) => Press::Column(n),
             listview::Hit::VBar(BarHit::Back) => moved(self.view.scroll(-1, &lay)),
             listview::Hit::VBar(BarHit::Forward) => moved(self.view.scroll(1, &lay)),
             listview::Hit::VBar(BarHit::PageBack) => {

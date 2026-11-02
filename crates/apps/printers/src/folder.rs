@@ -466,7 +466,7 @@ impl Folder {
                     }
                     Outcome::Redraw
                 }
-                Press::Redraw => Outcome::Redraw,
+                Press::Column(_) | Press::Redraw => Outcome::Redraw,
                 Press::None => Outcome::None,
             };
         }

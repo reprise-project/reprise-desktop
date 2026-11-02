@@ -51,7 +51,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Spring-loaded buttons.** Drag a file over a task button, wait half a
   second, and its window comes up so you can drop into it.
 - **Cascade and tile.** The taskbar's menu cascades or tiles the windows,
-  shows the desktop, starts the task manager or locks the bar.
+  shows the desktop, starts the task manager (also Ctrl+Shift+Escape) or locks the bar.
 - **Tray overflow.** Quiet tray icons wait behind an arrow (Classic and
   Blue) or a ^ flyout (Glass) and come back when they have something to say.
   Customize... sets each icon to always show, always hide, or follow its

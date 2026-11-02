@@ -26,7 +26,7 @@ pub fn advanced(a: Area) -> Form {
         X,
         44,
         a.w,
-        "Task &manager (empty runs top in the terminal):",
+        "Task &manager (empty runs Task Manager):",
     ));
     let checks = [
         (

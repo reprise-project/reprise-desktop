@@ -134,6 +134,13 @@ struct Shot {
     surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
 }
 
+impl LivePreviews {
+    /// Whether a live picture of `w` exists.
+    pub fn shows(&self, w: WindowId) -> bool {
+        self.thumbs.iter().any(|t| t.window == w)
+    }
+}
+
 impl State {
     /// Whether `w` has something to show: a mapped surface with a buffer
     /// and a size.
@@ -242,6 +249,9 @@ impl State {
             sheet,
             cell: None,
         });
+        if self.mark_suspended(w) {
+            self.send_configure(w);
+        }
         id
     }
 
@@ -269,6 +279,9 @@ impl State {
         }
         if t.sheet.is_some() {
             self.sheet_forget_unused();
+        }
+        if self.mark_suspended(t.window) {
+            self.send_configure(t.window);
         }
     }
 

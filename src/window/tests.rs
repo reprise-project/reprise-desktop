@@ -1062,10 +1062,11 @@ fn state_faults(h: &crate::harness::Harness, w: super::WindowId) -> Vec<&'static
     use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as Xdg;
     let s = &h.state;
     let win = s.win(w).unwrap();
-    let (max, full) = win.xdg().unwrap().with_pending_state(|p| {
+    let (max, full, suspended) = win.xdg().unwrap().with_pending_state(|p| {
         (
             p.states.contains(Xdg::Maximized),
             p.states.contains(Xdg::Fullscreen),
+            p.states.contains(Xdg::Suspended),
         )
     });
     let frame = win.frame_rect();
@@ -1086,6 +1087,10 @@ fn state_faults(h: &crate::harness::Harness, w: super::WindowId) -> Vec<&'static
         (
             full != win.fullscreen,
             "the client hears fullscreen as it is",
+        ),
+        (
+            suspended != (win.minimized && !s.live_previews.shows(w)),
+            "the client hears a minimized window no live picture shows as suspended",
         ),
         (
             win.minimized == s.scene.enabled(win.tree),

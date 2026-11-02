@@ -24,6 +24,7 @@ pub mod overview;
 pub mod page;
 pub mod paint;
 mod panel;
+mod perfgraph;
 mod popups;
 pub mod preview;
 mod scrollbar;
@@ -504,6 +505,7 @@ fn build_at(s: &Settings, scale: i32) -> Style {
     .with_start_bloom(orb::bloom)
     .with_clock_face(clock::painter(s.mode))
     .with_copy_graph(copygraph::look(s.mode))
+    .with_perf(perfgraph::LOOK)
     .with_task_progress(std::sync::Arc::new(taskprogress::paint))
     .with_task_badge(std::sync::Arc::new(taskbadge::paint))
     .with_painted_task_spot(move || taskbutton::task_spot(&owned, scale))
