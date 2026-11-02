@@ -1,6 +1,6 @@
 //! The speaker's volume popup: a raised flyout ([`crate::flyout`]) over the tray with Output and Input device combos on top and, under a separator, master's column, an etched line and a column per program playing sound.
 //!
-//! Columns are 96 px wide: the 32 px icon, the name ("Volume" on master), the level in percent, a vertical trackbar (one position per 5 %, loudest on top) and a 30x26 speaker button that mutes; a muted column greys its trackbar and level. Six programs fit side by side; past six a scrollbar under them scrolls them a column at a time while master stays. The device combos are 360 px wide. Lengths are at 100% text and grow with it; icons, glyphs, the thumb and the scrollbar keep their size.
+//! Columns are 96 px wide: the 32 px icon, the name ("Volume" on master), the level in percent, a vertical trackbar (one position per 5 %, loudest on top, on to 150 % shaded past 100 with [`Mix::boost`]) and a 30x26 speaker button that mutes; a muted column greys its trackbar and level. Six programs fit side by side; past six a scrollbar under them scrolls them a column at a time while master stays. The device combos are 360 px wide. Lengths are at 100% text and grow with it; icons, glyphs, the thumb and the scrollbar keep their size.
 //!
 //! While a media player is active a strip under a second separator shows the title over the artist and Previous, Play or Pause and Next buttons (32x28, greyed when the player cannot act). Text is set in the second dialog font (`DialogFont::ShellDlg`).
 //!
@@ -23,6 +23,8 @@ pub use layout::{ColumnLayout, Hit, Layout, StripLayout, hit, layout};
 
 /// Trackbar positions: 0 to 20, one per 5 % of volume.
 pub const STEPS: usize = 21;
+/// With [`Mix::boost`], positions run on to 30, 150 %, shaded past 20.
+pub const BOOST_STEPS: usize = 31;
 pub const COL_W: i32 = 96;
 /// Between two program columns.
 const COL_GAP: i32 = 6;
@@ -158,6 +160,8 @@ pub struct Mix {
     pub apps: Vec<AppLevel>,
     /// The media player's track; `None` with no player, and no strip.
     pub playing: Option<NowPlaying>,
+    /// Volumes may go past 100 %: every trackbar runs to [`BOOST_STEPS`].
+    pub boost: bool,
 }
 
 /// Whose volume an [`Event`] sets: the default sink, or a program by its
@@ -196,9 +200,18 @@ pub struct Column {
     pub mute: bool,
 }
 
+/// A column's volume trackbar at `pos`.
+fn volume_bar(pos: usize, boost: bool) -> TrackBar {
+    let count = if boost { BOOST_STEPS } else { STEPS };
+    TrackBar::new(pos, count)
+        .paged(4, 2)
+        .untick()
+        .boosted(boost.then_some(STEPS - 1))
+}
+
 impl Column {
-    fn master(level: &Level) -> Column {
-        let mut volume = TrackBar::new(level.pos, STEPS).paged(4, 2).untick();
+    fn master(level: &Level, boost: bool) -> Column {
+        let mut volume = volume_bar(level.pos, boost);
         volume.enabled = level.live;
         Column {
             key: None,
@@ -209,12 +222,12 @@ impl Column {
         }
     }
 
-    fn app(a: &AppLevel) -> Column {
+    fn app(a: &AppLevel, boost: bool) -> Column {
         Column {
             key: Some(a.key.clone()),
             label: a.label.clone(),
             icon: a.icon.clone(),
-            volume: TrackBar::new(a.pos, STEPS).paged(4, 2).untick(),
+            volume: volume_bar(a.pos, boost),
             mute: a.mute,
         }
     }
@@ -292,8 +305,8 @@ fn combo_focus(dir: Dir) -> Focus {
 
 impl VolumePopup {
     pub fn new(mix: &Mix) -> VolumePopup {
-        let mut columns = vec![Column::master(&mix.master)];
-        columns.extend(mix.apps.iter().map(Column::app));
+        let mut columns = vec![Column::master(&mix.master, mix.boost)];
+        columns.extend(mix.apps.iter().map(|a| Column::app(a, mix.boost)));
         VolumePopup {
             columns,
             output: device_combo(&mix.outputs, mix.output),
@@ -318,8 +331,8 @@ impl VolumePopup {
 
     /// Take the devices and programs from the host. Programs are matched by key: one that stays keeps its focus, light and drag; one that left sends its focus to master and ends its drag. A held thumb keeps its own position since the device lags the drag's writes. Changed combos close their lists; `Redraw` when anything shown moved.
     pub fn sync(&mut self, lay: &Layout, mix: &Mix) -> Event {
-        let mut columns = vec![Column::master(&mix.master)];
-        columns.extend(mix.apps.iter().map(Column::app));
+        let mut columns = vec![Column::master(&mix.master, mix.boost)];
+        columns.extend(mix.apps.iter().map(|a| Column::app(a, mix.boost)));
         let moved: Vec<Option<usize>> = self
             .columns
             .iter()

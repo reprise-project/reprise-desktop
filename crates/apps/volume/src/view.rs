@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use repriseaudio::{Channels, Device, Snapshot};
+use repriseaudio::{Channels, Device, Scale, Snapshot};
 use reprisekit::controls::mixer::{self, Check, Line};
 
 pub const MASTER: &str = "master";
@@ -30,6 +30,8 @@ pub struct Options {
     pub device: Option<String>,
     pub hidden: BTreeSet<String>,
     pub advanced: bool,
+    /// `[sounds] allow_boost`: playback lines run to 150 %.
+    pub boost: bool,
 }
 
 impl Options {
@@ -39,6 +41,7 @@ impl Options {
             device: None,
             hidden: BTreeSet::new(),
             advanced: false,
+            boost: false,
         }
     }
 }
@@ -67,13 +70,13 @@ pub fn source(snap: &Snapshot) -> Option<&Device> {
         .or_else(|| snap.sources.first())
 }
 
-pub fn volume_pos(v: f64) -> usize {
-    let last = (mixer::STEPS - 1) as f64;
-    (v * last).round().clamp(0.0, last) as usize
+/// The volume trackbar's positions; a playback line runs past 100 % with `boost`.
+pub fn scale(boost: bool) -> Scale {
+    Scale::new(mixer::STEPS - 1, boost)
 }
 
-pub fn volume_of(pos: usize) -> f64 {
-    pos as f64 / (mixer::STEPS - 1) as f64
+pub fn volume_pos(v: f64) -> usize {
+    scale(false).pos(v)
 }
 
 fn balance(ch: &Channels) -> Option<usize> {
@@ -87,11 +90,12 @@ pub fn all_lines(snap: &Snapshot, o: &Options) -> Vec<Line> {
             let mut v = vec![Line {
                 key: MASTER.into(),
                 title: MASTER_TITLE.into(),
-                volume: out.map_or(0, |d| volume_pos(d.volume)),
+                volume: out.map_or(0, |d| scale(o.boost).pos(d.volume)),
                 balance: out.and_then(|d| balance(&d.channels)),
                 check: Check::MuteAll,
                 checked: out.is_some_and(|d| d.mute),
                 live: out.is_some(),
+                boost: o.boost,
             }];
             v.extend(snap.apps.iter().map(|a| {
                 // The column stands for the program's loudest stream.
@@ -102,11 +106,12 @@ pub fn all_lines(snap: &Snapshot, o: &Options) -> Vec<Line> {
                 Line {
                     key: app_key(&a.key),
                     title: a.label.clone(),
-                    volume: volume_pos(a.volume),
+                    volume: scale(o.boost).pos(a.volume),
                     balance: loudest.and_then(|s| balance(&s.channels)),
                     check: Check::Mute,
                     checked: a.mute,
                     live: true,
+                    boost: o.boost,
                 }
             }));
             v
@@ -123,6 +128,7 @@ pub fn all_lines(snap: &Snapshot, o: &Options) -> Vec<Line> {
                     check: Check::Select,
                     checked: Some(d.name.as_str()) == picked,
                     live: true,
+                    boost: false,
                 })
                 .collect()
         }

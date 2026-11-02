@@ -5,7 +5,7 @@ use crate::pointer::{Interaction, Lit, WHEEL_ROWS};
 use crate::trackbar::{self, TrackBar};
 
 use super::layout::{Hit, Layout, bar_parts, hit};
-use super::{Dir, Event, Focus, MAX_SHOWN, Part, STEPS, Transport, VolumePopup, combo_focus};
+use super::{Dir, Event, Focus, MAX_SHOWN, Part, Transport, VolumePopup, combo_focus};
 
 impl VolumePopup {
     /// The part at (`x`, `y`) on `lay` laid out by [`Self::current`].
@@ -438,7 +438,7 @@ impl VolumePopup {
                 form::Key::Down | form::Key::Left => self.slide(i, |t| t.step(-1)),
                 form::Key::PageUp => self.slide(i, |t| t.step(t.page as i32)),
                 form::Key::PageDown => self.slide(i, |t| t.step(-(t.page as i32))),
-                form::Key::Home => self.slide(i, |t| t.set(STEPS - 1)),
+                form::Key::Home => self.slide(i, |t| t.set(t.count - 1)),
                 form::Key::End => self.slide(i, |t| t.set(0)),
                 _ => Event::None,
             },

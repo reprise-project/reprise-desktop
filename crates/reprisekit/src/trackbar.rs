@@ -34,6 +34,9 @@ pub struct TrackBar {
     pub tick_every: usize,
     /// Whether it has ticks at all.
     pub ticks: bool,
+    /// The position of 100 % on a volume slider that runs past it; the positions above are drawn
+    /// shaded.
+    pub full_at: Option<usize>,
 }
 
 impl TrackBar {
@@ -46,7 +49,13 @@ impl TrackBar {
             page: 3,
             tick_every: 1,
             ticks: true,
+            full_at: None,
         }
+    }
+
+    /// The same trackbar shaded past position `full_at`, which stands for 100 %; `None` is plain.
+    pub fn boosted(self, full_at: Option<usize>) -> TrackBar {
+        TrackBar { full_at, ..self }
     }
 
     /// The same trackbar with no ticks.
@@ -97,6 +106,8 @@ pub struct Layout {
     /// Whether ticks are drawn at all.
     pub ticked: bool,
     pub vertical: bool,
+    /// [`TrackBar::full_at`].
+    pub full_at: Option<usize>,
 }
 
 /// Each position's offset along a track `len` px long from position 0's end, `inset` px in from
@@ -135,6 +146,7 @@ pub fn layout(tb: &TrackBar, x: i32, y: i32, w: i32) -> Layout {
         tick_every: tb.tick_every.max(1),
         ticked: tb.ticks,
         vertical: false,
+        full_at: tb.full_at,
     }
 }
 
@@ -176,6 +188,7 @@ pub fn layout_vertical_sized(
         tick_every: tb.tick_every.max(1),
         ticked: tb.ticks,
         vertical: true,
+        full_at: tb.full_at,
     }
 }
 
@@ -249,6 +262,31 @@ pub fn vertical_ticks(lay: &Layout, every: usize, len: i32, end_len: i32) -> Vec
     out
 }
 
+/// A vertical trackbar's boost zone, logical: the channel above the 100 % position and the inner
+/// columns it is shaded in, then a mark either side of the thumb at 100 %, as long as an end tick.
+/// None on a plain or horizontal trackbar.
+pub fn boost_zone(lay: &Layout, end_len: i32) -> Option<(Rect, [Rect; 2])> {
+    let full = *lay.ticks.get(lay.full_at?)?;
+    if !lay.vertical {
+        return None;
+    }
+    let ch = lay.channel;
+    let shade = Rect::new(
+        ch.x + 1,
+        ch.y + 1,
+        (ch.width - 2).max(0),
+        (full - ch.y).max(0),
+    );
+    let (left, right) = (lay.bounds.x + 3, lay.bounds.right() - 4);
+    Some((
+        shade,
+        [
+            Rect::new(left + 1 - end_len, full, end_len, 1),
+            Rect::new(right, full, end_len, 1),
+        ],
+    ))
+}
+
 /// The trackbar's `access` part: a slider at its tick index, 0 to the last tick.
 pub fn access(
     tb: &TrackBar,
@@ -309,6 +347,22 @@ mod tests {
         assert_eq!(position_at(&l, 100), 7);
         let one = layout(&TrackBar::new(0, 1), 0, 0, 71);
         assert_eq!(one.ticks, vec![5]);
+    }
+
+    #[test]
+    fn the_boost_zone_runs_from_the_channel_top_to_the_100_percent_mark() {
+        let tb = TrackBar::new(0, 31).boosted(Some(20));
+        let l = layout_vertical(&tb, 10, 10, 140);
+        let full = l.ticks[20];
+        let (shade, marks) = boost_zone(&l, 4).expect("a boosted vertical trackbar");
+        assert_eq!(shade, Rect::new(l.channel.x + 1, 11, 2, full - 10));
+        assert_eq!(marks[0], Rect::new(10, full, 4, 1));
+        assert_eq!(marks[1], Rect::new(l.bounds.right() - 4, full, 4, 1));
+        assert_eq!(
+            boost_zone(&layout_vertical(&TrackBar::new(0, 21), 10, 10, 140), 4),
+            None
+        );
+        assert_eq!(boost_zone(&layout(&tb, 0, 0, 100), 4), None);
     }
 
     #[test]

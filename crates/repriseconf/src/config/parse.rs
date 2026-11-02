@@ -837,6 +837,9 @@ impl Config {
             if let Some(v) = s.bell {
                 cfg.sounds.bell = v;
             }
+            if let Some(v) = s.allow_boost {
+                cfg.sounds.allow_boost = v;
+            }
         }
         if let Some(p) = file.privacy {
             if let Some(v) = p.recent_files {

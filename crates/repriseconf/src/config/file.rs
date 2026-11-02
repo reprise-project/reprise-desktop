@@ -256,6 +256,7 @@ pub struct FilePrivacy {
 pub struct FileSounds {
     pub theme: Option<String>,
     pub bell: Option<bool>,
+    pub allow_boost: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

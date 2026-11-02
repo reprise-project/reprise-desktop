@@ -742,6 +742,7 @@ fn track_marks(mode: Mode) -> TrackMarks {
         Mode::Light => TRACK_MARKS,
         Mode::Dark => TrackMarks {
             ink: Color::rgb(0x5E, 0x5E, 0x5E),
+            boost: Color::rgb(0xE8, 0x7A, 0x42),
             ..TRACK_MARKS
         },
     }
@@ -758,6 +759,7 @@ pub const TRACK_MARKS: TrackMarks = TrackMarks {
     end_len_v: 4,
     sparse: true,
     ink: Color::rgb(0xC1, 0xC2, 0xC2),
+    boost: Color::rgb(0xE0, 0x5E, 0x2C),
 };
 
 /// The dialog and sheet face.

@@ -344,6 +344,9 @@ suspend_after = 0            # run [power] standby
 #                            # it lacks comes from freedesktop
 # bell = true                # a program's system bell plays the theme's bell; false keeps
 #                            # it silent, and an unfocused window's task button still flashes
+# allow_boost = false        # true lets the volume sliders, the tray wheel and the volume
+#                            # keys go past 100 % up to 150 %; turned off, louder outputs
+#                            # and programs come back to 100 %
 
 # [privacy]
 # recent_files = true        # false hides the recently used files GTK and KDE apps record

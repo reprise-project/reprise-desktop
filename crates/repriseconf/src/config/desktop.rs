@@ -281,12 +281,14 @@ impl Default for NotificationsConfig {
     }
 }
 
-/// `[sounds]`: the theme notifications and the bell play from, and whether the bell sounds.
+/// `[sounds]`: the theme notifications and the bell play from, whether the bell sounds, and
+/// whether playback volumes may go past 100 %.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SoundsConfig {
     /// An XDG sound theme name.
     pub theme: String,
     pub bell: bool,
+    pub allow_boost: bool,
 }
 
 impl Default for SoundsConfig {
@@ -294,6 +296,7 @@ impl Default for SoundsConfig {
         SoundsConfig {
             theme: "freedesktop".into(),
             bell: true,
+            allow_boost: false,
         }
     }
 }

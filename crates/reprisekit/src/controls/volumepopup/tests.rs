@@ -39,6 +39,7 @@ fn mix(apps: &[AppLevel]) -> Mix {
         input: Some(0),
         apps: apps.to_vec(),
         playing: None,
+        boost: false,
     }
 }
 
