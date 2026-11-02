@@ -17,8 +17,10 @@
 //! `RESTART_SETTLE` after a window of it maps, it starts again for each empty
 //! slot or missing outside window no start in flight will fill, so an app that
 //! brings back its own windows gets no extra one.
+//! Snap groups come back as well (`sessionsnap`).
 
 use crate::compositor::State;
+use crate::sessionsnap::{PendingSnaps, SavedSnap};
 use crate::windowrules::Remembered;
 use reprisefs::apps::AppEntry;
 use reprisefs::autostart::Entry;
@@ -29,7 +31,7 @@ use std::time::{Duration, Instant};
 
 /// How long after login a restored app's first window still goes to its old
 /// desktop; a later window is taken to have been started by hand.
-const DESKTOP_WINDOW: Duration = Duration::from_secs(120);
+pub(crate) const DESKTOP_WINDOW: Duration = Duration::from_secs(120);
 
 /// How long after a restored app's first window maps its other saved tab
 /// windows have to come back before it is started again for them.
@@ -129,11 +131,15 @@ pub fn pick_tabs(groups: &[SavedTabs], saved: &[SavedApp]) -> Vec<SavedTabs> {
         .collect()
 }
 
-/// Give each app in `saved` with a window in `tabs` the titles of its `open` windows
-/// (app id, title) outside them.
-pub fn note_loose(saved: &mut [SavedApp], tabs: &[SavedTabs], open: &[(String, String)]) {
+/// Give each app in `saved` with a window in a tab or snap group (`grouped`) the titles of its
+/// `open` windows (app id, title) outside the tab groups.
+pub fn note_loose(
+    saved: &mut [SavedApp],
+    grouped: impl Fn(&str) -> bool,
+    open: &[(String, String)],
+) {
     for s in saved {
-        if !tabs.iter().any(|t| t.apps.contains(&s.app_id)) {
+        if !grouped(&s.app_id) {
             continue;
         }
         let titles = open.iter().filter(|(a, _)| *a == s.app_id);
@@ -452,6 +458,11 @@ impl<T: Copy + Eq> PendingTabs<T> {
         i.map(|i| self.loose.remove(i)).is_some()
     }
 
+    /// Whether `w` holds a saved group's slot.
+    pub fn holds(&self, w: T) -> bool {
+        self.holding(w).is_some()
+    }
+
     fn holding(&self, w: T) -> Option<(usize, usize)> {
         self.groups.iter().enumerate().find_map(|(g, r)| {
             let s = r.slots.iter().position(|s| s.window == Some(w))?;
@@ -603,6 +614,8 @@ pub struct Session {
     pub tabs: Vec<SavedTabs>,
     pub restoring: Pending,
     pub regrouping: PendingTabs<crate::window::WindowId>,
+    pub snaps: Vec<SavedSnap>,
+    pub resnapping: PendingSnaps<crate::window::WindowId>,
     /// `end` already kept this session, so the loop's own `end` at shutdown
     /// must not take the emptied screen over it.
     pub kept: bool,
@@ -622,6 +635,7 @@ impl Session {
         Session {
             apps: p.session.clone(),
             tabs: p.session_tabs.clone(),
+            snaps: p.session_snaps.clone(),
             was_locked: p.screen_locked,
             restore_unfinished: p.session_restoring,
             ..Session::default()
@@ -633,7 +647,7 @@ impl Session {
 /// the next login (empty when `[session] restore` is off) and queue the
 /// state file's write.
 pub fn save(state: &mut State) {
-    let (saved, tabs) = if state.config.session.restore {
+    let (saved, tabs, snaps) = if state.config.session.restore {
         let saving = |w: &crate::window::Window| w.mapped && w.placeable();
         let open: Vec<(String, usize)> = state
             .windows
@@ -666,25 +680,38 @@ pub fn save(state: &mut State) {
             })
             .collect();
         let tabs = pick_tabs(&groups, &saved);
+        let snaps = crate::sessionsnap::pick_snaps(&state.snap_arrangements(), &saved);
         let loose: Vec<(String, String)> = (state.windows.iter())
             .filter(|w| saving(w) && state.tabs.groups.group_of(w.id).is_none())
             .map(|w| (w.app(), w.title()))
             .collect();
         let mut saved = saved;
-        note_loose(&mut saved, &tabs, &loose);
-        (saved, tabs)
+        let grouped = |a: &str| {
+            tabs.iter().any(|t| t.apps.iter().any(|x| x == a))
+                || (snaps.iter().flat_map(|g| &g.members)).any(|m| m.app == a)
+        };
+        note_loose(&mut saved, grouped, &loose);
+        (saved, tabs, snaps)
     } else {
-        (Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), Vec::new())
     };
-    if state.session.apps != saved || state.session.tabs != tabs {
+    if state.session.apps != saved || state.session.tabs != tabs || state.session.snaps != snaps {
         log::info!(
-            "session: saved {:?}, tabs {:?}",
+            "session: saved {:?}, tabs {:?}, snaps {:?}",
             saved.iter().map(|s| &s.app_id).collect::<Vec<_>>(),
-            tabs.iter().map(|t| &t.apps).collect::<Vec<_>>()
+            tabs.iter().map(|t| &t.apps).collect::<Vec<_>>(),
+            (snaps.iter())
+                .map(|g| g
+                    .members
+                    .iter()
+                    .map(|m| (m.zone, &m.app))
+                    .collect::<Vec<_>>())
+                .collect::<Vec<_>>()
         );
-        crate::state::save_session(&saved, &tabs);
+        crate::state::save_session(&saved, &tabs, &snaps);
         state.session.apps = saved;
         state.session.tabs = tabs;
+        state.session.snaps = snaps;
     }
 }
 
@@ -781,16 +808,34 @@ fn restore_now(state: &mut State, autostarted: &[Entry]) {
         crate::state::flush();
     }
     let now = Instant::now();
-    let mut regrouping = PendingTabs::new(&state.session.tabs, &state.session.apps, now);
-    for (s, e) in &start {
-        log::info!("session: restoring {} ({})", s.app_id, e.id);
-        let argv = reprisefs::apps::launch_argv(e, &state.config.terminal);
-        crate::spawn::spawn_argv_in(&argv, Some(&e.id), None, &state.env, None);
-        regrouping.started(&s.app_id);
+    let started: Vec<SavedApp> = start.iter().map(|(s, _)| (*s).clone()).collect();
+    let argvs: Vec<(Vec<std::ffi::OsString>, String)> = (start.iter())
+        .map(|(_, e)| {
+            (
+                reprisefs::apps::launch_argv(e, &state.config.terminal),
+                e.id.clone(),
+            )
+        })
+        .collect();
+    for (s, (argv, id)) in started.iter().zip(&argvs) {
+        log::info!("session: restoring {} ({id})", s.app_id);
+        crate::spawn::spawn_argv_in(argv, Some(id), None, &state.env, None);
     }
-    let started: Vec<&SavedApp> = start.iter().map(|(s, _)| *s).collect();
-    state.session.restoring = Pending::new(&started, now);
-    state.session.regrouping = regrouping;
+    await_windows(state, &started, now);
+}
+
+/// Wait for the windows of `started`, the saved apps restore has just started: their desktops,
+/// tab groups and snap groups.
+pub(crate) fn await_windows(state: &mut State, started: &[SavedApp], now: Instant) {
+    let s = &mut state.session;
+    let mut regrouping = PendingTabs::new(&s.tabs, &s.apps, now);
+    for a in started {
+        regrouping.started(&a.app_id);
+    }
+    let started: Vec<&SavedApp> = started.iter().collect();
+    s.restoring = Pending::new(&started, now);
+    s.regrouping = regrouping;
+    s.resnapping = PendingSnaps::new(&s.snaps, &s.apps, now);
 }
 
 /// A window of `app_id` has mapped: when restore started it and some of its
@@ -821,6 +866,9 @@ pub fn settle_restart(state: &mut State, app_id: &str) {
         log::warn!("session: no restart timer for {app_id}: {e}");
     }
 }
+
+#[cfg(test)]
+mod restore_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1365,7 +1413,7 @@ mod tests {
             ("ed".to_string(), "notes.txt".to_string()),
             ("gimp".to_string(), "pic".to_string()),
         ];
-        note_loose(&mut apps, &[tabs(&["ed", "ed"], 0, 0)], &open);
+        note_loose(&mut apps, |a| a == "ed", &open);
         assert_eq!(apps[0].loose, ["notes.txt"]);
         assert!(apps[1].loose.is_empty(), "gimp is in no group");
     }

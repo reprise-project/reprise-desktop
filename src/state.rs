@@ -38,6 +38,8 @@ pub struct Persisted {
     pub session: Vec<crate::session::SavedApp>,
     /// The tab groups open when the last session ended, regrouped at login.
     pub session_tabs: Vec<crate::session::SavedTabs>,
+    /// The snap groups open when the last session ended, snapped again at login.
+    pub session_snaps: Vec<crate::sessionsnap::SavedSnap>,
     /// The programs pinned to the Glass Start menu, by desktop file id.
     pub start_pins: Vec<String>,
     /// Launched programs' desktop file ids, newest first.
@@ -160,11 +162,15 @@ pub fn save_desktop(auto_arrange: bool, positions: &BTreeMap<String, (i32, i32)>
     run_in_order(move || patch(&path, keys));
 }
 
-/// Queue a write of the apps and tab groups the session ended with (`session`, `session_tabs`),
-/// leaving every other key as it is.
-pub fn save_session(apps: &[crate::session::SavedApp], tabs: &[crate::session::SavedTabs]) {
+/// Queue a write of the apps, tab groups and snap groups the session ended with (`session`,
+/// `session_tabs`, `session_snaps`), leaving every other key as it is.
+pub fn save_session(
+    apps: &[crate::session::SavedApp],
+    tabs: &[crate::session::SavedTabs],
+    snaps: &[crate::sessionsnap::SavedSnap],
+) {
     let path = path();
-    let keys = session_keys(apps, tabs);
+    let keys = session_keys(apps, tabs, snaps);
     run_in_order(move || patch(&path, keys));
 }
 
@@ -192,12 +198,19 @@ pub fn save_color_filter_last(name: &str) {
 fn session_keys(
     apps: &[crate::session::SavedApp],
     tabs: &[crate::session::SavedTabs],
+    snaps: &[crate::sessionsnap::SavedSnap],
 ) -> toml::Table {
-    match (toml::Value::try_from(apps), toml::Value::try_from(tabs)) {
-        (Ok(a), Ok(t)) => {
-            toml::Table::from_iter([("session".to_string(), a), ("session_tabs".to_string(), t)])
-        }
-        (Err(e), _) | (_, Err(e)) => {
+    match (
+        toml::Value::try_from(apps),
+        toml::Value::try_from(tabs),
+        toml::Value::try_from(snaps),
+    ) {
+        (Ok(a), Ok(t), Ok(n)) => toml::Table::from_iter([
+            ("session".to_string(), a),
+            ("session_tabs".to_string(), t),
+            ("session_snaps".to_string(), n),
+        ]),
+        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
             log::warn!("state: could not serialize the session: {e}");
             toml::Table::new()
         }
@@ -538,12 +551,24 @@ mod tests {
                 text_size: 100,
             }),
         }];
-        let (p, a, t) = (path.clone(), apps.clone(), tabs.clone());
-        run_in_order(move || patch(&p, session_keys(&a, &t)));
+        let snaps = vec![crate::sessionsnap::SavedSnap {
+            monitor: "Dell|U2720Q|1".into(),
+            desktop: 1,
+            columns: true,
+            bands: vec![(2.0, 1), (1.0, 2)],
+            members: vec![crate::sessionsnap::SavedZone {
+                zone: 2,
+                app: "foot".into(),
+                title: "~/src".into(),
+            }],
+        }];
+        let (p, a, t, n) = (path.clone(), apps.clone(), tabs.clone(), snaps.clone());
+        run_in_order(move || patch(&p, session_keys(&a, &t, &n)));
         flush();
         let back = load_from(&path);
         assert_eq!(back.session, apps);
         assert_eq!(back.session_tabs, tabs);
+        assert_eq!(back.session_snaps, snaps);
         assert!(back.auto_arrange);
         std::fs::remove_dir_all(&dir).unwrap();
     }

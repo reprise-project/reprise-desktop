@@ -451,7 +451,11 @@ are.
   back to its own group and tab; others fill their program's tabs in order,
   and move to their own tab when they take its title within 10 seconds. A
   window with the title of one the program had outside any group stays out
-  of the groups. A program
+  of the groups. Snapped windows go back into their zones of the same
+  layout, together in one snap group, on the monitor and desktop they were
+  on; a window takes the zone saved with the title it opens with, else its
+  program's first free zone, unless the title is one of the program's other
+  windows'. When that monitor is gone they open unsnapped. A program
   starts once; if its other grouped windows or its windows outside the
   groups aren't back 4 seconds after a window of it appears, it starts
   again for each one missing that no

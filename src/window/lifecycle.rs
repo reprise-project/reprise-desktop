@@ -521,6 +521,7 @@ impl State {
         }
         if placeable {
             self.tab_on_map(w);
+            self.snap_on_map(w);
         }
         self.sync_toplevel(w);
         self.write_x11_state(w);
@@ -595,6 +596,7 @@ impl State {
         crate::peek::forget_window(self, w);
         self.forget_tabs(w, was_focused);
         self.session.regrouping.forget(w);
+        self.session.resnapping.forget(w);
         // The window is mid-teardown, still in the scene: the overview
         // drops it once the loop is idle.
         if self.overview.view.is_some() {

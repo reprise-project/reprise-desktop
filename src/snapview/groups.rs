@@ -70,6 +70,62 @@ impl Snapping {
         id
     }
 
+    /// `w` back into zone `zone` of a restored group: `with`'s group when it has that layout on
+    /// `output` and `desktop`, else a new one there, which sets the active layout there unless
+    /// one is set. The group's zones over `work`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rejoin(
+        &mut self,
+        w: WindowId,
+        output: &str,
+        desktop: usize,
+        layout: &ZoneLayout,
+        work: Rect,
+        zone: usize,
+        with: Option<WindowId>,
+    ) -> Vec<Rect> {
+        let same = |g: &Group| g.output == output && g.desktop == desktop && g.layout == *layout;
+        let joined = with
+            .and_then(|m| self.group_index(m))
+            .filter(|&i| same(&self.groups[i]));
+        match joined {
+            Some(i) => {
+                let leader = self.groups[i].members[0].1;
+                self.join_group(leader, w, zone);
+            }
+            None => {
+                if let Some(o) = self.remove(w) {
+                    self.drop_unheld_layout(&o);
+                }
+                self.next_group += 1;
+                let id = self.next_group;
+                self.groups.push(Group {
+                    id,
+                    output: output.to_string(),
+                    desktop,
+                    layout: layout.clone(),
+                    splits: Splits::new(layout, work),
+                    members: vec![(zone, w)],
+                });
+                let explicit = ActiveLayout::default_for(work).layout != *layout;
+                (self.active.entry((output.to_string(), desktop)))
+                    .or_insert_with(|| ActiveLayout::new(layout.clone(), explicit, work));
+                self.record(id);
+            }
+        }
+        let Some(i) = self.group_index(w) else {
+            return Vec::new();
+        };
+        self.groups[i].splits.zones(work).to_vec()
+    }
+
+    /// Every snap group as (output, desktop, layout, (zone, window) members).
+    pub fn arrangements(
+        &self,
+    ) -> impl Iterator<Item = (&str, usize, &ZoneLayout, &[(usize, WindowId)])> {
+        (self.groups.iter()).map(|g| (g.output.as_str(), g.desktop, &g.layout, &g.members[..]))
+    }
+
     /// `w` joins `leader`'s group in zone `zone`, leaving any other.
     pub fn join_group(&mut self, leader: WindowId, w: WindowId, zone: usize) {
         let left = if w != leader { self.remove(w) } else { None };
