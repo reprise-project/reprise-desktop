@@ -428,15 +428,28 @@ impl Watch {
     /// Returns when the last change of the burst was heard.
     pub fn next(&mut self, settle: Duration) -> io::Result<Instant> {
         while !(self.wait(None)? && self.read()?) {}
-        let mut last = Instant::now();
-        loop {
-            let left = (last + settle).saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return Ok(last);
-            }
-            if self.wait(Some(left))? && self.read()? {
-                last = Instant::now();
-            }
+        burst_end(Instant::now(), settle, Instant::now, |left| {
+            Ok(self.wait(Some(left))? && self.read()?)
+        })
+    }
+}
+
+/// When the burst whose first change was heard at `first` ends: `changed(left)` waits up to
+/// `left` for another change and says whether one came.
+fn burst_end(
+    first: Instant,
+    settle: Duration,
+    mut now: impl FnMut() -> Instant,
+    mut changed: impl FnMut(Duration) -> io::Result<bool>,
+) -> io::Result<Instant> {
+    let mut last = first;
+    loop {
+        let left = (last + settle).saturating_duration_since(now());
+        if left.is_zero() {
+            return Ok(last);
+        }
+        if changed(left)? {
+            last = now();
         }
     }
 }
@@ -543,8 +556,40 @@ mod tests {
         assert!(ok.is_ok_and(|s| s.success()));
     }
 
+    /// Runs `burst_end` on a clock moved only by its waits; `gaps` are the ms between changes.
+    fn burst(settle: Duration, gaps: &[u64]) -> (Duration, Duration, usize) {
+        let t0 = Instant::now();
+        let clock = std::cell::Cell::new(t0);
+        let mut gaps = gaps.iter().map(|&ms| Duration::from_millis(ms)).peekable();
+        let end = burst_end(
+            t0,
+            settle,
+            || clock.get(),
+            |left| {
+                let next = gaps.next_if(|&gap| gap <= left);
+                clock.set(clock.get() + next.unwrap_or(left));
+                Ok(next.is_some())
+            },
+        )
+        .unwrap();
+        (end - t0, clock.get() - t0, gaps.count())
+    }
+
     #[test]
-    fn a_burst_of_changes_is_one_and_an_installation_made_later_is_watched() {
+    fn a_burst_ends_at_its_last_change_once_settle_passes_without_another() {
+        let settle = Duration::from_millis(200);
+        let ms = Duration::from_millis;
+        assert_eq!(burst(settle, &[60, 60]), (ms(120), ms(320), 0));
+        assert_eq!(burst(settle, &[200]), (ms(200), ms(400), 0));
+        assert_eq!(
+            burst(settle, &[60, 201, 10]),
+            (ms(60), ms(260), 2),
+            "a change after settle is the next burst's"
+        );
+    }
+
+    #[test]
+    fn marks_waiting_are_one_change_and_an_installation_made_later_is_watched() {
         let root =
             std::env::temp_dir().join(format!("reprise-flatpak-watch-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -556,33 +601,13 @@ mod tests {
         std::fs::write(system.join("other"), "").unwrap();
         assert!(!w.read().unwrap(), "only .changed tells of a change");
 
-        let settle = Duration::from_millis(200);
-        let marks = std::thread::spawn({
-            let system = system.clone();
-            move || {
-                for _ in 0..2 {
-                    mark(&system);
-                    std::thread::sleep(Duration::from_millis(60));
-                }
-                mark(&system);
-                Instant::now()
-            }
-        });
-        let start = Instant::now();
-        assert!(
-            w.wait(Some(Duration::from_secs(2))).unwrap(),
-            "a touch is heard"
-        );
-        let heard = w.next(settle).unwrap();
-        let last = marks.join().unwrap();
-        assert!(
-            heard + Duration::from_millis(60) >= last,
-            "the burst ends at its last mark"
-        );
-        assert!(start.elapsed() >= Duration::from_millis(120) + settle);
+        for _ in 0..3 {
+            mark(&system);
+        }
+        w.next(Duration::from_millis(50)).unwrap();
         assert!(
             !w.wait(Some(Duration::ZERO)).unwrap(),
-            "one call took the whole burst"
+            "one call took every mark"
         );
 
         std::fs::create_dir(&user).unwrap();
