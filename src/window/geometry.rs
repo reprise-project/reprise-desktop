@@ -42,10 +42,11 @@ impl State {
         let shown_h = if win.shaded { 0 } else { ch };
         win.geom = FrameGeometry::layout(&m, cw, shown_h, win.maximized, win.chrome())
             .with_glass_top(glass_top);
-        let (tree, content, surface, frame, on) = (
+        let (tree, content, surface, dim, frame, on) = (
             win.tree,
             win.content,
             win.surface,
+            win.dim,
             win.frame,
             win.has_frame(),
         );
@@ -56,6 +57,8 @@ impl State {
             self.scene.set_enabled(sb, on);
         }
         self.scene.set_position(content, client.x, client.y);
+        self.scene
+            .rect_set_size(dim, (client.width.max(1), client.height.max(1)));
         self.scene.set_position(surface, -gx, -gy);
         self.sync_popups(w);
         self.redraw_frame(w);

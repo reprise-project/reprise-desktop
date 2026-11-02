@@ -96,6 +96,8 @@ pub struct Config {
     /// `[windows] shake`, resolved against the interface.
     pub window_shake: bool,
     pub title_double_click: TitleDoubleClick,
+    /// `[windows] dim_inactive`: how much darker, in percent, a window without the focus draws.
+    pub dim_inactive: u8,
     pub session: SessionConfig,
     pub icons: IconsConfig,
     pub cursor: CursorConfig,
@@ -171,6 +173,7 @@ impl Default for Config {
             window_tabs: true,
             window_shake: false,
             title_double_click: TitleDoubleClick::Maximize,
+            dim_inactive: 0,
             session: SessionConfig::default(),
             icons: IconsConfig::default(),
             cursor: CursorConfig::default(),

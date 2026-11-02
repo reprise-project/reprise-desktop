@@ -144,6 +144,7 @@ pub(super) fn fields() -> Vec<Field> {
             k("windows", "title_double_click"),
             lens!(title_double_click),
         ),
+        Field::Int(k("windows", "dim_inactive"), lens!(dim_inactive)),
         Field::Flag(k("session", "restore"), lens!(session_restore)),
         Field::Flag(k("session", "end_processes"), lens!(session_end_processes)),
         Field::List(k("fonts", "family"), lens!(font_family)),

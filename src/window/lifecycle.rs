@@ -53,6 +53,10 @@ impl State {
         scene.set_enabled(sheet, false);
         let content = scene.tree_create(tree);
         let surface = scene.surface_create(content, wl.clone());
+        let dim = scene.rect_create(content, (1, 1), [0.0; 4]);
+        scene.set_input(dim, Input::Passthrough);
+        scene.set_in_pictures(dim, false);
+        scene.set_enabled(dim, false);
         self.windows.push(Window {
             id,
             seq: crate::taskbar::next_seq(),
@@ -78,6 +82,8 @@ impl State {
             sheeted: false,
             content,
             surface,
+            dim,
+            dim_shade: Default::default(),
             popups: Vec::new(),
             x: 0,
             y: 0,

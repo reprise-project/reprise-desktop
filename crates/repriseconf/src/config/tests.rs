@@ -942,6 +942,17 @@ fn title_double_click_maximizes_by_default_and_takes_each_value() {
 }
 
 #[test]
+fn dim_inactive_is_off_by_default_and_takes_0_to_40() {
+    assert_eq!(Config::default().dim_inactive, 0);
+    let c = Config::parse("[windows]\ndim_inactive = 40\n").unwrap();
+    assert_eq!(c.dim_inactive, 40);
+    for bad in ["41", "-1"] {
+        let e = Config::parse(&format!("[windows]\ndim_inactive = {bad}\n")).unwrap_err();
+        assert!(e.contains("dim_inactive"), "{e}");
+    }
+}
+
+#[test]
 fn the_snap_layout_picker_reads_its_switch_and_layouts() {
     let c = Config::parse("[window_snapping]\npicker = false\nlayouts = [\"1|1\", \"3|1:2\"]\n")
         .unwrap();

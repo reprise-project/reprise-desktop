@@ -74,6 +74,9 @@ struct Pass<'a> {
 enum Mode<'a> {
     /// Everything shown: the screen.
     Screen,
+    /// The screen without the subtrees [`Scene::set_in_pictures`] left
+    /// out: a picture of one subtree.
+    Picture,
     /// What glass shows through: no subtree left out of the backdrop
     /// and no custom node but those [`CustomNode::in_backdrop`] keeps.
     Backdrop,
@@ -90,6 +93,10 @@ enum Mode<'a> {
 impl Mode<'_> {
     fn backdrop(self) -> bool {
         matches!(self, Mode::Backdrop)
+    }
+
+    fn picture(self) -> bool {
+        matches!(self, Mode::Picture)
     }
 }
 
@@ -437,7 +444,7 @@ where
             let origin = self.origin_of(id);
             let pass = Pass {
                 view,
-                mode: Mode::Screen,
+                mode: Mode::Picture,
                 hoist: false,
             };
             self.walk_node(
@@ -499,6 +506,7 @@ where
         let Some(n) = self
             .node(id)
             .filter(|n| n.enabled && (n.in_backdrop || !pass.mode.backdrop()))
+            .filter(|n| n.in_pictures || !pass.mode.picture())
             .filter(|n| !n.hidden_over(pass.view.area))
         else {
             return;
@@ -585,7 +593,7 @@ where
             return;
         }
         match pass.mode {
-            Mode::Screen => {}
+            Mode::Screen | Mode::Picture => {}
             Mode::Below { passed, .. } if !passed.get() => return,
             Mode::Backdrop => {
                 if matches!(&n.content, Content::Custom(c) if !c.in_backdrop()) {

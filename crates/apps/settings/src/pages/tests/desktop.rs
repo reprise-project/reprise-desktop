@@ -525,7 +525,7 @@ fn the_windows_page_geometry() {
         Rect::new(242, 142, 30, 13)
     );
     assert_eq!(rect(&s, p, "snap_layouts"), Rect::new(120, 166, 246, 20));
-    assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 228, 358, 154));
+    assert_eq!(rect(&s, p, "tabs_group"), Rect::new(20, 228, 358, 182));
     assert_eq!(rect(&s, p, "window_tabs"), Rect::new(32, 250, 13, 13));
     assert_eq!(rect(&s, p, "remember_windows"), Rect::new(32, 274, 13, 13));
     assert_eq!(rect(&s, p, FORGET_FRAMES), Rect::new(50, 296, 110, 23));
@@ -537,6 +537,15 @@ fn the_windows_page_geometry() {
     assert_eq!(
         rect(&s, p, "title_double_click"),
         Rect::new(186, 352, 120, 21)
+    );
+    assert_eq!(
+        rect(&s, p, "dim_inactive_label"),
+        Rect::new(32, 384, 230, 13)
+    );
+    assert_eq!(rect(&s, p, "dim_inactive").y, 380);
+    assert_eq!(
+        rect(&s, p, "dim_inactive_units"),
+        Rect::new(322, 384, 20, 13)
     );
     inside_page(&s, p);
 }
@@ -552,6 +561,7 @@ fn the_windows_page_reads_back_tabs_shaking_the_picker_the_bar_the_distance_and_
         remember_windows: false,
         window_shake: true,
         title_double_click: "shade".into(),
+        dim_inactive: 20,
         ..Settings::default()
     };
     let s = with(&want);
