@@ -29,6 +29,7 @@ mod menupopup;
 pub mod oneshot;
 pub mod openwith;
 mod outputmgmt;
+pub mod pathjob;
 mod primary;
 mod reply;
 mod runloop;

@@ -5,6 +5,7 @@ use crate::config::PowerConfig;
 use crate::theme::TextUnits;
 use reprisekit::controls::copyprogress;
 use reprisekit::controls::dlgtemplate::{KEY_AID_TEXT_H, NO, YES, delete_default};
+use reprisekit::controls::pathcomplete::Scope;
 
 pub(super) fn button(label: &str, action: DialogAction, default: bool) -> DialogButton {
     DialogButton {
@@ -176,6 +177,7 @@ impl Dialog {
                     c
                 },
                 thumb: ThumbDrag::default(),
+                complete: PathComplete::new(Scope::Rooted),
             }),
             buttons: vec![
                 button("OK", DialogAction::RunField, true),

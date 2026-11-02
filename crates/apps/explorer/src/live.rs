@@ -142,7 +142,8 @@ impl Explorer {
         let mut dirty = tipped
             | self.take_fills(ctx)
             | self.take_link_status(ctx)
-            | self.list_icons.take(&mut self.sv.entries, &mut ctx.icons);
+            | self.list_icons.take(&mut self.sv.entries, &mut ctx.icons)
+            | self.land_address_completion(ctx);
         let mut arrived: Vec<PathBuf> = Vec::new();
         for done in self.thumbs.drain() {
             let Some(&i) = self.item_index.get(&done.path) else {

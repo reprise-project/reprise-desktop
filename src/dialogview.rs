@@ -6,6 +6,7 @@
 //! Welcome panel stands over a still of its output (`output_still`) that fades to grey.
 
 mod browse;
+mod complete;
 mod draw;
 mod input;
 mod outcome;

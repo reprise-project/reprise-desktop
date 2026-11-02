@@ -21,6 +21,7 @@ use crate::controls::combo::{self, Combo};
 use crate::controls::form;
 use crate::controls::menu::MenuLayout;
 use crate::controls::metrics::ControlMetrics;
+use crate::controls::pathcomplete::{self, PathComplete, Scope};
 use crate::controls::placesbar::{self, Place, PlacesBar};
 use crate::controls::shellview::{self, Mode, ShellView};
 use crate::controls::toolbar::{self, ToolBar};
@@ -266,6 +267,8 @@ pub enum Hit {
     },
     /// In the rename box, at this byte of its text.
     Rename(usize),
+    /// A row of File name's completion list.
+    Completion(usize),
 }
 
 /// What happened after a key or a click. `Redraw` is a change to this
@@ -391,6 +394,8 @@ pub struct FileDlg {
     lookin: Combo,
     shell: ShellView,
     filename: TextEdit,
+    /// File name's path completion, relative names from the open folder.
+    complete: PathComplete,
     filetype: Combo,
     folder: Option<FolderId>,
     parent: Option<FolderId>,
@@ -472,6 +477,17 @@ impl std::fmt::Debug for Drawn {
 }
 
 impl FileDlg {
+    /// File name's completion and its edit, for a host that lists what it wants.
+    pub fn completion(&mut self) -> (&mut PathComplete, &mut TextEdit) {
+        (&mut self.complete, &mut self.filename)
+    }
+
+    fn completion_layout(&self, lay: &Layout, room: Option<Rect>) -> pathcomplete::Layout {
+        pathcomplete::layout(&self.complete, lay.filename, room, &self.drawn.0.get())
+    }
+}
+
+impl FileDlg {
     /// The host calls `set_listing` before the first draw.
     pub fn new(fields: Fields, places: Vec<Place>) -> FileDlg {
         let filter_items: Vec<&str> = fields.filters.iter().map(String::as_str).collect();
@@ -522,6 +538,7 @@ impl FileDlg {
                 ..Default::default()
             },
             filename: TextEdit::new("", false),
+            complete: PathComplete::new(Scope::Relative),
             filetype,
             places: PlacesBar {
                 places,
@@ -564,6 +581,7 @@ impl FileDlg {
         if let Some(prev) = self.folder
             && prev != folder.id
         {
+            self.complete.forget();
             match self.pending {
                 Some(Nav::Back) => self.forward.push(prev),
                 Some(Nav::Forward) => self.history.push(prev),

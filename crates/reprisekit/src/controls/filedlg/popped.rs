@@ -3,6 +3,7 @@ use crate::controls::combo::{self, Combo};
 use crate::controls::form;
 use crate::controls::hosted::{Anchor, Hosted, Spot};
 use crate::controls::menu::submenu_anchor;
+use crate::controls::pathcomplete;
 use crate::look::Paint;
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
@@ -22,6 +23,7 @@ pub struct Popped<'a> {
 #[derive(Clone, Copy)]
 enum Open {
     Context,
+    Complete,
     Views,
     LookIn,
     FileType,
@@ -33,6 +35,8 @@ impl Popped<'_> {
         let d = &self.dlg;
         if d.context.is_some() {
             Some(Open::Context)
+        } else if d.complete.is_open() {
+            Some(Open::Complete)
         } else if d.views_open {
             Some(Open::Views)
         } else if d.lookin.open.is_some() {
@@ -99,6 +103,10 @@ impl Hosted for Popped<'_> {
         }
         let lay = self.layout();
         let spot = match (open, &lay.views) {
+            (Open::Complete, _) => Spot {
+                rect: self.dlg.completion_layout(&lay, None).list,
+                anchor: Anchor::Below(lay.filename),
+            },
             (Open::Views, Some((rect, _))) => Spot {
                 rect: *rect,
                 anchor: Anchor::Below(lay.toolbar_rects[TOOLBAR_VIEWS]),
@@ -125,6 +133,7 @@ impl Hosted for Popped<'_> {
             return;
         }
         match self.open().filter(|_| level == 0) {
+            Some(Open::Complete) => self.dlg.complete.list_at = Some(origin),
             Some(Open::Views) => self.dlg.views_at = Some(origin),
             Some(Open::LookIn) => self.dlg.lookin.list_at = Some(origin),
             Some(Open::FileType) => self.dlg.filetype.list_at = Some(origin),
@@ -211,6 +220,11 @@ impl Hosted for Popped<'_> {
             );
         };
         match open {
+            Open::Complete => {
+                let mut l = self.dlg.completion_layout(&lay, None);
+                l.list = moved(l.list);
+                pathcomplete::draw(&self.dlg.complete, c, text, &p, &l, self.px);
+            }
             Open::LookIn => list(c, &self.dlg.lookin, &lay.lookin),
             Open::FileType => list(c, &self.dlg.filetype, &lay.filetype),
             Open::Extra | Open::Context => {}
@@ -235,6 +249,7 @@ impl Hosted for Popped<'_> {
 
     fn host(&mut self) {
         self.dlg.hosted = true;
+        self.dlg.complete.hosted = true;
         if let Some((f, _)) = &mut self.dlg.extra {
             f.host();
         }
@@ -242,6 +257,7 @@ impl Hosted for Popped<'_> {
 
     fn dismiss(&mut self) {
         self.dlg.context = None;
+        self.dlg.complete.close();
         self.dlg.views_open = false;
         self.dlg.lookin.open = None;
         self.dlg.filetype.open = None;

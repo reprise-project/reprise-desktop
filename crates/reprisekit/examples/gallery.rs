@@ -14,6 +14,8 @@ mod gallery_doctabs;
 mod gallery_p3;
 #[path = "gallery_parts/mod.rs"]
 mod gallery_parts;
+#[path = "gallery_pathcomplete/mod.rs"]
+mod gallery_pathcomplete;
 #[path = "gallery_power/mod.rs"]
 mod gallery_power;
 #[path = "gallery_rename/mod.rs"]
@@ -137,6 +139,10 @@ fn main() {
             &render_blue_start_menus(n.max(1)),
             &format!("reprisekit-gallery-blue-start-menus@{}.png", n.max(1)),
         );
+        write_preview(
+            &gallery_pathcomplete::render(n.max(1)),
+            &format!("reprisekit-gallery-path-complete@{}.png", n.max(1)),
+        );
         for mode in [
             reprisekit::glass::Mode::Light,
             reprisekit::glass::Mode::Dark,
@@ -222,6 +228,10 @@ fn main() {
     write_preview(
         &render_label_ellipsis(1),
         "reprisekit-gallery-label-ellipsis.png",
+    );
+    write_preview(
+        &gallery_pathcomplete::render(1),
+        "reprisekit-gallery-path-complete.png",
     );
     write_preview(
         &render_about_system(with_blue, 100),
