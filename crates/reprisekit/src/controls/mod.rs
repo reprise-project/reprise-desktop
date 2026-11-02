@@ -27,6 +27,8 @@ pub mod filesheet;
 pub mod finddlg;
 mod fit;
 pub mod flip;
+pub mod fontsample;
+pub mod fontview;
 pub mod form;
 pub mod grouplist;
 pub mod hosted;

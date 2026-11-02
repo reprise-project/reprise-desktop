@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Font Viewer
+Comment=Shows a font file's sample and installs it.
+Exec=reprise-fonts %f
+Icon=preferences-desktop-font
+Categories=Utility;
+MimeType=font/ttf;font/otf;font/collection;font/woff;font/woff2;application/x-font-ttf;application/x-font-otf;
+NoDisplay=true
+StartupWMClass=reprise.fonts
+Terminal=false

@@ -9,6 +9,7 @@ use reprisefs::thumbnails::Thumbnails;
 use reprisekit::controls::filepreview::{
     self, Action, Body, Facts, FilePreview, PAD, Route, SNIFF_BYTES, TEXT_BYTES,
 };
+use reprisekit::controls::fontsample;
 use reprisekit::controls::multiedit::{Metrics, MultiEdit};
 use reprisekit::controls::shellview;
 use reprisekit::raster::{Canvas, Rect};
@@ -81,11 +82,30 @@ pub(crate) fn read(
     };
     let found = match route {
         Route::Picture => picture().map(Loaded::Picture),
+        Route::Font => font_sample(path, max, scale).map(Loaded::Picture),
         Route::Text | Route::Other => read_text().map(Loaded::Text),
     };
     found
         .or_else(|| cached(path, &meta, cache?, max, scale).map(Loaded::Picture))
         .unwrap_or(Loaded::Nothing)
+}
+
+/// The font file at `path`'s first face set as a sample, inside `max` device px, in Classic's
+/// window colours: a sample is paper whatever the look.
+fn font_sample(path: &Path, max: (u32, u32), scale: i32) -> Option<Canvas> {
+    let sample = TextRenderer::from_file(path, 0)?;
+    let theme = reprisekit::theme::Theme::default();
+    let ui = TextRenderer::load(&theme.fonts);
+    let cs = &theme.colors;
+    let ink = (cs.window_text, cs.window, cs.button_shadow);
+    Some(fontsample::picture(
+        &ui,
+        theme.fonts.size_px,
+        &sample,
+        ink,
+        max,
+        scale,
+    ))
 }
 
 /// The largest thumbnail of `path` in the cache, fitted inside `max` device px.

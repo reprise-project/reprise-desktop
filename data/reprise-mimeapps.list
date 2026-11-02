@@ -6,3 +6,10 @@
 [Default Applications]
 text/plain=reprise-notepad.desktop
 inode/directory=reprise-explorer.desktop
+font/ttf=reprise-fonts.desktop
+font/otf=reprise-fonts.desktop
+font/collection=reprise-fonts.desktop
+font/woff=reprise-fonts.desktop
+font/woff2=reprise-fonts.desktop
+application/x-font-ttf=reprise-fonts.desktop
+application/x-font-otf=reprise-fonts.desktop
