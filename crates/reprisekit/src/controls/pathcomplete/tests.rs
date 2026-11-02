@@ -429,6 +429,7 @@ fn the_file_dialogs_file_name_completes_from_its_folder_on_a_popup() {
             label: "My Computer".into(),
             icon: None,
             enabled: true,
+            pinned: false,
         }],
     );
     let (w, h) = d.client();

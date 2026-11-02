@@ -28,6 +28,7 @@ fn sample() -> FileDlg {
             label: "My Computer".into(),
             icon: None,
             enabled: true,
+            pinned: false,
         }],
     )
 }
@@ -1117,6 +1118,7 @@ fn a_window_shorter_than_the_minimum_keeps_every_row_inside_it() {
             label: format!("Place {i}"),
             icon: None,
             enabled: true,
+            pinned: false,
         })
         .collect();
     d.set_text(u);
@@ -1145,7 +1147,7 @@ fn a_window_shorter_than_the_minimum_keeps_every_row_inside_it() {
     assert_eq!(tiles, 6 * (3 + 32 + 2 * 30), "tiles with 32 px icons");
     let lay = d.layout(&t, 22, Rect::new(0, 0, w, 100), &cm);
     assert_eq!(lay.places.height, tiles, "the places bar keeps its tiles");
-    let squeezed = placesbar::layout(&d.places, lay.places, &cm.places);
+    let squeezed = placesbar::layout(&d.places, lay.places, &cm);
     assert_eq!(squeezed[5].bottom(), lay.places.bottom(), "all six fit");
     assert_eq!(
         lay.shell.frame.height,
@@ -1810,6 +1812,7 @@ fn a_disabled_place_refuses_selection_and_activation() {
             label: "My Network Places".into(),
             icon: None,
             enabled: false,
+            pinned: false,
         }],
     );
     assert!(matches!(
@@ -1975,6 +1978,7 @@ fn blues_rows_sit_a_pixel_higher() {
         label: l.into(),
         icon: None,
         enabled: true,
+        pinned: false,
     };
     d.places.places = vec![place("Desktop"), place("My Computer")];
     let blue = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
@@ -2019,6 +2023,7 @@ fn arrow_keys_skip_a_disabled_place() {
         label: "Place".into(),
         icon: None,
         enabled,
+        pinned: false,
     };
     let mut d = FileDlg::new(
         Fields {
@@ -2052,6 +2057,7 @@ fn the_places_bar_lights_the_tile_of_the_folder_shown() {
         label: label.into(),
         icon: None,
         enabled: true,
+        pinned: false,
     };
     let mut d = FileDlg::new(
         Fields {
@@ -2288,6 +2294,7 @@ fn long_inputs(mode: DlgMode, accept: &str, label: &str, filters: &[&str]) -> Fi
                 label: l.to_string(),
                 icon: None,
                 enabled: true,
+                pinned: false,
             })
             .collect(),
     );
@@ -2777,6 +2784,135 @@ mod context_menu {
             Event::Redraw
         ));
         assert!(d.shell.edit.is_some(), "Rename opens the box");
+    }
+
+    #[test]
+    fn a_lone_folder_offers_pin_or_unpin() {
+        let mut d = multi(DlgMode::Open, true);
+        d.right_click(R, entry_hit(0), (300, 100));
+        assert_eq!(
+            labels(&d, 0),
+            ["Select", "-", "Pin to Places", "-", "Delete", "Rename"]
+        );
+        match menu_key(&mut d, form::Key::Char('i')) {
+            Event::PinEntry { name, pin } => assert_eq!((name.as_str(), pin), ("sub", true)),
+            other => panic!("Pin to Places pins the folder, got {other:?}"),
+        }
+        d.set_pinned_entries(vec!["sub".into()]);
+        d.right_click(R, entry_hit(0), (300, 100));
+        assert_eq!(labels(&d, 0)[2], "Unpin from Places");
+        assert!(matches!(
+            menu_key(&mut d, form::Key::Char('i')),
+            Event::PinEntry { pin: false, .. }
+        ));
+        d.right_click(R, entry_hit(1), (300, 100));
+        assert_eq!(labels(&d, 0), ["Select", "-", "Delete", "Rename"], "a file");
+    }
+
+    /// Three built-in tiles, then two pinned folders, the second missing.
+    fn pinned_dialog() -> FileDlg {
+        let mut d = multi(DlgMode::Open, false);
+        let tile = |label: &str, enabled, pinned| Place {
+            label: label.into(),
+            enabled,
+            pinned,
+            ..Place::default()
+        };
+        d.set_places(
+            vec![
+                tile("Home", true, false),
+                tile("Desktop", true, false),
+                tile("Computer", true, false),
+                tile("Work", true, true),
+                tile("Stick", false, true),
+            ],
+            vec![],
+        );
+        d
+    }
+
+    #[test]
+    fn a_pinned_tile_opens_unpins_and_moves() {
+        let mut d = pinned_dialog();
+        let tile = |i| Some(Hit::Places(i));
+        d.right_click(R, tile(1), (20, 100));
+        assert!(d.context.is_none(), "a built-in tile has no menu");
+        d.right_click(R, tile(3), (20, 300));
+        assert_eq!(
+            labels(&d, 0),
+            [
+                "Open",
+                "-",
+                "Unpin from Places",
+                "-",
+                "Move Up (greyed)",
+                "Move Down"
+            ]
+        );
+        assert!(matches!(
+            menu_key(&mut d, form::Key::Char('d')),
+            Event::ShiftPlace { tile: 3, up: false }
+        ));
+        d.right_click(R, tile(4), (20, 300));
+        assert_eq!(
+            labels(&d, 0),
+            [
+                "Open (greyed)",
+                "-",
+                "Unpin from Places",
+                "-",
+                "Move Up",
+                "Move Down (greyed)"
+            ],
+            "a missing folder can still be unpinned"
+        );
+        assert!(matches!(
+            menu_key(&mut d, form::Key::Char('i')),
+            Event::UnpinPlace(4)
+        ));
+        d.right_click(R, tile(3), (20, 300));
+        assert!(matches!(
+            menu_key(&mut d, form::Key::Enter),
+            Event::NeedPlace(3)
+        ));
+        assert_eq!(d.places.selected, Some(3));
+    }
+
+    #[test]
+    fn pinned_tiles_never_grow_the_dialog() {
+        let mut d = multi(DlgMode::Open, false);
+        let built_in = Place {
+            label: "Home".into(),
+            enabled: true,
+            ..Place::default()
+        };
+        d.set_places(vec![built_in.clone(); 6], vec![]);
+        let min = d.min_client();
+        let pinned = Place {
+            pinned: true,
+            ..built_in
+        };
+        let mut many = vec![d.places()[0].clone(); 6];
+        many.extend(vec![pinned; 10]);
+        d.set_places(many, vec![]);
+        assert_eq!(d.min_client(), min);
+        let cm = ControlMetrics::CLASSIC;
+        let bar = d.places_rect(R, &cm);
+        let wheel = Some(Hit::Places(0));
+        assert!(matches!(d.wheel(R, wheel, WHEEL_ROWS), Event::Redraw));
+        assert_eq!(d.places.top, 1, "a notch scrolls a tile");
+        d.places.selected = Some(1);
+        d.focus = Focus::Places;
+        for _ in 0..14 {
+            d.key(R, form::Key::Down, None, Mods::default());
+        }
+        assert_eq!(d.places.selected, Some(15));
+        let shown = (bar.height / cm.places.tile) as usize;
+        assert_eq!(
+            d.places.top,
+            16 - shown,
+            "the keyboard brings the last tile into view"
+        );
     }
 
     #[test]

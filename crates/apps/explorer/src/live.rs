@@ -141,7 +141,13 @@ impl Explorer {
                 ..Default::default()
             });
         }
-        let mut dirty = tipped
+        let repinned = self.pins.as_mut().is_some_and(|p| p.take_changed());
+        if repinned {
+            self.pane_key = None;
+            self.refresh_chrome(ctx);
+        }
+        let mut dirty = repinned
+            | tipped
             | self.take_fills(ctx)
             | self.take_link_status(ctx)
             | self.list_icons.take(&mut self.sv.entries, &mut ctx.icons)

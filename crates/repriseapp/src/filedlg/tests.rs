@@ -1872,3 +1872,57 @@ fn f5_and_ctrl_r_read_the_folder_again_and_a_right_press_opens_the_list_menu() {
     use reprisekit::controls::hosted::Hosted;
     assert_eq!(popped.spots().len(), 1, "the background's menu is up");
 }
+
+/// A pinned folder follows the built-in tiles, opens from its tile, and Pin, Unpin and Move
+/// write the bookmarks file the dialog reads.
+#[test]
+fn pinned_folders_tile_after_the_built_in_places() {
+    use reprisekit::controls::filedlg::Event as E;
+    let t = tmp("pins");
+    let file = t.join("gtk-3.0/bookmarks");
+    let (work, gone) = (t.join("sub"), t.join("gone"));
+    reprisefs::pins::edit_at(&file, |b| b.pin(&work) | b.pin(&gone)).unwrap();
+    let mut h = host_in(&t);
+    h.pins_at = Some(file.clone());
+    let mut dlg = h.open(&t, open_fields(), TextUnits::ONE);
+    let built_in = places().len();
+    let tiles: Vec<(&str, bool, bool)> = (dlg.places().iter())
+        .map(|p| (p.label.as_str(), p.enabled, p.pinned))
+        .collect();
+    assert_eq!(tiles.len(), built_in + 2);
+    assert_eq!(
+        tiles[built_in..],
+        [("sub", true, true), ("gone", false, true)]
+    );
+    assert_eq!(h.place(built_in), Some(h.folders.id(&work)));
+    assert_eq!(
+        h.place(built_in + 1),
+        None,
+        "a missing folder does not open"
+    );
+
+    let read = || reprisefs::pins::load(&file);
+    h.outcome(
+        &mut dlg,
+        E::ShiftPlace {
+            tile: built_in,
+            up: false,
+        },
+    );
+    let order: Vec<PathBuf> = read().folders().map(|(p, _)| p.to_path_buf()).collect();
+    assert_eq!(order, [gone.clone(), work.clone()]);
+    h.outcome(&mut dlg, E::UnpinPlace(built_in + 1));
+    assert!(
+        !read().has(&gone),
+        "the tile read before the move still names its folder"
+    );
+    h.outcome(
+        &mut dlg,
+        E::PinEntry {
+            name: "a.txt".into(),
+            pin: true,
+        },
+    );
+    assert!(read().has(&t.join("a.txt")));
+    let _ = std::fs::remove_dir_all(&t);
+}

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use crate::compositor::State;
 
-/// The ping every Browse dialog's folder watch wakes the loop with.
+/// The ping every Browse dialog's folder watch and the pinned folders' read wake the loop with.
 pub(super) fn watch_on_loop(state: &mut State) {
     let (ping, source) = match smithay::reexports::calloop::ping::make_ping() {
         Ok(p) => p,
@@ -12,7 +12,11 @@ pub(super) fn watch_on_loop(state: &mut State) {
     };
     let added = (state.handle).insert_source(source, |_, _, state| state.pickers_changed());
     match added {
-        Ok(_) => state.dialogs.picker_wake = Some(ping),
+        Ok(_) => {
+            let wake = ping.clone();
+            state.dialogs.pins = Some(reprisefs::pins::Pins::start(move || wake.ping()));
+            state.dialogs.picker_wake = Some(ping);
+        }
         Err(e) => log::warn!("browse: {}", e.error),
     }
 }
@@ -78,6 +82,10 @@ impl State {
 
     /// Opens Browse dialog `d` over the top dialog, moved to `kept` once it shows.
     fn open_browse(&mut self, mut d: Dialog, kept: Option<(i32, i32)>) {
+        if let (Some(pins), Some(p)) = (&self.dialogs.pins, d.picker_mut()) {
+            pins.refresh();
+            p.set_pins(&pins.current());
+        }
         if let (Some(ping), Some(p)) = (self.dialogs.picker_wake.clone(), d.picker_mut()) {
             match reprisefs::folderwatch::Watch::new(move || ping.ping()) {
                 Ok(w) => p.watch_with(w),
@@ -136,10 +144,25 @@ impl State {
     /// folder where it went.
     pub(crate) fn pickers_changed(&mut self) {
         let mut any = false;
-        for v in &mut self.dialogs.views {
+        let mut pins = None;
+        if let Some(p) = self.dialogs.pins.as_mut()
+            && p.take_changed()
+        {
+            pins = Some(p.current());
+        }
+        let mut repinned = Vec::new();
+        for (i, v) in self.dialogs.views.iter_mut().enumerate() {
             if let Some(p) = v.dialog.picker_mut() {
                 any |= p.watch_due();
+                if let Some(pins) = &pins
+                    && p.set_pins(pins)
+                {
+                    repinned.push(i);
+                }
             }
+        }
+        for i in repinned {
+            self.redraw_dialog(i);
         }
         if any {
             self.run_picker_requests();

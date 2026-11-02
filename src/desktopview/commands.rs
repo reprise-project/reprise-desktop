@@ -375,6 +375,14 @@ impl State {
                     self.spawn_terminal_in(&dir);
                 }
             }
+            Dc::Pin(pin) => {
+                if let Some(dir) = target.and_then(|i| self.icon_folder(i)) {
+                    let file = reprisefs::pins::bookmarks_file();
+                    crate::state::run_in_order(move || {
+                        reprisefs::pins::set_pinned(&file, &dir, pin)
+                    });
+                }
+            }
             Dc::Trash => {
                 if let Some(i) = target {
                     self.trash_selection(i);

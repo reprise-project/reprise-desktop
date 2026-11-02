@@ -2,7 +2,7 @@ use super::{
     DlgMode, Event, FileDlg, Focus, Hit, TOOLBAR_BACK, TOOLBAR_NEW_FOLDER, TOOLBAR_UP,
     TOOLBAR_VIEWS, rows, views_items,
 };
-use crate::classic::widgets::BarHit;
+use crate::classic::widgets::{BarHit, bar_hit};
 use crate::controls::combo::{self, Combo};
 use crate::controls::form;
 use crate::controls::metrics::ControlMetrics;
@@ -104,6 +104,12 @@ impl FileDlg {
         // Cancel's right end overlaps the grip's square.
         if lay.grip.contains(x, y) {
             return Some(Hit::Grip);
+        }
+        if let Some(parts) = placesbar::bar_parts(&self.places, lay.places, &lay_cm)
+            && (parts.back.x..parts.back.right()).contains(&x)
+            && (parts.back.y..parts.forward.bottom()).contains(&y)
+        {
+            return Some(Hit::PlacesBar(bar_hit(&parts, x, y, false)));
         }
         if let Some(i) = placesbar::hit(&lay.places_rects, x, y) {
             return Some(Hit::Places(i));
@@ -269,6 +275,14 @@ impl FileDlg {
                 self.places.selected = Some(i);
                 self.places.pressed = Some(i);
                 Event::NeedPlace(i)
+            }
+            Some(Hit::PlacesBar(h)) => {
+                let bar = self.places_rect(r, cm);
+                if self.places.bar_press(h, bar, cm) {
+                    Event::Redraw
+                } else {
+                    Event::None
+                }
             }
             Some(Hit::Shell(h)) => {
                 if let shellview::Hit::Header(i) = h {
@@ -436,6 +450,11 @@ impl FileDlg {
                 let lay = self.shell_layout(r, &cm);
                 redraw(shellview::scroll(&mut self.shell, rows, &lay))
             }
+            Some(Hit::Places(_) | Hit::PlacesBar(_)) => {
+                let cm = self.drawn.0.get();
+                let bar = self.places_rect(r, &cm);
+                redraw(self.places.scroll(notches as isize, bar, &cm))
+            }
             Some(Hit::FileType(_)) if self.focus == Focus::FileType => {
                 redraw(step(&mut self.filetype))
             }
@@ -585,6 +604,10 @@ impl FileDlg {
                 self.shell.selection.clear();
                 self.sync_name_field();
                 self.open_context(false, at, false);
+                Event::Redraw
+            }
+            Some(Hit::Places(i)) if self.places.places.get(i).is_some_and(|p| p.pinned) => {
+                self.open_place_context(i, at, false);
                 Event::Redraw
             }
             Some(Hit::FileName) => self.click(r, hit, Mods::default()),

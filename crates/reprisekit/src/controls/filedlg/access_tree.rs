@@ -38,7 +38,7 @@ impl FileDlg {
         let places = placesbar::access(
             &self.places,
             lay.places,
-            &self.drawn.0.get().places,
+            &self.drawn.0.get(),
             tree,
             root,
             "places",
