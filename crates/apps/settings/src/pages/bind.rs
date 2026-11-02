@@ -171,6 +171,7 @@ pub(super) fn binds() -> Vec<Bind> {
         ),
         Bind::Num("desktop_animation_ms", lens!(desktop_animation_ms)),
         Bind::Named("pager_mark", lens!(pager_mark), PAGER_MARKS),
+        Bind::Flag("wheel_on_desktop", lens!(wheel_on_desktop)),
         Bind::Flag("remember_windows", lens!(remember_windows)),
         Bind::Flag("window_tabs", lens!(window_tabs)),
         Bind::Flag("window_shake", lens!(window_shake)),

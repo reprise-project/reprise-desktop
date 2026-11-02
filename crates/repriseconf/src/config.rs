@@ -86,6 +86,8 @@ pub struct Config {
     pub workspaces: usize,
     pub workspace_animation: SwitchAnimation,
     pub pager_mark: reprisekit::taskbar::PagerMark,
+    /// `[workspaces] wheel_on_desktop`: the wheel over the desktop steps desktops as over the pager.
+    pub wheel_on_desktop: bool,
     pub effects: EffectsConfig,
     pub accessibility: AccessibilityConfig,
     pub remember_windows: bool,
@@ -157,6 +159,7 @@ impl Default for Config {
             workspaces: WORKSPACES_DEFAULT,
             workspace_animation: SwitchAnimation::default(),
             pager_mark: reprisekit::taskbar::PagerMark::default(),
+            wheel_on_desktop: false,
             effects: EffectsConfig::default_for(Interface::Classic),
             accessibility: AccessibilityConfig::default(),
             remember_windows: true,

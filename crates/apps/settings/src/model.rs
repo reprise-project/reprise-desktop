@@ -186,6 +186,8 @@ pub struct Settings {
     /// `[workspaces] pager`: one of [`PAGER_MARKS`]' names; only the Glass
     /// taskbar reads it.
     pub pager_mark: String,
+    /// `[workspaces] wheel_on_desktop`.
+    pub wheel_on_desktop: bool,
     /// `[windows] remember`.
     pub remember_windows: bool,
     /// `[windows] tabs`.
@@ -471,6 +473,7 @@ impl Settings {
             desktop_animation: c.workspace_animation.style.name().into(),
             desktop_animation_ms: c.workspace_animation.ms.into(),
             pager_mark: c.pager_mark.name().into(),
+            wheel_on_desktop: c.wheel_on_desktop,
             remember_windows: c.remember_windows,
             window_tabs: c.window_tabs,
             window_shake: c.window_shake,

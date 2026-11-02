@@ -540,6 +540,13 @@ fn desktop_switches_are_instant_by_default_and_the_animation_is_checked() {
 }
 
 #[test]
+fn the_wheel_on_the_desktop_is_off_unless_set() {
+    assert!(!Config::default().wheel_on_desktop);
+    let c = Config::parse("[workspaces]\nwheel_on_desktop = true\n").unwrap();
+    assert!(c.wheel_on_desktop);
+}
+
+#[test]
 fn the_pager_mark_defaults_to_light_and_rejects_others() {
     use reprisekit::taskbar::PagerMark;
     assert_eq!(Config::default().pager_mark, PagerMark::Light);

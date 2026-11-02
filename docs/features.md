@@ -215,6 +215,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Virtual desktops.** Four by default, up to sixteen, with a numbered pager
   on the taskbar that lights up when a window there wants you.
   Super+Ctrl+Left or Right switches; add Shift to take the window along. The
+  wheel over the pager steps to the previous or next desktop, and over the
+  desktop too with `[workspaces] wheel_on_desktop = true`. The
   switch can slide, fade, zoom or wipe, and three fingers sideways drag the
   slide along with them. A change to the number of desktops applies as soon
   as you save.

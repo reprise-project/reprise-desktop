@@ -429,7 +429,8 @@ impl State {
     /// A wheel or scroll frame, from the backend or an EIS sender: a tray
     /// icon's, the notification history's (`tray_axis`), a dialog's, the
     /// emoji picker's, the clipboard history's or the displays panel's when
-    /// the pointer is over one, else the client's under the pointer.
+    /// the pointer is over one, the pager's (and the desktop's with
+    /// `wheel_on_desktop`), else the client's under the pointer.
     pub fn handle_axis(&mut self, frame: AxisFrame) {
         self.settle_pointer();
         // The wheel rolls the 3D switcher; the Alt+Tab panel and region
@@ -470,6 +471,11 @@ impl State {
         {
             return;
         }
+        if self.wheels_desktops(&hit) {
+            self.desktop_wheel(frame.v120.map_or(0, |v| v.1), frame.axis.1);
+            return;
+        }
+        self.desktop_wheel = (0, 0.0);
         self.panels.wheel = 0;
         let Some(pointer) = self.seat.get_pointer() else {
             return;

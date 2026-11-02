@@ -26,7 +26,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[taskbar]` | position, button modes, pinned programs, auto-hide |
 | `[effects]` | animations and fades |
 | `[switcher]`, `[overview]` | Alt+Tab, the 3D switcher, the window overview |
-| `[workspaces]` | virtual desktops and their animation |
+| `[workspaces]` | virtual desktops, their animation and the wheel over the desktop |
 | `[window_snapping]`, `[windows]` | snapping, layouts, tabs, shake, window memory |
 | `[[window_rules]]` | per-program size, place, desktop and state |
 | `[session]` | session restore and leftover programs |
