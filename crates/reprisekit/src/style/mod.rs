@@ -44,6 +44,7 @@ pub struct Style {
     pub label_glow: Option<TitleGlow>,
     pub task_glow: Option<TaskGlow>,
     pub(crate) task_progress: Option<crate::taskbar::ProgressPainter>,
+    pub(crate) task_badge: Option<crate::taskbar::BadgePainter>,
     task_spot: Option<Spot>,
     pub task_nudge: bool,
     pub greyed_field_frame: bool,
@@ -170,6 +171,7 @@ impl Style {
             label_glow: None,
             task_glow: None,
             task_progress: None,
+            task_badge: None,
             task_spot: None,
             task_nudge: true,
             greyed_field_frame: false,
@@ -394,6 +396,11 @@ impl Style {
 
     pub(crate) fn with_task_progress(mut self, paint: crate::taskbar::ProgressPainter) -> Style {
         self.task_progress = Some(paint);
+        self
+    }
+
+    pub(crate) fn with_task_badge(mut self, paint: crate::taskbar::BadgePainter) -> Style {
+        self.task_badge = Some(paint);
         self
     }
 

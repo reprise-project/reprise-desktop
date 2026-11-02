@@ -227,20 +227,21 @@ pub fn taskbar(a: Area) -> Form {
             "taskbar_peek",
             "Pee&k at the desktop or a window from the taskbar",
         ),
+        ("taskbar_badges", "Show unread &counts on task buttons"),
         ("taskbar_tray_overflow", "Hide &idle notification icons"),
     ];
     for (i, (id, text)) in checks.into_iter().enumerate() {
-        items.push(Item::check(id, X, 108 + 22 * i as i32, text));
+        items.push(Item::check(id, X, 100 + 20 * i as i32, text));
     }
     items.push(button(
         TRAY_CUSTOMIZE,
         a.right() - BUTTON_W,
-        191,
+        195,
         "C&ustomize...",
     ));
     items.push(Item::new(
         "taskbar_note",
-        Rect::new(X, 216, a.w, 2 * LINE_H),
+        Rect::new(X, 220, a.w, 2 * LINE_H),
         Control::Lines(vec![
             "Left unchanged, these follow the interface: Glass".into(),
             "combines buttons and turns on all but small icons.".into(),

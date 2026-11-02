@@ -145,6 +145,8 @@ pub struct Settings {
     pub taskbar_show_desktop: bool,
     pub taskbar_peek: bool,
     pub taskbar_tray_overflow: bool,
+    /// `[taskbar] badges`.
+    pub taskbar_badges: bool,
     /// `[notifications] sound`.
     pub notification_sound: bool,
     /// `[sounds] theme` and `bell`.
@@ -460,6 +462,7 @@ impl Settings {
             taskbar_show_desktop: c.taskbar.show_desktop_button,
             taskbar_peek: c.taskbar.peek,
             taskbar_tray_overflow: c.taskbar.tray_overflow,
+            taskbar_badges: c.taskbar.badges,
             notification_sound: c.notifications.sound,
             sound_theme: c.sounds.theme.clone(),
             bell: c.sounds.bell,

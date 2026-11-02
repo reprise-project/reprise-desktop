@@ -1,6 +1,6 @@
 //! Drawn shapes for the looks that paint their parts from geometry at the
 //! output scale: coverage of rounded rects, ellipses, polygons and stroked
-//! lines, gradients, premultiplied compositing, and stroked glyphs.
+//! lines, gradients, premultiplied compositing, stroked glyphs and badge numerals.
 //!
 //! Two units meet here. Device pixels are what a part's canvas holds: a
 //! part `w` x `h` design pixels painted at `d` device pixels per design
@@ -17,10 +17,12 @@
 mod cover;
 mod glyph;
 mod grad;
+mod numerals;
 
 pub use cover::{ellipse, polygon, ringed, rounded, rounded4, stroke};
 pub use glyph::{Glyph, glyph};
 pub use grad::{Stops, radial};
+pub use numerals::{NUMERAL_H, NUMERAL_W, numerals, numerals_width};
 
 use crate::raster::Canvas;
 use crate::theme::Color;

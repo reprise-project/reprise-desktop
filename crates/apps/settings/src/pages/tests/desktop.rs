@@ -334,6 +334,7 @@ fn the_taskbar_page_geometry() {
         "taskbar_small_icons",
         "taskbar_show_desktop",
         "taskbar_peek",
+        "taskbar_badges",
         "taskbar_tray_overflow",
     ]
     .into_iter()
@@ -341,11 +342,11 @@ fn the_taskbar_page_geometry() {
     {
         assert_eq!(
             rect(&s, p, id),
-            Rect::new(20, 108 + 22 * i as i32, 13, 13),
+            Rect::new(20, 100 + 20 * i as i32, 13, 13),
             "{id} is row {i}"
         );
     }
-    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 216, 358, 26));
+    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 220, 358, 26));
     assert_eq!(rect(&s, p, "taskbar_auto_hide"), Rect::new(20, 250, 13, 13));
     for (i, id) in REVEAL_CONTROLS.into_iter().enumerate() {
         assert_eq!(
@@ -385,6 +386,7 @@ fn taskbar_values_go_in_and_come_back_out() {
         taskbar_pinned: true,
         taskbar_peek: true,
         taskbar_tray_overflow: true,
+        taskbar_badges: false,
         recent_files: false,
         start_icon: false,
         startmenu_banner: "Reprise".into(),
@@ -416,6 +418,7 @@ fn taskbar_values_go_in_and_come_back_out() {
     assert_eq!(tb.checked("taskbar_auto_hide"), Some(true));
     assert_eq!(tb.checked("taskbar_reveal_on_edge"), Some(false));
     assert_eq!(tb.checked("taskbar_reveal_on_keys"), Some(true));
+    assert_eq!(tb.checked("taskbar_badges"), Some(false));
     let mut got = Settings::default();
     read_all(&s, &mut got);
     assert_eq!(got, want);
