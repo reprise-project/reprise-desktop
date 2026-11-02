@@ -381,6 +381,11 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   the history. It also turns itself on during `[notifications] quiet_hours`,
   and while a full-screen window has focus or the screen is shared unless
   `auto_dnd = false`; the balloons it held then show once that ends.
+  Right-click the bell, or the history's check box, to turn it on for an
+  hour or until tomorrow: 08:00, or the end of quiet hours that run past
+  midnight. The menu, the check box and the bell's tooltip then say until
+  when, and Turn off ends it early. It lasts through a config reload, not
+  past the session.
 
 We had notifications in 2001. They were allowed a small corner. They still
 are.

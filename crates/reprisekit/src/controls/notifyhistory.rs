@@ -88,6 +88,8 @@ enum Meta {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct History {
     pub dnd: bool,
+    /// The end time of a timed Do Not Disturb, as the clock shows it; the check box says it.
+    pub dnd_until: Option<String>,
     pub list: GroupList<u32>,
     meta: Vec<Meta>,
     icons: Vec<Option<Rc<Canvas>>>,
@@ -143,7 +145,7 @@ pub fn layout(cm: &ControlMetrics) -> Layout {
     let w = width(cm);
     let check = Rect::new(pad, pad + (CHECK_ROW - cm.check) / 2, cm.check, cm.check);
     let label_x = check.x + cm.check_label;
-    let label = Rect::new(label_x, pad, 100, CHECK_ROW);
+    let label = Rect::new(label_x, pad, 200, CHECK_ROW);
     let list_h = 2 + ROWS * ROW_H + 2;
     let list = Rect::new(pad, pad + CHECK_ROW + LIST_GAP, w - 2 * pad, list_h);
     let clear = Rect::new(w - pad - BUTTON_W, list.bottom() + PAD, BUTTON_W, BUTTON_H);
@@ -228,6 +230,7 @@ impl History {
     pub fn new() -> History {
         History {
             dnd: false,
+            dnd_until: None,
             list: GroupList::new(Vec::new()),
             meta: Vec::new(),
             icons: Vec::new(),
@@ -553,6 +556,13 @@ fn neighbour_group(
     after.or_else(|| order[..at].iter().rev().find_map(|a| row_of(a)))
 }
 
+fn dnd_label(h: &History) -> String {
+    match &h.dnd_until {
+        Some(t) if h.dnd => format!("{DND_LABEL} until {t}"),
+        _ => DND_LABEL.to_string(),
+    }
+}
+
 pub fn hit(h: &History, x: i32, y: i32, cm: &ControlMetrics) -> Hit {
     let lay = layout(cm);
     let check_row = Rect::new(
@@ -608,7 +618,7 @@ pub fn draw(theme: &Theme, text: &TextRenderer, h: &History) -> Canvas {
         &mut c,
         text,
         lay.label.scaled(s),
-        DND_LABEL,
+        &dnd_label(h),
         false,
         cs.button_text,
         Align::Left,
@@ -707,7 +717,7 @@ pub fn access(
     let dnd = access::toggle(
         Role::CheckBox,
         check_row,
-        DND_LABEL,
+        &dnd_label(h),
         Toggled::from(h.dnd),
         true,
     );
@@ -1194,6 +1204,30 @@ mod tests {
         crate::raster::write_preview(
             &draw(&theme, &text, &History::new()),
             "notifyhistory-empty-preview.png",
+        );
+    }
+
+    #[test]
+    fn a_timed_do_not_disturb_says_until_when_while_on() {
+        let mut h = History::new();
+        h.dnd_until = Some("09:00".into());
+        assert_eq!(dnd_label(&h), "Do not disturb", "off, the time goes unsaid");
+        h.dnd = true;
+        assert_eq!(dnd_label(&h), "Do not disturb until 09:00");
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = Theme::default().fonts.size_px;
+        h.dnd_until = Some("12:59 PM".into());
+        let cm = ControlMetrics::CLASSIC;
+        assert!(
+            text.measure(&dnd_label(&h), false, px) <= layout(&cm).label.width,
+            "the label holds a 12-hour time"
+        );
+        let mut tree = crate::access::Tree::window("", (W, layout(&cm).height));
+        access(&h, &cm, &mut tree, crate::access::ROOT);
+        let root = tree.get(crate::access::ROOT).unwrap().children().to_vec();
+        assert_eq!(
+            tree.get(root[0]).unwrap().label(),
+            Some("Do not disturb until 12:59 PM")
         );
     }
 

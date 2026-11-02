@@ -131,6 +131,7 @@ pub enum MenuKind {
     },
     Layouts,
     NightLight(Vec<Option<crate::nightlight::Row>>),
+    Dnd(Vec<Option<crate::notifydnd::Row>>),
     StartPanel {
         rows: Vec<Option<StartRow>>,
     },
@@ -189,6 +190,7 @@ pub enum MenuPick {
     },
     Layout(u32),
     NightLight(crate::nightlight::Row),
+    Dnd(crate::notifydnd::Row),
     StartPanel(StartRow),
     TaskOverflow {
         bar: TreeId,
@@ -286,6 +288,11 @@ impl MenuKind {
                 .copied()
                 .flatten()
                 .map_or(MenuPick::Nothing, MenuPick::NightLight),
+            MenuKind::Dnd(rows) => rows
+                .get(idx)
+                .copied()
+                .flatten()
+                .map_or(MenuPick::Nothing, MenuPick::Dnd),
             MenuKind::StartPanel { rows } => rows
                 .get(idx)
                 .copied()

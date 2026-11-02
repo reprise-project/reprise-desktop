@@ -134,11 +134,13 @@ pub fn refresh(state: &mut State) {
         })
         .collect();
     let dnd = log.dnd;
+    let until = log.dnd_until.map(crate::taskbar::time_text);
     let Some(v) = state.notify.center.as_mut() else {
         return;
     };
     v.model.set_entries(entries);
     v.model.dnd = dnd;
+    v.model.dnd_until = until;
     redraw(state);
 }
 
@@ -210,6 +212,10 @@ pub fn press(state: &mut State, x: f64, y: f64, button: u32, time: u32) -> bool 
         _ => None,
     };
     if button == BTN_RIGHT {
+        if h == Hit::Dnd {
+            crate::notifydnd::open_at(state, (x as i32, y as i32));
+            return false;
+        }
         if let Some(id) = row.and_then(|i| v.model.note_at(i)) {
             v.model.press(h);
             redraw(state);
