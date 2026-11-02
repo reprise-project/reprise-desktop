@@ -1604,3 +1604,39 @@ fn output_in_one_caption_tab_redraws_only_its_window() {
         assert!(t.pane(w).unwrap().full, "{w:?} draws whole");
     }
 }
+
+#[test]
+fn a_drop_types_its_paths_as_a_bracketed_paste_and_raises_the_window() {
+    let mut ctx = test_ctx();
+    let mut t = terminal(&["sh", "-c", "printf '\\033[?2004h'; echo ready; sleep 5"]);
+    t.follow_scale(MAIN, 1, &mut ctx);
+    until("the program asks for bracketed paste", || {
+        t.w.tabs
+            .current()
+            .unwrap()
+            .mode()
+            .contains(TermMode::BRACKETED_PASTE)
+    });
+    t.w.tabs.list[0].written.borrow_mut().clear();
+    let reply = t.event(
+        MAIN,
+        Event::DragDrop {
+            x: 10,
+            y: 10,
+            data: repriseapp::Dropped::Files(vec!["/home/u/a b".into(), "/home/u/c".into()]),
+            action: repriseapp::DragAction::Ask,
+            source: repriseapp::Actions {
+                copy: true,
+                move_: false,
+                ask: true,
+            },
+        },
+        &mut ctx,
+    );
+    assert_eq!(
+        t.w.tabs.list[0].written.borrow().concat(),
+        b"\x1b[200~'/home/u/a b' /home/u/c \x1b[201~"
+    );
+    assert_eq!(reply.raise, Some(MAIN));
+    assert_eq!(reply.answer_drop, Some(Some(repriseapp::DragAction::Copy)));
+}

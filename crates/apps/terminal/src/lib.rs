@@ -4,6 +4,7 @@
 
 mod chrome;
 mod cwd;
+mod drop;
 mod find;
 mod keys;
 mod newtab;
@@ -1194,6 +1195,14 @@ impl Terminal {
             Event::Key(k) => self.key(&k, ctx),
             Event::Pointer(p) => self.pointer(p, ctx),
             Event::Pasted(text) | Event::PastedPrimary(text) => self.paste_text(text, ctx),
+            Event::DragEnter { .. } => Reply::drag_accept(drop::enter(&ev)),
+            Event::DragDrop { data, action, .. } => {
+                let reply = Reply {
+                    raise: Some(win),
+                    ..self.paste_text(drop::typed(&data), ctx)
+                };
+                drop::answered(reply, action)
+            }
             Event::Focus(f) => {
                 self.w.focused = f;
                 self.chrome_changed()
