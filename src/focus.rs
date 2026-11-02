@@ -148,6 +148,7 @@ impl State {
         self.set_activated(w, true);
         self.redraw_frame(w);
         self.claim_keyboard(w);
+        self.restore_layout(w);
         self.redraw_taskbars();
         self.redraw_all();
     }

@@ -67,6 +67,7 @@ pub struct FileKeyboard {
     pub options: Option<String>,
     pub repeat_rate: Option<i32>,
     pub repeat_delay: Option<i32>,
+    pub layout_per_window: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

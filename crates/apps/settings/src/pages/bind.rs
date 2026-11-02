@@ -256,6 +256,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Num("repeat_delay", lens!(repeat_delay)),
         Bind::Flag("shortcut_overlay", lens!(shortcut_overlay)),
         Bind::Num("shortcut_overlay_ms", lens!(shortcut_overlay_ms)),
+        Bind::Flag("layout_per_window", lens!(layout_per_window)),
         Bind::Text("standby", lens!(standby)),
         Bind::Text("poweroff", lens!(poweroff)),
         Bind::Text("reboot", lens!(reboot)),

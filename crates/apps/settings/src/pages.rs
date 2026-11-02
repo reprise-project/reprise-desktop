@@ -244,7 +244,7 @@ fn cleared_text(state: Clearing) -> String {
 /// rest scroll, so Action takes what the scrollbar leaves
 /// ([`fit_shortcut_columns`]; 194 px beside a 16 px bar).
 pub fn shortcuts(a: Area) -> Rect {
-    Rect::new(GX, 278, a.gw(), 74 + a.dh)
+    Rect::new(GX, 298, a.gw(), 74 + a.dh)
 }
 pub const SHORTCUT_COLUMNS: [(&str, i32); 2] = [("Keys", 120), ("Action", 194)];
 pub const SC_ADD: &str = "sc_add";

@@ -12,6 +12,7 @@ use crate::compositor::State;
 use crate::menuview::{MenuFrom, MenuKind};
 use crate::raster::Rect;
 use crate::startmenu::{MenuItem, MenuStyle};
+use crate::window::WindowId;
 
 #[derive(Debug, Default)]
 pub struct Layouts {
@@ -67,8 +68,12 @@ impl State {
         self.layouts_configured();
     }
 
-    /// The keymap was just compiled from `[keyboard]`: relabel, and read the group back (a new keymap starts on the first layout).
+    /// The keymap was just compiled from `[keyboard]`: relabel, read the group back (a new keymap
+    /// starts on the first layout), and forget the windows' layouts, which named the old list.
     pub fn layouts_configured(&mut self) {
+        for w in &mut self.windows {
+            w.layout = None;
+        }
         self.key_input.layouts.labels = labels(&self.config.keyboard);
         self.key_input.layouts.current = self.active_layout();
         self.redraw_taskbars();
@@ -82,9 +87,16 @@ impl State {
         keyboard.with_xkb_state(self, |ctx| ctx.xkb().lock().unwrap().active_layout().0)
     }
 
-    /// The keyboard's state changed: follow a layout switch, whoever made it.
+    /// The keyboard's state changed: follow a layout switch, whoever made it. The focused window
+    /// keeps it under `layout_per_window`, unless an input method's keymap is in force.
     pub fn follow_layout(&mut self) {
         let group = self.active_layout();
+        if self.config.keyboard.layout_per_window
+            && !self.ime.vk.foreign()
+            && let Some(w) = self.focused.and_then(|w| self.win_mut(w))
+        {
+            w.layout = Some(group);
+        }
         let layouts = &mut self.key_input.layouts;
         if layouts.current == group {
             return;
@@ -96,15 +108,27 @@ impl State {
         }
     }
 
+    /// Lock layout `idx`; the focused client hears it in its modifiers.
     pub fn set_layout(&mut self, idx: u32) {
-        let Some((mut mask, _)) = self.xkb_mask() else {
+        let Some(keyboard) = self.seat.get_keyboard() else {
             return;
         };
-        mask.layout_depressed = 0;
-        mask.layout_latched = 0;
-        mask.layout_locked = idx;
-        self.set_xkb_mask(mask);
+        keyboard.with_xkb_state(self, |mut ctx| {
+            ctx.set_layout(smithay::input::keyboard::Layout(idx))
+        });
         self.follow_layout();
+    }
+
+    /// Under `layout_per_window`, `w` taking the keyboard brings back its layout; a window that
+    /// never had one starts on the first.
+    pub fn restore_layout(&mut self, w: WindowId) {
+        if !self.config.keyboard.layout_per_window || !self.key_input.layouts.switchable() {
+            return;
+        }
+        let group = self.win(w).and_then(|x| x.layout).unwrap_or(0);
+        if group != self.key_input.layouts.current {
+            self.set_layout(group);
+        }
     }
 
     pub fn next_layout(&mut self) {
@@ -170,5 +194,64 @@ mod tests {
             current: 0,
         };
         assert!(!layouts.switchable());
+    }
+
+    /// Two windows under `[keyboard] layout = "us,hu"`, the second focused, the first on hu.
+    fn two_windows(
+        per_window: bool,
+    ) -> (
+        crate::harness::Harness,
+        crate::harness::TestClient,
+        WindowId,
+        WindowId,
+    ) {
+        let text = format!("[keyboard]\nlayout = \"us,hu\"\nlayout_per_window = {per_window}\n");
+        let mut h =
+            crate::harness::Harness::with_config(crate::config::Config::parse(&text).unwrap());
+        h.state.apply_keyboard();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "test.a", 300, 200).id;
+        h.state.set_layout(1);
+        let b = h.map_toplevel(&mut c, "test.b", 300, 200).id;
+        h.dispatch();
+        assert_eq!(h.state.focused, Some(b));
+        (h, c, a, b)
+    }
+
+    #[test]
+    fn each_window_gets_back_its_layout_and_a_new_one_starts_on_the_first() {
+        let (mut h, mut c, a, b) = two_windows(true);
+        assert_eq!(
+            h.state.key_input.layouts.current, 0,
+            "a new window starts on us"
+        );
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.group, 0, "the client hears us");
+        h.state.focus_window(a);
+        assert_eq!(h.state.key_input.layouts.current, 1, "a gets hu back");
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.group, 1, "the client hears hu");
+        h.state.focus_window(b);
+        assert_eq!(h.state.key_input.layouts.current, 0);
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.group, 0, "the client hears us again");
+        h.state.set_layout(1);
+        h.state.focus_window(a);
+        h.state.next_layout();
+        h.state.focus_window(b);
+        assert_eq!(h.state.key_input.layouts.current, 1, "b kept hu");
+        h.state.focus_window(a);
+        assert_eq!(h.state.key_input.layouts.current, 0, "a kept us");
+    }
+
+    #[test]
+    fn with_the_setting_off_one_layout_follows_the_focus() {
+        let (mut h, _c, a, b) = two_windows(false);
+        assert_eq!(h.state.key_input.layouts.current, 1);
+        h.state.focus_window(a);
+        h.state.next_layout();
+        h.state.focus_window(b);
+        assert_eq!(h.state.key_input.layouts.current, 0);
     }
 }

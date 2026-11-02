@@ -191,7 +191,7 @@ fn the_keyboard_page_geometry() {
     let s = built();
     assert_eq!(
         rect(&s, Page::Keyboard, "keyboard_group"),
-        Rect::new(20, 44, 358, 190)
+        Rect::new(20, 44, 358, 210)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, KB_LAYOUTS),
@@ -204,57 +204,62 @@ fn the_keyboard_page_geometry() {
     );
     assert_eq!(rect(&s, Page::Keyboard, KB_UP), Rect::new(291, 116, 75, 23));
     assert_eq!(
+        rect(&s, Page::Keyboard, "layout_per_window").y,
+        146,
+        "the check sits under the Layouts list"
+    );
+    assert_eq!(
         rect(&s, Page::Keyboard, "kb_model"),
-        Rect::new(116, 146, 250, 20)
+        Rect::new(116, 166, 250, 20)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "kb_options"),
-        Rect::new(116, 172, 250, 20)
+        Rect::new(116, 192, 250, 20)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "repeat_rate"),
-        Rect::new(116, 198, 50, 20)
+        Rect::new(116, 218, 50, 20)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "repeat_delay"),
-        Rect::new(250, 198, 50, 20)
+        Rect::new(250, 218, 50, 20)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "shortcuts_group"),
-        Rect::new(20, 242, 358, 138)
+        Rect::new(20, 262, 358, 138)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "shortcut_overlay"),
-        Rect::new(32, 260, 13, 13)
+        Rect::new(32, 280, 13, 13)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "shortcut_overlay_ms"),
-        Rect::new(250, 256, 50, 20)
+        Rect::new(250, 276, 50, 20)
     );
-    assert_eq!(shortcuts(Area::MIN), Rect::new(32, 278, 334, 74));
+    assert_eq!(shortcuts(Area::MIN), Rect::new(32, 298, 334, 74));
     assert_eq!(
         rect(&s, Page::Keyboard, SC_ADD),
-        Rect::new(129, 356, 75, 23)
+        Rect::new(129, 376, 75, 23)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, SC_EDIT),
-        Rect::new(210, 356, 75, 23)
+        Rect::new(210, 376, 75, 23)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, SC_REMOVE),
-        Rect::new(291, 356, 75, 23)
+        Rect::new(291, 376, 75, 23)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "osd_group"),
-        Rect::new(20, 388, 358, 62)
+        Rect::new(20, 408, 358, 62)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "osd_caps_lock"),
-        Rect::new(32, 406, 13, 13)
+        Rect::new(32, 426, 13, 13)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "osd_num_lock"),
-        Rect::new(32, 426, 13, 13)
+        Rect::new(32, 446, 13, 13)
     );
     inside_page(&s, Page::Keyboard);
 

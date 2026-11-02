@@ -159,6 +159,11 @@ impl VkMods {
 }
 
 impl VkKeymap {
+    /// Whether a virtual keyboard's keymap stands in for the seat's own.
+    pub fn foreign(&self) -> bool {
+        self.active.is_some()
+    }
+
     pub fn forget_keymap(&mut self) {
         self.active = None;
         self.own = None;

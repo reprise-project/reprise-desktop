@@ -175,6 +175,8 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # options = ""               # empty uses the xkb/XKB_DEFAULT_OPTIONS default
 # repeat_rate = 25           # keys per second
 # repeat_delay = 600         # milliseconds before repeat starts
+# layout_per_window = false  # true: each window keeps the layout it last had;
+#                            # a new window starts on the first
 
 # [shortcut_overlay]         # hold Super alone: a sheet of every shortcut in force
 # enabled = true
