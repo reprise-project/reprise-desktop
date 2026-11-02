@@ -44,6 +44,10 @@ impl SettingsApp {
                     let row = self.sheet.pages[Page::ScreenSaver.index()].combo_selected(id);
                     saverpage::pick(&mut self.want, row.unwrap_or(0));
                 }
+                if id == saverpage::AWAY {
+                    let row = self.sheet.pages[Page::ScreenSaver.index()].combo_selected(id);
+                    saverpage::pick_away(&self.away_devices, &mut self.want, row.unwrap_or(0));
+                }
                 if id == saverpage::WAIT
                     && let Some(form::Control::UpDown(u)) = self.sheet.pages
                         [Page::ScreenSaver.index()]

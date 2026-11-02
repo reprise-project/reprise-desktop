@@ -191,6 +191,8 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Flag(k("power", "lock_on_sleep"), lens!(lock_on_sleep)),
         Field::Flag(k("wallpaper", "lock_screen"), lens!(lock_wallpaper)),
         Field::Int(k("idle", "lock_after"), lens!(lock_after)),
+        Field::Text(k("lock", "away_device"), lens!(away_device)),
+        Field::Int(k("lock", "away_after_s"), lens!(away_after_s)),
         Field::Int(k("idle", "screen_off_after"), lens!(screen_off_after)),
         Field::Int(k("idle", "blank_after"), lens!(blank_after)),
         Field::Int(k("idle", "lock_fade"), lens!(lock_fade)),

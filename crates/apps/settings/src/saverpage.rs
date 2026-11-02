@@ -1,11 +1,14 @@
 //! The Screen Saver page: a monitor running the pending saver, the saver
 //! combo, Settings... and Preview, and the minutes of no input that start it
-//! (`[idle] blank_after`, shown in seconds on the Power page).
+//! (`[idle] blank_after`, shown in seconds on the Power page). Below, the paired Bluetooth
+//! device whose going away locks the session (`[lock]`).
 
 use std::path::{Path, PathBuf};
 
+use reprisebus::bluez::Device;
 use reprisekit::classic::assets::MONITOR_SCREEN;
 use reprisekit::classic::widgets::BUTTON_W;
+use reprisekit::controls::combo::{Combo, ListItem};
 use reprisekit::controls::form::{Control, Form, Item, Screen};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::saver::{self, Kind, Options, Saver};
@@ -19,6 +22,9 @@ pub const SAVER: &str = "saver";
 pub const SETTINGS: &str = "saver_settings";
 pub const PREVIEW: &str = "saver_preview";
 pub const WAIT: &str = "saver_wait";
+pub const AWAY: &str = "away_device";
+pub const AWAY_AFTER: &str = "away_after_s";
+const AWAY_ROWS: usize = 8;
 pub fn monitor_rect(a: Area) -> Rect {
     Rect::new(X + (a.w - 191) / 2, 44, 191, 168)
 }
@@ -46,6 +52,36 @@ pub fn page(a: Area) -> Form {
         306,
         a.gw(),
         "Lock after on the Power page locks the screen under it.",
+    ));
+    items.push(Item::group(
+        "away_group",
+        Rect::new(X, 338, a.w, 118),
+        "Lock When Away",
+    ));
+    items.push(Item::label_at(
+        "away_label",
+        GX,
+        358,
+        a.gw(),
+        "Lock when this paired device goes &away:",
+    ));
+    items.push(Item::combo(AWAY, GX, 374, 200, &[NONE_ROW], AWAY_ROWS));
+    items.extend(spin(
+        "away_after_label",
+        AWAY_AFTER,
+        GX,
+        408,
+        40,
+        "Aft&er:",
+        (0, 3600),
+    ));
+    items.push(Item::label_at("away_units", GX + 100, 408, 60, "seconds"));
+    items.push(Item::label_at(
+        "away_note",
+        GX,
+        432,
+        a.gw(),
+        "It must stay connected while near (calls, KDE Connect).",
     ));
     Form::new(items)
 }
@@ -102,6 +138,61 @@ pub fn follow(form: &mut Form, s: &Settings) {
     }
     if let Some(Control::UpDown(u)) = form.item_mut(WAIT).map(|i| &mut i.control) {
         u.set(((s.blank_after.max(60)) / 60).min(i32::MAX as i64) as i32);
+    }
+}
+
+/// The device combo's rows: "(None)", the paired `devices`, then the configured device when
+/// BlueZ does not list it, by its address or path.
+pub fn away_rows(devices: &[Device], s: &Settings) -> Vec<String> {
+    let mut rows = vec![NONE_ROW.to_string()];
+    rows.extend(devices.iter().map(|d| match d.name.as_str() {
+        "" => d.address.clone(),
+        n => n.to_string(),
+    }));
+    if !s.away_device.is_empty() && !devices.iter().any(|d| d.is(&s.away_device)) {
+        rows.push(s.away_device.clone());
+    }
+    rows
+}
+
+pub fn away_row(devices: &[Device], s: &Settings) -> usize {
+    if s.away_device.is_empty() {
+        return 0;
+    }
+    devices
+        .iter()
+        .position(|d| d.is(&s.away_device))
+        .unwrap_or(devices.len())
+        + 1
+}
+
+/// Row `row` of [`away_rows`] picked: a device stores its address, the unlisted row keeps the value.
+pub fn pick_away(devices: &[Device], s: &mut Settings, row: usize) {
+    match row.checked_sub(1) {
+        None => s.away_device.clear(),
+        Some(i) => {
+            if let Some(d) = devices.get(i) {
+                s.away_device = d.address.clone();
+            }
+        }
+    }
+}
+
+/// Fill the device combo from `devices` and put `s` on it; the grace greys under "(None)".
+pub fn follow_away(form: &mut Form, devices: &[Device], s: &Settings) {
+    let rows = away_rows(devices, s);
+    let at = away_row(devices, s);
+    if let Some(Control::Combo(c)) = form.item_mut(AWAY).map(|i| &mut i.control) {
+        let same = c.items.iter().map(|i| &i.text).eq(rows.iter());
+        if !same {
+            let enabled = c.enabled;
+            *c = Combo::with_items(rows.into_iter().map(ListItem::new).collect(), at, AWAY_ROWS);
+            c.enabled = enabled;
+        }
+    }
+    form.set_combo(AWAY, at);
+    for id in ["away_after_label", AWAY_AFTER, "away_units"] {
+        form.set_enabled(id, at > 0);
     }
 }
 
@@ -242,6 +333,66 @@ mod tests {
             Control::UpDown(u) => assert_eq!(u.value(), 5, "300 s is 5 minutes"),
             _ => unreachable!(),
         }
+    }
+
+    fn paired() -> Vec<Device> {
+        let device = |n: u8, name: &str| Device {
+            path: format!("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_0{n}"),
+            address: format!("AA:BB:CC:DD:EE:0{n}"),
+            name: name.into(),
+            paired: true,
+            connected: false,
+        };
+        vec![device(1, "Phone"), device(2, "")]
+    }
+
+    #[test]
+    fn the_away_list_is_none_then_the_paired_devices() {
+        let devices = paired();
+        let mut s = Settings::default();
+        assert_eq!(
+            away_rows(&devices, &s),
+            ["(None)", "Phone", "AA:BB:CC:DD:EE:02"]
+        );
+        assert_eq!(away_row(&devices, &s), 0);
+        pick_away(&devices, &mut s, 1);
+        assert_eq!(s.away_device, "AA:BB:CC:DD:EE:01");
+        assert_eq!(away_row(&devices, &s), 1);
+        s.away_device = "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_02".into();
+        assert_eq!(away_row(&devices, &s), 2, "a path names its device");
+        pick_away(&devices, &mut s, 0);
+        assert_eq!(s.away_device, "");
+    }
+
+    #[test]
+    fn a_device_bluez_does_not_list_keeps_its_row() {
+        let s = Settings {
+            away_device: "11:22:33:44:55:66".into(),
+            ..Settings::default()
+        };
+        assert_eq!(away_rows(&[], &s), ["(None)", "11:22:33:44:55:66"]);
+        assert_eq!(away_row(&[], &s), 1);
+        let mut kept = s.clone();
+        pick_away(&[], &mut kept, 1);
+        assert_eq!(kept.away_device, s.away_device, "picking it again keeps it");
+    }
+
+    #[test]
+    fn the_grace_greys_without_a_device() {
+        let mut f = page(Area::MIN);
+        let devices = paired();
+        let mut s = Settings::default();
+        let on = |f: &Form, id| match &f.item(id).unwrap().control {
+            Control::UpDown(u) => u.enabled,
+            Control::Label { enabled, .. } => *enabled,
+            _ => unreachable!(),
+        };
+        follow_away(&mut f, &devices, &s);
+        assert!(!on(&f, AWAY_AFTER) && !on(&f, "away_units"));
+        s.away_device = "aa:bb:cc:dd:ee:01".into();
+        follow_away(&mut f, &devices, &s);
+        assert_eq!(f.combo_selected(AWAY), Some(1));
+        assert!(on(&f, AWAY_AFTER) && on(&f, "away_units"));
     }
 
     #[test]

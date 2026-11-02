@@ -274,6 +274,9 @@ pub struct Settings {
     pub screen_off_after: i64,
     pub blank_after: i64,
     pub lock_fade: i64,
+    /// `[lock] away_device`, an address or object path; empty is off.
+    pub away_device: String,
+    pub away_after_s: i64,
 
     /// libinput's -1..1 speed in tenths, -10..=10, so the trackbar's steps
     /// and `Eq` both work.
@@ -560,6 +563,8 @@ impl Settings {
             screen_off_after: c.idle.screen_off_after.into(),
             blank_after: c.idle.blank_after.into(),
             lock_fade: c.idle.lock_fade.into(),
+            away_device: c.lock.away_device.clone(),
+            away_after_s: c.lock.away_after_s.into(),
 
             mouse_speed: tenths(c.mouse.speed),
             mouse_accel: c.mouse.acceleration,

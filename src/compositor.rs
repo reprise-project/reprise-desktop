@@ -377,6 +377,7 @@ pub struct State {
     pub idle: crate::idle::IdleState,
     pub saver: crate::saverview::SaverState,
     pub power: crate::power::PowerState,
+    pub awaylock: crate::awaylock::AwayLock,
     pub night: crate::nightlight::NightLight,
     pub dark_mode: crate::darkmode::DarkMode,
     /// wlr-layer-shell: panels, docks, launchers, backgrounds (`layer`).
@@ -722,6 +723,7 @@ impl State {
             idle: crate::idle::IdleState::new(&dh, handle.clone()),
             saver: Default::default(),
             power: crate::power::PowerState::default(),
+            awaylock: crate::awaylock::AwayLock::default(),
             night: crate::nightlight::NightLight::new(&dh),
             dark_mode: Default::default(),
             layers_shell: crate::layer::LayerShell::new(&dh),

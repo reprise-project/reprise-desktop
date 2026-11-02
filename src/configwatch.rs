@@ -373,6 +373,7 @@ pub fn reload(state: &mut State, cfg: Config) {
     }
     crate::sandbox::set_trusted(&state.config.clipboard.trusted_apps);
     crate::idle::config_changed(state);
+    crate::awaylock::config_changed(state);
     if old.location != state.config.location {
         crate::location::config_changed(state);
     }

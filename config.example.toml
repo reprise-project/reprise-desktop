@@ -259,6 +259,12 @@ lock_fade = 0                # dim the desktop to grey over this many seconds be
 screen_off_after = 900       # power every output off; any input turns them back on
 suspend_after = 0            # run [power] standby
 
+# [lock]                     # Reprise Settings' Screen Saver page edits these
+# away_device = "AA:BB:CC:DD:EE:FF"  # a paired Bluetooth device, by address or BlueZ object path; empty is off.
+#                            # Seen connected, then disconnected away_after_s seconds, it locks the
+#                            # session; it never unlocks. It must stay connected while near (docs/configuration.md)
+# away_after_s = 30          # 0 locks at once
+
 # [screensaver]              # what [idle] blank_after starts; Reprise Settings' Screen Saver page edits it
 # name = "blank"             # blank | starfield | mystify | logo | photos
 # speed = 5                  # 1 to 10: how fast starfield, mystify and logo move
