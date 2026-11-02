@@ -37,6 +37,8 @@ use std::cell::Cell;
 
 /// Volume positions: 0 to 60, a tick every tenth.
 pub const STEPS: usize = 61;
+/// A [`Line::boost`] line's volume positions: on to 90, 150 %, shaded past 60.
+pub const BOOST_STEPS: usize = 91;
 /// Balance positions: 0 (left only) to 20 (right only), centred at 10.
 pub const BALANCE_STEPS: usize = 21;
 pub const BALANCE_CENTRE: usize = 10;
@@ -125,7 +127,7 @@ pub struct Line {
     /// What the host knows the line by; [`Event`]s carry it.
     pub key: String,
     pub title: String,
-    /// The volume position, 0 to `STEPS - 1`.
+    /// The volume position, 0 to `STEPS - 1`, or to `BOOST_STEPS - 1` with `boost`.
     pub volume: usize,
     /// The balance position, 0 to `BALANCE_STEPS - 1`; `None` for a line
     /// with nothing to balance.
@@ -134,6 +136,8 @@ pub struct Line {
     pub checked: bool,
     /// False with no device behind it: the column greys.
     pub live: bool,
+    /// The volume may go past 100 %.
+    pub boost: bool,
 }
 
 /// One column's state.
@@ -150,7 +154,10 @@ pub struct Column {
 
 impl Column {
     fn new(l: &Line) -> Column {
-        let mut volume = TrackBar::new(l.volume, STEPS).paged(12, 10);
+        let count = if l.boost { BOOST_STEPS } else { STEPS };
+        let mut volume = TrackBar::new(l.volume, count)
+            .paged(12, 10)
+            .boosted(l.boost.then_some(STEPS - 1));
         volume.enabled = l.live;
         let mut balance =
             TrackBar::new(l.balance.unwrap_or(BALANCE_CENTRE), BALANCE_STEPS).paged(5, 10);
@@ -1264,7 +1271,7 @@ impl Mixer {
                 K::Down | K::Left => self.slide_volume(i, |t| t.step(-1)),
                 K::PageUp => self.slide_volume(i, |t| t.step(t.page as i32)),
                 K::PageDown => self.slide_volume(i, |t| t.step(-(t.page as i32))),
-                K::Home => self.slide_volume(i, |t| t.set(STEPS - 1)),
+                K::Home => self.slide_volume(i, |t| t.set(t.count - 1)),
                 K::End => self.slide_volume(i, |t| t.set(0)),
                 _ => Event::None,
             },

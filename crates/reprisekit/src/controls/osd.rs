@@ -17,8 +17,22 @@ const PERCENT_GAP: i32 = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Meter {
+    /// The level, 0 to `top`.
     pub fraction: f64,
     pub enabled: bool,
+    /// What a full bar stands for: 1, or more for a volume that runs past 100 %, whose
+    /// percentage is then written out in every look.
+    pub top: f64,
+}
+
+impl Meter {
+    pub fn new(fraction: f64, enabled: bool) -> Meter {
+        Meter {
+            fraction,
+            enabled,
+            top: 1.0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -104,8 +118,8 @@ fn body(
     .scaled(s);
     let percent = osd
         .meter
-        .filter(|_| glass)
-        .map(|m| format!("{}%", (m.fraction.clamp(0.0, 1.0) * 100.0).round()));
+        .filter(|m| glass || m.top > 1.0)
+        .map(|m| format!("{}%", (m.fraction.clamp(0.0, m.top) * 100.0).round()));
     let percent_w = percent
         .as_deref()
         .map_or(0, |t| text.measure(t, true, px) + PERCENT_GAP * s);
@@ -130,9 +144,12 @@ fn body(
         }
     } else {
         text.draw(c, title_r, &title, true, cs.button_text, Align::Left, px);
+        if let Some(t) = percent.as_deref() {
+            text.draw(c, title_r, t, true, cs.button_text, Align::Right, px);
+        }
     }
     if let Some(m) = osd.meter {
-        draw_progress(c, p, lay.bar, m.fraction, m.enabled);
+        draw_progress(c, p, lay.bar, m.fraction / m.top.max(1.0), m.enabled);
         if glass && !m.enabled {
             // Glass's greyed bar fills as an enabled one does; a muted
             // sink's bar goes grey all the same.
@@ -329,10 +346,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let osd = Osd {
             title: "Volume".into(),
-            meter: Some(Meter {
-                fraction: 1.0,
-                enabled: true,
-            }),
+            meter: Some(Meter::new(1.0, true)),
         };
         let c = draw(&theme, &text, &osd, None);
         assert_eq!(c.get(0, 0), cs.button_face.argb());
@@ -343,10 +357,7 @@ mod tests {
         assert_eq!(c.get(bar.x + 4, bar.y + 8), cs.hilight.argb());
         let muted = Osd {
             title: "Muted".into(),
-            meter: Some(Meter {
-                fraction: 1.0,
-                enabled: false,
-            }),
+            meter: Some(Meter::new(1.0, false)),
         };
         let c = draw(&theme, &text, &muted, None);
         assert_eq!(c.get(bar.x + 4, bar.y + 8), cs.gray_text.argb());
@@ -362,6 +373,38 @@ mod tests {
     }
 
     #[test]
+    fn a_boosted_volume_writes_its_percent_and_fills_by_150() {
+        let theme = Theme::default();
+        let cs = &theme.colors;
+        let text = TextRenderer::load(&FontConfig::default());
+        let osd = |top| Osd {
+            title: "Volume".into(),
+            meter: Some(Meter {
+                top,
+                ..Meter::new(0.75, true)
+            }),
+        };
+        let lay = layout();
+        let inked = |c: &Canvas| {
+            let t = lay.title;
+            (t.right() - 30..t.right())
+                .flat_map(|x| (t.y..t.bottom()).map(move |y| (x, y)))
+                .any(|(x, y)| c.get(x, y) == cs.button_text.argb())
+        };
+        let (plain, boosted) = (
+            draw(&theme, &text, &osd(1.0), None),
+            draw(&theme, &text, &osd(1.5), None),
+        );
+        assert!(!inked(&plain), "a plain Classic meter writes no percent");
+        assert!(inked(&boosted), "a boosted one writes 75%");
+        let bar = lay.bar;
+        let at = |c: &Canvas, f: f64| c.get(bar.x + (bar.width as f64 * f) as i32, bar.y + 8);
+        assert_eq!(at(&plain, 0.7), cs.hilight.argb(), "0.75 of a 100 % bar");
+        assert_ne!(at(&boosted, 0.6), cs.hilight.argb(), "half of a 150 % bar");
+        assert_eq!(at(&boosted, 0.4), cs.hilight.argb());
+    }
+
+    #[test]
     fn under_glass_the_panel_is_glass_with_a_white_title_and_its_level() {
         let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
         let text = TextRenderer::load(&FontConfig::default());
@@ -374,12 +417,7 @@ mod tests {
         };
         let m = panel::margin(&theme);
         let lay = layout();
-        let meter = |enabled| {
-            Some(Meter {
-                fraction: 0.5,
-                enabled,
-            })
-        };
+        let meter = |enabled| Some(Meter::new(0.5, enabled));
         let c = draw_one("Volume", meter(true));
         assert_eq!(
             (c.width as i32, c.height as i32),
@@ -480,10 +518,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let osd = Osd {
             title: "Volume".into(),
-            meter: Some(Meter {
-                fraction: 0.45,
-                enabled: true,
-            }),
+            meter: Some(Meter::new(0.45, true)),
         };
         crate::raster::write_preview(&draw(&theme, &text, &osd, None), "osd-preview.png");
     }

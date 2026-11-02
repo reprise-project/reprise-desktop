@@ -174,6 +174,7 @@ impl Props {
             device,
             hidden: self.hidden.clone(),
             advanced: o.advanced,
+            boost: o.boost,
         }
     }
 }

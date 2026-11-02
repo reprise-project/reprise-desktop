@@ -286,6 +286,13 @@ fn sounds_play_from_the_freedesktop_theme_and_the_bell_rings_by_default() {
     assert_eq!(Config::parse("[sounds]\n").unwrap().sounds, d);
     let c = Config::parse("[sounds]\ntheme = \"ocean\"\nbell = false\n").unwrap();
     assert_eq!((c.sounds.theme.as_str(), c.sounds.bell), ("ocean", false));
+    assert!(!d.allow_boost, "volumes stop at 100 % by default");
+    assert!(
+        Config::parse("[sounds]\nallow_boost = true\n")
+            .unwrap()
+            .sounds
+            .allow_boost
+    );
     assert!(Config::parse("[sounds]\ntheme = \"../x\"\n").is_err());
 }
 

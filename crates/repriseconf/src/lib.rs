@@ -396,6 +396,33 @@ fn with_bt_battery_warning(text: &str, percent: u8) -> Result<String, String> {
     Ok(doc.to_string())
 }
 
+pub type ConfigWatch = reprisefs::folderwatch::Watch;
+
+/// A watch on the config file: `wake` runs on its thread after each write or rename onto it, and
+/// [`ConfigWatch::take_changed`] says whether one came. None when inotify fails.
+pub fn watch(wake: impl Fn() + Send + Sync + 'static) -> Option<ConfigWatch> {
+    let path = config_path();
+    let mut w = reprisefs::folderwatch::Watch::new(wake)
+        .map_err(|e| log::warn!("the config file is not watched: {e}"))
+        .ok()?;
+    if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
+        w.watch_all(&[(dir.to_path_buf(), Some(name.to_os_string()))]);
+    }
+    Some(w)
+}
+
+/// `[sounds] allow_boost`, read now: whether playback volumes may go past 100 %.
+pub fn allow_boost() -> bool {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    allow_boost_in(&text)
+}
+
+fn allow_boost_in(text: &str) -> bool {
+    parsed(text)
+        .and_then(|doc| get(&doc, &key("sounds", "allow_boost")).and_then(Item::as_bool))
+        .unwrap_or(false)
+}
+
 /// A refresh in Hz with the decimals it needs: `60`, `59.94`.
 pub fn hz_string(refresh_mhz: i32) -> String {
     let hz = format!("{:.3}", refresh_mhz as f64 / 1000.0);
@@ -894,6 +921,13 @@ mod tests {
         assert_eq!(pct("-1"), 0);
         assert_eq!(pct("90"), 50);
         assert_eq!(pct("\"low\""), 5);
+    }
+
+    #[test]
+    fn boost_is_off_unless_set_true() {
+        assert!(!allow_boost_in(""));
+        assert!(allow_boost_in("[sounds]\nallow_boost = true\n"));
+        assert!(!allow_boost_in("[sounds]\nallow_boost = 1\n"));
     }
 
     #[test]

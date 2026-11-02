@@ -153,9 +153,10 @@ pub struct Settings {
     pub taskbar_badges: bool,
     /// `[notifications] sound`.
     pub notification_sound: bool,
-    /// `[sounds] theme` and `bell`.
+    /// `[sounds] theme`, `bell` and `allow_boost`.
     pub sound_theme: String,
     pub bell: bool,
+    pub allow_boost: bool,
     /// `[taskbar] position`: one of [`TASKBAR_POSITIONS`]' values, the
     /// bottom under every interface.
     pub taskbar_position: String,
@@ -478,6 +479,7 @@ impl Settings {
             notification_sound: c.notifications.sound,
             sound_theme: c.sounds.theme.clone(),
             bell: c.sounds.bell,
+            allow_boost: c.sounds.allow_boost,
             taskbar_position: c.taskbar.position.name().into(),
             taskbar_auto_hide: c.taskbar.auto_hide,
             taskbar_reveal_on_edge: c.taskbar.reveal_on_edge,

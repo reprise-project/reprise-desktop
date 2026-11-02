@@ -39,7 +39,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[night_light]` | schedule and warmth |
 | `[launcher]`, `[clipboard]`, `[screenshot]`, `[previews]` | the launcher's file and window search, clipboard history, where screenshots go, live previews |
 | `[notifications]` | balloon sounds, quiet hours, Do Not Disturb during full screen and screen sharing |
-| `[sounds]` | the sound theme balloons and the bell play from, and whether the bell sounds |
+| `[sounds]` | the sound theme balloons and the bell play from, whether the bell sounds, and `allow_boost`: playback volumes past 100 % up to 150 % |
 | `[privacy]` | recent files and location |
 | `[thumbnail_cache]` | whether thumbnails are kept, the cap, and whether installed thumbnailers make them for PDFs, videos and fonts |
 | `[storage]` | the low disk space warning |

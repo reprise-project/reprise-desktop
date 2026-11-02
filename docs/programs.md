@@ -249,6 +249,13 @@ display change applies first, then asks whether to keep it, and reverts after
   speakers and for each program, a Recording view that picks the input, and
   Advanced Controls for bass, treble and whatever else the card offers.
   Turning the volume up or down keeps the balance you set.
+- **Louder than 100 %.** With `[sounds] allow_boost = true` (Settings >
+  Sounds, "Allow volume above 100%") the popup's and Volume Control's
+  playback sliders, the tray wheel and the volume keys go on to 150 %, the
+  part past 100 % shaded and marked on each slider, and the on-screen panel
+  writes the level out. Recording levels and the sheet's sliders stay at
+  100 %. Turning it off brings every output and program louder than 100 %
+  back to it; the speaker icon does that, so it needs to be running.
 
 ## Network Connections
 
