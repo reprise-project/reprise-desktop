@@ -267,6 +267,17 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   before it.
 - **Open in Terminal** on the desktop's right-click menu, a folder's and
   Documents' or Home's starts your `terminal` there.
+- **Widgets.** A clock, a month calendar and a system meter can stand on
+  the desktop: tick them under the desktop menu's Widgets or on Settings'
+  Desktops page (`desktop_widgets`). Each is glass under Glass and a raised
+  panel otherwise. Drag one to move it: it snaps to the icon grid, on any
+  screen, and the icons make way. Right-click it for its options (the
+  clock's analog or digital face and its seconds, the meter's bars or
+  graph) and Remove. Each screen keeps its own place for each widget, in
+  `$XDG_STATE_HOME/reprise/widgets.toml`. A widget redraws only when what
+  it shows changes; the meter reads CPU and memory use once a second and
+  stops while the desktop is hidden (locked, the screen saver, a full-screen
+  window).
 - **Trusted launchers.** A `.desktop` file on the desktop, or one the
   launcher finds, runs only once you've marked it trusted (Allow Launching),
   so a download can't pose as a program.

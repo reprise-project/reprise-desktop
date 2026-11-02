@@ -231,6 +231,10 @@ impl State {
             }
             Interaction::Drag { .. } => self.drag_finish(),
             Interaction::Marquee => self.end_marquee(),
+            Interaction::WidgetDrag(held) => {
+                let pos = self.pointer_location();
+                self.widget_drop(held, (pos.x, pos.y));
+            }
             Interaction::Stir => {
                 self.end_marquee();
                 self.stir_up(Source::Pointer);
@@ -307,6 +311,7 @@ impl State {
             Interaction::BarMove { .. } | Interaction::BarWidth { .. } => self.cancel_bar_drag(),
             Interaction::Drag { .. } => self.drag_view_cancel(),
             Interaction::Marquee => self.end_marquee(),
+            Interaction::WidgetDrag(held) => self.widget_drag_cancel(held),
             Interaction::Stir => {
                 self.end_marquee();
                 self.stir_cancel(Source::Pointer);

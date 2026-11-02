@@ -56,6 +56,8 @@ pub struct Config {
     /// The desktop's system icons, in order: `documents`, `computer`, `home`,
     /// `recycle-bin`. Old `my-documents`/`my-computer` read as the new names.
     pub system_icons: Vec<String>,
+    /// The widgets standing on the desktop, each once, in the order listed.
+    pub desktop_widgets: Vec<reprisekit::controls::deskwidget::Kind>,
     pub wallpaper: WallpaperConfig,
     pub screensaver: ScreensaverConfig,
     /// `[display] gpu`: the DRM device whose connectors are driven, read once at startup.
@@ -140,6 +142,7 @@ impl Default for Config {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+            desktop_widgets: Vec::new(),
             wallpaper: WallpaperConfig::default(),
             screensaver: ScreensaverConfig::default(),
             gpu: None,

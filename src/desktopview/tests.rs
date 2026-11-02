@@ -474,23 +474,73 @@ fn a_late_answer_never_takes_a_cell_an_icon_landed_in_meanwhile() {
     let entries = [plain("New Folder")];
     let cells = [at((2, 1))];
     assert_eq!(
-        landing_cell(square, area, &entries, &cells, &[], "report.pdf", (2, 1)),
+        landing_cell(
+            square,
+            area,
+            &entries,
+            &cells,
+            &[],
+            &HashSet::new(),
+            "report.pdf",
+            (2, 1)
+        ),
         (2, 2),
         "the paste goes to the next free cell"
     );
     assert_eq!(
-        landing_cell(square, area, &entries, &cells, &[], "New Folder", (2, 1)),
+        landing_cell(
+            square,
+            area,
+            &entries,
+            &cells,
+            &[],
+            &HashSet::new(),
+            "New Folder",
+            (2, 1)
+        ),
         (2, 1),
         "an icon is not in its own way"
     );
     assert_eq!(
-        landing_cell(square, area, &[], &[], &[(2, 1)], "report.pdf", (2, 1)),
+        landing_cell(
+            square,
+            area,
+            &[],
+            &[],
+            &[(2, 1)],
+            &HashSet::new(),
+            "report.pdf",
+            (2, 1)
+        ),
         (2, 2),
         "a cell landed in before the read shows it is taken"
     );
     assert_eq!(
-        landing_cell(square, area, &entries, &cells, &[], "report.pdf", (4, 0)),
+        landing_cell(
+            square,
+            area,
+            &entries,
+            &cells,
+            &[],
+            &HashSet::new(),
+            "report.pdf",
+            (4, 0)
+        ),
         (4, 0)
+    );
+    assert_eq!(
+        landing_cell(
+            square,
+            area,
+            &[],
+            &[],
+            &[],
+            &HashSet::from([(4, 0)]),
+            "report.pdf",
+            (4, 0)
+        ),
+        (4, 1),
+        "a widget's cell is taken"
     );
 }
 
@@ -499,12 +549,30 @@ fn an_answer_lands_in_the_grown_grid_cell_holding_the_cell_it_was_asked_for() {
     let area = Rect::new(0, 0, 800, 600);
     let big = desktop::Cell::grown(reprisekit::theme::TextUnits::new(22, 11));
     assert_eq!(
-        landing_cell(big, area, &[], &[], &[], "report.pdf", (4, 2)),
+        landing_cell(
+            big,
+            area,
+            &[],
+            &[],
+            &[],
+            &HashSet::new(),
+            "report.pdf",
+            (4, 2)
+        ),
         (2, 1),
         "100% cell (4, 2) sits in cell (2, 1) of the 200% grid"
     );
     assert_eq!(
-        landing_cell(big, area, &[], &[], &[(4, 2)], "notes.txt", (5, 2)),
+        landing_cell(
+            big,
+            area,
+            &[],
+            &[],
+            &[(4, 2)],
+            &HashSet::new(),
+            "notes.txt",
+            (5, 2)
+        ),
         (2, 2),
         "an answer landed at 100% still claims its cell after the grid grew"
     );
@@ -675,23 +743,23 @@ fn recycle_bin_menu_greys_empty_and_entry_cannot_be_trashed() {
 #[test]
 fn a_slideshow_adds_next_desktop_background_after_refresh() {
     let (items, commands) = desktop_menu(false, true, true);
-    assert_eq!(items.len(), 12);
-    assert_eq!(commands[1], Some(DesktopCommand::Refresh));
-    assert_eq!(commands[2], Some(DesktopCommand::NextBackground));
-    assert_eq!(commands[3], Some(DesktopCommand::OpenTerminal));
+    assert_eq!(items.len(), 13);
+    assert_eq!(commands[2], Some(DesktopCommand::Refresh));
+    assert_eq!(commands[3], Some(DesktopCommand::NextBackground));
+    assert_eq!(commands[4], Some(DesktopCommand::OpenTerminal));
     assert!(matches!(
-        &items[2],
+        &items[3],
         MenuItem::Entry { label, mnemonic: Some(13), enabled: true, .. }
             if label == "Next desktop background"
     ));
-    assert!(matches!(items[4], MenuItem::Separator));
-    assert_eq!(desktop_menu(false, true, false).0.len(), 11);
+    assert!(matches!(items[5], MenuItem::Separator));
+    assert_eq!(desktop_menu(false, true, false).0.len(), 12);
 }
 
 #[test]
 fn with_the_files_off_the_desktop_menu_greys_new_and_paste() {
     let (items, commands) = desktop_menu(true, false, false);
-    for i in [4, 5, 7] {
+    for i in [5, 6, 8] {
         assert!(
             matches!(items[i], MenuItem::Entry { enabled: false, .. }),
             "row {i} is greyed with the desktop's files off"
@@ -699,46 +767,51 @@ fn with_the_files_off_the_desktop_menu_greys_new_and_paste() {
         assert_eq!(commands[i], None, "row {i} does nothing");
     }
     // New keeps its submenu arrow, greyed.
-    assert!(matches!(items[7], MenuItem::Entry { submenu: true, .. }));
-    for i in [0, 1, 2, 9, 10] {
+    assert!(matches!(items[8], MenuItem::Entry { submenu: true, .. }));
+    for i in [0, 1, 2, 3, 10, 11] {
         assert!(matches!(items[i], MenuItem::Entry { enabled: true, .. }));
     }
-    assert_eq!(commands[1], Some(DesktopCommand::Refresh));
-    assert_eq!(commands[2], Some(DesktopCommand::OpenTerminal));
-    assert_eq!(commands[9], Some(DesktopCommand::Settings));
-    assert_eq!(commands[10], Some(DesktopCommand::AboutReprise));
+    assert_eq!(commands[2], Some(DesktopCommand::Refresh));
+    assert_eq!(commands[3], Some(DesktopCommand::OpenTerminal));
+    assert_eq!(commands[10], Some(DesktopCommand::Settings));
+    assert_eq!(commands[11], Some(DesktopCommand::AboutReprise));
 }
 
 #[test]
 fn desktop_menu_lists_its_commands_with_separators() {
     let (items, commands) = desktop_menu(false, true, false);
-    assert_eq!(items.len(), 11);
+    assert_eq!(items.len(), 12);
     assert_eq!(commands[0], Some(DesktopCommand::ArrangeIcons));
     assert!(matches!(items[0], MenuItem::Entry { submenu: true, .. }));
-    assert_eq!(commands[1], Some(DesktopCommand::Refresh));
-    assert_eq!(commands[2], Some(DesktopCommand::OpenTerminal));
+    assert_eq!(commands[1], Some(DesktopCommand::Widgets));
     assert!(matches!(
-        &items[2],
+        &items[1],
+        MenuItem::Entry { label, mnemonic: Some(2), submenu: true, .. } if label == "Widgets"
+    ));
+    assert_eq!(commands[2], Some(DesktopCommand::Refresh));
+    assert_eq!(commands[3], Some(DesktopCommand::OpenTerminal));
+    assert!(matches!(
+        &items[3],
         MenuItem::Entry { label, mnemonic: Some(15), .. } if label == "Open in Terminal"
     ));
-    assert!(matches!(items[3], MenuItem::Separator));
+    assert!(matches!(items[4], MenuItem::Separator));
     // Paste and Paste Shortcut are there, greyed out with nothing
     // copied.
-    assert!(matches!(items[4], MenuItem::Entry { enabled: false, .. }));
     assert!(matches!(items[5], MenuItem::Entry { enabled: false, .. }));
-    assert_eq!(commands[4], None);
-    assert!(matches!(items[6], MenuItem::Separator));
-    assert_eq!(commands[7], Some(DesktopCommand::New));
-    assert!(matches!(items[7], MenuItem::Entry { submenu: true, .. }));
-    assert!(matches!(items[8], MenuItem::Separator));
-    assert_eq!(commands[9], Some(DesktopCommand::Settings));
-    assert!(matches!(
-        &items[9],
-        MenuItem::Entry { label, mnemonic: Some(0), .. } if label == "Reprise Settings"
-    ));
-    assert_eq!(commands[10], Some(DesktopCommand::AboutReprise));
+    assert!(matches!(items[6], MenuItem::Entry { enabled: false, .. }));
+    assert_eq!(commands[5], None);
+    assert!(matches!(items[7], MenuItem::Separator));
+    assert_eq!(commands[8], Some(DesktopCommand::New));
+    assert!(matches!(items[8], MenuItem::Entry { submenu: true, .. }));
+    assert!(matches!(items[9], MenuItem::Separator));
+    assert_eq!(commands[10], Some(DesktopCommand::Settings));
     assert!(matches!(
         &items[10],
+        MenuItem::Entry { label, mnemonic: Some(0), .. } if label == "Reprise Settings"
+    ));
+    assert_eq!(commands[11], Some(DesktopCommand::AboutReprise));
+    assert!(matches!(
+        &items[11],
         MenuItem::Entry { label, mnemonic: Some(0), .. } if label == "About Reprise"
     ));
     let (items, commands) = new_menu();
@@ -762,11 +835,11 @@ fn desktop_menu_lists_its_commands_with_separators() {
     ));
     // With something on the clipboard the Paste pair comes alive.
     let (items, commands) = desktop_menu(true, true, false);
-    assert!(matches!(items[4], MenuItem::Entry { enabled: true, .. }));
-    assert_eq!(commands[4], Some(DesktopCommand::Paste));
-    assert_eq!(commands[5], Some(DesktopCommand::PasteShortcut));
+    assert!(matches!(items[5], MenuItem::Entry { enabled: true, .. }));
+    assert_eq!(commands[5], Some(DesktopCommand::Paste));
+    assert_eq!(commands[6], Some(DesktopCommand::PasteShortcut));
     let (items, _) = desktop_menu(false, true, false);
-    for i in [0, 1, 2, 4, 5, 7, 9, 10] {
+    for i in [0, 1, 2, 3, 5, 6, 8, 10, 11] {
         assert!(matches!(
             items[i],
             MenuItem::Entry {

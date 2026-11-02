@@ -42,6 +42,7 @@ pub mod backdrop;
 pub mod blue;
 pub mod boxdraw;
 pub mod classic;
+pub mod clock;
 pub mod colorfilter;
 pub mod completion;
 pub mod controls;

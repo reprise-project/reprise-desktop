@@ -4,6 +4,7 @@
 use std::f64::consts::TAU;
 
 use super::Mode;
+use crate::clock::turns;
 use crate::raster::Canvas;
 use crate::shape::{
     Px, Stops, draw, ellipse, over, polygon, premul, radial, scale, smooth, stroke,
@@ -109,22 +110,12 @@ const DROP_FADE: f64 = 2.5;
 
 pub fn painter(mode: Mode) -> ClockPainter {
     match mode {
-        Mode::Light => |t, side, d| paint(&LIGHT, t, side, d),
-        Mode::Dark => |t, side, d| paint(&DARK, t, side, d),
+        Mode::Light => |t, seconds, side, d| paint(&LIGHT, t, seconds, side, d),
+        Mode::Dark => |t, seconds, side, d| paint(&DARK, t, seconds, side, d),
     }
 }
 
-/// Where the hands point at `(h, m, s)`: hour, minute and second, in turns clockwise from 12.
-pub(crate) fn turns((h, m, s): (u32, u32, u32)) -> (f64, f64, f64) {
-    let (h, m, s) = (f64::from(h % 12), f64::from(m), f64::from(s));
-    (
-        (h + m / 60.0 + s / 3600.0) / 12.0,
-        (m + s / 60.0) / 60.0,
-        s / 60.0,
-    )
-}
-
-fn paint(ink: &Inks, time: (u32, u32, u32), side: i32, d: i32) -> Canvas {
+fn paint(ink: &Inks, time: (u32, u32, u32), seconds: bool, side: i32, d: i32) -> Canvas {
     let k = f64::from(d);
     let mid = f64::from(side) * k / 2.0;
     let outer = mid - MARGIN * k;
@@ -191,8 +182,10 @@ fn paint(ink: &Inks, time: (u32, u32, u32), side: i32, d: i32) -> Canvas {
         for pts in &hands {
             px = over(scale(c(ink.hand), polygon(x, y, pts)), px);
         }
-        let red = stroke(x, y, &sweep, SECOND_HAND.base * k).max(disc(HUB * k));
-        px = over(scale(c(ink.second), red), px);
+        if seconds {
+            let red = stroke(x, y, &sweep, SECOND_HAND.base * k).max(disc(HUB * k));
+            px = over(scale(c(ink.second), red), px);
+        }
         px = over(scale(c(ink.hand), disc(PIN * k)), px);
         let t = (y + 0.5 - sheen_top) / sheen_h;
         let lit = ellipse(
@@ -233,7 +226,7 @@ mod tests {
     use super::*;
 
     fn light(t: (u32, u32, u32), d: i32) -> Canvas {
-        painter(Mode::Light)(t, SIDE, d)
+        painter(Mode::Light)(t, true, SIDE, d)
     }
 
     fn rgb(c: Color) -> u32 {
@@ -266,13 +259,6 @@ mod tests {
             .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
                 (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
             })
-    }
-
-    #[test]
-    fn the_hands_turn_with_the_time() {
-        assert_eq!(turns((3, 0, 0)), (0.25, 0.0, 0.0));
-        assert_eq!(turns((15, 30, 0)), (3.5 / 12.0, 0.5, 0.0));
-        assert_eq!(turns((0, 0, 45)), (45.0 / 3600.0 / 12.0, 0.75 / 60.0, 0.75));
     }
 
     /// At 9:30:15 the hour hand points between 9 and 10, the minute hand down and the second
@@ -333,7 +319,7 @@ mod tests {
 
     #[test]
     fn dark_glass_draws_light_hands_on_a_dark_face() {
-        let c = painter(Mode::Dark)((9, 30, 15), SIDE, 1);
+        let c = painter(Mode::Dark)((9, 30, 15), true, SIDE, 1);
         let (hour, _, _) = turns((9, 30, 15));
         let face = f64::from(SIDE) / 2.0 - MARGIN - BEZEL;
         assert!(near(out(&c, hour, face * 0.4, 1), DARK.hand));
@@ -348,7 +334,7 @@ mod tests {
         for mode in [Mode::Light, Mode::Dark] {
             for t in [(10, 9, 30), (3, 0, 45), (21, 37, 5)] {
                 for d in [1, 2] {
-                    got.push(fnv(&painter(mode)(t, SIDE, d)));
+                    got.push(fnv(&painter(mode)(t, true, SIDE, d)));
                 }
             }
         }
@@ -387,8 +373,8 @@ mod tests {
                     Color::rgb(0x2B, 0x2B, 0x2B)
                 },
             );
-            out.blit_over(0, y, &painter(mode)((10, 9, 30), SIDE, 1));
-            let two = painter(mode)((10, 9, 30), SIDE, 2);
+            out.blit_over(0, y, &painter(mode)((10, 9, 30), true, SIDE, 1));
+            let two = painter(mode)((10, 9, 30), true, SIDE, 2);
             let mut half = Canvas::new(two.width, SIDE as u32);
             half.blit_over(0, 0, &two);
             out.blit_over(SIDE + 10, y, &half);

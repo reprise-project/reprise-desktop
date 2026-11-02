@@ -144,6 +144,7 @@ mod debugview;
 mod desktop;
 mod desktopfiles;
 mod desktopview;
+mod deskwidgets;
 mod dialog;
 mod dialogdrop;
 mod dialogview;
@@ -316,6 +317,7 @@ fn run(
     )?;
     sandbox::set_trusted(&state.config.clipboard.trusted_apps);
     let another_session = spawn::another_session_on_bus();
+    state.setup_widgets();
     desktopview::setup(&mut state);
     desktopview::relist_on_loop(&mut state);
     dialogview::setup(&mut state);

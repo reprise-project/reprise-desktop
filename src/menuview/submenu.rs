@@ -302,6 +302,9 @@ impl State {
             DesktopCommand::ArrangeIcons => {
                 crate::desktopview::arrange_menu(self.desktop_auto_arrange())
             }
+            DesktopCommand::Widgets => {
+                crate::deskwidgets::widgets_menu(&self.config.desktop_widgets)
+            }
             DesktopCommand::New => {
                 let (mut items, commands) = crate::desktopview::new_menu();
                 let named = items.iter_mut().zip(crate::desktopview::NEW_MENU_ICONS);

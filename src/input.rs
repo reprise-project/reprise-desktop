@@ -38,6 +38,10 @@ pub enum Hit {
     Desktop {
         index: Option<usize>,
     },
+    /// A desktop widget's panel.
+    DeskWidget {
+        kind: reprisekit::controls::deskwidget::Kind,
+    },
     /// A client surface, its origin in layout coordinates, and the window
     /// it belongs to.
     Surface {
@@ -249,6 +253,8 @@ pub enum Interaction {
     Drag { x0: f64, y0: f64, started: bool },
     /// A left press on empty desktop: the marquee (`desktopview`).
     Marquee,
+    /// A desktop widget held by the left button (`deskwidgets`).
+    WidgetDrag(crate::deskwidgets::Held),
     /// A left press on empty desktop with a fluid water style: the pointer stirs the fluid.
     Stir,
     /// The pointer drags a selection in an edit field (a dialog's, the
@@ -315,6 +321,7 @@ impl Interaction {
             | Interaction::BarWidth { .. }
             | Interaction::Drag { .. }
             | Interaction::Marquee
+            | Interaction::WidgetDrag(_)
             | Interaction::Stir
             | Interaction::FieldDrag { .. }
             | Interaction::DialogMove { .. }
