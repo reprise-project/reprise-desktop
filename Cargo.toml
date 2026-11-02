@@ -15,6 +15,7 @@ members = [
     "crates/apps/notes",
     "crates/apps/about",
     "crates/apps/explorer",
+    "crates/apps/fonts",
     "crates/apps/sound",
     "crates/apps/volume",
     "crates/apps/settings",

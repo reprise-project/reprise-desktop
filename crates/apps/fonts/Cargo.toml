@@ -1,0 +1,26 @@
+[package]
+name = "reprise-fonts"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Font Viewer: a font file's names and sample, and Install"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-fonts"
+path = "src/bin/reprise-fonts.rs"
+test = false
+
+[dependencies]
+repriseapp = { path = "../../repriseapp" }
+reprisekit = { path = "../../reprisekit" }
+reprisebus = { path = "../../reprisebus" }
+log.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

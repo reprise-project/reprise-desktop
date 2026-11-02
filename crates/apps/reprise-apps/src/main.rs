@@ -13,6 +13,7 @@ fn entry(program: &str) -> Option<fn(Vec<OsString>)> {
         "reprise-diskusage" => reprise_diskusage::main,
         "reprise-drives" => reprise_drives::main,
         "reprise-explorer" => reprise_explorer::main,
+        "reprise-fonts" => reprise_fonts::main,
         "reprise-network" => reprise_network::main,
         "reprise-notepad" => reprise_notepad::main,
         "reprise-phone" => reprise_phone::main,

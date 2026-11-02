@@ -2292,6 +2292,7 @@ dependencies = [
  "reprise-diskusage",
  "reprise-drives",
  "reprise-explorer",
+ "reprise-fonts",
  "reprise-network",
  "reprise-notepad",
  "reprise-notes",
@@ -2376,6 +2377,17 @@ dependencies = [
  "serde",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "reprise-fonts"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "repriseapp",
+ "reprisebus",
+ "reprisekit",
+ "tempfile",
 ]
 
 [[package]]
