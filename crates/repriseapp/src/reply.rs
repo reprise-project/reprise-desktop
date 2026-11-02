@@ -111,6 +111,8 @@ pub struct Reply {
     /// Bring this program's window to the front with the keyboard: the host asks xdg-activation
     /// for a token on the last input's serial and presents it for that window.
     pub raise: Option<WinId>,
+    /// Ask the compositor to show the main window full screen (`true`) or as before (`false`).
+    pub fullscreen: Option<bool>,
 }
 
 impl Reply {
@@ -190,6 +192,7 @@ impl Reply {
             size,
             mut redraw_wins,
             raise,
+            fullscreen,
         } = then;
         let (spawn, spawn_app) = if spawn.is_empty() {
             (self.spawn, self.spawn_app)
@@ -232,6 +235,7 @@ impl Reply {
                 wins
             },
             raise: self.raise.or(raise),
+            fullscreen: self.fullscreen.or(fullscreen),
         }
     }
 }

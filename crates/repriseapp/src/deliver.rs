@@ -338,6 +338,14 @@ impl Host {
         if let Some(id) = reply.raise {
             self.raise(id);
         }
+        if let Some(on) = reply.fullscreen
+            && let Some(w) = self.slot_mut(MAIN).and_then(|s| s.window.toplevel())
+        {
+            match on {
+                true => w.set_fullscreen(None),
+                false => w.unset_fullscreen(),
+            }
+        }
         self.drain_head_requests();
     }
 

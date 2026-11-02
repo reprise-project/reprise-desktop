@@ -132,6 +132,38 @@ the `reprise-notes --restore` autostart entry, which you can turn off on
 the Startup page of Reprise Settings. Starting Sticky Notes while it runs
 opens a new note.
 
+## Image Viewer
+
+Opens a picture in any format Explorer's thumbnails read (PNG, JPEG, GIF, BMP,
+WebP, TIFF, ICO, QOI, PNM, HDR and OpenEXR) and is the default for pictures.
+It opens fitted to the window, never past 100%. The decode runs in the
+background, and a large picture is shown from a copy scaled to the window.
+
+- **Walk the folder:** Left and Right (or Page Up and Page Down, or the
+  wheel) go to the previous and next picture in the folder, sorted by name
+  with numbers in order ("img9" before "img10"); Home and End go to the first
+  and last.
+- **Zoom:** + and - (or Ctrl and the wheel, at the pointer) step the zoom,
+  Ctrl+0 fits the window and Ctrl+1 shows the picture at 100%, one picture
+  pixel per screen pixel. A picture larger than the window pans by dragging,
+  with the scrollbars, or with Up and Down.
+- **Rotate:** Ctrl+R turns the picture clockwise and Ctrl+L back. The turn is
+  for viewing; the file is not changed.
+- **Full Screen and Slide Show:** F11 or a double-click shows the picture on
+  black over the whole screen; F5 starts a slide show there, a picture every
+  3 seconds. Escape comes back.
+- **Moving pictures:** animated GIF, PNG and WebP play.
+- **Delete** sends the picture to the Recycle Bin, asking first as Explorer
+  does (Shift+Delete deletes it for good), and the next picture shows.
+- **Set as Desktop Background** (File menu) makes the picture the desktop's
+  background and ends a background slide show. It is greyed for formats the
+  desktop does not draw (anything but PNG, JPEG and BMP).
+- **Copy** (Ctrl+C) puts the file on the clipboard to paste in Explorer, and
+  **Open** (Ctrl+O) picks another picture.
+
+The status bar shows the name, the place in the folder, the size in pixels,
+the file size and the zoom.
+
 ## Terminal
 
 A tabbed terminal, `reprise-terminal`. It opens in the directory it was
