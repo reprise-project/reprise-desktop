@@ -41,6 +41,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[notifications]` | balloon sounds, quiet hours, Do Not Disturb during full screen and screen sharing |
 | `[sounds]` | the sound theme balloons and the bell play from, whether the bell sounds, and `allow_boost`: playback volumes past 100 % up to 150 % |
 | `[privacy]` | recent files and location |
+| `[recycle_bin]` | what Delete does, each drive's bin size, `older_than_days` to empty old items (Recycle Bin Properties) |
 | `[thumbnail_cache]` | whether thumbnails are kept, the cap, and whether installed thumbnailers make them for PDFs, videos and fonts |
 | `[storage]` | the low disk space warning |
 | `[bluetooth]` | `battery_warning`: the percent a connected device's battery warns at, 15 by default, 0 off (Bluetooth Devices > Options) |

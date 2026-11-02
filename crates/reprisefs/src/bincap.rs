@@ -13,6 +13,9 @@ pub const DEFAULT_PERCENT: u8 = 10;
 
 pub const HOME: &str = "home";
 
+/// The most `older_than_days` takes.
+pub const MAX_DAYS: u16 = 3650;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rule {
     pub remove_immediately: bool,
@@ -45,6 +48,9 @@ pub struct Policy {
     /// trash's drive. Kept while `independent` is off, so turning it on
     /// again brings them back.
     pub drives: BTreeMap<String, Rule>,
+    /// Items deleted longer ago than this many days are erased ([`crate::binage`]); 0 keeps
+    /// them.
+    pub older_than_days: u16,
 }
 
 impl Default for Policy {
@@ -54,6 +60,7 @@ impl Default for Policy {
             independent: false,
             global: Rule::default(),
             drives: BTreeMap::new(),
+            older_than_days: 0,
         }
     }
 }
@@ -88,6 +95,8 @@ impl Policy {
                 .and_then(Item::as_integer)
                 .map_or(base.max_percent, |v| v.clamp(0, 100) as u8),
         };
+        p.older_than_days = (t.get("older_than_days").and_then(Item::as_integer))
+            .map_or(0, |v| v.clamp(0, MAX_DAYS.into()) as u16);
         p.global = rule(t, Rule::default());
         if let Some(drives) = t.get("drives").and_then(Item::as_table_like) {
             for (key, d) in drives.iter() {
@@ -112,6 +121,7 @@ impl Policy {
         };
         t["confirm"] = value(self.confirm);
         t["independent"] = value(self.independent);
+        t["older_than_days"] = value(i64::from(self.older_than_days));
         set_rule(t, self.global);
         if self.drives.is_empty() {
             t.remove("drives");
@@ -716,6 +726,13 @@ mod tests {
         );
         assert!(p.confirm);
         assert_eq!(p.global.max_percent, 100);
+        assert_eq!(p.older_than_days, 0, "off unless set");
+        let days = |t: &str| Policy::parse(&format!("[recycle_bin]\nolder_than_days = {t}\n"));
+        assert_eq!(days("30").older_than_days, 30);
+        assert_eq!(days("-4").older_than_days, 0);
+        assert_eq!(days("99999").older_than_days, MAX_DAYS);
+        assert_eq!(days("\"30\"").older_than_days, 0);
+        assert_eq!(Policy::parse(&days("30").write("").unwrap()), days("30"));
         assert_eq!(
             p.drives[HOME],
             Rule {

@@ -382,6 +382,7 @@ fn run(
     state.config_notice = config_notice.clone();
     state.config_file = config_file;
     darkmode::setup(&mut state);
+    reprisefs::binage::start();
     if let Some(body) = config_notice {
         event_loop.handle().insert_idle(move |state| {
             notifyview::notice(state, "Configuration", &body);
