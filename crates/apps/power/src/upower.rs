@@ -1,6 +1,7 @@
 //! The battery as UPower reports it: a store fed by the daemon's display device over the system bus.
 
 use futures_util::stream::StreamExt;
+use reprisebus::charge::{self, ChargeLimit};
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
@@ -40,6 +41,10 @@ pub struct Battery {
     /// Seconds, 0 when unknown.
     pub time_to_empty: u64,
     pub time_to_full: u64,
+    /// Held below full by the charge limit: on mains, the limit on, UPower saying pending charge.
+    pub held: bool,
+    /// Where the charge limit stops charging, when it is on and known.
+    pub stops_at: Option<u8>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -48,7 +53,14 @@ pub struct Power {
     pub battery: Option<Battery>,
 }
 
-fn fold(on_battery: bool, props: &HashMap<String, OwnedVariant>) -> Power {
+/// UPower's `State` while a charger is connected and not charging.
+const PENDING_CHARGE: u32 = 5;
+
+fn fold(
+    on_battery: bool,
+    props: &HashMap<String, OwnedVariant>,
+    limit: Option<&ChargeLimit>,
+) -> Power {
     let present = props
         .get("IsPresent")
         .and_then(|v| bool::try_from(v.clone()).ok())
@@ -67,17 +79,19 @@ fn fold(on_battery: bool, props: &HashMap<String, OwnedVariant>) -> Power {
     }
     let num = |k: &str| props.get(k).and_then(|v| f64::try_from(v.clone()).ok());
     let int = |k: &str| props.get(k).and_then(|v| i64::try_from(v.clone()).ok());
+    let code = props
+        .get("State")
+        .and_then(|v| u32::try_from(v.clone()).ok());
+    let limit = limit.filter(|l| l.enabled);
     Power {
         on_battery,
         battery: Some(Battery {
-            state: props
-                .get("State")
-                .and_then(|v| u32::try_from(v.clone()).ok())
-                .map(State::from_code)
-                .unwrap_or_default(),
+            state: code.map(State::from_code).unwrap_or_default(),
             percent: num("Percentage").unwrap_or(0.0).round().clamp(0.0, 100.0) as u8,
             time_to_empty: int("TimeToEmpty").unwrap_or(0).max(0) as u64,
             time_to_full: int("TimeToFull").unwrap_or(0).max(0) as u64,
+            held: limit.is_some() && code == Some(PENDING_CHARGE),
+            stops_at: limit.and_then(|l| l.end),
         }),
     }
 }
@@ -110,6 +124,8 @@ type Changed = (String, HashMap<String, OwnedVariant>, Vec<String>);
 
 enum Wake {
     Device(Option<Changed>),
+    /// The battery whose charge limit is shown.
+    Battery(Option<Changed>),
     Daemon(Option<Changed>),
     Owner,
 }
@@ -118,11 +134,12 @@ enum Wake {
 struct Store {
     on_battery: bool,
     device: HashMap<String, OwnedVariant>,
+    limit: Option<ChargeLimit>,
 }
 
 impl Store {
     fn power(&self) -> Power {
-        fold(self.on_battery, &self.device)
+        fold(self.on_battery, &self.device, self.limit.as_ref())
     }
 
     fn device_changed(&mut self, changed: HashMap<String, OwnedVariant>) {
@@ -224,9 +241,14 @@ async fn run(feed: &mut Feed<Power>) -> Run {
                 .unavailable_because(format_args!("UPower unavailable ({e}); no battery to show"));
         }
     };
+    let limit = charge::find(&conn).await;
+    let battery = limit.as_ref().map(|l| l.device.clone());
     // Only UPower's own broadcasts get through (see `reprisebus::signals`).
     let mut rules = Vec::new();
-    for path in [device.as_str(), PATH] {
+    for path in [Some(device.as_str()), Some(PATH), battery.as_deref()]
+        .into_iter()
+        .flatten()
+    {
         match zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender(NAME)
@@ -240,12 +262,20 @@ async fn run(feed: &mut Feed<Power>) -> Run {
         }
     }
     let body = |m: &zbus::Message| m.body().deserialize::<Changed>().ok();
-    let daemon = |m: &zbus::Message| m.header().path().is_some_and(|p| p.as_str() == PATH);
+    let from = |m: &zbus::Message, path: Option<&str>| {
+        path.is_some_and(|path| m.header().path().is_some_and(|p| p.as_str() == path))
+    };
+    let battery = &battery;
     let mut streams = reprisebus::signals(&conn, NAME, rules)
         .await
         .filter_map(|s| async move {
             match s {
-                reprisebus::Signal::Message(m) if daemon(&m) => Some(Wake::Daemon(body(&m))),
+                reprisebus::Signal::Message(m) if from(&m, Some(PATH)) => {
+                    Some(Wake::Daemon(body(&m)))
+                }
+                reprisebus::Signal::Message(m) if from(&m, battery.as_deref()) => {
+                    Some(Wake::Battery(body(&m)))
+                }
                 reprisebus::Signal::Message(m) => Some(Wake::Device(body(&m))),
                 reprisebus::Signal::OwnerChanged => Some(Wake::Owner),
             }
@@ -257,6 +287,7 @@ async fn run(feed: &mut Feed<Power>) -> Run {
     let mut store = Store {
         on_battery: on_battery(&upower).await.unwrap_or(false),
         device: all_props(&device_props).await.unwrap_or_default(),
+        limit,
     };
     if !feed.send(store.power()) {
         return Run::Closed;
@@ -273,6 +304,13 @@ async fn run(feed: &mut Feed<Power>) -> Run {
                     store.device = props;
                 }
             }
+            Wake::Battery(Some((_, changed, invalidated)))
+                if invalidated.is_empty()
+                    && !charge::touches_limit(changed.keys().map(String::as_str)) =>
+            {
+                continue;
+            }
+            Wake::Battery(_) => store.limit = charge::find(&conn).await,
             Wake::Daemon(body) => {
                 if store.daemon_changed(body.as_ref())
                     && let Some(b) = on_battery(&upower).await
@@ -373,6 +411,7 @@ mod tests {
                 ("TimeToEmpty", Variant::from(7800i64)),
                 ("TimeToFull", Variant::from(0i64)),
             ]),
+            None,
         );
         assert_eq!(
             p,
@@ -383,6 +422,8 @@ mod tests {
                     percent: 45,
                     time_to_empty: 7800,
                     time_to_full: 0,
+                    held: false,
+                    stops_at: None,
                 }),
             }
         );
@@ -399,6 +440,7 @@ mod tests {
                 ("Percentage", Variant::from(40.0f64)),
                 ("TimeToFull", Variant::from(600i64)),
             ]),
+            limit: None,
         };
         store.device_changed(props(vec![("Percentage", Variant::from(41.0f64))]));
         let b = store.power().battery.expect("still a battery");
@@ -491,6 +533,39 @@ mod tests {
     }
 
     #[test]
+    fn pending_charge_with_the_limit_on_is_held_at_its_end() {
+        let device = |state: u32| {
+            props(vec![
+                ("IsPresent", Variant::from(true)),
+                ("Type", Variant::from(2u32)),
+                ("State", Variant::from(state)),
+                ("Percentage", Variant::from(80.0f64)),
+            ])
+        };
+        let limit = |enabled| ChargeLimit {
+            device: "/org/freedesktop/UPower/devices/battery_BAT0".into(),
+            enabled,
+            end: Some(80),
+        };
+        let battery = |state, limit: Option<ChargeLimit>| {
+            let b = fold(false, &device(state), limit.as_ref()).battery.unwrap();
+            (b.held, b.stops_at)
+        };
+        assert_eq!(battery(5, Some(limit(true))), (true, Some(80)));
+        assert_eq!(
+            battery(1, Some(limit(true))),
+            (false, Some(80)),
+            "charging up to it"
+        );
+        assert_eq!(
+            battery(5, Some(limit(false))),
+            (false, None),
+            "the limit is off"
+        );
+        assert_eq!(battery(5, None), (false, None), "no limit to hold it");
+    }
+
+    #[test]
     fn an_absent_display_device_is_no_battery() {
         let p = fold(
             false,
@@ -498,6 +573,7 @@ mod tests {
                 ("IsPresent", Variant::from(false)),
                 ("Type", Variant::from(0u32)),
             ]),
+            None,
         );
         assert_eq!(p.battery, None);
         assert!(!p.on_battery);

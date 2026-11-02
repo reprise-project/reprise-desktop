@@ -443,6 +443,47 @@ fn the_power_page_geometry() {
     inside_page(&s, p);
 }
 
+fn charge_limit(enabled: bool, end: Option<u8>) -> reprisebus::charge::ChargeLimit {
+    reprisebus::charge::ChargeLimit {
+        device: "/org/freedesktop/UPower/devices/battery_BAT0".into(),
+        enabled,
+        end,
+    }
+}
+
+#[test]
+fn the_charge_limit_row_shows_only_with_a_limit_to_set() {
+    let s = built();
+    assert!(
+        s.pages[Page::Power.index()].item(CHARGE_LIMIT).is_none(),
+        "no battery offers a limit"
+    );
+    let mut s = built();
+    let on = charge_limit(true, Some(80));
+    s.set_page(Page::Power.index(), power(Area::MIN, Some(&on)));
+    let p = Page::Power;
+    assert_eq!(rect(&s, p, CHARGE_LIMIT), Rect::new(20, 472, 13, 13));
+    match &s.pages[p.index()].item(CHARGE_LIMIT).unwrap().control {
+        Control::Check { label, checked, .. } => {
+            assert_eq!(
+                label,
+                "Limit charging to protect the &battery (stops at 80%)"
+            );
+            assert!(*checked);
+        }
+        c => panic!("a check box, not {c:?}"),
+    }
+    inside_page(&s, p);
+    assert_eq!(
+        crate::pages::system::charge_label(&charge_limit(false, None)),
+        "Limit charging to protect the &battery"
+    );
+    let over = reprisekit::interfaces::form_overflows(|_, _, _| {
+        vec![("Power".into(), power(Area::MIN, Some(&on)))]
+    });
+    assert!(over.is_empty(), "{}", over.join("\n"));
+}
+
 #[test]
 fn the_startup_page_geometry() {
     let s = built();

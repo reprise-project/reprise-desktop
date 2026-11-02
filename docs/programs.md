@@ -269,6 +269,9 @@ Pairing requests from a device show up as a prompt.
 Power profile, monitor and standby timeouts on mains and on battery, low and
 critical battery alarms, a Power Meter for each battery, and what the lid,
 power button and sleep button do. The battery icon's menu switches profile.
+While the battery charge limit holds a plugged-in battery, the icon's tooltip
+and the Power Meter say "Charging limited to 80%" (or wherever the limit
+stops).
 
 ## Printers
 

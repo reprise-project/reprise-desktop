@@ -8,6 +8,7 @@ mod apply;
 mod autostart;
 mod backgroundhost;
 mod backgroundpage;
+mod chargehost;
 mod configwatch;
 mod cursors;
 mod defaultshost;
@@ -298,6 +299,12 @@ struct SettingsApp {
     pad_picked: usize,
     pads_fresh: bool,
 
+    /// UPower's battery charge limit, read each time the Power page opens (`charge_seen`);
+    /// `charging` holds the read or toggle under way.
+    charge: Option<reprisebus::charge::ChargeLimit>,
+    charge_seen: bool,
+    charging: Option<Receiver<chargehost::Charged>>,
+
     xkb: Vec<reprisefs::xkb::Layout>,
     add_layout: Option<layoutdlg::LayoutDialog>,
 
@@ -428,6 +435,7 @@ impl SettingsApp {
                 Page::Tablet => {
                     tabletpage::page(a, &self.pads, self.pad_picked, &self.want.tablet_pads)
                 }
+                Page::Power => pages::power(a, self.charge.as_ref()),
                 _ => registry::build(p, &src, a),
             };
             self.sheet.pages[p.index()].take_layout(&template, offset);
@@ -523,6 +531,9 @@ impl SettingsApp {
             pads: Vec::new(),
             pad_picked: 0,
             pads_fresh: false,
+            charge: None,
+            charge_seen: false,
+            charging: None,
             types: defaultspage::new_list(),
             types_focus: false,
             chooser: None,
@@ -774,6 +785,7 @@ impl App for SettingsApp {
         }
         self.ensure_defaults();
         self.ensure_locations();
+        self.ensure_charge();
         if win == repriseapp::MAIN
             && !self.saver_ticking
             && self.sheet.tabs.open == Page::ScreenSaver.index()
