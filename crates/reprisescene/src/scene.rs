@@ -98,6 +98,7 @@ impl<R: Renderer, D> Scene<R, D> {
                     position: Point::default(),
                     enabled: true,
                     in_backdrop: true,
+                    in_pictures: true,
                     opacity: 1.0,
                     clip: None,
                     hidden_in: None,
@@ -192,6 +193,7 @@ impl<R: Renderer, D> Scene<R, D> {
             position: Point::default(),
             enabled: true,
             in_backdrop: true,
+            in_pictures: true,
             opacity: 1.0,
             clip: None,
             hidden_in: None,
@@ -338,6 +340,15 @@ impl<R: Renderer, D> Scene<R, D> {
     pub fn set_in_backdrop(&mut self, node: impl Into<NodeId>, shown: bool) {
         if let Some(n) = self.node_mut(node.into()) {
             n.in_backdrop = shown;
+        }
+    }
+
+    /// Draw `node` and everything under it in a picture of one subtree
+    /// ([`Scene::render_elements_of`]) or leave it out: what only the screen
+    /// shows, such as a dimmed window's shade. On by default.
+    pub fn set_in_pictures(&mut self, node: impl Into<NodeId>, shown: bool) {
+        if let Some(n) = self.node_mut(node.into()) {
+            n.in_pictures = shown;
         }
     }
 

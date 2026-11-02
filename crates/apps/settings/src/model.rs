@@ -210,6 +210,8 @@ pub struct Settings {
     pub window_shake: bool,
     /// `[windows] title_double_click`: one of [`TITLE_DOUBLE_CLICKS`]' values.
     pub title_double_click: String,
+    /// `[windows] dim_inactive`: percent, 0 off.
+    pub dim_inactive: i64,
     /// `[session] restore`.
     pub session_restore: bool,
     /// `[session] end_processes`.
@@ -510,6 +512,7 @@ impl Settings {
                 TitleDoubleClick::parse,
                 &c.title_double_click,
             ),
+            dim_inactive: c.dim_inactive.into(),
             session_restore: c.session.restore,
             session_end_processes: c.session.end_processes,
 

@@ -2,11 +2,11 @@
 
 use super::file::{AutoFlag, FileAppearance, FileConfig};
 use super::{
-    CURSOR_SIZE_MAX, Config, EFFECTS_MS_MAX, EffectsConfig, FontSmoothing, HotCorner,
-    IdleOverrides, MAX_POSITION, MenuAnimation, OutputConfig, OutputMode, PREVIEW_FPS_MAX,
-    PointerConfig, PowerAction, SNAP_DISTANCE_MAX, SWITCH_MS_MAX, ShortcutOverlay, StartMenuStyle,
-    SwitchStyle, SwitcherConfig, TabletConfig, TaskbarButtons, TaskbarConfig, TitleDoubleClick,
-    Transform, WORKSPACES_MAX, quarter_scale, switcher_size,
+    CURSOR_SIZE_MAX, Config, DIM_INACTIVE_MAX, EFFECTS_MS_MAX, EffectsConfig, FontSmoothing,
+    HotCorner, IdleOverrides, MAX_POSITION, MenuAnimation, OutputConfig, OutputMode,
+    PREVIEW_FPS_MAX, PointerConfig, PowerAction, SNAP_DISTANCE_MAX, SWITCH_MS_MAX, ShortcutOverlay,
+    StartMenuStyle, SwitchStyle, SwitcherConfig, TabletConfig, TaskbarButtons, TaskbarConfig,
+    TitleDoubleClick, Transform, WORKSPACES_MAX, quarter_scale, switcher_size,
 };
 use reprisekit::interface::Interface;
 use reprisekit::theme::{Color, FontConfig};
@@ -1029,6 +1029,14 @@ impl Config {
                         "[windows] title_double_click = {v:?} is not \"maximize\", \"shade\", \"minimize\" or \"none\""
                     )
                 })?;
+            }
+            if let Some(d) = w.dim_inactive {
+                cfg.dim_inactive = u8::try_from(d)
+                    .ok()
+                    .filter(|d| *d <= DIM_INACTIVE_MAX)
+                    .ok_or_else(|| {
+                        format!("[windows] dim_inactive must be between 0 and {DIM_INACTIVE_MAX}, got {d}")
+                    })?;
             }
         }
         if let Some(s) = file.session {

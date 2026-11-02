@@ -236,6 +236,9 @@ pub(crate) struct Node<R: Renderer, D> {
     /// Drawn by [`crate::Scene::backdrop_elements`]; false leaves the node
     /// and everything under it out of the backdrop.
     pub(crate) in_backdrop: bool,
+    /// Drawn by [`crate::Scene::render_elements_of`]; false leaves the node
+    /// and everything under it out of a picture of one subtree.
+    pub(crate) in_pictures: bool,
     pub(crate) opacity: f32,
     /// A tree's clip, node-local: its leaves draw and hit only inside it.
     pub(crate) clip: Option<Rectangle<i32, Logical>>,

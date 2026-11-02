@@ -17,6 +17,9 @@ pub const SNAP_DISTANCE_DEFAULT: i32 = 30;
 
 pub const SNAP_DISTANCE_MAX: i32 = 100;
 
+/// The most `[windows] dim_inactive` darkens, in percent.
+pub const DIM_INACTIVE_MAX: u8 = 40;
+
 impl Default for SnapConfig {
     fn default() -> Self {
         SnapConfig {

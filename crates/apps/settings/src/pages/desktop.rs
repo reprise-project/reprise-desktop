@@ -6,16 +6,16 @@ use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::raster::Rect;
 
 use crate::model::{
-    DESKTOPS_MAX, HOT_CORNERS, PAGER_MARKS, PREVIEW_FPS_MAX, SNAP_DISTANCE_MAX, STARTMENU_STYLES,
-    SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES, SWITCHER_STYLES, TASKBAR_BUTTONS,
-    TASKBAR_POSITIONS, TITLE_DOUBLE_CLICKS,
+    DESKTOPS_MAX, DIM_INACTIVE_MAX, HOT_CORNERS, PAGER_MARKS, PREVIEW_FPS_MAX, SNAP_DISTANCE_MAX,
+    STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES, SWITCHER_STYLES,
+    TASKBAR_BUTTONS, TASKBAR_POSITIONS, TITLE_DOUBLE_CLICKS,
 };
 
 /// How windows snap, tab and come back: the Snapping group holds
 /// `[window_snapping]`'s drag snapping and how near an edge it starts (greyed
 /// with drag snapping off), the snap layouts on the maximize button, the snap
 /// bar a drag shows (greyed too) and the layouts they offer; Tabs and Placement
-/// holds `[windows]`, shaking and the title bar double click included.
+/// holds `[windows]`, shaking, the title bar double click and dimming included.
 pub fn windows(a: Area) -> Form {
     let gw = a.gw();
     let mut items = vec![
@@ -59,7 +59,7 @@ pub fn windows(a: Area) -> Form {
             gw,
             "Empty for the built-in six, e.g. 1|1 2|1 1:2|1:2",
         ),
-        group(a, "tabs_group", 228, 154, "Tabs and Placement"),
+        group(a, "tabs_group", 228, 182, "Tabs and Placement"),
         Item::check(
             "window_tabs",
             GX,
@@ -101,6 +101,16 @@ pub fn windows(a: Area) -> Form {
             TITLE_DOUBLE_CLICKS,
         ),
     ]);
+    items.extend(spin(
+        "dim_inactive_label",
+        "dim_inactive",
+        GX,
+        384,
+        230,
+        "Dim &windows that don't have the focus:",
+        (0, DIM_INACTIVE_MAX as i32),
+    ));
+    items.push(Item::label_at("dim_inactive_units", GX + 290, 384, 20, "%"));
     Form::new(items)
 }
 

@@ -121,6 +121,7 @@ pub(super) fn render(state: &mut State, head: Head) {
     state.overview_fade_frame();
     state.flip_frame(&output);
     state.water_frame(&output);
+    crate::dim::frame(state);
     crate::autohideview::frame(state, &output);
     crate::snapbarview::frame(state, &output);
     let border = crate::captureborder::elements(state, &output);

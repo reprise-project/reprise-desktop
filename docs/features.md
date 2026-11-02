@@ -132,6 +132,13 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   minimizes. Shake it again to bring back the ones it minimized. Windows
   kept on top and the shaken window's own dialogs stay. On by default under
   Glass (`[windows] shake`, or the Windows page of Reprise Settings).
+- **Dim inactive windows.** Every window but the focused one draws darker by
+  `[windows] dim_inactive` percent (0 to 40, off by default; the Windows page
+  of Reprise Settings). A focused dialog keeps its parent bright and a focused
+  window its dialogs. Only the client area darkens, not the frame. Full-screen
+  windows, Alt+Tab and taskbar previews, the 3D switcher and window screenshots
+  stay bright; a screenshot or screencast of the whole screen shows it as seen.
+  The shade fades in 150 ms when `[effects] window_animation` is on.
 - **Window memory.** A program opens where its last window closed: same
   screen, same size, maximized if it was. A second window of it cascades
   from the first. Docked and undocked layouts each keep their own places
