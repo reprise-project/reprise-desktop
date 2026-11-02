@@ -111,6 +111,8 @@ desktop and stays out of the way when it's missing.
 - power-profiles-daemon, for the power profile in Power Options and the
   battery menu
 - BlueZ, for the Bluetooth icon, Bluetooth Devices and `[lock] away_device`
+- KDE Connect (`kdeconnect`), for the phone icon (battery, Ring phone, Send
+  files) and phones in Send To
 - UDisks2, for mounting drives as they're plugged in, Safely Remove
   Hardware, and unmounted drives and Eject in Computer
 - ddcutil and the i2c-dev module, for external monitors' brightness over

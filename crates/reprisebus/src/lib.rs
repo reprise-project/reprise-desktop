@@ -23,6 +23,7 @@
 //! as does [`units`], which lists the programs the systemd user manager starts
 //! with the session. Synchronous callers [`wait`] on it.
 //! [`bluez`] lists BlueZ's paired devices and follows whether one is connected.
+//! [`kdeconnect`] follows the phones KDE Connect reaches.
 //! [`mutex`] locks a mutex even when its holder panicked.
 
 pub mod a11y;
@@ -33,6 +34,7 @@ pub mod filetransfer;
 pub mod fprint;
 pub mod instance;
 pub mod journal;
+pub mod kdeconnect;
 pub mod launcher;
 pub mod mutex;
 pub mod notify;

@@ -1048,6 +1048,10 @@ impl Explorer {
                 None => return Reply::none(),
             },
             SendTo::Folder(d) => return self.send_to_folder(paths, d, ctx),
+            SendTo::Phone(id) => {
+                sendto::send_to_phone(id, &paths);
+                return Reply::none();
+            }
         };
         self.put_all(&paths, &dir, &|_| Some(op), false, ctx)
     }

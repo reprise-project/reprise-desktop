@@ -1830,6 +1830,7 @@ pub fn main(args: Vec<std::ffi::OsString>) {
         }
         return;
     }
+    reprisefs::sendto::follow_phones();
     repriseapp::run(Box::new(Lazy {
         start: parse_args(args),
         inner: None,

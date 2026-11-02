@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Phone
+Comment=Shows the phones KDE Connect reaches, their batteries, and rings or sends files to one.
+Exec=reprise-phone
+Icon=phone
+Categories=Settings;
+StartupWMClass=reprise.phone
+NoDisplay=true
+Terminal=false
