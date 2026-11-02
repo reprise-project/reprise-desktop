@@ -21,7 +21,7 @@ mod tests;
 mod wrap;
 
 pub(crate) use fonts::system_fonts;
-pub use fonts::test_tahoma;
+pub use fonts::{families, test_tahoma};
 use fonts::{full_hinting, load_faces, load_shell_dlg};
 pub use mnemonic::{access_key, escape_mnemonic, split_mnemonic};
 pub use wrap::{wrap, wrap_bold, wrap_chars};

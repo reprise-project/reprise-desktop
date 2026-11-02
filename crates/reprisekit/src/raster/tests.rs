@@ -1374,3 +1374,16 @@ fn a_transposed_picture_blends_clips_and_mirrors_at_scale_2() {
         "the block's far device pixel"
     );
 }
+
+#[test]
+fn blit_alpha_inks_each_device_pixel_of_the_source_at_its_alpha() {
+    let mut glyph = Canvas::with_scale(2, 1, 2);
+    glyph.pixels[1] = 0xFFFF_FFFF;
+    glyph.pixels[2] = 0x8080_8080;
+    let mut c = Canvas::new(6, 4);
+    c.fill_rect(c.bounds(), Color::rgb(0, 0, 0));
+    c.blit_alpha(1, 1, &glyph, Color::rgb(0xFF, 0, 0));
+    assert_eq!(c.get(1, 1), 0xFF00_0000, "zero alpha leaves the pixel");
+    assert_eq!(c.get(2, 1), 0xFFFF_0000, "full alpha is the ink");
+    assert_eq!(c.get(3, 1), 0xFF80_0000, "half alpha is half the ink");
+}
