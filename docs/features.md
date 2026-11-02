@@ -150,7 +150,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   The shade fades in 150 ms when `[effects] window_animation` is on.
 - **Window memory.** A program opens where its last window closed: same
   screen, same size, maximized if it was. A second window of it cascades
-  from the first. Docked and undocked layouts each keep their own places
+  from the first. A window that names itself with an xdg-toplevel-tag no
+  dialog uses (each sticky note does) keeps a place of its own under that
+  name. Docked and undocked layouts each keep their own places
   (per set of connected screens, by make, model and serial), in
   `$XDG_STATE_HOME/reprise/windows.toml`. A place left off every screen opens
   at the default place instead. Window rules that set a size or position

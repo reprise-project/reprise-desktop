@@ -26,6 +26,16 @@ edit-paste = &Paste
 edit-delete = &Delete
 edit-select-all = Select &All
 
+## A sticky note: its strip buttons and its colours
+note-new = New Note
+note-delete = Delete Note
+note-yellow = &Yellow
+note-green = &Green
+note-pink = P&ink
+note-purple = Purp&le
+note-blue = &Blue
+note-white = &White
+
 ## Find and Replace
 find-what = Fi&nd what:
 find-replace-with = Re&place with:

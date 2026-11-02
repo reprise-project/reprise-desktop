@@ -79,6 +79,12 @@ pub trait Extended {
     fn caption(&self, _win: WinId) -> Caption {
         Caption::Window
     }
+    /// A name for window `win`, plain-captioned, that the compositor keeps its place and size
+    /// under instead of the app's: a sticky note's own. Sent as its xdg-toplevel-tag when the
+    /// window is made.
+    fn place_tag(&self, _win: WinId) -> Option<String> {
+        None
+    }
     /// The window that takes the compositor's shortcuts while it has the
     /// keyboard (Super, Alt+Tab and every bind reach it as keys), such as
     /// a dialog whose hot-key field has the focus. Read after every

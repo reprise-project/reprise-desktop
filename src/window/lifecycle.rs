@@ -108,6 +108,7 @@ impl State {
             csd: false,
             dialog_tag: DialogTag::None,
             file_dialog: false,
+            place_tag: None,
             modal: false,
             on_top: false,
             frame_scale: 1,

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Sticky Notes
+Comment=Keeps short notes on the desktop.
+Exec=reprise-notes
+Icon=accessories-text-editor
+Categories=Utility;
+StartupWMClass=reprise.notes
+Terminal=false

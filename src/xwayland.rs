@@ -693,6 +693,7 @@ impl Premap {
     fn subject(&self) -> Subject {
         Subject {
             app: self.app.clone(),
+            key: self.app.clone(),
             title: self.title.clone(),
             placeable: !self.override_redirect
                 && !self.owned

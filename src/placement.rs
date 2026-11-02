@@ -52,6 +52,8 @@ impl Wm {
 /// What placing a window reads of it: from a live window, or from an X11 window before it maps.
 pub(crate) struct Subject {
     pub app: String,
+    /// What its frame is kept under: [`Window::kept_key`].
+    pub key: String,
     pub title: String,
     /// See [`Window::placeable`].
     pub placeable: bool,
@@ -79,6 +81,15 @@ impl Window {
             self.app_seen.clone()
         } else {
             live
+        }
+    }
+
+    /// What the window's remembered frame is kept under: its app id, or `app#tag` for a window
+    /// with a [`place_tag`](Window::place_tag), so each such window of the app keeps its own.
+    pub fn kept_key(&self) -> String {
+        match &self.place_tag {
+            Some(t) => format!("{}#{t}", self.app()),
+            None => self.app(),
         }
     }
 
@@ -116,10 +127,21 @@ impl State {
             .map(|w| w.id)
     }
 
+    /// The newest mapped window whose frame is kept under `key` ([`Window::kept_key`]).
+    fn newest_kept(&self, key: &str, except: Option<WindowId>) -> Option<WindowId> {
+        self.windows
+            .iter()
+            .rev()
+            .filter(|w| w.mapped && Some(w.id) != except && w.placeable())
+            .find(|w| w.kept_key() == key)
+            .map(|w| w.id)
+    }
+
     pub(crate) fn plan_window(&self, w: WindowId) -> Option<Want> {
         let win = self.win(w)?;
         let subject = Subject {
             app: win.app(),
+            key: win.kept_key(),
             title: win.title(),
             placeable: win.placeable(),
             fixed: !win.is_resizable(),
@@ -134,12 +156,12 @@ impl State {
             return None;
         }
         let (app_id, title, fixed) = (&s.app, &s.title, s.fixed);
-        let first = self.newest_of_app(app_id, w).is_none();
         let now = std::time::Instant::now();
+        let first = self.newest_kept(&s.key, w).is_none();
         let mut base = Want::default();
         if self.config.remember_windows
             && !fixed
-            && let Some(m) = self.wm.kept.get(&self.output_set(), app_id)
+            && let Some(m) = self.wm.kept.get(&self.output_set(), &s.key)
         {
             base = match self.kept_on_screen(m) {
                 Some(m) => m.want(first, self.config.accessibility.text_size),
@@ -395,8 +417,8 @@ impl State {
         if !self.config.remember_windows || !win.placeable() || !win.is_resizable() {
             return;
         }
-        let app_id = win.app();
-        if last_only && self.newest_of_app(&app_id, Some(w)).is_some() {
+        let app_id = win.kept_key();
+        if last_only && self.newest_kept(&app_id, Some(w)).is_some() {
             return;
         }
         let Some(entry) = self.frame_of(w) else {

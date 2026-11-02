@@ -321,3 +321,26 @@ fn reloading_reads_the_file_and_drops_the_pending_write() {
         "the write that waited for the old frames is dropped"
     );
 }
+
+#[test]
+fn each_tagged_window_of_an_app_reopens_at_its_own_place() {
+    let mut h = one_screen();
+    let mut c = h.connect();
+    leave_at(&mut h, &mut c, (600, 500), (500, 400));
+    let a = h.map_dialog(&mut c, APP, None, "note-a", (200, 200));
+    let b = h.map_dialog(&mut c, APP, None, "note-b", (200, 200));
+    h.state.move_to(a.id, 100, 120);
+    h.state.move_to(b.id, 900, 140);
+    close(&mut h, &mut c, a);
+    close(&mut h, &mut c, b);
+    let b = h.map_dialog(&mut c, APP, None, "note-b", (200, 200));
+    let a = h.map_dialog(&mut c, APP, None, "note-a", (200, 200));
+    assert_eq!((frame_of(&h, a).x, frame_of(&h, a).y), (100, 120));
+    assert_eq!((frame_of(&h, b).x, frame_of(&h, b).y), (900, 140));
+    let plain = h.map_toplevel(&mut c, APP, 300, 200);
+    assert_eq!(
+        (frame_of(&h, plain).x, frame_of(&h, plain).y),
+        (600, 500),
+        "an untagged window keeps the app's own place"
+    );
+}

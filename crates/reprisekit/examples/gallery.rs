@@ -16,6 +16,8 @@ mod gallery_doctabs;
 mod gallery_keys;
 #[path = "gallery_miniview/mod.rs"]
 mod gallery_miniview;
+#[path = "gallery_notes/mod.rs"]
+mod gallery_notes;
 #[path = "gallery_p3/mod.rs"]
 mod gallery_p3;
 #[path = "gallery_parts/mod.rs"]
@@ -126,6 +128,10 @@ fn main() {
         write_preview(
             &gallery_widgets::render(n.max(1)),
             &format!("reprisekit-gallery-desk-widgets@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_notes::render(n.max(1)),
+            &format!("reprisekit-gallery-notes@{}.png", n.max(1)),
         );
         write_preview(
             &render_copy_progress(true, n.max(1)),
@@ -310,6 +316,7 @@ fn main() {
         &gallery_widgets::render(1),
         "reprisekit-gallery-desk-widgets@1.png",
     );
+    write_preview(&gallery_notes::render(1), "reprisekit-gallery-notes@1.png");
     write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
     write_preview(
         &gallery_miniview::render(1),
