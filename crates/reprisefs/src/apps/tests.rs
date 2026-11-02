@@ -284,6 +284,34 @@ fn default_terminal_is_reprise() {
 }
 
 #[test]
+fn the_terminal_runs_alone_in_the_scope_of_the_entry_naming_its_program() {
+    let foot = parse_desktop(
+        "[Desktop Entry]\nType=Application\nName=Foot\nExec=foot\n",
+        "org.codeberg.dnkl.foot.desktop",
+    )
+    .map(|e| AppEntry {
+        startup_wm_class: Some("foot".into()),
+        ..e
+    })
+    .unwrap();
+    let apps = [foot];
+    assert_eq!(
+        terminal_argv("\"/usr/bin/foot\" --hold"),
+        ["/usr/bin/foot", "--hold"]
+    );
+    assert_eq!(
+        terminal_app("/usr/bin/foot --hold", &apps).as_deref(),
+        Some("org.codeberg.dnkl.foot.desktop")
+    );
+    assert_eq!(
+        terminal_app(DEFAULT_TERMINAL, &apps).as_deref(),
+        Some("reprise-terminal"),
+        "no entry: the program's name"
+    );
+    assert_eq!(terminal_app("", &apps), None);
+}
+
+#[test]
 fn terminal_entries_wrap_in_terminal() {
     let e = parse_desktop(
         "[Desktop Entry]\nType=Application\nName=htop\nExec=htop\nTerminal=true\n",

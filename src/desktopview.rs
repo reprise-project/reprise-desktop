@@ -149,6 +149,8 @@ pub enum DesktopCommand {
     AllowLaunching,
     CreateShortcut,
     Explore,
+    /// The terminal in the folder under the menu, or in the desktop's own folder.
+    OpenTerminal,
     OpenFileLocation,
     OpenWith,
     SendTo,
