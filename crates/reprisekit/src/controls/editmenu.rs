@@ -144,6 +144,8 @@ pub fn shortcut(cmd: Command) -> (u32, bool) {
 pub struct Menu {
     tree: MenuTree,
     chain: PopupMenu,
+    /// Rows the host added under the edit ones ([`Menu::open_with`]).
+    extra: usize,
 }
 
 /// What a key, press or pick did to an open [`Menu`].
@@ -155,14 +157,37 @@ pub enum Step {
     Close,
     /// It closed on this pick.
     Run(Command),
+    /// It closed on the host's row `i` of [`Menu::open_with`]'s `extra`.
+    Extra(usize),
 }
 
 impl Menu {
     /// Opens with its top-left at `at`; from the keyboard its first row starts picked.
     pub fn open(live: Live, at: (i32, i32), cx: &MenuCtx, by_keyboard: bool) -> Menu {
-        let tree = tree(live);
+        Menu::open_with(live, Vec::new(), at, cx, by_keyboard)
+    }
+
+    /// [`Menu::open`] with the host's own rows `extra` under a separator below Select All.
+    pub fn open_with(
+        live: Live,
+        extra: Vec<MenuItem>,
+        at: (i32, i32),
+        cx: &MenuCtx,
+        by_keyboard: bool,
+    ) -> Menu {
+        let n = extra.len();
+        let mut rows = items(live);
+        if n > 0 {
+            rows.push(MenuItem::Separator);
+            rows.extend(extra);
+        }
+        let tree = MenuTree::flat(rows);
         let chain = PopupMenu::open(&tree, at, cx, by_keyboard);
-        Menu { tree, chain }
+        Menu {
+            tree,
+            chain,
+            extra: n,
+        }
     }
 
     pub fn tree(&self) -> &MenuTree {
@@ -199,13 +224,13 @@ impl Menu {
             },
         };
         let act = self.chain.key(&self.tree, key, cx);
-        step(act)
+        self.step(act)
     }
 
     /// A press anywhere: on a live row it picks it, off the menu it closes it.
     pub fn press(&mut self, x: i32, y: i32, cx: &MenuCtx) -> Step {
         let act = self.chain.click(&self.tree, x, y, cx);
-        step(act)
+        self.step(act)
     }
 
     /// `true` when the lit row changed.
@@ -229,6 +254,19 @@ impl Chain for Menu {
     }
     fn chain_mut(&mut self) -> &mut PopupMenu {
         &mut self.chain
+    }
+}
+
+impl Menu {
+    fn step(&self, act: MenuAction) -> Step {
+        let first_extra = ROWS.len() + 1;
+        match act {
+            MenuAction::Chosen(path) => match path[..] {
+                [i] if self.extra > 0 && i >= first_extra => Step::Extra(i - first_extra),
+                _ => command(&path).map_or(Step::Close, Step::Run),
+            },
+            other => step(other),
+        }
     }
 }
 
@@ -320,6 +358,25 @@ mod tests {
         assert_eq!(command(&[8]), Some(Command::SelectAll));
         assert_eq!(command(&[9]), None);
         assert_eq!(command(&[4, 0]), None);
+    }
+
+    #[test]
+    fn a_host_row_under_the_edit_rows_comes_back_as_its_own_index() {
+        let text = crate::text::TextRenderer::load(&crate::theme::FontConfig::default());
+        let theme = Theme::default();
+        let cx = MenuCtx {
+            text: &text,
+            theme: &theme,
+            px: theme.fonts.size_px,
+            within: Rect::new(0, 0, 800, 600),
+        };
+        let extra = vec![MenuItem::item("&Green"), MenuItem::item("&Blue")];
+        let mut m = Menu::open_with(Live::default(), extra, (10, 10), &cx, true);
+        assert_eq!(m.tree().iter().count(), 12, "a separator and the two rows");
+        assert_eq!(m.key(0, Some("b"), &cx), Step::Extra(1));
+        let mut m = Menu::open_with(Live::default(), Vec::new(), (10, 10), &cx, true);
+        assert_eq!(m.tree().iter().count(), 9, "no separator without rows");
+        assert_eq!(m.key(0, Some("a"), &cx), Step::Run(Command::SelectAll));
     }
 
     #[test]

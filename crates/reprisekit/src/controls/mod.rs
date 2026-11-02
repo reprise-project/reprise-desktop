@@ -66,6 +66,7 @@ pub mod snapbar;
 pub mod snappicker;
 pub mod statspanel;
 pub mod statusbar;
+pub mod stickynote;
 pub mod switcher;
 pub mod tabstrip;
 pub mod taskpane;

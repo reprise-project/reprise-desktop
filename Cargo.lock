@@ -2294,6 +2294,7 @@ dependencies = [
  "reprise-explorer",
  "reprise-network",
  "reprise-notepad",
+ "reprise-notes",
  "reprise-phone",
  "reprise-polkit",
  "reprise-power",
@@ -2398,6 +2399,18 @@ dependencies = [
 
 [[package]]
 name = "reprise-notepad"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "repriseapp",
+ "reprisebus",
+ "reprisefs",
+ "reprisekit",
+ "tempfile",
+]
+
+[[package]]
+name = "reprise-notes"
 version = "0.1.0"
 dependencies = [
  "log",

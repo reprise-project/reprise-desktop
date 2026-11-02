@@ -209,7 +209,7 @@ impl Notepad {
     fn context_step(&mut self, step: editmenu::Step, ctx: &Ctx) -> Reply {
         let cmd = match step {
             editmenu::Step::Run(cmd) => cmd,
-            editmenu::Step::Close => {
+            editmenu::Step::Close | editmenu::Step::Extra(_) => {
                 self.context = None;
                 return Reply::redraw();
             }

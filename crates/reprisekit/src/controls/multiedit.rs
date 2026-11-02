@@ -836,6 +836,9 @@ pub struct Metrics {
     /// The scrollbars' shortest thumb, logical px: the look's
     /// [`ControlMetrics::thumb_min`](crate::controls::metrics::ControlMetrics::thumb_min).
     pub thumb_min: i32,
+    /// No sunken edge: the text box fills its whole rect in `cs.window`, for a host that draws
+    /// its own surround (a sticky note).
+    pub flat: bool,
 }
 
 impl Default for Metrics {
@@ -848,6 +851,7 @@ impl Default for Metrics {
             vbar_always: false,
             bar: crate::controls::metrics::ControlMetrics::CLASSIC.scroll,
             thumb_min: crate::controls::metrics::ControlMetrics::CLASSIC.thumb_min,
+            flat: false,
         }
     }
 }
@@ -989,7 +993,7 @@ pub struct Layout {
 /// outgrow the box and a horizontal one when the widest line does (both, always, with
 /// `m.bars_always`).
 pub fn layout(text: &TextRenderer, m: &Metrics, edit: &MultiEdit, r: Rect, s: i32) -> Layout {
-    let inner = r.inset(2 * s);
+    let inner = if m.flat { r } else { r.inset(2 * s) };
     let line_h = m.line_h.max(1) * s;
     let widest = widest_px(text, m, edit);
     let mut rows = (inner.height / line_h).max(1) as usize;
@@ -1396,8 +1400,10 @@ pub fn draw(
     let Paint { cs, s, .. } = *p;
     // With a preedit nothing is drawn selected; text-input-v3 removes the real selection.
     let preedit = c.preedit().filter(|_| caret.focused()).cloned();
-    c.fill_rect(lay.frame, cs.button_face);
-    draw_edit_frame(c, p, lay.frame, cs.window);
+    if !m.flat {
+        c.fill_rect(lay.frame, cs.button_face);
+        draw_edit_frame(c, p, lay.frame, cs.window);
+    }
     let inner = lay.inner;
     c.fill_rect(inner, cs.window);
     let line_h = m.line_h * s;

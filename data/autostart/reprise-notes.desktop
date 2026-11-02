@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Sticky Notes
+Exec=reprise-notes --restore
+OnlyShowIn=reprise;
+NoDisplay=true
