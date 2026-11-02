@@ -62,13 +62,13 @@ The file manager, and the default for folders.
   Ctrl+Z undoes the last one, a whole Rename dialog's worth at once;
   undoing a copy its Recycle Bin can't take (a drive set to remove files
   immediately, or too big) asks before deleting it permanently.
-- **Preview** (Space): a window over Explorer shows the one selected file:
-  a picture fitted to the screen, the first 256 KB of a text file, the
-  thumbnail another program left in the shared cache (a PDF's, a video's),
-  else its icon, type, size and date. The arrows step to the previous and
-  next item in the view's order and move the selection with it; Enter opens
-  the file, Space or Escape closes the preview. A file on a mount that
-  stopped answering shows its card until the read comes back.
+- **Preview** (Space): a window over Explorer shows the one selected file: a
+  picture fitted to the screen, the first 256 KB of a text file, the
+  thumbnail another program left in the shared cache (a PDF's, a video's), a
+  font's sample, else its icon, type, size and date. The arrows step to the
+  previous and next item in the view's order and move the selection with it;
+  Enter opens the file, Space or Escape closes the preview. A file on a
+  mount that stopped answering shows its card until the read comes back.
 - **Drag and drop** between Explorer windows, the desktop and other
   programs, Flatpaks included. A right-drag asks whether to copy, move or
   make a shortcut. Drop a link from a browser and you get a link file.
@@ -386,6 +386,18 @@ Back, Up and Refresh do what they say, and Open in Explorer opens the folder
 shown. An entry's right-click menu adds Open in Explorer and Move to Recycle
 Bin, which asks first as Explorer's Delete does. Open it from Explorer, from
 the low disk space balloon, or as `reprise-diskusage FOLDER`.
+
+## Font Viewer
+
+The default for font files (`.ttf`, `.otf`, `.ttc`, `.woff`, `.woff2`):
+double-click one in Explorer or on the desktop. It shows the face's name,
+version and copyright, the alphabet, digits and punctuation, and a pangram at
+12, 18, 24, 36, 48 and 72 px, set from the file itself. A collection (`.ttc`)
+picks its face from a list. Install copies the file into your fonts folder
+(`$XDG_DATA_HOME/fonts`, usually `~/.local/share/fonts`) and runs `fc-cache`
+on it, so other programs' font lists show it on their next start. A face
+already there by its PostScript name says Installed; one under a system
+fonts folder says Installed (system).
 
 ## Date and Time Properties
 

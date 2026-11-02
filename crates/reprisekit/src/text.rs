@@ -13,6 +13,7 @@ use freetype::{Face, Library};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 
+pub mod fontfile;
 mod fonts;
 mod mnemonic;
 #[cfg(test)]
@@ -174,6 +175,8 @@ pub struct TextRenderer {
     /// ([`TextRenderer::for_output`]): bitmap fallback strikes are off.
     prescaled: bool,
     for_output: std::cell::OnceCell<Box<TextRenderer>>,
+    /// Every glyph from this face, a char it lacks as its notdef: a font file's own sample.
+    own_glyphs: bool,
 }
 
 fn coverage(bm: &freetype::Bitmap) -> Vec<u8> {
@@ -297,7 +300,29 @@ impl TextRenderer {
             italic: std::cell::OnceCell::new(),
             prescaled: false,
             for_output: std::cell::OnceCell::new(),
+            own_glyphs: false,
         }
+    }
+
+    /// Face `index` of the font file at `path`, antialiased, drawing only its own glyphs; `None`
+    /// when FreeType cannot open it.
+    pub fn from_file(path: &std::path::Path, index: u32) -> Option<TextRenderer> {
+        let lib = Library::init().ok()?;
+        let face = match lib.new_face(path.as_os_str(), index as isize) {
+            Ok(f) => f,
+            Err(e) => {
+                log::warn!("FreeType could not open {}: {e}", path.display());
+                return None;
+            }
+        };
+        let loaded = LoadedFace {
+            family: face.family_name().unwrap_or_default(),
+            italic: false,
+            face,
+        };
+        let mut t = TextRenderer::with_faces(Some(loaded.clone()), Some(loaded), true);
+        t.own_glyphs = true;
+        Some(t)
     }
 
     /// These faces for a host that draws text at an output's device size on a scale-1 canvas
@@ -508,7 +533,7 @@ impl TextRenderer {
         // face smoothed (an outline CJK face in mono ink at 11 px loses its strokes).
         let fallback = match index {
             Some(_) => None,
-            None if no_fallback(ch) => None,
+            None if self.own_glyphs || no_fallback(ch) => None,
             None => {
                 let strike = self.fallback_face(ch, bold, true).and_then(|fb| {
                     let p = fallback_strike(strike_ppems(&fb), size_px)?;
