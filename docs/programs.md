@@ -72,6 +72,8 @@ The file manager, and the default for folders.
   make a shortcut. Drop a link from a browser and you get a link file.
 - **Recycle Bin** on the freedesktop trash, shared with every other Linux
   program, with Restore and the original location of everything in it.
+  Recycle Bin Properties can empty items older than a number of days, at
+  login and then daily.
 - **Properties** (Alt+Enter): size, dates, Read-only, Hidden and
   Executable, a Summary tab whose title, author and keywords live in the
   file's extended attributes, a Checksums tab, a Shortcut tab for launchers
