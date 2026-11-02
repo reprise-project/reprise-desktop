@@ -1,5 +1,5 @@
-//! Calculator in Classic, Blue and Glass light and dark, Standard and Scientific with its
-//! history, written to `target/reprisekit-gallery-calculator@<scale>.png`.
+//! Calculator and Character Map in Classic, Blue and Glass light and dark, written to
+//! `target/reprisekit-gallery-calculator@<scale>.png` and `-charmap@<scale>.png`.
 
 use reprisekit::controls::calculator::{self, Calc, Input, Mode};
 use reprisekit::interface::Interface;
@@ -82,6 +82,59 @@ pub fn calculator(s: i32) -> Canvas {
             c.blit_canvas(x * s, y * s, &d);
             x += cw + 10;
         }
+    }
+    c
+}
+
+/// Character Map in each look, its grid in the UI font with a character picked.
+pub fn charmap(s: i32) -> Canvas {
+    use reprisekit::controls::charmap::{self, CharMap};
+    let (cw, ch) = charmap::CLIENT;
+    let looks = looks();
+    let label_w = 90;
+    let mut map = CharMap::new(
+        ('!'..='~')
+            .chain('\u{a0}'..='\u{24f}')
+            .chain('\u{2190}'..='\u{21ff}'),
+    );
+    map.pick_char('&');
+    let fonts = vec![FontConfig::default().family[0].clone()];
+    let mut f = charmap::form(&fonts, 0, &map);
+    charmap::append(&mut f, 'é');
+    charmap::append(&mut f, '→');
+    let cols = 2;
+    let rows = looks.len().div_ceil(cols) as i32;
+    let (w, h) = (cols as i32 * (label_w + cw + 10), rows * (ch + 10));
+    let mut c = super::blurred_stripes(w * s, h * s);
+    let head = TextRenderer::load(&FontConfig::default());
+    for (i, (name, base)) in looks.iter().enumerate() {
+        let x = (i % cols) as i32 * (label_w + cw + 10);
+        let y = (i / cols) as i32 * (ch + 10);
+        head.draw(
+            &mut c,
+            Rect::new(x + 4, y + 4, label_w - 8, 16).scaled(s),
+            name,
+            true,
+            Color::rgb(0xFF, 0xFF, 0xFF),
+            Align::Left,
+            11 * s as u32,
+        );
+        let theme = base.scaled(s);
+        let text = TextRenderer::load(&theme.fonts);
+        let p = theme.paint();
+        let mut d = Canvas::new((cw * s) as u32, (ch * s) as u32);
+        d.fill_rect(d.bounds(), p.cs.button_face);
+        charmap::draw_window(
+            &mut d,
+            &text,
+            &text,
+            &p,
+            &f,
+            &map,
+            true,
+            theme.fonts.size_px,
+        );
+        c.blit_canvas((x + label_w) * s, y * s, &d);
     }
     c
 }

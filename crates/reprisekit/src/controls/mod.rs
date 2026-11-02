@@ -9,6 +9,7 @@ pub mod browsefolder;
 pub mod calculator;
 pub mod calendar;
 pub mod captiontabs;
+pub mod charmap;
 pub mod cliphistory;
 pub mod colorbutton;
 pub mod colorpick;
