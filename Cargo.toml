@@ -32,6 +32,7 @@ members = [
     "crates/apps/terminal",
     "crates/apps/phone",
     "crates/apps/imageviewer",
+    "crates/apps/paint",
     "crates/apps/reprise-apps",
     "crates/portal",
 ]

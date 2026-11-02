@@ -2297,6 +2297,7 @@ dependencies = [
  "reprise-network",
  "reprise-notepad",
  "reprise-notes",
+ "reprise-paint",
  "reprise-phone",
  "reprise-polkit",
  "reprise-power",
@@ -2446,6 +2447,21 @@ dependencies = [
  "reprisefs",
  "reprisekit",
  "tempfile",
+]
+
+[[package]]
+name = "reprise-paint"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "log",
+ "repriseapp",
+ "reprisebus",
+ "repriseconf",
+ "reprisefs",
+ "reprisekit",
+ "tempfile",
+ "toml_edit",
 ]
 
 [[package]]
