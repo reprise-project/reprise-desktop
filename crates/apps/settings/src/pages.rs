@@ -189,7 +189,7 @@ pub const COLUMNS: [(&str, i32); 3] = [("Startup Item", 164), ("Command", 114), 
 /// with Forget beside it. Three rows show at [`Area::MIN`]; the rest scroll,
 /// so Program takes what Location and the scrollbar leave ([`fit_location_columns`]).
 pub fn locations(a: Area) -> Rect {
-    Rect::new(X, 220, a.w - BUTTON_W - 8, 68 + a.dh)
+    Rect::new(X, 220, a.w - BUTTON_W - 8, 46 + a.dh)
 }
 pub const LOCATION_COLUMNS: [(&str, i32); 2] = [("Program", 185), ("Location", 70)];
 pub const PRIVACY_LOCATION: &str = "privacy_location";
@@ -205,6 +205,8 @@ pub const THUMBS: &str = "thumbnail_cache";
 pub const THUMBS_MB: &str = "thumbnail_max_mb";
 const THUMBS_SIZE: [&str; 2] = ["thumbnail_size_label", THUMBS_MB];
 pub const THUMBS_CLEAR: &str = "thumbnail_clear";
+/// The Advanced page's check for thumbnails from the installed thumbnailers.
+pub const THUMBNAILERS: &str = "external_thumbnailers";
 pub const THUMBS_CLEARED: &str = "thumbnail_cleared";
 
 /// Where the Advanced page's Clear is: running, or ended with what it removed or without a

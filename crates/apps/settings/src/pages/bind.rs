@@ -9,8 +9,8 @@ use super::system::{BELL, NOTIFICATION_SOUND, SOUND_CONTROLS};
 use super::{
     CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN, GTK_FIXED_ROWS,
     KB_ADD, KB_LAYOUTS, KB_REMOVE, KB_UP, KELVIN_MAX, KELVIN_MIN, KELVIN_STEP, MK_ACCEL, MK_SPEED,
-    PRIVACY_LOCATION, SPEED_STEPS, Steps, THUMBS, THUMBS_MB, THUMBS_SIZE, TRAY_CUSTOMIZE, WATER,
-    WATER_STYLE,
+    PRIVACY_LOCATION, SPEED_STEPS, Steps, THUMBNAILERS, THUMBS, THUMBS_MB, THUMBS_SIZE,
+    TRAY_CUSTOMIZE, WATER, WATER_STYLE,
 };
 use crate::registry::Page;
 use repriseconf::{Lens, lens};
@@ -218,6 +218,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag("launcher_windows", lens!(launcher_windows)),
         Bind::Flag(THUMBS, lens!(thumbnail_cache)),
         Bind::Num(THUMBS_MB, lens!(thumbnail_max_mb)),
+        Bind::Flag(THUMBNAILERS, lens!(external_thumbnailers)),
         Bind::Text("font_family", lens!(font_family)),
         Bind::Num("font_size_px", lens!(font_size_px)),
         Bind::Flag("font_antialias", lens!(font_antialias)),

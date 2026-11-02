@@ -46,6 +46,7 @@ pub mod scope;
 pub mod search;
 pub mod sendto;
 pub mod sysinfo;
+pub mod thumbnailers;
 pub mod thumbnails;
 pub mod thumbpipe;
 pub mod trash;

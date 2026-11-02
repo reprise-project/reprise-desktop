@@ -146,7 +146,7 @@ struct Listing {
     folder: Folder,
     /// Names shown for paths they don't spell: non-UTF-8 names and My Recent Documents' files.
     aliases: Vec<(String, OsString)>,
-    /// The pictures' paths; picture `i`'s entry has id `i + 1`.
+    /// The paths of files with thumbnails ([`Item::thumbnailable`]); file `i`'s entry has id `i + 1`.
     pictures: Vec<PathBuf>,
     icons: ListingIcons,
 }
@@ -254,7 +254,7 @@ fn listing(folders: &mut FolderTable, id: FolderId, read: Read, icons: &mut Icon
             }
             let id = if it.is_dir {
                 folders.id(&it.path)
-            } else if it.is_image() {
+            } else if it.thumbnailable() {
                 pictures.push(it.path.clone());
                 pictures.len() as u64
             } else {
@@ -611,6 +611,7 @@ impl Host {
         self.thumbs = Some(Thumbs::new(
             std::sync::Arc::new(crate::decode::Decoders::default_set()),
             thumbs::cache_for(cache),
+            cache.external_thumbnailers,
             wake.clone(),
         ));
     }
@@ -753,7 +754,9 @@ impl Host {
             };
             let e = &mut dlg.entries_mut()[i];
             e.thumb = Some(shellview::frame_thumb(d.thumb, d.dims, d.scale));
-            e.detail = shellview::image_detail(d.dims, &e.kind);
+            if d.sized {
+                e.detail = shellview::image_detail(d.dims, &e.kind);
+            }
             shown = true;
         }
         shown

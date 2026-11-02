@@ -2,8 +2,8 @@
 
 use super::{
     ADD, Area, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE,
-    THUMBS, THUMBS_CLEAR, THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, WATER, WATER_STYLE, X, button,
-    choice, combo, edit, field, group, list, locations, spin,
+    THUMBNAILERS, THUMBS, THUMBS_CLEAR, THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, WATER, WATER_STYLE,
+    X, button, choice, combo, edit, field, group, list, locations, spin,
 };
 use crate::model::WATER_STYLES;
 use repriseconf::ThumbnailCache;
@@ -66,38 +66,38 @@ pub fn advanced(a: Area) -> Form {
     items.push(Item::check(
         DEBUG_OVERLAY,
         X,
-        300 + dh,
+        278 + dh,
         "Show a &debug overlay (frame rate, render times)",
     ));
     items.push(
         Item::check(
             DEBUG_IN_CAPTURES,
             X,
-            322 + dh,
+            300 + dh,
             "Show it in screenshots and screen &sharing",
         )
         .under_check(),
     );
-    items.push(Item::check(WATER, X, 344 + dh, "Desktop &water"));
-    items.push(choice(WATER_STYLE, X + 112, 340 + dh, 100, WATER_STYLES));
+    items.push(Item::check(WATER, X, 322 + dh, "Desktop &water"));
+    items.push(choice(WATER_STYLE, X + 112, 318 + dh, 100, WATER_STYLES));
     items.push(Item::label_at(
         "water_note",
         X + 12,
-        364 + dh,
+        342 + dh,
         a.w - 12,
         "With Ink, Glow, Sparks or Neon, dragging on the desktop",
     ));
     items.push(Item::label_at(
         "water_note_2",
         X + 12,
-        377 + dh,
+        355 + dh,
         a.w - 12,
         "stirs the fluid instead of drawing a selection box.",
     ));
     items.push(Item::check(
         THUMBS,
         X,
-        392 + dh,
+        370 + dh,
         "Keep &thumbnails of pictures",
     ));
     let mb = ThumbnailCache::MAX_MB;
@@ -106,7 +106,7 @@ pub fn advanced(a: Area) -> Form {
             THUMBS_SIZE[0],
             THUMBS_MB,
             X,
-            418 + dh,
+            396 + dh,
             70,
             "Si&ze in MB:",
             (*mb.start() as i32, *mb.end() as i32),
@@ -117,19 +117,25 @@ pub fn advanced(a: Area) -> Form {
     items.push(Item::value_at(
         THUMBS_CLEARED,
         cleared_x,
-        392 + dh,
+        370 + dh,
         a.right() - cleared_x,
         "",
     ));
     items.push(button(
         THUMBS_CLEAR,
         a.right() - BUTTON_W,
-        412 + dh,
+        390 + dh,
         "Clea&r",
+    ));
+    items.push(Item::check(
+        THUMBNAILERS,
+        X,
+        418 + dh,
+        "Ma&ke thumbnails of documents and videos",
     ));
     items.push(Item::new(
         "note",
-        Rect::new(X, 444 + dh, a.w - BUTTON_W - 8, 2 * LINE_H),
+        Rect::new(X, 440 + dh, a.w - BUTTON_W - 8, 2 * LINE_H),
         Control::Lines(vec![
             "Keys no page sets are edited in".into(),
             "config.toml itself.".into(),
@@ -138,7 +144,7 @@ pub fn advanced(a: Area) -> Form {
     items.push(button(
         EDIT_FILE,
         a.right() - BUTTON_W,
-        444 + dh,
+        440 + dh,
         "&Edit File...",
     ));
     Form::new(items)

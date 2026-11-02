@@ -191,6 +191,11 @@ desktop and stays out of the way when it's missing.
 - xdg-utils and libarchive, for opening files, zipping and extracting
   archives in Explorer and opening a network's sign-in page
 - plocate with its database, or fd, for files in the launcher and Explorer's Search
+- Freedesktop thumbnailers, for thumbnails of files Reprise does not decode
+  itself (`[thumbnail_cache] external_thumbnailers`): papers or evince for
+  PDF, PostScript, DjVu and comic books, ffmpegthumbnailer for videos,
+  gnome-font-viewer for fonts, libgsf for OpenDocument and Office files.
+  Any package that installs a `.thumbnailer` file works.
 
 ## Fonts
 

@@ -52,6 +52,8 @@ pub struct Hit {
     /// The picture's own size, from `Thumb::Image::Width` and `Height`,
     /// which the standard leaves optional.
     pub dims: Option<(u32, u32)>,
+    /// The `Software` key: the program that wrote the entry.
+    pub software: Option<String>,
 }
 
 pub struct Rgba<'a> {
@@ -116,9 +118,14 @@ impl Thumbnails {
     /// cap.
     pub fn get(&self, path: &Path, meta: &Metadata, edge: u32) -> Option<Hit> {
         let (png, text) = read_valid(&self.entry(path, edge)?, path, meta, max_entry(edge))?;
-        let key = |k: &str| key(&text, k).and_then(|v| v.parse().ok());
-        let dims = key("Thumb::Image::Width").zip(key("Thumb::Image::Height"));
-        Some(Hit { png, dims })
+        let num = |k: &str| key_of(&text, k).and_then(|v| v.parse().ok());
+        let dims = num("Thumb::Image::Width").zip(num("Thumb::Image::Height"));
+        let software = key_of(&text, "Software").map(str::to_string);
+        Some(Hit {
+            png,
+            dims,
+            software,
+        })
     }
 
     /// Whether this program failed to thumbnail `path` as `meta`
@@ -143,6 +150,32 @@ impl Thumbnails {
             ("Thumb::Image::Width", dims.0.to_string()),
             ("Thumb::Image::Height", dims.1.to_string()),
         ];
+        self.store(&entry, path, meta, thumb, &text, max_entry(edge));
+    }
+
+    /// Keep `thumb`, fitted inside an `edge` square, as the thumbnail an external thumbnailer
+    /// made of the file at `path` that `meta` describes; `dims` is the picture size it reported.
+    /// Kept whatever its size, since the file is not a picture that could stand in for it.
+    pub fn put_made(
+        &mut self,
+        path: &Path,
+        meta: &Metadata,
+        edge: u32,
+        thumb: Rgba,
+        dims: Option<(u32, u32)>,
+    ) {
+        let Some(entry) = self.entry(path, edge) else {
+            return;
+        };
+        let text: Vec<_> = dims
+            .into_iter()
+            .flat_map(|(w, h)| {
+                [
+                    ("Thumb::Image::Width", w.to_string()),
+                    ("Thumb::Image::Height", h.to_string()),
+                ]
+            })
+            .collect();
         self.store(&entry, path, meta, thumb, &text, max_entry(edge));
     }
 
@@ -296,7 +329,7 @@ pub fn clear_written_by(root: &Path, program: &str) -> Cleared {
             .and_then(|f| f.take(HEAD).read_to_end(&mut head))
             .is_ok()
             && text_chunks(&head)
-                .is_some_and(|t| key(&t, "Software").is_some_and(|v| v.starts_with(program)))
+                .is_some_and(|t| key_of(&t, "Software").is_some_and(|v| v.starts_with(program)))
     };
     let pngs = |dir: PathBuf| {
         std::fs::read_dir(dir)
@@ -327,6 +360,17 @@ pub fn clear_written_by(root: &Path, program: &str) -> Cleared {
         }
     }
     gone
+}
+
+/// The picture size a PNG's `Thumb::Image::Width` and `Height` give, as a thumbnailer may write.
+pub fn image_dims(png: &[u8]) -> Option<(u32, u32)> {
+    let text = text_chunks(png)?;
+    let num = |k: &str| {
+        key_of(&text, k)
+            .and_then(|v| v.parse().ok())
+            .filter(|&v: &u32| v > 0)
+    };
+    num("Thumb::Image::Width").zip(num("Thumb::Image::Height"))
 }
 
 /// How much of an entry [`clear_written_by`] reads for its `Software` key.
@@ -372,7 +416,7 @@ fn read_valid(entry: &Path, path: &Path, meta: &Metadata, cap: u64) -> Option<(V
 
 type Text = Vec<(String, String)>;
 
-fn key<'a>(text: &'a [(String, String)], k: &str) -> Option<&'a str> {
+fn key_of<'a>(text: &'a [(String, String)], k: &str) -> Option<&'a str> {
     text.iter().find(|(key, _)| key == k).map(|(_, v)| v.trim())
 }
 
@@ -381,15 +425,15 @@ fn key<'a>(text: &'a [(String, String)], k: &str) -> Option<&'a str> {
 /// when present.
 fn vouches(text: &[(String, String)], uri: &str, meta: &Metadata) -> bool {
     let check = || -> Option<bool> {
-        if key(text, "Thumb::URI")? != uri {
+        if key_of(text, "Thumb::URI")? != uri {
             return Some(false);
         }
         // Whole seconds; a fraction some writers add is ignored.
-        let mtime = key(text, "Thumb::MTime")?.split('.').next()?;
+        let mtime = key_of(text, "Thumb::MTime")?.split('.').next()?;
         if mtime.parse::<i64>().ok()? != meta.mtime() {
             return Some(false);
         }
-        Some(match key(text, "Thumb::Size") {
+        Some(match key_of(text, "Thumb::Size") {
             Some(size) => size.parse::<u64>().ok()? == meta.len(),
             None => true,
         })
@@ -665,6 +709,25 @@ mod tests {
         // Nor a file that is not a PNG.
         std::fs::write(&entry, b"not a png").unwrap();
         assert!(cache.get(&src, &meta, EDGE).is_none());
+    }
+
+    #[test]
+    fn a_made_thumbnail_is_kept_at_any_size_with_the_size_it_reported() {
+        let (_dir, src, mut cache) = setup(1 << 20);
+        let meta = std::fs::metadata(&src).unwrap();
+        let px = pixels(90, 128, [9, 9, 9, 255]);
+        cache.put_made(&src, &meta, EDGE, rgba(90, 128, &px), None);
+        let hit = cache.get(&src, &meta, EDGE).expect("a hit");
+        assert_eq!(hit.dims, None);
+        assert_eq!(image_dims(&hit.png), None);
+        let k = keys(&cache.entry(&src, EDGE).unwrap());
+        assert_eq!(k["Thumb::URI"], file_uri(&src));
+        assert_eq!(k["Thumb::MTime"], meta.mtime().to_string());
+        assert_eq!(k["Software"], PROGRAM);
+        cache.put_made(&src, &meta, EDGE, rgba(90, 128, &px), Some((1920, 1080)));
+        let hit = cache.get(&src, &meta, EDGE).expect("a hit");
+        assert_eq!(hit.dims, Some((1920, 1080)));
+        assert_eq!(image_dims(&hit.png), Some((1920, 1080)));
     }
 
     /// A failure answers until the picture changes, and only for the

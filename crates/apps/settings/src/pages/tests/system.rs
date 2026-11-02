@@ -103,24 +103,25 @@ fn the_advanced_page_geometry() {
     assert_eq!(rect(&s, p, "recent_files"), Rect::new(20, 154, 13, 13));
     assert_eq!(rect(&s, p, "capture_border"), Rect::new(20, 176, 13, 13));
     assert_eq!(rect(&s, p, PRIVACY_LOCATION), Rect::new(20, 198, 13, 13));
-    assert_eq!(locations(Area::MIN), Rect::new(20, 220, 275, 68));
-    assert_eq!(rect(&s, p, WATER), Rect::new(20, 344, 13, 13));
+    assert_eq!(locations(Area::MIN), Rect::new(20, 220, 275, 46));
+    assert_eq!(rect(&s, p, WATER), Rect::new(20, 322, 13, 13));
     assert_eq!(
         rect(&s, p, WATER_STYLE),
-        Rect::new(132, 340, 100, combo::COMBO_H)
+        Rect::new(132, 318, 100, combo::COMBO_H)
     );
     assert_eq!(rect(&s, p, FORGET), Rect::new(303, 220, 75, 23));
     assert!(
         s.pages[p.index()].item("desktop_icons").is_none(),
         "desktop_icons is on Background"
     );
-    assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 300, 13, 13));
-    assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 322, 13, 13));
-    assert_eq!(rect(&s, p, THUMBS), Rect::new(20, 392, 13, 13));
-    assert_eq!(rect(&s, p, THUMBS_MB), Rect::new(112, 414, 50, 20));
-    assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(303, 412, 75, 23));
-    assert_eq!(rect(&s, p, "note"), Rect::new(20, 444, 275, 26));
-    assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 444, 75, 23));
+    assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 278, 13, 13));
+    assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 300, 13, 13));
+    assert_eq!(rect(&s, p, THUMBS), Rect::new(20, 370, 13, 13));
+    assert_eq!(rect(&s, p, THUMBS_MB), Rect::new(112, 392, 50, 20));
+    assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(303, 390, 75, 23));
+    assert_eq!(rect(&s, p, THUMBNAILERS), Rect::new(20, 418, 13, 13));
+    assert_eq!(rect(&s, p, "note"), Rect::new(20, 440, 275, 26));
+    assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 440, 75, 23));
     for id in ["banner_label", "startmenu_banner", "start_icon"] {
         assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Taskbar");
     }
@@ -241,6 +242,19 @@ fn the_thumbnail_cache_row_reads_and_writes_its_keys() {
     );
     let back = crate::model::load(&out);
     assert_eq!((back.thumbnail_cache, back.thumbnail_max_mb), (true, 128));
+}
+
+#[test]
+fn the_thumbnailers_check_writes_external_thumbnailers() {
+    let mut got = crate::model::load("");
+    let mut s = with(&got);
+    let p = Page::Advanced;
+    assert!(got.external_thumbnailers, "on unless set");
+    let base = got.clone();
+    tick(&mut s, &mut got, p, THUMBNAILERS, false);
+    let out = crate::model::save("", &got, &base).expect("parses");
+    assert_eq!(out, "[thumbnail_cache]\nexternal_thumbnailers = false\n");
+    assert!(!crate::model::load(&out).external_thumbnailers);
 }
 
 #[test]

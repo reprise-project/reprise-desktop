@@ -149,7 +149,7 @@ impl Explorer {
         let job = (!folder).then(|| {
             let p = it.path.clone();
             Job::spawn(Some(&ctx.wake), move || {
-                let cache = repriseapp::thumbs::configured_cache();
+                let cache = repriseapp::thumbs::cache_for(repriseconf::thumbnail_cache());
                 read(
                     &p,
                     route,

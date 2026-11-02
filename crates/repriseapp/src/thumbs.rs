@@ -1,11 +1,14 @@
-//! Pictures' thumbnails for Thumbnails and Tiles, decoded off the event loop by one worker thread
-//! through the freedesktop thumbnail cache. Explorer and the file dialog host share it; Explorer's
+//! Thumbnails for Thumbnails and Tiles, made off the event loop by one worker thread through the
+//! freedesktop thumbnail cache: pictures by the built-in decoders, other types by an installed
+//! thumbnailer ([`reprisefs::thumbnailers`]). Explorer and the file dialog host share it; Explorer's
 //! [`serve_stdio`] decodes for the compositor's Browse dialog in a process of its own. Navigation
 //! bumps a generation counter and the worker drops requests older than the newest it has seen.
 //! A file that does not answer within [`WITHIN`] keeps its icon, and the worker moves on.
 
 use crate::Waker;
 use crate::decode::Decoders;
+use reprisefs::apps::MimeGlobs;
+use reprisefs::thumbnailers::{RunError, Runner, Thumbnailers};
 use reprisefs::thumbnails::{Cleared, Rgba, Thumbnails, edge_for};
 use reprisefs::thumbpipe;
 use reprisekit::controls::shellview;
@@ -38,7 +41,10 @@ struct Request {
 pub struct Done {
     pub path: PathBuf,
     pub thumb: Canvas,
+    /// The size `thumb`'s frame fits: the picture's own when `sized`, else the thumbnail's.
     pub dims: (u32, u32),
+    /// `dims` is the file's picture size, which the Tiles line shows.
+    pub sized: bool,
     pub generation: u64,
     /// The draw scale it was asked for: `thumb` fills [`shellview::thumb_px`] of it.
     pub scale: i32,
@@ -54,13 +60,19 @@ pub struct Thumbs {
 }
 
 impl Thumbs {
-    pub fn new(decoders: Arc<Decoders>, cache: Option<Thumbnails>, wake: Waker) -> Thumbs {
+    /// With `external`, types the decoders do not take go to the installed thumbnailers.
+    pub fn new(
+        decoders: Arc<Decoders>,
+        cache: Option<Thumbnails>,
+        external: bool,
+        wake: Waker,
+    ) -> Thumbs {
         let (tx, req_rx) = channel::<Request>();
         let (done_tx, rx) = channel::<Done>();
         let test_tx = done_tx.clone();
         let worker = std::thread::Builder::new()
             .name("thumbs".to_string())
-            .spawn(move || work(decoders, cache, req_rx, done_tx, wake));
+            .spawn(move || work(decoders, external, cache, req_rx, done_tx, wake));
         let worker = match worker {
             Ok(h) => Some(h),
             Err(e) => {
@@ -140,6 +152,7 @@ impl Drop for Thumbs {
 
 fn work(
     decoders: Arc<Decoders>,
+    external: bool,
     mut cache: Option<Thumbnails>,
     rx: Receiver<Request>,
     tx: Sender<Done>,
@@ -148,6 +161,7 @@ fn work(
     let mut queue: VecDeque<Request> = VecDeque::new();
     let mut newest = 0u64;
     let fs = Deadlines::new(WITHIN);
+    let mut make = Make::new(&decoders, external);
     loop {
         let Ok(req) = rx.recv() else {
             return;
@@ -167,14 +181,14 @@ fn work(
             // the listing and is never asked for again: a retry costs a read
             // per pass and would not succeed. The next listing clears the set.
             let edge = edge_for(shellview::thumb_px(req.scale));
-            let Some((thumb, dims)) = thumbnail(&decoders, edge, cache.as_mut(), &req.path, &fs)
-            else {
+            let Some(made) = thumbnail(&mut make, edge, cache.as_mut(), &req.path, &fs) else {
                 continue;
             };
             let done = Done {
                 path: req.path,
-                thumb,
-                dims,
+                thumb: made.thumb,
+                dims: made.dims,
+                sized: made.sized,
                 generation: req.generation,
                 scale: req.scale,
             };
@@ -189,9 +203,11 @@ fn work(
 /// The thumbnail helper of [`reprisefs::thumbpipe`]: answers the paths on stdin through the
 /// shared cache as `[thumbnail_cache]` sets it, decoding a miss into it, until stdin closes.
 pub fn serve_stdio() -> std::io::Result<()> {
-    let mut cache = configured_cache();
+    let setting = repriseconf::thumbnail_cache();
+    let mut cache = cache_for(setting);
+    let decoders = Decoders::default_set();
     serve(
-        &Decoders::default_set(),
+        &mut Make::new(&decoders, setting.external_thumbnailers),
         cache.as_mut(),
         std::io::stdin().lock(),
         std::io::stdout().lock(),
@@ -199,7 +215,7 @@ pub fn serve_stdio() -> std::io::Result<()> {
 }
 
 fn serve(
-    decoders: &Decoders,
+    make: &mut Make,
     mut cache: Option<&mut Thumbnails>,
     mut input: impl std::io::BufRead,
     mut output: impl std::io::Write,
@@ -207,13 +223,13 @@ fn serve(
     let fs = Deadlines::new(WITHIN);
     while let Some((path, edge)) = thumbpipe::read_request(&mut input)? {
         let edge = edge_for(edge);
-        let thumb = thumbnail(decoders, edge, cache.as_deref_mut(), &path, &fs).map(|(c, dims)| {
-            let (width, height) = c.device_size();
+        let thumb = thumbnail(make, edge, cache.as_deref_mut(), &path, &fs).map(|m| {
+            let (width, height) = m.thumb.device_size();
             thumbpipe::Thumb {
                 width,
                 height,
-                pixels: c.pixels,
-                dims,
+                pixels: m.thumb.pixels,
+                dims: m.dims,
             }
         });
         thumbpipe::write_reply(&mut output, thumb.as_ref())?;
@@ -232,12 +248,6 @@ pub fn open_cache(max_bytes: u64) -> Option<Thumbnails> {
 
 /// The cap when `[thumbnail_cache] max_mb` is unset.
 pub const CACHE_BYTES: u64 = repriseconf::ThumbnailCache::DEFAULT.max_bytes();
-
-/// The shared cache as config.toml's `[thumbnail_cache]` sets it, read now. None when it is off:
-/// pictures still decode, and nothing is kept.
-pub fn configured_cache() -> Option<Thumbnails> {
-    cache_for(repriseconf::thumbnail_cache())
-}
 
 /// The shared cache as `setting` has it: None when it is off.
 pub fn cache_for(setting: repriseconf::ThumbnailCache) -> Option<Thumbnails> {
@@ -258,18 +268,52 @@ pub fn clear_cache() -> Cleared {
 const PROGRAM_PREFIX: &str = "reprise-";
 const PROGRAM: &str = concat!("reprise-", env!("CARGO_PKG_VERSION"));
 
-/// `path`'s thumbnail at `edge` and its size, from `cache` or decoded into it. The stat comes
-/// before the read, so a picture changed in between is kept under its old stamp and simply misses
-/// next time. Anything but a regular file (a named pipe, a device) is never opened, since the open
-/// or the read may never return. A picture whose open or read `fs` gives up on is not marked
-/// failed in the cache, so it is tried again once its mount answers.
+/// How the worker makes a thumbnail: the built-in decoders, and the installed thumbnailers unless
+/// `[thumbnail_cache] external_thumbnailers` is off.
+struct Make<'a> {
+    decoders: &'a Decoders,
+    globs: MimeGlobs,
+    external: Option<External>,
+}
+
+struct External {
+    runner: Runner,
+    installed: Box<dyn Fn() -> Arc<Thumbnailers> + Send>,
+}
+
+impl<'a> Make<'a> {
+    fn new(decoders: &'a Decoders, external: bool) -> Make<'a> {
+        Make {
+            decoders,
+            globs: MimeGlobs::new(),
+            external: external.then(|| External {
+                runner: Runner::default(),
+                installed: Box::new(reprisefs::thumbnailers::installed),
+            }),
+        }
+    }
+}
+
+struct Made {
+    thumb: Canvas,
+    dims: (u32, u32),
+    sized: bool,
+}
+
+/// `path`'s thumbnail at `edge` and its size, from `cache` or made into it. A picture (by its
+/// name's MIME type, or an unknown type) goes to the decoders first; anything else, or a picture
+/// they cannot decode, goes to its thumbnailer. The stat comes before the read, so a file changed
+/// in between is kept under its old stamp and simply misses next time. Anything but a regular file
+/// (a named pipe, a device) is never opened, since the open or the read may never return. A file
+/// whose open or read `fs` gives up on, or that waits out every thumbnailer slot, is not marked
+/// failed in the cache, so it is tried again later; nor is a type nothing here can make.
 fn thumbnail(
-    decoders: &Decoders,
+    make: &mut Make,
     edge: u32,
     mut cache: Option<&mut Thumbnails>,
     path: &std::path::Path,
     fs: &Deadlines,
-) -> Option<(Canvas, (u32, u32))> {
+) -> Option<Made> {
     let p = path.to_path_buf();
     let (file, meta) = fs
         .run(move || {
@@ -282,43 +326,111 @@ fn thumbnail(
         })
         .map_err(|e| log::debug!("thumbnail {}: {e}", path.display()))
         .ok()?;
+    let name = path.file_name().map(|n| n.to_string_lossy());
+    let mime = name.and_then(|n| make.globs.current().mime_of_name(&n));
+    let picture = mime.as_deref().is_none_or(|m| m.starts_with("image/"));
+    let thumbnailer = (make.external.as_ref()).and_then(|x| {
+        mime.as_deref()
+            .and_then(|m| (x.installed)().for_mime(m).cloned())
+    });
+    if !picture && thumbnailer.is_none() {
+        return None;
+    }
     if let Some(cache) = cache.as_deref_mut() {
-        // An entry without the picture's size is a miss, since the Tiles
-        // line needs it, and is written again with it.
+        // A picture's entry without its size is a miss, since the Tiles line needs it, and is
+        // written again with it; unless Reprise wrote it from a thumbnailer that gave none.
         if let Some(hit) = cache.get(path, &meta, edge)
-            && let Some(dims) = hit.dims
+            && (hit.dims.is_some()
+                || !picture
+                || (hit.software.as_deref()).is_some_and(|s| s.starts_with(PROGRAM_PREFIX)))
             && let Ok(thumb) = reprisekit::icontheme::png_to_canvas(&hit.png, edge)
         {
-            return Some((thumb, dims));
+            return Some(Made {
+                dims: hit.dims.unwrap_or_else(|| thumb.device_size()),
+                sized: hit.dims.is_some(),
+                thumb,
+            });
         }
         if cache.failed(path, &meta) {
             return None;
         }
     }
-    let img = match fs.run(move || crate::decode::read_capped_from(file)) {
-        Err(e) if e.kind() == io::ErrorKind::TimedOut => {
-            log::debug!("thumbnail {}: {e}", path.display());
-            return None;
+    let decoded = if picture {
+        match fs.run(move || crate::decode::read_capped_from(file)) {
+            Err(e) if e.kind() == io::ErrorKind::TimedOut => {
+                log::debug!("thumbnail {}: {e}", path.display());
+                return None;
+            }
+            bytes => (bytes.ok()).and_then(|b| make.decoders.decode(&b, (edge, edge))),
         }
-        bytes => bytes.ok().and_then(|b| decoders.decode(&b, (edge, edge))),
+    } else {
+        None
+    };
+    if let Some(img) = decoded {
+        let dims = (img.width, img.height);
+        if let Some(cache) = cache {
+            let (width, height) = img.canvas.device_size();
+            let pixels = straight_rgba(&img.canvas);
+            let thumb = Rgba {
+                width,
+                height,
+                pixels: &pixels,
+            };
+            cache.put(path, &meta, edge, thumb, dims);
+        }
+        return Some(Made {
+            thumb: img.canvas,
+            dims,
+            sized: true,
+        });
+    }
+    let made = match (&make.external, &thumbnailer) {
+        (Some(x), Some(t)) => match x.runner.run(t, path, edge) {
+            Err(RunError::Busy) => return None,
+            Err(RunError::Failed(why)) => {
+                log::debug!("thumbnail {}: {why}", path.display());
+                None
+            }
+            Ok(png) => made_from(&png, edge),
+        },
+        _ => None,
     };
     if let Some(cache) = cache {
-        match &img {
-            Some(img) => {
-                let (width, height) = img.canvas.device_size();
-                let pixels = straight_rgba(&img.canvas);
+        match &made {
+            Some(m) => {
+                let (width, height) = m.thumb.device_size();
+                let pixels = straight_rgba(&m.thumb);
                 let thumb = Rgba {
                     width,
                     height,
                     pixels: &pixels,
                 };
-                cache.put(path, &meta, edge, thumb, (img.width, img.height));
+                cache.put_made(path, &meta, edge, thumb, m.sized.then_some(m.dims));
             }
             None => cache.put_failed(path, &meta),
         }
     }
-    let img = img?;
-    Some((img.canvas, (img.width, img.height)))
+    made
+}
+
+/// A thumbnailer's PNG fitted inside an `edge` square, with the picture size it reported.
+fn made_from(png: &[u8], edge: u32) -> Option<Made> {
+    let full = reprisekit::icontheme::png_to_canvas(png, reprisefs::thumbnailers::MAX_SIDE)
+        .map_err(|e| log::debug!("thumbnailer PNG: {e}"))
+        .ok()?;
+    let (sw, sh) = full.device_size();
+    let (w, h) = reprisekit::raster::fit_size(sw, sh, (edge, edge));
+    let thumb = if (w, h) == (sw, sh) {
+        full
+    } else {
+        Canvas::resample_box_from(sw, sh, w, h, |x, y| full.pixels[(y * sw + x) as usize])
+    };
+    let reported = reprisefs::thumbnails::image_dims(png);
+    Some(Made {
+        dims: reported.unwrap_or((w, h)),
+        sized: reported.is_some(),
+        thumb,
+    })
 }
 
 /// File-system calls on threads of their own, each given up after `within`: a file on a dead
@@ -414,6 +526,7 @@ mod tests {
             path: PathBuf::from(path),
             thumb: Canvas::new(1, 1),
             dims: (800, 600),
+            sized: true,
             generation,
             scale: 1,
         }
@@ -496,12 +609,26 @@ mod tests {
     #[test]
     fn a_cached_thumbnail_is_read_back_rather_than_decoded() {
         let (_dir, src, decoders, count, mut cache) = counted(b"FAKE picture");
-        let first = thumbnail(&decoders, 128, Some(&mut cache), &src, &fs()).expect("decoded");
-        let again = thumbnail(&decoders, 128, Some(&mut cache), &src, &fs()).expect("cached");
+        let first = thumbnail(
+            &mut Make::new(&decoders, false),
+            128,
+            Some(&mut cache),
+            &src,
+            &fs(),
+        )
+        .expect("decoded");
+        let again = thumbnail(
+            &mut Make::new(&decoders, false),
+            128,
+            Some(&mut cache),
+            &src,
+            &fs(),
+        )
+        .expect("cached");
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(first.0, again.0);
-        assert_eq!(again.1, (640, 320));
-        thumbnail(&decoders, 128, None, &src, &fs()).expect("decoded");
+        assert_eq!(first.thumb, again.thumb);
+        assert_eq!((again.dims, again.sized), ((640, 320), true));
+        thumbnail(&mut Make::new(&decoders, false), 128, None, &src, &fs()).expect("decoded");
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
@@ -515,7 +642,13 @@ mod tests {
             thumbpipe::write_request(&mut asked, p, 128).unwrap();
         }
         let mut answers = Vec::new();
-        serve(&decoders, Some(&mut cache), &asked[..], &mut answers).unwrap();
+        serve(
+            &mut Make::new(&decoders, false),
+            Some(&mut cache),
+            &asked[..],
+            &mut answers,
+        )
+        .unwrap();
         let mut r = std::io::Cursor::new(answers);
         let first = thumbpipe::read_reply(&mut r, 128)
             .unwrap()
@@ -542,7 +675,16 @@ mod tests {
         assert!(made.success());
         let (tx, rx) = channel();
         std::thread::spawn(move || {
-            let _ = tx.send(thumbnail(&Decoders::default_set(), 128, None, &fifo, &fs()).is_none());
+            let _ = tx.send(
+                thumbnail(
+                    &mut Make::new(&Decoders::default_set(), false),
+                    128,
+                    None,
+                    &fifo,
+                    &fs(),
+                )
+                .is_none(),
+            );
         });
         let answer = rx.recv_timeout(std::time::Duration::from_secs(5));
         assert_eq!(
@@ -563,16 +705,36 @@ mod tests {
         let mut asked = Vec::new();
         thumbpipe::write_request(&mut asked, &src, shellview::thumb_px(2)).unwrap();
         let mut answers = Vec::new();
-        serve(&decoders, Some(&mut cache), &asked[..], &mut answers).unwrap();
+        serve(
+            &mut Make::new(&decoders, false),
+            Some(&mut cache),
+            &asked[..],
+            &mut answers,
+        )
+        .unwrap();
         assert!(
             thumbpipe::read_reply(&mut &answers[..], 256)
                 .unwrap()
                 .is_some()
         );
         assert_eq!((held("normal"), held("large")), (0, 1));
-        thumbnail(&decoders, edge(2), Some(&mut cache), &src, &fs()).expect("cached");
+        thumbnail(
+            &mut Make::new(&decoders, false),
+            edge(2),
+            Some(&mut cache),
+            &src,
+            &fs(),
+        )
+        .expect("cached");
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
-        thumbnail(&decoders, edge(1), Some(&mut cache), &src, &fs()).expect("decoded");
+        thumbnail(
+            &mut Make::new(&decoders, false),
+            edge(1),
+            Some(&mut cache),
+            &src,
+            &fs(),
+        )
+        .expect("decoded");
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
         assert_eq!((held("normal"), held("large")), (1, 1));
     }
@@ -605,7 +767,8 @@ mod tests {
         std::fs::write(&pic, b"RAMP").unwrap();
         let mut decoders = Decoders::default_set();
         decoders.register(Box::new(Ramp));
-        let (thumb, dims) = thumbnail(&decoders, edge, None, &pic, &fs()).expect("decoded");
+        let Made { thumb, dims, .. } =
+            thumbnail(&mut Make::new(&decoders, false), edge, None, &pic, &fs()).expect("decoded");
         let sv = ShellView {
             mode: Mode::Thumbnails,
             entries: vec![Entry {
@@ -672,11 +835,38 @@ mod tests {
     #[test]
     fn a_picture_that_failed_is_not_decoded_again_until_it_changes() {
         let (_dir, src, decoders, count, mut cache) = counted(b"FAKE BAD picture");
-        assert!(thumbnail(&decoders, 128, Some(&mut cache), &src, &fs()).is_none());
-        assert!(thumbnail(&decoders, 128, Some(&mut cache), &src, &fs()).is_none());
+        assert!(
+            thumbnail(
+                &mut Make::new(&decoders, false),
+                128,
+                Some(&mut cache),
+                &src,
+                &fs()
+            )
+            .is_none()
+        );
+        assert!(
+            thumbnail(
+                &mut Make::new(&decoders, false),
+                128,
+                Some(&mut cache),
+                &src,
+                &fs()
+            )
+            .is_none()
+        );
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
         std::fs::write(&src, b"FAKE picture, saved again").unwrap();
-        assert!(thumbnail(&decoders, 128, Some(&mut cache), &src, &fs()).is_some());
+        assert!(
+            thumbnail(
+                &mut Make::new(&decoders, false),
+                128,
+                Some(&mut cache),
+                &src,
+                &fs()
+            )
+            .is_some()
+        );
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
@@ -738,13 +928,127 @@ mod tests {
         let (_dir, src, decoders, count, mut cache) = counted(b"FAKE picture");
         let fs = fs();
         fs.running.store(MAX_STUCK, Ordering::Release);
-        assert!(thumbnail(&decoders, 128, Some(&mut cache), &src, &fs).is_none());
+        assert!(
+            thumbnail(
+                &mut Make::new(&decoders, false),
+                128,
+                Some(&mut cache),
+                &src,
+                &fs
+            )
+            .is_none()
+        );
         assert_eq!(count.load(Ordering::SeqCst), 0, "nothing decoded");
         fs.running.store(0, Ordering::Release);
         assert!(
-            thumbnail(&decoders, 128, Some(&mut cache), &src, &fs).is_some(),
+            thumbnail(
+                &mut Make::new(&decoders, false),
+                128,
+                Some(&mut cache),
+                &src,
+                &fs
+            )
+            .is_some(),
             "not marked failed in the cache"
         );
         assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    /// A Make whose only thumbnailer is a script running `body` for `*.pdf`, counting its runs
+    /// in `dir/runs`.
+    fn with_thumbnailer<'a>(decoders: &'a Decoders, dir: &std::path::Path, body: &str) -> Make<'a> {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(dir.join("globs2"), "50:application/pdf:*.pdf\n").unwrap();
+        let script = dir.join("fake-thumbnailer");
+        let runs = dir.join("runs");
+        let text = format!("#!/bin/sh\necho >> '{}'\n{body}\n", runs.display());
+        std::fs::write(&script, text).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let folder = dir.join("thumbnailers");
+        std::fs::create_dir_all(&folder).unwrap();
+        let entry = format!(
+            "[Thumbnailer Entry]\nExec={} %i %o %s\nMimeType=application/pdf;\n",
+            script.display()
+        );
+        std::fs::write(folder.join("fake.thumbnailer"), entry).unwrap();
+        let list = Arc::new(Thumbnailers::load(&[folder]));
+        Make {
+            decoders,
+            globs: MimeGlobs::at(vec![dir.join("globs2")]),
+            external: Some(External {
+                runner: Runner {
+                    slot_dir: dir.to_path_buf(),
+                    scratch: dir.to_path_buf(),
+                    deadline: Duration::from_secs(5),
+                },
+                installed: Box::new(move || list.clone()),
+            }),
+        }
+    }
+
+    fn runs(dir: &std::path::Path) -> usize {
+        std::fs::read_to_string(dir.join("runs")).map_or(0, |r| r.lines().count())
+    }
+
+    fn png(w: u32, h: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut enc = png::Encoder::new(&mut out, w, h);
+        enc.set_color(png::ColorType::Rgba);
+        let mut wr = enc.write_header().unwrap();
+        wr.write_image_data(&vec![0xff; (w * h * 4) as usize])
+            .unwrap();
+        wr.finish().unwrap();
+        out
+    }
+
+    #[test]
+    fn a_document_gets_its_thumbnailers_picture_fitted_and_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let page = dir.path().join("page.png");
+        std::fs::write(&page, png(300, 150)).unwrap();
+        let decoders = Decoders::default_set();
+        let body = format!("cp '{}' \"$2\"", page.display());
+        let mut make = with_thumbnailer(&decoders, dir.path(), &body);
+        let doc = dir.path().join("report.pdf");
+        std::fs::write(&doc, b"%PDF-1.7").unwrap();
+        let mut cache = Thumbnails::at(dir.path().join("cache"), PROGRAM, 1 << 20);
+        let made = thumbnail(&mut make, 128, Some(&mut cache), &doc, &fs()).expect("made");
+        assert_eq!(made.thumb.device_size(), (128, 64));
+        assert_eq!((made.dims, made.sized), ((128, 64), false));
+        let meta = std::fs::metadata(&doc).unwrap();
+        assert!(cache.get(&doc, &meta, 128).is_some(), "kept in the cache");
+        let again = thumbnail(&mut make, 128, Some(&mut cache), &doc, &fs()).expect("cached");
+        assert_eq!(again.thumb, made.thumb);
+        assert_eq!(runs(dir.path()), 1, "the second ask is a cache hit");
+    }
+
+    #[test]
+    fn a_failing_thumbnailer_is_not_run_again_until_the_file_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let decoders = Decoders::default_set();
+        let mut make = with_thumbnailer(&decoders, dir.path(), "exit 1");
+        let doc = dir.path().join("broken.pdf");
+        std::fs::write(&doc, b"%PDF").unwrap();
+        let mut cache = Thumbnails::at(dir.path().join("cache"), PROGRAM, 1 << 20);
+        assert!(thumbnail(&mut make, 128, Some(&mut cache), &doc, &fs()).is_none());
+        assert!(thumbnail(&mut make, 128, Some(&mut cache), &doc, &fs()).is_none());
+        assert_eq!(runs(dir.path()), 1);
+        std::fs::write(&doc, b"%PDF, saved again").unwrap();
+        assert!(thumbnail(&mut make, 128, Some(&mut cache), &doc, &fs()).is_none());
+        assert_eq!(runs(dir.path()), 2);
+    }
+
+    #[test]
+    fn with_thumbnailers_off_a_document_is_neither_run_nor_read_nor_marked_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let decoders = Decoders::default_set();
+        let mut make = with_thumbnailer(&decoders, dir.path(), "exit 1");
+        make.external = None;
+        let doc = dir.path().join("report.pdf");
+        std::fs::write(&doc, b"%PDF").unwrap();
+        let mut cache = Thumbnails::at(dir.path().join("cache"), PROGRAM, 1 << 20);
+        assert!(thumbnail(&mut make, 128, Some(&mut cache), &doc, &fs()).is_none());
+        assert_eq!(runs(dir.path()), 0);
+        assert!(!cache.failed(&doc, &std::fs::metadata(&doc).unwrap()));
     }
 }
