@@ -458,7 +458,10 @@ are.
   that support it draw at the exact scale.
 - **Night light** from sunset to sunrise, worked out from your time zone, or
   on a schedule. Each change fades over half an hour. A check box in the
-  displays panel pauses it.
+  displays panel pauses it until tomorrow; the displays icon's right-click
+  menu disables it for an hour or until tomorrow (the end of tonight's
+  night, or 06:00 with no night ahead), and shows when it resumes. A pause
+  lasts through a config reload, not a new session.
 - A **displays icon** in the tray: scroll over it to dim or brighten every
   display at once; click it for a slider per display and the night light
   switch; right-click for night light's menu. The brightness keys change every

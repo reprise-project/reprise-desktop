@@ -196,7 +196,7 @@ pub fn update(state: &mut State) {
         };
         let k = schedule::kelvin(level, nl.cfg.temperature);
         nl.kelvin = (k < NEUTRAL).then_some(k);
-        nl.warm_until = warming(nl).then(|| schedule::pause_until(now, &nights));
+        nl.warm_until = warming(nl).then(|| schedule::pause_until(now, &nights, &Local));
         nl.next_start = schedule::next_start(now, &nights);
     } else {
         nl.kelvin = None;
@@ -314,27 +314,55 @@ pub fn outputs_changed(state: &mut State) {
     apply_all(state);
 }
 
-/// Pause until the night now on (or the next one) is over, or resume:
-/// the displays cell's menu and the keybind.
-pub fn toggle_pause(state: &mut State) {
+/// How long a pause from the displays cell's menu lasts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pause {
+    Hour,
+    /// Until the night now on (or the next one) is over.
+    Tomorrow,
+}
+
+/// When a `pause` taken at `now` ends, given the schedule's `nights`.
+fn pause_end(pause: Pause, now: i64, nights: &[(i64, i64)], clock: &dyn LocalClock) -> i64 {
+    match pause {
+        Pause::Hour => now + 3600,
+        Pause::Tomorrow => schedule::pause_until(now, nights, clock),
+    }
+}
+
+/// Pause for `pause`'s span from now; nothing while night light is off. A pause outlives a
+/// reload that keeps `enabled` and `schedule`, never a restart.
+pub fn pause(state: &mut State, pause: Pause) {
     let now = now();
     let nl = &mut state.night;
     if !nl.cfg.enabled {
         log::info!("night light: not enabled; nothing to pause");
         return;
     }
-    if nl.paused_until.take().is_some() {
-        log::info!("night light: resumed");
-    } else {
-        let plan = plan(nl);
-        let until = schedule::pause_until(now, &schedule::nights(plan, now, &Local));
-        nl.paused_until = Some(until);
-        log::info!(
-            "night light: paused until {}",
-            crate::taskbar::time_text(until)
-        );
-    }
+    let plan = plan(nl);
+    let until = pause_end(pause, now, &schedule::nights(plan, now, &Local), &Local);
+    nl.paused_until = Some(until);
+    log::info!(
+        "night light: paused until {}",
+        crate::taskbar::time_text(until)
+    );
     update(state);
+}
+
+pub fn resume(state: &mut State) {
+    if state.night.paused_until.take().is_some() {
+        log::info!("night light: resumed");
+        update(state);
+    }
+}
+
+/// Resume, else pause until tomorrow: the keybind and the displays panel's check box.
+pub fn toggle_pause(state: &mut State) {
+    if state.night.paused_until.is_some() {
+        resume(state);
+    } else {
+        pause(state, Pause::Tomorrow);
+    }
 }
 
 /// Pause (`paused` true) or resume; nothing while night light is off or already so.
@@ -388,37 +416,52 @@ fn panel_text(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Row {
-    Pause,
+    Pause(Pause),
+    Resume,
     Settings,
 }
 
-/// The displays cell's menu, opened from `cell` (layout coordinates) on
-/// `output` on the screen side of the bar: Pause (or Resume), then
-/// Settings...; Settings... alone while night light is off.
+/// The displays cell's menu rows: while paused, Resume and the time it resumes by itself; else the
+/// two pauses; Settings... last. Settings... alone while night light is off.
+fn menu(enabled: bool, paused_until: Option<i64>) -> (Vec<MenuItem>, Vec<Option<Row>>) {
+    if !enabled {
+        return (
+            vec![MenuItem::item("&Settings...").bold(true)],
+            vec![Some(Row::Settings)],
+        );
+    }
+    let (mut items, mut rows) = match paused_until {
+        Some(t) => (
+            vec![
+                MenuItem::item("&Resume Night Light").bold(true),
+                MenuItem::entry(format!("Resumes at {}", crate::taskbar::time_text(t)))
+                    .enabled(false),
+            ],
+            vec![Some(Row::Resume), None],
+        ),
+        None => (
+            vec![
+                MenuItem::item("Disable for 1 &hour").bold(true),
+                MenuItem::item("Disable until &tomorrow"),
+            ],
+            vec![
+                Some(Row::Pause(Pause::Hour)),
+                Some(Row::Pause(Pause::Tomorrow)),
+            ],
+        ),
+    };
+    items.extend([MenuItem::Separator, MenuItem::item("&Settings...")]);
+    rows.extend([None, Some(Row::Settings)]);
+    (items, rows)
+}
+
+/// The displays cell's menu (`menu`), opened from `cell` (layout coordinates) on `output` on the
+/// screen side of the bar.
 pub fn open_menu(state: &mut State, output: &Output, cell: Rect) {
     if state.layout_box(Some(output)).width <= 0 {
         return;
     }
-    let pause = if state.night.paused_until.is_some() {
-        "&Resume"
-    } else {
-        "&Pause"
-    };
-    let (items, rows) = if state.night.cfg.enabled {
-        (
-            vec![
-                MenuItem::item(pause).bold(true),
-                MenuItem::Separator,
-                MenuItem::item("&Settings..."),
-            ],
-            vec![Some(Row::Pause), None, Some(Row::Settings)],
-        )
-    } else {
-        (
-            vec![MenuItem::item("&Settings...").bold(true)],
-            vec![Some(Row::Settings)],
-        )
-    };
+    let (items, rows) = menu(state.night.cfg.enabled, state.night.paused_until);
     let usable = state.usable_area(Some(output));
     let layout = MenuStyle::context_for(&state.config.theme, &items).layout_in(
         &state.config.theme,
@@ -446,7 +489,8 @@ pub fn open_menu(state: &mut State, output: &Output, cell: Rect) {
 
 pub fn pick(state: &mut State, row: Row) {
     match row {
-        Row::Pause => toggle_pause(state),
+        Row::Pause(p) => pause(state, p),
+        Row::Resume => resume(state),
         Row::Settings => open_settings(state),
     }
 }
@@ -512,6 +556,83 @@ impl GammaControlHandler for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn labels(items: &[MenuItem]) -> Vec<(String, bool)> {
+        (items.iter())
+            .map(|i| match i {
+                MenuItem::Entry { label, enabled, .. } => (label.clone(), *enabled),
+                _ => ("-".into(), false),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_menu_offers_two_pauses_then_resume_and_its_time_while_paused() {
+        let (items, rows) = menu(true, None);
+        assert_eq!(
+            labels(&items),
+            [
+                ("Disable for 1 hour".into(), true),
+                ("Disable until tomorrow".into(), true),
+                ("-".into(), false),
+                ("Settings...".into(), true),
+            ]
+        );
+        assert_eq!(
+            rows,
+            [
+                Some(Row::Pause(Pause::Hour)),
+                Some(Row::Pause(Pause::Tomorrow)),
+                None,
+                Some(Row::Settings)
+            ]
+        );
+        let (items, rows) = menu(true, Some(0));
+        let shown = labels(&items);
+        assert_eq!(shown[0], ("Resume Night Light".into(), true));
+        assert_eq!(
+            shown[1],
+            (
+                format!("Resumes at {}", crate::taskbar::time_text(0)),
+                false
+            ),
+            "the resume time is a greyed row"
+        );
+        assert_eq!(rows[..2], [Some(Row::Resume), None]);
+        assert_eq!(menu(false, None).1, [Some(Row::Settings)]);
+    }
+
+    #[test]
+    fn an_hour_pause_ends_an_hour_on_whatever_the_schedule() {
+        let nights = [(1000, 50_000)];
+        assert_eq!(pause_end(Pause::Hour, 2000, &nights, &Local), 5600);
+        assert_eq!(
+            pause_end(Pause::Tomorrow, 2000, &nights, &Local),
+            schedule::pause_until(2000, &nights, &Local)
+        );
+    }
+
+    #[test]
+    fn a_pause_resumes_and_outlives_a_reload_that_keeps_the_schedule() {
+        let mut h = crate::harness::Harness::new();
+        h.state.config.night_light.enabled = true;
+        update(&mut h.state);
+        pause(&mut h.state, Pause::Hour);
+        let until = h.state.night.paused_until.expect("paused");
+        assert!((until - now() - 3600).abs() <= 2, "an hour from now");
+        h.state.config.night_light.temperature += 100;
+        update(&mut h.state);
+        assert_eq!(h.state.night.paused_until, Some(until), "a reload keeps it");
+        resume(&mut h.state);
+        assert_eq!(h.state.night.paused_until, None);
+        pause(&mut h.state, Pause::Tomorrow);
+        assert!(h.state.night.paused_until.is_some_and(|t| t > now()));
+        h.state.config.night_light.enabled = false;
+        update(&mut h.state);
+        assert_eq!(h.state.night.paused_until, None, "turning it off ends it");
+        pause(&mut h.state, Pause::Hour);
+        assert_eq!(h.state.night.paused_until, None, "nothing pauses while off");
+    }
 
     #[test]
     fn the_panel_says_until_when_warming_paused_or_off() {

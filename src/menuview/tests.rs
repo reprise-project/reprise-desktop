@@ -356,8 +356,8 @@ fn a_hidden_bars_start_menu_stands_on_its_reveal_line() {
 fn the_tray_cells_menus_pick_their_rows() {
     use crate::nightlight::Row;
     assert_eq!(MenuKind::Layouts.pick(2), MenuPick::Layout(2));
-    let night = MenuKind::NightLight(vec![Some(Row::Pause), None, Some(Row::Settings)]);
-    assert_eq!(night.pick(0), MenuPick::NightLight(Row::Pause));
+    let night = MenuKind::NightLight(vec![Some(Row::Resume), None, Some(Row::Settings)]);
+    assert_eq!(night.pick(0), MenuPick::NightLight(Row::Resume));
     assert_eq!(night.pick(1), MenuPick::Nothing);
     assert_eq!(night.pick(2), MenuPick::NightLight(Row::Settings));
 }
