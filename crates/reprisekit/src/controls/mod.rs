@@ -4,6 +4,7 @@
 pub mod aboutbox;
 pub mod addressbar;
 pub mod arrange;
+pub mod batchrename;
 pub mod browsefolder;
 pub mod calendar;
 pub mod captiontabs;

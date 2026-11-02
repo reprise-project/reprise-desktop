@@ -33,9 +33,14 @@ The file manager, and the default for folders.
   desktop, a mail or a removable drive. An archive (zip, 7z, tar plain or
   compressed) has Extract Here, which writes over nothing already there, and
   Extract to, into a new folder named after it; an archive with an entry
-  that would land outside that folder is refused. Ctrl+Z undoes the last
-  one; undoing a copy its Recycle Bin can't take (a drive set to remove files
-  immediately, or too big) asks before deleting it permanently.
+  that would land outside that folder is refused. F2 with several items
+  selected opens a Rename dialog: find and replace (optionally ignoring
+  case) or a base name numbered in view order ("Photo (1)", "Photo (2)"),
+  with extensions kept by default and a preview of every new name; a name
+  in use or not valid greys OK. Launchers are left out of it. Ctrl+Z
+  undoes the last one, a whole Rename dialog's worth at once; undoing a
+  copy its Recycle Bin can't take (a drive set to remove files immediately,
+  or too big) asks before deleting it permanently.
 - **Drag and drop** between Explorer windows, the desktop and other
   programs, Flatpaks included. A right-drag asks whether to copy, move or
   make a shortcut. Drop a link from a browser and you get a link file.
