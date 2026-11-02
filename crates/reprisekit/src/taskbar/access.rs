@@ -12,6 +12,8 @@ pub struct TaskbarNames {
     pub pager_attention: Vec<bool>,
     pub tasks: Vec<(String, bool)>,
     pub attention: Vec<bool>,
+    /// Per task button, its program's unread count, read after the title.
+    pub badges: Vec<Option<u32>>,
     pub tray: Vec<String>,
     /// The flyout or a tray arrow's run is open: the ^ cell reads expanded (a tray arrow is then named Hide).
     pub hidden_open: bool,
@@ -23,6 +25,11 @@ pub struct TaskbarNames {
 }
 
 pub const ATTENTION: &str = "Wants attention";
+
+/// A task button's name with its unread badge: "Mail, 3 unread".
+pub fn unread(title: &str, count: u32) -> String {
+    format!("{title}, {count} unread")
+}
 /// Name and tip of the Quick Launch band's » cell.
 pub const QUICK_MORE_NAME: &str = "Show more Quick Launch buttons";
 
@@ -98,7 +105,10 @@ pub fn access(layout: &TaskbarLayout, names: &TaskbarNames, tree: &mut Tree, par
         if !layout.tasks.is_empty() {
             let id = bar(tree, "tasks", &layout.tasks, "Running Applications");
             for (i, (r, (title, active))) in layout.tasks.iter().zip(&names.tasks).enumerate() {
-                let mut n = button(*r, title);
+                let mut n = match names.badges.get(i).copied().flatten() {
+                    Some(count) => button(*r, &unread(title, count)),
+                    None => button(*r, title),
+                };
                 n.set_toggled((*active).into());
                 wants(&mut n, names.attention.get(i));
                 mark(TaskbarHit::Task(i), tree.push(id, i, n));

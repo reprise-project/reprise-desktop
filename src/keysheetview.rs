@@ -64,6 +64,24 @@ struct Panel {
     tree: TreeId,
     glass_tree: TreeId,
     backdrop: Backdrop,
+    /// What it shows and where, for the reader.
+    sheet: KeySheet,
+    layout: keysheet::Layout,
+    rect: Rect,
+}
+
+/// The sheet as a reader sees it while it shows: its groups and their rows.
+pub fn access(state: &State) -> Option<reprisekit::access::Tree> {
+    use reprisekit::access::{ROOT, accesskit::Role};
+    let p = state.key_sheet.panel.as_ref()?;
+    let mut tree = crate::access::root(Role::Window, keysheet::TITLE, p.rect);
+    let (w, h) = (p.rect.width, p.rect.height);
+    keysheet::access(&p.sheet, &p.layout, Rect::new(0, 0, w, h), &mut tree, ROOT);
+    Some(tree)
+}
+
+pub fn is_shown(state: &State) -> bool {
+    state.key_sheet.panel.is_some()
 }
 
 const WINDOWS: &str = "Windows";
@@ -391,8 +409,12 @@ impl State {
             tree,
             glass_tree,
             backdrop,
+            sheet: k,
+            layout: lay,
+            rect: Rect::new(at.0, at.1, size.0, size.1),
         });
         self.redraw_nodes(Vec::new(), &[tree.into()]);
+        crate::access::touch(self);
     }
 
     /// Take the sheet down and stop waiting for it, as the lock does.
@@ -409,6 +431,7 @@ impl State {
         p.backdrop
             .set(&mut self.scene, &self.glass, p.glass_tree, None);
         self.destroy_redrawn(p.tree);
+        crate::access::touch(self);
     }
 }
 
@@ -555,6 +578,26 @@ mod tests {
         h.key(KEY_LEFTMETA, false);
         assert!(!h.state.key_sheet_shown(), "the release takes it down");
         assert!(h.state.menus.is_empty(), "and opens no Start menu");
+    }
+
+    #[test]
+    fn a_reader_finds_the_shown_sheets_groups_where_it_stands() {
+        use reprisekit::access::accesskit::Role;
+        let mut h = harness(true);
+        assert!(access(&h.state).is_none());
+        h.key(KEY_LEFTMETA, true);
+        h.run_for(80);
+        let t = access(&h.state).expect("the sheet's tree");
+        assert!(t.find(Role::Group, keysheet::TITLE).is_some());
+        assert!(t.find(Role::Group, WINDOWS).is_some());
+        let rect = h.state.key_sheet.panel.as_ref().unwrap().rect;
+        let b = t.focus_bounds();
+        assert!(
+            b.is_some_and(|b| b.x0 == f64::from(rect.x) && b.y0 == f64::from(rect.y)),
+            "placed at {rect:?}: {b:?}"
+        );
+        h.key(KEY_LEFTMETA, false);
+        assert!(access(&h.state).is_none(), "gone with the sheet");
     }
 
     #[test]

@@ -443,6 +443,12 @@ fn the_file_dialogs_file_name_completes_from_its_folder_on_a_popup() {
 
     let text = TextRenderer::load(&FontConfig::default());
     let px = Theme::default().fonts.size_px;
+    let mut tree = Tree::window("Open", (w, h));
+    d.access(&mut tree, r, &text, px);
+    assert!(
+        tree.find(Role::ListBoxOption, "notes/").is_some(),
+        "File name's matches read as a list"
+    );
     let mut p = filedlg::Popped {
         dlg: &mut d,
         text: std::rc::Rc::new(text),

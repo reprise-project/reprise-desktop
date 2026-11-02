@@ -511,10 +511,12 @@ are.
 ## Accessibility
 
 - **Screen readers.** Reprise's programs and its own Start menu, taskbar,
-  switcher, launcher, dialogs, notification balloons and history speak
-  AT-SPI, and so do window frames: a reader can press a caption's Minimize,
-  Maximize, Close and window menu, and pick or close its tabs. A balloon is
-  announced when it appears. They're tested with Orca.
+  switcher, launcher, dialogs, notification balloons and history, shortcut
+  sheet and colour picker speak AT-SPI, and so do window frames: a reader can
+  press a caption's Minimize, Maximize, Close and window menu, and pick or
+  close its tabs. A balloon is announced when it appears, a task button reads
+  its unread count ("Mail, 3 unread") and the colour picker its colour as
+  `#rrggbb`. They're tested with Orca.
 - **Magnifier** from 1x to 8x (Super+= and Super+-) that follows the pointer,
   the caret and the keyboard focus.
 - **Colour filters:** grayscale, inverted, and corrections for three kinds of

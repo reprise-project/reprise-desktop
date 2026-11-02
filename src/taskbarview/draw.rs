@@ -345,16 +345,13 @@ impl State {
             })
             .collect();
         let task_badge = if self.config.taskbar.badges && self.launcher_entries.any_badge() {
-            let pins = &self.quicklaunch;
             (slots.iter())
                 .map(|slot| {
                     if slot.dialog.is_some() {
                         return None;
                     }
                     let app = slot.windows.first().map_or("", |&i| apps[i].as_str());
-                    let pin = slot.pin.and_then(|p| pins.get(p)).map(|q| q.file.as_str());
-                    let keys = crate::launcherentry::app_keys(app, pin, &self.app_index);
-                    self.launcher_entries.badge(&keys)
+                    self.task_badge(app, slot.pin)
                 })
                 .collect()
         } else {

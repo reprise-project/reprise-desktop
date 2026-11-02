@@ -2,6 +2,7 @@ use super::{FileDlg, Focus, cancel_label};
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{self, edit_first_visible};
 use crate::controls::combo;
+use crate::controls::pathcomplete;
 use crate::controls::placesbar;
 use crate::controls::shellview;
 use crate::controls::toolbar;
@@ -64,6 +65,8 @@ impl FileDlg {
             "filename",
         );
         labelled(tree, filename, l);
+        let complete = self.completion_layout(&lay, (!self.hosted).then_some(r));
+        pathcomplete::access(&self.complete, &complete, tree, filename);
         let accept = tree.push(
             root,
             "accept",
