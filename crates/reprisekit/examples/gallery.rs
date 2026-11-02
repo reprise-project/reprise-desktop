@@ -4036,6 +4036,7 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         (361, 424),
     );
     sheet.set_apply_enabled(true);
+    sheet.set_restore(0, true);
     let (sw, sh) = sheet.size;
     let mut sheet_c = Canvas::new(sw as u32, sh as u32);
     sheet_c.fill_rect(sheet_c.bounds(), cs.button_face);

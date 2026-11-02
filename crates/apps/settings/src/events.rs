@@ -72,6 +72,10 @@ impl SettingsApp {
             }
             propsheet::Event::Page(_, form::Event::Pressed(id)) => match id {
                 pages::EDIT_FILE => self.edit_file(),
+                propsheet::RESTORE => {
+                    self.ask_restore();
+                    Reply::redraw_all()
+                }
                 pages::BACKUP_EXPORT | pages::BACKUP_IMPORT => {
                     let pick = match id {
                         pages::BACKUP_EXPORT => Pick::Export,

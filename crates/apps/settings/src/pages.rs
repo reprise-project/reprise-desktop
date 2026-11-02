@@ -28,7 +28,9 @@ mod lists;
 mod system;
 
 pub use appearance::{effects, fonts_and_icons, night_light};
-pub use bind::{fill_layouts, follow, layout_selection, read_one, write, write_form, write_forms};
+pub use bind::{
+    fill_layouts, follow, keys_of, layout_selection, read_one, write, write_form, write_forms,
+};
 pub use desktop::{FORGET_FRAMES, desktops, launcher, switcher, taskbar, windows};
 pub use input::{accessibility, keyboard, mouse, pointers, preview_size};
 pub use lists::{

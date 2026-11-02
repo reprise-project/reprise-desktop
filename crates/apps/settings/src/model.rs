@@ -14,8 +14,10 @@ mod io;
 mod shortcuts;
 
 pub use choices::*;
-pub(crate) use fields::text_to_list;
-pub use io::{load, rebase, save, switch_interface, validate};
+pub(crate) use fields::{INTERFACE, text_to_list};
+#[cfg(test)]
+pub use io::keys;
+pub use io::{copy_keys, keys_apart, load, rebase, save, switch_interface, validate};
 pub use shortcuts::{
     ACTIONS, ProgramShortcut, Row, Shortcut, check_keys, check_program_keys, default_chord, forget,
     program_text, row,

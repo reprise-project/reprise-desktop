@@ -10,6 +10,7 @@ ok = OK
 cancel = Cancel
 apply = &Apply
 close = Close
+restore-defaults = Restore Defaults
 yes = &Yes
 yes-to-all = Yes to &All
 no = &No

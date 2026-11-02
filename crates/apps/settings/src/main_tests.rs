@@ -1426,3 +1426,74 @@ fn the_charge_limit_row_follows_what_upower_says() {
     charged(&mut a, None, None);
     assert_eq!(charge_row(&a), None, "the battery went away");
 }
+
+/// Restore Defaults on Sounds asks with the page's keys the file sets, then takes only those out
+/// of `config.toml`; a page whose keys are all at their defaults has it greyed, and a page that
+/// writes no key has none.
+#[test]
+fn restore_defaults_takes_only_the_pages_keys_out_of_the_file() {
+    let dir = tmp("restore-defaults");
+    let path = dir.join("config.toml");
+    std::fs::write(
+        &path,
+        "# mine\n[sounds]\nbell = false\ntheme = \"oxygen\"\n\n[taskbar]\nauto_hide = true\n",
+    )
+    .unwrap();
+    let mut a = SettingsApp::open(path.clone());
+    let lit = |a: &SettingsApp, p: Page| match a.sheet.pages[p.index()].item(propsheet::RESTORE) {
+        Some(it) => matches!(it.control, form::Control::Button { enabled: true, .. }),
+        None => panic!("{p:?} has no Restore Defaults"),
+    };
+    assert!(lit(&a, Page::Sounds) && lit(&a, Page::Taskbar));
+    let at = a.sheet.pages[Page::Sounds.index()]
+        .item(propsheet::RESTORE)
+        .unwrap()
+        .rect;
+    let ok = a.sheet.pages[Page::Sounds.index()]
+        .item(propsheet::OK)
+        .unwrap()
+        .rect;
+    assert_eq!(
+        at,
+        reprisekit::raster::Rect::new(152, 498, 96, 23),
+        "under the page's left edge"
+    );
+    assert_eq!(at.y, ok.y, "on the button row");
+    assert!(!lit(&a, Page::Pointers), "nothing there is off its default");
+    for p in [Page::Display, Page::StartMenu, Page::Tablet, Page::Backup] {
+        assert!(
+            a.sheet.pages[p.index()].item(propsheet::RESTORE).is_none(),
+            "{p:?}"
+        );
+    }
+    a.want.cursor_size = 48;
+    a.sync_apply();
+    assert!(lit(&a, Page::Pointers), "an unapplied change counts");
+
+    let keys = a.restorable(Page::Sounds);
+    assert_eq!(
+        apply::restore_question(Page::Sounds, &keys),
+        "Restore the defaults on the Sounds page?\n\
+         These settings are taken out of config.toml:\n    sounds.theme\n    sounds.bell"
+    );
+    a.sheet.tabs.open = Page::Sounds.index();
+    a.ask_restore();
+    assert!(a.asking.is_some(), "it asks first");
+    a.asking = None;
+    a.restore_defaults(Page::Sounds);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "# mine\n\n[taskbar]\nauto_hide = true\n"
+    );
+    let def = model::Settings::default();
+    assert_eq!(
+        (&a.want.sound_theme, a.want.bell),
+        (&def.sound_theme, def.bell)
+    );
+    assert!(!lit(&a, Page::Sounds), "greyed once at the defaults");
+    assert_eq!(
+        a.want.cursor_size, 48,
+        "the Pointers change is still pending"
+    );
+    assert!(a.dirty());
+}
