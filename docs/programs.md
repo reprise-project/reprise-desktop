@@ -166,7 +166,8 @@ One window, 23 pages, four headings. Only one runs at a time.
     memory.
 - **Input**
   - **Keyboard:** layouts, repeat, every shortcut, programs' global
-    shortcuts included, and whether Caps Lock and Num Lock show on screen.
+    shortcuts included, whether Caps Lock and Num Lock show on screen, and
+    the sheet holding Super shows.
   - **Mouse:** pointer speed, double-click speed, scrolling, and the
     touchpad's tapping, scrolling and disable-while-typing.
   - **Tablet:** what each pad button, pad key, ring, strip and dial does,

@@ -80,3 +80,24 @@ pub struct TabletConfig {
 pub fn find_tablet<'a>(list: &'a [TabletConfig], name: &str) -> Option<&'a TabletConfig> {
     list.iter().find(|t| crate::glob::glob(&t.name, name))
 }
+
+/// `[shortcut_overlay]`: the keyboard shortcut sheet holding Super alone shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShortcutOverlay {
+    pub enabled: bool,
+    /// How long Super is held alone before the sheet shows, in ms.
+    pub delay_ms: u32,
+}
+
+impl ShortcutOverlay {
+    pub const DELAY_MS: std::ops::RangeInclusive<u32> = 200..=5000;
+}
+
+impl Default for ShortcutOverlay {
+    fn default() -> Self {
+        ShortcutOverlay {
+            enabled: true,
+            delay_ms: 1000,
+        }
+    }
+}

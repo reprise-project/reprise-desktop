@@ -743,6 +743,8 @@ fn save_round_trips_every_field() {
         kb_options: "ctrl:nocaps".into(),
         repeat_rate: 30,
         repeat_delay: 500,
+        shortcut_overlay: false,
+        shortcut_overlay_ms: 600,
         standby: "loginctl suspend".into(),
         poweroff: "loginctl poweroff".into(),
         reboot: "loginctl reboot".into(),

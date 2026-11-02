@@ -1,6 +1,7 @@
-//! The launcher finding open windows, in Classic, Blue and Glass, written to
-//! `target/reprisekit-gallery-launcher-windows@<scale>.png`.
+//! The launcher finding open windows and the keyboard shortcut sheet in each look, written to
+//! `target/reprisekit-gallery-launcher-windows@<scale>.png` and `...-key-sheet@<scale>.png`.
 
+use reprisekit::controls::keysheet::{self, Binding, Group, KeySheet};
 use reprisekit::controls::launcher::{self, Key, Launcher, Row};
 use reprisekit::interface::Interface;
 use reprisekit::interfaces::theme_for;
@@ -63,5 +64,70 @@ pub fn launcher_windows(scale: i32) -> Canvas {
     let icon = square(launcher::ICON * scale, Color::rgb(230, 120, 30));
     side_by_side(scale, |theme, text| {
         launcher::draw(theme, text, &l, Some(&icon), true, None)
+    })
+}
+
+fn key_sheet_sample() -> KeySheet {
+    let group = |title: &str, rows: &[(&str, &str)]| Group {
+        title: title.into(),
+        rows: rows
+            .iter()
+            .map(|(keys, what)| Binding {
+                keys: (*keys).into(),
+                what: (*what).into(),
+            })
+            .collect(),
+    };
+    KeySheet {
+        groups: vec![
+            group(
+                "Windows",
+                &[
+                    ("Super+Q, Alt+F4", "Close the window"),
+                    ("Alt+Tab", "Switch windows"),
+                    ("Super+Tab", "Switch windows in 3D"),
+                    ("Alt+Space", "Window menu"),
+                    ("Super+Left", "Snap left"),
+                    ("Super+Right", "Snap right"),
+                    ("Super+W", "Window overview"),
+                ],
+            ),
+            group(
+                "Desktops",
+                &[
+                    ("Super+Ctrl+Left", "Previous desktop"),
+                    ("Super+Ctrl+Right", "Next desktop"),
+                ],
+            ),
+            group(
+                "Launch and search",
+                &[
+                    ("Super, Ctrl+Esc", "Start menu"),
+                    ("Super+Space", "Launcher"),
+                    ("Super+R", "Run"),
+                    ("Super+V", "Clipboard history"),
+                ],
+            ),
+            group(
+                "Screenshots",
+                &[("Print", "Whole screen"), ("Shift+Print", "Area")],
+            ),
+            group(
+                "System",
+                &[
+                    ("Super+L", "Lock"),
+                    ("Shift+Left Alt", "Next keyboard layout"),
+                ],
+            ),
+        ],
+    }
+}
+
+/// The sheet laid out for a short output, so it takes columns.
+pub fn key_sheet(scale: i32) -> Canvas {
+    let k = key_sheet_sample();
+    side_by_side(scale, |theme, text| {
+        let lay = keysheet::layout(&k, theme, text, (900, 500));
+        keysheet::draw(theme, text, &k, &lay)
     })
 }
