@@ -621,6 +621,37 @@ fn window_shake_follows_the_interface_and_auto_reads_as_its_default() {
 }
 
 #[test]
+fn a_dark_schedule_loads_as_its_mode_and_picking_light_or_dark_ends_it() {
+    let night = load("[appearance]\ninterface = \"glass\"\n[glass]\nmode = \"night\"\n");
+    assert_eq!(night.glass_mode, "night");
+    let hours = load("[glass]\nmode = \"hours\"\ndark_from = \"22:00\"\n");
+    assert_eq!(
+        (
+            hours.glass_mode.as_str(),
+            hours.glass_dark_from.as_str(),
+            hours.glass_dark_to.as_str()
+        ),
+        ("hours", "22:00", "07:00")
+    );
+    let text = "[glass]\nmode = \"hours\"\ndark_from = \"22:00\"\n";
+    let base = load(text);
+    let dark = Settings {
+        glass_mode: "dark".into(),
+        ..base.clone()
+    };
+    let saved = save(text, &dark, &base).unwrap();
+    assert_eq!(load(&saved).glass_mode, "dark", "{saved}");
+    assert_eq!(
+        repriseconf::config::Config::parse(&saved)
+            .unwrap()
+            .glass_dark
+            .schedule,
+        repriseconf::config::DarkSchedule::Off,
+        "no schedule left: {saved}"
+    );
+}
+
+#[test]
 fn save_round_trips_every_field() {
     let s = Settings {
         terminal: "kitty".into(),
@@ -651,6 +682,8 @@ fn save_round_trips_every_field() {
         color_scheme: "Olive Green".into(),
         glass_color: "#102030".into(),
         glass_mode: "dark".into(),
+        glass_dark_from: "20:30".into(),
+        glass_dark_to: "05:45".into(),
         glass_material: "smoked".into(),
         glass_frame: "square".into(),
         glass_notification_style: "lozenge".into(),

@@ -26,6 +26,7 @@ mod configwatch;
 mod constraint;
 mod crash;
 mod cursor;
+mod darkmode;
 mod desktops;
 mod devices;
 mod displays;
@@ -297,6 +298,7 @@ fn run(
     if after_crash {
         spawn::adopt_orphans();
     }
+    let config = darkmode::apply(&mut Default::default(), config, &config_file);
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     let mut state = State::new(
         config,
@@ -367,6 +369,7 @@ fn run(
     }
     state.config_notice = config_notice.clone();
     state.config_file = config_file;
+    darkmode::setup(&mut state);
     if let Some(body) = config_notice {
         event_loop.handle().insert_idle(move |state| {
             notifyview::notice(state, "Configuration", &body);

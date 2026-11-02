@@ -285,6 +285,7 @@ where
                     }
                     state.config_notice = notice;
                 }
+                let cfg = crate::darkmode::apply(&mut state.dark_mode, cfg, &table);
                 state.config_file = table;
                 reload(state, cfg);
             }

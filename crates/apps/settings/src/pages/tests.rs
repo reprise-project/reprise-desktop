@@ -390,6 +390,7 @@ fn enabled_on(s: &PropSheet, page: Page, id: &str) -> bool {
         Control::Combo(c) => c.enabled,
         Control::UpDown(u) => u.enabled,
         Control::TrackBar(t) => t.enabled,
+        Control::Time(t) => t.enabled,
         _ => panic!("{id} has no greyed state here"),
     }
 }

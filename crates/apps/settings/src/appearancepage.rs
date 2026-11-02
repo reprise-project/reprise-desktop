@@ -12,7 +12,7 @@ use crate::model::{
     GLASS_FRAMES, GLASS_MATERIALS, GLASS_MODES, GLASS_NOTIFY_STYLES, INTERFACES, Settings,
     text_to_list,
 };
-use crate::pages::{Area, COMBO_MAX, TRACK_MAX, X, choice};
+use crate::pages::{Area, COMBO_MAX, TRACK_MAX, X, choice, time_edit};
 use crate::registry::Page;
 
 pub const SAMPLE: &str = "sample";
@@ -35,6 +35,14 @@ fn columns(a: Area) -> (i32, i32, i32) {
     (COMBO_W + half, RIGHT_X + half, RIGHT_W + dw - half)
 }
 const INTENSITY_POSITIONS: usize = 101;
+const TIME_W: i32 = 62;
+/// The "hours" mode's times, greyed under any other mode.
+pub const DARK_HOURS: [&str; 4] = [
+    "dark_hours_label",
+    "glass_dark_from",
+    "dark_to_label",
+    "glass_dark_to",
+];
 const BLUR_POSITIONS: usize = glass::BLUR_MAX as usize;
 
 /// The interface `s` names; an unknown one is Classic, as the compositor reads it.
@@ -189,6 +197,10 @@ pub fn page(s: &Settings, a: Area) -> Form {
                 Rect::new(rx, y(422), tw, trackbar::HEIGHT),
                 Control::TrackBar(TrackBar::new(100, INTENSITY_POSITIONS).paged(10, 5)),
             ),
+            Item::label_at(DARK_HOURS[0], rx, y(452), rw, "Dark &hours:"),
+            time_edit(DARK_HOURS[1], rx, y(468), TIME_W),
+            Item::label_at(DARK_HOURS[2], rx + TIME_W + 4, y(472), 14, "to"),
+            time_edit(DARK_HOURS[3], rx + TIME_W + 22, y(468), TIME_W),
         ]);
     }
     Form::new(items)
@@ -223,6 +235,9 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     let frosted =
         glass::Material::parse(&s.glass_material).unwrap_or_default() == glass::Material::Frosted;
     form.set_enabled("glass_streaks", s.glass_transparency && frosted);
+    for id in DARK_HOURS {
+        form.set_enabled(id, s.glass_mode == "hours");
+    }
     // Set every time: `Theme`'s equality cannot see the glass settings (the look compares by name).
     if let Some(Control::Sample { theme: t, .. }) = form.item_mut(SAMPLE).map(|i| &mut i.control) {
         *t = theme(s);

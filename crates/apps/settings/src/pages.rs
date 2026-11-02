@@ -323,12 +323,17 @@ pub(crate) fn radio(id: &'static str, group: &'static str, x: i32, y: i32, text:
 fn time(label_id: &'static str, id: &'static str, x: i32, y: i32, w: i32, text: &str) -> [Item; 2] {
     [
         Item::label_at(label_id, x, y, w, text),
-        Item::new(
-            id,
-            Rect::new(x + w + 4, y - 4, 70, EDIT_H),
-            Control::Time(TimeField::hm(0, 0, false)),
-        ),
+        time_edit(id, x + w + 4, y - 4, 70),
     ]
+}
+
+/// An hours and minutes field `w` wide at (`x`, `y`).
+pub fn time_edit(id: &'static str, x: i32, y: i32, w: i32) -> Item {
+    Item::new(
+        id,
+        Rect::new(x, y, w, EDIT_H),
+        Control::Time(TimeField::hm(0, 0, false)),
+    )
 }
 
 /// A trackbar between two end labels across a group's inside, its value

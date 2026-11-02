@@ -118,7 +118,10 @@ interface = "classic"        # classic | blue | glass; an unknown value falls ba
 # blur_rate = 30             # at most this many times a second a program drawing
 #                            # next to the glass (a video) or desktop water blurs
 #                            # into it again; 0: every frame
-# mode = "light"             # light | dark
+# mode = "light"             # light | dark | night (dark from sunset to sunrise, or between
+#                            # [night_light]'s fixed times, night light on or not) | hours
+# dark_from = "19:00"        # local times for mode = "hours"; a dark_to at or before
+# dark_to = "07:00"          # dark_from is the next morning
 # material = "frosted"       # frosted | smoked (darker, white titles) | molten (bent edges)
 # frame = "rounded"          # rounded | square (flat, separate caption buttons)
 # notification_style = "lozenge"  # lozenge | halo (the app icon breaks out of the top-left edge) | droplet (one row, opens on hover)

@@ -321,8 +321,27 @@ impl Config {
                 cfg.glass.orb_glow = o;
             }
             if let Some(m) = g.mode {
-                cfg.glass.mode = reprisekit::glass::Mode::parse(&m)
-                    .ok_or_else(|| format!("[glass] mode = {m:?} is not light or dark"))?;
+                match super::DarkSchedule::parse(&m) {
+                    Some(s) => cfg.glass_dark.schedule = s,
+                    None => {
+                        cfg.glass.mode = reprisekit::glass::Mode::parse(&m).ok_or_else(|| {
+                            format!("[glass] mode = {m:?} is not light, dark, night or hours")
+                        })?
+                    }
+                }
+            }
+            for (key, text, slot) in [
+                ("dark_from", g.dark_from, &mut cfg.glass_dark.from),
+                ("dark_to", g.dark_to, &mut cfg.glass_dark.to),
+            ] {
+                if let Some(t) = text {
+                    *slot = super::parse_hhmm(&t).ok_or_else(|| {
+                        format!("[glass] {key} {t:?} is not a time like \"19:00\"")
+                    })?;
+                }
+            }
+            if cfg.glass_dark.from == cfg.glass_dark.to {
+                return Err("[glass] dark_from and dark_to must differ".into());
             }
             if let Some(m) = g.material {
                 cfg.glass.material = reprisekit::glass::Material::parse(&m).ok_or_else(|| {

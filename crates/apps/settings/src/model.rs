@@ -76,8 +76,11 @@ pub struct Settings {
     pub color_scheme: String,
     /// `[glass] color`: a swatch's name or "#RRGGBB".
     pub glass_color: String,
-    /// `[glass] mode`: "light" or "dark".
+    /// `[glass] mode`: one of [`GLASS_MODES`]' values.
     pub glass_mode: String,
+    /// `[glass] dark_from` and `dark_to`, "19:00": the "hours" mode's local times.
+    pub glass_dark_from: String,
+    pub glass_dark_to: String,
     /// `[glass] material`: one of [`GLASS_MATERIALS`]' values.
     pub glass_material: String,
     /// `[glass] frame`: one of [`GLASS_FRAMES`]' values.
@@ -409,7 +412,11 @@ impl Settings {
             glass_color: reprisekit::glass::swatch_name(c.glass.color)
                 .expect("the default glass colour is a swatch")
                 .into(),
-            glass_mode: c.glass.mode.as_str().into(),
+            glass_mode: (c.glass_dark.schedule.name())
+                .unwrap_or(c.glass.mode.as_str())
+                .into(),
+            glass_dark_from: hhmm(c.glass_dark.from),
+            glass_dark_to: hhmm(c.glass_dark.to),
             glass_material: c.glass.material.as_str().into(),
             glass_frame: c.glass.frame.as_str().into(),
             glass_notification_style: c.glass.notification.as_str().into(),

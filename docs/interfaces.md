@@ -92,7 +92,8 @@ Glass has no colour schemes. It has a `[glass]` section instead:
 | --- | --- | --- |
 | `color` | `sky`, `twilight`, `sea`, `leaf`, `lime`, `sun`, `pumpkin`, `ruby`, `fuchsia`, `blush`, `violet`, `lavender`, `taupe`, `chocolate`, `slate`, `frost`, or `"#RRGGBB"` | `sky` |
 | `intensity` | how much of the colour shows, 0 to 100; part of it follows the brightness behind the glass, so translucent glass shows more colour over light backdrops than over dark ones (not under Smoked) | 42 |
-| `mode` | `light` or `dark` | `light` |
+| `mode` | `light`, `dark`, `night` (dark from sunset to sunrise, or between `[night_light]`'s fixed times, whether or not night light is on) or `hours` (dark from `dark_from` to `dark_to`) | `light` |
+| `dark_from`, `dark_to` | local times for `mode = "hours"`; a `dark_to` at or before `dark_from` is the next morning | `"19:00"`, `"07:00"` |
 | `material` | `frosted`, `smoked` or `molten` | `frosted` |
 | `frame` | `rounded` or `square` | `rounded` |
 | `notification_style` | the notification sheet's shape: `lozenge`; `halo`, with the app icon breaking out of its top-left edge and the glass washed in the icon's colour; or `droplet`, one row that opens on hover | `lozenge` |
@@ -106,6 +107,9 @@ Glass has no colour schemes. It has a `[glass]` section instead:
 
 - **Dark mode** turns controls, dialogs, menus and titles dark and tells
   programs to go dark through the portal. The glass keeps its colour.
+  Under `night` or `hours` the look and the portal switch at each edge as
+  if you had changed `mode` yourself. Picking Light or Dark ends the
+  schedule.
 - **Smoked** glass lets less through, with white titles in either mode.
 - **Molten** glass blurs less, shows richer colours and bends what lies just
   past its edges, with a faint colour fringe and a light catching its rims.

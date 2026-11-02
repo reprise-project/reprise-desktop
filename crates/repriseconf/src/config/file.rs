@@ -559,6 +559,8 @@ pub struct FileGlass {
     pub blur_rate: Option<u16>,
     pub orb_glow: Option<u8>,
     pub mode: Option<String>,
+    pub dark_from: Option<String>,
+    pub dark_to: Option<String>,
     pub material: Option<String>,
     pub frame: Option<String>,
     pub notification_style: Option<String>,

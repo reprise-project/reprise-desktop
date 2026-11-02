@@ -256,3 +256,48 @@ pub struct ScreensaverConfig {
     pub options: reprisekit::saver::Options,
     pub folder: Option<PathBuf>,
 }
+
+/// When Glass turns dark by itself: `[glass] mode = "night"` (night light's schedule, whether or not
+/// night light is on) or `"hours"` (from `dark_from` to `dark_to`). Off is a fixed light or dark mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DarkSchedule {
+    #[default]
+    Off,
+    Night,
+    Hours,
+}
+
+impl DarkSchedule {
+    /// The `[glass] mode` value naming the schedule; Off has none of its own.
+    pub fn name(self) -> Option<&'static str> {
+        match self {
+            DarkSchedule::Off => None,
+            DarkSchedule::Night => Some("night"),
+            DarkSchedule::Hours => Some("hours"),
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<DarkSchedule> {
+        [DarkSchedule::Night, DarkSchedule::Hours]
+            .into_iter()
+            .find(|d| d.name() == Some(s))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GlassDark {
+    pub schedule: DarkSchedule,
+    /// `dark_from` and `dark_to`, minutes after local midnight; `to` at or before `from` is the next day's.
+    pub from: u32,
+    pub to: u32,
+}
+
+impl Default for GlassDark {
+    fn default() -> Self {
+        GlassDark {
+            schedule: DarkSchedule::Off,
+            from: 19 * 60,
+            to: 7 * 60,
+        }
+    }
+}

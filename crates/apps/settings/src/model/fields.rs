@@ -53,6 +53,8 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Text(k("appearance", "color_scheme"), lens!(color_scheme)),
         Field::Text(k("glass", "color"), lens!(glass_color)),
         Field::Text(k("glass", "mode"), lens!(glass_mode)),
+        Field::Text(k("glass", "dark_from"), lens!(glass_dark_from)),
+        Field::Text(k("glass", "dark_to"), lens!(glass_dark_to)),
         Field::Text(k("glass", "material"), lens!(glass_material)),
         Field::Text(k("glass", "frame"), lens!(glass_frame)),
         Field::Text(
