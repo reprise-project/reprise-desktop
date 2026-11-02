@@ -152,6 +152,10 @@ fn main() {
             &format!("reprisekit-gallery-calculator@{}.png", n.max(1)),
         );
         write_preview(
+            &gallery_programs::charmap(n.max(1)),
+            &format!("reprisekit-gallery-charmap@{}.png", n.max(1)),
+        );
+        write_preview(
             &render_copy_progress(true, n.max(1)),
             &format!("reprisekit-gallery-copy-progress@{}.png", n.max(1)),
         );
@@ -344,6 +348,10 @@ fn main() {
     write_preview(
         &gallery_programs::calculator(1),
         "reprisekit-gallery-calculator@1.png",
+    );
+    write_preview(
+        &gallery_programs::charmap(1),
+        "reprisekit-gallery-charmap@1.png",
     );
     write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
     write_preview(

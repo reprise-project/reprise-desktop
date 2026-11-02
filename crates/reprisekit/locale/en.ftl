@@ -108,3 +108,12 @@ calc-divide-by-zero = Cannot divide by zero
 calc-invalid = Invalid input
 calc-overflow = Result is too large
 
+## Character Map
+charmap-font = &Font:
+charmap-block = &Block:
+charmap-search = S&earch:
+charmap-all-blocks = All blocks
+charmap-to-copy = Characters to c&opy:
+charmap-select = &Select
+charmap-copy = &Copy
+charmap-grid = Characters

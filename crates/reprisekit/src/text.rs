@@ -442,6 +442,16 @@ impl TextRenderer {
         TextRenderer::with_faces(None, None, false)
     }
 
+    /// The characters the regular face maps, in code point order; none without a face.
+    pub fn chars(&self) -> Vec<char> {
+        let Some(face) = self.face(false) else {
+            return Vec::new();
+        };
+        face.chars()
+            .filter_map(|(code, _)| char::from_u32(code as u32))
+            .collect()
+    }
+
     pub fn has_face(&self, family: &str) -> bool {
         self.regular.as_ref().is_some_and(|f| f.family == family)
     }

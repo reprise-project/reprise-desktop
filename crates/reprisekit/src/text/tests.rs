@@ -945,4 +945,5 @@ fn families_are_sorted_each_once() {
     sorted.sort_by_cached_key(|n| (n.to_lowercase(), n.clone()));
     sorted.dedup();
     assert_eq!(all, sorted);
+    assert!(all.iter().all(|n| !n.starts_with('.')), "no dot family");
 }
