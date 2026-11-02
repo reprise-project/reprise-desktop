@@ -388,6 +388,43 @@ pub fn draw_copy_graph(c: &mut Canvas, p: &Paint, r: Rect, g: &crate::copyart::G
     true
 }
 
+/// A performance history graph filling `r` inside a sunken field frame, in the style's
+/// [`crate::perfart::PerfLook`], else Classic's.
+pub fn draw_perf_graph(c: &mut Canvas, p: &Paint, r: Rect, g: &crate::perfart::Graph) {
+    let look = perf_look(p);
+    let inner = r.inset(2);
+    let d = p.s * c.scale();
+    let art = (look.graph)(g, p.cs, inner.width, inner.height, d).at_scale(c.scale());
+    draw_field_frame(c, p, r, p.cs.window);
+    c.blit_over(inner.x * p.s, inner.y * p.s, &art);
+}
+
+/// A level meter filled to `fraction` in `r`, its `value` written in the band at its foot.
+pub fn draw_perf_meter(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    r: Rect,
+    fraction: f64,
+    value: &str,
+    px: u32,
+) {
+    let look = perf_look(p);
+    let inner = r.inset(2);
+    let d = p.s * c.scale();
+    let art = (look.meter)(fraction, p.cs, inner.width, inner.height, d).at_scale(c.scale());
+    draw_field_frame(c, p, r, p.cs.window);
+    c.blit_over(inner.x * p.s, inner.y * p.s, &art);
+    let band = crate::perfart::METER_LABEL_H;
+    let label = Rect::new(inner.x, inner.bottom() - band, inner.width, band);
+    let ink = (look.meter_ink)(p.cs);
+    text.draw(c, label, value, false, ink, Align::Center, px);
+}
+
+fn perf_look(p: &Paint) -> crate::perfart::PerfLook {
+    (p.look.style().and_then(|st| st.perf)).unwrap_or(classic::perfgraph::LOOK)
+}
+
 /// A month calendar's weekday band in `r`; returns the ink of the day
 /// letters: the style's band part and text colour, else Classic's button
 /// shadow band with face-coloured letters.

@@ -35,6 +35,7 @@ members = [
     "crates/apps/paint",
     "crates/apps/calc",
     "crates/apps/charmap",
+    "crates/apps/taskmgr",
     "crates/apps/reprise-apps",
     "crates/portal",
 ]

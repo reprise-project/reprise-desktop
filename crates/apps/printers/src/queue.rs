@@ -307,9 +307,11 @@ impl Queue {
                 self.popup = Popup::open(rows, x, y, ctx, false);
                 Outcome::Redraw
             }
-            Press::Row(_) | Press::Activate(_) | Press::Background | Press::Redraw => {
-                Outcome::Redraw
-            }
+            Press::Row(_)
+            | Press::Activate(_)
+            | Press::Background
+            | Press::Column(_)
+            | Press::Redraw => Outcome::Redraw,
             Press::None => Outcome::None,
         }
     }

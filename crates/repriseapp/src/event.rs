@@ -90,6 +90,9 @@ pub enum Event {
     /// `Reply::paste_image`; empty when the clipboard holds no picture.
     PastedImage(Vec<u8>),
     Focus(bool),
+    /// The compositor suspended the window (it is minimized, nothing of it shows) or shows it
+    /// again; sent on each change.
+    Suspended(bool),
     /// The compositor took its shortcuts back from the window that held
     /// them ([`Extended::shortcuts_inhibited`](crate::Extended::shortcuts_inhibited)), on the user's
     /// Super+Shift+Escape. The modifiers held for that chord are no

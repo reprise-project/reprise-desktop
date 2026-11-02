@@ -346,6 +346,7 @@ impl Notepad {
             | Event::DropCancelled
             | Event::Output(_)
             | Event::ShortcutsInactive
+            | Event::Suspended(_)
             | Event::Heads(_)
             | Event::HeadsApplied { .. } => Reply::none(),
         }
