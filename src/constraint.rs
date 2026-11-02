@@ -127,7 +127,7 @@ impl State {
             || self.start_panel.is_some()
             || self.panels.clipview.is_some()
             || self.panels.emojiview.is_some()
-            || self.panels.region.is_some()
+            || self.panels.takes_pointer()
             || crate::notifyview::reply_focused(self)
             || self.dialog_has_keyboard()
         {

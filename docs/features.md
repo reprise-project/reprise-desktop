@@ -331,6 +331,12 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   Ctrl+Alt+PrtSc for its content without the frame, Shift+PrtSc for a region
   or a clicked window. Every shot goes to the clipboard and, if you like, to
   Pictures/Screenshots.
+- **Colour picker.** Super+Shift+C turns the pointer into a crosshair with a
+  loupe beside it: the 9 x 9 pixels round the point, the centre one ringed,
+  and its `#RRGGBB` under them. It follows the pointer across screens; the
+  arrow keys nudge it a pixel. A click or Enter copies the colour as
+  `#rrggbb` and shows it in a notice; Esc or a right-click cancels. Programs
+  asking through the Screenshot portal's PickColor get the same picker.
 
 ## Notifications
 

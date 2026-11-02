@@ -41,7 +41,7 @@ pub enum Row {
 
 /// The compositor's action names, `spawn` first since it is the one with
 /// a command. Mirrors `Action::name` in `src/config/keybinds.rs`.
-pub const ACTIONS: [&str; 60] = [
+pub const ACTIONS: [&str; 61] = [
     "spawn",
     "terminal",
     "close",
@@ -89,6 +89,7 @@ pub const ACTIONS: [&str; 60] = [
     "screenshot-window",
     "screenshot-region",
     "screenshot-content",
+    "color-picker",
     "volume-up",
     "volume-down",
     "mute",

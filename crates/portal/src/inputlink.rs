@@ -1,10 +1,11 @@
-//! The long-lived Wayland connection behind RemoteDesktop, InputCapture, GlobalShortcuts and Background:
+//! The long-lived Wayland connection behind RemoteDesktop, InputCapture, GlobalShortcuts, Background and PickColor:
 //! binds `reprise_input_v1` and `zxdg_output_manager_v1`, keeps the zones and the sandboxed apps with a
 //! window current, and runs every request on
 //! its own thread. Requests come in over a channel with a socket as the wake-up; capture and shortcuts
 //! events go out on an async channel each capture or shortcuts object owns.
 
 use crate::inputproto::{
+    reprise_color_pick_v1::{self, RepriseColorPickV1},
     reprise_eis_client_v1::RepriseEisClientV1,
     reprise_input_capture_v1::{self, RepriseInputCaptureV1},
     reprise_input_v1::{Device, Kind, RepriseInputV1},
@@ -91,6 +92,8 @@ enum Cmd {
     Key(u32, u32, bool),
     Keysym(u32, u32, bool),
     DestroyKeys(u32),
+    PickColor(u32, async_channel::Sender<Option<u32>>),
+    DestroyPick(u32),
 }
 
 struct Shared {
@@ -112,6 +115,7 @@ pub struct Link {
     shortcuts: bool,
     live_shortcuts: Arc<AtomicUsize>,
     keys: bool,
+    picks: bool,
     sandboxed_changes: async_channel::Receiver<()>,
 }
 
@@ -218,6 +222,27 @@ impl Drop for KeysHandle {
     }
 }
 
+/// One colour pick. Dropping it destroys the `reprise_color_pick_v1`, closing the picker if it is
+/// still open.
+pub struct PickHandle {
+    link: Link,
+    id: u32,
+    answer: async_channel::Receiver<Option<u32>>,
+}
+
+impl PickHandle {
+    /// The pick as 0xRRGGBB, None for a cancel or a lost link.
+    pub async fn answer(&self) -> Option<u32> {
+        self.answer.recv().await.ok().flatten()
+    }
+}
+
+impl Drop for PickHandle {
+    fn drop(&mut self) {
+        self.link.send(Cmd::DestroyPick(self.id));
+    }
+}
+
 impl Link {
     pub fn start() -> Result<Link, String> {
         let conn = Connection::connect_to_env().map_err(|e| format!("wayland: {e}"))?;
@@ -230,10 +255,11 @@ impl Link {
             registry_queue_init::<State>(&conn).map_err(|e| format!("registry: {e}"))?;
         let qh = queue.handle();
         let input: RepriseInputV1 = globals
-            .bind(&qh, 2..=5, ())
+            .bind(&qh, 2..=6, ())
             .map_err(|e| format!("reprise_input_v1: {e}"))?;
         let shortcuts = input.version() >= 3;
         let keys = input.version() >= 4;
+        let picks = input.version() >= 6;
         let xdg: ZxdgOutputManagerV1 = globals
             .bind(&qh, 3..=3, ())
             .map_err(|e| format!("xdg_output: {e}"))?;
@@ -259,6 +285,7 @@ impl Link {
             captures: HashMap::new(),
             shortcuts: HashMap::new(),
             keys: HashMap::new(),
+            picks: HashMap::new(),
             _sandboxed: sandboxed,
             sandboxed_pending: BTreeSet::new(),
             sandboxed_changed: changed_tx,
@@ -289,6 +316,7 @@ impl Link {
             shortcuts,
             live_shortcuts: Arc::new(AtomicUsize::new(0)),
             keys,
+            picks,
             sandboxed_changes: changed_rx,
         };
         let dead = link.dead.clone();
@@ -386,6 +414,21 @@ impl Link {
         })
     }
 
+    /// Open the compositor's colour picker; None before v6.
+    pub fn pick_color(&self) -> Option<PickHandle> {
+        if !self.picks {
+            return None;
+        }
+        let id = self.alloc();
+        let (tx, rx) = async_channel::bounded(1);
+        self.send(Cmd::PickColor(id, tx));
+        Some(PickHandle {
+            link: self.clone(),
+            id,
+            answer: rx,
+        })
+    }
+
     fn alloc(&self) -> u32 {
         self.next_id.fetch_add(1, Ordering::SeqCst)
     }
@@ -424,6 +467,7 @@ struct State {
     captures: HashMap<u32, (RepriseInputCaptureV1, async_channel::Sender<CaptureEvent>)>,
     shortcuts: HashMap<u32, (RepriseShortcutsV1, async_channel::Sender<ShortcutEvent>)>,
     keys: HashMap<u32, RepriseKeysV1>,
+    picks: HashMap<u32, (RepriseColorPickV1, async_channel::Sender<Option<u32>>)>,
     /// Held so the compositor goes on sending the list.
     _sandboxed: Option<RepriseSandboxedV1>,
     sandboxed_pending: BTreeSet<String>,
@@ -557,6 +601,15 @@ impl State {
             Cmd::DestroyKeys(id) => {
                 if let Some(k) = self.keys.remove(&id) {
                     k.destroy();
+                }
+            }
+            Cmd::PickColor(id, tx) => {
+                let p = self.input.pick_color(qh, id);
+                self.picks.insert(id, (p, tx));
+            }
+            Cmd::DestroyPick(id) => {
+                if let Some((p, _)) = self.picks.remove(&id) {
+                    p.destroy();
                 }
             }
         }
@@ -781,6 +834,25 @@ impl Dispatch<RepriseInputCaptureV1, u32> for State {
             reprise_input_capture_v1::Event::ZonesChanged => CaptureEvent::ZonesChanged,
         };
         let _ = tx.try_send(e);
+    }
+}
+
+impl Dispatch<RepriseColorPickV1, u32> for State {
+    fn event(
+        state: &mut Self,
+        _: &RepriseColorPickV1,
+        ev: reprise_color_pick_v1::Event,
+        id: &u32,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some((_, tx)) = state.picks.get(id) else {
+            return;
+        };
+        let _ = tx.try_send(match ev {
+            reprise_color_pick_v1::Event::Picked { rgb } => Some(rgb),
+            reprise_color_pick_v1::Event::Cancelled => None,
+        });
     }
 }
 
@@ -1042,6 +1114,36 @@ mod tests {
             "create_shortcuts carries the app id"
         );
         assert!(destroyed, "dropping the handle destroys the object");
+    }
+
+    #[test]
+    fn a_pick_hears_the_colour_and_dies_with_its_handle() {
+        let (ours, mut theirs) = UnixStream::pair().unwrap();
+        let compositor = std::thread::spawn(move || {
+            let input = fake_compositor(&mut theirs, 2, 6);
+            theirs
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let pick = loop {
+                let (object, opcode, body) = request(&mut theirs).unwrap();
+                if (object, opcode) == (input, 6) {
+                    break u32::from_ne_bytes(body[..4].try_into().unwrap());
+                }
+            };
+            send(&mut theirs, pick, 0, &0x0080_00ffu32.to_ne_bytes());
+            std::iter::from_fn(|| request(&mut theirs).ok())
+                .any(|(object, opcode, _)| (object, opcode) == (pick, 0))
+        });
+        let link = Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap();
+        let handle = link.pick_color().unwrap();
+        assert_eq!(zbus::block_on(handle.answer()), Some(0x0080_00ff));
+        drop(handle);
+        assert!(
+            compositor.join().unwrap(),
+            "dropping the handle destroys the object"
+        );
+        let (link, _hang_up, _fake) = start_with_fake(5);
+        assert!(link.pick_color().is_none(), "a v5 global has no pick_color");
     }
 
     #[test]

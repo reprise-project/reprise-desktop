@@ -354,7 +354,7 @@ impl State {
         !self.is_locked()
             && self.interaction == Interaction::Idle
             && Popup::open(self).next().is_none()
-            && self.panels.region.is_none()
+            && !self.panels.takes_pointer()
             && !self.seat.get_pointer().is_some_and(|p| p.is_grabbed())
     }
 

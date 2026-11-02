@@ -663,6 +663,10 @@ action = "screenshot-region"
 keys = "Ctrl+Alt+Sys_Req"
 action = "screenshot-content"
 
+[[keybinds]]                 # pick a colour on screen: a loupe follows the pointer, a click
+keys = "Super+Shift+c"       # copies #rrggbb; arrows nudge, Enter picks, Esc or right-click cancels
+action = "color-picker"
+
 [[keybinds]]                 # the clipboard history: type to filter, Enter pastes, Del forgets
 keys = "Super+v"
 action = "clipboard-history"

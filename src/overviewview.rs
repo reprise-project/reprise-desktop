@@ -954,7 +954,7 @@ impl State {
             || self.overview.view.is_some()
             || self.buttons_down > 0
             || self.drag_running()
-            || self.panels.region.is_some()
+            || self.panels.takes_pointer()
             || !matches!(self.interaction, crate::input::Interaction::Idle)
         {
             return;

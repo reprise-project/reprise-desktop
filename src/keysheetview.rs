@@ -122,6 +122,7 @@ fn describe(a: &Action) -> (&'static str, String) {
         Action::Terminal => (LAUNCH, "Terminal"),
         Action::ClipboardHistory => (LAUNCH, "Clipboard history"),
         Action::EmojiPicker => (LAUNCH, "Emoji picker"),
+        Action::ColorPicker => (LAUNCH, "Colour picker"),
         Action::Screenshot => (SCREENSHOTS, "Whole screen"),
         Action::ScreenshotWindow => (SCREENSHOTS, "Window"),
         Action::ScreenshotRegion => (SCREENSHOTS, "Area"),

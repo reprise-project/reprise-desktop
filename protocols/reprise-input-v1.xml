@@ -4,7 +4,7 @@
     reprise private protocol: input injection and capture for reprise-portal.
   </copyright>
 
-  <interface name="reprise_input_v1" version="5">
+  <interface name="reprise_input_v1" version="6">
     <description summary="EIS sockets and pointer barriers for the portal">
       One global. connect_eis hands the compositor one end of a socketpair
       to run libei's EIS side on; create_capture makes an object that owns
@@ -12,7 +12,7 @@
       create_shortcuts makes an object that receives one program's global
       shortcuts. create_keys makes an object that presses keys for one
       RemoteDesktop session. watch_sandboxed makes an object that lists
-      the sandboxed apps with a window.
+      the sandboxed apps with a window. pick_color opens the colour picker.
     </description>
 
     <enum name="kind">
@@ -83,6 +83,14 @@
         from its sandbox's (an X11 client's class, an Electron app).
       </description>
       <arg name="id" type="new_id" interface="reprise_sandboxed_v1"/>
+    </request>
+
+    <request name="pick_color" since="6">
+      <description summary="let the user pick a colour on screen">
+        For the Screenshot portal's PickColor: the compositor opens its
+        colour picker and answers on the new object.
+      </description>
+      <arg name="id" type="new_id" interface="reprise_color_pick_v1"/>
     </request>
   </interface>
 
@@ -202,6 +210,19 @@
     <event name="changed">
       <description summary="this app's entries changed in the config"/>
     </event>
+  </interface>
+
+  <interface name="reprise_color_pick_v1" version="1">
+    <description summary="one colour pick">
+      Exactly one of picked or cancelled is sent. A picker already open
+      cancels this one at once. Destroying the object before the answer
+      closes the picker.
+    </description>
+    <request name="destroy" type="destructor"/>
+    <event name="picked">
+      <arg name="rgb" type="uint" summary="the pixel as 0xRRGGBB"/>
+    </event>
+    <event name="cancelled"/>
   </interface>
 
   <interface name="reprise_sandboxed_v1" version="1">

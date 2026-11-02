@@ -85,6 +85,7 @@ pub const DEFAULTS: &[(&str, &str)] = &[
     ("Super+Shift+w", "screenshot-window"),
     ("Shift+Print", "screenshot-region"),
     ("Ctrl+Alt+Sys_Req", "screenshot-content"),
+    ("Super+Shift+c", "color-picker"),
     ("Super+v", "clipboard-history"),
     ("Super+period", "emoji-picker"),
     ("Super+equal", "zoom-in"),

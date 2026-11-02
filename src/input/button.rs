@@ -46,6 +46,10 @@ impl State {
             self.redraw_all();
             return;
         }
+        if self.panels.colorpick.is_some() {
+            self.color_pick_button(button, state == ButtonState::Pressed);
+            return;
+        }
         if state == ButtonState::Pressed && self.switcher.is_open() {
             // The Alt+Tab panel owns the pointer: the press is its alone.
             self.buttons_down += 1;

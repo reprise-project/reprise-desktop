@@ -5117,16 +5117,11 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
             height: h as u32,
             pixels: under.pixels.clone(),
         };
-        let mut m = colorpick::ColorPick::default();
-        m.motion((22, 36));
-        colorpick::draw(
-            &mut under,
-            &text,
-            px,
-            &m,
-            &still,
-            &still.backdrop(w as u32, h as u32),
-        );
+        let at = (22, 36);
+        let mut loupe = Canvas::new(colorpick::W as u32, colorpick::H as u32);
+        colorpick::draw(&mut loupe, &text, px, &still, at);
+        let r = colorpick::layout(at, (w, h)).loupe;
+        under.blit_canvas(r.x, r.y, &loupe);
         c.blit_canvas(745, 8596, &under);
     }
 
