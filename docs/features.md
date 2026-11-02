@@ -468,6 +468,9 @@ are.
   keys on the Keyboard page.
 - **Media keys** for volume, mute, brightness, playback and Wi-Fi, with an
   on-screen panel. They work on the lock screen too, except Wi-Fi.
+- **Caps Lock and Num Lock** show "On" or "Off" in the same panel when they
+  change, each with its own switch (`[osd]`, Settings > Keyboard). The
+  panel stays hidden on the lock screen.
 
 ## Accessibility
 

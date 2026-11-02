@@ -368,6 +368,8 @@ fn values_go_in_and_come_back_out() {
         start_icon: false,
         adaptive_sync: true,
         preview_taskbar: false,
+        osd_caps_lock: false,
+        osd_num_lock: false,
         previews_fps: 24,
         switcher_style: "thumbnails".into(),
         screenshot_save: false,

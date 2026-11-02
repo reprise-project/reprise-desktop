@@ -46,6 +46,22 @@ pub struct DebugConfig {
     pub overlay_in_captures: bool,
 }
 
+/// `[osd]`: which lock keys show the on-screen panel when they change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OsdConfig {
+    pub caps_lock: bool,
+    pub num_lock: bool,
+}
+
+impl Default for OsdConfig {
+    fn default() -> Self {
+        OsdConfig {
+            caps_lock: true,
+            num_lock: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreviewsConfig {
     pub taskbar: bool,

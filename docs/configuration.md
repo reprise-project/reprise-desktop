@@ -41,6 +41,7 @@ lists them. Glass's `[glass]` section is documented there too.
 | `[privacy]` | recent files and location |
 | `[thumbnail_cache]` | whether pictures' thumbnails are kept, and the cap |
 | `[debug]` | the debug overlay |
+| `[osd]` | `caps_lock`, `num_lock`: whether the key's on or off shows on screen when it changes, both on by default (Settings > Keyboard) |
 | `[[keybinds]]` | shortcuts, layered over the defaults; `action = "none"` unbinds a chord |
 | `[[startmenu]]`, `startmenu_style` | the Classic Start menu's rows, and which Start menu you get |
 | `[[outputs]]` | per-monitor mode, scale, rotation and position; a layout saved for the connected set of monitors wins over them ([features.md](features.md#displays)) |

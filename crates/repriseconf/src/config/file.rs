@@ -196,6 +196,13 @@ pub struct FileScreenshot {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub struct FileOsd {
+    pub caps_lock: Option<bool>,
+    pub num_lock: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FilePreviews {
     pub taskbar: Option<bool>,
     pub fps: Option<i64>,
@@ -641,6 +648,7 @@ pub struct FileConfig {
     pub window_snapping: Option<FileSnapping>,
     pub screenshot: Option<FileScreenshot>,
     pub previews: Option<FilePreviews>,
+    pub osd: Option<FileOsd>,
     pub switcher: Option<FileSwitcher>,
     pub overview: Option<FileOverview>,
     pub gestures: Option<FileGestures>,

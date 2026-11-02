@@ -1,4 +1,4 @@
-//! The media keys' on-screen panel: one `reprisekit::controls::osd` box at
+//! The on-screen panel of the media keys and the lock keys: one `reprisekit::controls::osd` box at
 //! the bottom centre of the desktop icons' output, showing a report or one
 //! line per display, replaced on every key and gone 1.5 s after the last. Its `layers.overlay` tree is tagged
 //! `SceneOwner::Osd`: the glass tree, then the buffer, which takes the pointer
@@ -7,9 +7,11 @@
 
 use std::time::Duration;
 
-use reprisekit::controls::osd::{self, Meter, Osd};
+use crate::config::OsdConfig;
+use reprisekit::controls::osd::{self, LockKey, Meter, Osd};
 use reprisekit::look::panel;
 use reprisescene::{BufferId, Input, TreeId};
+use smithay::input::keyboard::ModifiersState;
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::utils::Rectangle;
@@ -107,6 +109,22 @@ fn describe(r: &Report) -> Option<(Osd, &'static str)> {
     })
 }
 
+/// The lock key `before` to `after` turned, and whether it is now on, when `cfg` shows that key;
+/// Caps Lock first should one key change both.
+fn lock_change(
+    before: &ModifiersState,
+    after: &ModifiersState,
+    cfg: OsdConfig,
+) -> Option<(LockKey, bool)> {
+    if cfg.caps_lock && before.caps_lock != after.caps_lock {
+        return Some((LockKey::Caps, after.caps_lock));
+    }
+    if cfg.num_lock && before.num_lock != after.num_lock {
+        return Some((LockKey::Num, after.num_lock));
+    }
+    None
+}
+
 /// Where a panel of `size` goes in `usable`: centred `GAP` above its bottom edge, top-left kept inside.
 fn panel_origin(usable: Rect, size: (i32, i32)) -> (i32, i32) {
     let x = usable.x + (usable.width - size.0) / 2;
@@ -128,6 +146,20 @@ impl State {
             .get(icon_name, 32 * scale)
             .unwrap_or_else(|| reprisekit::icon::fallback(&theme, 32 * scale));
         let canvas = osd::draw(&theme, self.text.for_output(theme.scale), &osd, Some(&icon));
+        if self.show_canvas(canvas, (osd::W, osd::H), true) {
+            self.osd.showing = None;
+        }
+    }
+
+    /// Show (or replace) the panel of the lock key a key event turned, as `[osd]` asks.
+    pub fn show_lock_osd(&mut self, before: &ModifiersState, after: &ModifiersState) {
+        let Some((key, on)) = lock_change(before, after, self.config.osd) else {
+            return;
+        };
+        let Some((theme, _)) = self.osd_theme() else {
+            return;
+        };
+        let canvas = osd::draw_lock_key(&theme, self.text.for_output(theme.scale), key, on);
         if self.show_canvas(canvas, (osd::W, osd::H), true) {
             self.osd.showing = None;
         }
@@ -337,6 +369,53 @@ mod tests {
         assert_eq!(icon, "network-wireless");
         let (osd, _) = describe(&Report::Wifi { on: false }).unwrap();
         assert_eq!(osd.title, "Wireless off");
+    }
+
+    #[test]
+    fn a_lock_key_turning_shows_its_panel_unless_osd_turns_it_off() {
+        let mods = |caps_lock, num_lock| ModifiersState {
+            caps_lock,
+            num_lock,
+            ..Default::default()
+        };
+        let all = OsdConfig::default();
+        assert_eq!(
+            lock_change(&mods(false, false), &mods(true, false), all),
+            Some((LockKey::Caps, true))
+        );
+        assert_eq!(
+            lock_change(&mods(true, true), &mods(false, true), all),
+            Some((LockKey::Caps, false))
+        );
+        assert_eq!(
+            lock_change(&mods(false, true), &mods(false, false), all),
+            Some((LockKey::Num, false))
+        );
+        assert_eq!(
+            lock_change(&mods(true, true), &mods(true, true), all),
+            None,
+            "no change"
+        );
+        let no_caps = OsdConfig {
+            caps_lock: false,
+            ..all
+        };
+        assert_eq!(
+            lock_change(&mods(false, false), &mods(true, false), no_caps),
+            None
+        );
+        assert_eq!(
+            lock_change(&mods(false, false), &mods(true, true), no_caps),
+            Some((LockKey::Num, true))
+        );
+        let no_num = OsdConfig {
+            num_lock: false,
+            ..all
+        };
+        assert_eq!(
+            lock_change(&mods(false, false), &mods(false, true), no_num),
+            None
+        );
     }
 
     #[test]

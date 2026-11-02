@@ -281,6 +281,10 @@ suspend_after = 0            # run [power] standby
 # taskbar = true             # pointing at a task button shows its windows; false keeps the text tip
 # fps = 10                   # how often a changing picture is redrawn, 1 to 60; more costs more GPU
 
+# [osd]                      # the on-screen panel the media keys show; Settings > Keyboard also sets these
+# caps_lock = true           # Caps Lock On / Off when it changes
+# num_lock = true            # Num Lock On / Off when it changes
+
 # [switcher]                 # Alt+Tab; a key left out follows the interface:
 #                            # Glass's defaults are shown; Classic and Blue use
 #                            # style = "icons", desktop = false, peek = false,

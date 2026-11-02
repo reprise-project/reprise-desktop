@@ -4046,25 +4046,22 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
                 enabled: false,
             }),
         ),
-        (
-            "Brightness",
-            Some(osd::Meter {
-                fraction: 0.8,
-                enabled: true,
-            }),
-        ),
+        ("Caps Lock On", None),
         ("Music Player: Next", None),
     ];
     for (i, (title, meter)) in osds.iter().enumerate() {
-        let panel = osd::draw(
-            theme,
-            &text,
-            &osd::Osd {
-                title: title.to_string(),
-                meter: *meter,
-            },
-            None,
-        );
+        let panel = match *title {
+            "Caps Lock On" => osd::draw_lock_key(theme, &text, osd::LockKey::Caps, true),
+            _ => osd::draw(
+                theme,
+                &text,
+                &osd::Osd {
+                    title: title.to_string(),
+                    meter: *meter,
+                },
+                None,
+            ),
+        };
         c.blit_canvas(
             20 + (i as i32 % 2) * 280,
             3145 + (i as i32 / 2) * 80,
