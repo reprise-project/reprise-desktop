@@ -631,6 +631,9 @@ are.
   phone, and Send files from the tray or Send To.
 - **Drives** mount when you plug them in, ask for a passphrase if they're
   encrypted, and eject from the tray or from Computer.
+- **Disk Usage.** What takes a folder's or a drive's space, largest first with
+  a bar each, counted in the background; open it from Explorer or the low disk
+  space balloon.
 - **Printers.** Add, share, pause and manage printers and their queues, with
   a tray icon while something prints. Driverless printers just work.
 - **Software Updates** checks system packages through PackageKit, Flatpaks

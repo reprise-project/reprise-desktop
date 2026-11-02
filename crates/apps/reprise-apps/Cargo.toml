@@ -17,6 +17,7 @@ reprise-about = { path = "../about" }
 reprise-accounts = { path = "../accounts" }
 reprise-bluetooth = { path = "../bluetooth" }
 reprise-datetime = { path = "../datetime" }
+reprise-diskusage = { path = "../diskusage" }
 reprise-drives = { path = "../drives" }
 reprise-explorer = { path = "../explorer" }
 reprise-network = { path = "../network" }

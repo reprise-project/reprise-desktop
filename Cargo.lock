@@ -2289,6 +2289,7 @@ dependencies = [
  "reprise-accounts",
  "reprise-bluetooth",
  "reprise-datetime",
+ "reprise-diskusage",
  "reprise-drives",
  "reprise-explorer",
  "reprise-network",
@@ -2332,6 +2333,18 @@ dependencies = [
  "reprisekit",
  "serde",
  "zbus 6.2.0",
+]
+
+[[package]]
+name = "reprise-diskusage"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "repriseapp",
+ "reprisebus",
+ "reprisefs",
+ "reprisekit",
+ "tempfile",
 ]
 
 [[package]]

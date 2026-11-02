@@ -26,6 +26,7 @@ members = [
     "crates/apps/polkit",
     "crates/apps/updates",
     "crates/apps/printers",
+    "crates/apps/diskusage",
     "crates/apps/terminal",
     "crates/apps/phone",
     "crates/apps/reprise-apps",
