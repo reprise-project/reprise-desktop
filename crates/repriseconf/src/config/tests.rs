@@ -721,6 +721,16 @@ fn desktop_extensions_default_to_hide_and_read_each_mode() {
 }
 
 #[test]
+fn desktop_widgets_default_to_none_and_list_each_kind_once() {
+    use reprisekit::controls::deskwidget::Kind;
+    assert!(Config::default().desktop_widgets.is_empty());
+    let c = Config::parse("desktop_widgets = [\"meter\", \"clock\", \"meter\"]\n").unwrap();
+    assert_eq!(c.desktop_widgets, [Kind::Meter, Kind::Clock]);
+    let bad = Config::parse("desktop_widgets = [\"weather\"]\n");
+    assert!(bad.is_err(), "an unknown widget is refused");
+}
+
+#[test]
 fn desktop_icons_defaults_on_and_is_configurable() {
     assert!(Config::default().desktop_icons);
     assert_eq!(Config::default().system_icons.len(), 4);

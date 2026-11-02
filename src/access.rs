@@ -47,6 +47,8 @@ pub enum Surface {
     KeySheet,
     /// The colour picker's loupe.
     ColorPick,
+    /// The desktop widgets, while any stands.
+    Widgets,
     /// A framed window's caption: its buttons, window menu and tabs. It never claims the
     /// focus; the client's own tree has it.
     Frame(WindowId),
@@ -315,6 +317,7 @@ fn surfaces(state: &State) -> Vec<Surface> {
         (crate::keysheetview::is_shown(state), Surface::KeySheet),
         (state.panels.colorpick.is_some(), Surface::ColorPick),
         (true, Surface::Balloons),
+        (state.widgets_shown(), Surface::Widgets),
     ];
     v.extend(open.into_iter().filter_map(|(on, x)| on.then_some(x)));
     v.extend(state.mini_views.ids().map(Surface::MiniView));
@@ -380,6 +383,7 @@ fn tree(state: &State, surface: Surface) -> Option<Tree> {
         Surface::KeySheet => crate::keysheetview::access(state),
         Surface::ColorPick => crate::colorpickview::access(state),
         Surface::Balloons => Some(crate::notifyview::access(state)),
+        Surface::Widgets => state.widgets_access(),
         Surface::Frame(w) => frame_tree(state, w),
     }
 }
@@ -573,7 +577,8 @@ fn lands_on(state: &State, surface: Surface, hit: &Hit) -> bool {
         | (Surface::TrayFlyout, Hit::TrayFlyout { .. })
         | (Surface::TaskPreview, Hit::TaskPreview { .. })
         | (Surface::Balloons, Hit::Notification)
-        | (Surface::NotifyCenter, Hit::NotifyCenter) => true,
+        | (Surface::NotifyCenter, Hit::NotifyCenter)
+        | (Surface::Widgets, Hit::DeskWidget { .. }) => true,
         _ => false,
     }
 }

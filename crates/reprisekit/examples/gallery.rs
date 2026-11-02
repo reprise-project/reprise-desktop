@@ -26,6 +26,8 @@ mod gallery_pathcomplete;
 mod gallery_power;
 #[path = "gallery_rename/mod.rs"]
 mod gallery_rename;
+#[path = "gallery_widgets/mod.rs"]
+mod gallery_widgets;
 
 use reprisekit::art::glyph::Glyph;
 use reprisekit::art::{signalbars, viewsicon};
@@ -120,6 +122,10 @@ fn main() {
         write_preview(
             &gallery_miniview::render(n.max(1)),
             &format!("reprisekit-gallery-mini-view@{}.png", n.max(1)),
+        );
+        write_preview(
+            &gallery_widgets::render(n.max(1)),
+            &format!("reprisekit-gallery-desk-widgets@{}.png", n.max(1)),
         );
         write_preview(
             &render_copy_progress(true, n.max(1)),
@@ -299,6 +305,10 @@ fn main() {
     write_preview(
         &gallery_checksums::render(1),
         "reprisekit-gallery-checksums@1.png",
+    );
+    write_preview(
+        &gallery_widgets::render(1),
+        "reprisekit-gallery-desk-widgets@1.png",
     );
     write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
     write_preview(

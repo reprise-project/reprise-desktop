@@ -91,6 +91,7 @@ pub(super) fn fields() -> Vec<Field> {
         ),
         Field::Text(k("colors", "background"), lens!(background)),
         Field::Names(k("", "system_icons"), lens!(system_icons)),
+        Field::Strings(k("", "desktop_widgets"), lens!(desktop_widgets)),
         Field::Text(k("taskbar", "buttons"), lens!(taskbar_buttons)),
         Field::Flag(k("taskbar", "pinned"), lens!(taskbar_pinned)),
         Field::Flag(k("taskbar", "small_icons"), lens!(taskbar_small_icons)),

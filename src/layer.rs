@@ -220,13 +220,19 @@ pub fn reserve(p: &Placement, mut usable: Rect) -> Rect {
 }
 
 fn raise_desktop(state: &mut State) {
-    let icons = state
+    let ours: Vec<_> = (state
         .scene
         .children(state.layers.background)
         .iter()
-        .copied()
-        .find(|&n| state.scene.data(n) == Some(&SceneOwner::Desktop));
-    if let Some(n) = icons {
+        .copied())
+    .filter(|&n| {
+        matches!(
+            state.scene.data(n),
+            Some(SceneOwner::Desktop | SceneOwner::DeskWidget(_))
+        )
+    })
+    .collect();
+    for n in ours {
         state.scene.raise_to_top(n);
     }
 }

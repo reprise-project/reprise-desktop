@@ -12,6 +12,7 @@ desktop_icons = true          # icons for the files in ~/Desktop (XDG_DESKTOP_DI
 start_icon = false            # the Start button's logo: the icon theme's start-here (true) or the Reprise mark (false)
 adaptive_sync = false         # variable refresh rate on every output that supports it; an [[outputs]] entry overrides it, and the Display page of Reprise Settings sets that one
 system_icons = ["documents", "computer", "home", "recycle-bin"]   # the desktop's system icons, in order; home is your home folder
+# desktop_widgets = ["clock", "calendar", "meter"] # widgets standing on the desktop, each once; default none; the desktop menu's Widgets and the Settings Desktops page set it; places and options are kept in $XDG_STATE_HOME/reprise/widgets.toml
 
 [colors]                     # "#RRGGBB" or "r g b"; a key set here overrides
                               # the interface's own colour, so every line

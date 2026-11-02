@@ -892,6 +892,7 @@ impl State {
                     .filter(|(i, _)| !moved.contains(i))
                     .map(|(_, r)| grid_of(r))
                     .collect();
+                taken.extend(self.icon_blocked());
                 let grabbed_grid = sources
                     .first()
                     .and_then(index_of)
@@ -977,6 +978,7 @@ impl State {
                     .iter()
                     .map(|r| desktop::cell_at(grid, area, r.x, r.y))
                     .collect();
+                taken.extend(self.icon_blocked());
                 let cells = links
                     .iter()
                     .map(|_| {
