@@ -107,7 +107,7 @@ impl State {
             let listed = one_per_name(app_index);
             v.result_apps = panel_matches(&query, app_index, &listed, SEARCH_ROWS);
             v.result_settings = rank_settings(&query, app_index, &v.result_apps, SEARCH_SETTINGS);
-            v.answer = calc_row(&query).map(|(_, answer)| answer);
+            v.answer = calc_row(&query);
             v.search.files = kept;
         }
         self.start_panel_show_results();
@@ -148,7 +148,7 @@ impl State {
             .iter()
             .map(|s| s.name(app_index))
             .collect();
-        let calc = v.answer.as_deref().map(|a| format!("= {a}"));
+        let calc = v.answer.as_ref().map(|(row, _)| row.clone());
         let (mut groups, kinds) =
             result_groups(calc.as_deref(), &names, &settings, &v.search.files);
         v.result_kinds = kinds;
@@ -190,7 +190,7 @@ impl State {
             File(std::path::PathBuf, crate::desktop::FileFacts),
         }
         let run = match v.result_kinds.get(g) {
-            Some(ResultKind::Calc) => v.answer.clone().map(Run::Copy),
+            Some(ResultKind::Calc) => v.answer.clone().map(|(_, a)| Run::Copy(a)),
             Some(ResultKind::Programs) => v
                 .result_apps
                 .get(r)

@@ -120,6 +120,7 @@ mod textinput;
 mod tooltip;
 mod toplevels;
 mod touch;
+mod units;
 mod virtualpointer;
 mod warp;
 mod workspaces;

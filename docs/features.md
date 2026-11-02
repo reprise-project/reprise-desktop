@@ -87,7 +87,12 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   `[privacy] recent_files = false` hides them everywhere and records none.
 - **Launcher.** Super+Space, a few letters, Enter. It fuzzy-matches programs
   and settings pages ("wifi", "touchpad"), finds files in your home folder
-  from two letters on, and does sums: `2+3*4`, Enter copies 14. File search
+  from two letters on, and does sums: `2+3*4`, Enter copies 14. It converts
+  units too: `5 km in mi`, `30 c to f`, `2 gib in mb`, `3 ft 4 in = cm`
+  show `5 km = 3.10686 mi` and Enter copies the number. Length, mass, volume,
+  temperature, area, speed, time, data (`mb` is a megabyte, `mib` a mebibyte,
+  `mbit` or `mbps` a megabit), pressure, energy and power; the amount can be
+  a sum (`2*3 km in m`). File search
   uses plocate's database when it has one and `fd` when it doesn't, so
   nothing crawls your disk in the background. Right-click a row, or press
   the menu key, for the Start menu's program menu or a file's menu; Open
