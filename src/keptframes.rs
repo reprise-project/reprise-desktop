@@ -14,7 +14,8 @@ pub const SETS_MAX: usize = 16;
 /// A kept frame and when it was stored, counted up across the file.
 type Stamped = (Remembered, u64);
 
-/// Read once at start: the compositor is the file's only writer.
+/// Read at start and after Settings imported the file (`State::reload_remembered`): the
+/// compositor is its only other writer.
 pub struct KeptFrames {
     pub path: PathBuf,
     sets: BTreeMap<String, BTreeMap<String, Stamped>>,

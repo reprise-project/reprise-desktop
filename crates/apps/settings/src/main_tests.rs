@@ -1150,6 +1150,22 @@ fn the_page_argument_names_a_page() {
 }
 
 #[test]
+fn export_and_import_take_a_file_and_run_without_a_window() {
+    let args = |v: &[&str]| backup_arg(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+    let file = || PathBuf::from("/home/u/s.toml");
+    assert_eq!(
+        args(&["--export", "/home/u/s.toml"]),
+        Some(BackupVerb::Export(file()))
+    );
+    assert_eq!(
+        args(&["--import=/home/u/s.toml"]),
+        Some(BackupVerb::Import(file()))
+    );
+    assert_eq!(args(&["--export"]), None, "no file");
+    assert_eq!(args(&["--page", "backup"]), None);
+}
+
+#[test]
 fn the_focus_argument_names_a_control_on_the_page() {
     let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string()));
     let mouse_keys = Some((Page::Accessibility, Some("mouse_keys".to_string())));

@@ -107,6 +107,10 @@ impl Shell {
         emit(&self.events, self.eventfd, TrayEvent::ForgetWindowFrames);
     }
 
+    async fn reload_remembered(&self) {
+        emit(&self.events, self.eventfd, TrayEvent::ReloadRemembered);
+    }
+
     /// The icon of the window playing a sound stream; see [`crate::streamwindow`].
     async fn window_icon(&self, pids: Vec<u32>, title: String) -> reprisebus::tray::WindowIconWire {
         use crate::streamwindow::{lineage, read_proc};

@@ -1,6 +1,6 @@
 //! Reprise Settings: a property sheet over `config.toml` and the XDG autostart directories.
 //!
-//! Pages are listed in `registry::GROUPS`; `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files; a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes and the Advanced page's Forget and Clear act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
+//! Pages are listed in `registry::GROUPS`; `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files; a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes, the Advanced page's Forget and Clear and the Backup page's Export... and Import... (`backup`, also `--export`/`--import FILE`) act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
 
 mod additem;
 mod appearancepage;
@@ -8,6 +8,8 @@ mod apply;
 mod autostart;
 mod backgroundhost;
 mod backgroundpage;
+mod backup;
+mod backuphost;
 mod chargehost;
 mod configwatch;
 mod cursors;
@@ -86,6 +88,7 @@ const SAVER_WIN: WinId = WinId::named("saver");
 const CHOOSER_WIN: WinId = WinId::named("openwith");
 
 const ERROR_WIN: WinId = WinId::named("error");
+const ASK_WIN: WinId = WinId::named("ask");
 
 struct Chooser {
     mime: String,
@@ -243,6 +246,59 @@ fn page_arg(mut args: impl Iterator<Item = String>) -> Option<(Page, Option<Stri
     Some((page?, focus))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum BackupVerb {
+    Export(PathBuf),
+    Import(PathBuf),
+}
+
+/// `--export FILE` or `--import FILE`, with or without `=`.
+fn backup_arg(args: &[String]) -> Option<BackupVerb> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let (flag, value) = match a.split_once('=') {
+            Some((f, v)) => (f, Some(v.to_string())),
+            None => (a.as_str(), None),
+        };
+        let make = match flag {
+            "--export" => BackupVerb::Export,
+            "--import" => BackupVerb::Import,
+            _ => continue,
+        };
+        return Some(make(PathBuf::from(value.or_else(|| it.next().cloned())?)));
+    }
+    None
+}
+
+/// Export or import without a window; the exit status.
+fn run_backup(verb: BackupVerb) -> i32 {
+    let roots = backup::Roots::current();
+    let done = match &verb {
+        BackupVerb::Export(file) => backup::export_to(file, &roots)
+            .map(|()| format!("Exported the settings to {}.", file.display())),
+        BackupVerb::Import(file) => backup::read(file).and_then(|bundle| {
+            let kept = backup::import(&bundle, &roots)?;
+            let what: Vec<&str> = bundle.replaces().iter().map(|e| e.what).collect();
+            Ok(format!(
+                "Imported {}: {}.\nThe files it replaced are in {}.",
+                file.display(),
+                what.join(", "),
+                kept.display()
+            ))
+        }),
+    };
+    match done {
+        Ok(line) => {
+            println!("{line}");
+            0
+        }
+        Err(why) => {
+            eprintln!("{why}");
+            1
+        }
+    }
+}
+
 /// The bus name the running sheet owns; a later start sends it a `page` action.
 const BUS_NAME: &str = "org.reprise.Settings";
 const PAGE_ACTION: &str = "page";
@@ -332,6 +388,7 @@ struct SettingsApp {
     add_for: Pick,
 
     error: Option<MsgBox>,
+    asking: Option<backuphost::Ask>,
     dialog_text: Rc<TextRenderer>,
     dialog_px: u32,
     err_icon: Option<Canvas>,
@@ -569,6 +626,7 @@ impl SettingsApp {
             add_host: Host::default(),
             add_for: Pick::Autostart,
             error: None,
+            asking: None,
             dialog_text,
             dialog_px,
             err_icon: None,
@@ -685,6 +743,8 @@ impl App for SettingsApp {
                     Pick::Wallpaper => "Browse",
                     Pick::SlideFolder => "Browse for Folder",
                     Pick::Program => "Browse",
+                    Pick::Export => "Export",
+                    Pick::Import => "Import",
                 }
                 .into(),
                 size: self.add.as_ref().map_or(filedlg::CLIENT, |d| d.client()),
@@ -754,6 +814,13 @@ impl App for SettingsApp {
                 fixed: true,
                 modal: true,
             });
+        }
+        if let Some(a) = &self.asking {
+            kids.push(a.msg.child(
+                ASK_WIN,
+                &self.dialog_text,
+                &self.dialog_theme(&Theme::default()),
+            ));
         }
         if let Some(b) = &self.error {
             kids.push(b.child(
@@ -902,7 +969,14 @@ impl repriseapp::Extended for SettingsApp {
 /// Runs the program; `args` are the command line after the program's name.
 pub fn main(args: Vec<std::ffi::OsString>) {
     reprisebus::journal::init_logger(reprisebus::journal::PROGRAM_FILTER);
-    let page = page_arg(args.into_iter().map(|a| a.to_string_lossy().into_owned()));
+    let args: Vec<String> = args
+        .into_iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    if let Some(verb) = backup_arg(&args) {
+        std::process::exit(run_backup(verb));
+    }
+    let page = page_arg(args.into_iter());
     let action = page.as_ref().map(|(p, focus)| {
         let params = std::iter::once(p.slug()).chain(focus.clone()).collect();
         (PAGE_ACTION.to_string(), params)

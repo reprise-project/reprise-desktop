@@ -1,9 +1,10 @@
-//! Sounds, Power, Startup and Advanced.
+//! Sounds, Power, Startup, Advanced and Backup.
 
 use super::{
-    ADD, Area, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE,
-    THUMBNAILERS, THUMBS, THUMBS_CLEAR, THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, WATER, WATER_STYLE,
-    X, button, choice, combo, edit, field, group, list, locations, spin,
+    ADD, Area, BACKUP_EXPORT, BACKUP_IMPORT, BACKUP_STATUS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY,
+    EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE, THUMBNAILERS, THUMBS, THUMBS_CLEAR,
+    THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, WATER, WATER_STYLE, X, button, choice, combo, edit,
+    field, group, list, locations, spin,
 };
 use crate::model::WATER_STYLES;
 use reprisebus::charge::ChargeLimit;
@@ -149,6 +150,50 @@ pub fn advanced(a: Area) -> Form {
         "&Edit File...",
     ));
     Form::new(items)
+}
+
+/// What Export and Import carry, one line per [`ENTRIES`](crate::backup::ENTRIES) row, what they
+/// leave out, the two buttons and the line saying what the last one did.
+pub fn backup(a: Area) -> Form {
+    let entries = crate::backup::ENTRIES;
+    let list_h = LINE_H * entries.len() as i32;
+    let note_y = 66 + list_h + 10;
+    let buttons_y = note_y + 3 * LINE_H + 10;
+    Form::new(vec![
+        Item::label_at(
+            "backup_intro",
+            X,
+            44,
+            a.w,
+            "Export saves these in one file; Import puts them back:",
+        ),
+        Item::new(
+            "backup_list",
+            Rect::new(GX, 66, a.w - 12, list_h),
+            Control::Lines(entries.iter().map(|e| e.what.to_string()).collect()),
+        ),
+        Item::new(
+            "backup_left_out",
+            Rect::new(X, note_y, a.w, 3 * LINE_H),
+            Control::Lines(vec![
+                "Not included: the programs a session reopens, the Run".into(),
+                "and clipboard histories, and the location answers given".into(),
+                "on this computer.".into(),
+            ]),
+        ),
+        button(BACKUP_EXPORT, X, buttons_y, "&Export..."),
+        button(
+            BACKUP_IMPORT,
+            X + BUTTON_W + BUTTON_GAP,
+            buttons_y,
+            "&Import...",
+        ),
+        Item::new(
+            BACKUP_STATUS,
+            Rect::new(X, buttons_y + 34, a.w, 2 * LINE_H),
+            Control::Lines(Vec::new()),
+        ),
+    ])
 }
 
 /// The sound theme picked from `sound_themes`, then the events that play from it.

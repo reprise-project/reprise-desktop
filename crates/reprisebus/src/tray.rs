@@ -89,6 +89,14 @@ pub fn forget_window_frames() -> zbus::Result<()> {
     Ok(())
 }
 
+/// Ask the compositor to reread where windows and file dialogs open (`windows.toml`,
+/// `filedialog.toml`), after Settings imported them. Blocks for at most [`crate::METHOD_TIMEOUT`].
+pub fn reload_remembered() -> zbus::Result<()> {
+    let conn = crate::session()?;
+    crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "ReloadRemembered", &()))?;
+    Ok(())
+}
+
 /// The icon of the window a program plays sound from, as `WindowIcon` finds it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowIcon {
