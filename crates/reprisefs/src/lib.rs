@@ -56,6 +56,7 @@ pub mod thumbpipe;
 pub mod trash;
 pub mod udisks;
 pub mod undo;
+pub mod usage;
 pub mod xkb;
 
 #[cfg(test)]

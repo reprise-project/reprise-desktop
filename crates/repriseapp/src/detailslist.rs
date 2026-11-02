@@ -1,17 +1,17 @@
-//! A Details list as the folder and queue windows use it: the `ListView` and what the pointer and keys
-//! do to it (selection, scrollbars, their lit parts, the wheel), so each window keeps only what its rows mean.
+//! A Details list in a program's window: the `ListView` and what the pointer and keys do to it
+//! (selection, scrollbars, their lit parts, the wheel), so each window keeps only what its rows mean.
 
-use repriseapp::{BTN_LEFT, Ctx};
+use crate::{BTN_LEFT, Ctx};
 use reprisekit::classic::widgets::{Axis, BarHit, ScrollHit};
-use reprisekit::controls::listview::{self, Column, ListView};
+use reprisekit::controls::listview::{self, Column, ListView, Row, Rows};
 use reprisekit::look::Paint;
 use reprisekit::pointer::Click;
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::selection::Mods;
 use reprisekit::textedit::keysym;
 
-pub struct List {
-    pub view: ListView,
+pub struct List<R: Rows = Vec<Row>> {
+    pub view: ListView<R>,
     thumb: Option<i32>,
 }
 
@@ -25,8 +25,8 @@ pub enum Press {
     None,
 }
 
-impl List {
-    pub fn new(columns: Vec<Column>) -> List {
+impl<R: Rows + Default> List<R> {
+    pub fn new(columns: Vec<Column>) -> List<R> {
         List {
             view: ListView {
                 columns,

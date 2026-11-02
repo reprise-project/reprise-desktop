@@ -30,6 +30,8 @@ The file manager, and the default for folders.
 - **Pinned folders:** Pin to Places on a folder's menu adds it to the
   task pane's Pinned group and to every file dialog's places bar (see
   Pinned folders in features.md).
+- **Disk Usage** on a folder's or a drive's right-click menu opens
+  [Disk Usage](#disk-usage) on it.
 - **Places:** Desktop, Documents, Home, Computer and the Recycle Bin.
   Computer lists your drives, unmounted and locked removable ones included:
   open one to mount it (a locked one asks for its passphrase first), Eject to
@@ -355,6 +357,19 @@ the window closed, a balloon does. It says when a restart or a log off is due.
 Closing the window doesn't stop an install halfway, and nothing installs on its
 own.
 
+## Disk Usage
+
+What takes a folder's or a drive's space: its folders and files, largest
+first, each with its size, a bar for its share of the folder and how many
+files it holds. Sizes fill in as the count runs in the background; they are
+what the files take on disk, a hard-linked file counted once. Links are not
+followed and other drives mounted inside are not entered, so a drive that
+has stopped answering holds nothing up. Double-click a folder to go into it;
+Back, Up and Refresh do what they say, and Open in Explorer opens the folder
+shown. An entry's right-click menu adds Open in Explorer and Move to Recycle
+Bin, which asks first as Explorer's Delete does. Open it from Explorer, from
+the low disk space balloon, or as `reprise-diskusage FOLDER`.
+
 ## Date and Time Properties
 
 Double-click the clock. A month grid, an analog clock, the time zone and
@@ -388,8 +403,9 @@ network time.
   folder and `/` are every two minutes. When one has less free than
   `[storage] low_space_percent` of its size (5 % by default, set on
   Settings > Power; 0 turns it off) or than 1 GiB (a tenth of a disk under
-  10 GiB), a balloon says so once, with Open, which opens the disk, and
-  Empty Recycle Bin while the bin holds something, which asks first as the
+  10 GiB), a balloon says so once, with Open, which opens the disk, Show
+  Usage, which opens Disk Usage on it, and Empty Recycle Bin while the bin
+  holds something, which asks first as the
   bin's own menu does. It warns again after the disk climbs a point past the
   limit and falls back.
   Nothing happens on its own while the session is locked, and drives already

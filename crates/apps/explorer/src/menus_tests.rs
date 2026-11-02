@@ -331,7 +331,9 @@ fn a_folders_menu_explores_and_a_files_opens_with() {
     assert_eq!(m.command(&[1]), Command::OpenInNewTab);
     assert_eq!(label(m.items(), 2), "Explore");
     assert_eq!(m.command(&[2]), Command::Explore);
-    assert_eq!(label(m.items(), 4), "Sharing and Security...");
+    assert_eq!(label(m.items(), 4), "Disk Usage");
+    assert_eq!(m.command(&[4]), Command::DiskUsage);
+    assert_eq!(label(m.items(), 5), "Sharing and Security...");
     let m = item_menu(&s, ItemKind::File, false, &[("Notepad".into(), None)], &[]);
     assert_eq!(label(m.items(), 1), "Run as...");
     assert!(!enabled(m.items(), 1));
@@ -590,7 +592,8 @@ fn only_a_removable_drives_menu_has_eject() {
     ));
     assert!(matches!(rows[at - 1], MenuItem::Separator));
     assert!(matches!(rows[at + 1], MenuItem::Separator));
-    assert_eq!(label(rows, 3), "Sharing and Security...");
+    assert_eq!(label(rows, 3), "Disk Usage", "on a drive too");
+    assert_eq!(label(rows, 4), "Sharing and Security...");
     assert_eq!(label(rows, at + 3), "Copy", "Cut then Copy follow Eject");
 }
 
@@ -813,6 +816,7 @@ fn a_lone_folders_menu_pins_or_unpins_it() {
     let m = item_menu(&pinned(Some(true)), ItemKind::Folder, false, &[], &[]);
     assert_eq!(label(m.items(), 4), "Unpin from Places");
     assert_eq!(m.command(&[4]), Command::Pin(false));
+    assert_eq!(label(m.items(), 5), "Disk Usage", "under the pin row");
     let m = item_menu(&pinned(None), ItemKind::Folder, false, &[], &[]);
-    assert_eq!(label(m.items(), 4), "Sharing and Security...");
+    assert_eq!(label(m.items(), 4), "Disk Usage", "no pin row");
 }

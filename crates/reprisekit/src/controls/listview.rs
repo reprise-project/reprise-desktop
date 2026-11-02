@@ -26,7 +26,7 @@ use crate::look::Paint;
 use crate::look::widgets::header as header_widgets;
 use crate::look::widgets::item::{self, Mark};
 use crate::look::widgets::{
-    draw_checkbox, draw_edit_text, draw_field_frame, draw_hscrollbar, draw_scrollbar,
+    draw_checkbox, draw_edit_text, draw_field_frame, draw_hscrollbar, draw_progress, draw_scrollbar,
 };
 use crate::pointer::{Click, DoubleClick, Lit, Pointer};
 use crate::raster::{Canvas, Rect};
@@ -54,6 +54,8 @@ fn name_x(slot: i32) -> i32 {
     NAME_X - ICON_PX + slot
 }
 const CELL_X: i32 = 6;
+/// A bar cell ([`Rows::bar`]) leaves this much of the row above and below it.
+const BAR_INSET: i32 = 3;
 const HEADER_TEXT_X: i32 = 6;
 /// A check column's box: the look's check box side (13 px), 8 px from the frame edge, 3 px below the
 /// row top; it replaces the icon and the first cell's text starts 7 px after it.
@@ -132,6 +134,11 @@ pub trait Rows {
     fn icon_in(&self, row: usize, slot: i32) -> Option<&Canvas> {
         let _ = slot;
         self.icon(row)
+    }
+    /// A share from 0 to 1 that cell `col` of row `row` shows as a bar in place of its text.
+    fn bar(&self, row: usize, col: usize) -> Option<f64> {
+        let _ = (row, col);
+        None
     }
 }
 
@@ -913,6 +920,19 @@ fn draw_rows<R: Rows, C: AsRef<[Column]>, S: Borrow<Selection>>(
             };
             cx += cw;
             if ci == 0 && editing {
+                continue;
+            }
+            if ci > 0
+                && let Some(share) = lv.rows.bar(i, ci)
+            {
+                // draw_progress takes logical px.
+                let bar = Rect::new(
+                    tx / s,
+                    y / s + BAR_INSET,
+                    tw.max(0) / s,
+                    lay.row_h() - 2 * BAR_INSET,
+                );
+                draw_progress(c, p, bar, share.clamp(0.0, 1.0), true);
                 continue;
             }
             let tr = Rect::new(tx, y, tw.max(0), row_h);
