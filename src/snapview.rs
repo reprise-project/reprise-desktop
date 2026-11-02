@@ -212,6 +212,7 @@ impl State {
     /// Fill `target` with `w`: the client size that makes the frame the zone's size, within the
     /// client's limits.
     fn snap_commit(&mut self, w: WindowId, target: Rect) {
+        self.set_shaded(w, false);
         let Some(win) = self.win(w) else {
             return;
         };

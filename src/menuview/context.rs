@@ -93,6 +93,8 @@ impl State {
                 targets: !self.tab_targets(w).is_empty(),
                 grouped: self.tabs.groups.group_of(w).is_some(),
             }),
+            shade: (win.shaded || (win.has_frame() && self.tabs.groups.group_of(w).is_none()))
+                .then_some(win.shaded),
         })
     }
 
@@ -145,6 +147,10 @@ impl State {
                     self.set_minimized(w, false);
                 }
                 self.set_maximized(w, true);
+            }
+            WindowMenuRow::Shade => {
+                let on = !self.win(w).is_some_and(|x| x.shaded);
+                self.set_shaded(w, on);
             }
             WindowMenuRow::Move => self.begin_key_move(w),
             WindowMenuRow::Size => self.begin_key_size(w),

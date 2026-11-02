@@ -1281,6 +1281,43 @@ mod tests {
         crate::pins::check("look/windowed_dialog_frame", &got);
     }
 
+    /// A window rolled up to its caption: the frame round a 240 px wide client of no height, so
+    /// the bottom border closes right under the caption, untitled.
+    #[test]
+    fn rolled_up_window_frames_pin_in_every_look_at_scale_1_and_2() {
+        let mut got = Vec::new();
+        for (name, theme) in windowed_themes() {
+            for s in [1, 2] {
+                let m = &theme.metrics;
+                let g = FrameGeometry::layout(m, 240, 0, false, Chrome::WINDOW).scaled(s);
+                assert_eq!(
+                    g.total.1,
+                    (m.caption_height + 2 * m.frame_width) * s,
+                    "{name}: only the caption and its borders"
+                );
+                let theme = theme.scaled(s);
+                let text = loaded(theme.fonts.clone());
+                for active in [true, false] {
+                    let st = FrameState {
+                        title: "",
+                        active,
+                        maximized: false,
+                        pressed: None,
+                        glow: Glow::default(),
+                        icon: None,
+                        tabbed: false,
+                    };
+                    let mut c = Canvas::new(g.total.0 as u32, g.total.1 as u32);
+                    draw_frame(&mut c, &theme, &text, &text, &g, &st);
+                    let foot = c.get(g.total.0 / 2, g.total.1 - 1);
+                    assert!(foot >> 24 > 0, "{name} @{s}: the bottom border is drawn");
+                    got.push((format!("{name} active={active} {s}"), fnv(&c)));
+                }
+            }
+        }
+        crate::pins::check("look/rolled_up_frame", &got);
+    }
+
     /// A dialog's frame with its ? box round a 240x60 client at scale `s`, untitled.
     fn help_dialog_frame(
         theme: &Theme,

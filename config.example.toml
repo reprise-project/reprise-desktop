@@ -488,6 +488,9 @@ suspend_after = 0            # run [power] standby
 # shake = "auto"             # shaking a window by its title bar minimizes the other windows on its
 #                            # screen and desktop; shaking it again brings them back. "auto" is on
 #                            # under Glass and off under Classic and Blue; true or false sets it
+# title_double_click = "maximize"  # a double click on a title bar: "maximize" (or restore),
+#                            # "shade" rolls the window up to its title bar and back,
+#                            # "minimize", or "none"
 
 # [session]
 # restore = true             # the apps open at Log Off, Turn Off or Restart (or a crash) start

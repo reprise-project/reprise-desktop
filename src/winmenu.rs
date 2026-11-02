@@ -12,6 +12,8 @@ pub enum WindowMenuRow {
     Size,
     Minimize,
     Maximize,
+    /// Rolls the window up to its caption, or back down.
+    Shade,
     AlwaysOnTop,
     AllDesktops,
     /// Opens `move_to_menu`, does nothing itself.
@@ -50,6 +52,9 @@ pub struct WindowMenuState {
     pub sticky: bool,
     /// The tab group rows, after the desktop rows; None for a window that cannot be a tab.
     pub tabs: Option<TabRows>,
+    /// Whether the window is rolled up, for the Roll Up/Roll Down row after Maximize; None for a
+    /// window that cannot roll up at all (no frame of ours, or in a tab group).
+    pub shade: Option<bool>,
 }
 
 /// `close_keys` is the accelerator shown after Close ("Alt+F4"). Returns the
@@ -78,7 +83,7 @@ pub fn window_menu(
         (
             Size,
             "&Size",
-            normal && state.resizable && !state.owned,
+            normal && state.resizable && !state.owned && state.shade != Some(true),
             None,
         ),
         (
@@ -94,6 +99,10 @@ pub fn window_menu(
             Some(MenuGlyph::Maximize),
         ),
     ];
+    let shade = state.shade.map(|shaded| {
+        let label = if shaded { "Roll Do&wn" } else { "Roll &Up" };
+        (Shade, label, shaded || normal, None, None)
+    });
     let mut group = vec![(AlwaysOnTop, "Always on &Top", !state.owned, None, None)];
     if state.desktops > 1 {
         group.push((
@@ -127,6 +136,7 @@ pub fn window_menu(
     for (row, label, enabled, glyph, shortcut) in rows
         .into_iter()
         .map(|(row, label, enabled, glyph)| (row, label, enabled, glyph, None))
+        .chain(shade)
         .chain(group)
         .chain(std::iter::once(close))
     {
@@ -253,6 +263,7 @@ mod tests {
             desktops: 1,
             sticky: false,
             tabs: None,
+            shade: None,
         };
         let (items, actions) = window_menu(st, Some("Alt+F4"));
         assert_eq!(items.len(), 9);
@@ -293,6 +304,7 @@ mod tests {
             desktops: 1,
             sticky: false,
             tabs: None,
+            shade: None,
         };
         let (items, _) = window_menu(st, None);
         assert_eq!(row(&items, 0), ("Restore", true, true));
@@ -315,6 +327,7 @@ mod tests {
             desktops: 1,
             sticky: false,
             tabs: None,
+            shade: None,
         };
         let (items, _) = window_menu(st, None);
         assert_eq!(row(&items, 0), ("Restore", true, true));
@@ -334,6 +347,7 @@ mod tests {
             desktops: 1,
             sticky: false,
             tabs: None,
+            shade: None,
         };
         let (items, _) = window_menu(st, Some("Alt+F4"));
         assert_eq!(row(&items, 0), ("Restore", false, false));
@@ -357,6 +371,7 @@ mod tests {
             desktops: 1,
             sticky: false,
             tabs: None,
+            shade: None,
         };
         let (items, _) = window_menu(st, Some("Alt+F4"));
         assert!(matches!(
@@ -381,6 +396,7 @@ mod tests {
             desktops: 4,
             sticky: false,
             tabs: None,
+            shade: None,
         };
         let (items, actions) = window_menu(st, Some("Alt+F4"));
         assert_eq!(items.len(), 11);
@@ -423,6 +439,7 @@ mod tests {
                 targets: true,
                 grouped: false,
             }),
+            shade: None,
         };
         let (items, actions) = window_menu(st, None);
         assert_eq!(items.len(), 11);
@@ -512,6 +529,7 @@ mod tests {
             desktops: 1,
             sticky: false,
             tabs: None,
+            shade: None,
         };
         let (items, _) = window_menu(st, Some("Alt+F4"));
         assert_eq!(row(&items, 1), ("Move", true, false));
@@ -539,6 +557,7 @@ mod tests {
             desktops: 1,
             sticky: false,
             tabs: None,
+            shade: None,
         };
         let (items, _) = window_menu(st, Some("Alt+F4"));
         let style = MenuStyle::context_for(&theme, &items).fit(
@@ -558,5 +577,71 @@ mod tests {
         assert_eq!(keybind_label(MOD_ALT, KEY_F4), "Alt+F4");
         assert_eq!(keybind_label(MOD_CTRL, KEY_q), "Ctrl+Q");
         assert_eq!(keybind_label(MOD_LOGO, KEY_c), "Super+C");
+    }
+
+    #[test]
+    fn a_framed_window_rolls_up_after_maximize_and_a_rolled_one_rolls_down() {
+        let st = WindowMenuState {
+            maximized: false,
+            minimized: false,
+            from_taskbar: false,
+            owned: false,
+            resizable: true,
+            on_top: false,
+            desktops: 1,
+            sticky: false,
+            tabs: None,
+            shade: Some(false),
+        };
+        let (items, actions) = window_menu(st, None);
+        assert_eq!(row(&items, 5), ("Roll Up", true, false));
+        assert_eq!(actions[5], Some(WindowMenuRow::Shade));
+        assert!(matches!(
+            &items[5],
+            MenuItem::Entry {
+                mnemonic: Some(5),
+                ..
+            }
+        ));
+        assert_eq!(row(&items, 6), ("-", false, false));
+
+        let (items, _) = window_menu(
+            WindowMenuState {
+                shade: Some(true),
+                ..st
+            },
+            None,
+        );
+        assert_eq!(row(&items, 5), ("Roll Down", true, false));
+        assert!(matches!(
+            &items[5],
+            MenuItem::Entry {
+                mnemonic: Some(7),
+                ..
+            }
+        ));
+        assert_eq!(
+            row(&items, 2),
+            ("Size", false, false),
+            "no sizing while rolled up"
+        );
+        assert_eq!(
+            row(&items, 4),
+            ("Maximize", true, false),
+            "maximize rolls it down"
+        );
+
+        let (items, _) = window_menu(
+            WindowMenuState {
+                maximized: true,
+                ..st
+            },
+            None,
+        );
+        assert_eq!(
+            row(&items, 5),
+            ("Roll Up", false, false),
+            "greyed while maximized"
+        );
     }
 }
