@@ -611,6 +611,10 @@ pub(crate) mod tests {
         );
     }
 
+    /// Held by the tests that turn `reap_ended`, which kills every test's conversation past its
+    /// grace, not only its own.
+    pub(crate) static REAPING: Mutex<()> = Mutex::new(());
+
     /// Whether `pid` is gone or a zombie: no longer running.
     pub(crate) fn ended(pid: libc::pid_t) -> bool {
         match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
@@ -632,20 +636,21 @@ pub(crate) mod tests {
 
     #[test]
     fn dropping_interrupts_the_child_without_waiting_and_reap_ended_reaps_it() {
-        let mark = std::env::temp_dir().join(format!("reprise-finger-{}", std::process::id()));
-        let _ = std::fs::remove_file(&mark);
+        let _reaping = crate::mutex::lock(&REAPING);
+        let dir = std::env::temp_dir().join(format!("reprise-finger-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mark, go) = (dir.join("released"), dir.join("go"));
         let mut c = sh(&format!(
-            "trap 'echo released > {}; exit 0' INT; echo 'I ready'; while :; do sleep 0.01; done",
-            mark.display()
+            "trap 'while [ ! -e {go} ]; do sleep 0.01; done; echo released > {mark}; exit 0' INT; \
+             echo 'I ready'; while :; do sleep 0.01; done",
+            go = go.display(),
+            mark = mark.display()
         ));
         let pid = c.pid();
         wait_until("the child says ready", || !c.read().0.is_empty());
-        let start = Instant::now();
         drop(c);
-        assert!(
-            start.elapsed() < Duration::from_millis(50),
-            "drop does not wait"
-        );
+        assert!(!ended(pid), "drop returns while the child is still ending");
+        std::fs::write(&go, "").unwrap();
         wait_until("the child hears SIGINT", || {
             std::fs::read_to_string(&mark).ok().as_deref() == Some("released\n")
         });
@@ -654,21 +659,19 @@ pub(crate) mod tests {
             // SAFETY: signal 0 only checks that the pid exists.
             unsafe { libc::kill(pid, 0) == -1 }
         });
-        let _ = std::fs::remove_file(&mark);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn a_child_that_ignores_the_interrupt_is_killed_once_its_grace_is_over() {
-        let c = sh("trap '' INT; exec sleep 60");
+        let _reaping = crate::mutex::lock(&REAPING);
+        let mut c = sh("trap '' INT; echo 'I ready'; exec sleep 60");
         let pid = c.pid();
-        std::thread::sleep(Duration::from_millis(50));
+        wait_until("the child says ready", || !c.read().0.is_empty());
         let start = Instant::now();
         drop(c);
-        assert!(
-            start.elapsed() < Duration::from_millis(50),
-            "drop does not wait"
-        );
-        let due = reap_ended(Instant::now());
+        assert!(!ended(pid), "drop returns while the child runs");
+        let due = reap_ended(start);
         assert!(due.is_some(), "the child waits out its grace");
         assert!(!ended(pid), "still running within the grace");
         wait_until("the child is killed", || {

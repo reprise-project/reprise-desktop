@@ -1311,17 +1311,25 @@ mod tests {
 
     #[test]
     fn unlocking_does_not_wait_for_a_fingerprint_child_that_ignores_the_interrupt() {
+        let _reaping = crate::mutex::lock(&crate::lockfinger::tests::REAPING);
         let mut h = locked(|_| sh("exit 0"));
         h.state.lock.helpers.finger = |_| Some(sh("trap '' INT; echo 'I ready'; exec sleep 60"));
         let user = h.state.lock.active.as_ref().unwrap().user.clone();
         let finger = start_finger(&h.state, &user).expect("a fingerprint conversation");
         let pid = finger.conversation.pid();
         h.state.lock.active.as_mut().unwrap().finger = Some(finger);
-        h.run_for(50);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while (h.state.lock.active.as_ref()).is_some_and(|l| l.state.finger.is_none()) {
+            assert!(std::time::Instant::now() < end, "the child says ready");
+            h.run_for(5);
+        }
         let start = std::time::Instant::now();
         unlock(&mut h.state);
-        assert!(start.elapsed() < std::time::Duration::from_millis(50));
         assert!(!h.state.is_locked());
+        assert!(
+            !crate::lockfinger::tests::ended(pid),
+            "unlock returns while the child runs"
+        );
         let end = start + std::time::Duration::from_secs(5);
         while !crate::lockfinger::tests::ended(pid) {
             assert!(std::time::Instant::now() < end, "the child is killed");
