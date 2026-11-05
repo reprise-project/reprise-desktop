@@ -353,7 +353,7 @@ pub fn taskbar(a: Area) -> Form {
 }
 
 /// The Start button glow's rows, greyed outside Glass.
-pub(super) const GLOW_CONTROLS: [&str; 3] = ["orb_glow_label", "glass_orb_glow", "orb_glow_note"];
+pub(super) const GLOW_CONTROLS: [&str; 2] = ["orb_glow_label", "glass_orb_glow"];
 
 /// The auto-hide triggers' check boxes, indented under "Auto-hide the taskbar" and greyed while it is off.
 pub(super) const REVEAL_CONTROLS: [&str; 3] = [

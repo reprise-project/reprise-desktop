@@ -671,9 +671,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     sp.set_enabled("switcher_preview", !thumbnails);
     sp.set_enabled("switcher_size_label", thumbnails);
     sp.set_enabled("switcher_size", thumbnails);
-    for id in ["switcher_flip", FLIP_NOTE] {
-        sp.set_enabled(id, s.interface == "glass");
-    }
+    sp.set_enabled("switcher_flip", s.interface == "glass");
     let wp = &mut sheet.pages[Page::WindowBehavior.index()];
     for id in DRAG_SNAP_CONTROLS {
         wp.set_enabled(id, s.snap_enabled);
