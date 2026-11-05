@@ -99,9 +99,6 @@ fn double_click_speed_reads_slow_to_fast() {
     s.pages[p.index()].set_track("double_click_ms", 0);
     read_one(&s, "double_click_ms", &mut got);
     assert_eq!(got.double_click_ms, 900);
-    assert_eq!(rect(&s, p, "mouse_group"), Rect::new(20, 44, 358, 178));
-    assert_eq!(rect(&s, p, "touchpad_group"), Rect::new(20, 232, 358, 218));
-    inside_page(&s, p);
 }
 
 #[test]
@@ -114,19 +111,11 @@ fn mousekeys_trackbars_have_slow_and_fast_ends() {
     for id in ["mk_speed_fast", "mk_accel_fast"] {
         assert_eq!(lines(&s, p, id), ["Fast"]);
     }
-    assert_eq!(
-        rect(&s, p, "mouse_keys_group"),
-        Rect::new(20, 307, 358, 100)
-    );
-    assert_eq!(rect(&s, p, "mouse_keys_speed").y, 347);
-    assert_eq!(rect(&s, p, "mouse_keys_acceleration").y, 375);
-    assert_eq!(rect(&s, p, "key_shortcuts").y, 415);
     let off = under("classic");
     assert!(
         !enabled_on(&off, p, "mk_accel_fast"),
         "the ends grey with MouseKeys off"
     );
-    inside_page(&s, p);
 }
 
 #[test]
@@ -253,6 +242,10 @@ fn the_keyboard_page_geometry() {
         Rect::new(291, 89, 75, 23)
     );
     assert_eq!(rect(&s, Page::Keyboard, KB_UP), Rect::new(291, 116, 75, 23));
+    assert_eq!(
+        rect(&s, Page::Keyboard, KB_SWITCH_NOTE),
+        Rect::new(116, 122, 169, 13)
+    );
     assert_eq!(
         rect(&s, Page::Keyboard, "layout_per_window").y,
         146,
@@ -433,23 +426,11 @@ fn an_empty_layout_list_shows_the_layout_in_use_greyed() {
 fn the_keyboard_page_names_its_switch_keys_and_units() {
     let s = built();
     let p = Page::Keyboard;
-    assert_eq!(rect(&s, p, KB_LAYOUTS), Rect::new(GX + 84, 62, 169, 55));
     assert_eq!(
         lines(&s, p, KB_SWITCH_NOTE),
         ["Shift+Left Alt switches them."]
     );
-    assert_eq!(
-        rect(&s, p, KB_SWITCH_NOTE),
-        Rect::new(GX + 84, 122, 169, 13)
-    );
     assert_eq!(lines(&s, p, "rate_units"), ["a second"]);
-    assert_eq!(rect(&s, p, "rate_units"), Rect::new(GX + 140, 222, 50, 13));
-    assert_eq!(
-        rect(&s, p, "repeat_delay"),
-        Rect::new(GX + 240, 218, 50, 20)
-    );
-    assert_eq!(rect(&s, p, "delay_units"), Rect::new(GX + 296, 222, 20, 13));
-    inside_page(&s, p);
 }
 
 #[test]

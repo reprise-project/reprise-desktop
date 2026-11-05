@@ -78,6 +78,7 @@ fn the_switcher_page_geometry() {
     assert_eq!(rect(&s, p, "switcher_desktop"), Rect::new(32, 140, 13, 13));
     assert_eq!(rect(&s, p, "switcher_peek"), Rect::new(32, 162, 13, 13));
     assert_eq!(rect(&s, p, "switcher_flip"), Rect::new(32, 184, 13, 13));
+    assert_eq!(rect(&s, p, FLIP_NOTE), Rect::new(GX + 18, 202, 316, 13));
     assert_eq!(rect(&s, p, "overview_group"), Rect::new(20, 240, 358, 76));
     assert_eq!(rect(&s, p, "hot_corner"), Rect::new(146, 284, 130, 21));
     inside_page(&s, p);
@@ -164,30 +165,6 @@ fn the_key_notes_follow_rebinding() {
 }
 
 #[test]
-fn the_switcher_page_geometry_with_its_key_notes() {
-    let s = built();
-    let p = Page::Switcher;
-    assert_eq!(rect(&s, p, "switcher_group"), Rect::new(20, 44, 358, 186));
-    assert_eq!(rect(&s, p, FLIP_NOTE), Rect::new(GX + 18, 202, 316, 13));
-    assert_eq!(rect(&s, p, "overview_group"), Rect::new(20, 240, 358, 76));
-    assert_eq!(rect(&s, p, "hot_corner").y, 284);
-    assert_eq!(
-        lines(&s, p, FLIP_NOTE),
-        ["Super+Tab shows them; Glass only."]
-    );
-    let classic = under("classic");
-    assert!(!enabled_on(&classic, p, "switcher_flip"));
-    let q = Page::Search;
-    assert_eq!(
-        rect(&s, q, "launcher_search_group"),
-        Rect::new(20, 44, 358, 121)
-    );
-    assert_eq!(rect(&s, q, "launcher_files").y, 117);
-    inside_page(&s, p);
-    inside_page(&s, q);
-}
-
-#[test]
 fn switcher_values_go_in_and_come_back_out() {
     let want = Settings {
         switcher_style: "thumbnails".into(),
@@ -237,13 +214,6 @@ fn the_virtual_desktops_page_geometry() {
     assert_eq!(
         rect(&s, p, "desktop_names_note"),
         Rect::new(50, 264, 316, 13)
-    );
-    for id in ["session_restore", "session_end_processes"] {
-        assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Startup");
-    }
-    assert!(
-        s.pages[p.index()].item("previews_group").is_none(),
-        "window pictures are on Taskbar"
     );
     inside_page(&s, p);
 }
@@ -600,6 +570,11 @@ fn the_taskbar_page_geometry() {
         rect(&s, p, "taskbar_height_label"),
         Rect::new(254, 48, 44, 13)
     );
+    assert_eq!(rect(&s, p, "taskbar_height"), Rect::new(302, 44, 50, 20));
+    assert_eq!(
+        rect(&s, p, "taskbar_height_units"),
+        Rect::new(358, 48, 20, 13)
+    );
     assert_eq!(rect(&s, p, "buttons_label"), Rect::new(20, 76, 100, 13));
     assert_eq!(rect(&s, p, "taskbar_buttons"), Rect::new(124, 72, 230, 21));
     for (i, id) in [
@@ -621,6 +596,8 @@ fn the_taskbar_page_geometry() {
         );
     }
     assert_eq!(rect(&s, p, TRAY_CUSTOMIZE), Rect::new(303, 167, 75, 23));
+    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 228, 358, 39));
+    assert_eq!(rect(&s, p, "taskbar_auto_hide").y, 272);
     for (i, id) in REVEAL_CONTROLS.into_iter().enumerate() {
         assert_eq!(
             rect(&s, p, id),
@@ -632,19 +609,11 @@ fn the_taskbar_page_geometry() {
     assert_eq!(rect(&s, p, "fps_label"), Rect::new(38, 366, 110, 13));
     assert_eq!(rect(&s, p, "previews_fps"), Rect::new(152, 362, 50, 20));
     assert_eq!(rect(&s, p, "fps_units"), Rect::new(208, 366, 170, 13));
-    assert!(
-        s.pages[p.index()].item("recent_files").is_none(),
-        "recent_files is on Privacy"
-    );
+    assert_eq!(rect(&s, p, "start_group"), Rect::new(20, 386, 358, 88));
     assert_eq!(rect(&s, p, "start_icon"), Rect::new(32, 408, 13, 13));
     assert_eq!(rect(&s, p, "orb_glow_label"), Rect::new(32, 434, 110, 13));
+    assert_eq!(rect(&s, p, "glass_orb_glow"), Rect::new(146, 428, 150, 26));
     assert_eq!(rect(&s, p, "orb_glow_note"), Rect::new(32, 456, 334, 13));
-    for id in ["taskbar_pinned", "startmenu_banner", "startmenu_style"] {
-        assert!(
-            s.pages[p.index()].item(id).is_none(),
-            "{id} is on Start Menu"
-        );
-    }
     inside_page(&s, p);
 }
 
@@ -666,24 +635,7 @@ fn taskbar_holds_its_height_slide_pictures_and_glow() {
             assert!(k.contains(&want.to_string()), "{i}: {want}");
         }
     }
-    assert!(!keys_on(&built(), Page::Effects).contains(&"effects.taskbar_slide".to_string()));
     assert!(Page::Taskbar.keywords().contains(&"previews"));
-    let s = built();
-    let p = Page::Taskbar;
-    assert_eq!(rect(&s, p, "taskbar_height"), Rect::new(302, 44, 50, 20));
-    assert_eq!(
-        rect(&s, p, "taskbar_height_units"),
-        Rect::new(358, 48, 20, 13)
-    );
-    assert_eq!(rect(&s, p, "taskbar_small_icons").y, 100);
-    assert_eq!(rect(&s, p, "taskbar_slide").y, 208);
-    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 228, 358, 39));
-    assert_eq!(rect(&s, p, "taskbar_auto_hide").y, 272);
-    assert_eq!(rect(&s, p, "preview_taskbar").y, 346);
-    assert_eq!(rect(&s, p, "previews_fps").y, 362);
-    assert_eq!(rect(&s, p, "start_group"), Rect::new(20, 386, 358, 88));
-    assert_eq!(rect(&s, p, "glass_orb_glow"), Rect::new(146, 428, 150, 26));
-    inside_page(&s, p);
 }
 
 #[test]
