@@ -1964,13 +1964,10 @@ fn enter_on_a_found_page_already_open_focuses_the_control_it_found() {
     assert!(!a.shortcuts_focus, "the shortcut list lets go");
 }
 
-#[test]
-fn a_found_page_clicked_in_the_list_focuses_the_control_it_found() {
-    let (mut a, mut ctx) = (app("search-click"), test_ctx());
+/// A left press on `page`'s row of the page list, in a window that shows the whole sheet.
+fn press_page_row(a: &mut SettingsApp, ctx: &mut Ctx, page: Page) {
     ctx.size = (1920, 1080);
-    a.event(MAIN, Event::Resized, &mut ctx);
-    find(&mut a, &mut ctx, "debug overlay");
-    let adv = Page::Advanced.index();
+    a.event(MAIN, Event::Resized, ctx);
     let px = a.sheet.open().units().px(ctx.theme.fonts.size_px);
     let inner = a
         .sheet
@@ -1980,8 +1977,8 @@ fn a_found_page_clicked_in_the_list_focuses_the_control_it_found() {
         .inner;
     let x = inner.x + 20;
     let y = (inner.y..inner.bottom())
-        .find(|&y| a.sheet.hit(x, y, &ctx.text, px) == Some(propsheet::Hit::Tab(adv)))
-        .expect("the Advanced row shows");
+        .find(|&y| a.sheet.hit(x, y, &ctx.text, px) == Some(propsheet::Hit::Tab(page.index())))
+        .expect("the page's row shows");
     let press = PointerInput::Press {
         x,
         y,
@@ -1989,9 +1986,25 @@ fn a_found_page_clicked_in_the_list_focuses_the_control_it_found() {
         time: 0,
         mods: Mods::default(),
     };
-    a.event(MAIN, Event::Pointer(press), &mut ctx);
-    assert_eq!(registry::open(&a.sheet), Page::Advanced);
-    assert_eq!(focused_id(&a), Some(pages::DEBUG_OVERLAY));
+    a.event(MAIN, Event::Pointer(press), ctx);
+}
+
+#[test]
+fn a_found_page_clicked_in_the_list_focuses_the_control_it_found() {
+    for open_first in [false, true] {
+        let (mut a, mut ctx) = (app("search-click"), test_ctx());
+        if open_first {
+            a.open_page(Page::Advanced, None);
+        }
+        find(&mut a, &mut ctx, "debug overlay");
+        press_page_row(&mut a, &mut ctx, Page::Advanced);
+        assert_eq!(registry::open(&a.sheet), Page::Advanced);
+        assert_eq!(
+            focused_id(&a),
+            Some(pages::DEBUG_OVERLAY),
+            "the page open before: {open_first}"
+        );
+    }
 }
 
 /// The keys that step the list keep the keyboard on it, so the next row is a key away.
