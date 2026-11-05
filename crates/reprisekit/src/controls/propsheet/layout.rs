@@ -12,7 +12,7 @@ use crate::theme::TextUnits;
 
 use super::{
     BUTTON_IDS, Buttons, Layout, MARGIN, Nav, PAGE_BOTTOM, PAGE_EDGE, PAGE_TOP, PropSheet, RESTORE,
-    STRIP, buttons, is_button, shift,
+    SEARCH_GAP, SEARCH_H, STRIP, buttons, is_button, shift,
 };
 
 impl PropSheet {
@@ -364,7 +364,7 @@ impl PropSheet {
             Buttons::Close => (at(apply), none, none),
         };
         let strip = self.strip();
-        let (tabs, list, title) = match &self.nav {
+        let (tabs, search, list, title) = match &self.nav {
             Nav::Tabs => (
                 tabstrip::layout(
                     text.dialog(self.font),
@@ -376,12 +376,14 @@ impl PropSheet {
                     u,
                 ),
                 None,
+                None,
                 none,
             ),
             Nav::List(_) => {
                 let (top, bottom) = (u.len(STRIP.1 + 2), u.len(STRIP.1 + 2 + pagelist::ROW_H));
                 let title = Rect::new(page.x, oy + top, page.width, bottom - top);
-                (Vec::new(), self.list_layout(), title)
+                let search = at(Rect::new(MARGIN, STRIP.1, pagelist::WIDTH, SEARCH_H));
+                (Vec::new(), Some(search), self.list_layout(), title)
             }
         };
         let (bar, hbar) = self.bars_in(page);
@@ -389,6 +391,7 @@ impl PropSheet {
             strip,
             page,
             tabs,
+            search,
             list,
             title,
             ok,
@@ -491,17 +494,18 @@ impl PropSheet {
         self.page_clip(text, px).is_none_or(|r| r.contains(x, y))
     }
 
-    /// The page list's rects in list mode, which need no text; its scrollbar has the
-    /// width of the look the open page was last drawn in.
+    /// The page list's rects in list mode, under the search field, which need no text; its
+    /// scrollbar has the width of the look the open page was last drawn in.
     pub(super) fn list_layout(&self) -> Option<pagelist::Layout> {
         let Nav::List(rows) = &self.nav else {
             return None;
         };
         let (ox, oy) = self.origin;
-        let h = self.shown().1 - STRIP.1 - PAGE_BOTTOM;
+        let top = STRIP.1 + SEARCH_H + SEARCH_GAP;
+        let h = self.shown().1 - top - PAGE_BOTTOM;
         let r = self
             .units()
-            .rect(Rect::new(MARGIN, STRIP.1, pagelist::WIDTH, h));
+            .rect(Rect::new(MARGIN, top, pagelist::WIDTH, h));
         let frame = Rect::new(r.x + ox, r.y + oy, r.width, r.height);
         Some(pagelist::layout(rows, frame, &self.open().controls()))
     }

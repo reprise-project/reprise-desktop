@@ -415,7 +415,9 @@ impl Props {
         picture_file: impl FnOnce(&Source) -> Result<PathBuf, String>,
     ) -> Outcome {
         match ev {
-            propsheet::Event::None | propsheet::Event::Link(_) => Outcome::None,
+            propsheet::Event::None | propsheet::Event::Link(_) | propsheet::Event::Search => {
+                Outcome::None
+            }
             propsheet::Event::Redraw => Outcome::Redraw,
             propsheet::Event::Page(_, form::Event::Pressed(BROWSE)) => Outcome::Browse,
             propsheet::Event::Page(_, form::Event::Changed(STOCK)) => {

@@ -221,8 +221,8 @@ mod tests {
         assert_eq!(open(&s), Page::Appearance, "the first page opens");
     }
 
-    /// The list's inside is 480 px at the smallest sheet: 33 rows at 585 px, so it scrolls
-    /// until the sheet is 105 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// The list's inside is 456 px at the smallest sheet: 33 rows at 585 px, so it scrolls
+    /// until the sheet is 129 px taller. On a sheet 56 px shorter, a page opened from its end
     /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
@@ -233,15 +233,15 @@ mod tests {
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
         assert_eq!(list.rows.len(), 33, "seven headings over 26 pages");
-        assert_eq!((list.total, list.inner.height), (585, 480));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 105 px");
-        sheet.size.1 += 105;
+        assert_eq!((list.total, list.inner.height), (585, 456));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 129 px");
+        sheet.size.1 += 129;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 161;
+        sheet.size.1 -= 185;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (585, 424));
+        assert_eq!((list.total, list.inner.height), (585, 400));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();

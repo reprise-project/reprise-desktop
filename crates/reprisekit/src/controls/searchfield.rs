@@ -21,7 +21,7 @@ pub const RIGHT_PAD: i32 = 4;
 /// The least room kept between the band's other items and the field.
 pub const GAP: i32 = 8;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchField {
     pub edit: TextEdit,
 }
@@ -56,10 +56,15 @@ impl SearchField {
 
     /// A press at `x` in `field` (as [`layout`] gave it, drawn at scale `s`) places the caret.
     pub fn click(&mut self, field: Rect, x: i32, text: &TextRenderer, px: u32, s: i32) {
+        let i = self.caret_at(field, x, text, px, s);
+        self.edit.place(i, false);
+    }
+
+    /// The byte a press at `x` in `field` puts the caret at, as [`SearchField::click`] reads it.
+    pub fn caret_at(&self, field: Rect, x: i32, text: &TextRenderer, px: u32, s: i32) -> usize {
         let inner = inner(field.scaled(s), s);
         let first = edit_first_visible(text, &self.edit, inner.width, px, 0);
-        let i = first + index_at(text, &self.edit.text[first..], x * s - inner.x, px);
-        self.edit.place(i, false);
+        first + index_at(text, &self.edit.text[first..], x * s - inner.x, px)
     }
 }
 

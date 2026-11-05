@@ -15,6 +15,7 @@
 //! End on it open pages, and a page opened any way scrolls its row into view
 //! ([`PropSheet::reveal_open`]). The keys also rest on a live link row, which
 //! opens nothing; Enter on it, or a press on it, comes back as [`Event::Link`].
+//! A search field sits over the list, 4 px above it, the tab stop before the list.
 //! Ctrl+Tab, Ctrl+Page Down and their reverses step pages in either mode
 //! ([`page_step`]).
 //!
@@ -43,6 +44,7 @@ use crate::classic::widgets::{BUTTON_H, BUTTON_W, BarHit};
 use crate::controls::form::{self, Control, Form, Item};
 use crate::controls::pagelist::{self, PageList};
 use crate::controls::scrollbar::PageScroll;
+use crate::controls::searchfield::SearchField;
 use crate::controls::tabstrip::TabStrip;
 use crate::raster::Rect;
 use crate::text::DialogFont;
@@ -73,6 +75,9 @@ const BUTTON_BOTTOM: i32 = 7;
 const BUTTON_PITCH: i32 = BUTTON_W + 6;
 /// The page's bevel, which the scrollbar and the scrolled controls keep inside.
 const PAGE_EDGE: i32 = 2;
+/// The search field's height in list mode; the list starts `SEARCH_GAP` under it.
+const SEARCH_H: i32 = 20;
+const SEARCH_GAP: i32 = 4;
 const BUTTON_IDS: &[&str] = &[OK, CANCEL, APPLY, RESTORE];
 
 /// Which buttons the sheet's row holds. Each set fills the slots from the right,
@@ -109,6 +114,10 @@ pub struct PropSheet {
     scroll: PageScroll,
     /// The page's sideways scroll in a client narrower than the sheet, as `scroll`.
     hscroll: PageScroll,
+    /// The search field over the page list, in list mode.
+    pub search: SearchField,
+    /// The field has the keyboard: neither the list (`tabs.focused`) nor the page does.
+    pub search_focused: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,11 +130,15 @@ pub enum Event {
     Apply,
     /// Link `k` of the page list was pressed, or Enter was pressed with the list resting on it.
     Link(usize),
+    /// The search field's text changed; it is [`PropSheet::search`]'s.
+    Search,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Tab(usize),
+    /// The search field, with the byte a press there puts the caret at.
+    Search(usize),
     /// A link row of the page list, greyed or not.
     Link(usize),
     ListBar(BarHit),
@@ -142,6 +155,8 @@ pub struct Layout {
     pub strip: (i32, i32),
     pub page: Rect,
     pub tabs: Vec<Rect>,
+    /// The search field, in list mode.
+    pub search: Option<Rect>,
     pub list: Option<pagelist::Layout>,
     pub title: Rect,
     pub ok: Rect,
@@ -198,6 +213,8 @@ impl PropSheet {
             nav: Nav::Tabs,
             scroll: PageScroll::default(),
             hscroll: PageScroll::across(),
+            search: SearchField::default(),
+            search_focused: false,
         };
         sheet.pages = pages.into_iter().map(|p| sheet.dress(p, false)).collect();
         sheet
@@ -233,6 +250,8 @@ impl PropSheet {
             nav: Nav::List(PageList::new(groups)),
             scroll: PageScroll::default(),
             hscroll: PageScroll::across(),
+            search: SearchField::default(),
+            search_focused: false,
         };
         sheet.pages = pages.into_iter().map(|p| sheet.dress(p, false)).collect();
         sheet
@@ -301,7 +320,7 @@ impl PropSheet {
 
     /// Replace page `i` with `page`, built in client coordinates: it gains the
     /// sheet's buttons, Apply as it stood on the page it replaces. The focus is
-    /// `page`'s own, none while the strip holds it.
+    /// `page`'s own, none while the strip or the search field holds the keyboard.
     pub fn set_page(&mut self, i: usize, page: Form) {
         let Some(old) = self.pages.get(i) else {
             return;
@@ -318,7 +337,7 @@ impl PropSheet {
             self.set_restore(i, true);
             self.pages[i].set_enabled(RESTORE, on);
         }
-        if self.tabs.focused && i == self.tabs.open {
+        if (self.tabs.focused || self.search_focused) && i == self.tabs.open {
             self.pages[i].set_focus(None);
         }
     }

@@ -467,7 +467,7 @@ impl DialogLayout {
                     Hit::Tab(i) => Some(DialogHit::Tab(i)),
                     Hit::Control(h) => Some(DialogHit::Control(h)),
                     h @ (Hit::PageBar(_) | Hit::PageHBar(_)) => Some(DialogHit::PageBar(h)),
-                    Hit::ListBar(_) | Hit::List | Hit::Link(_) => None,
+                    Hit::ListBar(_) | Hit::List | Hit::Link(_) | Hit::Search(_) => None,
                 }),
                 FormBody::Plain(form) => form.hit(x, y, text, px).map(DialogHit::Control),
             };

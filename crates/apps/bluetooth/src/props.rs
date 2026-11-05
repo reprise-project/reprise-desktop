@@ -199,7 +199,9 @@ impl PropsSheet {
 
     pub fn event(&mut self, ev: propsheet::Event) -> Outcome {
         match ev {
-            propsheet::Event::None | propsheet::Event::Link(_) => Outcome::None,
+            propsheet::Event::None | propsheet::Event::Link(_) | propsheet::Event::Search => {
+                Outcome::None
+            }
             propsheet::Event::Redraw => Outcome::Redraw,
             propsheet::Event::Page(_, form::Event::Changed(id)) => {
                 self.read(id);

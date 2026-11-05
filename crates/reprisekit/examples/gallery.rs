@@ -214,6 +214,10 @@ fn main() {
             &gallery_pathcomplete::render(n.max(1)),
             &format!("reprisekit-gallery-path-complete@{}.png", n.max(1)),
         );
+        write_preview(
+            &render_list_sheet_search(n.max(1)),
+            &format!("reprisekit-gallery-list-sheet-search@{}.png", n.max(1)),
+        );
         for mode in [
             reprisekit::glass::Mode::Light,
             reprisekit::glass::Mode::Dark,
@@ -456,6 +460,10 @@ fn main() {
         write_preview(
             &render_list_sheet_links(),
             "reprisekit-gallery-list-sheet-links.png",
+        );
+        write_preview(
+            &render_list_sheet_search(1),
+            "reprisekit-gallery-list-sheet-search.png",
         );
         write_preview(
             &render_long_list_sheets(),
@@ -8436,10 +8444,47 @@ fn render_list_sheet_links() -> Canvas {
     })
 }
 
+/// The list sheets with "power" typed in the focused search field and the list filtered to
+/// Screen Saver & Lock, Power Options and Advanced; Printers greyed.
+fn render_list_sheet_search(scale: i32) -> Canvas {
+    use pagelist::Item::{Link, Page};
+    let groups: &[(&str, &[pagelist::Item])] = &[
+        (
+            "Personalize",
+            &[Page("Appearance"), Page("Screen Saver & Lock")],
+        ),
+        (
+            "Devices",
+            &[Page("Keyboard"), Link("Bluetooth"), Link("Printers")],
+        ),
+        ("System", &[Link("Power Options"), Page("Advanced")]),
+    ];
+    render_list_sheets_at(groups, 1, scale, |sheet| {
+        let list = sheet.list_mut().expect("a list sheet");
+        list.set_link_enabled(1, false);
+        list.set_filter(Some(&pagelist::Filter {
+            pages: vec![false, true, false, true],
+            links: vec![false, false, true],
+        }));
+        sheet.click(Some(propsheet::Hit::Search(0)));
+        sheet.key(form::Key::Edit(EditKey::Insert("power".into())), None);
+    })
+}
+
 /// `groups` as list sheets in each look, page `open` open and revealed, after `prep`.
 fn render_list_sheets_of(
     groups: &[(&str, &[pagelist::Item])],
     open: usize,
+    prep: impl Fn(&mut PropSheet),
+) -> Canvas {
+    render_list_sheets_at(groups, open, 1, prep)
+}
+
+/// [`render_list_sheets_of`] drawn at `scale`.
+fn render_list_sheets_at(
+    groups: &[(&str, &[pagelist::Item])],
+    open: usize,
+    scale: i32,
     prep: impl Fn(&mut PropSheet),
 ) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
@@ -8461,11 +8506,11 @@ fn render_list_sheets_of(
             ),
         ])
     };
-    let mut c = Canvas::new(564, 1312);
+    let mut c = Canvas::new((564 * scale) as u32, (1312 * scale) as u32);
     c.fill_rect(c.bounds(), Theme::default().colors.background);
     let mut y = 10;
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
-        let theme = cued(interfaces::theme_for(i));
+        let theme = cued(interfaces::theme_for(i)).scaled(scale);
         let pages = (0..count).map(|_| page()).collect();
         let mut sheet = PropSheet::with_list(groups, pages, (398, 424));
         sheet.tabs.open = open;
@@ -8475,7 +8520,7 @@ fn render_list_sheets_of(
         sheet.set_apply_enabled(true);
         prep(&mut sheet);
         let (w, h) = sheet.size;
-        let mut sc = Canvas::new(w as u32, h as u32);
+        let mut sc = Canvas::new((w * scale) as u32, (h * scale) as u32);
         sc.fill_rect(sc.bounds(), theme.colors.button_face);
         propsheet::draw(
             &mut sc,
@@ -8485,7 +8530,7 @@ fn render_list_sheets_of(
             true,
             theme.fonts.size_px,
         );
-        c.blit_canvas(10, y, &sc);
+        c.blit_canvas(10 * scale, y * scale, &sc);
         y += h + 10;
     }
     c
