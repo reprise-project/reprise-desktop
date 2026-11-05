@@ -214,7 +214,7 @@ impl DrivesApp {
             let tag = self.tag();
             self.space_asks.insert(tag, r.clone());
             if let Some(t) = &self.tray {
-                t.notify_buttons(&summary, &body, tag, &space::buttons(r));
+                t.notify_buttons(&summary, &body, tag, space::buttons(r));
             }
         }
     }
