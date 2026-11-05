@@ -777,7 +777,7 @@ fn client() -> reprisebus::remote::Client {
 }
 
 /// Everything under the check box that greys with it.
-const REMOTE_GREYED: [&str; 18] = [
+const REMOTE_GREYED: [&str; 19] = [
     "status",
     "encoder",
     "port_label",
@@ -792,6 +792,7 @@ const REMOTE_GREYED: [&str; 18] = [
     "video_encoder_label",
     "video_encoder",
     "remote_sound",
+    "remote_lock",
     "fingerprint_label",
     "fingerprint",
     "regenerate",
@@ -842,8 +843,9 @@ fn the_remote_desktop_page_geometry() {
     assert_eq!(rect(&s, p, "fingerprint"), Rect::new(GX, 349, 218, 20));
     assert_eq!(rect(&s, p, "regenerate"), Rect::new(256, 347, 110, 23));
     assert_eq!(rect(&s, p, "client_group"), Rect::new(20, 389, 358, 85));
-    assert_eq!(rect(&s, p, "clients"), Rect::new(GX, 409, 253, 55));
+    assert_eq!(rect(&s, p, "clients"), Rect::new(GX, 409, 253, 38));
     assert_eq!(rect(&s, p, "disconnect"), Rect::new(291, 409, 75, 23));
+    assert_eq!(rect(&s, p, "remote_lock"), Rect::new(GX, 453, 13, 13));
     inside_page(&s, p);
     let page = &s.pages[p.index()];
     assert_eq!(
@@ -1234,6 +1236,25 @@ fn sound_on_the_remote_computer_round_trips_through_apply() {
     assert_eq!(back.pages[p.index()].checked("remote_sound"), Some(false));
 }
 
+#[test]
+fn locking_when_the_last_remote_computer_leaves_round_trips_through_apply() {
+    let mut got = crate::model::load("");
+    let base = got.clone();
+    let mut s = with(&got);
+    let p = Page::RemoteDesktop;
+    let page = &mut s.pages[p.index()];
+    assert_eq!(page.checked("remote_lock"), Some(true), "on unless set");
+    page.set_check("remote_lock", false);
+    read_one(&s, "remote_lock", &mut got);
+    let out = crate::model::save("", &got, &base).expect("parses");
+    let doc: toml_edit::DocumentMut = out.parse().unwrap();
+    let table = doc["remote_desktop"].as_table().expect("the section");
+    let rd = repriseconf::remote::from_table(&table.to_string().parse().unwrap());
+    assert!(!rd.lock_on_leave, "lock_on_leave = false is written");
+    let back = with(&crate::model::load(&out));
+    assert_eq!(back.pages[p.index()].checked("remote_lock"), Some(false));
+}
+
 /// The page with one client, selected, and the defaults in its settings, Classic at 100%.
 #[test]
 fn the_remote_desktop_page_pixels() {
@@ -1272,7 +1293,7 @@ fn the_remote_desktop_page_pixels() {
             (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
         });
     assert_eq!(
-        h, 13_272_056_036_377_627_569,
+        h, 5_057_494_088_244_633_774,
         "the page with its client selected"
     );
 }

@@ -398,6 +398,7 @@ suspend_after = 0            # run [power] standby
 # sound = true               # true plays this computer's sound on every connected one, not
 #                            # here; false plays nothing there
 # max_viewers = 4            # how many computers may be connected at once, 1 to 16
+# lock_on_leave = true       # false leaves the session unlocked when the last computer leaves
 
 # [debug]                    # Settings > Advanced also sets these
 # overlay = false            # true shows frame rate, render times, damage, clients

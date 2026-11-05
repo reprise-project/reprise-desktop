@@ -353,6 +353,10 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("fingerprint", "Fingerprint (SHA-256):"),
             ("regenerate", "New Certificate..."),
             ("disconnect", "Disconnect"),
+            (
+                "remote_lock",
+                "Lock this computer when the last one disconnects",
+            ),
         ],
         Page::Privacy => &[
             ("privacy_location", "Let programs ask for your location"),

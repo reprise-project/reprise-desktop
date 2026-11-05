@@ -146,6 +146,10 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Int(k("remote_desktop", "frame_rate"), lens!(remote_frame_rate)),
         Field::Text(k("remote_desktop", "encoder"), lens!(remote_encoder)),
         Field::Flag(k("remote_desktop", "sound"), lens!(remote_sound)),
+        Field::Flag(
+            k("remote_desktop", "lock_on_leave"),
+            lens!(remote_lock_on_leave),
+        ),
         Field::Int(k("workspaces", "count"), lens!(desktops)),
         Field::Strings(k("workspaces", "names"), lens!(desktop_names)),
         Field::Text(k("workspaces", "animation"), lens!(desktop_animation)),
