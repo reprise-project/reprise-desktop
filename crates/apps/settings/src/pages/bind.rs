@@ -8,8 +8,8 @@ use super::desktop::{
 };
 use super::input::{MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS};
 use super::system::{
-    ALLOW_BOOST, BELL, NOTIFICATION_SOUND, QUALITY_VALUE, REMOTE_ENCODER, REMOTE_FRAME_RATE,
-    REMOTE_PORT, REMOTE_QUALITY, REMOTE_SOUND, SOUND_CONTROLS,
+    ALLOW_BOOST, BELL, CLIPBOARD_HISTORY, NOTIFICATION_SOUND, QUALITY_VALUE, REMOTE_ENCODER,
+    REMOTE_FRAME_RATE, REMOTE_PORT, REMOTE_QUALITY, REMOTE_SOUND, SOUND_CONTROLS, clipboard_label,
 };
 use super::{
     CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN, DOUBLE_CLICK,
@@ -25,6 +25,7 @@ use reprisekit::controls::combo;
 use reprisekit::controls::form::{Control, Form};
 use reprisekit::controls::listbox::ListBox;
 use reprisekit::controls::propsheet::PropSheet;
+use reprisekit::text::escape_mnemonic;
 use reprisekit::textedit::TextEdit;
 use reprisekit::theme::Color;
 
@@ -776,19 +777,25 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     }
 }
 
-/// Fill every note that names a key from `binds`: the layout switch keys, the zoom keys, the
-/// launcher's, the 3D switcher's and the overview's.
+/// Fill every note and label that names a key from `binds`: the layout switch keys, the zoom keys,
+/// the launcher's, the 3D switcher's, the overview's and the clipboard history's.
 pub fn show_keys(sheet: &mut PropSheet, binds: &[Shortcut]) {
     let switch = keys_for(binds, "next-layout").map_or_else(
         || "No key switches them.".to_string(),
         |k| format!("{k} switches them."),
     );
-    sheet.pages[Page::Keyboard.index()].set_text(KB_SWITCH_NOTE, &switch);
+    sheet.pages[Page::Keyboard.index()].set_text(KB_SWITCH_NOTE, &escape_mnemonic(&switch));
     crate::magnifierpage::show_zoom_keys(&mut sheet.pages[Page::MagnifierFilters.index()], binds);
     sheet.pages[Page::Search.index()].set_lines(SEARCH_NOTE, &search_note(binds));
     let sp = &mut sheet.pages[Page::Switcher.index()];
-    sp.set_text(FLIP_NOTE, &flip_note(binds));
-    sp.set_text(OVERVIEW_NOTE, &overview_note(binds));
+    sp.set_text(FLIP_NOTE, &escape_mnemonic(&flip_note(binds)));
+    sp.set_text(OVERVIEW_NOTE, &escape_mnemonic(&overview_note(binds)));
+    if let Some(Control::Check { label, .. }) = sheet.pages[Page::Privacy.index()]
+        .item_mut(CLIPBOARD_HISTORY)
+        .map(|i| &mut i.control)
+    {
+        *label = clipboard_label(binds);
+    }
 }
 
 /// The layout xkbcommon compiles for an empty `[keyboard] layout`: the first of `env`

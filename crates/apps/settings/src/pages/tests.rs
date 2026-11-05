@@ -418,6 +418,7 @@ fn lines(s: &PropSheet, page: Page, id: &str) -> Vec<String> {
     {
         Control::Label { text, .. } => vec![text.clone()],
         Control::Lines(l) => l.clone(),
+        Control::Check { label, .. } => vec![label.clone()],
         _ => panic!("{id} is a label"),
     }
 }
