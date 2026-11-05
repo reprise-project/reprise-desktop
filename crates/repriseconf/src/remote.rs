@@ -74,7 +74,7 @@ impl EncoderChoice {
 pub struct RemoteDesktop {
     pub port: u16,
     pub quality: Quality,
-    /// 30 or 60.
+    /// 30, 60, 120 or 144.
     pub frame_rate: u32,
     pub encoder: EncoderChoice,
     pub sound: bool,
@@ -143,7 +143,7 @@ fn read(t: &toml::Table) -> (RemoteDesktop, Vec<&'static str>) {
         }),
         frame_rate: key(t, "frame_rate", &mut bad, d.frame_rate, |v| {
             v.as_integer()
-                .filter(|r| matches!(r, 30 | 60))
+                .filter(|r| matches!(r, 30 | 60 | 120 | 144))
                 .map(|r| r as u32)
         }),
         encoder: key(t, "encoder", &mut bad, d.encoder, |v| {
@@ -259,9 +259,17 @@ quality = \"sharp\"",
     }
 
     #[test]
-    fn frame_rate_is_30_or_60() {
-        let t: toml::Table = toml::from_str("frame_rate = 45").unwrap();
-        assert_eq!(from_table(&t).frame_rate, 60);
+    fn frame_rate_is_30_60_120_or_144() {
+        for (text, want) in [
+            ("30", 30),
+            ("120", 120),
+            ("144", 144),
+            ("45", 60),
+            ("240", 60),
+        ] {
+            let t: toml::Table = toml::from_str(&format!("frame_rate = {text}")).unwrap();
+            assert_eq!(from_table(&t).frame_rate, want, "frame_rate = {text}");
+        }
     }
 
     #[test]

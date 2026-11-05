@@ -172,8 +172,12 @@ pub const REMOTE_ENCODERS: &Choices = &[
     ("none", "None (RemoteFX)"),
 ];
 
-pub const FRAME_RATES: &[(i64, &str)] =
-    &[(30, "30 frames per second"), (60, "60 frames per second")];
+pub const FRAME_RATES: &[(i64, &str)] = &[
+    (30, "30 frames per second"),
+    (60, "60 frames per second"),
+    (120, "120 frames per second"),
+    (144, "144 frames per second"),
+];
 
 pub const SLIDE_INTERVALS: &[(i64, &str)] = &[
     (1, "1 minute"),

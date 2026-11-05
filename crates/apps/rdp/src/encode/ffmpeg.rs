@@ -524,6 +524,32 @@ mod tests {
         }
     }
 
+    /// The `level_idc` of the first sequence parameter set in Annex B `data`.
+    fn level_idc(data: &[u8]) -> Option<u8> {
+        let sps = data
+            .windows(4)
+            .position(|w| w[..3] == [0, 0, 1] && w[3] & 0x1f == 7)?;
+        data.get(sps + 6).copied()
+    }
+
+    #[test]
+    fn x264_picks_the_level_for_1080p_at_the_frame_rate() {
+        silence();
+        let size = (1920, 1080);
+        for (rate, level) in [(60, 42), (144, 52)] {
+            let mut encoder = Ffmpeg::new(
+                Backend::X264,
+                Path::new(RENDER_NODE),
+                rate,
+                Quality::Balanced,
+            )
+            .unwrap();
+            let damage = vec![Rect::full(size)];
+            let (data, _) = avc(encoder.encode(&frame(size, 0, damage), true).unwrap());
+            assert_eq!(level_idc(&data), Some(level), "{rate} frames a second");
+        }
+    }
+
     #[test]
     fn odd_sizes_crop() {
         let mut encoder = x264();
