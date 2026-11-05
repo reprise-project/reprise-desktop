@@ -1,5 +1,6 @@
 use crate::classic::widgets::{LINE_H, bar_hit};
 use crate::controls::form;
+use crate::controls::hosted::Hosted;
 use crate::controls::pagelist::{self, PageList, Pick};
 use crate::controls::{searchfield, tabstrip};
 use crate::text::TextRenderer;
@@ -57,10 +58,11 @@ impl PropSheet {
         }
     }
 
-    /// The search field takes the keyboard from the list and the page.
+    /// The search field takes the keyboard from the list and the page, closing a dropped list.
     fn take_search(&mut self) {
         self.tabs.focused = false;
         self.drop_cursor();
+        self.open_mut().dismiss();
         self.open_mut().set_focus(None);
         self.search_focused = true;
     }
@@ -95,11 +97,14 @@ impl PropSheet {
         // page, field.
         match tab {
             Some(back) if self.search_focused => {
-                self.search_focused = false;
                 if back {
-                    self.open_mut().focus_edge(true);
+                    if !self.open_mut().focus_edge(true) {
+                        return StripKey::None;
+                    }
+                    self.search_focused = false;
                     return StripKey::Moved;
                 }
+                self.search_focused = false;
                 self.tabs.focused = true;
                 return self.rest_on_shown().unwrap_or(StripKey::Moved);
             }
@@ -220,6 +225,16 @@ impl PropSheet {
         }
         if let (true, None, form::Key::Edit(k)) = (self.search_focused, ctrl_tab, &key) {
             return self.search_key(k.clone());
+        }
+        if let (true, None, form::Key::DocEdge { end, select }) =
+            (self.search_focused, ctrl_tab, &key)
+        {
+            let select = *select;
+            return self.search_key(if *end {
+                EditKey::End { select }
+            } else {
+                EditKey::Home { select }
+            });
         }
         if key == form::Key::Enter
             && ctrl_tab.is_none()

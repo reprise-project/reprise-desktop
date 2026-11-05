@@ -2215,7 +2215,6 @@ fn typing_on_the_list_goes_to_the_field() {
     );
 }
 
-/// Keys typed into a control on the page stay there.
 #[test]
 fn typing_in_a_page_field_stays_in_the_field() {
     let pages = vec![
@@ -2235,6 +2234,48 @@ fn typing_in_a_page_field_stays_in_the_field() {
         Event::Page(0, form::Event::Changed("name"))
     );
     assert_eq!(s.search.text(), "");
+}
+
+#[test]
+fn shift_tab_from_the_field_with_no_page_stop_keeps_the_field() {
+    let mut s = list_sheet();
+    for id in ["check", OK, CANCEL, APPLY] {
+        s.open_mut().set_enabled(id, false);
+    }
+    s.focus_search();
+    s.key(form::Key::Tab { back: true }, None);
+    assert!(s.search_focused);
+    assert!(!s.tabs.focused);
+    assert_eq!(s.open().focus(), None);
+}
+
+#[test]
+fn ctrl_home_and_end_move_the_field_caret() {
+    let mut s = list_sheet();
+    s.focus_search();
+    s.key(form::Key::Edit(EditKey::Insert("night".into())), None);
+    let edge = |end, select| form::Key::DocEdge { end, select };
+    assert_eq!(s.key(edge(false, false), None), Event::Redraw);
+    assert_eq!(s.search.edit.caret(), 0);
+    assert_eq!(s.key(edge(true, true), None), Event::Redraw);
+    assert_eq!(s.search.edit.selection(), 0..5);
+    assert!(s.search_focused);
+}
+
+#[test]
+fn ctrl_f_closes_a_dropped_combo_list() {
+    let pages = vec![
+        Form::new(vec![Item::combo("pick", 20, 50, 100, &["One", "Two"], 4)]),
+        check_page("Effects"),
+        check_page("Mouse"),
+    ];
+    let mut s = PropSheet::with_list(LIST_GROUPS, pages, (398, 424));
+    s.focus_control("pick");
+    s.key(form::Key::Drop, None);
+    assert!(s.open().popup_open());
+    assert_eq!(s.focus_search(), Event::Redraw);
+    assert!(!s.open().popup_open());
+    assert_eq!(s.key(form::Key::Escape, None), Event::Cancel);
 }
 
 #[test]

@@ -158,6 +158,90 @@ fn the_location_list_takes_its_tab_stop_after_its_check_on_the_advanced_page() {
     );
 }
 
+/// Which of the search field, a side list, the page list and a page control hold the keyboard.
+fn holders(a: &SettingsApp) -> [bool; 4] {
+    [
+        a.sheet.search_focused,
+        a.list_focus || a.shortcuts_focus || a.types_focus || a.locations_focus,
+        a.sheet.tabs.focused,
+        a.sheet.open().focus().is_some(),
+    ]
+}
+
+const FIELD: [bool; 4] = [true, false, false, false];
+const SIDE_LIST: [bool; 4] = [false, true, false, false];
+const PAGE: [bool; 4] = [false, false, false, true];
+
+fn ctrl_key(a: &mut SettingsApp, ctx: &Ctx, sym: u32, shift: bool) {
+    let k = KeyInput {
+        sym,
+        utf8: None,
+        mods: repriseapp::Mods {
+            ctrl: true,
+            shift,
+            ..Default::default()
+        },
+        edit: reprisekit::textedit::key_for(sym, true, shift, None),
+    };
+    a.key(k, &ctx.forms().controls());
+}
+
+fn press_search_field(a: &mut SettingsApp, ctx: &mut Ctx) {
+    ctx.size = (1920, 1080);
+    let px = a.sheet.open().units().px(ctx.theme.fonts.size_px);
+    let field = a
+        .sheet
+        .layout(&ctx.text, px)
+        .search
+        .expect("a search field");
+    let press = PointerInput::Press {
+        x: field.x + 4,
+        y: field.y + 4,
+        button: BTN_LEFT,
+        time: 0,
+        mods: repriseapp::Mods::default(),
+    };
+    a.event(MAIN, Event::Pointer(press), ctx);
+}
+
+#[test]
+fn the_search_field_and_a_side_list_never_hold_the_keyboard_together() {
+    let mut a = app("search-side-list");
+    let mut ctx = test_ctx();
+    a.open_page(Page::Keyboard, None);
+    assert_eq!(
+        holders(&a),
+        SIDE_LIST,
+        "the page opens on its shortcut list"
+    );
+
+    press_search_field(&mut a, &mut ctx);
+    assert_eq!(holders(&a), FIELD, "a press in the field");
+
+    press_side_row(&mut a, &mut ctx, 0, 1000);
+    assert_eq!(holders(&a), SIDE_LIST, "a press on the shortcut list");
+
+    ctrl_key(&mut a, &ctx, u32::from(b'f'), false);
+    assert_eq!(holders(&a), FIELD, "Ctrl+F");
+
+    tab(&mut a, &ctx, true);
+    assert_eq!(holders(&a), PAGE, "Shift+Tab off the field");
+    let last = a.sheet.open().focus().unwrap();
+    assert_eq!(
+        a.sheet.open().items[last].id,
+        propsheet::CANCEL,
+        "the page's last stop (Apply is greyed)"
+    );
+
+    let tab_sym = reprisekit::textedit::keysym::TAB;
+    ctrl_key(&mut a, &ctx, tab_sym, true);
+    ctrl_key(&mut a, &ctx, u32::from(b'f'), false);
+    assert_ne!(a.sheet.tabs.open, Page::Keyboard.index());
+    ctrl_key(&mut a, &ctx, tab_sym, false);
+    assert_eq!(a.sheet.tabs.open, Page::Keyboard.index());
+    assert_eq!(holders(&a), SIDE_LIST, "Ctrl+Tab from the field");
+}
+
 #[test]
 fn a_double_click_on_a_file_type_opens_the_chooser_like_enter() {
     let mut a = app("types-double-click");
