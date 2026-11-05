@@ -1935,11 +1935,11 @@ fn enter_on_a_found_control_takes_the_keyboard_from_the_location_list() {
     pages::fill_locations(&mut a.locations, &[("Maps".into(), true)]);
     press_side_row(&mut a, &mut ctx, 0, 1000);
     assert!(a.locations_focus);
-    // "clipboard" alone is a Privacy keyword and opens the page; "keep" names the control.
-    find(&mut a, &mut ctx, "keep clipboard");
+    find(&mut a, &mut ctx, "clipboard");
     assert_eq!(
         a.search_hits[Page::Privacy.index()],
-        Some(Hit::Control("clipboard_history"))
+        Some(Hit::Keyword(Some("clipboard_history"))),
+        "a keyword naming one control"
     );
     enter(&mut a, &ctx);
     assert_eq!(registry::open(&a.sheet), Page::Privacy);
