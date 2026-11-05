@@ -1,3 +1,4 @@
+use super::super::desktop::GLOW_CONTROLS;
 use super::*;
 
 #[test]
@@ -133,13 +134,13 @@ fn the_virtual_desktops_page_geometry() {
         rect(&s, p, "desktop_names_note"),
         Rect::new(50, 264, 316, 13)
     );
-    assert_eq!(rect(&s, p, "previews_group"), Rect::new(20, 298, 358, 76));
-    assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(32, 322, 13, 13));
-    assert_eq!(rect(&s, p, "previews_fps"), Rect::new(146, 344, 50, 20));
-    assert_eq!(rect(&s, p, "fps_units"), Rect::new(202, 348, 100, 13));
     for id in ["session_restore", "session_end_processes"] {
         assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Startup");
     }
+    assert!(
+        s.pages[p.index()].item("previews_group").is_none(),
+        "window pictures are on Taskbar"
+    );
     inside_page(&s, p);
 }
 
@@ -303,28 +304,38 @@ fn use_virtual_desktops_sets_one_and_greys_the_rest() {
 }
 
 #[test]
-fn the_duration_and_the_refresh_rate_follow_what_uses_them() {
+fn the_duration_follows_the_animation() {
     let p = Page::VirtualDesktops;
+    let mut s = built();
+    assert!(enabled_on(&s, p, "desktop_animation"));
+    assert!(!enabled_on(&s, p, "desktop_animation_ms"), "no animation");
+    assert!(!enabled_on(&s, p, "duration_units"));
+    let fade = Settings {
+        desktop_animation: "fade".into(),
+        ..Settings::default()
+    };
+    follow(&mut s, &fade);
+    assert!(enabled_on(&s, p, "desktop_animation_ms"));
+}
+
+#[test]
+fn the_refresh_rate_follows_what_shows_a_live_picture() {
+    let p = Page::Taskbar;
     let still = Settings {
         switcher_preview: false,
         preview_taskbar: false,
         ..Settings::default()
     };
     let mut s = with(&still);
-    assert!(enabled_on(&s, p, "desktop_animation"));
-    assert!(!enabled_on(&s, p, "desktop_animation_ms"), "no animation");
-    assert!(!enabled_on(&s, p, "duration_units"));
     for id in FPS_CONTROLS {
         assert!(!enabled_on(&s, p, id), "{id} greys with no live picture");
     }
     let thumbs = Settings {
         switcher_style: "thumbnails".into(),
-        desktop_animation: "fade".into(),
         ..still.clone()
     };
     follow(&mut s, &thumbs);
     assert!(enabled_on(&s, p, "previews_fps"), "thumbnails are live");
-    assert!(enabled_on(&s, p, "desktop_animation_ms"));
     let taskbar = Settings {
         preview_taskbar: true,
         ..still
@@ -453,6 +464,10 @@ fn the_taskbar_page_geometry() {
     let p = Page::Taskbar;
     assert_eq!(rect(&s, p, "location_label"), Rect::new(20, 48, 100, 13));
     assert_eq!(rect(&s, p, "taskbar_position"), Rect::new(124, 44, 120, 21));
+    assert_eq!(
+        rect(&s, p, "taskbar_height_label"),
+        Rect::new(254, 48, 44, 13)
+    );
     assert_eq!(rect(&s, p, "buttons_label"), Rect::new(20, 76, 100, 13));
     assert_eq!(rect(&s, p, "taskbar_buttons"), Rect::new(124, 72, 230, 21));
     for (i, id) in [
@@ -462,6 +477,7 @@ fn the_taskbar_page_geometry() {
         "taskbar_badges",
         "taskbar_tray_overflow",
         "taskbar_network_meter",
+        "taskbar_slide",
     ]
     .into_iter()
     .enumerate()
@@ -472,22 +488,94 @@ fn the_taskbar_page_geometry() {
             "{id} is row {i}"
         );
     }
-    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 228, 358, 26));
-    assert_eq!(rect(&s, p, "taskbar_auto_hide"), Rect::new(20, 258, 13, 13));
+    assert_eq!(rect(&s, p, TRAY_CUSTOMIZE), Rect::new(303, 167, 75, 23));
     for (i, id) in REVEAL_CONTROLS.into_iter().enumerate() {
         assert_eq!(
             rect(&s, p, id),
-            Rect::new(38, 278 + 20 * i as i32, 13, 13),
+            Rect::new(38, 290 + 18 * i as i32, 13, 13),
             "{id} sits under the auto-hide label"
         );
     }
+    assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(20, 346, 13, 13));
+    assert_eq!(rect(&s, p, "fps_label"), Rect::new(38, 366, 110, 13));
+    assert_eq!(rect(&s, p, "previews_fps"), Rect::new(152, 362, 50, 20));
+    assert_eq!(rect(&s, p, "fps_units"), Rect::new(208, 366, 170, 13));
     assert!(
         s.pages[p.index()].item("recent_files").is_none(),
         "recent_files is on Advanced"
     );
-    assert_eq!(rect(&s, p, "start_group"), Rect::new(20, 338, 358, 44));
-    assert_eq!(rect(&s, p, "start_icon"), Rect::new(32, 360, 13, 13));
+    assert_eq!(rect(&s, p, "start_icon"), Rect::new(32, 408, 13, 13));
+    assert_eq!(rect(&s, p, "orb_glow_label"), Rect::new(32, 434, 110, 13));
+    assert_eq!(rect(&s, p, "orb_glow_note"), Rect::new(32, 456, 334, 13));
+    for id in ["taskbar_pinned", "startmenu_banner", "startmenu_style"] {
+        assert!(
+            s.pages[p.index()].item(id).is_none(),
+            "{id} is on Start Menu"
+        );
+    }
     inside_page(&s, p);
+}
+
+#[test]
+fn taskbar_holds_its_height_slide_pictures_and_glow() {
+    assert_moved("taskbar_height", Page::FontsAndIcons, Page::Taskbar);
+    assert_moved("taskbar_slide", Page::Effects, Page::Taskbar);
+    assert_moved("preview_taskbar", Page::VirtualDesktops, Page::Taskbar);
+    assert_moved("glass_orb_glow", Page::Appearance, Page::Taskbar);
+    for i in ["classic", "glass"] {
+        let k = keys_on(&under(i), Page::Taskbar);
+        for want in [
+            "metrics.taskbar_height",
+            "effects.taskbar_slide",
+            "previews.taskbar",
+            "previews.fps",
+            "glass.orb_glow",
+        ] {
+            assert!(k.contains(&want.to_string()), "{i}: {want}");
+        }
+    }
+    assert!(!keys_on(&built(), Page::Effects).contains(&"effects.taskbar_slide".to_string()));
+    assert!(Page::Taskbar.keywords().contains(&"previews"));
+    let s = built();
+    let p = Page::Taskbar;
+    assert_eq!(rect(&s, p, "taskbar_height"), Rect::new(302, 44, 50, 20));
+    assert_eq!(
+        rect(&s, p, "taskbar_height_units"),
+        Rect::new(358, 48, 20, 13)
+    );
+    assert_eq!(rect(&s, p, "taskbar_small_icons").y, 100);
+    assert_eq!(rect(&s, p, "taskbar_slide").y, 208);
+    assert_eq!(rect(&s, p, "taskbar_note"), Rect::new(20, 228, 358, 39));
+    assert_eq!(rect(&s, p, "taskbar_auto_hide").y, 272);
+    assert_eq!(rect(&s, p, "preview_taskbar").y, 346);
+    assert_eq!(rect(&s, p, "previews_fps").y, 362);
+    assert_eq!(rect(&s, p, "start_group"), Rect::new(20, 386, 358, 88));
+    assert_eq!(rect(&s, p, "glass_orb_glow"), Rect::new(146, 428, 150, 26));
+    inside_page(&s, p);
+}
+
+#[test]
+fn glass_only_taskbar_controls_grey_with_a_note_elsewhere() {
+    let classic = under("classic");
+    for id in GLOW_CONTROLS {
+        assert!(!enabled_on(&classic, Page::Taskbar, id), "{id}");
+    }
+    assert_eq!(
+        lines(&classic, Page::Taskbar, "orb_glow_note"),
+        ["The glow shows under Glass only."]
+    );
+    assert!(!enabled_on(&classic, Page::Taskbar, "taskbar_small_icons"));
+    assert_eq!(
+        lines(&classic, Page::Taskbar, "taskbar_note"),
+        [
+            "Left unchanged, these follow the interface: Glass combines",
+            "buttons and turns on the desktop button and Peek. Small",
+            "icons shorten the Glass taskbar only.",
+        ]
+    );
+    let glass = under("glass");
+    assert!(enabled_on(&glass, Page::Taskbar, "glass_orb_glow"));
+    assert!(enabled_on(&glass, Page::Taskbar, "taskbar_small_icons"));
 }
 
 #[test]
@@ -495,15 +583,17 @@ fn taskbar_values_go_in_and_come_back_out() {
     let want = Settings {
         taskbar_position: "top".into(),
         taskbar_buttons: "combine".into(),
-        taskbar_pinned: true,
+        taskbar_height: 40,
+        taskbar_slide: false,
+        preview_taskbar: false,
+        previews_fps: 12,
+        glass_orb_glow: 30,
         taskbar_peek: true,
         taskbar_tray_overflow: true,
         taskbar_badges: false,
         taskbar_network_meter: true,
         recent_files: false,
         start_icon: false,
-        startmenu_banner: "Reprise".into(),
-        startmenu_style: "classic".into(),
         taskbar_auto_hide: true,
         taskbar_reveal_on_edge: false,
         taskbar_reveal_on_attention: false,
@@ -536,6 +626,24 @@ fn taskbar_values_go_in_and_come_back_out() {
     let mut got = Settings::default();
     read_all(&s, &mut got);
     assert_eq!(got, want);
+}
+
+#[test]
+fn the_taskbar_slide_check_goes_in_and_comes_back_out() {
+    let mut got = Settings::for_interface("glass");
+    let mut s = with(&got);
+    let p = Page::Taskbar;
+    assert_eq!(
+        s.pages[p.index()].checked("taskbar_slide"),
+        Some(true),
+        "Glass slides its task buttons"
+    );
+    tick(&mut s, &mut got, p, "taskbar_slide", false);
+    assert!(!got.taskbar_slide);
+    assert_eq!(
+        with(&Settings::for_interface("classic")).pages[p.index()].checked("taskbar_slide"),
+        Some(false)
+    );
 }
 
 #[test]
