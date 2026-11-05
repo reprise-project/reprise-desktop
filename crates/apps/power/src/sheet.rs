@@ -631,7 +631,7 @@ fn schemes_page(icon: Option<Canvas>) -> Form {
         X,
         314,
         W,
-        "Blank and lock times are on Reprise Settings' Power page.",
+        "Screen saver and lock times are in Reprise Settings.",
     ));
     Form::new(items)
 }

@@ -284,7 +284,8 @@ One window, 26 pages, seven headings. Only one runs at a time.
     picks one virtual desktop to give a picture of its own; picking the
     picture for all desktops there takes it away.
   - **Screen Saver & Lock:** the saver, its settings and a live preview,
-    and the paired device whose going away locks the session.
+    then the lock: its timeout and fade, lock on sleep, the lock screen's
+    wallpaper and the paired device whose going away locks the session.
   - **Fonts & Icons:** the UI and dialog fonts, the icon theme, frame and
     caption sizes, and how GTK and Qt programs are themed.
   - **Effects:** window animations, highlight fades, menu shadows and how menus
@@ -334,8 +335,8 @@ One window, 26 pages, seven headings. Only one runs at a time.
     and every connected computer is listed; Disconnect ends the selected
     one.
 - **System**
-  - **Power:** the Turn Off commands, idle timeouts, lock on sleep and the
-    lock screen's wallpaper.
+  - **Power:** the Turn Off commands, the screen off and screen saver
+    timeouts, and the low disk space warning.
   - **Startup:** autostart entries and session restore.
   - **Default Programs:** browser, mail, music, video, photos, text editor,
     file manager, terminal and its arguments, what a plugged-in drive does,
