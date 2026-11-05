@@ -1,7 +1,5 @@
-//! The Screen Saver & Lock page: a monitor running the pending saver, the saver
-//! combo, Settings... and Preview, and the minutes of no input that start it
-//! (`[idle] blank_after`, shown in seconds on the Power page). Below, the paired Bluetooth
-//! device whose going away locks the session (`[lock]`).
+//! The Screen Saver & Lock page: the saver and its wait (`[idle] blank_after`),
+//! then the Lock group, the paired-device lock (`[lock]`) included.
 
 use std::path::{Path, PathBuf};
 
@@ -39,50 +37,71 @@ pub fn page(a: Area) -> Form {
     let bx = GX + 156;
     let mut items = vec![
         Item::new(MONITOR, monitor_rect(a), Control::Monitor(Screen::Black)),
-        Item::group("saver_group", Rect::new(X, 222, a.w, 106), "Screen saver"),
+        Item::group("saver_group", Rect::new(X, 222, a.w, 84), "Screen saver"),
         Item::combo(SAVER, GX, 244, 150, &rows, rows.len()),
         button(SETTINGS, bx, 243, "Se&ttings..."),
         button(PREVIEW, bx + BUTTON_W + 6, 243, "Pre&view"),
     ];
     items.extend(spin("wait_label", WAIT, GX, 282, 40, "&Wait:", (1, 1440)));
     items.push(Item::label_at("wait_units", GX + 100, 282, 60, "minutes"));
-    items.push(Item::label_at(
-        "saver_note",
-        GX,
-        306,
-        a.gw(),
-        "Lock after on the Power page locks the screen under it.",
-    ));
+
     items.push(Item::group(
-        "away_group",
-        Rect::new(X, 338, a.w, 118),
-        "Lock When Away",
+        "lock_group",
+        Rect::new(X, 314, a.w, 160),
+        "Lock",
+    ));
+    let gw = a.gw();
+    let seconds = |id, y| Item::label_at(id, GX + 174, y, gw - 174, "seconds (0 is off)");
+    items.extend(spin(
+        "lock_label",
+        "lock_after",
+        GX,
+        336,
+        114,
+        "&Lock after:",
+        (0, 99999),
+    ));
+    items.push(seconds("lock_units", 336));
+    items.extend(spin(
+        "fade_label",
+        "lock_fade",
+        GX,
+        360,
+        114,
+        "&Fade before lock:",
+        (0, 99999),
+    ));
+    items.push(seconds("fade_units", 360));
+    items.push(Item::check(
+        "lock_on_sleep",
+        GX,
+        382,
+        "Lock the computer when it goes to &sleep",
+    ));
+    items.push(Item::check(
+        "lock_wallpaper",
+        GX,
+        404,
+        "Show the wallpaper on the lock scree&n",
     ));
     items.push(Item::label_at(
         "away_label",
         GX,
-        358,
-        a.gw(),
-        "Lock when this paired device goes &away:",
+        426,
+        gw,
+        "Lock when this device &disconnects:",
     ));
-    items.push(Item::combo(AWAY, GX, 374, 200, &[NONE_ROW], AWAY_ROWS));
+    items.push(Item::combo(AWAY, GX, 442, 150, &[NONE_ROW], AWAY_ROWS));
     items.extend(spin(
         "away_after_label",
         AWAY_AFTER,
-        GX,
-        408,
+        GX + 160,
+        446,
         40,
         "Aft&er:",
         (0, 3600),
     ));
-    items.push(Item::label_at("away_units", GX + 100, 408, 60, "seconds"));
-    items.push(Item::label_at(
-        "away_note",
-        GX,
-        432,
-        a.gw(),
-        "It must stay connected while near (calls, KDE Connect).",
-    ));
+    items.push(Item::label_at("away_units", GX + 260, 446, 60, "seconds"));
     Form::new(items)
 }
 
