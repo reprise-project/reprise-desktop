@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::procfs::{self, CpuTimes, MemInfo};
 use crate::scopes::{self, Scope};
@@ -22,6 +23,9 @@ pub struct ProcRow {
     pub mem_kb: u64,
     pub threads: u32,
     pub cmdline: String,
+    /// Bytes per second read from and written to storage since the last reading; None while the
+    /// Disk column is hidden or where `/proc/<pid>/io` is unreadable.
+    pub disk: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -71,6 +75,11 @@ pub struct Sampler {
     cmdlines: HashMap<Key, String>,
     users: HashMap<u32, String>,
     page_kb: u64,
+    /// Read `/proc/<pid>/io` too, for the Disk column.
+    pub disk: bool,
+    /// Each process's storage bytes at the last reading, and when that was.
+    io: HashMap<Key, u64>,
+    at: Option<Instant>,
 }
 
 impl Sampler {
@@ -86,6 +95,9 @@ impl Sampler {
             cmdlines: HashMap::new(),
             users,
             page_kb: (page.max(4096) as u64) / 1024,
+            disk: false,
+            io: HashMap::new(),
+            at: None,
         }
     }
 
@@ -102,6 +114,15 @@ impl Sampler {
     }
 
     pub fn sample(&mut self) -> Snapshot {
+        self.sample_at(Instant::now())
+    }
+
+    /// [`Self::sample`] taken at `now`, which times the disk rates.
+    pub fn sample_at(&mut self, now: Instant) -> Snapshot {
+        let secs = (self.at)
+            .map(|t| now.saturating_duration_since(t).as_secs_f64())
+            .filter(|s| *s > 0.0);
+        let mut io = HashMap::new();
         let cpu = procfs::read_cpu(&self.root);
         let (load, cores, machine) = match (&self.cpu, &cpu) {
             (Some((p, pc)), Some((n, nc))) => (
@@ -126,6 +147,16 @@ impl Sampler {
                 .entry(key)
                 .or_insert_with(|| procfs::read_cmdline(root, pid))
                 .clone();
+            let disk = (self.disk)
+                .then(|| procfs::read_io(root, pid))
+                .flatten()
+                .map(|bytes| {
+                    io.insert(key, bytes);
+                    match (self.io.get(&key), secs) {
+                        (Some(&prev), Some(s)) => (bytes.saturating_sub(prev) as f64 / s) as u64,
+                        _ => 0,
+                    }
+                });
             procs.push(ProcRow {
                 pid,
                 start: p.stat.start,
@@ -140,10 +171,13 @@ impl Sampler {
                 mem_kb: p.stat.rss_pages * self.page_kb,
                 threads: p.stat.threads,
                 cmdline,
+                disk,
             });
         }
         self.cmdlines.retain(|k, _| ticks.contains_key(k));
         self.ticks = ticks;
+        self.io = io;
+        self.at = Some(now);
         if cpu.is_some() {
             self.cpu = cpu;
         }
@@ -155,38 +189,6 @@ impl Sampler {
             scopes: self.slice.as_deref().map(scopes::read).unwrap_or_default(),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Column {
-    Name,
-    Pid,
-    User,
-    Cpu,
-    Memory,
-}
-
-pub const COLUMNS: [Column; 5] = [
-    Column::Name,
-    Column::Pid,
-    Column::User,
-    Column::Cpu,
-    Column::Memory,
-];
-
-/// `rows` by `col`, ascending or not; equal rows by pid.
-pub fn sort(rows: &mut [ProcRow], col: Column, ascending: bool) {
-    rows.sort_by(|a, b| {
-        let o = match col {
-            Column::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            Column::Pid => a.pid.cmp(&b.pid),
-            Column::User => a.user.cmp(&b.user),
-            Column::Cpu => a.cpu.total_cmp(&b.cpu),
-            Column::Memory => a.mem_kb.cmp(&b.mem_kb),
-        };
-        let o = if ascending { o } else { o.reverse() };
-        o.then(a.pid.cmp(&b.pid))
-    });
 }
 
 #[cfg(test)]
@@ -288,31 +290,32 @@ mod tests {
         );
     }
 
-    fn row(pid: i32, name: &str, cpu: f64, mem_kb: u64) -> ProcRow {
-        ProcRow {
-            pid,
-            name: name.into(),
-            cpu,
-            mem_kb,
-            ..Default::default()
-        }
-    }
-
     #[test]
-    fn rows_sort_by_any_column_and_ties_by_pid() {
-        let mut rows = vec![
-            row(3, "bash", 2.0, 10),
-            row(1, "Xwayland", 2.0, 500),
-            row(2, "agent", 9.0, 30),
-        ];
-        let pids = |r: &[ProcRow]| r.iter().map(|p| p.pid).collect::<Vec<_>>();
-        sort(&mut rows, Column::Name, true);
-        assert_eq!(pids(&rows), [2, 3, 1], "names compare case-insensitively");
-        sort(&mut rows, Column::Cpu, false);
-        assert_eq!(pids(&rows), [2, 1, 3], "equal shares fall back to the pid");
-        sort(&mut rows, Column::Memory, true);
-        assert_eq!(pids(&rows), [3, 2, 1]);
-        sort(&mut rows, Column::Pid, false);
-        assert_eq!(pids(&rows), [3, 2, 1]);
+    fn disk_rates_are_read_only_for_the_disk_column_and_blank_where_unreadable() {
+        let root = tempfile::tempdir().unwrap();
+        let r = root.path();
+        let cpu = "cpu 0 0 0 1000 0 0 0 0\n";
+        write(
+            r,
+            cpu,
+            &[
+                (10, stat(10, "writer", 1, 5)),
+                (11, stat(11, "other", 1, 6)),
+            ],
+        );
+        let io = |bytes: u64| format!("read_bytes: 0\nwrite_bytes: {bytes}\n");
+        std::fs::write(r.join("10/io"), io(1 << 20)).unwrap();
+        let mut s = Sampler::new(r, None, HashMap::new());
+        let t0 = Instant::now();
+        let disk =
+            |snap: &Snapshot, pid: i32| snap.procs.iter().find(|p| p.pid == pid).unwrap().disk;
+        assert_eq!(disk(&s.sample_at(t0), 10), None, "the column is hidden");
+        s.disk = true;
+        let first = s.sample_at(t0 + std::time::Duration::from_secs(1));
+        assert_eq!(disk(&first, 10), Some(0), "nothing to measure against yet");
+        std::fs::write(r.join("10/io"), io(3 << 20)).unwrap();
+        let next = s.sample_at(t0 + std::time::Duration::from_secs(3));
+        assert_eq!(disk(&next, 10), Some(1 << 20), "2 MiB over 2 s");
+        assert_eq!(disk(&next, 11), None, "no io file to read");
     }
 }

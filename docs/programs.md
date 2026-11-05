@@ -455,13 +455,18 @@ another program).
 - **Processes:** your processes with their PID, user, share of the CPU and
   resident memory; click a column title to sort by it, rest the pointer on a
   row for its command line. Show processes from all users lists everyone's,
-  read only. End Process asks first.
+  read only. End Process asks first. View > Select Columns... adds Threads,
+  Disk (bytes read from and written to storage per second, blank for other
+  users' processes) and Command Line (a process with no arguments, such as a
+  kernel thread, shows its name in brackets). Drag a divider to widen a column.
 - **Performance:** the CPU's load and the memory in use, now and over the
   last hundred samples, swap drawn over memory. View > CPU History draws a
   graph per core. Totals, memory and swap figures sit underneath.
 - **Updates** every second; View > Update Speed sets High (half a second),
   Normal, Low (four seconds) or Paused, and F5 refreshes at once. Nothing is
   sampled while the window is minimized.
+- The update speed, the CPU graph and the Processes columns and their widths
+  are kept in `~/.local/state/reprise/taskmgr.toml`.
 
 ## User Accounts
 

@@ -2750,9 +2750,12 @@ dependencies = [
  "log",
  "repriseapp",
  "reprisebus",
+ "repriseconf",
  "reprisefs",
  "reprisekit",
+ "serde",
  "tempfile",
+ "toml",
  "wayland-client",
  "wayland-protocols-wlr",
 ]

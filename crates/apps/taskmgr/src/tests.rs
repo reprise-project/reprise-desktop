@@ -56,6 +56,7 @@ fn proc(pid: i32, name: &str, uid: u32, cpu: f64, mem_kb: u64) -> ProcRow {
         mem_kb,
         threads: 2,
         cmdline: format!("/usr/bin/{name} --flag"),
+        disk: None,
     }
 }
 
@@ -132,6 +133,19 @@ fn click(t: &mut TaskMgr, ctx: &mut Ctx, (x, y): (i32, i32)) {
         }),
         ctx,
     );
+    t.event(
+        MAIN,
+        Event::Pointer(PointerInput::Release {
+            x,
+            y,
+            button: BTN_LEFT,
+            mods: Mods::default(),
+        }),
+        ctx,
+    );
+}
+
+fn click_release(t: &mut TaskMgr, ctx: &mut Ctx, (x, y): (i32, i32)) {
     t.event(
         MAIN,
         Event::Pointer(PointerInput::Release {
@@ -338,6 +352,7 @@ fn the_buttons_follow_the_selection() {
 enum Sent {
     Every(Option<Duration>),
     Now,
+    Disk(bool),
 }
 
 fn sent(rx: &std::sync::mpsc::Receiver<worker::Cmd>) -> Vec<Sent> {
@@ -345,6 +360,7 @@ fn sent(rx: &std::sync::mpsc::Receiver<worker::Cmd>) -> Vec<Sent> {
         .map(|c| match c {
             worker::Cmd::Every(d) => Sent::Every(d),
             worker::Cmd::Now => Sent::Now,
+            worker::Cmd::Disk(on) => Sent::Disk(on),
         })
         .collect()
 }
@@ -403,6 +419,184 @@ fn the_view_menu_marks_the_speed_and_graph_picked() {
     t.act(Act::PerCore(true));
     assert_eq!(marked(&t, &[1]), [false, false, true, false]);
     assert_eq!(marked(&t, &[3]), [false, true]);
+}
+
+/// The right edge of each Processes column.
+fn edges(t: &TaskMgr, l: &listview::Layout) -> Vec<i32> {
+    let mut x = l.header.x;
+    (t.procs.view.columns.iter())
+        .map(|c| {
+            x += l.col_w(c);
+            x
+        })
+        .collect()
+}
+
+fn titles(t: &TaskMgr) -> Vec<String> {
+    t.procs
+        .view
+        .columns
+        .iter()
+        .map(|c| c.title.clone())
+        .collect()
+}
+
+/// Ticks `keys` in Select Columns and presses OK.
+fn pick_columns(t: &mut TaskMgr, ctx: &mut Ctx, keys: &[&str]) {
+    t.act(TaskMgr::menu_act(1, &[4]).expect("Select Columns..."));
+    let f = t.pick.as_mut().expect("Select Columns opens");
+    for k in keys {
+        f.set_check(k, true);
+    }
+    t.event(PICK, key(keysym::RETURN), ctx);
+    assert!(t.pick.is_none(), "OK closes it");
+    pages::follow_form(t, ctx);
+}
+
+#[test]
+fn select_columns_opens_from_the_processes_page_only() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    let item = |t: &TaskMgr| t.bar.menus[1].items()[4].clone();
+    assert!(matches!(item(&t), MenuItem::Entry { enabled: false, .. }));
+    open(&mut t, &mut ctx, Page::Processes);
+    assert!(matches!(item(&t), MenuItem::Entry { enabled: true, .. }));
+    t.act(Act::SelectColumns);
+    let kids = t.children();
+    assert_eq!(kids.len(), 1);
+    assert!(kids[0].modal && kids[0].title == "Select Columns");
+    let f = t.pick.as_ref().unwrap();
+    assert_eq!(f.checked("name"), Some(true));
+    assert_eq!(f.checked("command_line"), Some(false));
+    t.event(PICK, key(keysym::ESCAPE), &mut ctx);
+    assert!(t.pick.is_none(), "Escape cancels");
+    assert_eq!(titles(&t).len(), 5);
+}
+
+#[test]
+fn picked_columns_show_in_table_order_with_command_line_last() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    ctx.size = (800, 460);
+    t.event(MAIN, Event::Resized, &mut ctx);
+    open(&mut t, &mut ctx, Page::Processes);
+    let mut s = snapshot();
+    s.procs[1].cmdline.clear();
+    t.take(s, &mut ctx);
+    pick_columns(&mut t, &mut ctx, &["command_line", "threads"]);
+    assert_eq!(
+        titles(&t),
+        [
+            "Image Name",
+            "PID",
+            "User Name",
+            "CPU",
+            "Mem Usage",
+            "Threads",
+            "Command Line"
+        ]
+    );
+    assert_eq!(
+        t.procs.view.rows[0].cells,
+        [
+            "ark",
+            "41",
+            "u",
+            "12",
+            "80,000 K",
+            "2",
+            "/usr/bin/ark --flag"
+        ]
+    );
+    assert_eq!(t.procs.view.rows[1].cells[6], "[notepad]");
+    let r = pages::layout(&t, &ctx).list.unwrap();
+    let l = t.procs.layout(r, &ctx);
+    assert!(
+        l.hscroll.is_none() && t.procs.view.columns[6].width > 200,
+        "Command Line fills what the others leave"
+    );
+    let edges = edges(&t, &l);
+    click(&mut t, &mut ctx, (edges[5] + 20, l.header.y + 4));
+    assert_eq!(t.procs.view.sort, Some((6, true)), "it sorts");
+    let names: Vec<&str> = t.proc_rows.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["ark", "helper", "notepad"]);
+}
+
+#[test]
+fn the_disk_column_turns_the_io_reading_on_and_off() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    let (tx, cmds) = std::sync::mpsc::channel();
+    let (_out, rx) = std::sync::mpsc::channel();
+    t.worker = Some(worker::Handle { tx, rx });
+    open(&mut t, &mut ctx, Page::Processes);
+    pick_columns(&mut t, &mut ctx, &["disk"]);
+    assert_eq!(sent(&cmds), [Sent::Disk(true)]);
+    let mut s = snapshot();
+    s.procs[2].disk = Some(2048);
+    t.take(s, &mut ctx);
+    assert_eq!(t.procs.view.rows[0].cells[5], "2 KB/s");
+    assert_eq!(t.procs.view.rows[1].cells[5], "", "blank where unreadable");
+    t.set_columns(columns::defaults());
+    assert_eq!(sent(&cmds), [Sent::Disk(false)]);
+}
+
+#[test]
+fn hiding_the_sorted_column_sorts_by_image_name() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    t.set_columns(vec![ProcColumn::Pid]);
+    assert_eq!(titles(&t), ["Image Name", "PID"]);
+    assert_eq!(t.procs.view.sort, Some((0, true)));
+}
+
+#[test]
+fn columns_widths_and_view_picks_persist_in_the_state_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("taskmgr.toml");
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    t.restore(path.clone());
+    assert!(!path.exists(), "nothing written until something changes");
+    open(&mut t, &mut ctx, Page::Processes);
+    pick_columns(&mut t, &mut ctx, &["command_line"]);
+    t.act(Act::Speed(Speed::Low));
+    t.act(Act::PerCore(true));
+    let r = pages::layout(&t, &ctx).list.unwrap();
+    let l = t.procs.layout(r, &ctx);
+    let edge = edges(&t, &l)[1];
+    let y = l.header.y + 4;
+    t.event(
+        MAIN,
+        Event::Pointer(PointerInput::Press {
+            x: edge,
+            y,
+            button: BTN_LEFT,
+            time: 0,
+            mods: Mods::default(),
+        }),
+        &mut ctx,
+    );
+    t.event(
+        MAIN,
+        Event::Pointer(PointerInput::Motion { x: edge + 30, y }),
+        &mut ctx,
+    );
+    click_release(&mut t, &mut ctx, (edge + 30, y));
+    assert_eq!(
+        t.procs.view.columns[1].width, 78,
+        "the divider drag widened PID"
+    );
+    let mut again = loaded(&mut ctx);
+    again.restore(path.clone());
+    assert_eq!(titles(&again), titles(&t));
+    assert_eq!(again.procs.view.columns[1].width, 78);
+    assert_eq!((again.speed, again.per_core), (Speed::Low, true));
+    let kept = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        kept.contains("command_line") && kept.contains("pid = 78"),
+        "{kept}"
+    );
 }
 
 #[test]
@@ -506,6 +700,16 @@ fn the_pages_are_pinned_in_every_interface_at_1_and_2() {
                 got.push((format!("{i:?} {page:?} @{d}"), fnv(&c)));
             }
         }
+        t.act(Act::SelectColumns);
+        let main = ctx.size;
+        ctx.size = ctx.forms().text.size(selectcols::CLIENT);
+        for d in [1, 2] {
+            let (w, h) = ctx.size;
+            let mut c = Canvas::with_scale(w as u32, h as u32, d);
+            ctx.at_scale(d, |ctx| t.draw(PICK, &mut c, ctx));
+            got.push((format!("{i:?} Select Columns @{d}"), fnv(&c)));
+        }
+        ctx.size = main;
     }
     pins("pages", &got);
 }
@@ -529,6 +733,14 @@ fn render_pages() {
                 ctx.at_scale(d, |ctx| t.draw(MAIN, &mut c, ctx));
                 reprisekit::raster::write_preview(&c, &format!("taskmgr-{i:?}-{page:?}@{d}.png"));
             }
+        }
+        t.act(Act::SelectColumns);
+        ctx.size = ctx.forms().text.size(selectcols::CLIENT);
+        let (w, h) = ctx.size;
+        for d in [1, 2] {
+            let mut c = Canvas::with_scale(w as u32, h as u32, d);
+            ctx.at_scale(d, |ctx| t.draw(PICK, &mut c, ctx));
+            reprisekit::raster::write_preview(&c, &format!("taskmgr-{i:?}-columns@{d}.png"));
         }
     }
 }

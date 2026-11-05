@@ -261,6 +261,9 @@ fn build_form(t: &TaskMgr, lay: &Layout) -> Form {
 /// Keeps the form on the page and size shown, its buttons live as the selection allows and its
 /// figures current.
 pub fn follow_form(t: &mut TaskMgr, ctx: &Ctx) {
+    if t.refit {
+        t.fit_lists(ctx);
+    }
     let key = (t.page(), ctx.size);
     if t.form_for != Some(key) {
         let lay = layout(t, ctx);
