@@ -6,9 +6,10 @@ use crate::cert::Identity;
 use crate::control::{Client, Request, Status};
 use crate::intake::{Arrival, Intake};
 use crate::viewers::{Kick, LOGGING_IN_PER_IP, Refused, ViewerId, Viewers};
+use ironrdp_pdu::rdp::server_error_info::ProtocolIndependentCode;
 use ironrdp_server::{
-    CliprdrServerFactory, GfxServerFactory, RdpServer, RdpServerDisplay, RdpServerInputHandler,
-    SoundServerFactory,
+    CliprdrServerFactory, ErrorInfo, GfxServerFactory, RdpServer, RdpServerDisplay,
+    RdpServerInputHandler, SoundServerFactory,
 };
 use repriseconf::remote::RemoteDesktop;
 use std::cell::{Cell, RefCell};
@@ -205,14 +206,20 @@ async fn run<L: Leave + 'static, C: Login>(
         }
         std::future::pending::<Infallible>().await
     };
-    let ended = tokio::select! {
+    let told = server.error_info_disconnect_handle();
+    let ended = {
+        let connection = server.run_connection(stream);
+        tokio::pin!(connection);
+        tokio::select! {
         biased;
-        ended = server.run_connection(stream) => Some(ended),
+        ended = &mut connection => Some(ended),
         Ok(kick) = kicked => {
             match kick {
                 Kick::Asked => log::info!("{peer}: disconnected by request"),
                 Kick::PortChanged => log::info!("{peer}: disconnected; the port changed"),
             }
+            shared.forget(id, peer);
+            tell_and_end(connection.as_mut(), |why| drop(told.disconnect(why))).await;
             None
         }
         () = login_expired(&*check, budget) => {
@@ -220,6 +227,7 @@ async fn run<L: Leave + 'static, C: Login>(
             None
         }
         never = present => match never {},
+        }
     };
     shared.forget(id, peer);
     if let Some(ended) = ended {
@@ -259,6 +267,21 @@ impl<L: Leave + 'static> Drop for Unwound<L> {
             tokio::task::spawn_local(async move { shared.leave.left().await });
         }
     }
+}
+
+/// What a kicked client is told. A client told nothing takes the closed socket for a network
+/// failure and reconnects with its saved password; Remmina does within a second.
+const KICKED: ErrorInfo =
+    ErrorInfo::ProtocolIndependentCode(ProtocolIndependentCode::RpcInitiatedDisconnectByuser);
+/// How long a kicked connection may take to send [`KICKED`] and close. One still logging in is
+/// not told; it is closed when this runs out.
+const TOLD: Duration = Duration::from_secs(2);
+
+/// Passes [`KICKED`] to `tell` for the server to send, then runs `connection` until the server has
+/// sent it and closed, or for [`TOLD`].
+async fn tell_and_end(connection: Pin<&mut impl Future>, tell: impl FnOnce(ErrorInfo)) {
+    tell(KICKED);
+    let _ = tokio::time::timeout(TOLD, connection).await;
 }
 
 /// Ends once `budget` has passed and no check is in flight, unless the connection has logged in.
@@ -1152,6 +1175,37 @@ pub(crate) mod tests {
                 );
             })
             .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_kick_tells_the_client_it_was_disconnected_by_the_user_before_closing() {
+        let (sent, closes) = oneshot::channel();
+        let told = Cell::new(None);
+        let closed = Cell::new(false);
+        let connection = std::pin::pin!(async {
+            closes.await.unwrap();
+            closed.set(true);
+        });
+        let started = tokio::time::Instant::now();
+        tell_and_end(connection, |why| {
+            told.set(Some(why));
+            sent.send(()).unwrap();
+        })
+        .await;
+        let user = ProtocolIndependentCode::RpcInitiatedDisconnectByuser;
+        assert_eq!(told.get(), Some(ErrorInfo::ProtocolIndependentCode(user)));
+        assert!(
+            closed.get(),
+            "the connection runs on until it has sent that"
+        );
+        assert!(started.elapsed() < TOLD, "and is not held once it closes");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_kicked_connection_that_does_not_close_is_dropped_after_2_s() {
+        let started = tokio::time::Instant::now();
+        tell_and_end(std::pin::pin!(std::future::pending::<()>()), drop).await;
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
     }
 
     #[tokio::test]
