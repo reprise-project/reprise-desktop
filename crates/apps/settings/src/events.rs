@@ -415,6 +415,8 @@ impl SettingsApp {
                 } else if self.sheet.tabs.open != was {
                     self.blur_side_lists();
                     self.tab_opened();
+                } else if self.sheet.open().focus().is_some() {
+                    self.blur_side_lists();
                 }
                 let r = self.sheet_event(ev);
                 Reply {
@@ -488,6 +490,9 @@ impl SettingsApp {
             }) => {
                 let hit = self.sheet.hit(x, y, &ctx.text, px);
                 let ev = self.sheet.right_press(hit);
+                if self.sheet.open().focus().is_some() && !self.over_side_list(x, y, ctx) {
+                    self.blur_side_lists();
+                }
                 self.sheet_event(ev)
             }
             _ => Reply::none(),
