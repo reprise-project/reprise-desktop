@@ -11,6 +11,7 @@ fn mi(label: &str, shortcut: Option<&str>, enabled: bool) -> MenuItem {
 pub(crate) mod title {
     pub const FILE: usize = 0;
     pub const EDIT: usize = 1;
+    pub const FORMAT: usize = 2;
     pub const VIEW: usize = 3;
     pub const HELP: usize = 4;
 }
@@ -33,6 +34,7 @@ pub(crate) mod row {
     pub const GOTO: usize = 11;
     pub const SELECT_ALL: usize = 13;
     pub const TIME_DATE: usize = 14;
+    pub const WORD_WRAP: usize = 0;
     pub const STATUS_BAR: usize = 0;
     pub const ABOUT: usize = 2;
 }
@@ -76,7 +78,7 @@ pub(crate) fn menus() -> Vec<(String, Vec<MenuItem>)> {
         (
             tr!("menu-format"),
             vec![
-                mi(&tr!("menu-word-wrap"), None, false),
+                mi(&tr!("menu-word-wrap"), None, true),
                 mi(&tr!("menu-font"), None, false),
             ],
         ),
@@ -149,6 +151,15 @@ impl Notepad {
             (title::EDIT, row::GOTO) => {
                 let at = (self.edit.caret().line + 1).to_string();
                 self.goto = Some(goto_form(&at));
+            }
+            (title::FORMAT, row::WORD_WRAP) => {
+                self.metrics.wrap = !self.metrics.wrap;
+                if let MenuItem::Entry { checked, .. } =
+                    &mut self.bar.menus[title::FORMAT][row::WORD_WRAP]
+                {
+                    *checked = self.metrics.wrap;
+                }
+                self.scroll_to_caret(ctx);
             }
             (title::VIEW, row::STATUS_BAR) => {
                 self.status_bar = !self.status_bar;

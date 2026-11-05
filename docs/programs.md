@@ -108,8 +108,9 @@ UTF-16 LE and BE files with one, and saves each back in its encoding with
 its LF, CRLF or CR line endings. Save As has an Encoding box (UTF-8, UTF-8
 with BOM, UTF-16 LE, UTF-16 BE) that starts on the document's encoding; the
 one picked is kept for later saves. Notepad never leaves a file half saved,
-asks before opening a file that doesn't decode, and grows with Larger Text. Word Wrap and Print are
-greyed out for now. Notepad has always had its priorities.
+asks before opening a file that doesn't decode, and grows with Larger Text. Format > Word Wrap
+folds long lines into the window, with no horizontal scrollbar; Ln and Col still count the file's
+lines. Print is greyed out for now. Notepad has always had its priorities.
 
 When Notepad loses the desktop or crashes with unsaved text, it writes the text to
 `$XDG_STATE_HOME/reprise/notepad/` (`~/.local/state/reprise/notepad/` by default) and offers it
