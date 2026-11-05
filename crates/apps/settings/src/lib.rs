@@ -1,6 +1,6 @@
 //! Reprise Settings: a property sheet over `config.toml` and the XDG autostart directories.
 //!
-//! Pages are listed in `registry::GROUPS`; Ctrl+F or typing on the list puts the keyboard in the search field over it, which shows only the pages a query matches (`searchhost`). `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files; a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes, the Privacy page's Forget, the Advanced page's Clear and the Backup page's Export... and Import... (`backup`, also `--export`/`--import FILE`) act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
+//! Pages are listed in `registry::GROUPS`. `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files; a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes, the Privacy page's Forget, the Advanced page's Clear and the Backup page's Export... and Import... (`backup`, also `--export`/`--import FILE`) act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
 
 #[cfg(test)]
 reprisebus::test_session!();
@@ -329,7 +329,7 @@ fn run_backup(verb: BackupVerb) -> i32 {
 const BUS_NAME: &str = "org.reprise.Settings";
 const PAGE_ACTION: &str = "page";
 
-/// The longest 100% length that grows to no more than `v`.
+/// A channel's next value; `Err` once the sender is gone.
 fn take<T>(rx: &Receiver<T>) -> Result<Option<T>, ()> {
     match rx.try_recv() {
         Ok(v) => Ok(Some(v)),

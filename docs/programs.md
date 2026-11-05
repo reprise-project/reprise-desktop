@@ -308,7 +308,7 @@ matched control focused.
   - **Taskbar:** location, height, button mode, small icons (Glass), Show
     desktop, Peek, unread counts, idle tray icons and Customize..., network
     speed, button slides, auto-hide and what shows it, live window pictures
-    and their rate, and the Start button's logo, and its glow (Glass).
+    and their rate, the Start button's logo, and its glow (Glass).
   - **Start Menu:** the menu style and banner, the Start menu tree, the Quick
     Launch buttons and whether they show as pinned task buttons.
   - **Search:** whether the launcher and Start's search box also find your
