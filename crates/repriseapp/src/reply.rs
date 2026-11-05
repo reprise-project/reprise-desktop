@@ -1,7 +1,7 @@
 //! A program's answer to an event, and the spawns it asks for.
 
 use crate::{Accept, DragAction, DragOut, FileClip, WinId};
-use reprisebus::instance::{Handoff, KEYBOARD_LAUNCH_ENV};
+use reprisebus::instance::Handoff;
 use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -15,7 +15,7 @@ pub fn spawn_in(argv: &[OsString], dir: Option<&Path>, scope: Option<&str>) -> s
     spawn_then(argv, dir, scope, &Handoff::default(), |_| {})
 }
 
-/// A [`Reply::spawn`]'s process, handed `handoff` ([`hand_over`]); a failure is only logged.
+/// A [`Reply::spawn`]'s process, handed `handoff` ([`Handoff::apply`]); a failure is only logged.
 pub(crate) fn spawn_handing(argv: &[OsString], handoff: &Handoff) {
     if let Err(e) = spawn_then(argv, None, None, handoff, |_| {}) {
         log::warn!("spawn {argv:?}: {e}");
@@ -42,7 +42,7 @@ pub(crate) fn spawn_then(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    hand_over(&mut c, handoff);
+    handoff.apply(&mut c);
     if let Some(dir) = dir {
         c.current_dir(dir);
     }
@@ -55,21 +55,6 @@ pub(crate) fn spawn_then(
         let _ = child.wait();
     });
     Ok(())
-}
-
-/// Give `c` `handoff`: its token as `XDG_ACTIVATION_TOKEN`, a start by key as
-/// [`KEYBOARD_LAUNCH_ENV`]. Without them both are removed, so this process's own never reach `c`;
-/// `DESKTOP_STARTUP_ID` always is.
-pub(crate) fn hand_over(c: &mut Command, handoff: &Handoff) {
-    c.env_remove("DESKTOP_STARTUP_ID");
-    match &handoff.token {
-        Some(t) => c.env("XDG_ACTIVATION_TOKEN", t),
-        None => c.env_remove("XDG_ACTIVATION_TOKEN"),
-    };
-    match handoff.by_key {
-        true => c.env(KEYBOARD_LAUNCH_ENV, "1"),
-        false => c.env_remove(KEYBOARD_LAUNCH_ENV),
-    };
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
