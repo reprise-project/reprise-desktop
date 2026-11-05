@@ -459,11 +459,7 @@ pub fn item_menu(
         if writable {
             m.row(row(TERMINAL, true), Command::OpenTerminal);
         }
-        match state.pinned {
-            Some(false) => m.row(row("P&in to Places", true), Command::Pin(true)),
-            Some(true) => m.row(row("Unp&in from Places", true), Command::Pin(false)),
-            None => {}
-        }
+        pin_row(&mut m, state.pinned, Command::Pin);
         m.row(row("Disk &Usage", true), Command::DiskUsage);
         m.row(row("Sharing and Security...", false), Command::Nothing);
     } else {
@@ -554,14 +550,26 @@ pub fn background_menu(state: &MenuState) -> Menu {
     m
 }
 
+/// Pin to Places, or Unpin from Places when `pinned`, each running `cmd` with whether it pins;
+/// no row with `pinned` None.
+fn pin_row(m: &mut Menu, pinned: Option<bool>, cmd: fn(bool) -> Command) {
+    match pinned {
+        Some(false) => m.row(row("P&in to Places", true), cmd(true)),
+        Some(true) => m.row(row("Unp&in from Places", true), cmd(false)),
+        None => {}
+    }
+}
+
 /// The right-click menu of a row in the Folders tree. Its first row is the
-/// node's default action: Collapse, Expand, or greyed when nothing is to show.
-pub fn tree_menu(expanded: bool, has_children: bool, folder: bool) -> Menu {
+/// node's default action: Collapse, Expand, or greyed when nothing is to show. A node with a
+/// folder behind it pins it as `pinned` says, as [`item_menu`] does.
+pub fn tree_menu(expanded: bool, has_children: bool, folder: bool, pinned: Option<bool>) -> Menu {
     let mut m = Menu::default();
     let label = if expanded { "&Collapse" } else { "&Expand" };
     m.row(bold(label, has_children), Command::ToggleNode);
     m.row(row("E&xplore", true), Command::OpenNode);
     m.row(row("&Open", true), Command::OpenNode);
+    pin_row(&mut m, pinned, Command::NodePin);
     m.sep();
     m.row(row("Sharing and Security...", false), Command::Nothing);
     m.sub(row("Se&nd To", false), send_to_menu(&[]));

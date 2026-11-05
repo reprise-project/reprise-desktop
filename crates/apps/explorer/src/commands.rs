@@ -81,6 +81,8 @@ pub enum Command {
     NodeCopy,
     NodeDelete,
     NodeProperties,
+    /// The tree menu's Pin to Places (true) or Unpin from Places on the node's folder.
+    NodePin(bool),
     Refresh,
     GoTo(Place),
     Navigate(String),
@@ -324,8 +326,13 @@ impl Explorer {
             },
             Command::Pin(pin) => {
                 if let Some(dir) = self.selected_dir().and_then(|p| p.path()) {
-                    let file = reprisefs::pins::bookmarks_file();
-                    reprisefs::pins::set_pinned(&file, &dir, pin);
+                    self.set_pinned(&dir, pin);
+                }
+                Reply::none()
+            }
+            Command::NodePin(pin) => {
+                if let Some(dir) = self.node_pin_dir() {
+                    self.set_pinned(&dir, pin);
                 }
                 Reply::none()
             }

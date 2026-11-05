@@ -604,13 +604,13 @@ mod tests {
         };
         assert_eq!(row(icon_menu(IconMenu::default())), Some(IconProperties));
         assert_eq!(row(bin_menu(false)), Some(BinProperties));
-        assert_eq!(row(place_menu(desktop::Place::Computer, false)), None);
+        assert_eq!(row(place_menu(desktop::Place::Computer, false, None)), None);
         assert_eq!(
-            row(place_menu(desktop::Place::Documents, true)),
+            row(place_menu(desktop::Place::Documents, true, None)),
             Some(IconProperties)
         );
         assert_eq!(
-            row(place_menu(desktop::Place::Home, true)),
+            row(place_menu(desktop::Place::Home, true, None)),
             Some(IconProperties)
         );
     }

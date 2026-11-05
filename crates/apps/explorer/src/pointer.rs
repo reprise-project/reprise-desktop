@@ -506,15 +506,7 @@ impl Explorer {
             if let treeview::Hit::Row(i) = self.tree.hit(&tl, x, y) {
                 self.tree.select(i, &tl);
             }
-            let node = self
-                .tree
-                .selected
-                .clone()
-                .and_then(|p| self.tree.node(&p))
-                .map(|n| (n.expanded, n.has_children))
-                .unwrap_or((false, false));
-            let folder = self.node_folder().is_some();
-            let menu = menus::tree_menu(node.0, node.1, folder);
+            let menu = self.node_menu();
             self.popup = Some(Popup::new((x, y), menu, ctx, false));
             return Reply::redraw();
         }

@@ -3749,3 +3749,61 @@ fn open_in_terminal_starts_the_terminal_in_the_folder() {
     ex.run(Command::OpenTerminalHere, &mut ctx);
     opened(dir.path());
 }
+
+/// Documents, Home and a plain folder's nodes pin from the tree menu; Computer and the Recycle
+/// Bin are not folders and have no pin row.
+#[test]
+fn the_tree_menu_pins_and_unpins_a_nodes_folder() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let file = dir.path().join("bookmarks");
+    let mut ctx = test_ctx();
+    let here = Place::Folder(dir.path().to_path_buf());
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+    ex.settings.show_hidden = true;
+    let pins = reprisefs::pins::Pins::start_at(file.clone(), || {});
+    pins.wait_first(std::time::Duration::from_secs(5));
+    ex.pins = Some(pins);
+    ex.build_tree(&mut ctx);
+    ex.tree_follow(&here, &mut ctx);
+    let pin_row = |ex: &Explorer| {
+        let m = ex.node_menu();
+        (0..m.items().len()).find_map(|i| match m.command(&[i]) {
+            Command::NodePin(pin) => Some(pin),
+            _ => None,
+        })
+    };
+    let marks = || -> Vec<PathBuf> {
+        let b = reprisefs::pins::load(&file);
+        b.folders().map(|(p, _)| p.to_path_buf()).collect()
+    };
+    let select = |ex: &mut Explorer, place: &Place| {
+        ex.tree.selected = Some(ex.tree_path_of(place).expect("the place's node"));
+    };
+    for place in [Place::Computer, Place::RecycleBin] {
+        select(&mut ex, &place);
+        assert_eq!(pin_row(&ex), None, "{place:?} has no pin row");
+    }
+    for place in [Place::Documents, Place::Home, here] {
+        let Some(folder) = place.path() else {
+            continue;
+        };
+        select(&mut ex, &place);
+        assert_eq!(pin_row(&ex), Some(true), "{place:?}: Pin to Places");
+        ex.run(Command::NodePin(true), &mut ctx);
+        assert_eq!(marks(), std::slice::from_ref(&folder), "{place:?} pinned");
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while pin_row(&ex) != Some(false) {
+            assert!(
+                std::time::Instant::now() < end,
+                "{place:?}: Unpin from Places"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        ex.run(Command::NodePin(false), &mut ctx);
+        assert_eq!(marks(), Vec::<PathBuf>::new(), "{place:?} unpinned");
+        while pin_row(&ex) != Some(true) {
+            assert!(std::time::Instant::now() < end, "{place:?}: unpinned");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+}
