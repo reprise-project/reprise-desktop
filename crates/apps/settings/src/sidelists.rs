@@ -89,6 +89,7 @@ impl SettingsApp {
         let lay = listview::layout(list, rect, cm);
         // Both lists are single-select: no Ctrl or Shift reaches them.
         let mods = reprisekit::selection::Mods::default();
+        let mut toggled = None;
         let moved = match key {
             form::Key::Up => list.step(-1, &lay, mods),
             form::Key::Down => list.step(1, &lay, mods),
@@ -100,12 +101,16 @@ impl SettingsApp {
                 let Some(i) = list.selection.focus else {
                     return Reply::none();
                 };
-                list.toggle(i)
+                toggled = list.toggle(i).then_some(i);
+                toggled.is_some()
             }
             _ => false,
         };
         if !moved {
             return Reply::none();
+        }
+        if let Some(i) = toggled {
+            self.startup_toggled(i);
         }
         self.sync_apply();
         Reply::redraw()
@@ -308,7 +313,8 @@ impl SettingsApp {
 
     pub(crate) fn list_release(&mut self, x: i32, y: i32, cm: &ControlMetrics) -> Option<Reply> {
         let (list, hit) = self.held_check_hit(x, y, cm)?;
-        if list.release_check(hit).is_some() {
+        if let Some(i) = list.release_check(hit) {
+            self.startup_toggled(i);
             self.sync_apply();
         }
         Some(Reply::redraw())

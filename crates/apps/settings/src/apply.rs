@@ -14,6 +14,8 @@ use std::path::PathBuf;
 
 use repriseapp::{Ctx, Event, Reply};
 
+pub(crate) const RUN_AS_QUESTION: &str = "Turn off Run As?\nFrom the next log on, programs that need an administrator password (Software Updates, Network Connections, drives) cannot ask for one.";
+
 /// The question Restore Defaults asks on page `p` before taking `keys` out of `config.toml`.
 pub(crate) fn restore_question(p: Page, keys: &[Key]) -> String {
     let mut text = format!(
@@ -56,6 +58,21 @@ impl SettingsApp {
         let checks = self.applied_checks.clone();
         pages::fill_list(&mut self.list, &self.entries, &checks);
         self.sync_remove();
+    }
+
+    /// Startup row `row`'s check just flipped. Run As going off flips back on until the question's OK.
+    pub(crate) fn startup_toggled(&mut self, row: usize) {
+        if registry::open(&self.sheet) != Page::Startup
+            || self
+                .entries
+                .get(row)
+                .is_none_or(|e| e.id != autostart::RUN_AS)
+            || self.list.checks.as_ref().and_then(|c| c.get(row)) != Some(&false)
+        {
+            return;
+        }
+        self.list.toggle(row);
+        self.ask(RUN_AS_QUESTION.into(), Then::StopAutostart(row));
     }
 
     fn checks(&self) -> Vec<bool> {
