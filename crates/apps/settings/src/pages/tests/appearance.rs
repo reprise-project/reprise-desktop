@@ -782,72 +782,53 @@ fn the_monitor_shows_the_colour_then_the_picture_and_keeps_it_while_the_next_is_
 #[test]
 fn the_fonts_and_icons_page_geometry() {
     let s = built();
+    let p = Page::FontsAndIcons;
+    assert_eq!(rect(&s, p, "font_family"), Rect::new(32, 78, 163, 20));
+    assert_eq!(rect(&s, p, "font_shell_dlg"), Rect::new(203, 78, 163, 20));
+    assert_eq!(rect(&s, p, "font_size_px"), Rect::new(80, 104, 50, 20));
+    assert_eq!(rect(&s, p, "icon_theme"), Rect::new(92, 256, 274, 21));
+    assert_eq!(rect(&s, p, "gtk_theme"), Rect::new(120, 390, 246, 21));
     assert_eq!(
-        rect(&s, Page::FontsAndIcons, "fonts_group"),
-        Rect::new(20, 44, 358, 84)
+        rect(&s, p, "qt_platform_theme"),
+        Rect::new(120, 416, 246, 21)
     );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "font_family"),
-        Rect::new(32, 78, 163, 20)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "font_shell_dlg"),
-        Rect::new(203, 78, 163, 20)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "font_size_px"),
-        Rect::new(80, 104, 50, 20)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "font_size_units"),
-        Rect::new(136, 108, 20, 13)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "font_antialias"),
-        Rect::new(192, 108, 13, 13)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "icons_group"),
-        Rect::new(20, 138, 358, 56)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "icon_theme"),
-        Rect::new(92, 158, 274, 21)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "windows_group"),
-        Rect::new(20, 204, 358, 66)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "toolkits_group"),
-        Rect::new(20, 306, 358, 114)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "gtk_theme"),
-        Rect::new(120, 326, 246, 21)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "qt_platform_theme"),
-        Rect::new(120, 352, 246, 21)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "smoothing_label"),
-        Rect::new(32, 382, 84, 13)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "font_smoothing"),
-        Rect::new(120, 378, 246, 21)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "gtk4_colors"),
-        Rect::new(32, 404, 13, 13)
-    );
-    let fi = &s.pages[Page::FontsAndIcons.index()];
+    assert_eq!(rect(&s, p, "gtk4_colors"), Rect::new(32, 442, 13, 13));
+    let fi = &s.pages[p.index()];
     assert!(
         fi.item("menus_group").is_none(),
         "the Menus group is on Effects"
     );
-    inside_page(&s, Page::FontsAndIcons);
+    inside_page(&s, p);
+}
+
+#[test]
+fn fonts_and_icons_put_both_smoothings_in_one_group() {
+    let s = built();
+    let p = Page::FontsAndIcons;
+    assert_eq!(rect(&s, p, "fonts_group"), Rect::new(20, 44, 358, 102));
+    assert_eq!(
+        rect(&s, p, "font_size_units"),
+        Rect::new(GX + 104, 108, 20, 13)
+    );
+    assert_eq!(
+        lines(&s, p, "fonts_note"),
+        ["Text size on the Text & Keys page enlarges all text."]
+    );
+    assert_eq!(rect(&s, p, "smoothing_group"), Rect::new(20, 154, 358, 72));
+    assert_eq!(lines(&s, p, "reprise_text_label"), ["Reprise text:"]);
+    assert_eq!(
+        rect(&s, p, "font_antialias"),
+        Rect::new(GX + 88, 176, 13, 13)
+    );
+    assert_eq!(lines(&s, p, "smoothing_label"), ["&Other programs:"]);
+    assert_eq!(rect(&s, p, "font_smoothing").y, 198);
+    assert_eq!(rect(&s, p, "icons_group"), Rect::new(20, 236, 358, 48));
+    assert_eq!(rect(&s, p, "windows_group"), Rect::new(20, 294, 358, 66));
+    assert_eq!(rect(&s, p, "frame_units").y, 316);
+    assert_eq!(rect(&s, p, "caption_units").y, 342);
+    assert_eq!(rect(&s, p, "toolkits_group"), Rect::new(20, 370, 358, 86));
+    assert_eq!(rect(&s, p, "toolkits_note").y, 460);
+    inside_page(&s, p);
 }
 
 #[test]
