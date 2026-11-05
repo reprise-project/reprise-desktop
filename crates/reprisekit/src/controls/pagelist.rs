@@ -1,7 +1,5 @@
-//! The list a property sheet picks its page from in list mode: headings and page names in a sunken box.
-//! Rows that overflow scroll under the look's scrollbar; a held arrow repeats on the host's ticks ([`PageList::bar_tick`]).
-//! Which page is open is the sheet's [`TabStrip`]; pages are numbered down the list, across headings.
-//! Links are numbered the same way and open nothing in the list: the sheet reports them.
+//! The list a property sheet picks its page from in list mode: headings, pages and links in a
+//! sunken box, numbered down the list. The open page is the sheet's [`TabStrip`]'s.
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{BarHit, ScrollParts, bar_hit, scrollbar_parts};
@@ -248,10 +246,8 @@ impl PageList {
         self.cursor.map_or(Pick::Page(open), Pick::Link)
     }
 
-    /// Where a key on the focused list lands, from [`PageList::current`]: Up
-    /// and Down the nearest shown page or live link before or after it (itself
-    /// at an end; from a hidden row, the last and the first), Home and End the
-    /// first and the last. `None` for any other key or when no row qualifies.
+    /// Where a key on the focused list lands: Up and Down the next shown page or live link (itself
+    /// at an end; last or first from a hidden row), Home and End the ends; else `None`.
     pub fn target(&self, open: usize, key: &form::Key) -> Option<Pick> {
         let live: Vec<Pick> = self
             .picks()
@@ -282,9 +278,8 @@ impl PageList {
             .filter_map(|i| pick_of(&self.rows[i]))
     }
 
-    /// Show only the pages and links `filter` flags, or every row for `None`. Scrolls to the
-    /// top and lets go of a cursor whose link hides. Panics unless there is one flag per
-    /// page and per link.
+    /// Show only the rows `filter` flags (all for `None`), scrolled to the top, dropping a cursor
+    /// whose link hides. Panics unless there is one flag per page and per link.
     pub fn set_filter(&mut self, filter: Option<&Filter>) {
         if let Some(f) = filter {
             assert!(
@@ -532,9 +527,8 @@ fn draw_item_row(
         text.draw(c, tr, label, false, ink, Align::Left, px);
         return;
     }
-    // A look that boxes its items boxes the selected row, 1 px in from
-    // either side, darker while the list has the focus; the text stays
-    // as it is.
+    // A look that boxes its items boxes the selected row 1 px in, darker while the list has the
+    // focus; the text stays as it is.
     let mark = Mark {
         selected: true,
         lead: focused,
@@ -561,13 +555,8 @@ pub struct Nodes {
     pub links: Vec<Option<NodeId>>,
 }
 
-/// The list's `access` part: a list holding, shown row by shown row, each heading as
-/// static text and each page or link as a list item named by its label (a
-/// link's with its dots), the selected one ([`PageList::current`]) selected.
-/// The list's bounds are its inside. A heading's bounds are its part inside,
-/// none when scrolled out; an item keeps its whole row, so one scrolled out
-/// lies outside the list, where a reader can ask to scroll it in
-/// ([`PageList::reveal`]).
+/// The list's `access` part: shown headings as static text, pages and links as list items, the
+/// current one selected. An item keeps its whole row, so a reader can scroll one in from outside.
 pub fn access(
     list: &PageList,
     strip: &TabStrip,
