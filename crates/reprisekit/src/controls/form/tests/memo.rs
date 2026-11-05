@@ -272,7 +272,7 @@ fn the_wheel_scrolls_a_memos_view_and_not_its_caret() {
         draw(&mut c, &t, &classic_paint(&theme.colors, 1), f, false, PX);
     };
     let memo = |f: &Form| match &f.items[0].control {
-        Control::Memo(m) => (m.edit.caret(), m.view.get().top, m.rows.get()),
+        Control::Memo(m) => (m.edit.caret(), m.view.get().top, m.rows()),
         _ => unreachable!(),
     };
     shot(&f);
@@ -316,7 +316,7 @@ fn page_keys_move_a_memos_caret_a_page() {
         draw(&mut c, &t, &classic_paint(&theme.colors, 1), f, false, PX);
     };
     let memo = |f: &Form| match &f.items[0].control {
-        Control::Memo(m) => (m.edit.caret(), m.view.get().top, m.rows.get()),
+        Control::Memo(m) => (m.edit.caret(), m.view.get().top, m.rows()),
         _ => unreachable!(),
     };
     assert_eq!(f.paste(text.join("\n")), Event::Changed("m"));

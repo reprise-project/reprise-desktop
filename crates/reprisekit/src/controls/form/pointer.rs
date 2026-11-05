@@ -873,7 +873,10 @@ impl Form {
             }
             Control::Memo(memo) if memo.enabled => {
                 let mut view = memo.view.get();
-                let moved = view.scroll_lines(rows as i64, &memo.edit, memo.rows.get());
+                let moved = memo
+                    .lay
+                    .get()
+                    .is_some_and(|lay| view.scroll_lines(rows as i64, &lay));
                 memo.view.set(view);
                 moved
             }

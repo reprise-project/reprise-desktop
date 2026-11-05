@@ -193,17 +193,7 @@ impl Notepad {
     /// Below the caret's line, where Shift+F10 and the Menu key open the context menu.
     pub(crate) fn caret_point(&self, ctx: &Ctx) -> (i32, i32) {
         let el = self.edit_layout(ctx);
-        let caret = self.edit.caret();
-        let x = multiedit::x_of(&self.mono, &self.metrics, &self.edit, caret) - self.view.left;
-        let row = caret.line.saturating_sub(self.view.top) as i32 + 1;
-        let at = (
-            el.inner.x + 1 + x,
-            el.inner.y + 1 + row * self.metrics.line_h,
-        );
-        (
-            at.0.clamp(el.inner.x, el.inner.right()),
-            at.1.clamp(el.inner.y, el.inner.bottom()),
-        )
+        multiedit::caret_point(&self.mono, &self.metrics, &self.edit, &el, self.view)
     }
 
     fn context_step(&mut self, step: editmenu::Step, ctx: &Ctx) -> Reply {

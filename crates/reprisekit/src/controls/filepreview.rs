@@ -232,20 +232,20 @@ impl FilePreview {
 
     /// Text scrolled `by` rows (the wheel) in the client `r`; true when it moved.
     pub fn scroll(&mut self, by: i64, mono: &TextRenderer, m: &Metrics, r: Rect) -> bool {
-        let (Some(lay), Body::Text(edit)) = (self.text_layout(mono, m, r), &self.body) else {
+        let Some(lay) = self.text_layout(mono, m, r) else {
             return false;
         };
-        self.view.scroll_lines(by, edit, lay.rows)
+        self.view.scroll_lines(by, &lay)
     }
 
     /// Text scrolled `pages` pages, [`Action::Page`]'s; true when it moved.
     pub fn page(&mut self, pages: i64, mono: &TextRenderer, m: &Metrics, r: Rect) -> bool {
-        let (Some(lay), Body::Text(edit)) = (self.text_layout(mono, m, r), &self.body) else {
+        let Some(lay) = self.text_layout(mono, m, r) else {
             return false;
         };
-        let lines = edit.lines().len() as i64;
+        let lines = lay.total as i64;
         let by = pages.saturating_mul(lay.rows as i64).clamp(-lines, lines);
-        self.view.scroll_lines(by, edit, lay.rows)
+        self.view.scroll_lines(by, &lay)
     }
 
     /// A left press at `at`: a scrollbar part scrolls or takes the thumb. True when it scrolled.

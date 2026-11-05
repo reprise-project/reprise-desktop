@@ -312,7 +312,8 @@ fn vertical_moves_keep_the_goal_column() {
     let m = Metrics::default();
     let mut t = e("longer line\nab\nlonger line");
     t.place(p(0, 8), false);
-    let goal = x_of(&text, &m, &t, p(0, 8));
+    let lay = layout(&text, &m, &t, Rect::new(0, 0, 200, 60), 1);
+    let goal = x_of(&text, &m, &t, &lay, p(0, 8));
     t.key(MultiKey::Down { select: false }, &text, &m);
     assert_eq!(t.caret, p(1, 2), "a short line clamps");
     assert_eq!(t.goal_x, Some(goal));
