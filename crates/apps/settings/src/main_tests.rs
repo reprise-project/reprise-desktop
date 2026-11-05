@@ -1,6 +1,6 @@
 use super::*;
 use crate::locations::location_answers;
-use repriseapp::{BTN_LEFT, Extended, KeyInput, PointerInput};
+use repriseapp::{BTN_LEFT, BTN_RIGHT, Extended, KeyInput, PointerInput};
 use reprisekit::classic::widgets::BarHit;
 use reprisekit::controls::{form, listview, propsheet};
 use reprisekit::theme::FontConfig;
@@ -204,6 +204,19 @@ fn press_search_field(a: &mut SettingsApp, ctx: &mut Ctx) {
     a.event(MAIN, Event::Pointer(press), ctx);
 }
 
+fn press_control(a: &mut SettingsApp, ctx: &mut Ctx, id: &str, button: u32) {
+    ctx.size = (1920, 1080);
+    let r = a.sheet.open().rect(id).expect("the control");
+    let press = PointerInput::Press {
+        x: r.x + 4,
+        y: r.y + 4,
+        button,
+        time: 0,
+        mods: repriseapp::Mods::default(),
+    };
+    a.event(MAIN, Event::Pointer(press), ctx);
+}
+
 #[test]
 fn the_search_field_and_a_side_list_never_hold_the_keyboard_together() {
     let mut a = app("search-side-list");
@@ -221,6 +234,10 @@ fn the_search_field_and_a_side_list_never_hold_the_keyboard_together() {
     press_side_row(&mut a, &mut ctx, 0, 1000);
     assert_eq!(holders(&a), SIDE_LIST, "a press on the shortcut list");
 
+    press_control(&mut a, &mut ctx, pages::SC_ADD, BTN_LEFT);
+    assert_eq!(holders(&a), PAGE, "a press on Add...");
+    press_side_row(&mut a, &mut ctx, 0, 2000);
+
     ctrl_key(&mut a, &ctx, u32::from(b'f'), false);
     assert_eq!(holders(&a), FIELD, "Ctrl+F");
 
@@ -236,10 +253,20 @@ fn the_search_field_and_a_side_list_never_hold_the_keyboard_together() {
     let tab_sym = reprisekit::textedit::keysym::TAB;
     ctrl_key(&mut a, &ctx, tab_sym, true);
     ctrl_key(&mut a, &ctx, u32::from(b'f'), false);
-    assert_ne!(a.sheet.tabs.open, Page::Keyboard.index());
+    assert_eq!(holders(&a), FIELD, "Ctrl+F on the page before Keyboard");
+    assert_ne!(
+        a.sheet.tabs.open,
+        Page::Keyboard.index(),
+        "Ctrl+Shift+Tab leaves Keyboard"
+    );
     ctrl_key(&mut a, &ctx, tab_sym, false);
     assert_eq!(a.sheet.tabs.open, Page::Keyboard.index());
     assert_eq!(holders(&a), SIDE_LIST, "Ctrl+Tab from the field");
+
+    a.open_page(Page::DefaultPrograms, None);
+    assert_eq!(holders(&a), SIDE_LIST, "Default Programs opens on its list");
+    press_control(&mut a, &mut ctx, defaultspage::TERMINAL_ARGS, BTN_RIGHT);
+    assert_eq!(holders(&a), PAGE, "a right press in the arguments field");
 }
 
 #[test]
