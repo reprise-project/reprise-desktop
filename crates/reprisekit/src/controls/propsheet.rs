@@ -238,6 +238,14 @@ impl PropSheet {
         sheet
     }
 
+    /// The page list, in list mode.
+    pub fn list_mut(&mut self) -> Option<&mut PageList> {
+        match &mut self.nav {
+            Nav::List(list) => Some(list),
+            Nav::Tabs => None,
+        }
+    }
+
     fn is_list(&self) -> bool {
         matches!(self.nav, Nav::List(_))
     }
