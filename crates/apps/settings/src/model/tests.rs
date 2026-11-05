@@ -292,7 +292,6 @@ fn load_falls_back_to_the_compositors_defaults() {
     assert_eq!(s, Settings::default());
     assert_eq!(s.terminal, "reprise-terminal");
     assert_eq!(s.taskbar_height, 28);
-    assert_eq!(s.screen_off_after, 900);
     assert_eq!(s.task_manager, "", "an absent key is the empty string");
 }
 
@@ -805,7 +804,6 @@ fn save_round_trips_every_field() {
         lock_on_sleep: false,
         lock_wallpaper: true,
         lock_after: 300,
-        screen_off_after: 0,
         blank_after: 120,
         lock_fade: 4,
         away_device: "AA:BB:CC:DD:EE:01".into(),

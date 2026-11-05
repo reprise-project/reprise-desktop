@@ -297,20 +297,20 @@ fn the_advanced_page_geometry() {
         "the terminal is picked on Default Programs"
     );
     assert_eq!(rect(&s, p, "task_manager"), Rect::new(20, 60, 358, 20));
-    assert_eq!(rect(&s, p, "screenshot_save"), Rect::new(20, 132, 13, 13));
+    assert_eq!(rect(&s, p, "screenshot_save"), Rect::new(20, 92, 13, 13));
     assert!(
         s.pages[p.index()].item("desktop_icons").is_none(),
         "desktop_icons is on Background"
     );
-    assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 278, 13, 13));
-    assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 300, 13, 13));
-    assert_eq!(rect(&s, p, THUMBS), Rect::new(20, 370, 13, 13));
-    assert_eq!(rect(&s, p, THUMBS_MB), Rect::new(82, 392, 50, 20));
-    assert_eq!(rect(&s, p, THUMBS_SIZE[2]), Rect::new(136, 396, 20, 13));
-    assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(303, 390, 75, 23));
-    assert_eq!(rect(&s, p, THUMBNAILERS), Rect::new(20, 418, 13, 13));
-    assert_eq!(rect(&s, p, "note"), Rect::new(20, 440, 275, 26));
-    assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 440, 75, 23));
+    assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 114, 13, 13));
+    assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 136, 13, 13));
+    assert_eq!(rect(&s, p, THUMBS), Rect::new(20, 158, 13, 13));
+    assert_eq!(rect(&s, p, THUMBS_MB), Rect::new(82, 180, 50, 20));
+    assert_eq!(rect(&s, p, THUMBS_SIZE[2]), Rect::new(136, 184, 20, 13));
+    assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(303, 178, 75, 23));
+    assert_eq!(rect(&s, p, THUMBNAILERS), Rect::new(20, 206, 13, 13));
+    assert_eq!(rect(&s, p, "note"), Rect::new(20, 443, 275, 26));
+    assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 443, 75, 23));
     for id in ["banner_label", "startmenu_banner", "start_icon"] {
         assert!(
             s.pages[p.index()].item(id).is_none(),
@@ -592,25 +592,22 @@ fn the_location_check_and_list() {
 }
 
 #[test]
-fn the_power_page_geometry() {
+fn turn_off_commands_and_low_disk_space_sit_on_advanced() {
     let s = built();
-    let p = Page::Power;
-    assert_eq!(rect(&s, p, "turnoff_group"), Rect::new(20, 44, 358, 126));
-    assert_eq!(rect(&s, p, "standby_label"), Rect::new(32, 66, 70, 13));
-    assert_eq!(rect(&s, p, "standby"), Rect::new(106, 62, 260, 20));
-    assert_eq!(rect(&s, p, "poweroff"), Rect::new(106, 88, 260, 20));
-    assert_eq!(rect(&s, p, "reboot"), Rect::new(106, 114, 260, 20));
-    assert_eq!(rect(&s, p, "hibernate"), Rect::new(106, 140, 260, 20));
-    assert_eq!(rect(&s, p, "idle_group"), Rect::new(20, 180, 358, 100));
-    assert_eq!(rect(&s, p, "screen_off_after"), Rect::new(150, 200, 50, 20));
-    assert_eq!(rect(&s, p, "blank_after"), Rect::new(150, 226, 50, 20));
-    assert_eq!(rect(&s, p, "idle_note"), Rect::new(32, 256, 334, 13));
-    assert_eq!(rect(&s, p, "storage_group"), Rect::new(20, 288, 358, 74));
+    let p = Page::Advanced;
+    let off = rect(&s, p, "turnoff_group");
+    assert_eq!((off.x, off.width, off.height), (20, 358, 126));
+    assert_eq!(rect(&s, p, "standby"), Rect::new(106, off.y + 18, 260, 20));
+    assert_eq!(
+        rect(&s, p, "hibernate"),
+        Rect::new(106, off.y + 96, 260, 20)
+    );
+    let disk = rect(&s, p, "storage_group");
+    assert_eq!((disk.y, disk.height), (off.bottom() + 8, 74));
     assert_eq!(
         rect(&s, p, "low_space_percent"),
-        Rect::new(150, 308, 50, 20)
+        Rect::new(150, disk.y + 20, 50, 20)
     );
-    assert_eq!(rect(&s, p, "low_space_note"), Rect::new(32, 338, 334, 13));
     inside_page(&s, p);
 }
 
@@ -715,13 +712,6 @@ fn the_lock_group_sits_under_the_screen_saver() {
         assert!(s.pages[p.index()].item(id).is_none(), "{id} is gone");
     }
     inside_page(&s, p);
-}
-
-#[test]
-fn the_lock_rows_move_from_power_to_screen_saver_and_lock() {
-    for id in ["lock_after", "lock_fade", "lock_on_sleep", "lock_wallpaper"] {
-        assert_moved(id, Page::Power, Page::ScreenSaverLock);
-    }
 }
 
 #[test]

@@ -310,15 +310,6 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("notify_balloons", "Show balloons"),
             ("notify_sounds", "Play sounds"),
         ],
-        Page::Power => &[
-            ("standby", "Stand by:"),
-            ("poweroff", "Turn off:"),
-            ("reboot", "Restart:"),
-            ("hibernate", "Hibernate:"),
-            ("screen_off_after", "Screen off after:"),
-            ("blank_after", "Screen saver after:"),
-            ("low_space_percent", "Warn below:"),
-        ],
         Page::Startup => &[
             ("add", "Add..."),
             ("remove", "Remove"),
@@ -401,6 +392,11 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "external_thumbnailers",
                 "Make thumbnails of documents and videos",
             ),
+            ("standby", "Stand by:"),
+            ("poweroff", "Turn off:"),
+            ("reboot", "Restart:"),
+            ("hibernate", "Hibernate:"),
+            ("low_space_percent", "Warn below:"),
             ("edit_file", "Edit File..."),
         ],
         Page::Backup => &[

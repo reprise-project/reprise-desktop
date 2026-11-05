@@ -779,6 +779,10 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
     );
     assert_eq!(keys_on(&s, Page::Cursor), ["cursor.theme", "cursor.size"]);
     assert!(keys_on(&s, Page::Keyboard).contains(&"keyboard.layout".to_string()));
+    let advanced = keys_on(&s, Page::Advanced);
+    for key in ["power.standby", "storage.low_space_percent"] {
+        assert!(advanced.contains(&key.to_string()), "{key} in {advanced:?}");
+    }
     let saver = keys_on(&s, Page::ScreenSaverLock);
     for key in [
         "screensaver.name",

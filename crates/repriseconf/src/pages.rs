@@ -30,7 +30,6 @@ pub enum Page {
     TextKeys,
     MagnifierFilters,
     RemoteDesktop,
-    Power,
     Startup,
     DefaultPrograms,
     Privacy,
@@ -113,7 +112,7 @@ pub const GROUPS: &[(&str, &[Entry])] = &[
     (
         "System",
         &[
-            Entry::Page(Page::Power),
+            Entry::Program("reprise-power.desktop"),
             Entry::Page(Page::Startup),
             Entry::Page(Page::DefaultPrograms),
             Entry::Page(Page::Privacy),
@@ -139,9 +138,17 @@ const ALIASES: &[(&str, Page)] = &[
     ("sounds", Page::Sound),
 ];
 
+/// Old `--page` names of pages a separate program took over.
+const PROGRAM_ALIASES: &[(&str, &str)] = &[("power", "reprise-power.desktop")];
+
 /// The list entry a `--page` name opens.
 pub fn named(slug: &str) -> Option<Entry> {
-    Page::named(slug).map(Entry::Page)
+    Page::named(slug).map(Entry::Page).or_else(|| {
+        PROGRAM_ALIASES
+            .iter()
+            .find(|(old, _)| *old == slug)
+            .map(|&(_, id)| Entry::Program(id))
+    })
 }
 
 impl Page {
@@ -188,7 +195,6 @@ impl Page {
             Page::MagnifierFilters => "Magnifier & Filters",
             Page::Sound => "Sound",
             Page::Notifications => "Notifications",
-            Page::Power => "Power",
             Page::Startup => "Startup",
             Page::DefaultPrograms => "Default Programs",
             Page::Privacy => "Privacy",
@@ -338,7 +344,6 @@ impl Page {
                 "quiet hours",
                 "popups",
             ],
-            Page::Power => &["idle", "screen off", "free space", "storage"],
             Page::Startup => &["autostart", "login", "session", "startup programs"],
             Page::DefaultPrograms => &[
                 "default",
@@ -357,7 +362,14 @@ impl Page {
                 "history",
                 "screen sharing",
             ],
-            Page::Advanced => &["screenshots", "task manager", "thumbnails", "cache"],
+            Page::Advanced => &[
+                "screenshots",
+                "task manager",
+                "thumbnails",
+                "cache",
+                "free space",
+                "storage",
+            ],
             Page::Backup => &["export", "import", "back up", "transfer", "move settings"],
         }
     }
@@ -501,6 +513,8 @@ pub const PROGRAMS: &[Program] = &[
             "suspend",
             "standby",
             "lid",
+            "screen off",
+            "hibernate",
         ],
     },
     Program {
@@ -601,7 +615,12 @@ mod tests {
     }
 
     #[test]
-    fn link_rows_name_programs_in_tree_order() {
+    fn power_names_power_options() {
+        assert_eq!(Page::named("power"), None);
+        assert_eq!(
+            named("power"),
+            Some(Entry::Program("reprise-power.desktop"))
+        );
         let labels: Vec<&str> = links().map(|p| p.label).collect();
         assert_eq!(
             labels,
@@ -609,11 +628,16 @@ mod tests {
                 "Bluetooth",
                 "Printers",
                 "Network Connections",
+                "Power Options",
                 "Date and Time",
                 "User Accounts",
                 "Software Updates"
             ]
         );
+    }
+
+    #[test]
+    fn link_rows_name_programs_in_tree_order() {
         let rows: Vec<&str> = links().map(Program::row_label).collect();
         assert_eq!(rows[2], "Connections", "the Network heading says the rest");
         for (_, entries) in GROUPS {
@@ -639,6 +663,11 @@ mod tests {
         assert_eq!(
             power.find("power sleep", "Power Options"),
             Some(Hit::Keyword)
+        );
+        assert_eq!(
+            power.find("hibernate", "Power Options"),
+            Some(Hit::Keyword),
+            "a lid, button and battery action"
         );
         assert_eq!(power.find("delay", "Power Options"), None);
         assert_eq!(power.find("", "Power Options"), None);
