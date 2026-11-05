@@ -6,6 +6,67 @@ fn the_start_menu_page_sits_inside_its_page() {
 }
 
 #[test]
+fn start_menu_holds_its_style_banner_and_quick_launch_check() {
+    for id in ["startmenu_style", "taskbar_pinned"] {
+        assert_moved(id, Page::Taskbar, Page::StartMenu);
+    }
+    let s = built();
+    assert!(
+        s.pages[Page::StartMenu.index()]
+            .item("startmenu_banner")
+            .is_some()
+    );
+    assert!(
+        s.pages[Page::Taskbar.index()]
+            .item("startmenu_banner")
+            .is_none()
+    );
+    assert_eq!(
+        keys_on(&s, Page::StartMenu),
+        [".startmenu_banner", ".startmenu_style", "taskbar.pinned"]
+    );
+    let p = Page::StartMenu;
+    assert_eq!(rect(&s, p, "startmenu_style"), Rect::new(134, 44, 244, 21));
+    assert_eq!(rect(&s, p, "startmenu_banner"), Rect::new(134, 70, 244, 20));
+    assert_eq!(
+        rect(&s, p, crate::menupage::STYLE_NOTE),
+        Rect::new(20, 94, 358, 13)
+    );
+    assert_eq!(rect(&s, p, "sm_group"), Rect::new(20, 120, 358, 186));
+    assert_eq!(
+        crate::menupage::tree_rect(Area::MIN),
+        Rect::new(32, 140, 251, 152)
+    );
+    assert_eq!(rect(&s, p, "ql_group"), Rect::new(20, 316, 358, 156));
+    assert_eq!(rect(&s, p, "taskbar_pinned"), Rect::new(32, 336, 13, 13));
+    assert_eq!(
+        crate::quickpage::list_rect(Area::MIN),
+        Rect::new(32, 358, 251, 106)
+    );
+    inside_page(&s, p);
+}
+
+#[test]
+fn the_banner_greys_and_the_note_names_the_classic_style() {
+    let mut s = built();
+    let mut want = Settings {
+        startmenu_style: "glass".into(),
+        ..Settings::default()
+    };
+    follow(&mut s, &want);
+    assert!(!enabled_on(&s, Page::StartMenu, "startmenu_banner"));
+    assert!(!enabled_on(&s, Page::StartMenu, "banner_label"));
+    assert_eq!(
+        lines(&s, Page::StartMenu, crate::menupage::STYLE_NOTE),
+        ["Only the Classic style shows the banner and menu below."]
+    );
+    want.startmenu_style = "classic".into();
+    follow(&mut s, &want);
+    assert!(enabled_on(&s, Page::StartMenu, "startmenu_banner"));
+    assert!(enabled_on(&s, Page::StartMenu, "banner_label"));
+}
+
+#[test]
 fn the_switcher_page_geometry() {
     let s = built();
     let p = Page::Switcher;
@@ -395,7 +456,6 @@ fn the_taskbar_page_geometry() {
     assert_eq!(rect(&s, p, "buttons_label"), Rect::new(20, 76, 100, 13));
     assert_eq!(rect(&s, p, "taskbar_buttons"), Rect::new(124, 72, 230, 21));
     for (i, id) in [
-        "taskbar_pinned",
         "taskbar_small_icons",
         "taskbar_show_desktop",
         "taskbar_peek",
@@ -425,22 +485,8 @@ fn the_taskbar_page_geometry() {
         s.pages[p.index()].item("recent_files").is_none(),
         "recent_files is on Advanced"
     );
-    assert_eq!(
-        rect(&s, p, "start_group"),
-        Rect::new(20, 338, 358, 94),
-        "the Start Button group ends 4 px above the page's foot"
-    );
+    assert_eq!(rect(&s, p, "start_group"), Rect::new(20, 338, 358, 44));
     assert_eq!(rect(&s, p, "start_icon"), Rect::new(32, 360, 13, 13));
-    assert_eq!(rect(&s, p, "banner_label"), Rect::new(32, 384, 110, 13));
-    assert_eq!(
-        rect(&s, p, "startmenu_banner"),
-        Rect::new(146, 380, 220, 20)
-    );
-    assert_eq!(
-        rect(&s, p, "startmenu_style_label"),
-        Rect::new(32, 412, 110, 13)
-    );
-    assert_eq!(rect(&s, p, "startmenu_style"), Rect::new(146, 408, 220, 21));
     inside_page(&s, p);
 }
 

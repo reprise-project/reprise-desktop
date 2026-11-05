@@ -758,7 +758,7 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
     assert_eq!(keys_on(&s, Page::Cursor), ["cursor.theme", "cursor.size"]);
     assert!(keys_on(&s, Page::Keyboard).contains(&"keyboard.layout".to_string()));
     assert!(keys_on(&s, Page::ScreenSaverLock).contains(&"screensaver.name".to_string()));
-    for p in [Page::Display, Page::StartMenu, Page::Tablet, Page::Backup] {
+    for p in [Page::Display, Page::Tablet, Page::Backup] {
         assert_eq!(
             keys_on(&s, p),
             Vec::<String>::new(),

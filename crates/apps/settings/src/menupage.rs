@@ -1,7 +1,8 @@
-//! The Start Menu page: the menu as a tree with Add, Rename, Remove and Move buttons. Buttons edit
-//! the pending menu and the tree in step; Apply writes the menu whole.
+//! The Start Menu page: the menu's style and banner, then the menu as a tree with Add, Rename,
+//! Remove and Move buttons. Buttons edit the pending menu and the tree in step; Apply writes the
+//! menu whole.
 
-use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
+use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::menu::expand_label;
 use reprisekit::controls::metrics::ControlMetrics;
@@ -9,7 +10,8 @@ use reprisekit::controls::treeview::{self, Node, Style, TreeView};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{escape_mnemonic, split_mnemonic};
 
-use crate::pages::{Area, GX, group};
+use crate::model::STARTMENU_STYLES;
+use crate::pages::{Area, GX, X, choice, edit, group};
 use crate::startmenu::{self, Entry, Target};
 
 pub const TREE: &str = "sm_tree";
@@ -19,9 +21,10 @@ pub const RENAME: &str = "sm_rename";
 pub const REMOVE: &str = "sm_remove";
 pub const UP: &str = "sm_up";
 pub const DOWN: &str = "sm_down";
+pub const STYLE_NOTE: &str = "startmenu_style_note";
 
 pub fn tree_rect(a: Area) -> Rect {
-    Rect::new(GX, 64, a.gw() - BUTTON_W - 8, 164 + a.dh)
+    Rect::new(GX, 140, a.gw() - BUTTON_W - 8, 152 + a.dh)
 }
 const BUTTON_STEP: i32 = BUTTON_H + 4;
 
@@ -32,7 +35,24 @@ const ROOT: &str = "Start Menu";
 pub fn page(a: Area) -> Form {
     let tree_rect = tree_rect(a);
     let mut items = vec![
-        group(a, "sm_group", 44, 196 + a.dh, "Start menu"),
+        Item::label_at("startmenu_style_label", X, 48, 110, "Start menu st&yle:"),
+        choice(
+            "startmenu_style",
+            X + 114,
+            44,
+            a.combo(Area::MIN.w - 114),
+            STARTMENU_STYLES,
+        ),
+        Item::label_at("banner_label", X, 74, 110, "&Banner:"),
+        edit("startmenu_banner", X + 114, 70, a.w - 114),
+        Item::new(
+            STYLE_NOTE,
+            Rect::new(X, 94, a.w, LINE_H),
+            Control::Lines(vec![
+                "Only the Classic style shows the banner and menu below.".into(),
+            ]),
+        ),
+        group(a, "sm_group", 120, 186 + a.dh, "Start menu"),
         Item::new(TREE, tree_rect, Control::Tree(tree(&[]))),
     ];
     let buttons = [
@@ -456,7 +476,7 @@ mod tests {
     #[test]
     fn the_tree_fills_the_group_beside_a_column_of_six_buttons() {
         let f = page(Area::MIN);
-        assert_eq!(tree_rect(Area::MIN), Rect::new(32, 64, 251, 164));
+        assert_eq!(tree_rect(Area::MIN), Rect::new(32, 140, 251, 152));
         let tops: Vec<(i32, i32)> = [ADD, FOLDER, RENAME, REMOVE, UP, DOWN]
             .iter()
             .map(|id| {
@@ -467,18 +487,18 @@ mod tests {
         assert_eq!(
             tops,
             [
-                (291, 64),
-                (291, 91),
-                (291, 118),
-                (291, 145),
-                (291, 172),
-                (291, 199)
+                (291, 140),
+                (291, 167),
+                (291, 194),
+                (291, 221),
+                (291, 248),
+                (291, 275)
             ]
         );
         let group = f.item("sm_group").unwrap().rect;
         assert!(
             group.bottom() >= tree_rect(Area::MIN).bottom() + 8
-                && group.bottom() >= 199 + BUTTON_H + 8
+                && group.bottom() >= 275 + BUTTON_H + 8
         );
     }
 
@@ -491,7 +511,7 @@ mod tests {
         let text = TextRenderer::load(&FontConfig::default());
         let mut f = open(&default_menu());
         select(&mut f, &[2]);
-        let mut c = Canvas::new(400, 260);
+        let mut c = Canvas::new(400, 340);
         c.fill_rect(c.bounds(), theme.colors.button_face);
         form::draw(
             &mut c,

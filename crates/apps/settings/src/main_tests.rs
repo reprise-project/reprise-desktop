@@ -1678,7 +1678,8 @@ fn restore_defaults_takes_only_the_pages_keys_out_of_the_file() {
     );
     assert_eq!(at.y, ok.y, "on the button row");
     assert!(!lit(&a, Page::Cursor), "nothing there is off its default");
-    for p in [Page::Display, Page::StartMenu, Page::Tablet, Page::Backup] {
+    assert!(!lit(&a, Page::StartMenu), "the file sets no Start Menu key");
+    for p in [Page::Display, Page::Tablet, Page::Backup] {
         assert!(
             a.sheet.pages[p.index()].item(propsheet::RESTORE).is_none(),
             "{p:?}"

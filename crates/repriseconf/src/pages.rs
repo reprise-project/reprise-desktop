@@ -238,7 +238,7 @@ impl Page {
                 "autohide",
                 "peek",
             ],
-            Page::StartMenu => &["menu", "pinned", "quick launch"],
+            Page::StartMenu => &["menu", "pinned", "quick launch", "banner"],
             Page::Search => &["launcher", "run"],
             Page::Switcher => &[
                 "alt tab",

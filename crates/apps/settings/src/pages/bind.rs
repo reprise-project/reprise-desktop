@@ -632,7 +632,8 @@ pub fn write_form(form: &mut Form, s: &Settings) {
 /// the file name extensions without the desktop's files, the water style
 /// while water is off and its note without a fluid style, and shows the look's desktop
 /// colour on its Color button; the Taskbar page
-/// greys the auto-hide triggers while auto-hide is off, the Sound page the sound theme while
+/// greys the auto-hide triggers while auto-hide is off, the Start Menu page the banner outside the
+/// Classic style, the Sound page the sound theme while
 /// neither notifications nor the bell play a sound, and the Advanced page
 /// the debug overlay's captures check while the overlay is off and the thumbnail cache's size
 /// while the cache is off; the Remote Desktop page names the quality picked. Runs from
@@ -722,6 +723,10 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         tb.set_enabled(id, s.taskbar_auto_hide);
     }
     tb.set_enabled(TRAY_CUSTOMIZE, s.taskbar_tray_overflow);
+    let sm = &mut sheet.pages[Page::StartMenu.index()];
+    for id in ["banner_label", "startmenu_banner"] {
+        sm.set_enabled(id, s.startmenu_style == "classic");
+    }
     let quality = REMOTE_QUALITIES[remote_quality_row(&s.remote_quality)].1;
     sheet.pages[Page::RemoteDesktop.index()].set_text(QUALITY_VALUE, quality);
     let adv = &mut sheet.pages[Page::Advanced.index()];
