@@ -20,15 +20,16 @@ repriseconf = { path = "../../repriseconf" }
 reprisebus = { path = "../../reprisebus" }
 repriseaudio = { path = "../../repriseaudio" }
 ironrdp-server.workspace = true
-ironrdp-pdu = "0.9"
-ironrdp-egfx = "0.3"
-ironrdp-dvc = "0.8"
-ironrdp-svc = "0.8"
-ironrdp-core = "0.2"
-ironrdp-graphics = "0.9"
-ironrdp-cliprdr = "0.7"
-ironrdp-rdpsnd = "0.9"
+ironrdp-pdu.workspace = true
+ironrdp-egfx.workspace = true
+ironrdp-dvc.workspace = true
+ironrdp-svc.workspace = true
+ironrdp-core.workspace = true
+ironrdp-graphics.workspace = true
+ironrdp-cliprdr.workspace = true
+ironrdp-rdpsnd.workspace = true
 tokio = { workspace = true, features = ["rt", "net", "time", "macros", "io-util", "sync", "signal"] }
+tokio-rustls = "0.26"
 pipewire = { workspace = true, features = ["v0_3_33"] }
 zbus.workspace = true
 zruntime.workspace = true
@@ -38,7 +39,6 @@ reis = { version = "0.7", default-features = false }
 bytes = "1"
 serde = { workspace = true, features = ["derive"] }
 rcgen.workspace = true
-anyhow = "1"
 async-trait = "0.1"
 sha2 = "0.11"
 socket2 = { version = "0.6", features = ["all"] }
@@ -55,7 +55,7 @@ reprisefs = { path = "../../reprisefs" }
 image.workspace = true
 
 [dev-dependencies]
-ironrdp-ainput = "0.8"
+ironrdp-ainput.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["sync", "test-util"] }
 png.workspace = true
