@@ -273,7 +273,7 @@ fn main() {
     let (config, config_notice, config_file) = config::Config::load(cli.config.as_deref());
     config.warn_retired();
     if let Some(notice) = &config_notice {
-        log::warn!("{notice}");
+        log::warn!("{}", notice.body);
     }
     if let Err(e) = run(
         config,
@@ -296,7 +296,7 @@ fn run(
     config_file: toml::Table,
     config_path: PathBuf,
     config_stamp: configwatch::Stamp,
-    config_notice: Option<String>,
+    config_notice: Option<config::Notice>,
     cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let after_crash = cli.after_crash.is_some();
@@ -377,14 +377,13 @@ fn run(
     if let Some(cmd) = startup {
         spawn::spawn(cmd, &state.env, None);
     }
-    state.config_notice = config_notice.clone();
     state.config_file = config_file;
     darkmode::setup(&mut state);
     reprisefs::binage::start();
-    if let Some(body) = config_notice {
-        event_loop.handle().insert_idle(move |state| {
-            notifyview::notice(state, "Configuration", &body);
-        });
+    if let Some(notice) = config_notice {
+        event_loop
+            .handle()
+            .insert_idle(move |state| configwatch::announce(state, Some(notice)));
     }
     autostart::start(&mut state, session_begun, after_crash);
 

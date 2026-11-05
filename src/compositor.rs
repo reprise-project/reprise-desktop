@@ -306,8 +306,8 @@ pub struct State {
     pub apps_watch: crate::appindex::AppIndexWatch,
     /// Reloads `config.toml` when it changes (`configwatch`).
     pub config_watch: crate::dirwatch::JobWatch,
-    /// The notice naming the keys the last read of `config.toml` dropped.
-    pub config_notice: Option<String>,
+    /// The notice about `config.toml` up last; None after a read with nothing to say.
+    pub config_notice: Option<crate::config::Notice>,
     /// The table `config` was built from: a key that fails on reload keeps its value here.
     pub config_file: toml::Table,
     /// Reads the Quick Launch folder again when it changes (`quickwatch`).

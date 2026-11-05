@@ -4,7 +4,9 @@
 mod keybinds;
 mod menu;
 mod parse;
-pub(crate) use parse::dropped_notice;
+pub(crate) use parse::{
+    KEEPS_SETTINGS, Notice, broken_notice, dropped_notice, parse_error, unreadable_notice,
+};
 
 #[cfg(test)]
 mod tests;
