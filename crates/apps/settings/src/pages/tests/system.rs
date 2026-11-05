@@ -156,11 +156,6 @@ fn the_advanced_page_geometry() {
     assert_eq!(rect(&s, p, "capture_border"), Rect::new(20, 176, 13, 13));
     assert_eq!(rect(&s, p, PRIVACY_LOCATION), Rect::new(20, 198, 13, 13));
     assert_eq!(locations(Area::MIN), Rect::new(20, 220, 275, 46));
-    assert_eq!(rect(&s, p, WATER), Rect::new(20, 322, 13, 13));
-    assert_eq!(
-        rect(&s, p, WATER_STYLE),
-        Rect::new(132, 318, 100, combo::COMBO_H)
-    );
     assert_eq!(rect(&s, p, FORGET), Rect::new(303, 220, 75, 23));
     assert!(
         s.pages[p.index()].item("desktop_icons").is_none(),
@@ -179,80 +174,6 @@ fn the_advanced_page_geometry() {
         assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Taskbar");
     }
     inside_page(&s, p);
-}
-
-#[test]
-fn water_styles_list_the_fluids() {
-    let keys: Vec<_> = WATER_STYLES.iter().map(|c| c.0).collect();
-    assert_eq!(
-        keys,
-        ["calm", "lively", "rain", "ink", "glow", "sparks", "neon"]
-    );
-    let labels: Vec<_> = WATER_STYLES.iter().skip(3).map(|c| c.1).collect();
-    assert_eq!(labels, ["Ink", "Glow", "Sparks", "Neon"]);
-    for (key, _) in WATER_STYLES {
-        assert!(reprisekit::water::Water::parse(key).is_some(), "{key}");
-    }
-}
-
-#[test]
-fn water_note_sits_under_the_style_combo_and_greys_when_off() {
-    let mut s = built();
-    let p = Page::Advanced;
-    let combo = rect(&s, p, WATER_STYLE);
-    let (a, b) = (rect(&s, p, "water_note"), rect(&s, p, "water_note_2"));
-    assert!(
-        a.y >= combo.bottom() && b.y >= a.bottom(),
-        "{a:?} {b:?} under {combo:?}"
-    );
-    let page = &s.pages[p.index()];
-    let Control::Label { text, .. } = &page.item("water_note").unwrap().control else {
-        panic!("the note is a label");
-    };
-    assert!(text.starts_with("With Ink, Glow, Sparks or Neon"));
-    inside_page(&s, p);
-    let mut want = Settings {
-        wallpaper_water: "off".into(),
-        ..Settings::default()
-    };
-    follow(&mut s, &want);
-    assert!(!enabled_on(&s, p, "water_note") && !enabled_on(&s, p, "water_note_2"));
-    want.wallpaper_water = "ink".into();
-    follow(&mut s, &want);
-    assert!(enabled_on(&s, p, "water_note") && enabled_on(&s, p, "water_note_2"));
-}
-
-#[test]
-fn the_water_style_greys_while_water_is_off() {
-    let mut s = built();
-    let mut want = Settings {
-        wallpaper_water: "off".into(),
-        ..Settings::default()
-    };
-    follow(&mut s, &want);
-    assert!(
-        !enabled_on(&s, Page::Advanced, WATER_STYLE),
-        "greyed while off"
-    );
-    want.wallpaper_water = "rain".into();
-    follow(&mut s, &want);
-    assert!(enabled_on(&s, Page::Advanced, WATER_STYLE));
-    write_forms(&mut s, &want);
-    let page = &s.pages[Page::Advanced.index()];
-    assert_eq!(
-        page.combo_selected(WATER_STYLE),
-        Some(2),
-        "Rain is the third row"
-    );
-    assert!(matches!(
-        page.item(WATER).map(|i| &i.control),
-        Some(Control::Check { checked: true, .. })
-    ));
-    let mut got = Settings::default();
-    tick(&mut s, &mut got, Page::Advanced, WATER, false);
-    assert_eq!(got.wallpaper_water, "off");
-    tick(&mut s, &mut got, Page::Advanced, WATER, true);
-    assert_eq!(got.wallpaper_water, "rain");
 }
 
 fn thumbs_mb(s: &PropSheet) -> &UpDown {

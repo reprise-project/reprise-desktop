@@ -198,7 +198,14 @@ impl Page {
                 "blur",
                 "high contrast",
             ],
-            Page::Background => &["wallpaper", "picture", "slideshow", "extensions"],
+            Page::Background => &[
+                "wallpaper",
+                "picture",
+                "slideshow",
+                "extensions",
+                "widgets",
+                "water",
+            ],
             Page::ScreenSaverLock => &[
                 "screensaver",
                 "starfield",
@@ -240,7 +247,7 @@ impl Page {
                 "overview",
                 "hot corner",
             ],
-            Page::VirtualDesktops => &["workspaces", "desktops", "widgets"],
+            Page::VirtualDesktops => &["workspaces", "desktops"],
             Page::WindowBehavior => &[
                 "windows",
                 "tiling",

@@ -581,26 +581,21 @@ fn the_background_page_geometry() {
         Rect::new(289, 40, 89, 21)
     );
     assert_eq!(
-        rect(&s, p, backgroundpage::WALLPAPER),
-        Rect::new(219, 66, 159, 191)
-    );
-    assert_eq!(
-        rect(&s, p, backgroundpage::BROWSE),
-        Rect::new(303, 264, 75, 23)
-    );
-    assert_eq!(rect(&s, p, "slideshow_group"), Rect::new(20, 393, 358, 70));
-    assert_eq!(
         rect(&s, p, backgroundpage::INTERVAL),
         Rect::new(166, 413, 120, 21)
     );
-    assert_eq!(rect(&s, p, "slideshow_shuffle"), Rect::new(32, 439, 13, 13));
-    assert_eq!(rect(&s, p, "position_label"), Rect::new(219, 310, 75, 13));
+    assert_eq!(rect(&s, p, "position_label"), Rect::new(219, 230, 75, 13));
     assert_eq!(
         rect(&s, p, "wallpaper_position"),
-        Rect::new(219, 326, 75, 21)
+        Rect::new(219, 246, 75, 21)
     );
-    assert_eq!(rect(&s, p, "color_label"), Rect::new(303, 310, 75, 13));
-    assert_eq!(rect(&s, p, "background"), Rect::new(303, 326, 75, 21));
+    assert_eq!(rect(&s, p, "color_label"), Rect::new(303, 230, 75, 13));
+    assert_eq!(rect(&s, p, "background"), Rect::new(303, 246, 75, 21));
+    assert_eq!(rect(&s, p, "use_for_label"), Rect::new(219, 276, 44, 13));
+    assert_eq!(
+        rect(&s, p, backgroundpage::USE_FOR),
+        Rect::new(267, 272, 111, 21)
+    );
     assert_eq!(rect(&s, p, "icons_group"), Rect::new(20, 222, 191, 160));
     assert_eq!(rect(&s, p, "extensions_label"), Rect::new(32, 334, 167, 13));
     assert_eq!(
@@ -617,6 +612,32 @@ fn the_background_page_geometry() {
             "{id}"
         );
     }
+    inside_page(&s, p);
+}
+
+#[test]
+fn the_background_page_geometry_with_widgets_and_water() {
+    let s = built();
+    let p = Page::Background;
+    assert_eq!(
+        rect(&s, p, backgroundpage::WALLPAPER),
+        Rect::new(219, 66, 159, 123)
+    );
+    assert_eq!(
+        rect(&s, p, backgroundpage::BROWSE),
+        Rect::new(303, 196, 75, 23)
+    );
+    assert_eq!(rect(&s, p, "widgets_group"), Rect::new(219, 300, 159, 82));
+    assert_eq!(rect(&s, p, "widget_clock"), Rect::new(231, 322, 13, 13));
+    assert_eq!(rect(&s, p, "widget_meter"), Rect::new(231, 366, 13, 13));
+    assert_eq!(rect(&s, p, "slideshow_group"), Rect::new(20, 393, 358, 48));
+    assert_eq!(
+        rect(&s, p, "slideshow_shuffle"),
+        Rect::new(296, 417, 13, 13)
+    );
+    assert_eq!(rect(&s, p, WATER), Rect::new(20, 455, 13, 13));
+    assert_eq!(rect(&s, p, WATER_STYLE), Rect::new(132, 451, 80, 21));
+    assert_eq!(rect(&s, p, "water_note"), Rect::new(218, 455, 160, 13));
     inside_page(&s, p);
 }
 
@@ -1152,4 +1173,105 @@ fn an_unlisted_icon_theme_still_shows() {
     let mut got = Settings::default();
     read_all(&sheet, &mut got);
     assert_eq!(got.icon_theme, "gone");
+}
+
+#[test]
+fn water_styles_list_the_fluids() {
+    let keys: Vec<_> = WATER_STYLES.iter().map(|c| c.0).collect();
+    assert_eq!(
+        keys,
+        ["calm", "lively", "rain", "ink", "glow", "sparks", "neon"]
+    );
+    let labels: Vec<_> = WATER_STYLES.iter().skip(3).map(|c| c.1).collect();
+    assert_eq!(labels, ["Ink", "Glow", "Sparks", "Neon"]);
+    for (key, _) in WATER_STYLES {
+        assert!(reprisekit::water::Water::parse(key).is_some(), "{key}");
+    }
+}
+
+#[test]
+fn water_note_sits_right_of_the_style_combo_and_greys_when_off() {
+    let mut s = built();
+    let p = Page::Background;
+    let combo = rect(&s, p, WATER_STYLE);
+    let note = rect(&s, p, "water_note");
+    assert!(note.x > combo.right(), "{note:?} right of {combo:?}");
+    assert!(s.pages[p.index()].item("water_note_2").is_none());
+    assert_eq!(lines(&s, p, "water_note"), ["Drag on the desktop to stir."]);
+    let mut want = Settings {
+        wallpaper_water: "off".into(),
+        ..Settings::default()
+    };
+    follow(&mut s, &want);
+    assert!(!enabled_on(&s, p, "water_note"));
+    want.wallpaper_water = "calm".into();
+    follow(&mut s, &want);
+    assert!(enabled_on(&s, p, WATER_STYLE));
+    assert!(
+        !enabled_on(&s, p, "water_note"),
+        "dragging draws a selection box under Calm"
+    );
+    want.wallpaper_water = "ink".into();
+    follow(&mut s, &want);
+    assert!(enabled_on(&s, p, "water_note"));
+}
+
+#[test]
+fn the_water_style_greys_while_water_is_off() {
+    let mut s = built();
+    let mut want = Settings {
+        wallpaper_water: "off".into(),
+        ..Settings::default()
+    };
+    follow(&mut s, &want);
+    assert!(
+        !enabled_on(&s, Page::Background, WATER_STYLE),
+        "greyed while off"
+    );
+    want.wallpaper_water = "rain".into();
+    follow(&mut s, &want);
+    assert!(enabled_on(&s, Page::Background, WATER_STYLE));
+    write_forms(&mut s, &want);
+    let page = &s.pages[Page::Background.index()];
+    assert_eq!(
+        page.combo_selected(WATER_STYLE),
+        Some(2),
+        "Rain is the third row"
+    );
+    assert!(matches!(
+        page.item(WATER).map(|i| &i.control),
+        Some(Control::Check { checked: true, .. })
+    ));
+    let mut got = Settings::default();
+    tick(&mut s, &mut got, Page::Background, WATER, false);
+    assert_eq!(got.wallpaper_water, "off");
+    tick(&mut s, &mut got, Page::Background, WATER, true);
+    assert_eq!(got.wallpaper_water, "rain");
+}
+
+#[test]
+fn the_widget_boxes_tick_what_stands_and_write_desktop_widgets() {
+    let p = Page::Background;
+    let mut got = Settings {
+        desktop_widgets: vec!["meter".into(), "clock".into()],
+        ..Settings::default()
+    };
+    let mut s = with(&got);
+    let page = &s.pages[p.index()];
+    assert_eq!(page.checked("widget_clock"), Some(true));
+    assert_eq!(page.checked("widget_calendar"), Some(false));
+    assert_eq!(page.checked("widget_meter"), Some(true));
+    let mut tick = |id: &str, on: bool| {
+        if let Some(Control::Check { checked, .. }) =
+            s.pages[p.index()].item_mut(id).map(|i| &mut i.control)
+        {
+            *checked = on;
+        }
+    };
+    tick("widget_calendar", true);
+    tick("widget_meter", false);
+    for id in ["widget_clock", "widget_calendar", "widget_meter"] {
+        read_one(&s, id, &mut got);
+    }
+    assert_eq!(got.desktop_widgets, ["clock", "calendar"]);
 }

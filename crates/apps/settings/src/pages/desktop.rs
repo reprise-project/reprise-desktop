@@ -243,10 +243,6 @@ pub fn virtual_desktops(a: Area) -> Form {
         100,
         "times a second",
     ));
-    items.push(group(a, "widgets_group", 384, 88, "Desktop Widgets"));
-    items.push(Item::check("widget_clock", GX, 406, "&Clock"));
-    items.push(Item::check("widget_calendar", GX, 428, "Ca&lendar"));
-    items.push(Item::check("widget_meter", GX, 450, "&System meter"));
     Form::new(items)
 }
 

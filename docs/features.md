@@ -284,7 +284,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   Documents' or Home's starts your `terminal` there.
 - **Widgets.** A clock, a month calendar and a system meter can stand on
   the desktop: tick them under the desktop menu's Widgets or in Settings >
-  Virtual Desktops (`desktop_widgets`). Each is glass under Glass and a raised
+  Background (`desktop_widgets`). Each is glass under Glass and a raised
   panel otherwise. Drag one to move it: it snaps to the icon grid, on any
   screen, and the icons make way. Right-click it for its options (the
   clock's analog or digital face and its seconds, the meter's bars or

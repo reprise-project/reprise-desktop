@@ -408,8 +408,8 @@ mod tests {
         }
     }
 
-    /// From the smallest to a large size, content holders grow (group boxes,
-    /// fields, lists, the tree, previews); combos and trackbars grow no more than
+    /// From the smallest to a large size, content holders grow (group boxes that
+    /// end at the column's right edge, fields, lists, the tree, previews); combos and trackbars grow no more than
     /// their most; check boxes, radios, buttons, up-downs, colour buttons and time
     /// fields keep their size. The page's list or preview takes the extra height.
     #[test]
@@ -425,8 +425,8 @@ mod tests {
                 let at = format!("{}: {} from {r:?} to {n:?}", p.label(), it.id);
                 assert_eq!(it.id, now.id);
                 match &it.control {
-                    Control::Group(_) if r.width == small.w => {
-                        assert_eq!(n.width, large.w, "{at}")
+                    Control::Group(_) if r.right() == small.right() => {
+                        assert_eq!(n.right(), large.right(), "{at}")
                     }
                     Control::Group(_) => assert_eq!(n.width, r.width, "{at}"),
                     Control::Edit { .. }
