@@ -119,7 +119,7 @@ pub(super) fn default_startmenu() -> Vec<MenuEntry> {
                 MenuEntry::spawn(
                     "&Network Connections",
                     "network-workgroup",
-                    "nm-connection-editor",
+                    "reprise-network",
                 )
                 .tipped(
                     "Displays existing network connections on this computer and helps you \
