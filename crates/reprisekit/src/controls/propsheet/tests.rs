@@ -149,6 +149,27 @@ fn a_press_on_a_link_row_comes_back_as_its_link() {
     assert_eq!(cursor(&s), Some(0));
 }
 
+/// The filter hides the open page's row: the page stays open with its title, the panel has
+/// no list item to name it, and Down from the list opens the first shown page.
+#[test]
+fn an_open_page_the_filter_hides_stays_open() {
+    use crate::access::{ROOT, Tree};
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut s = link_sheet();
+    s.list_mut().unwrap().set_filter(Some(&pagelist::Filter {
+        pages: vec![false, true, false],
+        links: vec![true, false],
+    }));
+    let mut tree = Tree::window("T", s.size);
+    let (panel, _) = s.access(&mut tree, ROOT, &text, 11);
+    assert!(tree.get(panel).unwrap().labelled_by().is_empty());
+    s.tabs.focused = true;
+    s.open_mut().set_focus(None);
+    assert_eq!(s.key(form::Key::Down, None), Event::Redraw);
+    assert_eq!(s.tabs.open, 1);
+    assert!(sheet(&["General"], (398, 424)).list_mut().is_none());
+}
+
 #[test]
 fn enter_on_the_link_the_list_rests_on_opens_it() {
     let mut s = link_sheet();
