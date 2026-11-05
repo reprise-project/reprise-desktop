@@ -70,8 +70,9 @@ fn target(state: &State, w: WindowId, bright: Option<WindowId>) -> f32 {
     f32::from(level) / 100.0
 }
 
-/// Before a frame: every shade heads for its target, and the windows whose shade changed redraw,
-/// again each frame while one fades. Fades with `[effects] window_animation`, else snaps.
+/// Before a frame and on a focus change: every shade heads for its target, and the windows whose
+/// shade changed redraw, again each frame while one fades. Fades with `[effects]
+/// window_animation`, else snaps.
 pub fn frame(state: &mut State) {
     let now = Instant::now();
     let fade = if state.config.effects.window_animation {

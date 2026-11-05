@@ -51,10 +51,12 @@ impl State {
             self.layers_shell.focused = None;
         }
         if let Some(w) = self.focused.take() {
-            self.set_activated(w, false);
-            self.redraw_frame(w);
-            self.redraw_taskbars();
-            self.redraw_all();
+            self.redraw_changed(|s| {
+                s.set_activated(w, false);
+                s.redraw_frame(w);
+                s.redraw_taskbars();
+                crate::dim::frame(s);
+            });
         }
     }
 
@@ -90,6 +92,13 @@ impl State {
     /// Focus and raise `w`, showing its desktop first. A window under a modal
     /// dialog comes up with it, and the dialog takes the focus.
     pub fn focus_window(&mut self, owner: WindowId) {
+        self.redraw_changed(|s| {
+            s.raise_and_focus(owner);
+            crate::dim::frame(s);
+        });
+    }
+
+    fn raise_and_focus(&mut self, owner: WindowId) {
         // A tab its group hides (or a window it owns) shows in the group's place
         // first, coming up with the group if minimized.
         let home = self.home(owner);
@@ -127,7 +136,6 @@ impl State {
             if held != surface {
                 self.claim_keyboard(w);
             }
-            self.redraw_all();
             return;
         }
         let prev = self.focused;
@@ -150,7 +158,6 @@ impl State {
         self.claim_keyboard(w);
         self.restore_layout(w);
         self.redraw_taskbars();
-        self.redraw_all();
     }
 
     /// Whether `w`, mapping, takes the keyboard (`mapfocus::takes_focus`);

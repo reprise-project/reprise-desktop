@@ -853,6 +853,36 @@ impl State {
         crate::backend::schedule_on(self, &was, crate::backend::Ask::Scene);
     }
 
+    /// Run `f`, then ask for a new frame on the outputs where it edited the scene
+    /// (`Scene::watched`), or on every output if it moved glass's blur quality in or out of a
+    /// drag's. What changes inside a custom node or a client surface, its owner asks for. Inside
+    /// another `redraw_changed`, the outer one asks.
+    pub fn redraw_changed<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let quality = |s: &Self| {
+            crate::glass::wanted(&s.config)
+                .then(|| crate::glass::quality(&s.interaction, &s.config.glass))
+        };
+        let outer = self.scene.watch();
+        let before = quality(self);
+        let r = f(self);
+        if !outer {
+            return r;
+        }
+        let rects = self.scene.watched();
+        if quality(self) != before {
+            self.redraw_all();
+            return r;
+        }
+        let outputs: Vec<smithay::output::Output> = (self.scene.outputs().iter())
+            .filter(|o| {
+                reprisescene::output_rect(o).is_some_and(|g| rects.iter().any(|r| g.overlaps(*r)))
+            })
+            .cloned()
+            .collect();
+        crate::backend::schedule_on(self, &outputs, crate::backend::Ask::Scene);
+        r
+    }
+
     /// Destroy `node` and ask for a new frame on the outputs it covered.
     pub fn destroy_redrawn(&mut self, node: impl Into<reprisescene::NodeId>) {
         let node = node.into();

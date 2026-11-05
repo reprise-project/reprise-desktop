@@ -120,15 +120,18 @@ impl State {
     }
 
     /// Run `f` with `redraw_frame` put off: each frame it asked for draws once afterwards, in its
-    /// final state.
+    /// final state. The frames drawn afterwards ask for frames as `redraw_changed` does: a
+    /// `redraw_changed` inside `f` ends before they draw.
     pub fn batch_frames(&mut self, f: impl FnOnce(&mut Self)) {
-        let outer = self.frame_batch.begin();
-        f(self);
-        if outer {
-            for w in self.frame_batch.end() {
-                self.redraw_frame(w);
+        self.redraw_changed(|s| {
+            let outer = s.frame_batch.begin();
+            f(s);
+            if outer {
+                for w in s.frame_batch.end() {
+                    s.redraw_frame(w);
+                }
             }
-        }
+        });
     }
 
     /// Whether `w` shows as a sheet: peek hides it, it is not fullscreen, and the look draws
