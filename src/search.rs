@@ -487,13 +487,13 @@ mod tests {
         assert_eq!(
             rank("mouse"),
             [
-                Setting::Page(Page::Mouse),
-                Setting::Page(Page::Accessibility)
+                Setting::Page(Page::MouseTouchpad),
+                Setting::Page(Page::TextKeys)
             ],
-            "the Mouse page by name, then Accessibility by MouseKeys"
+            "the Mouse & Touchpad page by name, then Text & Keys by MouseKeys"
         );
-        assert_eq!(rank("touchpad"), [Setting::Page(Page::Mouse)]);
-        assert_eq!(rank("cursor"), [Setting::Page(Page::Pointers)]);
+        assert_eq!(rank("touchpad"), [Setting::Page(Page::MouseTouchpad)]);
+        assert_eq!(rank("cursor"), [Setting::Page(Page::Cursor)]);
         assert_eq!(
             rank("power"),
             [Setting::Page(Page::Power), Setting::App(1)],
@@ -512,15 +512,18 @@ mod tests {
         assert_eq!(rank("lid"), [Setting::App(1)]);
         assert_eq!(rank("transparency"), [Setting::Page(Page::Appearance)]);
         assert_eq!(rank("dpi"), [Setting::Page(Page::Display)]);
-        assert_eq!(rank("lock screen"), [Setting::Page(Page::ScreenSaver)]);
+        assert_eq!(rank("lock screen"), [Setting::Page(Page::ScreenSaverLock)]);
         assert_eq!(rank("hot corner"), [Setting::Page(Page::Switcher)]);
-        assert_eq!(rank("notifications"), [Setting::Page(Page::Sounds)]);
+        assert_eq!(rank("notifications"), [Setting::Page(Page::Sound)]);
         assert_eq!(rank("clipboard"), [Setting::Page(Page::Advanced)]);
         assert_eq!(rank("print queue"), [Setting::App(2)]);
         assert_eq!(rank("firmware"), [Setting::App(3)]);
-        assert_eq!(rank("grayscale"), [Setting::Page(Page::Vision)]);
-        assert_eq!(rank("colour blind"), [Setting::Page(Page::Vision)]);
-        assert_eq!(rank("magnifier"), [Setting::Page(Page::Vision)]);
+        assert_eq!(rank("grayscale"), [Setting::Page(Page::MagnifierFilters)]);
+        assert_eq!(
+            rank("colour blind"),
+            [Setting::Page(Page::MagnifierFilters)]
+        );
+        assert_eq!(rank("magnifier"), [Setting::Page(Page::MagnifierFilters)]);
         assert!(rank("w").is_empty(), "one character finds nothing");
         assert!(rank("notepad").is_empty());
     }
@@ -543,7 +546,7 @@ mod tests {
         );
         assert_eq!(
             rank("mouse speed").first(),
-            Some(&Setting::Page(Page::Mouse))
+            Some(&Setting::Page(Page::MouseTouchpad))
         );
         let found = rank("keyboard");
         assert_eq!(found.first(), Some(&Setting::Page(Page::Keyboard)));

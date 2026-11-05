@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn the_sounds_page_geometry() {
     let s = built();
-    let p = Page::Sounds;
+    let p = Page::Sound;
     assert_eq!(rect(&s, p, "sound_theme_group"), Rect::new(20, 44, 358, 52));
     assert_eq!(rect(&s, p, "sound_theme_label"), Rect::new(GX, 70, 80, 13));
     assert_eq!(rect(&s, p, "sound_theme"), Rect::new(116, 66, 200, 21));
@@ -103,7 +103,7 @@ fn the_sound_theme_and_the_sound_checks_write_their_keys() {
             heads: &[],
         },
     );
-    let p = Page::Sounds;
+    let p = Page::Sound;
     let id = "sound_theme";
     assert_eq!(
         rows(&s, p, id),
@@ -581,7 +581,7 @@ fn a_startup_list_that_scrolls_draws_only_the_vertical_bar() {
 #[test]
 fn the_lock_when_away_group_sits_under_the_screen_saver() {
     let s = built();
-    let p = Page::ScreenSaver;
+    let p = Page::ScreenSaverLock;
     assert_eq!(rect(&s, p, "away_group"), Rect::new(20, 338, 358, 118));
     assert_eq!(rect(&s, p, "away_label"), Rect::new(32, 358, 334, 13));
     assert_eq!(rect(&s, p, "away_device"), Rect::new(32, 374, 200, 21));

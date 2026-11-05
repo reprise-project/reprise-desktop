@@ -1,4 +1,4 @@
-//! Keyboard, Mouse, Pointers and Accessibility.
+//! Keyboard, Mouse & Touchpad, Cursor and Text & Keys.
 
 use super::{
     Area, CURSOR_DEFAULT_ROW, CURSOR_PREVIEW, DELAY_STEPS, DOUBLE_CLICK, GX, KB_ADD, KB_LAYOUTS,
@@ -313,7 +313,7 @@ pub(super) const SLOW_CONTROLS: [&str; 5] = [
     "slow_long",
 ];
 
-/// The Accessibility page: the text size on top, then StickyKeys, SlowKeys
+/// The Text & Keys page: the text size on top, then StickyKeys, SlowKeys
 /// and MouseKeys, each in its group, and the shortcuts that turn them on and off.
 pub fn accessibility(a: Area) -> Form {
     let gw = a.gw();

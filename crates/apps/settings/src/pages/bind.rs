@@ -623,15 +623,15 @@ pub fn write_form(form: &mut Form, s: &Settings) {
 /// tap-to-click; the Layouts buttons by the list (Add up to four, Remove on a
 /// row, Move Up below the first); the night light's controls by its check box
 /// and times by the fixed schedule; the StickyKeys, SlowKeys and delay
-/// options; the Vision filter's intensity unless a correction is picked; on
+/// options; the colour filter's intensity unless a correction is picked; on
 /// Window Switcher, the preview check box while Alt+Tab shows thumbnails and
-/// the 3D switcher outside Glass; on Desktops, the refresh rate while nothing
+/// the 3D switcher outside Glass; on Virtual Desktops, the refresh rate while nothing
 /// shows a live picture, and the count and animation without "Use virtual
 /// desktops". The Appearance page is rebuilt for the pending interface and its
 /// sample redrawn; the Background page greys the position without a wallpaper
 /// and the file name extensions without the desktop's files, and shows the look's desktop
 /// colour on its Color button; the Taskbar page
-/// greys the auto-hide triggers while auto-hide is off, the Sounds page the sound theme while
+/// greys the auto-hide triggers while auto-hide is off, the Sound page the sound theme while
 /// neither notifications nor the bell play a sound, and the Advanced page
 /// the debug overlay's captures check while the overlay is off and the thumbnail cache's size
 /// while the cache is off; the Remote Desktop page names the quality picked. Runs from
@@ -639,7 +639,7 @@ pub fn write_form(form: &mut Form, s: &Settings) {
 pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     crate::appearancepage::follow(sheet, s);
     crate::backgroundpage::follow(&mut sheet.pages[Page::Background.index()], s);
-    crate::saverpage::follow(&mut sheet.pages[Page::ScreenSaver.index()], s);
+    crate::saverpage::follow(&mut sheet.pages[Page::ScreenSaverLock.index()], s);
     if let Some(Control::UpDown(u)) = sheet.pages[Page::Power.index()]
         .item_mut("blank_after")
         .map(|i| &mut i.control)
@@ -658,11 +658,11 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     for id in [WATER_STYLE, "water_note", "water_note_2"] {
         water.set_enabled(id, s.wallpaper_water != "off");
     }
-    let wp = &mut sheet.pages[Page::Windows.index()];
+    let wp = &mut sheet.pages[Page::WindowBehavior.index()];
     for id in DRAG_SNAP_CONTROLS {
         wp.set_enabled(id, s.snap_enabled);
     }
-    let dp = &mut sheet.pages[Page::Desktops.index()];
+    let dp = &mut sheet.pages[Page::VirtualDesktops.index()];
     for id in FPS_CONTROLS {
         dp.set_enabled(id, live);
     }
@@ -691,9 +691,9 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         nl.set_enabled(id, s.nl_enabled && s.nl_schedule == "fixed");
     }
     nl.set_text("nl_temp_value", &format!("{} K", s.nl_temperature));
-    sheet.pages[Page::Mouse.index()]
+    sheet.pages[Page::MouseTouchpad.index()]
         .set_text("double_click_value", &format!("{} ms", s.double_click_ms));
-    let ax = &mut sheet.pages[Page::Accessibility.index()];
+    let ax = &mut sheet.pages[Page::TextKeys.index()];
     for id in STICKY_CONTROLS {
         ax.set_enabled(id, s.sticky_keys);
     }
@@ -708,7 +708,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         "slow_delay_value",
         &format!("{}.{} seconds", tenths / 10, tenths % 10),
     );
-    crate::visionpage::follow(&mut sheet.pages[Page::Vision.index()], s);
+    crate::visionpage::follow(&mut sheet.pages[Page::MagnifierFilters.index()], s);
     let fx = &mut sheet.pages[Page::Effects.index()];
     for id in ANIM_CONTROLS {
         fx.set_enabled(id, s.window_animation);
@@ -716,7 +716,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     for id in HOVER_CONTROLS {
         fx.set_enabled(id, s.hover_fade);
     }
-    let sp = &mut sheet.pages[Page::Sounds.index()];
+    let sp = &mut sheet.pages[Page::Sound.index()];
     for id in SOUND_CONTROLS {
         sp.set_enabled(id, s.notification_sound || s.bell);
     }

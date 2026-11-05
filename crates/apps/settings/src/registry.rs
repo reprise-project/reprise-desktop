@@ -1,6 +1,6 @@
 //! How each page of the Reprise Settings sheet is built. Which pages exist
 //! and their headings live in [`repriseconf::pages`], shared with the
-//! compositor's search; a page's index in `PropSheet::pages` is its place in [`GROUPS`].
+//! compositor's search; a page's index in `PropSheet::pages` is its place in [`Page::all`].
 
 use reprisefs::xkb::Layout;
 use reprisekit::controls::form::Form;
@@ -9,7 +9,7 @@ use reprisekit::controls::propsheet::PropSheet;
 use crate::model::Settings;
 use crate::pages::{self, Area};
 
-pub use repriseconf::pages::{GROUPS, Page};
+pub use repriseconf::pages::{Entry, GROUPS, Page};
 
 /// What the pages offer besides the settings: installed themes (sound themes included), Qt tools,
 /// keyboard layouts and the compositor's outputs.
@@ -31,7 +31,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
     match p {
         Page::Appearance => crate::appearancepage::page(&Settings::default(), a),
         Page::Background => crate::backgroundpage::page(a),
-        Page::ScreenSaver => crate::saverpage::page(a),
+        Page::ScreenSaverLock => crate::saverpage::page(a),
         Page::Display => crate::displaypage::page(
             &crate::displaypage::Display::with_heads(src.heads.to_vec()),
             a,
@@ -43,17 +43,17 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::Effects => pages::effects(a),
         Page::Taskbar => pages::taskbar(a),
         Page::StartMenu => crate::menupage::page(a),
-        Page::Launcher => pages::launcher(a),
+        Page::Search => pages::launcher(a),
         Page::Switcher => pages::switcher(a),
-        Page::Desktops => pages::desktops(a),
-        Page::Windows => pages::windows(a),
+        Page::VirtualDesktops => pages::desktops(a),
+        Page::WindowBehavior => pages::windows(a),
         Page::Keyboard => pages::keyboard(a),
-        Page::Mouse => pages::mouse(a),
+        Page::MouseTouchpad => pages::mouse(a),
         Page::Tablet => crate::tabletpage::page(a, &[], 0, &[]),
-        Page::Pointers => pages::pointers(a, src.cursor_themes),
-        Page::Accessibility => pages::accessibility(a),
-        Page::Vision => crate::visionpage::page(a),
-        Page::Sounds => pages::sounds(a, src.sound_themes),
+        Page::Cursor => pages::pointers(a, src.cursor_themes),
+        Page::TextKeys => pages::accessibility(a),
+        Page::MagnifierFilters => crate::visionpage::page(a),
+        Page::Sound => pages::sounds(a, src.sound_themes),
         Page::Power => pages::power(a),
         Page::Startup => pages::startup(a),
         Page::DefaultPrograms => crate::defaultspage::page(a),
@@ -63,17 +63,28 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
     }
 }
 
+/// Each heading of [`GROUPS`] with its pages' labels, in list order. Program entries
+/// get no row.
+fn page_rows() -> Vec<(&'static str, Vec<&'static str>)> {
+    GROUPS
+        .iter()
+        .map(|(heading, entries)| {
+            let labels = entries
+                .iter()
+                .filter_map(|e| match e {
+                    Entry::Page(p) => Some(p.label()),
+                    Entry::Program(_) => None,
+                })
+                .collect();
+            (*heading, labels)
+        })
+        .collect()
+}
+
 /// The whole sheet at [`Area::MIN`] with `s` pushed in ([`pages::write`]).
 pub fn sheet(s: &Settings, src: &Sources) -> PropSheet {
-    let labels: Vec<Vec<&str>> = GROUPS
-        .iter()
-        .map(|(_, ps)| ps.iter().map(|p| p.label()).collect())
-        .collect();
-    let groups: Vec<(&str, &[&str])> = GROUPS
-        .iter()
-        .zip(&labels)
-        .map(|((heading, _), l)| (*heading, l.as_slice()))
-        .collect();
+    let rows = page_rows();
+    let groups: Vec<(&str, &[&str])> = rows.iter().map(|(h, l)| (*h, l.as_slice())).collect();
     let forms = Page::all().map(|p| build(p, src, Area::MIN)).collect();
     let mut sheet = PropSheet::with_list(&groups, forms, pages::CLIENT);
     pages::write(&mut sheet, s, src.layouts);
@@ -109,41 +120,52 @@ mod tests {
     }
 
     #[test]
-    fn four_headings_over_the_pages() {
+    fn seven_headings_over_the_pages() {
         let labels: Vec<&str> = Page::all().map(Page::label).collect();
         assert_eq!(
             labels,
             [
                 "Appearance",
                 "Background",
-                "Screen Saver",
-                "Display",
-                "Night Light",
+                "Screen Saver & Lock",
                 "Fonts & Icons",
                 "Effects",
                 "Taskbar",
                 "Start Menu",
-                "Launcher",
+                "Search",
                 "Window Switcher",
-                "Desktops",
-                "Windows",
+                "Virtual Desktops",
+                "Window Behavior",
+                "Display",
+                "Night Light",
+                "Sound",
                 "Keyboard",
-                "Mouse",
+                "Mouse & Touchpad",
+                "Cursor",
                 "Tablet",
-                "Pointers",
-                "Accessibility",
-                "Vision",
-                "Sounds",
+                "Text & Keys",
+                "Magnifier & Filters",
+                "Remote Desktop",
                 "Power",
                 "Startup",
                 "Default Programs",
-                "Remote Desktop",
                 "Advanced",
                 "Backup",
             ]
         );
         let headings: Vec<&str> = GROUPS.iter().map(|g| g.0).collect();
-        assert_eq!(headings, ["Look", "Desktop", "Input", "System"]);
+        assert_eq!(
+            headings,
+            [
+                "Personalize",
+                "Taskbar & Windows",
+                "Display & Sound",
+                "Devices",
+                "Accessibility",
+                "Network",
+                "System"
+            ]
+        );
         for (i, p) in Page::all().enumerate() {
             assert_eq!((p.index(), Page::at(i)), (i, Some(p)));
         }
@@ -151,20 +173,33 @@ mod tests {
     }
 
     #[test]
-    fn a_page_is_named_by_its_label_in_lower_case() {
-        assert_eq!(Page::FontsAndIcons.slug(), "fonts-and-icons");
-        assert_eq!(Page::named("fonts-and-icons"), Some(Page::FontsAndIcons));
-        assert_eq!(Page::named("display"), Some(Page::Display));
-        assert_eq!(Page::named("night-light"), Some(Page::NightLight));
-        assert_eq!(Page::named("accessibility"), Some(Page::Accessibility));
-        assert_eq!(Page::named("vision"), Some(Page::Vision));
-        assert_eq!(Page::named("taskbar"), Some(Page::Taskbar));
-        assert_eq!(Page::named("start-menu"), Some(Page::StartMenu));
-        assert_eq!(Page::named("startup"), Some(Page::Startup));
-        assert_eq!(Page::named("window-switcher"), Some(Page::Switcher));
-        assert_eq!(Page::named("appearance"), Some(Page::Appearance));
-        assert_eq!(Page::named("windows"), Some(Page::Windows));
-        assert_eq!(Page::named("background"), Some(Page::Background));
+    fn a_page_is_named_by_its_slug_or_its_old_name() {
+        use repriseconf::pages::Entry;
+        assert_eq!(Page::ScreenSaverLock.slug(), "screen-saver-and-lock");
+        assert_eq!(Page::MouseTouchpad.slug(), "mouse-and-touchpad");
+        assert_eq!(Page::TextKeys.slug(), "text-and-keys");
+        assert_eq!(Page::MagnifierFilters.slug(), "magnifier-and-filters");
+        for p in Page::all() {
+            assert_eq!(Page::named(&p.slug()), Some(p));
+        }
+        for (old, now) in [
+            ("screen-saver", Page::ScreenSaverLock),
+            ("launcher", Page::Search),
+            ("desktops", Page::VirtualDesktops),
+            ("windows", Page::WindowBehavior),
+            ("mouse", Page::MouseTouchpad),
+            ("pointers", Page::Cursor),
+            ("accessibility", Page::TextKeys),
+            ("vision", Page::MagnifierFilters),
+            ("sounds", Page::Sound),
+        ] {
+            assert_eq!(Page::named(old), Some(now), "{old}");
+            assert_eq!(
+                repriseconf::pages::named(old),
+                Some(Entry::Page(now)),
+                "{old}"
+            );
+        }
         assert_eq!(Page::named("autostart"), None, "the page is Startup");
         assert_eq!(Page::named("Night Light"), None);
     }
@@ -182,11 +217,11 @@ mod tests {
             s.tabs.labels,
             Page::all().map(Page::label).collect::<Vec<_>>()
         );
-        assert_eq!(open(&s), GROUPS[0].1[0], "the first page opens");
+        assert_eq!(open(&s), Page::Appearance, "the first page opens");
     }
 
-    /// The list's inside is 480 px at the smallest sheet: 30 rows at 522 px, so it scrolls
-    /// until the sheet is 42 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// The list's inside is 480 px at the smallest sheet: 33 rows at 585 px, so it scrolls
+    /// until the sheet is 105 px taller. On a sheet 56 px shorter, a page opened from its end
     /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
@@ -196,16 +231,16 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 30, "four headings over 26 pages");
-        assert_eq!((list.total, list.inner.height), (522, 480));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 42 px");
-        sheet.size.1 += 42;
+        assert_eq!(list.rows.len(), 33, "seven headings over 26 pages");
+        assert_eq!((list.total, list.inner.height), (585, 480));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 105 px");
+        sheet.size.1 += 105;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 98;
+        sheet.size.1 -= 161;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (522, 424));
+        assert_eq!((list.total, list.inner.height), (585, 424));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();
@@ -229,7 +264,7 @@ mod tests {
         assert!(sheet.tabs.focused);
         sheet.key(Key::Home, None);
         let l = sheet.layout(&text, px).list.unwrap();
-        assert_eq!(l.top, 0, "Home scrolls back to the Look heading");
+        assert_eq!(l.top, 0, "Home scrolls back to the Personalize heading");
         sheet.key(Key::End, None);
         assert_eq!(row(&sheet).0.bottom(), row(&sheet).1.bottom());
     }
@@ -433,7 +468,7 @@ mod tests {
             (Page::Background, crate::backgroundpage::WALLPAPER),
             (Page::Display, crate::displaypage::ARRANGE),
             (Page::StartMenu, crate::menupage::TREE),
-            (Page::Pointers, pages::CURSOR_PREVIEW),
+            (Page::Cursor, pages::CURSOR_PREVIEW),
             (Page::Startup, SIDE_LIST),
             (Page::Keyboard, SIDE_LIST),
             (Page::Advanced, SIDE_LIST),
@@ -513,13 +548,13 @@ mod tests {
         for (p, id, name) in [
             (Page::Display, crate::displaypage::MODE, "Screen resolution"),
             (Page::NightLight, "nl_temperature", "Color temperature"),
-            (Page::Mouse, "mouse_speed", "Pointer speed"),
-            (Page::Mouse, "touchpad_speed", "Touchpad speed"),
-            (Page::Mouse, "double_click_ms", "Double-click speed"),
-            (Page::Accessibility, "slow_keys_delay", "SlowKeys delay"),
-            (Page::Accessibility, "mouse_keys_speed", "MouseKeys speed"),
+            (Page::MouseTouchpad, "mouse_speed", "Pointer speed"),
+            (Page::MouseTouchpad, "touchpad_speed", "Touchpad speed"),
+            (Page::MouseTouchpad, "double_click_ms", "Double-click speed"),
+            (Page::TextKeys, "slow_keys_delay", "SlowKeys delay"),
+            (Page::TextKeys, "mouse_keys_speed", "MouseKeys speed"),
             (
-                Page::Accessibility,
+                Page::TextKeys,
                 "mouse_keys_acceleration",
                 "MouseKeys acceleration",
             ),

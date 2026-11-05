@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn the_accessibility_page_geometry() {
     let s = built();
-    let p = Page::Accessibility;
+    let p = Page::TextKeys;
     assert_eq!(rect(&s, p, "text_size"), Rect::new(94, 44, 80, 21));
     assert_eq!(rect(&s, p, "sticky_group"), Rect::new(20, 70, 358, 108));
     assert_eq!(rect(&s, p, "sticky_keys"), Rect::new(32, 109, 13, 13));
@@ -57,7 +57,7 @@ fn accessibility_values_go_in_and_come_back_out() {
         ..Settings::default()
     };
     let s = with(&want);
-    let page = &s.pages[Page::Accessibility.index()];
+    let page = &s.pages[Page::TextKeys.index()];
     assert_eq!(page.track_pos("slow_keys_delay"), Some(12));
     assert_eq!(page.track_pos("mouse_keys_speed"), Some(6));
     assert_eq!(page.track_pos("mouse_keys_acceleration"), Some(6));
@@ -85,7 +85,7 @@ fn accessibility_values_go_in_and_come_back_out() {
 #[test]
 fn double_click_speed_reads_slow_to_fast() {
     let mut s = built();
-    let p = Page::Mouse;
+    let p = Page::MouseTouchpad;
     assert_eq!(lines(&s, p, "double_click_slow"), ["Slow"]);
     assert_eq!(lines(&s, p, "double_click_fast"), ["Fast"]);
     assert_eq!(lines(&s, p, "double_click_value"), ["500 ms"]);
@@ -107,7 +107,7 @@ fn double_click_speed_reads_slow_to_fast() {
 #[test]
 fn mousekeys_trackbars_have_slow_and_fast_ends() {
     let s = built();
-    let p = Page::Accessibility;
+    let p = Page::TextKeys;
     for id in ["mk_speed_slow", "mk_accel_slow"] {
         assert_eq!(lines(&s, p, id), ["Slow"]);
     }
@@ -132,7 +132,7 @@ fn mousekeys_trackbars_have_slow_and_fast_ends() {
 #[test]
 fn the_vision_page_geometry() {
     let s = built();
-    let p = Page::Vision;
+    let p = Page::MagnifierFilters;
     assert_eq!(rect(&s, p, "cf_group"), Rect::new(20, 44, 358, 110));
     assert_eq!(rect(&s, p, "color_filter"), Rect::new(106, 62, 150, 21));
     assert_eq!(rect(&s, p, "cf_preview"), Rect::new(266, 60, 100, 28));
@@ -172,7 +172,7 @@ fn color_filter_values_go_in_and_come_back_out() {
         ..Settings::default()
     };
     let mut s = with(&want);
-    let page = &s.pages[Page::Vision.index()];
+    let page = &s.pages[Page::MagnifierFilters.index()];
     assert_eq!(page.checked("magnifier_follow"), Some(false));
     assert_eq!(page.combo_selected("color_filter"), Some(5));
     assert_eq!(page.track_pos("color_filter_intensity"), Some(40));
@@ -191,7 +191,7 @@ fn color_filter_values_go_in_and_come_back_out() {
         ..want
     };
     follow(&mut s, &gray);
-    match &s.pages[Page::Vision.index()]
+    match &s.pages[Page::MagnifierFilters.index()]
         .item("color_filter_intensity")
         .unwrap()
         .control
@@ -205,7 +205,7 @@ fn color_filter_values_go_in_and_come_back_out() {
 fn the_color_filter_preview_draws_the_pending_filter() {
     let text = TextRenderer::load(&FontConfig::default());
     let px = Theme::default().fonts.size_px;
-    let at = Page::Vision.index();
+    let at = Page::MagnifierFilters.index();
     let mut want = Settings {
         color_filter: "grayscale".into(),
         ..Settings::default()
@@ -432,75 +432,75 @@ fn program_rows_follow_the_binds() {
 fn the_mouse_page_geometry() {
     let s = built();
     assert_eq!(
-        rect(&s, Page::Mouse, "mouse_group"),
+        rect(&s, Page::MouseTouchpad, "mouse_group"),
         Rect::new(20, 44, 358, 178)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "double_click_ms"),
+        rect(&s, Page::MouseTouchpad, "double_click_ms"),
         Rect::new(78, 89, 238, trackbar::HEIGHT)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "double_click_value"),
+        rect(&s, Page::MouseTouchpad, "double_click_value"),
         Rect::new(286, 68, 80, 13)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "mouse_speed_label"),
+        rect(&s, Page::MouseTouchpad, "mouse_speed_label"),
         Rect::new(32, 120, 334, 13)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "mouse_slow"),
+        rect(&s, Page::MouseTouchpad, "mouse_slow"),
         Rect::new(32, 141, 26, 13)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "mouse_speed"),
+        rect(&s, Page::MouseTouchpad, "mouse_speed"),
         Rect::new(60, 135, 160, trackbar::HEIGHT)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "mouse_fast"),
+        rect(&s, Page::MouseTouchpad, "mouse_fast"),
         Rect::new(224, 141, 26, 13)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "mouse_accel"),
+        rect(&s, Page::MouseTouchpad, "mouse_accel"),
         Rect::new(32, 169, 13, 13)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "mouse_natural"),
+        rect(&s, Page::MouseTouchpad, "mouse_natural"),
         Rect::new(32, 191, 13, 13)
     );
 
     assert_eq!(
-        rect(&s, Page::Mouse, "touchpad_group"),
+        rect(&s, Page::MouseTouchpad, "touchpad_group"),
         Rect::new(20, 232, 358, 218)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "touchpad_speed"),
+        rect(&s, Page::MouseTouchpad, "touchpad_speed"),
         Rect::new(60, 271, 160, trackbar::HEIGHT)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "touchpad_accel"),
+        rect(&s, Page::MouseTouchpad, "touchpad_accel"),
         Rect::new(32, 305, 13, 13)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "tap_to_click"),
+        rect(&s, Page::MouseTouchpad, "tap_to_click"),
         Rect::new(32, 331, 13, 13)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "two_finger_scroll"),
+        rect(&s, Page::MouseTouchpad, "two_finger_scroll"),
         Rect::new(32, 353, 13, 13)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "two_finger_tap_right_click"),
+        rect(&s, Page::MouseTouchpad, "two_finger_tap_right_click"),
         Rect::new(32, 375, 13, 13)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "disable_while_typing"),
+        rect(&s, Page::MouseTouchpad, "disable_while_typing"),
         Rect::new(32, 397, 13, 13)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "touchpad_natural"),
+        rect(&s, Page::MouseTouchpad, "touchpad_natural"),
         Rect::new(32, 419, 13, 13)
     );
-    inside_page(&s, Page::Mouse);
+    inside_page(&s, Page::MouseTouchpad);
 }
 
 #[test]
@@ -511,7 +511,11 @@ fn the_speed_trackbars_run_from_minus_one_to_one_in_tenths() {
         ..Settings::default()
     };
     let s = with(&want);
-    let pos = |id: &str| match &s.pages[Page::Mouse.index()].item(id).unwrap().control {
+    let pos = |id: &str| match &s.pages[Page::MouseTouchpad.index()]
+        .item(id)
+        .unwrap()
+        .control
+    {
         Control::TrackBar(t) => (t.pos, t.count),
         _ => panic!("{id} is a trackbar"),
     };
@@ -525,7 +529,7 @@ fn the_speed_trackbars_run_from_minus_one_to_one_in_tenths() {
 #[test]
 fn two_finger_tap_follows_tap_to_click() {
     let mut s = with(&Settings::default());
-    let enabled = |s: &PropSheet| match &s.pages[Page::Mouse.index()]
+    let enabled = |s: &PropSheet| match &s.pages[Page::MouseTouchpad.index()]
         .item("two_finger_tap_right_click")
         .unwrap()
         .control
@@ -545,7 +549,7 @@ fn two_finger_tap_follows_tap_to_click() {
 #[test]
 fn the_pointers_page_geometry() {
     let s = built();
-    let p = Page::Pointers;
+    let p = Page::Cursor;
     assert_eq!(rect(&s, p, "cursor_group"), Rect::new(20, 44, 358, 84));
     assert_eq!(rect(&s, p, "cursor_theme"), Rect::new(92, 62, 274, 21));
     assert_eq!(rect(&s, p, "cursor_size"), Rect::new(92, 92, 110, 21));
@@ -556,7 +560,7 @@ fn the_pointers_page_geometry() {
 #[test]
 fn an_empty_cursor_theme_is_the_default_row() {
     let sheet = with(&Settings::default());
-    let page = &sheet.pages[Page::Pointers.index()];
+    let page = &sheet.pages[Page::Cursor.index()];
     assert_eq!(page.combo_selected("cursor_theme"), Some(0));
     assert_eq!(page.combo_selected("cursor_size"), Some(0));
     let mut got = Settings {

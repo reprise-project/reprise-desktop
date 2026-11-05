@@ -184,7 +184,7 @@ frame, and `sound` at once.
 (`"AA:BB:CC:DD:EE:FF"`) or BlueZ object path; empty (the default) turns it off.
 Once BlueZ has seen it connected, it disconnecting for `away_after_s`
 seconds (30 by default, 0 locks at once) locks the session. The Screen Saver
-page of Reprise Settings lists the paired devices.
+& Lock page of Reprise Settings lists the paired devices.
 
 - The device must stay connected while it is near: a phone paired for calls
   or audio, or one that KDE Connect reaches over Bluetooth. A phone that is

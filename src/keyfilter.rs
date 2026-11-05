@@ -58,7 +58,7 @@ impl Aid {
         [
             "reprise-settings",
             "--page",
-            "accessibility",
+            "text-and-keys",
             "--focus",
             self.key(),
         ]
@@ -1067,7 +1067,7 @@ mod tests {
             [
                 "reprise-settings",
                 "--page",
-                "accessibility",
+                "text-and-keys",
                 "--focus",
                 "slow_keys"
             ]

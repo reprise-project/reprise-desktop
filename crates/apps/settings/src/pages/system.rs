@@ -1,4 +1,4 @@
-//! Sounds, Power, Startup, Remote Desktop, Advanced and Backup.
+//! Sound, Power, Startup, Remote Desktop, Advanced and Backup.
 
 use super::{
     ADD, Area, BACKUP_EXPORT, BACKUP_IMPORT, BACKUP_STATUS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY,

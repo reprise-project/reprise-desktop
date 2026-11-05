@@ -272,9 +272,9 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 ## Reprise Settings
 
-One window, 26 pages, four headings. Only one runs at a time.
+One window, 26 pages, seven headings. Only one runs at a time.
 
-- **Look**
+- **Personalize**
   - **Appearance:** interface and colour scheme. Under Glass: mode,
     material, frame, transparency, blur, reflections and colour intensity.
   - **Background:** a picture or a slideshow, its position, the desktop
@@ -282,51 +282,45 @@ One window, 26 pages, four headings. Only one runs at a time.
     Paint), which icons sit on the desktop and whether their labels show
     file name extensions. Use for picks one virtual desktop to give a picture
     of its own; picking the picture for all desktops there takes it away.
-  - **Screen Saver:** the saver, its settings and a live preview.
+  - **Screen Saver & Lock:** the saver, its settings and a live preview,
+    and the paired device whose going away locks the session.
+  - **Fonts & Icons:** the UI and dialog fonts, the icon theme, frame and
+    caption sizes, and how GTK and Qt programs are themed.
+  - **Effects:** window animations, highlight fades, menu shadows and how menus
+    open (fade, slide or none) and taskbar slides.
+- **Taskbar & Windows**
+  - **Taskbar:** position, button mode, pinned programs, Peek, Show desktop,
+    tray overflow, auto-hide, and the Start button and menu style.
+  - **Start Menu:** the Start menu tree and the Quick Launch buttons.
+  - **Search:** whether the launcher searches your files and open windows.
+  - **Window Switcher:** Alt+Tab's icons or thumbnails, picture size, Peek,
+    the 3D switcher and the overview's hot corner.
+  - **Virtual Desktops:** how many, how they animate, their names, the
+    taskbar's live previews, and the desktop widgets.
+  - **Window Behavior:** snapping, snap layouts, the snap bar, window tabs
+    and window memory.
+- **Display & Sound**
   - **Display:** arrange monitors by dragging them, or pick one with the
     arrows and move it with Ctrl+arrows to the next edge that way, Identify,
     the primary screen, and each screen's resolution, refresh rate, orientation, scale
     and adaptive sync. Forget saved layouts drops the layouts the desktop
     remembers per set of monitors.
   - **Night Light:** warmth, and sunset to sunrise or a schedule.
-  - **Fonts & Icons:** the UI and dialog fonts, the icon theme, frame and
-    caption sizes, and how GTK and Qt programs are themed.
-  - **Effects:** window animations, highlight fades, menu shadows and how menus
-    open (fade, slide or none) and taskbar slides.
-- **Desktop**
-  - **Taskbar:** position, button mode, pinned programs, Peek, Show desktop,
-    tray overflow, auto-hide, and the Start button and menu style.
-  - **Start Menu:** the Start menu tree and the Quick Launch buttons.
-  - **Launcher:** whether it searches your files and open windows.
-  - **Window Switcher:** Alt+Tab's icons or thumbnails, picture size, Peek,
-    the 3D switcher and the overview's hot corner.
-  - **Desktops:** how many, how they animate, their names, the taskbar's
-    live previews, and the desktop widgets.
-  - **Windows:** snapping, snap layouts, the snap bar, window tabs and window
-    memory.
-- **Input**
+  - **Sound:** the sound theme, and whether notifications and a program's
+    bell play a sound.
+- **Devices**
   - **Keyboard:** layouts, repeat, every shortcut, programs' global
     shortcuts included, whether Caps Lock and Num Lock show on screen, and
     the sheet holding Super shows.
-  - **Mouse:** pointer speed, double-click speed, scrolling, and the
-    touchpad's tapping, scrolling and disable-while-typing.
+  - **Mouse & Touchpad:** pointer speed, double-click speed, scrolling, and
+    the touchpad's tapping, scrolling and disable-while-typing.
+  - **Cursor:** cursor theme and size.
   - **Tablet:** what each pad button, pad key, ring, strip and dial does,
     and how far a ring or strip turns per step.
-  - **Pointers:** cursor theme and size.
-  - **Accessibility:** text size, StickyKeys, SlowKeys and MouseKeys.
-  - **Vision:** colour filters and the magnifier.
-- **System**
-  - **Sounds:** the sound theme, and whether notifications and a program's
-    bell play a sound.
-  - **Power:** the Turn Off commands, idle timeouts, lock on sleep and the
-    lock screen's wallpaper.
-  - **Startup:** autostart entries and session restore.
-  - **Default Programs:** browser, mail, music, video, photos, text editor,
-    file manager, terminal and its arguments, what a plugged-in drive does,
-    whether opening a script runs it on its own or in the terminal, whether
-    a script's window stays open when it ends, and the program for
-    every file type, which Browse... can pick by its file when it has no
-    desktop entry.
+- **Accessibility**
+  - **Text & Keys:** text size, StickyKeys, SlowKeys and MouseKeys.
+  - **Magnifier & Filters:** colour filters and the magnifier.
+- **Network**
   - **Remote Desktop:** Allow remote connections turns the server on or off
     at once, enabling and starting its user unit or stopping and disabling
     it, and the lines under it say where it listens and which video encoder
@@ -337,6 +331,16 @@ One window, 26 pages, four headings. Only one runs at a time.
     check on the connecting computer, with New Certificate... beside it,
     and every connected computer is listed; Disconnect ends the selected
     one.
+- **System**
+  - **Power:** the Turn Off commands, idle timeouts, lock on sleep and the
+    lock screen's wallpaper.
+  - **Startup:** autostart entries and session restore.
+  - **Default Programs:** browser, mail, music, video, photos, text editor,
+    file manager, terminal and its arguments, what a plugged-in drive does,
+    whether opening a script runs it on its own or in the terminal, whether
+    a script's window stays open when it ends, and the program for
+    every file type, which Browse... can pick by its file when it has no
+    desktop entry.
   - **Advanced:** clipboard history, screenshots, recent files, location,
     desktop water, the debug overlay, the thumbnail cache (Clear removes
     only the thumbnails Reprise kept and says how much went), thumbnails from
@@ -366,8 +370,10 @@ shortcut), the controls you haven't touched show the new values; yours stay
 as you left them, and OK and Apply write only what you changed.
 
 `reprise-settings --page display` opens on a page: its name in lower case,
-spaces as hyphens and `&` as `and` (`fonts-and-icons`, `start-menu`).
-`--focus mouse_keys` puts the keyboard on a control there.
+spaces as hyphens and `&` as `and` (`fonts-and-icons`, `start-menu`). A
+page's old name still opens it under its new one (`--page vision` opens
+Magnifier & Filters). `--focus mouse_keys` puts the keyboard on a control
+there, on whichever page holds it.
 `reprise-settings --export FILE` and `--import FILE` do the Backup page's
 work without a window; `--import` asks nothing. A
 display change applies first, then asks whether to keep it, and reverts after
@@ -389,7 +395,7 @@ display change applies first, then asks whether to keep it, and reverts after
   Advanced Controls for bass, treble and whatever else the card offers.
   Turning the volume up or down keeps the balance you set.
 - **Louder than 100 %.** With `[sounds] allow_boost = true` (Settings >
-  Sounds, "Allow volume above 100%") the popup's and Volume Control's
+  Sound, "Allow volume above 100%") the popup's and Volume Control's
   playback sliders, the tray wheel and the volume keys go on to 150 %, the
   part past 100 % shaded and marked on each slider, and the on-screen panel
   writes the level out. Recording levels and the sheet's sliders stay at

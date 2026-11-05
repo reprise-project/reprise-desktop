@@ -1,4 +1,4 @@
-//! The Pointers page's host side: installed XCursor themes and the preview bitmap.
+//! The Cursor page's host side: installed XCursor themes and the preview bitmap.
 
 use reprisekit::icontheme::IconTheme;
 use reprisekit::raster::{Canvas, Rect};

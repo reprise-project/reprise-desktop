@@ -108,7 +108,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 
 - **Frames that work.** Minimize, maximize and close. Double-click the
   caption to maximize (or roll up, minimize or nothing: `[windows]
-  title_double_click`, or the Windows page of Reprise Settings), the icon for
+  title_double_click`, or the Window Behavior page of Reprise Settings), the icon for
   the window menu, or double-click the icon to close. Super and a left drag
   moves a window by its body.
 - **Window menu.** Alt+Space, or a right-click on the caption: Restore,
@@ -148,9 +148,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   side, or up and down: every other window on that screen and desktop
   minimizes. Shake it again to bring back the ones it minimized. Windows
   kept on top and the shaken window's own dialogs stay. On by default under
-  Glass (`[windows] shake`, or the Windows page of Reprise Settings).
+  Glass (`[windows] shake`, or the Window Behavior page of Reprise Settings).
 - **Dim inactive windows.** Every window but the focused one draws darker by
-  `[windows] dim_inactive` percent (0 to 40, off by default; the Windows page
+  `[windows] dim_inactive` percent (0 to 40, off by default; the Window Behavior page
   of Reprise Settings). A focused dialog keeps its parent bright and a focused
   window its dialogs. Only the client area darkens, not the frame. Full-screen
   windows, Alt+Tab and taskbar previews, the 3D switcher and window screenshots
@@ -164,7 +164,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   (per set of connected screens, by make, model and serial), in
   `$XDG_STATE_HOME/reprise/windows.toml`. A place left off every screen opens
   at the default place instead. Window rules that set a size or position
-  win. Forget Positions on the Windows page of Reprise Settings drops them
+  win. Forget Positions on the Window Behavior page of Reprise Settings drops them
   all (`[windows] remember`).
 - **Window rules** in the config match windows by app id and title, with
   globs, and pin their size, position, screen, desktop, state, always-on-top
@@ -215,7 +215,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   during the drag puts it back. With several screens only the outer edges
   of the whole arrangement snap: a window carried from one screen to the
   next lands where you let it go. `[window_snapping] distance`, or Snap
-  distance from edges on the Windows page, sets how near an edge the drag
+  distance from edges on the Window Behavior page, sets how near an edge the drag
   has to come.
 - **Snap layouts.** Rest on a maximize button, or press Super+Z, for six
   ways to split the screen: halves, two thirds and a third, thirds, a half
@@ -283,8 +283,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Open in Terminal** on the desktop's right-click menu, a folder's and
   Documents' or Home's starts your `terminal` there.
 - **Widgets.** A clock, a month calendar and a system meter can stand on
-  the desktop: tick them under the desktop menu's Widgets or on Settings'
-  Desktops page (`desktop_widgets`). Each is glass under Glass and a raised
+  the desktop: tick them under the desktop menu's Widgets or in Settings >
+  Virtual Desktops (`desktop_widgets`). Each is glass under Glass and a raised
   panel otherwise. Drag one to move it: it snaps to the icon grid, on any
   screen, and the icons make way. Right-click it for its options (the
   clock's analog or digital face and its seconds, the meter's bars or
@@ -431,7 +431,7 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   ten seconds gets one "5 new from Mail" balloon instead.
 - **Per program.** Right-click a program's group in the history, or press the
   Menu key on it, for Don't Show Balloons and No Sounds. Its notifications
-  still go into the history, and critical ones still show. Settings > Sounds
+  still go into the history, and critical ones still show. Settings > Sound
   lists the programs that sent notifications this session with the same two
   switches (`[notifications] no_balloons` and `no_sounds`).
 - **Do Not Disturb** holds back all but the critical ones. They still go into
@@ -458,7 +458,7 @@ are.
   own timeout, and separate timeouts on battery.
 - **Lock on sleep.** The screen locks before the machine suspends, whatever
   asked it to.
-- **Lock when away.** Pick your phone on the Screen Saver page and the
+- **Lock when away.** Pick your phone on the Screen Saver & Lock page and the
   session locks once it has been disconnected for `[lock] away_after_s`
   (30 s). The phone has to keep a Bluetooth connection while you're near,
   as it does for calls or KDE Connect ([configuration.md](configuration.md#lock-when-away)).
