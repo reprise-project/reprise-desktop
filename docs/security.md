@@ -299,7 +299,7 @@ you still confirm.
 To revoke: `flatpak permissions` lists the permission store and `flatpak
 permission-remove <table> <id>` removes an entry. The Keyboard page of
 Reprise Settings forgets a program's global shortcuts, and Settings >
-Advanced lists and forgets location answers. There is no page for screen
+Privacy lists and forgets location answers. There is no page for screen
 sharing and remote control grants yet.
 
 ## Programs and files

@@ -62,7 +62,7 @@ apparently.
   drag a window toward the top of the screen.
 - **Programs that match.** Explorer, Notepad, Volume Control, Printers,
   Network Connections, Power Options, Bluetooth, User Accounts, Software
-  Updates and a 23-page Reprise Settings. Having built all those property
+  Updates and a 27-page Reprise Settings. Having built all those property
   sheets, I do expect someone to use them.
 - **The good bits of this century.** A launcher that does sums, clipboard
   history, an emoji picker, notification history with Do Not Disturb, night
