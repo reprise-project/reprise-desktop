@@ -16,25 +16,53 @@ pub fn user_dir(config_home: &Path) -> PathBuf {
     config_home.join("autostart")
 }
 
-/// Check or uncheck `e`.
-///
-/// A system entry gains a user file marked `X-Reprise-Override=true`; such a file is deleted when
-/// checked again, so the system entry comes back untouched. Any other user file just has `Hidden` rewritten.
-pub fn set_enabled(dir: &Path, e: &Entry, on: bool) -> std::io::Result<()> {
+/// Unchecking sets `Hidden=true` (a marked override for a system entry). Checking deletes a stand-in for a system
+/// entry that runs on `desktops`, else leaves a user file whose fence admits them ([`Entry::admitted`]).
+pub fn set_enabled(
+    dir: &Path,
+    e: &Entry,
+    on: bool,
+    desktops: &[String],
+    config_dirs: &[PathBuf],
+) -> std::io::Result<()> {
     let path = dir.join(format!("{}.desktop", e.id));
+    if !on {
+        if e.user {
+            let text = std::fs::read_to_string(&path)?;
+            return repriseconf::write_atomic(&path, &autostart::set_hidden(&text, true));
+        }
+        std::fs::create_dir_all(dir)?;
+        let shadow = Entry {
+            hidden: true,
+            ..e.clone()
+        };
+        return repriseconf::write_atomic(&path, &autostart::override_text(&shadow));
+    }
+    let admitted = Entry {
+        hidden: false,
+        ..e.admitted(desktops)
+    };
     if e.user {
         let text = std::fs::read_to_string(&path)?;
-        if on && autostart::is_override(&text) {
+        // A marked override, or a bare `Hidden=true` file with no `Exec`, only stands in for the system entry.
+        let stand_in = autostart::is_override(&text)
+            || autostart::parse(&e.id, &text, true).is_none_or(|f| f.exec.is_empty());
+        if !stand_in {
+            let fenced =
+                admitted.only_show_in != e.only_show_in || admitted.not_show_in != e.not_show_in;
+            let text = if fenced {
+                autostart::set_show_in(&text, &admitted)
+            } else {
+                text
+            };
+            return repriseconf::write_atomic(&path, &autostart::set_hidden(&text, false));
+        }
+        if autostart::system_entry(config_dirs, &e.id).is_some_and(|s| s.runs_on(desktops)) {
             return std::fs::remove_file(&path);
         }
-        return repriseconf::write_atomic(&path, &autostart::set_hidden(&text, !on));
     }
-    let shadow = Entry {
-        hidden: !on,
-        ..e.clone()
-    };
     std::fs::create_dir_all(dir)?;
-    repriseconf::write_atomic(&path, &autostart::override_text(&shadow))
+    repriseconf::write_atomic(&path, &autostart::copy_text(&admitted))
 }
 
 /// Delete a user entry's file. A system entry has none and can only be unchecked, so that is an error, not a no-op.
@@ -151,13 +179,13 @@ mod tests {
 
     #[test]
     fn unchecking_a_system_entry_writes_a_marked_override() {
-        let dir = tmp("shadow").join("autostart");
-        let e = entry(
-            "reprise-sound",
-            "[Desktop Entry]\nName=Volume\nExec=reprise-sound --tray\n",
-            false,
-        );
-        set_enabled(&dir, &e, false).expect("write");
+        let root = tmp("shadow");
+        let (etc, dir) = (vec![root.join("etc")], root.join("autostart"));
+        let sys = "[Desktop Entry]\nName=Volume\nExec=reprise-sound --tray\n";
+        put(&etc[0].join("autostart"), "reprise-sound.desktop", sys);
+        let e = entry("reprise-sound", sys, false);
+        let here = vec!["reprise".to_string()];
+        set_enabled(&dir, &e, false, &here, &etc).expect("write");
 
         let text = std::fs::read_to_string(dir.join("reprise-sound.desktop")).expect("read");
         assert_eq!(
@@ -167,7 +195,7 @@ mod tests {
 
         // Re-checking deletes the shadow instead of writing Hidden=false, so the system entry stands alone again.
         let shadow = entry("reprise-sound", &text, true);
-        set_enabled(&dir, &shadow, true).expect("remove");
+        set_enabled(&dir, &shadow, true, &here, &etc).expect("remove");
         assert!(!dir.join("reprise-sound.desktop").exists());
     }
 
@@ -185,7 +213,8 @@ mod tests {
             true,
         );
 
-        set_enabled(&dir, &e, false).expect("hide");
+        let here = vec!["reprise".to_string()];
+        set_enabled(&dir, &e, false, &here, &[]).expect("hide");
         let text = std::fs::read_to_string(dir.join("mine.desktop")).unwrap();
         assert_eq!(
             text,
@@ -194,10 +223,103 @@ mod tests {
         );
 
         let e = entry("mine", &text, true);
-        set_enabled(&dir, &e, true).expect("show");
+        set_enabled(&dir, &e, true, &here, &[]).expect("show");
         let text = std::fs::read_to_string(dir.join("mine.desktop")).unwrap();
         assert!(text.contains("Hidden=false"), "the file stays: {text}");
         assert!(text.contains("Comment=keep me"));
+    }
+
+    #[test]
+    fn checking_an_entry_fenced_to_another_desktop_sticks_through_a_rescan() {
+        let dir = tmp("fenced").join("autostart");
+        let here = vec!["reprise".to_string()];
+        let e = entry(
+            "kwallet",
+            "[Desktop Entry]\nName=KWallet\nExec=kwalletd6\nOnlyShowIn=KDE;\n",
+            false,
+        );
+        set_enabled(&dir, &e, true, &here, &[]).expect("write");
+        let text = std::fs::read_to_string(dir.join("kwallet.desktop")).unwrap();
+        assert_eq!(
+            text,
+            "[Desktop Entry]\nType=Application\nName=KWallet\nExec=kwalletd6\nHidden=false\nOnlyShowIn=KDE;reprise;\n"
+        );
+        let copy = entry("kwallet", &text, true);
+        assert!(copy.runs_on(&here), "checked after Apply");
+
+        set_enabled(&dir, &copy, false, &here, &[]).expect("uncheck");
+        let off = entry(
+            "kwallet",
+            &std::fs::read_to_string(dir.join("kwallet.desktop")).unwrap(),
+            true,
+        );
+        assert!(!off.runs_on(&here));
+        set_enabled(&dir, &off, true, &here, &[]).expect("check again");
+        let again = entry(
+            "kwallet",
+            &std::fs::read_to_string(dir.join("kwallet.desktop")).unwrap(),
+            true,
+        );
+        assert!(again.runs_on(&here), "a second check sticks too");
+    }
+
+    #[test]
+    fn checking_a_marked_shadow_still_fenced_off_here_rewrites_it() {
+        let dir = tmp("old-shadow").join("autostart");
+        let here = vec!["reprise".to_string()];
+        let sys = entry(
+            "kwallet",
+            "[Desktop Entry]\nName=KWallet\nExec=kwalletd6\nOnlyShowIn=KDE;\n",
+            false,
+        );
+        put(&dir, "kwallet.desktop", &autostart::override_text(&sys));
+        let shadow = entry(
+            "kwallet",
+            &std::fs::read_to_string(dir.join("kwallet.desktop")).unwrap(),
+            true,
+        );
+        set_enabled(&dir, &shadow, true, &here, &[]).expect("write");
+        let text = std::fs::read_to_string(dir.join("kwallet.desktop")).expect("the file stays");
+        assert!(!autostart::is_override(&text));
+        assert!(entry("kwallet", &text, true).runs_on(&here));
+    }
+
+    #[test]
+    fn checking_a_marked_shadow_of_a_hidden_system_entry_keeps_it_running() {
+        let root = tmp("hidden-sys");
+        let (etc, home) = (vec![root.join("etc")], root.join("home"));
+        let dir = user_dir(&home);
+        let here = vec!["reprise".to_string()];
+        let sys = "[Desktop Entry]\nName=Tray\nExec=tray\nHidden=true\n";
+        put(&etc[0].join("autostart"), "tray.desktop", sys);
+        put(
+            &dir,
+            "tray.desktop",
+            &autostart::override_text(&entry("tray", sys, false)),
+        );
+        let row = |id: &str| {
+            autostart::scan(&etc, &home)
+                .into_iter()
+                .find(|e| e.id == id)
+                .expect("listed")
+        };
+        assert!(!row("tray").runs_on(&here));
+
+        set_enabled(&dir, &row("tray"), true, &here, &etc).expect("check");
+        assert!(row("tray").runs_on(&here), "checked after a rescan");
+    }
+
+    #[test]
+    fn checking_a_users_own_fenced_file_edits_it_in_place() {
+        let dir = tmp("own-fenced").join("autostart");
+        let here = vec!["reprise".to_string()];
+        let text = "[Desktop Entry]\nName=Mine\nExec=mine\nComment=keep me\nOnlyShowIn=GNOME;\nX-GNOME-Autostart-Delay=5\n";
+        put(&dir, "mine.desktop", text);
+        set_enabled(&dir, &entry("mine", text, true), true, &here, &[]).expect("check");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("mine.desktop")).unwrap(),
+            "[Desktop Entry]\nHidden=false\nName=Mine\nExec=mine\nComment=keep me\nOnlyShowIn=GNOME;reprise;\nX-GNOME-Autostart-Delay=5\n"
+        );
     }
 
     /// A file name with a line break would write a second key into the launcher; Add refuses it before touching the directory.

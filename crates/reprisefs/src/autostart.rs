@@ -96,6 +96,20 @@ impl Entry {
         self.runs_on(std::slice::from_ref(&desktop.to_string()))
     }
 
+    /// A copy whose `OnlyShowIn` / `NotShowIn` let it start on `desktops`: `OnlyShowIn` gains the
+    /// first name when it holds none of them, `NotShowIn` loses every one.
+    pub fn admitted(&self, desktops: &[String]) -> Entry {
+        let mut e = self.clone();
+        if let Some(first) = desktops.first()
+            && !e.only_show_in.is_empty()
+            && !e.only_show_in.iter().any(|d| desktops.contains(d))
+        {
+            e.only_show_in.push(first.clone());
+        }
+        e.not_show_in.retain(|d| !desktops.contains(d));
+        e
+    }
+
     /// The argv that starts this entry, with no shell: `exec_line` split by
     /// [`exec_argv`], under `terminal -e` when the entry asks for one.
     pub fn argv(&self, terminal: &str) -> Vec<OsString> {
@@ -228,6 +242,11 @@ pub fn merge(system: Vec<Entry>, user: Vec<Entry>) -> Vec<Entry> {
 }
 
 pub fn override_text(e: &Entry) -> String {
+    copy_text(e) + "X-Reprise-Override=true\n"
+}
+
+/// [`override_text`] without the `X-Reprise-Override` marker: a plain user file.
+pub fn copy_text(e: &Entry) -> String {
     let mut out = format!(
         "[Desktop Entry]\nType=Application\nName={}\nExec={}\nHidden={}\n",
         escape_value(&e.name),
@@ -251,7 +270,6 @@ pub fn override_text(e: &Entry) -> String {
     if e.terminal {
         out.push_str("Terminal=true\n");
     }
-    out.push_str("X-Reprise-Override=true\n");
     out
 }
 
@@ -265,7 +283,27 @@ pub fn is_override(text: &str) -> bool {
 /// insert one right after the header when absent. Idempotent, and
 /// leaves every other line (other groups, comments, key order) untouched.
 pub fn set_hidden(text: &str, hidden: bool) -> String {
-    let value = if hidden { "true" } else { "false" };
+    set_key(text, "Hidden", Some(if hidden { "true" } else { "false" }))
+}
+
+/// [`set_hidden`] for the `OnlyShowIn` / `NotShowIn` lines, written from `e`'s lists; an empty list drops its line.
+pub fn set_show_in(text: &str, e: &Entry) -> String {
+    let value = |list: &[String]| (!list.is_empty()).then(|| format!("{};", list.join(";")));
+    let text = set_key(text, "OnlyShowIn", value(&e.only_show_in).as_deref());
+    set_key(&text, "NotShowIn", value(&e.not_show_in).as_deref())
+}
+
+/// The entry of `id` that `scan` would list from `config_dirs` alone, before any user file.
+pub fn system_entry(config_dirs: &[PathBuf], id: &str) -> Option<Entry> {
+    config_dirs.iter().find_map(|dir| {
+        let text =
+            crate::apps::read_desktop_file(&dir.join("autostart").join(format!("{id}.desktop")))
+                .ok()?;
+        parse(id, &text, false)
+    })
+}
+
+fn set_key(text: &str, key: &str, value: Option<&str>) -> String {
     let had_trailing_newline = text.ends_with('\n');
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
 
@@ -278,16 +316,20 @@ pub fn set_hidden(text: &str, hidden: bool) -> String {
         .map(|i| header + 1 + i)
         .unwrap_or(lines.len());
 
-    let hidden_line = (header + 1..group_end).find(|&i| {
+    let line = (header + 1..group_end).find(|&i| {
         lines[i]
             .split_once('=')
-            .map(|(k, _)| k.trim() == "Hidden")
+            .map(|(k, _)| k.trim() == key)
             .unwrap_or(false)
     });
 
-    match hidden_line {
-        Some(i) => lines[i] = format!("Hidden={value}"),
-        None => lines.insert(header + 1, format!("Hidden={value}")),
+    match (line, value) {
+        (Some(i), Some(v)) => lines[i] = format!("{key}={v}"),
+        (None, Some(v)) => lines.insert(header + 1, format!("{key}={v}")),
+        (Some(i), None) => {
+            lines.remove(i);
+        }
+        (None, None) => {}
     }
 
     let mut out = lines.join("\n");
@@ -662,6 +704,50 @@ mod tests {
     }
 
     #[test]
+    fn admitted_opens_the_fence_for_this_desktop_only() {
+        let here = vec!["reprise".to_string()];
+        let kde = parse("k", "[Desktop Entry]\nExec=k\nOnlyShowIn=KDE;\n", false).unwrap();
+        let open = kde.admitted(&here);
+        assert_eq!(open.only_show_in, ["KDE", "reprise"]);
+        assert!(open.runs_on(&here));
+        assert!(!open.runs_in("GNOME"), "still fenced off other desktops");
+
+        let not = parse(
+            "n",
+            "[Desktop Entry]\nExec=n\nNotShowIn=reprise;GNOME;\n",
+            false,
+        )
+        .unwrap();
+        assert_eq!(not.admitted(&here).not_show_in, ["GNOME"]);
+
+        let ours = parse("o", "[Desktop Entry]\nExec=o\nOnlyShowIn=reprise;\n", false).unwrap();
+        assert_eq!(
+            ours.admitted(&here),
+            ours,
+            "an entry that runs here is unchanged"
+        );
+    }
+
+    #[test]
+    fn copy_text_is_override_text_without_the_marker() {
+        let e = parse(
+            "a",
+            "[Desktop Entry]\nName=A\nExec=a\nOnlyShowIn=KDE;\n",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            copy_text(&e),
+            "[Desktop Entry]\nType=Application\nName=A\nExec=a\nHidden=false\nOnlyShowIn=KDE;\n"
+        );
+        assert!(!is_override(&copy_text(&e)));
+        assert_eq!(
+            override_text(&e),
+            copy_text(&e) + "X-Reprise-Override=true\n"
+        );
+    }
+
+    #[test]
     fn argv_wraps_a_terminal_entry_in_the_terminal() {
         let text = "[Desktop Entry]\nExec=top -d \"1 2\" %U 100%%\n";
         let plain = parse("a", text, false).unwrap();
@@ -713,6 +799,63 @@ mod tests {
         let text = "[Desktop Entry]\nExec=a\nHidden=false\nName=A\n";
         let out = set_hidden(text, true);
         assert_eq!(out, "[Desktop Entry]\nExec=a\nHidden=true\nName=A\n");
+    }
+
+    #[test]
+    fn set_show_in_rewrites_only_the_fence_lines() {
+        let text = "# mine\n[Desktop Entry]\nName=A\nOnlyShowIn=GNOME;\nExec=a\nNotShowIn=reprise;\nComment=keep\n\n[X-Other]\nOnlyShowIn=KDE;\n";
+        let e = parse("a", text, true).unwrap();
+        let open = e.admitted(&["reprise".to_string()]);
+        assert_eq!(
+            set_show_in(text, &open),
+            "# mine\n[Desktop Entry]\nName=A\nOnlyShowIn=GNOME;reprise;\nExec=a\nComment=keep\n\n[X-Other]\nOnlyShowIn=KDE;\n",
+            "an emptied list drops its line; other groups keep theirs"
+        );
+        let plain = parse("b", "[Desktop Entry]\nExec=b\n", true).unwrap();
+        let fenced = Entry {
+            only_show_in: vec!["reprise".into()],
+            ..plain
+        };
+        assert_eq!(
+            set_show_in("[Desktop Entry]\nExec=b\n", &fenced),
+            "[Desktop Entry]\nOnlyShowIn=reprise;\nExec=b\n"
+        );
+    }
+
+    #[test]
+    fn system_entry_is_the_first_config_dir_holding_the_id() {
+        let root = tree("system-entry");
+        let (a, b) = (root.join("a"), root.join("b"));
+        write(
+            &a.join("autostart"),
+            "x.desktop",
+            "[Desktop Entry]\nType=Link\n",
+        );
+        write(
+            &b.join("autostart"),
+            "x.desktop",
+            "[Desktop Entry]\nExec=from-b\n",
+        );
+        write(
+            &a.join("autostart"),
+            "y.desktop",
+            "[Desktop Entry]\nExec=from-a\n",
+        );
+        write(
+            &b.join("autostart"),
+            "y.desktop",
+            "[Desktop Entry]\nExec=from-b\n",
+        );
+        let dirs = [a, b];
+        let exec = |id: &str| system_entry(&dirs, id).map(|e| e.exec);
+        assert_eq!(
+            exec("x").as_deref(),
+            Some("from-b"),
+            "an entry that does not parse is skipped, as in scan"
+        );
+        assert_eq!(exec("y").as_deref(), Some("from-a"));
+        assert_eq!(exec("z"), None);
+        assert!(!system_entry(&dirs, "y").unwrap().user);
     }
 
     #[test]

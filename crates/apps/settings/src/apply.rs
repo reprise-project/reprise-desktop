@@ -228,6 +228,7 @@ impl SettingsApp {
             }
         }
         let dir = self.user_autostart();
+        let config_dirs = reprisefs::autostart::system_dirs();
         let checks = self.checks();
         let mut changed = false;
         let mut failed_autostart = false;
@@ -238,7 +239,7 @@ impl SettingsApp {
             if want == have {
                 continue;
             }
-            match autostart::set_enabled(&dir, e, want) {
+            match autostart::set_enabled(&dir, e, want, &self.desktops, &config_dirs) {
                 Ok(()) => changed = true,
                 Err(err) => {
                     log::warn!("autostart {}: {err}", e.id);
