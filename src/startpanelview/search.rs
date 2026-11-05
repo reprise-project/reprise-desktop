@@ -1,13 +1,12 @@
 use std::path::PathBuf;
 
+use repriseconf::search::word_starts;
 use reprisefs::apps::AppEntry;
 use reprisekit::startpanel::{ResultGroup, ResultRow};
 
 use crate::compositor::State;
 use crate::raster::Canvas;
-use crate::search::{
-    CALC_ICON, SearchOwner, Setting, calc_row, file_row, rank_settings, word_starts,
-};
+use crate::search::{CALC_ICON, SearchOwner, Setting, calc_row, file_row, rank_settings};
 
 use super::RESULT_ICON;
 use super::lists::{app_icon, file_name, one_per_name, unread};
