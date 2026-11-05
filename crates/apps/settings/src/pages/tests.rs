@@ -339,7 +339,7 @@ fn lines_under_a_choice_start_at_its_label_in_every_look() {
                 cm.check_label - cm.radio_label,
             ),
         ] {
-            let mut c = Canvas::new(420, 420);
+            let mut c = Canvas::new(420, CLIENT.1 as u32);
             c.fill_rect(c.bounds(), theme.colors.button_face);
             form::draw(&mut c, &text, &theme.paint(), &form, false, 11);
             let at = |id: &str| {
@@ -407,8 +407,8 @@ fn lines(s: &PropSheet, page: Page, id: &str) -> Vec<String> {
     }
 }
 
-/// An up-down whose value has a unit has a label starting within 8 px right of it on its text
-/// row, as placed (indents under a check box included).
+/// An up-down whose value has a unit has a `_units` label starting within 8 px right of it on
+/// its text row, as placed (indents under a check box included).
 #[test]
 fn every_spin_shows_its_unit() {
     use reprisekit::interface::Interface;
@@ -417,6 +417,7 @@ fn every_spin_shows_its_unit() {
         let cm = reprisekit::interfaces::theme_for(i).look.controls();
         let s = under(i.as_str());
         let mut missing = Vec::new();
+        let mut seen = 0;
         for p in Page::all() {
             let f = &s.pages[p.index()];
             for u in f
@@ -427,9 +428,11 @@ fn every_spin_shows_its_unit() {
                 if COUNTS.contains(&u.id) {
                     continue;
                 }
+                seen += 1;
                 let r = u.placed(&cm);
                 let unit = f.items.iter().any(|l| {
                     matches!(l.control, Control::Label { .. })
+                        && l.id.ends_with("_units")
                         && l.placed(&cm).y == r.y + 4
                         && (r.right()..=r.right() + 8).contains(&l.placed(&cm).x)
                 });
@@ -438,6 +441,7 @@ fn every_spin_shows_its_unit() {
                 }
             }
         }
+        assert!(seen > 0, "{}: the sweep finds the up-downs", i.as_str());
         assert!(
             missing.is_empty(),
             "{}: no unit after {missing:?}",

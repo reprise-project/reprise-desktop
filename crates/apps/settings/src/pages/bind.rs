@@ -10,10 +10,10 @@ use super::system::{
     REMOTE_PORT, REMOTE_QUALITY, REMOTE_SOUND, SOUND_CONTROLS,
 };
 use super::{
-    CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN, GTK_FIXED_ROWS,
-    KB_ADD, KB_LAYOUTS, KB_REMOVE, KB_UP, KELVIN_MAX, KELVIN_MIN, KELVIN_STEP, MK_ACCEL, MK_SPEED,
-    PRIVACY_LOCATION, SPEED_STEPS, Steps, THUMBNAILERS, THUMBS, THUMBS_MB, THUMBS_SIZE,
-    TRAY_CUSTOMIZE, WATER, WATER_STYLE,
+    CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN, DOUBLE_CLICK,
+    GTK_FIXED_ROWS, KB_ADD, KB_LAYOUTS, KB_REMOVE, KB_UP, KELVIN_MAX, KELVIN_MIN, KELVIN_STEP,
+    MK_ACCEL, MK_SPEED, PRIVACY_LOCATION, SPEED_STEPS, Steps, THUMBNAILERS, THUMBS, THUMBS_MB,
+    THUMBS_SIZE, TRAY_CUSTOMIZE, WATER, WATER_STYLE,
 };
 use crate::registry::Page;
 use repriseconf::{Key, Lens, lens};
@@ -267,7 +267,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Num("hover_out_ms", lens!(hover_out_ms)),
         Bind::Flag("taskbar_slide", lens!(taskbar_slide)),
         Bind::Flag("session_fade", lens!(session_fade)),
-        Bind::Num("double_click_ms", lens!(double_click_ms)),
+        Bind::Steps("double_click_ms", lens!(double_click_ms), DOUBLE_CLICK),
         Bind::Text("kb_model", lens!(kb_model)),
         Bind::Text("kb_options", lens!(kb_options)),
         Bind::Num("repeat_rate", lens!(repeat_rate)),
@@ -691,6 +691,8 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         nl.set_enabled(id, s.nl_enabled && s.nl_schedule == "fixed");
     }
     nl.set_text("nl_temp_value", &format!("{} K", s.nl_temperature));
+    sheet.pages[Page::Mouse.index()]
+        .set_text("double_click_value", &format!("{} ms", s.double_click_ms));
     let ax = &mut sheet.pages[Page::Accessibility.index()];
     for id in STICKY_CONTROLS {
         ax.set_enabled(id, s.sticky_keys);

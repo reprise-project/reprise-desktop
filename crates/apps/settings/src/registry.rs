@@ -515,7 +515,14 @@ mod tests {
             (Page::NightLight, "nl_temperature", "Color temperature"),
             (Page::Mouse, "mouse_speed", "Pointer speed"),
             (Page::Mouse, "touchpad_speed", "Touchpad speed"),
+            (Page::Mouse, "double_click_ms", "Double-click speed"),
             (Page::Accessibility, "slow_keys_delay", "SlowKeys delay"),
+            (Page::Accessibility, "mouse_keys_speed", "MouseKeys speed"),
+            (
+                Page::Accessibility,
+                "mouse_keys_acceleration",
+                "MouseKeys acceleration",
+            ),
             (Page::RemoteDesktop, "quality", "Picture quality"),
             (Page::Appearance, "glass_dark_to", "Dark until"),
         ] {
