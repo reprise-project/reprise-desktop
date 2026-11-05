@@ -2,7 +2,7 @@
 //! records, a camera while one films, each with the app's name in its tooltip (names come from PipeWire).
 
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay::reexports::calloop::{
     LoopHandle, RegistrationToken,
@@ -32,6 +32,10 @@ pub struct Privacy {
     window: bool,
     /// What the ongoing captures show now, as `screen` and `window`: none once they end.
     ongoing: (bool, bool),
+    /// Whether an ext session was ongoing at the last `note_live`.
+    ext: bool,
+    /// When a capture was last seen live; the linger runs `HOLD` from here.
+    live_at: Option<Instant>,
     sharing: bool,
     hold: Option<RegistrationToken>,
     mic_apps: Vec<String>,
@@ -143,22 +147,32 @@ fn start_camera_devices(handle: &LoopHandle<'static, State>) {
 /// A capture started, asked for a frame or ended: the dot shows while one
 /// is ongoing (`captureborder::ongoing`), so a screenshot shows none.
 /// Only a change in what is ongoing re-arms the hold, so the dot goes
-/// `HOLD` after the last ongoing capture ends.
+/// `HOLD` after the last ongoing capture ends: an ext session when it goes,
+/// a wlr recorder at its last frame rather than when the border lets it go.
 pub fn captures_changed(state: &mut State) {
-    let now = kinds(&crate::captureborder::ongoing(state));
+    let at = Instant::now();
+    note_live(state, at);
+    let ongoing = kinds(&crate::captureborder::ongoing(state));
     let p = &mut state.privacy;
-    if now == p.ongoing {
+    if ongoing == p.ongoing {
         return;
     }
-    p.ongoing = now;
-    log::info!("ongoing captures: screen {}, window {}", now.0, now.1);
-    let live = now.0 || now.1;
-    if live {
-        (p.screen, p.window) = now;
-    } else if !p.sharing {
+    p.ongoing = ongoing;
+    log::info!(
+        "ongoing captures: screen {}, window {}",
+        ongoing.0,
+        ongoing.1
+    );
+    let live = ongoing.0 || ongoing.1;
+    let from = if live {
+        (p.screen, p.window) = ongoing;
+        at
+    } else if p.sharing {
+        p.live_at.unwrap_or(at)
+    } else {
         return;
-    }
-    arm_hold(state);
+    };
+    arm_hold(state, from);
     let p = &mut state.privacy;
     if live && !p.sharing {
         p.sharing = true;
@@ -168,24 +182,47 @@ pub fn captures_changed(state: &mut State) {
     }
 }
 
-fn arm_hold(state: &mut State) {
+/// Moves `live_at` to `at` while an ext session is live or has just gone
+/// or a wlr frame waits, and to a wlr recording's newest frame.
+fn note_live(state: &mut State, at: Instant) {
+    let ext = !state.captures.targets().is_empty();
+    let waiting = !state.captures.wlr_waiting().is_empty();
+    let recorded = crate::captureborder::last_recorded(state);
+    let p = &mut state.privacy;
+    if ext || p.ext || waiting {
+        p.live_at = Some(at);
+    }
+    p.live_at = p.live_at.max(recorded);
+    p.ext = ext;
+}
+
+/// Runs the hold `HOLD` from `from`, at once if that has passed.
+fn arm_hold(state: &mut State, from: Instant) {
     if let Some(t) = state.privacy.hold.take() {
         state.handle.remove(t);
     }
     match state
         .handle
-        .insert_source(Timer::from_duration(HOLD), |_, _, state| hold_fired(state))
-    {
+        .insert_source(Timer::from_deadline(from + HOLD), |_, _, state| {
+            hold_fired(state)
+        }) {
         Ok(t) => state.privacy.hold = Some(t),
         Err(e) => log::warn!("privacy: hold timer: {e}"),
     }
 }
 
 /// The hold ran out: the dot goes unless a session is still live, which
-/// keeps it for another hold.
+/// keeps it for another hold, or one was live less than `HOLD` ago.
 fn hold_fired(state: &mut State) -> TimeoutAction {
     if !crate::captureborder::ongoing(state).is_empty() {
         return TimeoutAction::ToDuration(HOLD);
+    }
+    let at = Instant::now();
+    note_live(state, at);
+    if let Some(end) = state.privacy.live_at.map(|t| t + HOLD)
+        && end > at
+    {
+        return TimeoutAction::ToInstant(end);
     }
     let p = &mut state.privacy;
     p.hold = None;
@@ -697,11 +734,12 @@ mod tests {
             "held while shared"
         );
         c.ext_end(&mut h, s);
+        let ended = std::time::Instant::now();
         assert!(
             h.state.privacy.sharing_shown(),
             "the dot outlasts the capture"
         );
-        hold_fired(&mut h.state);
+        run_until(&mut h, ended, 1.1);
         assert!(!h.state.privacy.sharing_shown());
         assert!(
             crate::notifyview::balloon_up(&h.state),
@@ -773,6 +811,26 @@ mod tests {
         assert!(
             crate::notifyview::balloon_up(&h.state),
             "the held balloon shows once the dot goes"
+        );
+    }
+
+    #[test]
+    fn a_wlr_recording_that_stops_loses_the_dot_5_s_after_its_last_frame() {
+        let mut h = capturing();
+        let mut c = h.connect_capture(SIZE);
+        for _ in 0..3 {
+            c.wlr_shot(&mut h);
+            h.run_for(40);
+        }
+        c.wlr_shot(&mut h);
+        let last = std::time::Instant::now();
+        assert!(h.state.privacy.sharing_shown(), "a recording");
+        run_until(&mut h, last, 0.9);
+        assert!(h.state.privacy.sharing_shown(), "the dot lingers");
+        run_until(&mut h, last, 1.1);
+        assert!(
+            !h.state.privacy.sharing_shown(),
+            "the dot goes HOLD after the last frame"
         );
     }
 
