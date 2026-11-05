@@ -66,6 +66,7 @@ fn menu_constants_point_at_their_rows() {
     assert_eq!(label_at(title::EDIT, row::GOTO), "Go To...");
     assert_eq!(label_at(title::EDIT, row::SELECT_ALL), "Select All");
     assert_eq!(label_at(title::EDIT, row::TIME_DATE), "Time/Date");
+    assert_eq!(label_at(title::FORMAT, row::WORD_WRAP), "Word Wrap");
     assert_eq!(label_at(title::VIEW, row::STATUS_BAR), "Status Bar");
     assert_eq!(label_at(title::HELP, row::ABOUT), "About Notepad");
 }
@@ -2012,4 +2013,29 @@ fn the_german_strings_translate_the_menus_and_fall_back_to_english() {
         "&Word Wrap",
         "untranslated: English"
     );
+}
+
+#[test]
+fn word_wrap_folds_long_lines_into_the_box_and_off_draws_as_before() {
+    let ctx = test_ctx();
+    let mut np = Notepad::new(None);
+    np.edit = MultiEdit::new(&"word ".repeat(200));
+    let mut before = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+    np.draw_main(&mut before, &ctx);
+    assert!(np.edit_layout(&ctx).hscroll.is_some());
+    let checked = |np: &Notepad| match &np.bar.menus[title::FORMAT][row::WORD_WRAP] {
+        MenuItem::Entry { checked, .. } => *checked,
+        MenuItem::Separator => unreachable!(),
+    };
+    np.command(title::FORMAT, row::WORD_WRAP, &ctx);
+    assert!(checked(&np));
+    let lay = np.edit_layout(&ctx);
+    assert_eq!(lay.hscroll, None);
+    assert!(lay.vscroll.is_some(), "the vertical bar stays");
+    assert!(lay.total > 1, "{} rows", lay.total);
+    np.command(title::FORMAT, row::WORD_WRAP, &ctx);
+    assert!(!checked(&np));
+    let mut after = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+    np.draw_main(&mut after, &ctx);
+    assert!(before.pixels == after.pixels);
 }
