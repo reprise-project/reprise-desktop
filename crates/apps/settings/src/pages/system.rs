@@ -30,12 +30,6 @@ pub fn advanced(a: Area) -> Form {
         "Task &manager (empty runs Task Manager):",
     ));
     items.push(Item::check(
-        "adaptive_sync",
-        X,
-        88,
-        "&Variable refresh rate (adaptive sync) where supported",
-    ));
-    items.push(Item::check(
         "screenshot_save",
         X,
         132,

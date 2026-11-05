@@ -506,6 +506,7 @@ pub const ORIENTATION: &str = "orientation";
 pub const SCALE: &str = "scale";
 pub const VRR: &str = "vrr";
 pub const FORGET: &str = "forget_layouts";
+pub const TEXT_SIZE_NOTE: &str = "text_size_note";
 
 const X: i32 = crate::pages::X;
 const RX: i32 = 203;
@@ -532,7 +533,7 @@ fn combo(
 }
 
 /// The page for `d` in `a`, in the client's coordinates: the arrangement well, Identify and the
-/// primary check box, the shown output's name, then its mode controls.
+/// primary check box, the shown output's name, its mode controls, then a note naming Text size.
 pub fn page(d: &Display, a: Area) -> Form {
     let (Some(head), Some(pick)) = (d.head(), d.pick()) else {
         return Form::new(vec![Item::label_at(
@@ -641,6 +642,16 @@ pub fn page(d: &Display, a: Area) -> Form {
         "&Forget saved layouts",
         d.layouts_saved,
         false,
+    ));
+    items.push(Item::label_at(
+        TEXT_SIZE_NOTE,
+        X,
+        280 + dy,
+        a.w,
+        &reprisekit::text::escape_mnemonic(&format!(
+            "Text size on the {} page enlarges all text.",
+            Page::TextKeys.label()
+        )),
     ));
     Form::new(items)
 }
@@ -1101,7 +1112,7 @@ mod tests {
         for it in &two.items {
             let r = it.placed(&ControlMetrics::CLASSIC);
             assert!(
-                r.x >= 20 && r.right() <= 378 && r.y >= 44 && r.bottom() <= 380,
+                r.x >= 20 && r.right() <= 378 && r.y >= 44 && r.bottom() <= 492,
                 "{} at {r:?} leaves the content column",
                 it.id
             );
@@ -1198,6 +1209,24 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn display_names_text_size_under_its_last_row() {
+        let d = Display::with_heads(vec![test_head("DP-1")]);
+        let f = page(&d, Area::MIN);
+        let note = f.item(TEXT_SIZE_NOTE).unwrap();
+        assert_eq!(note.rect, Rect::new(20, 390, 358, 13));
+        let Control::Label { text, .. } = &note.control else {
+            panic!("a label: {:?}", note.control);
+        };
+        assert_eq!(
+            reprisekit::text::split_mnemonic(text),
+            (
+                "Text size on the Text & Keys page enlarges all text.".into(),
+                None
+            )
+        );
     }
 
     #[test]

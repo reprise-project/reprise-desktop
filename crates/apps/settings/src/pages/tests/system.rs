@@ -278,7 +278,6 @@ fn the_advanced_page_geometry() {
         "the terminal is picked on Default Programs"
     );
     assert_eq!(rect(&s, p, "task_manager"), Rect::new(20, 60, 358, 20));
-    assert_eq!(rect(&s, p, "adaptive_sync"), Rect::new(20, 88, 13, 13));
     assert_eq!(rect(&s, p, "screenshot_save"), Rect::new(20, 132, 13, 13));
     assert!(
         s.pages[p.index()].item("desktop_icons").is_none(),
@@ -1266,4 +1265,24 @@ fn the_remote_desktop_page_pixels() {
         h, 13_272_056_036_377_627_569,
         "the page with its client selected"
     );
+}
+
+#[test]
+fn variable_refresh_rate_is_found_and_set_on_display_only() {
+    assert!(
+        built()
+            .pages
+            .iter()
+            .all(|p| p.item("adaptive_sync").is_none())
+    );
+    for word in ["vrr", "adaptive sync", "freesync"] {
+        assert!(
+            Page::Display.keywords().contains(&word),
+            "{word} on Display"
+        );
+        assert!(
+            !Page::Advanced.keywords().contains(&word),
+            "{word} not on Advanced"
+        );
+    }
 }

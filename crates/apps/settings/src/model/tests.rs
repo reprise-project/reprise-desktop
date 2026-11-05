@@ -664,7 +664,6 @@ fn save_round_trips_every_field() {
         desktop_icons: false,
         desktop_extensions: "hide_launchers".into(),
         start_icon: false,
-        adaptive_sync: true,
         switcher_preview: false,
         switcher_desktop: true,
         switcher_peek: true,
@@ -1572,4 +1571,24 @@ fn a_file_with_equal_quiet_hours_still_loads_and_applies() {
     assert_eq!(validate(&bell, &s), Ok(()));
     let out = save(text, &bell, &s).unwrap();
     assert!(out.contains("bell = false"), "{out}");
+}
+
+#[test]
+fn the_file_adaptive_sync_is_kept_and_no_page_writes_it() {
+    assert!(
+        !keys()
+            .iter()
+            .any(|k| k.table.is_empty() && k.name == "adaptive_sync")
+    );
+    let d = Settings::default();
+    let out = save(
+        "adaptive_sync = true\n",
+        &Settings {
+            bell: !d.bell,
+            ..d.clone()
+        },
+        &d,
+    )
+    .unwrap();
+    assert!(out.contains("adaptive_sync = true"), "{out}");
 }

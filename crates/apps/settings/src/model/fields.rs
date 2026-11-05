@@ -38,7 +38,6 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Flag(k("", "desktop_icons"), lens!(desktop_icons)),
         Field::Text(k("", "desktop_extensions"), lens!(desktop_extensions)),
         Field::Flag(k("", "start_icon"), lens!(start_icon)),
-        Field::Flag(k("", "adaptive_sync"), lens!(adaptive_sync)),
         Field::Flag(k("previews", "taskbar"), lens!(preview_taskbar)),
         Field::Flag(k("osd", "caps_lock"), lens!(osd_caps_lock)),
         Field::Flag(k("osd", "num_lock"), lens!(osd_num_lock)),

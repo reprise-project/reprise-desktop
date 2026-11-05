@@ -232,6 +232,7 @@ impl Page {
                 "vrr",
                 "variable refresh rate",
                 "adaptive sync",
+                "freesync",
             ],
             Page::NightLight => &["blue light", "colour temperature", "color temperature"],
             Page::FontsAndIcons => &["font", "icon theme", "gtk", "qt"],

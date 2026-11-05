@@ -382,10 +382,6 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
         Page::Advanced => &[
             ("task_manager", "Task manager (empty runs Task Manager):"),
             (
-                "adaptive_sync",
-                "Variable refresh rate (adaptive sync) where supported",
-            ),
-            (
                 "screenshot_save",
                 "Save each screenshot as a file in Pictures/Screenshots",
             ),
