@@ -446,6 +446,19 @@ impl Host {
         }
     }
 
+    /// Asks for the main window on top or not when [`Extended::on_top`](crate::Extended::on_top)
+    /// differs from what the compositor has.
+    pub(crate) fn sync_on_top(&mut self) {
+        let Some(want) = self.app.on_top().filter(|&w| w != self.on_top) else {
+            return;
+        };
+        let main = self.slots.iter().find(|s| s.id == MAIN);
+        if let (Some(m), Some(w)) = (&self.on_top_manager, main.and_then(|s| s.window.toplevel())) {
+            m.set(w.xdg_toplevel(), u32::from(want));
+            self.on_top = want;
+        }
+    }
+
     pub(crate) fn sync_inhibitor(&mut self) {
         let want = self
             .app

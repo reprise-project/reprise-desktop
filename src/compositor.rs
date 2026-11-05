@@ -271,6 +271,8 @@ pub struct State {
     pub workspaces: crate::workspaces::Workspaces,
     /// reprise_tabs_v1, advertised while `[windows] tabs` is on.
     pub tabs_global: Option<smithay::reexports::wayland_server::backend::GlobalId>,
+    /// Each bound `reprise_on_top_v1`, told when a window of its client changes on top.
+    pub on_top_managers: Vec<crate::ontopproto::proto::reprise_on_top_v1::RepriseOnTopV1>,
     /// What the record dot and the microphone and camera indicators show
     /// (`privacy`).
     pub privacy: crate::privacy::Privacy,
@@ -574,6 +576,7 @@ impl State {
 
         let ime = crate::textinput::Ime::new(&dh, &seat);
         let tabs_global = crate::tabsproto::advertise(&dh, config.window_tabs, None);
+        crate::ontopproto::advertise(&dh);
         let clip = crate::clipboard::Clip::new(&dh);
 
         Ok(State {
@@ -651,6 +654,7 @@ impl State {
             desktops: crate::desktops::Desktops::new(config.workspaces),
             desktop_wheel: (0, 0.0),
             tabs_global,
+            on_top_managers: Vec::new(),
             workspaces: crate::workspaces::Workspaces::new(
                 &dh,
                 crate::desktops::Desktops::new(config.workspaces),

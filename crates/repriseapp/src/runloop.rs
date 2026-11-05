@@ -193,6 +193,9 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         .bind::<reprise_tabs_v1::RepriseTabsV1, _, _>(&qh, 1..=1, NoEvents)
         .ok();
     TAB_GROUPS.store(tab_groups.is_some(), std::sync::atomic::Ordering::Relaxed);
+    let on_top_manager = globals
+        .bind::<crate::ontop::reprise_on_top_v1::RepriseOnTopV1, _, _>(&qh, 1..=1, OnTopOf)
+        .ok();
     // The main window itself is `sync_main`'s, so a program that starts
     // hidden never gets a surface for it.
     let ((w, h), _) = opening_size(&*app);
@@ -248,6 +251,8 @@ pub fn run(app: Box<dyn App>) -> Result<(), RunError> {
         tag_manager,
         effects,
         tab_groups,
+        on_top_manager,
+        on_top: false,
         outputs: None,
         inhibit_manager,
         seat: None,
@@ -507,4 +512,29 @@ impl ProvidesRegistryState for Host {
         &mut self.registry_state
     }
     registry_handlers![OutputState, SeatState,];
+}
+
+/// The on-top manager's `changed`: the main window's state, told to a program that keeps it.
+pub(crate) struct OnTopOf;
+
+impl Dispatch2<crate::ontop::reprise_on_top_v1::RepriseOnTopV1, Host> for OnTopOf {
+    fn event(
+        &self,
+        host: &mut Host,
+        _: &crate::ontop::reprise_on_top_v1::RepriseOnTopV1,
+        event: crate::ontop::reprise_on_top_v1::Event,
+        _: &Connection,
+        _: &QueueHandle<Host>,
+    ) {
+        let crate::ontop::reprise_on_top_v1::Event::Changed { toplevel, on_top } = event;
+        let main = (host.slots.iter())
+            .find(|s| s.id == MAIN)
+            .and_then(|s| s.window.toplevel());
+        if main.is_some_and(|w| *w.xdg_toplevel() == toplevel) && host.on_top != (on_top != 0) {
+            host.on_top = on_top != 0;
+            if host.app.on_top().is_some() {
+                host.send(MAIN, Event::OnTop(host.on_top));
+            }
+        }
+    }
 }

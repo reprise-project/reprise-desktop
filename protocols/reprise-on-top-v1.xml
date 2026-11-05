@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="reprise_on_top_v1">
+  <copyright>
+    reprise private protocol: a program's window kept above the others.
+  </copyright>
+
+  <interface name="reprise_on_top_v1" version="1">
+    <description summary="keep a toplevel above the windows that are not">
+      One global. A program asks for one of its toplevels to stay above
+      every window that is not on top itself, as the window menu's Always
+      on Top does, and hears when that changes by the window menu, a key
+      or a window rule.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        What was asked for stands.
+      </description>
+    </request>
+
+    <request name="set">
+      <description summary="keep toplevel on top, or not">
+        Asked before toplevel maps, it holds from the map on, unless a
+        window rule says otherwise. Ignored when toplevel belongs to
+        another client.
+      </description>
+      <arg name="toplevel" type="object" interface="xdg_toplevel"/>
+      <arg name="on_top" type="uint" summary="1 to keep it on top, 0 not"/>
+    </request>
+
+    <event name="changed">
+      <description summary="whether toplevel is on top">
+        Sent once toplevel maps, and on each change after that, whatever
+        made it, a set request included.
+      </description>
+      <arg name="toplevel" type="object" interface="xdg_toplevel"/>
+      <arg name="on_top" type="uint" summary="1 on top, 0 not"/>
+    </event>
+  </interface>
+</protocol>
