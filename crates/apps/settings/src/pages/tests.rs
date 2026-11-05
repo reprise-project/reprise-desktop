@@ -488,7 +488,6 @@ fn values_go_in_and_come_back_out() {
         background: "#336699".into(),
         system_icons: vec!["computer".into(), "recycle-bin".into()],
         start_icon: false,
-        adaptive_sync: true,
         preview_taskbar: false,
         osd_caps_lock: false,
         osd_num_lock: false,

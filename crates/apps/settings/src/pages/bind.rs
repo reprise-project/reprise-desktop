@@ -105,7 +105,6 @@ pub(super) fn binds() -> Vec<Bind> {
             crate::model::DESKTOP_EXTENSIONS,
         ),
         Bind::Flag("start_icon", lens!(start_icon)),
-        Bind::Flag("adaptive_sync", lens!(adaptive_sync)),
         Bind::Flag("switcher_preview", lens!(switcher_preview)),
         Bind::Flag("switcher_desktop", lens!(switcher_desktop)),
         Bind::Flag("switcher_peek", lens!(switcher_peek)),
