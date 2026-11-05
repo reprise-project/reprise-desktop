@@ -1013,6 +1013,26 @@ mod tests {
     }
 
     #[test]
+    fn a_sticky_shift_latches_on_the_layout_in_force() {
+        let (mut h, mut c) = crate::harness::Harness::on_second_layout();
+        h.state.config.accessibility.sticky_keys = true;
+        h.state.aids_configured();
+        let (_, index) = h.state.xkb_mask().expect("the seat's mask");
+        h.key(42, true);
+        h.key(42, false);
+        assert_eq!(
+            h.state.xkb_mask().unwrap().0.latched,
+            1 << index[0],
+            "Shift latched"
+        );
+        assert_eq!(
+            h.layout_heard(&mut c),
+            (1, 1, 1),
+            "de, and the client hears it"
+        );
+    }
+
+    #[test]
     fn every_aid_says_it_is_on_or_off_and_how_to_switch_it_back() {
         for (aid, keys) in [
             (Aid::StickyKeys, "Pressing Shift five times"),

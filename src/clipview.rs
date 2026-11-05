@@ -354,6 +354,19 @@ mod tests {
     }
 
     #[test]
+    fn a_paste_leaves_the_client_on_its_layout() {
+        let (mut h, mut c) = crate::harness::Harness::on_second_layout();
+        h.state.send_paste();
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.keys, [(EVDEV_V, true), (EVDEV_V, false)]);
+        assert_eq!(
+            h.layout_heard(&mut c),
+            (1, 1, 1),
+            "de, and the client hears it"
+        );
+    }
+
+    #[test]
     fn a_modifier_the_keymap_lacks_sets_no_bit() {
         assert_eq!(mod_bit(2), 0b100);
         assert_eq!(mod_bit(u32::MAX), 0);
