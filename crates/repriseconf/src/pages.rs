@@ -45,12 +45,24 @@ pub enum Entry {
     Program(&'static str),
 }
 
-/// What a search matched: the label, a keyword, or a control's label (its id, for --focus).
+/// What a search matched: the label, a keyword (with the one control it names, if any), or a
+/// control's label. A control goes by the id `--focus` takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Label,
-    Keyword,
+    Keyword(Option<&'static str>),
     Control(&'static str),
+}
+
+impl Hit {
+    /// The control the hit names, for the page to focus.
+    pub fn focus(self) -> Option<&'static str> {
+        match self {
+            Hit::Keyword(id) => id,
+            Hit::Control(id) => Some(id),
+            Hit::Label => None,
+        }
+    }
 }
 
 pub const GROUPS: &[(&str, &[Entry])] = &[
@@ -382,8 +394,10 @@ impl Page {
     /// Matches when every word of `query` starts a word of the label, a keyword or a
     /// control label; a control's hit names the first control holding a word the page lacks.
     pub fn find(self, query: &str) -> Option<Hit> {
-        if let Some(hit) = find_by_name(query, self.label(), self.keywords()) {
-            return Some(hit);
+        match find_by_name(query, self.label(), self.keywords()) {
+            Some(Hit::Keyword(_)) => return Some(Hit::Keyword(self.sole_control(query))),
+            Some(hit) => return Some(hit),
+            None => {}
         }
         let page: Vec<&str> = [self.label()]
             .into_iter()
@@ -405,6 +419,23 @@ impl Page {
             .iter()
             .find(|&&(_, l)| rest.iter().any(|w| word_starts(w, l)))
             .map(|&(id, _)| Hit::Control(id))
+    }
+
+    /// The one control whose label holds every word of `query` the page label lacks; `None`
+    /// when no control or several do ("mouse speed" names three speeds).
+    fn sole_control(self, query: &str) -> Option<&'static str> {
+        let rest: Vec<&str> = query
+            .split_whitespace()
+            .filter(|w| !word_starts(w, self.label()))
+            .collect();
+        let rest = rest.join(" ");
+        let mut ids = self
+            .terms()
+            .iter()
+            .filter(|&&(_, l)| all_words(&rest, &[l]))
+            .map(|&(id, _)| id);
+        let id = ids.next()?;
+        ids.all(|other| other == id).then_some(id)
     }
 
     /// Its `--page` name: the label in lower case, "&" spelled "and",
@@ -454,7 +485,7 @@ fn find_by_name(query: &str, name: &str, keywords: &[&str]) -> Option<Hit> {
         return Some(Hit::Label);
     }
     let hay: Vec<&str> = [name].into_iter().chain(keywords.iter().copied()).collect();
-    all_words(query, &hay).then_some(Hit::Keyword)
+    all_words(query, &hay).then_some(Hit::Keyword(None))
 }
 
 /// The program `id` (a desktop entry id) names.
@@ -579,16 +610,21 @@ mod tests {
     fn a_page_is_found_by_label_then_keyword_then_control_label() {
         assert_eq!(Page::NightLight.find("night"), Some(Hit::Label));
         assert_eq!(Page::FontsAndIcons.find("icons fonts"), Some(Hit::Label));
-        assert_eq!(Page::FontsAndIcons.find("smoothing"), Some(Hit::Keyword));
+        assert_eq!(
+            Page::FontsAndIcons.find("smoothing"),
+            Some(Hit::Keyword(None))
+        );
         assert_eq!(
             Page::FontsAndIcons.find("font smoothing"),
-            Some(Hit::Keyword)
+            Some(Hit::Keyword(None))
         );
-        assert_eq!(Page::FontsAndIcons.find("antialias"), Some(Hit::Keyword));
-        assert_eq!(Page::MouseTouchpad.find("mouse speed"), Some(Hit::Keyword));
+        assert_eq!(
+            Page::FontsAndIcons.find("antialias"),
+            Some(Hit::Keyword(None))
+        );
         assert_eq!(
             Page::DefaultPrograms.find("default browser"),
-            Some(Hit::Keyword)
+            Some(Hit::Keyword(Some("dp_browser")))
         );
         assert_eq!(
             Page::Keyboard.find("delay"),
@@ -609,9 +645,31 @@ mod tests {
     }
 
     #[test]
-    fn the_switcher_page_is_found_by_3d_and_flip() {
-        assert_eq!(Page::Switcher.find("3d"), Some(Hit::Keyword));
-        assert_eq!(Page::Switcher.find("flip"), Some(Hit::Keyword));
+    fn a_keyword_hit_names_the_one_control_holding_the_words_the_label_lacks() {
+        assert_eq!(
+            Page::Privacy.find("clipboard"),
+            Some(Hit::Keyword(Some("clipboard_history")))
+        );
+        assert_eq!(
+            Page::Notifications.find("quiet hours"),
+            Some(Hit::Keyword(Some("quiet_hours")))
+        );
+        assert_eq!(
+            Page::Switcher.find("3d"),
+            Some(Hit::Keyword(Some("switcher_flip")))
+        );
+        assert_eq!(Page::Switcher.find("flip"), Some(Hit::Keyword(None)));
+        assert_eq!(
+            Page::MouseTouchpad.find("mouse speed"),
+            Some(Hit::Keyword(None)),
+            "three speeds: none is the one"
+        );
+        assert_eq!(
+            Hit::Keyword(Some("quiet_hours")).focus(),
+            Some("quiet_hours")
+        );
+        assert_eq!(Hit::Control("repeat_delay").focus(), Some("repeat_delay"));
+        assert_eq!(Hit::Label.focus(), None);
     }
 
     #[test]
@@ -659,14 +717,17 @@ mod tests {
             power.find("options power", "Power Options"),
             Some(Hit::Label)
         );
-        assert_eq!(power.find("sleep", "Power Options"), Some(Hit::Keyword));
+        assert_eq!(
+            power.find("sleep", "Power Options"),
+            Some(Hit::Keyword(None))
+        );
         assert_eq!(
             power.find("power sleep", "Power Options"),
-            Some(Hit::Keyword)
+            Some(Hit::Keyword(None))
         );
         assert_eq!(
             power.find("hibernate", "Power Options"),
-            Some(Hit::Keyword),
+            Some(Hit::Keyword(None)),
             "a lid, button and battery action"
         );
         assert_eq!(power.find("delay", "Power Options"), None);

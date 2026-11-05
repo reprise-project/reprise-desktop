@@ -41,7 +41,13 @@ impl SettingsApp {
     /// Call after Enter in the field or a press on a found row opened a page: the control the
     /// query named takes the keyboard, unless it is missing or greyed and the list keeps it.
     pub(crate) fn search_opened(&mut self) {
-        let Some(&Some(Hit::Control(id))) = self.search_hits.get(self.sheet.tabs.open) else {
+        let Some(id) = self
+            .search_hits
+            .get(self.sheet.tabs.open)
+            .copied()
+            .flatten()
+            .and_then(Hit::focus)
+        else {
             return;
         };
         if self.sheet.focus_control(id) {
@@ -71,7 +77,7 @@ mod tests {
         assert_eq!(shown("browser wallpaper"), [], "the words sit on two pages");
         assert_eq!(
             find("do not disturb").unwrap().1[Page::Notifications.index()],
-            Some(Hit::Keyword)
+            Some(Hit::Keyword(None))
         );
         let (f, hits) = find("night").unwrap();
         assert_eq!(

@@ -104,10 +104,12 @@ pub fn rank_settings(
         return Vec::new();
     }
     let pages = Page::all().filter_map(|p| {
-        Some(match p.find(query)? {
-            Hit::Control(id) => (Hit::Control(id), Setting::Control(p, id)),
-            hit => (hit, Setting::Page(p)),
-        })
+        let hit = p.find(query)?;
+        Some((
+            hit,
+            hit.focus()
+                .map_or(Setting::Page(p), |id| Setting::Control(p, id)),
+        ))
     });
     let installed = PROGRAMS.iter().filter_map(|p| {
         let i = apps.iter().position(|a| a.id == p.id)?;
@@ -119,7 +121,7 @@ pub fn rank_settings(
     let mut found: Vec<(Hit, Setting)> = pages.chain(installed).collect();
     found.sort_by_key(|&(hit, _)| match hit {
         Hit::Label => 0,
-        Hit::Keyword => 1,
+        Hit::Keyword(_) => 1,
         Hit::Control(_) => 2,
     });
     found.into_iter().map(|(_, s)| s).take(max).collect()
@@ -466,10 +468,13 @@ mod tests {
         }
     }
 
-    fn without_controls(found: Vec<Setting>) -> Vec<Setting> {
+    fn as_pages(found: Vec<Setting>) -> Vec<Setting> {
         found
             .into_iter()
-            .filter(|s| !matches!(s, Setting::Control(..)))
+            .map(|s| match s {
+                Setting::Control(p, _) => Setting::Page(p),
+                s => s,
+            })
             .collect()
     }
 
@@ -481,7 +486,7 @@ mod tests {
             installed("reprise-printers.desktop", "Printers"),
             installed("reprise-updates.desktop", "Software Updates"),
         ];
-        let rank = |q: &str| without_controls(rank_settings(q, &apps, &[], 8));
+        let rank = |q: &str| as_pages(rank_settings(q, &apps, &[], 8));
         assert_eq!(rank("wifi"), [Setting::App(0)]);
         assert_eq!(rank("Wi-Fi"), [Setting::App(0)]);
         assert_eq!(
@@ -493,10 +498,17 @@ mod tests {
             "the Mouse & Touchpad page by name, then Text & Keys by MouseKeys"
         );
         assert_eq!(rank("touchpad"), [Setting::Page(Page::MouseTouchpad)]);
-        assert_eq!(rank("cursor"), [Setting::Page(Page::Cursor)]);
+        assert_eq!(
+            rank("cursor"),
+            [
+                Setting::Page(Page::Cursor),
+                Setting::Page(Page::MagnifierFilters)
+            ],
+            "the Cursor page by name, then Magnifier & Filters by its text cursor check"
+        );
         assert_eq!(rank("power"), [Setting::App(1)], "Power Options by name");
         assert_eq!(
-            rank("dis"),
+            rank("dis")[..2],
             [
                 Setting::Page(Page::Display),
                 Setting::Page(Page::Notifications)
@@ -505,13 +517,19 @@ mod tests {
         );
         assert_eq!(
             rank("sleep"),
-            [Setting::App(1)],
-            "sleep is a Power Options word"
+            [Setting::App(1), Setting::Page(Page::ScreenSaverLock)],
+            "a Power Options word, then the lock-on-sleep check"
         );
         assert_eq!(rank("lid"), [Setting::App(1)]);
         assert_eq!(rank("transparency"), [Setting::Page(Page::Appearance)]);
         assert_eq!(rank("dpi"), [Setting::Page(Page::Display)]);
-        assert_eq!(rank("lock screen"), [Setting::Page(Page::ScreenSaverLock)]);
+        assert_eq!(
+            rank("lock screen"),
+            [
+                Setting::Page(Page::ScreenSaverLock),
+                Setting::Page(Page::Keyboard)
+            ]
+        );
         assert_eq!(rank("hot corner"), [Setting::Page(Page::Switcher)]);
         assert_eq!(rank("notifications"), [Setting::Page(Page::Notifications)]);
         assert_eq!(rank("quiet hours"), [Setting::Page(Page::Notifications)]);
@@ -530,7 +548,7 @@ mod tests {
 
     #[test]
     fn the_page_is_found_by_rdp_and_remmina() {
-        let rank = |q: &str| without_controls(rank_settings(q, &[], &[], 8));
+        let rank = |q: &str| as_pages(rank_settings(q, &[], &[], 8));
         for q in ["rdp", "remmina", "remote", "desktop sharing"] {
             assert_eq!(rank(q), [Setting::Page(Page::RemoteDesktop)], "{q}");
         }
@@ -539,22 +557,51 @@ mod tests {
     #[test]
     fn a_control_label_finds_its_page_after_names_and_keywords() {
         let rank = |q: &str| rank_settings(q, &[], &[], 8);
+        // The tier a page's row ranks in, read back from the page's own hit.
+        let tier = |q: &str, s: &Setting| match s {
+            Setting::Page(p) | Setting::Control(p, _) => match p.find(q) {
+                Some(Hit::Label) => 0,
+                Some(Hit::Keyword(_)) => 1,
+                Some(Hit::Control(_)) => 2,
+                None => panic!("{p:?} is listed for {q:?}"),
+            },
+            Setting::App(_) => panic!("no programs installed"),
+        };
         assert!(rank("repeat delay").contains(&Setting::Control(Page::Keyboard, "repeat_delay")));
-        assert_eq!(
-            rank("default browser").first(),
-            Some(&Setting::Page(Page::DefaultPrograms))
-        );
-        assert_eq!(
-            rank("mouse speed").first(),
-            Some(&Setting::Page(Page::MouseTouchpad))
-        );
-        let found = rank("keyboard");
-        assert_eq!(found.first(), Some(&Setting::Page(Page::Keyboard)));
-        let first_control = found.iter().position(|s| matches!(s, Setting::Control(..)));
-        let last_page = found.iter().rposition(|s| matches!(s, Setting::Page(_)));
-        if let (Some(c), Some(p)) = (first_control, last_page) {
-            assert!(p < c, "name and keyword rows before control rows");
+        for q in ["keyboard", "hours", "dis"] {
+            let tiers: Vec<u8> = rank(q).iter().map(|s| tier(q, s)).collect();
+            assert!(tiers.is_sorted(), "{q}: {tiers:?}");
         }
+        assert_eq!(
+            rank("keyboard").first(),
+            Some(&Setting::Page(Page::Keyboard))
+        );
+        assert_eq!(
+            rank("hours")[..2],
+            [
+                Setting::Control(Page::Notifications, "quiet_hours"),
+                Setting::Control(Page::Appearance, "glass_dark_from")
+            ],
+            "the keyword's control before an earlier page's control label"
+        );
+    }
+
+    #[test]
+    fn a_keyword_naming_one_control_opens_it_focused_in_the_keyword_tier() {
+        let first = |q: &str| rank_settings(q, &[], &[], 8).first().copied();
+        for (q, page, id) in [
+            ("clipboard", Page::Privacy, "clipboard_history"),
+            ("quiet hours", Page::Notifications, "quiet_hours"),
+            ("3d", Page::Switcher, "switcher_flip"),
+            ("default browser", Page::DefaultPrograms, "dp_browser"),
+        ] {
+            assert_eq!(first(q), Some(Setting::Control(page, id)), "{q}");
+        }
+        assert_eq!(
+            first("mouse speed"),
+            Some(Setting::Page(Page::MouseTouchpad)),
+            "three speeds: the page opens unfocused"
+        );
     }
 
     #[test]
