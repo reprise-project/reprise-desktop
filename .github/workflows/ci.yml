@@ -11,7 +11,7 @@ permissions:
   packages: read
 jobs:
   # .github/ci-image pins the image and its packages.
-  build:
+  lint:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     container:
@@ -24,12 +24,39 @@ jobs:
       CARGO_INCREMENTAL: 0
       # Where rust-cache looks for the registry; the builds run as builder.
       CARGO_HOME: /home/builder/.cargo
-      # A font-gated test fails instead of skipping; see CONTRIBUTING.md.
-      REPRISE_TEST_STRICT: 1
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: .github/ci-image/tag.sh --check
       - uses: ./.github/actions/build
+        with:
+          checks: lint
+  # A pull request tests the crates its changes can reach; main tests everything.
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/reprise-project/reprise-ci:2026-10-25-f7b0d8395c9e
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_HOME: /home/builder/.cargo
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      # A font-gated test fails instead of skipping; see CONTRIBUTING.md.
+      REPRISE_TEST_STRICT: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # HEAD^ is the base of a pull request's merge commit.
+          fetch-depth: 2
+      - uses: ./.github/actions/build
+        with:
+          checks: test
+          affected: ${{ github.event_name == 'pull_request' }}
   # The same on today's image and repos: shows what the next pin bump will meet, without
   # blocking a merge.
   canary:
@@ -41,6 +68,8 @@ jobs:
     env:
       CARGO_INCREMENTAL: 0
       CARGO_HOME: /home/builder/.cargo
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
       REPRISE_TEST_STRICT: 1
     steps:
       # The first checkout downloads the tree for .github/pacman.sh; the second clones once git

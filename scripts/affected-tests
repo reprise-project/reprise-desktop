@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: scripts/affected-tests [--dry-run] [BASE] [nextest args...]
-# Runs the tests of every workspace member that the changes since
+# Builds and runs the tests of every workspace member that the changes since
 # merge-base(BASE, HEAD) can affect (default BASE: origin/main; the working
 # tree and untracked files count): each changed member plus its reverse
 # dependencies. A change outside the members' directories runs everything.
@@ -71,15 +71,13 @@ else:
     print(" ".join(sorted(changed)) + "\t" + " ".join(sorted(affected)))
 ')
 
-cmd=(cargo nextest run --workspace --locked)
+cmd=(cargo nextest run --locked)
 case $sets in
-  ALL) crates="(whole workspace)" ;;
+  ALL) crates="(whole workspace)"; cmd+=(--workspace) ;;
   $'\t') echo "affected-tests: no crate changed since $base"; exit 0 ;;
   *)
     crates=${sets#*$'\t'}
-    expr=
-    for c in ${sets%%$'\t'*}; do expr+="${expr:+ | }rdeps(=$c)"; done
-    cmd+=(-E "$expr")
+    for c in $crates; do cmd+=(-p "$c"); done
     ;;
 esac
 cmd+=("$@")
