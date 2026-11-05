@@ -1,6 +1,5 @@
-//! Settings pages and separate settings programs with their search words. [`GROUPS`]
-//! fixes the list's order, pages and program links alike; [`Page::find`] is the one
-//! matcher Settings and Start share.
+//! Settings pages and settings programs with their search words, listed in [`GROUPS`] order.
+//! [`Page::find`] is the one matcher Settings and Start share.
 
 mod terms;
 
@@ -240,6 +239,7 @@ impl Page {
                 "extensions",
                 "widgets",
                 "water",
+                "desktop icons",
             ],
             Page::ScreenSaverLock => &[
                 "screensaver",
@@ -247,8 +247,6 @@ impl Page {
                 "mystify",
                 "photos",
                 "idle",
-                "lock",
-                "lock screen",
                 "away",
             ],
             Page::Display => &[
@@ -264,9 +262,22 @@ impl Page {
                 "adaptive sync",
                 "freesync",
             ],
-            Page::NightLight => &["blue light", "colour temperature", "color temperature"],
-            Page::FontsAndIcons => &["font", "antialias", "smoothing", "icon theme", "gtk", "qt"],
-            Page::Effects => &["animations", "shadows"],
+            Page::NightLight => &[
+                "blue light",
+                "colour temperature",
+                "color temperature",
+                "schedule",
+            ],
+            Page::FontsAndIcons => &[
+                "antialias",
+                "smoothing",
+                "icon theme",
+                "gtk",
+                "qt",
+                "window frames",
+                "title bar",
+            ],
+            Page::Effects => &["animations", "shadows", "menus"],
             Page::Taskbar => &[
                 "tray",
                 "notification area",
@@ -276,7 +287,7 @@ impl Page {
                 "peek",
                 "previews",
             ],
-            Page::StartMenu => &["menu", "pinned", "quick launch", "banner"],
+            Page::StartMenu => &["pinned", "quick launch", "banner"],
             Page::Search => &["launcher", "run"],
             Page::Switcher => &[
                 "alt tab",
@@ -287,7 +298,7 @@ impl Page {
                 "3d",
                 "flip",
             ],
-            Page::VirtualDesktops => &["workspaces", "desktops"],
+            Page::VirtualDesktops => &["workspaces"],
             Page::WindowBehavior => &[
                 "windows",
                 "tiling",
@@ -306,9 +317,9 @@ impl Page {
                 "keyboard layout",
                 "repeat",
                 "language",
+                "on-screen display",
             ],
             Page::MouseTouchpad => &[
-                "touchpad",
                 "trackpad",
                 "pointer speed",
                 "natural scrolling",
@@ -331,12 +342,10 @@ impl Page {
                 "vision",
                 "color",
                 "colour",
-                "filter",
                 "grayscale",
                 "invert",
                 "colour blindness",
                 "color blindness",
-                "magnifier",
                 "zoom",
             ],
             Page::Sound => &[
@@ -347,6 +356,10 @@ impl Page {
                 "volume",
                 "boost",
                 "louder",
+                "audio",
+                "speakers",
+                "microphone",
+                "headphones",
             ],
             Page::Notifications => &[
                 "balloons",
@@ -358,7 +371,6 @@ impl Page {
             ],
             Page::Startup => &["autostart", "login", "session", "startup programs"],
             Page::DefaultPrograms => &[
-                "default",
                 "browser",
                 "mail",
                 "terminal",
@@ -366,7 +378,7 @@ impl Page {
                 "open with",
                 "file types",
             ],
-            Page::RemoteDesktop => &["remote", "rdp", "remmina", "desktop sharing"],
+            Page::RemoteDesktop => &["rdp", "remmina", "desktop sharing"],
             Page::Privacy => &[
                 "location",
                 "clipboard",
@@ -380,6 +392,9 @@ impl Page {
                 "thumbnails",
                 "cache",
                 "free space",
+                "low disk space",
+                "turn off computer",
+                "shutdown",
                 "storage",
             ],
             Page::Backup => &["export", "import", "back up", "transfer", "move settings"],
@@ -509,27 +524,20 @@ pub const PROGRAMS: &[Program] = &[
         label: "Network Connections",
         short_label: Some("Connections"),
         keywords: &[
-            "network", "wifi", "wi-fi", "wireless", "wlan", "ethernet", "wired", "vpn", "internet",
+            "wifi", "wi-fi", "wireless", "wlan", "ethernet", "wired", "vpn", "internet",
         ],
     },
     Program {
         id: "reprise-sound.desktop",
         label: "Sounds and Audio Devices",
         short_label: None,
-        keywords: &[
-            "sound",
-            "audio",
-            "volume",
-            "speakers",
-            "microphone",
-            "headphones",
-        ],
+        keywords: &["volume", "speakers", "microphone", "headphones"],
     },
     Program {
         id: "reprise-bluetooth.desktop",
         label: "Bluetooth",
         short_label: None,
-        keywords: &["bluetooth", "pairing"],
+        keywords: &["pairing"],
     },
     Program {
         id: "reprise-power.desktop",
@@ -546,25 +554,27 @@ pub const PROGRAMS: &[Program] = &[
             "lid",
             "screen off",
             "hibernate",
+            "charge limit",
+            "charging",
         ],
     },
     Program {
         id: "reprise-datetime.desktop",
         label: "Date and Time",
         short_label: None,
-        keywords: &["clock", "date", "time", "time zone", "timezone"],
+        keywords: &["clock", "time zone", "timezone"],
     },
     Program {
         id: "reprise-accounts.desktop",
         label: "User Accounts",
         short_label: None,
-        keywords: &["user", "users", "account", "password", "picture"],
+        keywords: &["users", "password", "picture"],
     },
     Program {
         id: "reprise-printers.desktop",
         label: "Printers",
         short_label: None,
-        keywords: &["printer", "printing", "print queue", "cups"],
+        keywords: &["printing", "print queue", "cups"],
     },
     Program {
         id: "reprise-updates.desktop",
@@ -585,12 +595,13 @@ mod tests {
             .chain(
                 PROGRAMS
                     .iter()
-                    .flat_map(|p| p.keywords.iter().map(|k| (p.id, *k))),
+                    .flat_map(|p| p.keywords.iter().map(|k| (p.label, *k))),
             );
-        for (owner, k) in words {
-            assert_eq!(k, k.to_lowercase(), "{owner}: {k}");
-            assert_ne!(k, owner.to_lowercase(), "{owner} repeats its label");
-        }
+        let dead: Vec<(&str, &str)> = words
+            .inspect(|(owner, k)| assert_eq!(*k, k.to_lowercase(), "{owner}: {k}"))
+            .filter(|(owner, k)| all_words(k, &[owner]))
+            .collect();
+        assert_eq!(dead, [], "keywords the label already finds");
     }
 
     #[test]

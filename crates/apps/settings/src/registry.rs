@@ -108,6 +108,7 @@ pub fn open(sheet: &PropSheet) -> Page {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use repriseconf::search::all_words;
     use reprisekit::raster::Rect;
     use reprisekit::text::TextRenderer;
     use reprisekit::theme::{FontConfig, Theme};
@@ -631,6 +632,8 @@ mod tests {
         });
         let mut built: Vec<(Page, Vec<(&str, String)>)> =
             Page::all().map(|p| (p, Vec::new())).collect();
+        use reprisekit::controls::form::Control as C;
+        let mut titles: Vec<(Page, String)> = Vec::new();
         for (p, f) in every_page(Area::MIN).into_iter().chain(appearance) {
             let (_, terms) = built.iter_mut().find(|(q, _)| *q == p).unwrap();
             for t in control_labels(&f) {
@@ -638,6 +641,10 @@ mod tests {
                     terms.push(t);
                 }
             }
+            titles.extend(f.items.iter().filter_map(|it| match &it.control {
+                C::Group(t) | C::GroupTitle(t) => Some((p, reprisekit::text::split_mnemonic(t).0)),
+                _ => None,
+            }));
         }
         let same = |p: Page, a: &(&str, String), b: &(&str, String)| {
             a.0 == b.0 && (a.1 == b.1 || RUNTIME_LABELS.contains(&(p, a.0)))
@@ -682,7 +689,25 @@ mod tests {
             report.is_empty(),
             "Page::terms (crates/repriseconf/src/pages/terms.rs) is out of step:\n{report}"
         );
+        let unfound: Vec<&(Page, String)> = titles
+            .iter()
+            .filter(|(p, t)| {
+                let hay: Vec<&str> = [p.label()]
+                    .into_iter()
+                    .chain(p.keywords().iter().copied())
+                    .chain(p.terms().iter().map(|&(_, l)| l))
+                    .collect();
+                !UNSEARCHED_TITLES.contains(&t.as_str()) && !all_words(t, &hay)
+            })
+            .collect();
+        assert!(
+            unfound.is_empty(),
+            "group titles a search misses, to add as page keywords: {unfound:?}"
+        );
     }
+
+    /// Group titles that name nothing a user searches for.
+    const UNSEARCHED_TITLES: &[&str] = &["Preview", "Connected Computers"];
 
     #[test]
     fn the_area_follows_the_sheet_size() {
