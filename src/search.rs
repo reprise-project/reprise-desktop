@@ -458,6 +458,8 @@ mod tests {
         let apps = [
             installed("reprise-network.desktop", "Network Connections"),
             installed("reprise-power.desktop", "Power Options"),
+            installed("reprise-printers.desktop", "Printers"),
+            installed("reprise-updates.desktop", "Software Updates"),
         ];
         let rank = |q: &str| rank_settings(q, &apps, &[], 8);
         assert_eq!(rank("wifi"), [Setting::App(0)]);
@@ -484,9 +486,18 @@ mod tests {
         );
         assert_eq!(
             rank("sleep"),
-            [Setting::Page(Page::Power)],
-            "a keyword after no name"
+            [Setting::App(1)],
+            "sleep is a Power Options word"
         );
+        assert_eq!(rank("lid"), [Setting::App(1)]);
+        assert_eq!(rank("transparency"), [Setting::Page(Page::Appearance)]);
+        assert_eq!(rank("dpi"), [Setting::Page(Page::Display)]);
+        assert_eq!(rank("lock screen"), [Setting::Page(Page::ScreenSaver)]);
+        assert_eq!(rank("hot corner"), [Setting::Page(Page::Switcher)]);
+        assert_eq!(rank("notifications"), [Setting::Page(Page::Sounds)]);
+        assert_eq!(rank("clipboard"), [Setting::Page(Page::Advanced)]);
+        assert_eq!(rank("print queue"), [Setting::App(2)]);
+        assert_eq!(rank("firmware"), [Setting::App(3)]);
         assert_eq!(rank("grayscale"), [Setting::Page(Page::Vision)]);
         assert_eq!(rank("colour blind"), [Setting::Page(Page::Vision)]);
         assert_eq!(rank("magnifier"), [Setting::Page(Page::Vision)]);
