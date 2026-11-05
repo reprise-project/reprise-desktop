@@ -19,9 +19,8 @@ pub fn renderer() -> Result<GlesRenderer, String> {
     Ok(renderer)
 }
 
-/// The process's one headless display, made on first use and never dropped:
-/// smithay's `EGLDisplay::new` panics when another thread drops the last
-/// handle to the same display meanwhile, and that drop terminates it.
+/// The process's one headless display, made on first use and never dropped,
+/// so each later renderer skips device enumeration and EGL initialisation.
 fn display() -> Result<EGLDisplay, String> {
     static DISPLAY: OnceLock<Result<EGLDisplay, String>> = OnceLock::new();
     DISPLAY
