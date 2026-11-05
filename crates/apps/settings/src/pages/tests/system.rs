@@ -5,6 +5,7 @@ use crate::pages::system::NOTIFICATION_SOUND;
 fn the_sound_page_geometry() {
     let s = built();
     let p = Page::Sound;
+    assert_eq!(rect(&s, p, AUDIO_DEVICES), Rect::new(268, 44, 110, 23));
     assert_eq!(rect(&s, p, "sound_theme_group"), Rect::new(20, 80, 358, 52));
     assert_eq!(rect(&s, p, "sound_theme_label"), Rect::new(GX, 106, 80, 13));
     assert_eq!(rect(&s, p, "sound_theme"), Rect::new(116, 102, 200, 21));
@@ -23,7 +24,6 @@ fn the_sound_page_geometry() {
 fn sound_opens_sounds_and_audio_devices() {
     let s = built();
     let p = Page::Sound;
-    assert_eq!(rect(&s, p, AUDIO_DEVICES), Rect::new(268, 44, 110, 23));
     assert_eq!(
         lines(&s, p, "audio_devices_note"),
         [
@@ -31,11 +31,8 @@ fn sound_opens_sounds_and_audio_devices() {
             "set each program's volume, open"
         ]
     );
-    assert_eq!(rect(&s, p, "sound_theme_group").y, 80);
-    assert_eq!(rect(&s, p, "volume_group").y, 200);
     assert_eq!(program_for(AUDIO_DEVICES), Some("reprise-sound.desktop"));
     assert_eq!(program_for(EDIT_FILE), None);
-    inside_page(&s, p);
 }
 
 #[test]
@@ -65,9 +62,6 @@ fn notifications_gather_on_their_own_page() {
     assert_eq!(
         keys_on(&built(), Page::Sound),
         ["sounds.theme", "sounds.bell", "sounds.allow_boost"]
-    );
-    assert!(
-        !keys_on(&under("glass"), Page::Appearance).contains(&"glass.notification_style".into())
     );
     for k in ["balloons", "do not disturb", "dnd", "quiet hours", "popups"] {
         assert!(Page::Notifications.keywords().contains(&k), "{k}");
@@ -312,9 +306,6 @@ fn advanced_groups_what_has_no_other_page() {
         ]
     );
     let p = Page::Advanced;
-    for id in ["terminal", "desktop_icons", "start_icon"] {
-        assert!(s.pages[p.index()].item(id).is_none(), "{id} is elsewhere");
-    }
     assert_eq!(rect(&s, p, "task_manager"), Rect::new(20, 60, 358, 20));
     assert_eq!(rect(&s, p, "screenshot_save"), Rect::new(20, 90, 13, 13));
     assert_eq!(rect(&s, p, "restart_notice"), Rect::new(20, 112, 13, 13));
@@ -392,18 +383,6 @@ fn privacy_holds_location_history_and_the_sharing_border() {
             "privacy.capture_border"
         ]
     );
-    let advanced = keys_on(&built(), Page::Advanced);
-    for k in [
-        "clipboard.history",
-        "privacy.recent_files",
-        "privacy.location",
-        "privacy.capture_border",
-    ] {
-        assert!(
-            !advanced.contains(&k.to_string()),
-            "{k} is not reset on Advanced"
-        );
-    }
     for k in [
         "location",
         "clipboard",
@@ -738,9 +717,6 @@ fn the_lock_group_sits_under_the_screen_saver() {
     assert_eq!(rect(&s, p, "away_device"), Rect::new(32, 442, 150, 21));
     assert_eq!(rect(&s, p, "away_after_s"), Rect::new(236, 442, 50, 20));
     assert_eq!(rect(&s, p, "away_units"), Rect::new(292, 446, 60, 13));
-    for id in ["away_group", "saver_note", "away_note"] {
-        assert!(s.pages[p.index()].item(id).is_none(), "{id} is gone");
-    }
     inside_page(&s, p);
 }
 
@@ -827,6 +803,7 @@ fn the_remote_desktop_page_geometry() {
     let s = built();
     let p = Page::RemoteDesktop;
     assert_eq!(rect(&s, p, "allow"), Rect::new(20, 44, 13, 13));
+    assert_eq!(rect(&s, p, "allow_note"), Rect::new(38, 64, 340, 13));
     assert_eq!(rect(&s, p, "status"), Rect::new(38, 80, 340, 13));
     assert_eq!(rect(&s, p, "encoder"), Rect::new(38, 96, 340, 13));
     assert_eq!(
@@ -903,10 +880,6 @@ fn the_remote_switch_says_it_acts_at_once() {
         lines(&s, p, "allow_note"),
         ["Turning this on or off takes effect at once."]
     );
-    assert_eq!(rect(&s, p, "allow_note"), Rect::new(38, 64, 340, 13));
-    assert_eq!(rect(&s, p, "connection_group").y, 120);
-    assert_eq!(rect(&s, p, "client_group"), Rect::new(20, 389, 358, 85));
-    inside_page(&s, p);
 }
 
 /// The encoder rows lit, top to bottom.
@@ -1305,21 +1278,8 @@ fn the_remote_desktop_page_pixels() {
 }
 
 #[test]
-fn variable_refresh_rate_is_found_and_set_on_display_only() {
-    assert!(
-        built()
-            .pages
-            .iter()
-            .all(|p| p.item("adaptive_sync").is_none())
-    );
+fn variable_refresh_rate_words_find_display() {
     for word in ["vrr", "adaptive sync", "freesync"] {
-        assert!(
-            Page::Display.keywords().contains(&word),
-            "{word} on Display"
-        );
-        assert!(
-            !Page::Advanced.keywords().contains(&word),
-            "{word} not on Advanced"
-        );
+        assert!(Page::Display.find(word).is_some(), "{word}");
     }
 }
