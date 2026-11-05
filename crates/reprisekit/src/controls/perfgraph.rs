@@ -10,12 +10,14 @@ use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
 use accesskit::{NodeId, Role};
 
-/// The last `cap` samples of one quantity, as fractions of its whole (0 to 1).
+/// The last `cap` samples of one quantity, as fractions of its whole (0 to 1), or as given for
+/// a quantity with no fixed whole ([`History::unbounded`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct History {
     samples: Vec<f32>,
     cap: usize,
     ticks: u64,
+    unbounded: bool,
 }
 
 impl History {
@@ -24,6 +26,16 @@ impl History {
             samples: Vec::with_capacity(cap),
             cap: cap.max(2),
             ticks: 0,
+            unbounded: false,
+        }
+    }
+
+    /// A history of a quantity such as a rate, kept as pushed; [`History::scaled`] gives the
+    /// fractions a graph draws.
+    pub fn unbounded(cap: usize) -> History {
+        History {
+            unbounded: true,
+            ..History::new(cap)
         }
     }
 
@@ -31,8 +43,31 @@ impl History {
         if self.samples.len() == self.cap {
             self.samples.remove(0);
         }
-        self.samples.push(v.clamp(0.0, 1.0) as f32);
+        let v = if self.unbounded {
+            v.max(0.0)
+        } else {
+            v.clamp(0.0, 1.0)
+        };
+        self.samples.push(v as f32);
         self.ticks += 1;
+    }
+
+    /// The largest sample held, 0 when empty.
+    pub fn peak(&self) -> f64 {
+        f64::from(self.samples.iter().copied().fold(0.0, f32::max))
+    }
+
+    /// This history as fractions of `whole`, scrolled as far.
+    pub fn scaled(&self, whole: f64) -> History {
+        let k = if whole > 0.0 { 1.0 / whole } else { 0.0 };
+        History {
+            samples: (self.samples.iter())
+                .map(|&v| (f64::from(v) * k).clamp(0.0, 1.0) as f32)
+                .collect(),
+            cap: self.cap,
+            ticks: self.ticks,
+            unbounded: false,
+        }
     }
 
     pub fn samples(&self) -> &[f32] {
@@ -108,6 +143,23 @@ mod tests {
         assert_eq!(h.ticks(), 4);
         h.push(7.0);
         assert_eq!(h.latest(), Some(1.0), "clamped to the whole");
+    }
+
+    #[test]
+    fn an_unbounded_history_keeps_its_samples_and_scales_to_a_whole() {
+        let mut h = History::unbounded(3);
+        for v in [400.0, 1000.0, -5.0, 250.0] {
+            h.push(v);
+        }
+        assert_eq!(h.samples(), [1000.0f32, 0.0, 250.0]);
+        assert_eq!(h.peak(), 1000.0);
+        let s = h.scaled(500.0);
+        assert_eq!(s.samples(), [1.0f32, 0.0, 0.5], "clamped to the whole");
+        assert_eq!(
+            (s.cap(), s.ticks()),
+            (3, 4),
+            "scrolled as far as the original"
+        );
     }
 
     #[test]

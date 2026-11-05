@@ -124,7 +124,8 @@ desktop and stays out of the way when it's missing.
   DDC/CI (the keys and the displays icon). Load i2c-dev at boot with
   `echo i2c-dev | sudo tee /etc/modules-load.d/i2c-dev.conf`; ddcutil's udev
   rule gives the logged-in user the monitors' I2C buses.
-- hwdata, whose `pci.ids` names the graphics card in About Reprise
+- hwdata, whose `pci.ids` names the graphics card in About Reprise and Task
+  Manager
 - tzdata, whose `zone1970.tab` places your time zone's city, for the night
   light's sunset and sunrise without a set location
 

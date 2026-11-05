@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::devices;
 use crate::procfs::{self, CpuTimes, MemInfo};
 use crate::scopes::{self, Scope};
 
@@ -36,6 +37,7 @@ pub struct Snapshot {
     pub cores: Vec<f64>,
     pub mem: MemInfo,
     pub scopes: Vec<Scope>,
+    pub devices: devices::Readings,
 }
 
 impl Snapshot {
@@ -80,6 +82,8 @@ pub struct Sampler {
     /// Each process's storage bytes at the last reading, and when that was.
     io: HashMap<Key, u64>,
     at: Option<Instant>,
+    /// Disks, adapters, GPUs and sensors; None reads only processes, CPU and memory.
+    pub devices: Option<devices::Sampler>,
 }
 
 impl Sampler {
@@ -98,6 +102,7 @@ impl Sampler {
             disk: false,
             io: HashMap::new(),
             at: None,
+            devices: None,
         }
     }
 
@@ -110,7 +115,10 @@ impl Sampler {
         if slice.is_none() {
             log::info!("no user manager cgroup: the Applications page stays empty");
         }
-        Sampler::new(Path::new("/proc"), slice, users)
+        Sampler {
+            devices: Some(devices::Sampler::new(Path::new("/"))),
+            ..Sampler::new(Path::new("/proc"), slice, users)
+        }
     }
 
     pub fn sample(&mut self) -> Snapshot {
@@ -181,12 +189,17 @@ impl Sampler {
         if cpu.is_some() {
             self.cpu = cpu;
         }
+        let keys: Vec<(i32, u64)> = procs.iter().map(|p| (p.pid, p.start)).collect();
+        let devices = (self.devices.as_mut())
+            .map(|d| d.sample(Instant::now(), &keys))
+            .unwrap_or_default();
         Snapshot {
             procs,
             cpu: load,
             cores,
             mem: procfs::read_meminfo(&self.root),
             scopes: self.slice.as_deref().map(scopes::read).unwrap_or_default(),
+            devices,
         }
     }
 }

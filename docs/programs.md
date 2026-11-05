@@ -462,12 +462,32 @@ another program).
   Disk (bytes read from and written to storage per second, blank for other
   users' processes) and Command Line (a process with no arguments, such as a
   kernel thread, shows its name in brackets). Drag a divider to widen a column.
-- **Performance:** the CPU's load and the memory in use, now and over the
-  last hundred samples, swap drawn over memory. View > CPU History draws a
-  graph per core. Totals, memory and swap figures sit underneath.
+- **Performance:** a list of devices on the left, each with a small history
+  and its figure now; the one picked fills the right.
+  - **CPU** and **Memory:** the load and the memory in use, now and over the
+    last hundred samples, swap drawn over memory, with the totals, memory and
+    swap figures underneath. View > CPU History, or a right click on the CPU
+    graph (the Menu key or Shift+F10 while the CPU shows), picks one graph or
+    one per core. The CPU's temperature and fan show where its sensor chip
+    gives them.
+  - **Disk:** one per whole disk: the share of the time it was busy, the read
+    and write rates, each graph scaled to its peak, its capacity and what it
+    has read and written since startup.
+  - **Network:** one per adapter that is up (the ones the taskbar's network
+    meter counts), Ethernet or Wi-Fi: what it receives and sends, and the
+    totals since it connected.
+  - **GPU:** one per graphics card: its usage, video memory, temperature and
+    fan. AMD cards report their own usage; NVIDIA cards do through the
+    driver's NVML library when it is installed; other cards add up the busy
+    time of your own programs' GPU clients, which the pane says. A card with
+    none of these (a virtual machine's) shows "No usage data". A card that has
+    powered down is left asleep and not read.
+  - **Sensors:** every hardware sensor chip, with its temperatures, fans,
+    voltages and power.
 - **Updates** every second; View > Update Speed sets High (half a second),
   Normal, Low (four seconds) or Paused, and F5 refreshes at once. Nothing is
-  sampled while the window is minimized.
+  sampled while the window is minimized. Disks, adapters and cards that come
+  or go show within ten seconds.
 - **Options > Always On Top** keeps the window above the others; the window
   menu's Always on Top is the same switch, and ticking either ticks both.
 - Always On Top, the update speed, the CPU graph and the Processes columns
