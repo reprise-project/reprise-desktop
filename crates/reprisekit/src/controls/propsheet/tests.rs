@@ -92,9 +92,15 @@ const LINK_GROUPS: &[(&str, &[pagelist::Item])] = &[
     (
         "Devices",
         &[
-            pagelist::Item::Link("Bluetooth"),
+            pagelist::Item::Link {
+                label: "Bluetooth",
+                name: "Bluetooth",
+            },
             pagelist::Item::Page("Mouse"),
-            pagelist::Item::Link("Printers"),
+            pagelist::Item::Link {
+                label: "Printers",
+                name: "Printers",
+            },
         ],
     ),
 ];

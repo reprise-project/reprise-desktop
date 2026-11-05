@@ -6,5 +6,4 @@ Exec=reprise-accounts
 Icon=system-users
 Categories=Settings;
 StartupWMClass=reprise.accounts
-NoDisplay=true
 Terminal=false

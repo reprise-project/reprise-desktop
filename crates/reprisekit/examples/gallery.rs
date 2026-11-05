@@ -8419,9 +8419,17 @@ fn render_long_list_sheets() -> Canvas {
     render_list_sheets_of(groups, 26, |_| {})
 }
 
+fn link(label: &str) -> pagelist::Item<'_> {
+    link_named(label, label)
+}
+
+fn link_named<'a>(label: &'a str, name: &'a str) -> pagelist::Item<'a> {
+    pagelist::Item::Link { label, name }
+}
+
 /// The list sheets with link rows among the pages, Printers greyed.
 fn render_list_sheet_links() -> Canvas {
-    use pagelist::Item::{Link, Page};
+    use pagelist::Item::Page;
     let groups: &[(&str, &[pagelist::Item])] = &[
         ("Personalize", &[Page("Appearance"), Page("Effects")]),
         (
@@ -8429,13 +8437,16 @@ fn render_list_sheet_links() -> Canvas {
             &[
                 Page("Keyboard"),
                 Page("Mouse & Touchpad"),
-                Link("Bluetooth"),
-                Link("Printers"),
+                link("Bluetooth"),
+                link("Printers"),
             ],
         ),
         (
             "Network",
-            &[Link("Network Connections"), Page("Remote Desktop")],
+            &[
+                link_named("Connections", "Network Connections"),
+                Page("Remote Desktop"),
+            ],
         ),
     ];
     render_list_sheets_of(groups, 1, |sheet| {
@@ -8448,7 +8459,7 @@ fn render_list_sheet_links() -> Canvas {
 /// The list sheets with "power" typed in the focused search field and the list filtered to
 /// Screen Saver & Lock, Power Options and Advanced; Printers greyed.
 fn render_list_sheet_search(scale: i32) -> Canvas {
-    use pagelist::Item::{Link, Page};
+    use pagelist::Item::Page;
     let groups: &[(&str, &[pagelist::Item])] = &[
         (
             "Personalize",
@@ -8456,9 +8467,9 @@ fn render_list_sheet_search(scale: i32) -> Canvas {
         ),
         (
             "Devices",
-            &[Page("Keyboard"), Link("Bluetooth"), Link("Printers")],
+            &[Page("Keyboard"), link("Bluetooth"), link("Printers")],
         ),
-        ("System", &[Link("Power Options"), Page("Advanced")]),
+        ("System", &[link("Power Options"), Page("Advanced")]),
     ];
     render_list_sheets_at(groups, 1, scale, |sheet| {
         let list = sheet.list_mut().expect("a list sheet");

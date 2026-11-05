@@ -6,5 +6,4 @@ Exec=reprise-datetime
 Icon=preferences-system-time
 Categories=Settings;
 StartupWMClass=reprise.datetime
-NoDisplay=true
 Terminal=false
