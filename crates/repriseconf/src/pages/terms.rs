@@ -97,10 +97,6 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("taskbar_position", "Taskbar location:"),
             ("taskbar_buttons", "Taskbar buttons:"),
             (
-                "taskbar_pinned",
-                "Show the Quick Launch programs as pinned task buttons",
-            ),
-            (
                 "taskbar_small_icons",
                 "Use small icons on a shorter taskbar",
             ),
@@ -136,16 +132,20 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "start_icon",
                 "Show the icon theme's logo on the Start button",
             ),
-            ("startmenu_banner", "Start menu banner:"),
-            ("startmenu_style", "Start menu style:"),
         ],
         Page::StartMenu => &[
+            ("startmenu_style", "Start menu style:"),
+            ("startmenu_banner", "Banner:"),
             ("sm_add", "Add..."),
             ("sm_folder", "New Folder"),
             ("sm_rename", "Rename..."),
             ("sm_remove", "Remove"),
             ("sm_up", "Move Up"),
             ("sm_down", "Move Down"),
+            (
+                "taskbar_pinned",
+                "Show the Quick Launch programs as pinned task buttons",
+            ),
             ("ql_add", "Add..."),
             ("ql_remove", "Remove"),
             ("ql_up", "Move Up"),

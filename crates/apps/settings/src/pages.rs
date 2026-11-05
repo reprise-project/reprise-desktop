@@ -275,7 +275,7 @@ pub const KB_UP: &str = "kb_up";
 /// The note under the Layouts list naming the keys that switch layouts ([`show_keys`]).
 pub const KB_SWITCH_NOTE: &str = "kb_switch_note";
 
-fn edit(id: &'static str, x: i32, y: i32, w: i32) -> Item {
+pub(crate) fn edit(id: &'static str, x: i32, y: i32, w: i32) -> Item {
     Item::edit(id, Rect::new(x, y, w, EDIT_H), "", true)
 }
 

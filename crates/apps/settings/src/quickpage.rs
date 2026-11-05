@@ -1,6 +1,7 @@
-//! The Start Menu page's Quick Launch group: the folder's buttons in order,
-//! with Add..., Remove, Move Up and Move Down. Each acts on the folder at
-//! once, as the Startup page does; the compositor watches the folder.
+//! The Start Menu page's Quick Launch group: whether the taskbar pins the
+//! folder's programs, then its buttons in order with Add..., Remove, Move Up
+//! and Move Down. Each button acts on the folder at once, as the Startup page
+//! does; the compositor watches the folder.
 
 use std::path::Path;
 
@@ -23,12 +24,12 @@ pub const DOWN: &str = "ql_down";
 
 /// The group, under the Start menu group; it moves down with the page's extra height.
 fn group_rect(a: Area) -> Rect {
-    Rect::new(X, 248 + a.dh, a.w, 134)
+    Rect::new(X, 316 + a.dh, a.w, 156)
 }
 pub fn list_rect(a: Area) -> Rect {
     Rect::new(
         GX,
-        268 + a.dh,
+        358 + a.dh,
         a.gw() - BUTTON_W - 8,
         6 * listbox::ROW_H + 4,
     )
@@ -47,6 +48,12 @@ pub fn items(a: Area) -> Vec<Item> {
     let list_rect = list_rect(a);
     let mut items = vec![
         Item::group("ql_group", group_rect(a), "Quick Launch"),
+        Item::check(
+            "taskbar_pinned",
+            GX,
+            336 + a.dh,
+            "Show the Quick Launch programs as pinned tas&k buttons",
+        ),
         Item::new(
             LIST,
             list_rect,
@@ -291,13 +298,14 @@ mod tests {
     #[test]
     fn the_group_sits_under_the_start_menus_with_its_buttons_beside_the_list() {
         let f = Form::new(items(Area::MIN));
-        assert_eq!(list_rect(Area::MIN), Rect::new(32, 268, 251, 106));
+        assert_eq!(list_rect(Area::MIN), Rect::new(32, 358, 251, 106));
         let tops: Vec<i32> = [ADD, REMOVE, UP, DOWN]
             .iter()
             .map(|id| f.item(id).unwrap().rect.y)
             .collect();
-        assert_eq!(tops, [268, 295, 322, 349]);
+        assert_eq!(tops, [358, 385, 412, 439]);
         assert!(group_rect(Area::MIN).bottom() >= list_rect(Area::MIN).bottom() + 8);
-        assert!(group_rect(Area::MIN).y >= crate::menupage::tree_rect(Area::MIN).bottom() + 20);
+        let menu = crate::menupage::page(Area::MIN);
+        assert!(group_rect(Area::MIN).y > menu.item("sm_group").unwrap().rect.bottom());
     }
 }
