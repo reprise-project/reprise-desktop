@@ -648,10 +648,7 @@ pub fn page(d: &Display, a: Area) -> Form {
         X,
         280 + dy,
         a.w,
-        &reprisekit::text::escape_mnemonic(&format!(
-            "Text size on the {} page enlarges all text.",
-            Page::TextKeys.label()
-        )),
+        &reprisekit::text::escape_mnemonic(&crate::pages::text_size_note()),
     ));
     Form::new(items)
 }
