@@ -2081,6 +2081,29 @@ fn a_link_row_starts_its_program_in_its_app_scope_and_settings_stays() {
 }
 
 #[test]
+fn audio_devices_greys_without_a_shown_sounds_entry() {
+    let enabled = |a: &SettingsApp| match a.sheet.pages[Page::Sound.index()]
+        .item(pages::AUDIO_DEVICES)
+        .map(|it| &it.control)
+    {
+        Some(form::Control::Button { enabled, .. }) => *enabled,
+        other => panic!("Audio Devices... is a button: {other:?}"),
+    };
+    let mut a = app("audio-devices");
+    assert!(a.app_dirs.is_empty());
+    assert!(!enabled(&a), "greyed with no entry");
+    let dir = tmp("audio-devices-apps");
+    std::fs::write(
+        dir.join("reprise-sound.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Sounds\nExec=reprise-sound\n",
+    )
+    .unwrap();
+    a.app_dirs = vec![dir];
+    a.show_links();
+    assert!(enabled(&a), "lit once the entry is shown");
+}
+
+#[test]
 fn open_program_starts_a_shown_entry_and_nothing_for_a_missing_one() {
     use std::ffi::OsString;
     let mut a = app("open-program");
