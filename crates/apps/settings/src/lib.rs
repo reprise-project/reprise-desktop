@@ -1018,6 +1018,15 @@ impl repriseapp::Extended for SettingsApp {
         self.drop_form(win).map(repriseapp::ReaderForm::Form)
     }
 
+    /// A control a reader focuses on the page takes the keyboard from a side list too.
+    fn reader(&mut self, win: WinId, act: repriseapp::Reader, ctx: &Ctx) -> bool {
+        let changed = repriseapp::reader_forms(self, win, act, ctx);
+        if changed && win == repriseapp::MAIN && self.sheet.open().focus().is_some() {
+            self.blur_side_lists();
+        }
+        changed
+    }
+
     fn drop_file_dialog(&mut self, win: WinId) -> Option<FileDrop<'_>> {
         (win == ADD_WIN).then_some(FileDrop {
             dlg: self.add.as_mut()?,
