@@ -214,6 +214,7 @@ impl SettingsApp {
             },
             propsheet::Event::Page(..) => Reply::redraw(),
             propsheet::Event::Link(_) => Reply::none(),
+            propsheet::Event::Search => Reply::redraw(),
             propsheet::Event::Apply => {
                 if self.apply() {
                     self.display.pending = Some(displayhost::Press::Apply);
@@ -375,7 +376,7 @@ impl SettingsApp {
                 Reply::redraw()
             }
             Event::Key(k) => {
-                let field = self.sheet.open().focused_edit();
+                let field = self.sheet.focused_edit();
                 let clip = form_clipboard(field, &Event::Key(k.clone()));
                 self.key(k, &ctx.forms().controls()).with_clipboard(clip)
             }

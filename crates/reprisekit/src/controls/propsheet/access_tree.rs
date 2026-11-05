@@ -1,14 +1,14 @@
 use crate::access::{self, Tree, accesskit};
 use crate::controls::pagelist::{self, Pick};
-use crate::controls::tabstrip;
+use crate::controls::{searchfield, tabstrip};
 use crate::text::TextRenderer;
 use accesskit::{NodeId, Role};
 
 use super::{Nav, PropSheet};
 
 impl PropSheet {
-    /// The sheet's `access` part: the tab list (list mode), then the open page as a
-    /// panel labelled by its tab or item. Returns the panel, for a host that draws
+    /// The sheet's `access` part: the tabs, or the search field and the page list, then the
+    /// open page as a panel labelled by its tab or item. Returns the panel, for a host that draws
     /// controls of its own on the page, and the focused node.
     pub fn access(
         &self,
@@ -19,6 +19,10 @@ impl PropSheet {
     ) -> (NodeId, Option<NodeId>) {
         let l = self.layout(text, px);
         let open = self.tabs.open;
+        let field = l.search.map(|f| {
+            let font = text.dialog(self.font);
+            searchfield::access(&self.search, f, font, px, tree, parent, "search")
+        });
         let (page, nav, role) = match (&self.nav, &l.list) {
             (Nav::List(list), Some(lay)) => {
                 let nodes = pagelist::access(list, &self.tabs, lay, tree, parent, "pages");
@@ -46,6 +50,7 @@ impl PropSheet {
         let panel = tree.push(parent, ("page", open), panel);
         let focus = self.open().access(tree, panel, text, px);
         let nav = nav.filter(|_| self.tabs.focused);
-        (panel, nav.or(focus))
+        let field = field.filter(|_| self.search_focused);
+        (panel, field.or(nav).or(focus))
     }
 }

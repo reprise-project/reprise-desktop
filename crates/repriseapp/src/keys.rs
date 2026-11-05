@@ -158,7 +158,7 @@ fn sheet_event(sheet: &mut PropSheet, ev: &Event, ctx: &Ctx) -> Option<propsheet
             .tip_tick()
             .then_some(propsheet::Event::Redraw)?,
         Event::Key(k) => {
-            note_clipboard(sheet.open().focused_edit(), ev);
+            note_clipboard(sheet.focused_edit(), ev);
             let ctrl_tab = propsheet::page_step(k.sym, k.mods.ctrl, k.mods.shift);
             sheet.key(form_key(k)?, ctrl_tab)
         }
@@ -711,6 +711,70 @@ mod tests {
         );
         assert_eq!(value(&form), 42);
         assert_eq!(take_clipboard(), Reply::none(), "taken once");
+    }
+
+    /// A list sheet's search field holding the keyboard gets the clipboard keys: Copy and Cut
+    /// read its selection, Ctrl+V asks for the clipboard and the text lands in the field.
+    #[test]
+    fn sheet_input_copies_cuts_and_pastes_for_the_search_field() {
+        use reprisekit::controls::pagelist;
+        use reprisekit::controls::propsheet::Hit;
+        let ctx = Ctx {
+            theme: reprisekit::theme::Theme::default(),
+            text: std::rc::Rc::new(reprisekit::text::TextRenderer::load(
+                &reprisekit::theme::FontConfig::default(),
+            )),
+            icons: reprisekit::icontheme::IconCache::new(reprisekit::icontheme::IconTheme::load(
+                "test",
+                &[],
+            )),
+            caret_on: true,
+            size: (544, 424),
+            maximized: false,
+            origin: (0, 0),
+            wake: crate::Waker::noop(),
+            heads: Default::default(),
+            want_tick: Default::default(),
+            output_size: None,
+            at_pick: false,
+            text_size: 100,
+        };
+        let ctrl = |ch: u8| {
+            Event::Key(KeyInput {
+                sym: u32::from(ch),
+                utf8: None,
+                mods: crate::Mods {
+                    ctrl: true,
+                    ..Default::default()
+                },
+                edit: reprisekit::textedit::key_for(u32::from(ch), true, false, None),
+            })
+        };
+        let groups: &[(&str, &[pagelist::Item])] = &[("All", &[pagelist::Item::Page("One")])];
+        let mut sheet = PropSheet::with_list(groups, vec![Form::new(Vec::new())], (398, 424));
+        sheet.click(Some(Hit::Search(0)));
+        sheet.key(form::Key::Edit(EditKey::Insert("power".into())), None);
+        sheet.key(form::Key::Edit(EditKey::SelectAll), None);
+
+        sheet_input(&mut sheet, &ctrl(b'c'), &ctx);
+        assert_eq!(take_clipboard().copy.as_deref(), Some("power"));
+        assert_eq!(
+            sheet_input(&mut sheet, &ctrl(b'x'), &ctx),
+            Some(propsheet::Event::Search)
+        );
+        assert_eq!(
+            take_clipboard().copy.as_deref(),
+            Some("power"),
+            "read before the cut"
+        );
+        assert_eq!(sheet.search.text(), "");
+        sheet_input(&mut sheet, &ctrl(b'v'), &ctx);
+        assert!(take_clipboard().paste);
+        assert_eq!(
+            sheet_input(&mut sheet, &Event::Pasted("mouse".into()), &ctx),
+            Some(propsheet::Event::Search)
+        );
+        assert_eq!(sheet.search.text(), "mouse");
     }
 
     /// Ctrl+Home and Ctrl+End take a memo's caret to its first and last
