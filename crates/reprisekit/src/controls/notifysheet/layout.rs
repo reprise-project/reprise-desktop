@@ -7,11 +7,12 @@ use crate::look::widgets::BUTTON_ICON;
 use crate::raster::Rect;
 use crate::style::{NotifyLook, SheetShape, Well};
 use crate::text::{TextRenderer, wrap};
-use crate::theme::Theme;
+use crate::theme::{TextUnits, Theme};
 
 use super::{SheetContent, SheetLayout, notify_look};
 
-/// The parts every shape shares, design px.
+/// The parts every shape shares, design px at 100% text; the fonts, the heights that hold a
+/// line, the pill sizes and the text column grow with the text size ([`Grown`]).
 const APP_PX: u32 = 12;
 const BODY_PX: u32 = 14;
 const APP_H: i32 = 16;
@@ -33,12 +34,10 @@ const BADGE: i32 = 18;
 const BADGE_IN: i32 = 4;
 /// The app icon's inset inside the badge's ring.
 pub(super) const BADGE_ICON_IN: i32 = 2;
-/// The reply field's text stands in this far from its rounded ends.
-pub(super) const FIELD_TEXT_IN: i32 = PILL_H / 2;
 /// A picture beside the title stands this far left of it.
 const PICTURE_GAP: i32 = 8;
 
-/// A shape's layout, design px from the sheet's top-left.
+/// A shape's layout at 100% text, design px from the sheet's top-left.
 struct Frame {
     shape: SheetShape,
     width: i32,
@@ -92,6 +91,53 @@ const HALO: Frame = Frame {
     picture: Some(28),
     row_x: 18,
 };
+
+/// The sizes that grow with `theme`'s text, design px but for the fonts, which are device px.
+struct Grown {
+    t: TextUnits,
+    app_px: u32,
+    title_px: u32,
+    body_px: u32,
+    app_h: i32,
+    title_h: i32,
+    line_h: i32,
+    pills: Pills,
+}
+
+/// What a pill holds: its label font in device px, the rest design px.
+struct Pills {
+    px: u32,
+    h: i32,
+    min: i32,
+    more: i32,
+}
+
+impl Grown {
+    fn new(theme: &Theme, title_px: u32) -> Grown {
+        let t = theme.text;
+        let su = theme.scale.max(1) as u32;
+        Grown {
+            t,
+            app_px: t.px(APP_PX) * su,
+            title_px: t.px(title_px) * su,
+            body_px: t.px(BODY_PX) * su,
+            app_h: t.len(APP_H),
+            title_h: t.len(TITLE_H),
+            line_h: t.len(LINE_H),
+            pills: Pills {
+                px: t.px(PILL_PX) * su,
+                h: t.len(PILL_H),
+                min: t.len(PILL_MIN),
+                more: t.len(MORE_W),
+            },
+        }
+    }
+
+    /// How much wider a text column `w` wide at 100% is at the text size.
+    fn widen(&self, w: i32) -> i32 {
+        self.t.len(w) - w
+    }
+}
 
 /// Lay out a sheet of `shape` for `c`; `expanded` opens a Droplet and shows the reply row in
 /// place of the pills. `None` when the look has no sheets ([`super::has_sheets`]).
@@ -155,35 +201,35 @@ fn action_row(
     reply: Option<NotifyReply>,
     (field_left, left, right, y): (i32, i32, i32, i32),
     s: i32,
-    pill_px: u32,
+    pills: &Pills,
     at: impl Fn(i32, i32, i32, i32) -> Rect,
 ) -> ActionRow {
     let room = right - left;
     let shown = actions.len().min(NOTIFY_BUTTONS);
-    let mut widths = pill_widths(text, &actions[..shown], icons, pill_px, s);
+    let mut widths = pill_widths(text, &actions[..shown], icons, pills, s);
     if actions.len() > NOTIFY_BUTTONS {
-        widths.push(MORE_W);
+        widths.push(pills.more);
     }
     let flow = flow_buttons(&widths, room, PILL_GAP);
     let rows = flow_rows(&flow).max(i32::from(reply.is_some()));
-    let row_y = |row: i32| y + row * (PILL_H + PILL_GAP);
+    let row_y = |row: i32| y + row * (pills.h + PILL_GAP);
     let mut row = ActionRow {
         buttons: Vec::new(),
         labels: Vec::new(),
         more: None,
         field: None,
         send: None,
-        bottom: (rows > 0).then(|| row_y(rows - 1) + PILL_H),
+        bottom: (rows > 0).then(|| row_y(rows - 1) + pills.h),
     };
     if let Some(r) = reply {
-        let sw = pill_widths(text, &[r.send], &[], pill_px, s)[0].min(room);
+        let sw = pill_widths(text, &[r.send], &[], pills, s)[0].min(room);
         let sx = right - sw;
-        row.send = Some(at(sx, y, sw, PILL_H));
-        row.field = Some(at(field_left, y, sx - PILL_GAP - field_left, PILL_H));
+        row.send = Some(at(sx, y, sw, pills.h));
+        row.field = Some(at(field_left, y, sx - PILL_GAP - field_left, pills.h));
         return row;
     }
     for (i, f) in flow.iter().enumerate() {
-        let pill = at(left + f.x, row_y(f.row), f.width, PILL_H);
+        let pill = at(left + f.x, row_y(f.row), f.width, pills.h);
         if i == shown {
             row.more = Some(pill);
             continue;
@@ -191,15 +237,23 @@ fn action_row(
         row.buttons.push(pill);
         let room = (f.width - 2 * PILL_PAD) * s;
         let iconic = icons.get(i).copied().unwrap_or(false);
-        row.labels
-            .push((!iconic).then(|| text.ellipsize(actions[i], room, true, pill_px).into_owned()));
+        row.labels.push((!iconic).then(|| {
+            text.ellipsize(actions[i], room, true, pills.px)
+                .into_owned()
+        }));
     }
     row
 }
 
 /// Pill widths, design px: label plus padding, or for an action `icons` marks its icon plus
 /// padding.
-fn pill_widths(text: &TextRenderer, labels: &[&str], icons: &[bool], px: u32, s: i32) -> Vec<i32> {
+fn pill_widths(
+    text: &TextRenderer,
+    labels: &[&str],
+    icons: &[bool],
+    pills: &Pills,
+    s: i32,
+) -> Vec<i32> {
     labels
         .iter()
         .enumerate()
@@ -207,7 +261,7 @@ fn pill_widths(text: &TextRenderer, labels: &[&str], icons: &[bool], px: u32, s:
             if icons.get(i).copied().unwrap_or(false) {
                 ICON_PILL_W
             } else {
-                ((text.measure(l, true, px) + s - 1) / s + 2 * PILL_PAD).max(PILL_MIN)
+                ((text.measure(l, true, pills.px) + s - 1) / s + 2 * PILL_PAD).max(pills.min)
             }
         })
         .collect()
@@ -222,25 +276,26 @@ fn column_layout(
     expanded: bool,
 ) -> SheetLayout {
     let s = theme.scale.max(1);
-    let su = s as u32;
+    let g = Grown::new(theme, f.title_px);
+    let (app_px, title_px, body_px) = (g.app_px, g.title_px, g.body_px);
     let m = (look.margin)(f.shape);
-    let w = f.width;
-    let (app_px, title_px, body_px, pill_px) =
-        (APP_PX * su, f.title_px * su, BODY_PX * su, PILL_PX * su);
+    let dw = g.widen(f.width - f.pad - f.text.0);
+    let w = f.width + dw;
+    let text_y = f.text.1 + g.app_h - APP_H;
     let picture = f
         .picture
         .filter(|_| c.has_picture)
-        .map(|side| Rect::new(f.text.0, f.text.1, side, side));
+        .map(|side| Rect::new(f.text.0, text_y, side, side));
     let text_x = picture.map_or(f.text.0, |p| p.right() + PICTURE_GAP);
     let text_w = w - f.pad - text_x;
-    let close_x = f.close.0;
+    let close_x = f.close.0 + dw;
     let head_w = close_x - CLOSE_GAP - f.app.0;
     let title_w = if f.title_by_close {
         close_x - CLOSE_GAP - text_x
     } else {
         text_w
     };
-    let (title_y, body_y) = (f.text.1, f.text.1 + TITLE_H);
+    let (title_y, body_y) = (text_y, text_y + g.title_h);
 
     let app_shown = text
         .ellipsize(&app_line(c), head_w * s, false, app_px)
@@ -249,7 +304,8 @@ fn column_layout(
         .ellipsize(c.title, title_w * s, true, title_px)
         .into_owned();
     let lines = body_lines(text, c.body, text_w * s, body_px);
-    let text_bottom = (body_y + lines.len() as i32 * LINE_H).max(picture.map_or(0, |p| p.bottom()));
+    let text_bottom =
+        (body_y + lines.len() as i32 * g.line_h).max(picture.map_or(0, |p| p.bottom()));
 
     let reply = c.reply.filter(|_| expanded);
     let row_y = text_bottom + ROW_GAP;
@@ -267,7 +323,7 @@ fn column_layout(
         reply,
         (f.row_x, f.pad, w - f.pad, row_y),
         s,
-        pill_px,
+        &g.pills,
         Rect::new,
     );
     let bottom = row_bottom.unwrap_or(text_bottom);
@@ -285,12 +341,12 @@ fn column_layout(
     });
     let parts = NotifyParts {
         bubble: at(sheet),
-        title: at(Rect::new(text_x, title_y, title_w, TITLE_H)),
+        title: at(Rect::new(text_x, title_y, title_w, g.title_h)),
         body: at(Rect::new(
             text_x,
             body_y,
             text_w,
-            lines.len().max(1) as i32 * LINE_H,
+            lines.len().max(1) as i32 * g.line_h,
         )),
         close: at(Rect::new(close_x, f.close.1, CLOSE, CLOSE)),
         buttons: buttons.into_iter().map(at).collect(),
@@ -321,16 +377,17 @@ fn column_layout(
         title_px,
         body_px,
         app_line: app_shown,
-        app_box: at(Rect::new(f.app.0, f.app.1, head_w, APP_H)),
+        app_box: at(Rect::new(f.app.0, f.app.1, head_w, g.app_h)),
         title,
         labels,
-        line_h: LINE_H * s,
-        pill_px,
+        line_h: g.line_h * s,
+        pill_px: g.pills.px,
     }
 }
 
-/// The Droplet, design px: a capsule row of round slot, title and app line, one body line and
-/// the picture; expanded, the body wraps and the pills follow.
+/// The Droplet at 100% text, design px: a capsule row of round slot, title and app line, one
+/// body line and the picture; expanded, the body wraps and the pills follow. Text taller than
+/// the slot makes the row taller, the slot, picture and close centred on it.
 const DROPLET_W: i32 = 360;
 const DROPLET_H: i32 = 68;
 const DROPLET_SLOT: i32 = 48;
@@ -343,9 +400,8 @@ const DROPLET_TITLE_PX: u32 = 15;
 const APP_GAP: i32 = 8;
 /// The title keeps at least this share of the head row from a long app line, fifths.
 const TITLE_SHARE: i32 = 3;
-const DROPLET_CLOSE: (i32, i32) = (DROPLET_W - DROPLET_END - CLOSE, 24);
 const DROPLET_PAD: i32 = 14;
-const DROPLET_OPEN_CLOSE: (i32, i32) = (DROPLET_W - DROPLET_PAD - CLOSE, 12);
+const DROPLET_OPEN_CLOSE_Y: i32 = 12;
 
 fn droplet_layout(
     theme: &Theme,
@@ -355,36 +411,41 @@ fn droplet_layout(
     expanded: bool,
 ) -> SheetLayout {
     let s = theme.scale.max(1);
-    let su = s as u32;
+    let g = Grown::new(theme, DROPLET_TITLE_PX);
+    let (app_px, title_px, body_px) = (g.app_px, g.title_px, g.body_px);
     let m = (look.margin)(SheetShape::Droplet);
     let (ox, oy) = (m.left * s, m.top * s);
     let at = |x: i32, y: i32, w: i32, h: i32| Rect::new(ox + x * s, oy + y * s, w * s, h * s);
-    let (app_px, title_px, body_px, pill_px) = (
-        APP_PX * su,
-        DROPLET_TITLE_PX * su,
-        BODY_PX * su,
-        PILL_PX * su,
-    );
-    let picture_x = DROPLET_W - DROPLET_PICTURE_END - DROPLET_SLOT;
     let text_x = DROPLET_TEXT_X;
-    let (shut_close, open_close) = if c.has_picture {
-        let x = picture_x - CLOSE_GAP - CLOSE;
-        ((x, DROPLET_CLOSE.1), (x, DROPLET_OPEN_CLOSE.1))
+    let w = DROPLET_W + g.widen(DROPLET_W - DROPLET_END - text_x);
+
+    let has_body = c.body.split_whitespace().next().is_some();
+    let block = g.title_h + if has_body { g.line_h } else { 0 };
+    let row_h = DROPLET_SLOT.max(block);
+    let shut_h = DROPLET_H.max(row_h + 2 * DROPLET_IN);
+    let slot_y = DROPLET_IN + (row_h - DROPLET_SLOT) / 2;
+    let title_y = DROPLET_IN + (row_h - block) / 2;
+    let body_y = title_y + g.title_h;
+
+    let picture_x = w - DROPLET_PICTURE_END - DROPLET_SLOT;
+    let close_x = if c.has_picture {
+        picture_x - CLOSE_GAP - CLOSE
     } else {
-        (DROPLET_CLOSE, DROPLET_OPEN_CLOSE)
+        w - DROPLET_END - CLOSE
+    };
+    let shut_close = (close_x, (shut_h - CLOSE) / 2);
+    let open_close = if c.has_picture {
+        (close_x, DROPLET_OPEN_CLOSE_Y)
+    } else {
+        (w - DROPLET_PAD - CLOSE, DROPLET_OPEN_CLOSE_Y)
     };
     let head_right = shut_close.0 - CLOSE_GAP;
     let text_right = match (expanded, c.has_picture) {
         (false, _) => head_right,
         (true, true) => picture_x - DROPLET_IN,
-        (true, false) => DROPLET_W - DROPLET_END,
+        (true, false) => w - DROPLET_END,
     };
     let text_w = text_right - text_x;
-
-    let has_body = c.body.split_whitespace().next().is_some();
-    let block = TITLE_H + if has_body { LINE_H } else { 0 };
-    let title_y = DROPLET_IN + (DROPLET_SLOT - block) / 2;
-    let body_y = title_y + TITLE_H;
     let lines = match (has_body, expanded) {
         (false, _) => Vec::new(),
         (true, true) => body_lines(text, c.body, text_w * s, body_px),
@@ -397,7 +458,7 @@ fn droplet_layout(
         }
     };
 
-    let head = at(text_x, title_y, head_right - text_x, TITLE_H);
+    let head = at(text_x, title_y, head_right - text_x, g.title_h);
     let app = app_line(c);
     let app_w = text.measure(&app, false, app_px);
     let gap = APP_GAP * s;
@@ -419,32 +480,32 @@ fn droplet_layout(
 
     let reply = c.reply.filter(|_| expanded);
     let actions = if expanded { c.actions } else { &[][..] };
-    let text_bottom = body_y + lines.len() as i32 * LINE_H;
-    let row_y = text_bottom.max(DROPLET_IN + DROPLET_SLOT) + ROW_GAP;
+    let text_bottom = body_y + lines.len() as i32 * g.line_h;
+    let row_y = text_bottom.max(slot_y + DROPLET_SLOT) + ROW_GAP;
     let row = action_row(
         text,
         actions,
         c.action_icons,
         reply,
-        (text_x, DROPLET_PAD, DROPLET_W - DROPLET_PAD, row_y),
+        (text_x, DROPLET_PAD, w - DROPLET_PAD, row_y),
         s,
-        pill_px,
+        &g.pills,
         at,
     );
     let h = if let Some(bottom) = row.bottom {
-        DROPLET_H.max(bottom + DROPLET_PAD)
+        shut_h.max(bottom + DROPLET_PAD)
     } else if expanded {
-        DROPLET_H.max(text_bottom + DROPLET_PAD)
+        shut_h.max(text_bottom + DROPLET_PAD)
     } else {
-        DROPLET_H
+        shut_h
     };
 
-    let sheet = at(0, 0, DROPLET_W, h);
+    let sheet = at(0, 0, w, h);
     let (close_x, close_y) = if expanded { open_close } else { shut_close };
     let parts = NotifyParts {
         bubble: sheet,
         title: head,
-        body: at(text_x, body_y, text_w, lines.len().max(1) as i32 * LINE_H),
+        body: at(text_x, body_y, text_w, lines.len().max(1) as i32 * g.line_h),
         close: at(close_x, close_y, CLOSE, CLOSE),
         buttons: row.buttons,
         more: row.more,
@@ -454,18 +515,18 @@ fn droplet_layout(
         send_label: reply.map_or_else(String::new, |r| r.send.to_string()),
     };
     SheetLayout {
-        width: (m.left + DROPLET_W + m.right) * s,
+        width: (m.left + w + m.right) * s,
         height: (m.top + m.bottom + h) * s,
         shape: SheetShape::Droplet,
         expanded,
         sheet,
         footprint: sheet,
-        icon: at(DROPLET_IN, DROPLET_IN, DROPLET_SLOT, DROPLET_SLOT),
+        icon: at(DROPLET_IN, slot_y, DROPLET_SLOT, DROPLET_SLOT),
         well: Well::Round,
         badge: None,
         picture: c
             .has_picture
-            .then(|| at(picture_x, DROPLET_IN, DROPLET_SLOT, DROPLET_SLOT)),
+            .then(|| at(picture_x, slot_y, DROPLET_SLOT, DROPLET_SLOT)),
         parts,
         lines,
         app_px,
@@ -475,8 +536,8 @@ fn droplet_layout(
         app_box,
         title,
         labels: row.labels,
-        line_h: LINE_H * s,
-        pill_px,
+        line_h: g.line_h * s,
+        pill_px: g.pills.px,
     }
 }
 

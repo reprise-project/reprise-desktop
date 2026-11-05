@@ -13,7 +13,7 @@ use crate::theme::{Color, Theme};
 
 use super::SheetLayout;
 use super::glass::SheetGlass;
-use super::layout::{BADGE_ICON_IN, FIELD_TEXT_IN, PILL_PAD};
+use super::layout::{BADGE_ICON_IN, PILL_PAD};
 
 /// The app icon, the notification's own picture and each pill's action icon, device px.
 #[derive(Clone, Copy, Debug, Default)]
@@ -362,9 +362,10 @@ pub(super) fn relight(
     }
 }
 
+/// The reply field's text stands in from its rounded ends by half its height.
 pub(super) fn field_text(lay: &SheetLayout, s: i32) -> Option<Rect> {
-    let d = FIELD_TEXT_IN * s;
-    lay.parts
-        .field
-        .map(|f| Rect::new(f.x + d, f.y, f.width - 2 * d, f.height))
+    lay.parts.field.map(|f| {
+        let d = f.height / s / 2 * s;
+        Rect::new(f.x + d, f.y, f.width - 2 * d, f.height)
+    })
 }
