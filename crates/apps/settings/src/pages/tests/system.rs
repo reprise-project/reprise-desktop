@@ -18,7 +18,57 @@ fn the_sounds_page_geometry() {
     assert_eq!(rect(&s, p, "bell"), Rect::new(GX, 154, 13, 13));
     assert_eq!(rect(&s, p, "volume_group"), Rect::new(20, 190, 358, 74));
     assert_eq!(rect(&s, p, "allow_boost"), Rect::new(GX, 212, 13, 13));
+    assert_eq!(rect(&s, p, "notify_group"), Rect::new(20, 274, 358, 144));
+    assert_eq!(
+        rect(&s, p, notifypage::PROGRAMS),
+        Rect::new(GX, 294, 334, 89)
+    );
+    assert_eq!(
+        rect(&s, p, notifypage::BALLOONS),
+        Rect::new(GX, 391, 13, 13)
+    );
+    assert_eq!(
+        rect(&s, p, notifypage::SOUNDS),
+        Rect::new(GX + 140, 391, 13, 13)
+    );
     inside_page(&s, p);
+}
+
+#[test]
+fn the_program_switches_pin_their_pixels_in_every_look() {
+    let s = Settings {
+        notify_no_sounds: vec!["chat".into()],
+        ..Settings::default()
+    };
+    let mut f = sounds(Area::MIN, &[]);
+    let programs = notifypage::programs(
+        &[
+            ("mail".into(), "Mail".into()),
+            ("chat".into(), "Chat".into()),
+        ],
+        &s,
+        |_| None,
+    );
+    notifypage::fill(&mut f, &programs, &s);
+    let row = Rect::new(20, 274, 358, 144);
+    let Some(none) = row_pins(&f, row) else {
+        return;
+    };
+    if let Some(form::Control::ListBox { list, .. }) =
+        f.item_mut(notifypage::PROGRAMS).map(|i| &mut i.control)
+    {
+        list.selected = Some(1);
+    }
+    notifypage::fill(&mut f, &programs, &s);
+    let chat = row_pins(&f, row).unwrap();
+    assert_eq!(
+        [none, chat],
+        [
+            [0x7271412745a72c79, 0xfd6a7e8ff001b3f9, 0xb31b2628785111f8],
+            [0xff6d03cb3a6174f0, 0xa243e9831ad6b73a, 0xc5e8178a57516dfb],
+        ],
+        "nothing picked, Chat picked; Classic, Blue, Glass"
+    );
 }
 
 /// The checks write `[notifications] sound` and `[sounds] bell` and grey the theme combo while

@@ -62,6 +62,8 @@ const NO_APP: &str = "Other";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub id: u32,
+    /// The program, which groups entries; `app` is its name, the newest one's heading the group.
+    pub key: String,
     pub app: String,
     /// The newest one's heads its group.
     pub icon: Option<Rc<Canvas>>,
@@ -74,7 +76,7 @@ pub struct Entry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Meta {
     Header {
-        app: String,
+        key: String,
         open: bool,
     },
     Note {
@@ -205,7 +207,7 @@ pub enum Key {
     Right,
     Enter,
     Delete,
-    /// The Menu key: the selected notification's actions menu.
+    /// The Menu key: the selected notification's actions menu, or on a header its program's.
     Menu,
     Escape,
 }
@@ -223,6 +225,8 @@ pub enum Event {
     Invoke(u32),
     /// Open notification `id`'s actions menu under its row (the Menu key).
     Menu(u32),
+    /// Open program `key`'s menu under its header (the Menu key).
+    GroupMenu(String),
     Close,
 }
 
@@ -254,24 +258,25 @@ impl History {
         let picked_app = self
             .list
             .selected
-            .and_then(|i| self.app_of(i))
+            .and_then(|i| self.key_of(i))
             .map(str::to_string);
         let old_apps: Vec<String> = self.headers().map(str::to_string).collect();
-        let mut apps: Vec<&str> = Vec::new();
+        let mut keys: Vec<&str> = Vec::new();
         for e in &self.entries {
-            if !apps.contains(&e.app.as_str()) {
-                apps.push(&e.app);
+            if !keys.contains(&e.key.as_str()) {
+                keys.push(&e.key);
             }
         }
         let (mut rows, mut meta, mut icons, mut trail) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        for app in apps {
-            let notes: Vec<&Entry> = self.entries.iter().filter(|e| e.app == app).collect();
-            let open = !self.folded.contains(app);
+        for key in keys {
+            let notes: Vec<&Entry> = self.entries.iter().filter(|e| e.key == key).collect();
+            let open = !self.folded.contains(key);
+            let app = notes.first().map_or("", |e| e.app.as_str());
             let name = if app.is_empty() { NO_APP } else { app };
             rows.push(Row::Group(format!("{name} ({})", notes.len())));
             meta.push(Meta::Header {
-                app: app.to_string(),
+                key: key.to_string(),
                 open,
             });
             icons.push(notes.first().and_then(|e| e.icon.clone()));
@@ -302,7 +307,7 @@ impl History {
         self.meta = meta;
         self.icons = icons;
         let same = |m: &Meta| match (&picked, m) {
-            (Some(Meta::Header { app: a, .. }), Meta::Header { app: b, .. }) => a == b,
+            (Some(Meta::Header { key: a, .. }), Meta::Header { key: b, .. }) => a == b,
             (Some(Meta::Note { id: a, .. }), Meta::Note { id: b, .. }) => a == b,
             _ => false,
         };
@@ -329,15 +334,23 @@ impl History {
 
     fn headers(&self) -> impl Iterator<Item = &str> {
         self.meta.iter().filter_map(|m| match m {
-            Meta::Header { app, .. } => Some(app.as_str()),
+            Meta::Header { key, .. } => Some(key.as_str()),
             Meta::Note { .. } => None,
         })
     }
 
-    fn header_row(&self, app: &str) -> Option<usize> {
+    fn header_row(&self, key: &str) -> Option<usize> {
         self.meta
             .iter()
-            .position(|m| matches!(m, Meta::Header { app: a, .. } if a == app))
+            .position(|m| matches!(m, Meta::Header { key: k, .. } if k == key))
+    }
+
+    /// The program row `i` heads, when it is a group's header.
+    pub fn group_at(&self, i: usize) -> Option<&str> {
+        match self.meta.get(i)? {
+            Meta::Header { key, .. } => Some(key),
+            Meta::Note { .. } => None,
+        }
     }
 
     pub fn note_at(&self, i: usize) -> Option<u32> {
@@ -347,12 +360,12 @@ impl History {
         }
     }
 
-    fn app_of(&self, i: usize) -> Option<&str> {
+    fn key_of(&self, i: usize) -> Option<&str> {
         self.meta[..=i.min(self.meta.len().checked_sub(1)?)]
             .iter()
             .rev()
             .find_map(|m| match m {
-                Meta::Header { app, .. } => Some(app.as_str()),
+                Meta::Header { key, .. } => Some(key.as_str()),
                 Meta::Note { .. } => None,
             })
     }
@@ -380,13 +393,13 @@ impl History {
         Event::Redraw
     }
 
-    /// Open `app`'s group and select its newest notification, scrolled
-    /// so the header shows above it: where a click on its "new from"
-    /// balloon lands.
-    pub fn reveal(&mut self, app: &str) {
-        self.folded.remove(app);
+    /// Open program `key`'s group and select its newest notification,
+    /// scrolled so the header shows above it: where a click on its "new
+    /// from" balloon lands.
+    pub fn reveal(&mut self, key: &str) {
+        self.folded.remove(key);
         self.rebuild();
-        let header = self.header_row(app);
+        let header = self.header_row(key);
         if let Some(h) = header {
             let first = if self.note_at(h + 1).is_some() {
                 h + 1
@@ -423,7 +436,7 @@ impl History {
     }
 
     fn act(&mut self, i: usize, key: Key) -> Event {
-        let Some(app) = self.app_of(i).map(str::to_string) else {
+        let Some(app) = self.key_of(i).map(str::to_string) else {
             return Event::None;
         };
         match (self.meta[i].clone(), key) {
@@ -431,6 +444,7 @@ impl History {
             (Meta::Header { open: false, .. }, Key::Right) => self.set_open(&app, true),
             (_, Key::Left) => self.set_open(&app, false),
             (Meta::Header { .. }, Key::Delete) => Event::ClearGroup(app),
+            (Meta::Header { .. }, Key::Menu) => Event::GroupMenu(app),
             (Meta::Note { id, live: true, .. }, Key::Enter) => Event::Invoke(id),
             (Meta::Note { id, .. }, Key::Delete) => Event::Dismiss(id),
             (Meta::Note { id, .. }, Key::Menu) => Event::Menu(id),
@@ -447,7 +461,7 @@ impl History {
             Hit::Clear if !self.list.rows.is_empty() => self.hold(Held::Clear),
             Hit::GroupClear(i) => self.hold(Held::GroupClear(i)),
             Hit::List(grouplist::Hit::Row(i)) => match self.meta.get(i).cloned() {
-                Some(Meta::Header { app, open }) => self.set_open(&app, !open),
+                Some(Meta::Header { key, open }) => self.set_open(&key, !open),
                 Some(Meta::Note { .. }) => {
                     self.list.select(i, ROWS as usize);
                     Event::Redraw
@@ -504,7 +518,7 @@ impl History {
             }
             Some(Held::Clear) => Event::Clear,
             Some(Held::GroupClear(i)) => match self.meta.get(i) {
-                Some(Meta::Header { app, .. }) => Event::ClearGroup(app.clone()),
+                Some(Meta::Header { key, .. }) => Event::ClearGroup(key.clone()),
                 _ => Event::Redraw,
             },
             None => Event::Redraw,
@@ -737,6 +751,7 @@ pub fn access(
             match m {
                 Meta::Header { open, .. } => {
                     n.set_expanded(*open);
+                    n.add_action(Action::ShowContextMenu);
                     // The AT-SPI bridge maps no `expanded`; screen readers hear the fold here.
                     if !open {
                         n.set_description(COLLAPSED_LABEL);
@@ -772,6 +787,7 @@ pub fn access(
 pub fn sample() -> History {
     let entry = |id, app: &str, message: &str, time: &str, live| Entry {
         id,
+        key: app.into(),
         app: app.into(),
         icon: None,
         message: message.into(),
@@ -846,6 +862,7 @@ mod tests {
         let mut h = History::new();
         h.set_entries(vec![Entry {
             id: 1,
+            key: String::new(),
             app: String::new(),
             icon: None,
             message: "Hi".into(),
@@ -899,6 +916,37 @@ mod tests {
         assert_eq!(dead.key(Key::Escape), Event::Close);
     }
 
+    #[test]
+    fn the_menu_key_on_a_header_opens_its_programs_menu() {
+        let mut h = sample();
+        h.list.select(3, ROWS as usize);
+        assert_eq!(h.group_at(3), Some("Updates"));
+        assert_eq!(h.group_at(4), None, "a notification row");
+        assert_eq!(h.key(Key::Menu), Event::GroupMenu("Updates".into()));
+    }
+
+    #[test]
+    fn programs_group_by_key_under_the_newest_name() {
+        let entry = |id, key: &str, app: &str| Entry {
+            id,
+            key: key.into(),
+            app: app.into(),
+            icon: None,
+            message: format!("m{id}"),
+            time: String::new(),
+            live: true,
+            replied: false,
+        };
+        let mut h = History::new();
+        h.set_entries(vec![
+            entry(3, "org.example.Mail", "Mail"),
+            entry(2, "mail", "Mail"),
+            entry(1, "org.example.Mail", "Old Mail"),
+        ]);
+        assert_eq!(labels(&h), ["Mail (2)", "m3", "m1", "Mail (1)", "m2"]);
+        assert_eq!(h.group_at(3), Some("mail"));
+    }
+
     /// A group's Clear holds down on the press and clears that program
     /// on the release over it; dragged off, it does nothing.
     #[test]
@@ -933,6 +981,7 @@ mod tests {
             0,
             Entry {
                 id: 5,
+                key: "Chat".into(),
                 app: "Chat".into(),
                 icon: None,
                 message: "Hey".into(),
@@ -953,7 +1002,7 @@ mod tests {
     #[test]
     fn clearing_the_selected_group_selects_the_next_header() {
         let without = |h: &History, app: &str| -> Vec<Entry> {
-            h.entries.iter().filter(|e| e.app != app).cloned().collect()
+            h.entries.iter().filter(|e| e.key != app).cloned().collect()
         };
         let mut h = sample();
         h.list.select(2, ROWS as usize);
@@ -974,6 +1023,7 @@ mod tests {
         let entries: Vec<Entry> = (0..24)
             .map(|i| Entry {
                 id: 100 - i,
+                key: if i < 15 { "Chat" } else { "Mail" }.into(),
                 app: if i < 15 { "Chat" } else { "Mail" }.into(),
                 icon: None,
                 message: format!("m{i}"),
@@ -1277,7 +1327,10 @@ mod tests {
         assert_eq!(replied.description(), Some("Replied, 1:05 PM"));
         assert!(note.supports_action(Action::ShowContextMenu));
         assert!(note.supports_action(Action::Focus) && note.supports_action(Action::Click));
-        assert!(!mail.supports_action(Action::ShowContextMenu));
+        assert!(
+            mail.supports_action(Action::ShowContextMenu),
+            "a header has its program's menu"
+        );
     }
 
     #[test]

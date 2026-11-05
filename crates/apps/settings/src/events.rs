@@ -4,8 +4,8 @@ use crate::registry::Page;
 use crate::{
     ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN, SAVER_WIN,
     SHORTCUT_WIN, SettingsApp, additem, appearancepage, backgroundpage, defaultspage, displayhost,
-    displaypage, filepick::Pick, layoutdlg, menupage, pages, quickpage, renamedlg, saverdlg,
-    saverpage,
+    displaypage, filepick::Pick, layoutdlg, menupage, notifypage, pages, quickpage, renamedlg,
+    saverdlg, saverpage,
 };
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
@@ -30,6 +30,16 @@ impl SettingsApp {
                 }
                 if p == Page::Tablet.index() {
                     return self.tablet_changed(id);
+                }
+                if p == Page::Sounds.index()
+                    && [
+                        notifypage::PROGRAMS,
+                        notifypage::BALLOONS,
+                        notifypage::SOUNDS,
+                    ]
+                    .contains(&id)
+                {
+                    return self.notify_changed(id);
                 }
                 if id == pages::CHARGE_LIMIT {
                     self.charge_toggled();

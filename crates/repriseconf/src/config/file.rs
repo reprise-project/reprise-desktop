@@ -292,6 +292,8 @@ pub struct FileNotifications {
     pub sound: Option<bool>,
     pub quiet_hours: Option<Vec<String>>,
     pub auto_dnd: Option<bool>,
+    pub no_balloons: Option<Vec<String>>,
+    pub no_sounds: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Default)]

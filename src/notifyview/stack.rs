@@ -29,6 +29,8 @@ pub(super) enum Item {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Burst {
+    /// The program's [`Notification::key`]; `app` is its name.
+    pub(super) key: String,
     pub(super) app: String,
     icon: Vec<IconSource>,
     app_icon: Vec<IconSource>,
@@ -39,8 +41,9 @@ pub(super) struct Burst {
 }
 
 impl Burst {
-    pub(super) fn new(app: &str) -> Burst {
+    pub(super) fn new(key: &str, app: &str) -> Burst {
         Burst {
+            key: key.to_string(),
             app: app.to_string(),
             ..Burst::default()
         }
@@ -84,8 +87,8 @@ impl Item {
         matches!(self, Item::Burst(b) if b.ids.contains(&id))
     }
 
-    pub(super) fn burst_of(&self, app: &str) -> bool {
-        matches!(self, Item::Burst(b) if b.app == app)
+    pub(super) fn burst_of(&self, key: &str) -> bool {
+        matches!(self, Item::Burst(b) if b.key == key)
     }
 
     pub(super) fn icon(&self) -> &[IconSource] {
@@ -154,12 +157,12 @@ pub(super) fn slot_of(items: &[&Item], id: u32) -> Option<usize> {
     items.iter().position(|i| i.is(id))
 }
 
-/// The stack notes from `app` a new burst takes: all but one with an open reply (the bool).
-pub(super) fn fold_from(items: &[(&Item, bool)], app: &str) -> Vec<usize> {
+/// The stack notes from program `key` a new burst takes: all but one with an open reply (the bool).
+pub(super) fn fold_from(items: &[(&Item, bool)], key: &str) -> Vec<usize> {
     items
         .iter()
         .enumerate()
-        .filter(|(_, (item, replying))| !replying && item.note().is_some_and(|n| n.app == app))
+        .filter(|(_, (item, replying))| !replying && item.note().is_some_and(|n| n.key == key))
         .map(|(i, _)| i)
         .collect()
 }
@@ -173,49 +176,50 @@ pub(super) fn take_all<T>(stack: &mut Vec<T>, leaving: &mut Vec<T>) -> Vec<T> {
 }
 
 pub(super) fn foldable(n: &Notification) -> bool {
-    !n.app.is_empty() && n.id != OWN_ID && n.urgency != Urgency::Critical
+    !n.key.is_empty() && n.id != OWN_ID && n.urgency != Urgency::Critical
 }
 
 pub(super) fn in_burst(v: &NotifyView, id: u32) -> bool {
     v.stack.iter().any(|b| b.item.burst_has(id)) || v.queue.iter().any(|q| q.burst_has(id))
 }
 
-pub(super) fn arrived(recent: &mut VecDeque<(String, Instant)>, app: &str, at: Instant) -> bool {
+/// Program `key` raised a balloon at `at`; true when that makes a burst.
+pub(super) fn arrived(recent: &mut VecDeque<(String, Instant)>, key: &str, at: Instant) -> bool {
     while recent
         .front()
         .is_some_and(|(_, t)| at.duration_since(*t) > BURST_WINDOW)
     {
         recent.pop_front();
     }
-    recent.push_back((app.to_string(), at));
-    recent.iter().filter(|(a, _)| a == app).count() > BURST_AFTER
+    recent.push_back((key.to_string(), at));
+    recent.iter().filter(|(k, _)| k == key).count() > BURST_AFTER
 }
 
 /// Fold `n` into its program's burst, shown or queued; else a new burst takes the program's notes
 /// (but a reply being written), in the oldest shown one's slot or the first queued one's place.
 pub(super) fn fold(state: &mut State, n: Notification) {
-    let app = n.app.clone();
+    let key = n.key.clone();
     let mut expired_ids = Vec::new();
     if n.transient {
         expired_ids.push(n.id);
     }
     let sheets = sheets(state);
     let v = &mut state.notify;
-    if let Some(i) = v.stack.iter().position(|b| b.item.burst_of(&app)) {
+    if let Some(i) = v.stack.iter().position(|b| b.item.burst_of(&key)) {
         join_burst(&mut v.stack[i], &n, &state.config.theme);
         v.stack[i].painted = None;
         restart(v, i, Some(DEFAULT_MS), sheets);
         paint(state);
-    } else if let Some(Item::Burst(b)) = v.queue.iter_mut().find(|q| q.burst_of(&app)) {
+    } else if let Some(Item::Burst(b)) = v.queue.iter_mut().find(|q| q.burst_of(&key)) {
         b.add(&n);
     } else {
-        let mut burst = Burst::new(&app);
+        let mut burst = Burst::new(&key, &n.app);
         let shown: Vec<(&Item, bool)> = v
             .stack
             .iter()
             .map(|b| (&b.item, b.reply.is_some()))
             .collect();
-        let on_screen = fold_from(&shown, &app);
+        let on_screen = fold_from(&shown, &key);
         for &i in on_screen.iter().rev() {
             if let Item::Note(a) = &v.stack[i].item {
                 burst.add(a);
@@ -224,7 +228,7 @@ pub(super) fn fold(state: &mut State, n: Notification) {
                 }
             }
         }
-        let (taken, at) = take_queued(&mut v.queue, &app);
+        let (taken, at) = take_queued(&mut v.queue, &key);
         for q in &taken {
             burst.add(q);
             if q.transient {
@@ -263,13 +267,13 @@ pub(super) fn fold_in<T>(stack: &mut Vec<T>, taken: &[usize], burst: Option<T>) 
 
 pub(super) fn take_queued(
     queue: &mut VecDeque<Item>,
-    app: &str,
+    key: &str,
 ) -> (Vec<Notification>, Option<usize>) {
     let mut taken = Vec::new();
     let mut at = None;
     let mut i = 0;
     queue.retain(|q| {
-        let mine = q.note().is_some_and(|n| n.app == app);
+        let mine = q.note().is_some_and(|n| n.key == key);
         if mine {
             at.get_or_insert(i);
             if let Item::Note(n) = q {

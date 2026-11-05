@@ -276,9 +276,21 @@ fn decode_picture(path: &Path) -> image::ImageResult<image::DynamicImage> {
     crate::wallpaper::decode_with(path, MAX_PICTURE_SIDE, Some(MAX_PICTURE_ALLOC))
 }
 
+/// A [`program_key`]'s limit, as long as a desktop id may be.
+pub const KEY_CHARS: usize = 255;
+
 pub fn desktop_id(hint: &str) -> Option<String> {
     let ok = !hint.is_empty() && hint.len() <= 255 && !hint.contains('/') && !hint.starts_with('.');
     ok.then(|| format!("{}.desktop", hint.trim_end_matches(".desktop")))
+}
+
+/// What names the program sending a notification: the `desktop-entry` hint without `.desktop`
+/// when it is a usable id, else `app_name`.
+pub fn program_key(hint: Option<&str>, app_name: &str) -> String {
+    match hint.filter(|h| desktop_id(h).is_some()) {
+        Some(h) => h.trim_end_matches(".desktop").to_string(),
+        None => app_name.to_string(),
+    }
 }
 
 pub fn plain_text(markup: &str) -> String {
@@ -633,5 +645,21 @@ mod tests {
         );
         assert_eq!(desktop_id("../etc/passwd"), None);
         assert_eq!(desktop_id(""), None);
+    }
+
+    #[test]
+    fn a_program_is_its_desktop_entry_hint_else_its_app_name() {
+        let key = |hint, app| program_key(hint, app);
+        assert_eq!(
+            key(Some("org.mozilla.Thunderbird"), "Thunderbird"),
+            "org.mozilla.Thunderbird"
+        );
+        assert_eq!(key(Some("discord.desktop"), "Discord"), "discord");
+        assert_eq!(key(None, "notify-send"), "notify-send");
+        assert_eq!(
+            key(Some("../x"), "Mail"),
+            "Mail",
+            "an unusable hint falls back"
+        );
     }
 }

@@ -315,7 +315,8 @@ pub fn config_changed(state: &mut State) {
 }
 
 /// Notification `n` arrived: into the history unless it is transient, and a balloon unless Do Not
-/// Disturb holds it back or the history is open, where it shows as a row instead. One the automatic
+/// Disturb or `[notifications] no_balloons` holds it back or the history is open, where it shows as
+/// a row instead. One the automatic
 /// Do Not Disturb holds back waits to show until it ends. A replace swaps in place, keeping a reply
 /// being typed.
 pub fn show(state: &mut State, n: Notification) {
@@ -327,9 +328,10 @@ pub fn show(state: &mut State, n: Notification) {
         }
     }
     let s = suppress(state);
-    if looking || !shows_balloon(&n, s) {
+    let allowed = state.config.notifications.shows_balloons(&n.key);
+    if looking || !shows_balloon(&n, s, allowed) {
         drop_balloon(state, n.id);
-        if !looking && s.holds(&n) {
+        if !looking && s.holds(&n, allowed) {
             state.notify.log.hold(n);
         } else if n.transient {
             crate::tray::notification_closed(state, n.id, REASON_EXPIRED);
@@ -354,14 +356,14 @@ pub fn show(state: &mut State, n: Notification) {
         changed(state);
         return;
     }
-    if let Some(sound) = balloon_sound(&n, state.config.notifications.sound) {
+    if let Some(sound) = balloon_sound(&n, &state.config.notifications) {
         repriseaudio::sounds::play(sound.clone(), state.config.sounds.theme.clone());
     }
     if foldable(&n) {
         let v = &mut state.notify;
-        let due = arrived(&mut v.recent, &n.app, Instant::now());
-        let open = v.queue.iter().any(|q| q.burst_of(&n.app))
-            || v.stack.iter().any(|b| b.item.burst_of(&n.app));
+        let due = arrived(&mut v.recent, &n.key, Instant::now());
+        let open = v.queue.iter().any(|q| q.burst_of(&n.key))
+            || v.stack.iter().any(|b| b.item.burst_of(&n.key));
         if due || open {
             fold(state, n);
             changed(state);
@@ -454,6 +456,7 @@ pub fn notice_opening(state: &mut State, summary: &str, body: &str, argv: Vec<Os
 fn show_own(state: &mut State, summary: &str, body: &str, opens: bool, image: Option<Canvas>) {
     let mut n = Notification::new(OWN_ID, summary.to_string(), body.to_string());
     n.app = OWN_APP.to_string();
+    n.key = OWN_APP.to_string();
     n.expire_timeout = 0;
     if opens {
         n.actions = vec![(DEFAULT_ACTION.to_string(), String::new())];
@@ -579,10 +582,10 @@ pub fn clear_history(state: &mut State) {
     dismiss_cleared(state, ids);
 }
 
-/// A group's Clear in the history: every notification from `app` leaves it, those still open
+/// A group's Clear in the history: every notification from program `key` leaves it, those still open
 /// dismissed.
-pub fn clear_app(state: &mut State, app: &str) {
-    let ids = state.notify.log.clear_app(app);
+pub fn clear_app(state: &mut State, key: &str) {
+    let ids = state.notify.log.clear_app(key);
     dismiss_cleared(state, ids);
 }
 
@@ -617,7 +620,7 @@ pub fn set_dnd_until(state: &mut State, on: bool, until: Option<i64>) {
         };
         let held = |item: &Item| match item {
             Item::Burst(_) => true,
-            Item::Note(n) => !shows_balloon(n, manual) && !n.transient,
+            Item::Note(n) => !shows_balloon(n, manual, true) && !n.transient,
         };
         v.queue.retain(|q| !held(q));
         let (gone, kept): (Vec<Balloon>, Vec<Balloon>) = std::mem::take(&mut v.stack)
@@ -700,8 +703,13 @@ pub fn sender_gone(state: &mut State, sender: &str) {
     crate::notifycenter::refresh(state);
 }
 
-/// What a new balloon for `n` plays with `[notifications] sound` at `on`: a low urgency one is silent.
-fn balloon_sound(n: &Notification, on: bool) -> Option<&repriseaudio::sounds::Sound> {
+/// What a new balloon for `n` plays under `cfg`: nothing with `sound` off, from a program in
+/// `no_sounds`, or at low urgency.
+fn balloon_sound<'a>(
+    n: &'a Notification,
+    cfg: &crate::config::NotificationsConfig,
+) -> Option<&'a repriseaudio::sounds::Sound> {
+    let on = cfg.sound && cfg.plays_sounds(&n.key);
     n.sound.as_ref().filter(|_| on && n.urgency != Urgency::Low)
 }
 

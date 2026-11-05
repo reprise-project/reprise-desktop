@@ -1,4 +1,4 @@
-//! The compositor's own tray calls on the session bus: Customize..., Identify, screen saver Preview, Forget Positions, tablet pads, the window icon a sound program borrows, reprise-power's critical battery turn-off, and Software Updates' Restart Now.
+//! The compositor's own tray calls on the session bus: Customize..., Identify, screen saver Preview, Forget Positions, tablet pads, the programs that sent notifications, the window icon a sound program borrows, reprise-power's critical battery turn-off, and Software Updates' Restart Now.
 
 pub const NAME: &str = "org.reprise.Tray";
 pub const PATH: &str = "/org/reprise/Tray";
@@ -82,6 +82,20 @@ pub fn tablet_pads() -> zbus::Result<Vec<Pad>> {
         crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "TabletPads", &()))?;
     let list: Vec<PadWire> = reply.body().deserialize()?;
     Ok(list.into_iter().map(Pad::from_wire).collect())
+}
+
+/// The programs that sent notifications this session, as (key, name): the key is what
+/// `[notifications] no_balloons` and `no_sounds` list. Blocks for at most [`crate::METHOD_TIMEOUT`].
+pub fn notification_programs() -> zbus::Result<Vec<(String, String)>> {
+    let conn = crate::session()?;
+    let reply = crate::wait(conn.call_method(
+        Some(NAME),
+        PATH,
+        Some(INTERFACE),
+        "NotificationPrograms",
+        &(),
+    ))?;
+    reply.body().deserialize()
 }
 
 /// Ask the compositor to show each output's number, big in its middle for 2 s. Blocks for at most [`crate::METHOD_TIMEOUT`].

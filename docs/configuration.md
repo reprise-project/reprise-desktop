@@ -52,7 +52,7 @@ while an editor saves it doesn't.
 | `[accessibility]` | text size, StickyKeys, SlowKeys, MouseKeys, magnifier, colour filters |
 | `[night_light]` | schedule and warmth |
 | `[launcher]`, `[clipboard]`, `[screenshot]`, `[previews]` | the launcher's file and window search, clipboard history, where screenshots go, live previews |
-| `[notifications]` | balloon sounds, quiet hours, Do Not Disturb during full screen and screen sharing |
+| `[notifications]` | balloon sounds, quiet hours, Do Not Disturb during full screen and screen sharing, programs whose balloons or sounds are off |
 | `[sounds]` | the sound theme balloons and the bell play from, whether the bell sounds, and `allow_boost`: playback volumes past 100 % up to 150 % |
 | `[privacy]` | recent files and location |
 | `[recycle_bin]` | what Delete does, each drive's bin size, `older_than_days` to empty old items (Recycle Bin Properties) |

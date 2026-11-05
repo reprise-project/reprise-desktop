@@ -28,6 +28,8 @@ mod menuhost;
 mod menupage;
 mod model;
 mod monitordlg;
+mod notifyhost;
+mod notifypage;
 mod outputwrite;
 mod pages;
 mod quickpage;
@@ -355,6 +357,14 @@ struct SettingsApp {
     pad_picked: usize,
     pads_fresh: bool,
 
+    /// The Sounds page's programs: those the compositor saw send notifications (asked each time
+    /// the page opens, `notify_fresh`) and those the config lists.
+    notify_programs: Vec<notifypage::Program>,
+    notify_seen: Vec<(String, String)>,
+    /// The installed desktop entries' names of the listed programs not seen this session.
+    notify_names: HashMap<String, String>,
+    notify_fresh: bool,
+
     /// UPower's battery charge limit, read each time the Power page opens (`charge_seen`);
     /// `charging` holds the read or toggle under way.
     charge: Option<reprisebus::charge::ChargeLimit>,
@@ -591,6 +601,10 @@ impl SettingsApp {
             pads: Vec::new(),
             pad_picked: 0,
             pads_fresh: false,
+            notify_programs: Vec::new(),
+            notify_seen: Vec::new(),
+            notify_names: HashMap::new(),
+            notify_fresh: false,
             charge: None,
             charge_seen: false,
             charging: None,
@@ -867,6 +881,7 @@ impl App for SettingsApp {
             reply.tick = true;
         }
         reply.redraw |= self.ensure_pads();
+        reply.redraw |= self.ensure_notify_programs();
         reply.redraw |= self.ensure_away_devices();
         self.prime_icons(ctx);
         if reply.quit {
