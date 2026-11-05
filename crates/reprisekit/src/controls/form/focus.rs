@@ -49,6 +49,11 @@ impl Form {
         }
     }
 
+    /// Whether control `id` is on the form and can take the keyboard.
+    pub fn can_focus(&self, id: &str) -> bool {
+        self.index_of(id).is_some_and(|i| self.items[i].focusable())
+    }
+
     pub fn focus_id(&mut self, id: &str) {
         let to = self.index_of(id).filter(|&i| self.items[i].focusable());
         self.set_focus(to);

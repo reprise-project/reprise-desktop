@@ -39,13 +39,14 @@ impl SettingsApp {
     }
 
     /// Call after Enter in the field or a press on a found row opened a page: the control the
-    /// query named takes the keyboard.
+    /// query named takes the keyboard, unless it is missing or greyed and the list keeps it.
     pub(crate) fn search_opened(&mut self) {
         let Some(&Some(Hit::Control(id))) = self.search_hits.get(self.sheet.tabs.open) else {
             return;
         };
-        self.blur_side_lists();
-        self.sheet.focus_control(id);
+        if self.sheet.focus_control(id) {
+            self.blur_side_lists();
+        }
     }
 }
 
