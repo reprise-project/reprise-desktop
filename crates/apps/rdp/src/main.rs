@@ -104,7 +104,7 @@ fn main() -> ExitCode {
             status,
             config: config_rx.clone(),
             disconnect: disconnect_rx,
-            leave: lock::LockOnLeave::new(marker.clone()),
+            leave: lock::LockOnLeave::new(marker.clone(), config_rx.clone()),
         };
         let sync_owner = input::SyncOwner::default();
         let serving = listen::serve(server, intake, logins, |shown| {

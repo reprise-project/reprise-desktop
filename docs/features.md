@@ -795,7 +795,10 @@ no port forwarding; allow the port in your firewall if you run one.
 - **Leaving locks.** When the last client shown the session leaves, whether
   it disconnects or Disconnect ends it, the session locks; a client shown it
   before the lock goes ahead keeps it unlocked. A client that logged in but
-  never got the picture leaves the session as it was. A computer that connects
+  never got the picture leaves the session as it was. Clearing Lock this
+  computer when the last one disconnects, under Connected Computers
+  (`lock_on_leave`), leaves it unlocked; it is read as each client is shown
+  the session and as it leaves. A computer that connects
   while `max_viewers` computers are connected or logging in is turned away
   at once, as is a third from an address with two still logging in. A
   connection that dies without closing ends within about 30 s.
