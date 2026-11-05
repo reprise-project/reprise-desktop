@@ -1,4 +1,4 @@
-//! The compositor's own tray calls on the session bus: Customize..., Identify, screen saver Preview, Forget Positions, tablet pads, the window icon a sound program borrows, and reprise-power's critical battery turn-off.
+//! The compositor's own tray calls on the session bus: Customize..., Identify, screen saver Preview, Forget Positions, tablet pads, the window icon a sound program borrows, reprise-power's critical battery turn-off, and Software Updates' Restart Now.
 
 pub const NAME: &str = "org.reprise.Tray";
 pub const PATH: &str = "/org/reprise/Tray";
@@ -15,6 +15,15 @@ pub fn customize() -> zbus::Result<()> {
 pub fn critical_turn_off() -> zbus::Result<()> {
     let conn = crate::session()?;
     crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "CriticalTurnOff", &()))?;
+    Ok(())
+}
+
+/// Ask the compositor to restart the computer as Start's Restart does: programs are asked to close,
+/// so their save prompts come up, and the session-end prompt can still cancel it. Blocks for at
+/// most [`crate::METHOD_TIMEOUT`].
+pub fn restart() -> zbus::Result<()> {
+    let conn = crate::session()?;
+    crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "Restart", &()))?;
     Ok(())
 }
 

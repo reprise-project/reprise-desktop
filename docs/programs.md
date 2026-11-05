@@ -480,6 +480,16 @@ the window closed, a balloon does. It says when a restart or a log off is due.
 Closing the window doesn't stop an install halfway, and nothing installs on its
 own.
 
+It also notices a system updated from elsewhere, such as `pacman -Syu` in a
+terminal: once the running kernel's modules folder under `/usr/lib/modules` is
+gone, or a package leaves `/run/reboot-required`, a balloon says "Restart to
+finish updating" with Restart Now and Later, once a boot, and the tray icon and
+the window say it until the restart. Logging in after such an update and before
+restarting notices it too. Restart Now goes the way Start's Restart does:
+programs are asked to close first, so they can ask about unsaved work, and the
+prompt listing what is left can still cancel it. Settings > Startup turns it
+off (`[updates] restart_notice`).
+
 ## Disk Usage
 
 What takes a folder's or a drive's space: its folders and files, largest

@@ -753,6 +753,7 @@ fn save_round_trips_every_field() {
         title_double_click: "shade".into(),
         session_restore: true,
         session_end_processes: false,
+        restart_notice: false,
         font_family: "Verdana".into(),
         font_size_px: 13,
         font_antialias: true,

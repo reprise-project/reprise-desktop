@@ -630,6 +630,17 @@ fn capture_border_default_on_and_privacy_turns_it_off() {
 }
 
 #[test]
+fn the_restart_notice_is_on_by_default() {
+    assert!(Config::default().restart_notice);
+    assert!(
+        !Config::parse("[updates]\nrestart_notice = false\n")
+            .unwrap()
+            .restart_notice
+    );
+    assert!(Config::parse("[updates]\nrestart = false\n").is_err());
+}
+
+#[test]
 fn the_debug_overlay_is_off_and_left_out_of_captures_by_default() {
     assert_eq!(Config::default().debug, DebugConfig::default());
     assert!(!Config::default().debug.overlay);

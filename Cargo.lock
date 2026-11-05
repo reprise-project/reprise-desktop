@@ -2748,7 +2748,6 @@ dependencies = [
  "repriseconf",
  "reprisekit",
  "reprisetray",
- "toml",
  "zbus 6.2.0",
 ]
 

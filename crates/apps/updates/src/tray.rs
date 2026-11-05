@@ -6,16 +6,22 @@ use crate::model::TrayLook;
 
 pub const BUS_NAME: &str = "reprise.updates";
 pub const TITLE: &str = "Software Updates";
+/// The tag of the restart balloon, whose buttons are Restart Now and Later.
+pub const RESTART_BALLOON: u32 = 1;
+pub const RESTART_BUTTONS: [&str; 2] = ["Restart Now", "Later"];
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum TrayMsg {
     Open,
     Check,
+    Restart,
 }
 
 pub fn translate(msg: Msg) -> Option<TrayMsg> {
     match msg {
         Msg::Activate(..) | Msg::BalloonClicked(_) => Some(TrayMsg::Open),
+        Msg::BalloonButton(RESTART_BALLOON, 0) => Some(TrayMsg::Restart),
+        Msg::BalloonButton(..) => None,
         msg => rows().translate(msg),
     }
 }
@@ -68,6 +74,11 @@ mod tests {
             translate(Rows::clicked(&TrayMsg::Check)),
             Some(TrayMsg::Check)
         );
+        assert_eq!(
+            translate(Msg::BalloonButton(RESTART_BALLOON, 0)),
+            Some(TrayMsg::Restart)
+        );
+        assert_eq!(translate(Msg::BalloonButton(RESTART_BALLOON, 1)), None);
         assert_eq!(translate(Msg::Clicked(0)), None);
         assert_eq!(translate(Msg::Scroll(1)), None);
     }

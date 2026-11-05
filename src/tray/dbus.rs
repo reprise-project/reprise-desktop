@@ -83,6 +83,10 @@ impl Shell {
         emit(&self.events, self.eventfd, TrayEvent::CriticalTurnOff);
     }
 
+    async fn restart(&self) {
+        emit(&self.events, self.eventfd, TrayEvent::Restart);
+    }
+
     /// Asks to empty the Recycle Bin, as its desktop icon's menu does.
     async fn empty_recycle_bin(&self) {
         emit(&self.events, self.eventfd, TrayEvent::EmptyRecycleBin);

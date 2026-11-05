@@ -498,6 +498,8 @@ fn the_startup_page_geometry() {
         rect(&s, p, "session_end_processes"),
         Rect::new(32, 336, 13, 13)
     );
+    assert_eq!(rect(&s, p, "updates_group"), Rect::new(20, 368, 358, 44));
+    assert_eq!(rect(&s, p, "restart_notice"), Rect::new(32, 390, 13, 13));
     inside_page(&s, p);
 
     assert_eq!(list(Area::MIN), Rect::new(20, 44, 358, 208));

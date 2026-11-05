@@ -186,6 +186,8 @@ pub enum Phase {
         request: Option<String>,
     },
     Installed(Restart),
+    /// The system was updated outside an install here and needs a restart (see `restart`).
+    RestartDue,
     Failed(String),
 }
 
@@ -237,6 +239,10 @@ pub fn headline(phase: &Phase, updates: &[Update], picked: usize) -> String {
             "The updates were installed. Log off and back on to finish installing them.".into()
         }
         Phase::Installed(Restart::None) => "The updates were installed.".into(),
+        Phase::RestartDue => {
+            "The system was updated. Some devices may not work until you restart your computer."
+                .into()
+        }
         Phase::Failed(message) => message.clone(),
     }
 }
@@ -279,6 +285,11 @@ pub fn tray_look(phase: &Phase, updates: &[Update]) -> TrayLook {
         Phase::Installed(Restart::System) => TrayLook {
             icon: "system-reboot",
             tip: "Restart your computer to finish installing updates".into(),
+            active: true,
+        },
+        Phase::RestartDue => TrayLook {
+            icon: "system-reboot",
+            tip: "Restart to finish updating".into(),
             active: true,
         },
         Phase::Installed(Restart::Session) => TrayLook {
@@ -352,6 +363,13 @@ pub fn installed_balloon(restart: Restart) -> (String, String) {
     ("Updates installed".into(), body.into())
 }
 
+pub fn restart_balloon() -> (String, String) {
+    (
+        "Restart to finish updating".into(),
+        "The system was updated. Some devices may not work until you restart.".into(),
+    )
+}
+
 /// Something a device asks for while its firmware installs: `now` holds the install until it is
 /// done, otherwise it finishes the update afterwards.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -381,15 +399,6 @@ pub fn closed_balloon(phase: &Phase) -> Option<(String, String)> {
         })),
         _ => None,
     }
-}
-
-/// `[power] reboot` from the config, the command the Turn Off dialog's Restart runs too.
-pub fn reboot_command(config: &str) -> String {
-    config
-        .parse::<toml::Table>()
-        .ok()
-        .and_then(|t| t.get("power")?.get("reboot")?.as_str().map(str::to_string))
-        .unwrap_or_else(|| "systemctl reboot".into())
 }
 
 #[cfg(test)]
@@ -579,15 +588,5 @@ mod tests {
         assert!(a.news(&both), "b is new");
         assert!(!a.news(&first), "one went away");
         assert!(a.news(&both), "and came back");
-    }
-
-    #[test]
-    fn restart_now_runs_the_configured_reboot() {
-        assert_eq!(reboot_command(""), "systemctl reboot");
-        assert_eq!(
-            reboot_command("[power]\nreboot = \"loginctl reboot\"\n"),
-            "loginctl reboot"
-        );
-        assert_eq!(reboot_command("not toml ["), "systemctl reboot");
     }
 }
