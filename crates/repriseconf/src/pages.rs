@@ -1,7 +1,9 @@
-//! The Settings sheet's pages and separate settings programs, with the search
-//! words for each. [`GROUPS`] fixes the pages' order.
+//! Settings pages and separate settings programs with their search words. [`GROUPS`]
+//! fixes the pages' order; [`Page::find`] is the one matcher Settings and Start share.
 
 mod terms;
+
+use crate::search::{all_words, word_starts};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
@@ -31,6 +33,14 @@ pub enum Page {
     RemoteDesktop,
     Advanced,
     Backup,
+}
+
+/// What a search matched: the label, a keyword, or a control's label (its id, for --focus).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hit {
+    Label,
+    Keyword,
+    Control(&'static str),
 }
 
 pub const GROUPS: &[(&str, &[Page])] = &[
@@ -276,6 +286,34 @@ impl Page {
         terms::of(self)
     }
 
+    /// Matches when every word of `query` starts a word of the label, a keyword or a
+    /// control label; a control's hit names the first control holding a word the page lacks.
+    pub fn find(self, query: &str) -> Option<Hit> {
+        if let Some(hit) = find_by_name(query, self.label(), self.keywords()) {
+            return Some(hit);
+        }
+        let page: Vec<&str> = [self.label()]
+            .into_iter()
+            .chain(self.keywords().iter().copied())
+            .collect();
+        let all: Vec<&str> = page
+            .iter()
+            .copied()
+            .chain(self.terms().iter().map(|&(_, l)| l))
+            .collect();
+        if !all_words(query, &all) {
+            return None;
+        }
+        let rest: Vec<&str> = query
+            .split_whitespace()
+            .filter(|w| !page.iter().any(|h| word_starts(w, h)))
+            .collect();
+        self.terms()
+            .iter()
+            .find(|&&(_, l)| rest.iter().any(|w| word_starts(w, l)))
+            .map(|&(id, _)| Hit::Control(id))
+    }
+
     /// Its `--page` name: the label in lower case, "&" spelled "and",
     /// spaces as hyphens (`fonts-and-icons`).
     pub fn slug(self) -> String {
@@ -294,6 +332,21 @@ impl Page {
 pub struct Program {
     pub id: &'static str,
     pub keywords: &'static [&'static str],
+}
+
+impl Program {
+    /// `name` is the program's desktop-entry name; a program has no control hits.
+    pub fn find(&self, query: &str, name: &str) -> Option<Hit> {
+        find_by_name(query, name, self.keywords)
+    }
+}
+
+fn find_by_name(query: &str, name: &str, keywords: &[&str]) -> Option<Hit> {
+    if all_words(query, &[name]) {
+        return Some(Hit::Label);
+    }
+    let hay: Vec<&str> = [name].into_iter().chain(keywords.iter().copied()).collect();
+    all_words(query, &hay).then_some(Hit::Keyword)
 }
 
 pub const PROGRAMS: &[Program] = &[
@@ -366,5 +419,51 @@ mod tests {
             assert_eq!(k, k.to_lowercase(), "{owner}: {k}");
             assert_ne!(k, owner.to_lowercase(), "{owner} repeats its label");
         }
+    }
+
+    #[test]
+    fn a_page_is_found_by_label_then_keyword_then_control_label() {
+        assert_eq!(Page::NightLight.find("night"), Some(Hit::Label));
+        assert_eq!(Page::FontsAndIcons.find("icons fonts"), Some(Hit::Label));
+        assert_eq!(Page::Mouse.find("mouse speed"), Some(Hit::Keyword));
+        assert_eq!(
+            Page::DefaultPrograms.find("default browser"),
+            Some(Hit::Keyword)
+        );
+        assert_eq!(
+            Page::Keyboard.find("delay"),
+            Some(Hit::Control("repeat_delay"))
+        );
+        assert_eq!(
+            Page::Keyboard.find("keyboard delay"),
+            Some(Hit::Control("repeat_delay")),
+            "the label takes one word, a control the other"
+        );
+        assert_eq!(
+            Page::Switcher.find("picture size"),
+            Some(Hit::Control("switcher_size"))
+        );
+        assert_eq!(Page::Keyboard.find("delay zzz"), None);
+        assert_eq!(Page::Keyboard.find(""), None);
+        assert_eq!(Page::Keyboard.find("  "), None);
+    }
+
+    #[test]
+    fn a_program_is_found_by_its_name_then_its_keywords() {
+        let power = PROGRAMS
+            .iter()
+            .find(|p| p.id == "reprise-power.desktop")
+            .unwrap();
+        assert_eq!(
+            power.find("options power", "Power Options"),
+            Some(Hit::Label)
+        );
+        assert_eq!(power.find("sleep", "Power Options"), Some(Hit::Keyword));
+        assert_eq!(
+            power.find("power sleep", "Power Options"),
+            Some(Hit::Keyword)
+        );
+        assert_eq!(power.find("delay", "Power Options"), None);
+        assert_eq!(power.find("", "Power Options"), None);
     }
 }
