@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn the_sounds_page_geometry() {
+fn the_sound_page_geometry() {
     let s = built();
     let p = Page::Sound;
     assert_eq!(rect(&s, p, "sound_theme_group"), Rect::new(20, 44, 358, 52));
@@ -40,7 +40,7 @@ fn the_program_switches_pin_their_pixels_in_every_look() {
         notify_no_sounds: vec!["chat".into()],
         ..Settings::default()
     };
-    let mut f = sounds(Area::MIN, &[]);
+    let mut f = sound(Area::MIN, &[]);
     let programs = notifypage::programs(
         &[
             ("mail".into(), "Mail".into()),

@@ -44,7 +44,7 @@ fn switcher_values_go_in_and_come_back_out() {
 }
 
 #[test]
-fn the_desktops_page_geometry() {
+fn the_virtual_desktops_page_geometry() {
     let s = built();
     let p = Page::VirtualDesktops;
     assert_eq!(rect(&s, p, "desktops_group"), Rect::new(20, 44, 358, 244));
@@ -142,7 +142,7 @@ fn the_desktop_names_rows_pin_their_pixels_in_every_look() {
     let row = Rect::new(46, 236, 332, 42);
     let mut pins = Vec::new();
     for names in [vec!["Work".to_string(), "Chat".into()], Vec::new()] {
-        let mut f = desktops(Area::MIN);
+        let mut f = virtual_desktops(Area::MIN);
         if let Some(Control::Edit { edit, .. }) = f.item_mut(DESKTOP_NAMES).map(|i| &mut i.control)
         {
             *edit = reprisekit::textedit::TextEdit::new(names.join(", "), false);
@@ -152,7 +152,7 @@ fn the_desktop_names_rows_pin_their_pixels_in_every_look() {
         };
         pins.push(h);
     }
-    let mut f = desktops(Area::MIN);
+    let mut f = virtual_desktops(Area::MIN);
     for id in ["desktop_names_label", DESKTOP_NAMES, "desktop_names_note"] {
         f.set_enabled(id, false);
     }
@@ -197,7 +197,7 @@ fn the_widget_boxes_tick_what_stands_and_write_desktop_widgets() {
 
 #[test]
 fn the_wheel_on_desktop_row_pins_its_pixels_in_every_look() {
-    let mut f = desktops(Area::MIN);
+    let mut f = virtual_desktops(Area::MIN);
     let row = Rect::new(50, 212, 328, 17);
     let Some(off) = row_pins(&f, row) else {
         return;
@@ -573,7 +573,7 @@ fn the_reveal_check_boxes_grey_while_auto_hide_is_off() {
 }
 
 #[test]
-fn the_launcher_page_geometry() {
+fn the_search_page_geometry() {
     let s = built();
     let p = Page::Search;
     assert_eq!(
@@ -590,7 +590,7 @@ fn the_launcher_page_geometry() {
 }
 
 #[test]
-fn launcher_values_go_in_and_come_back_out() {
+fn search_values_go_in_and_come_back_out() {
     let want = Settings {
         launcher_files: false,
         launcher_windows: false,
@@ -606,7 +606,7 @@ fn launcher_values_go_in_and_come_back_out() {
 }
 
 #[test]
-fn the_windows_page_geometry() {
+fn the_window_behavior_page_geometry() {
     let s = built();
     let p = Page::WindowBehavior;
     assert_eq!(rect(&s, p, "snap_group"), Rect::new(20, 44, 358, 172));
@@ -649,7 +649,8 @@ fn the_windows_page_geometry() {
 }
 
 #[test]
-fn the_windows_page_reads_back_tabs_shaking_the_picker_the_bar_the_distance_and_the_layouts() {
+fn the_window_behavior_page_reads_back_tabs_shaking_the_picker_the_bar_the_distance_and_the_layouts()
+ {
     let want = Settings {
         window_tabs: false,
         snap_picker: false,

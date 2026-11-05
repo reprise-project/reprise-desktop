@@ -31,8 +31,8 @@ pub use appearance::{effects, fonts_and_icons, night_light};
 pub use bind::{
     fill_layouts, follow, keys_of, layout_selection, read_one, write, write_form, write_forms,
 };
-pub use desktop::{FORGET_FRAMES, desktops, launcher, switcher, taskbar, windows};
-pub use input::{accessibility, keyboard, mouse, pointers, preview_size};
+pub use desktop::{FORGET_FRAMES, search, switcher, taskbar, virtual_desktops, window_behavior};
+pub use input::{cursor, keyboard, mouse_touchpad, preview_size, text_and_keys};
 pub use lists::{
     draw_list, fill_list, fill_locations, fill_shortcuts, fit_list_columns, fit_location_columns,
     fit_shortcut_columns, list_key, new_list, new_location_list, new_shortcut_list,
@@ -40,7 +40,7 @@ pub use lists::{
 };
 pub use system::{
     REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup, power, remote_desktop,
-    selected_client, show_remote, sounds, startup,
+    selected_client, show_remote, sound, startup,
 };
 
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).

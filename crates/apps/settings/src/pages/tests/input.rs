@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn the_accessibility_page_geometry() {
+fn the_text_and_keys_page_geometry() {
     let s = built();
     let p = Page::TextKeys;
     assert_eq!(rect(&s, p, "text_size"), Rect::new(94, 44, 80, 21));
@@ -41,7 +41,7 @@ fn the_accessibility_page_geometry() {
 }
 
 #[test]
-fn accessibility_values_go_in_and_come_back_out() {
+fn text_and_keys_values_go_in_and_come_back_out() {
     let want = Settings {
         sticky_keys: true,
         sticky_lock: false,
@@ -130,7 +130,7 @@ fn mousekeys_trackbars_have_slow_and_fast_ends() {
 }
 
 #[test]
-fn the_vision_page_geometry() {
+fn the_magnifier_filters_page_geometry() {
     let s = built();
     let p = Page::MagnifierFilters;
     assert_eq!(rect(&s, p, "cf_group"), Rect::new(20, 44, 358, 110));
@@ -211,7 +211,7 @@ fn the_color_filter_preview_draws_the_pending_filter() {
         ..Settings::default()
     };
     let mut s = with(&want);
-    let r = s.on_page(crate::visionpage::preview_rect(Area::MIN));
+    let r = s.on_page(crate::magnifierpage::preview_rect(Area::MIN));
     let pixel = |s: &PropSheet, x: i32, y: i32| {
         let mut c = Canvas::new(s.size.0 as u32, s.size.1 as u32);
         form::draw(
@@ -429,7 +429,7 @@ fn program_rows_follow_the_binds() {
 /// trackbar's top), and each group's "Reverse scrolling direction" check 22 px
 /// under the last row.
 #[test]
-fn the_mouse_page_geometry() {
+fn the_mouse_touchpad_page_geometry() {
     let s = built();
     assert_eq!(
         rect(&s, Page::MouseTouchpad, "mouse_group"),
@@ -547,7 +547,7 @@ fn two_finger_tap_follows_tap_to_click() {
 }
 
 #[test]
-fn the_pointers_page_geometry() {
+fn the_cursor_page_geometry() {
     let s = built();
     let p = Page::Cursor;
     assert_eq!(rect(&s, p, "cursor_group"), Rect::new(20, 44, 358, 84));

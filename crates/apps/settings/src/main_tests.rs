@@ -696,7 +696,7 @@ fn a_program_row_edits_its_keys_and_delete_forgets_it() {
 }
 
 #[test]
-fn a_rebound_zoom_key_rewrites_the_vision_note() {
+fn a_rebound_zoom_key_rewrites_the_magnifier_note() {
     let dir = tmp("zoom-note");
     std::fs::write(dir.join("config.toml"), "").unwrap();
     let mut app = SettingsApp::open(dir.join("config.toml"));
