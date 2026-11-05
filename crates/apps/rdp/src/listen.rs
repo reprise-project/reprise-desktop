@@ -328,6 +328,9 @@ const HYBRID: u32 = 0x2;
 const HYBRID_EX: u32 = 0x8;
 /// Enough of the stream to hold an X.224 Connection Request with a cookie.
 const HEAD: usize = 512;
+/// RDP_NEG_CORRELATION_INFO (MS-RDPBCGR 2.2.1.1.2), which may follow the RDP_NEG_REQ, opens with
+/// these bytes: its type, flags and length (36).
+const CORRELATION_INFO: [u8; 4] = [6, 0, 36, 0];
 
 /// The start of what a client sent and how much it sent in all.
 #[derive(Default)]
@@ -345,8 +348,10 @@ impl Seen {
         if h.first() != Some(&3) || h.get(5) != Some(&0xE0) || h.len() < len || len < 11 {
             return None;
         }
-        let neg = &h[len - 8..len];
-        if len < 19 || neg[0] != 1 || neg[2..4] != [8, 0] {
+        let correlated = len >= 19 + 36 && h[len - 36..][..4] == CORRELATION_INFO;
+        let end = if correlated { len - 36 } else { len };
+        let neg = &h[end - 8..end];
+        if end < 19 || neg[0] != 1 || neg[2..4] != [8, 0] {
             return Some((0, len));
         }
         Some((u32::from_le_bytes([neg[4], neg[5], neg[6], neg[7]]), len))
@@ -585,6 +590,10 @@ pub(crate) mod tests {
         cookie.extend(b"Cookie: mstshash=someone\r\n");
         cookie.extend([1, 0, 8, 0, 8, 0, 0, 0]);
         assert_eq!(seen(&cookie, 45).request(), Some((HYBRID_EX, 45)));
+        let mut correlated = vec![3, 0, 0, 55, 50, 0xE0, 0, 0, 0, 0, 0, 1, 8, 8, 0, 1, 0, 0, 0];
+        correlated.extend(CORRELATION_INFO);
+        correlated.extend([0x5A; 32]);
+        assert_eq!(seen(&correlated, 55).request(), Some((SSL, 55)));
         let legacy = [3, 0, 0, 11, 6, 0xE0, 0, 0, 0, 0, 0];
         assert_eq!(seen(&legacy, 11).request(), Some((0, 11)));
         assert_eq!(seen(&plain[..10], 10).request(), None);
