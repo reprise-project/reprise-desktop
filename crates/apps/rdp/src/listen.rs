@@ -24,8 +24,9 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, watch};
 
-/// What follows a connection's login, and what follows once its display and input are dropped;
-/// each called once per logged-in connection, so several may be logged in at a time.
+/// What follows a connection being shown the session, and what follows once its display and
+/// input are dropped; each called once per connection shown it, so several may be at a time.
+/// A connection that logs in but never gets its portal session never had the session.
 pub trait Leave {
     fn arrived(&self) {}
     fn left(&self) -> impl Future<Output = ()>;
@@ -44,6 +45,9 @@ pub struct Server<L> {
     pub leave: L,
 }
 
+/// Sent by a connection's display once its portal session is granted and its input is served.
+pub type Shown = oneshot::Sender<()>;
+
 /// What serves one connection: a display, an input handler, maybe a graphics pipeline, maybe a
 /// clipboard and maybe sound.
 pub type Handlers<D, I> = (
@@ -55,12 +59,13 @@ pub type Handlers<D, I> = (
 );
 
 /// Serve clients from `intake` for `server.user`, each checked by `logins` and served by
-/// `handlers`. A client arriving with `max_viewers` connected is closed at once.
+/// `handlers`, which reports through its [`Shown`]. A client arriving with `max_viewers`
+/// connected is closed at once.
 pub async fn serve<D, I, L>(
     mut server: Server<L>,
     mut intake: impl Intake,
     logins: impl Logins,
-    mut handlers: impl FnMut() -> Handlers<D, I>,
+    mut handlers: impl FnMut(Shown) -> Handlers<D, I>,
 ) -> Infallible
 where
     D: RdpServerDisplay + 'static,
@@ -104,7 +109,8 @@ where
                     }
                 };
                 let (check, budget) = logins.check(peer);
-                let (display, input, gfx, clipboard, sound) = handlers();
+                let (shown, on_shown) = oneshot::channel();
+                let (display, input, gfx, clipboard, sound) = handlers(shown);
                 let local = stream
                     .local_addr()
                     .unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
@@ -120,7 +126,7 @@ where
                     .build();
                 let viewer = Viewer { id, peer, kicked };
                 let shared = shared.clone();
-                tokio::task::spawn_local(run(rdp, stream, viewer, check, budget, shared));
+                tokio::task::spawn_local(run(rdp, stream, viewer, check, budget, on_shown, shared));
             }
         }
     }
@@ -163,6 +169,7 @@ async fn run<L: Leave + 'static, C: Login>(
     viewer: Viewer,
     check: Arc<C>,
     budget: Duration,
+    on_shown: oneshot::Receiver<()>,
     shared: Rc<Shared<L>>,
 ) {
     let Viewer { id, peer, kicked } = viewer;
@@ -181,9 +188,7 @@ async fn run<L: Leave + 'static, C: Login>(
     };
     let present = async {
         check.logged_in().await;
-        shared.leave.arrived();
         shared.viewers.borrow_mut().logged_in(id);
-        arrived.set(true);
         let since = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
@@ -194,6 +199,10 @@ async fn run<L: Leave + 'static, C: Login>(
                 since,
             })
         });
+        if on_shown.await.is_ok() {
+            shared.leave.arrived();
+            arrived.set(true);
+        }
         std::future::pending::<Infallible>().await
     };
     let ended = tokio::select! {
@@ -228,6 +237,8 @@ async fn run<L: Leave + 'static, C: Login>(
     if arrived.replace(false) {
         drop(server);
         shared.leave.left().await;
+    } else if check.accepted() {
+        log::info!("{peer}: left without being shown the session; it stays as it was");
     }
 }
 
@@ -484,7 +495,7 @@ pub(crate) mod tests {
             disconnect: disconnect_rx,
             leave: (),
         };
-        local.spawn_local(serve(server, intake, logins, || {
+        local.spawn_local(serve(server, intake, logins, |_| {
             (
                 crate::Grey,
                 crate::input::Input::new(Default::default()).0,
@@ -1012,7 +1023,12 @@ pub(crate) mod tests {
 
     /// Run one connection to its end and return the steps after it and the clients reported
     /// while it was connected.
-    async fn session(log_in: bool, end: End, portal: Portal) -> (Vec<&'static str>, Vec<Client>) {
+    async fn session(
+        log_in: bool,
+        shown: bool,
+        end: End,
+        portal: Portal,
+    ) -> (Vec<&'static str>, Vec<Client>) {
         let dir = tempfile::tempdir().unwrap();
         let _scripts = auth::tests::SCRIPTS.lock().await;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1033,6 +1049,10 @@ pub(crate) mod tests {
                 check.validate(&credentials).await.unwrap(),
                 CredentialDecision::Accept
             );
+        }
+        let (shown_tx, on_shown) = oneshot::channel();
+        if shown {
+            shown_tx.send(()).unwrap();
         }
         let steps = Steps::default();
         let (input, mut events) = mpsc::unbounded_channel();
@@ -1089,6 +1109,7 @@ pub(crate) mod tests {
                     Viewer { id, peer, kicked },
                     check.clone(),
                     HANDSHAKE,
+                    on_shown,
                     shared.clone()
                 ),
                 ending
@@ -1111,7 +1132,7 @@ pub(crate) mod tests {
     async fn disconnect_ends_with_release_then_close_then_lock() {
         LocalSet::new()
             .run_until(async {
-                let (steps, _) = session(true, End::ClientLeft, Portal::Flag).await;
+                let (steps, _) = session(true, true, End::ClientLeft, Portal::Flag).await;
                 assert_eq!(steps, ["arrived", "release", "close", "lock"]);
             })
             .await;
@@ -1122,7 +1143,7 @@ pub(crate) mod tests {
         LocalSet::new()
             .run_until(async {
                 let started = std::time::Instant::now();
-                let (steps, _) = session(true, End::ClientLeft, Portal::Grant).await;
+                let (steps, _) = session(true, true, End::ClientLeft, Portal::Grant).await;
                 assert_eq!(steps, ["arrived", "release", "close", "lock"]);
                 assert!(
                     started.elapsed() < Duration::from_secs(4),
@@ -1134,10 +1155,20 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn a_logged_in_connection_never_shown_the_session_does_not_lock() {
+        LocalSet::new()
+            .run_until(async {
+                let (steps, _) = session(true, false, End::ClientLeft, Portal::Flag).await;
+                assert_eq!(steps, ["release", "close"]);
+            })
+            .await;
+    }
+
+    #[tokio::test]
     async fn an_unauthenticated_drop_does_not_lock() {
         LocalSet::new()
             .run_until(async {
-                let (steps, _) = session(false, End::ClientLeft, Portal::Flag).await;
+                let (steps, _) = session(false, false, End::ClientLeft, Portal::Flag).await;
                 assert_eq!(steps, ["release", "close"]);
             })
             .await;
@@ -1147,7 +1178,7 @@ pub(crate) mod tests {
     async fn a_disconnect_request_ends_a_listed_client_and_locks() {
         LocalSet::new()
             .run_until(async {
-                let (steps, listed) = session(true, End::Asked, Portal::Flag).await;
+                let (steps, listed) = session(true, true, End::Asked, Portal::Flag).await;
                 assert_eq!(listed.len(), 1);
                 assert_eq!(listed[0].user, "alice");
                 assert!(listed[0].address.starts_with("127.0.0.1:"), "{listed:?}");
@@ -1218,7 +1249,15 @@ pub(crate) mod tests {
                 });
                 let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
                 let viewer = Viewer { id, peer, kicked };
-                let ran = run(rdp, stream, viewer, check, HANDSHAKE, shared);
+                let ran = run(
+                    rdp,
+                    stream,
+                    viewer,
+                    check,
+                    HANDSHAKE,
+                    oneshot::channel().1,
+                    shared,
+                );
                 tokio::time::timeout(Duration::from_secs(10), ran)
                     .await
                     .expect("the closed connection ends");
@@ -1228,11 +1267,11 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn a_logged_in_connection_whose_task_panics_still_locks() {
+    async fn a_shown_connection_whose_task_panics_still_locks() {
         LocalSet::new()
             .run_until(async {
                 let peer = SocketAddr::from(([127, 0, 0, 1], 1));
-                for log_in in [false, true] {
+                for shown in [false, true] {
                     let steps = Steps::default();
                     let shared = Rc::new(Shared {
                         user: "alice".into(),
@@ -1247,7 +1286,7 @@ pub(crate) mod tests {
                     let task = tokio::task::spawn_local(async move {
                         let _unwound = Unwound {
                             shared,
-                            arrived: Rc::new(Cell::new(log_in)),
+                            arrived: Rc::new(Cell::new(shown)),
                             id,
                             peer,
                         };
@@ -1257,8 +1296,8 @@ pub(crate) mod tests {
                     for _ in 0..100 {
                         tokio::task::yield_now().await;
                     }
-                    let want: &[&str] = if log_in { &["lock"] } else { &[] };
-                    assert_eq!(*steps.borrow(), want, "logged in: {log_in}");
+                    let want: &[&str] = if shown { &["lock"] } else { &[] };
+                    assert_eq!(*steps.borrow(), want, "shown: {shown}");
                 }
             })
             .await;

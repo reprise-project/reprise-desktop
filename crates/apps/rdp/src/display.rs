@@ -8,6 +8,7 @@ use crate::encode::probe::Backend;
 use crate::encode::{Done, Encoded, Encoder, Job, Switch, Worker};
 use crate::gfx::{Gfx, Prepared, Video};
 use crate::input::{self, Feed, SharedMoves};
+use crate::listen::Shown;
 use crate::portal::{self, Grant};
 use crate::stream::{
     self, CursorImage, DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer, Offer, SizeChange,
@@ -141,6 +142,8 @@ pub struct Display {
     input: Option<Feed>,
     moves: SharedMoves,
     links: Links,
+    /// Until the portal session is granted.
+    shown: Option<Shown>,
 }
 
 impl Display {
@@ -151,6 +154,7 @@ impl Display {
         picture: Probed,
         gfx: Option<Gfx>,
         links: Links,
+        shown: Shown,
     ) -> Display {
         Display {
             told: Told::new(last),
@@ -161,6 +165,7 @@ impl Display {
             live: Arc::default(),
             moves: input.moves.clone(),
             input: Some(input),
+            shown: Some(shown),
         }
     }
 }
@@ -203,6 +208,9 @@ impl RdpServerDisplay for Display {
                     feed.events,
                     self.told.size.clone(),
                 ));
+            }
+            if let Some(shown) = self.shown.take() {
+                let _ = shown.send(());
             }
             let path = self.gfx.as_ref().map(|gfx| H264 {
                 gfx: gfx.clone(),

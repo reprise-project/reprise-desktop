@@ -199,11 +199,12 @@ consent. While it runs, the screen-sharing dot shows, this computer's
 screen keeps showing the session, and its own keyboard and mouse keep
 working, so someone at the computer sees and can take part in what the
 client does. When a logged-in client leaves, its held keys and buttons are
-let go; when it was the last one logged in, the session then locks through
-logind, so the computer is not left open. Stopping the server, as turning
-Remote Desktop off does, locks the session before a logged-in client's
-connection closes. A server that
-dies with a client logged in locks the session when it next starts.
+let go; when it was the last one shown the session, the session then locks
+through logind, so the computer is not left open. A client that logged in
+but never got the picture and input (with no screen to share, say) leaves
+the session as it was. Stopping the server, as turning Remote Desktop off
+does, locks the session before a shown client's connection closes. A server
+that dies with a client shown the session locks it when it next starts.
 
 The client shares the clipboard only while it is logged in. `reprise-rdp`
 opens its data control connection once the client's clipboard channel is up,
