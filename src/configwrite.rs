@@ -1,13 +1,13 @@
 //! What the compositor writes back into `config.toml`: switches the desktop
-//! flips (StickyKeys), the system icons after one is removed, and the
-//! taskbar's edge and width after a drag. The rest of the file stays
+//! flips (StickyKeys), the system icons after one is removed, the
+//! taskbar's edge and width after a drag, and Always Open Here's window rules. The rest of the file stays
 //! byte-identical (`toml_edit` via `repriseconf`). The config watch reloads
 //! the write; for a setting already live it finds nothing to apply.
 
 use std::path::Path;
 use std::sync::OnceLock;
 use std::sync::mpsc::{Sender, channel};
-use toml_edit::{Array, DocumentMut, Value, value};
+use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Value, value};
 
 /// `text` with `[table] key = v`, the rest untouched. Err when `text` is not TOML or `table` is not a table.
 pub fn set_value(text: &str, key: repriseconf::Key, v: Value) -> Result<String, String> {
@@ -102,6 +102,56 @@ pub fn save_recycle_bin(path: &Path, policy: reprisefs::bincap::Policy, replace:
         match saved {
             Ok(_) => log::info!("config {}: saved recycle_bin", path.display()),
             Err(e) => log::error!("config {}: {e}; recycle_bin not saved", path.display()),
+        }
+    }));
+}
+
+/// `text` with Always Open Here's rule for `app_id` dropped and `rule` appended as the last
+/// `[[window_rules]]`; hand-written rules stay. Err when `text` is not TOML or `window_rules` is
+/// not an array of tables.
+pub fn set_open_here(
+    text: &str,
+    app_id: &str,
+    rule: Option<&crate::windowrules::WindowRule>,
+) -> Result<String, String> {
+    let mut doc: DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
+    if !doc.contains_key("window_rules") {
+        if rule.is_none() {
+            return Ok(text.to_string());
+        }
+        doc.insert("window_rules", Item::ArrayOfTables(ArrayOfTables::new()));
+    }
+    let rules = (doc["window_rules"].as_array_of_tables_mut())
+        .ok_or("window_rules is not an array of tables")?;
+    rules.retain(|t| {
+        !(t.get("from_menu").and_then(Item::as_bool) == Some(true)
+            && t.get("app_id").and_then(Item::as_str) == Some(app_id))
+    });
+    if let Some(r) = rule {
+        rules.push(r.to_table());
+    }
+    if rules.is_empty() {
+        doc.remove("window_rules");
+    }
+    Ok(doc.to_string())
+}
+
+/// Queue `set_open_here` on `path`: Always Open Here ticked (`Some`) or unticked.
+pub fn save_open_here(path: &Path, app_id: String, rule: Option<crate::windowrules::WindowRule>) {
+    let path = path.to_path_buf();
+    queue(Box::new(move || {
+        let saved = repriseconf::edit(&path, |text| set_open_here(text, &app_id, rule.as_ref()))
+            .map_err(|e| e.to_string())
+            .and_then(|r| r);
+        match saved {
+            Ok(_) => log::info!(
+                "config {}: saved the window rule of {app_id:?}",
+                path.display()
+            ),
+            Err(e) => log::error!(
+                "config {}: {e}; the window rule of {app_id:?} not saved",
+                path.display()
+            ),
         }
     }));
 }
@@ -242,6 +292,60 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(dir.join(".config.toml.lock"));
         let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn open_here_rules_round_trip_and_leave_comments_and_other_rules() {
+        use crate::windowrules::{Remembered, WindowRule, put_open_here};
+        let text = "# mine\nterminal = \"foot\"\n\n# shells\n[[window_rules]]\napp_id = \"foot\" # hand\n\
+                    size = [300, 200]\n\n[idle]\nlock_after = 60 # a minute\n";
+        let at = |x: i32, maximized: bool| Remembered {
+            output: "DP-1".into(),
+            x,
+            y: 40,
+            width: 800,
+            height: 600,
+            maximized,
+            text_size: 100,
+        };
+        let mine = |x: i32, maximized: bool| {
+            WindowRule::open_here(
+                "foot",
+                "Dell|U2720Q|ABC".into(),
+                &at(x, maximized),
+                true,
+                false,
+            )
+        };
+        let mut live = Config::parse(text).unwrap();
+        let out = set_open_here(text, "foot", Some(&mine(10, false))).unwrap();
+        put_open_here(&mut live.window_rules, "foot", Some(mine(10, false)));
+        for kept in [
+            "# mine\n",
+            "# shells\n",
+            "\"foot\" # hand\n",
+            "60 # a minute\n",
+        ] {
+            assert!(out.contains(kept), "{kept:?} kept in {out}");
+        }
+        assert_eq!(Config::parse(&out).unwrap(), live, "{out}");
+        assert_eq!(live.window_rules.len(), 2);
+
+        let again = set_open_here(&out, "foot", Some(&mine(90, true))).unwrap();
+        put_open_here(&mut live.window_rules, "foot", Some(mine(90, true)));
+        assert_eq!(again.matches("from_menu").count(), 1, "{again}");
+        assert_eq!(Config::parse(&again).unwrap(), live, "{again}");
+
+        let off = set_open_here(&again, "foot", None).unwrap();
+        assert_eq!(Config::parse(&off).unwrap(), Config::parse(text).unwrap());
+        assert!(off.contains("app_id = \"foot\" # hand\n"), "{off}");
+        assert!(!off.contains("from_menu"), "{off}");
+
+        let none = "# mine\n";
+        let only = set_open_here(none, "foot", Some(&mine(10, false))).unwrap();
+        assert_eq!(set_open_here(&only, "foot", None).unwrap(), none);
+        assert_eq!(set_open_here(none, "foot", None).unwrap(), none);
+        assert!(set_open_here("window_rules = 1\n", "foot", None).is_err());
     }
 
     #[test]

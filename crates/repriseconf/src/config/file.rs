@@ -372,6 +372,7 @@ pub struct FileWindowRule {
     pub always_on_top: Option<bool>,
     pub sticky: Option<bool>,
     pub tab_group: Option<String>,
+    pub from_menu: Option<bool>,
 }
 
 #[derive(Deserialize, Default)]

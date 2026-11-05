@@ -541,7 +541,7 @@ fn window_rules_parse_in_file_order_with_desktops_counted_from_one() {
         "[windows]\nremember = false\n\n\
          [[window_rules]]\napp_id = \"foot\"\nsize = [800, 600]\nposition = [-10, 40]\n\
          output = \"DP-2\"\nstate = \"maximized\"\ndesktop = 2\nalways_on_top = true\n\
-         sticky = false\ntab_group = \"shells\"\n\n\
+         sticky = false\ntab_group = \"shells\"\nfrom_menu = true\n\n\
          [[window_rules]]\napp_id = \"firefox\"\ntitle = \"*Mail*\"\n",
     )
     .unwrap();
@@ -560,6 +560,7 @@ fn window_rules_parse_in_file_order_with_desktops_counted_from_one() {
                 always_on_top: Some(true),
                 sticky: Some(false),
                 tab_group: Some("shells".into()),
+                from_menu: true,
             },
             WindowRule {
                 app_id: "firefox".into(),
