@@ -245,6 +245,13 @@ impl SettingsApp {
         {
             return self.sheet_event(ev);
         }
+        if propsheet::find_key(k.sym, k.mods.ctrl, k.mods.shift, k.mods.alt) {
+            let ev = self.sheet.focus_search();
+            if self.sheet.search_focused {
+                self.blur_side_lists();
+            }
+            return self.sheet_event(ev);
+        }
         let Some(key) = dialog_key(&k) else {
             return Reply::none();
         };
@@ -403,7 +410,7 @@ impl SettingsApp {
                 let hit = self.sheet.hit(x, y, &ctx.text, px);
                 let was = self.sheet.tabs.open;
                 let ev = self.sheet.click(hit);
-                if self.sheet.tabs.focused {
+                if self.sheet.tabs.focused || self.sheet.search_focused {
                     self.blur_side_lists();
                 } else if self.sheet.tabs.open != was {
                     self.blur_side_lists();
