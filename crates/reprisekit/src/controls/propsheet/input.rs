@@ -1,6 +1,6 @@
 use crate::classic::widgets::{LINE_H, bar_hit};
 use crate::controls::form;
-use crate::controls::pagelist::{self, PageList};
+use crate::controls::pagelist::{self, PageList, Pick};
 use crate::controls::tabstrip;
 use crate::text::TextRenderer;
 
@@ -13,15 +13,39 @@ impl PropSheet {
     /// after. True when the rows moved.
     pub fn reveal_open(&mut self) -> bool {
         let open = self.tabs.open;
-        self.on_list(|list, lay| list.reveal(open, lay))
+        self.on_list(|list, lay| list.reveal(Pick::Page(open), lay))
     }
 
     /// Give the keyboard to control `id` on the open page, taking it from the page strip, and
     /// scroll the control into view.
     pub fn focus_control(&mut self, id: &str) {
         self.tabs.focused = false;
+        self.settle_cursor();
         self.open_mut().focus_id(id);
         self.reveal_focus();
+    }
+
+    /// The link the page list's keyboard rests on.
+    fn cursor(&self) -> Option<usize> {
+        match &self.nav {
+            Nav::List(list) => list.cursor,
+            Nav::Tabs => None,
+        }
+    }
+
+    /// Let go of the list's cursor. True when there was one.
+    fn drop_cursor(&mut self) -> bool {
+        match &mut self.nav {
+            Nav::List(list) => list.cursor.take().is_some(),
+            Nav::Tabs => false,
+        }
+    }
+
+    /// A list without the keyboard holds no cursor.
+    fn settle_cursor(&mut self) {
+        if !self.tabs.focused {
+            self.drop_cursor();
+        }
     }
 
     /// Open tab `i` from the host, as a click does. True when another page opened.
@@ -32,7 +56,10 @@ impl PropSheet {
     /// The strip's part of a key, before the open page's (see `nav_key`). For a host
     /// that routes the page's keys itself.
     pub fn strip_key(&mut self, key: &form::Key, ctrl_tab: Option<bool>) -> StripKey {
-        let list = self.is_list();
+        let list = match &mut self.nav {
+            Nav::List(list) => Some(list),
+            Nav::Tabs => None,
+        };
         let r = nav_key(&mut self.tabs, &mut self.pages, key, ctrl_tab, list);
         self.after_nav(r)
     }
@@ -43,12 +70,21 @@ impl PropSheet {
         self.after_nav(r)
     }
 
-    /// A page turned by the strip or the list shows its row and starts unscrolled.
+    /// A page turned by the strip or the list takes the selection from a link, shows its row
+    /// and starts unscrolled; a link the keys rest on shows its row.
     fn after_nav(&mut self, r: StripKey) -> StripKey {
-        if r == StripKey::Turned {
-            self.reveal_open();
-            self.scroll_to(0);
-            self.scroll_across(0);
+        self.settle_cursor();
+        match (r, self.cursor()) {
+            (StripKey::Turned, _) => {
+                self.drop_cursor();
+                self.reveal_open();
+                self.scroll_to(0);
+                self.scroll_across(0);
+            }
+            (StripKey::Moved, Some(k)) => {
+                self.on_list(|list, lay| list.reveal(Pick::Link(k), lay));
+            }
+            _ => {}
         }
         r
     }
@@ -56,12 +92,20 @@ impl PropSheet {
     pub fn page_clicked(&mut self) {
         let i = self.tabs.open;
         page_clicked(&mut self.tabs, &self.pages[i]);
+        self.settle_cursor();
     }
 
     /// A key for the sheet: the strip's keys ([`PropSheet::strip_key`]) first, the open page's
     /// after. `ctrl_tab` is `Some(back)` for Ctrl+Tab and Ctrl+Shift+Tab, which turn
     /// the tabs; `key` is then ignored.
     pub fn key(&mut self, key: form::Key, ctrl_tab: Option<bool>) -> Event {
+        if key == form::Key::Enter
+            && ctrl_tab.is_none()
+            && self.tabs.focused
+            && let Some(k) = self.cursor()
+        {
+            return Event::Link(k);
+        }
         match self.strip_key(&key, ctrl_tab) {
             StripKey::Pass => {}
             StripKey::None => return Event::None,
@@ -110,7 +154,11 @@ impl PropSheet {
             if let Some(b) = pagelist::hit_bar(lay, x, y) {
                 return Some(Hit::ListBar(b));
             }
-            return Some(pagelist::hit(list, lay, x, y).map_or(Hit::List, Hit::Tab));
+            return Some(match pagelist::hit(list, lay, x, y) {
+                Some(Pick::Page(k)) => Hit::Tab(k),
+                Some(Pick::Link(k)) => Hit::Link(k),
+                None => Hit::List,
+            });
         }
         if let Some(i) = tabstrip::hit(&l.tabs, x, y) {
             return Some(Hit::Tab(i));
@@ -135,15 +183,19 @@ impl PropSheet {
             return Event::None;
         }
         self.tabs.focused = false;
+        self.settle_cursor();
         self.reveal_focus();
         Event::Redraw
     }
 
-    /// A reader asked to see row `row` of the list at (`x`, `y`): the page list's page `row`, or
-    /// a row of a list on the open page, scrolls in; nothing is picked or turned to.
+    /// A reader asked to see row `row` of the list at (`x`, `y`): the page list's item `row`
+    /// ([`PageList::item`]), or a row of a list on the open page, scrolls in; nothing is picked
+    /// or turned to.
     pub fn reveal(&mut self, x: i32, y: i32, row: usize, text: &TextRenderer, px: u32) -> Event {
         let moved = match self.hit(x, y, text, px) {
-            Some(Hit::Tab(_) | Hit::List) => self.on_list(|list, lay| list.reveal(row, lay)),
+            Some(Hit::Tab(_) | Hit::Link(_) | Hit::List) => {
+                self.on_list(|list, lay| list.item(row).is_some_and(|pick| list.reveal(pick, lay)))
+            }
             Some(Hit::Control(_)) => {
                 self.open_mut().reveal(x, y, row, text, px) != form::Event::None
             }
@@ -163,11 +215,13 @@ impl PropSheet {
     pub fn click(&mut self, hit: Option<Hit>) -> Event {
         match hit {
             Some(Hit::Tab(i)) => {
+                let dropped = self.drop_cursor();
                 return match self.tab_click(i) {
-                    StripKey::None | StripKey::Pass => Event::None,
-                    StripKey::Moved | StripKey::Turned => Event::Redraw,
+                    StripKey::None | StripKey::Pass if !dropped => Event::None,
+                    _ => Event::Redraw,
                 };
             }
+            Some(Hit::Link(k)) => return self.link_click(k),
             Some(Hit::ListBar(b)) => {
                 self.on_list(|list, lay| list.bar_press(b, lay));
                 return Event::Redraw;
@@ -187,6 +241,21 @@ impl PropSheet {
         let ev = self.pages[i].click(control(hit));
         self.page_clicked();
         self.event(i, ev)
+    }
+
+    /// A press on link `k`: a live one takes the list's cursor and the keyboard and comes back
+    /// as [`Event::Link`]; a greyed one does nothing.
+    fn link_click(&mut self, k: usize) -> Event {
+        let Nav::List(list) = &mut self.nav else {
+            return Event::None;
+        };
+        if !list.links.get(k).is_some_and(|l| l.enabled) {
+            return Event::None;
+        }
+        list.cursor = Some(k);
+        self.tabs.focused = true;
+        self.open_mut().set_focus(None);
+        Event::Link(k)
     }
 
     /// The pointer moved to (`x`, `y`) over `hit`: the closed tab under it lights,
@@ -234,7 +303,12 @@ impl PropSheet {
     /// The wheel over the page list scrolls it a row per row; elsewhere it is the
     /// open page's ([`Form::wheel`]).
     pub fn wheel(&mut self, hit: Option<Hit>, rows: i32) -> Event {
-        if self.is_list() && matches!(hit, Some(Hit::Tab(_) | Hit::List | Hit::ListBar(_))) {
+        if self.is_list()
+            && matches!(
+                hit,
+                Some(Hit::Tab(_) | Hit::Link(_) | Hit::List | Hit::ListBar(_))
+            )
+        {
             let moved = self.on_list(|list, lay| list.scroll(rows * pagelist::ROW_H, lay));
             return if moved { Event::Redraw } else { Event::None };
         }

@@ -213,6 +213,7 @@ impl SettingsApp {
                 _ => Reply::redraw(),
             },
             propsheet::Event::Page(..) => Reply::redraw(),
+            propsheet::Event::Link(_) => Reply::none(),
             propsheet::Event::Apply => {
                 if self.apply() {
                     self.display.pending = Some(displayhost::Press::Apply);

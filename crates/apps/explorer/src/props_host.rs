@@ -465,7 +465,7 @@ impl Explorer {
 
     pub(crate) fn props_outcome(&mut self, out: propsheet::Event, ctx: &mut Ctx) -> Reply {
         match out {
-            propsheet::Event::None => Reply::none(),
+            propsheet::Event::None | propsheet::Event::Link(_) => Reply::none(),
             propsheet::Event::Redraw => Reply::redraw(),
             propsheet::Event::Cancel => {
                 self.props = None;

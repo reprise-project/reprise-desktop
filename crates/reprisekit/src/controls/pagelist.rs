@@ -1,6 +1,7 @@
 //! The list a property sheet picks its page from in list mode: headings and page names in a sunken box.
 //! Rows that overflow scroll under the look's scrollbar; a held arrow repeats on the host's ticks ([`PageList::bar_tick`]).
 //! Which page is open is the sheet's [`TabStrip`]; pages are numbered down the list, across headings.
+//! Links are numbered the same way and open nothing in the list: the sheet reports them.
 
 use crate::access::{self, Tree, accesskit};
 use crate::classic::widgets::{BarHit, ScrollParts, bar_hit, scrollbar_parts};
@@ -27,15 +28,39 @@ const PAGE_X: i32 = 14;
 const HEADING_GAP: i32 = 4;
 const HIGHLIGHT_PAD: i32 = 2;
 
+/// A row under a heading, as a host lists it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Item<'a> {
+    Page(&'a str),
+    Link(&'a str),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Row {
     Heading(String),
     Page(usize),
+    Link(usize),
+}
+
+/// A row the pointer or the keys land on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Page(usize),
+    Link(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Link {
+    pub label: String,
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PageList {
     pub rows: Vec<Row>,
+    pub links: Vec<Link>,
+    /// The link row the keyboard rests on; `None` unless the list has the keyboard.
+    pub cursor: Option<usize>,
     /// How far the rows are scrolled up, in px; read through the layout,
     /// which holds it to the rows' range.
     pub top: i32,
@@ -45,20 +70,34 @@ pub struct PageList {
 }
 
 impl PageList {
-    /// `groups` are the headings in order, each with its pages' labels;
-    /// the pages are numbered from 0 down the whole list.
-    pub fn new(groups: &[(&str, &[&str])]) -> PageList {
+    /// `groups` are the headings in order, each with its rows; pages and
+    /// links are each numbered from 0 down the whole list.
+    pub fn new(groups: &[(&str, &[Item<'_>])]) -> PageList {
         let mut rows = Vec::new();
+        let mut links = Vec::new();
         let mut page = 0;
-        for (heading, labels) in groups {
+        for (heading, items) in groups {
             rows.push(Row::Heading((*heading).to_string()));
-            for _ in labels.iter() {
-                rows.push(Row::Page(page));
-                page += 1;
+            for item in items.iter() {
+                match item {
+                    Item::Page(_) => {
+                        rows.push(Row::Page(page));
+                        page += 1;
+                    }
+                    Item::Link(label) => {
+                        rows.push(Row::Link(links.len()));
+                        links.push(Link {
+                            label: (*label).to_string(),
+                            enabled: true,
+                        });
+                    }
+                }
             }
         }
         PageList {
             rows,
+            links,
+            cursor: None,
             top: 0,
             drag: ThumbDrag::default(),
             bars: Pointer::new(),
@@ -81,10 +120,10 @@ impl PageList {
         moved
     }
 
-    /// Scroll page `page`'s row fully into view, as little as it takes; a
-    /// heading's first page brings its heading fully into view with it. True when the rows moved.
-    pub fn reveal(&mut self, page: usize, lay: &Layout) -> bool {
-        let Some(i) = self.rows.iter().position(|r| *r == Row::Page(page)) else {
+    /// Scroll `pick`'s row fully into view, as little as it takes; a
+    /// heading's first row brings its heading fully into view with it. True when the rows moved.
+    pub fn reveal(&mut self, pick: Pick, lay: &Layout) -> bool {
+        let Some(i) = self.rows.iter().position(|r| pick_of(r) == Some(pick)) else {
             return false;
         };
         let (r, inner) = (lay.rows[i], lay.inner);
@@ -171,20 +210,59 @@ impl PageList {
             .filter(|r| matches!(r, Row::Page(_)))
             .count()
     }
+
+    /// Grey or ungrey link `i`; greying the cursor's link lets go of it.
+    pub fn set_link_enabled(&mut self, i: usize, on: bool) {
+        let Some(link) = self.links.get_mut(i) else {
+            return;
+        };
+        link.enabled = on;
+        if !on && self.cursor == Some(i) {
+            self.cursor = None;
+        }
+    }
+
+    /// The row that draws selected: the cursor's link, else page `open`.
+    pub fn current(&self, open: usize) -> Pick {
+        self.cursor.map_or(Pick::Page(open), Pick::Link)
+    }
+
+    /// Where a key on the focused list lands, from [`PageList::current`]: Up
+    /// and Down the nearest page or live link before or after it (itself at
+    /// an end), Home and End the first and the last. `None` for any other
+    /// key or when no row qualifies.
+    pub fn target(&self, open: usize, key: &form::Key) -> Option<Pick> {
+        let live: Vec<Pick> = self
+            .rows
+            .iter()
+            .filter_map(pick_of)
+            .filter(|p| match p {
+                Pick::Page(_) => true,
+                Pick::Link(k) => self.links.get(*k).is_some_and(|l| l.enabled),
+            })
+            .collect();
+        let at = live.iter().position(|p| *p == self.current(open));
+        match key {
+            form::Key::Up => at.map(|i| live[i.saturating_sub(1)]),
+            form::Key::Down => at.map(|i| live[(i + 1).min(live.len() - 1)]),
+            form::Key::Home => live.first().copied(),
+            form::Key::End => live.last().copied(),
+            _ => None,
+        }
+    }
+
+    /// The `n`th page or link down the list, as a reader counts the items.
+    pub fn item(&self, n: usize) -> Option<Pick> {
+        self.rows.iter().filter_map(pick_of).nth(n)
+    }
 }
 
-/// The page a key on the focused list opens, from `open` of `count`: Up
-/// and Down the one before or after it, stopping at the ends, Home and
-/// End the first and the last. `None` for any other key.
-pub fn target(open: usize, count: usize, key: &form::Key) -> Option<usize> {
-    let last = count.saturating_sub(1);
-    Some(match key {
-        form::Key::Up => open.saturating_sub(1),
-        form::Key::Down => (open + 1).min(last),
-        form::Key::Home => 0,
-        form::Key::End => last,
-        _ => return None,
-    })
+fn pick_of(row: &Row) -> Option<Pick> {
+    match row {
+        Row::Heading(_) => None,
+        Row::Page(k) => Some(Pick::Page(*k)),
+        Row::Link(k) => Some(Pick::Link(*k)),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -258,17 +336,14 @@ pub fn hit_bar(lay: &Layout, x: i32, y: i32) -> Option<BarHit> {
     Some(bar_hit(&bar_parts(lay)?, x, y, false))
 }
 
-/// The page whose row is under (`x`, `y`): `None` on a heading, in a gap,
-/// off the rows or on a row scrolled out of the inside.
-pub fn hit(list: &PageList, lay: &Layout, x: i32, y: i32) -> Option<usize> {
+/// The page or link whose row is under (`x`, `y`): `None` on a heading, in
+/// a gap, off the rows or on a row scrolled out of the inside.
+pub fn hit(list: &PageList, lay: &Layout, x: i32, y: i32) -> Option<Pick> {
     if !lay.inner.contains(x, y) {
         return None;
     }
     let i = lay.rows.iter().position(|r| r.contains(x, y))?;
-    match list.rows.get(i)? {
-        Row::Page(k) => Some(*k),
-        Row::Heading(_) => None,
-    }
+    pick_of(list.rows.get(i)?)
 }
 
 /// Draw the list, `strip` naming the pages and the open one, and its
@@ -294,76 +369,113 @@ pub fn draw(
         draw_scrollbar(c, p, sb.scaled(s), top, visible, total, list.bars.lit());
     }
     let inner = lay.inner.scaled(s);
+    let current = list.current(strip.open);
     c.with_clip(inner, |c| {
         for (row, r) in list.rows.iter().zip(&lay.rows) {
             let r = r.scaled(s);
             if r.intersect(&inner).is_empty() {
                 continue;
             }
-            draw_row(c, text, p, row, r, &inner, strip, cues, px);
+            if let Row::Heading(h) = row {
+                let tr = Rect::new(r.x + HEADING_X * s, r.y, r.width - HEADING_X * s, r.height);
+                text.draw(c, tr, h, true, group_label_ink(p), Align::Left, px);
+                continue;
+            }
+            let Some((label, enabled)) = row_text(list, strip, row) else {
+                continue;
+            };
+            let selected = pick_of(row) == Some(current);
+            draw_item_row(
+                c,
+                text,
+                p,
+                &label,
+                enabled,
+                selected,
+                r,
+                &inner,
+                strip.focused,
+                cues,
+                px,
+            );
         }
     });
 }
 
+/// A page or link row's text and whether it is live; `None` for a heading.
+fn row_text(list: &PageList, strip: &TabStrip, row: &Row) -> Option<(String, bool)> {
+    match row {
+        Row::Heading(_) => None,
+        Row::Page(k) => Some((strip.labels.get(*k)?.clone(), true)),
+        Row::Link(k) => list
+            .links
+            .get(*k)
+            .map(|l| (format!("{}...", l.label), l.enabled)),
+    }
+}
+
 #[expect(clippy::too_many_arguments)]
-fn draw_row(
+fn draw_item_row(
     c: &mut Canvas,
     text: &TextRenderer,
     p: &Paint,
-    row: &Row,
+    label: &str,
+    enabled: bool,
+    selected: bool,
     r: Rect,
     inner: &Rect,
-    strip: &TabStrip,
+    focused: bool,
     cues: bool,
     px: u32,
 ) {
     let Paint { cs, s, .. } = *p;
-    match row {
-        Row::Heading(h) => {
-            let tr = Rect::new(r.x + HEADING_X * s, r.y, r.width - HEADING_X * s, r.height);
-            text.draw(c, tr, h, true, group_label_ink(p), Align::Left, px);
-        }
-        Row::Page(k) => {
-            let Some(label) = strip.labels.get(*k) else {
-                return;
-            };
-            let tx = r.x + PAGE_X * s;
-            let tr = Rect::new(tx, r.y, r.right() - tx, r.height);
-            if *k != strip.open {
-                text.draw(c, tr, label, false, cs.button_text, Align::Left, px);
-                return;
-            }
-            // A look that boxes its items boxes the open page's row, 1
-            // px in from either side, darker while the list has the
-            // focus; the text stays as it is.
-            let mark = Mark {
-                selected: true,
-                lead: strip.focused,
-                ..Mark::default()
-            };
-            let row = Rect::new(r.x + s, r.y, r.width - 2 * s, r.height);
-            if item::draw_item(c, p, row, mark) {
-                text.draw(c, tr, label, false, cs.button_text, Align::Left, px);
-                return;
-            }
-            let tw = text.measure(label, false, px);
-            let pad = HIGHLIGHT_PAD * s;
-            let hl = Rect::new(tx - pad, r.y, tw + 2 * pad, r.height).intersect(inner);
-            c.fill_rect(hl, cs.hilight);
-            text.draw(c, tr, label, false, cs.hilight_text, Align::Left, px);
-            if strip.focused && cues {
-                draw_focus_ring(c, p, hl, cs.hilight_text);
-            }
-        }
+    let tx = r.x + PAGE_X * s;
+    let tr = Rect::new(tx, r.y, r.right() - tx, r.height);
+    if !selected {
+        let ink = if enabled {
+            cs.button_text
+        } else {
+            cs.gray_text
+        };
+        text.draw(c, tr, label, false, ink, Align::Left, px);
+        return;
+    }
+    // A look that boxes its items boxes the selected row, 1 px in from
+    // either side, darker while the list has the focus; the text stays
+    // as it is.
+    let mark = Mark {
+        selected: true,
+        lead: focused,
+        ..Mark::default()
+    };
+    let row = Rect::new(r.x + s, r.y, r.width - 2 * s, r.height);
+    if item::draw_item(c, p, row, mark) {
+        text.draw(c, tr, label, false, cs.button_text, Align::Left, px);
+        return;
+    }
+    let tw = text.measure(label, false, px);
+    let pad = HIGHLIGHT_PAD * s;
+    let hl = Rect::new(tx - pad, r.y, tw + 2 * pad, r.height).intersect(inner);
+    c.fill_rect(hl, cs.hilight);
+    text.draw(c, tr, label, false, cs.hilight_text, Align::Left, px);
+    if focused && cues {
+        draw_focus_ring(c, p, hl, cs.hilight_text);
     }
 }
 
+/// The list's items, by page and by link number.
+pub struct Nodes {
+    pub pages: Vec<Option<NodeId>>,
+    pub links: Vec<Option<NodeId>>,
+}
+
 /// The list's `access` part: a list holding, row by row, each heading as
-/// static text and each page as a list item named by its label, the open
-/// one selected. The list's bounds are its inside. A heading's bounds are its
-/// part inside, none when scrolled out; a page keeps its whole row, so one
-/// scrolled out lies outside the list, where a reader can ask to scroll it
-/// in ([`PageList::reveal`]). Returns the pages' items in page order.
+/// static text and each page or link as a list item named by its label (a
+/// link's with its dots), the selected one ([`PageList::current`]) selected.
+/// The list's bounds are its inside. A heading's bounds are its part inside,
+/// none when scrolled out; an item keeps its whole row, so one scrolled out
+/// lies outside the list, where a reader can ask to scroll it in
+/// ([`PageList::reveal`]).
 pub fn access(
     list: &PageList,
     strip: &TabStrip,
@@ -371,16 +483,17 @@ pub fn access(
     tree: &mut Tree,
     parent: NodeId,
     key: impl std::hash::Hash,
-) -> Vec<NodeId> {
+) -> Nodes {
     let mut list_node = access::node(Role::List, lay.inner);
     list_node.set_label("Pages");
     let id = tree.push(parent, key, list_node);
-    let total = list
-        .rows
-        .iter()
-        .filter(|r| matches!(r, Row::Page(_)))
-        .count();
-    let mut items = Vec::new();
+    let total = list.rows.iter().filter_map(pick_of).count();
+    let current = list.current(strip.open);
+    let mut nodes = Nodes {
+        pages: vec![None; list.page_count()],
+        links: vec![None; list.links.len()],
+    };
+    let mut place_in_set = 0;
     for (i, (row, r)) in list.rows.iter().zip(&lay.rows).enumerate() {
         let shown = r.intersect(&lay.inner);
         let place = |n: &mut accesskit::Node| {
@@ -396,19 +509,29 @@ pub fn access(
                 place(&mut n);
                 tree.push(id, i, n);
             }
-            Row::Page(k) => {
+            Row::Page(_) | Row::Link(_) => {
+                let (label, enabled) = row_text(list, strip, row).unwrap_or_default();
                 let mut n = access::node(Role::ListItem, *r);
                 n.set_bounds(access::row_bounds(lay.inner, *r));
-                n.set_label(strip.labels.get(*k).map_or("", String::as_str));
-                n.set_selected(*k == strip.open);
-                n.set_position_in_set(items.len() + 1);
+                n.set_label(label);
+                n.set_selected(pick_of(row) == Some(current));
+                place_in_set += 1;
+                n.set_position_in_set(place_in_set);
                 n.set_size_of_set(total);
-                access::focusable(&mut n, true);
-                items.push(tree.push(id, i, n));
+                access::focusable(&mut n, enabled);
+                let node = Some(tree.push(id, i, n));
+                let slot = match row {
+                    Row::Link(k) => nodes.links.get_mut(*k),
+                    Row::Page(k) => nodes.pages.get_mut(*k),
+                    Row::Heading(_) => None,
+                };
+                if let Some(slot) = slot {
+                    *slot = node;
+                }
             }
         }
     }
-    items
+    nodes
 }
 
 #[cfg(test)]
@@ -421,9 +544,18 @@ mod tests {
     use crate::theme::{Color, FontConfig, Theme};
     use std::time::Duration;
 
-    const GROUPS: &[(&str, &[&str])] =
-        &[("Look", &["Night Light", "Effects"]), ("Input", &["Mouse"])];
+    const GROUPS: &[(&str, &[Item])] = &[
+        ("Look", &[Item::Page("Night Light"), Item::Page("Effects")]),
+        ("Input", &[Item::Page("Mouse")]),
+    ];
     const FRAME: Rect = Rect::new(6, 8, 140, 120);
+
+    fn page_nodes(n: Nodes) -> Vec<NodeId> {
+        n.pages
+            .into_iter()
+            .map(|p| p.expect("every page has a node"))
+            .collect()
+    }
 
     fn strip(open: usize, focused: bool) -> TabStrip {
         let mut t = TabStrip::new(&["Night Light", "Effects", "Mouse"], open);
@@ -457,25 +589,12 @@ mod tests {
                 Rect::new(8, 82, 136, 17),
             ]
         );
-        assert_eq!(hit(&list, &lay, 30, 50), Some(1));
-        assert_eq!(hit(&list, &lay, 30, 90), Some(2));
+        assert_eq!(hit(&list, &lay, 30, 50), Some(Pick::Page(1)));
+        assert_eq!(hit(&list, &lay, 30, 90), Some(Pick::Page(2)));
         assert_eq!(hit(&list, &lay, 30, 15), None, "a heading is no page");
         assert_eq!(hit(&list, &lay, 30, 62), None, "the gap before a heading");
         assert_eq!(hit(&list, &lay, 30, 110), None, "under the last row");
         assert_eq!(hit(&list, &lay, 150, 50), None, "right of the list");
-    }
-
-    #[test]
-    fn up_down_home_and_end_name_the_page_they_open() {
-        use form::Key;
-        assert_eq!(target(1, 3, &Key::Down), Some(2));
-        assert_eq!(target(2, 3, &Key::Down), Some(2), "stops at the last");
-        assert_eq!(target(1, 3, &Key::Up), Some(0));
-        assert_eq!(target(0, 3, &Key::Up), Some(0), "stops at the first");
-        assert_eq!(target(1, 3, &Key::Home), Some(0));
-        assert_eq!(target(0, 3, &Key::End), Some(2));
-        assert_eq!(target(1, 3, &Key::Left), None);
-        assert_eq!(target(1, 3, &Key::PageDown), None);
     }
 
     /// In each look: the look's list frame round a window-coloured inside,
@@ -617,7 +736,14 @@ mod tests {
         let list = PageList::new(GROUPS);
         let lay = layout(&list, FRAME, &ControlMetrics::CLASSIC);
         let mut tree = Tree::window("T", (160, 140));
-        let items = access(&list, &strip(1, false), &lay, &mut tree, ROOT, "pages");
+        let items = page_nodes(access(
+            &list,
+            &strip(1, false),
+            &lay,
+            &mut tree,
+            ROOT,
+            "pages",
+        ));
         assert_eq!(items.len(), 3);
         let effects = tree.find(Role::ListItem, "Effects").unwrap();
         assert_eq!(items[1], effects);
@@ -663,14 +789,14 @@ mod tests {
         assert_eq!(hit_bar(&lay, 135, 60), Some(BarHit::Forward));
         assert_eq!(hit_bar(&lay, 30, 12), None);
 
-        assert!(list.reveal(2, &lay));
+        assert!(list.reveal(Pick::Page(2), &lay));
         assert_eq!(list.top, 33);
         let lay = layout(&list, SHORT, &cm);
         assert_eq!(lay.rows[4], Rect::new(8, 49, 120, 17));
-        assert_eq!(hit(&list, &lay, 30, 60), Some(2));
-        assert!(!list.reveal(2, &lay), "already in view");
-        assert!(!list.reveal(1, &lay), "page 1 is in view too");
-        assert!(list.reveal(0, &lay));
+        assert_eq!(hit(&list, &lay, 30, 60), Some(Pick::Page(2)));
+        assert!(!list.reveal(Pick::Page(2), &lay), "already in view");
+        assert!(!list.reveal(Pick::Page(1), &lay), "page 1 is in view too");
+        assert!(list.reveal(Pick::Page(0), &lay));
         assert_eq!(list.top, 0);
         // A page below another one comes to the inside's top alone: in
         // 36 px of inside, page 1's row (34 px down the rows) 11 px up.
@@ -678,7 +804,7 @@ mod tests {
         list.top = 45;
         let lay = layout(&list, tiny, &cm);
         assert_eq!(lay.rows[2].y, -1);
-        assert!(list.reveal(1, &lay));
+        assert!(list.reveal(Pick::Page(1), &lay));
         assert_eq!(list.top, 34);
         list.top = 17;
 
@@ -697,7 +823,7 @@ mod tests {
         let lay = layout(&tall, FRAME, &cm);
         assert_eq!(lay.scrollbar, None);
         assert!(!tall.scroll(17, &lay));
-        assert!(!tall.reveal(2, &lay));
+        assert!(!tall.reveal(Pick::Page(2), &lay));
     }
 
     #[test]
@@ -869,7 +995,14 @@ mod tests {
         list.top = 25;
         let lay = layout(&list, SHORT, &ControlMetrics::CLASSIC);
         let mut tree = Tree::window("T", (160, 140));
-        let items = access(&list, &strip(0, false), &lay, &mut tree, ROOT, "pages");
+        let items = page_nodes(access(
+            &list,
+            &strip(0, false),
+            &lay,
+            &mut tree,
+            ROOT,
+            "pages",
+        ));
         let bounds = |t: &Tree, id| t.get(id).unwrap().bounds();
         assert_eq!(
             bounds(&tree, items[0]),
@@ -892,14 +1025,221 @@ mod tests {
         p.update(tree);
         assert_eq!(p.reveal(items[1]), None);
         assert_eq!(p.reveal(first).map(|r| r.row), Some(0));
-        assert!(list.reveal(0, &lay));
+        assert!(list.reveal(Pick::Page(0), &lay));
         assert_eq!(list.top, 0, "the page comes in with its heading");
         let mut tree = Tree::window("T", (160, 140));
-        let items = access(&list, &strip(0, false), &lay, &mut tree, ROOT, "pages");
+        let items = page_nodes(access(
+            &list,
+            &strip(0, false),
+            &lay,
+            &mut tree,
+            ROOT,
+            "pages",
+        ));
         assert_eq!(
             tree.get(items[2]).unwrap().position_in_set(),
             Some(3),
             "out of view or not, every page is listed"
+        );
+    }
+
+    const LINK_GROUPS: &[(&str, &[Item])] = &[
+        ("Look", &[Item::Page("Night Light"), Item::Page("Effects")]),
+        (
+            "Devices",
+            &[
+                Item::Link("Bluetooth"),
+                Item::Page("Mouse"),
+                Item::Link("Printers"),
+            ],
+        ),
+    ];
+    const LINK_FRAME: Rect = Rect::new(6, 8, 140, 140);
+
+    #[test]
+    fn links_number_down_the_list_like_pages() {
+        let list = PageList::new(LINK_GROUPS);
+        assert_eq!(
+            list.rows,
+            vec![
+                Row::Heading("Look".into()),
+                Row::Page(0),
+                Row::Page(1),
+                Row::Heading("Devices".into()),
+                Row::Link(0),
+                Row::Page(2),
+                Row::Link(1),
+            ]
+        );
+        assert_eq!(list.page_count(), 3);
+        assert_eq!(
+            list.links,
+            vec![
+                Link {
+                    label: "Bluetooth".into(),
+                    enabled: true
+                },
+                Link {
+                    label: "Printers".into(),
+                    enabled: true
+                },
+            ]
+        );
+        let lay = layout(&list, LINK_FRAME, &ControlMetrics::CLASSIC);
+        assert_eq!(lay.rows[4], Rect::new(8, 82, 136, 17));
+        assert_eq!(lay.scrollbar, None, "123 px of rows in 136");
+        assert_eq!(hit(&list, &lay, 30, 90), Some(Pick::Link(0)));
+        assert_eq!(hit(&list, &lay, 30, 100), Some(Pick::Page(2)));
+        assert_eq!(hit(&list, &lay, 30, 70), None, "the Devices heading");
+        assert_eq!(list.item(2), Some(Pick::Link(0)));
+        assert_eq!(list.item(5), None);
+    }
+
+    #[test]
+    fn the_keys_step_over_pages_and_live_links() {
+        use form::Key;
+        let mut list = PageList::new(LINK_GROUPS);
+        list.set_link_enabled(1, false);
+        assert_eq!(
+            list.target(1, &Key::Down),
+            Some(Pick::Link(0)),
+            "onto a link"
+        );
+        list.cursor = Some(0);
+        assert_eq!(list.current(1), Pick::Link(0));
+        assert_eq!(list.target(1, &Key::Down), Some(Pick::Page(2)));
+        assert_eq!(list.target(1, &Key::Up), Some(Pick::Page(1)));
+        list.cursor = None;
+        assert_eq!(
+            list.target(2, &Key::Down),
+            Some(Pick::Page(2)),
+            "a greyed link is skipped"
+        );
+        assert_eq!(list.target(2, &Key::Home), Some(Pick::Page(0)));
+        assert_eq!(list.target(0, &Key::End), Some(Pick::Page(2)));
+        assert_eq!(
+            list.target(0, &Key::Up),
+            Some(Pick::Page(0)),
+            "stops at the first"
+        );
+        assert_eq!(list.target(1, &Key::Left), None);
+        list.set_link_enabled(1, true);
+        assert_eq!(list.target(0, &Key::End), Some(Pick::Link(1)));
+        list.cursor = Some(1);
+        list.set_link_enabled(1, false);
+        assert_eq!(list.cursor, None, "greying the cursor's link lets go of it");
+    }
+
+    /// FNV-1a over the pixels, for pins.
+    fn hash(c: &Canvas) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for y in 0..c.height as i32 {
+            for x in 0..c.width as i32 {
+                for b in c.get(x, y).to_le_bytes() {
+                    h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+                }
+            }
+        }
+        h
+    }
+
+    /// Rest: page 1 open, list unfocused, Printers greyed. Cursor: the list focused with its
+    /// cursor on Bluetooth, cues out.
+    #[test]
+    fn a_link_row_draws_its_label_and_dots_in_every_look() {
+        let want: [(Interface, i32, &str, u64); 12] = [
+            (Interface::Classic, 1, "rest", 0x92719c5fa6c193b0),
+            (Interface::Classic, 1, "cursor", 0x305d04fcb4a84508),
+            (Interface::Classic, 2, "rest", 0x125053a00225449d),
+            (Interface::Classic, 2, "cursor", 0x1286ed701a20108d),
+            (Interface::Blue, 1, "rest", 0x40ba698820e64e34),
+            (Interface::Blue, 1, "cursor", 0x92b9398054b2c430),
+            (Interface::Blue, 2, "rest", 0xb873db6697fee7e3),
+            (Interface::Blue, 2, "cursor", 0x8cacb4b348b0212b),
+            (Interface::Glass, 1, "rest", 0xe540a73a9f5b9770),
+            (Interface::Glass, 1, "cursor", 0x6524582380167712),
+            (Interface::Glass, 2, "rest", 0xf63a64a61bdc685c),
+            (Interface::Glass, 2, "cursor", 0x018db865dd4ddb6a),
+        ];
+        let mut got = Vec::new();
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            for s in [1, 2] {
+                let theme = theme_for(i).scaled(s);
+                let text = TextRenderer::load(&theme.fonts);
+                let (p, cs, px) = (theme.paint(), &theme.colors, theme.fonts.size_px);
+                let cm = p.look.controls().grown(p.text);
+                let mut list = PageList::new(LINK_GROUPS);
+                list.set_link_enabled(1, false);
+                let lay = layout(&list, LINK_FRAME, &cm);
+                for state in ["rest", "cursor"] {
+                    let focused = state == "cursor";
+                    list.cursor = focused.then_some(0);
+                    let mut c = Canvas::new(160 * s as u32, 160 * s as u32);
+                    c.fill_rect(c.bounds(), cs.button_face);
+                    let strip = strip(1, focused);
+                    draw(&mut c, &text, &p, &list, &strip, &lay, false, px);
+                    got.push((i, s, state, hash(&c)));
+                    if s != 1 {
+                        continue;
+                    }
+                    let inks = |r: Rect, col: Color| {
+                        (r.y..r.bottom())
+                            .any(|y| (r.x..r.right()).any(|x| c.get(x, y) == col.argb()))
+                    };
+                    let (r2, r4, r6) = (lay.rows[2], lay.rows[4], lay.rows[6]);
+                    if !focused {
+                        let tx = r4.x + PAGE_X;
+                        let (bare, dots) = (
+                            text.measure("Bluetooth", false, px),
+                            text.measure("Bluetooth...", false, px),
+                        );
+                        let after = Rect::new(tx + bare, r4.y, dots - bare, r4.height);
+                        assert!(inks(after, cs.button_text), "{i:?}: the dots");
+                        assert!(inks(r6, cs.gray_text), "{i:?}: Printers greys");
+                        assert!(!inks(r6, cs.button_text), "{i:?}: in grey only");
+                    } else if i == Interface::Glass {
+                        assert_eq!(c.get(r4.x + 40, r4.y), 0xFF7A_9BCD, "the link's box");
+                        assert_ne!(c.get(r2.x + 40, r2.y), 0xFF7A_9BCD, "Effects bare");
+                    } else {
+                        assert_eq!(c.get(r4.x + 12, r4.y + 2), cs.hilight.argb(), "{i:?}");
+                        assert_eq!(
+                            c.get(r2.x + 12, r2.y + 2),
+                            cs.window.argb(),
+                            "{i:?}: Effects plain"
+                        );
+                    }
+                }
+            }
+        }
+        if crate::text::test_tahoma() {
+            assert_eq!(got, want);
+        }
+    }
+
+    #[test]
+    fn the_list_reads_a_link_as_an_item_named_with_its_dots() {
+        let mut list = PageList::new(LINK_GROUPS);
+        list.set_link_enabled(1, false);
+        let lay = layout(&list, LINK_FRAME, &ControlMetrics::CLASSIC);
+        let strip = TabStrip::new(&["Night Light", "Effects", "Mouse"], 1);
+        let mut tree = Tree::window("T", (160, 160));
+        let nodes = access(&list, &strip, &lay, &mut tree, ROOT, "pages");
+        assert_eq!((nodes.pages.len(), nodes.links.len()), (3, 2));
+        let bt = tree.find(Role::ListItem, "Bluetooth...").unwrap();
+        assert_eq!(nodes.links[0], Some(bt));
+        let n = tree.get(bt).unwrap();
+        assert_eq!((n.position_in_set(), n.size_of_set()), (Some(3), Some(5)));
+        assert!(tree.get(nodes.links[1].unwrap()).unwrap().is_disabled());
+        list.cursor = Some(0);
+        let mut tree = Tree::window("T", (160, 160));
+        let nodes = access(&list, &strip, &lay, &mut tree, ROOT, "pages");
+        assert_eq!(
+            tree.get(nodes.links[0].unwrap()).unwrap().is_selected(),
+            Some(true)
+        );
+        assert_eq!(
+            tree.get(nodes.pages[1].unwrap()).unwrap().is_selected(),
+            Some(false)
         );
     }
 }

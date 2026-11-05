@@ -109,7 +109,7 @@ impl Options {
 
     pub fn event(&mut self, ev: propsheet::Event) -> Outcome {
         match ev {
-            propsheet::Event::None => Outcome::None,
+            propsheet::Event::None | propsheet::Event::Link(_) => Outcome::None,
             propsheet::Event::Redraw => Outcome::Redraw,
             propsheet::Event::Page(_, ev) => {
                 self.page_event(ev);
