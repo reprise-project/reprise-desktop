@@ -25,6 +25,7 @@
 //! [`bluez`] lists BlueZ's paired devices and follows whether one is connected.
 //! [`kdeconnect`] follows the phones KDE Connect reaches.
 //! [`mutex`] locks a mutex even when its holder panicked.
+//! [`testsession`] gives a test binary a session of its own.
 
 pub mod a11y;
 pub mod appearance;
@@ -40,6 +41,7 @@ pub mod mutex;
 pub mod notify;
 pub mod permissions;
 pub mod polkit;
+pub mod testsession;
 pub mod tray;
 pub mod units;
 

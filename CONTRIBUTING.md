@@ -26,6 +26,11 @@ unprivileged user (`.github/workflows/ci.yml` installs the packages). Run
 the tests as a normal user too: some check that a read-only directory
 refuses a write, which root ignores.
 
+A crate's tests never see your session: `#[cfg(test)]
+reprisebus::test_session!();` at its root gives the test binary an empty
+HOME, XDG folders and runtime folder of its own and no session bus, system
+bus or display. A new crate whose tests touch any of them adds that line.
+
 Pixel tests that depend on the UI font are pinned to Wine 9.0's Tahoma.
 `scripts/test-fonts.sh` downloads it into your cache and prints the
 directory; the tests load Tahoma from there instead of the system:

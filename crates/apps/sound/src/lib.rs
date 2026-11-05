@@ -2,6 +2,9 @@
 //!
 //! One process: a tray speaker that follows the default sink, the volume popup a click on it opens, and the properties sheet a double click or Adjust Audio Properties opens. Open Volume Control and the sheet's Volume... buttons start reprise-volume, the mixer window. `--tray` starts with the sheet hidden (what the autostart entry uses); closing the sheet hides it again, only Exit in the tray menu quits.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod appicons;
 mod mpris;
 mod sheet;

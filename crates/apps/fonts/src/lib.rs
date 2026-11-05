@@ -1,6 +1,9 @@
 //! Font Viewer: the window round `reprisekit::controls::fontview` for one font file, opened from
 //! Explorer or the desktop. Install runs on a listing thread ([`install`]).
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod install;
 
 use install::user_dir;

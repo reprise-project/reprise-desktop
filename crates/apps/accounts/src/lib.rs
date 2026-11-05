@@ -1,3 +1,6 @@
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod acct;
 mod adduser;
 mod passwd;

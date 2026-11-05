@@ -4,6 +4,9 @@
 //! `reprise-updates` shows the window and checks at once. Closing the window hides it; an install
 //! carries on behind it.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod flatpak;
 mod fwupd;
 mod model;

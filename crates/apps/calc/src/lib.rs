@@ -1,6 +1,9 @@
 //! Calculator: the window around `reprisekit::controls::calculator`, with its menu bar and
 //! the clipboard.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 reprisekit::strings!("calc");
 
 use repriseapp::keys::{AltArm, form_input};

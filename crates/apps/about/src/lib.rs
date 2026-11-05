@@ -1,6 +1,9 @@
 //! About Reprise: the window around `reprisekit::controls::aboutbox`'s system view and `repriseapp::about::SystemFacts`;
 //! it stays unmapped until the compositor's outputs are heard.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 use repriseapp::about::{self, SystemFacts};
 use repriseapp::keys::dialog_key;
 use repriseapp::{App, BTN_LEFT, Caption, Ctx, Event, PointerInput, Reply, WinId};

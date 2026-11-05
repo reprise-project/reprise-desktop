@@ -2,6 +2,10 @@
 //! launcher's file search) and Explorer. `std` plus `libc` for system calls `std` lacks, zbus for
 //! UDisks2, png and md5 for the thumbnail cache, and toml_edit for the Recycle Bin's settings in
 //! `config.toml`; nothing here knows about a display, a seat or the compositor.
+
+#[cfg(test)]
+reprisebus::test_session!();
+
 pub mod apps;
 pub mod autostart;
 pub mod batchrename;

@@ -7,6 +7,9 @@
 //! `reprise-power` shows it. Closing the sheet hides it; only Exit in the tray menu quits. The compositor
 //! does the acting: the timeouts, lid and buttons are its, read from the same file.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod alarms;
 mod logind;
 mod profiles;

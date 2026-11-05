@@ -1,6 +1,9 @@
 //! Wayland client host for reprisekit programs: an [`App`] draws into a [`Canvas`] and takes
 //! [`Event`]s; `run` gives each window an xdg toplevel and a `wl_shm` buffer.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 reprisekit::strings!("repriseapp");
 
 pub mod about;

@@ -9,6 +9,9 @@
 //! or balance write sets each channel, so balance survives a volume change.
 //! Hidden columns and Advanced Controls persist ([`state`]).
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod dialogs;
 mod fit;
 mod state;

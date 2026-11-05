@@ -1,6 +1,9 @@
 //! Character Map: the window around `reprisekit::controls::charmap`, loading the font picked and
 //! putting characters on the clipboard.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 reprisekit::strings!("charmap");
 
 use repriseapp::keys::{dialog_key, form_input};

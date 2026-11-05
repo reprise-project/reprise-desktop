@@ -2,6 +2,9 @@
 //! reprisekit's controls, the file system is reprisefs, and every input
 //! resolves to a [`commands::Command`] before anything changes.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod acting;
 mod browse;
 mod checksums;

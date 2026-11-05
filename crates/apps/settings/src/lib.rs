@@ -2,6 +2,9 @@
 //!
 //! Pages are listed in `registry::GROUPS`; `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files; a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes, the Advanced page's Forget and Clear and the Backup page's Export... and Import... (`backup`, also `--export`/`--import FILE`) act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod additem;
 mod appearancepage;
 mod apply;
