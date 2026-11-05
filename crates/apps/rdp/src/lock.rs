@@ -81,8 +81,8 @@ pub async fn lock() -> bool {
     }
 }
 
-/// `$XDG_RUNTIME_DIR/reprise/rdp/logged-in`: there from a login until the session locked after it,
-/// so a server stopped or killed in between locks on its way out or on its next start.
+/// `$XDG_RUNTIME_DIR/reprise/rdp/logged-in`: there from a client being shown the session until
+/// it locked after, so a server stopped or killed in between locks on its way out or next start.
 pub fn marker_path() -> Option<PathBuf> {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -145,8 +145,8 @@ async fn on_thread(
     }
 }
 
-/// Locks once the last logged-in client has left and the portal sessions are closed, which is
-/// after its held input was released. Its marker is kept from the first login until then.
+/// Locks once the last client shown the session ([`Leave`]) has left and the portal sessions are
+/// closed, which is after its held input was released. Its marker is kept from the first on.
 pub struct LockOnLeave<F> {
     marker: Option<PathBuf>,
     present: Cell<usize>,

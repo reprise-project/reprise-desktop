@@ -792,9 +792,10 @@ no port forwarding; allow the port in your firewall if you run one.
   action runs 30 s later.
 - **Disconnecting.** Connected Computers on the Settings page lists every
   client; Disconnect ends the selected one.
-- **Leaving locks.** When the last logged-in client leaves, whether it
-  disconnects or Disconnect ends it, the session locks; a client that logs
-  in before the lock goes ahead keeps it unlocked. A computer that connects
+- **Leaving locks.** When the last client shown the session leaves, whether
+  it disconnects or Disconnect ends it, the session locks; a client shown it
+  before the lock goes ahead keeps it unlocked. A client that logged in but
+  never got the picture leaves the session as it was. A computer that connects
   while `max_viewers` computers are connected or logging in is turned away
   at once, as is a third from an address with two still logging in. A
   connection that dies without closing ends within about 30 s.
