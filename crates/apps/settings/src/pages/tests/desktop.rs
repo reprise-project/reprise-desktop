@@ -71,16 +71,112 @@ fn the_banner_greys_and_the_note_names_the_classic_style() {
 fn the_switcher_page_geometry() {
     let s = built();
     let p = Page::Switcher;
-    assert_eq!(rect(&s, p, "switcher_group"), Rect::new(20, 44, 358, 168));
+    assert_eq!(rect(&s, p, "switcher_group"), Rect::new(20, 44, 358, 186));
     assert_eq!(rect(&s, p, "switcher_style"), Rect::new(146, 64, 130, 21));
     assert_eq!(rect(&s, p, "switcher_size"), Rect::new(146, 90, 130, 21));
     assert_eq!(rect(&s, p, "switcher_preview"), Rect::new(32, 118, 13, 13));
     assert_eq!(rect(&s, p, "switcher_desktop"), Rect::new(32, 140, 13, 13));
     assert_eq!(rect(&s, p, "switcher_peek"), Rect::new(32, 162, 13, 13));
     assert_eq!(rect(&s, p, "switcher_flip"), Rect::new(32, 184, 13, 13));
-    assert_eq!(rect(&s, p, "overview_group"), Rect::new(20, 224, 358, 76));
-    assert_eq!(rect(&s, p, "hot_corner"), Rect::new(146, 268, 130, 21));
+    assert_eq!(rect(&s, p, "overview_group"), Rect::new(20, 240, 358, 76));
+    assert_eq!(rect(&s, p, "hot_corner"), Rect::new(146, 284, 130, 21));
     inside_page(&s, p);
+}
+
+#[test]
+fn search_and_switcher_notes_name_their_keys() {
+    let d = Settings::default().shortcuts;
+    assert_eq!(
+        search_note(&d),
+        [
+            "Super+Space opens the launcher, which finds installed",
+            "programs as you type their names. The Start menu's",
+            "search box follows these too.",
+        ]
+    );
+    assert_eq!(
+        search_note(&[]),
+        [
+            "The launcher finds installed programs as you type their",
+            "names. The Start menu's search box follows these too.",
+        ]
+    );
+    assert_eq!(flip_note(&d), "Super+Tab shows them; Glass only.");
+    assert_eq!(flip_note(&[]), "No key shows them; Glass only.");
+    assert_eq!(
+        overview_note(&d),
+        "Super+W shows this desktop's windows side by side."
+    );
+    assert_eq!(
+        overview_note(&[]),
+        "Every window of this desktop side by side."
+    );
+}
+
+#[test]
+fn the_key_notes_follow_rebinding() {
+    let mut binds = Settings::default().shortcuts;
+    for b in binds.iter_mut().filter(|b| b.action == "launcher") {
+        b.keys = "Ctrl+Alt+space".into();
+    }
+    let mut s = built();
+    show_keys(&mut s, &binds);
+    assert_eq!(
+        lines(&s, Page::Search, SEARCH_NOTE),
+        [
+            "Ctrl+Alt+Space opens the launcher, which finds",
+            "installed programs as you type their names. The Start",
+            "menu's search box follows these too.",
+        ]
+    );
+    assert_eq!(
+        lines(&s, Page::Switcher, FLIP_NOTE),
+        ["Super+Tab shows them; Glass only."]
+    );
+    assert_eq!(
+        lines(&s, Page::Switcher, OVERVIEW_NOTE),
+        ["Super+W shows this desktop's windows side by side."]
+    );
+    show_keys(&mut s, &[]);
+    assert_eq!(
+        lines(&s, Page::Search, SEARCH_NOTE),
+        [
+            "The launcher finds installed programs as you type their",
+            "names. The Start menu's search box follows these too.",
+        ]
+    );
+    assert_eq!(
+        lines(&s, Page::Switcher, FLIP_NOTE),
+        ["No key shows them; Glass only."]
+    );
+    assert_eq!(
+        lines(&s, Page::Switcher, OVERVIEW_NOTE),
+        ["Every window of this desktop side by side."]
+    );
+}
+
+#[test]
+fn the_switcher_page_geometry_with_its_key_notes() {
+    let s = built();
+    let p = Page::Switcher;
+    assert_eq!(rect(&s, p, "switcher_group"), Rect::new(20, 44, 358, 186));
+    assert_eq!(rect(&s, p, FLIP_NOTE), Rect::new(GX + 18, 202, 316, 13));
+    assert_eq!(rect(&s, p, "overview_group"), Rect::new(20, 240, 358, 76));
+    assert_eq!(rect(&s, p, "hot_corner").y, 284);
+    assert_eq!(
+        lines(&s, p, FLIP_NOTE),
+        ["Super+Tab shows them; Glass only."]
+    );
+    let classic = under("classic");
+    assert!(!enabled_on(&classic, p, "switcher_flip") && !enabled_on(&classic, p, FLIP_NOTE));
+    let q = Page::Search;
+    assert_eq!(
+        rect(&s, q, "launcher_search_group"),
+        Rect::new(20, 44, 358, 121)
+    );
+    assert_eq!(rect(&s, q, "launcher_files").y, 117);
+    inside_page(&s, p);
+    inside_page(&s, q);
 }
 
 #[test]
@@ -429,8 +525,10 @@ fn the_flip_check_greys_outside_glass() {
     assert_eq!(s.pages[p.index()].checked("switcher_flip"), Some(true));
     follow(&mut s, &on("blue"));
     assert!(!enabled_on(&s, p, "switcher_flip"), "greyed under Blue");
+    assert!(!enabled_on(&s, p, FLIP_NOTE), "its note greyed under Blue");
     follow(&mut s, &on("glass"));
     assert!(enabled_on(&s, p, "switcher_flip"), "enabled under Glass");
+    assert!(enabled_on(&s, p, FLIP_NOTE), "its note enabled under Glass");
 }
 
 #[test]
@@ -702,14 +800,11 @@ fn the_search_page_geometry() {
     let p = Page::Search;
     assert_eq!(
         rect(&s, p, "launcher_search_group"),
-        Rect::new(20, 44, 358, 108)
+        Rect::new(20, 44, 358, 121)
     );
-    assert_eq!(
-        rect(&s, p, "launcher_search_note"),
-        Rect::new(32, 66, 334, 26)
-    );
-    assert_eq!(rect(&s, p, "launcher_files"), Rect::new(32, 104, 13, 13));
-    assert_eq!(rect(&s, p, "launcher_windows"), Rect::new(32, 126, 13, 13));
+    assert_eq!(rect(&s, p, SEARCH_NOTE), Rect::new(32, 66, 334, 39));
+    assert_eq!(rect(&s, p, "launcher_files"), Rect::new(32, 117, 13, 13));
+    assert_eq!(rect(&s, p, "launcher_windows"), Rect::new(32, 139, 13, 13));
     inside_page(&s, p);
 }
 

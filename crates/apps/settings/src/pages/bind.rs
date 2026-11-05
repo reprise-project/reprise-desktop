@@ -2,8 +2,9 @@
 
 use super::appearance::{ANIM_CONTROLS, HOVER_CONTROLS, NL_CONTROLS, NL_TIMES};
 use super::desktop::{
-    DESKTOP_CONTROLS, DRAG_SNAP_CONTROLS, DURATION_CONTROLS, FPS_CONTROLS, GLOW_CONTROLS,
-    REVEAL_CONTROLS,
+    DESKTOP_CONTROLS, DRAG_SNAP_CONTROLS, DURATION_CONTROLS, FLIP_NOTE, FPS_CONTROLS,
+    GLOW_CONTROLS, OVERVIEW_NOTE, REVEAL_CONTROLS, SEARCH_NOTE, flip_note, overview_note,
+    search_note,
 };
 use super::input::{MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS};
 use super::system::{
@@ -679,7 +680,9 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     sp.set_enabled("switcher_preview", !thumbnails);
     sp.set_enabled("switcher_size_label", thumbnails);
     sp.set_enabled("switcher_size", thumbnails);
-    sp.set_enabled("switcher_flip", s.interface == "glass");
+    for id in ["switcher_flip", FLIP_NOTE] {
+        sp.set_enabled(id, s.interface == "glass");
+    }
     let wp = &mut sheet.pages[Page::WindowBehavior.index()];
     for id in DRAG_SNAP_CONTROLS {
         wp.set_enabled(id, s.snap_enabled);
@@ -784,7 +787,8 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     }
 }
 
-/// Fill every note that names a key from `binds`: the layout switch keys and the zoom keys.
+/// Fill every note that names a key from `binds`: the layout switch keys, the zoom keys, the
+/// launcher's, the 3D switcher's and the overview's.
 pub fn show_keys(sheet: &mut PropSheet, binds: &[Shortcut]) {
     let switch = keys_for(binds, "next-layout").map_or_else(
         || "No key switches them.".to_string(),
@@ -792,6 +796,10 @@ pub fn show_keys(sheet: &mut PropSheet, binds: &[Shortcut]) {
     );
     sheet.pages[Page::Keyboard.index()].set_text(KB_SWITCH_NOTE, &switch);
     crate::magnifierpage::show_zoom_keys(&mut sheet.pages[Page::MagnifierFilters.index()], binds);
+    sheet.pages[Page::Search.index()].set_lines(SEARCH_NOTE, &search_note(binds));
+    let sp = &mut sheet.pages[Page::Switcher.index()];
+    sp.set_text(FLIP_NOTE, &flip_note(binds));
+    sp.set_text(OVERVIEW_NOTE, &overview_note(binds));
 }
 
 /// The layout xkbcommon compiles for an empty `[keyboard] layout`: the first of `env`

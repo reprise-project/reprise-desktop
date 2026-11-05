@@ -8,8 +8,8 @@ use reprisekit::trackbar::{self, TrackBar};
 
 use crate::model::{
     DESKTOPS_MAX, DIM_INACTIVE_MAX, HOT_CORNERS, PAGER_MARKS, PREVIEW_FPS_MAX, SNAP_DISTANCE_MAX,
-    SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES, SWITCHER_STYLES, TASKBAR_BUTTONS,
-    TASKBAR_POSITIONS, TITLE_DOUBLE_CLICKS,
+    SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES, SWITCHER_STYLES, Shortcut, TASKBAR_BUTTONS,
+    TASKBAR_POSITIONS, TITLE_DOUBLE_CLICKS, keys_for,
 };
 
 /// How windows snap, tab and come back: the Snapping group holds
@@ -362,35 +362,71 @@ pub(super) const REVEAL_CONTROLS: [&str; 3] = [
     "taskbar_reveal_on_attention",
 ];
 
-/// The Search page: the Search group's checks for files and folders and for open windows, with
-/// what they add under them.
+pub const SEARCH_NOTE: &str = "launcher_search_note";
+pub const FLIP_NOTE: &str = "flip_note";
+pub const OVERVIEW_NOTE: &str = "overview_note";
+/// The search note's most lines, and the characters a line holds.
+const SEARCH_LINES: usize = 3;
+const SEARCH_COLS: usize = 55;
+
+/// The Search page: the Search group's note naming the launcher's keys, and its checks for files
+/// and folders and for open windows. [`super::show_keys`] fills the note.
 pub fn search(a: Area) -> Form {
     Form::new(vec![
-        group(a, "launcher_search_group", 44, 108, "Search"),
+        group(a, "launcher_search_group", 44, 121, "Search"),
         Item::new(
-            "launcher_search_note",
-            Rect::new(GX, 66, a.gw(), 2 * LINE_H),
-            Control::Lines(vec![
-                "The launcher finds installed programs as you type".into(),
-                "their names.".into(),
-            ]),
+            SEARCH_NOTE,
+            Rect::new(GX, 66, a.gw(), SEARCH_LINES as i32 * LINE_H),
+            Control::Lines(search_note(&[])),
         ),
         Item::check(
             "launcher_files",
             GX,
-            104,
+            117,
             "Also find &files and folders in my home folder",
         ),
-        Item::check("launcher_windows", GX, 126, "Also find open &windows"),
+        Item::check("launcher_windows", GX, 139, "Also find open &windows"),
     ])
 }
 
+/// The Search note's lines: the keys bound to the launcher, what it finds, and that the Start
+/// menu's search follows the checks. Keys too long for the note drop the Start menu sentence.
+pub fn search_note(binds: &[Shortcut]) -> Vec<String> {
+    const FINDS: &str = "finds installed programs as you type their names.";
+    const START: &str = "The Start menu's search box follows these too.";
+    let wrap = |body: &str| reprisekit::text::wrap_chars(body, SEARCH_COLS);
+    let Some(keys) = keys_for(binds, "launcher") else {
+        return wrap(&format!("The launcher {FINDS} {START}"));
+    };
+    let opens = format!("{keys} opens the launcher, which {FINDS}");
+    let mut lines = wrap(&format!("{opens} {START}"));
+    if lines.len() > SEARCH_LINES {
+        lines = wrap(&opens);
+    }
+    lines.truncate(SEARCH_LINES);
+    lines
+}
+
+/// The 3D switcher check's note: the keys bound to it, and that it runs under Glass alone.
+pub fn flip_note(binds: &[Shortcut]) -> String {
+    let keys = keys_for(binds, "flip").unwrap_or_else(|| "No key".into());
+    format!("{keys} shows them; Glass only.")
+}
+
+/// The Window Overview note, naming the keys bound to the overview.
+pub fn overview_note(binds: &[Shortcut]) -> String {
+    keys_for(binds, "overview").map_or_else(
+        || "Every window of this desktop side by side.".into(),
+        |k| format!("{k} shows this desktop's windows side by side."),
+    )
+}
+
 /// The Window Switcher page: what Alt+Tab shows and how large its pictures
-/// are, the desktop entry and peek with it, the 3D switcher on Super+Tab, and
-/// the window overview's hot corner under it.
+/// are, the desktop entry and peek with it, the 3D switcher, and the window
+/// overview's hot corner under it. [`super::show_keys`] fills the notes.
 pub fn switcher(a: Area) -> Form {
     Form::new(vec![
-        group(a, "switcher_group", 44, 168, "Alt+Tab"),
+        group(a, "switcher_group", 44, 186, "Alt+Tab"),
         Item::label_at("switcher_style_label", GX, 68, 110, "Alt+Tab &shows:"),
         choice("switcher_style", GX + 114, 64, 130, SWITCHER_STYLES),
         Item::label_at("switcher_size_label", GX, 94, 110, "Picture si&ze:"),
@@ -403,19 +439,15 @@ pub fn switcher(a: Area) -> Form {
         ),
         Item::check("switcher_desktop", GX, 140, "Show the &desktop in Alt+Tab"),
         Item::check("switcher_peek", GX, 162, "Pee&k at the selected window"),
-        Item::check(
-            "switcher_flip",
-            GX,
-            184,
-            "Show windows in &3D with Super+Tab",
-        ),
-        group(a, "overview_group", 224, 76, "Window Overview"),
+        Item::check("switcher_flip", GX, 184, "Show windows in &3D"),
+        Item::label_at(FLIP_NOTE, GX + 18, 202, a.gw() - 18, &flip_note(&[])),
+        group(a, "overview_group", 240, 76, "Window Overview"),
         Item::new(
-            "overview_note",
-            Rect::new(GX, 246, a.gw(), LINE_H),
-            Control::Lines(vec!["Every window of this desktop side by side.".into()]),
+            OVERVIEW_NOTE,
+            Rect::new(GX, 262, a.gw(), LINE_H),
+            Control::Lines(vec![overview_note(&[])]),
         ),
-        Item::label_at("hot_corner_label", GX, 272, 110, "Hot &corner:"),
-        choice("hot_corner", GX + 114, 268, 130, HOT_CORNERS),
+        Item::label_at("hot_corner_label", GX, 288, 110, "Hot &corner:"),
+        choice("hot_corner", GX + 114, 284, 130, HOT_CORNERS),
     ])
 }
