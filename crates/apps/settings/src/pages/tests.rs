@@ -382,6 +382,58 @@ fn inside_page(sheet: &PropSheet, page: Page) {
     }
 }
 
+/// A label's text, one entry per line.
+fn lines(s: &PropSheet, page: Page, id: &str) -> Vec<String> {
+    match &s.pages[page.index()]
+        .item(id)
+        .unwrap_or_else(|| panic!("{id} is on {}", page.label()))
+        .control
+    {
+        Control::Label { text, .. } => vec![text.clone()],
+        Control::Lines(l) => l.clone(),
+        _ => panic!("{id} is a label"),
+    }
+}
+
+/// An up-down whose value has a unit has a label starting within 8 px right of it on its text
+/// row, as placed (indents under a check box included).
+#[test]
+fn every_spin_shows_its_unit() {
+    use reprisekit::interface::Interface;
+    const COUNTS: [&str; 2] = ["desktops", super::system::REMOTE_PORT];
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let cm = reprisekit::interfaces::theme_for(i).look.controls();
+        let s = under(i.as_str());
+        let mut missing = Vec::new();
+        for p in Page::all() {
+            let f = &s.pages[p.index()];
+            for u in f
+                .items
+                .iter()
+                .filter(|it| matches!(it.control, Control::UpDown(_)))
+            {
+                if COUNTS.contains(&u.id) {
+                    continue;
+                }
+                let r = u.placed(&cm);
+                let unit = f.items.iter().any(|l| {
+                    matches!(l.control, Control::Label { .. })
+                        && l.placed(&cm).y == r.y + 4
+                        && (r.right()..=r.right() + 8).contains(&l.placed(&cm).x)
+                });
+                if !unit {
+                    missing.push(format!("{}: {}", p.label(), u.id));
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "{}: no unit after {missing:?}",
+            i.as_str()
+        );
+    }
+}
+
 fn enabled_on(s: &PropSheet, page: Page, id: &str) -> bool {
     match &s.pages[page.index()].item(id).unwrap().control {
         Control::Check { enabled, .. }

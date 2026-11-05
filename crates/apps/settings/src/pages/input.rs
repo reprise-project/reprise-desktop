@@ -71,15 +71,17 @@ pub fn keyboard(a: Area) -> Form {
         "&Repeat rate:",
         (1, 255),
     ));
+    items.push(Item::label_at("rate_units", GX + 140, 222, 50, "a second"));
     items.extend(spin(
         "delay_label",
         "repeat_delay",
-        GX + 170,
+        GX + 196,
         222,
-        44,
+        40,
         "Dela&y:",
         (0, 9999),
     ));
+    items.push(Item::label_at("delay_units", GX + 296, 222, 20, "ms"));
     // The Shortcuts list is a `ListView` the host draws over the page; the page carries its buttons only.
     items.push(group(a, "shortcuts_group", 262, 138 + a.dh, "Shortcuts"));
     items.push(Item::check(
@@ -169,10 +171,11 @@ pub fn mouse(a: Area) -> Form {
         "double_click_ms",
         GX,
         68,
-        130,
-        "Double-click &speed (ms):",
+        110,
+        "Double-click &speed:",
         (0, 9999),
     ));
+    items.push(Item::label_at("double_click_units", GX + 168, 68, 20, "ms"));
     items.extend(motion(
         a,
         94,
