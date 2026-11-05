@@ -8,10 +8,12 @@ mod flatpak;
 mod fwupd;
 mod model;
 mod packagekit;
+mod restart;
 mod tray;
 mod window;
 mod worker;
 
+use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 use repriseapp::keys::{dialog_key, form_input};
@@ -35,6 +37,15 @@ struct UpdatesApp {
     /// An install just ended: its result stays up through the check that follows it.
     hold: bool,
     tray_state: Option<model::TrayLook>,
+    /// What the restart watch last said, and `[updates] restart_notice`, reread on each config change.
+    restart_due: bool,
+    notice_on: bool,
+    config: Option<repriseconf::ConfigWatch>,
+    /// The once-a-boot mark of the restart balloon, and this boot's id.
+    mark: PathBuf,
+    boot: String,
+    /// Asks the compositor to restart; a test puts a stand-in here.
+    restarter: fn() -> zbus::Result<()>,
 
     window: window::Window,
     icon_loaded: bool,
@@ -58,6 +69,12 @@ impl UpdatesApp {
             announced: Announced::default(),
             hold: false,
             tray_state: None,
+            restart_due: false,
+            notice_on: repriseconf::restart_notice(),
+            config: None,
+            mark: restart::mark_path(),
+            boot: restart::boot_id(),
+            restarter: reprisebus::tray::restart,
             window: window::Window::new(None),
             units: TextUnits::ONE,
             asked: window::CLIENT,
@@ -92,8 +109,39 @@ impl UpdatesApp {
     fn waits_on_restart(&self) -> bool {
         matches!(
             self.phase,
-            Phase::Installed(Restart::System | Restart::Session)
+            Phase::Installed(Restart::System | Restart::Session) | Phase::RestartDue
         )
+    }
+
+    /// A restart the system needs shows in the window and tray until it happens, and in a balloon
+    /// once a boot. An install's result says it instead, and one running holds it until it ends.
+    fn settle_restart(&mut self) {
+        if !(self.restart_due && self.notice_on) {
+            if self.phase == Phase::RestartDue {
+                self.phase = Phase::Ready;
+            }
+            return;
+        }
+        match self.phase {
+            Phase::Checking | Phase::Installing { .. } | Phase::RestartDue => return,
+            Phase::Installed(Restart::System) => {
+                restart::first_this_boot(&self.mark, &self.boot);
+                return;
+            }
+            Phase::Installed(_) => self.phase = Phase::Installed(Restart::System),
+            Phase::Unchecked | Phase::Ready | Phase::Failed(_) => self.phase = Phase::RestartDue,
+        }
+        if restart::first_this_boot(&self.mark, &self.boot)
+            && let Some(t) = &self.tray
+        {
+            let (summary, body) = model::restart_balloon();
+            t.notify_buttons(
+                &summary,
+                &body,
+                tray::RESTART_BALLOON,
+                &tray::RESTART_BUTTONS,
+            );
+        }
     }
 
     fn check(&mut self) {
@@ -184,6 +232,11 @@ impl UpdatesApp {
                 self.hold = true;
                 match result {
                     Ok(restart) => {
+                        let restart = if self.restart_due && self.notice_on {
+                            restart.max(Restart::System)
+                        } else {
+                            restart
+                        };
                         if self.hidden || restart != Restart::None {
                             self.notify(model::installed_balloon(restart), true);
                         }
@@ -200,7 +253,9 @@ impl UpdatesApp {
                     }
                 }
             }
+            worker::Msg::RestartDue(due) => self.restart_due = due,
         }
+        self.settle_restart();
     }
 
     fn wake(&mut self) -> Reply {
@@ -212,6 +267,10 @@ impl UpdatesApp {
             .as_ref()
             .map(|rx| rx.try_iter().filter_map(tray::translate).collect())
             .unwrap_or_default();
+        if self.config.as_mut().is_some_and(|w| w.take_changed()) {
+            self.notice_on = repriseconf::restart_notice();
+            self.settle_restart();
+        }
         let raised = !msgs.is_empty();
         let mut shown = None;
         for msg in msgs {
@@ -221,6 +280,7 @@ impl UpdatesApp {
                     shown = Some(repriseapp::MAIN);
                 }
                 tray::TrayMsg::Check => self.check(),
+                tray::TrayMsg::Restart => self.restart(),
             }
         }
         self.push_state();
@@ -274,12 +334,10 @@ impl UpdatesApp {
         self.window.list_pointer(input, &cm)
     }
 
-    fn restart(&self) -> Reply {
-        let config = std::fs::read_to_string(repriseconf::config_path()).unwrap_or_default();
-        let cmd = model::reboot_command(&config);
-        Reply {
-            spawn: vec![vec!["sh".into(), "-c".into(), cmd.into()]],
-            ..Reply::none()
+    /// Restart Now: the compositor's Restart, so programs get to ask about unsaved work.
+    fn restart(&self) {
+        if let Err(e) = (self.restarter)() {
+            log::warn!("the compositor did not take the restart: {e}");
         }
     }
 }
@@ -310,6 +368,8 @@ impl App for UpdatesApp {
             Ok(None) => {}
             Err(code) => return repriseapp::Start::Exit(code),
         }
+        let w = waker.clone();
+        self.config = repriseconf::watch(move || w.wake());
         let (rx, jobs) = worker::start(waker, !self.tray_only);
         self.worker = Some(rx);
         self.jobs = Some(jobs);
@@ -394,7 +454,10 @@ impl UpdatesApp {
                 self.push_state();
                 Reply::redraw()
             }
-            window::Outcome::Restart => self.restart(),
+            window::Outcome::Restart => {
+                self.restart();
+                Reply::none()
+            }
             window::Outcome::Close => {
                 if let Some(balloon) = model::closed_balloon(&self.phase) {
                     self.notify(balloon, true);
@@ -565,6 +628,93 @@ mod tests {
             Phase::Failed("Reprise could not check for updates. No network.".into())
         );
         assert_eq!(app.updates.len(), 1);
+    }
+
+    fn restart_app(name: &str, notice_on: bool) -> (UpdatesApp, PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("reprise-updates-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let app = UpdatesApp {
+            notice_on,
+            mark: dir.join("restart-notice"),
+            boot: "boot-1".into(),
+            ..UpdatesApp::new(true)
+        };
+        (app, dir)
+    }
+
+    fn marked(app: &UpdatesApp) -> bool {
+        std::fs::read_to_string(&app.mark).is_ok_and(|s| s.trim() == "boot-1")
+    }
+
+    #[test]
+    fn a_restart_the_system_needs_holds_through_checks_until_it_goes() {
+        let (mut app, dir) = restart_app("due", true);
+        app.worker_msg(worker::Msg::RestartDue(true));
+        assert_eq!(app.phase, Phase::RestartDue);
+        assert!(marked(&app), "the balloon went up this boot");
+        let look = model::tray_look(&app.phase, &app.updates);
+        assert_eq!((look.icon, look.active), ("system-reboot", true));
+        app.worker_msg(worker::Msg::Checking);
+        app.worker_msg(found(Ok(vec![update("a")])));
+        assert_eq!(app.phase, Phase::RestartDue);
+        assert_eq!(app.updates.len(), 1);
+        app.worker_msg(worker::Msg::RestartDue(false));
+        assert_eq!(app.phase, Phase::Ready);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_restart_due_during_an_install_becomes_the_installs_restart() {
+        let (mut app, dir) = restart_app("install", true);
+        app.worker_msg(found(Ok(vec![update("linux")])));
+        app.install();
+        app.worker_msg(worker::Msg::RestartDue(true));
+        assert!(app.phase.busy(), "the install's progress stays up");
+        assert!(!marked(&app));
+        app.worker_msg(worker::Msg::Installed(Ok(Restart::None)));
+        assert_eq!(app.phase, Phase::Installed(Restart::System));
+        assert!(marked(&app), "the install's balloon said it");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_restart_notice_switched_off_shows_nothing() {
+        let (mut app, dir) = restart_app("off", false);
+        app.worker_msg(worker::Msg::RestartDue(true));
+        assert_eq!(app.phase, Phase::Unchecked);
+        app.worker_msg(worker::Msg::Installed(Ok(Restart::None)));
+        assert_eq!(app.phase, Phase::Installed(Restart::None));
+        assert!(!marked(&app));
+        app.notice_on = true;
+        app.settle_restart();
+        assert_eq!(app.phase, Phase::Installed(Restart::System));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    static RESTARTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    fn counted_restart() -> zbus::Result<()> {
+        RESTARTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    #[test]
+    fn restart_now_on_the_balloon_asks_the_compositor_and_later_does_not() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = UpdatesApp {
+            msgs: Some(rx),
+            restarter: counted_restart,
+            ..UpdatesApp::new(true)
+        };
+        tx.send(reprisetray::Msg::BalloonButton(tray::RESTART_BALLOON, 1))
+            .unwrap();
+        app.wake();
+        assert_eq!(RESTARTS.load(std::sync::atomic::Ordering::SeqCst), 0);
+        tx.send(reprisetray::Msg::BalloonButton(tray::RESTART_BALLOON, 0))
+            .unwrap();
+        app.wake();
+        assert_eq!(RESTARTS.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     /// A wake that shows no window leaves a second instance's handoff for the wake whose raise does.

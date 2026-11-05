@@ -154,6 +154,7 @@ pub(super) fn fields() -> Vec<Field> {
         Field::Int(k("windows", "dim_inactive"), lens!(dim_inactive)),
         Field::Flag(k("session", "restore"), lens!(session_restore)),
         Field::Flag(k("session", "end_processes"), lens!(session_end_processes)),
+        Field::Flag(k("updates", "restart_notice"), lens!(restart_notice)),
         Field::List(k("fonts", "family"), lens!(font_family)),
         Field::Int(k("fonts", "size_px"), lens!(font_size_px)),
         Field::Flag(k("fonts", "antialias"), lens!(font_antialias)),

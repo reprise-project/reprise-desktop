@@ -359,7 +359,8 @@ pub fn power(a: Area, charge: Option<&ChargeLimit>) -> Form {
 /// The Startup page: the autostart list (a [`ListView`](reprisekit::controls::listview::ListView) the host draws over
 /// the page and routes the pointer to, see `main.rs`), its two buttons, and
 /// the Session group: what the next login gets back of this one, and what Log
-/// Off ends. The list takes the page's extra height.
+/// Off ends, then whether Software Updates says when the system needs a restart. The list takes the
+/// page's extra height.
 pub fn startup(a: Area) -> Form {
     let list = list(a);
     let (y, dh) = (list.bottom() + 8, a.dh);
@@ -378,6 +379,13 @@ pub fn startup(a: Area) -> Form {
             GX,
             336 + dh,
             "&End the programs still running when I log off",
+        ),
+        group(a, "updates_group", 368 + dh, 44, "Software Updates"),
+        Item::check(
+            "restart_notice",
+            GX,
+            390 + dh,
+            "&Tell me when an update needs a restart",
         ),
     ])
 }

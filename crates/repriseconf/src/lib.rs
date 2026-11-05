@@ -423,6 +423,19 @@ fn allow_boost_in(text: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// `[updates] restart_notice`, read now: whether Software Updates says when the system needs a
+/// restart (true unless `false`).
+pub fn restart_notice() -> bool {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    restart_notice_in(&text)
+}
+
+fn restart_notice_in(text: &str) -> bool {
+    parsed(text)
+        .and_then(|doc| get(&doc, &key("updates", "restart_notice")).and_then(Item::as_bool))
+        .unwrap_or(true)
+}
+
 /// A refresh in Hz with the decimals it needs: `60`, `59.94`.
 pub fn hz_string(refresh_mhz: i32) -> String {
     let hz = format!("{:.3}", refresh_mhz as f64 / 1000.0);
@@ -928,6 +941,13 @@ mod tests {
         assert!(!allow_boost_in(""));
         assert!(allow_boost_in("[sounds]\nallow_boost = true\n"));
         assert!(!allow_boost_in("[sounds]\nallow_boost = 1\n"));
+    }
+
+    #[test]
+    fn the_restart_notice_is_on_unless_turned_off() {
+        assert!(restart_notice_in(""));
+        assert!(!restart_notice_in("[updates]\nrestart_notice = false\n"));
+        assert!(restart_notice_in("not toml ["));
     }
 
     #[test]

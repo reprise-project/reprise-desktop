@@ -261,6 +261,12 @@ pub struct FileSounds {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub struct FileUpdates {
+    pub restart_notice: Option<bool>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FileDebug {
     pub overlay: Option<bool>,
     pub overlay_in_captures: Option<bool>,
@@ -690,6 +696,7 @@ pub struct FileConfig {
     pub notifications: Option<FileNotifications>,
     pub sounds: Option<FileSounds>,
     pub privacy: Option<FilePrivacy>,
+    pub updates: Option<FileUpdates>,
     pub debug: Option<FileDebug>,
     pub launcher: Option<FileLauncher>,
     pub shortcut_overlay: Option<FileShortcutOverlay>,

@@ -1,6 +1,6 @@
 //! Work off the event loop: one thread runs checks and installs serially and
 //! checks on a schedule; others check when PackageKit, fwupd or a Flatpak
-//! installation says something changed.
+//! installation says something changed, and one watches for a restart the system needs.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -44,6 +44,8 @@ pub enum Msg {
     /// A device's request while its firmware installs, `None` once it carries on.
     Request(Option<Request>),
     Installed(Result<Restart, Failure>),
+    /// Whether the system needs a restart no install here asked for, at start and on each change.
+    RestartDue(bool),
 }
 
 /// Why an install stopped.
@@ -69,6 +71,7 @@ impl Jobs {
 pub fn start(waker: repriseapp::Waker, check_now: bool) -> (Receiver<Msg>, Jobs) {
     let (jobs_tx, jobs_rx) = channel();
     let (poster, rx) = Poster::channel(waker);
+    let restart_poster = poster.clone();
     let first = if check_now {
         Duration::ZERO
     } else {
@@ -87,6 +90,20 @@ pub fn start(waker: repriseapp::Waker, check_now: bool) -> (Receiver<Msg>, Jobs)
         .spawn(move || zbus::block_on(watch(watcher)))
     {
         log::warn!("could not start the updates watcher: {e}");
+    }
+    if let Some(paths) = crate::restart::Paths::system() {
+        let poster = restart_poster;
+        let spawned = std::thread::Builder::new()
+            .name("reprise-updates-restart".into())
+            .spawn(move || {
+                let posted = crate::restart::watch(&paths, |due| poster.post(Msg::RestartDue(due)));
+                if let Err(e) = posted {
+                    log::warn!("the restart watch stopped: {e}");
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("could not start the restart watch: {e}");
+        }
     }
     let watcher = jobs.clone();
     if let Err(e) = std::thread::Builder::new()
