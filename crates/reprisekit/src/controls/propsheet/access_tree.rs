@@ -7,9 +7,8 @@ use accesskit::{NodeId, Role};
 use super::{Nav, PropSheet};
 
 impl PropSheet {
-    /// The sheet's `access` part: the tabs, or the search field and the page list, then the
-    /// open page as a panel labelled by its tab or item. Returns the panel, for a host that draws
-    /// controls of its own on the page, and the focused node.
+    /// The sheet's `access` part: tabs, or search field and page list, then the open page as a
+    /// panel named by its tab or item, or its label when filtered out. Returns it and the focus.
     pub fn access(
         &self,
         tree: &mut Tree,
@@ -43,8 +42,13 @@ impl PropSheet {
             }
         };
         let mut panel = access::node(role, l.page);
-        if let Some(t) = page {
-            panel.push_labelled_by(t);
+        match page {
+            Some(t) => panel.push_labelled_by(t),
+            None => {
+                if let Some(label) = self.tabs.labels.get(open) {
+                    panel.set_label(label.as_str());
+                }
+            }
         }
         // Keyed by the page, so a switch replaces the panel whole.
         let panel = tree.push(parent, ("page", open), panel);

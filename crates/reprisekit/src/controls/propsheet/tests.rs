@@ -169,7 +169,9 @@ fn an_open_page_the_filter_hides_stays_open() {
     }));
     let mut tree = Tree::window("T", s.size);
     let (panel, _) = s.access(&mut tree, ROOT, &text, 11);
-    assert!(tree.get(panel).unwrap().labelled_by().is_empty());
+    let node = tree.get(panel).unwrap();
+    assert!(node.labelled_by().is_empty());
+    assert_eq!(node.label(), Some("Night Light"));
     s.tabs.focused = true;
     s.open_mut().set_focus(None);
     assert_eq!(s.key(form::Key::Down, None), Event::Redraw);
@@ -219,6 +221,23 @@ fn a_reader_scrolls_a_page_list_row_in_without_turning_to_it() {
     assert_eq!(list_top(&s), 175, "the last row's bottom at the inside's");
     assert_eq!(s.tabs.open, 0, "the open page stays");
     assert_eq!(s.reveal(x, y, r.row, &text, px), Event::None);
+}
+
+#[test]
+fn a_pressed_link_half_out_of_the_list_scrolls_into_view() {
+    let labels: Vec<String> = (0..30).map(|i| format!("Page {i}")).collect();
+    let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+    let pages = labels.iter().map(|l| check_page(l)).collect();
+    let mut items: Vec<pagelist::Item> = labels.into_iter().map(pagelist::Item::Page).collect();
+    items.push(pagelist::Item::Link {
+        label: "Printers",
+        name: "Printers",
+    });
+    let mut s = PropSheet::with_list(&[("All", &items)], pages, (398, 424));
+    s.list_mut().unwrap().top = 183;
+    assert_eq!(s.click(Some(Hit::Link(0))), Event::Link(0));
+    assert_eq!(list_top(&s), 192, "the link's bottom at the inside's");
+    assert_eq!((s.tabs.focused, cursor(&s)), (true, Some(0)));
 }
 
 /// A resized list sheet keeps its buttons in the bottom-right corner
@@ -2354,6 +2373,37 @@ fn ctrl_tab_turns_only_to_the_pages_the_filter_shows() {
     assert_eq!(s.tabs.open, 0, "wraps past the hidden page");
     let mut s = filtered_link_sheet([true, false, false], [true; 2]);
     assert_eq!(ctrl_tab(&mut s), Event::None, "no other page shows");
+}
+
+#[test]
+fn a_page_the_host_opens_starts_scrolled_home_and_the_old_page_lets_go() {
+    let theme = Theme::default().with_form_text(200);
+    let page = || {
+        Form::new(vec![
+            Item::check("top", 20, 50, "Top"),
+            Item::check("low", 20, 350, "Low"),
+        ])
+    };
+    let mut s = PropSheet::new(&["One", "Two"], vec![page(), page()], (398, 424));
+    s.drawn_with(&theme.paint());
+    s.fit((398, 300));
+    assert_eq!(s.wheel(None, 100), Event::Redraw);
+    let text = TextRenderer::load(&FontConfig::default());
+    let low = s.open().rect("low").unwrap();
+    let hit = s.hit(
+        low.x + 4,
+        low.y + low.height / 2,
+        &text,
+        theme.fonts.size_px,
+    );
+    s.click(hit);
+    assert!(s.open().holding());
+    s.set_open(1);
+    assert_eq!(s.page_offset(), (0, 0));
+    assert!(!s.pages[0].holding());
+    s.wheel(None, 100);
+    s.set_open(1);
+    assert_ne!(s.page_offset(), (0, 0), "the open page keeps its place");
 }
 
 #[test]
