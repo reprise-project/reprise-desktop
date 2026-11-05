@@ -80,7 +80,7 @@ impl State {
         crate::lockview::redraw(self);
     }
 
-    fn active_layout(&mut self) -> u32 {
+    pub fn active_layout(&mut self) -> u32 {
         let Some(keyboard) = self.seat.get_keyboard() else {
             return 0;
         };

@@ -1784,4 +1784,45 @@ mod harness_tests {
             "the seat's key types after it"
         );
     }
+
+    #[test]
+    fn the_seats_keymap_comes_back_on_the_layout_it_left() {
+        use smithay::input::keyboard::xkb;
+        let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let french = xkb::Keymap::new_from_names(&ctx, "evdev", "pc105", "fr", "", None, 0)
+            .expect("the fr layout")
+            .get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
+        let (mut h, mut c) = Harness::on_second_layout();
+        let mut v = h.connect();
+        let vk = v.virtual_keyboard_with(&french);
+        h.roundtrip(&mut v);
+        v.vk_key(vk, KEY_B, true);
+        v.vk_key(vk, KEY_B, false);
+        h.roundtrip(&mut v);
+        tap(&mut h, KEY_A);
+        assert_eq!(
+            h.layout_heard(&mut c),
+            (1, 1, 1),
+            "de, and the client hears it"
+        );
+    }
+
+    #[test]
+    fn a_virtual_keyboards_held_ctrl_goes_and_the_layout_stays() {
+        let (mut h, mut c) = Harness::on_second_layout();
+        let (_, index) = h.state.xkb_mask().expect("the seat's mask");
+        let ctrl = 1 << index[2];
+        let mut v = h.connect();
+        let vk = v.virtual_keyboard();
+        v.side.vks[vk].modifiers(ctrl, 0, 0, 1);
+        h.roundtrip(&mut v);
+        v.side.vks[vk].destroy();
+        h.roundtrip(&mut v);
+        assert_eq!(h.state.xkb_mask().unwrap().0.depressed, 0, "Ctrl is let go");
+        assert_eq!(
+            h.layout_heard(&mut c),
+            (1, 1, 1),
+            "de, and the client hears it"
+        );
+    }
 }
