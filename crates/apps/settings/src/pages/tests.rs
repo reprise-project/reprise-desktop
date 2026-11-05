@@ -773,14 +773,7 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
     let s = built();
     assert_eq!(
         keys_on(&s, Page::Sound),
-        [
-            "notifications.sound",
-            "notifications.no_balloons",
-            "notifications.no_sounds",
-            "sounds.theme",
-            "sounds.bell",
-            "sounds.allow_boost"
-        ]
+        ["sounds.theme", "sounds.bell", "sounds.allow_boost"]
     );
     assert_eq!(keys_on(&s, Page::Cursor), ["cursor.theme", "cursor.size"]);
     assert!(keys_on(&s, Page::Keyboard).contains(&"keyboard.layout".to_string()));

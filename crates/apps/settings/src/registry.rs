@@ -57,6 +57,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::TextKeys => pages::text_and_keys(a),
         Page::MagnifierFilters => crate::magnifierpage::page(a),
         Page::Sound => pages::sound(a, src.sound_themes),
+        Page::Notifications => pages::notifications(a),
         Page::Power => pages::power(a),
         Page::Startup => pages::startup(a),
         Page::DefaultPrograms => crate::defaultspage::page(a),
@@ -144,6 +145,7 @@ mod tests {
                 "Display",
                 "Night Light",
                 "Sound",
+                "Notifications",
                 "Keyboard",
                 "Mouse & Touchpad",
                 "Cursor",
@@ -226,8 +228,8 @@ mod tests {
         assert_eq!(open(&s), Page::Appearance, "the first page opens");
     }
 
-    /// The list's inside is 456 px at the smallest sheet: 34 rows at 602 px, so it scrolls
-    /// until the sheet is 146 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// The list's inside is 456 px at the smallest sheet: 35 rows at 619 px, so it scrolls
+    /// until the sheet is 163 px taller. On a sheet 56 px shorter, a page opened from its end
     /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
@@ -237,16 +239,16 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 34, "seven headings over 27 pages");
-        assert_eq!((list.total, list.inner.height), (602, 456));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 146 px");
-        sheet.size.1 += 146;
+        assert_eq!(list.rows.len(), 35, "seven headings over 28 pages");
+        assert_eq!((list.total, list.inner.height), (619, 456));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 163 px");
+        sheet.size.1 += 163;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 202;
+        sheet.size.1 -= 219;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (602, 400));
+        assert_eq!((list.total, list.inner.height), (619, 400));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();

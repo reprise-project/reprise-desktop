@@ -36,11 +36,6 @@ fn the_appearance_page_geometry() {
     assert_eq!(rect(&g, p, "glass_intensity"), Rect::new(232, 304, 146, 26));
     assert_eq!(rect(&g, p, "blur_label"), Rect::new(232, 334, 146, 13));
     assert_eq!(rect(&g, p, "glass_blur"), Rect::new(232, 350, 146, 26));
-    assert_eq!(rect(&g, p, "notify_label"), Rect::new(20, 452, 90, 13));
-    assert_eq!(
-        rect(&g, p, "glass_notification_style"),
-        Rect::new(20, 468, 90, 21)
-    );
     inside_page(&g, p);
 }
 
@@ -174,7 +169,7 @@ fn glass_material_and_frame_combos_write_their_keys() {
 
 #[test]
 fn glass_notification_combo_writes_its_key() {
-    let p = Page::Appearance;
+    let p = Page::Notifications;
     let mut got = Settings {
         interface: "glass".into(),
         glass_notification_style: "unlisted".into(),
@@ -191,11 +186,6 @@ fn glass_notification_combo_writes_its_key() {
     assert_eq!(got.glass_notification_style, "halo");
     pick(&mut s, &mut got, p, "glass_notification_style", 2);
     assert_eq!(got.glass_notification_style, "droplet");
-    assert!(
-        under("classic").pages[p.index()]
-            .item("glass_notification_style")
-            .is_none()
-    );
 }
 
 #[test]
@@ -210,7 +200,6 @@ fn the_glass_rows_show_under_glass_only() {
         "glass_intensity",
         "glass_blur",
         "glass_streaks",
-        "glass_notification_style",
     ];
     let p = Page::Appearance;
     for i in ["classic", "blue"] {
@@ -888,7 +877,10 @@ fn the_effects_page_geometry() {
     assert_eq!(rect(&s, p, "menu_animation"), Rect::new(246, 256, 110, 21));
     assert!(s.pages[p.index()].item("taskbar_group").is_none());
     for id in ["notification_sound", "sound_theme"] {
-        assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Sound");
+        assert!(
+            s.pages[p.index()].item(id).is_none(),
+            "{id} is not an effect"
+        );
     }
     inside_page(&s, p);
 }

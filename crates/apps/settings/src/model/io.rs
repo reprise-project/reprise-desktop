@@ -9,6 +9,7 @@ use super::{
     ACTIONS, ProgramShortcut, Settings, Shortcut, check_keys, check_program_keys, default_chord,
     glass_swatch,
 };
+use repriseconf::config::parse_hhmm;
 use repriseconf::{Key, get, key as k, remove, set};
 use toml_edit::{Array, DocumentMut, Item, Value};
 
@@ -290,6 +291,14 @@ fn check_snap_layouts(text: &str) -> Result<(), String> {
 pub fn validate(s: &Settings, base: &Settings) -> Result<(), String> {
     if s.nl_from == s.nl_to {
         return Err("The night light's From and To times must differ.".into());
+    }
+    // A file already holding equal times still applies other changes; the compositor drops the key alone.
+    if s.quiet_hours != base.quiet_hours
+        && let [from, to] = &s.quiet_hours[..]
+        && let (Some(f), Some(t)) = (parse_hhmm(from), parse_hhmm(to))
+        && f == t
+    {
+        return Err("The quiet hours' From and To times must differ.".into());
     }
     for sc in &s.shortcuts {
         check_keys(&sc.keys)?;
