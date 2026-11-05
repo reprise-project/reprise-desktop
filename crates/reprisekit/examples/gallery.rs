@@ -158,6 +158,10 @@ fn main() {
             &format!("reprisekit-gallery-charmap@{}.png", n.max(1)),
         );
         write_preview(
+            &gallery_programs::colordlg(n.max(1)),
+            &format!("reprisekit-gallery-colordlg@{}.png", n.max(1)),
+        );
+        write_preview(
             &gallery_perf::render(n.max(1)),
             &format!("reprisekit-gallery-perf@{}.png", n.max(1)),
         );
@@ -358,6 +362,10 @@ fn main() {
     write_preview(
         &gallery_programs::charmap(1),
         "reprisekit-gallery-charmap@1.png",
+    );
+    write_preview(
+        &gallery_programs::colordlg(1),
+        "reprisekit-gallery-colordlg@1.png",
     );
     write_preview(&gallery_power::render(1), "reprisekit-gallery-power@1.png");
     write_preview(

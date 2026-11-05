@@ -34,6 +34,8 @@ menu-invert = &Invert Colors
 menu-attributes = A&ttributes...
 menu-clear-image = &Clear Image
 menu-crop = C&rop to Selection
+menu-colors = &Colors
+menu-edit-colors = &Edit Colors...
 menu-help = &Help
 menu-about = &About Paint
 

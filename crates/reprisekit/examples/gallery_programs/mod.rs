@@ -1,5 +1,6 @@
-//! Calculator and Character Map in Classic, Blue and Glass light and dark, written to
-//! `target/reprisekit-gallery-calculator@<scale>.png` and `-charmap@<scale>.png`.
+//! Calculator, Character Map and the Color dialog in Classic, Blue and Glass light and dark,
+//! written to `target/reprisekit-gallery-calculator@<scale>.png`, `-charmap@<scale>.png` and
+//! `-colordlg@<scale>.png`.
 
 use reprisekit::controls::calculator::{self, Calc, Input, Mode};
 use reprisekit::interface::Interface;
@@ -135,6 +136,57 @@ pub fn charmap(s: i32) -> Canvas {
             theme.fonts.size_px,
         );
         c.blit_canvas((x + label_w) * s, y * s, &d);
+    }
+    c
+}
+
+/// The Color dialog in each look: narrow on a basic colour, then widened with a custom colour
+/// picked and the field, bar and spinners showing.
+pub fn colordlg(s: i32) -> Canvas {
+    use reprisekit::controls::colordlg::{self, BASIC, CUSTOM, ColorDlg, Grid, Well};
+    let white = Color::rgb(0xFF, 0xFF, 0xFF);
+    let narrow = ColorDlg::new(BASIC[13], [white; CUSTOM]);
+    let mut custom = [white; CUSTOM];
+    custom[0] = Color::rgb(0x12, 0x80, 0x40);
+    custom[1] = Color::rgb(0xE0, 0x60, 0x20);
+    let mut wide = ColorDlg::new(BASIC[0], custom);
+    wide.expand();
+    wide.pick(Well {
+        grid: Grid::Custom,
+        i: 1,
+    });
+    let label_w = 90;
+    let (nw, ch) = colordlg::CLIENT_NARROW;
+    let ww = colordlg::CLIENT_WIDE.0;
+    let looks = looks();
+    let w = label_w + nw + 10 + ww + 10;
+    let h = looks.len() as i32 * (ch + 10);
+    let mut c = super::blurred_stripes(w * s, h * s);
+    let head = TextRenderer::load(&FontConfig::default());
+    for (i, (name, base)) in looks.iter().enumerate() {
+        let y = i as i32 * (ch + 10);
+        head.draw(
+            &mut c,
+            Rect::new(4, y + 4, label_w - 8, 16).scaled(s),
+            name,
+            true,
+            Color::rgb(0xFF, 0xFF, 0xFF),
+            Align::Left,
+            11 * s as u32,
+        );
+        let theme = base.scaled(s);
+        let text = TextRenderer::load(&theme.fonts);
+        let p = theme.paint();
+        let mut x = label_w;
+        for dlg in [&narrow, &wide] {
+            let (dw, dh) = colordlg::client(dlg);
+            let f = colordlg::form(dlg);
+            let mut d = Canvas::new((dw * s) as u32, (dh * s) as u32);
+            d.fill_rect(d.bounds(), p.cs.button_face);
+            colordlg::draw_window(&mut d, &text, &p, &f, dlg, theme.fonts.size_px);
+            c.blit_canvas(x * s, y * s, &d);
+            x += dw + 10;
+        }
     }
     c
 }
