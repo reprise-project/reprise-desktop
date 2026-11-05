@@ -11,7 +11,7 @@ use crate::theme::Theme;
 
 use super::notify_look;
 
-/// The chip's metrics, design px.
+/// The chip's metrics, design px at 100% text; its font and height grow with the text size.
 const CHIP_H: i32 = 28;
 const CHIP_PX: u32 = 12;
 const CHIP_PAD: i32 = 12;
@@ -23,8 +23,15 @@ pub fn chip_label(more: usize) -> String {
 /// The chip's size for `more` waiting, device px.
 pub fn chip_layout(theme: &Theme, text: &TextRenderer, more: usize) -> (i32, i32) {
     let s = theme.scale.max(1);
-    let label = text.measure(&chip_label(more), false, CHIP_PX * s as u32);
-    (((label + s - 1) / s + 2 * CHIP_PAD) * s, CHIP_H * s)
+    let label = text.measure(&chip_label(more), false, chip_px(theme));
+    (
+        ((label + s - 1) / s + 2 * CHIP_PAD) * s,
+        theme.text.len(CHIP_H) * s,
+    )
+}
+
+fn chip_px(theme: &Theme) -> u32 {
+    theme.text.px(CHIP_PX) * theme.scale.max(1) as u32
 }
 
 pub fn draw_chip(theme: &Theme, text: &TextRenderer, more: usize, hot: bool) -> Canvas {
@@ -37,7 +44,7 @@ pub fn draw_chip(theme: &Theme, text: &TextRenderer, more: usize, hot: bool) -> 
     let mut c = (look.chip)(&look, (w / s, h / s), state, s);
     let r = Rect::new(0, 0, w, h);
     let label = chip_label(more);
-    let px = CHIP_PX * s as u32;
+    let px = chip_px(theme);
     text.draw(&mut c, r, &label, false, look.inks.text, Align::Center, px);
     c
 }
