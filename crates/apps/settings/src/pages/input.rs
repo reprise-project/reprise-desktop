@@ -1,8 +1,8 @@
 //! Keyboard, Mouse, Pointers and Accessibility.
 
 use super::{
-    Area, CURSOR_DEFAULT_ROW, CURSOR_PREVIEW, DELAY_STEPS, GX, KB_ADD, KB_LAYOUTS, KB_REMOVE,
-    KB_UP, MK_ACCEL, MK_SPEED, SC_ADD, SC_EDIT, SC_REMOVE, SPEED_STEPS, TRACK_MAX, X, button,
+    Area, CURSOR_DEFAULT_ROW, CURSOR_PREVIEW, DELAY_STEPS, DOUBLE_CLICK, GX, KB_ADD, KB_LAYOUTS,
+    KB_REMOVE, KB_UP, MK_ACCEL, MK_SPEED, SC_ADD, SC_EDIT, SC_REMOVE, SPEED_STEPS, X, button,
     combo, edit, ends_track, group, shortcuts, spin, updown,
 };
 use crate::model::{CURSOR_SIZES, TEXT_SIZES};
@@ -99,7 +99,7 @@ pub fn keyboard(a: Area) -> Form {
         max as i32,
     ));
     items.push(Item::label_at(
-        "shortcut_overlay_ms_unit",
+        "shortcut_overlay_ms_units",
         GX + 272,
         280,
         20,
@@ -165,20 +165,32 @@ fn motion(a: Area, y: i32, ids: [&'static str; 5], name: &'static str, keys: boo
 }
 
 pub fn mouse(a: Area) -> Form {
-    let mut items = vec![group(a, "mouse_group", 44, 152, "Mouse")];
-    items.extend(spin(
+    let mut items = vec![group(a, "mouse_group", 44, 178, "Mouse")];
+    items.push(Item::label_at(
         "double_click_label",
-        "double_click_ms",
         GX,
         68,
-        110,
+        200,
         "Double-click &speed:",
-        (0, 9999),
     ));
-    items.push(Item::label_at("double_click_units", GX + 168, 68, 20, "ms"));
+    items.extend(ends_track(
+        a,
+        [
+            "double_click_slow",
+            "double_click_ms",
+            "double_click_fast",
+            "double_click_value",
+        ],
+        "Double-click speed",
+        95,
+        27,
+        ("Slow", "Fast"),
+        GX + 46,
+        TrackBar::new(0, DOUBLE_CLICK.count),
+    ));
     items.extend(motion(
         a,
-        94,
+        120,
         [
             "mouse_speed_label",
             "mouse_slow",
@@ -192,14 +204,14 @@ pub fn mouse(a: Area) -> Form {
     items.push(Item::check(
         "mouse_natural",
         GX,
-        165,
+        191,
         "Re&verse scrolling direction",
     ));
 
-    items.push(group(a, "touchpad_group", 206, 218, "Touchpad"));
+    items.push(group(a, "touchpad_group", 232, 218, "Touchpad"));
     items.extend(motion(
         a,
-        230,
+        256,
         [
             "touchpad_speed_label",
             "touchpad_slow",
@@ -210,29 +222,29 @@ pub fn mouse(a: Area) -> Form {
         "Touchpad speed",
         false,
     ));
-    items.push(Item::check("tap_to_click", GX, 305, "&Tap to click"));
+    items.push(Item::check("tap_to_click", GX, 331, "&Tap to click"));
     items.push(Item::check(
         "two_finger_scroll",
         GX,
-        327,
+        353,
         "Scroll with two &fingers (edge scrolling when off)",
     ));
     items.push(Item::check(
         "two_finger_tap_right_click",
         GX,
-        349,
+        375,
         "Two-finger tap is a &right click (middle when off)",
     ));
     items.push(Item::check(
         "disable_while_typing",
         GX,
-        371,
+        397,
         "&Disable while typing",
     ));
     items.push(Item::check(
         "touchpad_natural",
         GX,
-        393,
+        419,
         "Reverse scr&olling direction",
     ));
     Form::new(items)
@@ -281,12 +293,16 @@ pub fn preview_size(a: Area) -> (u32, u32) {
 /// The StickyKeys controls that grey with its check box, the SlowKeys ones and the MouseKeys ones.
 pub(super) const STICKY_CONTROLS: [&str; 2] = ["sticky_lock", "sticky_two_keys_off"];
 
-pub(super) const MOUSE_KEYS_CONTROLS: [&str; 5] = [
+pub(super) const MOUSE_KEYS_CONTROLS: [&str; 9] = [
     "mouse_keys_num_lock",
     "mk_speed_label",
+    "mk_speed_slow",
     "mouse_keys_speed",
+    "mk_speed_fast",
     "mk_accel_label",
+    "mk_accel_slow",
     "mouse_keys_acceleration",
+    "mk_accel_fast",
 ];
 
 pub(super) const SLOW_CONTROLS: [&str; 5] = [
@@ -355,10 +371,10 @@ pub fn accessibility(a: Area) -> Form {
         GX + 46,
         TrackBar::new(0, DELAY_STEPS),
     ));
-    // The keypad moves the pointer: the switch and Num Lock's share a row, and so
-    // do the speed and acceleration, a label left of each trackbar.
+    // The keypad moves the pointer: the switch and Num Lock's share a row, and the
+    // speed and acceleration each take a row, Slow and Fast around the trackbar.
     let half = gw / 2;
-    items.push(group(a, "mouse_keys_group", 307, 72, "MouseKeys"));
+    items.push(group(a, "mouse_keys_group", 307, 100, "MouseKeys"));
     items.push(Item::check("mouse_keys", GX, 325, "Use &MouseKeys"));
     items.push(Item::check(
         "mouse_keys_num_lock",
@@ -366,39 +382,42 @@ pub fn accessibility(a: Area) -> Form {
         325,
         "Only while &Num Lock is on",
     ));
-    items.push(Item::label_at("mk_speed_label", GX, 353, 40, "S&peed:"));
-    items.push(Item::new(
-        "mouse_keys_speed",
-        Rect::new(GX + 40, 347, (half - 48).min(TRACK_MAX), trackbar::HEIGHT),
-        Control::TrackBar(TrackBar::new(0, MK_SPEED.count)),
-    ));
-    items.push(Item::label_at(
-        "mk_accel_label",
-        GX + half,
+    items.extend(mouse_keys_track(
+        a,
         353,
-        70,
-        "&Acceleration:",
+        [
+            "mk_speed_label",
+            "mk_speed_slow",
+            "mouse_keys_speed",
+            "mk_speed_fast",
+        ],
+        "S&peed:",
+        "MouseKeys speed",
+        MK_SPEED.count,
     ));
-    items.push(Item::new(
-        "mouse_keys_acceleration",
-        Rect::new(
-            GX + half + 70,
-            347,
-            (gw - half - 70).min(TRACK_MAX),
-            trackbar::HEIGHT,
-        ),
-        Control::TrackBar(TrackBar::new(0, MK_ACCEL.count)),
+    items.extend(mouse_keys_track(
+        a,
+        381,
+        [
+            "mk_accel_label",
+            "mk_accel_slow",
+            "mouse_keys_acceleration",
+            "mk_accel_fast",
+        ],
+        "&Acceleration:",
+        "MouseKeys acceleration",
+        MK_ACCEL.count,
     ));
     items.push(Item::check(
         "key_shortcuts",
         X,
-        387,
+        415,
         "Use the keyboard s&hortcuts",
     ));
     items.push(
         Item::new(
             "shortcuts_note",
-            Rect::new(X, 405, a.w - 18, 3 * LINE_H),
+            Rect::new(X, 433, a.w - 18, 3 * LINE_H),
             Control::Lines(vec![
                 "Shift five times turns StickyKeys on or off, right Shift held".into(),
                 "eight seconds SlowKeys, left Alt+left Shift+Num Lock MouseKeys.".into(),
@@ -407,4 +426,29 @@ pub fn accessibility(a: Area) -> Form {
         .under_check(),
     );
     Form::new(items)
+}
+
+/// A MouseKeys trackbar row at text row `y`: its label, then Slow, the trackbar `name` to a
+/// reader, and Fast. `ids` are the label, Slow, the trackbar and Fast.
+fn mouse_keys_track(
+    a: Area,
+    y: i32,
+    ids: [&'static str; 4],
+    label: &'static str,
+    name: &'static str,
+    count: usize,
+) -> [Item; 4] {
+    let [label_id, slow_id, track_id, fast_id] = ids;
+    let track = Rect::new(
+        GX + 116,
+        y - 6,
+        a.track(Area::MIN.gw() - 150),
+        trackbar::HEIGHT,
+    );
+    [
+        Item::label_at(label_id, GX, y, 80, label),
+        Item::label_at(slow_id, GX + 84, y, 30, "Slow"),
+        Item::new(track_id, track, Control::TrackBar(TrackBar::new(0, count))).named(name),
+        Item::label_at(fast_id, track.right() + 4, y, 30, "Fast"),
+    ]
 }
