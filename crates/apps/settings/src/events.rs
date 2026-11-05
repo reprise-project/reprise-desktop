@@ -32,7 +32,7 @@ impl SettingsApp {
                 if p == Page::Tablet.index() {
                     return self.tablet_changed(id);
                 }
-                if p == Page::Sound.index()
+                if p == Page::Notifications.index()
                     && [
                         notifypage::PROGRAMS,
                         notifypage::BALLOONS,

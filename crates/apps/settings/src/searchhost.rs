@@ -67,6 +67,10 @@ mod tests {
         assert!(shown("default browser").contains(&Page::DefaultPrograms));
         assert!(shown("mouse speed").contains(&Page::MouseTouchpad));
         assert_eq!(shown("browser wallpaper"), [], "the words sit on two pages");
+        assert_eq!(
+            find("do not disturb").unwrap().1[Page::Notifications.index()],
+            Some(Hit::Keyword)
+        );
         let (f, hits) = find("night").unwrap();
         assert_eq!(
             (f.pages.len(), hits.len()),

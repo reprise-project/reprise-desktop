@@ -724,6 +724,8 @@ fn save_round_trips_every_field() {
         notification_sound: false,
         notify_no_balloons: vec!["discord".into()],
         notify_no_sounds: vec!["org.mozilla.Thunderbird".into(), "mail".into()],
+        quiet_hours: vec!["23:00".into(), "06:30".into()],
+        auto_dnd: false,
         sound_theme: "ocean".into(),
         bell: false,
         allow_boost: true,
@@ -1527,4 +1529,47 @@ fn keys_for_names_the_bound_chords() {
     );
     assert_eq!(keys_for(&d, "zoom-in").as_deref(), Some("Super+="));
     assert_eq!(keys_for(&[], "launcher"), None);
+}
+
+#[test]
+fn quiet_hours_round_trip_and_refuse_equal_times() {
+    let s = load("[notifications]\nquiet_hours = [\"22:30\", \"06:00\"]\nauto_dnd = false\n");
+    assert_eq!(
+        (s.quiet_hours.clone(), s.auto_dnd),
+        (vec!["22:30".to_string(), "06:00".into()], false)
+    );
+    let out = save("", &s, &Settings::default()).unwrap();
+    assert!(
+        out.contains("quiet_hours = [\"22:30\", \"06:00\"]"),
+        "{out}"
+    );
+    let off = Settings {
+        quiet_hours: Vec::new(),
+        ..s.clone()
+    };
+    let parsed = Config::parse(&save(&out, &off, &s).unwrap()).unwrap();
+    assert!(parsed.notifications.quiet_hours.is_none());
+    let same = Settings {
+        quiet_hours: vec!["07:00".into(), "07:00".into()],
+        ..Settings::default()
+    };
+    assert_eq!(
+        validate(&same, &Settings::default()),
+        Err("The quiet hours' From and To times must differ.".into())
+    );
+}
+
+/// The compositor drops equal quiet hours; a file holding them still opens and takes other changes.
+#[test]
+fn a_file_with_equal_quiet_hours_still_loads_and_applies() {
+    let text = "[notifications]\nquiet_hours = [\"07:00\", \"07:00\"]\n";
+    let s = load(text);
+    assert_eq!(s.quiet_hours, ["07:00", "07:00"]);
+    let bell = Settings {
+        bell: false,
+        ..s.clone()
+    };
+    assert_eq!(validate(&bell, &s), Ok(()));
+    let out = save(text, &bell, &s).unwrap();
+    assert!(out.contains("bell = false"), "{out}");
 }

@@ -1,12 +1,12 @@
-//! Sound, Power, Startup, Remote Desktop, Privacy, Advanced and Backup.
+//! Sound, Notifications, Power, Startup, Remote Desktop, Privacy, Advanced and Backup.
 
 use super::{
     ADD, Area, BACKUP_EXPORT, BACKUP_IMPORT, BACKUP_STATUS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY,
     EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE, THUMBNAILERS, THUMBS, THUMBS_CLEAR,
-    THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, X, button, combo, edit, ends_track, field, group, list,
-    locations, spin,
+    THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, X, button, choice, combo, edit, ends_track, field,
+    group, list, locations, spin, time,
 };
-use crate::model::{FRAME_RATES, REMOTE_ENCODERS, REMOTE_QUALITIES};
+use crate::model::{FRAME_RATES, GLASS_NOTIFY_STYLES, REMOTE_ENCODERS, REMOTE_QUALITIES};
 use crate::notifypage;
 use reprisebus::remote::{Client, Status};
 use repriseconf::ThumbnailCache;
@@ -193,9 +193,7 @@ pub fn backup(a: Area) -> Form {
     ])
 }
 
-/// The sound theme picked from `sound_themes`, the events that play from it, the volume's reach,
-/// then each program's notification switches ([`notifypage`]). The program list takes the page's
-/// extra height.
+/// The sound theme picked from `sound_themes`, the bell and the volume's reach.
 pub fn sound(a: Area, sound_themes: &[String]) -> Form {
     Form::new(vec![
         group(a, "sound_theme_group", 44, 52, "Sound Theme"),
@@ -208,29 +206,79 @@ pub fn sound(a: Area, sound_themes: &[String]) -> Form {
             sound_themes,
             sound_themes.len().clamp(1, 8),
         ),
-        group(a, "sound_events_group", 106, 74, "Play Sounds"),
-        Item::check(
-            NOTIFICATION_SOUND,
-            GX,
-            128,
-            "&Play a sound for notifications",
-        ),
-        Item::check(BELL, GX, 154, "Play a &sound when a program rings the bell"),
-        group(a, "volume_group", 190, 74, "Volume"),
-        Item::check(ALLOW_BOOST, GX, 212, "Allow volume &above 100%"),
+        group(a, "sound_events_group", 106, 48, "Play Sounds"),
+        Item::check(BELL, GX, 128, "Play a &sound when a program rings the bell"),
+        group(a, "volume_group", 164, 74, "Volume"),
+        Item::check(ALLOW_BOOST, GX, 186, "Allow volume &above 100%"),
         Item::label_at(
             "allow_boost_note",
             GX + 18,
-            232,
+            206,
             a.gw() - 18,
             "Sliders and the volume keys go on to 150%.",
         ),
-        group(a, "notify_group", 274, 144 + a.dh, "Program Notifications"),
+    ])
+}
+
+/// The notification sound and balloon style, Do Not Disturb's triggers, then each program's
+/// switches ([`notifypage`]). The program list takes the page's extra height.
+pub fn notifications(a: Area) -> Form {
+    let mut items = vec![
+        group(a, "balloons_group", 44, 92, "Balloons"),
+        Item::check(
+            NOTIFICATION_SOUND,
+            GX,
+            66,
+            "&Play a sound for notifications",
+        ),
+        Item::label_at("notify_style_label", GX, 92, 84, "Balloon st&yle:"),
+        choice(
+            "glass_notification_style",
+            GX + 88,
+            88,
+            120,
+            GLASS_NOTIFY_STYLES,
+        ),
+        Item::label_at(
+            notifypage::STYLE_NOTE,
+            GX,
+            114,
+            a.gw(),
+            "Only Glass draws balloons in a style.",
+        ),
+        group(a, "dnd_group", 146, 116, "Do Not Disturb"),
+        Item::check(
+            notifypage::AUTO_DND,
+            GX,
+            168,
+            "Hold balloons during &full screen and screen sharing",
+        ),
+        Item::check(
+            notifypage::QUIET,
+            GX,
+            192,
+            "Hold balloons during &quiet hours",
+        ),
+    ];
+    let [from_label, from, to_label, to] = notifypage::QUIET_TIMES;
+    let times = time(from_label, from, GX, 216, 36, "F&rom:")
+        .into_iter()
+        .chain(time(to_label, to, GX + 132, 216, 24, "&To:"));
+    items.extend(times.map(Item::under_check));
+    items.extend([
+        Item::label_at(
+            "quiet_note",
+            GX,
+            242,
+            a.gw(),
+            "Held balloons show afterwards; critical ones always show.",
+        ),
+        group(a, "notify_group", 272, 144 + a.dh, "Program Notifications"),
         Item::new(
             notifypage::PROGRAMS,
             Rect::new(
                 GX,
-                294,
+                292,
                 a.gw(),
                 notifypage::ROWS as i32 * listbox::ROW_H + 4 + a.dh,
             ),
@@ -238,17 +286,19 @@ pub fn sound(a: Area, sound_themes: &[String]) -> Form {
                 list: ListBox::new(Vec::new(), None),
                 icons: Vec::new(),
             },
-        ),
-        Item::check(notifypage::BALLOONS, GX, 391 + a.dh, "Show &balloons").enabled(false),
-        Item::check(notifypage::SOUNDS, GX + 140, 391 + a.dh, "Play s&ounds").enabled(false),
-    ])
+        )
+        .named("Program Notifications"),
+        Item::check(notifypage::BALLOONS, GX, 389 + a.dh, "Show &balloons").enabled(false),
+        Item::check(notifypage::SOUNDS, GX + 140, 389 + a.dh, "Play s&ounds").enabled(false),
+    ]);
+    Form::new(items)
 }
 
 pub(super) const NOTIFICATION_SOUND: &str = "notification_sound";
 pub(super) const BELL: &str = "bell";
 pub(super) const ALLOW_BOOST: &str = "allow_boost";
 
-/// The sound theme's label and combo, greyed while nothing plays a sound.
+/// The sound theme's label and combo.
 pub(super) const SOUND_CONTROLS: [&str; 2] = ["sound_theme_label", "sound_theme"];
 
 pub fn power(a: Area) -> Form {

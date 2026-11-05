@@ -1,4 +1,4 @@
-//! The Sound page's program list: this session's senders and the programs `[notifications]
+//! The Notifications page's program list: this session's senders and the programs `[notifications]
 //! no_balloons` and `no_sounds` name, with Show balloons and Play sounds for the picked one.
 
 use crate::model::Settings;
@@ -9,6 +9,17 @@ use reprisekit::controls::listbox::ListBox;
 pub const PROGRAMS: &str = "notify_programs";
 pub const BALLOONS: &str = "notify_balloons";
 pub const SOUNDS: &str = "notify_sounds";
+pub const AUTO_DND: &str = "auto_dnd";
+pub const QUIET: &str = "quiet_hours";
+pub const QUIET_TIMES: [&str; 4] = [
+    "quiet_from_label",
+    "quiet_from",
+    "quiet_to_label",
+    "quiet_to",
+];
+/// The From and To times the quiet hours tick on with while `[notifications] quiet_hours` is empty.
+pub const QUIET_DEFAULT: [&str; 2] = ["22:00", "07:00"];
+pub const STYLE_NOTE: &str = "notify_style_note";
 
 /// The list's rows at [`Area::MIN`](crate::pages::Area::MIN).
 pub const ROWS: usize = 5;
@@ -112,7 +123,7 @@ pub fn read(form: &Form, programs: &[Program], id: &str, s: &mut Settings) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pages::{Area, sound};
+    use crate::pages::{Area, notifications};
 
     fn seen() -> Vec<(String, String)> {
         vec![
@@ -163,7 +174,7 @@ mod tests {
             notify_no_sounds: vec!["chat".into()],
             ..Settings::default()
         };
-        let mut f = sound(Area::MIN, &[]);
+        let mut f = notifications(Area::MIN);
         let list = programs(&seen(), &s, |_| None);
         fill(&mut f, &list, &s);
         assert!(
@@ -196,7 +207,7 @@ mod tests {
     #[test]
     fn a_refill_keeps_the_pick_on_its_program() {
         let s = Settings::default();
-        let mut f = sound(Area::MIN, &[]);
+        let mut f = notifications(Area::MIN);
         fill(&mut f, &programs(&seen(), &s, |_| None), &s);
         pick(&mut f, 1);
         let more = [vec![("new".to_string(), "New".to_string())], seen()].concat();

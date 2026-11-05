@@ -164,6 +164,10 @@ pub struct Settings {
     /// sounds are off.
     pub notify_no_balloons: Vec<String>,
     pub notify_no_sounds: Vec<String>,
+    /// `[notifications] quiet_hours`: From and To as "HH:MM", empty for none.
+    pub quiet_hours: Vec<String>,
+    /// `[notifications] auto_dnd`.
+    pub auto_dnd: bool,
     /// `[sounds] theme`, `bell` and `allow_boost`.
     pub sound_theme: String,
     pub bell: bool,
@@ -507,6 +511,10 @@ impl Settings {
             notification_sound: c.notifications.sound,
             notify_no_balloons: c.notifications.no_balloons.clone(),
             notify_no_sounds: c.notifications.no_sounds.clone(),
+            quiet_hours: (c.notifications.quiet_hours)
+                .map(|(f, t)| vec![hhmm(f), hhmm(t)])
+                .unwrap_or_default(),
+            auto_dnd: c.notifications.auto_dnd,
             sound_theme: c.sounds.theme.clone(),
             bell: c.sounds.bell,
             allow_boost: c.sounds.allow_boost,

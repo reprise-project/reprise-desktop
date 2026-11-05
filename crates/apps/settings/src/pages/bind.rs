@@ -16,6 +16,7 @@ use super::{
     KELVIN_STEP, MK_ACCEL, MK_SPEED, PRIVACY_LOCATION, SPEED_STEPS, Steps, THUMBNAILERS, THUMBS,
     THUMBS_MB, THUMBS_SIZE, TRAY_CUSTOMIZE, WATER, WATER_STYLE,
 };
+use crate::notifypage::{AUTO_DND, QUIET, QUIET_DEFAULT, QUIET_TIMES};
 use crate::registry::Page;
 use repriseconf::{Key, Lens, lens};
 use reprisefs::xkb::{Layout, MAX_LAYOUTS};
@@ -84,6 +85,12 @@ pub(super) enum Bind {
     Names(&'static str, Lens<Settings, Vec<String>>),
     /// A check box ticked while the list holds its name: a desktop widget.
     Member(&'static str, Lens<Settings, Vec<String>>, &'static str),
+    /// The quiet hours check box: ticked while the list holds From and To. Unticking empties it;
+    /// ticking takes the times the page's fields show.
+    Quiet(&'static str, Lens<Settings, Vec<String>>),
+    /// A quiet hours time field: entry `i`, or [`QUIET_DEFAULT`]'s while the list is off. A change
+    /// writes entry `i` while the list is on.
+    QuietTime(&'static str, Lens<Settings, Vec<String>>, usize),
 }
 
 pub(super) fn binds() -> Vec<Bind> {
@@ -216,6 +223,10 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag("taskbar_badges", lens!(taskbar_badges)),
         Bind::Flag("taskbar_network_meter", lens!(taskbar_network_meter)),
         Bind::Flag(NOTIFICATION_SOUND, lens!(notification_sound)),
+        Bind::Quiet(QUIET, lens!(quiet_hours)),
+        Bind::QuietTime(QUIET_TIMES[1], lens!(quiet_hours), 0),
+        Bind::QuietTime(QUIET_TIMES[3], lens!(quiet_hours), 1),
+        Bind::Flag(AUTO_DND, lens!(auto_dnd)),
         Bind::Choice(SOUND_CONTROLS[1], lens!(sound_theme)),
         Bind::Flag(BELL, lens!(bell)),
         Bind::Flag(ALLOW_BOOST, lens!(allow_boost)),
@@ -386,7 +397,9 @@ impl Bind {
             | Bind::Hex(id, _)
             | Bind::Icon(id, _)
             | Bind::Names(id, _)
-            | Bind::Member(id, _, _) => id,
+            | Bind::Member(id, _, _)
+            | Bind::Quiet(id, _)
+            | Bind::QuietTime(id, _, _) => id,
         }
     }
 
@@ -417,7 +430,9 @@ impl Bind {
             | Bind::Level(_, at, _) => *at.get_mut(s) += 1,
             Bind::Flag(_, at) => *at.get_mut(s) ^= true,
             Bind::Icon(_, at) => at.get_mut(s).push(String::new()),
-            Bind::Names(_, at) => at.get_mut(s).push("\u{1}".into()),
+            Bind::Names(_, at) | Bind::Quiet(_, at) | Bind::QuietTime(_, at, _) => {
+                at.get_mut(s).push("\u{1}".into())
+            }
             Bind::Member(_, at, name) => {
                 let list = at.get_mut(s);
                 match list.iter().position(|n| n == name) {
@@ -615,6 +630,14 @@ pub fn write_form(form: &mut Form, s: &Settings) {
             (Bind::Icon(name, at) | Bind::Member(_, at, name), Control::Check { checked, .. }) => {
                 *checked = at.get(s).iter().any(|n| n == name);
             }
+            (Bind::Quiet(_, at), Control::Check { checked, .. }) => *checked = at.get(s).len() == 2,
+            (Bind::QuietTime(_, at, i), Control::Time(tf)) => {
+                let (h, m) = match &at.get(s)[..] {
+                    [from, to] => hhmm([from, to][*i]),
+                    _ => hhmm(QUIET_DEFAULT[*i]),
+                };
+                tf.set(h, m, 0);
+            }
             _ => {}
         }
     }
@@ -633,9 +656,9 @@ pub fn write_form(form: &mut Form, s: &Settings) {
 /// while water is off and its note without a fluid style, and shows the look's desktop
 /// colour on its Color button; the Taskbar page greys the auto-hide triggers while auto-hide is
 /// off, the picture rate while nothing shows a live picture, and small icons and the Start button
-/// glow outside Glass; the Start Menu page greys the banner outside the Classic style; the Sound
-/// page greys the sound theme while
-/// neither notifications nor the bell play a sound, and the Advanced page
+/// glow outside Glass; the Start Menu page greys the banner outside the Classic style; the
+/// Notifications page greys the quiet hours' times while they are off and the balloon style
+/// outside Glass, and the Advanced page
 /// the debug overlay's captures check while the overlay is off and the thumbnail cache's size
 /// while the cache is off; the Remote Desktop page names the quality picked. Runs from
 /// `write` and after every read-back.
@@ -712,9 +735,12 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     for id in HOVER_CONTROLS {
         fx.set_enabled(id, s.hover_fade);
     }
-    let sp = &mut sheet.pages[Page::Sound.index()];
-    for id in SOUND_CONTROLS {
-        sp.set_enabled(id, s.notification_sound || s.bell);
+    let np = &mut sheet.pages[Page::Notifications.index()];
+    for id in QUIET_TIMES {
+        np.set_enabled(id, s.quiet_hours.len() == 2);
+    }
+    for id in ["notify_style_label", "glass_notification_style"] {
+        np.set_enabled(id, s.interface == "glass");
     }
     let tb = &mut sheet.pages[Page::Taskbar.index()];
     for id in REVEAL_CONTROLS {
@@ -970,6 +996,25 @@ pub fn read_one(sheet: &PropSheet, id: &str, s: &mut Settings) {
                         list.push(name.to_string());
                     } else if !*checked {
                         list.retain(|n| n != name);
+                    }
+                }
+                (Bind::Quiet(_, at), Control::Check { checked, .. }) => {
+                    let shown = |id| match page.item(id).map(|i| &i.control) {
+                        Some(Control::Time(tf)) => Some(format!("{:02}:{:02}", tf.h, tf.m)),
+                        _ => None,
+                    };
+                    *at.get_mut(s) = if *checked {
+                        [QUIET_TIMES[1], QUIET_TIMES[3]]
+                            .into_iter()
+                            .filter_map(shown)
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                }
+                (Bind::QuietTime(_, at, i), Control::Time(tf)) => {
+                    if let Some(t) = at.get_mut(s).get_mut(*i) {
+                        *t = format!("{:02}:{:02}", tf.h, tf.m);
                     }
                 }
                 _ => {}
