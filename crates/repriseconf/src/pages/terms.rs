@@ -15,7 +15,6 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("glass_streaks", "Show reflections"),
             ("glass_intensity", "Color intensity:"),
             ("glass_blur", "Blur:"),
-            ("glass_orb_glow", "Start button glow:"),
             ("glass_dark_from", "Dark hours:"),
             ("glass_dark_to", "Dark until"),
             ("classic_scheme", "Color scheme:"),
@@ -73,7 +72,6 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("icon_theme", "Theme:"),
             ("frame_width", "Frame width:"),
             ("caption_height", "Caption height:"),
-            ("taskbar_height", "Taskbar height:"),
             ("gtk_theme", "GTK theme:"),
             ("qt_platform_theme", "Qt style:"),
             ("font_smoothing", "Font smoothing:"),
@@ -91,10 +89,10 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("menu_hover_ms", "Hover:"),
             ("menu_fade_ms", "Time:"),
             ("menu_animation", "Animation:"),
-            ("taskbar_slide", "Slide taskbar buttons as they are dragged"),
         ],
         Page::Taskbar => &[
             ("taskbar_position", "Taskbar location:"),
+            ("taskbar_height", "Height:"),
             ("taskbar_buttons", "Taskbar buttons:"),
             (
                 "taskbar_small_icons",
@@ -114,6 +112,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "taskbar_network_meter",
                 "Show network speed beside the clock",
             ),
+            ("taskbar_slide", "Slide taskbar buttons as they are dragged"),
             ("taskbar_tray_customize", "Customize..."),
             ("taskbar_auto_hide", "Auto-hide the taskbar"),
             (
@@ -129,9 +128,15 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "Show when a window needs attention",
             ),
             (
+                "preview_taskbar",
+                "Show live window pictures over taskbar buttons",
+            ),
+            ("previews_fps", "Refresh rate:"),
+            (
                 "start_icon",
                 "Show the icon theme's logo on the Start button",
             ),
+            ("glass_orb_glow", "Start button glow:"),
         ],
         Page::StartMenu => &[
             ("startmenu_style", "Start menu style:"),
@@ -181,11 +186,6 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "Switch desktops with the wheel over the desktop",
             ),
             ("desktop_names", "Desktop names:"),
-            (
-                "preview_taskbar",
-                "Show live window pictures over taskbar buttons",
-            ),
-            ("previews_fps", "Refresh rate:"),
         ],
         Page::WindowBehavior => &[
             (

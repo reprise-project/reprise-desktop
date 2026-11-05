@@ -198,16 +198,10 @@ pub fn page(s: &Settings, a: Area) -> Form {
                 Rect::new(rx, y(350), tw, trackbar::HEIGHT),
                 Control::TrackBar(TrackBar::new(1, BLUR_POSITIONS).paged(1, 1)),
             ),
-            Item::label_at("orb_glow_label", rx, y(406), rw, "&Start button glow:"),
-            Item::new(
-                "glass_orb_glow",
-                Rect::new(rx, y(422), tw, trackbar::HEIGHT),
-                Control::TrackBar(TrackBar::new(100, INTENSITY_POSITIONS).paged(10, 5)),
-            ),
-            Item::label_at(DARK_HOURS[0], rx, y(452), rw, "Dark &hours:"),
-            time_edit(DARK_HOURS[1], rx, y(468), TIME_W),
-            Item::label_at(DARK_HOURS[2], rx + TIME_W + 4, y(472), 14, "to"),
-            time_edit(DARK_HOURS[3], rx + TIME_W + 22, y(468), TIME_W).named("Dark until"),
+            Item::label_at(DARK_HOURS[0], rx, y(406), rw, "Dark &hours:"),
+            time_edit(DARK_HOURS[1], rx, y(422), TIME_W),
+            Item::label_at(DARK_HOURS[2], rx + TIME_W + 4, y(426), 14, "to"),
+            time_edit(DARK_HOURS[3], rx + TIME_W + 22, y(422), TIME_W).named("Dark until"),
         ]);
     }
     Form::new(items)

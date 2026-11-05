@@ -4,6 +4,7 @@ use super::{Area, GX, TRAY_CUSTOMIZE, X, button, choice, edit, group, spin};
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::raster::Rect;
+use reprisekit::trackbar::{self, TrackBar};
 
 use crate::model::{
     DESKTOPS_MAX, DIM_INACTIVE_MAX, HOT_CORNERS, PAGER_MARKS, PREVIEW_FPS_MAX, SNAP_DISTANCE_MAX,
@@ -127,7 +128,7 @@ pub(super) const DRAG_SNAP_CONTROLS: [&str; 4] = [
 ];
 
 /// The virtual desktop controls that grey with one desktop; the duration's also grey without an
-/// animation, and the preview rate's while nothing shows a live picture.
+/// animation.
 pub(super) const DESKTOP_CONTROLS: [&str; 10] = [
     "desktop_names_label",
     DESKTOP_NAMES,
@@ -144,6 +145,7 @@ pub(super) const DESKTOP_CONTROLS: [&str; 10] = [
 pub(super) const DURATION_CONTROLS: [&str; 3] =
     ["duration_label", "desktop_animation_ms", "duration_units"];
 
+/// The Taskbar page's window picture rate, greyed while nothing shows a live picture.
 pub(super) const FPS_CONTROLS: [&str; 3] = ["fps_label", "previews_fps", "fps_units"];
 
 /// The desktops' names, apart by commas.
@@ -220,42 +222,31 @@ pub fn virtual_desktops(a: Area) -> Form {
     ));
     items.extend(indented.into_iter().map(Item::under_check));
 
-    items.push(group(a, "previews_group", 298, 76, "Window Pictures"));
-    items.push(Item::check(
-        "preview_taskbar",
-        GX,
-        322,
-        "Show live &window pictures over taskbar buttons",
-    ));
-    items.extend(spin(
-        "fps_label",
-        "previews_fps",
-        GX,
-        348,
-        110,
-        "Re&fresh rate:",
-        (1, PREVIEW_FPS_MAX as i32),
-    ));
-    items.push(Item::label_at(
-        "fps_units",
-        GX + 170,
-        348,
-        100,
-        "times a second",
-    ));
     Form::new(items)
 }
 
-/// The edge the bar sits on and how windows become task buttons, then one
-/// check box per optional part of the taskbar, auto-hide with its three
-/// triggers indented under it, and the Start button's logo.
+/// The edge the bar sits on, its height and how windows become task buttons, then one check box
+/// per optional part of the taskbar, auto-hide with its three triggers indented under it, the live
+/// window pictures and their rate, and the Start button's logo and glow.
 pub fn taskbar(a: Area) -> Form {
     let mut items = vec![
         Item::label_at("location_label", X, 48, 100, "Taskbar l&ocation:"),
         choice("taskbar_position", X + 104, 44, 120, TASKBAR_POSITIONS),
+    ];
+    items.extend(spin(
+        "taskbar_height_label",
+        "taskbar_height",
+        X + 234,
+        48,
+        44,
+        "Hei&ght:",
+        (8, 256),
+    ));
+    items.extend([
+        Item::label_at("taskbar_height_units", X + 338, 48, 20, "px"),
         Item::label_at("buttons_label", X, 76, 100, "Taskbar &buttons:"),
         choice("taskbar_buttons", X + 104, 72, 230, TASKBAR_BUTTONS),
-    ];
+    ]);
     let checks = [
         (
             "taskbar_small_icons",
@@ -275,6 +266,10 @@ pub fn taskbar(a: Area) -> Form {
             "taskbar_network_meter",
             "Show n&etwork speed beside the clock",
         ),
+        (
+            "taskbar_slide",
+            "Slide taskbar buttons as they are d&ragged",
+        ),
     ];
     for (i, (id, text)) in checks.into_iter().enumerate() {
         items.push(Item::check(id, X, 100 + 18 * i as i32, text));
@@ -287,16 +282,17 @@ pub fn taskbar(a: Area) -> Form {
     ));
     items.push(Item::new(
         "taskbar_note",
-        Rect::new(X, 228, a.w, 2 * LINE_H),
+        Rect::new(X, 228, a.w, 3 * LINE_H),
         Control::Lines(vec![
-            "Left unchanged, these follow the interface: Glass".into(),
-            "combines buttons and turns on all but small icons.".into(),
+            "Left unchanged, these follow the interface: Glass combines".into(),
+            "buttons and turns on the desktop button and Peek. Small".into(),
+            "icons shorten the Glass taskbar only.".into(),
         ]),
     ));
     items.push(Item::check(
         "taskbar_auto_hide",
         X,
-        258,
+        272,
         "Auto-&hide the taskbar",
     ));
     let reveals = [
@@ -305,17 +301,59 @@ pub fn taskbar(a: Area) -> Form {
         "Show when a window needs &attention",
     ];
     for (i, (id, text)) in REVEAL_CONTROLS.into_iter().zip(reveals).enumerate() {
-        items.push(Item::check(id, X, 278 + 20 * i as i32, text).under_check());
+        items.push(Item::check(id, X, 290 + 18 * i as i32, text).under_check());
     }
-    items.push(group(a, "start_group", 338, 44, "Start Button"));
     items.push(Item::check(
-        "start_icon",
-        GX,
-        360,
-        "Show the icon theme's &logo on the Start button",
+        "preview_taskbar",
+        X,
+        346,
+        "Show live window &pictures over taskbar buttons",
     ));
+    let [fps_label, fps] = spin(
+        "fps_label",
+        "previews_fps",
+        X,
+        366,
+        110,
+        "Re&fresh rate:",
+        (1, PREVIEW_FPS_MAX as i32),
+    );
+    // Under the check, 18 px in: the units' width gives that back to stay on the page.
+    let fps_units = Item::label_at(
+        "fps_units",
+        X + 170,
+        366,
+        a.w - 188,
+        "times a second, Alt+Tab too",
+    );
+    items.extend([fps_label, fps, fps_units].map(Item::under_check));
+    items.extend([
+        group(a, "start_group", 386, 88, "Start Button"),
+        Item::check(
+            "start_icon",
+            GX,
+            408,
+            "Show the icon theme's &logo on the Start button",
+        ),
+        Item::label_at("orb_glow_label", GX, 434, 110, "Start butto&n glow:"),
+        Item::new(
+            "glass_orb_glow",
+            Rect::new(GX + 114, 428, a.track(150), trackbar::HEIGHT),
+            Control::TrackBar(TrackBar::new(100, 101).paged(10, 5)),
+        ),
+        Item::label_at(
+            "orb_glow_note",
+            GX,
+            456,
+            a.gw(),
+            "The glow shows under Glass only.",
+        ),
+    ]);
     Form::new(items)
 }
+
+/// The Start button glow's rows, greyed outside Glass.
+pub(super) const GLOW_CONTROLS: [&str; 3] = ["orb_glow_label", "glass_orb_glow", "orb_glow_note"];
 
 /// The auto-hide triggers' check boxes, indented under "Auto-hide the taskbar" and greyed while it is off.
 pub(super) const REVEAL_CONTROLS: [&str; 3] = [
