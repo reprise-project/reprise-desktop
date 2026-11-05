@@ -184,8 +184,8 @@ in `~/.local/state/reprise/paint.toml`.
 
 A selection moves with the pointer, Ctrl drags a copy, and Cut, Copy and Paste carry pictures on
 the clipboard as PNG; a pasted picture larger than the canvas grows it. The text tool types into
-a box with the font, size and bold set in the Fonts toolbar, and the text goes on the picture when
-you click outside the box. The Image menu flips, rotates, resizes and skews, inverts the colors,
+a box with the font, size and bold set in the Fonts toolbar; lines wrap at the box's width, and the
+text goes on the picture, broken as it showed, when you click outside the box. The Image menu flips, rotates, resizes and skews, inverts the colors,
 sets the canvas size (Attributes), clears the picture and crops it to the selection. View zooms
 from 1x to 8x, with a pixel grid from 4x (Ctrl+G turns it off). Ctrl+Z steps back through the
 last 50 changes, fewer when they are large.
