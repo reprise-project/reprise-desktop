@@ -88,6 +88,9 @@ impl State {
             MenuPick::WindowList { windows, row } => self.window_list_activate(&windows, row),
             MenuPick::Jump { row, target } => self.jump_activate(row, &target),
             MenuPick::NotifyAction { id, key } => crate::notifyview::invoke(self, id, &key),
+            MenuPick::NotifyProgram { key, row } => {
+                crate::notifycenter::pick_program(self, &key, row)
+            }
             MenuPick::Layout(i) => self.set_layout(i),
             MenuPick::NightLight(row) => crate::nightlight::pick(self, row),
             MenuPick::Dnd(row) => crate::notifydnd::pick(self, row),

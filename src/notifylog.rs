@@ -27,15 +27,17 @@ impl Suppress {
     }
 
     /// Whether `n`, held back, waits to show once the automatic conditions end; one held back by
-    /// hand, or a transient one, goes to the history only.
-    pub fn holds(self, n: &Notification) -> bool {
-        !shows_balloon(n, self) && !self.manual && !n.transient
+    /// hand, from a program whose balloons are off (`allowed` false), or transient, goes to the
+    /// history only.
+    pub fn holds(self, n: &Notification, allowed: bool) -> bool {
+        !shows_balloon(n, self, allowed) && allowed && !self.manual && !n.transient
     }
 }
 
-/// Whether `n` raises a balloon under `s`: a critical one always does.
-pub fn shows_balloon(n: &Notification, s: Suppress) -> bool {
-    n.urgency == Urgency::Critical || !(s.manual || s.automatic())
+/// Whether `n` raises a balloon under `s`, `allowed` saying whether its program's balloons are on:
+/// a critical one always does.
+pub fn shows_balloon(n: &Notification, s: Suppress, allowed: bool) -> bool {
+    n.urgency == Urgency::Critical || (allowed && !(s.manual || s.automatic()))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -158,12 +160,12 @@ impl Log {
             .collect()
     }
 
-    /// Take every entry from program `app` out (a group's Clear); returns
+    /// Take every entry from program `key` out (a group's Clear); returns
     /// the ids still open, which the user dismissed.
-    pub fn clear_app(&mut self, app: &str) -> Vec<u32> {
+    pub fn clear_app(&mut self, key: &str) -> Vec<u32> {
         let (gone, kept) = std::mem::take(&mut self.entries)
             .into_iter()
-            .partition::<Vec<Entry>, _>(|e| e.n.app == app);
+            .partition::<Vec<Entry>, _>(|e| e.n.key == key);
         self.entries = kept;
         self.unseen = self.unseen.min(self.entries.len());
         gone.into_iter()
@@ -257,7 +259,7 @@ mod tests {
         let mut log = Log::default();
         for (id, app) in [(1, "Mail"), (2, "Chat"), (3, "Mail")] {
             let mut n = note(id);
-            n.app = app.into();
+            n.key = app.into();
             log.record(&n, 0, false);
         }
         log.close(1);
@@ -290,7 +292,7 @@ mod tests {
         let mut crit = note(1);
         crit.urgency = Urgency::Critical;
         let none = Suppress::default();
-        assert!(shows_balloon(&note(2), none));
+        assert!(shows_balloon(&note(2), none, true));
         let each = [
             Suppress {
                 manual: true,
@@ -311,10 +313,13 @@ mod tests {
         ];
         for s in each {
             assert!(
-                !shows_balloon(&note(2), s),
+                !shows_balloon(&note(2), s, true),
                 "{s:?} holds a normal balloon back"
             );
-            assert!(shows_balloon(&crit, s), "{s:?} lets a critical one through");
+            assert!(
+                shows_balloon(&crit, s, true),
+                "{s:?} lets a critical one through"
+            );
         }
         log.dnd = true;
         assert!(log.bell_shown(), "the bell shows for DND alone");
@@ -327,22 +332,38 @@ mod tests {
             fullscreen_focus: true,
             ..none
         };
-        assert!(full.holds(&note(1)));
-        assert!(!none.holds(&note(1)), "nothing to wait for");
+        assert!(full.holds(&note(1), true));
+        assert!(!none.holds(&note(1), true), "nothing to wait for");
         assert!(
             !Suppress {
                 manual: true,
                 ..full
             }
-            .holds(&note(1)),
+            .holds(&note(1), true),
             "by hand: history only"
         );
         let mut transient = note(2);
         transient.transient = true;
-        assert!(!full.holds(&transient));
+        assert!(!full.holds(&transient, true));
         let mut crit = note(3);
         crit.urgency = Urgency::Critical;
-        assert!(!full.holds(&crit), "it shows at once");
+        assert!(!full.holds(&crit, true), "it shows at once");
+    }
+
+    #[test]
+    fn a_program_with_balloons_off_shows_only_critical_ones_and_never_waits() {
+        let mut crit = note(1);
+        crit.urgency = Urgency::Critical;
+        let none = Suppress::default();
+        let full = Suppress {
+            fullscreen_focus: true,
+            ..none
+        };
+        for s in [none, full] {
+            assert!(!shows_balloon(&note(2), s, false), "{s:?}");
+            assert!(shows_balloon(&crit, s, false), "{s:?} critical still shows");
+            assert!(!s.holds(&note(2), false), "{s:?} history only");
+        }
     }
 
     #[test]

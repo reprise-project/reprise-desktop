@@ -158,6 +158,9 @@ pub struct Notification {
     /// Who sent it: the `desktop-entry` hint's application name, else the
     /// `app_name` it gave. May be empty.
     pub app: String,
+    /// The program as `[notifications] no_balloons` and `no_sounds` name it, and the history
+    /// groups it: the `desktop-entry` hint, else the `app_name`. See [`notify::program_key`].
+    pub key: String,
     pub summary: String,
     /// Plain text: any markup was reduced by `notify::plain_text`.
     pub body: String,
@@ -201,6 +204,7 @@ impl Notification {
         Notification {
             id,
             app: String::new(),
+            key: String::new(),
             summary,
             body,
             app_icon: Vec::new(),

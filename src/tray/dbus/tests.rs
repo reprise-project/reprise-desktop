@@ -831,3 +831,19 @@ fn an_items_overlay_pixmap_is_read_with_its_other_properties() {
     assert_eq!(item.overlay.pixmaps.len(), 1, "the badge is decoded");
     assert_eq!(item.overlay.pixmaps[0].width, 16);
 }
+
+#[test]
+fn the_session_programs_keep_first_order_and_take_the_latest_name() {
+    let mut p = Programs::default();
+    p.saw("org.example.Mail", "Mail");
+    p.saw("", "Nameless");
+    p.saw("chat", "Chat");
+    p.saw("org.example.Mail", "Mail 2");
+    assert_eq!(
+        p.0,
+        [
+            ("org.example.Mail".to_string(), "Mail 2".to_string()),
+            ("chat".to_string(), "Chat".to_string()),
+        ]
+    );
+}

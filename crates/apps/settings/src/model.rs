@@ -160,6 +160,10 @@ pub struct Settings {
     pub taskbar_network_meter: bool,
     /// `[notifications] sound`.
     pub notification_sound: bool,
+    /// `[notifications] no_balloons` and `no_sounds`: the programs, by key, whose balloons or
+    /// sounds are off.
+    pub notify_no_balloons: Vec<String>,
+    pub notify_no_sounds: Vec<String>,
     /// `[sounds] theme`, `bell` and `allow_boost`.
     pub sound_theme: String,
     pub bell: bool,
@@ -493,6 +497,8 @@ impl Settings {
             taskbar_badges: c.taskbar.badges,
             taskbar_network_meter: c.taskbar.network_meter,
             notification_sound: c.notifications.sound,
+            notify_no_balloons: c.notifications.no_balloons.clone(),
+            notify_no_sounds: c.notifications.no_sounds.clone(),
             sound_theme: c.sounds.theme.clone(),
             bell: c.sounds.bell,
             allow_boost: c.sounds.allow_boost,

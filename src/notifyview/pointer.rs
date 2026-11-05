@@ -88,7 +88,7 @@ pub fn press(state: &mut State, x: f64, y: f64, button: u32) -> bool {
                 display_next(state);
             } else {
                 paint(state);
-                crate::notifycenter::reveal(state, &burst.app);
+                crate::notifycenter::reveal(state, &burst.key);
             }
             return false;
         }

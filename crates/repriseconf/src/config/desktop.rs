@@ -261,6 +261,10 @@ pub struct NotificationsConfig {
     /// Do Not Disturb turns itself on while a full-screen window has focus and while the screen
     /// is shared.
     pub auto_dnd: bool,
+    /// Programs whose balloons stay in the history only, by desktop entry id or app name.
+    pub no_balloons: Vec<String>,
+    /// Programs whose balloons play no sound.
+    pub no_sounds: Vec<String>,
 }
 
 impl NotificationsConfig {
@@ -272,6 +276,33 @@ impl NotificationsConfig {
             None => false,
         }
     }
+
+    /// Whether `program` (a desktop entry id or app name) raises balloons.
+    pub fn shows_balloons(&self, program: &str) -> bool {
+        !program_listed(&self.no_balloons, program)
+    }
+
+    pub fn plays_sounds(&self, program: &str) -> bool {
+        !program_listed(&self.no_sounds, program)
+    }
+}
+
+/// Whether `list` names `program`, ignoring ASCII case.
+pub fn program_listed(list: &[String], program: &str) -> bool {
+    list.iter().any(|p| p.eq_ignore_ascii_case(program))
+}
+
+/// Add `program` to `list` (`on`) or take every spelling of it out; true when `list` changed.
+pub fn set_program_listed(list: &mut Vec<String>, program: &str, on: bool) -> bool {
+    if on == program_listed(list, program) {
+        return false;
+    }
+    if on {
+        list.push(program.to_string());
+    } else {
+        list.retain(|p| !p.eq_ignore_ascii_case(program));
+    }
+    true
 }
 
 impl Default for NotificationsConfig {
@@ -280,6 +311,8 @@ impl Default for NotificationsConfig {
             sound: true,
             quiet_hours: None,
             auto_dnd: true,
+            no_balloons: Vec::new(),
+            no_sounds: Vec::new(),
         }
     }
 }

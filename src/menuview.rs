@@ -129,6 +129,8 @@ pub enum MenuKind {
         id: u32,
         keys: Vec<String>,
     },
+    /// A program's group in the notification history: its key.
+    NotifyProgram(String),
     Layouts,
     NightLight(Vec<Option<crate::nightlight::Row>>),
     Dnd(Vec<Option<crate::notifydnd::Row>>),
@@ -187,6 +189,10 @@ pub enum MenuPick {
     NotifyAction {
         id: u32,
         key: String,
+    },
+    NotifyProgram {
+        key: String,
+        row: crate::notifycenter::ProgramRow,
     },
     Layout(u32),
     NightLight(crate::nightlight::Row),
@@ -279,6 +285,13 @@ impl MenuKind {
                 Some(key) => MenuPick::NotifyAction {
                     id: *id,
                     key: key.clone(),
+                },
+                None => MenuPick::Nothing,
+            },
+            MenuKind::NotifyProgram(key) => match crate::notifycenter::program_row(idx) {
+                Some(row) => MenuPick::NotifyProgram {
+                    key: key.clone(),
+                    row,
                 },
                 None => MenuPick::Nothing,
             },

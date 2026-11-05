@@ -157,7 +157,7 @@ fn a_burst_takes_its_tint_from_its_first_app_icon() {
     let glass = theme_for(Interface::Glass);
     let mut scene = crate::compositor::DeskScene::new();
     let mut b = balloon(&mut scene, 1);
-    b.item = Item::Burst(Burst::new("Mail"));
+    b.item = Item::Burst(Burst::new("Mail", "Mail"));
     join_burst(&mut b, &note(2, "Mail"), &glass);
     assert_eq!(b.tint, Some(None));
     let mut red = note(3, "Mail");
@@ -227,6 +227,7 @@ fn relative_time_reads_now_then_minutes_then_hours() {
 fn note(id: u32, app: &str) -> Notification {
     let mut n = Notification::new(id, format!("n{id}"), "x".into());
     n.app = app.into();
+    n.key = app.into();
     n
 }
 
@@ -363,7 +364,7 @@ fn a_burst_takes_its_programs_queued_balloons() {
 
 #[test]
 fn a_burst_counts_and_lists_its_newest() {
-    let mut b = Burst::new("Mail");
+    let mut b = Burst::new("Mail", "Mail");
     for id in 1..=5 {
         b.add(&note(id, "Mail"));
     }
@@ -387,7 +388,7 @@ fn a_burst_keeps_the_first_app_icon_and_has_no_picture() {
     first.image = vec![src(32)];
     let mut second = note(2, "Mail");
     second.app_icon = vec![src(16)];
-    let mut b = Burst::new("Mail");
+    let mut b = Burst::new("Mail", "Mail");
     b.add(&first);
     assert!(!Item::Burst(b.clone()).has_app_icon());
     b.add(&second);
@@ -1587,12 +1588,75 @@ fn a_sheet_draws_and_asks_for_frames_only_on_its_output() {
 fn a_low_urgency_balloon_and_the_sound_key_off_are_silent() {
     let mut n = note(1, "Mail");
     n.sound = Some(repriseaudio::sounds::Sound::Name("bell".into()));
-    assert_eq!(balloon_sound(&n, true), n.sound.as_ref());
-    assert_eq!(balloon_sound(&n, false), None);
+    let on = crate::config::NotificationsConfig::default();
+    let off = crate::config::NotificationsConfig {
+        sound: false,
+        ..on.clone()
+    };
+    assert_eq!(balloon_sound(&n, &on), n.sound.as_ref());
+    assert_eq!(balloon_sound(&n, &off), None);
     n.urgency = Urgency::Critical;
-    assert_eq!(balloon_sound(&n, true), n.sound.as_ref());
+    assert_eq!(balloon_sound(&n, &on), n.sound.as_ref());
     n.urgency = Urgency::Low;
-    assert_eq!(balloon_sound(&n, true), None);
+    assert_eq!(balloon_sound(&n, &on), None);
+}
+
+#[test]
+fn a_program_with_sounds_off_is_silent_even_when_critical() {
+    let mut n = note(1, "Mail");
+    n.sound = Some(repriseaudio::sounds::Sound::Name("bell".into()));
+    n.urgency = Urgency::Critical;
+    let cfg = crate::config::NotificationsConfig {
+        no_sounds: vec!["mail".into()],
+        ..Default::default()
+    };
+    assert_eq!(balloon_sound(&n, &cfg), None);
+    assert_eq!(
+        balloon_sound(&note(2, "Chat"), &cfg),
+        None,
+        "Chat sent no sound"
+    );
+    let mut chat = note(3, "Chat");
+    chat.sound = n.sound.clone();
+    assert_eq!(balloon_sound(&chat, &cfg), chat.sound.as_ref());
+}
+
+#[test]
+fn a_program_with_balloons_off_goes_to_the_history_and_its_critical_ones_show() {
+    let config = "[notifications]\nno_balloons = [\"Mail\"]\n";
+    let mut h = crate::harness::Harness::with_config(crate::config::Config::parse(config).unwrap());
+    h.output("TEST-1", 1024, 768);
+    show(&mut h.state, note(1, "Mail"));
+    assert!(!balloon_up(&h.state), "no balloon for Mail");
+    assert!(
+        h.state.notify.log.get(1).is_some_and(|e| e.open),
+        "in the history, open"
+    );
+    assert!(
+        h.state.notify.log.held.is_empty(),
+        "not waiting to show later"
+    );
+    let mut crit = note(2, "Mail");
+    crit.urgency = Urgency::Critical;
+    show(&mut h.state, crit);
+    assert!(balloon_up(&h.state), "a critical one shows");
+    show(&mut h.state, note(3, "Chat"));
+    assert_eq!(h.state.notify.stack.len() + h.state.notify.queue.len(), 2);
+}
+
+#[test]
+fn a_burst_counts_only_the_balloons_shown() {
+    let config = "[notifications]\nno_balloons = [\"Mail\"]\n";
+    let mut h = crate::harness::Harness::with_config(crate::config::Config::parse(config).unwrap());
+    h.output("TEST-1", 1024, 768);
+    for id in 1..=6 {
+        show(&mut h.state, note(id, "Mail"));
+    }
+    assert!(
+        h.state.notify.recent.is_empty(),
+        "hidden ones count for no burst"
+    );
+    assert!(!balloon_up(&h.state));
 }
 
 #[test]

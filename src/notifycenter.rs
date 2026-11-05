@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use reprisekit::controls::grouplist;
 use reprisekit::controls::listview;
-use reprisekit::controls::menu::place_popup;
+use reprisekit::controls::menu::{MenuItem, place_popup};
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::notifyhistory::{self, Entry, Event, History, Hit, Key};
 use reprisescene::{BufferId, TreeId};
@@ -119,6 +119,7 @@ pub fn refresh(state: &mut State) {
         .iter()
         .map(|e| Entry {
             id: e.n.id,
+            key: e.n.key.clone(),
             app: e.n.app.clone(),
             icon: crate::tray::closest(e.n.balloon_icon(), px)
                 .or_else(|| state.icons.get("dialog-information", px))
@@ -220,6 +221,11 @@ pub fn press(state: &mut State, x: f64, y: f64, button: u32, time: u32) -> bool 
             v.model.press(h);
             redraw(state);
             open_row_menu(state, id, (x as i32, y as i32));
+        } else if let Some((i, key)) = row.and_then(|i| Some((i, v.model.group_at(i)?.to_string())))
+        {
+            v.model.select(i);
+            redraw(state);
+            open_program_menu(state, key, (x as i32, y as i32));
         }
         return false;
     }
@@ -324,7 +330,7 @@ fn apply(state: &mut State, event: Event) {
             crate::notifyview::set_dnd(state, on);
         }
         Event::Clear => crate::notifyview::clear_history(state),
-        Event::ClearGroup(app) => crate::notifyview::clear_app(state, &app),
+        Event::ClearGroup(key) => crate::notifyview::clear_app(state, &key),
         Event::Dismiss(id) => crate::notifyview::forget(state, id),
         Event::Invoke(id) => crate::notifyview::invoke(state, id, DEFAULT_ACTION),
         Event::Menu(id) => {
@@ -337,8 +343,81 @@ fn apply(state: &mut State, event: Event) {
                 open_row_menu(state, id, (v.at.0 + r.x, v.at.1 + r.bottom()));
             }
         }
+        Event::GroupMenu(key) => {
+            let cm = state.config.theme.look.controls();
+            let Some(v) = state.notify.center.as_ref() else {
+                return;
+            };
+            let row = v.model.list.selected.and_then(|i| v.model.row_rect(i, &cm));
+            if let Some(r) = row {
+                let at = (v.at.0 + r.x, v.at.1 + r.bottom());
+                open_program_menu(state, key, at);
+            }
+        }
         Event::Close => close(state),
     }
+}
+
+/// A program's switches in its menu in the history, in row order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgramRow {
+    Balloons,
+    Sounds,
+}
+
+const PROGRAM_ROWS: [ProgramRow; 2] = [ProgramRow::Balloons, ProgramRow::Sounds];
+
+/// Program `key`'s menu: each switch checked while it is off for the program.
+fn program_items(cfg: &crate::config::NotificationsConfig, key: &str) -> Vec<MenuItem> {
+    PROGRAM_ROWS
+        .iter()
+        .map(|row| match row {
+            ProgramRow::Balloons => {
+                MenuItem::item("Don't Show &Balloons").checked(!cfg.shows_balloons(key))
+            }
+            ProgramRow::Sounds => MenuItem::item("No &Sounds").checked(!cfg.plays_sounds(key)),
+        })
+        .collect()
+}
+
+/// The menu of the group heading `key`, at layout point `at`: a right click on its header or the
+/// Menu key there.
+fn open_program_menu(state: &mut State, key: String, at: (i32, i32)) {
+    state.close_menu();
+    let items = program_items(&state.config.notifications, &key);
+    let Some(output) = state.output_at(f64::from(at.0), f64::from(at.1)) else {
+        return;
+    };
+    let usable = state.usable_area(Some(&output));
+    let layout = MenuStyle::context_for(&state.config.theme, &items).layout_in(
+        &state.config.theme,
+        &state.text,
+        &items,
+        usable,
+    );
+    let pos = place_popup(at, (layout.width, layout.height), usable);
+    let kind = MenuKind::NotifyProgram(key);
+    state.push_menu(0, pos, layout, items, output, kind, MenuFrom::Elsewhere);
+    state.redraw_menu(0);
+}
+
+/// The program menu's row `idx`.
+pub fn program_row(idx: usize) -> Option<ProgramRow> {
+    PROGRAM_ROWS.get(idx).copied()
+}
+
+/// Flip `row` for program `key` at once and in `config.toml`.
+pub fn pick_program(state: &mut State, key: &str, row: ProgramRow) {
+    let n = &mut state.config.notifications;
+    let (list, name) = match row {
+        ProgramRow::Balloons => (&mut n.no_balloons, "no_balloons"),
+        ProgramRow::Sounds => (&mut n.no_sounds, "no_sounds"),
+    };
+    let off = !repriseconf::config::program_listed(list, key);
+    repriseconf::config::set_program_listed(list, key, off);
+    let saved: toml_edit::Array = list.iter().map(String::as_str).collect();
+    let at = repriseconf::key("notifications", name);
+    crate::configwrite::save_value(&state.config_path, at, toml_edit::Value::Array(saved));
 }
 
 fn open_row_menu(state: &mut State, id: u32, at: (i32, i32)) {
@@ -389,6 +468,50 @@ pub fn open_actions_menu(
 mod tests {
     use super::*;
     use crate::keys::*;
+
+    fn mail(id: u32) -> crate::tray::Notification {
+        let mut n = crate::tray::Notification::new(id, format!("n{id}"), String::new());
+        n.app = "Mail".into();
+        n.key = "org.example.Mail".into();
+        n
+    }
+
+    #[test]
+    fn a_groups_menu_flips_its_programs_switches_live() {
+        let mut h = crate::harness::Harness::new();
+        let out = h.output("TEST-1", 1024, 768);
+        crate::notifyview::show(&mut h.state, mail(1));
+        toggle(&mut h.state, &out, Rect::new(1000, 740, 16, 28));
+        let header = h.state.notify.center.as_ref().map(|v| v.model.group_at(0));
+        assert_eq!(header, Some(Some("org.example.Mail")));
+        h.state.notify.center.as_mut().unwrap().model.select(0);
+        key(&mut h.state, crate::keys::KEY_Menu, 0);
+        let menu = h
+            .state
+            .menus
+            .first()
+            .expect("the Menu key opens the group's menu");
+        assert!(
+            matches!(&menu.kind, MenuKind::NotifyProgram(k) if k == "org.example.Mail"),
+            "the menu is Mail's"
+        );
+        let checked = |i: &MenuItem| matches!(i, MenuItem::Entry { checked: true, .. });
+        let checks: Vec<bool> = menu.items.iter().map(checked).collect();
+        assert_eq!(checks, [false, false], "both on to begin with");
+        h.state.menu_activate(0, 0);
+        let n = &h.state.config.notifications;
+        assert_eq!(n.no_balloons, ["org.example.Mail"]);
+        assert!(n.no_sounds.is_empty());
+        let items = program_items(n, "org.example.Mail");
+        assert_eq!(items.iter().map(checked).collect::<Vec<_>>(), [true, false]);
+        close(&mut h.state);
+        crate::notifyview::show(&mut h.state, mail(2));
+        assert!(
+            !crate::notifyview::balloon_up(&h.state),
+            "Mail's balloons are off"
+        );
+        assert!(h.state.notify.log.get(2).is_some(), "it is in the history");
+    }
 
     #[test]
     fn shift_f10_opens_the_row_menu_like_the_menu_key() {
