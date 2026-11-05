@@ -2,10 +2,10 @@
 
 use crate::registry::Page;
 use crate::{
-    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN, SAVER_WIN,
-    SHORTCUT_WIN, SettingsApp, additem, appearancepage, backgroundpage, defaultspage, displayhost,
-    displaypage, filepick::Pick, layoutdlg, menupage, notifypage, pages, quickpage, renamedlg,
-    saverdlg, saverpage,
+    ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN,
+    SAVER_WIN, SHORTCUT_WIN, SettingsApp, additem, appearancepage, backgroundpage, defaultspage,
+    displayhost, displaypage, filepick::Pick, layoutdlg, menupage, notifypage, pages, quickpage,
+    renamedlg, saverdlg, saverpage,
 };
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
@@ -84,6 +84,10 @@ impl SettingsApp {
                 self.show_monitor();
                 self.sync_apply();
                 Reply::redraw()
+            }
+            propsheet::Event::Page(p, form::Event::Pressed(id)) if self.color_button(p, id) => {
+                self.open_color(p, id);
+                Reply::redraw_all()
             }
             propsheet::Event::Page(_, form::Event::Pressed(id)) => match id {
                 pages::EDIT_FILE => self.edit_file(),
@@ -298,6 +302,9 @@ impl SettingsApp {
         }
         if win == SHORTCUT_WIN {
             return self.shortcut_event(ev, ctx);
+        }
+        if win == COLOR_WIN {
+            return self.color_event(ev, ctx);
         }
         if win == LAYOUT_WIN {
             return self.add_layout_event(ev, ctx);

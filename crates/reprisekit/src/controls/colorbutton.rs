@@ -10,7 +10,7 @@ use crate::text::TextRenderer;
 use crate::theme::Color;
 use accesskit::{NodeId, Role};
 
-/// The popup: 20 swatches in 4 columns, an etched line, a greyed Other... and the current colour. Positions are from the button's top-left.
+/// The popup: 20 swatches in 4 columns, an etched line, Other... and the current colour. Positions are from the button's top-left.
 const POPUP: (i32, i32, i32, i32) = (0, 21, 98, 151);
 const SWATCHES: usize = 20;
 const COLS: usize = 4;
@@ -34,6 +34,8 @@ pub struct ColorButton {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PopupHit {
     Swatch(usize),
+    /// Other..., which the host answers with the Color dialog.
+    Other,
     Face,
 }
 
@@ -68,6 +70,11 @@ impl ColorButton {
             _ => false,
         }
     }
+}
+
+fn other_rect(button: Rect) -> Rect {
+    let (x, y, w, h) = POPUP_OTHER;
+    Rect::new(button.x + x, button.y + y, w, h)
 }
 
 fn swatch_at(button: Rect, k: usize) -> (i32, i32) {
@@ -109,6 +116,9 @@ pub fn hit_popup(button: Rect, b: &ColorButton, x: i32, y: i32) -> Option<PopupH
         if Rect::new(sx, sy, SWATCH, SWATCH).contains(x, y) {
             return Some(PopupHit::Swatch(k));
         }
+    }
+    if other_rect(button).contains(x, y) {
+        return Some(PopupHit::Other);
     }
     Some(PopupHit::Face)
 }
@@ -207,22 +217,15 @@ pub fn draw_popup(
         }
         None => c.etched_hline_t(x0, x1, y, cs, s),
     }
-    let other = Rect::new(
-        button.x + POPUP_OTHER.0,
-        button.y + POPUP_OTHER.1,
-        POPUP_OTHER.2,
-        POPUP_OTHER.3,
-    )
-    .scaled(s);
     draw_button(
         c,
         text,
         p,
-        other,
+        other_rect(button).scaled(s),
         "&Other...",
         false,
         Interaction::Idle,
-        false,
+        true,
         false,
         px,
     );
@@ -277,6 +280,11 @@ mod tests {
         assert_eq!(
             hit_popup(r, &b, r.x + 1, r.y + POPUP.1 + 1),
             Some(PopupHit::Face)
+        );
+        let (ox, oy, _, _) = POPUP_OTHER;
+        assert_eq!(
+            hit_popup(r, &b, r.x + ox + 3, r.y + oy + 3),
+            Some(PopupHit::Other)
         );
         assert_eq!(
             hit_popup(r, &b, r.x + 1, r.y + 1),

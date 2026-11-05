@@ -278,7 +278,8 @@ One window, 23 pages, four headings. Only one runs at a time.
   - **Appearance:** interface and colour scheme. Under Glass: mode,
     material, frame, transparency, blur, reflections and colour intensity.
   - **Background:** a picture or a slideshow, its position, the desktop
-    colour, which icons sit on the desktop and whether their labels show
+    colour (Other... under the swatches opens the Color dialog, as in
+    Paint), which icons sit on the desktop and whether their labels show
     file name extensions. Use for picks one virtual desktop to give a picture
     of its own; picking the picture for all desktops there takes it away.
   - **Screen Saver:** the saver, its settings and a live preview.
