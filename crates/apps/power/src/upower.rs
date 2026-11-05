@@ -51,6 +51,8 @@ pub struct Battery {
 pub struct Power {
     pub on_battery: bool,
     pub battery: Option<Battery>,
+    /// The battery's charge limit, on or off; `None` without a battery or a limit.
+    pub limit: Option<ChargeLimit>,
 }
 
 /// UPower's `State` while a charger is connected and not charging.
@@ -74,7 +76,7 @@ fn fold(
     if !present || kind != 2 {
         return Power {
             on_battery,
-            battery: None,
+            ..Power::default()
         };
     }
     let num = |k: &str| props.get(k).and_then(|v| f64::try_from(v.clone()).ok());
@@ -82,7 +84,7 @@ fn fold(
     let code = props
         .get("State")
         .and_then(|v| u32::try_from(v.clone()).ok());
-    let limit = limit.filter(|l| l.enabled);
+    let on = limit.filter(|l| l.enabled);
     Power {
         on_battery,
         battery: Some(Battery {
@@ -90,9 +92,10 @@ fn fold(
             percent: num("Percentage").unwrap_or(0.0).round().clamp(0.0, 100.0) as u8,
             time_to_empty: int("TimeToEmpty").unwrap_or(0).max(0) as u64,
             time_to_full: int("TimeToFull").unwrap_or(0).max(0) as u64,
-            held: limit.is_some() && code == Some(PENDING_CHARGE),
-            stops_at: limit.and_then(|l| l.end),
+            held: on.is_some() && code == Some(PENDING_CHARGE),
+            stops_at: on.and_then(|l| l.end),
         }),
+        limit: limit.cloned(),
     }
 }
 
@@ -425,6 +428,7 @@ mod tests {
                     held: false,
                     stops_at: None,
                 }),
+                limit: None,
             }
         );
     }
@@ -503,7 +507,7 @@ mod tests {
         };
         let on_battery = Power {
             on_battery: true,
-            battery: None,
+            ..Power::default()
         };
         assert!(feed.send(Power::default()));
         assert!(feed.send(Power::default()));
@@ -563,6 +567,11 @@ mod tests {
             "the limit is off"
         );
         assert_eq!(battery(5, None), (false, None), "no limit to hold it");
+        assert_eq!(
+            fold(false, &device(5), Some(&limit(false))).limit,
+            Some(limit(false)),
+            "an off limit is still offered"
+        );
     }
 
     #[test]

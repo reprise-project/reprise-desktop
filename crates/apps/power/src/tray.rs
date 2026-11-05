@@ -127,6 +127,7 @@ mod tests {
                 time_to_full: 0,
                 ..Battery::default()
             }),
+            limit: None,
         }
     }
 
@@ -166,6 +167,7 @@ mod tests {
                 stops_at,
                 ..Battery::default()
             }),
+            limit: None,
         };
         assert_eq!(tooltip(&held(Some(80))), "Charging limited to 80%");
         assert_eq!(tooltip(&held(None)), "Charging limited (79%)");

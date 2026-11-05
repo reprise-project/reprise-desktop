@@ -17,6 +17,7 @@ use crate::profiles::{self, Profiles};
 use crate::settings::Settings;
 use crate::tray::{clock, held};
 use crate::upower::{Power, State};
+use reprisebus::charge::ChargeLimit;
 
 /// The sheet's fixed client size: a 404x448 window less the frame.
 pub const CLIENT: (i32, i32) = (398, 424);
@@ -98,6 +99,11 @@ pub enum Outcome {
     Apply(Settings, Option<String>),
     Close,
     ApplyAndClose(Settings, Option<String>),
+    /// The charge limit's check changed: the host turns the limit on or off at once.
+    Charge {
+        device: String,
+        on: bool,
+    },
 }
 
 pub struct Sheet {
@@ -111,6 +117,8 @@ pub struct Sheet {
     power: Power,
     profiles: Profiles,
     profile: Option<String>,
+    /// A charge limit toggle is under way: its check stays grey until [`Sheet::charge_done`].
+    charging: bool,
 }
 
 impl Sheet {
@@ -124,7 +132,7 @@ impl Sheet {
         let pages = vec![
             schemes_page(icon).set_in(DialogFont::ShellDlg),
             alarms_page(),
-            meter_page(),
+            meter_page(power.limit.as_ref()),
             advanced_page(),
         ];
         let mut s = Sheet {
@@ -136,6 +144,7 @@ impl Sheet {
             power: power.clone(),
             profiles: profiles.clone(),
             profile: None,
+            charging: false,
         };
         s.write();
         s
@@ -166,7 +175,42 @@ impl Sheet {
     }
 
     pub fn refresh_power(&mut self, power: &Power) {
+        let moved = self.power.limit != power.limit;
         self.power = power.clone();
+        if moved {
+            self.rebuild_meter();
+        } else {
+            self.write_meter();
+        }
+    }
+
+    /// Whether a toggle the host runs is under way; the check is grey while it is.
+    pub fn set_charging(&mut self, on: bool) {
+        self.charging = on;
+        self.sheet.pages[TAB_METER].set_enabled(CHARGE_LIMIT, !on);
+    }
+
+    /// The host's toggle finished; `limit` is UPower's afterwards.
+    pub fn charge_done(&mut self, limit: Option<ChargeLimit>) {
+        self.charging = false;
+        self.power.limit = limit;
+        self.rebuild_meter();
+    }
+
+    /// Build the Power Meter tab again for the limit now known, keeping its focus.
+    fn rebuild_meter(&mut self) {
+        let old = &self.sheet.pages[TAB_METER];
+        let focus = old.focus().map(|f| old.items[f].id);
+        self.sheet
+            .set_page(TAB_METER, meter_page(self.power.limit.as_ref()));
+        if let Some(id) =
+            focus.filter(|_| !self.sheet.tabs.focused || self.sheet.tabs.open != TAB_METER)
+        {
+            self.sheet.pages[TAB_METER].focus_id(id);
+        }
+        if self.charging {
+            self.sheet.pages[TAB_METER].set_enabled(CHARGE_LIMIT, false);
+        }
         self.write_meter();
     }
 
@@ -182,6 +226,7 @@ impl Sheet {
         match ev {
             propsheet::Event::None => Outcome::None,
             propsheet::Event::Redraw => Outcome::Redraw,
+            propsheet::Event::Page(_, form::Event::Changed(CHARGE_LIMIT)) => self.charge_toggled(),
             propsheet::Event::Page(_, form::Event::Changed(id)) => {
                 self.read(id);
                 Outcome::Redraw
@@ -207,6 +252,19 @@ impl Sheet {
                 self.write();
                 Outcome::Close
             }
+        }
+    }
+
+    fn charge_toggled(&mut self) -> Outcome {
+        let page = &mut self.sheet.pages[TAB_METER];
+        let (Some(limit), Some(on)) = (&self.power.limit, page.checked(CHARGE_LIMIT)) else {
+            return Outcome::Redraw;
+        };
+        page.set_enabled(CHARGE_LIMIT, false);
+        self.charging = true;
+        Outcome::Charge {
+            device: limit.device.clone(),
+            on,
         }
     }
 
@@ -610,8 +668,18 @@ fn alarms_page() -> Form {
     ])
 }
 
-fn meter_page() -> Form {
-    Form::new(vec![
+/// The battery charge limit's check box on the Power Meter tab, there only while UPower offers a limit.
+pub const CHARGE_LIMIT: &str = "charge_limit";
+
+pub fn charge_label(limit: &ChargeLimit) -> String {
+    match limit.end {
+        Some(end) => format!("Limit charging to protect the &battery (stops at {end}%)"),
+        None => "Limit charging to protect the &battery".to_string(),
+    }
+}
+
+fn meter_page(limit: Option<&ChargeLimit>) -> Form {
+    let mut items = vec![
         Item::label_at("source_l", X, 50, 150, "Current power source:"),
         Item::label_at("source_value", X + 150, 50, 200, ""),
         group("battery_g", 76, 110, "Battery"),
@@ -622,7 +690,11 @@ fn meter_page() -> Form {
         Item::label_at("charge_value", GX + 130, 122, 190, ""),
         Item::label_at("remaining_l", GX + 50, 144, 80, "Remaining:"),
         Item::label_at("remaining_value", GX + 130, 144, 190, ""),
-    ])
+    ];
+    if let Some(l) = limit {
+        items.push(Item::check(CHARGE_LIMIT, X, 198, &charge_label(l)).checked(l.enabled));
+    }
+    Form::new(items)
 }
 
 fn advanced_page() -> Form {
@@ -678,7 +750,22 @@ mod tests {
     fn every_page_fits_its_text() {
         let over = reprisekit::interfaces::form_overflows(|_, _, _| {
             let s = sheet().sheet;
-            s.tabs.labels.into_iter().zip(s.pages).collect()
+            let limited = Sheet::new(
+                &Settings::default(),
+                &with(Some(ChargeLimit {
+                    end: Some(100),
+                    ..limit(true)
+                })),
+                &Profiles::default(),
+                None,
+            )
+            .sheet;
+            s.tabs
+                .labels
+                .into_iter()
+                .zip(s.pages)
+                .chain(limited.tabs.labels.into_iter().zip(limited.pages))
+                .collect()
         });
         assert!(over.is_empty(), "{}", over.join("\n"));
     }
@@ -995,6 +1082,7 @@ mod tests {
                 time_to_full: 0,
                 ..Battery::default()
             }),
+            limit: None,
         });
         let p = &s.sheet.pages[TAB_METER];
         let text = |id| match &p.item(id).unwrap().control {
@@ -1006,5 +1094,65 @@ mod tests {
         assert_eq!(text("charge_value"), "45%");
         assert_eq!(text("remaining_value"), "2:10");
         assert_eq!(text("status_value"), "Discharging");
+    }
+
+    fn limit(enabled: bool) -> ChargeLimit {
+        ChargeLimit {
+            device: "/org/freedesktop/UPower/devices/battery_BAT0".into(),
+            enabled,
+            end: Some(80),
+        }
+    }
+
+    fn with(l: Option<ChargeLimit>) -> Power {
+        Power {
+            limit: l,
+            ..Power::default()
+        }
+    }
+
+    #[test]
+    fn the_charge_limit_check_shows_only_with_a_limit_and_follows_upower() {
+        let mut s = sheet();
+        assert!(s.sheet.pages[TAB_METER].item(CHARGE_LIMIT).is_none());
+        s.refresh_power(&with(Some(limit(false))));
+        assert_eq!(s.sheet.pages[TAB_METER].checked(CHARGE_LIMIT), Some(false));
+        s.refresh_power(&with(Some(limit(true))));
+        assert_eq!(s.sheet.pages[TAB_METER].checked(CHARGE_LIMIT), Some(true));
+        assert_eq!(
+            charge_label(&limit(true)),
+            "Limit charging to protect the &battery (stops at 80%)"
+        );
+        s.refresh_power(&Power::default());
+        assert!(
+            s.sheet.pages[TAB_METER].item(CHARGE_LIMIT).is_none(),
+            "the battery went away"
+        );
+    }
+
+    #[test]
+    fn checking_the_limit_asks_the_host_and_greys_until_it_answers() {
+        let mut s = sheet();
+        s.refresh_power(&with(Some(limit(false))));
+        s.open_tab(TAB_METER);
+        s.sheet.pages[TAB_METER].set_check(CHARGE_LIMIT, true);
+        assert!(
+            matches!(changed(&mut s, CHARGE_LIMIT), Outcome::Charge { ref device, on: true } if device.ends_with("BAT0"))
+        );
+        let enabled = |s: &Sheet| {
+            matches!(
+                s.sheet.pages[TAB_METER]
+                    .item(CHARGE_LIMIT)
+                    .map(|i| &i.control),
+                Some(Control::Check { enabled: true, .. })
+            )
+        };
+        assert!(!enabled(&s));
+        s.refresh_power(&with(Some(limit(false))));
+        assert!(!enabled(&s), "a snapshot during the toggle keeps it grey");
+        s.charge_done(Some(limit(true)));
+        assert!(enabled(&s));
+        assert_eq!(s.sheet.pages[TAB_METER].checked(CHARGE_LIMIT), Some(true));
+        assert!(!apply_on(&s), "the limit acts at once");
     }
 }

@@ -2,10 +2,11 @@
 //!
 //! One process: a tray icon that follows UPower's display device, the low and critical battery alarms,
 //! and the Power Options Properties sheet behind it, which edits `config.toml`'s `[idle]`,
-//! `[idle.battery]` and `[power]` keys. The sheet and the tray menu also switch power-profiles-daemon's
-//! profile, when the daemon is there. `--tray` starts with the sheet hidden (the autostart entry); plain
-//! `reprise-power` shows it. Closing the sheet hides it; only Exit in the tray menu quits. The compositor
-//! does the acting: the timeouts, lid and buttons are its, read from the same file.
+//! `[idle.battery]` and `[power]` keys, and the battery charge limit, which acts at once. The sheet and
+//! the tray menu also switch power-profiles-daemon's profile, when the daemon is there. `--tray` starts
+//! with the sheet hidden (the autostart entry); plain `reprise-power` shows it. Closing the sheet hides
+//! it; only Exit in the tray menu quits. The compositor does the acting: the timeouts, lid and buttons
+//! are its, read from the same file.
 
 #[cfg(test)]
 reprisebus::test_session!();
@@ -21,6 +22,7 @@ mod upower;
 use repriseapp::keys::sheet_input;
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{App, Child, Ctx, Event, Reply, WinId};
+use reprisebus::charge::{self, ChargeLimit};
 use reprisekit::access::Tree;
 use reprisekit::art::powericon;
 use reprisekit::controls::propsheet;
@@ -30,6 +32,7 @@ use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 use settings::Settings;
 use upower::{Power, State};
@@ -60,6 +63,24 @@ struct PowerApp {
     forms: Theme,
     /// The client size last asked for the main window.
     asked: (i32, i32),
+    /// The charge limit toggle under way.
+    charging: Option<Receiver<Charged>>,
+    waker: Option<repriseapp::Waker>,
+}
+
+/// A charge limit toggle's result: the limit as UPower tells it afterwards, and the toggle's
+/// failure, `None` inside when the password prompt was dismissed.
+struct Charged {
+    limit: Option<ChargeLimit>,
+    failed: Option<Option<String>>,
+}
+
+fn toggle(device: &str, on: bool) -> Charged {
+    Charged {
+        failed: charge::set(device, on).err(),
+        // Tests leave the system bus alone.
+        limit: if cfg!(test) { None } else { charge::read() },
+    }
 }
 
 const ERROR_WIN: WinId = WinId::named("error");
@@ -145,6 +166,7 @@ impl PowerApp {
         }
         self.iconless = icon.is_none();
         let mut s = sheet::Sheet::new(&self.settings, &self.power, &self.profiles, icon.flatten());
+        s.set_charging(self.charging.is_some());
         if let Some(old) = &self.sheet {
             s.open_tab(old.sheet.tabs.open);
         }
@@ -198,20 +220,63 @@ impl PowerApp {
             if let Some(s) = &mut self.sheet {
                 s.unapplied(&self.settings);
             }
-            self.error = Some(MsgBox::new(
-                "Power Options",
-                reprisekit::controls::msgbox::Fields {
-                    text: format!("{} could not be written.", self.path.display()),
-                    icon: None,
-                    buttons: vec!["OK".into()],
-                    default: 0,
-                    min_text_h: None,
-                    min_w: 0,
-                    max_w: repriseapp::dialog_max_w(),
-                },
-            ));
+            self.fail(format!("{} could not be written.", self.path.display()));
         }
         ok
+    }
+
+    fn fail(&mut self, text: String) {
+        self.error = Some(MsgBox::new(
+            "Power Options",
+            reprisekit::controls::msgbox::Fields {
+                text,
+                icon: None,
+                buttons: vec!["OK".into()],
+                default: 0,
+                min_text_h: None,
+                min_w: 0,
+                max_w: repriseapp::dialog_max_w(),
+            },
+        ));
+    }
+
+    /// Turn the charge limit on or off on a thread; a change while one runs shows the known limit again.
+    fn charge(&mut self, device: String, on: bool) {
+        if self.charging.is_some() {
+            if let Some(s) = &mut self.sheet {
+                s.charge_done(self.power.limit.clone());
+            }
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waker = self.waker.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(toggle(&device, on));
+            if let Some(w) = waker {
+                w.wake();
+            }
+        });
+        self.charging = Some(rx);
+    }
+
+    /// A finished toggle: show the limit UPower reports and say why a refusal failed.
+    fn charged(&mut self) {
+        let done = match self.charging.as_ref().map(Receiver::try_recv) {
+            None | Some(Err(TryRecvError::Empty)) => return,
+            Some(Ok(c)) => c,
+            Some(Err(TryRecvError::Disconnected)) => Charged {
+                limit: self.power.limit.clone(),
+                failed: None,
+            },
+        };
+        self.charging = None;
+        self.power.limit = done.limit;
+        if let Some(s) = &mut self.sheet {
+            s.charge_done(self.power.limit.clone());
+        }
+        if let Some(Some(why)) = done.failed {
+            self.fail(format!("The charge limit could not be changed.\n\n{why}"));
+        }
     }
 
     /// Ask the daemon for `profile` and show it as on until the daemon says otherwise.
@@ -267,11 +332,16 @@ impl PowerApp {
                 self.hidden = true;
                 Reply::redraw()
             }
+            sheet::Outcome::Charge { device, on } => {
+                self.charge(device, on);
+                Reply::redraw()
+            }
         }
     }
 
-    /// Drain the UPower, profile and tray channels. Quits only on the tray's Exit.
+    /// Drain the UPower, profile, charge limit and tray channels. Quits only on the tray's Exit.
     fn wake(&mut self) -> Reply {
+        self.charged();
         let fresh_profiles = self
             .profile_snapshots
             .as_ref()
@@ -397,7 +467,8 @@ impl App for PowerApp {
         let (profile_snapshots, setter) = profiles::watch(waker.clone());
         self.profile_snapshots = Some(profile_snapshots);
         self.setter = Some(setter);
-        self.snapshots = Some(upower::watch(waker));
+        self.snapshots = Some(upower::watch(waker.clone()));
+        self.waker = Some(waker);
         repriseapp::Start::Continue
     }
 
@@ -506,6 +577,7 @@ pub fn main(args: Vec<std::ffi::OsString>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reprisekit::controls::form;
     use upower::Battery;
 
     /// An edit another writer made while the sheet stayed hidden reaches the alarms with the next battery snapshot.
@@ -528,6 +600,7 @@ mod tests {
                 percent: 40,
                 ..Battery::default()
             }),
+            limit: None,
         })
         .unwrap();
         app.wake();
@@ -554,5 +627,79 @@ mod tests {
         tx.send(reprisetray::Rows::clicked(&tray::TrayMsg::OpenProperties))
             .unwrap();
         assert_eq!(app.wake().activate, Some((repriseapp::MAIN, handoff)));
+    }
+
+    fn bat(enabled: bool) -> reprisebus::charge::ChargeLimit {
+        reprisebus::charge::ChargeLimit {
+            device: "/org/freedesktop/UPower/devices/battery_BAT0".into(),
+            enabled,
+            end: Some(80),
+        }
+    }
+
+    fn toggled() -> (PowerApp, std::sync::mpsc::Sender<Charged>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = PowerApp {
+            power: Power {
+                limit: Some(bat(false)),
+                ..Power::default()
+            },
+            ..PowerApp::default()
+        };
+        app.build(None);
+        let s = app.sheet.as_mut().unwrap();
+        s.open_tab(sheet::TAB_METER);
+        s.sheet.pages[sheet::TAB_METER].set_check(sheet::CHARGE_LIMIT, true);
+        let out = s.event(propsheet::Event::Page(
+            sheet::TAB_METER,
+            form::Event::Changed(sheet::CHARGE_LIMIT),
+        ));
+        assert!(matches!(out, sheet::Outcome::Charge { on: true, .. }));
+        app.charging = Some(rx);
+        (app, tx)
+    }
+
+    /// The charge limit check as (checked, enabled).
+    fn check(app: &PowerApp) -> (bool, bool) {
+        match &app.sheet.as_ref().unwrap().sheet.pages[sheet::TAB_METER]
+            .item(sheet::CHARGE_LIMIT)
+            .unwrap()
+            .control
+        {
+            form::Control::Check {
+                checked, enabled, ..
+            } => (*checked, *enabled),
+            c => panic!("a check box, not {c:?}"),
+        }
+    }
+
+    #[test]
+    fn a_refused_toggle_says_why_and_a_dismissed_prompt_says_nothing() {
+        for (failed, said) in [
+            (
+                Some(Some("Not authorized".to_string())),
+                Some("The charge limit could not be changed.\n\nNot authorized"),
+            ),
+            (Some(None), None),
+        ] {
+            let (mut app, tx) = toggled();
+            assert_eq!(check(&app), (true, false));
+            tx.send(Charged {
+                limit: Some(bat(false)),
+                failed,
+            })
+            .unwrap();
+            app.wake();
+            assert!(app.charging.is_none());
+            assert_eq!(app.error.as_ref().map(|b| b.fields.text.as_str()), said);
+            assert_eq!(check(&app), (false, true), "back at the known limit, live");
+        }
+    }
+
+    #[test]
+    fn a_rebuild_for_the_icon_keeps_a_running_toggle_grey() {
+        let (mut app, _tx) = toggled();
+        app.build(Some(None));
+        assert!(!check(&app).1);
     }
 }

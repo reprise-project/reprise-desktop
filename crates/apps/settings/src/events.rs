@@ -42,10 +42,6 @@ impl SettingsApp {
                 {
                     return self.notify_changed(id);
                 }
-                if id == pages::CHARGE_LIMIT {
-                    self.charge_toggled();
-                    return Reply::redraw();
-                }
                 if id == pages::REMOTE_ALLOW {
                     self.remote_toggled();
                     return Reply::redraw();
