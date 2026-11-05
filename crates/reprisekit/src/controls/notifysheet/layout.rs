@@ -1,7 +1,7 @@
 //! Sheet layouts for each shape, and a Droplet part way open.
 
 use crate::controls::tooltip::{
-    NOTIFY_BODY_LINES, NOTIFY_BUTTONS, NotifyParts, NotifyReply, shrink_labelled,
+    NOTIFY_BODY_LINES, NOTIFY_BUTTONS, NotifyParts, NotifyReply, flow_buttons, flow_rows,
 };
 use crate::look::widgets::BUTTON_ICON;
 use crate::raster::Rect;
@@ -57,7 +57,7 @@ struct Frame {
     /// The side of a round picture at `text`, pushing the title right of it. `None` puts the
     /// picture in the slot with the app icon as a badge.
     picture: Option<i32>,
-    /// The pill row's and reply field's left.
+    /// The reply field's left; pills may reach the padding.
     row_x: i32,
 }
 
@@ -134,15 +134,17 @@ fn body_lines(text: &TextRenderer, body: &str, width: i32, px: u32) -> Vec<Strin
     lines
 }
 
-/// The pills or, with `reply`, the reply field and its send pill, right-aligned between
-/// `left` and `right` from `y`, design px.
+/// The pills right-aligned between `left` and `right` from `y`, design px, or with `reply` the
+/// reply field from `field_left` and its send pill. Pills that overrun the row wrap onto rows
+/// under it; the reply row stands on the first, the rows keeping the height the pills give them.
 struct ActionRow {
     buttons: Vec<Rect>,
     labels: Vec<Option<String>>,
     more: Option<Rect>,
     field: Option<Rect>,
     send: Option<Rect>,
-    shown: bool,
+    /// The rows' bottom, design px; `None` with neither pills nor a reply.
+    bottom: Option<i32>,
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -151,82 +153,64 @@ fn action_row(
     actions: &[&str],
     icons: &[bool],
     reply: Option<NotifyReply>,
-    (left, right, y): (i32, i32, i32),
+    (field_left, left, right, y): (i32, i32, i32, i32),
     s: i32,
     pill_px: u32,
     at: impl Fn(i32, i32, i32, i32) -> Rect,
 ) -> ActionRow {
     let room = right - left;
     let shown = actions.len().min(NOTIFY_BUTTONS);
-    let more_w = if actions.len() > NOTIFY_BUTTONS {
-        MORE_W
-    } else {
-        0
-    };
+    let mut widths = pill_widths(text, &actions[..shown], icons, pill_px, s);
+    if actions.len() > NOTIFY_BUTTONS {
+        widths.push(MORE_W);
+    }
+    let flow = flow_buttons(&widths, room, PILL_GAP);
+    let rows = flow_rows(&flow).max(i32::from(reply.is_some()));
+    let row_y = |row: i32| y + row * (PILL_H + PILL_GAP);
     let mut row = ActionRow {
         buttons: Vec::new(),
         labels: Vec::new(),
         more: None,
         field: None,
         send: None,
-        shown: true,
+        bottom: (rows > 0).then(|| row_y(rows - 1) + PILL_H),
     };
     if let Some(r) = reply {
-        let sw = pill_widths(text, &[r.send], &[], pill_px, s, room)[0];
+        let sw = pill_widths(text, &[r.send], &[], pill_px, s)[0].min(room);
         let sx = right - sw;
         row.send = Some(at(sx, y, sw, PILL_H));
-        row.field = Some(at(left, y, sx - PILL_GAP - left, PILL_H));
-    } else if shown > 0 || more_w > 0 {
-        let parts = shown + usize::from(more_w > 0);
-        let room = room - more_w - (parts as i32 - 1) * PILL_GAP;
-        let widths = pill_widths(text, &actions[..shown], icons, pill_px, s, room);
-        let mut x = right;
-        if more_w > 0 {
-            x -= more_w;
-            row.more = Some(at(x, y, more_w, PILL_H));
-            x -= PILL_GAP;
+        row.field = Some(at(field_left, y, sx - PILL_GAP - field_left, PILL_H));
+        return row;
+    }
+    for (i, f) in flow.iter().enumerate() {
+        let pill = at(left + f.x, row_y(f.row), f.width, PILL_H);
+        if i == shown {
+            row.more = Some(pill);
+            continue;
         }
-        for (i, (a, w)) in actions[..shown].iter().zip(&widths).enumerate().rev() {
-            x -= w;
-            row.buttons.push(at(x, y, *w, PILL_H));
-            let room = (w - 2 * PILL_PAD) * s;
-            let iconic = icons.get(i).copied().unwrap_or(false);
-            row.labels
-                .push((!iconic).then(|| text.ellipsize(a, room, true, pill_px).into_owned()));
-            x -= PILL_GAP;
-        }
-        row.buttons.reverse();
-        row.labels.reverse();
-    } else {
-        row.shown = false;
+        row.buttons.push(pill);
+        let room = (f.width - 2 * PILL_PAD) * s;
+        let iconic = icons.get(i).copied().unwrap_or(false);
+        row.labels
+            .push((!iconic).then(|| text.ellipsize(actions[i], room, true, pill_px).into_owned()));
     }
     row
 }
 
 /// Pill widths, design px: label plus padding, or for an action `icons` marks its icon plus
-/// padding; the labelled ones shrink evenly when they overrun `room`.
-fn pill_widths(
-    text: &TextRenderer,
-    labels: &[&str],
-    icons: &[bool],
-    px: u32,
-    s: i32,
-    room: i32,
-) -> Vec<i32> {
-    let iconic = |i: usize| icons.get(i).copied().unwrap_or(false);
-    let mut w: Vec<i32> = labels
+/// padding.
+fn pill_widths(text: &TextRenderer, labels: &[&str], icons: &[bool], px: u32, s: i32) -> Vec<i32> {
+    labels
         .iter()
         .enumerate()
         .map(|(i, l)| {
-            if iconic(i) {
+            if icons.get(i).copied().unwrap_or(false) {
                 ICON_PILL_W
             } else {
                 ((text.measure(l, true, px) + s - 1) / s + 2 * PILL_PAD).max(PILL_MIN)
             }
         })
-        .collect();
-    shrink_labelled(&mut w, iconic, room);
-    w
+        .collect()
 }
 
 fn column_layout(
@@ -268,7 +252,6 @@ fn column_layout(
     let text_bottom = (body_y + lines.len() as i32 * LINE_H).max(picture.map_or(0, |p| p.bottom()));
 
     let reply = c.reply.filter(|_| expanded);
-    let actions = if reply.is_some() { &[][..] } else { c.actions };
     let row_y = text_bottom + ROW_GAP;
     let ActionRow {
         buttons,
@@ -276,18 +259,18 @@ fn column_layout(
         more,
         field,
         send,
-        shown: row,
+        bottom: row_bottom,
     } = action_row(
         text,
-        actions,
+        c.actions,
         c.action_icons,
         reply,
-        (f.row_x, w - f.pad, row_y),
+        (f.row_x, f.pad, w - f.pad, row_y),
         s,
         pill_px,
         Rect::new,
     );
-    let bottom = if row { row_y + PILL_H } else { text_bottom };
+    let bottom = row_bottom.unwrap_or(text_bottom);
     let h = f.slot.bottom().max(bottom) + f.pad;
 
     let sheet = Rect::new(0, 0, w, h);
@@ -435,10 +418,7 @@ fn droplet_layout(
     let app_box = Rect::new(app_box.x, app_box.y + lift, app_box.width, app_box.height);
 
     let reply = c.reply.filter(|_| expanded);
-    let actions = match (expanded, reply) {
-        (true, None) => c.actions,
-        _ => &[][..],
-    };
+    let actions = if expanded { c.actions } else { &[][..] };
     let text_bottom = body_y + lines.len() as i32 * LINE_H;
     let row_y = text_bottom.max(DROPLET_IN + DROPLET_SLOT) + ROW_GAP;
     let row = action_row(
@@ -446,13 +426,13 @@ fn droplet_layout(
         actions,
         c.action_icons,
         reply,
-        (text_x, DROPLET_W - DROPLET_PAD, row_y),
+        (text_x, DROPLET_PAD, DROPLET_W - DROPLET_PAD, row_y),
         s,
         pill_px,
         at,
     );
-    let h = if row.shown {
-        DROPLET_H.max(row_y + PILL_H + DROPLET_PAD)
+    let h = if let Some(bottom) = row.bottom {
+        DROPLET_H.max(bottom + DROPLET_PAD)
     } else if expanded {
         DROPLET_H.max(text_bottom + DROPLET_PAD)
     } else {
