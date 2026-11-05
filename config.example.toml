@@ -890,7 +890,7 @@ separator = true
 [[startmenu.items]]
 label = "&Network Connections"
 icon = "network-workgroup"
-command = "nm-connection-editor"
+command = "reprise-network"
 tip = "Displays existing network connections on this computer and helps you create new ones"
 [[startmenu.items]]
 label = "&Printers"
