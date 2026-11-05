@@ -100,6 +100,7 @@ fn the_sound_theme_and_the_sound_checks_write_their_keys() {
             cursor_themes: &[],
             sound_themes: &themes,
             layouts: &[],
+            system_layout: "us",
             heads: &[],
         },
     );

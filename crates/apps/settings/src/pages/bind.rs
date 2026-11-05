@@ -11,9 +11,9 @@ use super::system::{
 };
 use super::{
     CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN, DOUBLE_CLICK,
-    GTK_FIXED_ROWS, KB_ADD, KB_LAYOUTS, KB_REMOVE, KB_UP, KELVIN_MAX, KELVIN_MIN, KELVIN_STEP,
-    MK_ACCEL, MK_SPEED, PRIVACY_LOCATION, SPEED_STEPS, Steps, THUMBNAILERS, THUMBS, THUMBS_MB,
-    THUMBS_SIZE, TRAY_CUSTOMIZE, WATER, WATER_STYLE,
+    GTK_FIXED_ROWS, KB_ADD, KB_LAYOUTS, KB_REMOVE, KB_SWITCH_NOTE, KB_UP, KELVIN_MAX, KELVIN_MIN,
+    KELVIN_STEP, MK_ACCEL, MK_SPEED, PRIVACY_LOCATION, SPEED_STEPS, Steps, THUMBNAILERS, THUMBS,
+    THUMBS_MB, THUMBS_SIZE, TRAY_CUSTOMIZE, WATER, WATER_STYLE,
 };
 use crate::registry::Page;
 use repriseconf::{Key, Lens, lens};
@@ -28,8 +28,8 @@ use reprisekit::theme::Color;
 use crate::model::{
     CURSOR_SIZES, Choices, DESKTOPS_DEFAULT, FONT_SMOOTHINGS, FRAME_RATES, HOT_CORNERS, INTERFACES,
     MENU_ANIMATIONS, PAGER_MARKS, POSITIONS, QT_PLATFORM_THEMES, REMOTE_ENCODERS, REMOTE_QUALITIES,
-    STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES, Settings,
-    TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, WATER_STYLES,
+    STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES, Settings, Shortcut,
+    TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, WATER_STYLES, keys_for,
     remote_quality_row,
 };
 
@@ -487,8 +487,8 @@ pub fn keys_of(form: &Form) -> Vec<Key> {
 
 /// Push `s` into every bound control and the Layouts list. Rebuilds the edits,
 /// so call it on load or cancel, never on a keystroke: `TextEdit::new` puts the caret at the end.
-pub fn write(sheet: &mut PropSheet, s: &Settings, reg: &[Layout]) {
-    fill_layouts(sheet, s, reg, None);
+pub fn write(sheet: &mut PropSheet, s: &Settings, reg: &[Layout], system: &str) {
+    fill_layouts(sheet, s, reg, system, None);
     crate::menupage::fill(&mut sheet.pages[Page::StartMenu.index()], &s.startmenu);
     write_forms(sheet, s);
     follow(sheet, s);
@@ -729,13 +729,14 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     for id in THUMBS_SIZE {
         adv.set_enabled(id, s.thumbnail_cache);
     }
+    show_keys(sheet, &s.shortcuts);
     let count = s.layouts().len();
     let picked = layout_selection(sheet);
     let page = &mut sheet.pages[Page::Keyboard.index()];
     let lit = [
         (KB_ADD, count < MAX_LAYOUTS),
-        (KB_REMOVE, picked.is_some()),
-        (KB_UP, picked.is_some_and(|i| i > 0)),
+        (KB_REMOVE, picked.is_some_and(|i| i < count)),
+        (KB_UP, picked.is_some_and(|i| 0 < i && i < count)),
     ];
     for (id, on) in lit {
         page.set_enabled(id, on);
@@ -746,19 +747,54 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     }
 }
 
-pub fn fill_layouts(sheet: &mut PropSheet, s: &Settings, reg: &[Layout], select: Option<usize>) {
-    let rows: Vec<String> = s
-        .layouts()
-        .iter()
-        .map(|(l, v)| reprisefs::xkb::describe(reg, l, v).description)
-        .collect();
-    let keep = select.or(layout_selection(sheet));
-    if let Some(Control::ListBox { list, .. }) = sheet.pages[Page::Keyboard.index()]
+/// Fill every note that names a key from `binds`: the layout switch keys and the zoom keys.
+pub fn show_keys(sheet: &mut PropSheet, binds: &[Shortcut]) {
+    let switch = keys_for(binds, "next-layout").map_or_else(
+        || "No key switches them.".to_string(),
+        |k| format!("{k} switches them."),
+    );
+    sheet.pages[Page::Keyboard.index()].set_text(KB_SWITCH_NOTE, &switch);
+    crate::magnifierpage::show_zoom_keys(&mut sheet.pages[Page::MagnifierFilters.index()], binds);
+}
+
+/// The layout xkbcommon compiles for an empty `[keyboard] layout`: the first of `env`
+/// (`XKB_DEFAULT_LAYOUT`), else "us".
+pub fn system_layout(env: Option<&str>) -> String {
+    let first = env.and_then(|e| e.split(',').next()).map(str::trim);
+    first.filter(|l| !l.is_empty()).unwrap_or("us").to_string()
+}
+
+/// The Layouts list from `s`; with no layouts, one greyed row naming `system`, the
+/// [`system_layout`] in use.
+pub fn fill_layouts(
+    sheet: &mut PropSheet,
+    s: &Settings,
+    reg: &[Layout],
+    system: &str,
+    select: Option<usize>,
+) {
+    let layouts = s.layouts();
+    let list = if layouts.is_empty() {
+        let system = reprisefs::xkb::describe(reg, system, "");
+        let mut list = ListBox::new(
+            vec![format!("{} (system default)", system.description)],
+            None,
+        );
+        list.greyed = vec![true];
+        list
+    } else {
+        let keep = select.or(layout_selection(sheet));
+        let rows: Vec<String> = (layouts.iter())
+            .map(|(l, v)| reprisefs::xkb::describe(reg, l, v).description)
+            .collect();
+        let n = rows.len();
+        ListBox::new(rows, keep.filter(|&i| i < n))
+    };
+    if let Some(Control::ListBox { list: l, .. }) = sheet.pages[Page::Keyboard.index()]
         .item_mut(KB_LAYOUTS)
         .map(|i| &mut i.control)
     {
-        let n = rows.len();
-        *list = ListBox::new(rows, keep.filter(|&i| i < n));
+        *l = list;
     }
     follow(sheet, s);
 }

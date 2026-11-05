@@ -1,6 +1,5 @@
 //! The Keyboard page's shortcut list and layouts, and their dialogs.
 
-use crate::registry::Page;
 use crate::{SettingsApp, layoutdlg, model, pages, shortcutdlg};
 use repriseapp::keys::form_input;
 use repriseapp::{Ctx, Event, Reply};
@@ -12,8 +11,7 @@ impl SettingsApp {
         pages::fill_shortcuts(&mut self.shortcuts, &self.want, &|app| {
             names.get(app).cloned().unwrap_or_else(|| app.to_string())
         });
-        let magnifier = &mut self.sheet.pages[Page::MagnifierFilters.index()];
-        crate::magnifierpage::show_zoom_keys(magnifier, &self.want.shortcuts);
+        pages::show_keys(&mut self.sheet, &self.want.shortcuts);
     }
 
     /// Every key taken but `row`'s; a program's is under its list text so the conflict note names it.
@@ -146,7 +144,13 @@ impl SettingsApp {
     }
 
     fn layouts_changed(&mut self, select: Option<usize>) -> Reply {
-        pages::fill_layouts(&mut self.sheet, &self.want, &self.xkb, select);
+        pages::fill_layouts(
+            &mut self.sheet,
+            &self.want,
+            &self.xkb,
+            &self.system_layout,
+            select,
+        );
         self.sync_apply();
         Reply::redraw()
     }
