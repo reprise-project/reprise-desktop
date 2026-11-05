@@ -380,10 +380,7 @@ impl State {
             KeyRoute::SwitcherStep { backwards } => self.switcher_step(backwards),
             KeyRoute::DragCancel => self.cancel_drag(),
             KeyRoute::Swallow => {}
-            KeyRoute::Menu(sym) => {
-                self.menu_key(sym);
-                self.redraw_all();
-            }
+            KeyRoute::Menu(sym) => self.redraw_changed(|s| s.menu_key(sym)),
             r @ (KeyRoute::Launcher
             | KeyRoute::StartPanel
             | KeyRoute::Overview
@@ -1059,8 +1056,12 @@ impl State {
     /// the cursor (picking a side first, for a size with none), Enter
     /// commits, Escape restores the rect it started from. Every other key
     /// is swallowed.
-    #[expect(non_upper_case_globals)] // xkb keysym names in patterns
     pub fn interaction_key(&mut self, sym: u32) {
+        self.redraw_changed(|s| s.apply_interaction_key(sym));
+    }
+
+    #[expect(non_upper_case_globals)] // xkb keysym names in patterns
+    fn apply_interaction_key(&mut self, sym: u32) {
         use keys::*;
         let arrow = arrow_for(sym);
         let p = self.pointer_location();
@@ -1097,11 +1098,12 @@ impl State {
                             return;
                         };
                         let (ax, ay) = edge_anchor(r, picked);
+                        let at = (f64::from(ax), f64::from(ay)).into();
                         if let Some(pointer) = self.seat.get_pointer() {
-                            pointer.set_location((f64::from(ax), f64::from(ay)).into());
+                            pointer.set_location(at);
                         }
+                        crate::backend::schedule_pointer(self, at);
                         self.set_resize_edges(picked);
-                        self.redraw_all();
                         return;
                     }
                     self.warp_cursor(cx + dx * KEY_STEP, cy + dy * KEY_STEP);
@@ -1109,7 +1111,6 @@ impl State {
             },
             _ => {}
         }
-        self.redraw_all();
     }
 
     /// Enter on a keyboard move or size: commit it, then hand the pointer

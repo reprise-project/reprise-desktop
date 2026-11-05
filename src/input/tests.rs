@@ -567,3 +567,25 @@ fn a_caption_press_under_fast_drag_glass_asks_every_output() {
     h.button(crate::harness::LEFT, false);
     assert_eq!(asked_outputs(), ["TEST-1", "TEST-2"], "and changes back");
 }
+
+#[test]
+fn an_arrow_in_a_keyboard_move_asks_only_the_output_the_window_moves_on() {
+    let mut h = two_outputs(crate::config::Config::default());
+    let mut c = h.connect();
+    let a = h.map_toplevel(&mut c, "a", 300, 200);
+    h.state.move_to(a.id, 100, 100);
+    h.dispatch();
+    h.state.begin_key_move(a.id);
+    h.dispatch();
+    let before = h.state.win(a.id).expect("a").frame_rect();
+    crate::backend::take_asks();
+    h.state.interaction_key(crate::keys::KEY_Right);
+    h.dispatch();
+    h.state.settle_moves();
+    assert_ne!(
+        h.state.win(a.id).expect("a").frame_rect(),
+        before,
+        "a moves"
+    );
+    assert_eq!(asked_outputs(), ["TEST-1"], "a lies on TEST-1");
+}
