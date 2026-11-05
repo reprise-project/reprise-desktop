@@ -1368,15 +1368,44 @@ fn the_page_scrollbar_over_the_side_list_scrolls_the_page() {
 }
 
 #[test]
-fn the_page_argument_names_a_page() {
+fn the_page_argument_names_a_page_or_a_program() {
     let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string())).map(|a| a.0);
-    assert_eq!(args(&["--page", "night-light"]), Some(Page::NightLight));
-    assert_eq!(args(&["--page=fonts-and-icons"]), Some(Page::FontsAndIcons));
-    assert_eq!(args(&["--page", "startup"]), Some(Page::Startup));
-    assert_eq!(args(&["--page", "appearance"]), Some(Page::Appearance));
-    assert_eq!(args(&["--page", "background"]), Some(Page::Background));
+    assert_eq!(
+        args(&["--page", "night-light"]),
+        Some(Entry::Page(Page::NightLight))
+    );
+    assert_eq!(
+        args(&["--page=fonts-and-icons"]),
+        Some(Entry::Page(Page::FontsAndIcons))
+    );
+    assert_eq!(
+        args(&["--page", "power"]),
+        Some(Entry::Program("reprise-power.desktop"))
+    );
     assert_eq!(args(&["--page", "nowhere"]), None);
     assert_eq!(args(&[]), None);
+}
+
+#[test]
+fn focus_on_a_control_that_left_power_opens_its_page() {
+    let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string())).map(|a| a.0);
+    assert_eq!(
+        args(&["--page", "power", "--focus", "standby"]),
+        Some(Entry::Page(Page::Advanced))
+    );
+    assert_eq!(
+        args(&["--page", "power", "--focus", "low_space_percent"]),
+        Some(Entry::Page(Page::Advanced))
+    );
+    assert_eq!(
+        args(&["--page", "power", "--focus", "lock_after"]),
+        Some(Entry::Page(Page::ScreenSaverLock))
+    );
+    assert_eq!(
+        args(&["--page", "power", "--focus", "screen_off_after"]),
+        Some(Entry::Program("reprise-power.desktop")),
+        "screen off is Power Options' own"
+    );
 }
 
 #[test]
@@ -1398,7 +1427,7 @@ fn export_and_import_take_a_file_and_run_without_a_window() {
 #[test]
 fn the_focus_argument_names_a_control_on_the_page() {
     let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string()));
-    let mouse_keys = Some((Page::TextKeys, Some("mouse_keys".to_string())));
+    let mouse_keys = Some((Entry::Page(Page::TextKeys), Some("mouse_keys".to_string())));
     assert_eq!(
         args(&["--page", "accessibility", "--focus", "mouse_keys"]),
         mouse_keys
@@ -1410,7 +1439,7 @@ fn the_focus_argument_names_a_control_on_the_page() {
     assert_eq!(args(&["--focus", "mouse_keys"]), None, "no page, no focus");
     assert_eq!(
         args(&["--page", "text-and-keys", "--focus", "mouse_keys"]),
-        Some((Page::TextKeys, Some("mouse_keys".into())))
+        Some((Entry::Page(Page::TextKeys), Some("mouse_keys".into())))
     );
 }
 
@@ -1419,11 +1448,11 @@ fn focus_on_a_moved_control_opens_its_new_page() {
     let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string()));
     assert_eq!(
         args(&["--page", "sound", "--focus", "mouse_keys"]),
-        Some((Page::TextKeys, Some("mouse_keys".into())))
+        Some((Entry::Page(Page::TextKeys), Some("mouse_keys".into())))
     );
     assert_eq!(
         args(&["--page", "advanced", "--focus", "clipboard_history"]),
-        Some((Page::Privacy, Some("clipboard_history".into())))
+        Some((Entry::Page(Page::Privacy), Some("clipboard_history".into())))
     );
     let mut a = app("moved-focus");
     a.open_page(Page::Privacy, Some("clipboard_history"));
@@ -1434,7 +1463,7 @@ fn focus_on_a_moved_control_opens_its_new_page() {
     );
     assert_eq!(
         args(&["--page", "sound", "--focus", "nowhere"]),
-        Some((Page::Sound, Some("nowhere".into()))),
+        Some((Entry::Page(Page::Sound), Some("nowhere".into()))),
         "an id no page holds leaves the page as named"
     );
 }

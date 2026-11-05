@@ -25,6 +25,22 @@ pub(crate) fn launch(entry: &AppEntry, terminal: &str) -> Reply {
     }
 }
 
+/// Start program `id`'s shown entry in its app scope, from a process with no Settings window;
+/// false when it has none or the start fails.
+pub(crate) fn start(id: &str) -> bool {
+    let Some(e) = find(id, &dirs()) else {
+        return false;
+    };
+    let argv = launch_argv(&e, &repriseconf::terminal());
+    match repriseapp::spawn_in(&argv, None, Some(&e.id)) {
+        Ok(()) => true,
+        Err(err) => {
+            log::warn!("start {id}: {err}");
+            false
+        }
+    }
+}
+
 /// Where Settings looks for desktop entries; none under test.
 pub(crate) fn dirs() -> Vec<PathBuf> {
     if cfg!(test) {

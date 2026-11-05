@@ -340,8 +340,7 @@ no desktop entry that shows in menus.
     and every connected computer is listed; Disconnect ends the selected
     one.
 - **System**
-  - **Power:** the Turn Off commands, the screen off and screen saver
-    timeouts, and the low disk space warning.
+  - **Power Options...**
   - **Startup:** autostart entries and session restore.
   - **Default Programs:** browser, mail, music, video, photos, text editor,
     file manager, terminal and its arguments, what a plugged-in drive does,
@@ -353,7 +352,8 @@ no desktop entry that shows in menus.
   - **Advanced:** clipboard history, screenshots, recent files, location,
     the debug overlay, the thumbnail cache (Clear removes
     only the thumbnails Reprise kept and says how much went), thumbnails from
-    the installed thumbnailers, and an Edit File... button for when
+    the installed thumbnailers, the Turn Off commands, the low disk space
+    warning, and an Edit File... button for when
     you'd rather just open `config.toml`.
   - **Backup:** Export... saves your settings and remembered places in one
     file (`reprise-settings-YYYY-MM-DD.toml`); Import... puts them back, on
@@ -381,8 +381,9 @@ as you left them, and OK and Apply write only what you changed.
 `reprise-settings --page display` opens on a page: its name in lower case,
 spaces as hyphens and `&` as `and` (`fonts-and-icons`, `start-menu`). A
 page's old name still opens it under its new one (`--page vision` opens
-Magnifier & Filters). `--focus mouse_keys` puts the keyboard on a control
-there, on whichever page holds it.
+Magnifier & Filters), and `--page power` starts Power Options instead of
+Settings. `--focus mouse_keys` puts the keyboard on a control there, on
+whichever page holds it.
 `reprise-settings --export FILE` and `--import FILE` do the Backup page's
 work without a window; `--import` asks nothing. A
 display change applies first, then asks whether to keep it, and reverts after
@@ -615,7 +616,7 @@ network time.
 - **Low disk space.** The same program reads how full the disks of your home
   folder and `/` are every two minutes. When one has less free than
   `[storage] low_space_percent` of its size (5 % by default, set on
-  Settings > Power; 0 turns it off) or than 1 GiB (a tenth of a disk under
+  Settings > Advanced; 0 turns it off) or than 1 GiB (a tenth of a disk under
   10 GiB), a balloon says so once, with Open, which opens the disk, Show
   Usage, which opens Disk Usage on it, and Empty Recycle Bin while the bin
   holds something, which asks first as the bin's own menu does. It

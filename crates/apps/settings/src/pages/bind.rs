@@ -294,8 +294,6 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Flag("lock_on_sleep", lens!(lock_on_sleep)),
         Bind::Flag("lock_wallpaper", lens!(lock_wallpaper)),
         Bind::Num("lock_after", lens!(lock_after)),
-        Bind::Num("screen_off_after", lens!(screen_off_after)),
-        Bind::Num("blank_after", lens!(blank_after)),
         Bind::Num("lock_fade", lens!(lock_fade)),
         Bind::Num(crate::saverpage::AWAY_AFTER, lens!(away_after_s)),
         Bind::Num("low_space_percent", lens!(low_space_percent)),
@@ -666,12 +664,6 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     crate::appearancepage::follow(sheet, s);
     crate::backgroundpage::follow(&mut sheet.pages[Page::Background.index()], s);
     crate::saverpage::follow(&mut sheet.pages[Page::ScreenSaverLock.index()], s);
-    if let Some(Control::UpDown(u)) = sheet.pages[Page::Power.index()]
-        .item_mut("blank_after")
-        .map(|i| &mut i.control)
-    {
-        u.set(s.blank_after.clamp(0, i32::MAX as i64) as i32);
-    }
     let thumbnails = s.switcher_style == "thumbnails";
     let live = s.preview_taskbar || thumbnails || s.switcher_preview;
     let many = s.desktops > 1;
