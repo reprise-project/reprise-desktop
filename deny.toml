@@ -54,5 +54,6 @@ skip = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = [
+    "https://github.com/reprise-project/IronRDP",
     "https://github.com/reprise-project/smithay",
 ]

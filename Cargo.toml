@@ -40,7 +40,6 @@ members = [
     "crates/apps/reprise-apps",
     "crates/portal",
 ]
-exclude = ["crates/vendor"]
 
 [workspace.package]
 edition = "2024"
@@ -58,7 +57,19 @@ futures-lite = "2"
 futures-util = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp"] }
 inotify = { version = "0.11", default-features = false }
-ironrdp-server = { version = "0.13", features = ["egfx"] }
+# Pinned to 7384223d on our fork's `patches` branch: upstream master plus the
+# 0xE1 prefix of Pause (`KeyboardEvent::extended1`), the ainput side buttons and
+# frame acknowledgements staying suspended across a graphics reset.
+ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "7384223dec96eb1bbed9ee107428ace96b0b6876" }
+ironrdp-cliprdr = { git = "https://github.com/reprise-project/IronRDP.git", rev = "7384223dec96eb1bbed9ee107428ace96b0b6876" }
+ironrdp-core = { git = "https://github.com/reprise-project/IronRDP.git", rev = "7384223dec96eb1bbed9ee107428ace96b0b6876" }
+ironrdp-dvc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "7384223dec96eb1bbed9ee107428ace96b0b6876" }
+ironrdp-egfx = { git = "https://github.com/reprise-project/IronRDP.git", rev = "7384223dec96eb1bbed9ee107428ace96b0b6876" }
+ironrdp-graphics = { git = "https://github.com/reprise-project/IronRDP.git", rev = "7384223dec96eb1bbed9ee107428ace96b0b6876" }
+ironrdp-pdu = { git = "https://github.com/reprise-project/IronRDP.git", rev = "7384223dec96eb1bbed9ee107428ace96b0b6876" }
+ironrdp-rdpsnd = { git = "https://github.com/reprise-project/IronRDP.git", rev = "7384223dec96eb1bbed9ee107428ace96b0b6876" }
+ironrdp-server = { git = "https://github.com/reprise-project/IronRDP.git", rev = "7384223dec96eb1bbed9ee107428ace96b0b6876", features = ["egfx"] }
+ironrdp-svc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "7384223dec96eb1bbed9ee107428ace96b0b6876" }
 libc = "0.2"
 log = "0.4"
 pipewire = "0.10"
@@ -84,12 +95,6 @@ zbus = "6.1"
 # The runtime zbus runs its connections on, for tasks spawned beside them.
 zruntime = { version = "0.2", default-features = false, features = ["helper"] }
 zeroize = "1"
-
-# ironrdp-server 0.13.0 trimmed to its code and licences, plus our input fix in
-# src/handler.rs: the middle button, the side buttons, the horizontal wheel and the 0xE1
-# prefix of Pause reach RdpServerInputHandler.
-[patch.crates-io]
-ironrdp-server = { path = "crates/vendor/ironrdp-server" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

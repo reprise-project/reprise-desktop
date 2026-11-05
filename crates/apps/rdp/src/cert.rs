@@ -1,16 +1,16 @@
 //! The server's self-signed TLS certificate, kept as `cert.pem` and `key.pem` in its directory.
 
-use ironrdp_server::tokio_rustls::TlsAcceptor;
-use ironrdp_server::tokio_rustls::rustls::ServerConfig;
-use ironrdp_server::tokio_rustls::rustls::crypto::aws_lc_rs;
-use ironrdp_server::tokio_rustls::rustls::pki_types::pem::{self, PemObject};
-use ironrdp_server::tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::sync::Arc;
+use tokio_rustls::TlsAcceptor;
+use tokio_rustls::rustls::ServerConfig;
+use tokio_rustls::rustls::crypto::aws_lc_rs;
+use tokio_rustls::rustls::pki_types::pem::{self, PemObject};
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 const CERT: &str = "cert.pem";
 const KEY: &str = "key.pem";
