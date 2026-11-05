@@ -21,6 +21,7 @@ use smithay::{
         },
         wayland_server::{
             Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
+            backend::ClientId,
             protocol::{wl_buffer::WlBuffer, wl_shm::Format},
         },
     },
@@ -297,5 +298,9 @@ impl Screencopy {
 
     pub fn is_alive(&self) -> bool {
         self.frame.is_alive()
+    }
+
+    pub fn client(&self) -> Option<ClientId> {
+        self.frame.client().map(|c| c.id())
     }
 }

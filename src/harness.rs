@@ -68,6 +68,8 @@ use crate::{
     window::WindowId,
 };
 
+mod capture;
+
 /// `BTN_LEFT`.
 pub const LEFT: u32 = 0x110;
 
