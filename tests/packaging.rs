@@ -1,5 +1,6 @@
 //! Both PKGBUILDs build reprise-apps, link every program crate to it (or build and install it on
-//! its own) and install every desktop entry, and CI installs their dependencies.
+//! its own) and install every desktop entry, CI installs their dependencies, and the desktop
+//! entries file only programs with a settings window under Settings.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -113,6 +114,36 @@ fn both_pkgbuilds_link_every_program_and_install_every_desktop_entry() {
             "{path} installs only entries that exist: {stray:?}"
         );
     }
+}
+
+#[test]
+fn only_programs_with_a_settings_window_are_filed_under_settings() {
+    let settings: BTreeSet<String> = desktop_entries()
+        .into_iter()
+        .filter(|e| {
+            let text =
+                std::fs::read_to_string(root().join(format!("data/apps/{e}.desktop"))).unwrap();
+            text.lines()
+                .find_map(|l| l.strip_prefix("Categories="))
+                .is_some_and(|c| c.split(';').any(|c| c == "Settings"))
+        })
+        .collect();
+    assert_eq!(
+        settings,
+        [
+            "reprise-accounts",
+            "reprise-bluetooth",
+            "reprise-datetime",
+            "reprise-network",
+            "reprise-power",
+            "reprise-printers",
+            "reprise-settings",
+            "reprise-sound",
+            "reprise-updates"
+        ]
+        .map(String::from)
+        .into(),
+    );
 }
 
 /// The package names in the PKGBUILD array `key` (`depends`), version bounds left off.
