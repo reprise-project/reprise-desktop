@@ -253,6 +253,8 @@ impl Page {
                 "task switcher",
                 "overview",
                 "hot corner",
+                "3d",
+                "flip",
             ],
             Page::VirtualDesktops => &["workspaces", "desktops"],
             Page::WindowBehavior => &[
@@ -531,6 +533,12 @@ mod tests {
         assert_eq!(Page::Keyboard.find("delay zzz"), None);
         assert_eq!(Page::Keyboard.find(""), None);
         assert_eq!(Page::Keyboard.find("  "), None);
+    }
+
+    #[test]
+    fn the_switcher_page_is_found_by_3d_and_flip() {
+        assert_eq!(Page::Switcher.find("3d"), Some(Hit::Keyword));
+        assert_eq!(Page::Switcher.find("flip"), Some(Hit::Keyword));
     }
 
     #[test]
