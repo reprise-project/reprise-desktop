@@ -183,6 +183,26 @@ impl Explorer {
         foldertree::place_of(&self.tree, &self.tree_places, path)
     }
 
+    /// The folder the tree menu's Pin to Places acts on: any node's but Computer's and the
+    /// Recycle Bin's, which are not folders.
+    pub fn node_pin_dir(&self) -> Option<PathBuf> {
+        match self.place_of(self.tree.selected.as_ref()?)? {
+            Place::Computer | Place::RecycleBin => None,
+            place => place.path(),
+        }
+    }
+
+    /// The right-click menu of the selected node of the Folders tree.
+    pub fn node_menu(&self) -> crate::commands::Menu {
+        let (expanded, has_children) = (self.tree.selected.as_ref())
+            .and_then(|p| self.tree.node(p))
+            .map_or((false, false), |n| (n.expanded, n.has_children));
+        let pinned =
+            (self.node_pin_dir()).map(|dir| reprisefs::pins::is_pinned(&self.pinned(), &dir));
+        let folder = self.node_folder().is_some();
+        crate::menus::tree_menu(expanded, has_children, folder, pinned)
+    }
+
     pub fn node_folder(&self) -> Option<(PathBuf, String)> {
         let path = self.tree.selected.as_ref()?;
         let node = self.tree.node(path)?;

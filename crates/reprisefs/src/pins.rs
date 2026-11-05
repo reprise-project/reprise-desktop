@@ -226,6 +226,7 @@ struct Shared {
 /// it and looks for each folder, so a dead mount stalls the thread and not its owner's loop.
 pub struct Pins {
     shared: Arc<Mutex<Shared>>,
+    file: PathBuf,
     seen: u64,
     poke: mpsc::Sender<()>,
     /// The thread ends once this drops.
@@ -244,6 +245,7 @@ impl Pins {
         let alive = Arc::new(());
         let (out, gone) = (shared.clone(), Arc::downgrade(&alive));
         let from_watch = poke.clone();
+        let read = file.clone();
         let spawned = std::thread::Builder::new()
             .name("pins".to_string())
             .spawn(move || {
@@ -259,7 +261,7 @@ impl Pins {
                     if gone.strong_count() == 0 {
                         return;
                     }
-                    let want = watches(&file);
+                    let want = watches(&read);
                     if let Some(w) = &mut watch
                         && watched.as_ref() != Some(&want)
                     {
@@ -267,7 +269,7 @@ impl Pins {
                         watched = Some(want);
                     }
                     let mounts = std::fs::read("/proc/self/mounts").unwrap_or_default();
-                    let pins = shown(&load(&file), &crate::places::network_mounts(mounts));
+                    let pins = shown(&load(&read), &crate::places::network_mounts(mounts));
                     let mut s = lock(&out);
                     if *s.pins != pins || s.generation == 0 {
                         s.pins = Arc::new(pins);
@@ -283,10 +285,16 @@ impl Pins {
         let _ = poke.send(());
         Pins {
             shared,
+            file,
             seen: 0,
             poke,
             _alive: alive,
         }
+    }
+
+    /// The bookmarks file this reads, where a pin from its owner goes.
+    pub fn file(&self) -> &Path {
+        &self.file
     }
 
     /// The pins as last read; empty until the first read lands.

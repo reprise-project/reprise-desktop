@@ -377,7 +377,8 @@ impl State {
             }
             Dc::Pin(pin) => {
                 if let Some(dir) = target.and_then(|i| self.icon_folder(i)) {
-                    let file = reprisefs::pins::bookmarks_file();
+                    let file = (self.dialogs.pins.as_ref())
+                        .map_or_else(reprisefs::pins::bookmarks_file, |p| p.file().to_path_buf());
                     crate::state::run_in_order(move || {
                         reprisefs::pins::set_pinned(&file, &dir, pin)
                     });

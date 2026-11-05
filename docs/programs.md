@@ -27,9 +27,9 @@ The file manager, and the default for folders.
 - **Open in Terminal** on a folder's right-click menu, and on the
   background's in any folder but Computer and the Recycle Bin, starts your
   `terminal` in that folder.
-- **Pinned folders:** Pin to Places on a folder's menu adds it to the
-  task pane's Pinned group and to every file dialog's places bar (see
-  Pinned folders in features.md).
+- **Pinned folders:** Pin to Places on a folder's menu (a Folders tree
+  node's too) adds it to the task pane's Pinned group and to every file
+  dialog's places bar (see Pinned folders in features.md).
 - **Disk Usage** on a folder's or a drive's right-click menu opens
   [Disk Usage](#disk-usage) on it.
 - **Places:** Desktop, Documents, Home, Computer and the Recycle Bin.

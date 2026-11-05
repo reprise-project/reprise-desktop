@@ -220,15 +220,7 @@ impl Explorer {
                     (tl.body.x + 8, tl.body.y + below * tl.row_h)
                 })
                 .unwrap_or((tl.body.x + 8, tl.body.y + 8));
-            let node = self
-                .tree
-                .selected
-                .clone()
-                .and_then(|p| self.tree.node(&p))
-                .map(|n| (n.expanded, n.has_children))
-                .unwrap_or((false, false));
-            let folder = self.node_folder().is_some();
-            let menu = menus::tree_menu(node.0, node.1, folder);
+            let menu = self.node_menu();
             self.popup = Some(Popup::new(at, menu, ctx, true));
             return Reply::redraw();
         }
