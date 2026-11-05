@@ -12,7 +12,11 @@ use smithay::reexports::calloop::{
 
 use crate::{captureborder::Captured, compositor::State};
 
+#[cfg(not(test))]
 const HOLD: Duration = Duration::from_secs(5);
+/// Short, so tests wait out the dot's linger.
+#[cfg(test)]
+const HOLD: Duration = Duration::from_millis(500);
 
 const SKIPPED_APPS: [&str; 4] = [
     "org.PulseAudio.pavucontrol",
@@ -26,6 +30,8 @@ pub struct Privacy {
     /// What the last ongoing captures showed: a screen or area, a window.
     screen: bool,
     window: bool,
+    /// What the ongoing captures show now, as `screen` and `window`: none once they end.
+    ongoing: (bool, bool),
     sharing: bool,
     hold: Option<RegistrationToken>,
     mic_apps: Vec<String>,
@@ -136,17 +142,20 @@ fn start_camera_devices(handle: &LoopHandle<'static, State>) {
 
 /// A capture started, asked for a frame or ended: the dot shows while one
 /// is ongoing (`captureborder::ongoing`), so a screenshot shows none.
-/// Every change while it shows re-arms the hold, so the dot goes `HOLD`
-/// after the last capture ends.
+/// Only a change in what is ongoing re-arms the hold, so the dot goes
+/// `HOLD` after the last ongoing capture ends.
 pub fn captures_changed(state: &mut State) {
-    let (screen, window) = kinds(&crate::captureborder::ongoing(state));
+    let now = kinds(&crate::captureborder::ongoing(state));
     let p = &mut state.privacy;
-    let live = screen || window;
-    if live && (screen, window) != (p.screen, p.window) {
-        log::info!("ongoing captures: screen {screen}, window {window}");
-        (p.screen, p.window) = (screen, window);
+    if now == p.ongoing {
+        return;
     }
-    if !live && !p.sharing {
+    p.ongoing = now;
+    log::info!("ongoing captures: screen {}, window {}", now.0, now.1);
+    let live = now.0 || now.1;
+    if live {
+        (p.screen, p.window) = now;
+    } else if !p.sharing {
         return;
     }
     arm_hold(state);
@@ -715,5 +724,67 @@ mod tests {
             "held while recorded"
         );
         assert_eq!(h.state.notify.log.held.len(), 1);
+    }
+
+    /// A screen cast with a balloon held under its dot, ended: when it ended.
+    fn cast_with_held_balloon(h: &mut crate::harness::Harness) -> std::time::Instant {
+        let mut c = h.connect_capture(SIZE);
+        let mut s = c.ext_session(h);
+        c.ext_frame(h, &mut s);
+        c.ext_frame(h, &mut s);
+        crate::notifyview::show(&mut h.state, note(1));
+        assert!(
+            !crate::notifyview::balloon_up(&h.state),
+            "held while shared"
+        );
+        c.ext_end(h, s);
+        std::time::Instant::now()
+    }
+
+    /// A screenshot through a one-frame ext session, as grim and the portal take it, and one
+    /// through wlr-screencopy.
+    fn screenshot(h: &mut crate::harness::Harness) {
+        let mut c = h.connect_capture(SIZE);
+        let mut s = c.ext_session(h);
+        c.ext_frame(h, &mut s);
+        c.ext_end(h, s);
+        c.wlr_shot(h);
+    }
+
+    /// Turns of the loop until `HOLD` times `holds` after `from`.
+    fn run_until(h: &mut crate::harness::Harness, from: std::time::Instant, holds: f32) {
+        let left =
+            (from + HOLD.mul_f32(holds)).saturating_duration_since(std::time::Instant::now());
+        h.run_for(left.as_millis() as u64);
+    }
+
+    #[test]
+    fn a_screenshot_during_the_linger_does_not_extend_it() {
+        let mut h = capturing();
+        let ended = cast_with_held_balloon(&mut h);
+        run_until(&mut h, ended, 0.4);
+        screenshot(&mut h);
+        assert!(h.state.privacy.sharing_shown(), "the dot lingers");
+        run_until(&mut h, ended, 1.2);
+        assert!(
+            !h.state.privacy.sharing_shown(),
+            "the dot goes HOLD after the cast ends"
+        );
+        assert!(
+            crate::notifyview::balloon_up(&h.state),
+            "the held balloon shows once the dot goes"
+        );
+    }
+
+    #[test]
+    fn screenshots_every_few_seconds_after_a_cast_do_not_hold_the_dot() {
+        let mut h = capturing();
+        let ended = cast_with_held_balloon(&mut h);
+        for k in 1..=5 {
+            run_until(&mut h, ended, 0.4 * k as f32);
+            screenshot(&mut h);
+        }
+        assert!(!h.state.privacy.sharing_shown(), "no sharing dot");
+        assert!(crate::notifyview::balloon_up(&h.state), "the balloon shows");
     }
 }
