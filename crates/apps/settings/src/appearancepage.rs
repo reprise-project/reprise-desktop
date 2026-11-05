@@ -114,7 +114,14 @@ fn title(name: &str) -> String {
 
 fn scheme_rows(i: Interface, custom: bool) -> Vec<String> {
     match i {
-        Interface::Classic => schemes::names().map(String::from).collect(),
+        Interface::Classic => {
+            let contrast = |n: &&str| n.starts_with("High Contrast");
+            schemes::names()
+                .filter(|n| !contrast(n))
+                .chain(schemes::names().filter(contrast))
+                .map(String::from)
+                .collect()
+        }
         Interface::Blue => blue::Variant::ALL
             .iter()
             .map(|v| v.name().to_string())
