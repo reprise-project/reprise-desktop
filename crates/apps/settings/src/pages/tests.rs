@@ -326,12 +326,17 @@ fn lines_under_a_choice_start_at_its_label_in_every_look() {
         let cm = theme.look.controls();
         for (form, choice, under, past) in [
             (
-                accessibility(Area::MIN),
+                text_and_keys(Area::MIN),
                 "key_shortcuts",
                 "shortcuts_note",
                 0,
             ),
-            (desktops(Area::MIN), "use_desktops", "desktops_label", 0),
+            (
+                virtual_desktops(Area::MIN),
+                "use_desktops",
+                "desktops_label",
+                0,
+            ),
             (
                 night_light(Area::MIN),
                 "nl_fixed",

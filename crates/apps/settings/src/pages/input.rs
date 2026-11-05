@@ -164,7 +164,7 @@ fn motion(a: Area, y: i32, ids: [&'static str; 5], name: &'static str, keys: boo
     ]
 }
 
-pub fn mouse(a: Area) -> Form {
+pub fn mouse_touchpad(a: Area) -> Form {
     let mut items = vec![group(a, "mouse_group", 44, 178, "Mouse")];
     items.push(Item::label_at(
         "double_click_label",
@@ -252,7 +252,7 @@ pub fn mouse(a: Area) -> Form {
 
 /// The pointer theme and size, and a preview of the theme's pointers the host
 /// draws into `CURSOR_PREVIEW` (inside is [`preview_size`]), which takes the page's extra width and height.
-pub fn pointers(a: Area, cursor_themes: &[String]) -> Form {
+pub fn cursor(a: Area, cursor_themes: &[String]) -> Form {
     let mut themes = vec![CURSOR_DEFAULT_ROW.to_string()];
     themes.extend(cursor_themes.iter().cloned());
     let sizes: Vec<&str> = CURSOR_SIZES.iter().map(|c| c.1).collect();
@@ -315,7 +315,7 @@ pub(super) const SLOW_CONTROLS: [&str; 5] = [
 
 /// The Text & Keys page: the text size on top, then StickyKeys, SlowKeys
 /// and MouseKeys, each in its group, and the shortcuts that turn them on and off.
-pub fn accessibility(a: Area) -> Form {
+pub fn text_and_keys(a: Area) -> Form {
     let gw = a.gw();
     let note = |id, y, text: &str| Item::label_at(id, GX, y, gw, text);
     let sizes: Vec<&str> = TEXT_SIZES.iter().map(|c| c.1).collect();

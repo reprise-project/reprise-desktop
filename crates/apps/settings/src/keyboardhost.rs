@@ -12,8 +12,8 @@ impl SettingsApp {
         pages::fill_shortcuts(&mut self.shortcuts, &self.want, &|app| {
             names.get(app).cloned().unwrap_or_else(|| app.to_string())
         });
-        let vision = &mut self.sheet.pages[Page::MagnifierFilters.index()];
-        crate::visionpage::show_zoom_keys(vision, &self.want.shortcuts);
+        let magnifier = &mut self.sheet.pages[Page::MagnifierFilters.index()];
+        crate::magnifierpage::show_zoom_keys(magnifier, &self.want.shortcuts);
     }
 
     /// Every key taken but `row`'s; a program's is under its list text so the conflict note names it.

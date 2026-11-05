@@ -8336,55 +8336,51 @@ fn render_glass_sheet(theme: &Theme) -> Canvas {
 /// The list-mode property sheet in each look: four headings over nine pages, the third open, the list focused.
 fn render_list_sheets() -> Canvas {
     let groups: &[(&str, &[&str])] = &[
-        ("Look", &["Night Light", "Fonts & Icons", "Effects"]),
-        ("Desktop", &["Taskbar", "Start Menu"]),
-        ("Input", &["Keyboard", "Mouse"]),
+        ("Personalize", &["Appearance", "Fonts & Icons", "Effects"]),
+        ("Taskbar & Windows", &["Taskbar", "Start Menu"]),
+        ("Devices", &["Keyboard", "Mouse & Touchpad"]),
         ("System", &["Power", "Advanced"]),
     ];
     render_list_sheets_of(groups, 2)
 }
 
-/// The list sheets with 24 pages, the last open and scrolled into view.
+/// The list sheets with seven headings over 26 pages, the last open and scrolled into view.
 fn render_long_list_sheets() -> Canvas {
     let groups: &[(&str, &[&str])] = &[
         (
-            "Look",
+            "Personalize",
             &[
                 "Appearance",
                 "Background",
-                "Screen Saver",
-                "Display",
-                "Night Light",
+                "Screen Saver & Lock",
                 "Fonts & Icons",
                 "Effects",
             ],
         ),
         (
-            "Desktop",
+            "Taskbar & Windows",
             &[
                 "Taskbar",
                 "Start Menu",
-                "Launcher",
+                "Search",
                 "Window Switcher",
-                "Desktops",
-                "Windows",
+                "Virtual Desktops",
+                "Window Behavior",
             ],
         ),
-        ("Input", &["Keyboard", "Mouse", "Pointers", "Accessibility"]),
+        ("Display & Sound", &["Display", "Night Light", "Sound"]),
+        (
+            "Devices",
+            &["Keyboard", "Mouse & Touchpad", "Cursor", "Tablet"],
+        ),
+        ("Accessibility", &["Text & Keys", "Magnifier & Filters"]),
+        ("Network", &["Remote Desktop"]),
         (
             "System",
-            &[
-                "Power",
-                "Startup",
-                "Default Programs",
-                "Sound",
-                "Network",
-                "Updates",
-                "Advanced",
-            ],
+            &["Power", "Startup", "Default Programs", "Advanced", "Backup"],
         ),
     ];
-    render_list_sheets_of(groups, 23)
+    render_list_sheets_of(groups, 25)
 }
 
 /// `groups` as list sheets in each look, page `open` open and revealed.

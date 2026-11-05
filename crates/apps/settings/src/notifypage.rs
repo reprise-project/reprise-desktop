@@ -112,7 +112,7 @@ pub fn read(form: &Form, programs: &[Program], id: &str, s: &mut Settings) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pages::{Area, sounds};
+    use crate::pages::{Area, sound};
 
     fn seen() -> Vec<(String, String)> {
         vec![
@@ -163,7 +163,7 @@ mod tests {
             notify_no_sounds: vec!["chat".into()],
             ..Settings::default()
         };
-        let mut f = sounds(Area::MIN, &[]);
+        let mut f = sound(Area::MIN, &[]);
         let list = programs(&seen(), &s, |_| None);
         fill(&mut f, &list, &s);
         assert!(
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn a_refill_keeps_the_pick_on_its_program() {
         let s = Settings::default();
-        let mut f = sounds(Area::MIN, &[]);
+        let mut f = sound(Area::MIN, &[]);
         fill(&mut f, &programs(&seen(), &s, |_| None), &s);
         pick(&mut f, 1);
         let more = [vec![("new".to_string(), "New".to_string())], seen()].concat();

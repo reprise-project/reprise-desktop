@@ -203,7 +203,7 @@ pub fn backup(a: Area) -> Form {
 /// The sound theme picked from `sound_themes`, the events that play from it, the volume's reach,
 /// then each program's notification switches ([`notifypage`]). The program list takes the page's
 /// extra height.
-pub fn sounds(a: Area, sound_themes: &[String]) -> Form {
+pub fn sound(a: Area, sound_themes: &[String]) -> Form {
     Form::new(vec![
         group(a, "sound_theme_group", 44, 52, "Sound Theme"),
         Item::label_at(SOUND_CONTROLS[0], GX, 70, 80, "Sound th&eme:"),
