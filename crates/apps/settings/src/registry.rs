@@ -60,6 +60,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::Power => pages::power(a),
         Page::Startup => pages::startup(a),
         Page::DefaultPrograms => crate::defaultspage::page(a),
+        Page::Privacy => pages::privacy(a),
         Page::RemoteDesktop => pages::remote_desktop(a, None, false),
         Page::Advanced => pages::advanced(a),
         Page::Backup => pages::backup(a),
@@ -153,6 +154,7 @@ mod tests {
                 "Power",
                 "Startup",
                 "Default Programs",
+                "Privacy",
                 "Advanced",
                 "Backup",
             ]
@@ -224,8 +226,8 @@ mod tests {
         assert_eq!(open(&s), Page::Appearance, "the first page opens");
     }
 
-    /// The list's inside is 456 px at the smallest sheet: 33 rows at 585 px, so it scrolls
-    /// until the sheet is 129 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// The list's inside is 456 px at the smallest sheet: 34 rows at 602 px, so it scrolls
+    /// until the sheet is 146 px taller. On a sheet 56 px shorter, a page opened from its end
     /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
@@ -235,16 +237,16 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 33, "seven headings over 26 pages");
-        assert_eq!((list.total, list.inner.height), (585, 456));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 129 px");
-        sheet.size.1 += 129;
+        assert_eq!(list.rows.len(), 34, "seven headings over 27 pages");
+        assert_eq!((list.total, list.inner.height), (602, 456));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 146 px");
+        sheet.size.1 += 146;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 185;
+        sheet.size.1 -= 202;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (585, 400));
+        assert_eq!((list.total, list.inner.height), (602, 400));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();
@@ -329,7 +331,7 @@ mod tests {
                 let list = match p {
                     Page::Startup => Some(pages::list(a)),
                     Page::Keyboard => Some(pages::shortcuts(a)),
-                    Page::Advanced => Some(pages::locations(a)),
+                    Page::Privacy => Some(pages::locations(a)),
                     Page::DefaultPrograms => Some(crate::defaultspage::list(a)),
                     _ => None,
                 };
@@ -476,8 +478,8 @@ mod tests {
             (Page::Cursor, pages::CURSOR_PREVIEW),
             (Page::Startup, SIDE_LIST),
             (Page::Keyboard, SIDE_LIST),
-            (Page::Advanced, SIDE_LIST),
             (Page::DefaultPrograms, SIDE_LIST),
+            (Page::Privacy, SIDE_LIST),
         ] {
             let (was, now) = grower(p, id);
             assert_eq!(now, was + large.dh, "{}: {id}", p.label());

@@ -58,7 +58,7 @@ impl SettingsApp {
             Page::Startup => Some((&mut self.list, list, &mut self.list_focus)),
             Page::Keyboard => Some((&mut self.shortcuts, shortcuts, &mut self.shortcuts_focus)),
             Page::DefaultPrograms => Some((&mut self.types, types, &mut self.types_focus)),
-            Page::Advanced => Some((&mut self.locations, locations, &mut self.locations_focus)),
+            Page::Privacy => Some((&mut self.locations, locations, &mut self.locations_focus)),
             _ => None,
         }
     }
@@ -68,7 +68,7 @@ impl SettingsApp {
             Page::Startup => self.focus_list(on),
             Page::Keyboard => self.focus_shortcuts(on),
             Page::DefaultPrograms => self.focus_types(on),
-            Page::Advanced => self.focus_locations(on),
+            Page::Privacy => self.focus_locations(on),
             _ => {}
         }
     }
@@ -153,7 +153,7 @@ impl SettingsApp {
     /// list that is its page's first tab stop.
     fn side_list_after(&self) -> Option<usize> {
         match registry::open(&self.sheet) {
-            Page::Advanced => self.sheet.open().index_of(pages::PRIVACY_LOCATION),
+            Page::Privacy => self.sheet.open().index_of(pages::PRIVACY_LOCATION),
             _ => None,
         }
     }

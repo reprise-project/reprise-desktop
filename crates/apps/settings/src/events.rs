@@ -364,7 +364,7 @@ impl SettingsApp {
         if self.sheet.tabs.open != Page::DefaultPrograms.index() {
             self.focus_types(false);
         }
-        if self.sheet.tabs.open != Page::Advanced.index() {
+        if self.sheet.tabs.open != Page::Privacy.index() {
             self.focus_locations(false);
         }
         match ev {

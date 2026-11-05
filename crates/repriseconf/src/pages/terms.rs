@@ -353,6 +353,22 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("regenerate", "New Certificate..."),
             ("disconnect", "Disconnect"),
         ],
+        Page::Privacy => &[
+            ("privacy_location", "Let programs ask for your location"),
+            ("location_forget", "Forget"),
+            (
+                "recent_files",
+                "Show recently used files in menus and file dialogs",
+            ),
+            (
+                "clipboard_history",
+                "Keep a clipboard history (Super+V opens it)",
+            ),
+            (
+                "capture_border",
+                "Show a red border around what is being shared",
+            ),
+        ],
         Page::Advanced => &[
             ("task_manager", "Task manager (empty runs Task Manager):"),
             (
@@ -360,23 +376,9 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "Variable refresh rate (adaptive sync) where supported",
             ),
             (
-                "clipboard_history",
-                "Keep a clipboard history (Super+V opens it)",
-            ),
-            (
                 "screenshot_save",
                 "Save each screenshot as a file in Pictures/Screenshots",
             ),
-            (
-                "recent_files",
-                "Show recently used files in menus and file dialogs",
-            ),
-            (
-                "capture_border",
-                "Show a red border around what is being shared",
-            ),
-            ("privacy_location", "Let programs ask for your location"),
-            ("location_forget", "Forget"),
             (
                 "debug_overlay",
                 "Show a debug overlay (frame rate, render times)",

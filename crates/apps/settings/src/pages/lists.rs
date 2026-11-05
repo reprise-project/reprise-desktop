@@ -141,7 +141,7 @@ pub fn show_locations_loading(lv: &mut ListView) {
     lv.top = 0;
 }
 
-/// Draw a side list (Startup, Shortcuts, the file types or the Advanced page's location answers)
+/// Draw a side list (Startup, Shortcuts, the file types or the Privacy page's location answers)
 /// over the page the sheet already drew; `rect` is its [`list`](super::list),
 /// [`shortcuts`](super::shortcuts) or [`locations`](super::locations) where the page sits now.
 pub fn draw_list(

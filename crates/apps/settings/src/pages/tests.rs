@@ -255,7 +255,7 @@ fn rows(s: &PropSheet, page: Page, id: &str) -> (Vec<String>, usize) {
     }
 }
 
-/// The lists the host draws over the Startup and Keyboard pages move with
+/// The lists the host draws over the Startup, Keyboard and Privacy pages move with
 /// their pages: right of the sheet's list, inside the page, flush with the buttons under them.
 #[test]
 fn the_side_lists_move_with_their_pages() {
@@ -277,6 +277,12 @@ fn the_side_lists_move_with_their_pages() {
         .unwrap()
         .rect;
     assert_eq!(delete.right(), shortcuts.right());
+    let forget = rect(&s, Page::Privacy, FORGET);
+    assert_eq!(
+        forget.right(),
+        Area::MIN.gright(),
+        "Forget keeps to the group's edge"
+    );
 }
 
 fn themes() -> Vec<String> {
@@ -604,6 +610,16 @@ fn render_the_pages() {
     .collect();
     fill_list(&mut lv, &entries, &[true, false, true]);
     lv.selection.set_only(Some(0));
+    let mut places = new_location_list();
+    fit_location_columns(
+        &mut places,
+        &reprisekit::controls::metrics::ControlMetrics::CLASSIC,
+        locations(Area::MIN),
+    );
+    fill_locations(
+        &mut places,
+        &[("Maps".into(), true), ("org.example.Weather".into(), false)],
+    );
     let keyboard = crate::model::load(
         "[[global_shortcuts]]\napp = \"org.example.Talk\"\nid = \"talk\"\n\
          description = \"Hold to talk\"\nkeys = \"Pause\"\n\
@@ -655,6 +671,17 @@ fn render_the_pages() {
                 &theme,
                 &sc,
                 sheet.on_page(shortcuts(Area::MIN)),
+                px,
+                1,
+            );
+        }
+        if p == Page::Privacy {
+            draw_list(
+                &mut c,
+                &text,
+                &theme,
+                &places,
+                sheet.on_page(locations(Area::MIN)),
                 px,
                 1,
             );
