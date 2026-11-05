@@ -556,7 +556,7 @@ suspend_after = 0            # run [power] standby
 # restart_notice = true      # Software Updates says when the system needs a restart: a kernel
 #                            # update removed the running kernel's modules, or a package left
 #                            # /run/reboot-required. A balloon once a boot, the tray icon and the
-#                            # window until the restart; false shows none of them (Settings > Startup)
+#                            # window until the restart; false shows none of them (Settings > Advanced)
 
 # [[window_rules]]           # every rule that matches applies, in file order; later ones win,
 # app_id = "foot"            # and a rule beats the remembered place. Globs: * and ?. X11: the class.

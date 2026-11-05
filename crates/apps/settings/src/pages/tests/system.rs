@@ -289,34 +289,87 @@ fn the_sound_theme_and_the_bell_write_their_keys() {
 }
 
 #[test]
-fn the_advanced_page_geometry() {
+fn advanced_groups_what_has_no_other_page() {
+    assert_moved("restart_notice", Page::Startup, Page::Advanced);
     let s = built();
+    let mut k = keys_on(&s, Page::Advanced);
+    k.sort();
+    assert_eq!(
+        k,
+        [
+            ".task_manager",
+            "debug.overlay",
+            "debug.overlay_in_captures",
+            "power.hibernate",
+            "power.poweroff",
+            "power.reboot",
+            "power.standby",
+            "screenshot.save",
+            "storage.low_space_percent",
+            "thumbnail_cache.enabled",
+            "thumbnail_cache.external_thumbnailers",
+            "thumbnail_cache.max_mb",
+            "updates.restart_notice",
+        ]
+    );
     let p = Page::Advanced;
-    assert!(
-        s.pages[p.index()].item("terminal").is_none(),
-        "the terminal is picked on Default Programs"
-    );
-    assert_eq!(rect(&s, p, "task_manager"), Rect::new(20, 60, 358, 20));
-    assert_eq!(rect(&s, p, "screenshot_save"), Rect::new(20, 92, 13, 13));
-    assert!(
-        s.pages[p.index()].item("desktop_icons").is_none(),
-        "desktop_icons is on Background"
-    );
-    assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 114, 13, 13));
-    assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 136, 13, 13));
-    assert_eq!(rect(&s, p, THUMBS), Rect::new(20, 158, 13, 13));
-    assert_eq!(rect(&s, p, THUMBS_MB), Rect::new(82, 180, 50, 20));
-    assert_eq!(rect(&s, p, THUMBS_SIZE[2]), Rect::new(136, 184, 20, 13));
-    assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(303, 178, 75, 23));
-    assert_eq!(rect(&s, p, THUMBNAILERS), Rect::new(20, 206, 13, 13));
-    assert_eq!(rect(&s, p, "note"), Rect::new(20, 443, 275, 26));
-    assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 443, 75, 23));
-    for id in ["banner_label", "startmenu_banner", "start_icon"] {
-        assert!(
-            s.pages[p.index()].item(id).is_none(),
-            "{id} is not on Advanced"
-        );
+    for id in ["terminal", "desktop_icons", "start_icon"] {
+        assert!(s.pages[p.index()].item(id).is_none(), "{id} is elsewhere");
     }
+    assert_eq!(rect(&s, p, "task_manager"), Rect::new(20, 60, 358, 20));
+    assert_eq!(rect(&s, p, "screenshot_save"), Rect::new(20, 90, 13, 13));
+    assert_eq!(rect(&s, p, "restart_notice"), Rect::new(20, 112, 13, 13));
+    assert_eq!(rect(&s, p, "turnoff_group"), Rect::new(20, 134, 358, 74));
+    assert_eq!(rect(&s, p, "standby"), Rect::new(94, 152, 101, 20));
+    assert_eq!(rect(&s, p, "poweroff"), Rect::new(265, 152, 101, 20));
+    assert_eq!(rect(&s, p, "reboot"), Rect::new(94, 178, 101, 20));
+    assert_eq!(rect(&s, p, "hibernate"), Rect::new(265, 178, 101, 20));
+    let d = Settings::default();
+    use reprisekit::interface::Interface;
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let theme = reprisekit::interfaces::theme_for(i);
+        let text = TextRenderer::load(&theme.fonts);
+        for (id, cmd) in [
+            ("standby", &d.standby),
+            ("poweroff", &d.poweroff),
+            ("reboot", &d.reboot),
+            ("hibernate", &d.hibernate),
+        ] {
+            let r = rect(&s, p, id);
+            let mut c = Canvas::new(r.right() as u32, r.bottom() as u32);
+            let inner = reprisekit::look::widgets::draw_edit_field(
+                &mut c,
+                &theme.paint(),
+                r,
+                theme.colors.window,
+                false,
+                reprisekit::look::widgets::Interaction::Idle,
+            );
+            assert!(
+                text.measure(cmd, false, theme.fonts.size_px) <= inner.width,
+                "{cmd} shows whole in {id} under {i:?}"
+            );
+        }
+    }
+    assert_eq!(rect(&s, p, "storage_group"), Rect::new(20, 218, 358, 66));
+    assert_eq!(
+        rect(&s, p, "low_space_percent"),
+        Rect::new(150, 236, 50, 20)
+    );
+    assert_eq!(rect(&s, p, "low_space_note").y, 260);
+    assert_eq!(rect(&s, p, "thumbs_group"), Rect::new(20, 294, 358, 92));
+    assert_eq!(rect(&s, p, THUMBS), Rect::new(GX, 316, 13, 13));
+    assert_eq!(rect(&s, p, THUMBS_CLEARED).y, 316);
+    assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(291, 334, 75, 23));
+    let mb = rect(&s, p, THUMBS_MB);
+    assert_eq!(mb.y, 336);
+    let units = rect(&s, p, THUMBS_SIZE[2]);
+    assert_eq!((units.x, units.y), (mb.right() + 4, 340));
+    assert_eq!(rect(&s, p, THUMBNAILERS), Rect::new(GX, 364, 13, 13));
+    assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 396, 13, 13));
+    assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 418, 13, 13));
+    assert_eq!(rect(&s, p, "note"), Rect::new(20, 440, 275, 26));
+    assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 440, 75, 23));
     inside_page(&s, p);
 }
 
@@ -536,9 +589,9 @@ fn the_clear_row_pixels() {
     assert_eq!(
         [idle, clearing, done],
         [
-            7_897_640_068_597_891_350,
-            2_251_566_719_493_853_932,
-            14_478_241_142_069_230_046
+            4_963_357_358_802_389_574,
+            13_921_270_549_905_946_812,
+            18_015_333_014_336_005_774
         ],
         "idle, clearing, done"
     );
@@ -592,42 +645,20 @@ fn the_location_check_and_list() {
 }
 
 #[test]
-fn turn_off_commands_and_low_disk_space_sit_on_advanced() {
-    let s = built();
-    let p = Page::Advanced;
-    let off = rect(&s, p, "turnoff_group");
-    assert_eq!((off.x, off.width, off.height), (20, 358, 126));
-    assert_eq!(rect(&s, p, "standby"), Rect::new(106, off.y + 18, 260, 20));
-    assert_eq!(
-        rect(&s, p, "hibernate"),
-        Rect::new(106, off.y + 96, 260, 20)
-    );
-    let disk = rect(&s, p, "storage_group");
-    assert_eq!((disk.y, disk.height), (off.bottom() + 8, 74));
-    assert_eq!(
-        rect(&s, p, "low_space_percent"),
-        Rect::new(150, disk.y + 20, 50, 20)
-    );
-    inside_page(&s, p);
-}
-
-#[test]
 fn the_startup_page_geometry() {
     let s = built();
     let p = Page::Startup;
-    assert_eq!(rect(&s, p, ADD), Rect::new(222, 260, 75, 23));
-    assert_eq!(rect(&s, p, REMOVE), Rect::new(303, 260, 75, 23));
-    assert_eq!(rect(&s, p, "session_group"), Rect::new(20, 292, 358, 66));
-    assert_eq!(rect(&s, p, "session_restore"), Rect::new(32, 314, 13, 13));
+    assert_eq!(rect(&s, p, ADD), Rect::new(222, 311, 75, 23));
+    assert_eq!(rect(&s, p, REMOVE), Rect::new(303, 311, 75, 23));
+    assert_eq!(rect(&s, p, "session_group"), Rect::new(20, 343, 358, 66));
+    assert_eq!(rect(&s, p, "session_restore"), Rect::new(32, 365, 13, 13));
     assert_eq!(
         rect(&s, p, "session_end_processes"),
-        Rect::new(32, 336, 13, 13)
+        Rect::new(32, 387, 13, 13)
     );
-    assert_eq!(rect(&s, p, "updates_group"), Rect::new(20, 368, 358, 44));
-    assert_eq!(rect(&s, p, "restart_notice"), Rect::new(32, 390, 13, 13));
     inside_page(&s, p);
 
-    assert_eq!(list(Area::MIN), Rect::new(20, 44, 358, 208));
+    assert_eq!(list(Area::MIN), Rect::new(20, 44, 358, 259));
     let lv = new_list();
     let lay = listview::layout(
         &lv,
@@ -635,7 +666,7 @@ fn the_startup_page_geometry() {
         &reprisekit::controls::metrics::ControlMetrics::CLASSIC,
     );
     assert_eq!(lay.header, Rect::new(22, 46, 354, listview::HEADER_H));
-    assert_eq!(lay.rows, 11, "11 rows of 17 px under the header");
+    assert_eq!(lay.rows, 14, "14 rows of 17 px under the header");
     assert_eq!(
         COLUMNS.iter().map(|c| c.1).sum::<i32>(),
         lay.header.width - 16,

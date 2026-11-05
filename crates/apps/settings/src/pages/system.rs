@@ -16,9 +16,9 @@ use reprisekit::controls::listbox::{self, ListBox};
 use reprisekit::raster::Rect;
 use reprisekit::trackbar::TrackBar;
 
-/// The task manager, the switches with no page of their own, the thumbnail cache, the Turn Off
-/// commands, the low disk space warning and the config file itself. The terminal is picked on
-/// Default Programs.
+/// The task manager, the switches with no page of their own, the Turn Off commands, the low
+/// disk space warning, the thumbnail cache, the debug overlay and the config file itself. The
+/// terminal is picked on Default Programs. Nothing on the page grows with its height.
 pub fn advanced(a: Area) -> Form {
     let gw = a.gw();
     let mut items = Vec::new();
@@ -33,74 +33,48 @@ pub fn advanced(a: Area) -> Form {
     items.push(Item::check(
         "screenshot_save",
         X,
-        92,
+        90,
         "Save each screenshot as a file in &Pictures/Screenshots",
     ));
     items.push(Item::check(
-        DEBUG_OVERLAY,
+        "restart_notice",
         X,
-        114,
-        "Show a &debug overlay (frame rate, render times)",
-    ));
-    items.push(
-        Item::check(
-            DEBUG_IN_CAPTURES,
-            X,
-            136,
-            "Show it in screenshots and screen &sharing",
-        )
-        .under_check(),
-    );
-    items.push(Item::check(THUMBS, X, 158, "Keep &thumbnails of pictures"));
-    let mb = ThumbnailCache::MAX_MB;
-    items.extend(
-        spin(
-            THUMBS_SIZE[0],
-            THUMBS_MB,
-            X,
-            184,
-            40,
-            "Si&ze:",
-            (*mb.start() as i32, *mb.end() as i32),
-        )
-        .map(Item::under_check),
-    );
-    items.push(Item::label_at(THUMBS_SIZE[2], X + 98, 184, 20, "MB").under_check());
-    let cleared_x = X + 184;
-    items.push(Item::value_at(
-        THUMBS_CLEARED,
-        cleared_x,
-        158,
-        a.right() - cleared_x,
-        "",
-    ));
-    items.push(button(THUMBS_CLEAR, a.right() - BUTTON_W, 178, "Clea&r"));
-    items.push(Item::check(
-        THUMBNAILERS,
-        X,
-        206,
-        "Ma&ke thumbnails of documents and videos",
+        112,
+        "Tell me when an &update needs a restart",
     ));
 
-    // One row per command: the label, then its field 4 px above the label's row, as on the Keyboard page.
-    let command = |label_id, id, y, text| {
+    let half = (gw - 8) / 2;
+    let command = |label_id, id, x, y, text| {
         [
-            Item::label_at(label_id, GX, y, 70, text),
-            edit(id, GX + 74, y - 4, gw - 74),
+            Item::label_at(label_id, x, y, 60, text),
+            edit(id, x + 62, y - 4, half - 62),
         ]
     };
-    items.push(group(a, "turnoff_group", 227, 126, "Turn Off Computer"));
-    items.extend(command("standby_label", "standby", 249, "Stand &by:"));
-    items.extend(command("poweroff_label", "poweroff", 275, "Tur&n off:"));
-    items.extend(command("reboot_label", "reboot", 301, "Rest&art:"));
-    items.extend(command("hibernate_label", "hibernate", 327, "&Hibernate:"));
+    let right = GX + half + 8;
+    items.push(group(a, "turnoff_group", 134, 74, "Turn Off Computer"));
+    items.extend(command("standby_label", "standby", GX, 156, "Stand &by:"));
+    items.extend(command(
+        "poweroff_label",
+        "poweroff",
+        right,
+        156,
+        "Tur&n off:",
+    ));
+    items.extend(command("reboot_label", "reboot", GX, 182, "Rest&art:"));
+    items.extend(command(
+        "hibernate_label",
+        "hibernate",
+        right,
+        182,
+        "&Hibernate:",
+    ));
 
-    items.push(group(a, "storage_group", 361, 74, "Low Disk Space"));
+    items.push(group(a, "storage_group", 218, 66, "Low Disk Space"));
     items.extend(spin(
         "low_space_label",
         "low_space_percent",
         GX,
-        385,
+        240,
         114,
         "Warn bel&ow:",
         (0, repriseconf::LOW_SPACE_MAX.into()),
@@ -108,22 +82,69 @@ pub fn advanced(a: Area) -> Form {
     items.push(Item::label_at(
         "low_space_units",
         GX + 174,
-        385,
+        240,
         gw - 174,
         "% free",
     ));
     items.push(Item::label_at(
         "low_space_note",
         GX,
-        411,
+        260,
         gw,
         "For the disks of your home folder and /. 0 turns it off.",
     ));
 
-    let dh = a.dh;
+    items.push(group(a, "thumbs_group", 294, 92, "Thumbnails"));
+    items.push(Item::check(THUMBS, GX, 316, "Keep &thumbnails of pictures"));
+    let cleared_x = GX + 184;
+    items.push(Item::value_at(
+        THUMBS_CLEARED,
+        cleared_x,
+        316,
+        a.gright() - cleared_x,
+        "",
+    ));
+    items.push(button(THUMBS_CLEAR, a.gright() - BUTTON_W, 334, "Clea&r"));
+    let mb = ThumbnailCache::MAX_MB;
+    items.extend(
+        spin(
+            THUMBS_SIZE[0],
+            THUMBS_MB,
+            GX,
+            340,
+            40,
+            "Si&ze:",
+            (*mb.start() as i32, *mb.end() as i32),
+        )
+        .map(Item::under_check),
+    );
+    items.push(Item::label_at(THUMBS_SIZE[2], GX + 98, 340, 20, "MB").under_check());
+    items.push(Item::check(
+        THUMBNAILERS,
+        GX,
+        364,
+        "Ma&ke thumbnails of documents and videos",
+    ));
+
+    items.push(Item::check(
+        DEBUG_OVERLAY,
+        X,
+        396,
+        "Show a &debug overlay (frame rate, render times)",
+    ));
+    items.push(
+        Item::check(
+            DEBUG_IN_CAPTURES,
+            X,
+            418,
+            "Show it in screenshots and screen &sharing",
+        )
+        .under_check(),
+    );
+
     items.push(Item::new(
         "note",
-        Rect::new(X, 443 + dh, a.w - BUTTON_W - 8, 2 * LINE_H),
+        Rect::new(X, 440, a.w - BUTTON_W - 8, 2 * LINE_H),
         Control::Lines(vec![
             "Keys no page sets are edited in".into(),
             "config.toml itself.".into(),
@@ -132,7 +153,7 @@ pub fn advanced(a: Area) -> Form {
     items.push(button(
         EDIT_FILE,
         a.right() - BUTTON_W,
-        443 + dh,
+        440,
         "&Edit File...",
     ));
     Form::new(items)
@@ -346,33 +367,25 @@ pub(super) const SOUND_CONTROLS: [&str; 2] = ["sound_theme_label", "sound_theme"
 /// The Startup page: the autostart list (a [`ListView`](reprisekit::controls::listview::ListView) the host draws over
 /// the page and routes the pointer to, see `main.rs`), its two buttons, and
 /// the Session group: what the next login gets back of this one, and what Log
-/// Off ends, then whether Software Updates says when the system needs a restart. The list takes the
-/// page's extra height.
+/// Off ends. The list takes the page's extra height.
 pub fn startup(a: Area) -> Form {
     let list = list(a);
     let (y, dh) = (list.bottom() + 8, a.dh);
     Form::new(vec![
         button(ADD, list.right() - 2 * BUTTON_W - BUTTON_GAP, y, "&Add..."),
         button(REMOVE, list.right() - BUTTON_W, y, "&Remove"),
-        group(a, "session_group", 292 + dh, 66, "Session"),
+        group(a, "session_group", 343 + dh, 66, "Session"),
         Item::check(
             "session_restore",
             GX,
-            314 + dh,
+            365 + dh,
             "Re&open the programs that were open at the last log off",
         ),
         Item::check(
             "session_end_processes",
             GX,
-            336 + dh,
+            387 + dh,
             "&End the programs still running when I log off",
-        ),
-        group(a, "updates_group", 368 + dh, 44, "Software Updates"),
-        Item::check(
-            "restart_notice",
-            GX,
-            390 + dh,
-            "&Tell me when an update needs a restart",
         ),
     ])
 }
