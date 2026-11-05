@@ -25,6 +25,7 @@ use wayland_protocols_wlr::screencopy::v1::client::{
 };
 
 use super::Harness;
+use super::input_client::reprise_input_v1::RepriseInputV1;
 use crate::compositor::ClientState;
 
 #[derive(Default)]
@@ -51,9 +52,22 @@ pub struct ExtSession {
 
 impl Harness {
     /// A trusted client capturing the first output, which is `w`x`h`.
-    pub fn connect_capture(&mut self, (w, h): (i32, i32)) -> CaptureClient {
+    pub fn connect_capture(&mut self, size: (i32, i32)) -> CaptureClient {
+        self.connect_capture_as(size, false)
+    }
+
+    /// The portal's capture connection for the remote desktop server, marked through
+    /// `reprise_input_v1.remote_capture`.
+    pub fn connect_remote_capture(&mut self, size: (i32, i32)) -> CaptureClient {
+        self.connect_capture_as(size, true)
+    }
+
+    fn connect_capture_as(&mut self, (w, h): (i32, i32), remote: bool) -> CaptureClient {
         let (server, client) = UnixStream::pair().expect("socket pair");
-        let data = ClientState::of_stream(&server, None);
+        let mut data = ClientState::of_stream(&server, None);
+        if remote {
+            data.sandbox.pid = Some(crate::sandbox::TEST_PORTAL_PID);
+        }
         self.state
             .dh
             .insert_client(server, Arc::new(data))
@@ -80,6 +94,12 @@ impl Harness {
         let sources = registry.bind(n, v, &qh, ());
         let (n, v) = global("ext_image_copy_capture_manager_v1", 1);
         let ext = registry.bind(n, v, &qh, ());
+        if remote {
+            let (n, v) = global("reprise_input_v1", 8);
+            let input: RepriseInputV1 = registry.bind(n, v, &qh, ());
+            input.remote_capture();
+            input.destroy();
+        }
         let mut c = CaptureClient {
             queue,
             side,
@@ -197,6 +217,7 @@ impl wc::Dispatch<wl_registry::WlRegistry, ()> for Side {
 }
 
 wc::delegate_noop!(Side: ignore wl_shm::WlShm);
+wc::delegate_noop!(Side: ignore RepriseInputV1);
 wc::delegate_noop!(Side: ignore wl_shm_pool::WlShmPool);
 wc::delegate_noop!(Side: ignore WlBuffer);
 wc::delegate_noop!(Side: ignore WlOutput);

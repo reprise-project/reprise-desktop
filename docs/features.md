@@ -682,7 +682,8 @@ are.
   is not sharing: it shows no dot and holds back no balloons.
 - **Capture border.** A red border on the screen around the screen, window
   or area being recorded or shared. Recordings never show it, and a single
-  screenshot draws none. Settings > Privacy turns it off.
+  screenshot draws none. Settings > Privacy turns it off. The Remote Desktop
+  server's screen gets none unless Settings > Remote Desktop asks for it.
 - **Prompts.** Screen sharing, remote control, input capture, location and
   camera access through the portal all ask first. Cancel or Deny is the default button, so a
   stray Enter never grants anything.
@@ -784,21 +785,24 @@ no port forwarding; allow the port in your firewall if you run one.
   ms, and `/sound:latency:20` brings it to about 65 ms.
 - **While a client is connected,** this screen keeps showing the session
   and its own keyboard and mouse keep working. The red dot shows the screen
-  is shared. The screen saver and the idle lock keep their timeouts, and
+  is shared. The red capture border stays off unless Show a red border
+  while a remote computer is connected, under the list of connected
+  computers, is on (`capture_border`); a screen shared another way keeps
+  its border. The screen saver and the idle lock keep their timeouts, and
   remote input counts as activity; screen off and idle suspend wait.
   Closing the lid turns the laptop's panel off instead of running
   `[power] lid_close`, and the session goes on; opening it turns the panel
   back on. When the last client leaves with the lid still shut, the lid
   action runs 30 s later.
-- **Disconnecting.** Connected Computers on the Settings page lists every
+- **Disconnecting.** Connected computers on the Settings page lists every
   client; Disconnect ends the selected one.
 - **Leaving locks.** When the last client shown the session leaves, whether
   it disconnects or Disconnect ends it, the session locks; a client shown it
   before the lock goes ahead keeps it unlocked. A client that logged in but
   never got the picture leaves the session as it was. Clearing Lock this
-  computer when the last one disconnects, under Connected Computers
-  (`lock_on_leave`), leaves it unlocked; it is read as each client is shown
-  the session and as it leaves. A computer that connects
+  computer when the last one disconnects, under the list of connected
+  computers (`lock_on_leave`), leaves it unlocked; it is read as each client
+  is shown the session and as it leaves. A computer that connects
   while `max_viewers` computers are connected or logging in is turned away
   at once, as is a third from an address with two still logging in. A
   connection that dies without closing ends within about 30 s.

@@ -664,6 +664,14 @@ fn capture_border_default_on_and_privacy_turns_it_off() {
 }
 
 #[test]
+fn the_remote_desktop_border_is_off_unless_its_section_turns_it_on() {
+    assert!(!Config::default().remote_desktop.capture_border);
+    let on = Config::parse("[remote_desktop]\ncapture_border = true\n").unwrap();
+    assert!(on.remote_desktop.capture_border);
+    assert!(on.capture_border, "[privacy] keeps its own default");
+}
+
+#[test]
 fn the_restart_notice_is_on_by_default() {
     assert!(Config::default().restart_notice);
     assert!(
