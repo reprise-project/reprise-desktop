@@ -325,7 +325,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Named(
             "color_filter",
             lens!(color_filter),
-            crate::visionpage::FILTERS,
+            crate::magnifierpage::FILTERS,
         ),
         Bind::Level("color_filter_intensity", lens!(color_filter_intensity), 0),
         Bind::Switch(
@@ -708,7 +708,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         "slow_delay_value",
         &format!("{}.{} seconds", tenths / 10, tenths % 10),
     );
-    crate::visionpage::follow(&mut sheet.pages[Page::MagnifierFilters.index()], s);
+    crate::magnifierpage::follow(&mut sheet.pages[Page::MagnifierFilters.index()], s);
     let fx = &mut sheet.pages[Page::Effects.index()];
     for id in ANIM_CONTROLS {
         fx.set_enabled(id, s.window_animation);

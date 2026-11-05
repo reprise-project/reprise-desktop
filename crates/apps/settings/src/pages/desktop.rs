@@ -16,7 +16,7 @@ use crate::model::{
 /// with drag snapping off), the snap layouts on the maximize button, the snap
 /// bar a drag shows (greyed too) and the layouts they offer; Tabs and Placement
 /// holds `[windows]`, shaking, the title bar double click and dimming included.
-pub fn windows(a: Area) -> Form {
+pub fn window_behavior(a: Area) -> Form {
     let gw = a.gw();
     let mut items = vec![
         group(a, "snap_group", 44, 172, "Snapping"),
@@ -149,7 +149,7 @@ pub(super) const FPS_CONTROLS: [&str; 3] = ["fps_label", "previews_fps", "fps_un
 /// The desktops' names, apart by commas.
 pub const DESKTOP_NAMES: &str = "desktop_names";
 
-pub fn desktops(a: Area) -> Form {
+pub fn virtual_desktops(a: Area) -> Form {
     let mut items = vec![group(a, "desktops_group", 44, 244, "Virtual Desktops")];
     items.push(Item::check("use_desktops", GX, 64, "&Use virtual desktops"));
     // Indented under the check box they depend on: `ix` is the box's x, and each item starts at its label's column.
@@ -356,7 +356,7 @@ pub(super) const REVEAL_CONTROLS: [&str; 3] = [
 
 /// The Search page: the Search group's checks for files and folders and for open windows, with
 /// what they add under them.
-pub fn launcher(a: Area) -> Form {
+pub fn search(a: Area) -> Form {
     Form::new(vec![
         group(a, "launcher_search_group", 44, 108, "Search"),
         Item::new(
