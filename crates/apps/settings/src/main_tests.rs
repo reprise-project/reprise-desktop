@@ -1557,3 +1557,36 @@ fn restore_defaults_takes_only_the_pages_keys_out_of_the_file() {
     );
     assert!(a.dirty());
 }
+
+#[test]
+fn other_on_the_colour_button_opens_the_color_dialog_whose_ok_sets_the_desktop() {
+    use reprisekit::controls::colordlg::{BASIC, Grid, Well};
+    let mut a = app("othercolor");
+    let state = tmp("othercolor-state").join("settings.toml");
+    a.state_path = Some(state.clone());
+    let mut ctx = test_ctx();
+    let p = Page::Background.index();
+    a.sheet_event(propsheet::Event::Page(
+        p,
+        form::Event::Pressed("background"),
+    ));
+    assert!(a.children().iter().any(|c| c.id == COLOR_WIN));
+    let (d, ..) = a.color_dlg.as_mut().unwrap();
+    d.dlg.pick(Well {
+        grid: Grid::Basic,
+        i: 28,
+    });
+    d.dlg.add_custom();
+    let enter = Event::Key(KeyInput {
+        sym: reprisekit::textedit::keysym::RETURN,
+        utf8: None,
+        mods: Default::default(),
+        edit: None,
+    });
+    a.event(COLOR_WIN, enter, &mut ctx);
+    assert!(a.color_dlg.is_none(), "Enter is OK");
+    assert_eq!(BASIC[28], reprisekit::theme::Color::rgb(0, 0, 0xFF));
+    assert_eq!(a.want.background, "#0000FF");
+    assert_eq!(winstate::custom_colors(&state)[0], BASIC[28]);
+    let _ = std::fs::remove_dir_all(state.parent().unwrap());
+}

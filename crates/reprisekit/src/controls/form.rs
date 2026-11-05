@@ -136,6 +136,7 @@ pub enum Control {
         theme: Theme,
         icon: Option<Canvas>,
     },
+    /// A colour button: a swatch picked reports `Changed`, Other... in its popup `Pressed`.
     Color(ColorButton),
     /// The month grid, [`calendar::Calendar`]; the arrows move the day.
     Calendar(Calendar),
@@ -447,6 +448,8 @@ pub enum Part {
     UpDown(updown::Hit),
     TrackBar(trackbar::Hit),
     Swatch(usize),
+    /// A colour button's Other...
+    Other,
     Calendar(calendar::Hit),
     Time(timefield::Hit),
     Popup,
