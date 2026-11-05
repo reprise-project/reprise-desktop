@@ -5,17 +5,36 @@ use crate::pages::system::NOTIFICATION_SOUND;
 fn the_sound_page_geometry() {
     let s = built();
     let p = Page::Sound;
-    assert_eq!(rect(&s, p, "sound_theme_group"), Rect::new(20, 44, 358, 52));
-    assert_eq!(rect(&s, p, "sound_theme_label"), Rect::new(GX, 70, 80, 13));
-    assert_eq!(rect(&s, p, "sound_theme"), Rect::new(116, 66, 200, 21));
+    assert_eq!(rect(&s, p, "sound_theme_group"), Rect::new(20, 80, 358, 52));
+    assert_eq!(rect(&s, p, "sound_theme_label"), Rect::new(GX, 106, 80, 13));
+    assert_eq!(rect(&s, p, "sound_theme"), Rect::new(116, 102, 200, 21));
     assert_eq!(
         rect(&s, p, "sound_events_group"),
-        Rect::new(20, 106, 358, 48)
+        Rect::new(20, 142, 358, 48)
     );
-    assert_eq!(rect(&s, p, "bell"), Rect::new(GX, 128, 13, 13));
-    assert_eq!(rect(&s, p, "volume_group"), Rect::new(20, 164, 358, 74));
-    assert_eq!(rect(&s, p, "allow_boost"), Rect::new(GX, 186, 13, 13));
-    assert_eq!(rect(&s, p, "allow_boost_note").y, 206);
+    assert_eq!(rect(&s, p, "bell"), Rect::new(GX, 164, 13, 13));
+    assert_eq!(rect(&s, p, "volume_group"), Rect::new(20, 200, 358, 74));
+    assert_eq!(rect(&s, p, "allow_boost"), Rect::new(GX, 222, 13, 13));
+    assert_eq!(rect(&s, p, "allow_boost_note").y, 242);
+    inside_page(&s, p);
+}
+
+#[test]
+fn sound_opens_sounds_and_audio_devices() {
+    let s = built();
+    let p = Page::Sound;
+    assert_eq!(rect(&s, p, AUDIO_DEVICES), Rect::new(268, 44, 110, 23));
+    assert_eq!(
+        lines(&s, p, "audio_devices_note"),
+        [
+            "To pick speakers and microphones or",
+            "set each program's volume, open"
+        ]
+    );
+    assert_eq!(rect(&s, p, "sound_theme_group").y, 80);
+    assert_eq!(rect(&s, p, "volume_group").y, 200);
+    assert_eq!(program_for(AUDIO_DEVICES), Some("reprise-sound.desktop"));
+    assert_eq!(program_for(EDIT_FILE), None);
     inside_page(&s, p);
 }
 

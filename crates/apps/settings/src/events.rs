@@ -90,6 +90,11 @@ impl SettingsApp {
                 self.open_color(p, id);
                 Reply::redraw_all()
             }
+            propsheet::Event::Page(_, form::Event::Pressed(id))
+                if let Some(program) = pages::program_for(id) =>
+            {
+                self.open_program(program)
+            }
             propsheet::Event::Page(_, form::Event::Pressed(id)) => match id {
                 pages::EDIT_FILE => self.edit_file(),
                 propsheet::RESTORE => {

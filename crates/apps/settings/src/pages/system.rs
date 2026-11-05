@@ -1,10 +1,10 @@
 //! Sound, Notifications, Power, Startup, Remote Desktop, Privacy, Advanced and Backup.
 
 use super::{
-    ADD, Area, BACKUP_EXPORT, BACKUP_IMPORT, BACKUP_STATUS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY,
-    EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE, THUMBNAILERS, THUMBS, THUMBS_CLEAR,
-    THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, X, button, choice, combo, edit, ends_track, field,
-    group, list, locations, spin, time,
+    ADD, AUDIO_DEVICES, Area, BACKUP_EXPORT, BACKUP_IMPORT, BACKUP_STATUS, DEBUG_IN_CAPTURES,
+    DEBUG_OVERLAY, EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE, THUMBNAILERS, THUMBS,
+    THUMBS_CLEAR, THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, X, button, choice, combo, edit,
+    ends_track, field, group, list, locations, spin, time,
 };
 use crate::model::{FRAME_RATES, GLASS_NOTIFY_STYLES, REMOTE_ENCODERS, REMOTE_QUALITIES};
 use crate::notifypage;
@@ -187,27 +187,44 @@ pub fn backup(a: Area) -> Form {
     ])
 }
 
-/// The sound theme picked from `sound_themes`, the bell and the volume's reach.
+/// The button that opens Sounds and Audio Devices, the sound theme picked from `sound_themes`, the bell and
+/// the volume's reach.
 pub fn sound(a: Area, sound_themes: &[String]) -> Form {
     Form::new(vec![
-        group(a, "sound_theme_group", 44, 52, "Sound Theme"),
-        Item::label_at(SOUND_CONTROLS[0], GX, 70, 80, "Sound th&eme:"),
+        Item::new(
+            "audio_devices_note",
+            Rect::new(X, 44, a.w - 118, 2 * LINE_H),
+            Control::Lines(vec![
+                "To pick speakers and microphones or".into(),
+                "set each program's volume, open".into(),
+            ]),
+        ),
+        Item::button_at(
+            AUDIO_DEVICES,
+            a.right() - 110,
+            44,
+            110,
+            "Au&dio Devices...",
+            true,
+        ),
+        group(a, "sound_theme_group", 80, 52, "Sound Theme"),
+        Item::label_at(SOUND_CONTROLS[0], GX, 106, 80, "Sound th&eme:"),
         combo(
             SOUND_CONTROLS[1],
             GX + 84,
-            66,
+            102,
             a.combo(200),
             sound_themes,
             sound_themes.len().clamp(1, 8),
         ),
-        group(a, "sound_events_group", 106, 48, "Play Sounds"),
-        Item::check(BELL, GX, 128, "Play a &sound when a program rings the bell"),
-        group(a, "volume_group", 164, 74, "Volume"),
-        Item::check(ALLOW_BOOST, GX, 186, "Allow volume &above 100%"),
+        group(a, "sound_events_group", 142, 48, "Play Sounds"),
+        Item::check(BELL, GX, 164, "Play a &sound when a program rings the bell"),
+        group(a, "volume_group", 200, 74, "Volume"),
+        Item::check(ALLOW_BOOST, GX, 222, "Allow volume &above 100%"),
         Item::label_at(
             "allow_boost_note",
             GX + 18,
-            206,
+            242,
             a.gw() - 18,
             "Sliders and the volume keys go on to 150%.",
         ),
