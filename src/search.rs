@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(rank("lock screen"), [Setting::Page(Page::ScreenSaverLock)]);
         assert_eq!(rank("hot corner"), [Setting::Page(Page::Switcher)]);
         assert_eq!(rank("notifications"), [Setting::Page(Page::Sound)]);
-        assert_eq!(rank("clipboard"), [Setting::Page(Page::Advanced)]);
+        assert_eq!(rank("clipboard"), [Setting::Page(Page::Privacy)]);
         assert_eq!(rank("print queue"), [Setting::App(2)]);
         assert_eq!(rank("firmware"), [Setting::App(3)]);
         assert_eq!(rank("grayscale"), [Setting::Page(Page::MagnifierFilters)]);

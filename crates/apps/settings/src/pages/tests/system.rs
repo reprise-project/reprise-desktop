@@ -151,13 +151,7 @@ fn the_advanced_page_geometry() {
     );
     assert_eq!(rect(&s, p, "task_manager"), Rect::new(20, 60, 358, 20));
     assert_eq!(rect(&s, p, "adaptive_sync"), Rect::new(20, 88, 13, 13));
-    assert_eq!(rect(&s, p, "clipboard_history"), Rect::new(20, 110, 13, 13));
     assert_eq!(rect(&s, p, "screenshot_save"), Rect::new(20, 132, 13, 13));
-    assert_eq!(rect(&s, p, "recent_files"), Rect::new(20, 154, 13, 13));
-    assert_eq!(rect(&s, p, "capture_border"), Rect::new(20, 176, 13, 13));
-    assert_eq!(rect(&s, p, PRIVACY_LOCATION), Rect::new(20, 198, 13, 13));
-    assert_eq!(locations(Area::MIN), Rect::new(20, 220, 275, 46));
-    assert_eq!(rect(&s, p, FORGET), Rect::new(303, 220, 75, 23));
     assert!(
         s.pages[p.index()].item("desktop_icons").is_none(),
         "desktop_icons is on Background"
@@ -174,6 +168,62 @@ fn the_advanced_page_geometry() {
     for id in ["banner_label", "startmenu_banner", "start_icon"] {
         assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Taskbar");
     }
+    inside_page(&s, p);
+}
+
+#[test]
+fn privacy_holds_location_history_and_the_sharing_border() {
+    for id in [
+        PRIVACY_LOCATION,
+        FORGET,
+        "recent_files",
+        "clipboard_history",
+        "capture_border",
+    ] {
+        assert_moved(id, Page::Advanced, Page::Privacy);
+    }
+    assert_eq!(
+        keys_on(&built(), Page::Privacy),
+        [
+            "clipboard.history",
+            "privacy.recent_files",
+            "privacy.location",
+            "privacy.capture_border"
+        ]
+    );
+    let advanced = keys_on(&built(), Page::Advanced);
+    for k in [
+        "clipboard.history",
+        "privacy.recent_files",
+        "privacy.location",
+        "privacy.capture_border",
+    ] {
+        assert!(
+            !advanced.contains(&k.to_string()),
+            "{k} is not reset on Advanced"
+        );
+    }
+    for k in [
+        "location",
+        "clipboard",
+        "recent files",
+        "history",
+        "screen sharing",
+    ] {
+        assert!(Page::Privacy.keywords().contains(&k), "{k}");
+        assert!(!Page::Advanced.keywords().contains(&k), "{k}");
+    }
+    let s = built();
+    let p = Page::Privacy;
+    assert_eq!(rect(&s, p, "location_group"), Rect::new(20, 44, 358, 168));
+    assert_eq!(rect(&s, p, PRIVACY_LOCATION), Rect::new(GX, 66, 13, 13));
+    assert_eq!(locations(Area::MIN), Rect::new(GX, 88, 251, 114));
+    assert_eq!(rect(&s, p, FORGET), Rect::new(291, 88, 75, 23));
+    assert_eq!(rect(&s, p, "history_group"), Rect::new(20, 222, 358, 70));
+    assert_eq!(rect(&s, p, "clipboard_history"), Rect::new(GX, 266, 13, 13));
+    assert_eq!(rect(&s, p, "sharing_group"), Rect::new(20, 302, 358, 48));
+    assert_eq!(rect(&s, p, "capture_border"), Rect::new(GX, 324, 13, 13));
+    assert_eq!(LOCATION_COLUMNS[1].0, "Answer");
     inside_page(&s, p);
 }
 
@@ -366,7 +416,7 @@ fn the_location_check_and_list() {
     let mut s = built();
     let mut got = Settings::default();
     assert!(got.location, "programs may ask by default");
-    tick(&mut s, &mut got, Page::Advanced, PRIVACY_LOCATION, false);
+    tick(&mut s, &mut got, Page::Privacy, PRIVACY_LOCATION, false);
     assert!(!got.location);
     let mut lv = new_location_list();
     fit_location_columns(
@@ -375,7 +425,7 @@ fn the_location_check_and_list() {
         locations(Area::MIN),
     );
     let widths: Vec<i32> = lv.columns.iter().map(|c| c.width).collect();
-    assert_eq!(widths, [185, 70]);
+    assert_eq!(widths, [161, 70]);
     fill_locations(
         &mut lv,
         &[("Maps".into(), true), ("org.example.Weather".into(), false)],

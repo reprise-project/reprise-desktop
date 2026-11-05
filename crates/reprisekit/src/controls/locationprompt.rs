@@ -32,7 +32,7 @@ impl Fields {
     }
 }
 
-const DETAIL_TEXT: &str = "A remembered choice can be forgotten on the Advanced page of \
+const DETAIL_TEXT: &str = "A remembered choice can be forgotten on the Privacy page of \
                            Reprise Settings.";
 
 /// What the user answered.

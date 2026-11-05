@@ -1,4 +1,4 @@
-//! Sound, Power, Startup, Remote Desktop, Advanced and Backup.
+//! Sound, Power, Startup, Remote Desktop, Privacy, Advanced and Backup.
 
 use super::{
     ADD, Area, BACKUP_EXPORT, BACKUP_IMPORT, BACKUP_STATUS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY,
@@ -16,10 +16,8 @@ use reprisekit::controls::listbox::{self, ListBox};
 use reprisekit::raster::Rect;
 use reprisekit::trackbar::TrackBar;
 
-/// The task manager, the switches with no page of their own, the location
-/// answers programs were given (a [`ListView`](reprisekit::controls::listview::ListView) the host draws over the page at
-/// [`locations`]), the thumbnail cache and the config file itself. The terminal is picked on
-/// Default Programs. The list takes the page's extra height.
+/// The task manager, the switches with no page of their own, the thumbnail cache and the
+/// config file itself. The terminal is picked on Default Programs.
 pub fn advanced(a: Area) -> Form {
     let dh = a.dh;
     let mut items = Vec::new();
@@ -31,42 +29,17 @@ pub fn advanced(a: Area) -> Form {
         a.w,
         "Task &manager (empty runs Task Manager):",
     ));
-    let checks = [
-        (
-            "adaptive_sync",
-            "&Variable refresh rate (adaptive sync) where supported",
-        ),
-        (
-            "clipboard_history",
-            "Keep a &clipboard history (Super+V opens it)",
-        ),
-        (
-            "screenshot_save",
-            "Save each screenshot as a file in &Pictures/Screenshots",
-        ),
-        (
-            "recent_files",
-            "Show recently used &files in menus and file dialogs",
-        ),
-        (
-            "capture_border",
-            "Show a red &border around what is being shared",
-        ),
-    ];
-    for (i, (id, text)) in checks.into_iter().enumerate() {
-        items.push(Item::check(id, X, 88 + 22 * i as i32, text));
-    }
     items.push(Item::check(
-        PRIVACY_LOCATION,
+        "adaptive_sync",
         X,
-        198,
-        "Let programs ask for your &location",
+        88,
+        "&Variable refresh rate (adaptive sync) where supported",
     ));
-    items.push(button(
-        FORGET,
-        a.right() - BUTTON_W,
-        locations(a).y,
-        "F&orget",
+    items.push(Item::check(
+        "screenshot_save",
+        X,
+        132,
+        "Save each screenshot as a file in &Pictures/Screenshots",
     ));
     items.push(Item::check(
         DEBUG_OVERLAY,
@@ -138,6 +111,42 @@ pub fn advanced(a: Area) -> Form {
         "&Edit File...",
     ));
     Form::new(items)
+}
+
+/// The location check, its answers (a `ListView` the host draws at [`locations`]) with
+/// Forget, the recent files and clipboard histories, and the border around a shared screen.
+pub fn privacy(a: Area) -> Form {
+    let dh = a.dh;
+    Form::new(vec![
+        group(a, "location_group", 44, 168 + dh, "Location"),
+        Item::check(
+            PRIVACY_LOCATION,
+            GX,
+            66,
+            "Let programs ask for your &location",
+        ),
+        button(FORGET, a.gright() - BUTTON_W, locations(a).y, "F&orget"),
+        group(a, "history_group", 222 + dh, 70, "History"),
+        Item::check(
+            "recent_files",
+            GX,
+            244 + dh,
+            "Show recently used &files in menus and file dialogs",
+        ),
+        Item::check(
+            "clipboard_history",
+            GX,
+            266 + dh,
+            "Keep a &clipboard history (Super+V opens it)",
+        ),
+        group(a, "sharing_group", 302 + dh, 48, "Screen Sharing"),
+        Item::check(
+            "capture_border",
+            GX,
+            324 + dh,
+            "Show a red &border around what is being shared",
+        ),
+    ])
 }
 
 /// What Export and Import carry, one line per [`ENTRIES`](crate::backup::ENTRIES) row, what they

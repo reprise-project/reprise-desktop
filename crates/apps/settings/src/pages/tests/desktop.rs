@@ -423,7 +423,7 @@ fn the_taskbar_page_geometry() {
     }
     assert!(
         s.pages[p.index()].item("recent_files").is_none(),
-        "recent_files is on Advanced"
+        "recent_files is on Privacy"
     );
     assert_eq!(
         rect(&s, p, "start_group"),

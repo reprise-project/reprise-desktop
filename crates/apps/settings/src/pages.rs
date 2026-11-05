@@ -40,8 +40,8 @@ pub use lists::{
     show_locations_loading,
 };
 pub use system::{
-    REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup, power, remote_desktop,
-    selected_client, show_remote, sound, startup,
+    REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup, power, privacy,
+    remote_desktop, selected_client, show_remote, sound, startup,
 };
 
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).
@@ -202,13 +202,13 @@ pub fn list(a: Area) -> Rect {
 }
 pub const COLUMNS: [(&str, i32); 3] = [("Startup Item", 164), ("Command", 114), ("Location", 60)];
 
-/// The Advanced page's list of remembered location answers, under its check,
-/// with Forget beside it. Three rows show at [`Area::MIN`]; the rest scroll,
-/// so Program takes what Location and the scrollbar leave ([`fit_location_columns`]).
+/// The Privacy page's list of remembered location answers, under its check,
+/// with Forget beside it. It takes the page's extra height; rows past its foot scroll,
+/// so Program takes what Answer and the scrollbar leave ([`fit_location_columns`]).
 pub fn locations(a: Area) -> Rect {
-    Rect::new(X, 220, a.w - BUTTON_W - 8, 46 + a.dh)
+    Rect::new(GX, 88, a.gw() - BUTTON_W - 8, 114 + a.dh)
 }
-pub const LOCATION_COLUMNS: [(&str, i32); 2] = [("Program", 185), ("Location", 70)];
+pub const LOCATION_COLUMNS: [(&str, i32); 2] = [("Program", 161), ("Answer", 70)];
 pub const PRIVACY_LOCATION: &str = "privacy_location";
 /// The Advanced page's debug overlay check and the one indented under it, greyed while the overlay is off.
 pub const DEBUG_OVERLAY: &str = "debug_overlay";

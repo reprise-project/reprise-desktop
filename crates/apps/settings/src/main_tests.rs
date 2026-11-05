@@ -133,10 +133,10 @@ fn tab(a: &mut SettingsApp, ctx: &Ctx, back: bool) {
 }
 
 #[test]
-fn the_location_list_takes_its_tab_stop_after_its_check_on_the_advanced_page() {
-    let mut a = app("advanced-tab");
+fn the_location_list_takes_its_tab_stop_after_its_check_on_the_privacy_page() {
+    let mut a = app("privacy-tab");
     let ctx = test_ctx();
-    a.open_page(Page::Advanced, None);
+    a.open_page(Page::Privacy, None);
     assert!(
         !a.locations_focus,
         "opening the page leaves the list unfocused"
@@ -281,6 +281,51 @@ fn the_search_field_and_a_side_list_never_hold_the_keyboard_together() {
     assert_eq!(holders(&a), SIDE_LIST, "Default Programs opens on its list");
     press_control(&mut a, &mut ctx, defaultspage::TERMINAL_ARGS, BTN_RIGHT);
     assert_eq!(holders(&a), PAGE, "a right press in the arguments field");
+}
+
+/// Privacy's location list sits mid-form, after its check: the field and the list hand the
+/// keyboard over as on the other pages, but opening the page never gives it to the list.
+#[test]
+fn the_search_field_and_the_location_list_never_hold_the_keyboard_together() {
+    let mut a = app("search-location-list");
+    let mut ctx = test_ctx();
+    a.open_page(Page::Privacy, None);
+    a.locations_due = false;
+    pages::fill_locations(&mut a.locations, &[("Maps".into(), true)]);
+
+    press_search_field(&mut a, &mut ctx);
+    assert_eq!(holders(&a), FIELD, "a press in the field");
+    press_side_row(&mut a, &mut ctx, 0, 1000);
+    assert_eq!(holders(&a), SIDE_LIST, "a press on the location list");
+
+    press_search_field(&mut a, &mut ctx);
+    assert_eq!(
+        holders(&a),
+        FIELD,
+        "a press in the field takes it from the list"
+    );
+
+    let tab_sym = reprisekit::textedit::keysym::TAB;
+    ctrl_key(&mut a, &ctx, tab_sym, true);
+    assert_ne!(registry::open(&a.sheet), Page::Privacy);
+    ctrl_key(&mut a, &ctx, u32::from(b'f'), false);
+    assert_eq!(holders(&a), FIELD, "Ctrl+F on the page before Privacy");
+    ctrl_key(&mut a, &ctx, tab_sym, false);
+    assert_eq!(registry::open(&a.sheet), Page::Privacy);
+    assert!(
+        !holders(&a)[1],
+        "Ctrl+Tab from the field: the list is not the page's first stop"
+    );
+
+    ctrl_key(&mut a, &ctx, u32::from(b'f'), false);
+    assert_eq!(holders(&a), FIELD, "Ctrl+F on Privacy");
+    tab(&mut a, &ctx, true);
+    assert_eq!(holders(&a), PAGE, "Shift+Tab off the field");
+    assert_eq!(
+        focused_id(&a),
+        Some(propsheet::CANCEL),
+        "Privacy's last stop (Apply is greyed)"
+    );
 }
 
 #[test]
@@ -1377,6 +1422,17 @@ fn focus_on_a_moved_control_opens_its_new_page() {
         Some((Page::TextKeys, Some("mouse_keys".into())))
     );
     assert_eq!(
+        args(&["--page", "advanced", "--focus", "clipboard_history"]),
+        Some((Page::Privacy, Some("clipboard_history".into())))
+    );
+    let mut a = app("moved-focus");
+    a.open_page(Page::Privacy, Some("clipboard_history"));
+    let page = a.sheet.open();
+    assert_eq!(
+        page.focus().map(|i| page.items[i].id),
+        Some("clipboard_history")
+    );
+    assert_eq!(
         args(&["--page", "sound", "--focus", "nowhere"]),
         Some((Page::Sound, Some("nowhere".into()))),
         "an id no page holds leaves the page as named"
@@ -1449,7 +1505,7 @@ fn an_unreadable_config_is_reported() {
 }
 
 fn forget_enabled(app: &SettingsApp) -> bool {
-    match &app.sheet.pages[Page::Advanced.index()]
+    match &app.sheet.pages[Page::Privacy.index()]
         .item(pages::FORGET)
         .unwrap()
         .control
@@ -1476,9 +1532,9 @@ fn location_answers_list_the_prompts_then_the_portals() {
     );
 }
 
-/// Show the Advanced page and wait for the location read it starts.
-fn read_locations_on_advanced(app: &mut SettingsApp) {
-    app.sheet.tabs.open = Page::Advanced.index();
+/// Show the Privacy page and wait for the location read it starts.
+fn read_locations_on_privacy(app: &mut SettingsApp) {
+    app.sheet.tabs.open = Page::Privacy.index();
     app.ensure_locations();
     let found = app
         .locating
@@ -1490,7 +1546,7 @@ fn read_locations_on_advanced(app: &mut SettingsApp) {
 }
 
 #[test]
-fn the_location_list_is_read_off_the_loop_once_the_advanced_page_shows() {
+fn the_location_list_is_read_off_the_loop_once_the_privacy_page_shows() {
     let dir = tmp("location-lazy");
     let file = dir.join("location.toml");
     std::fs::write(&file, "[apps]\n\"org.example.NoSuchMaps\" = true\n").unwrap();
@@ -1500,9 +1556,9 @@ fn the_location_list_is_read_off_the_loop_once_the_advanced_page_shows() {
     app.ensure_locations();
     assert!(app.locating.is_none(), "no read while another page shows");
 
-    app.sheet.tabs.open = Page::Advanced.index();
+    app.sheet.tabs.open = Page::Privacy.index();
     app.ensure_locations();
-    assert!(app.locating.is_some(), "the Advanced page starts the read");
+    assert!(app.locating.is_some(), "the Privacy page starts the read");
     let cells: Vec<Vec<String>> = app.locations.rows.iter().map(|r| r.cells.clone()).collect();
     assert_eq!(cells, [vec!["Loading...".to_string(), String::new()]]);
     app.locations.selection.set_only(Some(0));
@@ -1535,7 +1591,7 @@ fn forget_drops_a_location_answer_from_the_file() {
     .unwrap();
     let mut app = SettingsApp::open(dir.join("config.toml"), "us".into());
     app.location_file = file.clone();
-    read_locations_on_advanced(&mut app);
+    read_locations_on_privacy(&mut app);
     let cells: Vec<Vec<String>> = app.locations.rows.iter().map(|r| r.cells.clone()).collect();
     assert_eq!(
         cells,
@@ -1838,7 +1894,27 @@ fn a_query_filters_the_list_and_enter_focuses_the_control_it_found() {
     enter(&mut a, &ctx);
     assert_eq!(registry::open(&a.sheet), Page::Advanced);
     assert_eq!(focused_id(&a), Some(pages::DEBUG_OVERLAY));
-    assert!(!a.sheet.tabs.focused && !a.locations_focus);
+    assert!(!a.sheet.tabs.focused);
+}
+
+#[test]
+fn enter_on_a_found_control_takes_the_keyboard_from_the_location_list() {
+    let (mut a, mut ctx) = (app("search-from-list"), test_ctx());
+    a.open_page(Page::Privacy, None);
+    a.locations_due = false;
+    pages::fill_locations(&mut a.locations, &[("Maps".into(), true)]);
+    press_side_row(&mut a, &mut ctx, 0, 1000);
+    assert!(a.locations_focus);
+    // "clipboard" alone is a Privacy keyword and opens the page; "keep" names the control.
+    find(&mut a, &mut ctx, "keep clipboard");
+    assert_eq!(
+        a.search_hits[Page::Privacy.index()],
+        Some(Hit::Control("clipboard_history"))
+    );
+    enter(&mut a, &ctx);
+    assert_eq!(registry::open(&a.sheet), Page::Privacy);
+    assert_eq!(focused_id(&a), Some("clipboard_history"));
+    assert_eq!(holders(&a), PAGE);
 }
 
 #[test]
