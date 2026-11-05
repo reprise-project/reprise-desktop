@@ -1,6 +1,9 @@
 //! reprise-diskusage FOLDER: a folder's entries largest first with a bar each, sizes filling in as
 //! [`reprisefs::usage::Scan`] counts. docs/programs.md covers what the window does.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod model;
 
 use model::{Line, SHARE, SIZE};

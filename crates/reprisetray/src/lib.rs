@@ -4,6 +4,9 @@
 //! The applet hands over a [`Config`] and a [`Shown`], talks to the thread through [`TrayHandle`] and
 //! drains [`Msg`]s on every wake. Row meaning, icon art and click handling stay with the applet.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 use futures_util::stream::StreamExt;
 use reprisebus::mutex::lock;
 use std::collections::HashMap;

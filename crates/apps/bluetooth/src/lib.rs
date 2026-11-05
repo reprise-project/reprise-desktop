@@ -9,6 +9,9 @@
 //! window modules own the models, and this file turns outcomes into
 //! `bz::Cmd`s and windows.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod addwiz;
 mod battery;
 mod bz;

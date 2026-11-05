@@ -1,6 +1,9 @@
 //! Task Manager: the running programs by app scope, every process with its CPU and memory, and
 //! the CPU and memory history, sampled by [`worker`] while the window shows.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod pages;
 mod procfs;
 mod sample;

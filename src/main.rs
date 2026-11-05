@@ -50,6 +50,8 @@ mod gpufence;
 mod handlers;
 #[cfg(test)]
 mod harness;
+#[cfg(test)]
+reprisebus::test_session!();
 mod heldkeys;
 mod hoverfade;
 mod icon;

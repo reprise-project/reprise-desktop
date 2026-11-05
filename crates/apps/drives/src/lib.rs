@@ -5,6 +5,9 @@
 //! `$HOME` or `/` runs low on space (`space`). No main window; the process is
 //! autostarted for the session.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod model;
 mod space;
 mod tray;

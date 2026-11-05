@@ -2,6 +2,9 @@
 //! FileChooser, AppChooser, Notification, Inhibit, Background, Wallpaper) as `org.freedesktop.impl.portal.desktop.reprise`; dialogs run in a child process (`dialog`).
 //! It serves only while Reprise is the session's compositor (see `owner`).
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod access;
 mod appchoose;
 mod appchooser;

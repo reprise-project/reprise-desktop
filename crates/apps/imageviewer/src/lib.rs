@@ -1,6 +1,9 @@
 //! Image Viewer: the pictures of a folder one at a time, fitted or zoomed, turned, full screen or
 //! as a slideshow, sent to the Recycle Bin or set as the desktop background.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod dialogs;
 mod folder;
 mod input;

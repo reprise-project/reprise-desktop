@@ -2,6 +2,9 @@
 //! autostarted for the session where kdeconnectd is installed, and its icon shows only while
 //! kdeconnectd runs.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod pick;
 mod tray;
 
