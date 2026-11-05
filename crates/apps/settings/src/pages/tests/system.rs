@@ -851,7 +851,12 @@ fn the_remote_desktop_page_geometry() {
     assert_eq!(
         rows(&s, p, "frame_rate"),
         (
-            vec!["30 frames per second".into(), "60 frames per second".into()],
+            vec![
+                "30 frames per second".into(),
+                "60 frames per second".into(),
+                "120 frames per second".into(),
+                "144 frames per second".into(),
+            ],
             1
         ),
         "60 unless set"

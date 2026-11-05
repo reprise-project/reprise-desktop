@@ -170,7 +170,7 @@ journal names the invalid ones.
 | --- | --- | --- |
 | `port` | 1 to 65535, the TCP port on every interface. A change moves the listener at once and ends every connected session; a port that can't be bound is tried again on the next save | `3389` |
 | `quality` | `"speed"`, `"balanced"`, `"sharp"`: H.264 quantizer 30, 25 or 21. Balanced and Sharp send full colour (AVC444) to a client that offers it, Speed reduced colour (AVC420) | `"balanced"` |
-| `frame_rate` | `30` or `60`, frames a second at most | `60` |
+| `frame_rate` | `30`, `60`, `120` or `144`, frames a second at most. The screen sends no more frames than its refresh rate, so the rate a client gets is the lower of the two | `60` |
 | `encoder` | `"auto"`: the first of VA-API, NVENC, Vulkan and x264 that codes a test frame at start. `"vaapi"`, `"nvenc"`, `"vulkan"`, `"software"` (x264) pick one; one that doesn't work here falls back to `"auto"` with a journal line, and one that fails while coding hands over to the next that works, then to RemoteFX bitmaps. `"none"` sends RemoteFX bitmaps only | `"auto"` |
 | `sound` | `true` plays this computer's sound on the client, not here; `false` plays nothing there | `true` |
 | `max_viewers` | 1 to 16, how many computers may be connected at once, counting those still logging in; one more is closed before it logs in, as is a third from an address with two logging in. Read as each computer connects | `4` |

@@ -205,7 +205,7 @@ pub struct Settings {
     /// `[storage] low_space_percent`, 0 to [`repriseconf::LOW_SPACE_MAX`]; 0 turns the warning off.
     pub low_space_percent: i64,
     /// `[remote_desktop] port`, `quality` (one of [`REMOTE_QUALITIES`]' values), `frame_rate`
-    /// (30 or 60), `encoder` (one of [`REMOTE_ENCODERS`]' values), `sound` and `lock_on_leave`.
+    /// (30, 60, 120 or 144), `encoder` (one of [`REMOTE_ENCODERS`]' values), `sound` and `lock_on_leave`.
     pub remote_port: i64,
     pub remote_quality: String,
     pub remote_frame_rate: i64,
