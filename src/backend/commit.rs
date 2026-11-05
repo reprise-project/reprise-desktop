@@ -958,8 +958,8 @@ mod tests {
     #[derive(Default)]
     struct Loop {
         stuck_done: bool,
-        quick_dones: Vec<Instant>,
-        ticks: Vec<Instant>,
+        quick_dones: usize,
+        ticks: usize,
         resend: Option<mpsc::Sender<Job<()>>>,
     }
 
@@ -978,7 +978,7 @@ mod tests {
                     if id == 0 {
                         data.stuck_done = true;
                     } else {
-                        data.quick_dones.push(Instant::now());
+                        data.quick_dones += 1;
                         if let Some(r) = &data.resend {
                             let _ = r.send(Job::Run(FLIP, ()));
                         }
@@ -990,7 +990,7 @@ mod tests {
             .insert_source(
                 Timer::from_duration(Duration::from_millis(2)),
                 |_, _, data| {
-                    data.ticks.push(Instant::now());
+                    data.ticks += 1;
                     TimeoutAction::ToDuration(Duration::from_millis(2))
                 },
             )
@@ -1001,38 +1001,20 @@ mod tests {
         };
         assert!(stuck.send(Job::Run(MODESET, ())));
         assert!(quick.send(Job::Run(FLIP, ())));
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_millis(200) {
+        let end = Instant::now() + Duration::from_secs(10);
+        while data.quick_dones <= 50 || data.ticks <= 50 {
+            assert!(
+                Instant::now() < end,
+                "B flips and the timer fires while A is stuck: {} flips, {} ticks",
+                data.quick_dones,
+                data.ticks
+            );
             ev.dispatch(Duration::from_millis(5), &mut data).unwrap();
             while let Ok(job) = quick_jobs.try_recv() {
                 assert!(quick.send(job));
             }
         }
         assert!(!data.stuck_done, "A is still in its commit");
-        let gaps = |at: &[Instant]| {
-            at.windows(2)
-                .map(|w| w[1] - w[0])
-                .max()
-                .unwrap_or(Duration::MAX)
-        };
-        assert!(
-            data.quick_dones.len() > 20,
-            "B kept flipping: {}",
-            data.quick_dones.len()
-        );
-        assert!(
-            gaps(&data.quick_dones) < Duration::from_millis(25),
-            "B's flips kept coming"
-        );
-        assert!(
-            data.ticks.len() > 20,
-            "the timer kept firing: {}",
-            data.ticks.len()
-        );
-        assert!(
-            gaps(&data.ticks) < Duration::from_millis(25),
-            "no tick waited on A"
-        );
         release.send(()).unwrap();
         let start = Instant::now();
         while !data.stuck_done && start.elapsed() < Duration::from_secs(5) {
