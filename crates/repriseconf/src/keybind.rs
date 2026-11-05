@@ -254,6 +254,151 @@ pub fn modifier_only(keys: &str) -> bool {
     split(keys).is_some_and(|(_, key)| MODIFIER_KEYS.iter().any(|m| key.eq_ignore_ascii_case(m)))
 }
 
+pub const WINDOWS: &str = "Windows";
+pub const DESKTOPS: &str = "Desktops";
+pub const LAUNCH: &str = "Launch and search";
+pub const SCREENSHOTS: &str = "Screenshots";
+pub const MEDIA: &str = "Media";
+pub const ACCESSIBILITY: &str = "Accessibility";
+pub const SYSTEM: &str = "System";
+pub const PROGRAMS: &str = "Programs";
+
+/// Every `[[keybinds]]` action but `spawn`: its id, the key sheet heading it is listed under and
+/// what it does in words.
+pub const ACTION_NAMES: &[(&str, &str, &str)] = &[
+    ("close", WINDOWS, "Close the window"),
+    ("cycle", WINDOWS, "Switch windows"),
+    ("cycle-app", WINDOWS, "Switch the app's windows"),
+    ("flip", WINDOWS, "Switch windows in 3D"),
+    ("maximize", WINDOWS, "Maximize"),
+    ("minimize", WINDOWS, "Minimize"),
+    ("windowmenu", WINDOWS, "Window menu"),
+    ("showdesktop", WINDOWS, "Show the desktop"),
+    ("toggleframe", WINDOWS, "Hide or show the frame"),
+    ("alwaysontop", WINDOWS, "Always on top"),
+    ("mini-view", WINDOWS, "Mini view"),
+    ("center", WINDOWS, "Centre the window"),
+    ("tab-next", WINDOWS, "Next tab"),
+    ("tab-prev", WINDOWS, "Previous tab"),
+    ("snap-left", WINDOWS, "Snap left"),
+    ("snap-right", WINDOWS, "Snap right"),
+    ("snap-up", WINDOWS, "Snap up"),
+    ("snap-down", WINDOWS, "Snap down"),
+    ("snap-layouts", WINDOWS, "Snap layouts"),
+    ("overview", WINDOWS, "Window overview"),
+    ("desktop-prev", DESKTOPS, "Previous desktop"),
+    ("desktop-next", DESKTOPS, "Next desktop"),
+    (
+        "desktop-carry-prev",
+        DESKTOPS,
+        "Take the window to the previous one",
+    ),
+    (
+        "desktop-carry-next",
+        DESKTOPS,
+        "Take the window to the next one",
+    ),
+    ("all-desktops", DESKTOPS, "Show on all desktops"),
+    ("launcher", LAUNCH, "Launcher"),
+    ("startmenu", LAUNCH, "Start menu"),
+    ("run", LAUNCH, "Run"),
+    ("task-manager", LAUNCH, "Task Manager"),
+    ("terminal", LAUNCH, "Terminal"),
+    ("clipboard-history", LAUNCH, "Clipboard history"),
+    ("emoji-picker", LAUNCH, "Emoji picker"),
+    ("color-picker", LAUNCH, "Colour picker"),
+    ("screenshot", SCREENSHOTS, "Whole screen"),
+    ("screenshot-window", SCREENSHOTS, "Window"),
+    ("screenshot-region", SCREENSHOTS, "Area"),
+    (
+        "screenshot-content",
+        SCREENSHOTS,
+        "Window without its frame",
+    ),
+    ("volume-up", MEDIA, "Volume up"),
+    ("volume-down", MEDIA, "Volume down"),
+    ("mute", MEDIA, "Mute"),
+    ("mic-mute", MEDIA, "Mute the microphone"),
+    ("brightness-up", MEDIA, "Brighter"),
+    ("brightness-down", MEDIA, "Dimmer"),
+    ("kbd-brightness-up", MEDIA, "Keyboard backlight up"),
+    ("kbd-brightness-down", MEDIA, "Keyboard backlight down"),
+    ("play-pause", MEDIA, "Play or pause"),
+    ("next", MEDIA, "Next track"),
+    ("prev", MEDIA, "Previous track"),
+    ("stop", MEDIA, "Stop"),
+    ("wifi", MEDIA, "Wireless on or off"),
+    ("zoom-in", ACCESSIBILITY, "Zoom in"),
+    ("zoom-out", ACCESSIBILITY, "Zoom out"),
+    ("zoom-reset", ACCESSIBILITY, "Zoom back"),
+    ("color-filter", ACCESSIBILITY, "Colour filter"),
+    ("lock", SYSTEM, "Lock"),
+    ("logoff", SYSTEM, "Log off"),
+    ("turnoff", SYSTEM, "Turn off"),
+    ("exit", SYSTEM, "Quit Reprise"),
+    ("do-not-disturb", SYSTEM, "Do not disturb"),
+    ("night-light", SYSTEM, "Night light"),
+    ("focus-taskbar", SYSTEM, "Go to the taskbar"),
+    ("focus-tray", SYSTEM, "Go to the notification area"),
+    ("next-layout", SYSTEM, "Next keyboard layout"),
+];
+
+/// The heading and plain name of action `action`; None for `spawn` and an unknown id.
+pub fn describe(action: &str) -> Option<(&'static str, &'static str)> {
+    (ACTION_NAMES.iter())
+        .find(|(id, _, _)| *id == action)
+        .map(|&(_, group, what)| (group, what))
+}
+
+/// Keysym `sym` as a key cap names it: a letter in capitals, a typed sign as
+/// itself, a named key in words ("Page Down", "Print").
+pub fn key_text(sym: u32) -> String {
+    if let Some(c) = char::from_u32(sym).filter(|_| (0x21..=0x7e).contains(&sym)) {
+        return c.to_ascii_uppercase().to_string();
+    }
+    let name = key_name(sym).unwrap_or_else(|| format!("{sym:#x}"));
+    let fixed = match name.as_str() {
+        "Return" | "return" => "Enter",
+        "space" => "Space",
+        "Escape" | "escape" => "Esc",
+        "Sys_Req" | "sys_req" => "SysRq",
+        "Prior" => "Page Up",
+        "Next" => "Page Down",
+        "Super_L" | "super_l" => "Left Super",
+        "Super_R" | "super_r" => "Right Super",
+        "Alt_L" | "alt_l" => "Left Alt",
+        "Alt_R" | "alt_r" => "Right Alt",
+        "Shift_L" | "shift_l" => "Left Shift",
+        "Shift_R" | "shift_r" => "Right Shift",
+        "Control_L" | "control_l" => "Left Ctrl",
+        "Control_R" | "control_r" => "Right Ctrl",
+        _ => "",
+    };
+    if !fixed.is_empty() {
+        return fixed.to_string();
+    }
+    let name = name.strip_prefix("XF86").unwrap_or(&name);
+    // Underscores and case steps split words: "Page_Down", "AudioRaiseVolume".
+    let mut out = String::new();
+    let mut prev: Option<char> = None;
+    for c in name.chars() {
+        if c == '_' {
+            out.push(' ');
+        } else {
+            if c.is_uppercase() && prev.is_some_and(char::is_lowercase) {
+                out.push(' ');
+            }
+            out.push(c);
+        }
+        prev = Some(c);
+    }
+    let mut chars = out.chars();
+    chars
+        .next()
+        .map(|f| f.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,6 +560,36 @@ mod tests {
             .filter(|&(k, _)| k != "Super+Tab")
             .collect();
         assert_eq!(run(&old), DEFAULTS);
+    }
+
+    #[test]
+    fn every_action_has_a_heading_and_a_plain_name() {
+        assert_eq!(
+            describe("toggleframe"),
+            Some((WINDOWS, "Hide or show the frame"))
+        );
+        assert_eq!(describe("exit"), Some((SYSTEM, "Quit Reprise")));
+        assert_eq!(
+            describe("desktop-carry-prev"),
+            Some((DESKTOPS, "Take the window to the previous one"))
+        );
+        assert_eq!(describe("spawn"), None);
+        let headings = [
+            WINDOWS,
+            DESKTOPS,
+            LAUNCH,
+            SCREENSHOTS,
+            MEDIA,
+            ACCESSIBILITY,
+            SYSTEM,
+            PROGRAMS,
+        ];
+        let mut ids = std::collections::HashSet::new();
+        for (id, heading, plain) in ACTION_NAMES {
+            assert!(headings.contains(heading), "{id}: {heading}");
+            assert!(!plain.is_empty(), "{id}");
+            assert!(ids.insert(id), "{id} is listed twice");
+        }
     }
 
     #[test]

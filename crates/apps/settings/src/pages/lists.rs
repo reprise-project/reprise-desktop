@@ -73,7 +73,7 @@ pub fn fit_shortcut_columns(
 }
 
 /// Refill `lv` from `s` in [`crate::model::row`]'s order: the desktop's binds
-/// (a spawn shows its command after the action), each program shortcut as
+/// by [`crate::model::action_text`], each program shortcut as
 /// "Program: description", then each program refused one. `name` gives a
 /// program's name for its app id.
 pub fn fill_shortcuts(lv: &mut ListView, s: &Settings, name: &dyn Fn(&str) -> String) {
@@ -82,12 +82,11 @@ pub fn fill_shortcuts(lv: &mut ListView, s: &Settings, name: &dyn Fn(&str) -> St
         cells: vec![keys, what],
     };
     let binds = s.shortcuts.iter().map(|sc| {
-        let what = if sc.action == "spawn" {
-            format!("spawn {}", sc.command)
-        } else {
-            sc.action.clone()
-        };
-        row(sc.keys.clone(), what)
+        let command = (sc.action == "spawn").then_some(sc.command.as_str());
+        row(
+            sc.keys.clone(),
+            crate::model::action_text(&sc.action, command),
+        )
     });
     let programs = s.programs.iter().map(|p| {
         let keys = if p.keys.is_empty() { "None" } else { &p.keys };
