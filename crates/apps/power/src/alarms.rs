@@ -76,6 +76,7 @@ mod tests {
                 percent,
                 ..Battery::default()
             }),
+            limit: None,
         }
     }
 

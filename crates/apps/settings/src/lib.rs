@@ -13,7 +13,6 @@ mod backgroundhost;
 mod backgroundpage;
 mod backup;
 mod backuphost;
-mod chargehost;
 mod colorhost;
 mod configwatch;
 mod cursors;
@@ -375,12 +374,6 @@ struct SettingsApp {
     notify_names: HashMap<String, String>,
     notify_fresh: bool,
 
-    /// UPower's battery charge limit, read each time the Power page opens (`charge_seen`);
-    /// `charging` holds the read or toggle under way.
-    charge: Option<reprisebus::charge::ChargeLimit>,
-    charge_seen: bool,
-    charging: Option<Receiver<chargehost::Charged>>,
-
     /// The Remote Desktop server as last read; `remote_job` holds the read or act under way,
     /// an act while `remote_acting`.
     remote: remotehost::Remote,
@@ -522,7 +515,6 @@ impl SettingsApp {
                 Page::Tablet => {
                     tabletpage::page(a, &self.pads, self.pad_picked, &self.want.tablet_pads)
                 }
-                Page::Power => pages::power(a, self.charge.as_ref()),
                 _ => registry::build(p, &src, a),
             };
             self.sheet.pages[p.index()].take_layout(&template, offset);
@@ -625,9 +617,6 @@ impl SettingsApp {
             notify_seen: Vec::new(),
             notify_names: HashMap::new(),
             notify_fresh: false,
-            charge: None,
-            charge_seen: false,
-            charging: None,
             remote: remotehost::Remote::default(),
             remote_job: None,
             remote_acting: false,
@@ -898,7 +887,6 @@ impl App for SettingsApp {
         }
         self.ensure_defaults();
         self.ensure_locations();
-        self.ensure_charge();
         self.ensure_remote();
         if win == repriseapp::MAIN
             && !self.saver_ticking
