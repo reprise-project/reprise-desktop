@@ -291,7 +291,7 @@ async fn run<L: Leave + 'static>(
         }
         match ended {
             Ok(()) => log::info!("{peer}: disconnected"),
-            Err(e) => log::info!("{peer}: disconnected: {e:#}"),
+            Err(e) => log::info!("{peer}: disconnected: {}", e.report()),
         }
     }
     if check.accepted() {

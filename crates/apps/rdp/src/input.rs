@@ -6,7 +6,7 @@ use crate::geometry::{self, Region};
 use crate::keymap::{self, Locks, Scancodes, Utf16};
 use crate::portal::Grant;
 use ironrdp_pdu::input::fast_path::SynchronizeFlags;
-use ironrdp_server::{KeyboardEvent, MouseEvent, RdpServerInputHandler};
+use ironrdp_server::{KeyboardEvent, MouseButton, MouseEvent, RdpServerInputHandler};
 use reis::PendingRequestResult;
 use reis::ei;
 use reis::event::{DeviceCapability, EiEvent, EiEventConverter};
@@ -24,6 +24,17 @@ const BTN_RIGHT: u32 = 0x111;
 const BTN_MIDDLE: u32 = 0x112;
 const BTN_SIDE: u32 = 0x113;
 const BTN_EXTRA: u32 = 0x114;
+
+fn evdev_button(button: MouseButton) -> Option<u32> {
+    match button {
+        MouseButton::Left => Some(BTN_LEFT),
+        MouseButton::Right => Some(BTN_RIGHT),
+        MouseButton::Middle => Some(BTN_MIDDLE),
+        MouseButton::X1 => Some(BTN_SIDE),
+        MouseButton::X2 => Some(BTN_EXTRA),
+        _ => None,
+    }
+}
 
 /// xkb's Lock and Mod2 bits in a modifier mask: Caps Lock and Num Lock in every keymap.
 const MOD_LOCK: u32 = 1 << 1;
@@ -287,16 +298,15 @@ impl RdpServerInputHandler for Input {
                 self.moves.lock().unwrap().moved((x, y), now());
                 self.send(Event::Move(x, y));
             }
-            MouseEvent::LeftPressed => self.button(BTN_LEFT, true),
-            MouseEvent::LeftReleased => self.button(BTN_LEFT, false),
-            MouseEvent::RightPressed => self.button(BTN_RIGHT, true),
-            MouseEvent::RightReleased => self.button(BTN_RIGHT, false),
-            MouseEvent::MiddlePressed => self.button(BTN_MIDDLE, true),
-            MouseEvent::MiddleReleased => self.button(BTN_MIDDLE, false),
-            MouseEvent::Button4Pressed => self.button(BTN_SIDE, true),
-            MouseEvent::Button4Released => self.button(BTN_SIDE, false),
-            MouseEvent::Button5Pressed => self.button(BTN_EXTRA, true),
-            MouseEvent::Button5Released => self.button(BTN_EXTRA, false),
+            MouseEvent::Button {
+                button, pressed, ..
+            }
+            | MouseEvent::ButtonRel {
+                button, pressed, ..
+            } => match evdev_button(button) {
+                Some(code) => self.button(code, pressed),
+                None => log::debug!("{button:?} is not sent"),
+            },
             MouseEvent::VerticalScroll { value } => self.send(Event::Wheel(0, wheel(value))),
             MouseEvent::Scroll { x, y } => {
                 let (dx, dy) = (self.wheel_x.add(x), -self.wheel_y.add(y));
@@ -306,6 +316,7 @@ impl RdpServerInputHandler for Input {
             }
             MouseEvent::HorizontalScroll { value } => self.send(Event::Wheel(i32::from(value), 0)),
             MouseEvent::RelMove { .. } => log::debug!("relative pointer motion is not sent"),
+            other => log::debug!("{other:?} is not sent"),
         }
     }
 }
@@ -983,7 +994,12 @@ mod tests {
             extended: false,
             extended1: false,
         });
-        input.mouse(MouseEvent::LeftPressed);
+        input.mouse(MouseEvent::Button {
+            x: 0,
+            y: 0,
+            button: MouseButton::Left,
+            pressed: true,
+        });
         input.keyboard(KeyboardEvent::UnicodePressed(0xE9));
         drop(input);
         let mut sent = Vec::new();

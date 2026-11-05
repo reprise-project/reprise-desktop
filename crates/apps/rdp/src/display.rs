@@ -12,10 +12,10 @@ use crate::portal::{self, Grant};
 use crate::stream::{
     self, CursorImage, DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer, Offer, SizeChange,
 };
-use anyhow::Context;
 use ironrdp_pdu::pointer::PointerPositionAttribute;
 use ironrdp_server::{
-    DesktopSize, DisplayUpdate, RGBAPointer, RdpServerDisplay, RdpServerDisplayUpdates,
+    DesktopSize, DisplayContext, DisplayUpdate, RGBAPointer, RdpServerDisplay,
+    RdpServerDisplayUpdates, ServerError, ServerErrorExt, ServerResult,
 };
 use repriseconf::remote::{EncoderChoice, Quality, RemoteDesktop};
 use std::collections::VecDeque;
@@ -149,12 +149,15 @@ impl RdpServerDisplay for Display {
         *self.told.lock().unwrap()
     }
 
-    async fn updates(&mut self) -> anyhow::Result<Box<dyn RdpServerDisplayUpdates>> {
+    async fn updates(
+        &mut self,
+        _: DisplayContext,
+    ) -> ServerResult<Box<dyn RdpServerDisplayUpdates>> {
         if self.session.is_none() {
             let picture = probed(&mut self.picture).await;
             let grant = portal::open()
                 .await
-                .map_err(|e| anyhow::anyhow!("the screen is not shared: {e}"))?;
+                .map_err(|e| ServerError::reason("the screen is not shared", e.to_string()))?;
             log::info!(
                 "sharing {} at {:?}, {}x{} logical",
                 grant.mapping_id.as_deref().unwrap_or("the screen"),
@@ -162,8 +165,10 @@ impl RdpServerDisplay for Display {
                 grant.size.0,
                 grant.size.1
             );
-            let (stream, frames, sizes) = stream::spawn(&grant, &[DRM_FORMAT_MOD_LINEAR])
-                .map_err(|e| anyhow::anyhow!("the screen stream did not start: {e}"))?;
+            let (stream, frames, sizes) =
+                stream::spawn(&grant, &[DRM_FORMAT_MOD_LINEAR]).map_err(|e| {
+                    ServerError::reason("the screen stream did not start", e.to_string())
+                })?;
             let grant = Arc::new(grant);
             if let Some(feed) = self.input.take() {
                 tokio::task::spawn_local(input::serve(
@@ -187,7 +192,7 @@ impl RdpServerDisplay for Display {
                         .map(|f| Box::new(f) as Box<dyn Encoder>)
                 }))
             })
-            .context("no encoding thread")?;
+            .map_err(|e| ServerError::io("no encoding thread", e))?;
             self.session = Some(Session {
                 _grant: grant,
                 _stream: stream,
@@ -202,8 +207,8 @@ impl RdpServerDisplay for Display {
                 self.links.clone(),
             ));
         }
-        let mut live =
-            (self.live.lock().unwrap().take()).context("the picture is already being sent")?;
+        let mut live = (self.live.lock().unwrap().take())
+            .ok_or_else(|| ServerError::reason("display", "the picture is already being sent"))?;
         live.activate();
         Ok(Box::new(Updates {
             live: Some(live),
@@ -226,7 +231,7 @@ impl Drop for Updates {
 
 #[async_trait::async_trait]
 impl RdpServerDisplayUpdates for Updates {
-    async fn next_update(&mut self) -> anyhow::Result<Option<DisplayUpdate>> {
+    async fn next_update(&mut self) -> ServerResult<Option<DisplayUpdate>> {
         match self.live.as_mut() {
             Some(live) => Ok(live.next().await),
             None => Ok(None),
@@ -870,11 +875,14 @@ impl RdpServerDisplay for Grey {
         UNSHARED
     }
 
-    async fn updates(&mut self) -> anyhow::Result<Box<dyn RdpServerDisplayUpdates>> {
+    async fn updates(
+        &mut self,
+        _: DisplayContext,
+    ) -> ServerResult<Box<dyn RdpServerDisplayUpdates>> {
         struct Nothing;
         #[async_trait::async_trait]
         impl RdpServerDisplayUpdates for Nothing {
-            async fn next_update(&mut self) -> anyhow::Result<Option<DisplayUpdate>> {
+            async fn next_update(&mut self) -> ServerResult<Option<DisplayUpdate>> {
                 std::future::pending().await
             }
         }
@@ -1160,7 +1168,7 @@ mod tests {
         let (events, events_rx) = unbounded_channel();
         let mut factory = gfx.factory();
         factory.set_sender(events);
-        let (_bridge, server) = factory.build_server_with_handle().unwrap();
+        let (_bridge, server) = gfx.open();
         server.lock().unwrap().start(0).unwrap();
         let advertise = ironrdp_egfx::pdu::GfxPdu::CapabilitiesAdvertise(
             CapabilitiesAdvertisePdu::from_typed(&[caps]),
@@ -1601,7 +1609,7 @@ mod tests {
         use ironrdp_dvc::DvcProcessor;
         use ironrdp_egfx::pdu::{CapabilitiesAdvertisePdu, CapabilitiesV81Flags, CapabilitySet};
         let gfx = Gfx::default();
-        let (_bridge, server) = gfx.factory().build_server_with_handle().unwrap();
+        let (_bridge, server) = gfx.open();
         let (mut live, frames, _sizes) = opening(&gfx);
         let start = tokio::time::Instant::now();
         frames.send(frame((4, 2), SMALL)).unwrap();
@@ -1627,7 +1635,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn the_first_resize_waits_at_most_the_negotiation_time() {
         let gfx = Gfx::default();
-        let (_bridge, _server) = gfx.factory().build_server_with_handle().unwrap();
+        let (_bridge, _server) = gfx.open();
         let (mut live, frames, _sizes) = opening(&gfx);
         let start = tokio::time::Instant::now();
         frames.send(frame((4, 2), SMALL)).unwrap();
@@ -1638,7 +1646,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_held_resize_repaints_no_frame_of_the_new_size() {
         let gfx = Gfx::default();
-        let (_bridge, _server) = gfx.factory().build_server_with_handle().unwrap();
+        let (_bridge, _server) = gfx.open();
         let (mut live, _frames, _sizes) = opening(&gfx);
         live.take(frame((4, 2), SMALL));
         assert_eq!(live.held_resize, Some((4, 2)));
