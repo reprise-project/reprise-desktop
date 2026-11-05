@@ -81,6 +81,7 @@ mod notifydnd;
 mod notifylog;
 mod notifyview;
 mod offscreen;
+mod ontopproto;
 mod outputmgmt;
 mod outputpower;
 mod overviewview;

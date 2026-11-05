@@ -468,8 +468,10 @@ another program).
 - **Updates** every second; View > Update Speed sets High (half a second),
   Normal, Low (four seconds) or Paused, and F5 refreshes at once. Nothing is
   sampled while the window is minimized.
-- The update speed, the CPU graph and the Processes columns and their widths
-  are kept in `~/.local/state/reprise/taskmgr.toml`.
+- **Options > Always On Top** keeps the window above the others; the window
+  menu's Always on Top is the same switch, and ticking either ticks both.
+- Always On Top, the update speed, the CPU graph and the Processes columns
+  and their widths are kept in `~/.local/state/reprise/taskmgr.toml`.
 
 ## User Accounts
 

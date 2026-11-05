@@ -32,6 +32,7 @@ pub mod listjob;
 mod look;
 mod menupopup;
 pub mod oneshot;
+mod ontop;
 pub mod openwith;
 mod outputmgmt;
 pub mod pathjob;
@@ -293,6 +294,9 @@ struct Host {
     tag_manager: Option<xdg_toplevel_tag_manager_v1::XdgToplevelTagManagerV1>,
     effects: Option<ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1>,
     tab_groups: Option<reprise_tabs_v1::RepriseTabsV1>,
+    on_top_manager: Option<ontop::reprise_on_top_v1::RepriseOnTopV1>,
+    /// Whether the compositor keeps the main window on top, as last asked or heard.
+    on_top: bool,
     outputs: Option<outputmgmt::Outputs>,
     inhibit_manager:
         Option<zwp_keyboard_shortcuts_inhibit_manager_v1::ZwpKeyboardShortcutsInhibitManagerV1>,

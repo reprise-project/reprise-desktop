@@ -378,10 +378,7 @@ fn sampling_stops_while_the_window_is_suspended_and_follows_the_update_speed() {
     assert_eq!(sent(&cmds), [Sent::Every(None)], "still suspended");
     t.event(MAIN, Event::Suspended(false), &mut ctx);
     assert_eq!(sent(&cmds), [Sent::Every(Some(Duration::from_millis(500)))]);
-    assert_eq!(
-        TaskMgr::menu_act(1, &[1, 3]),
-        Some(Act::Speed(Speed::Paused))
-    );
+    assert_eq!(t.menu_act(2, &[1, 3]), Some(Act::Speed(Speed::Paused)));
     t.act(Act::Speed(Speed::Paused));
     t.event(MAIN, key(keysym::F5), &mut ctx);
     assert_eq!(
@@ -395,7 +392,7 @@ fn sampling_stops_while_the_window_is_suspended_and_follows_the_update_speed() {
 fn the_view_menu_marks_the_speed_and_graph_picked() {
     let mut t = mgr();
     let marked = |t: &TaskMgr, path: &[usize]| -> Vec<bool> {
-        let tree = t.bar.menus[1].at(path).unwrap();
+        let tree = t.bar.menus[2].at(path).unwrap();
         tree.items()
             .iter()
             .map(|i| {
@@ -443,7 +440,7 @@ fn titles(t: &TaskMgr) -> Vec<String> {
 
 /// Ticks `keys` in Select Columns and presses OK.
 fn pick_columns(t: &mut TaskMgr, ctx: &mut Ctx, keys: &[&str]) {
-    t.act(TaskMgr::menu_act(1, &[4]).expect("Select Columns..."));
+    t.act(t.menu_act(2, &[4]).expect("Select Columns..."));
     let f = t.pick.as_mut().expect("Select Columns opens");
     for k in keys {
         f.set_check(k, true);
@@ -457,7 +454,7 @@ fn pick_columns(t: &mut TaskMgr, ctx: &mut Ctx, keys: &[&str]) {
 fn select_columns_opens_from_the_processes_page_only() {
     let mut ctx = ctx();
     let mut t = loaded(&mut ctx);
-    let item = |t: &TaskMgr| t.bar.menus[1].items()[4].clone();
+    let item = |t: &TaskMgr| t.bar.menus[2].items()[4].clone();
     assert!(matches!(item(&t), MenuItem::Entry { enabled: false, .. }));
     open(&mut t, &mut ctx, Page::Processes);
     assert!(matches!(item(&t), MenuItem::Entry { enabled: true, .. }));
@@ -658,6 +655,34 @@ fn end_task_on_a_program_not_responding_offers_end_now_at_once() {
         t.ending.is_empty(),
         "nothing waits on a request it cannot answer"
     );
+}
+
+#[test]
+fn always_on_top_is_ticked_kept_and_follows_the_window_menu() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("taskmgr.toml");
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    t.restore(path.clone());
+    let ticked = |t: &TaskMgr| {
+        matches!(
+            t.bar.menus[1].items()[0],
+            MenuItem::Entry { checked: true, .. }
+        )
+    };
+    assert_eq!(t.on_top(), Some(false));
+    assert!(!ticked(&t));
+    let act = t.menu_act(1, &[0]).expect("Options > Always On Top");
+    t.act(act);
+    assert!(ticked(&t) && t.on_top() == Some(true));
+    let mut again = loaded(&mut ctx);
+    again.restore(path.clone());
+    assert_eq!(again.on_top(), Some(true), "it survives a restart");
+    again.event(MAIN, Event::OnTop(false), &mut ctx);
+    assert!(!ticked(&again), "the window menu unticks it");
+    let mut third = loaded(&mut ctx);
+    third.restore(path);
+    assert_eq!(third.on_top(), Some(false), "and that is kept too");
 }
 
 #[test]

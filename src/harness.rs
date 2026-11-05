@@ -384,7 +384,7 @@ impl Harness {
 
     /// [`Harness::map_toplevel`] running `setup` between the initial commit and the first
     /// buffer.
-    fn map_toplevel_after(
+    pub fn map_toplevel_after(
         &mut self,
         c: &mut TestClient,
         app_id: &str,
@@ -613,6 +613,17 @@ impl TestClient {
             &self.qh(),
             (),
         )
+    }
+
+    /// Bind `reprise_on_top_v1`; its `changed` events land in [`ClientSide::on_top`].
+    pub fn bind_on_top(&self) -> on_top_client::reprise_on_top_v1::RepriseOnTopV1 {
+        let name = (self.side.globals.iter())
+            .find(|(_, i, _)| i == "reprise_on_top_v1")
+            .map(|(n, _, _)| *n)
+            .expect("reprise_on_top_v1 is advertised");
+        (self.side.registry.as_ref())
+            .expect("wl_registry")
+            .bind(name, 1, &self.qh(), ())
     }
 
     /// Bind `reprise_input_v1` v5 and watch the sandboxed apps with a window, as the portal
@@ -1004,6 +1015,8 @@ pub struct ClientSide {
     pub buttons: Vec<(u32, bool)>,
     /// Each `reprise_sandboxed_v1` event heard: an app id for `app`, `None` for `done`.
     pub sandboxed: Vec<Option<String>>,
+    /// Each `reprise_on_top_v1.changed` heard: whether its toplevel is on top.
+    pub on_top: Vec<bool>,
     /// The `shells` the compositor asked to close, in order.
     pub closes: Vec<usize>,
     layer_shell: Option<ZwlrLayerShellV1>,
@@ -1327,6 +1340,32 @@ pub mod input_client {
 }
 
 wc::delegate_noop!(ClientSide: ignore input_client::reprise_input_v1::RepriseInputV1);
+
+pub mod on_top_client {
+    pub mod __interfaces {
+        use wayland_client::backend as wayland_backend;
+        use wayland_protocols::xdg::shell::client::__interfaces::*;
+        wayland_scanner::generate_interfaces!("protocols/reprise-on-top-v1.xml");
+    }
+    use self::__interfaces::*;
+    use wayland_client;
+    use wayland_protocols::xdg::shell::client::*;
+    wayland_scanner::generate_client_code!("protocols/reprise-on-top-v1.xml");
+}
+
+impl wc::Dispatch<on_top_client::reprise_on_top_v1::RepriseOnTopV1, ()> for ClientSide {
+    fn event(
+        st: &mut Self,
+        _: &on_top_client::reprise_on_top_v1::RepriseOnTopV1,
+        ev: on_top_client::reprise_on_top_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let on_top_client::reprise_on_top_v1::Event::Changed { on_top, .. } = ev;
+        st.on_top.push(on_top != 0);
+    }
+}
 
 impl wc::Dispatch<input_client::reprise_sandboxed_v1::RepriseSandboxedV1, ()> for ClientSide {
     fn event(

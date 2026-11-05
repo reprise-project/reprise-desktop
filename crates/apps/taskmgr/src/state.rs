@@ -1,5 +1,5 @@
-//! Task Manager's state in `$XDG_STATE_HOME/reprise/taskmgr.toml`: the View menu's picks and the
-//! Processes columns.
+//! Task Manager's state in `$XDG_STATE_HOME/reprise/taskmgr.toml`: the Options and View menus'
+//! picks and the Processes columns.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -11,6 +11,7 @@ use crate::Speed;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct State {
+    pub on_top: bool,
     pub speed: Speed,
     pub per_core: bool,
     /// The Processes columns shown, by [`crate::columns::Spec::key`]; None shows the defaults.
@@ -61,6 +62,7 @@ mod tests {
         let path = dir.path().join("reprise").join("taskmgr.toml");
         assert_eq!(State::load(&path), State::default(), "no file yet");
         let s = State {
+            on_top: true,
             speed: Speed::Low,
             per_core: true,
             columns: Some(vec!["name".into(), "command_line".into()]),

@@ -330,6 +330,7 @@ impl Host {
         self.sync_children();
         self.sync_flyout();
         self.sync_inhibitor();
+        self.sync_on_top();
         // An `Ask` drop cannot outlive the window answering it.
         if let Some(a) = &self.asked_drop
             && !self.slot_of_id(a.win)
