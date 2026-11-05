@@ -280,8 +280,9 @@ One window, 26 pages, seven headings. Only one runs at a time.
   - **Background:** a picture or a slideshow, its position, the desktop
     colour (Other... under the swatches opens the Color dialog, as in
     Paint), which icons sit on the desktop and whether their labels show
-    file name extensions. Use for picks one virtual desktop to give a picture
-    of its own; picking the picture for all desktops there takes it away.
+    file name extensions, the desktop widgets and desktop water. Use for
+    picks one virtual desktop to give a picture of its own; picking the
+    picture for all desktops there takes it away.
   - **Screen Saver & Lock:** the saver, its settings and a live preview,
     and the paired device whose going away locks the session.
   - **Fonts & Icons:** the UI and dialog fonts, the icon theme, frame and
@@ -295,8 +296,8 @@ One window, 26 pages, seven headings. Only one runs at a time.
   - **Search:** whether the launcher searches your files and open windows.
   - **Window Switcher:** Alt+Tab's icons or thumbnails, picture size, Peek,
     the 3D switcher and the overview's hot corner.
-  - **Virtual Desktops:** how many, how they animate, their names, the
-    taskbar's live previews, and the desktop widgets.
+  - **Virtual Desktops:** how many, how they animate, their names and the
+    taskbar's live previews.
   - **Window Behavior:** snapping, snap layouts, the snap bar, window tabs
     and window memory.
 - **Display & Sound**
@@ -342,7 +343,7 @@ One window, 26 pages, seven headings. Only one runs at a time.
     every file type, which Browse... can pick by its file when it has no
     desktop entry.
   - **Advanced:** clipboard history, screenshots, recent files, location,
-    desktop water, the debug overlay, the thumbnail cache (Clear removes
+    the debug overlay, the thumbnail cache (Clear removes
     only the thumbnails Reprise kept and says how much went), thumbnails from
     the installed thumbnailers, and an Edit File... button for when
     you'd rather just open `config.toml`.

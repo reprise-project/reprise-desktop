@@ -676,12 +676,74 @@ fn names(keys: &[repriseconf::Key]) -> Vec<String> {
         .collect()
 }
 
+/// The config keys page `p`'s controls write, as `table.name`.
+fn keys_on(s: &PropSheet, p: Page) -> Vec<String> {
+    names(&keys_of(&s.pages[p.index()]))
+}
+
+/// Under Glass, the focusable control `id` is built on `to` and not on `from`, its search term
+/// moved with it, and focusing it on `to` lands on it.
+fn assert_moved(id: &str, from: Page, to: Page) {
+    let mut s = under("glass");
+    assert!(
+        s.pages[to.index()].item(id).is_some(),
+        "{id} is on {}",
+        to.label()
+    );
+    assert!(
+        s.pages[from.index()].item(id).is_none(),
+        "{id} is off {}",
+        from.label()
+    );
+    let has = |p: Page| p.terms().iter().any(|(t, _)| *t == id);
+    assert!(has(to), "{id} is in {}'s terms", to.label());
+    assert!(!has(from), "{id} is out of {}'s terms", from.label());
+    s.tabs.open = to.index();
+    s.focus_control(id);
+    let form = &s.pages[to.index()];
+    assert_eq!(form.focus().map(|f| form.items[f].id), Some(id));
+}
+
+#[test]
+fn widgets_and_water_live_on_background() {
+    for id in ["widget_clock", "widget_calendar", "widget_meter"] {
+        assert_moved(id, Page::VirtualDesktops, Page::Background);
+    }
+    assert_moved(WATER, Page::Advanced, Page::Background);
+    let s = built();
+    assert_eq!(
+        keys_on(&s, Page::Background),
+        [
+            ".desktop_icons",
+            ".desktop_extensions",
+            "wallpaper.image",
+            "wallpaper.position",
+            "wallpaper.water",
+            "wallpaper.slideshow",
+            "wallpaper.desktops",
+            "wallpaper.interval",
+            "wallpaper.shuffle",
+            "colors.background",
+            ".system_icons",
+            ".desktop_widgets",
+        ]
+    );
+    assert!(!keys_on(&s, Page::VirtualDesktops).contains(&".desktop_widgets".to_string()));
+    assert!(!keys_on(&s, Page::Advanced).contains(&"wallpaper.water".to_string()));
+    for k in ["widgets", "water"] {
+        assert!(Page::Background.keywords().contains(&k), "{k}");
+        assert!(
+            !Page::VirtualDesktops.keywords().contains(&k)
+                && !Page::Advanced.keywords().contains(&k)
+        );
+    }
+}
+
 #[test]
 fn restore_defaults_takes_a_pages_keys_from_its_controls() {
     let s = built();
-    let on = |p: Page| names(&keys_of(&s.pages[p.index()]));
     assert_eq!(
-        on(Page::Sound),
+        keys_on(&s, Page::Sound),
         [
             "notifications.sound",
             "notifications.no_balloons",
@@ -691,32 +753,20 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
             "sounds.allow_boost"
         ]
     );
-    assert_eq!(on(Page::Cursor), ["cursor.theme", "cursor.size"]);
-    assert_eq!(
-        on(Page::Background),
-        [
-            ".desktop_icons",
-            ".desktop_extensions",
-            "wallpaper.image",
-            "wallpaper.position",
-            "wallpaper.slideshow",
-            "wallpaper.desktops",
-            "wallpaper.interval",
-            "wallpaper.shuffle",
-            "colors.background",
-            ".system_icons"
-        ],
-        "the wallpaper list's keys too"
-    );
-    assert!(on(Page::Keyboard).contains(&"keyboard.layout".to_string()));
-    assert!(on(Page::ScreenSaverLock).contains(&"screensaver.name".to_string()));
+    assert_eq!(keys_on(&s, Page::Cursor), ["cursor.theme", "cursor.size"]);
+    assert!(keys_on(&s, Page::Keyboard).contains(&"keyboard.layout".to_string()));
+    assert!(keys_on(&s, Page::ScreenSaverLock).contains(&"screensaver.name".to_string()));
     for p in [Page::Display, Page::StartMenu, Page::Tablet, Page::Backup] {
-        assert_eq!(on(p), Vec::<String>::new(), "{p:?} writes no config key");
+        assert_eq!(
+            keys_on(&s, p),
+            Vec::<String>::new(),
+            "{p:?} writes no config key"
+        );
     }
     let glass = under("glass");
-    let glass_keys = names(&keys_of(&glass.pages[Page::Appearance.index()]));
+    let glass_keys = keys_on(&glass, Page::Appearance);
     assert!(glass_keys.contains(&"glass.material".to_string()));
-    assert!(!on(Page::Appearance).contains(&"glass.material".to_string()));
+    assert!(!keys_on(&s, Page::Appearance).contains(&"glass.material".to_string()));
 }
 
 /// Every key the field table reads is on a page under one interface or another, so Restore

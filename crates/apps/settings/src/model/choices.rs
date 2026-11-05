@@ -193,7 +193,7 @@ pub const POSITIONS: &Choices = &[
     ("stretch", "Stretch"),
 ];
 
-/// Settings > Advanced's desktop water styles; unchecked is "off".
+/// Settings > Background's desktop water styles; unchecked is "off".
 /// Mirrors `reprisekit::water::Water::parse`.
 pub const WATER_STYLES: &Choices = &[
     ("calm", "Calm"),

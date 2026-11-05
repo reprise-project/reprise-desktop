@@ -628,8 +628,9 @@ pub fn write_form(form: &mut Form, s: &Settings) {
 /// the 3D switcher outside Glass; on Virtual Desktops, the refresh rate while nothing
 /// shows a live picture, and the count and animation without "Use virtual
 /// desktops". The Appearance page is rebuilt for the pending interface and its
-/// sample redrawn; the Background page greys the position without a wallpaper
-/// and the file name extensions without the desktop's files, and shows the look's desktop
+/// sample redrawn; the Background page greys the position without a wallpaper,
+/// the file name extensions without the desktop's files, the water style
+/// while water is off and its note without a fluid style, and shows the look's desktop
 /// colour on its Color button; the Taskbar page
 /// greys the auto-hide triggers while auto-hide is off, the Sound page the sound theme while
 /// neither notifications nor the bell play a sound, and the Advanced page
@@ -654,10 +655,6 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     sp.set_enabled("switcher_size_label", thumbnails);
     sp.set_enabled("switcher_size", thumbnails);
     sp.set_enabled("switcher_flip", s.interface == "glass");
-    let water = &mut sheet.pages[Page::Advanced.index()];
-    for id in [WATER_STYLE, "water_note", "water_note_2"] {
-        water.set_enabled(id, s.wallpaper_water != "off");
-    }
     let wp = &mut sheet.pages[Page::WindowBehavior.index()];
     for id in DRAG_SNAP_CONTROLS {
         wp.set_enabled(id, s.snap_enabled);

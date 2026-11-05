@@ -3,10 +3,10 @@
 use super::{
     ADD, Area, BACKUP_EXPORT, BACKUP_IMPORT, BACKUP_STATUS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY,
     EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE, THUMBNAILERS, THUMBS, THUMBS_CLEAR,
-    THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, WATER, WATER_STYLE, X, button, choice, combo, edit,
-    ends_track, field, group, list, locations, spin,
+    THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, X, button, combo, edit, ends_track, field, group, list,
+    locations, spin,
 };
-use crate::model::{FRAME_RATES, REMOTE_ENCODERS, REMOTE_QUALITIES, WATER_STYLES};
+use crate::model::{FRAME_RATES, REMOTE_ENCODERS, REMOTE_QUALITIES};
 use crate::notifypage;
 use reprisebus::remote::{Client, Status};
 use repriseconf::ThumbnailCache;
@@ -83,22 +83,6 @@ pub fn advanced(a: Area) -> Form {
         )
         .under_check(),
     );
-    items.push(Item::check(WATER, X, 322 + dh, "Desktop &water"));
-    items.push(choice(WATER_STYLE, X + 112, 318 + dh, 100, WATER_STYLES));
-    items.push(Item::label_at(
-        "water_note",
-        X + 12,
-        342 + dh,
-        a.w - 12,
-        "With Ink, Glow, Sparks or Neon, dragging on the desktop",
-    ));
-    items.push(Item::label_at(
-        "water_note_2",
-        X + 12,
-        355 + dh,
-        a.w - 12,
-        "stirs the fluid instead of drawing a selection box.",
-    ));
     items.push(Item::check(
         THUMBS,
         X,

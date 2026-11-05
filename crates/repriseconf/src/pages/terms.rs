@@ -34,6 +34,11 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("desktop_extensions", "File name extensions:"),
             ("slideshow_interval", "Change picture every:"),
             ("slideshow_shuffle", "Shuffle"),
+            ("widget_clock", "Clock"),
+            ("widget_calendar", "Calendar"),
+            ("widget_meter", "System meter"),
+            ("wallpaper_water", "Desktop water:"),
+            ("water_style", "Water style"),
         ],
         Page::ScreenSaverLock => &[
             ("saver_settings", "Settings..."),
@@ -181,9 +186,6 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "Show live window pictures over taskbar buttons",
             ),
             ("previews_fps", "Refresh rate:"),
-            ("widget_clock", "Clock"),
-            ("widget_calendar", "Calendar"),
-            ("widget_meter", "System meter"),
         ],
         Page::WindowBehavior => &[
             (
@@ -383,7 +385,6 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "debug_overlay_in_captures",
                 "Show it in screenshots and screen sharing",
             ),
-            ("wallpaper_water", "Desktop water"),
             ("thumbnail_cache", "Keep thumbnails of pictures"),
             ("thumbnail_max_mb", "Size:"),
             ("thumbnail_clear", "Clear"),
