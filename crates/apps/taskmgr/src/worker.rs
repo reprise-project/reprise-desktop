@@ -11,6 +11,8 @@ pub enum Cmd {
     Every(Option<Duration>),
     /// Sample at once.
     Now,
+    /// Read each process's storage I/O, for the Disk column.
+    Disk(bool),
 }
 
 pub struct Handle {
@@ -36,6 +38,10 @@ pub fn spawn(mut sampler: Sampler, wake: impl Fn() + Send + 'static) -> Handle {
                     if !resumed {
                         continue;
                     }
+                }
+                Ok(Cmd::Disk(on)) => {
+                    sampler.disk = on;
+                    continue;
                 }
                 Ok(Cmd::Now) | Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,

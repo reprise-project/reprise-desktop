@@ -4,14 +4,18 @@
 #[cfg(test)]
 reprisebus::test_session!();
 
+mod columns;
 mod pages;
 mod procfs;
 mod sample;
 mod scopes;
+mod selectcols;
+mod state;
 mod switchto;
 mod worker;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -34,9 +38,12 @@ use reprisekit::pointer::Click;
 use reprisekit::raster::Canvas;
 use reprisekit::textedit::keysym;
 
+use columns::Column as ProcColumn;
 use sample::{ProcRow, Snapshot};
+use state::State;
 
 const ASK: WinId = WinId::named("ask");
+const PICK: WinId = WinId::named("pick");
 
 /// How many samples a history graph spans.
 const HISTORY: usize = 100;
@@ -49,7 +56,8 @@ const TIP_DELAY: Duration = Duration::from_millis(600);
 const SIGTERM: i32 = 15;
 const SIGKILL: i32 = 9;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Speed {
     High,
     #[default]
@@ -129,6 +137,7 @@ enum Act {
     Refresh,
     Speed(Speed),
     PerCore(bool),
+    SelectColumns,
 }
 
 struct Tip {
@@ -151,7 +160,12 @@ pub struct TaskMgr {
     proc_rows: Vec<ProcRow>,
     /// Process start times by pid, from the last snapshot.
     starts: HashMap<i32, u64>,
-    sort: (sample::Column, bool),
+    /// The Processes columns shown, in order, and the widths a divider drag gave them.
+    columns: Vec<ProcColumn>,
+    widths: HashMap<ProcColumn, i32>,
+    /// The last column is to fill what the others leave.
+    refit: bool,
+    sort: (ProcColumn, bool),
     all_users: bool,
     uid: u32,
     cpu: History,
@@ -164,6 +178,8 @@ pub struct TaskMgr {
     /// The page and size `form` was built for.
     form_for: Option<(Page, (i32, i32))>,
     ask: Option<(Ask, MsgBox)>,
+    /// Select Columns, while open.
+    pick: Option<Form>,
     ending: Vec<Ending>,
     entries: Arc<Vec<AppEntry>>,
     icons: HashMap<String, Option<Rc<Canvas>>>,
@@ -172,6 +188,8 @@ pub struct TaskMgr {
     /// The dialog look and text of the last event, for the message box's window.
     forms: Option<reprisekit::theme::Theme>,
     text: Option<Rc<reprisekit::text::TextRenderer>>,
+    /// Where the state is kept, and what it last held.
+    state: Option<(PathBuf, State)>,
 }
 
 impl TaskMgr {
@@ -185,22 +203,13 @@ impl TaskMgr {
             tabs: TabStrip::new(&["Applications", "Processes", "Performance"], 0),
             apps: List::new(vec![Column::new("Task", 260), Column::new("Status", 100)]),
             app_rows: Vec::new(),
-            procs: List::new(vec![
-                Column::new("Image Name", 112),
-                Column::new("PID", 48),
-                Column::new("User Name", 72),
-                Column {
-                    right: true,
-                    ..Column::new("CPU", 56)
-                },
-                Column {
-                    right: true,
-                    ..Column::new("Mem Usage", 72)
-                },
-            ]),
+            procs: List::new(Vec::new()),
             proc_rows: Vec::new(),
             starts: HashMap::new(),
-            sort: (sample::Column::Cpu, false),
+            columns: columns::defaults(),
+            widths: HashMap::new(),
+            refit: false,
+            sort: (ProcColumn::Cpu, false),
             all_users: false,
             uid,
             cpu: History::new(HISTORY),
@@ -212,6 +221,7 @@ impl TaskMgr {
             form: Form::new(Vec::new()),
             form_for: None,
             ask: None,
+            pick: None,
             ending: Vec::new(),
             entries: Arc::new(entries),
             icons: HashMap::new(),
@@ -219,8 +229,9 @@ impl TaskMgr {
             alt_arm: AltArm::default(),
             forms: None,
             text: None,
+            state: None,
         };
-        t.procs.view.sort = Some((3, false));
+        t.show_columns();
         t.apps.view.frame = true;
         t.procs.view.frame = true;
         t.set_menus();
@@ -261,6 +272,7 @@ impl TaskMgr {
         view.push_sub(MenuItem::item("&Update Speed"), speed);
         view.push(MenuItem::Separator);
         view.push_sub(MenuItem::item("&CPU History"), history);
+        view.push(MenuItem::item("&Select Columns...").enabled(self.page() == Page::Processes));
         let keep = (self.bar.active, self.bar.underline, self.bar.hot);
         self.bar = Bar::with_trees(vec![("&File", file), ("&View", view)]);
         (self.bar.active, self.bar.underline, self.bar.hot) = keep;
@@ -272,6 +284,7 @@ impl TaskMgr {
             (1, [0]) => Act::Refresh,
             (1, [1, i]) => Act::Speed(*Speed::ALL.get(*i)?),
             (1, [3, i]) => Act::PerCore(*i == 1),
+            (1, [4]) => Act::SelectColumns,
             _ => return None,
         })
     }
@@ -285,9 +298,131 @@ impl TaskMgr {
                 self.follow_visibility();
             }
             Act::PerCore(on) => self.per_core = on,
+            Act::SelectColumns => {
+                self.pick = Some(selectcols::form(&self.columns));
+                return Reply::redraw_all();
+            }
         }
         self.set_menus();
+        self.persist();
         Reply::redraw()
+    }
+
+    /// Takes the state kept at `path`: the View menu's picks and the Processes columns.
+    pub fn restore(&mut self, path: PathBuf) {
+        let s = State::load(&path);
+        self.speed = s.speed;
+        self.per_core = s.per_core;
+        if let Some(keys) = &s.columns {
+            self.columns = columns::shown(keys.iter().filter_map(|k| columns::by_key(k)));
+        }
+        self.widths = (s.widths.iter())
+            .filter_map(|(k, &w)| Some((columns::by_key(k)?, w)))
+            .collect();
+        self.show_columns();
+        self.set_menus();
+        self.state = Some((path, self.kept()));
+    }
+
+    fn kept(&self) -> State {
+        let key = |c: &ProcColumn| columns::spec(*c).key.to_string();
+        State {
+            speed: self.speed,
+            per_core: self.per_core,
+            columns: (self.columns != columns::defaults())
+                .then(|| self.columns.iter().map(key).collect()),
+            widths: self.widths.iter().map(|(c, &w)| (key(c), w)).collect(),
+        }
+    }
+
+    /// Writes the state when it changed since it was last kept.
+    fn persist(&mut self) {
+        let now = self.kept();
+        if let Some((path, saved)) = &mut self.state
+            && *saved != now
+        {
+            now.save(path);
+            *saved = now;
+        }
+    }
+
+    /// The Processes list's columns from [`Self::columns`]; the sort falls back to Image Name when
+    /// its column goes.
+    fn show_columns(&mut self) {
+        if !self.columns.contains(&self.sort.0) {
+            self.sort = (ProcColumn::Name, true);
+        }
+        self.procs.view.columns = (self.columns.iter())
+            .map(|&c| {
+                let s = columns::spec(c);
+                Column {
+                    right: s.right,
+                    ..Column::new(s.title, self.widths.get(&c).copied().unwrap_or(s.width))
+                }
+            })
+            .collect();
+        let at = self.columns.iter().position(|&c| c == self.sort.0);
+        self.procs.view.sort = at.map(|i| (i, self.sort.1));
+        self.send(worker::Cmd::Disk(self.columns.contains(&ProcColumn::Disk)));
+        self.refresh_procs();
+        self.refit = true;
+    }
+
+    fn set_columns(&mut self, picked: Vec<ProcColumn>) {
+        self.columns = columns::shown(picked);
+        self.show_columns();
+        self.persist();
+    }
+
+    /// Keeps the widths a divider drag left on the Processes columns, all but the last, which
+    /// fills the rest.
+    fn note_widths(&mut self) {
+        let n = self.columns.len().saturating_sub(1);
+        for (c, col) in self.columns.iter().zip(&self.procs.view.columns).take(n) {
+            if col.width == columns::spec(*c).width {
+                self.widths.remove(c);
+            } else {
+                self.widths.insert(*c, col.width);
+            }
+        }
+        self.persist();
+    }
+
+    /// Fits each list's last column to what the others leave of `ctx`'s list area.
+    fn fit_lists(&mut self, ctx: &Ctx) {
+        let r = pages::layout(self, ctx).list_area;
+        self.apps.fit_last(r, ctx);
+        // The process list nearly always scrolls: fill beside its bar, or a horizontal one appears.
+        let last = self.procs.view.columns.len() - 1;
+        (self.procs.view).fill_beside_bar(last, r, &ctx.theme.controls());
+        for list in [&mut self.apps, &mut self.procs] {
+            list.follow(r, ctx);
+        }
+        self.refit = false;
+    }
+
+    fn pick_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
+        let Some(f) = &mut self.pick else {
+            return Reply::none();
+        };
+        if ev == Event::CloseRequest {
+            self.pick = None;
+            return Reply::redraw_all();
+        }
+        match repriseapp::keys::form_input(f, &ev, ctx) {
+            Some(form::Event::Cancel | form::Event::Pressed(selectcols::CANCEL)) => {
+                self.pick = None;
+                Reply::redraw_all()
+            }
+            Some(form::Event::Default | form::Event::Pressed(selectcols::OK)) => {
+                let picked = selectcols::picked(f);
+                self.pick = None;
+                self.set_columns(picked);
+                Reply::redraw_all()
+            }
+            Some(form::Event::None) | None => Reply::none(),
+            Some(_) => Reply::redraw(),
+        }
     }
 
     fn send(&self, cmd: worker::Cmd) {
@@ -370,8 +505,13 @@ impl TaskMgr {
             .filter(|p| self.all_users || p.uid == self.uid)
             .cloned()
             .collect();
-        sample::sort(&mut rows, self.sort.0, self.sort.1);
-        self.procs.view.rows = rows.iter().map(proc_cells).collect();
+        columns::sort(&mut rows, self.sort.0, self.sort.1);
+        self.procs.view.rows = (rows.iter())
+            .map(|p| listview::Row {
+                icon: None,
+                cells: self.columns.iter().map(|&c| columns::text(c, p)).collect(),
+            })
+            .collect();
         self.proc_rows = rows;
         let at = keep.and_then(|pid| self.proc_rows.iter().position(|p| p.pid == pid));
         self.procs.view.selection.set_only(at);
@@ -524,15 +664,12 @@ impl TaskMgr {
     }
 
     fn sort_by(&mut self, col: usize) {
-        let Some(&c) = sample::COLUMNS.get(col) else {
+        let Some(&c) = self.columns.get(col) else {
             return;
         };
         let ascending = match self.sort {
             (old, asc) if old == c => !asc,
-            _ => matches!(
-                c,
-                sample::Column::Name | sample::Column::User | sample::Column::Pid
-            ),
+            _ => columns::spec(c).ascending,
         };
         self.sort = (c, ascending);
         self.procs.view.sort = Some((col, ascending));
@@ -582,6 +719,7 @@ impl TaskMgr {
             if let Some(i) = reprisekit::controls::tabstrip::hit(&lay.tabs, x, y) {
                 self.tabs.open = i;
                 self.form_for = None;
+                self.set_menus();
                 return Reply::redraw();
             }
         }
@@ -696,6 +834,7 @@ impl TaskMgr {
             let back = k.mods.shift || k.sym == keysym::ISO_LEFT_TAB;
             self.tabs.open = (self.tabs.open + if back { n - 1 } else { 1 }) % n;
             self.form_for = None;
+            self.set_menus();
             return Reply::redraw();
         }
         if k.mods.alt
@@ -772,14 +911,7 @@ impl TaskMgr {
             }
             Event::CloseRequest => quit(),
             Event::Resized => {
-                let r = pages::layout(self, ctx).list_area;
-                self.apps.fit_last(r, ctx);
-                // The process list nearly always scrolls: fill beside its bar, or a horizontal one appears.
-                let last = self.procs.view.columns.len() - 1;
-                (self.procs.view).fill_beside_bar(last, r, &ctx.theme.controls());
-                for list in [&mut self.apps, &mut self.procs] {
-                    list.follow(r, ctx);
-                }
+                self.fit_lists(ctx);
                 Reply::redraw()
             }
             Event::Tick => self.tick(),
@@ -794,6 +926,7 @@ impl TaskMgr {
             Event::Pointer(PointerInput::Motion { x, y }) => self.motion(x, y, ctx),
             Event::Pointer(PointerInput::Release { .. }) => {
                 let list = self.list().is_some_and(|l| l.release(ctx));
+                self.note_widths();
                 let ev = self.form.release();
                 let r = self.form_event(ev, ctx);
                 Reply {
@@ -857,19 +990,6 @@ pub fn grouped(n: u64) -> String {
     out
 }
 
-fn proc_cells(p: &ProcRow) -> listview::Row {
-    listview::Row {
-        icon: None,
-        cells: vec![
-            p.name.clone(),
-            p.pid.to_string(),
-            p.user.clone(),
-            format!("{:02}", p.cpu.round() as u64),
-            kb_text(p.mem_kb),
-        ],
-    }
-}
-
 fn end_now_box(name: &str) -> MsgBox {
     MsgBox::new(
         format!("End Program - {name}"),
@@ -917,14 +1037,26 @@ impl App for TaskMgr {
     }
 
     fn children(&self) -> Vec<Child> {
-        let (Some(theme), Some(text), Some((_, b))) = (&self.forms, &self.text, &self.ask) else {
-            return Vec::new();
-        };
-        vec![b.child(ASK, text, theme)]
+        let mut kids = Vec::new();
+        if self.pick.is_some() {
+            kids.push(Child {
+                id: PICK,
+                title: "Select Columns".into(),
+                size: (self.forms.as_ref())
+                    .map_or(selectcols::CLIENT, |t| t.text.size(selectcols::CLIENT)),
+                fixed: true,
+                modal: true,
+            });
+        }
+        if let (Some(theme), Some(text), Some((_, b))) = (&self.forms, &self.text, &self.ask) {
+            kids.push(b.child(ASK, text, theme));
+        }
+        kids
     }
 
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
-        if let Some(s) = self.sampler.take() {
+        if let Some(mut s) = self.sampler.take() {
+            s.disk = self.columns.contains(&ProcColumn::Disk);
             self.worker = Some(worker::spawn(s, move || waker.wake()));
             self.follow_visibility();
         }
@@ -936,6 +1068,7 @@ impl App for TaskMgr {
         self.text = Some(ctx.text.clone());
         match win {
             ASK => self.ask_event(ev, ctx),
+            PICK => self.pick_event(ev, ctx),
             _ => self.main_event(ev, ctx),
         }
     }
@@ -944,6 +1077,17 @@ impl App for TaskMgr {
         if win == ASK {
             if let Some((_, b)) = &self.ask {
                 b.draw(c, &ctx.forms(), &ctx.text);
+            }
+            return;
+        }
+        if win == PICK {
+            if let Some(f) = &self.pick {
+                c.fill_rect(c.bounds(), ctx.theme.colors.button_face);
+                let p = reprisekit::look::Paint {
+                    s: 1,
+                    ..ctx.theme.paint()
+                };
+                form::draw(c, &ctx.text, &p, f, true, ctx.theme.fonts.size_px);
             }
             return;
         }
@@ -957,7 +1101,8 @@ impl repriseapp::Extended for TaskMgr {
     }
 
     fn popup(&mut self, win: WinId, _ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
-        (win != ASK && self.bar.open.is_some()).then(|| Box::new(&mut self.bar) as Box<dyn Hosted>)
+        (win == repriseapp::MAIN && self.bar.open.is_some())
+            .then(|| Box::new(&mut self.bar) as Box<dyn Hosted>)
     }
 
     fn follow_scale(&mut self, _win: WinId, scale: i32, ctx: &mut Ctx) {
@@ -974,6 +1119,12 @@ impl repriseapp::Extended for TaskMgr {
             }
             return;
         }
+        if win == PICK {
+            if let Some(f) = &self.pick {
+                oneshot::access_form(f, tree, &ctx.text, ctx.theme.fonts.size_px);
+            }
+            return;
+        }
         pages::access(self, tree, ctx);
     }
 }
@@ -984,7 +1135,8 @@ pub fn main(_args: Vec<std::ffi::OsString>) {
     let entries = reprisefs::apps::scan(&reprisefs::apps::default_dirs());
     // SAFETY: getuid has no failure case and touches no memory.
     let uid = unsafe { libc::getuid() };
-    let app = TaskMgr::new(Some(sample::Sampler::system()), entries, uid);
+    let mut app = TaskMgr::new(Some(sample::Sampler::system()), entries, uid);
+    app.restore(State::path());
     repriseapp::run(Box::new(app)).unwrap_or_else(|e| e.exit());
 }
 
