@@ -202,6 +202,15 @@ impl FileSearch {
     }
 }
 
+/// The folder file searches look in: `$HOME`; in tests the test process's own, so no test
+/// finds the user's files.
+fn search_root() -> Option<PathBuf> {
+    #[cfg(test)]
+    return Some(crate::harness::scratch());
+    #[cfg(not(test))]
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
 fn searches_files(query: &str, enabled: bool) -> bool {
     enabled && query.chars().count() >= MIN_CHARS
 }
@@ -317,7 +326,7 @@ impl State {
     }
 
     fn file_search_fire(&mut self, o: SearchOwner, query: String, max: usize) {
-        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        let Some(home) = search_root() else {
             return;
         };
         if !searches_files(&query, self.config.launcher_files) {
