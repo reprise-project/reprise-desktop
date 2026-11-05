@@ -206,3 +206,30 @@ fn an_open_combo_highlight_follows_the_pointer() {
     assert_eq!(f.click(at(&f, x, y)), Event::Changed("c"));
     assert_eq!(open(&f), (None, 3));
 }
+
+#[test]
+fn alt_o_in_an_open_colour_popup_presses_other() {
+    let red = Color::rgb(255, 0, 0);
+    let mut f = Form::new(vec![
+        Item::new(
+            "c",
+            Rect::new(10, 10, 75, 21),
+            Control::Color(ColorButton::new(red, vec![red])),
+        ),
+        Item::button("open", Rect::new(120, 10, 75, 23), "&Open", true, false),
+    ]);
+    assert_eq!(
+        f.key(Key::Access('o')),
+        Event::Pressed("open"),
+        "closed, Alt+O is the form's"
+    );
+    for key in [Key::Access('O'), Key::Char('o')] {
+        f.click(at(&f, 20, 15));
+        assert!(f.popup_open());
+        assert_eq!(f.key(key.clone()), Event::Pressed("c"), "{key:?}");
+        assert!(!f.popup_open(), "{key:?} closes the popup");
+    }
+    f.click(at(&f, 20, 15));
+    assert_eq!(f.key(Key::Access('x')), Event::None);
+    assert!(f.popup_open(), "another letter leaves it open");
+}
