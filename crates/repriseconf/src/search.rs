@@ -2,7 +2,7 @@
 
 /// Whether a word of `name` (split by `fuzzy::is_word_start`) starts with
 /// `query`, the rest of `query` running on from there ("sticky no" fits
-/// "Sticky Notes"). The Start menu lists only such names.
+/// "Sticky Notes").
 pub fn word_starts(query: &str, name: &str) -> bool {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
