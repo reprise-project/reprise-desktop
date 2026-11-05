@@ -285,6 +285,80 @@ fn changes_count_edits_and_not_reads() {
 }
 
 #[test]
+fn a_watch_sees_a_move_where_it_was_and_where_it_went() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let r = s.rect_create(root, (4, 4), RED);
+    assert!(s.watch());
+    s.set_position(r, 10, 0);
+    s.rect_set_color(r, [0.0, 0.0, 1.0, 1.0]);
+    let mut seen = s.watched();
+    seen.sort_by_key(|r| r.loc.x);
+    assert_eq!(seen, [rect(0, 0, 4, 4), rect(10, 0, 4, 4)]);
+    assert_eq!(s.watched(), [], "the watch ended");
+}
+
+#[test]
+fn a_watch_sees_a_raised_sibling_and_not_its_parent() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let layer = s.tree_create(root);
+    let a = s.rect_create(layer, (4, 4), RED);
+    let b = s.rect_create(layer, (4, 4), RED);
+    s.set_position(b, 100, 0);
+    assert!(s.watch());
+    s.raise_to_top(b);
+    assert_eq!(s.watched(), [], "raising the top sibling moves nothing");
+    assert!(s.watch());
+    s.raise_to_top(a);
+    assert_eq!(s.watched(), [rect(0, 0, 4, 4), rect(0, 0, 4, 4)]);
+}
+
+#[test]
+fn a_watch_sees_what_a_destroy_or_a_hidden_tree_covered() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let t = s.tree_create(root);
+    let r = s.rect_create(t, (4, 4), RED);
+    s.set_position(r, 3, 3);
+    assert!(s.watch());
+    s.set_enabled(t, false);
+    assert_eq!(s.watched(), [rect(3, 3, 4, 4)], "only before: hidden now");
+    assert!(s.watch());
+    s.set_enabled(t, true);
+    assert_eq!(s.watched(), [rect(3, 3, 4, 4)], "only after: hidden before");
+    assert!(s.watch());
+    s.destroy(t);
+    assert_eq!(s.watched(), [rect(3, 3, 4, 4)]);
+}
+
+#[test]
+fn setting_a_node_as_it_is_is_no_edit() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    let r = s.rect_create(root, (4, 4), RED);
+    s.set_position(r, 2, 2);
+    let before = s.changes();
+    assert!(s.watch());
+    s.set_position(r, 2, 2);
+    s.set_enabled(r, true);
+    assert_eq!(s.watched(), []);
+    assert_eq!(s.changes(), before);
+}
+
+#[test]
+fn a_second_watch_leaves_the_running_one_on() {
+    let mut s = TestScene::new();
+    let root = s.root();
+    assert!(s.watch());
+    assert!(!s.watch(), "already on");
+    let r = s.rect_create(root, (4, 4), RED);
+    assert_eq!(s.watched(), [rect(0, 0, 4, 4), rect(0, 0, 4, 4)]);
+    s.set_position(r, 9, 9);
+    assert_eq!(s.watched(), [], "no watch, nothing kept");
+}
+
+#[test]
 fn raise_lower_and_place_reorder_siblings() {
     let mut s = TestScene::new();
     let root = s.root();

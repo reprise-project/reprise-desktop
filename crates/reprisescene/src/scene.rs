@@ -73,6 +73,15 @@ pub struct Scene<R: Renderer, D = ()> {
     /// The tree the hoisted nodes draw above and those nodes, bottom
     /// first (`set_hoist`).
     pub(crate) hoist: Option<(NodeId, Vec<NodeId>)>,
+    watch: Option<Watch>,
+}
+
+/// The nodes edited since [`Scene::watch`] and the layout rects they covered before their first
+/// edit.
+#[derive(Default)]
+struct Watch {
+    nodes: std::collections::HashSet<NodeId>,
+    was: Vec<Rectangle<i32, Logical>>,
 }
 
 impl<R: Renderer, D> Default for Scene<R, D> {
@@ -112,6 +121,7 @@ impl<R: Renderer, D> Scene<R, D> {
             outputs: Vec::new(),
             changes: 0,
             hoist: None,
+            watch: None,
         }
     }
 
@@ -139,8 +149,53 @@ impl<R: Renderer, D> Scene<R, D> {
     }
 
     pub(crate) fn node_mut(&mut self, id: NodeId) -> Option<&mut Node<R, D>> {
+        self.saw(id);
         self.changes += 1;
         self.node_untracked(id)
+    }
+
+    /// Record where edits land until [`Scene::watched`]; false, and the running watch goes on,
+    /// if one is already on.
+    pub fn watch(&mut self) -> bool {
+        if self.watch.is_some() {
+            return false;
+        }
+        self.watch = Some(Watch::default());
+        true
+    }
+
+    /// End the watch: the layout rects its edits changed, each edited node's rect before its
+    /// first edit and now. A sibling reorder counts as an edit of the nodes that moved, not of
+    /// their parent. Drawing inside a custom node or a client surface is not an edit.
+    pub fn watched(&mut self) -> Vec<Rectangle<i32, Logical>> {
+        let Some(w) = self.watch.take() else {
+            return Vec::new();
+        };
+        let mut out = w.was;
+        out.extend(w.nodes.iter().filter_map(|&n| self.extents(n)));
+        // A buffer shown through `buffer_share` changes with its source.
+        let buffers = |n: &Node<R, D>| matches!(&n.content, Content::Buffer(_));
+        if w.nodes.iter().any(|&n| self.node(n).is_some_and(buffers)) {
+            let sharers: Vec<NodeId> = (self.live())
+                .filter(|(_, n)| matches!(&n.content, Content::Buffer(b) if b.shared.is_some()))
+                .map(|(id, _)| id)
+                .collect();
+            out.extend(sharers.into_iter().filter_map(|n| self.extents(n)));
+        }
+        out
+    }
+
+    /// `id` is about to be edited: under a watch, keep the rect it covers before its first edit.
+    fn saw(&mut self, id: NodeId) {
+        match &self.watch {
+            Some(w) if !w.nodes.contains(&id) => {}
+            _ => return,
+        }
+        let was = self.extents(id);
+        if let Some(w) = self.watch.as_mut() {
+            w.nodes.insert(id);
+            w.was.extend(was);
+        }
     }
 
     /// `node_mut` for bookkeeping that changes nothing drawn (which
@@ -179,8 +234,11 @@ impl<R: Renderer, D> Scene<R, D> {
         }
     }
 
+    /// A tree's children to reorder: counted as a change, but a watch sees the children the
+    /// caller moves (`saw`), not the tree.
     fn children_mut(&mut self, tree: NodeId) -> Option<&mut Vec<NodeId>> {
-        match self.node_mut(tree).map(|n| &mut n.content) {
+        self.changes += 1;
+        match self.node_untracked(tree).map(|n| &mut n.content) {
             Some(Content::Tree(c)) => Some(c),
             _ => None,
         }
@@ -226,6 +284,7 @@ impl<R: Renderer, D> Scene<R, D> {
         if let Some(c) = self.children_mut(parent.0) {
             c.push(id);
         }
+        self.saw(id);
         id
     }
 
@@ -313,10 +372,24 @@ impl<R: Renderer, D> Scene<R, D> {
         self.children_of(tree.0)
     }
 
-    pub fn set_position(&mut self, node: impl Into<NodeId>, x: i32, y: i32) {
-        if let Some(n) = self.node_mut(node.into()) {
-            n.position = Point::from((x, y));
+    /// Edit `id` with `set` unless `has` says it already is so: setting what a node has is no
+    /// edit, here and in every setter that comes through here.
+    fn set_if(
+        &mut self,
+        id: NodeId,
+        has: impl Fn(&Node<R, D>) -> bool,
+        set: impl FnOnce(&mut Node<R, D>),
+    ) {
+        if self.node(id).is_some_and(|n| !has(n))
+            && let Some(n) = self.node_mut(id)
+        {
+            set(n);
         }
+    }
+
+    pub fn set_position(&mut self, node: impl Into<NodeId>, x: i32, y: i32) {
+        let at = Point::from((x, y));
+        self.set_if(node.into(), |n| n.position == at, |n| n.position = at);
     }
 
     pub fn position(&self, node: impl Into<NodeId>) -> Option<Point<i32, Logical>> {
@@ -324,9 +397,11 @@ impl<R: Renderer, D> Scene<R, D> {
     }
 
     pub fn set_enabled(&mut self, node: impl Into<NodeId>, enabled: bool) {
-        if let Some(n) = self.node_mut(node.into()) {
-            n.enabled = enabled;
-        }
+        self.set_if(
+            node.into(),
+            |n| n.enabled == enabled,
+            |n| n.enabled = enabled,
+        );
     }
 
     pub fn enabled(&self, node: impl Into<NodeId>) -> bool {
@@ -338,18 +413,22 @@ impl<R: Renderer, D> Scene<R, D> {
     /// over glass, and popups, stay out of what glass shows. On by
     /// default.
     pub fn set_in_backdrop(&mut self, node: impl Into<NodeId>, shown: bool) {
-        if let Some(n) = self.node_mut(node.into()) {
-            n.in_backdrop = shown;
-        }
+        self.set_if(
+            node.into(),
+            |n| n.in_backdrop == shown,
+            |n| n.in_backdrop = shown,
+        );
     }
 
     /// Draw `node` and everything under it in a picture of one subtree
     /// ([`Scene::render_elements_of`]) or leave it out: what only the screen
     /// shows, such as a dimmed window's shade. On by default.
     pub fn set_in_pictures(&mut self, node: impl Into<NodeId>, shown: bool) {
-        if let Some(n) = self.node_mut(node.into()) {
-            n.in_pictures = shown;
-        }
+        self.set_if(
+            node.into(),
+            |n| n.in_pictures == shown,
+            |n| n.in_pictures = shown,
+        );
     }
 
     pub fn in_backdrop(&self, node: impl Into<NodeId>) -> bool {
@@ -359,9 +438,12 @@ impl<R: Renderer, D> Scene<R, D> {
     /// Opacity from 0 to 1. A tree's multiplies into every leaf under it,
     /// each drawn on its own (no group opacity).
     pub fn set_opacity(&mut self, node: impl Into<NodeId>, opacity: f32) {
-        if let Some(n) = self.node_mut(node.into()) {
-            n.opacity = opacity.clamp(0.0, 1.0);
-        }
+        let opacity = opacity.clamp(0.0, 1.0);
+        self.set_if(
+            node.into(),
+            |n| n.opacity == opacity,
+            |n| n.opacity = opacity,
+        );
     }
 
     pub fn opacity(&self, node: impl Into<NodeId>) -> Option<f32> {
@@ -376,9 +458,7 @@ impl<R: Renderer, D> Scene<R, D> {
         node: impl Into<NodeId>,
         area: Option<Rectangle<i32, Logical>>,
     ) {
-        if let Some(n) = self.node_mut(node.into()) {
-            n.hidden_in = area;
-        }
+        self.set_if(node.into(), |n| n.hidden_in == area, |n| n.hidden_in = area);
     }
 
     pub fn hidden_in(&self, node: impl Into<NodeId>) -> Option<Rectangle<i32, Logical>> {
@@ -388,9 +468,7 @@ impl<R: Renderer, D> Scene<R, D> {
     /// Draw and hit `tree`'s leaves only inside `clip` (node-local, so it moves with the
     /// tree); None draws them whole. Nested clips intersect.
     pub fn set_clip(&mut self, tree: TreeId, clip: Option<Rectangle<i32, Logical>>) {
-        if let Some(n) = self.node_mut(tree.0) {
-            n.clip = clip;
-        }
+        self.set_if(tree.0, |n| n.clip == clip, |n| n.clip = clip);
     }
 
     pub fn clip(&self, tree: TreeId) -> Option<Rectangle<i32, Logical>> {
@@ -414,14 +492,18 @@ impl<R: Renderer, D> Scene<R, D> {
         out
     }
 
+    /// Draws nothing, so a watch does not see it.
     pub fn set_input(&mut self, node: impl Into<NodeId>, input: Input) {
-        if let Some(n) = self.node_mut(node.into()) {
+        self.changes += 1;
+        if let Some(n) = self.node_untracked(node.into()) {
             n.input = input;
         }
     }
 
+    /// Draws nothing, so a watch does not see it.
     pub fn set_data(&mut self, node: impl Into<NodeId>, data: Option<D>) {
-        if let Some(n) = self.node_mut(node.into()) {
+        self.changes += 1;
+        if let Some(n) = self.node_untracked(node.into()) {
             n.data = data;
         }
     }
@@ -483,6 +565,11 @@ impl<R: Renderer, D> Scene<R, D> {
     pub fn set_hoist(&mut self, into: TreeId, nodes: Vec<NodeId>) {
         let hoist = (!nodes.is_empty()).then_some((into.0, nodes));
         if self.hoist != hoist {
+            let old = self.hoist.as_ref().map_or(&[][..], |h| &h.1[..]).to_vec();
+            let new = hoist.as_ref().map_or(&[][..], |h| &h.1[..]).to_vec();
+            for n in old.into_iter().chain(new) {
+                self.saw(n);
+            }
             self.hoist = hoist;
             self.changes += 1;
         }
@@ -490,6 +577,10 @@ impl<R: Renderer, D> Scene<R, D> {
 
     pub fn raise_to_top(&mut self, node: impl Into<NodeId>) {
         let node = node.into();
+        let parent = self.node(node).and_then(|n| n.parent);
+        if parent.is_some_and(|p| self.children_of(p.0).last() != Some(&node)) {
+            self.saw(node);
+        }
         if let Some(s) = self.siblings_mut(node) {
             s.retain(|c| *c != node);
             s.push(node);
@@ -498,6 +589,10 @@ impl<R: Renderer, D> Scene<R, D> {
 
     pub fn lower_to_bottom(&mut self, node: impl Into<NodeId>) {
         let node = node.into();
+        let parent = self.node(node).and_then(|n| n.parent);
+        if parent.is_some_and(|p| self.children_of(p.0).first() != Some(&node)) {
+            self.saw(node);
+        }
         if let Some(s) = self.siblings_mut(node) {
             s.retain(|c| *c != node);
             s.insert(0, node);
@@ -539,6 +634,9 @@ impl<R: Renderer, D> Scene<R, D> {
         for (&i, &n) in slots.iter().zip(nodes) {
             s[i] = n;
         }
+        for &n in nodes {
+            self.saw(n);
+        }
     }
 
     fn place(&mut self, node: NodeId, sibling: NodeId, offset: usize) {
@@ -551,6 +649,7 @@ impl<R: Renderer, D> Scene<R, D> {
         if a.parent.is_none() || a.parent != b.parent {
             return;
         }
+        self.saw(node);
         if let Some(s) = self.siblings_mut(node) {
             s.retain(|c| *c != node);
             let at = s.iter().position(|c| *c == sibling).unwrap_or(s.len());
@@ -575,6 +674,7 @@ impl<R: Renderer, D> Scene<R, D> {
             }
             up = self.node(t.0).and_then(|n| n.parent);
         }
+        self.saw(node);
         if let Some(s) = self.siblings_mut(node) {
             s.retain(|c| *c != node);
         }
@@ -599,6 +699,7 @@ impl<R: Renderer, D> Scene<R, D> {
             }
             return;
         }
+        self.saw(node);
         if let Some(s) = self.siblings_mut(node) {
             s.retain(|c| *c != node);
         }
@@ -623,22 +724,24 @@ impl<R: Renderer, D> Scene<R, D> {
         }
     }
 
+    /// Setting the size a rect has already is no edit.
     pub fn rect_set_size(&mut self, rect: RectId, size: impl Into<Size<i32, Logical>>) {
-        if let Some(Content::Rect(r)) = self.node_mut(rect.0).map(|n| &mut n.content) {
-            let size = size.into();
-            if r.size != size {
-                r.size = size;
-                r.buffer.resize(size);
-            }
+        let size = size.into();
+        if self.rect_size(rect).is_some_and(|s| s != size)
+            && let Some(Content::Rect(r)) = self.node_mut(rect.0).map(|n| &mut n.content)
+        {
+            r.size = size;
+            r.buffer.resize(size);
         }
     }
 
+    /// Setting the colour a rect has already is no edit.
     pub fn rect_set_color(&mut self, rect: RectId, color: [f32; 4]) {
-        if let Some(Content::Rect(r)) = self.node_mut(rect.0).map(|n| &mut n.content) {
-            let color = Color32F::from(color);
-            if r.buffer.color() != color {
-                r.buffer.set_color(color);
-            }
+        let color = Color32F::from(color);
+        let differs = matches!(self.node(rect.0).map(|n| &n.content),
+            Some(Content::Rect(r)) if r.buffer.color() != color);
+        if differs && let Some(Content::Rect(r)) = self.node_mut(rect.0).map(|n| &mut n.content) {
+            r.buffer.set_color(color);
         }
     }
 
@@ -695,9 +798,9 @@ impl<R: Renderer, D> Scene<R, D> {
         height: i32,
         within: Rectangle<i32, BufferCoords>,
     ) -> Rectangle<i32, BufferCoords> {
-        let Some(b) = self.buffer_mut(buffer) else {
+        if self.buffer_ref(buffer).is_none() {
             return Rectangle::default();
-        };
+        }
         if width <= 0 || height <= 0 || pixels.len() != (width * height) as usize {
             debug_assert!(
                 false,
@@ -707,25 +810,40 @@ impl<R: Renderer, D> Scene<R, D> {
             return Rectangle::default();
         }
         let size = Size::<i32, BufferCoords>::from((width, height));
-        if let (Pixels::Canvas(m), true, None) = (&mut b.pixels, b.buffer_size == size, &b.shared) {
+        let in_place = self.buffer_ref(buffer).is_some_and(|b| {
+            matches!(b.pixels, Pixels::Canvas(_)) && b.buffer_size == size && b.shared.is_none()
+        });
+        if !in_place {
+            let Some(b) = self.buffer_mut(buffer) else {
+                return Rectangle::default();
+            };
+            let p = Prepared::new(pixels, width, height);
+            b.pixels = Pixels::Canvas(p.0);
+            b.buffer_size = size;
+            b.shared = None;
+            return Rectangle::from_size(size);
+        }
+        let mut changed = Rectangle::default();
+        if let Some(Content::Buffer(b)) = self.node_untracked(buffer.0).map(|n| &mut n.content)
+            && let Pixels::Canvas(m) = &mut b.pixels
+        {
             let within = within
                 .intersection(Rectangle::from_size(size))
                 .unwrap_or_default();
-            let mut changed = Rectangle::default();
             let mut ctx = m.render();
             let _ = ctx.draw(|mem| {
                 let damage = copy_changed(mem, pixels, width as usize, within);
                 changed = damage.first().copied().unwrap_or_default();
                 Ok::<_, ()>(damage)
             });
-            changed
-        } else {
-            let p = Prepared::new(pixels, width, height);
-            b.pixels = Pixels::Canvas(p.0);
-            b.buffer_size = size;
-            b.shared = None;
-            Rectangle::from_size(size)
         }
+        // The same pixels again are no edit; a change in place keeps the node's rect, so a watch
+        // may see it after the copy.
+        if !changed.is_empty() {
+            self.changes += 1;
+            self.saw(buffer.0);
+        }
+        changed
     }
 
     /// Show a canvas copied by [`Prepared::new`], damaged whole.
@@ -820,14 +938,21 @@ impl<R: Renderer, D> Scene<R, D> {
         buffer: BufferId,
         source: Option<Rectangle<f64, BufferCoords>>,
     ) {
-        if let Some(b) = self.buffer_mut(buffer) {
-            b.source = source.filter(|s| s.size.w > 0.0 && s.size.h > 0.0);
+        let source = source.filter(|s| s.size.w > 0.0 && s.size.h > 0.0);
+        if self.buffer_ref(buffer).is_some_and(|b| b.source != source)
+            && let Some(b) = self.buffer_mut(buffer)
+        {
+            b.source = source;
         }
     }
 
+    /// Setting what a buffer has already is no edit, here and in the two setters around.
     pub fn buffer_set_dest_size(&mut self, buffer: BufferId, size: Option<Size<i32, Logical>>) {
-        if let Some(b) = self.buffer_mut(buffer) {
-            b.dest_size = size.filter(|s| s.w > 0 && s.h > 0);
+        let size = size.filter(|s| s.w > 0 && s.h > 0);
+        if self.buffer_ref(buffer).is_some_and(|b| b.dest_size != size)
+            && let Some(b) = self.buffer_mut(buffer)
+        {
+            b.dest_size = size;
         }
     }
 
@@ -838,7 +963,9 @@ impl<R: Renderer, D> Scene<R, D> {
         buffer: BufferId,
         region: Vec<Rectangle<i32, Logical>>,
     ) {
-        if let Some(b) = self.buffer_mut(buffer) {
+        if self.buffer_ref(buffer).is_some_and(|b| b.opaque != region)
+            && let Some(b) = self.buffer_mut(buffer)
+        {
             b.opaque = region;
         }
     }
