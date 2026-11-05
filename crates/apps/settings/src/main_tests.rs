@@ -2173,3 +2173,16 @@ fn a_page_handed_a_missing_control_opens_as_it_would_without_one() {
     a.open_page(Page::Keyboard, Some("missing"));
     assert_eq!(holders(&a), SIDE_LIST);
 }
+
+#[test]
+fn a_control_a_reader_focuses_takes_the_keyboard_from_the_side_list() {
+    let (mut a, mut ctx) = (app("reader-focus"), test_ctx());
+    ctx.size = (1920, 1080);
+    a.open_page(Page::Keyboard, None);
+    assert_eq!(holders(&a), SIDE_LIST);
+    let r = a.sheet.open().rect(pages::SC_ADD).expect("Add...");
+    let at = (r.x + r.width / 2, r.y + r.height / 2);
+    assert!(a.reader(MAIN, repriseapp::Reader::Focus(at), &ctx));
+    assert_eq!(holders(&a), PAGE);
+    assert_eq!(focused_id(&a), Some(pages::SC_ADD));
+}
