@@ -484,11 +484,12 @@ fn balloon_look(theme: &Theme) -> Option<BalloonLook> {
 /// Lay out the balloon for `title`, `body` and the action labels `actions`
 /// (every one but the body's own action). The first [`NOTIFY_BUTTONS`] get a
 /// button each, right-aligned under the body; more put a "..." button at the
-/// right end. An action `icons` marks shows its icon in an icon button in place
-/// of its label. A row too wide shrinks its labelled buttons evenly. With `reply`
-/// the row holds the reply field and send button instead, as tall as the button
-/// row so expanding the reply leaves the size alone. A look with its own balloon
-/// ([`BalloonLook`]) places the icon, text and close box and sizes the tail.
+/// end. An action `icons` marks shows its icon in an icon button in place of
+/// its label. Buttons that overrun the row wrap onto rows under it
+/// ([`flow_buttons`]). With `reply` the first row holds the reply field and
+/// send button instead, the balloon keeping the rows' height so expanding the
+/// reply leaves the size alone. A look with its own balloon ([`BalloonLook`])
+/// places the icon, text and close box and sizes the tail.
 pub fn notify_layout(
     theme: &Theme,
     text: &TextRenderer,
@@ -558,13 +559,8 @@ pub fn notify_layout(
         .ellipsize(title, title_box.width, look.is_none(), title_px)
         .into_owned();
 
-    let actions = if reply.is_some() { &[][..] } else { actions };
     let shown = actions.len().min(NOTIFY_BUTTONS);
-    let more_w = if actions.len() > NOTIFY_BUTTONS {
-        NOTIFY_MORE_W * s
-    } else {
-        0
-    };
+    let more = actions.len() > NOTIFY_BUTTONS;
     let gap = BUTTON_GAP * s;
     let iconic = |i: usize| icons.get(i).copied().unwrap_or(false);
     let mut widths: Vec<i32> = actions[..shown]
@@ -578,41 +574,42 @@ pub fn notify_layout(
             }
         })
         .collect();
-    let parts = shown + usize::from(more_w > 0);
-    let room = w - 2 * pad - more_w - parts.saturating_sub(1) as i32 * gap;
-    shrink_labelled(&mut widths, iconic, room);
-    let (mut buttons, mut labels, mut more) = (Vec::new(), Vec::new(), None);
+    if more {
+        widths.push(NOTIFY_MORE_W * s);
+    }
+    let flow = flow_buttons(&widths, w - 2 * pad, gap);
+    let (bh, y0) = (BUTTON_H * s, text_bottom + NOTIFY_ROW_GAP * s);
+    let row_y = |row: i32| y0 + row * (bh + gap);
+    let rows = flow_rows(&flow).max(i32::from(reply.is_some()));
+    let (mut buttons, mut labels, mut more_box) = (Vec::new(), Vec::new(), None);
     let (mut field, mut send) = (None, None);
-    let bubble_h = if let Some(r) = reply {
-        let y = text_bottom + NOTIFY_ROW_GAP * s;
+    if let Some(r) = reply {
+        let y = row_y(0);
         let label_w = text.measure(r.send, false, size) + 2 * NOTIFY_LABEL_PAD * s;
         let sw = label_w.max(BUTTON_W * s);
         let sx = w - pad - sw;
-        send = Some(Rect::new(sx, y, sw, BUTTON_H * s));
+        send = Some(Rect::new(sx, y, sw, bh));
         let fh = NOTIFY_FIELD_H * s;
-        let fy = y + (BUTTON_H * s - fh) / 2;
+        let fy = y + (bh - fh) / 2;
         field = Some(Rect::new(pad, fy, sx - gap - pad, fh));
-        y + BUTTON_H * s + pad
-    } else if parts == 0 {
+    } else {
+        for (i, f) in flow.iter().enumerate() {
+            let rect = Rect::new(pad + f.x, row_y(f.row), f.width, bh);
+            if i == shown {
+                more_box = Some(rect);
+                continue;
+            }
+            buttons.push(rect);
+            let room = f.width - 2 * NOTIFY_LABEL_PAD * s;
+            labels.push(
+                (!iconic(i)).then(|| text.ellipsize(actions[i], room, false, size).into_owned()),
+            );
+        }
+    }
+    let bubble_h = if rows == 0 {
         text_bottom + end_pad
     } else {
-        let y = text_bottom + NOTIFY_ROW_GAP * s;
-        let mut x = w - pad;
-        if more_w > 0 {
-            x -= more_w;
-            more = Some(Rect::new(x, y, more_w, BUTTON_H * s));
-            x -= gap;
-        }
-        for (i, (a, bw)) in actions[..shown].iter().zip(&widths).enumerate().rev() {
-            x -= bw;
-            buttons.push(Rect::new(x, y, *bw, BUTTON_H * s));
-            let room = bw - 2 * NOTIFY_LABEL_PAD * s;
-            labels.push((!iconic(i)).then(|| text.ellipsize(a, room, false, size).into_owned()));
-            x -= gap;
-        }
-        buttons.reverse();
-        labels.reverse();
-        y + BUTTON_H * s + pad
+        row_y(rows - 1) + bh + pad
     };
     NotifyLayout {
         width: w + shadow,
@@ -623,7 +620,7 @@ pub fn notify_layout(
         close,
         buttons,
         labels,
-        more,
+        more: more_box,
         field,
         send,
         placeholder: reply.map_or_else(String::new, |r| r.placeholder.to_string()),
@@ -642,22 +639,51 @@ pub fn notify_layout(
     }
 }
 
-/// Shares what `room` leaves after the icon buttons evenly among the labelled ones, when the
-/// row's `widths` overrun it.
-pub(crate) fn shrink_labelled(widths: &mut [i32], iconic: impl Fn(usize) -> bool, room: i32) {
-    let labelled = (0..widths.len()).filter(|&i| !iconic(i)).count() as i32;
-    if labelled == 0 || widths.iter().sum::<i32>() <= room {
-        return;
-    }
-    let fixed: i32 = (0..widths.len())
-        .filter(|&i| iconic(i))
-        .map(|i| widths[i])
-        .sum();
-    for (i, w) in widths.iter_mut().enumerate() {
-        if !iconic(i) {
-            *w = (room - fixed) / labelled;
+/// One button of a [`flow_buttons`] row: its left from the room's left, width and row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Flowed {
+    pub x: i32,
+    pub width: i32,
+    pub row: i32,
+}
+
+/// Lays buttons of `widths` out in order, right-aligned in `room` and `gap` apart, starting a
+/// new row under the last whenever the next would overrun it, so no label is cut. A button
+/// wider than `room` on its own is cut to it.
+pub(crate) fn flow_buttons(widths: &[i32], room: i32, gap: i32) -> Vec<Flowed> {
+    let mut rows: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut used = 0;
+    for (i, w) in widths.iter().map(|w| (*w).min(room)).enumerate() {
+        match rows.last_mut() {
+            Some(r) if used + gap + w <= room => {
+                r.end = i + 1;
+                used += gap + w;
+            }
+            _ => {
+                rows.push(i..i + 1);
+                used = w;
+            }
         }
     }
+    let mut out = Vec::with_capacity(widths.len());
+    for (row, r) in rows.into_iter().enumerate() {
+        let ws: Vec<i32> = widths[r].iter().map(|w| (*w).min(room)).collect();
+        let mut x = room - ws.iter().sum::<i32>() - (ws.len() as i32 - 1) * gap;
+        for width in ws {
+            out.push(Flowed {
+                x,
+                width,
+                row: row as i32,
+            });
+            x += width + gap;
+        }
+    }
+    out
+}
+
+/// How many rows [`flow_buttons`] laid out.
+pub(crate) fn flow_rows(flow: &[Flowed]) -> i32 {
+    flow.last().map_or(0, |f| f.row + 1)
 }
 
 /// The rects a notification's pointer and access parts use, from its canvas's top-left.
