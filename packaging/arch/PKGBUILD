@@ -46,7 +46,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'ddcutil: external monitors'\'' brightness over DDC/CI'
             'at-spi2-core: screen readers (Orca) in Reprise and its programs'
             'libx11: the Compose files behind dead keys and the Compose key in the lock screen password'
-            'hwdata: graphics card names in About Reprise (pci.ids)'
+            'hwdata: graphics card names in About Reprise and Task Manager (pci.ids)'
             'geoclue: the location prompt and the location indicator (Reprise is the geoclue agent)')
 provides=('reprise')
 conflicts=('reprise')

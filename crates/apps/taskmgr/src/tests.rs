@@ -6,7 +6,7 @@ use reprisekit::interface::Interface;
 use reprisekit::text::TextRenderer;
 use reprisekit::theme::Theme;
 
-fn themed_ctx(theme: Theme) -> Ctx {
+pub(crate) fn themed_ctx(theme: Theme) -> Ctx {
     Ctx {
         text: TextRenderer::load(&theme.fonts).into(),
         theme,
@@ -27,7 +27,7 @@ fn themed_ctx(theme: Theme) -> Ctx {
     }
 }
 
-fn ctx() -> Ctx {
+pub(crate) fn ctx() -> Ctx {
     themed_ctx(Theme::default())
 }
 
@@ -60,7 +60,7 @@ fn proc(pid: i32, name: &str, uid: u32, cpu: f64, mem_kb: u64) -> ProcRow {
     }
 }
 
-fn snapshot() -> Snapshot {
+pub(crate) fn snapshot() -> Snapshot {
     Snapshot {
         procs: vec![
             proc(1, "systemd", 0, 0.0, 12_000),
@@ -94,10 +94,11 @@ fn snapshot() -> Snapshot {
                 pids: vec![50],
             },
         ],
+        devices: Default::default(),
     }
 }
 
-fn mgr() -> TaskMgr {
+pub(crate) fn mgr() -> TaskMgr {
     let entries = vec![
         entry("org.kde.ark", "Ark", None),
         entry("reprise-notepad", "Notepad", Some("reprise.notepad")),
@@ -105,14 +106,14 @@ fn mgr() -> TaskMgr {
     TaskMgr::new(None, entries, UID)
 }
 
-fn loaded(ctx: &mut Ctx) -> TaskMgr {
+pub(crate) fn loaded(ctx: &mut Ctx) -> TaskMgr {
     let mut t = mgr();
     t.take(snapshot(), ctx);
     t.event(MAIN, Event::Resized, ctx);
     t
 }
 
-fn key(sym: u32) -> Event {
+pub(crate) fn key(sym: u32) -> Event {
     Event::Key(KeyInput {
         sym,
         utf8: None,
@@ -121,7 +122,7 @@ fn key(sym: u32) -> Event {
     })
 }
 
-fn click(t: &mut TaskMgr, ctx: &mut Ctx, (x, y): (i32, i32)) {
+pub(crate) fn click(t: &mut TaskMgr, ctx: &mut Ctx, (x, y): (i32, i32)) {
     t.event(
         MAIN,
         Event::Pointer(PointerInput::Press {
@@ -158,7 +159,7 @@ fn click_release(t: &mut TaskMgr, ctx: &mut Ctx, (x, y): (i32, i32)) {
     );
 }
 
-fn centre(r: reprisekit::raster::Rect) -> (i32, i32) {
+pub(crate) fn centre(r: reprisekit::raster::Rect) -> (i32, i32) {
     (r.x + r.width / 2, r.y + r.height / 2)
 }
 
@@ -181,7 +182,7 @@ fn click_row(t: &mut TaskMgr, ctx: &mut Ctx, i: usize) {
     click(t, ctx, at);
 }
 
-fn open(t: &mut TaskMgr, ctx: &mut Ctx, page: Page) {
+pub(crate) fn open(t: &mut TaskMgr, ctx: &mut Ctx, page: Page) {
     let i = Page::ALL.iter().position(|p| *p == page).unwrap();
     let tabs = pages::layout(t, ctx).tabs;
     click(t, ctx, centre(tabs[i]));
@@ -725,13 +726,13 @@ fn a_process_list_that_scrolls_has_no_horizontal_bar() {
 #[test]
 fn per_core_graphs_wrap_past_eight() {
     let r = reprisekit::raster::Rect::new(0, 0, 200, 100);
-    assert_eq!(pages::core_rects(r, 2).len(), 2);
-    let twelve = pages::core_rects(r, 12);
+    assert_eq!(perf::core_rects(r, 2).len(), 2);
+    let twelve = perf::core_rects(r, 12);
     assert_eq!(twelve[8].y, twelve[0].y + twelve[0].height + 3);
-    assert!(pages::core_rects(r, 0).is_empty());
+    assert!(perf::core_rects(r, 0).is_empty());
 }
 
-fn fnv(c: &Canvas) -> u64 {
+pub(crate) fn fnv(c: &Canvas) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     for v in [c.width, c.height]
         .into_iter()
@@ -745,7 +746,7 @@ fn fnv(c: &Canvas) -> u64 {
 }
 
 /// Compares `got` with `tests/pins/<name>.txt`, or rewrites it under `REPRISE_BLESS`.
-fn pins(name: &str, got: &[(String, u64)]) {
+pub(crate) fn pins(name: &str, got: &[(String, u64)]) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/pins")
         .join(format!("{name}.txt"));
@@ -867,8 +868,8 @@ fn the_cpu_graph_menu_picks_the_same_view_as_the_view_menu() {
     let mut ctx = ctx();
     let mut t = loaded(&mut ctx);
     open(&mut t, &mut ctx, Page::Performance);
-    let perf = pages::layout(&t, &ctx).perf.unwrap();
-    right_click(&mut t, &mut ctx, centre(perf.graph_groups[0]));
+    let lay = pages::layout(&t, &ctx).perf.unwrap();
+    right_click(&mut t, &mut ctx, centre(perf::cpu_graph(&lay).unwrap()));
     assert!(t.popup.is_some());
     assert!(
         t.popup(MAIN, &ctx).is_some(),
@@ -890,7 +891,11 @@ fn the_cpu_graph_menu_picks_the_same_view_as_the_view_menu() {
     assert!(!t.per_core, "by keyboard its first row is picked");
     assert_eq!(view_marks(&t), [true, false]);
 
-    right_click(&mut t, &mut ctx, centre(perf.graph_groups[1]));
+    t.perf.list.select_row(Some(1));
+    t.event(MAIN, key(keysym::MENU), &mut ctx);
+    assert!(t.popup.is_none(), "no menu while another pane shows");
+    let mem = pages::layout(&t, &ctx).perf.unwrap();
+    right_click(&mut t, &mut ctx, centre(mem.rows[0].graphs[0].group));
     assert!(t.popup.is_none(), "the memory graph has no menu");
 }
 

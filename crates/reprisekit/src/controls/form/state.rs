@@ -96,10 +96,11 @@ impl Form {
         }
     }
 
-    /// Put `s` in label `id`, or make it note `id`'s one line.
+    /// Put `s` in label `id`, or make it note `id`'s one line or group `id`'s title.
     pub fn set_text(&mut self, id: &str, s: &str) {
         match self.item_mut(id).map(|i| &mut i.control) {
             Some(Control::Label { text, .. }) => *text = s.to_string(),
+            Some(Control::Group(title)) => *title = s.to_string(),
             Some(Control::Lines(lines) | Control::GreyedLines(lines)) => *lines = vec![s.into()],
             _ => {}
         }
