@@ -2302,6 +2302,33 @@ fn escape_clears_the_query_then_cancels() {
     assert!(s.tabs.focused);
 }
 
+#[test]
+fn escape_on_a_page_control_clears_the_query_before_it_cancels() {
+    let mut first = check_page("Night Light");
+    first
+        .items
+        .push(Item::combo("combo", 20, 80, 100, &["A", "B"], 4));
+    let pages = vec![first, check_page("Effects"), check_page("Mouse")];
+    let mut s = PropSheet::with_list(LIST_GROUPS, pages, (398, 424));
+    let focused = |s: &PropSheet| s.open().focus().map(|f| s.open().items[f].id);
+    s.search.key(EditKey::Insert("mo".into()));
+    s.focus_control("check");
+    assert_eq!(s.key(form::Key::Escape, None), Event::Search);
+    assert_eq!(s.search.text(), "");
+    assert_eq!(focused(&s), Some("check"), "the control keeps the keyboard");
+    assert_eq!(s.key(form::Key::Escape, None), Event::Cancel);
+
+    s.search.key(EditKey::Insert("mo".into()));
+    s.focus_control("combo");
+    if let Control::Combo(c) = &mut s.open_mut().item_mut("combo").unwrap().control {
+        c.toggle();
+    }
+    assert!(s.open().popup_open());
+    assert_ne!(s.key(form::Key::Escape, None), Event::Search);
+    assert!(!s.open().popup_open(), "an open list closes first");
+    assert_eq!(s.search.text(), "mo");
+}
+
 fn filtered_link_sheet(pages: [bool; 3], links: [bool; 2]) -> PropSheet {
     let mut s = link_sheet();
     s.list_mut().unwrap().set_filter(Some(&pagelist::Filter {
@@ -2309,6 +2336,48 @@ fn filtered_link_sheet(pages: [bool; 3], links: [bool; 2]) -> PropSheet {
         links: links.to_vec(),
     }));
     s
+}
+
+#[test]
+fn ctrl_tab_turns_only_to_the_pages_the_filter_shows() {
+    let ctrl_tab = |s: &mut PropSheet| s.key(form::Key::Tab { back: false }, Some(false));
+    let mut s = filtered_link_sheet([true, false, true], [true; 2]);
+    assert_eq!(ctrl_tab(&mut s), Event::Redraw);
+    assert_eq!(s.tabs.open, 2);
+    ctrl_tab(&mut s);
+    assert_eq!(s.tabs.open, 0, "wraps past the hidden page");
+    let mut s = filtered_link_sheet([true, false, false], [true; 2]);
+    assert_eq!(ctrl_tab(&mut s), Event::None, "no other page shows");
+}
+
+#[test]
+fn a_host_opening_a_page_or_taking_the_keyboard_lets_go_of_the_link_cursor() {
+    let mut s = link_sheet();
+    s.click(Some(Hit::Link(0)));
+    s.set_open(2);
+    assert_eq!((s.tabs.open, s.tabs.focused, cursor(&s)), (2, true, None));
+    s.click(Some(Hit::Link(0)));
+    s.blur();
+    assert_eq!(
+        (
+            s.tabs.focused,
+            s.search_focused,
+            cursor(&s),
+            s.open().focus()
+        ),
+        (false, false, None, None)
+    );
+    s.focus_list();
+    assert_eq!((s.tabs.open, s.tabs.focused), (2, true));
+
+    let mut s = filtered_link_sheet([false, true, false], [false; 2]);
+    s.blur();
+    s.focus_list();
+    assert_eq!(
+        (s.tabs.open, s.tabs.focused),
+        (1, true),
+        "the list lands on the first shown row"
+    );
 }
 
 #[test]

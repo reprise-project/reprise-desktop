@@ -15,9 +15,7 @@ pub(crate) fn hand_focus(sheet: &mut PropSheet, list: &mut ListView, held: &mut 
     *held = on;
     list.focus_ring = on;
     if on {
-        sheet.open_mut().set_focus(None);
-        sheet.tabs.focused = false;
-        sheet.search_focused = false;
+        sheet.blur();
     }
 }
 
@@ -130,12 +128,10 @@ impl SettingsApp {
             self.list_focus || self.shortcuts_focus || self.types_focus || self.locations_focus;
         if held {
             self.focus_side_list(false);
-            let page = self.sheet.open_mut();
             if back {
-                page.set_focus(None);
-                self.sheet.tabs.focused = true;
+                self.sheet.focus_list();
             } else {
-                page.focus_edge(false);
+                self.sheet.open_mut().focus_edge(false);
             }
             return Reply::redraw();
         }
