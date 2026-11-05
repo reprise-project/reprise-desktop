@@ -208,11 +208,11 @@ pub const TRAY_CUSTOMIZE: &str = "taskbar_tray_customize";
 pub const ADD: &str = "add";
 pub const REMOVE: &str = "remove";
 
-/// The Startup page's autostart list: 11 rows under its header at
+/// The Startup page's autostart list: 14 rows under its header at
 /// [`Area::MIN`], more with extra page height; the rest scroll, so Command
 /// takes what the other columns and the scrollbar leave ([`fit_list_columns`]).
 pub fn list(a: Area) -> Rect {
-    Rect::new(X, 44, a.w, 208 + a.dh)
+    Rect::new(X, 44, a.w, 259 + a.dh)
 }
 pub const COLUMNS: [(&str, i32); 3] = [("Startup Item", 164), ("Command", 114), ("Location", 60)];
 

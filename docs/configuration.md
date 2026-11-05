@@ -44,7 +44,7 @@ while an editor saves it doesn't.
 | `[window_snapping]`, `[windows]` | snapping, layouts, tabs, shake, window memory, title bar double click, dimming windows without the focus |
 | `[[window_rules]]` | per-program size, place, screen (by connector or monitor id), desktop and state; `from_menu = true` marks the rule the window menu's Always Open Here wrote ([features.md](features.md#windows)) |
 | `[session]` | session restore and leftover programs |
-| `[updates]` | `restart_notice`: Software Updates says when a kernel update or `/run/reboot-required` calls for a restart, on by default (Settings > Startup) |
+| `[updates]` | `restart_notice`: Software Updates says when a kernel update or `/run/reboot-required` calls for a restart, on by default (Settings > Advanced) |
 | `[keyboard]`, `[mouse]`, `[touchpad]`, `[touchscreen]`, `[gestures]` | input |
 | `[shortcut_overlay]` | the shortcut sheet holding Super shows, and how long Super is held first |
 | `[[tablets]]` | which output a drawing tablet covers, and whether it keeps its shape |
