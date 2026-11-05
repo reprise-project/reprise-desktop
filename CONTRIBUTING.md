@@ -18,11 +18,13 @@ and run Reprise, nested in your current session or from a login manager.
 every test in its own process across all test binaries at once and reads
 `.config/nextest.toml`. Without it, `cargo test --workspace` runs the same
 tests.
-`scripts/affected-tests [BASE]` runs only the tests of the crates changed
-since BASE (default `origin/main`) and the crates that depend on them.
+`scripts/affected-tests [BASE]` builds and runs only the tests of the crates
+changed since BASE (default `origin/main`) and the crates that depend on them.
 
 CI runs the same three commands as an unprivileged user in an Arch Linux
-image built from `.github/ci-image/` (`packages` lists what it installs). Run
+image built from `.github/ci-image/` (`packages` lists what it installs). On
+a pull request it tests through `scripts/affected-tests`; main tests the
+whole workspace. Run
 the tests as a normal user too: some check that a read-only directory
 refuses a write, which root ignores.
 

@@ -1,8 +1,14 @@
 name: build
-description: Runs fmt, clippy and the tests as an unprivileged user.
+description: Runs fmt and clippy, the tests, or both, as an unprivileged user.
 inputs:
   setup:
     description: Install the CI image's packages first, for a container other than the CI image.
+    default: "false"
+  checks:
+    description: "lint (fmt and clippy), test, or all."
+    default: all
+  affected:
+    description: Test only the crates scripts/affected-tests picks against HEAD^, the merge commit's base.
     default: "false"
 runs:
   using: composite
@@ -13,21 +19,34 @@ runs:
       run: bash "$GITHUB_WORKSPACE"/.github/ci-image/setup.sh
     # Keyed on rustc, Cargo.lock and the job; drops the workspace's own artifacts before saving.
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+    # The workspace's own crates, which rust-cache drops: sccache keys on their contents, so an
+    # unchanged crate hits on a fresh checkout. The jobs set RUSTC_WRAPPER.
+    - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      with:
+        version: v0.19.0
     # The Tahoma the pixel tests are pinned to.
-    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    - if: inputs.checks != 'lint'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: /home/builder/.cache/reprise-test-fonts
         key: test-fonts-${{ hashFiles('scripts/test-fonts.sh') }}
     # The checkout and the caches come back owned by root.
     - shell: bash
       run: chown -R builder "$GITHUB_WORKSPACE" /home/builder
-    - shell: bash
+    - if: inputs.checks != 'test'
+      shell: bash
+      run: runuser -u builder -- env HOME=/home/builder cargo fmt --check
+    - if: inputs.checks != 'test'
+      shell: bash
+      run: runuser -u builder -- env HOME=/home/builder cargo clippy --workspace --all-targets --locked -- -D warnings
+    - if: inputs.checks != 'lint'
+      shell: bash
       run: |
         dir=$(runuser -u builder -- env HOME=/home/builder scripts/test-fonts.sh)
         echo "REPRISE_TEST_FONTS=$dir" >> "$GITHUB_ENV"
-    - shell: bash
-      run: runuser -u builder -- env HOME=/home/builder cargo fmt --check
-    - shell: bash
-      run: runuser -u builder -- env HOME=/home/builder cargo clippy --workspace --all-targets --locked -- -D warnings
-    - shell: bash
+    - if: inputs.checks != 'lint' && inputs.affected != 'true'
+      shell: bash
       run: runuser -u builder -- env HOME=/home/builder REPRISE_TEST_FONTS="$REPRISE_TEST_FONTS" cargo nextest run --workspace --locked --profile ci
+    - if: inputs.checks != 'lint' && inputs.affected == 'true'
+      shell: bash
+      run: runuser -u builder -- env HOME=/home/builder REPRISE_TEST_FONTS="$REPRISE_TEST_FONTS" scripts/affected-tests HEAD^ --profile ci
