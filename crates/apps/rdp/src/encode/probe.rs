@@ -3,6 +3,7 @@
 
 use super::colour;
 use super::ffmpeg::Ffmpeg;
+use super::gl::{self, Gl};
 use super::hwmap::{self, Converter, Devices, Gpu};
 use super::{Encoded, Encoder};
 use crate::stream::{
@@ -10,6 +11,7 @@ use crate::stream::{
 };
 use drm::control::Device as _;
 use drm::node::{DrmNode, NodeType};
+use glow::HasContext;
 use repriseconf::remote::{EncoderChoice, Quality};
 use std::fs::File;
 use std::os::fd::{AsFd, BorrowedFd};
@@ -78,19 +80,19 @@ impl Backend {
         }
     }
 
-    /// The GPU API dma-bufs are mapped into; NVENC takes them through Vulkan. None for the
-    /// CPU.
+    /// The GPU API dma-bufs reach it through. None for the CPU.
     pub fn gpu(self) -> Option<Gpu> {
         match self {
             Backend::Vaapi { .. } => Some(Gpu::Vaapi),
-            Backend::Nvenc | Backend::Vulkan => Some(Gpu::Vulkan),
+            Backend::Nvenc => Some(Gpu::Cuda),
+            Backend::Vulkan => Some(Gpu::Vulkan),
             Backend::X264 => None,
         }
     }
 
-    /// Whether it codes AVC444: the views are drawn for VA-API and on the CPU.
+    /// Whether it codes AVC444: the views are drawn for VA-API, CUDA and on the CPU.
     pub fn codes_avc444(self) -> bool {
-        matches!(self, Backend::Vaapi { .. } | Backend::X264)
+        matches!(self, Backend::Vaapi { .. } | Backend::Nvenc | Backend::X264)
     }
 
     /// The `[remote_desktop] encoder` value that names it.
@@ -237,7 +239,10 @@ fn test_frame(backend: Backend, device: &Path) -> Result<(), super::EncodeError>
     let frame = match backend.gpu() {
         Some(_) => {
             let gbm = gbm_device(device)?;
-            test_buffer(&gbm, XRGB8888, DRM_FORMAT_MOD_LINEAR)?
+            let mut painter = Painter::new(device);
+            // NVIDIA renders into no LINEAR buffer.
+            test_buffer(&gbm, &mut painter, XRGB8888, Some(DRM_FORMAT_MOD_LINEAR))
+                .or_else(|_| test_buffer(&gbm, &mut painter, XRGB8888, None))?
         }
         None => Frame::unleased(
             FrameBuffer::Shm {
@@ -342,8 +347,7 @@ pub fn modifiers(backend: Backend, device: &Path) -> Vec<u64> {
     let Some(gpu) = backend.gpu() else {
         return linear;
     };
-    let cuda = backend == Backend::Nvenc;
-    let (Ok(devices), Ok(gbm)) = (Devices::open(gpu, device, cuda), gbm_device(device)) else {
+    let (Ok(devices), Ok(gbm)) = (Devices::open(gpu, device), gbm_device(device)) else {
         return linear;
     };
     let mut candidates = plane_modifiers(device);
@@ -356,9 +360,10 @@ pub fn modifiers(backend: Backend, device: &Path) -> Vec<u64> {
             candidates.push(bo.modifier().into());
         }
     }
+    let mut painter = Painter::new(device);
     quietly(|| {
         mappable(&candidates, |format, modifier| {
-            converts(&devices, &gbm, format, modifier).is_ok()
+            converts(&devices, &gbm, &mut painter, format, modifier).is_ok()
         })
     })
 }
@@ -389,28 +394,32 @@ fn gbm_device(device: &Path) -> Result<gbm::Device<File>, super::EncodeError> {
     gbm::Device::new(file).map_err(err)
 }
 
-/// A dma-buf of `format` and `modifier` holding [`pattern`], as a stream frame.
+/// A dma-buf of `format` and `modifier` (else the driver's choice) holding [`pattern`], as a
+/// stream frame.
 fn test_buffer(
     gbm: &gbm::Device<File>,
+    painter: &mut Painter,
     format: u32,
-    modifier: u64,
+    modifier: Option<u64>,
 ) -> Result<Frame, super::EncodeError> {
     let err = |e: &dyn std::fmt::Display| super::EncodeError(e.to_string());
     let gbm_format = gbm::Format::try_from(format).map_err(|e| err(&e))?;
-    let mut bo = gbm
-        .create_buffer_object_with_modifiers2::<()>(
+    let flags = gbm::BufferObjectFlags::RENDERING;
+    let mut bo = match modifier {
+        Some(m) => gbm.create_buffer_object_with_modifiers2::<()>(
             TEST_SIDE,
             TEST_SIDE,
             gbm_format,
-            [gbm::Modifier::from(modifier)].into_iter(),
-            gbm::BufferObjectFlags::RENDERING,
-        )
-        .map_err(|e| err(&e))?;
-    bo.map_mut(0, 0, TEST_SIDE, TEST_SIDE, |map| {
+            [gbm::Modifier::from(m)].into_iter(),
+            flags,
+        ),
+        None => gbm.create_buffer_object::<()>(TEST_SIDE, TEST_SIDE, gbm_format, flags),
+    }
+    .map_err(|e| err(&e))?;
+    let mapped = bo.map_mut(0, 0, TEST_SIDE, TEST_SIDE, |map| {
         let stride = map.stride();
         map.buffer_mut()[..(stride * TEST_SIDE) as usize].copy_from_slice(&pattern(format, stride));
-    })
-    .map_err(|e| err(&e))?;
+    });
     let planes = (0..bo.plane_count() as i32)
         .map(|p| Plane {
             object: 0,
@@ -419,15 +428,102 @@ fn test_buffer(
         })
         .collect();
     let fd = Arc::new(bo.fd().map_err(|e| err(&e))?);
-    Ok(Frame::unleased(
+    let frame = Frame::unleased(
         FrameBuffer::Dmabuf {
             objects: vec![fd],
             fourcc: format,
-            modifier,
+            modifier: bo.modifier().into(),
             planes,
         },
         (TEST_SIDE, TEST_SIDE),
-    ))
+    );
+    if mapped.is_err() {
+        painter.paint(&frame)?;
+    }
+    Ok(frame)
+}
+
+/// Draws [`pattern`] into test buffers the CPU cannot map, as NVIDIA's tiled ones are; the GL
+/// context is made for the first.
+struct Painter<'a> {
+    node: &'a Path,
+    gl: Option<(Gl, glow::Program)>,
+}
+
+/// [`pattern`] by position: red is x, green y.
+const PAINT: &str = "#version 300 es
+precision highp float;
+out vec4 colour;
+void main() {
+    colour = vec4(floor(gl_FragCoord.xy) / 255.0, 128.0 / 255.0, 1.0);
+}
+";
+
+impl<'a> Painter<'a> {
+    fn new(node: &'a Path) -> Painter<'a> {
+        Painter { node, gl: None }
+    }
+
+    fn paint(&mut self, frame: &Frame) -> Result<(), super::EncodeError> {
+        let FrameBuffer::Dmabuf {
+            objects,
+            fourcc,
+            modifier,
+            planes,
+        } = &frame.buffer
+        else {
+            return Err(super::EncodeError("only a dma-buf is painted".into()));
+        };
+        let (gl, program) = match &mut self.gl {
+            Some(made) => made,
+            none => {
+                let gl = Gl::new(self.node)?;
+                // SAFETY: the new context is current.
+                let program = unsafe { gl::program(&gl.gl, PAINT)? };
+                none.insert((gl, program))
+            }
+        };
+        gl.current()?;
+        let image = gl.import(objects, *fourcc, *modifier, planes, frame.size)?;
+        let (w, h) = frame.size;
+        let g = &gl.gl;
+        // SAFETY: GL calls on the current context; what is made here is deleted here.
+        let painted = unsafe {
+            let texture = g.create_texture().map_err(gl::gl_err("texture"))?;
+            gl.bind_image(texture, image);
+            let fb = g.create_framebuffer().map_err(gl::gl_err("framebuffer"));
+            let painted = fb.and_then(|fb| {
+                g.bind_framebuffer(glow::FRAMEBUFFER, Some(fb));
+                g.framebuffer_texture_2d(
+                    glow::FRAMEBUFFER,
+                    glow::COLOR_ATTACHMENT0,
+                    glow::TEXTURE_2D,
+                    Some(texture),
+                    0,
+                );
+                let status = g.check_framebuffer_status(glow::FRAMEBUFFER);
+                if status == glow::FRAMEBUFFER_COMPLETE {
+                    g.viewport(0, 0, w as i32, h as i32);
+                    g.use_program(Some(*program));
+                    g.draw_arrays(glow::TRIANGLES, 0, 3);
+                    g.finish();
+                }
+                g.bind_framebuffer(glow::FRAMEBUFFER, None);
+                g.delete_framebuffer(fb);
+                match (status, g.get_error()) {
+                    (glow::FRAMEBUFFER_COMPLETE, glow::NO_ERROR) => Ok(()),
+                    (glow::FRAMEBUFFER_COMPLETE, e) => {
+                        Err(super::EncodeError(format!("painting: GL error {e:#x}")))
+                    }
+                    (s, _) => Err(super::EncodeError(format!("painting: framebuffer {s:#x}"))),
+                }
+            });
+            g.delete_texture(texture);
+            painted
+        };
+        gl.destroy_image(image);
+        painted
+    }
 }
 
 /// The test picture in `format`, rows of `stride` bytes: red rises to the right, green
@@ -478,10 +574,11 @@ fn luma_at(picture: &ffmpeg::frame::Video, x: u32, y: u32) -> Result<f64, super:
 fn converts(
     devices: &Devices,
     gbm: &gbm::Device<File>,
+    painter: &mut Painter,
     format: u32,
     modifier: u64,
 ) -> Result<(), super::EncodeError> {
-    let frame = test_buffer(gbm, format, modifier)?;
+    let frame = test_buffer(gbm, painter, format, Some(modifier))?;
     let mut converter = Converter::new(Some(devices), format, (TEST_SIDE, TEST_SIDE), TEST_RATE)?;
     let converted = hwmap::download(&converter.convert(&frame)?)?;
     for y in (8..TEST_SIDE).step_by(16) {
@@ -760,5 +857,18 @@ mod tests {
             blob.extend(modifier.to_ne_bytes());
         }
         assert_eq!(in_formats(&blob, &FORMATS), vec![8, 9]);
+    }
+
+    #[test]
+    #[ignore = "needs an NVIDIA GPU with NVENC"]
+    fn nvenc_passes_the_probe_with_the_drivers_tiled_modifiers() {
+        let node = Path::new(RENDER_NODE);
+        let started = Instant::now();
+        quietly(|| test_frame(Backend::Nvenc, node)).expect("NVENC codes the test frame");
+        let found = modifiers(Backend::Nvenc, node);
+        let took = started.elapsed();
+        eprintln!("NVENC's probe took {took:?} and found {found:#x?}");
+        assert!(found.len() > 1, "a tiled modifier besides LINEAR");
+        assert!(took < PROBE_TIMEOUT, "{took:?}");
     }
 }

@@ -1,9 +1,10 @@
-//! Stream frames as encoder input. A dma-buf is mapped onto the encoder's GPU and converted to
-//! NV12 in the [`colour`] YUV there; the software encoder's frames go through swscale.
+//! Stream frames as encoder input: dma-bufs mapped onto the encoder's GPU or drawn into CUDA
+//! frames, as NV12 in the [`colour`] YUV; the software encoder's frames go through swscale.
 
 use super::EncodeError;
 use super::bitmap::DmabufRead;
 use super::colour::{self, FULL_RANGE};
+use super::split::CudaViews;
 use crate::stream::{ABGR8888, ARGB8888, Frame, FrameBuffer, Plane, XBGR8888, XRGB8888};
 use ffmpeg::ffi;
 use ffmpeg::format::Pixel;
@@ -11,7 +12,7 @@ use ffmpeg::frame;
 use std::ffi::{CStr, CString};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr::{self, NonNull};
 use std::sync::Arc;
 
@@ -33,6 +34,12 @@ impl Ref {
         // SAFETY: `self` holds a live reference.
         unsafe { ffi::av_buffer_ref(self.as_ptr()) }
     }
+
+    /// A second reference to the same buffer.
+    pub fn try_clone(&self) -> Result<Ref, EncodeError> {
+        Ref::new(self.new_ref())
+            .ok_or_else(|| EncodeError("no memory for a buffer reference".into()))
+    }
 }
 
 impl Drop for Ref {
@@ -50,11 +57,13 @@ pub(super) fn check(ret: libc::c_int, what: &str) -> Result<libc::c_int, EncodeE
     }
 }
 
-/// The GPU API a dma-buf is mapped into.
+/// The GPU API a dma-buf reaches the encoder through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gpu {
     Vaapi,
     Vulkan,
+    /// Drawn by OpenGL ES (split.rs's views) and copied into CUDA frames on the GPU.
+    Cuda,
 }
 
 impl Gpu {
@@ -62,54 +71,61 @@ impl Gpu {
         match self {
             Gpu::Vaapi => ffi::AVPixelFormat::VAAPI,
             Gpu::Vulkan => ffi::AVPixelFormat::VULKAN,
+            Gpu::Cuda => ffi::AVPixelFormat::CUDA,
         }
     }
 
     /// The filter and options turning mapped RGB into BT.709 NV12. Naming the primaries and
     /// transfer on both sides keeps drivers from converting them or using BT.601.
-    fn to_nv12(self) -> (&'static str, CString) {
-        let options = match self {
-            Gpu::Vaapi => format!(
-                "format=nv12:out_color_matrix=bt709:out_range={}:out_color_primaries=bt709:\
-                 out_color_transfer=iec61966-2-1",
-                if FULL_RANGE { "full" } else { "tv" }
+    fn to_nv12(self) -> Result<(&'static str, CString), EncodeError> {
+        let (name, options) = match self {
+            Gpu::Vaapi => (
+                "scale_vaapi",
+                format!(
+                    "format=nv12:out_color_matrix=bt709:out_range={}:out_color_primaries=bt709:\
+                     out_color_transfer=iec61966-2-1",
+                    if FULL_RANGE { "full" } else { "tv" }
+                ),
             ),
-            Gpu::Vulkan => format!(
-                "format=nv12:colorspace=bt709:range={}:dithering=none",
-                if FULL_RANGE { "pc" } else { "tv" }
+            Gpu::Vulkan => (
+                "libplacebo",
+                format!(
+                    "format=nv12:colorspace=bt709:range={}:dithering=none",
+                    if FULL_RANGE { "pc" } else { "tv" }
+                ),
             ),
+            Gpu::Cuda => return Err(EncodeError("CUDA frames are drawn, not filtered".into())),
         };
-        let name = match self {
-            Gpu::Vaapi => "scale_vaapi",
-            Gpu::Vulkan => "libplacebo",
-        };
-        (name, CString::new(options).expect("no NUL in the options"))
+        Ok((name, CString::new(options).expect("no NUL in the options")))
     }
 }
 
-/// The devices one encoder runs on: the GPU the dma-bufs map into and, for NVENC, the CUDA
-/// device behind the same GPU.
+/// The device one encoder runs on, of the GPU behind its render node.
 pub struct Devices {
     pub(super) gpu: Gpu,
     pub(super) device: Ref,
-    cuda: Option<Ref>,
+    node: PathBuf,
 }
 
 impl Devices {
-    /// `gpu` on render node `node`, with its CUDA device when `cuda`.
-    pub fn open(gpu: Gpu, node: &Path, cuda: bool) -> Result<Devices, EncodeError> {
-        let device = match gpu {
-            Gpu::Vaapi => create(ffi::AVHWDeviceType::VAAPI, node)?,
-            Gpu::Vulkan => derive(
+    /// `gpu` on render node `node`. CUDA is found through Vulkan, which names the node's GPU.
+    pub fn open(gpu: Gpu, node: &Path) -> Result<Devices, EncodeError> {
+        let vulkan = || {
+            derive(
                 ffi::AVHWDeviceType::VULKAN,
                 &create(ffi::AVHWDeviceType::DRM, node)?,
-            )?,
+            )
         };
-        let cuda = match cuda {
-            true => Some(derive(ffi::AVHWDeviceType::CUDA, &device)?),
-            false => None,
+        let device = match gpu {
+            Gpu::Vaapi => create(ffi::AVHWDeviceType::VAAPI, node)?,
+            Gpu::Vulkan => vulkan()?,
+            Gpu::Cuda => derive(ffi::AVHWDeviceType::CUDA, &vulkan()?)?,
         };
-        Ok(Devices { gpu, device, cuda })
+        Ok(Devices {
+            gpu,
+            device,
+            node: node.to_path_buf(),
+        })
     }
 }
 
@@ -280,9 +296,8 @@ enum Route {
         mapped: Ref,
         graph: ffmpeg::filter::Graph,
     },
-    /// Mapped into Vulkan and copied on the GPU into CUDA frames, which NVENC converts itself
-    /// to limited-range BT.601 whatever the context's range.
-    Cuda { mapped: Ref, cuda: Ref },
+    /// Drawn as the AVC444 main view, which is the picture in 4:2:0, into CUDA frames.
+    Cuda(CudaViews),
     Cpu {
         sws: ffmpeg::software::scaling::Context,
         out: frame::Video,
@@ -300,18 +315,15 @@ impl Converter {
     ) -> Result<Converter, EncodeError> {
         let sw = sw_pixel(fourcc)?;
         let route = match devices {
+            Some(d) if d.gpu == Gpu::Cuda => {
+                Route::Cuda(CudaViews::new(&d.node, &d.device, size, size, false)?)
+            }
             Some(d) => {
                 let mapped = frames(&d.device, d.gpu.pixel(), sw, size, 0)?;
-                match &d.cuda {
-                    Some(cuda) => Route::Cuda {
-                        cuda: frames(cuda, ffi::AVPixelFormat::CUDA, sw, size, 4)?,
-                        mapped,
-                    },
-                    None => Route::Filter {
-                        gpu: d.gpu,
-                        graph: graph(&d.device, &mapped, d.gpu, size, frame_rate)?,
-                        mapped,
-                    },
+                Route::Filter {
+                    gpu: d.gpu,
+                    graph: graph(&d.device, &mapped, d.gpu, size, frame_rate)?,
+                    mapped,
                 }
             }
             None => {
@@ -356,7 +368,7 @@ impl Converter {
     /// The frames context the encoder's input comes from; None on the CPU.
     pub fn frames(&mut self) -> Option<*mut ffi::AVBufferRef> {
         match &mut self.route {
-            Route::Cuda { cuda, .. } => Some(cuda.as_ptr()),
+            Route::Cuda(views) => Some(views.frames()),
             Route::Filter { graph, .. } => {
                 let mut sink = graph.get("out")?;
                 // SAFETY: the sink of a configured graph; the context lives with the graph.
@@ -369,24 +381,21 @@ impl Converter {
     /// The encoder's pixel format.
     pub fn pixel(&self) -> Pixel {
         match &self.route {
-            Route::Cuda { .. } => Pixel::CUDA,
+            Route::Cuda(_) => Pixel::CUDA,
             Route::Filter { gpu, .. } => Pixel::from(gpu.pixel()),
             Route::Cpu { .. } => Pixel::YUV420P,
         }
     }
 
-    /// `frame` cropped to `self.size`, as the encoder takes it: NV12 on the GPU, RGB in CUDA
-    /// or YUV 4:2:0 in memory.
+    /// `frame` cropped to `self.size`, as the encoder takes it: NV12 on the GPU or YUV 4:2:0 in
+    /// memory.
     pub fn convert(&mut self, frame: &Frame) -> Result<frame::Video, EncodeError> {
         match &mut self.route {
             Route::Filter { gpu, mapped, graph } => {
                 let input = mapped_frame(frame, self.size, mapped, *gpu)?;
                 filter(graph, &input)
             }
-            Route::Cuda { mapped, cuda } => {
-                let input = mapped_frame(frame, self.size, mapped, Gpu::Vulkan)?;
-                upload(&input, cuda)
-            }
+            Route::Cuda(views) => views.main(frame),
             Route::Cpu { sws, out } => {
                 // SAFETY: `out` is a frame this converter owns.
                 let writable = unsafe { ffi::av_frame_make_writable(out.as_mut_ptr()) };
@@ -527,7 +536,7 @@ fn graph(
     frame_rate: u32,
 ) -> Result<ffmpeg::filter::Graph, EncodeError> {
     let mut graph = ffmpeg::filter::Graph::new();
-    let (convert, options) = gpu.to_nv12();
+    let (convert, options) = gpu.to_nv12()?;
     let find = |name| {
         ffmpeg::filter::find(name).ok_or_else(|| EncodeError(format!("FFmpeg has no {name}")))
     };
@@ -606,28 +615,6 @@ fn filter(
         .sink()
         .frame(&mut out)
         .map_err(err)?;
-    Ok(out)
-}
-
-/// `input` copied on the GPU into a frame of `cuda`.
-fn upload(input: &frame::Video, cuda: &Ref) -> Result<frame::Video, EncodeError> {
-    let mut out = frame::Video::empty();
-    // SAFETY: `out` is empty and gets a frame of `cuda`; the transfer reads `input`.
-    unsafe {
-        let o = out.as_mut_ptr();
-        check(
-            ffi::av_hwframe_get_buffer(cuda.as_ptr(), o, 0),
-            "CUDA frame",
-        )?;
-        check(
-            ffi::av_hwframe_transfer_data(o, input.as_ptr(), 0),
-            "copy to CUDA",
-        )?;
-        check(
-            ffi::av_frame_copy_props(o, input.as_ptr()),
-            "frame properties",
-        )?;
-    }
     Ok(out)
 }
 

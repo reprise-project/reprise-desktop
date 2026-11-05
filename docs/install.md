@@ -101,9 +101,11 @@ URL, so download it first and install the local file:
 - `reprise-rdp` encodes H.264 through FFmpeg 9 (libavcodec, libavfilter,
   libavutil, libswscale) with the `ffmpeg-the-third` crate, whose bindings are
   generated from FFmpeg's headers at build time (clang)
-- `reprise-rdp` draws the full-colour (AVC444) views on the GPU with OpenGL
-  ES through the `khronos-egl` and `glow` crates, built in; it loads libEGL
-  at run time, from the Mesa and libglvnd listed below
+- `reprise-rdp` draws the full-colour (AVC444) views, and NVENC's input, on
+  the GPU with OpenGL ES through the `khronos-egl` and `glow` crates, built
+  in; it loads libEGL at run time, from the Mesa and libglvnd listed below,
+  and on NVIDIA libcuda from `nvidia-utils` to copy the drawn pictures into
+  CUDA
 
 ### To run
 
@@ -206,8 +208,7 @@ desktop and stays out of the way when it's missing.
 - A VA-API driver with an H.264 encoder, for hardware H.264 in Remote
   Desktop: `intel-media-driver` on Intel graphics, `libva-mesa-driver` on
   AMD (Arch's `mesa` package provides it). On NVIDIA, `nvidia-utils` (CUDA
-  and NVENC); the NVENC path has not been tried on NVIDIA hardware yet,
-  and its colours may look slightly washed out.
+  and NVENC), tried on a GeForce RTX 4080 SUPER with driver 615.78.
   Without a hardware encoder, Remote Desktop encodes H.264 on the CPU with
   x264 through FFmpeg's libx264, which Arch's `ffmpeg` links; a client
   without H.264 gets RemoteFX bitmaps.

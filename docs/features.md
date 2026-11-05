@@ -741,9 +741,9 @@ no port forwarding; allow the port in your firewall if you run one.
   the pointer itself, so it moves without lag. Only what changed is sent,
   and a still screen sends nothing.
 - **Encoders.** At start the server tries each H.264 encoder on a test
-  frame: VA-API (Intel and AMD), NVENC (NVIDIA; not yet tried on NVIDIA
-  hardware, and colours there may look slightly washed out), Vulkan and
-  x264 on the CPU. Automatic uses the first of them
+  frame: VA-API (Intel and AMD), NVENC (NVIDIA; tried on a GeForce RTX
+  4080 SUPER with driver 615.78), Vulkan and x264 on the CPU. Automatic
+  uses the first of them
   that works. A client without H.264 gets RemoteFX bitmaps. Video encoder
   on the Settings page (`encoder`) picks one; those that don't work here
   are greyed. A chosen encoder that doesn't work here falls back to
@@ -756,9 +756,9 @@ no port forwarding; allow the port in your firewall if you run one.
   is left out.
 - **Quality.** Picture quality runs from Speed to Sharp and frame rate is
   30 or 60; both apply to a connected client at once. With Balanced or
-  Sharp, a client that offers it and VA-API or x264 coding, the picture is
-  sent in full colour (AVC444), so small coloured text stays sharp. Speed,
-  NVENC and Vulkan send reduced colour, which takes less bandwidth.
+  Sharp, a client that offers it and VA-API, NVENC or x264 coding, the
+  picture is sent in full colour (AVC444), so small coloured text stays
+  sharp. Speed and Vulkan send reduced colour, which takes less bandwidth.
 - **Keyboard and mouse.** Keys go by position and this computer's keyboard
   layout reads them. Characters the client sends as text are typed as they
   are. Caps Lock and Num Lock follow the client. Five mouse buttons, the
