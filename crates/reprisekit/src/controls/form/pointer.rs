@@ -202,6 +202,13 @@ impl Form {
                             x,
                         });
                     }
+                    Some(colorbutton::PopupHit::Other) => {
+                        return Some(Hit {
+                            item: i,
+                            part: Part::Other,
+                            x,
+                        });
+                    }
                     Some(colorbutton::PopupHit::Face) => {
                         return Some(Hit {
                             item: i,
@@ -673,6 +680,10 @@ impl Form {
                 } else {
                     Event::Redraw
                 }
+            }
+            (Control::Color(b), Part::Other) => {
+                b.open = false;
+                Event::Pressed(id)
             }
             (Control::Color(_), Part::Popup) => Event::None,
             (Control::HotKey(h), Part::Body) if h.enabled => Event::Redraw,

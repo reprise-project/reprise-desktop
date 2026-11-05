@@ -14,6 +14,7 @@ mod backgroundpage;
 mod backup;
 mod backuphost;
 mod chargehost;
+mod colorhost;
 mod configwatch;
 mod cursors;
 mod defaultshost;
@@ -85,6 +86,7 @@ use repriseapp::{App, Child, Ctx, DropForm, Event, FileDrop, Reply, Waker, WinId
 /// The file dialog: Startup Add... and Background Browse....
 const ADD_WIN: WinId = WinId::named("add");
 const SHORTCUT_WIN: WinId = WinId::named("shortcut");
+const COLOR_WIN: WinId = WinId::named("color");
 const LAYOUT_WIN: WinId = WinId::named("layout");
 const ADD_ITEM_WIN: WinId = WinId::named("add_item");
 const RENAME_WIN: WinId = WinId::named("rename");
@@ -336,6 +338,10 @@ struct SettingsApp {
     shortcuts: ListView,
     shortcuts_focus: bool,
     shortcut: Option<shortcutdlg::ShortcutDialog>,
+    /// The Color dialog an Other... opened, with the page and the colour button it sets.
+    color_dlg: Option<(repriseapp::colordlg::ColorDialog, usize, &'static str)>,
+    /// The Color dialog's custom colours.
+    custom_colors: [reprisekit::theme::Color; reprisekit::controls::colordlg::CUSTOM],
     shortcut_target: Option<model::Row>,
     app_names: HashMap<String, String>,
 
@@ -460,6 +466,7 @@ impl SettingsApp {
         app.kept = winstate::kept(&state);
         app.window = app.initial_size();
         app.last_slideshow = winstate::slideshow(&state);
+        app.custom_colors = winstate::custom_colors(&state);
         app.state_path = Some(state);
         app
     }
@@ -598,6 +605,9 @@ impl SettingsApp {
             shortcuts: pages::new_shortcut_list(),
             shortcuts_focus: false,
             shortcut: None,
+            color_dlg: None,
+            custom_colors: [reprisekit::theme::Color::rgb(0xFF, 0xFF, 0xFF);
+                reprisekit::controls::colordlg::CUSTOM],
             shortcut_target: None,
             app_names: HashMap::new(),
             defaults: None,
@@ -769,6 +779,9 @@ impl App for SettingsApp {
                 fixed: false,
                 modal: true,
             });
+        }
+        if let Some((d, ..)) = &self.color_dlg {
+            kids.push(d.child(COLOR_WIN, self.units));
         }
         if let Some(d) = &self.shortcut {
             kids.push(Child {

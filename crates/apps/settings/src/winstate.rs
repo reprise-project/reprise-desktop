@@ -1,8 +1,11 @@
 //! What the settings window keeps between runs in `$XDG_STATE_HOME/reprise/settings.toml`: its
-//! client size with the text size it was left at, and the slideshow folder last picked.
+//! client size with the text size it was left at, the slideshow folder last picked and the Color
+//! dialog's custom colours.
 
 use std::path::{Path, PathBuf};
 
+use reprisekit::controls::colordlg::{self, CUSTOM};
+use reprisekit::theme::Color;
 use toml_edit::{Array, DocumentMut, value};
 
 /// The client size the sheet opens at before it was ever resized.
@@ -89,6 +92,24 @@ fn read(path: &Path) -> Option<DocumentMut> {
     std::fs::read_to_string(path).ok()?.parse().ok()
 }
 
+/// The custom colours kept at `path` as `custom_colors = ["#rrggbb", ...]`: white where it keeps
+/// none or one does not read.
+pub fn custom_colors(path: &Path) -> [Color; CUSTOM] {
+    let mut out = [Color::rgb(0xFF, 0xFF, 0xFF); CUSTOM];
+    let kept = read(path).and_then(|d| d.get("custom_colors")?.as_array().cloned());
+    for (slot, v) in out.iter_mut().zip(kept.iter().flatten()) {
+        if let Some(c) = v.as_str().and_then(Color::parse) {
+            *slot = c;
+        }
+    }
+    out
+}
+
+pub fn save_custom_colors(path: &Path, colors: &[Color; CUSTOM]) {
+    let a: Array = colors.iter().map(|&c| colordlg::hex(c)).collect();
+    set(path, "custom_colors", value(a));
+}
+
 /// Write `key` into the file at `path`, keeping whatever else it holds; a failure is logged, not
 /// fatal.
 fn set(path: &Path, key: &str, item: toml_edit::Item) {
@@ -116,6 +137,11 @@ mod tests {
         assert_eq!(load(&path, min, 100), min, "never under the smallest");
         std::fs::write(&path, "window = \"big\"\n").unwrap();
         assert_eq!(load(&path, min, 100), DEFAULT);
+        let mut colors = [Color::rgb(0xFF, 0xFF, 0xFF); CUSTOM];
+        colors[2] = Color::rgb(0x12, 0x34, 0x56);
+        save_custom_colors(&path, &colors);
+        save(&path, (900, 700), 100);
+        assert_eq!(custom_colors(&path), colors, "kept beside the window size");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
