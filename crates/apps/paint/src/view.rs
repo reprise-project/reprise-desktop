@@ -469,7 +469,7 @@ impl Paint {
             let cover = self.text.cover(b.width, b.height);
             doc::blend_cover(&mut out, moved, &cover, self.doc.primary);
             if caret_on {
-                let k = self.text.caret();
+                let k = self.text.caret(b.width);
                 let k = Rect::new(moved.x + k.x.min(b.width - 1), moved.y + k.y, 1, k.height);
                 out.fill_rect(k.intersect(&moved), self.doc.primary);
             }

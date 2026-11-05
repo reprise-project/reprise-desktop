@@ -1,7 +1,8 @@
 //! The text tool's box: the text typed into it, its font, and the coverage it lays on the
-//! picture. The box sits on the picture at `Doc::text_box` and grows down as lines are added.
+//! picture. The box sits on the picture at `Doc::text_box`; its lines wrap at the box's width and
+//! it grows down as rows are added.
 
-use reprisekit::controls::multiedit::{Metrics, MultiEdit, MultiKey};
+use reprisekit::controls::multiedit::{self, Metrics, MultiEdit, MultiKey};
 use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{Align, TextRenderer};
 use reprisekit::theme::{Color, FontConfig};
@@ -72,19 +73,48 @@ impl TextBox {
         Metrics {
             font_px: self.font.px,
             line_h: self.line_h(),
+            bars_always: false,
+            flat: true,
+            wrap: true,
             ..Metrics::default()
         }
+    }
+
+    /// The width rows wrap at in a box `w` px wide, as the kit's edit lays it out; laying it out
+    /// is also what Up, Down, Home and End move by.
+    fn wrap_at(&self, r: &TextRenderer, m: &Metrics, w: i32) -> i32 {
+        let tall = Rect::new(0, 0, w.max(1), 1 << 20);
+        multiedit::layout(r, m, &self.edit, tall, 1)
+            .wrap
+            .unwrap_or(w)
+    }
+
+    /// Each row in a box `w` px wide: its line and byte range.
+    fn rows(&self, r: &TextRenderer, m: &Metrics, w: i32) -> Vec<(usize, usize, usize)> {
+        let width = self.wrap_at(r, m, w);
+        let mut out = Vec::new();
+        for (i, line) in self.edit.lines().iter().enumerate() {
+            let mut start = 0;
+            for b in multiedit::breaks(r, m, line, width) {
+                out.push((i, start, b));
+                start = b;
+            }
+            out.push((i, start, line.len()));
+        }
+        out
     }
 
     pub fn clear(&mut self) {
         self.edit = MultiEdit::new("");
     }
 
-    pub fn key(&mut self, key: MultiKey) -> bool {
+    /// A key in a box `w` px wide.
+    pub fn key(&mut self, key: MultiKey, w: i32) -> bool {
         let m = self.metrics();
         self.with_renderer(|_| ());
         let slot = self.renderer.borrow();
         let (_, r) = slot.as_ref().expect("loaded above");
+        self.wrap_at(r, &m, w);
         self.edit.key(key, r, &m)
     }
 
@@ -92,9 +122,11 @@ impl TextBox {
         self.edit.paste(text)
     }
 
-    /// `r` grown down to hold every line.
+    /// `r` grown down to hold every row.
     pub fn fit(&self, r: Rect) -> Rect {
-        let h = self.edit.lines().len() as i32 * self.line_h();
+        let m = self.metrics();
+        let rows = self.with_renderer(|t| self.rows(t, &m, r.width).len());
+        let h = rows as i32 * self.line_h();
         Rect::new(r.x, r.y, r.width, r.height.max(h))
     }
 
@@ -103,13 +135,14 @@ impl TextBox {
         let mut c = Canvas::new(w.max(1) as u32, h.max(1) as u32);
         let lh = self.line_h();
         let (px, bold) = (self.font.px, self.font.bold);
+        let (lines, m) = (self.edit.lines(), self.metrics());
         self.with_renderer(|r| {
-            for (i, line) in self.edit.lines().iter().enumerate() {
+            for (i, (line, start, end)) in self.rows(r, &m, w).into_iter().enumerate() {
                 let rect = Rect::new(0, i as i32 * lh, w, lh);
                 r.draw(
                     &mut c,
                     rect,
-                    line,
+                    &lines[line][start..end],
                     bold,
                     Color::rgb(255, 255, 255),
                     Align::Left,
@@ -120,14 +153,24 @@ impl TextBox {
         c.pixels.iter().map(|p| (p >> 24) as u8).collect()
     }
 
-    /// The caret's rect in the box, one pixel wide and a line tall.
-    pub fn caret(&self) -> Rect {
+    /// The caret's rect in a box `w` px wide, one pixel wide and a line tall. At a soft break
+    /// it starts the next row.
+    pub fn caret(&self, w: i32) -> Rect {
         let pos = self.edit.caret();
         let lh = self.line_h();
-        let line = self.edit.lines().get(pos.line).map_or("", String::as_str);
         let (px, bold) = (self.font.px, self.font.bold);
-        let x = self.with_renderer(|r| r.measure(&line[..pos.col.min(line.len())], bold, px));
-        Rect::new(x, pos.line as i32 * lh, 1, lh)
+        let (lines, m) = (self.edit.lines(), self.metrics());
+        self.with_renderer(|r| {
+            let rows = self.rows(r, &m, w);
+            let row = rows
+                .iter()
+                .rposition(|&(l, start, _)| l == pos.line && start <= pos.col)
+                .unwrap_or(0);
+            let (line, start, _) = rows[row];
+            let col = pos.col.clamp(start, lines[line].len());
+            let x = r.measure(&lines[line][start..col], bold, px);
+            Rect::new(x, row as i32 * lh, 1, lh)
+        })
     }
 
     pub fn is_empty(&self) -> bool {
