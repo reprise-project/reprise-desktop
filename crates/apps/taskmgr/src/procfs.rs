@@ -165,6 +165,22 @@ pub fn read_cmdline(root: &Path, pid: i32) -> String {
         .unwrap_or_default()
 }
 
+/// `/proc/<pid>/io`: the bytes it read from and wrote to storage, together. None when a field is
+/// missing.
+pub fn parse_io(s: &str) -> Option<u64> {
+    let field = |name: &str| {
+        s.lines()
+            .find_map(|l| l.strip_prefix(name)?.strip_prefix(':'))
+            .and_then(|v| v.trim().parse::<u64>().ok())
+    };
+    Some(field("read_bytes")? + field("write_bytes")?)
+}
+
+/// [`parse_io`] of process `pid`; None where the file is unreadable, as another user's is.
+pub fn read_io(root: &Path, pid: i32) -> Option<u64> {
+    parse_io(&std::fs::read_to_string(root.join(pid.to_string()).join("io")).ok()?)
+}
+
 pub fn read_cpu(root: &Path) -> Option<(CpuTimes, Vec<CpuTimes>)> {
     parse_cpu(&std::fs::read_to_string(root.join("stat")).ok()?)
 }
@@ -233,6 +249,14 @@ mod tests {
             "/usr/bin/foo --bar x y"
         );
         assert_eq!(parse_cmdline(b""), "");
+    }
+
+    #[test]
+    fn io_adds_the_bytes_read_and_written_to_storage() {
+        let text = "rchar: 900\nwchar: 800\nsyscr: 3\nsyscw: 2\nread_bytes: 4096\n\
+                    write_bytes: 8192\ncancelled_write_bytes: 0\n";
+        assert_eq!(parse_io(text), Some(12288));
+        assert_eq!(parse_io("rchar: 900\n"), None);
     }
 
     #[test]

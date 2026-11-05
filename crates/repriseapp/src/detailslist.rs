@@ -1,6 +1,6 @@
 //! A Details list as a program's window uses it: the `ListView` and what the pointer and keys do to
-//! it (selection, scrollbars, their lit parts, the wheel, a column title), so each window keeps only
-//! what its rows mean.
+//! it (selection, scrollbars, their lit parts, the wheel, a column title, a divider drag), so each
+//! window keeps only what its rows mean.
 
 use crate::{BTN_LEFT, Ctx};
 use reprisekit::classic::widgets::{Axis, BarHit, ScrollHit};
@@ -14,6 +14,8 @@ use reprisekit::textedit::keysym;
 pub struct List<R: Rows = Vec<Row>> {
     pub view: ListView<R>,
     thumb: Option<i32>,
+    /// A divider drag: the column, the pointer's x at the press and the column's width then.
+    resizing: Option<(usize, i32, i32)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +39,7 @@ impl<R: Rows + Default> List<R> {
                 ..Default::default()
             },
             thumb: None,
+            resizing: None,
         }
     }
 
@@ -108,6 +111,11 @@ impl<R: Rows + Default> List<R> {
             }
             _ if button != BTN_LEFT => moved(false),
             listview::Hit::Header(n) => Press::Column(n),
+            listview::Hit::Divider(i) => {
+                let width = self.view.columns.get(i).map_or(0, |c| c.width);
+                self.resizing = Some((i, x, width));
+                moved(false)
+            }
             listview::Hit::VBar(BarHit::Back) => moved(self.view.scroll(-1, &lay)),
             listview::Hit::VBar(BarHit::Forward) => moved(self.view.scroll(1, &lay)),
             listview::Hit::VBar(BarHit::PageBack) => {
@@ -134,6 +142,13 @@ impl<R: Rows + Default> List<R> {
 
     /// Pointer motion: a held thumb drags, and the part under the pointer lights. True when something moved or lit.
     pub fn motion(&mut self, x: i32, y: i32, r: Rect, ctx: &Ctx) -> bool {
+        if let Some((i, from, width)) = self.resizing {
+            let u = ctx.theme.controls().text;
+            let before = self.view.columns.get(i).map(|c| c.width);
+            self.view
+                .resize_column(i, u.within(u.len(width) + x - from));
+            return self.view.columns.get(i).map(|c| c.width) != before;
+        }
         let over = self.bar_at(x, y, r, ctx);
         let column = self.column_at(x, y, r, ctx);
         let lit = (self.view.bars.motion(over) | self.view.header.motion(column)) && ctx.styled();
@@ -149,6 +164,7 @@ impl<R: Rows + Default> List<R> {
 
     pub fn release(&mut self, ctx: &Ctx) -> bool {
         self.thumb = None;
+        self.resizing = None;
         let column = self.view.header.holding();
         self.view.header.release();
         (self.view.bars.release_bar() || column) && ctx.styled()
