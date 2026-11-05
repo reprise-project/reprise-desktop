@@ -46,6 +46,7 @@ use reprisekit::classic::frame::{
 };
 use reprisekit::controls::iconview::{self, Selection};
 use reprisekit::controls::menu::{MenuCtx, MenuItem, MenuKey, MenuTree, PopupMenu};
+use reprisekit::controls::pagelist;
 use reprisekit::controls::propsheet::{self, PropSheet};
 use reprisekit::controls::statusbar::{self, Panel, StatusBar};
 use reprisekit::controls::treeview::{self, Node, TreeView};
@@ -452,6 +453,10 @@ fn main() {
             "reprisekit-gallery-blue-start-menus.png",
         );
         write_preview(&render_list_sheets(), "reprisekit-gallery-list-sheet.png");
+        write_preview(
+            &render_list_sheet_links(),
+            "reprisekit-gallery-list-sheet-links.png",
+        );
         write_preview(
             &render_long_list_sheets(),
             "reprisekit-gallery-list-sheet-scrolled.png",
@@ -8335,58 +8340,114 @@ fn render_glass_sheet(theme: &Theme) -> Canvas {
 
 /// The list-mode property sheet in each look: four headings over nine pages, the third open, the list focused.
 fn render_list_sheets() -> Canvas {
-    let groups: &[(&str, &[&str])] = &[
-        ("Personalize", &["Appearance", "Fonts & Icons", "Effects"]),
-        ("Taskbar & Windows", &["Taskbar", "Start Menu"]),
-        ("Devices", &["Keyboard", "Mouse & Touchpad"]),
-        ("System", &["Power", "Advanced"]),
+    use pagelist::Item::Page;
+    let groups: &[(&str, &[pagelist::Item])] = &[
+        (
+            "Personalize",
+            &[Page("Appearance"), Page("Fonts & Icons"), Page("Effects")],
+        ),
+        ("Taskbar & Windows", &[Page("Taskbar"), Page("Start Menu")]),
+        ("Devices", &[Page("Keyboard"), Page("Mouse & Touchpad")]),
+        ("System", &[Page("Power"), Page("Advanced")]),
     ];
-    render_list_sheets_of(groups, 2)
+    render_list_sheets_of(groups, 2, |_| {})
 }
 
 /// The list sheets with seven headings over 26 pages, the last open and scrolled into view.
 fn render_long_list_sheets() -> Canvas {
-    let groups: &[(&str, &[&str])] = &[
+    use pagelist::Item::Page;
+    let groups: &[(&str, &[pagelist::Item])] = &[
         (
             "Personalize",
             &[
-                "Appearance",
-                "Background",
-                "Screen Saver & Lock",
-                "Fonts & Icons",
-                "Effects",
+                Page("Appearance"),
+                Page("Background"),
+                Page("Screen Saver & Lock"),
+                Page("Fonts & Icons"),
+                Page("Effects"),
             ],
         ),
         (
             "Taskbar & Windows",
             &[
-                "Taskbar",
-                "Start Menu",
-                "Search",
-                "Window Switcher",
-                "Virtual Desktops",
-                "Window Behavior",
+                Page("Taskbar"),
+                Page("Start Menu"),
+                Page("Search"),
+                Page("Window Switcher"),
+                Page("Virtual Desktops"),
+                Page("Window Behavior"),
             ],
         ),
-        ("Display & Sound", &["Display", "Night Light", "Sound"]),
+        (
+            "Display & Sound",
+            &[Page("Display"), Page("Night Light"), Page("Sound")],
+        ),
         (
             "Devices",
-            &["Keyboard", "Mouse & Touchpad", "Cursor", "Tablet"],
+            &[
+                Page("Keyboard"),
+                Page("Mouse & Touchpad"),
+                Page("Cursor"),
+                Page("Tablet"),
+            ],
         ),
-        ("Accessibility", &["Text & Keys", "Magnifier & Filters"]),
-        ("Network", &["Remote Desktop"]),
+        (
+            "Accessibility",
+            &[Page("Text & Keys"), Page("Magnifier & Filters")],
+        ),
+        ("Network", &[Page("Remote Desktop")]),
         (
             "System",
-            &["Power", "Startup", "Default Programs", "Advanced", "Backup"],
+            &[
+                Page("Power"),
+                Page("Startup"),
+                Page("Default Programs"),
+                Page("Advanced"),
+                Page("Backup"),
+            ],
         ),
     ];
-    render_list_sheets_of(groups, 25)
+    render_list_sheets_of(groups, 25, |_| {})
 }
 
-/// `groups` as list sheets in each look, page `open` open and revealed.
-fn render_list_sheets_of(groups: &[(&str, &[&str])], open: usize) -> Canvas {
+/// The list sheets with link rows among the pages, Printers greyed.
+fn render_list_sheet_links() -> Canvas {
+    use pagelist::Item::{Link, Page};
+    let groups: &[(&str, &[pagelist::Item])] = &[
+        ("Personalize", &[Page("Appearance"), Page("Effects")]),
+        (
+            "Devices",
+            &[
+                Page("Keyboard"),
+                Page("Mouse & Touchpad"),
+                Link("Bluetooth"),
+                Link("Printers"),
+            ],
+        ),
+        (
+            "Network",
+            &[Link("Network Connections"), Page("Remote Desktop")],
+        ),
+    ];
+    render_list_sheets_of(groups, 1, |sheet| {
+        if let propsheet::Nav::List(list) = &mut sheet.nav {
+            list.set_link_enabled(1, false);
+        }
+    })
+}
+
+/// `groups` as list sheets in each look, page `open` open and revealed, after `prep`.
+fn render_list_sheets_of(
+    groups: &[(&str, &[pagelist::Item])],
+    open: usize,
+    prep: impl Fn(&mut PropSheet),
+) -> Canvas {
     let text = TextRenderer::load(&FontConfig::default());
-    let count = groups.iter().map(|g| g.1.len()).sum::<usize>();
+    let count = groups
+        .iter()
+        .flat_map(|g| g.1.iter())
+        .filter(|it| matches!(it, pagelist::Item::Page(_)))
+        .count();
     let page = || {
         form::Form::new(vec![
             Item::group("group", Rect::new(20, 44, 358, 84), "Menus"),
@@ -8412,6 +8473,7 @@ fn render_list_sheets_of(groups: &[(&str, &[&str])], open: usize) -> Canvas {
         sheet.tabs.focused = true;
         sheet.open_mut().set_focus(None);
         sheet.set_apply_enabled(true);
+        prep(&mut sheet);
         let (w, h) = sheet.size;
         let mut sc = Canvas::new(w as u32, h as u32);
         sc.fill_rect(sc.bounds(), theme.colors.button_face);

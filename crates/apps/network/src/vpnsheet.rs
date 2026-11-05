@@ -630,7 +630,9 @@ impl PluginSheet {
                 Outcome::Close
             }
             propsheet::Event::Ok | propsheet::Event::Page(_, form::Event::Default) => save(),
-            propsheet::Event::None | propsheet::Event::Page(_, form::Event::None) => Outcome::None,
+            propsheet::Event::None
+            | propsheet::Event::Link(_)
+            | propsheet::Event::Page(_, form::Event::None) => Outcome::None,
             _ => Outcome::Redraw,
         }
     }
@@ -910,7 +912,9 @@ impl OvpnSheet {
                 .iter()
                 .find(|(button, _)| *button == b)
                 .map_or(Outcome::Redraw, |(_, id)| Outcome::Browse(id)),
-            propsheet::Event::None | propsheet::Event::Page(_, form::Event::None) => Outcome::None,
+            propsheet::Event::None
+            | propsheet::Event::Link(_)
+            | propsheet::Event::Page(_, form::Event::None) => Outcome::None,
             _ => Outcome::Redraw,
         }
     }
