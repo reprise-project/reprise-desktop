@@ -73,10 +73,13 @@ pub const OPEN: &str = "Open";
 pub const SHOW_USAGE: &str = "Show Usage";
 pub const EMPTY_BIN: &str = "Empty Recycle Bin";
 
-/// The warning's buttons: Open, then Empty Recycle Bin while the bin holds something, else Show
-/// Usage. Two keep both labels whole on the narrowest notification.
-pub fn buttons(r: &Reading) -> [&'static str; 2] {
-    [OPEN, if r.bin { EMPTY_BIN } else { SHOW_USAGE }]
+/// The warning's buttons: Open, Show Usage, then Empty Recycle Bin while the bin holds something.
+pub fn buttons(r: &Reading) -> &'static [&'static str] {
+    if r.bin {
+        &[OPEN, SHOW_USAGE, EMPTY_BIN]
+    } else {
+        &[OPEN, SHOW_USAGE]
+    }
 }
 
 fn watched() -> Vec<PathBuf> {
@@ -213,7 +216,7 @@ mod tests {
         let mut r = disk(1, 812 << 20, 20 * GB);
         assert_eq!(buttons(&r), ["Open", "Show Usage"]);
         r.bin = true;
-        assert_eq!(buttons(&r), ["Open", "Empty Recycle Bin"]);
+        assert_eq!(buttons(&r), ["Open", "Show Usage", "Empty Recycle Bin"]);
         assert_eq!(
             balloon(&r),
             (
@@ -235,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn both_button_sets_fit_whole_on_every_glass_sheet() {
+    fn both_button_sets_show_whole_on_every_glass_sheet() {
         use reprisekit::controls::notifysheet::{SheetContent, sheet_layout};
         use reprisekit::style::SheetShape;
         let text = reprisekit::text::TextRenderer::load(&reprisekit::theme::FontConfig::default());
@@ -250,14 +253,14 @@ mod tests {
                 when: "now",
                 title: &title,
                 body: &body,
-                actions: &actions,
+                actions,
                 action_icons: &[],
                 reply: None,
                 has_picture: false,
                 has_app_icon: true,
             };
-            for shape in [SheetShape::Lozenge, SheetShape::Halo] {
-                let lay = sheet_layout(&theme, &text, shape, &c, false).unwrap();
+            for shape in [SheetShape::Lozenge, SheetShape::Halo, SheetShape::Droplet] {
+                let lay = sheet_layout(&theme, &text, shape, &c, true).unwrap();
                 let whole: Vec<Option<String>> =
                     actions.iter().map(|a| Some(a.to_string())).collect();
                 assert_eq!(lay.labels, whole, "{shape:?}, bin {bin}");
