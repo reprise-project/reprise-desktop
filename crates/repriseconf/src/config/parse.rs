@@ -877,6 +877,9 @@ impl Config {
                 cfg.capture_border = v;
             }
         }
+        if let Some(v) = file.updates.and_then(|u| u.restart_notice) {
+            cfg.restart_notice = v;
+        }
         if let Some(d) = file.debug {
             if let Some(v) = d.overlay {
                 cfg.debug.overlay = v;

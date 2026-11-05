@@ -225,6 +225,8 @@ pub struct Settings {
     pub session_restore: bool,
     /// `[session] end_processes`.
     pub session_end_processes: bool,
+    /// `[updates] restart_notice`.
+    pub restart_notice: bool,
 
     pub font_family: String,
     pub font_size_px: i64,
@@ -528,6 +530,7 @@ impl Settings {
             dim_inactive: c.dim_inactive.into(),
             session_restore: c.session.restore,
             session_end_processes: c.session.end_processes,
+            restart_notice: c.restart_notice,
 
             font_family: fonts.family.join(", "),
             font_size_px: fonts.size_px.into(),

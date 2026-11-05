@@ -80,6 +80,8 @@ pub struct Config {
     pub recent_files: bool,
     pub location: bool,
     pub capture_border: bool,
+    /// `[updates] restart_notice`: Software Updates says when the running system needs a restart.
+    pub restart_notice: bool,
     pub debug: DebugConfig,
     pub shortcut_overlay: ShortcutOverlay,
     pub launcher_files: bool,
@@ -163,6 +165,7 @@ impl Default for Config {
             recent_files: true,
             location: true,
             capture_border: true,
+            restart_notice: true,
             debug: DebugConfig::default(),
             shortcut_overlay: ShortcutOverlay::default(),
             launcher_files: true,

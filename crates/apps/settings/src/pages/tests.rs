@@ -418,6 +418,7 @@ fn values_go_in_and_come_back_out() {
         remember_windows: false,
         session_restore: true,
         session_end_processes: false,
+        restart_notice: false,
         hibernate: "zzz".into(),
         lock_on_sleep: false,
         taskbar_height: 32,

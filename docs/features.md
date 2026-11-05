@@ -640,7 +640,10 @@ are.
   a tray icon while something prints. Driverless printers just work.
 - **Software Updates** checks system packages through PackageKit, Flatpaks
   and firmware, puts a balloon over the tray when it finds some, and installs
-  only what you tick. It does not install anything on its own.
+  only what you tick. It does not install anything on its own. When a kernel
+  update removes the running kernel's modules (until a restart, a USB device
+  plugged in may not work), it says to restart, with a Restart Now that asks
+  programs to close as Start's Restart does.
 - **No driver discs.** Audio runs through PipeWire, networking through
   NetworkManager, Bluetooth through BlueZ and power through UPower and
   systemd-logind.

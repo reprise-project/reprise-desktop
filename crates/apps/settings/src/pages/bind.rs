@@ -193,6 +193,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Num("dim_inactive", lens!(dim_inactive)),
         Bind::Flag("session_restore", lens!(session_restore)),
         Bind::Flag("session_end_processes", lens!(session_end_processes)),
+        Bind::Flag("restart_notice", lens!(restart_notice)),
         Bind::Named(
             "taskbar_position",
             lens!(taskbar_position),
