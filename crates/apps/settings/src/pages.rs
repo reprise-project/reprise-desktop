@@ -84,6 +84,13 @@ const MK_ACCEL: Steps = Steps {
     count: 11,
 };
 
+/// The double-click speed trackbar: 900 down to 200 ms in steps of 50, slowest on the left.
+const DOUBLE_CLICK: Steps = Steps {
+    first: 900,
+    step: -50,
+    count: 15,
+};
+
 /// A trackbar whose position `p` stands for `first + p * step`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Steps {

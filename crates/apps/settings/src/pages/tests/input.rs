@@ -19,7 +19,10 @@ fn the_accessibility_page_geometry() {
         rect(&s, p, "slow_keys_delay"),
         Rect::new(78, 268, 238, trackbar::HEIGHT)
     );
-    assert_eq!(rect(&s, p, "mouse_keys_group"), Rect::new(20, 307, 358, 72));
+    assert_eq!(
+        rect(&s, p, "mouse_keys_group"),
+        Rect::new(20, 307, 358, 100)
+    );
     assert_eq!(rect(&s, p, "mouse_keys"), Rect::new(32, 325, 13, 13));
     assert_eq!(
         rect(&s, p, "mouse_keys_num_lock"),
@@ -27,13 +30,13 @@ fn the_accessibility_page_geometry() {
     );
     assert_eq!(
         rect(&s, p, "mouse_keys_speed"),
-        Rect::new(72, 347, 119, trackbar::HEIGHT)
+        Rect::new(148, 347, 184, trackbar::HEIGHT)
     );
     assert_eq!(
         rect(&s, p, "mouse_keys_acceleration"),
-        Rect::new(269, 347, 97, trackbar::HEIGHT)
+        Rect::new(148, 375, 184, trackbar::HEIGHT)
     );
-    assert_eq!(rect(&s, p, "key_shortcuts"), Rect::new(20, 387, 13, 13));
+    assert_eq!(rect(&s, p, "key_shortcuts"), Rect::new(20, 415, 13, 13));
     inside_page(&s, p);
 }
 
@@ -77,6 +80,53 @@ fn accessibility_values_go_in_and_come_back_out() {
     let mut got = Settings::default();
     read_all(&s, &mut got);
     assert_eq!(got, want);
+}
+
+#[test]
+fn double_click_speed_reads_slow_to_fast() {
+    let mut s = built();
+    let p = Page::Mouse;
+    assert_eq!(lines(&s, p, "double_click_slow"), ["Slow"]);
+    assert_eq!(lines(&s, p, "double_click_fast"), ["Fast"]);
+    assert_eq!(lines(&s, p, "double_click_value"), ["500 ms"]);
+    assert_eq!(s.pages[p.index()].track_pos("double_click_ms"), Some(8));
+    let mut got = Settings::default();
+    s.pages[p.index()].set_track("double_click_ms", 14);
+    read_one(&s, "double_click_ms", &mut got);
+    assert_eq!(got.double_click_ms, 200);
+    follow(&mut s, &got);
+    assert_eq!(lines(&s, p, "double_click_value"), ["200 ms"]);
+    s.pages[p.index()].set_track("double_click_ms", 0);
+    read_one(&s, "double_click_ms", &mut got);
+    assert_eq!(got.double_click_ms, 900);
+    assert_eq!(rect(&s, p, "mouse_group"), Rect::new(20, 44, 358, 178));
+    assert_eq!(rect(&s, p, "touchpad_group"), Rect::new(20, 232, 358, 218));
+    inside_page(&s, p);
+}
+
+#[test]
+fn mousekeys_trackbars_have_slow_and_fast_ends() {
+    let s = built();
+    let p = Page::Accessibility;
+    for id in ["mk_speed_slow", "mk_accel_slow"] {
+        assert_eq!(lines(&s, p, id), ["Slow"]);
+    }
+    for id in ["mk_speed_fast", "mk_accel_fast"] {
+        assert_eq!(lines(&s, p, id), ["Fast"]);
+    }
+    assert_eq!(
+        rect(&s, p, "mouse_keys_group"),
+        Rect::new(20, 307, 358, 100)
+    );
+    assert_eq!(rect(&s, p, "mouse_keys_speed").y, 347);
+    assert_eq!(rect(&s, p, "mouse_keys_acceleration").y, 375);
+    assert_eq!(rect(&s, p, "key_shortcuts").y, 415);
+    let off = under("classic");
+    assert!(
+        !enabled_on(&off, p, "mk_accel_fast"),
+        "the ends grey with MouseKeys off"
+    );
+    inside_page(&s, p);
 }
 
 #[test]
@@ -383,72 +433,72 @@ fn the_mouse_page_geometry() {
     let s = built();
     assert_eq!(
         rect(&s, Page::Mouse, "mouse_group"),
-        Rect::new(20, 44, 358, 152)
+        Rect::new(20, 44, 358, 178)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "double_click_ms"),
-        Rect::new(146, 64, 50, 20)
+        Rect::new(78, 89, 238, trackbar::HEIGHT)
     );
     assert_eq!(
-        rect(&s, Page::Mouse, "double_click_units"),
-        Rect::new(200, 68, 20, 13)
+        rect(&s, Page::Mouse, "double_click_value"),
+        Rect::new(286, 68, 80, 13)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "mouse_speed_label"),
-        Rect::new(32, 94, 334, 13)
+        Rect::new(32, 120, 334, 13)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "mouse_slow"),
-        Rect::new(32, 115, 26, 13)
+        Rect::new(32, 141, 26, 13)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "mouse_speed"),
-        Rect::new(60, 109, 160, trackbar::HEIGHT)
+        Rect::new(60, 135, 160, trackbar::HEIGHT)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "mouse_fast"),
-        Rect::new(224, 115, 26, 13)
+        Rect::new(224, 141, 26, 13)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "mouse_accel"),
-        Rect::new(32, 143, 13, 13)
+        Rect::new(32, 169, 13, 13)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "mouse_natural"),
-        Rect::new(32, 165, 13, 13)
+        Rect::new(32, 191, 13, 13)
     );
 
     assert_eq!(
         rect(&s, Page::Mouse, "touchpad_group"),
-        Rect::new(20, 206, 358, 218)
+        Rect::new(20, 232, 358, 218)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "touchpad_speed"),
-        Rect::new(60, 245, 160, trackbar::HEIGHT)
+        Rect::new(60, 271, 160, trackbar::HEIGHT)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "touchpad_accel"),
-        Rect::new(32, 279, 13, 13)
-    );
-    assert_eq!(
-        rect(&s, Page::Mouse, "tap_to_click"),
         Rect::new(32, 305, 13, 13)
     );
     assert_eq!(
+        rect(&s, Page::Mouse, "tap_to_click"),
+        Rect::new(32, 331, 13, 13)
+    );
+    assert_eq!(
         rect(&s, Page::Mouse, "two_finger_scroll"),
-        Rect::new(32, 327, 13, 13)
+        Rect::new(32, 353, 13, 13)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "two_finger_tap_right_click"),
-        Rect::new(32, 349, 13, 13)
+        Rect::new(32, 375, 13, 13)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "disable_while_typing"),
-        Rect::new(32, 371, 13, 13)
+        Rect::new(32, 397, 13, 13)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "touchpad_natural"),
-        Rect::new(32, 393, 13, 13)
+        Rect::new(32, 419, 13, 13)
     );
     inside_page(&s, Page::Mouse);
 }
