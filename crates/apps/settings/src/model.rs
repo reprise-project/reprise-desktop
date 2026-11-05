@@ -201,6 +201,13 @@ pub struct Settings {
     pub external_thumbnailers: bool,
     /// `[storage] low_space_percent`, 0 to [`repriseconf::LOW_SPACE_MAX`]; 0 turns the warning off.
     pub low_space_percent: i64,
+    /// `[remote_desktop] port`, `quality` (one of [`REMOTE_QUALITIES`]' values), `frame_rate`
+    /// (30 or 60), `encoder` (one of [`REMOTE_ENCODERS`]' values) and `sound`.
+    pub remote_port: i64,
+    pub remote_quality: String,
+    pub remote_frame_rate: i64,
+    pub remote_encoder: String,
+    pub remote_sound: bool,
 
     /// `[workspaces] count`, 1 to [`DESKTOPS_MAX`]; 1 turns virtual
     /// desktops off.
@@ -402,6 +409,7 @@ impl Settings {
         let fonts = &c.theme.fonts;
         let a = &c.accessibility;
         let fx = &c.effects;
+        let remote = repriseconf::remote::RemoteDesktop::default();
         let hhmm = |min: u32| format!("{:02}:{:02}", min / 60, min % 60);
         Settings {
             terminal: c.terminal.clone(),
@@ -518,6 +526,11 @@ impl Settings {
             thumbnail_max_mb: repriseconf::ThumbnailCache::DEFAULT.max_mb as i64,
             external_thumbnailers: repriseconf::ThumbnailCache::DEFAULT.external_thumbnailers,
             low_space_percent: repriseconf::LOW_SPACE_PERCENT.into(),
+            remote_port: remote.port.into(),
+            remote_quality: remote.quality.name().into(),
+            remote_frame_rate: remote.frame_rate.into(),
+            remote_encoder: remote.encoder.name().into(),
+            remote_sound: remote.sound,
 
             desktops: c.workspaces as i64,
             desktop_animation: c.workspace_animation.style.name().into(),

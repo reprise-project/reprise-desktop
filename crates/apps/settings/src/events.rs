@@ -1,11 +1,12 @@
 //! Routing events: the sheet's controls, its keys and each dialog window.
 
+use crate::backuphost::Then;
 use crate::registry::Page;
 use crate::{
     ADD_ITEM_WIN, ADD_WIN, ASK_WIN, CHOOSER_WIN, COLOR_WIN, ERROR_WIN, LAYOUT_WIN, RENAME_WIN,
     SAVER_WIN, SHORTCUT_WIN, SettingsApp, additem, appearancepage, backgroundpage, defaultspage,
     displayhost, displaypage, filepick::Pick, layoutdlg, menupage, notifypage, pages, quickpage,
-    renamedlg, saverdlg, saverpage,
+    remotehost, renamedlg, saverdlg, saverpage,
 };
 use repriseapp::keys::{dialog_key, form_clipboard};
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
@@ -43,6 +44,10 @@ impl SettingsApp {
                 }
                 if id == pages::CHARGE_LIMIT {
                     self.charge_toggled();
+                    return Reply::redraw();
+                }
+                if id == pages::REMOTE_ALLOW {
+                    self.remote_toggled();
                     return Reply::redraw();
                 }
                 // Only the control just worked is read back: reading all would write clamped values for keys the control cannot show.
@@ -125,6 +130,19 @@ impl SettingsApp {
                 }
                 pages::ADD => {
                     self.open_add(Pick::Autostart);
+                    Reply::redraw_all()
+                }
+                pages::REMOTE_DISCONNECT => {
+                    self.remote_act(remotehost::Act::Disconnect);
+                    Reply::redraw()
+                }
+                pages::REMOTE_REGENERATE => {
+                    self.ask(
+                        "Make a new certificate? Computers that connected before will warn that \
+                         this computer's certificate changed."
+                            .into(),
+                        Then::NewCertificate,
+                    );
                     Reply::redraw_all()
                 }
                 saverpage::SETTINGS => {

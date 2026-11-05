@@ -199,16 +199,21 @@ pub fn spot_logical(mut spot: TextSpot, scale: i32) -> TextSpot {
 }
 
 pub fn field_route(route: &KeyRoute) -> bool {
-    matches!(
-        route,
-        KeyRoute::Launcher
-            | KeyRoute::StartPanel
-            | KeyRoute::Dialog
-            | KeyRoute::ClipView
-            | KeyRoute::EmojiView
-            | KeyRoute::Rename
-            | KeyRoute::NotifyReply
-    )
+    field_editor(route).is_some()
+}
+
+/// The field a field route's keys type into.
+pub fn field_editor(route: &KeyRoute) -> Option<Editor> {
+    Some(match route {
+        KeyRoute::Launcher => Editor::Launcher,
+        KeyRoute::StartPanel => Editor::StartPanel,
+        KeyRoute::Dialog => Editor::Dialog,
+        KeyRoute::ClipView => Editor::ClipView,
+        KeyRoute::EmojiView => Editor::EmojiView,
+        KeyRoute::Rename => Editor::Rename,
+        KeyRoute::NotifyReply => Editor::NotifyReply,
+        _ => return None,
+    })
 }
 
 /// The input method manager global, Smithay's with each manager wrapped in
@@ -520,9 +525,13 @@ impl State {
 
     fn ime_field_commit(&mut self) {
         let keys = self.ime.field.done();
-        let Some(editor) = self.editor() else {
-            return;
-        };
+        if let Some(editor) = self.editor() {
+            self.field_edits(editor, keys);
+        }
+    }
+
+    /// Apply `keys` to `editor`'s field as committed text and edits.
+    pub fn field_edits(&mut self, editor: Editor, keys: Vec<EditKey>) {
         for key in keys {
             match editor {
                 Editor::Rename => self.rename_edit(key),
@@ -617,6 +626,7 @@ mod tests {
             can_undo: false,
             can_redo: false,
             selected: false,
+            read_only: false,
             digits: false,
         }
     }

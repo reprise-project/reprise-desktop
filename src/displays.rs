@@ -211,6 +211,16 @@ impl Displays {
         self.move_to(i, value, level)
     }
 
+    /// Put `value` on `connector`'s display at 0, under its floor; None when it is not adjustable
+    /// or already there.
+    pub fn darken(&mut self, connector: &str, value: Value) -> Option<DisplayJob> {
+        let i = self.list.iter().position(|d| d.connector == connector)?;
+        let Level::At(_) = self.list[i].level(value) else {
+            return None;
+        };
+        self.move_to(i, value, 0)
+    }
+
     fn move_to(&mut self, i: usize, value: Value, level: u8) -> Option<DisplayJob> {
         let seq = self.seq + 1;
         let d = &mut self.list[i];
@@ -380,11 +390,23 @@ pub fn set(state: &mut State, connector: &str, value: Value, level: u8) {
     changed(state, before);
 }
 
+pub fn darken(state: &mut State, connector: &str, value: Value) {
+    let before = state.displays.adjustable(Value::Brightness);
+    let jobs = state
+        .displays
+        .darken(connector, value)
+        .into_iter()
+        .collect();
+    send(state, jobs);
+    changed(state, before);
+}
+
 pub fn report(state: &mut State, r: DisplayReport) {
     let before = state.displays.adjustable(Value::Brightness);
     if state.displays.report(&r) {
         changed(state, before);
     }
+    crate::power::displays_read(state);
     let jobs = state.displays.retry(Instant::now(), false);
     send(state, jobs);
     schedule_retry(state);

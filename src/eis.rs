@@ -7,9 +7,13 @@ use std::time::Duration;
 use reis::eis;
 use reis::enumflags2::BitFlags;
 use reis::request::{Device, DeviceCapability, EisRequest, EisRequestConverter, Seat};
+use reprisekit::textedit::EditKey;
 use smithay::{
     backend::input::{Axis, AxisSource, ButtonState, InputTime},
-    input::{keyboard::Keycode, pointer::AxisFrame},
+    input::{
+        keyboard::{Keycode, xkb},
+        pointer::AxisFrame,
+    },
     reexports::calloop::{
         Interest, Mode, PostAction, RegistrationToken,
         generic::Generic,
@@ -20,6 +24,7 @@ use smithay::{
 
 use crate::compositor::State;
 use crate::inputcapture::CaptureId;
+use crate::keyroute::KeyRoute;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -66,6 +71,8 @@ enum Phase {
 pub struct EisClient {
     id: EisId,
     pub kind: Kind,
+    /// A sender with someone at the other end: `reprise_input_v1`'s remote_session.
+    present: bool,
     allowed: BitFlags<DeviceCapability>,
     pub capture: Option<CaptureId>,
     context: eis::Context,
@@ -301,10 +308,21 @@ fn connected(
 }
 
 impl State {
+    /// A remote desktop session drives this desktop: some `present` sender has a bound seat with
+    /// at least one device. Other senders and InputCapture receivers do not count.
+    pub fn remote_controlled(&self) -> bool {
+        self.inputproto
+            .eis
+            .clients
+            .iter()
+            .any(|c| c.present && c.seat.is_some() && c.devices.is_some())
+    }
+
     pub fn eis_connect(
         &mut self,
         fd: OwnedFd,
         kind: Kind,
+        present: bool,
         capture: Option<CaptureId>,
         devices: u32,
     ) -> Result<EisId, String> {
@@ -335,6 +353,7 @@ impl State {
         self.inputproto.eis.clients.push(EisClient {
             id,
             kind,
+            present: present && kind == Kind::Sender,
             allowed: allowed_caps(devices),
             capture,
             context,
@@ -376,6 +395,7 @@ impl State {
             let _ = c.relay.forward();
         }
         log::info!("eis: {:?} client gone", c.kind);
+        crate::power::remote_control_changed(self);
     }
 
     fn eis_release_held(&mut self, id: EisId) {
@@ -530,6 +550,8 @@ impl State {
                 if let Some(c) = self.inputproto.eis.get_mut(id) {
                     c.devices = (!devices.is_empty()).then_some(devices);
                 }
+                self.eis_send_modifiers(id);
+                crate::power::remote_control_changed(self);
             }
             EisRequest::DeviceClosed(_) => {
                 if let Some(d) = self
@@ -540,6 +562,7 @@ impl State {
                 {
                     d.remove_all();
                 }
+                crate::power::remote_control_changed(self);
             }
             other => self.eis_inject(id, other),
         }
@@ -628,9 +651,101 @@ impl State {
                 }
                 self.handle_key(evdev_key(k.key), pressed, time);
             }
+            EisRequest::TextKeysym(t) => {
+                if t.state == eis::keyboard::KeyState::Press {
+                    self.eis_type_keysym(t.keysym, time);
+                }
+            }
+            EisRequest::TextUtf8(t) => self.eis_type_text(&t.text),
             // Every motion, button and scroll above ends its own frame.
             EisRequest::Frame(_) => {}
             other => log::debug!("eis: ignoring {other:?}"),
+        }
+    }
+
+    /// A keysym typed as a tap of an unshifted key that gives it under the locks and modifiers
+    /// in force, else as text: no key of the layout needs to give it.
+    fn eis_type_keysym(&mut self, sym: u32, time: InputTime) {
+        if let Some(code) = self.eis_key_giving(sym) {
+            self.handle_key(evdev_key(code), true, time);
+            self.handle_key(evdev_key(code), false, time);
+            return;
+        }
+        let point = xkb::keysym_to_utf32(sym.into());
+        match char::from_u32(point).filter(|c| !c.is_control()) {
+            Some(c) => self.eis_type_text(c.encode_utf8(&mut [0; 4])),
+            None => log::debug!("eis: no text for keysym {sym:#x}"),
+        }
+    }
+
+    fn eis_key_giving(&mut self, sym: u32) -> Option<u32> {
+        let Some((code, 0)) = self.key_for_sym(sym) else {
+            return None;
+        };
+        let keyboard = self.seat.get_keyboard()?;
+        let gives = keyboard.with_xkb_state(self, |ctx| {
+            let xkb = ctx.xkb().lock().unwrap();
+            // SAFETY: the state is only read here; no reference to it outlives the lock.
+            unsafe { xkb.state() }
+                .key_get_one_sym(evdev_key(code))
+                .raw()
+        });
+        (gives == sym).then_some(code)
+    }
+
+    /// Text goes where a key typing it would: the focused client, Reprise's field with the
+    /// keyboard, or the lock dialog's field. Anywhere else it is dropped.
+    fn eis_type_text(&mut self, text: &str) {
+        let Some(first) = text.chars().next() else {
+            return;
+        };
+        let sym = xkb::utf32_to_keysym(u32::from(first)).raw();
+        let mods = (self.seat.get_keyboard()).map_or(0, |k| crate::keys::mask(&k.modifier_state()));
+        let press = crate::keyboard::key_press(vec![sym], mods, true);
+        let globals = self.global_binds();
+        let route =
+            crate::keyroute::route(&self.key_modes(), &press, &self.config.keybinds, &globals);
+        match route.route {
+            KeyRoute::Client => self.type_text(text),
+            KeyRoute::Lock => crate::lockview::type_text(self, text),
+            route => match crate::imefield::field_editor(&route) {
+                Some(editor) => self.field_edits(editor, vec![EditKey::Insert(text.into())]),
+                None => log::debug!("eis: text dropped on {route:?}"),
+            },
+        }
+    }
+
+    /// Tell sender `id`'s keyboard the seat's modifiers; a sender keeps its lock keys in step
+    /// with them.
+    fn eis_send_modifiers(&mut self, id: EisId) {
+        let Some(m) = self
+            .seat
+            .get_keyboard()
+            .map(|k| k.modifier_state().serialized)
+        else {
+            return;
+        };
+        let Some(c) = self.inputproto.eis.get(id) else {
+            return;
+        };
+        let keyboard = (c.devices.as_ref())
+            .and_then(|d| d.keyboard.as_ref())
+            .and_then(|d| d.interface::<eis::Keyboard>());
+        let (Kind::Sender, Phase::Connected(conv), Some(keyboard)) = (c.kind, &c.phase, keyboard)
+        else {
+            return;
+        };
+        conv.handle().with_next_serial(|serial| {
+            keyboard.modifiers(serial, m.depressed, m.locked, m.latched, m.layout_effective)
+        });
+        self.eis_flush(id);
+    }
+
+    /// Tell every sender's keyboard the seat's new modifiers.
+    pub fn eis_modifiers_changed(&mut self) {
+        let ids: Vec<EisId> = self.inputproto.eis.clients.iter().map(|c| c.id).collect();
+        for id in ids {
+            self.eis_send_modifiers(id);
         }
     }
 
@@ -702,7 +817,7 @@ impl State {
             seat.add_device(
                 Some("Reprise keyboard"),
                 eis::device::DeviceType::Virtual,
-                DeviceCapability::Keyboard.into(),
+                caps & (DeviceCapability::Keyboard | DeviceCapability::Text),
                 |dev| {
                     if let (Some((fd, size)), Some(kb)) =
                         (&keymap, dev.interface::<eis::Keyboard>())
@@ -762,6 +877,7 @@ impl State {
                 if let Some(cap) = capture {
                     self.capture_devices_replaced(cap);
                 }
+                self.eis_send_modifiers(id);
             }
             self.eis_flush(id);
         }
@@ -826,7 +942,7 @@ pub fn allowed_caps(devices: u32) -> BitFlags<DeviceCapability> {
     use crate::inputproto::{DEVICE_KEYBOARD, DEVICE_POINTER};
     let mut caps = BitFlags::empty();
     if devices & DEVICE_KEYBOARD != 0 {
-        caps |= DeviceCapability::Keyboard;
+        caps |= DeviceCapability::Keyboard | DeviceCapability::Text;
     }
     if devices & DEVICE_POINTER != 0 {
         caps |= DeviceCapability::Pointer
@@ -1120,5 +1236,167 @@ mod tests {
         assert!(track(&mut held, KEYS, 0, false));
         assert!(track(&mut held, KEYS, 100, true));
         assert_eq!(held.len(), MAX_HELD);
+    }
+
+    fn sender_keyboard(
+        h: &mut crate::harness::Harness,
+    ) -> (crate::harness::EiPeer, reis::event::Device) {
+        let mut peer = h.ei_keyboard(Kind::Sender);
+        h.ei_hear(&mut peer);
+        let keyboard = (peer.heard.iter())
+            .find_map(|e| match e {
+                reis::event::EiEvent::DeviceResumed(r) => Some(r.device.clone()),
+                _ => None,
+            })
+            .expect("the keyboard is resumed");
+        (peer, keyboard)
+    }
+
+    fn locked_mods(peer: &crate::harness::EiPeer) -> Vec<u32> {
+        (peer.heard.iter())
+            .filter_map(|e| match e {
+                reis::event::EiEvent::KeyboardModifiers(m) => Some(m.locked),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_sender_keyboard_is_told_the_lock_keys() {
+        let mut h = crate::harness::Harness::new();
+        let (mut peer, _) = sender_keyboard(&mut h);
+        assert_eq!(
+            locked_mods(&peer),
+            [0],
+            "told nothing is locked as it binds"
+        );
+        h.key(58, true);
+        h.key(58, false);
+        h.ei_hear(&mut peer);
+        assert_eq!(
+            locked_mods(&peer).last(),
+            Some(&(1 << 1)),
+            "Caps Lock locks the Lock modifier"
+        );
+    }
+
+    fn send_keysym(
+        h: &mut crate::harness::Harness,
+        peer: &crate::harness::EiPeer,
+        device: &reis::event::Device,
+        sym: u32,
+    ) {
+        let text = device
+            .interface::<reis::ei::Text>()
+            .expect("the keyboard has text");
+        device.device().start_emulating(0, 0);
+        for state in [
+            reis::ei::keyboard::KeyState::Press,
+            reis::ei::keyboard::KeyState::Released,
+        ] {
+            text.keysym(sym, state);
+            device.device().frame(0, 0);
+        }
+        let _ = peer.context.flush();
+        h.run_for(5);
+    }
+
+    #[test]
+    fn a_text_keysym_a_key_gives_unshifted_taps_that_key() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        let (peer, keyboard) = sender_keyboard(&mut h);
+        h.roundtrip(&mut c);
+        c.side.keys.clear();
+        send_keysym(&mut h, &peer, &keyboard, 'a' as u32);
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.keys, [(30, true), (30, false)]);
+    }
+
+    #[test]
+    fn a_text_keysym_no_key_gives_is_typed_as_text() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        let (peer, keyboard) = sender_keyboard(&mut h);
+        h.roundtrip(&mut c);
+        c.side.keys.clear();
+        send_keysym(&mut h, &peer, &keyboard, 0x0101_F600);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            c.side.keys,
+            [(1, true), (1, false)],
+            "the first key of a keymap made for the emoji"
+        );
+    }
+
+    #[test]
+    fn a_text_keysym_under_caps_lock_is_typed_as_text() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        let (peer, keyboard) = sender_keyboard(&mut h);
+        h.key(58, true);
+        h.key(58, false);
+        h.roundtrip(&mut c);
+        c.side.keys.clear();
+        send_keysym(&mut h, &peer, &keyboard, 'a' as u32);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            c.side.keys,
+            [(1, true), (1, false)],
+            "the first key of a keymap made for the a"
+        );
+    }
+
+    #[test]
+    fn remote_text_goes_to_start_search_and_not_the_window_behind() {
+        let mut config = crate::config::Config::default();
+        config.startmenu_style = crate::config::StartMenuStyle::Glass;
+        let mut h = crate::harness::Harness::with_config(config);
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        let (peer, keyboard) = sender_keyboard(&mut h);
+        h.roundtrip(&mut c);
+        c.side.keys.clear();
+        let bar = h.state.bars[0].tree;
+        h.state.toggle_start(bar);
+        for ch in "café".chars() {
+            send_keysym(&mut h, &peer, &keyboard, u32::from(ch));
+        }
+        h.roundtrip(&mut c);
+        let panel = h.state.start_panel.as_ref().expect("Start is open");
+        assert_eq!(panel.model.query(), "café");
+        assert_eq!(c.side.keys, [], "the window behind hears nothing");
+    }
+
+    #[test]
+    fn only_the_remote_desktop_servers_sender_is_remote_control() {
+        let mut h = crate::harness::Harness::new();
+        let plain = h.ei_keyboard(Kind::Sender);
+        assert!(
+            !h.state.remote_controlled(),
+            "a plain sender, as Deskflow's, does not count"
+        );
+        let remote = h.ei_remote_session();
+        assert!(h.state.remote_controlled());
+        h.ei_close(remote);
+        assert!(
+            !h.state.remote_controlled(),
+            "the plain sender still connected does not count"
+        );
+        h.ei_close(plain);
+    }
+
+    #[test]
+    fn an_input_capture_receiver_is_not_remote_control() {
+        let mut h = crate::harness::Harness::new();
+        let _peer = h.ei_keyboard(Kind::Receiver);
+        assert!(!h.state.remote_controlled());
     }
 }

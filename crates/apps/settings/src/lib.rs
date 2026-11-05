@@ -38,6 +38,7 @@ mod outputwrite;
 mod pages;
 mod quickpage;
 mod registry;
+mod remotehost;
 mod renamedlg;
 mod saverdlg;
 mod saverhost;
@@ -380,6 +381,12 @@ struct SettingsApp {
     charge_seen: bool,
     charging: Option<Receiver<chargehost::Charged>>,
 
+    /// The Remote Desktop server as last read; `remote_job` holds the read or act under way,
+    /// an act while `remote_acting`.
+    remote: remotehost::Remote,
+    remote_job: Option<Receiver<remotehost::Reading>>,
+    remote_acting: bool,
+
     xkb: Vec<reprisefs::xkb::Layout>,
     add_layout: Option<layoutdlg::LayoutDialog>,
 
@@ -621,6 +628,9 @@ impl SettingsApp {
             charge: None,
             charge_seen: false,
             charging: None,
+            remote: remotehost::Remote::default(),
+            remote_job: None,
+            remote_acting: false,
             types: defaultspage::new_list(),
             types_focus: false,
             chooser: None,
@@ -889,6 +899,7 @@ impl App for SettingsApp {
         self.ensure_defaults();
         self.ensure_locations();
         self.ensure_charge();
+        self.ensure_remote();
         if win == repriseapp::MAIN
             && !self.saver_ticking
             && self.sheet.tabs.open == Page::ScreenSaver.index()

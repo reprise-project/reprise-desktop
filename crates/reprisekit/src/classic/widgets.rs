@@ -1092,6 +1092,9 @@ pub fn access_edit(
     };
     let mut n = access::node(role, r);
     access::focusable(&mut n, enabled);
+    if edit.is_read_only() {
+        n.set_read_only();
+    }
     if !edit.cue().is_empty() {
         n.set_placeholder(edit.cue());
     }

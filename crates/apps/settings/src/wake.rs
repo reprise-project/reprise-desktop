@@ -114,6 +114,7 @@ impl SettingsApp {
             }
         }
         changed |= self.charge_done();
+        changed |= self.remote_done();
         let cleared = match &self.clearing {
             Some(rx) => match take(rx) {
                 Ok(c) => c.map(pages::Clearing::Done),

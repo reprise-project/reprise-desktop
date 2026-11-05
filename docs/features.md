@@ -701,8 +701,8 @@ are.
 
 - **Screen sharing** in browsers, video calls and OBS, of a whole screen or
   one window.
-- **Remote desktop.** Tools can drive the keyboard and mouse once you allow
-  them.
+- **Remote control.** Tools can drive the keyboard and mouse once you allow
+  them. Reprise's own server for RDP clients is [Remote Desktop](#remote-desktop).
 - **One keyboard and mouse across computers** with Deskflow. Super+Shift+Esc
   always takes them back.
 - **VM viewers and remote desktops get your shortcuts,** Super and Alt+Tab
@@ -710,6 +710,86 @@ are.
   screenshots stay Reprise's. A balloon says so the first time a program takes
   them, and Super+Shift+Esc takes them back.
 - **Pointer lock and raw motion** for games, 3D tools and VM viewers.
+
+## Remote Desktop
+
+Another computer can use this session over RDP while you stay logged in
+here: one computer at a time, logged in with your own account's password.
+It's meant for the home network. Reprise opens no firewall port and sets up
+no port forwarding; allow the port in your firewall if you run one.
+
+- **Turning it on.** Settings > Remote Desktop > Allow remote connections to
+  this computer enables and starts the user unit
+  `app-org.reprise.RemoteDesktop.service`; clearing it stops and disables
+  the unit. With it off nothing listens. The line under the check box says
+  where it listens ("Listening on port 3389 at 192.168.1.20"), and the next
+  one which video encoder it uses.
+- **Connecting with Remmina.** Make an RDP profile with the address and
+  port from that line, your login name and your password. Set Security
+  protocol negotiation to TLS protocol security and leave Colour depth at
+  Automatic, which lets the client take H.264. The first connection shows
+  the server's certificate: compare its fingerprint with the one on the
+  Settings page before you accept it. Other FreeRDP 3 clients work the same
+  way, for example `xfreerdp3 /v:HOST /u:USER /sec:tls`.
+- **Login.** Only your own account's name and password log in. A client
+  that insists on NLA is refused, and the journal says to choose TLS. After
+  a fourth wrong password from an address, each further try waits longer
+  ([security.md](security.md#remote-desktop)).
+- **The picture.** The screen at the top left of the layout, at its own
+  size; a smaller client window scales it if the client is set to. The lock
+  screen shows too, and the client's keyboard unlocks it. The client draws
+  the pointer itself, so it moves without lag. Only what changed is sent,
+  and a still screen sends nothing.
+- **Encoders.** At start the server tries each H.264 encoder on a test
+  frame: VA-API (Intel and AMD), NVENC (NVIDIA; not yet tried on NVIDIA
+  hardware, and colours there may look slightly washed out), Vulkan and
+  x264 on the CPU. Automatic uses the first of them
+  that works. A client without H.264 gets RemoteFX bitmaps. Video encoder
+  on the Settings page (`encoder`) picks one; those that don't work here
+  are greyed. A chosen encoder that doesn't work here falls back to
+  Automatic and the Video line says so ("VA-API H.264 (NVENC
+  unavailable)"); one that fails while coding hands over to the next that
+  works, and after the last the picture goes as bitmaps. None (RemoteFX)
+  sends bitmaps only. A change while connected applies at the next frame.
+  The test runs in the background; a client that connects before it is
+  done waits for it, at most about 5 s, and an encoder that takes longer
+  is left out.
+- **Quality.** Picture quality runs from Speed to Sharp and frame rate is
+  30 or 60; both apply to a connected client at once. With Balanced or
+  Sharp, a client that offers it and VA-API or x264 coding, the picture is
+  sent in full colour (AVC444), so small coloured text stays sharp. Speed,
+  NVENC and Vulkan send reduced colour, which takes less bandwidth.
+- **Keyboard and mouse.** Keys go by position and this computer's keyboard
+  layout reads them. Characters the client sends as text are typed as they
+  are. Caps Lock and Num Lock follow the client. Five mouse buttons, the
+  wheel and the horizontal wheel work. Keys and buttons held when the client
+  leaves are let go.
+- **Copy and paste.** Text and pictures copied on either side paste on the
+  other while a client is connected, up to 16 MiB of text as RDP carries it
+  (UTF-16, so about 8 MiB of plain ASCII) and 64 MiB of picture. Pasting
+  something copied on the client ends empty if the client doesn't send it
+  within 5 s. Files stay where they are.
+- **Sound.** With Play sound on the remote computer on (`sound`), this
+  computer's sound plays on the client and not here. A "Remote client"
+  output becomes the default while the client is connected; the one before
+  comes back when it leaves, unless you picked another meanwhile, and also
+  when the server stops or, after a crash, when it next starts. A change
+  while connected applies at once. Sound goes as Opus when the client takes
+  it, else as 16-bit PCM at 44.1 kHz. The client's own buffering sets most
+  of the delay: with FreeRDP's default it is about 110 ms, and
+  `/sound:latency:20` brings it to about 65 ms.
+- **While a client is connected,** this screen keeps showing the session
+  and its own keyboard and mouse keep working. The red dot shows the screen
+  is shared. The screen saver and the idle lock keep their timeouts, and
+  remote input counts as activity; screen off and idle suspend wait.
+  Closing the lid turns the laptop's panel off instead of running
+  `[power] lid_close`, and the session goes on; opening it turns the panel
+  back on. When the client leaves with the lid still shut, the lid action
+  runs 30 s later.
+- **Leaving locks.** When the client disconnects, or Disconnect on the
+  Settings page ends it, the session locks. A second computer that connects
+  meanwhile is turned away at once. A connection that dies without closing
+  ends within about 30 s.
 
 ## Files
 

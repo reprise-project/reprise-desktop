@@ -71,6 +71,17 @@ runs `reprise-portal` from `/usr/bin` or `/usr/local/bin`. That keeps other
 clients from binding it directly; it is no boundary against code running as
 you.
 
+Reprise's remote desktop server starts its sessions without the permission
+dialog, since nobody may be at the screen to answer it. Turning Remote
+Desktop on in Settings is the consent. The portal skips the dialog only for
+the app id `org.reprise.RemoteDesktop`, only while the user unit
+`app-org.reprise.RemoteDesktop.service` is enabled and active, and only when
+that unit's main process runs `reprise-rdp` from `/usr/bin` or
+`/usr/local/bin` and is the process that asked. A sandboxed app's requests
+reach the portal through its bus proxy, so they never pass. Such a session gets the keyboard, the pointer and the
+screen at the layout origin (0,0), and leaves no restore token behind.
+As with `reprise_input_v1`, this is no boundary against code running as you.
+
 ## X11 programs
 
 All X11 programs share one Xwayland server, which Reprise starts on the
@@ -127,6 +138,74 @@ When the lock can't check a password at all (no login name, a broken PAM
 stack), switch to another VT, log in, and run `loginctl unlock-session`.
 Any program that can bind the session lock global can already run that
 command, which is why that global needs no extra gate.
+
+## Remote Desktop
+
+The Remote Desktop server, `reprise-rdp`, offers TLS security only and logs
+in the session user alone; any other name is refused before PAM sees it.
+NLA (CredSSP) is not offered: its NTLM exchange can only be checked against
+a password the server already holds, and PAM never hands one out. Under TLS
+the client sends the password itself, inside the encrypted connection. A
+client set to require NLA is closed, and the journal says to choose
+TLS.
+
+It checks the password as the Unlock Computer dialog does, in a
+`reprise --rdp-password-conversation USER` helper with the password on its
+stdin, but under its own PAM service, `reprise-rdp`: `pam_unix` for `auth`
+and `account` and nothing else. That stack has no pam_faillock, so wrong
+passwords sent over the network never lock the account at the lock screen.
+A further PAM prompt fails the login.
+
+The TLS certificate is self-signed, made on the first start for the host
+name, and kept in `$XDG_DATA_HOME/reprise/rdp/` (`cert.pem`, and `key.pem`
+readable by you alone). Nothing vouches for it, so the client asks the first
+time: compare the SHA-256 fingerprint it shows with the one on Settings >
+Remote Desktop. New Certificate... replaces it for the next connection, and
+clients that kept the old one warn.
+
+`reprise-rdp` throttles failed logins itself, and logs each one with the
+client's address:
+
+- **Per address.** The first three failures are free. After the fourth the
+  address waits 2 s before its next password is checked, doubling with each
+  further failure up to 60 s. A success clears the address.
+- **Every address.** 10 failures within 10 minutes pause every login for 10
+  minutes: no password is checked and the journal says so once. A success
+  doesn't clear the failures before it.
+
+A login counts as a failure from the moment its password check starts until
+PAM accepts it, so a client that drops the connection mid-check still
+spends an attempt. A connection has 10 s to log in, plus any wait its
+address is serving; a check in flight when that time runs out is finished
+first.
+
+One client is served at a time. A connection that arrives while another is
+open, even one still logging in, is closed at once and never touches the
+session in use. TCP keepalive ends a connection whose client has gone
+silent within about 30 s.
+
+Nothing is captured while no client is logged in: the portal session that
+shares the screen and takes input opens after the login and closes when the
+client leaves. The portal starts it without asking, as described under
+[The Wayland socket](#the-wayland-socket); turning Remote Desktop on is the
+consent. While it runs, the screen-sharing dot shows, this computer's
+screen keeps showing the session, and its own keyboard and mouse keep
+working, so someone at the computer sees and can take part in what the
+client does. When a logged-in client leaves, its held keys and buttons are
+let go and then the session locks through logind, so the computer is not
+left open. Stopping the server, as turning Remote Desktop off does, locks
+the session before a logged-in client's connection closes. A server that
+dies with a client logged in locks the session when it next starts.
+
+The client shares the clipboard only while it is logged in. `reprise-rdp`
+opens its data control connection once the client's clipboard channel is up,
+after the login, and closes it when the client leaves, clearing a selection
+the client still holds. A copy on either side only lists its formats to the
+other, and `reprise-rdp` fetches the bytes when a program on the other side
+reads them. With `[clipboard] history` on, Reprise reads every new copy for
+the history, so a client's text or picture crosses as soon as it is copied.
+Text and pictures cross, files and the primary selection don't. Text over
+16 MiB and pictures over 64 MiB are refused, measured on the wire.
 
 ## Keyboard shortcuts
 

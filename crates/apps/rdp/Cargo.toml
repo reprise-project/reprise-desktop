@@ -1,0 +1,61 @@
+[package]
+name = "reprise-rdp"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Reprise Remote Desktop: an RDP server for the running session, logged into with the session user's password over TLS"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "reprise-rdp"
+path = "src/main.rs"
+
+[dependencies]
+repriseconf = { path = "../../repriseconf" }
+reprisebus = { path = "../../reprisebus" }
+repriseaudio = { path = "../../repriseaudio" }
+ironrdp-server.workspace = true
+ironrdp-pdu = "0.9"
+ironrdp-egfx = "0.3"
+ironrdp-dvc = "0.8"
+ironrdp-svc = "0.8"
+ironrdp-core = "0.2"
+ironrdp-graphics = "0.9"
+ironrdp-cliprdr = "0.7"
+ironrdp-rdpsnd = "0.9"
+tokio = { workspace = true, features = ["rt", "net", "time", "macros", "io-util", "sync", "signal"] }
+pipewire = { workspace = true, features = ["v0_3_33"] }
+zbus.workspace = true
+zruntime.workspace = true
+futures-util.workspace = true
+libc.workspace = true
+reis = { version = "0.7", default-features = false }
+bytes = "1"
+serde = { workspace = true, features = ["derive"] }
+rcgen.workspace = true
+anyhow = "1"
+async-trait = "0.1"
+sha2 = "0.11"
+socket2 = { version = "0.6", features = ["all"] }
+log.workspace = true
+zeroize.workspace = true
+ffmpeg = { package = "ffmpeg-the-third", version = "6", default-features = false, features = ["codec", "filter", "format", "software-scaling"] }
+gbm = { version = "0.18", default-features = false }
+khronos-egl = { version = "6", features = ["dynamic"] }
+glow = "0.17"
+drm = "0.14"
+wayland-client.workspace = true
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+reprisefs = { path = "../../reprisefs" }
+image.workspace = true
+
+[dev-dependencies]
+ironrdp-ainput = "0.8"
+tempfile.workspace = true
+tokio = { workspace = true, features = ["sync", "test-util"] }
+png.workspace = true

@@ -4,7 +4,8 @@
 //! frame is filled at once when its source changed since the last one
 //! (and for the first); otherwise it, and every `copy_with_damage`,
 //! waits for the output's next drawn frame or the window's next commit,
-//! so an idle screen costs a screencast nothing.
+//! so an idle screen costs a screencast nothing. An output session's
+//! frame reports the damage since its previous one; others report all.
 //! A pointer cursor session on an output copies the pointer's image and
 //! follows it over the output. A session is ongoing (a screencast, not a
 //! screenshot) from its second frame.
@@ -12,6 +13,7 @@
 //! The shm copy follows niri's `render_to_shm` in
 //! `src/render_helpers/mod.rs` (GPL-3.0-or-later).
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Instant;
 
@@ -21,7 +23,7 @@ use smithay::{
         renderer::{
             Bind, Color32F,
             damage::OutputDamageTracker,
-            element::{Kind, surface::render_elements_from_surface_tree},
+            element::{Element, Kind, surface::render_elements_from_surface_tree},
             gles::GlesRenderer,
             sync::SyncPoint,
         },
@@ -31,7 +33,7 @@ use smithay::{
         calloop::timer::{TimeoutAction, Timer},
         wayland_server::protocol::{wl_buffer::WlBuffer, wl_pointer::WlPointer, wl_shm},
     },
-    utils::{Physical, Point, Scale, Size, Transform},
+    utils::{Buffer, Physical, Point, Rectangle, Scale, Size, Transform},
     wayland::{
         dmabuf::get_dmabuf,
         foreign_toplevel_list::ForeignToplevelHandle,
@@ -60,6 +62,9 @@ use crate::{
 /// The side of a cursor session's buffer, in logical pixels: room for
 /// the largest pointer image the themes ship.
 const CURSOR_BOX: i32 = 64;
+
+/// What a capture is drawn at: buffer size, scale and transform.
+type View = (Size<i32, Physical>, f64, Transform);
 
 /// The open ext sessions and the frames waiting for an output's next frame.
 #[derive(Default)]
@@ -179,13 +184,11 @@ pub fn window_committed(state: &mut State, w: WindowId) {
     }
     let on = Some(Shown::Window(w));
     state.captures.changed(&on);
-    let constraints = window_constraints(state, w);
-    for s in &state.captures.sessions {
-        if shown(&s.source()) == on
-            && let Some(c) = &constraints
-            && s.current_constraints().is_none_or(|old| old.size != c.size)
-        {
-            s.update_constraints(c.clone());
+    if let Some(c) = window_constraints(state, w) {
+        for s in &state.captures.sessions {
+            if shown(&s.source()) == on {
+                advertise(s, &c);
+            }
         }
     }
     for waiting in take_waiting(state, |s| *s == on) {
@@ -247,8 +250,8 @@ impl<'a> Target<'a> {
 }
 
 /// Render `output`'s picture from `origin` (physical pixels from its
-/// top-left), `size` large, into `target`. The debug overlay shows only
-/// with `[debug] overlay_in_captures`.
+/// top-left), `size` large, into `target`, its damage taken from `tracked`
+/// when given. The debug overlay shows only with `[debug] overlay_in_captures`.
 fn render_into(
     state: &mut State,
     output: &Output,
@@ -256,10 +259,11 @@ fn render_into(
     size: Size<i32, Physical>,
     with_cursor: bool,
     target: Target<'_>,
+    tracked: Option<&mut SessionDamage>,
 ) -> Result<Drawn, String> {
     let shown = state.config.debug.overlay_in_captures;
     state.without_debug_panels(shown, |state| {
-        render_scene_into(state, output, origin, size, with_cursor, target)
+        render_scene_into(state, output, origin, size, with_cursor, target, tracked)
     })
 }
 
@@ -270,6 +274,7 @@ fn render_scene_into(
     size: Size<i32, Physical>,
     with_cursor: bool,
     target: Target<'_>,
+    tracked: Option<&mut SessionDamage>,
 ) -> Result<Drawn, String> {
     let pointer = state.pointer_location();
     let State {
@@ -312,14 +317,19 @@ fn render_scene_into(
     );
     let scale = output.current_scale().fractional_scale();
     let at = (size, scale, output.current_transform());
-    draw(
+    let damage = tracked.map(|t| t.since_last(at, clear, &elements));
+    let mut drawn = draw(
         renderer,
         &mut captures.readbacks,
         at,
         &elements,
         clear,
         target,
-    )
+    )?;
+    if let Some(damage) = damage {
+        drawn.damage = damage;
+    }
+    Ok(drawn)
 }
 
 /// A capture rendered into its buffer, waiting for the GPU to finish.
@@ -327,6 +337,8 @@ fn render_scene_into(
 struct Drawn {
     sync: SyncPoint,
     shm: Option<ShmCopy>,
+    /// What changed since the session's last frame, in buffer pixels.
+    damage: Vec<Rectangle<i32, Buffer>>,
 }
 
 struct ShmCopy {
@@ -338,7 +350,7 @@ struct ShmCopy {
 fn draw(
     renderer: &mut GlesRenderer,
     readbacks: &mut Readbacks,
-    (size, scale, transform): (Size<i32, Physical>, f64, Transform),
+    (size, scale, transform): View,
     elements: &[OutputElement],
     clear: Color32F,
     target: Target<'_>,
@@ -354,6 +366,7 @@ fn draw(
             Ok(Drawn {
                 sync: result.sync,
                 shm: None,
+                damage: vec![whole(size)],
             })
         }
         Target::Shm(buffer) => {
@@ -384,6 +397,7 @@ fn draw(
                     slot,
                     size,
                 }),
+                damage: vec![whole(size)],
             })
         }
     }
@@ -550,41 +564,62 @@ fn render_window(state: &mut State, w: WindowId, target: Target<'_>) -> Result<D
     )
 }
 
+/// Sends `c` to `session` when its size is not the one last sent.
+fn advertise(session: &SessionRef, c: &BufferConstraints) {
+    if session
+        .current_constraints()
+        .is_none_or(|old| old.size != c.size)
+    {
+        session.update_constraints(c.clone());
+    }
+}
+
 fn fill_window(state: &mut State, w: WindowId, session: &SessionRef, frame: Frame) {
     let buffer = frame.buffer();
+    if window_size(state, w).is_some_and(|size| !fits(&buffer, size)) {
+        // A move onto an output of another scale resizes the capture without a commit.
+        if let Some(c) = window_constraints(state, w) {
+            advertise(session, &c);
+        }
+        return frame.fail(CaptureFailureReason::BufferConstraints);
+    }
     let drawn = render_window(state, w, Target::of(&buffer));
     if drawn.is_ok() {
         fresh(session).clear();
     }
     let what = format!("capture of window {w:?}");
-    complete(state, drawn, frame, Transform::Normal, what, || ());
+    complete(state, drawn, frame, Transform::Normal, what, |_| ());
 }
 
-/// Sends `frame` ready once `drawn` is done, after `then`; fails it if
-/// the render failed or does not finish.
+/// Sends `frame` ready with its damage once `drawn` is done, or fails it
+/// if the render failed or does not finish; `then` runs first, told
+/// whether it went ready.
 fn complete(
     state: &mut State,
     drawn: Result<Drawn, String>,
     frame: Frame,
     transform: Transform,
     what: String,
-    then: impl FnOnce() + 'static,
+    then: impl FnOnce(bool) + 'static,
 ) {
     let now = state.now();
     let drawn = match drawn {
         Ok(d) => d,
         Err(e) => {
             log::warn!("{what}: {e}");
+            then(false);
             return frame.fail(CaptureFailureReason::Unknown);
         }
     };
+    let damage = drawn.damage.clone();
     when_done(state, drawn, move |_, done| match done {
         Ok(()) => {
-            then();
-            frame.success(transform, None, now);
+            then(true);
+            frame.success(transform, damage, now);
         }
         Err(e) => {
             log::warn!("{what}: {e}");
+            then(false);
             frame.fail(CaptureFailureReason::Unknown);
         }
     });
@@ -653,9 +688,18 @@ fn fill_cursor(state: &mut State, session: &CursorSessionRef, frame: Frame) {
     );
     let what = format!("cursor capture on {}", output.name());
     let session = session.clone();
-    complete(state, drawn, frame, Transform::Normal, what, move || {
-        session.set_cursor_hotspot((hotspot.x, hotspot.y));
+    complete(state, drawn, frame, Transform::Normal, what, move |ready| {
+        if ready {
+            session.set_cursor_hotspot((hotspot.x, hotspot.y));
+        }
     });
+}
+
+/// Whether `buffer` is `size`. A frame asked before its source resized keeps the old size,
+/// which smithay lets through when it is larger.
+fn fits(buffer: &WlBuffer, size: Size<i32, Physical>) -> bool {
+    smithay::backend::renderer::buffer_dimensions(buffer)
+        .is_none_or(|b| (b.w, b.h) == (size.w, size.h))
 }
 
 fn cursor_side(output: &Output) -> i32 {
@@ -667,6 +711,9 @@ fn fill_ext(state: &mut State, output: &Output, session: &SessionRef, frame: Fra
         return frame.fail(CaptureFailureReason::Stopped);
     };
     let buffer = frame.buffer();
+    if !fits(&buffer, mode.size) {
+        return frame.fail(CaptureFailureReason::BufferConstraints);
+    }
     let drawn = render_into(
         state,
         output,
@@ -674,12 +721,25 @@ fn fill_ext(state: &mut State, output: &Output, session: &SessionRef, frame: Fra
         mode.size,
         session.draw_cursor(),
         Target::of(&buffer),
+        Some(&mut session_damage(session).borrow_mut()),
     );
     if drawn.is_ok() {
         fresh(session).clear();
     }
     let what = format!("capture of {}", output.name());
-    complete(state, drawn, frame, output.current_transform(), what, || ());
+    let session = session.clone();
+    complete(
+        state,
+        drawn,
+        frame,
+        output.current_transform(),
+        what,
+        move |ready| {
+            if !ready {
+                session_damage(&session).borrow_mut().forget();
+            }
+        },
+    );
 }
 
 fn fill_wlr(state: &mut State, screencopy: Screencopy) {
@@ -698,6 +758,7 @@ fn fill_wlr(state: &mut State, screencopy: Screencopy) {
         info.buffer_size,
         info.overlay_cursor,
         buffer,
+        None,
     );
     let name = info.output.name();
     let now = state.now();
@@ -794,6 +855,65 @@ fn fresh(session: &SessionRef) -> &Fresh {
         .user_data()
         .insert_if_missing_threadsafe(Fresh::default);
     session.user_data().get::<Fresh>().expect("inserted above")
+}
+
+/// An output session's damage tracker, kept from one delivered frame to the next.
+#[derive(Default)]
+struct SessionDamage(Option<(View, Color32F, OutputDamageTracker)>);
+
+impl SessionDamage {
+    /// The buffer regions `elements` changed since the last call: the whole
+    /// buffer on the first call and after `view` or `clear` changed.
+    fn since_last<E: Element>(
+        &mut self,
+        view: View,
+        clear: Color32F,
+        elements: &[E],
+    ) -> Vec<Rectangle<i32, Buffer>> {
+        let (size, scale, transform) = view;
+        if self
+            .0
+            .as_ref()
+            .is_none_or(|(v, c, _)| *v != view || *c != clear)
+        {
+            let tracker = OutputDamageTracker::new(size, scale, transform);
+            self.0 = Some((view, clear, tracker));
+        }
+        let (_, _, tracker) = self.0.as_mut().expect("set above");
+        let Ok((damage, _)) = tracker.damage_output(1, elements) else {
+            return vec![whole(size)];
+        };
+        // Output space to buffer pixels, as DrmCompositor maps element geometry.
+        let to_buffer = transform.invert();
+        let area = to_buffer.transform_size(size);
+        damage
+            .into_iter()
+            .flatten()
+            .map(|r| {
+                let r = to_buffer.transform_rect_in(*r, &area);
+                Rectangle::new((r.loc.x, r.loc.y).into(), (r.size.w, r.size.h).into())
+            })
+            .collect()
+    }
+
+    /// The frame last tracked never reached the client: the next is all damaged.
+    fn forget(&mut self) {
+        self.0 = None;
+    }
+}
+
+fn whole(size: Size<i32, Physical>) -> Rectangle<i32, Buffer> {
+    Rectangle::from_size((size.w, size.h).into())
+}
+
+fn session_damage(session: &SessionRef) -> &RefCell<SessionDamage> {
+    session
+        .user_data()
+        .insert_if_missing(|| RefCell::new(SessionDamage::default()));
+    session
+        .user_data()
+        .get::<RefCell<SessionDamage>>()
+        .expect("inserted above")
 }
 
 impl ScreencopyHandler for State {
@@ -965,7 +1085,157 @@ fn dmabuf_formats(renderer: &GlesRenderer) -> Vec<(Fourcc, Vec<Modifier>)> {
 
 #[cfg(test)]
 mod tests {
-    use super::Fresh;
+    use smithay::{
+        backend::renderer::{
+            Color32F,
+            element::{Id, Kind, solid::SolidColorRenderElement},
+        },
+        utils::{Buffer, Physical, Point, Rectangle, Size, Transform},
+    };
+
+    use super::{Fresh, SessionDamage, View};
+    use crate::harness::Harness;
+    use crate::render::{Parts, output_elements};
+
+    fn hd() -> View {
+        (Size::new(1280, 720), 1.0, Transform::Normal)
+    }
+    const CLEAR: Color32F = Color32F::new(0.0, 0.0, 0.0, 1.0);
+
+    fn whole(w: i32, h: i32) -> Vec<Rectangle<i32, Buffer>> {
+        vec![Rectangle::new((0, 0).into(), (w, h).into())]
+    }
+
+    fn solid(id: &Id, (x, y, w, h): (i32, i32, i32, i32)) -> SolidColorRenderElement {
+        let geo = Rectangle::<i32, Physical>::new((x, y).into(), (w, h).into());
+        SolidColorRenderElement::new(id.clone(), geo, 0, [1.0, 0.0, 0.0, 1.0], Kind::Unspecified)
+    }
+
+    /// Whether `damage` covers every pixel of `r`.
+    fn covers(damage: &[Rectangle<i32, Buffer>], r: Rectangle<i32, Buffer>) -> bool {
+        Rectangle::subtract_rects_many([r], damage.iter().copied()).is_empty()
+    }
+
+    fn buffer_rect(r: crate::raster::Rect) -> Rectangle<i32, Buffer> {
+        Rectangle::new((r.x, r.y).into(), (r.width, r.height).into())
+    }
+
+    #[test]
+    fn a_first_output_capture_frame_is_fully_damaged() {
+        let id = Id::new();
+        let mut d = SessionDamage::default();
+        let damage = d.since_last(hd(), CLEAR, &[solid(&id, (10, 10, 20, 20))]);
+        assert_eq!(damage, whole(1280, 720), "the whole 1280x720 buffer");
+    }
+
+    #[test]
+    fn moving_a_window_damages_only_its_old_and_new_place() {
+        let Ok(mut renderer) = reprisefx::headless::renderer() else {
+            eprintln!("skipped: no renderer");
+            return;
+        };
+        let mut h = Harness::new();
+        let output = h.output("TEST-1", 1280, 720);
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 200, 100);
+        h.state.move_to(t.id, 100, 100);
+        h.dispatch();
+        let mut elements = |h: &mut Harness| {
+            let s = &mut h.state;
+            let parts = Parts {
+                scene: &s.scene,
+                cursor: &s.cursor,
+                cursors: &mut s.cursors,
+                pointer: Point::default(),
+            };
+            output_elements(&mut renderer, parts, &output, Point::default(), false)
+        };
+        let mut d = SessionDamage::default();
+        let before = h.state.win(t.id).unwrap().frame_rect();
+        d.since_last(hd(), CLEAR, &elements(&mut h));
+        h.state.move_to(t.id, 400, 300);
+        h.dispatch();
+        let after = h.state.win(t.id).unwrap().frame_rect();
+        let damage = d.since_last(hd(), CLEAR, &elements(&mut h));
+        assert!(
+            covers(&damage, buffer_rect(before)),
+            "the old place {before:?}: {damage:?}"
+        );
+        assert!(
+            covers(&damage, buffer_rect(after)),
+            "the new place {after:?}: {damage:?}"
+        );
+        let corner = Rectangle::new((0, 0).into(), (50, 50).into());
+        assert!(
+            !damage.iter().any(|r| r.overlaps(corner)),
+            "(0,0)-(50,50) is untouched: {damage:?}"
+        );
+    }
+
+    #[test]
+    fn an_unchanged_output_reports_no_damage_when_forced() {
+        let id = Id::new();
+        let mut d = SessionDamage::default();
+        d.since_last(hd(), CLEAR, &[solid(&id, (10, 10, 20, 20))]);
+        let damage = d.since_last(hd(), CLEAR, &[solid(&id, (10, 10, 20, 20))]);
+        assert_eq!(damage, Vec::new(), "nothing changed since the last frame");
+    }
+
+    #[test]
+    fn a_mode_change_reports_full_damage() {
+        let id = Id::new();
+        let mut d = SessionDamage::default();
+        d.since_last(hd(), CLEAR, &[solid(&id, (10, 10, 20, 20))]);
+        let fhd = (Size::new(1920, 1080), 1.0, Transform::Normal);
+        let damage = d.since_last(fhd, CLEAR, &[solid(&id, (10, 10, 20, 20))]);
+        assert_eq!(damage, whole(1920, 1080), "the whole 1920x1080 buffer");
+        let scaled = (Size::new(1920, 1080), 2.0, Transform::Normal);
+        let damage = d.since_last(scaled, CLEAR, &[solid(&id, (10, 10, 20, 20))]);
+        assert_eq!(damage, whole(1920, 1080), "a new scale damages it all");
+        let rotated = (Size::new(1920, 1080), 2.0, Transform::_90);
+        let damage = d.since_last(rotated, CLEAR, &[solid(&id, (10, 10, 20, 20))]);
+        assert_eq!(
+            damage,
+            whole(1920, 1080),
+            "a new transform damages it all, in buffer pixels"
+        );
+    }
+
+    #[test]
+    fn a_frame_that_never_reached_the_client_leaves_the_next_fully_damaged() {
+        let id = Id::new();
+        let mut d = SessionDamage::default();
+        d.since_last(hd(), CLEAR, &[solid(&id, (10, 10, 20, 20))]);
+        d.forget();
+        let damage = d.since_last(hd(), CLEAR, &[solid(&id, (10, 10, 20, 20))]);
+        assert_eq!(damage, whole(1280, 720), "the whole 1280x720 buffer");
+    }
+
+    #[test]
+    fn a_window_moved_onto_a_scale_2_output_needs_a_buffer_twice_its_size_without_a_commit() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let b = h.output("TEST-2", 2048, 1536);
+        b.change_current_state(
+            None,
+            None,
+            Some(smithay::output::Scale::Fractional(2.0)),
+            None,
+        );
+        h.state.update_layout();
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 200, 100);
+        h.state.move_to(t.id, 100, 100);
+        let on_1 = super::window_size(&h.state, t.id).expect("mapped");
+        let b_at = reprisescene::output_rect(&b).expect("TEST-2's place").loc;
+        h.state.move_to(t.id, b_at.x + 100, b_at.y + 100);
+        let on_2 = super::window_size(&h.state, t.id).expect("mapped");
+        assert_eq!(
+            (on_2.w, on_2.h),
+            (2 * on_1.w, 2 * on_1.h),
+            "{on_1:?} at scale 1 doubles at scale 2"
+        );
+    }
 
     #[test]
     fn a_change_between_frames_is_kept_for_the_next_request() {

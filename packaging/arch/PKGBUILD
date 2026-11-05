@@ -6,7 +6,7 @@ pkgdesc="Wayland desktop with a classic retro look, with Notepad, Explorer and a
 arch=('x86_64')
 url="https://github.com/reprise-project/reprise-desktop"
 license=('GPL-3.0-or-later')
-depends=('seatd' 'systemd-libs' 'libinput>=1.26' 'libdrm' 'mesa' 'libglvnd' 'libdisplay-info' 'libxkbcommon' 'xorg-xwayland' 'freetype2' 'fontconfig' 'pam' 'libxcrypt' 'dbus' 'pipewire')
+depends=('seatd' 'systemd-libs' 'libinput>=1.26' 'libdrm' 'mesa' 'libglvnd' 'libdisplay-info' 'libxkbcommon' 'xorg-xwayland' 'freetype2' 'fontconfig' 'pam' 'libxcrypt' 'dbus' 'pipewire>=1:1.4' 'zlib' 'ffmpeg')
 makedepends=('rust' 'clang' 'git' 'pkgconf')
 optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for' 'ttf-dejavu: fallback font' 'noto-fonts-cjk: Chinese, Japanese and Korean text' 'wqy-bitmapfont: crisp Chinese text in Reprise'\''s own text with antialias = false' 'noto-fonts-emoji: the colour emoji in the Super+. picker' 'xdg-utils: open a file with no default program, the Start menu Internet and Help rows, the Edit File... button in Reprise Settings, and a network'\''s sign-in page'
             'shared-mime-info: file kinds and icons on the desktop, in Explorer and on Properties'
@@ -15,7 +15,7 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'gnome-font-viewer: font thumbnails in Explorer and the file dialogs'
             'libgsf: OpenDocument and Office document thumbnails in Explorer and the file dialogs'
             'libarchive: bsdtar, which Send To > Compressed (zipped) Folder, Extract Here and Extract to shell out to'
-            'wireplumber: wpctl, which reprise-sound, reprise-volume and the volume keys set the default device, volume and mute with'
+            'wireplumber: wpctl, which reprise-sound, reprise-volume, the volume keys and Remote Desktop sound set the default device, volume and mute with'
             'upower: the battery behind the reprise-power tray icon and the on-battery idle timeouts'
             'power-profiles-daemon: the power profile in Power Options and the battery icon menu'
             'xdg-desktop-portal: screen sharing, screenshots, and Deskflow through the portals (reprise-portal is the backend), and file drags into Flatpak programs'
@@ -47,10 +47,13 @@ optdepends=('ttf-tahoma: Wine'\''s Tahoma, the UI font the layouts are tuned for
             'at-spi2-core: screen readers (Orca) in Reprise and its programs'
             'libx11: the Compose files behind dead keys and the Compose key in the lock screen password'
             'hwdata: graphics card names in About Reprise and Task Manager (pci.ids)'
-            'geoclue: the location prompt and the location indicator (Reprise is the geoclue agent)')
+            'geoclue: the location prompt and the location indicator (Reprise is the geoclue agent)'
+            'intel-media-driver: hardware H.264 for Remote Desktop on Intel graphics'
+            'libva-mesa-driver: hardware H.264 for Remote Desktop on AMD graphics'
+            'nvidia-utils: hardware H.264 (NVENC) for Remote Desktop on NVIDIA graphics')
 provides=('reprise')
 conflicts=('reprise')
-backup=('etc/pam.d/reprise' 'etc/pam.d/reprise-fingerprint')
+backup=('etc/pam.d/reprise' 'etc/pam.d/reprise-fingerprint' 'etc/pam.d/reprise-rdp')
 # makepkg's lto option puts -flto=auto into CFLAGS, which turns the C shim in
 # libspa-sys into GCC bitcode that rustc's lld cannot link (undefined
 # *_libspa_rs symbols in reprise-portal). The option only touches CFLAGS,
@@ -79,7 +82,7 @@ build() {
   # cargo home (registry and git checkouts) to fixed prefixes.
   export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
   # Named explicitly: the workspace has a root package, so a bare `cargo build --release` would skip the programs package() installs.
-  cargo build --release --locked -p reprise -p reprise-portal -p reprise-apps
+  cargo build --release --locked -p reprise -p reprise-portal -p reprise-apps -p reprise-rdp
 }
 
 package() {
@@ -94,6 +97,9 @@ package() {
   for app in reprise-sound reprise-power reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers reprise-phone reprise-notes; do
     install -Dm644 "data/autostart/$app.desktop" "$pkgdir/etc/xdg/autostart/$app.desktop"
   done
+  install -Dm755 target/release/reprise-rdp "$pkgdir/usr/bin/reprise-rdp"
+  install -Dm644 data/systemd/app-org.reprise.RemoteDesktop.service "$pkgdir/usr/lib/systemd/user/app-org.reprise.RemoteDesktop.service"
+  install -Dm644 data/apps/org.reprise.RemoteDesktop.desktop "$pkgdir/usr/share/applications/org.reprise.RemoteDesktop.desktop"
   install -Dm755 target/release/reprise-portal "$pkgdir/usr/bin/reprise-portal"
   install -Dm644 data/portal/reprise.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/reprise.portal"
   install -Dm644 data/portal/reprise-settings.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/reprise-settings.portal"
@@ -113,5 +119,6 @@ package() {
   done
   install -Dm644 data/pam.d/reprise "$pkgdir/etc/pam.d/reprise"
   install -Dm644 data/pam.d/reprise-fingerprint "$pkgdir/etc/pam.d/reprise-fingerprint"
+  install -Dm644 data/pam.d/reprise-rdp "$pkgdir/etc/pam.d/reprise-rdp"
   install -Dm644 data/geoclue/90-reprise.conf "$pkgdir/etc/geoclue/conf.d/90-reprise.conf"
 }

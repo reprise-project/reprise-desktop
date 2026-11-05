@@ -102,6 +102,8 @@ pub struct Snapshot {
     pub sources: Vec<Device>,
     pub default_sink: Option<String>,
     pub default_source: Option<String>,
+    /// The sink picked with `wpctl set-default`, which WirePlumber keeps even while it is gone.
+    pub configured_sink: Option<String>,
     pub cards: Vec<Card>,
     pub apps: Vec<App>,
 }
@@ -200,6 +202,7 @@ impl Store {
                 Some(METADATA) if object["props"]["metadata.name"] == "default" => {
                     snap.default_sink = default_name(object, "default.audio.sink");
                     snap.default_source = default_name(object, "default.audio.source");
+                    snap.configured_sink = default_name(object, "default.configured.audio.sink");
                 }
                 _ => {}
             }
@@ -1235,7 +1238,8 @@ mod tests {
                 "props": { "metadata.name": "default" },
                 "metadata": [
                     { "subject": 0, "key": "default.audio.sink", "value": { "name": "other_sink" } },
-                    { "subject": 0, "key": "default.audio.source", "value": { "name": "some_mic" } }
+                    { "subject": 0, "key": "default.audio.source", "value": { "name": "some_mic" } },
+                    { "subject": 0, "key": "default.configured.audio.sink", "value": { "name": "gone_sink" } }
                 ]
             }]"#,
         ));
@@ -1243,6 +1247,7 @@ mod tests {
         let snap = store.snapshot();
         assert_eq!(snap.default_sink.as_deref(), Some("other_sink"));
         assert_eq!(snap.default_source.as_deref(), Some("some_mic"));
+        assert_eq!(snap.configured_sink.as_deref(), Some("gone_sink"));
     }
 
     /// `pw-dump -m` reports a metadata change with only the changed keys: the rest stands, a null value removes one.

@@ -147,6 +147,34 @@ pub const INTERFACES: &Choices = &[
 
 pub const WALLPAPER_MODES: &Choices = &[("picture", "Picture"), ("slideshow", "Slideshow")];
 
+/// The Remote Desktop quality trackbar's stops, left to right, and the name above it.
+pub const REMOTE_QUALITIES: &Choices = &[
+    ("speed", "Speed"),
+    ("balanced", "Balanced"),
+    ("sharp", "Sharp"),
+];
+
+/// The [`REMOTE_QUALITIES`] row `v` names; a name the server does not know reads as its default.
+pub fn remote_quality_row(v: &str) -> usize {
+    let row = |name: &str| REMOTE_QUALITIES.iter().position(|(q, _)| *q == name);
+    row(v)
+        .or_else(|| row(repriseconf::remote::RemoteDesktop::default().quality.name()))
+        .unwrap_or_default()
+}
+
+/// The Remote Desktop video encoders; the server greys those that do not work there.
+pub const REMOTE_ENCODERS: &Choices = &[
+    ("auto", "Automatic"),
+    ("vaapi", "Hardware, VA-API"),
+    ("nvenc", "Hardware, NVENC"),
+    ("vulkan", "Hardware, Vulkan"),
+    ("software", "Software (x264)"),
+    ("none", "None (RemoteFX)"),
+];
+
+pub const FRAME_RATES: &[(i64, &str)] =
+    &[(30, "30 frames per second"), (60, "60 frames per second")];
+
 pub const SLIDE_INTERVALS: &[(i64, &str)] = &[
     (1, "1 minute"),
     (5, "5 minutes"),

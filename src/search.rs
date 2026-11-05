@@ -536,6 +536,14 @@ mod tests {
     }
 
     #[test]
+    fn the_page_is_found_by_rdp_and_remmina() {
+        let rank = |q: &str| rank_settings(q, &[], &[], 8);
+        for q in ["rdp", "remmina", "remote", "desktop sharing"] {
+            assert_eq!(rank(q), [Setting::Page(Page::RemoteDesktop)], "{q}");
+        }
+    }
+
+    #[test]
     fn a_settings_program_listed_or_missing_is_left_out() {
         let apps = [installed("reprise-network.desktop", "Network Connections")];
         assert!(rank_settings("network", &apps, &[0], 8).is_empty());

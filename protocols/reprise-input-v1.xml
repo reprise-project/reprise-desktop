@@ -4,7 +4,7 @@
     reprise private protocol: input injection and capture for reprise-portal.
   </copyright>
 
-  <interface name="reprise_input_v1" version="6">
+  <interface name="reprise_input_v1" version="7">
     <description summary="EIS sockets and pointer barriers for the portal">
       One global. connect_eis hands the compositor one end of a socketpair
       to run libei's EIS side on; create_capture makes an object that owns
@@ -18,6 +18,8 @@
     <enum name="kind">
       <entry name="sender" value="1" summary="the client emulates input (RemoteDesktop)"/>
       <entry name="receiver" value="2" summary="the client receives captured input (InputCapture)"/>
+      <entry name="remote_session" value="3" since="7"
+             summary="a sender for Reprise's own remote desktop server"/>
     </enum>
 
     <enum name="error">
@@ -42,7 +44,11 @@
         The fd is one end of a SOCK_STREAM socketpair; the other end goes
         to the libei client. A receiver must pass the capture it belongs
         to; a sender passes null. Only the devices in the mask are
-        advertised to the client and bound for it.
+        advertised to the client and bound for it. A remote_session is a
+        sender with someone at the other end: while it has a device, screen
+        off and idle suspend wait and a shut lid only darkens the panel.
+        The portal uses it for the session it starts without a dialog for
+        the remote desktop server, and plain sender for every other.
       </description>
       <arg name="id" type="new_id" interface="reprise_eis_client_v1"/>
       <arg name="fd" type="fd"/>

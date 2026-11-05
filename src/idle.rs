@@ -6,7 +6,8 @@
 //! standby command after `suspend_after`, all paused while the session is
 //! unlocked and any client holds an idle inhibitor or an
 //! `org.freedesktop.ScreenSaver` cookie. A fullscreen window on screen holds
-//! off only the saver; the other steps keep their timeouts.
+//! off only the saver; the other steps keep their timeouts. A remote-control
+//! session holds off screen-off and suspend, even while locked.
 //! The timeouts are `Config::idle_for` the current power source
 //! (`power::PowerState::on_battery`).
 
@@ -401,8 +402,15 @@ fn notify_clients(state: &mut State) {
     }
 }
 
+/// A remote-control session (`State::remote_controlled`) holds off screen-off and suspend,
+/// locked or not; the saver and the lock keep their timeouts.
 fn config(state: &State) -> IdleConfig {
-    state.config.idle_for(state.power.on_battery)
+    let mut cfg = state.config.idle_for(state.power.on_battery);
+    if state.remote_controlled() {
+        cfg.screen_off_after = 0;
+        cfg.suspend_after = 0;
+    }
+    cfg
 }
 
 pub fn arm(state: &mut State) {
@@ -914,5 +922,91 @@ mod tests {
             Steps::default().next_deadline_ms(&cfg(600, 900), 0, Some(0), true),
             None
         );
+    }
+
+    mod remote {
+        use crate::config::Config;
+        use crate::eis::Kind;
+        use crate::harness::Harness;
+
+        fn laptop(lock_after: u32) -> Harness {
+            let mut config = Config::default();
+            config.idle.lock_after = lock_after;
+            config.idle.screen_off_after = 2;
+            config.idle.suspend_after = 3;
+            config.idle.blank_after = 0;
+            config.idle.lock_fade = 0;
+            config.power.standby = String::new();
+            let mut h = Harness::with_config(config);
+            h.output("eDP-1", 800, 600);
+            h
+        }
+
+        #[test]
+        fn a_remote_sender_holds_screen_off_and_suspend() {
+            let mut h = laptop(0);
+            let peer = h.ei_remote_session();
+            crate::idle::setup(&mut h.state);
+            h.run_for(5000);
+            assert!(!h.state.idle.steps.screen_off, "the outputs stay powered");
+            assert!(!h.state.idle.steps.suspended, "no standby");
+
+            crate::lockview::lock(&mut h.state);
+            crate::idle::notify_activity(&mut h.state);
+            h.run_for(5000);
+            assert!(
+                !h.state.idle.steps.screen_off,
+                "locked, the outputs stay powered"
+            );
+            assert!(!h.state.idle.steps.suspended, "locked, no standby");
+
+            h.ei_close(peer);
+            h.run_for(100);
+            assert!(
+                h.state.idle.steps.screen_off,
+                "the outputs go off once the sender is gone"
+            );
+            assert!(
+                h.state.idle.steps.suspended,
+                "standby once the sender is gone"
+            );
+        }
+
+        #[test]
+        fn a_remote_session_starting_wakes_the_outputs() {
+            let mut h = laptop(0);
+            crate::idle::setup(&mut h.state);
+            h.run_for(2500);
+            assert!(h.state.idle.steps.screen_off, "the outputs go off at 2 s");
+            assert!(!h.state.idle.steps.suspended, "no standby before 3 s");
+
+            let _peer = h.ei_remote_session();
+            assert!(
+                !h.state.idle.steps.screen_off,
+                "the outputs come back on as the session starts"
+            );
+            h.run_for(5000);
+            assert!(!h.state.idle.steps.screen_off, "the outputs stay powered");
+            assert!(!h.state.idle.steps.suspended, "no standby");
+        }
+
+        #[test]
+        fn a_sender_other_than_the_remote_desktop_server_holds_nothing() {
+            let mut h = laptop(0);
+            let _peer = h.ei_keyboard(Kind::Sender);
+            crate::idle::setup(&mut h.state);
+            h.run_for(5000);
+            assert!(h.state.idle.steps.screen_off, "the outputs go off");
+            assert!(h.state.idle.steps.suspended, "standby");
+        }
+
+        #[test]
+        fn a_remote_sender_does_not_hold_the_lock() {
+            let mut h = laptop(2);
+            let _peer = h.ei_remote_session();
+            crate::idle::setup(&mut h.state);
+            h.run_for(3000);
+            assert!(h.state.is_locked());
+        }
     }
 }

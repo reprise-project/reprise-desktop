@@ -21,8 +21,9 @@
 //! prompt was dismissed. [`launcher`] shows a program's progress on its
 //! task button. [`journal`] starts the logger with journal priorities.
 //! The last six share a program's one session bus connection ([`session`]),
-//! as does [`units`], which lists the programs the systemd user manager starts
-//! with the session. Synchronous callers [`wait`] on it.
+//! as do [`units`], which lists the programs the systemd user manager starts
+//! with the session, and [`remote`], which reads the Remote Desktop server and
+//! turns its user unit on or off. Synchronous callers [`wait`] on it.
 //! [`bluez`] lists BlueZ's paired devices and follows whether one is connected.
 //! [`kdeconnect`] follows the phones KDE Connect reaches.
 //! [`mutex`] locks a mutex even when its holder panicked.
@@ -42,6 +43,7 @@ pub mod mutex;
 pub mod notify;
 pub mod permissions;
 pub mod polkit;
+pub mod remote;
 pub mod testsession;
 pub mod tray;
 pub mod units;
