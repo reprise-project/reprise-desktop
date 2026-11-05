@@ -1,8 +1,9 @@
 //! Background page: a monitor showing the pending wallpaper over the desktop
 //! colour, one picture or a slideshow, their position, the colour, the
-//! slideshow interval and the desktop icons. The host fills the list (scan
-//! and thumbnails run on threads) and hands in the decoded or drawn picture;
-//! this module lays the page out and composes the monitor's screen.
+//! slideshow interval, the desktop icons and widgets, and desktop water. The
+//! host fills the list (scan and thumbnails run on threads) and hands in the
+//! decoded or drawn picture; this module lays the page out and composes the
+//! monitor's screen.
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -18,8 +19,10 @@ use reprisekit::theme::Color;
 use reprisekit::wallpaper::{Position, compose};
 use reprisekit::wallpapers::{self, Builtin, Design, Variant};
 
-use crate::model::{DESKTOP_EXTENSIONS, POSITIONS, SLIDE_INTERVALS, Settings, WALLPAPER_MODES};
-use crate::pages::{Area, GX, X, button, choice};
+use crate::model::{
+    DESKTOP_EXTENSIONS, POSITIONS, SLIDE_INTERVALS, Settings, WALLPAPER_MODES, WATER_STYLES,
+};
+use crate::pages::{Area, GX, WATER, WATER_STYLE, X, button, choice};
 use crate::wallpapers::expand;
 
 pub const MONITOR: &str = "monitor";
@@ -44,6 +47,7 @@ const SLIDE_CONTROLS: [&str; 4] = [
     INTERVAL,
     "slideshow_shuffle",
 ];
+const WATER_NOTE: &str = "water_note";
 pub const NONE_ROW: &str = "(None)";
 pub const MONITOR_RECT: Rect = Rect::new(X, 44, 191, 168);
 /// The right column, beside the monitor; 159 px wide at [`Area::MIN`].
@@ -53,11 +57,11 @@ fn rw(a: Area) -> i32 {
 }
 /// The list, which takes the right column's width and the page's extra height.
 pub fn list_rect(a: Area) -> Rect {
-    Rect::new(RX, 66, rw(a), 191 + a.dh)
+    Rect::new(RX, 66, rw(a), 123 + a.dh)
 }
-/// Rows the list shows at [`Area::MIN`]: 11 of 17 px inside its 2 px frame.
+/// Rows the list shows at [`Area::MIN`]: 7 of 17 px inside its 2 px frame.
 /// A picked row is scrolled to within these.
-const LIST_ROWS: usize = 11;
+const LIST_ROWS: usize = 7;
 /// Width of the screen the monitor stands for; sets how small a centred or
 /// tiled picture shows on it.
 const SCREEN_W: f32 = 1920.0;
@@ -147,8 +151,8 @@ pub fn label(path: &Path) -> String {
 /// The page with an empty list and a black monitor; the host fills the
 /// list ([`fill`] or [`fill_folders`]) and the screen ([`show`]). The
 /// list takes the page's extra height; the controls under it in the
-/// right column and the Slideshow group move down, and the Desktop icons
-/// group stays under the monitor.
+/// right column, the Slideshow group and the water row move down, and the
+/// Desktop icons group stays under the monitor.
 pub fn page(a: Area) -> Form {
     let right = a.right() - BUTTON_W;
     let dh = a.dh;
@@ -165,27 +169,35 @@ pub fn page(a: Area) -> Form {
                 icons: vec![None],
             },
         ),
-        button(BROWSE, right, 264 + dh, "B&rowse..."),
-        Item::label_at("position_label", RX, 310 + dh, BUTTON_W, "&Position:"),
-        choice("wallpaper_position", RX, 326 + dh, BUTTON_W, POSITIONS),
-        Item::label_at("color_label", right, 310 + dh, BUTTON_W, "&Color:"),
+        button(BROWSE, right, 196 + dh, "B&rowse..."),
+        Item::label_at("position_label", RX, 230 + dh, BUTTON_W, "&Position:"),
+        choice("wallpaper_position", RX, 246 + dh, BUTTON_W, POSITIONS),
+        Item::label_at("color_label", right, 230 + dh, BUTTON_W, "&Color:"),
         Item::new(
             "background",
-            Rect::new(right, 326 + dh, BUTTON_W, 21),
+            Rect::new(right, 246 + dh, BUTTON_W, 21),
             Control::Color(ColorButton::new(
                 Color::rgb(0, 0, 0),
                 schemes::PALETTE.to_vec(),
             )),
         ),
-        Item::label_at(USE_FOR_LABEL, RX, 356 + dh, 44, "Use &for:"),
+        Item::label_at(USE_FOR_LABEL, RX, 276 + dh, 44, "Use &for:"),
         Item::combo(
             USE_FOR,
             RX + 48,
-            352 + dh,
+            272 + dh,
             rw(Area::MIN) - 48,
             &[ALL_DESKTOPS],
             1,
         ),
+        Item::group(
+            "widgets_group",
+            Rect::new(RX, 300 + dh, rw(a), 82),
+            "Desktop Widgets",
+        ),
+        Item::check("widget_clock", RX + 12, 322 + dh, "Cl&ock"),
+        Item::check("widget_calendar", RX + 12, 344 + dh, "Ca&lendar"),
+        Item::check("widget_meter", RX + 12, 366 + dh, "System me&ter"),
         Item::group("icons_group", Rect::new(X, 222, 191, 160), "Desktop icons"),
         Item::check("documents", GX, 244, "&Documents"),
         Item::check("computer", GX, 266, "Co&mputer"),
@@ -195,7 +207,7 @@ pub fn page(a: Area) -> Form {
         choice(EXTENSIONS, GX, 350, 167, DESKTOP_EXTENSIONS),
         Item::group(
             "slideshow_group",
-            Rect::new(X, SLIDE_Y + dh, a.w, 70),
+            Rect::new(X, SLIDE_Y + dh, a.w, 48),
             "Slideshow",
         ),
         Item::label_at(
@@ -213,7 +225,16 @@ pub fn page(a: Area) -> Form {
             &intervals,
             intervals.len(),
         ),
-        Item::check("slideshow_shuffle", GX, SLIDE_Y + 46 + dh, "Sh&uffle"),
+        Item::check("slideshow_shuffle", GX + 264, SLIDE_Y + 24 + dh, "Sh&uffle"),
+        Item::check(WATER, X, 455 + dh, "Desktop &water:"),
+        choice(WATER_STYLE, X + 112, 451 + dh, 80, WATER_STYLES).named("Water style"),
+        Item::label_at(
+            WATER_NOTE,
+            X + 198,
+            455 + dh,
+            a.w - 198,
+            "Drag on the desktop to stir.",
+        ),
     ])
 }
 
@@ -479,7 +500,8 @@ pub fn show(form: &mut Form, s: &Settings, want: &str, picture: Option<&Picture>
 }
 
 /// Show Picture or Slideshow, grey the position while there is no
-/// wallpaper and the slideshow's controls without a slideshow, and show
+/// wallpaper, the slideshow's controls without a slideshow, the water
+/// style while water is off and the stirring note unless the style is a fluid, and show
 /// on the Color button the desktop colour `s` gives while `[colors]
 /// background` is unset.
 pub fn follow(form: &mut Form, s: &Settings) {
@@ -507,6 +529,9 @@ pub fn follow(form: &mut Form, s: &Settings) {
     }
     form.set_enabled(EXTENSIONS_LABEL, s.desktop_icons);
     form.set_enabled(EXTENSIONS, s.desktop_icons);
+    form.set_enabled(WATER_STYLE, s.wallpaper_water != "off");
+    let fluid = reprisekit::water::Water::parse(&s.wallpaper_water).is_some_and(|w| w.is_fluid());
+    form.set_enabled(WATER_NOTE, fluid);
     if s.background.is_empty()
         && let Some(Control::Color(b)) = form.item_mut("background").map(|i| &mut i.control)
     {
@@ -633,7 +658,7 @@ mod tests {
                 (h ^ *p as u64).wrapping_mul(0x100000001b3)
             })
         }
-        let row = Rect::new(RX, 350, rw(Area::MIN), 25);
+        let row = Rect::new(RX, 270, rw(Area::MIN), 25);
         let mut got = Vec::new();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let theme = reprisekit::theme::Theme {
@@ -680,12 +705,13 @@ mod tests {
     }
 
     #[test]
-    fn the_use_for_row_sits_between_the_colour_and_the_slideshow() {
+    fn the_use_for_row_sits_between_the_colour_and_the_widgets() {
         let f = page(Area::MIN);
         let combo = f.item(USE_FOR).unwrap().rect;
         let colour = f.item("background").unwrap().rect;
-        assert_eq!(combo, Rect::new(RX + 48, 352, rw(Area::MIN) - 48, 21));
-        assert!(combo.y > colour.bottom() && combo.bottom() < SLIDE_Y);
+        let widgets = f.item("widgets_group").unwrap().rect;
+        assert_eq!(combo, Rect::new(RX + 48, 272, rw(Area::MIN) - 48, 21));
+        assert!(combo.y > colour.bottom() && combo.bottom() < widgets.y);
         assert!(combo.right() <= Area::MIN.right());
     }
 

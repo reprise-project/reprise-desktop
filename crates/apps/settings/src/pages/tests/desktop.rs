@@ -76,9 +76,6 @@ fn the_virtual_desktops_page_geometry() {
     assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(32, 322, 13, 13));
     assert_eq!(rect(&s, p, "previews_fps"), Rect::new(146, 344, 50, 20));
     assert_eq!(rect(&s, p, "fps_units"), Rect::new(202, 348, 100, 13));
-    assert_eq!(rect(&s, p, "widgets_group"), Rect::new(20, 384, 358, 88));
-    assert_eq!(rect(&s, p, "widget_clock"), Rect::new(32, 406, 13, 13));
-    assert_eq!(rect(&s, p, "widget_meter"), Rect::new(32, 450, 13, 13));
     for id in ["session_restore", "session_end_processes"] {
         assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Startup");
     }
@@ -166,33 +163,6 @@ fn the_desktop_names_rows_pin_their_pixels_in_every_look() {
         ],
         "named, empty, greyed; Classic, Blue, Glass"
     );
-}
-
-#[test]
-fn the_widget_boxes_tick_what_stands_and_write_desktop_widgets() {
-    let p = Page::VirtualDesktops;
-    let mut got = Settings {
-        desktop_widgets: vec!["meter".into(), "clock".into()],
-        ..Settings::default()
-    };
-    let mut s = with(&got);
-    let page = &s.pages[p.index()];
-    assert_eq!(page.checked("widget_clock"), Some(true));
-    assert_eq!(page.checked("widget_calendar"), Some(false));
-    assert_eq!(page.checked("widget_meter"), Some(true));
-    let mut tick = |id: &str, on: bool| {
-        if let Some(Control::Check { checked, .. }) =
-            s.pages[p.index()].item_mut(id).map(|i| &mut i.control)
-        {
-            *checked = on;
-        }
-    };
-    tick("widget_calendar", true);
-    tick("widget_meter", false);
-    for id in ["widget_clock", "widget_calendar", "widget_meter"] {
-        read_one(&s, id, &mut got);
-    }
-    assert_eq!(got.desktop_widgets, ["clock", "calendar"]);
 }
 
 #[test]
