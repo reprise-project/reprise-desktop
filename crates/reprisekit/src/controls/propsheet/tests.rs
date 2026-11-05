@@ -7,6 +7,7 @@ use crate::look::classic_paint;
 use crate::look::widgets::draw_page;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, DialogFont, TextRenderer};
+use crate::textedit::EditKey;
 use crate::theme::TextUnits;
 use crate::theme::{FontConfig, Theme};
 
@@ -396,7 +397,6 @@ fn a_list_row_without_a_page_is_refused() {
 /// Tab goes into the open page.
 #[test]
 fn the_lists_keys_step_the_pages() {
-    use crate::textedit::EditKey;
     let mut s = list_sheet();
     let key = |s: &mut PropSheet, k| s.key(k, None);
     assert_eq!(key(&mut s, form::Key::Tab { back: true }), Event::Redraw);
@@ -1028,7 +1028,7 @@ fn the_strip_is_a_tab_stop_its_arrows_turn_the_tabs() {
     assert_eq!(s.open().focus(), None);
     assert_eq!(s.key(form::Key::Left, None), Event::None, "first tab");
     // The arrow as a host folds it for a field: an editing key.
-    let right = form::Key::Edit(crate::textedit::EditKey::Right {
+    let right = form::Key::Edit(EditKey::Right {
         select: false,
         word: false,
     });
@@ -1981,7 +1981,6 @@ fn the_search_field_grows_with_the_text() {
 
 #[test]
 fn a_press_in_the_search_field_takes_the_keyboard_and_edits_report_the_text() {
-    use crate::textedit::EditKey;
     let text = TextRenderer::load(&FontConfig::default());
     let mut s = list_sheet();
     let hit = s.hit(10, 15, &text, 11);
@@ -2170,4 +2169,198 @@ fn the_search_field_draws_in_every_look() {
             "Classic, Blue, Glass; each at 1x then 2x; each at rest then typed"
         );
     }
+}
+
+#[test]
+fn ctrl_f_is_the_find_key() {
+    assert!(find_key(0x66, true, false, false));
+    assert!(find_key(0x46, true, false, false), "with Caps Lock");
+    assert!(!find_key(0x66, false, false, false));
+    assert!(!find_key(0x66, true, true, false));
+    assert!(!find_key(0x66, true, false, true));
+}
+
+#[test]
+fn focus_search_selects_the_query() {
+    let mut s = list_sheet();
+    s.search.key(EditKey::Insert("abc".into()));
+    assert_eq!(s.focus_search(), Event::Redraw);
+    assert!(s.search_focused && s.search.edit.all_selected());
+    assert_eq!(s.open().focus(), None);
+    assert_eq!(sheet(&["General"], (398, 424)).focus_search(), Event::None);
+}
+
+#[test]
+fn typing_on_the_list_goes_to_the_field() {
+    let mut s = list_sheet();
+    s.search.key(EditKey::Insert("ab".into()));
+    s.click(Some(Hit::Tab(1)));
+    assert_eq!(
+        s.key(form::Key::Edit(EditKey::Insert("m".into())), None),
+        Event::Search
+    );
+    assert_eq!(s.search.text(), "abm");
+    assert!(s.search_focused && !s.tabs.focused);
+    s.click(Some(Hit::Tab(1)));
+    assert_eq!(
+        s.key(form::Key::Edit(EditKey::Backspace { word: false }), None),
+        Event::Search
+    );
+    assert_eq!(s.search.text(), "ab");
+    s.click(Some(Hit::Tab(1)));
+    s.key(form::Key::Edit(EditKey::Insert(" ".into())), None);
+    assert!(
+        s.tabs.focused && !s.search_focused,
+        "Space stays on the list"
+    );
+}
+
+/// Keys typed into a control on the page stay there.
+#[test]
+fn typing_in_a_page_field_stays_in_the_field() {
+    let pages = vec![
+        Form::new(vec![Item::edit(
+            "name",
+            Rect::new(20, 50, 100, 20),
+            "",
+            true,
+        )]),
+        check_page("Effects"),
+        check_page("Mouse"),
+    ];
+    let mut s = PropSheet::with_list(LIST_GROUPS, pages, (398, 424));
+    s.focus_control("name");
+    assert_eq!(
+        s.key(form::Key::Edit(EditKey::Insert("x".into())), None),
+        Event::Page(0, form::Event::Changed("name"))
+    );
+    assert_eq!(s.search.text(), "");
+}
+
+#[test]
+fn escape_clears_the_query_then_cancels() {
+    let mut s = list_sheet();
+    s.focus_search();
+    s.key(form::Key::Edit(EditKey::Insert("mo".into())), None);
+    assert_eq!(s.key(form::Key::Escape, None), Event::Search);
+    assert_eq!(s.search.text(), "");
+    assert!(s.search_focused);
+    assert_eq!(
+        s.key(form::Key::Escape, None),
+        Event::Cancel,
+        "an empty field passes it on"
+    );
+    s.search.key(EditKey::Insert("mo".into()));
+    s.click(Some(Hit::Tab(0)));
+    assert_eq!(
+        s.key(form::Key::Escape, None),
+        Event::Search,
+        "from the list too"
+    );
+    assert_eq!(s.search.text(), "");
+    assert!(s.tabs.focused);
+}
+
+fn filtered_link_sheet(pages: [bool; 3], links: [bool; 2]) -> PropSheet {
+    let mut s = link_sheet();
+    s.list_mut().unwrap().set_filter(Some(&pagelist::Filter {
+        pages: pages.to_vec(),
+        links: links.to_vec(),
+    }));
+    s
+}
+
+#[test]
+fn enter_in_the_field_opens_the_first_row_the_filter_shows() {
+    let filtered = |pages: [bool; 3], links: [bool; 2]| {
+        let mut s = filtered_link_sheet(pages, links);
+        s.focus_search();
+        s.key(form::Key::Edit(EditKey::Insert("x".into())), None);
+        s
+    };
+    let mut s = filtered([false, false, true], [true, false]);
+    assert_eq!(
+        s.key(form::Key::Enter, None),
+        Event::Link(0),
+        "Bluetooth's row comes first"
+    );
+    assert!(s.search_focused);
+    let mut s = filtered([false, false, true], [false, false]);
+    assert_eq!(s.key(form::Key::Enter, None), Event::Redraw);
+    assert_eq!(
+        (s.tabs.open, s.tabs.focused, s.search_focused),
+        (2, true, false)
+    );
+    let mut s = filtered([false; 3], [false; 2]);
+    assert_eq!(
+        s.key(form::Key::Enter, None),
+        Event::None,
+        "nothing matches"
+    );
+    let mut s = link_sheet();
+    s.focus_search();
+    assert_eq!(s.key(form::Key::Enter, None), Event::None, "an empty field");
+}
+
+#[test]
+fn down_in_the_field_steps_onto_the_first_shown_row() {
+    let mut s = filtered_link_sheet([false, true, false], [false, false]);
+    s.focus_search();
+    assert_eq!(s.key(form::Key::Down, None), Event::Redraw);
+    assert_eq!(
+        (s.tabs.open, s.tabs.focused, s.search_focused),
+        (1, true, false)
+    );
+    let mut s = filtered_link_sheet([false; 3], [false; 2]);
+    s.focus_search();
+    assert_eq!(s.key(form::Key::Down, None), Event::None, "nothing shows");
+    assert!(s.search_focused);
+}
+
+/// With the open page's row hidden, the list taking the keyboard would show no row selected.
+#[test]
+fn the_list_takes_the_keyboard_on_the_first_shown_row_when_the_open_page_hides() {
+    let tab = form::Key::Tab { back: false };
+    let mut s = filtered_link_sheet([false, false, true], [false, false]);
+    s.focus_search();
+    assert_eq!(s.key(tab.clone(), None), Event::Redraw);
+    assert_eq!(
+        (s.tabs.open, s.tabs.focused, s.search_focused, cursor(&s)),
+        (2, true, false, None)
+    );
+
+    let mut s = filtered_link_sheet([false, false, true], [true, false]);
+    s.focus_search();
+    assert_eq!(s.key(tab.clone(), None), Event::Redraw);
+    assert_eq!(
+        (s.tabs.open, s.tabs.focused, cursor(&s)),
+        (0, true, Some(0)),
+        "Bluetooth's link"
+    );
+    let mut s = filtered_link_sheet([false, false, true], [true, false]);
+    s.focus_search();
+    assert_eq!(s.key(form::Key::Down, None), Event::Redraw);
+    assert_eq!(
+        (s.tabs.open, s.tabs.focused, cursor(&s)),
+        (0, true, Some(0)),
+        "Down too"
+    );
+
+    let mut s = filtered_link_sheet([false, false, true], [false, false]);
+    s.focus_control("check");
+    assert_eq!(s.key(form::Key::Tab { back: true }, None), Event::Redraw);
+    assert_eq!(
+        (s.tabs.open, s.tabs.focused, cursor(&s)),
+        (2, true, None),
+        "Shift+Tab off the page"
+    );
+
+    let mut s = filtered_link_sheet([true, false, true], [true, false]);
+    s.focus_search();
+    s.key(tab, None);
+    assert_eq!(
+        (s.tabs.open, s.tabs.focused, cursor(&s)),
+        (0, true, None),
+        "a shown open page keeps its row"
+    );
 }

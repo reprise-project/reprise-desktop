@@ -98,10 +98,10 @@ impl PropSheet {
                 self.search_focused = false;
                 if back {
                     self.open_mut().focus_edge(true);
-                } else {
-                    self.tabs.focused = true;
+                    return StripKey::Moved;
                 }
-                return StripKey::Moved;
+                self.tabs.focused = true;
+                return self.rest_on_shown().unwrap_or(StripKey::Moved);
             }
             Some(true) if self.tabs.focused => {
                 self.tab_to_search();
@@ -118,7 +118,61 @@ impl PropSheet {
         if tab == Some(false) && !was && self.tabs.focused {
             self.tab_to_search();
         }
-        self.after_nav(r)
+        let r = self.after_nav(r);
+        if !was
+            && self.tabs.focused
+            && let Some(r) = self.rest_on_shown()
+        {
+            return r;
+        }
+        r
+    }
+
+    /// The list took the keyboard: with the open page's row hidden by the filter, it lands on
+    /// the first shown row, so a row shows selected. `None` when it stays where it was.
+    fn rest_on_shown(&mut self) -> Option<StripKey> {
+        let Nav::List(list) = &self.nav else {
+            return None;
+        };
+        if list.cursor.is_some() || list.shows(Pick::Page(self.tabs.open)) {
+            return None;
+        }
+        let pick = self.first_shown()?;
+        Some(self.land(pick))
+    }
+
+    /// The first live row the page list shows, where Home on it lands.
+    fn first_shown(&self) -> Option<Pick> {
+        match &self.nav {
+            Nav::List(list) => list.target(self.tabs.open, &form::Key::Home),
+            Nav::Tabs => None,
+        }
+    }
+
+    /// The list takes the keyboard on `pick`: a page opens as a press on its row opens it, a
+    /// link takes the list's cursor.
+    fn land(&mut self, pick: Pick) -> StripKey {
+        match pick {
+            Pick::Page(k) => self.tab_click(k),
+            Pick::Link(k) => {
+                if let Nav::List(list) = &mut self.nav {
+                    list.cursor = Some(k);
+                }
+                self.tabs.focused = true;
+                self.open_mut().set_focus(None);
+                self.after_nav(StripKey::Moved)
+            }
+        }
+    }
+
+    /// Ctrl+F ([`super::find_key`]): in list mode the search field takes the keyboard with its
+    /// text selected.
+    pub fn focus_search(&mut self) -> Event {
+        if !self.is_list() {
+            return Event::None;
+        }
+        self.tab_to_search();
+        Event::Redraw
     }
 
     pub fn tab_click(&mut self, i: usize) -> StripKey {
@@ -158,6 +212,12 @@ impl PropSheet {
     /// after. `ctrl_tab` is `Some(back)` for Ctrl+Tab and Ctrl+Shift+Tab, which turn
     /// the tabs; `key` is then ignored.
     pub fn key(&mut self, key: form::Key, ctrl_tab: Option<bool>) -> Event {
+        if ctrl_tab.is_none()
+            && self.is_list()
+            && let Some(ev) = self.field_key(&key)
+        {
+            return ev;
+        }
         if let (true, None, form::Key::Edit(k)) = (self.search_focused, ctrl_tab, &key) {
             return self.search_key(k.clone());
         }
@@ -186,6 +246,44 @@ impl PropSheet {
                 ev
             }
         }
+    }
+
+    /// The list-mode keys that reach the search field (see the module doc); `None` passes the
+    /// key on. Enter on a link comes back as [`Event::Link`] and the field keeps the keyboard.
+    fn field_key(&mut self, key: &form::Key) -> Option<Event> {
+        match key {
+            form::Key::Edit(k @ (EditKey::Insert(_) | EditKey::Backspace { .. }))
+                if self.tabs.focused && !matches!(k, EditKey::Insert(s) if s == " ") =>
+            {
+                self.take_search();
+                let end = self.search.text().len();
+                self.search.edit.place(end, false);
+                Some(self.search_key(k.clone()))
+            }
+            form::Key::Escape
+                if (self.search_focused || self.tabs.focused) && !self.search.text().is_empty() =>
+            {
+                self.search.clear();
+                Some(Event::Search)
+            }
+            form::Key::Enter if self.search_focused => Some(match self.first_shown() {
+                _ if self.search.text().is_empty() => Event::None,
+                Some(Pick::Link(k)) => Event::Link(k),
+                Some(page) => self.land_key(page),
+                None => Event::None,
+            }),
+            form::Key::Down if self.search_focused => Some(
+                self.first_shown()
+                    .map_or(Event::None, |pick| self.land_key(pick)),
+            ),
+            _ => None,
+        }
+    }
+
+    fn land_key(&mut self, pick: Pick) -> Event {
+        self.land(pick);
+        self.reveal_focus();
+        Event::Redraw
     }
 
     /// An editing key for the search field: [`Event::Search`] when its text changed.

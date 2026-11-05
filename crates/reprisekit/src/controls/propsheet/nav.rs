@@ -158,6 +158,15 @@ pub fn page_step(sym: u32, ctrl: bool, shift: bool) -> Option<bool> {
     }
 }
 
+/// Whether a key press is Ctrl+F, which puts the keyboard in the page list's search field
+/// ([`PropSheet::focus_search`]).
+pub fn find_key(sym: u32, ctrl: bool, shift: bool, alt: bool) -> bool {
+    const LETTER_F: u32 = 0x66;
+    // Caps Lock sends the capital.
+    const CAPITAL_F: u32 = 0x46;
+    ctrl && !shift && !alt && matches!(sym, LETTER_F | CAPITAL_F)
+}
+
 /// After a press on the open `page`: a control that took the focus takes it from
 /// the strip.
 pub(super) fn page_clicked(tabs: &mut TabStrip, page: &Form) {
