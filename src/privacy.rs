@@ -10,7 +10,7 @@ use smithay::reexports::calloop::{
     timer::{TimeoutAction, Timer},
 };
 
-use crate::compositor::State;
+use crate::{captureborder::Captured, compositor::State};
 
 const HOLD: Duration = Duration::from_secs(5);
 
@@ -23,9 +23,9 @@ const SKIPPED_APPS: [&str; 4] = [
 
 #[derive(Default)]
 pub struct Privacy {
-    outputs: usize,
-    windows: usize,
-    legacy: bool,
+    /// What the last ongoing captures showed: a screen or area, a window.
+    screen: bool,
+    window: bool,
     sharing: bool,
     hold: Option<RegistrationToken>,
     mic_apps: Vec<String>,
@@ -71,11 +71,7 @@ impl Privacy {
     }
 
     pub fn sharing_tip(&self) -> String {
-        share_label(
-            &self.share_apps,
-            self.outputs > 0 || self.legacy,
-            self.windows > 0,
-        )
+        share_label(&self.share_apps, self.screen, self.window)
     }
 
     pub fn mic_tip(&self) -> String {
@@ -138,31 +134,23 @@ fn start_camera_devices(handle: &LoopHandle<'static, State>) {
     }
 }
 
-/// A capture session opened or closed: count them again and show the
-/// dot while any is live. Every change re-arms the hold, so the dot goes
-/// `HOLD` after the last capture ends.
-pub fn sessions_changed(state: &mut State) {
-    let (outputs, windows) = state.captures.live();
+/// A capture started, asked for a frame or ended: the dot shows while one
+/// is ongoing (`captureborder::ongoing`), so a screenshot shows none.
+/// Every change while it shows re-arms the hold, so the dot goes `HOLD`
+/// after the last capture ends.
+pub fn captures_changed(state: &mut State) {
+    let (screen, window) = kinds(&crate::captureborder::ongoing(state));
     let p = &mut state.privacy;
-    if (outputs, windows) != (p.outputs, p.windows) {
-        log::info!("capture sessions: {outputs} on outputs, {windows} on windows");
+    let live = screen || window;
+    if live && (screen, window) != (p.screen, p.window) {
+        log::info!("ongoing captures: screen {screen}, window {window}");
+        (p.screen, p.window) = (screen, window);
     }
-    p.outputs = outputs;
-    p.windows = windows;
-    refresh(state);
-}
-
-/// A wlr-screencopy frame (grim, wf-recorder): it has no session, so it
-/// shows the dot for the hold.
-pub fn legacy_frame(state: &mut State) {
-    state.privacy.legacy = true;
-    refresh(state);
-}
-
-fn refresh(state: &mut State) {
+    if !live && !p.sharing {
+        return;
+    }
     arm_hold(state);
     let p = &mut state.privacy;
-    let live = p.outputs + p.windows > 0 || p.legacy;
     if live && !p.sharing {
         p.sharing = true;
         log::info!("screen sharing indicator on");
@@ -187,12 +175,10 @@ fn arm_hold(state: &mut State) {
 /// The hold ran out: the dot goes unless a session is still live, which
 /// keeps it for another hold.
 fn hold_fired(state: &mut State) -> TimeoutAction {
-    (state.privacy.outputs, state.privacy.windows) = state.captures.live();
-    let p = &mut state.privacy;
-    p.legacy = false;
-    if p.outputs + p.windows > 0 {
+    if !crate::captureborder::ongoing(state).is_empty() {
         return TimeoutAction::ToDuration(HOLD);
     }
+    let p = &mut state.privacy;
     p.hold = None;
     if p.sharing {
         p.sharing = false;
@@ -201,6 +187,15 @@ fn hold_fired(state: &mut State) -> TimeoutAction {
         crate::notifyview::suppress_changed(state);
     }
     TimeoutAction::Drop
+}
+
+/// Whether `targets` show a screen or an area of one, and a window.
+fn kinds<O, W>(targets: &[Captured<O, W>]) -> (bool, bool) {
+    let window = |t: &Captured<O, W>| matches!(t, Captured::Window(_));
+    (
+        targets.iter().any(|t| !window(t)),
+        targets.iter().any(window),
+    )
 }
 
 /// The dot's tooltip: who is sharing what. `screen` and `window` say
@@ -641,5 +636,84 @@ mod tests {
             share_label(&["Chromium".into(), "obs".into()], true, true),
             "Chromium and obs are sharing your screen and a window"
         );
+    }
+
+    const SIZE: (i32, i32) = (64, 48);
+
+    fn capturing() -> crate::harness::Harness {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", SIZE.0, SIZE.1);
+        h
+    }
+
+    fn note(id: u32) -> crate::tray::Notification {
+        let mut n = crate::tray::Notification::new(id, format!("n{id}"), "x".into());
+        n.app = "Mail".into();
+        n.key = "Mail".into();
+        n
+    }
+
+    #[test]
+    fn screenshots_back_to_back_are_not_sharing_and_balloons_still_show() {
+        let mut h = capturing();
+        for _ in 0..3 {
+            h.connect_capture(SIZE).wlr_shot(&mut h);
+            let mut c = h.connect_capture(SIZE);
+            let mut s = c.ext_session(&mut h);
+            c.ext_frame(&mut h, &mut s);
+            c.ext_end(&mut h, s);
+        }
+        assert!(!h.state.privacy.sharing_shown(), "no sharing dot");
+        assert!(crate::captureborder::ongoing(&h.state).is_empty());
+        crate::notifyview::show(&mut h.state, note(1));
+        assert!(crate::notifyview::balloon_up(&h.state), "the balloon shows");
+    }
+
+    #[test]
+    fn a_session_asking_for_frames_is_sharing_and_its_held_balloons_show_once_it_ends() {
+        let mut h = capturing();
+        let mut c = h.connect_capture(SIZE);
+        let mut s = c.ext_session(&mut h);
+        c.ext_frame(&mut h, &mut s);
+        assert!(
+            !h.state.privacy.sharing_shown(),
+            "one frame is a screenshot"
+        );
+        c.ext_frame(&mut h, &mut s);
+        assert!(h.state.privacy.sharing_shown(), "the second frame shares");
+        assert_eq!(h.state.privacy.sharing_tip(), "Your screen is being shared");
+        crate::notifyview::show(&mut h.state, note(1));
+        assert!(
+            !crate::notifyview::balloon_up(&h.state),
+            "held while shared"
+        );
+        c.ext_end(&mut h, s);
+        assert!(
+            h.state.privacy.sharing_shown(),
+            "the dot outlasts the capture"
+        );
+        hold_fired(&mut h.state);
+        assert!(!h.state.privacy.sharing_shown());
+        assert!(
+            crate::notifyview::balloon_up(&h.state),
+            "the held balloon shows once sharing ends"
+        );
+    }
+
+    #[test]
+    fn one_client_copying_frames_in_a_row_is_sharing() {
+        let mut h = capturing();
+        let mut c = h.connect_capture(SIZE);
+        c.wlr_shot(&mut h);
+        assert!(!h.state.privacy.sharing_shown());
+        c.wlr_shot(&mut h);
+        assert!(h.state.privacy.sharing_shown(), "a recording");
+        assert_eq!(crate::captureborder::ongoing(&h.state).len(), 1);
+        crate::notifyview::show(&mut h.state, note(1));
+        assert!(
+            !crate::notifyview::balloon_up(&h.state),
+            "held while recorded"
+        );
+        assert_eq!(h.state.notify.log.held.len(), 1);
     }
 }

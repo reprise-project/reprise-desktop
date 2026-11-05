@@ -675,9 +675,10 @@ are.
 
 ## Privacy and security
 
-- **Indicators.** A red dot while the screen is shared, a microphone while a
-  program records, a camera while one films and a pin while one reads your
-  location. The tooltips name the program.
+- **Indicators.** A red dot while the screen is shared or recorded, a
+  microphone while a program records, a camera while one films and a pin
+  while one reads your location. The tooltips name the program. A screenshot
+  is not sharing: it shows no dot and holds back no balloons.
 - **Capture border.** A red border on the screen around the screen, window
   or area being recorded or shared. Recordings never show it, and a single
   screenshot draws none. Settings > Advanced turns it off.
