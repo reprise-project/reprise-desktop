@@ -256,19 +256,14 @@ pub fn tree_subfolders(listed: &Listed, mounts: &[PathBuf]) -> Vec<(String, Plac
         .collect()
 }
 
-/// Computer's children in the Folders tree: the mounted drives, then Home. An
-/// unmounted volume has no folder yet and is left out.
+/// Computer's children in the Folders tree: the mounted drives. An unmounted volume has no folder
+/// yet, and Home hangs off the Desktop ([`Place::chain_in`]), so neither is a node here.
 pub fn computer_tree_children(listed: &Listed) -> Vec<(String, Place)> {
-    let mut kids: Vec<(String, Place)> = listed
+    listed
         .drives
         .iter()
         .map(|d| (d.name(), Place::Folder(d.mount.clone())))
-        .collect();
-    // The "Files Stored on This Computer" row: the one item that is not a drive.
-    for it in listed.items.iter().filter(|it| it.drive.is_none()) {
-        kids.push((it.name.clone(), Place::from_path(&it.path)));
-    }
-    kids
+        .collect()
 }
 
 /// The UDisks2 volume behind Computer's drive row `it`: mounted at its path, or
@@ -713,8 +708,6 @@ mod tests {
             Some((PathBuf::from("/home/u"), "u's Home".to_string())),
         );
         let kids = computer_tree_children(&listed);
-        // The drives first, named as the view names them, then the
-        // user's Home.
         assert_eq!(
             kids,
             vec![
@@ -726,11 +719,8 @@ mod tests {
                     "CD Drive (/run/media/u/DVD)".to_string(),
                     Place::Folder(PathBuf::from("/run/media/u/DVD"))
                 ),
-                (
-                    "u's Home".to_string(),
-                    Place::Folder(PathBuf::from("/home/u"))
-                ),
-            ]
+            ],
+            "the drives, named as the view names them, and not the Home the view lists"
         );
     }
 
