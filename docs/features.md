@@ -220,8 +220,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 - **Snap layouts.** Rest on a maximize button, or press Super+Z, for six
   ways to split the screen: halves, two thirds and a third, thirds, a half
   and two quarters, quarters, and a wide middle column. A portrait screen
-  gets rows. `[window_snapping] layouts`, or Custom layouts on the Windows
-  page of Reprise Settings, replaces them with your own. The maximize
+  gets rows. `[window_snapping] layouts`, or Custom layouts on the Window
+  Behavior page of Reprise Settings, replaces them with your own. The maximize
   button's tip names the keys, so a rebound Super+Z shows as bound.
 - **The snap bar.** Drag a window toward the top of the screen and the
   layouts drop down. Hold the window over a zone and let go.
@@ -431,9 +431,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   ten seconds gets one "5 new from Mail" balloon instead.
 - **Per program.** Right-click a program's group in the history, or press the
   Menu key on it, for Don't Show Balloons and No Sounds. Its notifications
-  still go into the history, and critical ones still show. Settings > Sound
-  lists the programs that sent notifications this session with the same two
-  switches (`[notifications] no_balloons` and `no_sounds`).
+  still go into the history, and critical ones still show. Settings >
+  Notifications lists the programs that sent notifications this session with
+  the same two switches (`[notifications] no_balloons` and `no_sounds`).
 - **Do Not Disturb** holds back all but the critical ones. They still go into
   the history. It also turns itself on during `[notifications] quiet_hours`,
   and while a full-screen window has focus or the screen is shared unless
@@ -682,7 +682,7 @@ are.
   is not sharing: it shows no dot and holds back no balloons.
 - **Capture border.** A red border on the screen around the screen, window
   or area being recorded or shared. Recordings never show it, and a single
-  screenshot draws none. Settings > Advanced turns it off.
+  screenshot draws none. Settings > Privacy turns it off.
 - **Prompts.** Screen sharing, remote control, input capture, location and
   camera access through the portal all ask first. Cancel or Deny is the default button, so a
   stray Enter never grants anything.
@@ -694,7 +694,7 @@ are.
 - **Location.** Reprise is the geoclue agent. It asks before a sandboxed
   program gets your location, remembers the answer if you like, and one
   switch turns location off for everyone. A prompt left unanswered for 24 s
-  closes and the program is refused. Settings > Advanced lists the
+  closes and the program is refused. Settings > Privacy lists the
   remembered answers, with the Flatpak programs' Location portal answers,
   and Forget drops one.
 

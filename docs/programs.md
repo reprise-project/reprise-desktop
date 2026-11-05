@@ -272,14 +272,25 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 ## Reprise Settings
 
-One window, 26 pages, seven headings. Only one runs at a time. A row ending
-in "..." starts a separate settings program in its own window, as Start
-does, and Settings stays on its page; the row is greyed when the program has
-no desktop entry that shows in menus.
+One window, 27 pages under seven headings, with link rows to the separate
+settings programs. Only one runs at a time. A link row ends in "..." and
+starts its program in its own window, as Start does, and Settings stays on
+its page; the row is greyed when the program has no desktop entry that shows
+in menus.
+
+The search field above the list (Ctrl+F, or type with the list focused)
+leaves only the pages and link rows that hold every word you typed in their
+name, their search words or a control's label: "repeat delay" leaves
+Keyboard, "wifi" leaves Connections. Enter opens the first row left, and
+when a control's label matched, that control takes the keyboard. Escape
+empties the field; Escape on an empty field is Cancel. Start's search and
+the launcher match the same words and open Settings on the page, with the
+matched control focused.
 
 - **Personalize**
-  - **Appearance:** interface and colour scheme. Under Glass: mode,
-    material, frame, transparency, blur, reflections and colour intensity.
+  - **Appearance:** interface and colour scheme. Under Glass: mode and dark
+    hours, material, frame, transparency, a faster blur while dragging,
+    frames behind glass, blur, reflections and colour intensity.
   - **Background:** a picture or a slideshow, its position, the desktop
     colour (Other... under the swatches opens the Color dialog, as in
     Paint), which icons sit on the desktop and whether their labels show
@@ -289,22 +300,30 @@ no desktop entry that shows in menus.
   - **Screen Saver & Lock:** the saver, its settings and a live preview,
     then the lock: its timeout and fade, lock on sleep, the lock screen's
     wallpaper and the paired device whose going away locks the session.
-  - **Fonts & Icons:** the UI and dialog fonts, the icon theme, frame and
-    caption sizes, and how GTK and Qt programs are themed.
-  - **Effects:** window animations, highlight fades, menu shadows and how menus
-    open (fade, slide or none).
+  - **Fonts & Icons:** the UI and dialog fonts and their smoothing, the icon
+    theme, frame and caption sizes, and how GTK and Qt programs are themed.
+  - **Effects:** window animations, highlight fades, the fade at log on and
+    log off, menu shadows and how menus open (fade, slide or none).
 - **Taskbar & Windows**
-  - **Taskbar:** position, height, button mode, Peek, Show desktop, tray
-    overflow, button slides, auto-hide, live window pictures and their rate,
-    and the Start button's logo and glow (Glass).
+  - **Taskbar:** location, height, button mode, small icons (Glass), Show
+    desktop, Peek, unread counts, idle tray icons and Customize..., network
+    speed, button slides, auto-hide and what shows it, live window pictures
+    and their rate, and the Start button's logo, and its glow (Glass).
   - **Start Menu:** the menu style and banner, the Start menu tree, the Quick
     Launch buttons and whether they show as pinned task buttons.
-  - **Search:** whether the launcher searches your files and open windows.
-  - **Window Switcher:** Alt+Tab's icons or thumbnails, picture size, Peek,
-    the 3D switcher and the overview's hot corner.
-  - **Virtual Desktops:** how many, how they animate and their names.
-  - **Window Behavior:** snapping, snap layouts, the snap bar, window tabs
-    and window memory.
+  - **Search:** whether the launcher and Start's search box also find your
+    files and open windows; a note names the keys that open the launcher.
+  - **Window Switcher:** Alt+Tab's icons or thumbnails, picture size, the
+    live preview, the desktop as an entry, Peek, the 3D switcher (Glass) and
+    the overview's hot corner; notes name the keys bound to the 3D switcher
+    and the overview.
+  - **Virtual Desktops:** whether to use them, how many, how they animate,
+    the current desktop's mark on the Glass taskbar, the wheel over the
+    desktop and their names.
+  - **Window Behavior:** snapping, snap layouts and the snap bar, snap
+    distance, custom layouts, window tabs, window memory and Forget
+    Positions, shake to minimize, a title bar's double-click and dimming the
+    windows without the focus.
 - **Display & Sound**
   - **Display:** arrange monitors by dragging them, or pick one with the
     arrows and move it with Ctrl+arrows to the next edge that way, Identify,
@@ -312,21 +331,30 @@ no desktop entry that shows in menus.
     and adaptive sync. Forget saved layouts drops the layouts the desktop
     remembers per set of monitors.
   - **Night Light:** warmth, and sunset to sunrise or a schedule.
-  - **Sound:** the sound theme, and whether notifications and a program's
-    bell play a sound.
+  - **Sound:** Audio Devices... (Sounds and Audio Devices, for speakers and
+    microphones), the sound theme, whether a program's bell plays a sound,
+    and volume above 100 %.
+  - **Notifications:** whether balloons play a sound, the balloon style
+    (Glass), holding balloons during full screen, screen sharing and quiet
+    hours, and the programs that sent notifications this session or are
+    held back, each with Show balloons and Play sounds.
 - **Devices**
-  - **Keyboard:** layouts, repeat, every shortcut, programs' global
-    shortcuts included, whether Caps Lock and Num Lock show on screen, and
-    the sheet holding Super shows.
-  - **Mouse & Touchpad:** pointer speed, double-click speed, scrolling, and
-    the touchpad's tapping, scrolling and disable-while-typing.
+  - **Keyboard:** layouts, a layout per window, the model and options,
+    repeat, every shortcut, programs' global shortcuts included, whether
+    Caps Lock and Num Lock show on screen, and the sheet holding Super shows.
+  - **Mouse & Touchpad:** pointer speed, Enhance pointer precision,
+    double-click speed, scrolling, and the touchpad's speed, Enhance pointer
+    precision, tapping, two-finger tap as a right click, scrolling and
+    disable-while-typing.
   - **Cursor:** cursor theme and size.
   - **Tablet:** what each pad button, pad key, ring, strip and dial does,
     and how far a ring or strip turns per step.
   - **Bluetooth...** and **Printers...**
 - **Accessibility**
-  - **Text & Keys:** text size, StickyKeys, SlowKeys and MouseKeys.
-  - **Magnifier & Filters:** colour filters and the magnifier.
+  - **Text & Keys:** text size, StickyKeys, SlowKeys, MouseKeys and Use the
+    keyboard shortcuts.
+  - **Magnifier & Filters:** colour filters and their intensity, and whether
+    the magnifier follows the text cursor and focus.
 - **Network**
   - **Connections...** (Network Connections)
   - **Remote Desktop:** Allow remote connections turns the server on or off
@@ -341,15 +369,17 @@ no desktop entry that shows in menus.
     one.
 - **System**
   - **Power Options...**
-  - **Startup:** autostart entries and session restore.
+  - **Startup:** autostart entries, session restore and ending the programs
+    still running at log off.
   - **Default Programs:** browser, mail, music, video, photos, text editor,
     file manager, terminal and its arguments, what a plugged-in drive does,
     whether opening a script runs it on its own or in the terminal, whether
-    a script's window stays open when it ends, and the program for
-    every file type, which Browse... can pick by its file when it has no
-    desktop entry.
-  - **Privacy:** location answers, recent files, clipboard history and the
-    red border around what is being shared.
+    a script's window stays open when it ends, asking before a script's
+    first run, and the program for every file type, which Browse... can
+    pick by its file when it has no desktop entry.
+  - **Privacy:** whether programs may ask for your location and the
+    remembered answers (Forget drops one), recent files, clipboard history
+    and the red border around what is being shared.
   - **Date and Time...**, **User Accounts...** and **Software Updates...**
   - **Advanced:** the task manager, screenshots, the update restart notice,
     the Turn Off commands, the low disk space warning, the thumbnail cache
@@ -372,8 +402,9 @@ Restore Defaults, at the left of the OK, Cancel and Apply row, is on every
 page whose controls write `config.toml` keys. It lists the page's keys that
 are off their defaults and, on OK, takes them out of `config.toml`, so the
 defaults apply; the other pages' unapplied changes stay as they are. It is
-greyed when nothing on the page is off its default. Display, Start Menu,
-Tablet and Backup keep their settings elsewhere and have none.
+greyed when nothing on the page is off its default. Start Menu's Restore
+Defaults leaves the menu tree as it is. Display, Tablet and Backup keep their
+settings elsewhere and have none.
 
 When `config.toml` changes while Settings is open (an editor, or a key aid's
 shortcut), the controls you haven't touched show the new values; yours stay

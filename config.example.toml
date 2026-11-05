@@ -344,7 +344,7 @@ suspend_after = 0            # run [power] standby
 # no_balloons = []           # programs whose balloons go to the history only, e.g.
 #                            # ["discord"]; critical ones still show. A program is its
 #                            # desktop entry id (org.mozilla.Thunderbird), else the name
-#                            # it sends (notify-send -a). Settings > Sound and a right
+#                            # it sends (notify-send -a). Settings > Notifications and a right
 #                            # click on its group in the history also set these
 # no_sounds = []             # programs whose balloons show without a sound
 
