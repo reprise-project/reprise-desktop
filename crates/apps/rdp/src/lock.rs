@@ -1,12 +1,13 @@
 //! Locking the session once the last logged-in client has left, so the computer is not left open.
 
 use crate::listen::Leave;
+use repriseconf::remote::RemoteDesktop;
 use std::cell::Cell;
 use std::convert::Infallible;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 use zbus::Connection;
 use zbus::{OwnedObjectPath, OwnedVariant};
 
@@ -146,18 +147,26 @@ async fn on_thread(
 }
 
 /// Locks once the last client shown the session ([`Leave`]) has left and the portal sessions are
-/// closed, which is after its held input was released. Its marker is kept from the first on.
+/// closed, which is after its held input was released, unless `lock_on_leave` is off as it leaves.
+/// Its marker is kept from the first shown client with `lock_on_leave` on until then.
 pub struct LockOnLeave<F> {
     marker: Option<PathBuf>,
     present: Cell<usize>,
     /// Wakes a last leaver's close wait: a login there means no lock.
     arrival: Notify,
+    config: watch::Receiver<RemoteDesktop>,
     lock: F,
 }
 
 impl LockOnLeave<()> {
-    pub fn new(marker: Option<PathBuf>) -> LockOnLeave<impl AsyncFn() -> bool> {
-        LockOnLeave::with_lock(marker, lock)
+    pub fn new(
+        marker: Option<PathBuf>,
+        config: watch::Receiver<RemoteDesktop>,
+    ) -> LockOnLeave<impl AsyncFn() -> bool> {
+        LockOnLeave {
+            config,
+            ..LockOnLeave::with_lock(marker, lock)
+        }
     }
 }
 
@@ -167,6 +176,7 @@ impl<F: AsyncFn() -> bool> LockOnLeave<F> {
             marker,
             present: Cell::new(0),
             arrival: Notify::new(),
+            config: watch::channel(RemoteDesktop::default()).1,
             lock,
         }
     }
@@ -176,7 +186,7 @@ impl<F: AsyncFn() -> bool> Leave for LockOnLeave<F> {
     fn arrived(&self) {
         self.present.set(self.present.get() + 1);
         self.arrival.notify_waiters();
-        if self.present.get() == 1
+        if self.config.borrow().lock_on_leave
             && let Some(m) = &self.marker
         {
             mark(m);
@@ -190,6 +200,13 @@ impl<F: AsyncFn() -> bool> Leave for LockOnLeave<F> {
         });
         self.present.set(present);
         if present > 0 {
+            return;
+        }
+        if !self.config.borrow().lock_on_leave {
+            log::info!("the last client left; lock_on_leave is off");
+            if let Some(m) = &self.marker {
+                let _ = fs::remove_file(m);
+            }
             return;
         }
         tokio::select! {
@@ -360,6 +377,31 @@ mod tests {
         leave.left().await;
         assert_eq!(locks.get(), 1, "the last leaver locks once");
         assert!(!marker.exists(), "the lock clears the marker");
+    }
+
+    #[tokio::test]
+    async fn with_lock_on_leave_off_the_last_leaver_does_not_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("logged-in");
+        let locks = Rc::new(Cell::new(0));
+        let (config, rx) = watch::channel(RemoteDesktop::default());
+        let leave = LockOnLeave {
+            config: rx,
+            ..LockOnLeave::with_lock(Some(marker.clone()), counted(&locks))
+        };
+        leave.arrived();
+        config.send_modify(|c| c.lock_on_leave = false);
+        leave.left().await;
+        assert_eq!(locks.get(), 0, "no lock with lock_on_leave off");
+        assert!(!marker.exists(), "the leave clears the login's marker");
+        leave.arrived();
+        assert!(
+            !marker.exists(),
+            "a login with lock_on_leave off leaves no marker"
+        );
+        config.send_modify(|c| c.lock_on_leave = true);
+        leave.left().await;
+        assert_eq!(locks.get(), 1, "the next leave reads lock_on_leave again");
     }
 
     #[tokio::test]

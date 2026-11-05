@@ -9,7 +9,8 @@ use super::desktop::{
 use super::input::{MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS};
 use super::system::{
     ALLOW_BOOST, BELL, CLIPBOARD_HISTORY, NOTIFICATION_SOUND, QUALITY_VALUE, REMOTE_ENCODER,
-    REMOTE_FRAME_RATE, REMOTE_PORT, REMOTE_QUALITY, REMOTE_SOUND, SOUND_CONTROLS, clipboard_label,
+    REMOTE_FRAME_RATE, REMOTE_LOCK_ON_LEAVE, REMOTE_PORT, REMOTE_QUALITY, REMOTE_SOUND,
+    SOUND_CONTROLS, clipboard_label,
 };
 use super::{
     CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN, DOUBLE_CLICK,
@@ -303,6 +304,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::NamedNum(REMOTE_FRAME_RATE, lens!(remote_frame_rate), FRAME_RATES),
         Bind::Named(REMOTE_ENCODER, lens!(remote_encoder), REMOTE_ENCODERS),
         Bind::Flag(REMOTE_SOUND, lens!(remote_sound)),
+        Bind::Flag(REMOTE_LOCK_ON_LEAVE, lens!(remote_lock_on_leave)),
         Bind::Track("mouse_speed", lens!(mouse_speed)),
         Bind::Flag("mouse_accel", lens!(mouse_accel)),
         Bind::Flag("mouse_natural", lens!(mouse_natural)),

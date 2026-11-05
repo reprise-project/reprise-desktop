@@ -205,6 +205,9 @@ but never got the picture and input (with no screen to share, say) leaves
 the session as it was. Stopping the server, as turning Remote Desktop off
 does, locks the session before a shown client's connection closes. A server
 that dies with a client shown the session locks it when it next starts.
+`[remote_desktop] lock_on_leave = false` turns these locks off: a client
+shown the session with it off doesn't lock on a stop or the next start, and
+the last to leave doesn't lock while it is off.
 
 The client shares the clipboard only while it is logged in. `reprise-rdp`
 opens its data control connection once the client's clipboard channel is up,

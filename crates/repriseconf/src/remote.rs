@@ -1,5 +1,5 @@
-//! `[remote_desktop]`: reprise-rdp's port, picture quality, frame rate, video encoder, sound and
-//! how many viewers it takes.
+//! `[remote_desktop]`: reprise-rdp's port, picture quality, frame rate, video encoder, sound, how
+//! many viewers it takes and whether the last to leave locks the session.
 //! Each key that is missing or out of range keeps its default alone.
 
 use serde::Deserialize;
@@ -80,6 +80,7 @@ pub struct RemoteDesktop {
     pub sound: bool,
     /// 1 to 16 connected at once.
     pub max_viewers: usize,
+    pub lock_on_leave: bool,
 }
 
 impl Default for RemoteDesktop {
@@ -91,6 +92,7 @@ impl Default for RemoteDesktop {
             encoder: EncoderChoice::Auto,
             sound: true,
             max_viewers: 4,
+            lock_on_leave: true,
         }
     }
 }
@@ -153,6 +155,13 @@ fn read(t: &toml::Table) -> (RemoteDesktop, Vec<&'static str>) {
                 .filter(|n| (1..=16).contains(n))
                 .map(|n| n as usize)
         }),
+        lock_on_leave: key(
+            t,
+            "lock_on_leave",
+            &mut bad,
+            d.lock_on_leave,
+            toml::Value::as_bool,
+        ),
     };
     (rd, bad)
 }
@@ -189,9 +198,18 @@ mod tests {
                 d.frame_rate,
                 d.encoder,
                 d.sound,
-                d.max_viewers
+                d.max_viewers,
+                d.lock_on_leave
             ),
-            (3389, Quality::Balanced, 60, EncoderChoice::Auto, true, 4)
+            (
+                3389,
+                Quality::Balanced,
+                60,
+                EncoderChoice::Auto,
+                true,
+                4,
+                true
+            )
         );
     }
 
@@ -220,6 +238,24 @@ quality = \"sharp\"",
             (3389, true, Quality::Balanced)
         );
         assert_eq!(bad, ["port", "quality", "sound"]);
+    }
+
+    #[test]
+    fn lock_on_leave_reads_true_or_false() {
+        for (text, want, invalid) in [
+            ("false", false, false),
+            ("true", true, false),
+            ("0", true, true),
+        ] {
+            let t: toml::Table = toml::from_str(&format!("lock_on_leave = {text}")).unwrap();
+            let (rd, bad) = read(&t);
+            assert_eq!(rd.lock_on_leave, want, "lock_on_leave = {text}");
+            assert_eq!(
+                bad.contains(&"lock_on_leave"),
+                invalid,
+                "lock_on_leave = {text}"
+            );
+        }
     }
 
     #[test]

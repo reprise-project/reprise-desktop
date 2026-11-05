@@ -411,6 +411,7 @@ pub(super) const QUALITY_VALUE: &str = "quality_value";
 pub(super) const REMOTE_FRAME_RATE: &str = "frame_rate";
 pub(super) const REMOTE_ENCODER: &str = "video_encoder";
 pub(super) const REMOTE_SOUND: &str = "remote_sound";
+pub(super) const REMOTE_LOCK_ON_LEAVE: &str = "remote_lock";
 /// The certificate's fingerprint: a read-only edit, so it can be selected and copied.
 const REMOTE_FINGERPRINT: &str = "fingerprint";
 pub const REMOTE_REGENERATE: &str = "regenerate";
@@ -418,7 +419,7 @@ const CLIENTS: &str = "clients";
 pub const REMOTE_DISCONNECT: &str = "disconnect";
 
 /// What greys with the switch off; New Certificate and Disconnect also need the server answering.
-const REMOTE_CONTROLS: [&str; 16] = [
+const REMOTE_CONTROLS: [&str; 17] = [
     REMOTE_STATUS,
     ENCODER,
     "port_label",
@@ -433,6 +434,7 @@ const REMOTE_CONTROLS: [&str; 16] = [
     "video_encoder_label",
     REMOTE_ENCODER,
     REMOTE_SOUND,
+    REMOTE_LOCK_ON_LEAVE,
     "fingerprint_label",
     REMOTE_FINGERPRINT,
 ];
@@ -552,7 +554,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(group(a, "client_group", 389, 85, "Connected Computers"));
     items.push(Item::new(
         CLIENTS,
-        Rect::new(GX, 409, gw - BUTTON_W - 6, 3 * listbox::ROW_H + 4),
+        Rect::new(GX, 409, gw - BUTTON_W - 6, 2 * listbox::ROW_H + 4),
         Control::ListBox {
             list: ListBox::new(Vec::new(), None),
             icons: Vec::new(),
@@ -563,6 +565,12 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         a.gright() - BUTTON_W,
         409,
         "&Disconnect",
+    ));
+    items.push(Item::check(
+        REMOTE_LOCK_ON_LEAVE,
+        GX,
+        453,
+        "&Lock this computer when the last one disconnects",
     ));
     let mut page = Form::new(items);
     show_remote(&mut page, status, enabled, None, None);
