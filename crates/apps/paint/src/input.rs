@@ -165,7 +165,8 @@ impl Paint {
             MultiKey::Edit(EditKey::Paste) => reply.paste = true,
             _ => {}
         }
-        self.text.key(key);
+        let w = self.doc.text_box.map_or(1, |b| b.width);
+        self.text.key(key, w);
         reply
     }
 

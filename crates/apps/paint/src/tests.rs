@@ -431,3 +431,78 @@ fn the_window_is_pinned_in_each_interface_at_scale_one_and_two() {
     }
     check_pins("window", &got);
 }
+
+fn typed(p: &mut Paint, ctx: &mut Ctx, s: &str) {
+    for ch in s.chars() {
+        let ch = ch.to_string();
+        p.event(
+            MAIN,
+            Event::Key(KeyInput {
+                sym: ch.chars().next().unwrap() as u32,
+                utf8: Some(ch.clone()),
+                mods: Mods::default(),
+                edit: Some(reprisekit::textedit::EditKey::Insert(ch)),
+            }),
+            ctx,
+        );
+    }
+}
+
+#[test]
+fn typed_text_wraps_at_the_box_and_lands_with_the_same_breaks() {
+    if !reprisekit::text::test_tahoma() {
+        reprisekit::pins::skipped("REPRISE_TEST_FONTS is not set");
+        return;
+    }
+    let mut ctx = test_ctx();
+    let mut p = Paint::new(None);
+    p.doc.img = Bitmap::new(160, 100, WHITE);
+    pick(&mut p, &mut ctx, Tool::Text);
+    p.text.font = textbox::Font {
+        family: "Tahoma".into(),
+        px: 13,
+        bold: false,
+    };
+    drag(&mut p, &mut ctx, (10, 10), (90, 25), BTN_LEFT);
+    let b = p.doc.text_box.unwrap();
+    typed(&mut p, &mut ctx, "the quick brown fox jumps over");
+    let lh = p.text.line_h();
+    let fit = p.text.fit(b);
+    assert_eq!(p.text.edit.lines().len(), 1, "one line, wrapped");
+    assert!(fit.height >= 3 * lh, "it wraps into rows: {fit:?}");
+    assert_eq!(fit.width, b.width, "the box keeps its width");
+    let last = fit.height - lh;
+    assert_eq!(
+        p.text.caret(b.width).y,
+        last,
+        "the caret ends on the last row"
+    );
+    p.event(MAIN, key(reprisekit::textedit::keysym::UP, false), &mut ctx);
+    assert_eq!(p.text.caret(b.width).y, last - lh, "Up goes up a row");
+    let shown = p.shown(fit, false);
+    for row in 0..3 {
+        let inked = (0..fit.width)
+            .flat_map(|x| (row * lh..(row + 1) * lh).map(move |y| (x, y)))
+            .filter(|&(x, y)| shown.get(x, y).is_some_and(|v| v != WHITE))
+            .count();
+        assert!(inked > 10, "row {row} holds text: {inked} pixels");
+    }
+    drag(&mut p, &mut ctx, (150, 90), (150, 90), BTN_LEFT);
+    assert!(p.doc.text_box.is_none());
+    for y in 0..fit.height {
+        for x in 0..fit.width {
+            assert_eq!(
+                p.doc.img.get(fit.x + x, fit.y + y),
+                shown.get(x, y),
+                "the picture holds the box's rows at ({x}, {y})"
+            );
+        }
+    }
+    let mut c = Canvas::new(160, 100);
+    for y in 0..100 {
+        for x in 0..160 {
+            c.put_raw(x, y, p.doc.img.get(x, y).unwrap());
+        }
+    }
+    check_pins("textbox", &[("wrapped".into(), hash(&c))]);
+}
