@@ -758,7 +758,7 @@ no port forwarding; allow the port in your firewall if you run one.
   done waits for it, at most about 5 s, and an encoder that takes longer
   is left out.
 - **Quality.** Picture quality runs from Speed to Sharp and frame rate is
-  30 or 60; both apply to a connected client at once. With Balanced or
+  30, 60, 120 or 144, never more than the screen's refresh rate; both apply to a connected client at once. With Balanced or
   Sharp, a client that offers it and VA-API, NVENC or x264 coding, the
   picture is sent in full colour (AVC444), so small coloured text stays
   sharp. Speed and Vulkan send reduced colour, which takes less bandwidth.
