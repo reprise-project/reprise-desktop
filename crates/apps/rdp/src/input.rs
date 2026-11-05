@@ -13,6 +13,7 @@ use reis::event::{DeviceCapability, EiEvent, EiEventConverter};
 use reis::handshake::EiHandshaker;
 use std::collections::VecDeque;
 use std::os::unix::net::UnixStream;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::Interest;
@@ -171,8 +172,33 @@ pub enum Event {
     Sync(Locks),
 }
 
+/// The id of the connection whose Synchronize sets the session's lock keys; 0 while none has.
+#[derive(Clone, Default)]
+pub struct SyncOwner(Arc<AtomicU64>);
+
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+impl SyncOwner {
+    /// Whether `id` owns sync, claiming it when nobody does.
+    fn claim(&self, id: u64) -> bool {
+        match self
+            .0
+            .compare_exchange(0, id, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => true,
+            Err(owner) => owner == id,
+        }
+    }
+
+    fn release(&self, id: u64) {
+        let _ = (self.0).compare_exchange(id, 0, Ordering::AcqRel, Ordering::Acquire);
+    }
+}
+
 /// The connection's input handler. Events queue until the portal session is open.
 pub struct Input {
+    id: u64,
+    owner: SyncOwner,
     events: UnboundedSender<Event>,
     held: Held,
     scancodes: Scancodes,
@@ -190,10 +216,12 @@ pub struct Feed {
 }
 
 impl Input {
-    pub fn new() -> (Input, Feed) {
+    pub fn new(owner: SyncOwner) -> (Input, Feed) {
         let (tx, rx) = unbounded_channel();
         let moves = SharedMoves::default();
         let input = Input {
+            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            owner,
             events: tx,
             held: Held::default(),
             scancodes: Scancodes::default(),
@@ -248,6 +276,7 @@ fn as_event(what: Release, pressed: bool) -> Event {
 
 impl Drop for Input {
     fn drop(&mut self) {
+        self.owner.release(self.id);
         for what in self.held.release_all() {
             self.send(as_event(what, false));
         }
@@ -284,11 +313,16 @@ impl RdpServerInputHandler for Input {
                     self.release(Release::Keysym(sym));
                 }
             }
-            KeyboardEvent::Synchronize(flags) => self.send(Event::Sync(Locks {
-                caps: flags.contains(SynchronizeFlags::CAPS_LOCK),
-                num: flags.contains(SynchronizeFlags::NUM_LOCK),
-                scroll: flags.contains(SynchronizeFlags::SCROLL_LOCK),
-            })),
+            KeyboardEvent::Synchronize(flags) if self.owner.claim(self.id) => {
+                self.send(Event::Sync(Locks {
+                    caps: flags.contains(SynchronizeFlags::CAPS_LOCK),
+                    num: flags.contains(SynchronizeFlags::NUM_LOCK),
+                    scroll: flags.contains(SynchronizeFlags::SCROLL_LOCK),
+                }))
+            }
+            KeyboardEvent::Synchronize(_) => {
+                log::debug!("another viewer sets the lock keys; this Synchronize is dropped")
+            }
         }
     }
 
@@ -726,7 +760,7 @@ mod tests {
 
     #[test]
     fn an_advanced_input_notch_down_is_120_down() {
-        let (mut input, mut feed) = Input::new();
+        let (mut input, mut feed) = Input::new(SyncOwner::default());
         input.mouse(MouseEvent::Scroll {
             x: 0,
             y: -120 << 16,
@@ -751,7 +785,7 @@ mod tests {
 
     #[test]
     fn middle_button_reaches_the_session() {
-        let (mut input, mut feed) = Input::new();
+        let (mut input, mut feed) = Input::new(SyncOwner::default());
         let middle = PointerFlags::MIDDLE_BUTTON_OR_WHEEL;
         input.mouse(pointer_pdu(middle | PointerFlags::DOWN, 0));
         input.mouse(pointer_pdu(middle, 0));
@@ -766,7 +800,7 @@ mod tests {
 
     #[test]
     fn side_buttons_are_back_and_forward() {
-        let (mut input, mut feed) = Input::new();
+        let (mut input, mut feed) = Input::new(SyncOwner::default());
         let extended = |flags| {
             MouseEvent::from(MouseXPdu {
                 flags,
@@ -808,7 +842,7 @@ mod tests {
 
     #[test]
     fn horizontal_wheel_scrolls_sideways() {
-        let (mut input, mut feed) = Input::new();
+        let (mut input, mut feed) = Input::new(SyncOwner::default());
         let decoded = |flags: u16| {
             let bytes = [flags.to_le_bytes(), [0, 0], [0, 0]].concat();
             let pdu: MousePdu = ironrdp_core::decode(&bytes).unwrap();
@@ -825,7 +859,7 @@ mod tests {
 
     #[test]
     fn pause_is_one_key() {
-        let (mut input, mut feed) = Input::new();
+        let (mut input, mut feed) = Input::new(SyncOwner::default());
         let e1 = KeyboardFlags::EXTENDED1;
         let up = KeyboardFlags::RELEASE;
         for (code, flags) in [
@@ -946,7 +980,7 @@ mod tests {
 
     #[test]
     fn advanced_input_wheel_fractions_add_up() {
-        let (mut input, mut feed) = Input::new();
+        let (mut input, mut feed) = Input::new(SyncOwner::default());
         input.mouse(MouseEvent::Scroll {
             x: 0,
             y: -(1 << 15),
@@ -976,9 +1010,74 @@ mod tests {
         assert_eq!(held.release_all(), vec![], "nothing is held twice");
     }
 
+    fn caps(on: bool) -> KeyboardEvent {
+        let mut flags = SynchronizeFlags::empty();
+        flags.set(SynchronizeFlags::CAPS_LOCK, on);
+        KeyboardEvent::Synchronize(flags)
+    }
+
+    fn caps_sync(on: bool) -> Event {
+        Event::Sync(Locks {
+            caps: on,
+            num: false,
+            scroll: false,
+        })
+    }
+
+    #[test]
+    fn a_second_viewers_sync_is_dropped() {
+        let owner = SyncOwner::default();
+        let (mut first, mut first_feed) = Input::new(owner.clone());
+        let (mut second, mut second_feed) = Input::new(owner);
+        first.keyboard(caps(true));
+        second.keyboard(caps(false));
+        first.keyboard(caps(false));
+        assert_eq!(
+            sent(&mut first_feed),
+            vec![caps_sync(true), caps_sync(false)]
+        );
+        assert_eq!(
+            sent(&mut second_feed),
+            vec![],
+            "the second viewer taps no lock keys"
+        );
+    }
+
+    #[test]
+    fn the_next_viewer_owns_sync_once_the_owner_leaves() {
+        let owner = SyncOwner::default();
+        let (mut first, _first_feed) = Input::new(owner.clone());
+        let (mut second, mut second_feed) = Input::new(owner);
+        first.keyboard(caps(true));
+        drop(first);
+        second.keyboard(caps(false));
+        assert_eq!(sent(&mut second_feed), vec![caps_sync(false)]);
+    }
+
+    #[test]
+    fn a_viewer_that_never_synced_leaves_the_claim_alone() {
+        let owner = SyncOwner::default();
+        let (mut first, mut first_feed) = Input::new(owner.clone());
+        let (bystander, _bystander_feed) = Input::new(owner.clone());
+        let (mut third, mut third_feed) = Input::new(owner);
+        first.keyboard(caps(true));
+        drop(bystander);
+        third.keyboard(caps(false));
+        first.keyboard(caps(false));
+        assert_eq!(
+            sent(&mut third_feed),
+            vec![],
+            "the first viewer still owns sync"
+        );
+        assert_eq!(
+            sent(&mut first_feed),
+            vec![caps_sync(true), caps_sync(false)]
+        );
+    }
+
     #[test]
     fn dropping_the_handler_sends_releases_for_what_the_client_held() {
-        let (mut input, mut feed) = Input::new();
+        let (mut input, mut feed) = Input::new(SyncOwner::default());
         input.keyboard(KeyboardEvent::Pressed {
             code: 0x38,
             extended: false,
@@ -1023,7 +1122,7 @@ mod tests {
 
     #[test]
     fn a_key_repeat_sends_one_press() {
-        let (mut input, mut feed) = Input::new();
+        let (mut input, mut feed) = Input::new(SyncOwner::default());
         for _ in 0..3 {
             input.keyboard(KeyboardEvent::Pressed {
                 code: 0x1E,
@@ -1037,7 +1136,7 @@ mod tests {
 
     #[test]
     fn an_emoji_typed_as_two_units_is_one_keysym_down_and_up() {
-        let (mut input, mut feed) = Input::new();
+        let (mut input, mut feed) = Input::new(SyncOwner::default());
         input.keyboard(KeyboardEvent::UnicodePressed(0xD83D));
         input.keyboard(KeyboardEvent::UnicodeReleased(0xD83D));
         input.keyboard(KeyboardEvent::UnicodePressed(0xDE00));

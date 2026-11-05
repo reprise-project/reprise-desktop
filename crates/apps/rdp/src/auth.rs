@@ -33,6 +33,10 @@ fn helper_beside(server: &Path) -> PathBuf {
 /// The helper's environment: what PAM modules and their messages read. Everything else is dropped.
 const KEPT_ENV: [&str; 5] = ["PATH", "LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"];
 
+/// The time a connection has to log in, on top of any wait its address is serving. A password
+/// check in flight when it runs out is finished first.
+pub const HANDSHAKE: Duration = Duration::from_secs(10);
+
 /// How long the helper has to give its verdict before it is killed and the check fails.
 const HELPER_LIMIT: Duration = Duration::from_secs(30);
 
@@ -167,28 +171,73 @@ pub fn helper_verdict(lines: &str) -> Verdict {
     verdict
 }
 
+/// One connection's login, followed while it runs.
+pub trait Login: CredentialValidator + Send + Sync + 'static {
+    /// Resolves once this connection has logged in.
+    fn logged_in(&self) -> impl Future<Output = ()>;
+    /// Whether this connection has logged in.
+    fn accepted(&self) -> bool;
+    /// Whether this connection has logged in, once no check is in flight.
+    fn settled(&self) -> impl Future<Output = bool>;
+}
+
+/// Makes the login of each new connection.
+pub trait Logins {
+    type Check: Login;
+    /// `peer`'s login and the time it has to log in.
+    fn check(&self, peer: SocketAddr) -> (Arc<Self::Check>, Duration);
+}
+
+/// The session user's password, with one [`Throttle`] for every connection.
+pub struct PasswordLogins {
+    user: String,
+    helper: PathBuf,
+    throttle: Arc<Mutex<Throttle>>,
+}
+
+impl PasswordLogins {
+    pub fn new(user: String) -> PasswordLogins {
+        PasswordLogins {
+            user,
+            helper: helper(),
+            throttle: Arc::default(),
+        }
+    }
+}
+
+impl Logins for PasswordLogins {
+    type Check = PasswordCheck;
+
+    fn check(&self, peer: SocketAddr) -> (Arc<PasswordCheck>, Duration) {
+        let check =
+            PasswordCheck::new(self.user.clone(), &self.helper, peer, self.throttle.clone());
+        let budget = HANDSHAKE + self.throttle.lock().unwrap().delay(peer.ip());
+        (Arc::new(check), budget)
+    }
+}
+
 /// One connection's login check: only the session user, with their password.
 pub struct PasswordCheck {
     user: String,
     helper: PathBuf,
     peer: SocketAddr,
     throttle: Arc<Mutex<Throttle>>,
-    login: watch::Sender<Login>,
+    login: watch::Sender<Stage>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Login {
+enum Stage {
     Waiting,
     Checking,
     Accepted,
 }
 
 /// Marks a check in flight until dropped, including when the check is cancelled.
-struct InFlight<'a>(&'a watch::Sender<Login>);
+struct InFlight<'a>(&'a watch::Sender<Stage>);
 
 impl<'a> InFlight<'a> {
-    fn start(login: &'a watch::Sender<Login>) -> Self {
-        login.send_replace(Login::Checking);
+    fn start(login: &'a watch::Sender<Stage>) -> Self {
+        login.send_replace(Stage::Checking);
         InFlight(login)
     }
 }
@@ -196,9 +245,9 @@ impl<'a> InFlight<'a> {
 impl Drop for InFlight<'_> {
     fn drop(&mut self) {
         self.0.send_if_modified(|l| {
-            let checking = *l == Login::Checking;
+            let checking = *l == Stage::Checking;
             if checking {
-                *l = Login::Waiting;
+                *l = Stage::Waiting;
             }
             checking
         });
@@ -218,29 +267,8 @@ impl PasswordCheck {
             helper: helper.to_path_buf(),
             peer,
             throttle,
-            login: watch::Sender::new(Login::Waiting),
+            login: watch::Sender::new(Stage::Waiting),
         }
-    }
-
-    /// Whether this connection has logged in.
-    pub fn accepted(&self) -> bool {
-        *self.login.borrow() == Login::Accepted
-    }
-
-    /// Resolves once this connection has logged in.
-    pub async fn logged_in(&self) {
-        let _ = (self.login.subscribe())
-            .wait_for(|l| *l == Login::Accepted)
-            .await;
-    }
-
-    /// Whether this connection has logged in, once no check is in flight.
-    pub async fn settled(&self) -> bool {
-        let mut login = self.login.subscribe();
-        login
-            .wait_for(|l| *l != Login::Checking)
-            .await
-            .is_ok_and(|l| *l == Login::Accepted)
     }
 
     fn delay(&self) -> Duration {
@@ -287,6 +315,26 @@ impl PasswordCheck {
             ),
         }
         Ok(false)
+    }
+}
+
+impl Login for PasswordCheck {
+    async fn logged_in(&self) {
+        let _ = (self.login.subscribe())
+            .wait_for(|l| *l == Stage::Accepted)
+            .await;
+    }
+
+    fn accepted(&self) -> bool {
+        *self.login.borrow() == Stage::Accepted
+    }
+
+    async fn settled(&self) -> bool {
+        let mut login = self.login.subscribe();
+        login
+            .wait_for(|l| *l != Stage::Checking)
+            .await
+            .is_ok_and(|l| *l == Stage::Accepted)
     }
 }
 
@@ -377,7 +425,7 @@ impl CredentialValidator for PasswordCheck {
             CredentialValidationError::new(e)
         })?;
         if ok {
-            self.login.send_replace(Login::Accepted);
+            self.login.send_replace(Stage::Accepted);
             log::info!("{}: logged in as {}", self.peer, self.user);
             return Ok(CredentialDecision::Accept);
         }

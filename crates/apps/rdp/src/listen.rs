@@ -1,41 +1,31 @@
-//! The accept loop: one client at a time, TLS security only, logged in by [`PasswordCheck`]. It
-//! follows the configured port and reports where it listens and who is connected.
+//! The accept loop: clients from an [`Intake`], up to `max_viewers` at once, TLS security only,
+//! each logged in through a [`Login`]. It reports who is connected.
 
-use crate::auth::{self, PasswordCheck, Throttle};
+use crate::auth::{Login, Logins};
 use crate::cert::Identity;
-use crate::control::{Client, Status};
+use crate::control::{Client, Request, Status};
+use crate::intake::{Arrival, Intake};
+use crate::viewers::{Kick, LOGGING_IN_PER_IP, Refused, ViewerId, Viewers};
 use ironrdp_server::{
     CliprdrServerFactory, GfxServerFactory, RdpServer, RdpServerDisplay, RdpServerInputHandler,
     SoundServerFactory,
 };
 use repriseconf::remote::RemoteDesktop;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, watch};
 
-/// The time a connection has to log in, on top of any wait its address is serving. A password
-/// check in flight when it runs out is finished first.
-pub const HANDSHAKE: Duration = Duration::from_secs(10);
-
-const KEEPALIVE_IDLE: Duration = Duration::from_secs(15);
-const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
-const KEEPALIVE_PROBES: u32 = 3;
-/// Keepalive probes wait for unacknowledged data; this ends a link that dies mid-send.
-const USER_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// All addresses: IPv4 included through the IPv6 socket, IPv4 alone where IPv6 is off.
-pub const ALL: IpAddr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
-
-/// What follows a connection's login, and what follows once its display and input are dropped.
+/// What follows a connection's login, and what follows once its display and input are dropped;
+/// each called once per logged-in connection, so several may be logged in at a time.
 pub trait Leave {
     fn arrived(&self) {}
     fn left(&self) -> impl Future<Output = ()>;
@@ -43,23 +33,15 @@ pub trait Leave {
 
 /// The accept loop's settings and its links to the bus.
 pub struct Server<L> {
-    /// The address to listen on; the port is `config`'s, and a change of it rebinds.
-    pub ip: IpAddr,
-    pub config: watch::Receiver<RemoteDesktop>,
     pub identity: watch::Receiver<Identity>,
     pub user: String,
-    /// Its `listening` and `clients` are kept here.
+    /// Its `clients` are kept here.
     pub status: watch::Sender<Status>,
-    /// Ends the connected client's session.
-    pub disconnect: mpsc::UnboundedReceiver<()>,
+    /// Its `max_viewers` is read as each connection arrives.
+    pub config: watch::Receiver<RemoteDesktop>,
+    /// Ends connected clients' sessions.
+    pub disconnect: mpsc::UnboundedReceiver<Request>,
     pub leave: L,
-}
-
-/// Why a connection was ended from this side.
-#[derive(Clone, Copy, Debug)]
-enum Kick {
-    Asked,
-    PortChanged,
 }
 
 /// What serves one connection: a display, an input handler, maybe a graphics pipeline, maybe a
@@ -72,10 +54,12 @@ pub type Handlers<D, I> = (
     Option<Box<dyn SoundServerFactory>>,
 );
 
-/// Accept clients for `server.user`, each served by `handlers`. A client arriving while another
-/// is connected is closed at once.
+/// Serve clients from `intake` for `server.user`, each checked by `logins` and served by
+/// `handlers`. A client arriving with `max_viewers` connected is closed at once.
 pub async fn serve<D, I, L>(
     mut server: Server<L>,
+    mut intake: impl Intake,
+    logins: impl Logins,
     mut handlers: impl FnMut() -> Handlers<D, I>,
 ) -> Infallible
 where
@@ -83,63 +67,43 @@ where
     I: RdpServerInputHandler + 'static,
     L: Leave + 'static,
 {
-    let throttle = Arc::new(Mutex::new(Throttle::default()));
-    let helper = auth::helper();
-    let busy = Rc::new(Cell::new(false));
     let shared = Rc::new(Shared {
         user: server.user,
         status: server.status,
         leave: server.leave,
+        viewers: RefCell::default(),
     });
-    let mut port = server.config.borrow_and_update().port;
-    let mut listener = listen_on(server.ip, port, &shared.status);
-    let mut kick: Option<oneshot::Sender<Kick>> = None;
     loop {
         tokio::select! {
-            Ok(()) = server.config.changed() => {
-                let wanted = server.config.borrow_and_update().port;
-                if wanted == port && let Some(l) = &listener {
-                    report(l, &shared.status);
-                    continue;
+            Some(request) = server.disconnect.recv() => match request {
+                Request::All => shared.viewers.borrow_mut().kick_all(Kick::Asked),
+                Request::Client(address, reply) => {
+                    let _ = reply.send(shared.viewers.borrow_mut().kick(&address, Kick::Asked));
                 }
-                let Some(bound) = listen_on(server.ip, wanted, &shared.status) else {
-                    continue;
-                };
-                if wanted != port && let Some(k) = kick.take() {
-                    let _ = k.send(Kick::PortChanged);
-                }
-                port = wanted;
-                listener = Some(bound);
-            }
-            Some(()) = server.disconnect.recv() => {
-                if let Some(k) = kick.take() {
-                    let _ = k.send(Kick::Asked);
-                }
-            }
-            accepted = accept(listener.as_ref()) => {
-                let (stream, peer) = match accepted {
-                    Ok(accepted) => accepted,
-                    Err(e) => {
-                        log::warn!("accept: {e}");
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+            },
+            arrival = intake.next() => {
+                let (stream, peer) = match arrival {
+                    Arrival::Connection(stream, peer) => (stream, peer),
+                    Arrival::Moved => {
+                        shared.viewers.borrow_mut().kick_all(Kick::PortChanged);
                         continue;
                     }
                 };
-                let peer = SocketAddr::new(peer.ip().to_canonical(), peer.port());
-                if busy.get() {
-                    log::info!("{peer}: closed; another client is connected");
-                    continue;
-                }
-                if let Err(e) = tune(&stream) {
-                    log::warn!("{peer}: TCP options: {e}");
-                }
-                let check = Arc::new(PasswordCheck::new(
-                    shared.user.clone(),
-                    &helper,
-                    peer,
-                    throttle.clone(),
-                ));
-                let budget = HANDSHAKE + throttle.lock().unwrap().delay(peer.ip());
+                let cap = server.config.borrow().max_viewers;
+                let joined = shared.viewers.borrow_mut().join(peer, cap);
+                let (id, kicked) = match joined {
+                    Ok(joined) => joined,
+                    Err(Refused::Full) => {
+                        let n = shared.viewers.borrow().len();
+                        log::info!("{peer}: closed; {n} viewers are connected");
+                        continue;
+                    }
+                    Err(Refused::LoggingIn(ip)) => {
+                        log::info!("{peer}: closed; {ip} has {LOGGING_IN_PER_IP} connections logging in");
+                        continue;
+                    }
+                };
+                let (check, budget) = logins.check(peer);
                 let (display, input, gfx, clipboard, sound) = handlers();
                 let local = stream
                     .local_addr()
@@ -154,14 +118,9 @@ where
                     .with_cliprdr_factory(clipboard)
                     .with_sound_factory(sound)
                     .build();
-                let guard = Busy::claim(&busy);
-                let (tx, kicked) = oneshot::channel();
-                kick = Some(tx);
+                let viewer = Viewer { id, peer, kicked };
                 let shared = shared.clone();
-                tokio::task::spawn_local(async move {
-                    let _guard = guard;
-                    run(rdp, stream, peer, check, budget, kicked, shared).await;
-                });
+                tokio::task::spawn_local(run(rdp, stream, viewer, check, budget, shared));
             }
         }
     }
@@ -172,74 +131,48 @@ struct Shared<L> {
     user: String,
     status: watch::Sender<Status>,
     leave: L,
+    viewers: RefCell<Viewers>,
 }
 
-/// Report where `listener` listens, as after a failed move it still does.
-fn report(listener: &TcpListener, status: &watch::Sender<Status>) {
-    let Ok(addr) = listener.local_addr() else {
-        return;
-    };
-    status.send_if_modified(|s| {
-        let changed = s.listening != addr.to_string();
-        s.listening = addr.to_string();
-        changed
-    });
-}
-
-/// Bind `ip`:`port` and report it, or the error, as `listening`.
-fn listen_on(ip: IpAddr, port: u16, status: &watch::Sender<Status>) -> Option<TcpListener> {
-    let bound = match bind(SocketAddr::new(ip, port)) {
-        Err(_) if ip == ALL => bind(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), port)),
-        bound => bound,
-    };
-    let (listener, listening) = match bound.and_then(|l| Ok((l.local_addr()?, l))) {
-        Ok((addr, l)) => {
-            log::info!("listening on {addr}");
-            (Some(l), addr.to_string())
+impl<L> Shared<L> {
+    /// Frees `viewer`'s place and takes it off `clients`. Only the first call does anything: a
+    /// later viewer may have the same address.
+    fn forget(&self, id: ViewerId, peer: SocketAddr) {
+        if !self.viewers.borrow_mut().leave(id) {
+            return;
         }
-        Err(e) => {
-            log::error!("cannot listen on port {port}: {e}");
-            (None, format!("error: {e}"))
-        }
-    };
-    status.send_modify(|s| s.listening = listening);
-    listener
-}
-
-/// A listener on `addr`; an IPv6 one takes IPv4 too, whatever `net.ipv6.bindv6only` says.
-fn bind(addr: SocketAddr) -> io::Result<TcpListener> {
-    use socket2::{Domain, Protocol, Socket, Type};
-    let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
-    if addr.is_ipv6() {
-        socket.set_only_v6(false)?;
-    }
-    socket.set_reuse_address(true)?;
-    socket.set_nonblocking(true)?;
-    socket.bind(&addr.into())?;
-    socket.listen(1024)?;
-    TcpListener::from_std(socket.into())
-}
-
-async fn accept(listener: Option<&TcpListener>) -> io::Result<(TcpStream, SocketAddr)> {
-    match listener {
-        Some(l) => l.accept().await,
-        None => std::future::pending().await,
+        let address = peer.to_string();
+        self.status.send_if_modified(|s| {
+            let had = s.clients.len();
+            s.clients.retain(|c| c.address != address);
+            s.clients.len() != had
+        });
     }
 }
 
-async fn run<L: Leave + 'static>(
+/// One connection's place among the viewers.
+struct Viewer {
+    id: ViewerId,
+    peer: SocketAddr,
+    kicked: oneshot::Receiver<Kick>,
+}
+
+async fn run<L: Leave + 'static, C: Login>(
     mut server: RdpServer,
     stream: TcpStream,
-    peer: SocketAddr,
-    check: Arc<PasswordCheck>,
+    viewer: Viewer,
+    check: Arc<C>,
     budget: Duration,
-    kicked: oneshot::Receiver<Kick>,
     shared: Rc<Shared<L>>,
 ) {
+    let Viewer { id, peer, kicked } = viewer;
     log::info!("{peer}: connected");
+    let arrived = Rc::new(Cell::new(false));
     let _unwound = Unwound {
         shared: shared.clone(),
-        check: check.clone(),
+        arrived: arrived.clone(),
+        id,
+        peer,
     };
     let seen = Arc::new(Mutex::new(Seen::default()));
     let stream = Recorded {
@@ -249,15 +182,17 @@ async fn run<L: Leave + 'static>(
     let present = async {
         check.logged_in().await;
         shared.leave.arrived();
+        shared.viewers.borrow_mut().logged_in(id);
+        arrived.set(true);
         let since = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         shared.status.send_modify(|s| {
-            s.clients = vec![Client {
+            s.clients.push(Client {
                 address: peer.to_string(),
                 user: shared.user.clone(),
                 since,
-            }]
+            })
         });
         std::future::pending::<Infallible>().await
     };
@@ -271,17 +206,13 @@ async fn run<L: Leave + 'static>(
             }
             None
         }
-        () = login_expired(&check, budget) => {
+        () = login_expired(&*check, budget) => {
             log::warn!("{peer}: dropped; no login within {} s", budget.as_secs());
-            return;
+            None
         }
         never = present => match never {},
     };
-    shared.status.send_if_modified(|s| {
-        let had = !s.clients.is_empty();
-        s.clients.clear();
-        had
-    });
+    shared.forget(id, peer);
     if let Some(ended) = ended {
         if !check.accepted() && seen.lock().unwrap().refuses_tls() {
             log::warn!(
@@ -294,21 +225,25 @@ async fn run<L: Leave + 'static>(
             Err(e) => log::info!("{peer}: disconnected: {}", e.report()),
         }
     }
-    if check.accepted() {
+    if arrived.replace(false) {
         drop(server);
         shared.leave.left().await;
     }
 }
 
-/// Runs `left` for a logged-in connection whose task panicked.
+/// Forgets the viewer however its task ends, and runs `left` for an arrived one that panicked.
 struct Unwound<L: Leave + 'static> {
     shared: Rc<Shared<L>>,
-    check: Arc<PasswordCheck>,
+    /// Set from `arrived` until `left` is called, so each arrival has one leave.
+    arrived: Rc<Cell<bool>>,
+    id: ViewerId,
+    peer: SocketAddr,
 }
 
 impl<L: Leave + 'static> Drop for Unwound<L> {
     fn drop(&mut self) {
-        if std::thread::panicking() && self.check.accepted() {
+        self.shared.forget(self.id, self.peer);
+        if std::thread::panicking() && self.arrived.replace(false) {
             let shared = self.shared.clone();
             tokio::task::spawn_local(async move { shared.leave.left().await });
         }
@@ -316,7 +251,7 @@ impl<L: Leave + 'static> Drop for Unwound<L> {
 }
 
 /// Ends once `budget` has passed and no check is in flight, unless the connection has logged in.
-async fn login_expired(check: &PasswordCheck, budget: Duration) {
+async fn login_expired(check: &impl Login, budget: Duration) {
     tokio::time::sleep(budget).await;
     if check.settled().await {
         std::future::pending::<()>().await;
@@ -420,41 +355,16 @@ impl AsyncWrite for Recorded {
     }
 }
 
-/// Keepalive and a user timeout end a dead link in about 30 s; no Nagle delay for small updates.
-fn tune(stream: &TcpStream) -> io::Result<()> {
-    let socket = socket2::SockRef::from(stream);
-    socket.set_tcp_keepalive(
-        &socket2::TcpKeepalive::new()
-            .with_time(KEEPALIVE_IDLE)
-            .with_interval(KEEPALIVE_INTERVAL)
-            .with_retries(KEEPALIVE_PROBES),
-    )?;
-    socket.set_tcp_user_timeout(Some(USER_TIMEOUT))?;
-    socket.set_tcp_nodelay(true)
-}
-
-/// Marks the server busy until dropped, including when its task is cancelled.
-struct Busy(Rc<Cell<bool>>);
-
-impl Busy {
-    fn claim(busy: &Rc<Cell<bool>>) -> Busy {
-        busy.set(true);
-        Busy(busy.clone())
-    }
-}
-
-impl Drop for Busy {
-    fn drop(&mut self) {
-        self.0.set(false);
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::auth::{self, HANDSHAKE, PasswordCheck, PasswordLogins, Throttle};
+    use crate::intake::TcpIntake;
     use ironrdp_server::{CredentialDecision, CredentialValidator};
+    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Once;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
     use tokio::task::LocalSet;
 
     static LINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -495,7 +405,37 @@ pub(crate) mod tests {
         addr: SocketAddr,
         status: watch::Receiver<Status>,
         config: watch::Sender<RemoteDesktop>,
-        _disconnect: mpsc::UnboundedSender<()>,
+        disconnect: mpsc::UnboundedSender<Request>,
+    }
+
+    /// A login that is accepted as the connection arrives.
+    struct Admitted;
+
+    #[async_trait::async_trait]
+    impl CredentialValidator for Admitted {
+        async fn validate(
+            &self,
+            _: &ironrdp_server::Credentials,
+        ) -> Result<CredentialDecision, ironrdp_server::CredentialValidationError> {
+            Ok(CredentialDecision::Accept)
+        }
+    }
+
+    impl Login for Admitted {
+        async fn logged_in(&self) {}
+        fn accepted(&self) -> bool {
+            true
+        }
+        async fn settled(&self) -> bool {
+            true
+        }
+    }
+
+    impl Logins for Admitted {
+        type Check = Admitted;
+        fn check(&self, _: SocketAddr) -> (Arc<Admitted>, Duration) {
+            (Arc::new(Admitted), HANDSHAKE)
+        }
     }
 
     async fn start(local: &LocalSet) -> SocketAddr {
@@ -503,25 +443,55 @@ pub(crate) mod tests {
     }
 
     async fn start_on(local: &LocalSet, port: u16) -> Running {
-        let dir = tempfile::tempdir().unwrap();
-        let identity = crate::cert::load_or_create(dir.path()).unwrap();
-        let (config, config_rx) = watch::channel(RemoteDesktop {
+        let config = RemoteDesktop {
             port,
             ..RemoteDesktop::default()
-        });
+        };
+        start_with(local, config, PasswordLogins::new("alice".into())).await
+    }
+
+    /// Clients logged in as they connect, on `port` with up to `max_viewers` at once.
+    async fn start_admitting(local: &LocalSet, port: u16, max_viewers: usize) -> Running {
+        let config = RemoteDesktop {
+            port,
+            max_viewers,
+            ..RemoteDesktop::default()
+        };
+        start_with(local, config, Admitted).await
+    }
+
+    async fn start_with(
+        local: &LocalSet,
+        config: RemoteDesktop,
+        logins: impl Logins + 'static,
+    ) -> Running {
+        let port = config.port;
+        let dir = tempfile::tempdir().unwrap();
+        let identity = crate::cert::load_or_create(dir.path()).unwrap();
+        let (config, config_rx) = watch::channel(config);
         let (status, mut status_rx) = watch::channel(Status::default());
         let (disconnect, disconnect_rx) = mpsc::unbounded_channel();
+        let intake = TcpIntake::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            config_rx.clone(),
+            status.clone(),
+        );
         let server = Server {
-            ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
-            config: config_rx,
             identity: watch::channel(identity).1,
             user: "alice".into(),
             status,
+            config: config_rx,
             disconnect: disconnect_rx,
             leave: (),
         };
-        local.spawn_local(serve(server, || {
-            (crate::Grey, crate::input::Input::new().0, None, None, None)
+        local.spawn_local(serve(server, intake, logins, || {
+            (
+                crate::Grey,
+                crate::input::Input::new(Default::default()).0,
+                None,
+                None,
+                None,
+            )
         }));
         let reported = status_rx.wait_for(|s| !s.listening.is_empty());
         let listening = (tokio::time::timeout(Duration::from_secs(5), reported).await)
@@ -536,8 +506,57 @@ pub(crate) mod tests {
             addr,
             status: status_rx,
             config,
-            _disconnect: disconnect,
+            disconnect,
         }
+    }
+
+    /// Two clients connected to `s` and listed, and the addresses they connect from.
+    async fn two_listed(s: &mut Running) -> [(TcpStream, String); 2] {
+        let mut connected = Vec::new();
+        for _ in 0..2 {
+            let mut c = TcpStream::connect(s.addr).await.unwrap();
+            assert!(confirmed(&mut c).await, "each client is served");
+            let address = c.local_addr().unwrap().to_string();
+            connected.push((c, address));
+        }
+        let listed = s.status.wait_for(|s| s.clients.len() == 2);
+        (tokio::time::timeout(Duration::from_secs(5), listed).await)
+            .expect("both clients are listed")
+            .unwrap();
+        connected.try_into().ok().unwrap()
+    }
+
+    fn listed(s: &Running) -> Vec<String> {
+        let clients = s.status.borrow().clients.clone();
+        clients.into_iter().map(|c| c.address).collect()
+    }
+
+    async fn listed_become(s: &mut Running, want: &[&str]) {
+        let waited = tokio::time::timeout(
+            Duration::from_secs(5),
+            s.status.wait_for(|s| {
+                s.clients
+                    .iter()
+                    .map(|c| c.address.as_str())
+                    .eq(want.iter().copied())
+            }),
+        )
+        .await
+        .is_ok();
+        assert!(waited, "listed {:?}, not {want:?}", listed(s));
+    }
+
+    async fn closed_soon(c: &mut TcpStream) -> bool {
+        tokio::time::timeout(Duration::from_secs(5), until_closed(c))
+            .await
+            .is_ok()
+    }
+
+    async fn still_open(c: &mut TcpStream) -> bool {
+        let mut byte = [0u8; 1];
+        tokio::time::timeout(Duration::from_millis(300), c.read(&mut byte))
+            .await
+            .is_err()
     }
 
     fn free_port() -> u16 {
@@ -625,17 +644,118 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn a_second_client_is_closed_while_one_is_active() {
+    async fn two_clients_are_served_and_both_listed() {
+        let local = LocalSet::new();
+        local
+            .run_until(async {
+                let mut s = start_admitting(&local, 0, 4).await;
+                let [(_a, first), (_b, second)] = two_listed(&mut s).await;
+                assert_eq!(listed(&s), [first, second]);
+                let mut third = TcpStream::connect(s.addr).await.unwrap();
+                assert!(
+                    confirmed(&mut third).await,
+                    "logged-in connections leave room for a third from their address"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_third_connection_logging_in_from_one_address_is_closed() {
+        capture_log();
         let local = LocalSet::new();
         local
             .run_until(async {
                 let addr = start(&local).await;
                 let mut first = TcpStream::connect(addr).await.unwrap();
+                let _second = TcpStream::connect(addr).await.unwrap();
+                let mut third = TcpStream::connect(addr).await.unwrap();
+                let closed =
+                    tokio::time::timeout(Duration::from_secs(5), until_closed(&mut third)).await;
+                assert_eq!(closed.ok(), Some(0), "closed at once with nothing sent");
+                let peer = third.local_addr().unwrap();
+                assert!(logged(&format!(
+                    "{peer}: closed; 127.0.0.1 has 2 connections logging in"
+                )));
+                assert!(confirmed(&mut first).await, "the first is still served");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_connection_over_the_cap_is_closed_and_not_listed() {
+        capture_log();
+        let local = LocalSet::new();
+        local
+            .run_until(async {
+                let mut s = start_admitting(&local, 0, 1).await;
+                let mut first = TcpStream::connect(s.addr).await.unwrap();
                 assert!(confirmed(&mut first).await);
-                let mut second = TcpStream::connect(addr).await.unwrap();
+                let address = first.local_addr().unwrap().to_string();
+                listed_become(&mut s, &[address.as_str()]).await;
+                let mut second = TcpStream::connect(s.addr).await.unwrap();
                 let closed =
                     tokio::time::timeout(Duration::from_secs(5), until_closed(&mut second)).await;
                 assert_eq!(closed.ok(), Some(0), "closed at once with nothing sent");
+                assert_eq!(listed(&s), [address]);
+                let peer = second.local_addr().unwrap();
+                let line = format!("{peer}: closed; 1 viewers are connected");
+                let lines = LINES.lock().unwrap().clone();
+                assert!(lines.contains(&line), "{line:?} in {lines:?}");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn disconnect_client_ends_only_that_address() {
+        let local = LocalSet::new();
+        local
+            .run_until(async {
+                let mut s = start_admitting(&local, 0, 4).await;
+                let [(mut a, first), (mut b, second)] = two_listed(&mut s).await;
+                let (reply, replied) = oneshot::channel();
+                s.disconnect.send(Request::Client(first, reply)).unwrap();
+                assert_eq!(replied.await, Ok(true), "a client was at that address");
+                assert!(closed_soon(&mut a).await, "the first client is ended");
+                listed_become(&mut s, &[second.as_str()]).await;
+                assert!(still_open(&mut b).await, "the second client is kept");
+                let (reply, replied) = oneshot::channel();
+                s.disconnect
+                    .send(Request::Client("127.0.0.1:1".into(), reply))
+                    .unwrap();
+                assert_eq!(replied.await, Ok(false), "no client at that address");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn disconnect_ends_every_client() {
+        let local = LocalSet::new();
+        local
+            .run_until(async {
+                let mut s = start_admitting(&local, 0, 4).await;
+                let [(mut a, _), (mut b, _)] = two_listed(&mut s).await;
+                s.disconnect.send(Request::All).unwrap();
+                assert!(closed_soon(&mut a).await, "the first client is ended");
+                assert!(closed_soon(&mut b).await, "the second client is ended");
+                listed_become(&mut s, &[]).await;
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_port_change_ends_every_client() {
+        let local = LocalSet::new();
+        local
+            .run_until(async {
+                let mut s = start_admitting(&local, free_port(), 4).await;
+                let [(mut a, _), (mut b, _)] = two_listed(&mut s).await;
+                let port = free_port();
+                s.config.send_modify(|c| c.port = port);
+                listening_at(&mut s.status, &format!("127.0.0.1:{port}")).await;
+                assert!(closed_soon(&mut a).await, "the first client is ended");
+                assert!(closed_soon(&mut b).await, "the second client is ended");
+                listed_become(&mut s, &[]).await;
             })
             .await;
     }
@@ -799,14 +919,9 @@ pub(crate) mod tests {
                 (tokio::time::timeout(Duration::from_secs(5), error).await)
                     .expect("the bind error is reported")
                     .unwrap();
+                assert!(still_open(&mut client).await, "the first client is kept");
                 let mut second = TcpStream::connect(s.addr).await.unwrap();
-                let closed =
-                    tokio::time::timeout(Duration::from_secs(5), until_closed(&mut second)).await;
-                assert_eq!(
-                    closed.ok(),
-                    Some(0),
-                    "the old port still serves, and the first client is still connected"
-                );
+                assert!(confirmed(&mut second).await, "the old port still serves");
                 drop(taken);
                 s.config.send_modify(|_| {});
                 listening_at(&mut s.status, &format!("127.0.0.1:{port}")).await;
@@ -948,8 +1063,9 @@ pub(crate) mod tests {
                 steps: steps.clone(),
                 open: matches!(portal, Portal::Flag).then_some(open_rx),
             },
+            viewers: RefCell::default(),
         });
-        let (kick, kicked) = oneshot::channel();
+        let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
         let ending = async {
             match end {
                 End::ClientLeft => {
@@ -959,7 +1075,8 @@ pub(crate) mod tests {
                 End::Asked => {
                     let listed = status_rx.wait_for(|s| !s.clients.is_empty()).await;
                     let clients = listed.unwrap().clients.clone();
-                    kick.send(Kick::Asked).unwrap();
+                    let address = peer.to_string();
+                    assert!(shared.viewers.borrow_mut().kick(&address, Kick::Asked));
                     clients
                 }
             }
@@ -969,10 +1086,9 @@ pub(crate) mod tests {
                 run(
                     rdp,
                     stream,
-                    peer,
+                    Viewer { id, peer, kicked },
                     check.clone(),
                     HANDSHAKE,
-                    kicked,
                     shared.clone()
                 ),
                 ending
@@ -987,6 +1103,7 @@ pub(crate) mod tests {
             status_rx.borrow().clients.is_empty(),
             "no client is listed once it left"
         );
+        assert_eq!(shared.viewers.borrow().len(), 0, "its place is freed");
         (steps.take(), listed)
     }
 
@@ -1044,55 +1161,78 @@ pub(crate) mod tests {
             .await;
     }
 
-    #[tokio::test]
-    async fn an_accepted_link_gives_up_after_30_s_unacknowledged_and_sends_at_once() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let _client = TcpStream::connect(listener.local_addr().unwrap())
-            .await
-            .unwrap();
-        let (stream, _) = listener.accept().await.unwrap();
-        tune(&stream).unwrap();
-        let socket = socket2::SockRef::from(&stream);
-        assert_eq!(socket.tcp_user_timeout().unwrap(), Some(USER_TIMEOUT));
-        assert!(socket.tcp_nodelay().unwrap());
-        assert!(socket.keepalive().unwrap());
-        assert_eq!(socket.tcp_keepalive_time().unwrap(), KEEPALIVE_IDLE);
+    /// Accepted, but never seen logged in, as a connection that ends in the poll accepting it.
+    struct AcceptedUnseen;
+
+    #[async_trait::async_trait]
+    impl CredentialValidator for AcceptedUnseen {
+        async fn validate(
+            &self,
+            _: &ironrdp_server::Credentials,
+        ) -> Result<CredentialDecision, ironrdp_server::CredentialValidationError> {
+            Ok(CredentialDecision::Accept)
+        }
+    }
+
+    impl Login for AcceptedUnseen {
+        fn logged_in(&self) -> impl Future<Output = ()> {
+            std::future::pending()
+        }
+        fn accepted(&self) -> bool {
+            true
+        }
+        async fn settled(&self) -> bool {
+            true
+        }
     }
 
     #[tokio::test]
-    async fn listening_on_all_addresses_takes_ipv4() {
-        let listener = bind(SocketAddr::new(ALL, 0)).unwrap();
-        let addr = listener.local_addr().unwrap();
-        if addr.is_ipv6() {
-            let only_v6 = socket2::SockRef::from(&listener).only_v6().unwrap();
-            assert!(!only_v6, "IPV6_V6ONLY is off");
-        }
-        let v4 = SocketAddr::from(([127, 0, 0, 1], addr.port()));
-        let (client, accepted) = tokio::join!(TcpStream::connect(v4), listener.accept());
-        client.expect("an IPv4 client connects");
-        let (_, peer) = accepted.unwrap();
-        assert_eq!(peer.ip().to_canonical(), v4.ip());
+    async fn an_accepted_connection_that_never_arrived_does_not_leave() {
+        LocalSet::new()
+            .run_until(async {
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let client = TcpStream::connect(listener.local_addr().unwrap())
+                    .await
+                    .unwrap();
+                let (stream, peer) = listener.accept().await.unwrap();
+                drop(client);
+                let dir = tempfile::tempdir().unwrap();
+                let identity = crate::cert::load_or_create(dir.path()).unwrap();
+                let check = Arc::new(AcceptedUnseen);
+                let rdp = RdpServer::builder()
+                    .with_addr(peer)
+                    .with_tls(identity.acceptor)
+                    .with_input_handler(crate::input::Input::new(Default::default()).0)
+                    .with_display_handler(crate::Grey)
+                    .with_credential_validator(Some(check.clone()))
+                    .build();
+                let steps = Steps::default();
+                let shared = Rc::new(Shared {
+                    user: "alice".into(),
+                    status: watch::channel(Status::default()).0,
+                    leave: Locker {
+                        steps: steps.clone(),
+                        open: Some(watch::channel(false).1),
+                    },
+                    viewers: RefCell::default(),
+                });
+                let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
+                let viewer = Viewer { id, peer, kicked };
+                let ran = run(rdp, stream, viewer, check, HANDSHAKE, shared);
+                tokio::time::timeout(Duration::from_secs(10), ran)
+                    .await
+                    .expect("the closed connection ends");
+                assert!(steps.borrow().is_empty(), "no leave without an arrival");
+            })
+            .await;
     }
 
     #[tokio::test]
     async fn a_logged_in_connection_whose_task_panics_still_locks() {
         LocalSet::new()
             .run_until(async {
-                let dir = tempfile::tempdir().unwrap();
-                let _scripts = auth::tests::SCRIPTS.lock().await;
-                let helper = auth::tests::script(dir.path(), "read -r pw\necho '= 0'\n");
                 let peer = SocketAddr::from(([127, 0, 0, 1], 1));
                 for log_in in [false, true] {
-                    let check = Arc::new(PasswordCheck::new(
-                        "alice".into(),
-                        &helper,
-                        peer,
-                        Arc::default(),
-                    ));
-                    if log_in {
-                        let credentials = auth::tests::credentials("alice", "right");
-                        check.validate(&credentials).await.unwrap();
-                    }
                     let steps = Steps::default();
                     let shared = Rc::new(Shared {
                         user: "alice".into(),
@@ -1101,9 +1241,16 @@ pub(crate) mod tests {
                             steps: steps.clone(),
                             open: Some(watch::channel(false).1),
                         },
+                        viewers: RefCell::default(),
                     });
+                    let (id, _kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
                     let task = tokio::task::spawn_local(async move {
-                        let _unwound = Unwound { shared, check };
+                        let _unwound = Unwound {
+                            shared,
+                            arrived: Rc::new(Cell::new(log_in)),
+                            id,
+                            peer,
+                        };
                         std::panic::resume_unwind(Box::new("the display failed"));
                     });
                     assert!(task.await.unwrap_err().is_panic());

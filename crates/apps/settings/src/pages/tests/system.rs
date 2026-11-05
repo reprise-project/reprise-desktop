@@ -732,7 +732,7 @@ fn the_remote_desktop_page_geometry() {
     assert_eq!(rect(&s, p, "encoder"), Rect::new(38, 80, 340, 13));
     assert_eq!(
         rect(&s, p, "connection_group"),
-        Rect::new(20, 104, 358, 186)
+        Rect::new(20, 104, 358, 183)
     );
     assert_eq!(rect(&s, p, "port_label"), Rect::new(GX, 128, 114, 13));
     assert_eq!(rect(&s, p, "port"), Rect::new(150, 124, 50, 20));
@@ -757,17 +757,17 @@ fn the_remote_desktop_page_geometry() {
     assert_eq!(rect(&s, p, "remote_sound"), Rect::new(GX, 266, 13, 13));
     assert_eq!(
         rect(&s, p, "certificate_group"),
-        Rect::new(20, 300, 358, 66)
+        Rect::new(20, 297, 358, 66)
     );
     assert_eq!(
         rect(&s, p, "fingerprint_label"),
-        Rect::new(GX, 320, 334, 13)
+        Rect::new(GX, 317, 334, 13)
     );
-    assert_eq!(rect(&s, p, "fingerprint"), Rect::new(GX, 336, 218, 20));
-    assert_eq!(rect(&s, p, "regenerate"), Rect::new(256, 334, 110, 23));
-    assert_eq!(rect(&s, p, "client_group"), Rect::new(20, 376, 358, 68));
-    assert_eq!(rect(&s, p, "clients"), Rect::new(GX, 396, 253, 38));
-    assert_eq!(rect(&s, p, "disconnect"), Rect::new(291, 396, 75, 23));
+    assert_eq!(rect(&s, p, "fingerprint"), Rect::new(GX, 333, 218, 20));
+    assert_eq!(rect(&s, p, "regenerate"), Rect::new(256, 331, 110, 23));
+    assert_eq!(rect(&s, p, "client_group"), Rect::new(20, 373, 358, 102));
+    assert_eq!(rect(&s, p, "clients"), Rect::new(GX, 393, 253, 72));
+    assert_eq!(rect(&s, p, "disconnect"), Rect::new(291, 393, 75, 23));
     inside_page(&s, p);
     let page = &s.pages[p.index()];
     assert_eq!(
@@ -816,7 +816,7 @@ fn unavailable_encoders_are_greyed() {
         [true, false, false, false, true, true],
         "Automatic, Software and None"
     );
-    show_remote(&mut page, None, true, None);
+    show_remote(&mut page, None, true, None, None);
     assert_eq!(
         encoders_lit(&page),
         [true, false, false, false, false, false],
@@ -954,6 +954,130 @@ fn disconnect_greys_without_a_client() {
     assert!(lit(&silent, "port"), "the settings stay lit");
 }
 
+fn viewer(address: &str) -> reprisebus::remote::Client {
+    reprisebus::remote::Client {
+        address: address.into(),
+        ..client()
+    }
+}
+
+#[test]
+fn two_viewers_from_one_ip_are_listed_with_their_ports() {
+    let page = remote_desktop(
+        Area::MIN,
+        Some(&serving(vec![
+            viewer("192.168.1.30:51234"),
+            viewer("192.168.1.30:51240"),
+            viewer("192.168.1.31:40100"),
+        ])),
+        true,
+    );
+    let Control::ListBox { list, .. } = &page.item("clients").unwrap().control else {
+        panic!("the clients are a list box");
+    };
+    assert_eq!(
+        list.items,
+        ["192.168.1.30:51234", "192.168.1.30:51240", "192.168.1.31"]
+    );
+}
+
+fn pick_client(page: &mut Form, row: usize) {
+    let Some(Control::ListBox { list, .. }) = page.item_mut("clients").map(|i| &mut i.control)
+    else {
+        panic!("the clients are a list box");
+    };
+    assert!(list.select(row, 2));
+}
+
+fn client_row(page: &Form) -> Option<usize> {
+    match &page.item("clients").unwrap().control {
+        Control::ListBox { list, .. } => list.selected,
+        _ => panic!("the clients are a list box"),
+    }
+}
+
+#[test]
+fn the_selection_follows_its_address_when_a_row_above_goes() {
+    let three = serving(vec![
+        viewer("192.168.1.30:51234"),
+        viewer("192.168.1.30:51240"),
+        viewer("192.168.1.31:40100"),
+    ]);
+    let mut page = remote_desktop(Area::MIN, Some(&three), true);
+    assert_eq!(
+        client_row(&page),
+        Some(0),
+        "the first row unless one is picked"
+    );
+    pick_client(&mut page, 2);
+    let keep = selected_client(&page, Some(&three)).map(str::to_owned);
+    assert_eq!(keep.as_deref(), Some("192.168.1.31:40100"));
+    let left = serving(vec![
+        viewer("192.168.1.30:51240"),
+        viewer("192.168.1.31:40100"),
+    ]);
+    show_remote(&mut page, Some(&left), true, None, keep.as_deref());
+    assert_eq!(client_row(&page), Some(1), "the picked client is row 1");
+    assert_eq!(
+        selected_client(&page, Some(&left)),
+        Some("192.168.1.31:40100")
+    );
+    assert!(lit(&page, "disconnect"));
+    show_remote(
+        &mut page,
+        Some(&serving(Vec::new())),
+        true,
+        None,
+        keep.as_deref(),
+    );
+    assert_eq!(client_row(&page), None);
+    assert!(!lit(&page, "disconnect"));
+}
+
+#[test]
+fn the_selection_follows_its_address_when_a_row_comes_above() {
+    let two = serving(vec![
+        viewer("192.168.1.30:51240"),
+        viewer("192.168.1.31:40100"),
+    ]);
+    let mut page = remote_desktop(Area::MIN, Some(&two), true);
+    pick_client(&mut page, 1);
+    let keep = selected_client(&page, Some(&two)).map(str::to_owned);
+    let three = serving(vec![
+        viewer("192.168.1.30:51234"),
+        viewer("192.168.1.30:51240"),
+        viewer("192.168.1.31:40100"),
+    ]);
+    show_remote(&mut page, Some(&three), true, None, keep.as_deref());
+    assert_eq!(client_row(&page), Some(2), "the picked client is row 2");
+    assert_eq!(
+        selected_client(&page, Some(&three)),
+        Some("192.168.1.31:40100")
+    );
+}
+
+#[test]
+fn disconnect_names_the_selected_viewer() {
+    let two = serving(vec![
+        viewer("192.168.1.30:51234"),
+        viewer("192.168.1.31:40100"),
+    ]);
+    let mut page = remote_desktop(Area::MIN, Some(&two), true);
+    assert_eq!(
+        crate::remotehost::disconnect(&page, Some(&two)),
+        Some(crate::remotehost::Act::Disconnect(
+            "192.168.1.30:51234".into()
+        ))
+    );
+    pick_client(&mut page, 1);
+    assert_eq!(
+        crate::remotehost::disconnect(&page, Some(&two)),
+        Some(crate::remotehost::Act::Disconnect(
+            "192.168.1.31:40100".into()
+        ))
+    );
+}
+
 #[test]
 fn port_quality_frame_rate_and_encoder_round_trip_through_apply() {
     let mut got = crate::model::load("");
@@ -1020,7 +1144,7 @@ fn sound_on_the_remote_computer_round_trips_through_apply() {
     assert_eq!(back.pages[p.index()].checked("remote_sound"), Some(false));
 }
 
-/// The page with a client connected and the defaults in its settings, Classic at 100%.
+/// The page with one client, selected, and the defaults in its settings, Classic at 100%.
 #[test]
 fn the_remote_desktop_page_pixels() {
     if !reprisekit::text::test_tahoma() {
@@ -1040,12 +1164,13 @@ fn the_remote_desktop_page_pixels() {
         Some(&serving(vec![client()])),
         true,
         Some("192.168.1.20"),
+        None,
     );
     // The local time zone writes the time; the pins hold one.
     if let Some(Control::ListBox { list, .. }) = page.item_mut("clients").map(|i| &mut i.control) {
         list.detail = vec!["user, since 11/1/2026 12:26".into()];
     }
-    let area = Rect::new(dx + 20, dy + 44, 358, 400);
+    let area = Rect::new(dx + 20, dy + 44, 358, 431);
     let mut c = Canvas::new(area.right() as u32, area.bottom() as u32);
     c.fill_rect(c.bounds(), theme.colors.button_face);
     form::draw(&mut c, &text, &theme.paint(), page, false, px);
@@ -1056,5 +1181,8 @@ fn the_remote_desktop_page_pixels() {
         .fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
             (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
         });
-    assert_eq!(h, 837_434_193_978_331_532, "the page with a client");
+    assert_eq!(
+        h, 10_607_338_161_772_842_921,
+        "the page with its client selected"
+    );
 }

@@ -335,7 +335,8 @@ One window, 26 pages, four headings. Only one runs at a time.
     on this computer are greyed, and with the server off only Automatic is
     lit. The certificate's fingerprint is there to
     check on the connecting computer, with New Certificate... beside it,
-    and the connected computer is listed with Disconnect.
+    and every connected computer is listed; Disconnect ends the selected
+    one.
   - **Advanced:** clipboard history, screenshots, recent files, location,
     desktop water, the debug overlay, the thumbnail cache (Clear removes
     only the thumbnails Reprise kept and says how much went), thumbnails from
@@ -613,13 +614,14 @@ network time.
   password says so. systemd's services wait 25 s for the password: in Date
   and Time a prompt left open longer closes, and the program says to try
   again.
-- **Remote Desktop server.** `reprise-rdp` lets one RDP client at a time use
-  the session. It runs as the user unit `app-org.reprise.RemoteDesktop.service`,
-  which Settings > Remote Desktop enables or disables, and has no window. It
-  shares the screen and takes input through the portal like any other remote
+- **Remote Desktop server.** `reprise-rdp` lets up to `[remote_desktop]
+  max_viewers` RDP clients at once use the session. It runs as the user
+  unit `app-org.reprise.RemoteDesktop.service`, which Settings > Remote
+  Desktop enables or disables, and has no window. It shares the screen and
+  takes input through the portal like any other remote
   control tool, but the portal asks nothing while the unit is enabled. On
   the session bus it is `org.reprise.RemoteDesktop`, which Settings reads for
-  the status lines and the connected computer. Its journal lines name each
+  the status lines and the connected computers. Its journal lines name each
   client's address, logins, the encoder and why a connection ended
   (`journalctl --user -u app-org.reprise.RemoteDesktop`). See
   [features.md](features.md#remote-desktop) for connecting and

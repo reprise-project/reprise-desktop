@@ -1,5 +1,6 @@
 //! `org.reprise.RemoteDesktop` on the session bus: the server's status for Settings, and
-//! Disconnect and RegenerateCertificate. The bus connection lives on a thread of its own.
+//! Disconnect, DisconnectClient and RegenerateCertificate. The bus connection lives on a thread
+//! of its own.
 
 use tokio::sync::{mpsc, oneshot, watch};
 use zbus::connection::Builder;
@@ -12,6 +13,7 @@ pub struct Status {
     /// The listening address, or `error: ` and why it cannot listen.
     pub listening: String,
     pub clients: Vec<Client>,
+    /// The encoder the latest connection to change it uses, or the configured one with none.
     pub encoder: String,
     /// The `[remote_desktop] encoder` values that work here besides `auto`.
     pub encoders: Vec<String>,
@@ -26,13 +28,20 @@ pub struct Client {
     pub since: u64,
 }
 
+/// Which viewers a disconnect ends.
+pub enum Request {
+    All,
+    /// The viewer at this address; the reply says whether there was one.
+    Client(String, oneshot::Sender<bool>),
+}
+
 /// A request for a new certificate, answered once it is in use.
 pub type Regenerate = oneshot::Sender<Result<(), String>>;
 
 /// Serve `status` on the session bus until it is dropped, passing the bus's requests on.
 pub fn spawn(
     status: watch::Receiver<Status>,
-    disconnect: mpsc::UnboundedSender<()>,
+    disconnect: mpsc::UnboundedSender<Request>,
     regenerate: mpsc::UnboundedSender<Regenerate>,
 ) {
     let spawned = std::thread::Builder::new()
@@ -99,7 +108,7 @@ fn signalled(sent: zbus::Result<()>) {
 
 struct RemoteDesktop {
     status: watch::Receiver<Status>,
-    disconnect: mpsc::UnboundedSender<()>,
+    disconnect: mpsc::UnboundedSender<Request>,
     regenerate: mpsc::UnboundedSender<Regenerate>,
 }
 
@@ -133,9 +142,17 @@ impl RemoteDesktop {
         self.status.borrow().fingerprint.clone()
     }
 
-    /// Ends the connected client's session, which locks this one if it had logged in.
+    /// Ends every connected client's session.
     fn disconnect(&self) {
-        let _ = self.disconnect.send(());
+        let _ = self.disconnect.send(Request::All);
+    }
+
+    /// Ends the session of the client at `address`, as listed in `Clients`.
+    async fn disconnect_client(&self, address: String) -> zbus::fdo::Result<()> {
+        let (tx, rx) = oneshot::channel();
+        let none = || zbus::fdo::Error::Failed(format!("no client at {address}"));
+        let _ = self.disconnect.send(Request::Client(address.clone(), tx));
+        rx.await.unwrap_or(false).then_some(()).ok_or_else(none)
     }
 
     /// Replies once the new certificate is in use; clients connected now keep the old one.
@@ -284,7 +301,36 @@ mod tests {
             conn.call_method(Some(NAME), PATH, Some(NAME), "Disconnect", &())
                 .await
                 .unwrap();
-            assert_eq!(disconnected.recv().await, Some(()));
+            assert!(matches!(disconnected.recv().await, Some(Request::All)));
+
+            let answer = std::thread::spawn(move || {
+                for found in [true, false] {
+                    let Some(Request::Client(address, reply)) = disconnected.blocking_recv() else {
+                        panic!("a DisconnectClient request");
+                    };
+                    assert_eq!(
+                        address,
+                        if found {
+                            "192.0.2.7:50123"
+                        } else {
+                            "192.0.2.8:1"
+                        }
+                    );
+                    reply.send(found).unwrap();
+                }
+            });
+            let method = "DisconnectClient";
+            (conn.call_method(Some(NAME), PATH, Some(NAME), method, &"192.0.2.7:50123"))
+                .await
+                .unwrap();
+            let missed =
+                (conn.call_method(Some(NAME), PATH, Some(NAME), method, &"192.0.2.8:1")).await;
+            answer.join().unwrap();
+            assert!(
+                matches!(&missed, Err(zbus::Error::FDO(e))
+                    if matches!(&**e, zbus::fdo::Error::Failed(m) if m == "no client at 192.0.2.8:1")),
+                "{missed:?}"
+            );
 
             let answer = std::thread::spawn(move || {
                 let reply = regenerations.blocking_recv().unwrap();

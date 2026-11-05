@@ -40,7 +40,7 @@ pub use lists::{
 };
 pub use system::{
     CHARGE_LIMIT, REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup, power,
-    remote_desktop, show_remote, sounds, startup,
+    remote_desktop, selected_client, show_remote, sounds, startup,
 };
 
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).

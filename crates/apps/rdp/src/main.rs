@@ -12,6 +12,7 @@ mod encode;
 mod geometry;
 mod gfx;
 mod input;
+mod intake;
 mod keymap;
 mod listen;
 mod lock;
@@ -19,6 +20,7 @@ mod portal;
 mod sink;
 mod sound;
 mod stream;
+mod viewers;
 mod wlclip;
 
 use encode::choice;
@@ -88,24 +90,25 @@ fn main() -> ExitCode {
             identity,
             status.clone(),
         ));
-        let told = Arc::new(Mutex::new(display::UNSHARED));
+        let last_told = Arc::new(Mutex::new(display::UNSHARED));
         let links = display::Links {
             config: config_rx.clone(),
             status: status.clone(),
+            lives: Arc::default(),
         };
+        let intake = intake::TcpIntake::new(intake::ALL, config_rx.clone(), status.clone());
+        let logins = auth::PasswordLogins::new(user.clone());
         let server = listen::Server {
-            ip: listen::ALL,
-            config: config_rx.clone(),
             identity: identity_rx,
             user,
             status,
+            config: config_rx.clone(),
             disconnect: disconnect_rx,
-            leave: lock::LockOnLeave {
-                marker: marker.clone(),
-            },
+            leave: lock::LockOnLeave::new(marker.clone()),
         };
-        let serving = listen::serve(server, || {
-            let (input, feed) = input::Input::new();
+        let sync_owner = input::SyncOwner::default();
+        let serving = listen::serve(server, intake, logins, || {
+            let (input, feed) = input::Input::new(sync_owner.clone());
             let h264 = probed
                 .borrow()
                 .as_ref()
@@ -113,7 +116,7 @@ fn main() -> ExitCode {
             let gfx = h264.then(gfx::Gfx::default);
             let factory = gfx.as_ref().map(gfx::Gfx::factory);
             let display =
-                display::Display::new(told.clone(), feed, probed.clone(), gfx, links.clone());
+                display::Display::new(last_told.clone(), feed, probed.clone(), gfx, links.clone());
             let clipboard: Box<dyn ironrdp_server::CliprdrServerFactory> =
                 Box::new(clipboard::Factory::default());
             let sound: Box<dyn ironrdp_server::SoundServerFactory> =
@@ -122,7 +125,7 @@ fn main() -> ExitCode {
         });
         lock::until_stopped(serving, terminated(), marker.as_deref(), lock::lock()).await;
     });
-    // Dropping the connections gives a client's sound sink back before the process ends.
+    // Dropping the connections gives the shared sink's default back before the process ends.
     drop(local);
     ExitCode::SUCCESS
 }
