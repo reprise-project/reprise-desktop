@@ -1,4 +1,4 @@
-//! Sound, Notifications, Power, Startup, Remote Desktop, Privacy, Advanced and Backup.
+//! Sound, Notifications, Startup, Remote Desktop, Privacy, Advanced and Backup.
 
 use super::{
     ADD, AUDIO_DEVICES, Area, BACKUP_EXPORT, BACKUP_IMPORT, BACKUP_STATUS, DEBUG_IN_CAPTURES,
@@ -16,10 +16,11 @@ use reprisekit::controls::listbox::{self, ListBox};
 use reprisekit::raster::Rect;
 use reprisekit::trackbar::TrackBar;
 
-/// The task manager, the switches with no page of their own, the thumbnail cache and the
-/// config file itself. The terminal is picked on Default Programs.
+/// The task manager, the switches with no page of their own, the thumbnail cache, the Turn Off
+/// commands, the low disk space warning and the config file itself. The terminal is picked on
+/// Default Programs.
 pub fn advanced(a: Area) -> Form {
-    let dh = a.dh;
+    let gw = a.gw();
     let mut items = Vec::new();
     items.extend(field(
         "task_manager_label",
@@ -32,67 +33,97 @@ pub fn advanced(a: Area) -> Form {
     items.push(Item::check(
         "screenshot_save",
         X,
-        132,
+        92,
         "Save each screenshot as a file in &Pictures/Screenshots",
     ));
     items.push(Item::check(
         DEBUG_OVERLAY,
         X,
-        278 + dh,
+        114,
         "Show a &debug overlay (frame rate, render times)",
     ));
     items.push(
         Item::check(
             DEBUG_IN_CAPTURES,
             X,
-            300 + dh,
+            136,
             "Show it in screenshots and screen &sharing",
         )
         .under_check(),
     );
-    items.push(Item::check(
-        THUMBS,
-        X,
-        370 + dh,
-        "Keep &thumbnails of pictures",
-    ));
+    items.push(Item::check(THUMBS, X, 158, "Keep &thumbnails of pictures"));
     let mb = ThumbnailCache::MAX_MB;
     items.extend(
         spin(
             THUMBS_SIZE[0],
             THUMBS_MB,
             X,
-            396 + dh,
+            184,
             40,
             "Si&ze:",
             (*mb.start() as i32, *mb.end() as i32),
         )
         .map(Item::under_check),
     );
-    items.push(Item::label_at(THUMBS_SIZE[2], X + 98, 396 + dh, 20, "MB").under_check());
+    items.push(Item::label_at(THUMBS_SIZE[2], X + 98, 184, 20, "MB").under_check());
     let cleared_x = X + 184;
     items.push(Item::value_at(
         THUMBS_CLEARED,
         cleared_x,
-        370 + dh,
+        158,
         a.right() - cleared_x,
         "",
     ));
-    items.push(button(
-        THUMBS_CLEAR,
-        a.right() - BUTTON_W,
-        390 + dh,
-        "Clea&r",
-    ));
+    items.push(button(THUMBS_CLEAR, a.right() - BUTTON_W, 178, "Clea&r"));
     items.push(Item::check(
         THUMBNAILERS,
         X,
-        418 + dh,
+        206,
         "Ma&ke thumbnails of documents and videos",
     ));
+
+    // One row per command: the label, then its field 4 px above the label's row, as on the Keyboard page.
+    let command = |label_id, id, y, text| {
+        [
+            Item::label_at(label_id, GX, y, 70, text),
+            edit(id, GX + 74, y - 4, gw - 74),
+        ]
+    };
+    items.push(group(a, "turnoff_group", 227, 126, "Turn Off Computer"));
+    items.extend(command("standby_label", "standby", 249, "Stand &by:"));
+    items.extend(command("poweroff_label", "poweroff", 275, "Tur&n off:"));
+    items.extend(command("reboot_label", "reboot", 301, "Rest&art:"));
+    items.extend(command("hibernate_label", "hibernate", 327, "&Hibernate:"));
+
+    items.push(group(a, "storage_group", 361, 74, "Low Disk Space"));
+    items.extend(spin(
+        "low_space_label",
+        "low_space_percent",
+        GX,
+        385,
+        114,
+        "Warn bel&ow:",
+        (0, repriseconf::LOW_SPACE_MAX.into()),
+    ));
+    items.push(Item::label_at(
+        "low_space_units",
+        GX + 174,
+        385,
+        gw - 174,
+        "% free",
+    ));
+    items.push(Item::label_at(
+        "low_space_note",
+        GX,
+        411,
+        gw,
+        "For the disks of your home folder and /. 0 turns it off.",
+    ));
+
+    let dh = a.dh;
     items.push(Item::new(
         "note",
-        Rect::new(X, 440 + dh, a.w - BUTTON_W - 8, 2 * LINE_H),
+        Rect::new(X, 443 + dh, a.w - BUTTON_W - 8, 2 * LINE_H),
         Control::Lines(vec![
             "Keys no page sets are edited in".into(),
             "config.toml itself.".into(),
@@ -101,7 +132,7 @@ pub fn advanced(a: Area) -> Form {
     items.push(button(
         EDIT_FILE,
         a.right() - BUTTON_W,
-        440 + dh,
+        443 + dh,
         "&Edit File...",
     ));
     Form::new(items)
@@ -311,79 +342,6 @@ pub(super) const ALLOW_BOOST: &str = "allow_boost";
 
 /// The sound theme's label and combo.
 pub(super) const SOUND_CONTROLS: [&str; 2] = ["sound_theme_label", "sound_theme"];
-
-pub fn power(a: Area) -> Form {
-    let gw = a.gw();
-    // One row per command: the label, then its field 4 px above the label's row, as on the Keyboard page.
-    let command = |label_id, id, y, text| {
-        [
-            Item::label_at(label_id, GX, y, 70, text),
-            edit(id, GX + 74, y - 4, gw - 74),
-        ]
-    };
-    let mut items = vec![group(a, "turnoff_group", 44, 126, "Turn Off Computer")];
-    items.extend(command("standby_label", "standby", 66, "Stand &by:"));
-    items.extend(command("poweroff_label", "poweroff", 92, "&Turn off:"));
-    items.extend(command("reboot_label", "reboot", 118, "&Restart:"));
-    items.extend(command("hibernate_label", "hibernate", 144, "&Hibernate:"));
-
-    items.push(group(a, "idle_group", 180, 100, "Idle"));
-    // The up-down for a 114 px label sits at GX + 118 and is 50 wide, so the unit follows 6 px later.
-    let seconds = |id: &'static str, y| Item::label_at(id, GX + 174, y, 60, "seconds");
-    items.extend(spin(
-        "screen_label",
-        "screen_off_after",
-        GX,
-        204,
-        114,
-        "&Screen off after:",
-        (0, 99999),
-    ));
-    items.push(seconds("screen_units", 204));
-    items.extend(spin(
-        "blank_label",
-        "blank_after",
-        GX,
-        230,
-        114,
-        "Screen sa&ver after:",
-        (0, 99999),
-    ));
-    items.push(seconds("blank_units", 230));
-    items.push(Item::label_at(
-        "idle_note",
-        GX,
-        256,
-        gw,
-        "0 disables the step.",
-    ));
-
-    items.push(group(a, "storage_group", 288, 74, "Low Disk Space"));
-    items.extend(spin(
-        "low_space_label",
-        "low_space_percent",
-        GX,
-        312,
-        114,
-        "Warn bel&ow:",
-        (0, repriseconf::LOW_SPACE_MAX.into()),
-    ));
-    items.push(Item::label_at(
-        "low_space_units",
-        GX + 174,
-        312,
-        gw - 174,
-        "% free",
-    ));
-    items.push(Item::label_at(
-        "low_space_note",
-        GX,
-        338,
-        gw,
-        "For the disks of your home folder and /. 0 turns it off.",
-    ));
-    Form::new(items)
-}
 
 /// The Startup page: the autostart list (a [`ListView`](reprisekit::controls::listview::ListView) the host draws over
 /// the page and routes the pointer to, see `main.rs`), its two buttons, and

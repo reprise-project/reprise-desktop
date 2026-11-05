@@ -301,7 +301,6 @@ pub struct Settings {
     pub lock_wallpaper: bool,
 
     pub lock_after: i64,
-    pub screen_off_after: i64,
     pub blank_after: i64,
     pub lock_fade: i64,
     /// `[lock] away_device`, an address or object path; empty is off.
@@ -608,7 +607,6 @@ impl Settings {
             lock_wallpaper: c.wallpaper.lock_screen,
 
             lock_after: c.idle.lock_after.into(),
-            screen_off_after: c.idle.screen_off_after.into(),
             blank_after: c.idle.blank_after.into(),
             lock_fade: c.idle.lock_fade.into(),
             away_device: c.lock.away_device.clone(),

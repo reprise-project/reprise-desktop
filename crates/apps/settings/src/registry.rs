@@ -58,7 +58,6 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::MagnifierFilters => crate::magnifierpage::page(a),
         Page::Sound => pages::sound(a, src.sound_themes),
         Page::Notifications => pages::notifications(a),
-        Page::Power => pages::power(a),
         Page::Startup => pages::startup(a),
         Page::DefaultPrograms => crate::defaultspage::page(a),
         Page::Privacy => pages::privacy(a),
@@ -158,7 +157,6 @@ mod tests {
                 "Text & Keys",
                 "Magnifier & Filters",
                 "Remote Desktop",
-                "Power",
                 "Startup",
                 "Default Programs",
                 "Privacy",
@@ -244,7 +242,7 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 41, "seven headings, 28 pages, six links");
+        assert_eq!(list.rows.len(), 41, "seven headings, 27 pages, seven links");
         assert_eq!((list.total, list.inner.height), (721, 456));
         assert!(list.scrollbar.is_some(), "the rows overflow by 265 px");
         sheet.size.1 += 265;

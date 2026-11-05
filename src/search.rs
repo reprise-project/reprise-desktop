@@ -494,11 +494,7 @@ mod tests {
         );
         assert_eq!(rank("touchpad"), [Setting::Page(Page::MouseTouchpad)]);
         assert_eq!(rank("cursor"), [Setting::Page(Page::Cursor)]);
-        assert_eq!(
-            rank("power"),
-            [Setting::Page(Page::Power), Setting::App(1)],
-            "names in list order, pages first"
-        );
+        assert_eq!(rank("power"), [Setting::App(1)], "Power Options by name");
         assert_eq!(
             rank("dis"),
             [

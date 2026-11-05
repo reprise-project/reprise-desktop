@@ -63,7 +63,7 @@ use repriseapp::filedlg::Host;
 use repriseapp::oneshot::MsgBox;
 use repriseapp::openwith::ChooserInput;
 use reprisebus::instance::{self, Claim};
-use reprisefs::autostart::Entry;
+use repriseconf::pages::Entry;
 use reprisekit::access::Tree;
 use reprisekit::controls::filedlg::{self, FileDlg};
 use reprisekit::controls::hosted::Hosted;
@@ -232,8 +232,9 @@ fn read_config(path: &Path) -> (String, Option<String>) {
     (text, err)
 }
 
-/// `--page <name>` and `--focus <control id>`, in either order and with or without `=`.
-fn page_arg(mut args: impl Iterator<Item = String>) -> Option<(Page, Option<String>)> {
+/// `--page <name>` and `--focus <control id>`, in either order and with or without `=`. A name
+/// a separate program took over gives that program, unless `--focus` names a control a page holds.
+fn page_arg(mut args: impl Iterator<Item = String>) -> Option<(Entry, Option<String>)> {
     let (mut page, mut focus) = (None, None);
     while let Some(a) = args.next() {
         let (flag, value) = match a.split_once('=') {
@@ -248,22 +249,27 @@ fn page_arg(mut args: impl Iterator<Item = String>) -> Option<(Page, Option<Stri
         *slot = value.or_else(|| args.next());
     }
     let name = page?;
-    let Some(page) = Page::named(&name) else {
+    let Some(entry) = repriseconf::pages::named(&name) else {
         log::warn!("--page {name:?} names no page");
         return None;
     };
-    let page = focus.as_deref().map_or(page, |id| holding(page, id));
-    Some((page, focus))
+    let entry = match focus.as_deref() {
+        Some(id) => holding(entry, id),
+        None => entry,
+    };
+    Some((entry, focus))
 }
 
-/// `page`, or the page whose search terms hold control `id` when `page`'s don't
-/// (a control that moved pages keeps its `--focus` callers).
-fn holding(page: Page, id: &str) -> Page {
+/// `entry`, or the page whose search terms hold control `id` when `entry` is a program or a
+/// page whose terms don't (a control that moved pages keeps its `--focus` callers).
+fn holding(entry: Entry, id: &str) -> Entry {
     let holds = |p: &Page| p.terms().iter().any(|&(i, _)| i == id);
-    if holds(&page) {
-        return page;
+    if let Entry::Page(p) = entry
+        && holds(&p)
+    {
+        return entry;
     }
-    Page::all().find(holds).unwrap_or(page)
+    Page::all().find(holds).map_or(entry, Entry::Page)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -340,7 +346,7 @@ struct SettingsApp {
     /// Each page's hit for the search field's query (`searchhost`); empty while the field is.
     search_hits: Vec<Option<repriseconf::pages::Hit>>,
 
-    entries: Vec<Entry>,
+    entries: Vec<reprisefs::autostart::Entry>,
     applied_checks: Vec<bool>,
     /// What the compositor filters `OnlyShowIn` / `NotShowIn` against.
     desktops: Vec<String>,
@@ -1037,7 +1043,18 @@ pub fn main(args: Vec<std::ffi::OsString>) {
     if let Some(verb) = backup_arg(&args) {
         std::process::exit(run_backup(verb));
     }
-    let page = page_arg(args.into_iter());
+    let page = match page_arg(args.into_iter()) {
+        Some((Entry::Program(id), _)) => {
+            if linkhost::start(id) {
+                return;
+            }
+            let label = repriseconf::pages::program(id).map_or(id, |p| p.label);
+            log::warn!("--page: {label} is not installed");
+            None
+        }
+        Some((Entry::Page(p), focus)) => Some((p, focus)),
+        None => None,
+    };
     let action = page.as_ref().map(|(p, focus)| {
         let params = std::iter::once(p.slug()).chain(focus.clone()).collect();
         (PAGE_ACTION.to_string(), params)
