@@ -169,7 +169,8 @@ fn the_advanced_page_geometry() {
     assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 278, 13, 13));
     assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 300, 13, 13));
     assert_eq!(rect(&s, p, THUMBS), Rect::new(20, 370, 13, 13));
-    assert_eq!(rect(&s, p, THUMBS_MB), Rect::new(112, 392, 50, 20));
+    assert_eq!(rect(&s, p, THUMBS_MB), Rect::new(82, 392, 50, 20));
+    assert_eq!(rect(&s, p, THUMBS_SIZE[2]), Rect::new(136, 396, 20, 13));
     assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(303, 390, 75, 23));
     assert_eq!(rect(&s, p, THUMBNAILERS), Rect::new(20, 418, 13, 13));
     assert_eq!(rect(&s, p, "note"), Rect::new(20, 440, 275, 26));

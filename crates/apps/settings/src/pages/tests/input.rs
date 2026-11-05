@@ -222,7 +222,15 @@ fn the_keyboard_page_geometry() {
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "repeat_delay"),
-        Rect::new(250, 218, 50, 20)
+        Rect::new(272, 218, 50, 20)
+    );
+    assert_eq!(
+        rect(&s, Page::Keyboard, "rate_units"),
+        Rect::new(172, 222, 50, 13)
+    );
+    assert_eq!(
+        rect(&s, Page::Keyboard, "delay_units"),
+        Rect::new(328, 222, 20, 13)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "shortcuts_group"),
@@ -379,7 +387,11 @@ fn the_mouse_page_geometry() {
     );
     assert_eq!(
         rect(&s, Page::Mouse, "double_click_ms"),
-        Rect::new(166, 64, 50, 20)
+        Rect::new(146, 64, 50, 20)
+    );
+    assert_eq!(
+        rect(&s, Page::Mouse, "double_click_units"),
+        Rect::new(200, 68, 20, 13)
     );
     assert_eq!(
         rect(&s, Page::Mouse, "mouse_speed_label"),

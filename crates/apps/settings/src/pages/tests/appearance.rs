@@ -792,6 +792,10 @@ fn the_fonts_and_icons_page_geometry() {
         Rect::new(80, 104, 50, 20)
     );
     assert_eq!(
+        rect(&s, Page::FontsAndIcons, "font_size_units"),
+        Rect::new(136, 108, 20, 13)
+    );
+    assert_eq!(
         rect(&s, Page::FontsAndIcons, "font_antialias"),
         Rect::new(192, 108, 13, 13)
     );
@@ -810,6 +814,10 @@ fn the_fonts_and_icons_page_geometry() {
     assert_eq!(
         rect(&s, Page::FontsAndIcons, "taskbar_height"),
         Rect::new(146, 274, 50, 20)
+    );
+    assert_eq!(
+        rect(&s, Page::FontsAndIcons, "taskbar_units"),
+        Rect::new(202, 278, 20, 13)
     );
     assert_eq!(
         rect(&s, Page::FontsAndIcons, "toolkits_group"),
@@ -849,19 +857,23 @@ fn the_effects_page_geometry() {
     let p = Page::Effects;
     assert_eq!(p.label(), "Effects");
     assert_eq!(rect(&s, p, "window_animation"), Rect::new(GX, 66, 13, 13));
-    assert_eq!(rect(&s, p, "open_label"), Rect::new(50, 92, 70, 13));
-    assert_eq!(rect(&s, p, "window_open_ms"), Rect::new(124, 88, 50, 20));
-    assert_eq!(rect(&s, p, "close_label"), Rect::new(190, 92, 70, 13));
-    assert_eq!(rect(&s, p, "window_close_ms"), Rect::new(264, 88, 50, 20));
+    assert_eq!(rect(&s, p, "open_label"), Rect::new(50, 92, 40, 13));
+    assert_eq!(rect(&s, p, "window_open_ms"), Rect::new(94, 88, 50, 20));
+    assert_eq!(rect(&s, p, "close_label"), Rect::new(190, 92, 40, 13));
+    assert_eq!(rect(&s, p, "window_close_ms"), Rect::new(234, 88, 50, 20));
+    assert_eq!(rect(&s, p, "close_units"), Rect::new(288, 92, 20, 13));
     assert_eq!(rect(&s, p, "hover_fade"), Rect::new(GX, 122, 13, 13));
-    assert_eq!(rect(&s, p, "in_label"), Rect::new(50, 148, 70, 13));
-    assert_eq!(rect(&s, p, "hover_in_ms"), Rect::new(124, 144, 50, 20));
-    assert_eq!(rect(&s, p, "out_label"), Rect::new(190, 148, 70, 13));
-    assert_eq!(rect(&s, p, "hover_out_ms"), Rect::new(264, 144, 50, 20));
+    assert_eq!(rect(&s, p, "in_label"), Rect::new(50, 148, 40, 13));
+    assert_eq!(rect(&s, p, "hover_in_ms"), Rect::new(94, 144, 50, 20));
+    assert_eq!(rect(&s, p, "in_units"), Rect::new(148, 148, 20, 13));
+    assert_eq!(rect(&s, p, "out_label"), Rect::new(190, 148, 40, 13));
+    assert_eq!(rect(&s, p, "hover_out_ms"), Rect::new(234, 144, 50, 20));
+    assert_eq!(rect(&s, p, "out_units"), Rect::new(288, 148, 20, 13));
     assert_eq!(rect(&s, p, "session_fade"), Rect::new(GX, 178, 13, 13));
     assert_eq!(rect(&s, p, "menus_group"), Rect::new(20, 212, 358, 74));
     assert_eq!(rect(&s, p, "menu_shadow"), Rect::new(96, 230, 50, 20));
     assert_eq!(rect(&s, p, "menu_hover_ms"), Rect::new(246, 230, 50, 20));
+    assert_eq!(rect(&s, p, "menu_hover_units"), Rect::new(300, 234, 20, 13));
     assert_eq!(rect(&s, p, "menu_fade_ms"), Rect::new(96, 256, 50, 20));
     assert_eq!(rect(&s, p, "menu_animation"), Rect::new(246, 256, 110, 21));
     assert_eq!(rect(&s, p, "taskbar_group"), Rect::new(20, 296, 358, 48));
@@ -869,6 +881,24 @@ fn the_effects_page_geometry() {
     for id in ["notification_sound", "sound_theme"] {
         assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Sounds");
     }
+    inside_page(&s, p);
+}
+
+#[test]
+fn effects_put_units_after_their_fields() {
+    let s = built();
+    let p = Page::Effects;
+    assert_eq!(lines(&s, p, "open_label"), ["&Open:"]);
+    assert_eq!(rect(&s, p, "open_units"), Rect::new(GX + 116, 92, 20, 13));
+    assert_eq!(
+        rect(&s, p, "shadow_units"),
+        Rect::new(GX + 118, 234, 20, 13)
+    );
+    assert_eq!(lines(&s, p, "shadow_units"), ["px"]);
+    assert_eq!(
+        rect(&s, p, "menu_fade_units"),
+        Rect::new(GX + 118, 260, 20, 13)
+    );
     inside_page(&s, p);
 }
 

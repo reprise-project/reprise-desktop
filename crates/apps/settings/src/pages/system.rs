@@ -112,12 +112,13 @@ pub fn advanced(a: Area) -> Form {
             THUMBS_MB,
             X,
             396 + dh,
-            70,
-            "Si&ze in MB:",
+            40,
+            "Si&ze:",
             (*mb.start() as i32, *mb.end() as i32),
         )
         .map(Item::under_check),
     );
+    items.push(Item::label_at(THUMBS_SIZE[2], X + 98, 396 + dh, 20, "MB").under_check());
     let cleared_x = X + 184;
     items.push(Item::value_at(
         THUMBS_CLEARED,
