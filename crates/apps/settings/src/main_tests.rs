@@ -2007,6 +2007,39 @@ fn a_found_page_clicked_in_the_list_focuses_the_control_it_found() {
     }
 }
 
+#[test]
+fn a_page_handed_over_clears_a_query_that_hides_it() {
+    let mut a = app("handoff-hidden");
+    let query = |a: &mut SettingsApp, q: &str| {
+        a.sheet.search.clear();
+        a.sheet
+            .search
+            .key(reprisekit::textedit::EditKey::Insert(q.into()));
+        a.sheet_event(propsheet::Event::Search);
+    };
+    query(&mut a, "wifi");
+    assert!(
+        !a.sheet
+            .list_mut()
+            .unwrap()
+            .shows(pagelist::Pick::Page(Page::MouseTouchpad.index()))
+    );
+    assert!(a.request(&page_request("mouse-and-touchpad")));
+    assert_eq!(registry::open(&a.sheet), Page::MouseTouchpad);
+    assert_eq!(a.sheet.search.text(), "");
+    assert!(a.search_hits.is_empty());
+    assert_eq!(a.sheet.list_mut().unwrap().filter(), None);
+
+    query(&mut a, "mouse");
+    assert!(a.request(&page_request("text-and-keys")));
+    assert_eq!(
+        a.sheet.search.text(),
+        "mouse",
+        "a query showing the page stays"
+    );
+    assert!(a.sheet.list_mut().unwrap().filter().is_some());
+}
+
 /// The keys that step the list keep the keyboard on it, so the next row is a key away.
 #[test]
 fn down_and_tab_from_the_field_open_a_found_page_without_focusing_its_control() {
