@@ -1,6 +1,8 @@
 //! The Settings sheet's pages and separate settings programs, with the search
 //! words for each. [`GROUPS`] fixes the pages' order.
 
+mod terms;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     Appearance,
@@ -267,6 +269,11 @@ impl Page {
             ],
             Page::Backup => &["export", "import", "back up", "transfer", "move settings"],
         }
+    }
+
+    /// Each labelled control on the page as (control id, label as shown), for search and --focus.
+    pub fn terms(self) -> &'static [(&'static str, &'static str)] {
+        terms::of(self)
     }
 
     /// Its `--page` name: the label in lower case, "&" spelled "and",
