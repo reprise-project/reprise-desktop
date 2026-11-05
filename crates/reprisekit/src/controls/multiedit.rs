@@ -13,6 +13,9 @@ use crate::textedit::{
 };
 use accesskit::{NodeId, Role};
 use std::cell::RefCell;
+pub use wrap::{Row, breaks};
+
+mod wrap;
 
 /// A place in the text: line index and byte offset on that line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -197,6 +200,8 @@ pub struct MultiEdit {
     edits: u64,
     /// Per-line widths for `widest_px`; an edit forgets only the lines it touched.
     widths: RefCell<Widths>,
+    /// Boxed, so an enum holding a `MultiEdit` stays small.
+    wraps: RefCell<Box<wrap::Wraps>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -238,6 +243,7 @@ impl MultiEdit {
             undo: Undo::default(),
             edits: 0,
             widths: RefCell::default(),
+            wraps: RefCell::default(),
         }
     }
 
@@ -359,6 +365,7 @@ impl MultiEdit {
     fn replaced_lines(&mut self) {
         self.edits += 1;
         *self.widths.get_mut() = Widths::default();
+        self.wraps.get_mut().clear();
     }
 
     fn forget_widths(&mut self, at: usize, old: usize, new: usize) {
@@ -367,6 +374,7 @@ impl MultiEdit {
             w.px.splice(at..at + old, std::iter::repeat_n(None, new));
         }
         w.widest = None;
+        self.wraps.get_mut().forget(at, old, new);
     }
 
     fn checkpoint(&mut self, kind: Edit) {
@@ -631,13 +639,21 @@ impl MultiEdit {
         };
     }
 
-    fn vertical(&mut self, line: usize, select: bool, text: &TextRenderer, m: &Metrics) {
+    /// Up or Down to row `to`, aiming for the goal x.
+    fn vertical(&mut self, to: usize, select: bool, text: &TextRenderer, m: &Metrics) {
+        let wrap = self.wrap_width(m);
         let goal = self
             .goal_x
-            .unwrap_or_else(|| x_of(text, m, self, self.caret));
-        let line = line.min(self.lines.len() - 1);
-        let col = col_at(text, m, self, line, goal);
-        self.move_to(Pos { line, col }, select);
+            .unwrap_or_else(|| row_x(text, m, self, wrap, self.caret));
+        let row = self.row(text, m, wrap, to);
+        let col = row_col(text, m, self, row, goal);
+        self.move_to(
+            Pos {
+                line: row.line,
+                col,
+            },
+            select,
+        );
         self.goal_x = Some(goal);
     }
 
@@ -768,30 +784,44 @@ impl MultiEdit {
         changed
     }
 
+    /// Take `key`; Up, Down, Home and End go by the rows of the last layout when wrapping.
     pub fn key(&mut self, key: MultiKey, text: &TextRenderer, m: &Metrics) -> bool {
         let before = (self.edits, self.caret, self.anchor, self.goal_x);
         let mut keep_goal = false;
+        let wrap = self.wrap_width(m);
+        let row = self.row_of(text, m, wrap, self.caret);
         match key {
+            MultiKey::Edit(EditKey::Home { select }) => {
+                let r = self.row(text, m, wrap, row);
+                self.move_to(
+                    Pos {
+                        line: r.line,
+                        col: r.start,
+                    },
+                    select,
+                );
+            }
+            MultiKey::Edit(EditKey::End { select }) => {
+                let r = self.row(text, m, wrap, row);
+                let col = r.end_col(&self.lines[r.line]);
+                self.move_to(Pos { line: r.line, col }, select);
+            }
             MultiKey::Edit(k) => self.apply_edit(k),
             MultiKey::Up { select } => {
                 keep_goal = true;
-                let line = self.caret.line.saturating_sub(1);
-                self.vertical(line, select, text, m);
+                self.vertical(row.saturating_sub(1), select, text, m);
             }
             MultiKey::Down { select } => {
                 keep_goal = true;
-                let line = self.caret.line + 1;
-                self.vertical(line, select, text, m);
+                self.vertical(row + 1, select, text, m);
             }
             MultiKey::PageUp { select, rows } => {
                 keep_goal = true;
-                let line = self.caret.line.saturating_sub(rows.max(1));
-                self.vertical(line, select, text, m);
+                self.vertical(row.saturating_sub(rows.max(1)), select, text, m);
             }
             MultiKey::PageDown { select, rows } => {
                 keep_goal = true;
-                let line = self.caret.line + rows.max(1);
-                self.vertical(line, select, text, m);
+                self.vertical(row + rows.max(1), select, text, m);
             }
             MultiKey::DocHome { select } => self.move_to(Pos::default(), select),
             MultiKey::DocEnd { select } => {
@@ -839,6 +869,9 @@ pub struct Metrics {
     /// No sunken edge: the text box fills its whole rect in `cs.window`, for a host that draws
     /// its own surround (a sticky note).
     pub flat: bool,
+    /// Soft-wrap lines at the box's width ([`breaks`]): no horizontal scrollbar, and the view
+    /// scrolls by rows.
+    pub wrap: bool,
 }
 
 impl Default for Metrics {
@@ -852,6 +885,7 @@ impl Default for Metrics {
             bar: crate::controls::metrics::ControlMetrics::CLASSIC.scroll,
             thumb_min: crate::controls::metrics::ControlMetrics::CLASSIC.thumb_min,
             flat: false,
+            wrap: false,
         }
     }
 }
@@ -924,8 +958,8 @@ fn raw_col(line: &str, ecol: usize, tab_cols: usize) -> usize {
     line.len()
 }
 
-/// The scroll state of a view onto a `MultiEdit`: the first line shown and the horizontal offset in
-/// px.
+/// The scroll state of a view onto a `MultiEdit`: the first row shown (a line unless wrapping) and
+/// the horizontal offset in px.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct View {
     pub top: usize,
@@ -935,19 +969,43 @@ pub struct View {
     pub bars: Pointer<(Axis, ScrollHit)>,
 }
 
-/// The x of `p` in px from the text's origin.
-pub fn x_of(text: &TextRenderer, m: &Metrics, edit: &MultiEdit, p: Pos) -> i32 {
-    let line = &edit.lines[p.line.min(edit.lines.len() - 1)];
-    let e = expand(line, m.tab_cols);
-    let ecol = expanded_col(line, p.col, m.tab_cols);
-    text.measure(&e[..ecol.min(e.len())], false, m.font_px)
+/// The x of `p` in px from the start of the row `lay` draws it on.
+pub fn x_of(text: &TextRenderer, m: &Metrics, edit: &MultiEdit, lay: &Layout, p: Pos) -> i32 {
+    row_x(text, m, edit, lay.wrap, p)
 }
 
-/// The column on `line` nearest `x` px from the text's origin.
-pub fn col_at(text: &TextRenderer, m: &Metrics, edit: &MultiEdit, line: usize, x: i32) -> usize {
-    let raw = &edit.lines[line.min(edit.lines.len() - 1)];
+fn row_x(text: &TextRenderer, m: &Metrics, edit: &MultiEdit, wrap: Option<i32>, p: Pos) -> i32 {
+    let p = edit.clamp(p);
+    let row = edit.row(text, m, wrap, edit.row_of(text, m, wrap, p));
+    let raw = &edit.lines[row.line][row.start..p.col.max(row.start)];
+    text.measure(&expand(raw, m.tab_cols), false, m.font_px)
+}
+
+/// The column on `row` nearest `x` px from the row's start.
+fn row_col(text: &TextRenderer, m: &Metrics, edit: &MultiEdit, row: Row, x: i32) -> usize {
+    let line = &edit.lines[row.line];
+    let raw = &line[row.start..row.end];
     let e = expand(raw, m.tab_cols);
-    raw_col(raw, index_at(text, &e, x, m.font_px), m.tab_cols)
+    let col = row.start + raw_col(raw, index_at(text, &e, x, m.font_px), m.tab_cols);
+    col.min(row.end_col(line))
+}
+
+/// Below the caret's row, inside the box: where Shift+F10 and the Menu key open a context menu.
+pub fn caret_point(
+    text: &TextRenderer,
+    m: &Metrics,
+    edit: &MultiEdit,
+    lay: &Layout,
+    view: View,
+) -> (i32, i32) {
+    let x = x_of(text, m, edit, lay, edit.caret) - view.left;
+    let row = edit.row_of(text, m, lay.wrap, edit.caret);
+    let below = row.saturating_sub(view.top) as i32 + 1;
+    let i = lay.inner;
+    (
+        (i.x + 1 + x).clamp(i.x, i.right()),
+        (i.y + 1 + below * m.line_h).clamp(i.y, i.bottom()),
+    )
 }
 
 /// The widest line's width in px at `m.font_px`.
@@ -985,21 +1043,48 @@ pub struct Layout {
     pub inner: Rect,
     /// The rows of text that fit.
     pub rows: usize,
+    /// The rows the text takes in all: its lines, or the rows they wrap into.
+    pub total: usize,
+    /// With [`Metrics::wrap`], the width in px rows wrap at: the text's room less the caret's.
+    pub wrap: Option<i32>,
     pub vscroll: Option<Rect>,
     pub hscroll: Option<Rect>,
 }
 
 /// Lay the control out in `r` at scale `s` for `edit`'s size: a vertical scrollbar when the lines
 /// outgrow the box and a horizontal one when the widest line does (both, always, with
-/// `m.bars_always`).
+/// `m.bars_always`). With `m.wrap` there is no horizontal one.
 pub fn layout(text: &TextRenderer, m: &Metrics, edit: &MultiEdit, r: Rect, s: i32) -> Layout {
     let inner = if m.flat { r } else { r.inset(2 * s) };
     let line_h = m.line_h.max(1) * s;
-    let widest = widest_px(text, m, edit);
     let mut rows = (inner.height / line_h).max(1) as usize;
     let mut box_w = inner.width;
     let mut box_h = inner.height;
     let sb = m.bar * s;
+    if m.wrap {
+        let width = |box_w: i32| box_w - 3 * s;
+        let mut vscroll = m.bars_always || m.vbar_always;
+        if vscroll {
+            box_w -= sb;
+        }
+        let mut total = edit.row_count(text, m, Some(width(box_w)));
+        if !vscroll && total > rows {
+            vscroll = true;
+            box_w -= sb;
+            total = edit.row_count(text, m, Some(width(box_w)));
+        }
+        edit.wraps.borrow_mut().laid = Some(width(box_w));
+        return Layout {
+            frame: r,
+            inner: Rect::new(inner.x, inner.y, box_w, box_h),
+            rows,
+            total,
+            wrap: Some(width(box_w)),
+            vscroll: vscroll.then(|| Rect::new(inner.x + box_w, inner.y, sb, box_h)),
+            hscroll: None,
+        };
+    }
+    let widest = widest_px(text, m, edit);
     let mut vscroll = m.bars_always || m.vbar_always || edit.lines.len() > rows;
     let mut hscroll = m.bars_always || widest + 2 * s > box_w;
     if vscroll {
@@ -1019,6 +1104,8 @@ pub fn layout(text: &TextRenderer, m: &Metrics, edit: &MultiEdit, r: Rect, s: i3
         frame: r,
         inner: inner_box,
         rows,
+        total: edit.lines.len(),
+        wrap: None,
         vscroll: vscroll.then(|| Rect::new(inner.x + box_w, inner.y, sb, box_h)),
         hscroll: hscroll.then(|| Rect::new(inner.x, inner.y + box_h, box_w, sb)),
     }
@@ -1053,8 +1140,8 @@ impl ScrollBar {
     }
 }
 
-fn vextent(edit: &MultiEdit, lay: &Layout) -> (usize, usize) {
-    (lay.rows, edit.lines.len())
+fn vextent(text: &TextRenderer, m: &Metrics, edit: &MultiEdit, lay: &Layout) -> (usize, usize) {
+    (lay.rows, edit.row_count(text, m, lay.wrap))
 }
 
 fn hextent(
@@ -1064,8 +1151,12 @@ fn hextent(
     lay: &Layout,
     s: i32,
 ) -> (usize, usize) {
+    let visible = lay.inner.width.max(1) as usize;
+    if lay.wrap.is_some() {
+        return (visible, visible);
+    }
     let total = widest_px(text, m, edit) + 2 * s;
-    (lay.inner.width.max(1) as usize, total.max(1) as usize)
+    (visible, total.max(1) as usize)
 }
 
 /// The parts of one bar in logical coordinates, if the layout has it.
@@ -1079,7 +1170,7 @@ pub fn bar_parts(
 ) -> Option<ScrollParts> {
     match bar {
         ScrollBar::Vertical => {
-            let (visible, total) = vextent(edit, lay);
+            let (visible, total) = vextent(text, m, edit, lay);
             Some(scrollbar_parts(
                 lay.vscroll?,
                 1,
@@ -1173,7 +1264,7 @@ pub fn bar_span(
 ) -> Option<BarSpan> {
     let parts = bar_parts(text, m, edit, lay, view, bar)?;
     let (visible, total) = match bar {
-        ScrollBar::Vertical => vextent(edit, lay),
+        ScrollBar::Vertical => vextent(text, m, edit, lay),
         ScrollBar::Horizontal => hextent(text, m, edit, lay, 1),
     };
     Some(BarSpan {
@@ -1222,7 +1313,7 @@ impl View {
         let mut v = self;
         match bar {
             ScrollBar::Vertical => {
-                v.scroll_lines(by as i64, edit, lay.rows);
+                v.scroll_lines(by as i64, lay);
             }
             ScrollBar::Horizontal => {
                 let max = (widest_px(text, m, edit) + 2 - lay.inner.width).max(0);
@@ -1232,10 +1323,10 @@ impl View {
         v
     }
 
-    /// Scroll `by` lines (down positive), held so the last line stays at the bottom of a box `rows`
-    /// lines tall; the caret stays put, as under the wheel.
-    pub fn scroll_lines(&mut self, by: i64, edit: &MultiEdit, rows: usize) -> bool {
-        let max = edit.lines.len().saturating_sub(rows) as i64;
+    /// Scroll `by` rows (down positive), held so the last row stays at the bottom of the box; the
+    /// caret stays put, as under the wheel.
+    pub fn scroll_lines(&mut self, by: i64, lay: &Layout) -> bool {
+        let max = lay.total.saturating_sub(lay.rows) as i64;
         let to = (self.top as i64 + by).clamp(0, max) as usize;
         let moved = to != self.top;
         self.top = to;
@@ -1251,13 +1342,17 @@ impl View {
         lay: &Layout,
         s: i32,
     ) {
-        let caret = edit.caret;
-        if caret.line < self.top {
-            self.top = caret.line;
-        } else if caret.line >= self.top + lay.rows {
-            self.top = caret.line + 1 - lay.rows;
+        let row = edit.row_of(text, m, lay.wrap, edit.caret);
+        if row < self.top {
+            self.top = row;
+        } else if row >= self.top + lay.rows {
+            self.top = row + 1 - lay.rows;
         }
-        let x = x_of(text, m, edit, caret);
+        if lay.wrap.is_some() {
+            self.left = 0;
+            return;
+        }
+        let x = x_of(text, m, edit, lay, edit.caret);
         let w = lay.inner.width - 2 * s;
         if x < self.left {
             self.left = x;
@@ -1297,11 +1392,11 @@ pub fn pos_at(
     s: i32,
 ) -> Pos {
     let row = ((y - lay.inner.y - s) / (m.line_h.max(1) * s)).max(0) as usize;
-    let line = (view.top + row).min(edit.lines.len() - 1);
+    let row = edit.row(text, m, lay.wrap, view.top + row);
     let tx = x - lay.inner.x - s + view.left;
     Pos {
-        line,
-        col: col_at(text, m, edit, line, tx),
+        line: row.line,
+        col: row_col(text, m, edit, row, tx),
     }
 }
 
@@ -1325,7 +1420,7 @@ pub fn drag_scroll(
     }
     let line_h = m.line_h.max(1) * s;
     let mut v = view;
-    let (rows, lines) = vextent(edit, lay);
+    let (rows, lines) = vextent(text, m, edit, lay);
     if y < i.y + s + line_h {
         v.top = v.top.saturating_sub(1);
     } else if y >= i.y + s + (rows as i32 - 1) * line_h && v.top + rows < lines {
@@ -1414,34 +1509,48 @@ pub fn draw(
     let x0 = inner.x + s - view.left;
     let clip = text_clip(inner, s);
     let mut caret_bar = None;
-    for row in 0..lay.rows {
-        let li = view.top + row;
-        let Some(line) = edit.lines.get(li) else {
+    let total = edit.row_count(text, m, lay.wrap);
+    let caret_row = edit.row_of(text, m, lay.wrap, edit.caret);
+    for i in 0..lay.rows {
+        let ri = view.top + i;
+        if ri >= total {
             break;
-        };
-        let y = inner.y + s + row as i32 * line_h;
+        }
+        let row = edit.row(text, m, lay.wrap, ri);
+        let li = row.line;
+        let line = &edit.lines[li][row.start..row.end];
+        let y = inner.y + s + i as i32 * line_h;
         let composed = preedit
             .as_ref()
-            .filter(|_| li == edit.caret.line)
-            .map(|p| p.splice(line, edit.caret.col));
-        let line = composed.as_ref().map_or(line.as_str(), |(t, ..)| t);
+            .filter(|_| ri == caret_row)
+            .map(|p| p.splice(line, edit.caret.col - row.start));
+        let line = composed.as_ref().map_or(line, |(t, ..)| t);
         let shown = expand(line, m.tab_cols);
         let width = text.measure(&shown, false, m.font_px);
         let r = Rect::new(x0, y, width.max(1), line_h);
-        if a != b && li >= a.line && li <= b.line {
+        let row_from = Pos {
+            line: li,
+            col: row.start,
+        };
+        let row_to = Pos {
+            line: li,
+            col: row.end,
+        };
+        if a != b && a <= row_to && b >= row_from {
+            let local = |p: Pos| p.col.clamp(row.start, row.end) - row.start;
             let sa = if li == a.line {
-                expanded_col(line, a.col, m.tab_cols)
+                expanded_col(line, local(a), m.tab_cols)
             } else {
                 0
             };
             let sb = if li == b.line {
-                expanded_col(line, b.col, m.tab_cols)
+                expanded_col(line, local(b), m.tab_cols)
             } else {
                 shown.len()
             };
             let xa = x0 + text.measure(&shown[..sa], false, m.font_px);
             let mut xb = x0 + text.measure(&shown[..sb], false, m.font_px);
-            if li < b.line {
+            if row.last && li < b.line {
                 xb += text.measure(" ", false, m.font_px);
             }
             let run = Rect::new(xa, y, (xb - xa).max(0), line_h);
@@ -1490,10 +1599,10 @@ pub fn draw(
             let ul = Rect::new(xa, base + s, xb - xa, s);
             c.fill_rect(ul.intersect(&clip), cs.button_text);
         }
-        if li == edit.caret.line {
+        if ri == caret_row {
             let (col, bar_on) = match (&composed, &preedit) {
                 (Some((_, _, at)), Some(p)) => (*at, p.cursor.is_some()),
-                _ => (edit.caret.col, true),
+                _ => (edit.caret.col - row.start, true),
             };
             let cx = col_x(col);
             if caret.shown() && bar_on && cx >= clip.x && cx < clip.right() {
@@ -1505,12 +1614,12 @@ pub fn draw(
     if caret.focused() {
         // A caret scrolled out of the box reports the nearest row, so the candidates stay by it.
         let bar = caret_bar.unwrap_or_else(|| {
-            let y = if edit.caret.line < view.top {
+            let y = if caret_row < view.top {
                 clip.y
             } else {
                 clip.bottom() - line_h
             };
-            let cx = x0 + x_of(text, m, edit, edit.caret);
+            let cx = x0 + x_of(text, m, edit, lay, edit.caret);
             Rect::new(cx.clamp(clip.x, clip.right() - s), y, s, line_h)
         });
         c.report_spot(edit.spot(lay.frame, bar));
@@ -1519,7 +1628,7 @@ pub fn draw(
         }
     }
     if let Some(sb) = lay.vscroll {
-        let (visible, total) = vextent(edit, lay);
+        let (visible, total) = vextent(text, m, edit, lay);
         let lit = axis_lit(view.bars.lit(), Axis::Vertical);
         draw_scrollbar(c, p, sb, view.top, visible, total, lit);
     }
@@ -1547,13 +1656,14 @@ pub fn draw_drop_point(
     at: Pos,
 ) {
     let s = p.s;
-    let Some(row) = at.line.checked_sub(view.top).filter(|r| *r < lay.rows) else {
+    let at_row = edit.row_of(text, m, lay.wrap, at);
+    let Some(row) = at_row.checked_sub(view.top).filter(|r| *r < lay.rows) else {
         return;
     };
     let inner = lay.inner;
     let clip = text_clip(inner, s);
     let line_h = m.line_h * s;
-    let x = inner.x + s - view.left + x_of(text, m, edit, at);
+    let x = inner.x + s - view.left + x_of(text, m, edit, lay, at);
     let y = inner.y + s + row as i32 * line_h;
     c.fill_rect(
         Rect::new(x, y, s, line_h).intersect(&clip),
@@ -1564,9 +1674,10 @@ pub fn draw_drop_point(
 /// A document past this many bytes gives its node only the text in view as its value.
 const FULL_VALUE_MAX: usize = 1 << 20;
 
-/// The edit's `access` part: a multi-line text input, one text run per line in view and for the
-/// caret's and the anchor's lines (each but the document's last ending in its line break) at the
-/// rect the line is drawn in, with the caret, the selection and the scroll position in px.
+/// The edit's `access` part: a multi-line text input, one text run per row in view and for the
+/// caret's and the anchor's rows (each line's last but the document's last ending in its line
+/// break) at the rect the row is drawn in, with the caret, the selection and the scroll position
+/// in px.
 #[allow(clippy::too_many_arguments)]
 pub fn access(
     edit: &MultiEdit,
@@ -1579,49 +1690,61 @@ pub fn access(
     key: impl std::hash::Hash,
 ) -> NodeId {
     let count = edit.lines.len();
-    let shown = view.top.min(count)..(view.top + lay.rows).min(count);
+    let total = edit.row_count(text, m, lay.wrap);
+    let shown = view.top.min(total)..(view.top + lay.rows).min(total);
     let mut n = access::node(Role::MultilineTextInput, lay.frame);
     access::focusable(&mut n, true);
     let line_h = f64::from(m.line_h);
     n.set_scroll_y(view.top as f64 * line_h);
     n.set_scroll_y_min(0.0);
-    n.set_scroll_y_max(count.saturating_sub(lay.rows) as f64 * line_h);
+    n.set_scroll_y_max(total.saturating_sub(lay.rows) as f64 * line_h);
     let bytes = edit.lines.iter().map(|l| l.len() + 1).sum::<usize>();
     n.set_value(if bytes <= FULL_VALUE_MAX {
         edit.text()
+    } else if shown.is_empty() {
+        String::new()
     } else {
-        edit.lines[shown.clone()].join("\n")
+        let lines = edit.row(text, m, lay.wrap, shown.start).line
+            ..=edit.row(text, m, lay.wrap, shown.end - 1).line;
+        edit.lines[lines].join("\n")
     });
     let id = tree.push(parent, key, n);
     let x0 = lay.inner.x + 1 - view.left;
     let last = count.saturating_sub(1);
-    let wanted = |i: usize| shown.contains(&i) || i == edit.caret.line || i == edit.anchor.line;
-    let end = shown.end.max(edit.caret.line + 1).max(edit.anchor.line + 1);
-    let mut starts = Vec::with_capacity(end.min(count));
-    let mut lines = Vec::with_capacity(shown.len() + 2);
-    let mut at = 0;
-    for (i, line) in edit.lines.iter().enumerate().take(end) {
-        starts.push(at);
-        if wanted(i) {
-            let y = lay.inner.y + 1 + (i as i32 - view.top as i32) * m.line_h;
-            let w = x_of(
-                text,
-                m,
-                edit,
-                Pos {
-                    line: i,
-                    col: line.len(),
-                },
-            );
-            lines.push(access::Line {
-                text: line,
-                start: at,
-                rect: Rect::new(x0, y, w.max(1), m.line_h),
-                hard_break: i < last,
-            });
+    let mut wanted: Vec<usize> = shown.clone().collect();
+    for p in [edit.caret, edit.anchor] {
+        let r = edit.row_of(text, m, lay.wrap, p);
+        if !shown.contains(&r) {
+            wanted.push(r);
         }
+    }
+    wanted.sort_unstable();
+    wanted.dedup();
+    let end = edit.caret.line.max(edit.anchor.line) + 1;
+    let end = wanted
+        .last()
+        .map_or(end, |&r| end.max(edit.row(text, m, lay.wrap, r).line + 1));
+    let mut starts = Vec::with_capacity(end.min(count));
+    let mut at = 0;
+    for line in edit.lines.iter().take(end) {
+        starts.push(at);
         at += line.len() + 1;
     }
+    let lines: Vec<access::Line> = wanted
+        .iter()
+        .map(|&ri| {
+            let row = edit.row(text, m, lay.wrap, ri);
+            let run = &edit.lines[row.line][row.start..row.end];
+            let y = lay.inner.y + 1 + (ri as i32 - view.top as i32) * m.line_h;
+            let w = text.measure(&expand(run, m.tab_cols), false, m.font_px);
+            access::Line {
+                text: run,
+                start: starts[row.line] + row.start,
+                rect: Rect::new(x0, y, w.max(1), m.line_h),
+                hard_break: row.last && row.line < last,
+            }
+        })
+        .collect();
     let offset = |p: Pos| starts.get(p.line).map_or(0, |s| s + p.col);
     access::text_runs(
         tree,
@@ -1637,3 +1760,5 @@ pub fn access(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wrap_tests;

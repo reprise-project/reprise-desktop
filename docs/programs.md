@@ -121,7 +121,8 @@ Small coloured notes, each a window of its own. The strip along a note's
 top has + for a new note (Ctrl+N too) and x to delete it, which asks first
 when the note has text. Right-click the text (or Shift+F10) for Undo, Redo,
 Cut, Copy, Paste, Delete and Select All, the six colours (yellow, green,
-pink, purple, blue, white), New Note and Delete Note. Lines don't wrap yet.
+pink, purple, blue, white), New Note and Delete Note. Lines wrap at the
+note's edge and rewrap when it is resized.
 
 Every change is saved a moment after you stop typing, to
 `$XDG_DATA_HOME/reprise/notes/` (`~/.local/share/reprise/notes/` by

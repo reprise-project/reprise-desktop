@@ -111,6 +111,7 @@ impl Notes {
             metrics: Metrics {
                 bars_always: false,
                 flat: true,
+                wrap: true,
                 ..Metrics::default()
             },
             menu: None,

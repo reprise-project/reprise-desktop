@@ -146,13 +146,7 @@ impl Notes {
             return (0, 0);
         };
         let el = self.edit_layout(n, ctx);
-        let caret = n.edit.caret();
-        let x = multiedit::x_of(&ctx.text, &self.metrics, &n.edit, caret) - n.view.left;
-        let row = caret.line.saturating_sub(n.view.top) as i32 + 1;
-        (
-            (el.inner.x + 1 + x).clamp(el.inner.x, el.inner.right()),
-            (el.inner.y + 1 + row * self.metrics.line_h).clamp(el.inner.y, el.inner.bottom()),
-        )
+        multiedit::caret_point(&ctx.text, &self.metrics, &n.edit, &el, n.view)
     }
 
     pub(crate) fn open_menu(&mut self, win: WinId, at: (i32, i32), by_keyboard: bool, ctx: &Ctx) {
@@ -322,7 +316,7 @@ impl Notes {
                 if lit { Reply::redraw() } else { Reply::none() }
             }
             PointerInput::Scroll { rows, .. } => {
-                if n.view.scroll_lines(rows as i64, &n.edit, el.rows) {
+                if n.view.scroll_lines(rows as i64, &el) {
                     Reply::redraw()
                 } else {
                     Reply::none()

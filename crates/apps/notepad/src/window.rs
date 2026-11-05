@@ -115,7 +115,7 @@ impl Notepad {
 
     pub(crate) fn scroll(&mut self, by: i64, ctx: &Ctx) -> bool {
         let lay = self.edit_layout(ctx);
-        self.view.scroll_lines(by, &self.edit, lay.rows)
+        self.view.scroll_lines(by, &lay)
     }
 
     pub(crate) fn draw_main(&self, c: &mut Canvas, ctx: &Ctx) {
