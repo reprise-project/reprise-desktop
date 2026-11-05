@@ -13,6 +13,8 @@ pub enum Cmd {
     Now,
     /// Read each process's storage I/O, for the Disk column.
     Disk(bool),
+    /// Read each process's GPU clients, for the GPU column.
+    Gpu(bool),
 }
 
 pub struct Handle {
@@ -41,6 +43,12 @@ pub fn spawn(mut sampler: Sampler, wake: impl Fn() + Send + 'static) -> Handle {
                 }
                 Ok(Cmd::Disk(on)) => {
                     sampler.disk = on;
+                    continue;
+                }
+                Ok(Cmd::Gpu(on)) => {
+                    if let Some(d) = sampler.devices.as_mut() {
+                        d.proc_gpu = on;
+                    }
                     continue;
                 }
                 Ok(Cmd::Now) | Err(RecvTimeoutError::Timeout) => {}

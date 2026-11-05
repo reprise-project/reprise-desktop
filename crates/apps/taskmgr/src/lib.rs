@@ -453,6 +453,7 @@ impl TaskMgr {
         let at = self.columns.iter().position(|&c| c == self.sort.0);
         self.procs.view.sort = at.map(|i| (i, self.sort.1));
         self.send(worker::Cmd::Disk(self.columns.contains(&ProcColumn::Disk)));
+        self.send(worker::Cmd::Gpu(self.columns.contains(&ProcColumn::Gpu)));
         self.refresh_procs();
         self.refit = true;
     }
@@ -1220,6 +1221,9 @@ impl App for TaskMgr {
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         if let Some(mut s) = self.sampler.take() {
             s.disk = self.columns.contains(&ProcColumn::Disk);
+            if let Some(d) = s.devices.as_mut() {
+                d.proc_gpu = self.columns.contains(&ProcColumn::Gpu);
+            }
             let (tx, rx) = std::sync::mpsc::channel();
             let wake = waker.clone();
             reprisebus::tray::watch_responding(move |h| {
