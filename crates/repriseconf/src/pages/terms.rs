@@ -175,7 +175,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ),
             ("switcher_desktop", "Show the desktop in Alt+Tab"),
             ("switcher_peek", "Peek at the selected window"),
-            ("switcher_flip", "Show windows in 3D with Super+Tab"),
+            ("switcher_flip", "Show windows in 3D"),
             ("hot_corner", "Hot corner:"),
         ],
         Page::VirtualDesktops => &[
