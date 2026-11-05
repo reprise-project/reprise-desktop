@@ -584,20 +584,11 @@ fn with_session_env(c: &mut std::process::Command, env: &SessionEnv, launch: Opt
     if env.x11_display.is_none() {
         c.env_remove("DISPLAY");
     }
-    c.env_remove("DESKTOP_STARTUP_ID");
-    match launch {
-        Some(l) => {
-            c.env("XDG_ACTIVATION_TOKEN", &l.token);
-        }
-        None => {
-            c.env_remove("XDG_ACTIVATION_TOKEN");
-        }
+    reprisebus::instance::Handoff {
+        token: launch.map(|l| l.token.clone()),
+        by_key: launch.is_some_and(|l| l.by_key),
     }
-    if launch.is_some_and(|l| l.by_key) {
-        c.env(reprisebus::instance::KEYBOARD_LAUNCH_ENV, "1");
-    } else {
-        c.env_remove(reprisebus::instance::KEYBOARD_LAUNCH_ENV);
-    }
+    .apply(c);
 }
 
 /// Returns whether the shell started; what it runs may still fail.

@@ -50,6 +50,20 @@ impl Handoff {
         data
     }
 
+    /// Hand this start to child `c`: the token as `XDG_ACTIVATION_TOKEN`, by key as
+    /// [`KEYBOARD_LAUNCH_ENV`]. Unset ones and `DESKTOP_STARTUP_ID` are removed so ours never leak.
+    pub fn apply(&self, c: &mut std::process::Command) {
+        c.env_remove("DESKTOP_STARTUP_ID");
+        match &self.token {
+            Some(t) => c.env("XDG_ACTIVATION_TOKEN", t),
+            None => c.env_remove("XDG_ACTIVATION_TOKEN"),
+        };
+        match self.by_key {
+            true => c.env(KEYBOARD_LAUNCH_ENV, "1"),
+            false => c.env_remove(KEYBOARD_LAUNCH_ENV),
+        };
+    }
+
     pub fn from_platform_data(data: &HashMap<String, OwnedVariant>) -> Handoff {
         Handoff {
             token: data
@@ -220,6 +234,40 @@ mod tests {
             .map(|(k, v)| (k.to_string(), OwnedVariant::try_from(v).expect("owned")))
             .collect();
         Handoff::from_platform_data(&data)
+    }
+
+    #[test]
+    fn a_child_gets_the_handed_token_and_by_key_mark_and_never_this_process_s_own() {
+        let env = |handoff: &Handoff| {
+            let mut c = std::process::Command::new("true");
+            handoff.apply(&mut c);
+            let mut envs: Vec<_> = c
+                .get_envs()
+                .map(|(k, v)| (k.to_os_string(), v.map(|v| v.to_os_string())))
+                .collect();
+            envs.sort();
+            envs
+        };
+        let given = Handoff {
+            token: Some("t".into()),
+            by_key: true,
+        };
+        assert_eq!(
+            env(&given),
+            [
+                ("DESKTOP_STARTUP_ID".into(), None),
+                ("REPRISE_KEYBOARD_LAUNCH".into(), Some("1".into())),
+                ("XDG_ACTIVATION_TOKEN".into(), Some("t".into())),
+            ]
+        );
+        assert_eq!(
+            env(&Default::default()),
+            [
+                ("DESKTOP_STARTUP_ID".into(), None),
+                ("REPRISE_KEYBOARD_LAUNCH".into(), None),
+                ("XDG_ACTIVATION_TOKEN".into(), None),
+            ]
+        );
     }
 
     #[test]
