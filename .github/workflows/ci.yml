@@ -68,8 +68,6 @@ jobs:
     env:
       CARGO_INCREMENTAL: 0
       CARGO_HOME: /home/builder/.cargo
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
       REPRISE_TEST_STRICT: 1
     steps:
       # The first checkout downloads the tree for .github/pacman.sh; the second clones once git
