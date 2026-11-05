@@ -8,14 +8,14 @@ const WORD_START: u32 = 4;
 const RUN: u32 = 2;
 const SCATTERED: u32 = 1;
 
-/// Whether `cand[i]` starts a word: it follows a space, `-`, `_` or `.`, or a
-/// case step (`MyApp` splits as `My|App`, `KCalc` as `K|Calc`).
+/// Whether `cand[i]` starts a word: follows a char that is no letter, digit or apostrophe, or
+/// a case step (`MyApp` splits as `My|App`, `KCalc` as `K|Calc`).
 pub fn is_word_start(cand: &[char], i: usize) -> bool {
     let Some(prev) = i.checked_sub(1) else {
         return true;
     };
     let (p, c) = (cand[prev], cand[i]);
-    matches!(p, ' ' | '-' | '_' | '.')
+    !p.is_alphanumeric() && !matches!(p, '\'' | '\u{2019}')
         || (p.is_lowercase() && c.is_uppercase())
         || (p.is_uppercase()
             && c.is_uppercase()
@@ -140,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn words_start_after_a_separator_or_a_case_step() {
+    fn words_start_after_a_non_alphanumeric_char_or_a_case_step() {
         let starts = |name: &str| {
             let c: Vec<char> = name.chars().collect();
             (0..c.len())
@@ -150,6 +150,10 @@ mod tests {
         assert_eq!(starts("MyApp"), [0, 2]);
         assert_eq!(starts("KCalc"), [0, 1]);
         assert_eq!(starts("GNOME no-op"), [0, 6, 9]);
+        assert_eq!(starts("(Super+V"), [0, 1, 7]);
+        assert_eq!(starts("(frame rate"), [0, 1, 7]);
+        assert_eq!(starts("Baldur's Gate"), [0, 9]);
+        assert_eq!(starts("Don\u{2019}t"), [0]);
     }
 
     #[test]
