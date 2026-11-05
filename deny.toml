@@ -36,6 +36,7 @@ wildcards = "deny"
 allow-wildcard-paths = true
 # The older copy of each crate the lock holds twice today, so only a new duplicate warns.
 skip = [
+    { crate = "drm@0.14.1", reason = "smithay and gbm 0.18; reprise-rdp has 0.15" },
     { crate = "rustix@0.38.44", reason = "drm 0.14 via smithay" },
     { crate = "linux-raw-sys@0.4.15", reason = "rustix 0.38 via drm 0.14" },
     { crate = "linux-raw-sys@0.9.4", reason = "drm-sys 0.8 via smithay" },
