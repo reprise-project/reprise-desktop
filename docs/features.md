@@ -86,8 +86,8 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   document folder deleted meanwhile and shows one made.
   `[privacy] recent_files = false` hides them everywhere and records none.
 - **Launcher.** Super+Space, a few letters, Enter. It fuzzy-matches programs,
-  finds settings pages and the settings on them ("wifi", "touchpad", "repeat
-  delay"; a setting opens its page with that control focused), finds files in
+  finds settings pages, settings programs and the settings on them ("wifi",
+  "touchpad", "repeat delay"; a setting opens its page with that control focused), finds files in
   your home folder from two letters on, and does sums: `2+3*4`, Enter copies 14. It converts
   units too: `5 km in mi`, `30 c to f`, `2 gib in mb`, `3 ft 4 in = cm`
   show `5 km = 3.10686 mi` and Enter copies the number. Length, mass, volume,

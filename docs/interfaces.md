@@ -116,8 +116,8 @@ Glass has no colour schemes. It has a `[glass]` section instead:
 - **Square** frames have square corners, a centred title and flat, separate
   caption buttons.
 
-The Appearance page of Reprise Settings sets all of these but `blur_rate`,
-`orb_glow`, on the Taskbar page, and `notification_style`, on the Notifications
+The Appearance page of Reprise Settings sets all of these except `blur_rate`;
+`orb_glow` is on the Taskbar page and `notification_style` on the Notifications
 page.
 
 ![Reprise Glass in dark mode, Ruby and Molten, with the calendar open](screenshots/glass-dark.png)
