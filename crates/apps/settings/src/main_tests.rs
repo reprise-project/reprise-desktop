@@ -2148,3 +2148,28 @@ fn open_program_starts_a_shown_entry_and_nothing_for_a_missing_one() {
     assert_eq!(r.spawn_app.as_deref(), Some("reprise-sound.desktop"));
     assert!(a.open_program("reprise-updates.desktop").spawn.is_empty());
 }
+
+#[test]
+fn enter_on_a_greyed_found_control_leaves_the_keyboard_on_the_list() {
+    let (mut a, mut ctx) = (app("search-greyed"), test_ctx());
+    find(&mut a, &mut ctx, "faster glass");
+    let page = a
+        .search_hits
+        .iter()
+        .position(|h| *h == Some(Hit::Control("glass_fast_drag")))
+        .expect("a page holds the control");
+    assert!(
+        !a.sheet.pages[page].can_focus("glass_fast_drag"),
+        "greyed under Classic"
+    );
+    enter(&mut a, &ctx);
+    assert_eq!(a.sheet.tabs.open, page);
+    assert_eq!(holders(&a), [false, false, true, false]);
+}
+
+#[test]
+fn a_page_handed_a_missing_control_opens_as_it_would_without_one() {
+    let mut a = app("open-missing");
+    a.open_page(Page::Keyboard, Some("missing"));
+    assert_eq!(holders(&a), SIDE_LIST);
+}

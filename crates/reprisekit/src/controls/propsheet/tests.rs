@@ -2376,6 +2376,19 @@ fn ctrl_tab_turns_only_to_the_pages_the_filter_shows() {
 }
 
 #[test]
+fn focusing_a_missing_or_greyed_control_leaves_the_keyboard_where_it_is() {
+    let mut s = list_sheet();
+    s.focus_list();
+    s.pages[0].set_enabled("check", false);
+    assert!(!s.focus_control("check"));
+    assert!(!s.focus_control("missing"));
+    assert_eq!((s.tabs.focused, s.open().focus()), (true, None));
+    s.pages[0].set_enabled("check", true);
+    assert!(s.focus_control("check"));
+    assert_eq!((s.tabs.focused, s.open().focus()), (false, Some(0)));
+}
+
+#[test]
 fn a_page_the_host_opens_starts_scrolled_home_and_the_old_page_lets_go() {
     let theme = Theme::default().with_form_text(200);
     let page = || {
