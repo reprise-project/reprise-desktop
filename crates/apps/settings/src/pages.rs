@@ -212,7 +212,7 @@ pub const WATER_STYLE: &str = "water_style";
 /// Clear, which removes the thumbnails Reprise kept, and the line saying what Clear removed.
 pub const THUMBS: &str = "thumbnail_cache";
 pub const THUMBS_MB: &str = "thumbnail_max_mb";
-const THUMBS_SIZE: [&str; 2] = ["thumbnail_size_label", THUMBS_MB];
+const THUMBS_SIZE: [&str; 3] = ["thumbnail_size_label", THUMBS_MB, "thumbnail_size_units"];
 pub const THUMBS_CLEAR: &str = "thumbnail_clear";
 /// The Advanced page's check for thumbnails from the installed thumbnailers.
 pub const THUMBNAILERS: &str = "external_thumbnailers";

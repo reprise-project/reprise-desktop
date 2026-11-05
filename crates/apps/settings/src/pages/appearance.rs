@@ -52,6 +52,7 @@ pub fn fonts_and_icons(
             FontConfig::SIZE_PX_MAX as i32,
         ),
     ));
+    items.push(Item::label_at("font_size_units", GX + 104, 108, 20, "px"));
     items.push(Item::check("font_antialias", GX + 160, 108, "Antia&lias"));
 
     items.push(group(a, "icons_group", 138, 56, "Icons"));
@@ -75,6 +76,7 @@ pub fn fonts_and_icons(
         "Frame &width:",
         (0, 32),
     ));
+    items.push(Item::label_at("frame_units", GX + 170, 226, 20, "px"));
     items.extend(spin(
         "caption_label",
         "caption_height",
@@ -84,6 +86,7 @@ pub fn fonts_and_icons(
         "Caption &height:",
         (12, 128),
     ));
+    items.push(Item::label_at("caption_units", GX + 170, 252, 20, "px"));
     items.extend(spin(
         "taskbar_label",
         "taskbar_height",
@@ -93,6 +96,7 @@ pub fn fonts_and_icons(
         "Tas&kbar height:",
         (8, 256),
     ));
+    items.push(Item::label_at("taskbar_units", GX + 170, 278, 20, "px"));
 
     // GTK and Qt look: `(Automatic)` and Automatic follow the look's darkness,
     // the Reprise rows its colours. Their font smoothing is apart from the Fonts
@@ -213,7 +217,6 @@ pub fn night_light(a: Area) -> Form {
 /// The Effects page: window animations and the fade of hovered buttons, each a check with its two durations
 /// indented under it, and the screen's fade; then the menus' shadow, timings and opening, and the task buttons' slide.
 pub fn effects(a: Area) -> Form {
-    let range = (0, EFFECTS_MS_MAX as i32);
     let mut items = vec![group(a, "effects_group", 44, 158, "Windows")];
     items.push(Item::check(
         "window_animation",
@@ -222,23 +225,17 @@ pub fn effects(a: Area) -> Form {
         "&Animate windows opening and closing",
     ));
     let mut anim = Vec::new();
-    anim.extend(spin(
-        "open_label",
-        "window_open_ms",
+    anim.extend(ms_spin(
+        ["open_label", "window_open_ms", "open_units"],
         GX,
         92,
-        70,
-        "&Open ms:",
-        range,
+        "&Open:",
     ));
-    anim.extend(spin(
-        "close_label",
-        "window_close_ms",
+    anim.extend(ms_spin(
+        ["close_label", "window_close_ms", "close_units"],
         GX + 140,
         92,
-        70,
-        "&Close ms:",
-        range,
+        "&Close:",
     ));
     items.extend(anim.into_iter().map(Item::under_check));
     items.push(Item::check(
@@ -248,23 +245,17 @@ pub fn effects(a: Area) -> Form {
         "Fade button &highlights",
     ));
     let mut hover = Vec::new();
-    hover.extend(spin(
-        "in_label",
-        "hover_in_ms",
+    hover.extend(ms_spin(
+        ["in_label", "hover_in_ms", "in_units"],
         GX,
         148,
-        70,
-        "&In ms:",
-        range,
+        "&In:",
     ));
-    hover.extend(spin(
-        "out_label",
-        "hover_out_ms",
+    hover.extend(ms_spin(
+        ["out_label", "hover_out_ms", "out_units"],
         GX + 140,
         148,
-        70,
-        "O&ut ms:",
-        range,
+        "O&ut:",
     ));
     items.extend(hover.into_iter().map(Item::under_check));
     items.push(Item::check(
@@ -283,24 +274,27 @@ pub fn effects(a: Area) -> Form {
         "&Shadow:",
         (0, 32),
     ));
+    items.push(Item::label_at("shadow_units", GX + 118, 234, 20, "px"));
     items.extend(spin(
         "hover_label",
         "menu_hover_ms",
         GX + 140,
         234,
         70,
-        "Ho&ver ms:",
+        "Ho&ver:",
         (0, 9999),
     ));
+    items.push(Item::label_at("menu_hover_units", GX + 268, 234, 20, "ms"));
     items.extend(spin(
         "fade_label",
         "menu_fade_ms",
         GX,
         260,
         60,
-        "Ti&me ms:",
+        "Ti&me:",
         (0, 9999),
     ));
+    items.push(Item::label_at("menu_fade_units", GX + 118, 260, 20, "ms"));
     items.push(Item::label_at(
         "menu_animation_label",
         GX + 140,
@@ -326,12 +320,26 @@ pub fn effects(a: Area) -> Form {
     Form::new(items)
 }
 
-pub(super) const ANIM_CONTROLS: [&str; 4] = [
+/// A 40 px label, an up-down of milliseconds and its "ms" unit, starting at `x`.
+fn ms_spin(ids: [&'static str; 3], x: i32, y: i32, text: &str) -> [Item; 3] {
+    let [label, updown] = spin(ids[0], ids[1], x, y, 40, text, (0, EFFECTS_MS_MAX as i32));
+    [label, updown, Item::label_at(ids[2], x + 98, y, 20, "ms")]
+}
+
+pub(super) const ANIM_CONTROLS: [&str; 6] = [
     "open_label",
     "window_open_ms",
+    "open_units",
     "close_label",
     "window_close_ms",
+    "close_units",
 ];
 
-pub(super) const HOVER_CONTROLS: [&str; 4] =
-    ["in_label", "hover_in_ms", "out_label", "hover_out_ms"];
+pub(super) const HOVER_CONTROLS: [&str; 6] = [
+    "in_label",
+    "hover_in_ms",
+    "in_units",
+    "out_label",
+    "hover_out_ms",
+    "out_units",
+];
