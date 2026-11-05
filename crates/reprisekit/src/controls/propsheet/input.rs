@@ -17,10 +17,15 @@ impl PropSheet {
         self.on_list(|list, lay| list.reveal(Pick::Page(open), lay))
     }
 
-    /// Open page `i` from the host, leaving the focus to the host: the list lets go of a link
-    /// it rests on and scrolls the page's row into view.
+    /// Open page `i` from the host, leaving the focus to the host: the old page lets go of the
+    /// pointer, the new one starts scrolled home, the list drops its link and shows the row.
     pub fn set_open(&mut self, i: usize) {
-        self.tabs.open = i;
+        if i != self.tabs.open {
+            self.open_mut().cancel_pointer();
+            self.tabs.open = i;
+            self.scroll_to(0);
+            self.scroll_across(0);
+        }
         self.drop_cursor();
         self.reveal_open();
     }
@@ -473,19 +478,16 @@ impl PropSheet {
         self.event(i, ev)
     }
 
-    /// A press on link `k`: a live one takes the list's cursor and the keyboard and comes back
-    /// as [`Event::Link`]; a greyed one does nothing.
+    /// A press on link `k`: a live one takes the list's cursor and the keyboard, scrolls into
+    /// view and comes back as [`Event::Link`]; a greyed one does nothing.
     fn link_click(&mut self, k: usize) -> Event {
-        let Nav::List(list) = &mut self.nav else {
+        let Nav::List(list) = &self.nav else {
             return Event::None;
         };
         if !list.links.get(k).is_some_and(|l| l.enabled) {
             return Event::None;
         }
-        list.cursor = Some(k);
-        self.tabs.focused = true;
-        self.search_focused = false;
-        self.open_mut().set_focus(None);
+        self.land(Pick::Link(k));
         Event::Link(k)
     }
 
