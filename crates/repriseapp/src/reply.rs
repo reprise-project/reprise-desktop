@@ -1,6 +1,7 @@
 //! A program's answer to an event, and the spawns it asks for.
 
 use crate::{Accept, DragAction, DragOut, FileClip, WinId};
+use reprisebus::instance::{Handoff, KEYBOARD_LAUNCH_ENV};
 use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -11,15 +12,23 @@ use std::process::{Command, Stdio};
 /// its exec until it is in that app scope ([`reprisefs::scope::hold`]), so this blocks on the
 /// session bus.
 pub fn spawn_in(argv: &[OsString], dir: Option<&Path>, scope: Option<&str>) -> std::io::Result<()> {
-    spawn_then(argv, dir, scope, |_| {})
+    spawn_then(argv, dir, scope, &Handoff::default(), |_| {})
 }
 
-/// [`spawn_in`]'s spawn, running `then` with the child's pid on the reaper thread before the
-/// wait, so the pid cannot be reused under it.
+/// A [`Reply::spawn`]'s process, handed `handoff` ([`hand_over`]); a failure is only logged.
+pub(crate) fn spawn_handing(argv: &[OsString], handoff: &Handoff) {
+    if let Err(e) = spawn_then(argv, None, None, handoff, |_| {}) {
+        log::warn!("spawn {argv:?}: {e}");
+    }
+}
+
+/// [`spawn_in`]'s spawn handed `handoff`, running `then` with the child's pid on the reaper thread
+/// before the wait, so the pid cannot be reused under it.
 pub(crate) fn spawn_then(
     argv: &[OsString],
     dir: Option<&Path>,
     scope: Option<&str>,
+    handoff: &Handoff,
     then: impl FnOnce(u32) + Send + 'static,
 ) -> std::io::Result<()> {
     let Some((program, args)) = argv.split_first() else {
@@ -30,10 +39,10 @@ pub(crate) fn spawn_then(
     };
     let mut c = Command::new(program);
     c.args(args)
-        .env_remove(reprisebus::instance::KEYBOARD_LAUNCH_ENV)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    hand_over(&mut c, handoff);
     if let Some(dir) = dir {
         c.current_dir(dir);
     }
@@ -48,6 +57,21 @@ pub(crate) fn spawn_then(
     Ok(())
 }
 
+/// Give `c` `handoff`: its token as `XDG_ACTIVATION_TOKEN`, a start by key as
+/// [`KEYBOARD_LAUNCH_ENV`]. Without them both are removed, so this process's own never reach `c`;
+/// `DESKTOP_STARTUP_ID` always is.
+pub(crate) fn hand_over(c: &mut Command, handoff: &Handoff) {
+    c.env_remove("DESKTOP_STARTUP_ID");
+    match &handoff.token {
+        Some(t) => c.env("XDG_ACTIVATION_TOKEN", t),
+        None => c.env_remove("XDG_ACTIVATION_TOKEN"),
+    };
+    match handoff.by_key {
+        true => c.env(KEYBOARD_LAUNCH_ENV, "1"),
+        false => c.env_remove(KEYBOARD_LAUNCH_ENV),
+    };
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Reply {
     pub redraw: bool,
@@ -60,10 +84,9 @@ pub struct Reply {
     pub copy_primary: Option<String>,
     /// Arrives as `Event::PastedPrimary` on the window this reply is for.
     pub paste_primary: bool,
-    /// Run each argument vector as a process of its own, no shell
-    /// between, detached and reaped in the background. No activation
-    /// token is sent: a launched window takes focus as a child of the
-    /// focused caller.
+    /// Run each argument vector as a process of its own, no shell between, detached and reaped in
+    /// the background. Each gets an xdg-activation token asked for on the last input, so its
+    /// window takes the focus even when a running copy shows it.
     pub spawn: Vec<Vec<OsString>>,
     /// The desktop entry id `spawn` runs as: each process starts in that app's scope
     /// (`reprisefs::scope`).
@@ -79,7 +102,7 @@ pub struct Reply {
     /// that window: its token is presented for it, so the compositor focuses
     /// it, and a start by key brings out its cues. Dropped while that window
     /// is not shown.
-    pub activate: Option<(WinId, reprisebus::instance::Handoff)>,
+    pub activate: Option<(WinId, Handoff)>,
     /// Start a drag of files from the window this reply is for. It must
     /// answer a pointer press still held (the host uses that press's
     /// serial); the compositor refuses it otherwise.
