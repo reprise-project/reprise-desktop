@@ -184,10 +184,12 @@ spends an attempt. A connection has 10 s to log in, plus any wait its
 address is serving; a check in flight when that time runs out is finished
 first.
 
-One client is served at a time. A connection that arrives while another is
-open, even one still logging in, is closed at once and never touches the
-session in use. TCP keepalive ends a connection whose client has gone
-silent within about 30 s.
+Up to `max_viewers` connections are served at once, counting those still
+logging in. One more is closed at once, before TLS, and never touches the
+session in use. So that one address cannot hold every place through the
+login time, a third connection from an address that already has two still
+logging in is closed the same way. TCP keepalive ends a connection whose
+client has gone silent within about 30 s.
 
 Nothing is captured while no client is logged in: the portal session that
 shares the screen and takes input opens after the login and closes when the
@@ -197,9 +199,10 @@ consent. While it runs, the screen-sharing dot shows, this computer's
 screen keeps showing the session, and its own keyboard and mouse keep
 working, so someone at the computer sees and can take part in what the
 client does. When a logged-in client leaves, its held keys and buttons are
-let go and then the session locks through logind, so the computer is not
-left open. Stopping the server, as turning Remote Desktop off does, locks
-the session before a logged-in client's connection closes. A server that
+let go; when it was the last one logged in, the session then locks through
+logind, so the computer is not left open. Stopping the server, as turning
+Remote Desktop off does, locks the session before a logged-in client's
+connection closes. A server that
 dies with a client logged in locks the session when it next starts.
 
 The client shares the clipboard only while it is logged in. `reprise-rdp`

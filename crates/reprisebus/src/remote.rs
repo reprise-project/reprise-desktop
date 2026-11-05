@@ -1,5 +1,5 @@
 //! Reprise's Remote Desktop server, `reprise-rdp`, from a program on the session bus: what it
-//! reports, ending its connection, a new certificate, and turning its user unit on or off.
+//! reports, ending its connections, a new certificate, and turning its user unit on or off.
 
 use std::collections::HashMap;
 use zbus::{Connection, OwnedVariant};
@@ -94,12 +94,18 @@ pub fn status() -> Option<Status> {
     crate::wait(read(&conn))
 }
 
-/// End the connected client's session.
-pub fn disconnect() -> Result<(), String> {
+/// End the session of the client at `address`, as [`Client::address`] gives it.
+pub fn disconnect_client(address: &str) -> Result<(), String> {
     let conn = session()?;
     told(
-        "Disconnect",
-        crate::wait(conn.call_method(Some(NAME), PATH, Some(INTERFACE), "Disconnect", &())),
+        "DisconnectClient",
+        crate::wait(conn.call_method(
+            Some(NAME),
+            PATH,
+            Some(INTERFACE),
+            "DisconnectClient",
+            &(address,),
+        )),
     )
 }
 

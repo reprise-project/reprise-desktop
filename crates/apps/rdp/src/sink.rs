@@ -1,5 +1,5 @@
-//! The "Remote client" sink: a PipeWire null sink made the default while a client listens, its
-//! monitor captured on a thread whose PipeWire connection owns the sink.
+//! The "Remote client" sink: one PipeWire null sink made the default while any viewer listens,
+//! its monitor captured once per viewer at that viewer's rate.
 
 use pipewire::properties::properties;
 use pipewire::proxy::ProxyT;
@@ -16,7 +16,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -29,9 +29,28 @@ const GIVE_BACK: Duration = Duration::from_secs(2);
 /// sink waits as long for the last one's turn, then takes it regardless.
 const JOIN: Duration = Duration::from_secs(3);
 
-/// Taken for a sink's whole life, so a reconnecting client's sink sees the default the last one
-/// gave back rather than the last one's sink.
+/// Taken for a shared sink's whole life, so the sink made after the last viewer left sees the
+/// default the last one gave back rather than the last one's sink.
 static ONE: Turn = Turn::new();
+
+/// The sink every viewer hears through, while one listens.
+static SHARED: Mutex<Weak<Shared>> = Mutex::new(Weak::new());
+
+/// The `T` in `slot` while it is held and `alive`, or a new one from `make` that `slot` then
+/// holds weakly.
+fn acquire<T>(
+    slot: &Mutex<Weak<T>>,
+    alive: impl FnOnce(&T) -> bool,
+    make: impl FnOnce() -> io::Result<T>,
+) -> io::Result<Arc<T>> {
+    let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(live) = slot.upgrade().filter(|t| alive(t)) {
+        return Ok(live);
+    }
+    let made = Arc::new(make()?);
+    *slot = Arc::downgrade(&made);
+    Ok(made)
+}
 
 /// One holder at a time, with a wait that gives up on a holder that never lets go.
 struct Turn {
@@ -88,39 +107,135 @@ impl Drop for Held<'_> {
     }
 }
 
-/// The running sink. Dropping it gives the default back and removes the sink.
+/// One viewer's capture of the shared sink. Dropping the last one gives the default back and
+/// removes the sink.
 pub struct Sink {
-    stop: pipewire::channel::Sender<()>,
-    /// The thread, and a channel that disconnects once it has dropped everything else, its
-    /// turn on [`ONE`] included.
-    thread: Option<(JoinHandle<()>, mpsc::Receiver<()>)>,
+    /// Wakes a capture still waiting for the sink to come up.
+    cancel: mpsc::Sender<bool>,
+    _capture: Worker,
+    _shared: Arc<Shared>,
 }
 
 impl Sink {
     /// Make the sink the default and pass what plays into it to `samples`: S16LE stereo at
     /// `rate`, in the chunks PipeWire hands over.
     pub fn open(rate: u32, samples: impl FnMut(&[u8]) + Send + 'static) -> io::Result<Sink> {
+        let shared = acquire(&SHARED, Shared::alive, Shared::open)?;
+        let (cancel, ready) = mpsc::channel();
+        shared.when_ready(cancel.clone());
+        let capture = Worker::spawn("reprise-rdp-sound", move |stopped| {
+            if ready.recv() != Ok(true) {
+                return;
+            }
+            if let Err(e) = capture(rate, Box::new(samples), stopped) {
+                log::warn!("sound: {e}");
+            }
+        })?;
+        Ok(Sink {
+            cancel,
+            _capture: capture,
+            _shared: shared,
+        })
+    }
+}
+
+impl Drop for Sink {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(false);
+    }
+}
+
+/// The null sink and the default switch to it, on a thread whose PipeWire connection owns the
+/// sink. Dropping it gives the default back and removes the sink.
+struct Shared {
+    ready: Arc<Mutex<Ready>>,
+    /// Locked never: the mutex makes it `Sync` for [`SHARED`], as its end channel is not.
+    _thread: Mutex<Worker>,
+}
+
+/// Whether the shared sink is up, or the captures waiting to hear.
+enum Ready {
+    Waiting(Vec<mpsc::Sender<bool>>),
+    Done(bool),
+}
+
+impl Shared {
+    fn open() -> io::Result<Shared> {
+        let ready = Arc::new(Mutex::new(Ready::Waiting(Vec::new())));
+        let thread = Worker::spawn("reprise-rdp-sink", {
+            let ready = ready.clone();
+            move |stopped| {
+                let _one = ONE.take(JOIN);
+                if let Err(e) = run(stopped, &ready) {
+                    log::warn!("sound: {e}");
+                }
+                report(&ready, false);
+            }
+        })?;
+        Ok(Shared {
+            ready,
+            _thread: Mutex::new(thread),
+        })
+    }
+
+    /// Whether the thread is still up or coming up: one that ended on its own stays dead.
+    fn alive(&self) -> bool {
+        let ready = self.ready.lock().unwrap_or_else(PoisonError::into_inner);
+        !matches!(*ready, Ready::Done(false))
+    }
+
+    /// Send `up` whether the sink is up, once it is or has failed.
+    fn when_ready(&self, up: mpsc::Sender<bool>) {
+        match &mut *self.ready.lock().unwrap_or_else(PoisonError::into_inner) {
+            Ready::Waiting(waiting) => waiting.push(up),
+            Ready::Done(done) => {
+                let _ = up.send(*done);
+            }
+        }
+    }
+}
+
+fn report(ready: &Mutex<Ready>, up: bool) {
+    let mut ready = ready.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Ready::Waiting(waiting) = &*ready {
+        for w in waiting {
+            let _ = w.send(up);
+        }
+    }
+    *ready = Ready::Done(up);
+}
+
+/// A thread with a PipeWire loop; dropping it stops the loop and waits for the thread.
+struct Worker {
+    stop: pipewire::channel::Sender<()>,
+    /// The thread, and a channel that disconnects once it has dropped everything else, a turn
+    /// on [`ONE`] included.
+    thread: Option<(JoinHandle<()>, mpsc::Receiver<()>)>,
+}
+
+impl Worker {
+    fn spawn(
+        name: &str,
+        body: impl FnOnce(pipewire::channel::Receiver<()>) + Send + 'static,
+    ) -> io::Result<Worker> {
         let (stop, stopped) = pipewire::channel::channel();
         let (ending, ended) = mpsc::channel::<()>();
         let thread = std::thread::Builder::new()
-            .name("reprise-rdp-sound".into())
+            .name(name.into())
             .spawn(move || {
                 let _ending = ending;
-                let _one = ONE.take(JOIN);
-                if let Err(e) = run(rate, Box::new(samples), stopped) {
-                    log::warn!("sound: {e}");
-                }
+                body(stopped);
             })?;
-        Ok(Sink {
+        Ok(Worker {
             stop,
             thread: Some((thread, ended)),
         })
     }
 }
 
-/// On a runtime thread the wait for the sink's thread moves to a thread of its own; at process
+/// On a runtime thread the wait for the thread moves to a thread of its own; at process
 /// shutdown, outside the runtime, dropping waits so the default is back before the exit.
-impl Drop for Sink {
+impl Drop for Worker {
     fn drop(&mut self) {
         let _ = self.stop.send(());
         let Some((thread, ended)) = self.thread.take() else {
@@ -130,7 +245,10 @@ impl Drop for Sink {
             Err(RecvTimeoutError::Disconnected) => {
                 let _ = thread.join();
             }
-            _ => log::warn!("sound: the sink did not go within {JOIN:?}"),
+            _ => log::warn!(
+                "sound: {} did not end within {JOIN:?}",
+                thread.thread().name().unwrap_or_default()
+            ),
         };
         if tokio::runtime::Handle::try_current().is_err() {
             wait();
@@ -270,17 +388,16 @@ fn keep_record(record: &Path, before: &str) {
 
 type Samples = Box<dyn FnMut(&[u8]) + Send>;
 
-fn run(
-    rate: u32,
-    samples: Samples,
+/// Run `body` on a new PipeWire connection whose loop quits on a stop from `stopped` or a core
+/// error. `body` gets the loop, the core and whether a stop came.
+fn on_pipewire(
     stopped: pipewire::channel::Receiver<()>,
+    body: impl FnOnce(
+        &pipewire::main_loop::MainLoopRc,
+        &pipewire::core::CoreRc,
+        &Cell<bool>,
+    ) -> Result<(), String>,
 ) -> Result<(), String> {
-    pipewire::init();
-    let record = record_path();
-    if let Some(r) = &record {
-        recover_at(r, repriseaudio::snapshot_now, set_default_wait);
-    }
-    let before = taken_over(&repriseaudio::snapshot_now());
     let main_loop = pipewire::main_loop::MainLoopRc::new(None).map_err(|e| e.to_string())?;
     let context = pipewire::context::ContextRc::new(&main_loop, None).map_err(|e| e.to_string())?;
     let core = context.connect_rc(None).map_err(|e| e.to_string())?;
@@ -308,99 +425,127 @@ fn run(
             }
         })
         .register();
-    let node: pipewire::node::Node = core
-        .create_object(
-            "adapter",
-            &properties! {
-                "factory.name" => "support.null-audio-sink",
-                "node.name" => NAME,
-                "node.description" => DESCRIPTION,
-                "media.class" => "Audio/Sink",
-                "audio.position" => "FL,FR",
-                "monitor.channel-volumes" => "true",
-            },
-        )
-        .map_err(|e| format!("no sink: {e}"))?;
-    let id = Rc::new(Cell::new(None));
-    let _bound = node
-        .upcast_ref()
-        .add_listener_local()
-        .bound({
-            let id = id.clone();
-            move |global| id.set(Some(global))
-        })
-        .register();
-    let synced = roundtrip(&main_loop, &core);
-    // A stop handled in the same dispatch as `done` has already spent its quit.
-    if stopping.get() {
-        return Ok(());
-    }
-    synced?;
-    let id = id.get().ok_or("PipeWire did not make the sink")?;
-    if let (Some(r), Some(b)) = (&record, &before) {
-        keep_record(r, b);
-    }
-    let _give_back = GiveBack {
-        id,
-        before,
-        record,
-        now: repriseaudio::snapshot_now,
-        set: set_default_wait,
-    };
-    if !set_default_wait(id) {
-        log::warn!("sound: \"{DESCRIPTION}\" did not become the default sink");
-    }
+    body(&main_loop, &core, &stopping)
+}
 
-    let mut props = properties! {
-        *pipewire::keys::MEDIA_TYPE => "Audio",
-        *pipewire::keys::MEDIA_CATEGORY => "Capture",
-        *pipewire::keys::APP_NAME => "Remote Desktop",
-        "stream.capture.sink" => "true",
-        "target.object" => NAME,
-        "node.dont-reconnect" => "true",
-    };
-    props.insert("node.latency", format!("{}/{rate}", rate / 50));
-    let stream = StreamRc::new(core.clone(), "Remote client", props).map_err(|e| e.to_string())?;
-    let weak = main_loop.downgrade();
-    let _listener = stream
-        .add_local_listener_with_user_data(samples)
-        .state_changed(move |_, _, _, new| {
-            if let StreamState::Error(e) = new {
-                log::warn!("sound: capture: {e}");
-                if let Some(l) = weak.upgrade() {
-                    l.quit();
+/// The shared sink's thread: make the sink the default, report it `ready`, and give the default
+/// back once stopped.
+fn run(stopped: pipewire::channel::Receiver<()>, ready: &Mutex<Ready>) -> Result<(), String> {
+    pipewire::init();
+    let record = record_path();
+    if let Some(r) = &record {
+        recover_at(r, repriseaudio::snapshot_now, set_default_wait);
+    }
+    let before = taken_over(&repriseaudio::snapshot_now());
+    on_pipewire(stopped, |main_loop, core, stopping| {
+        let node: pipewire::node::Node = core
+            .create_object(
+                "adapter",
+                &properties! {
+                    "factory.name" => "support.null-audio-sink",
+                    "node.name" => NAME,
+                    "node.description" => DESCRIPTION,
+                    "media.class" => "Audio/Sink",
+                    "audio.position" => "FL,FR",
+                    "monitor.channel-volumes" => "true",
+                },
+            )
+            .map_err(|e| format!("no sink: {e}"))?;
+        let id = Rc::new(Cell::new(None));
+        let _bound = node
+            .upcast_ref()
+            .add_listener_local()
+            .bound({
+                let id = id.clone();
+                move |global| id.set(Some(global))
+            })
+            .register();
+        let synced = roundtrip(main_loop, core);
+        // A stop handled in the same dispatch as `done` has already spent its quit.
+        if stopping.get() {
+            return Ok(());
+        }
+        synced?;
+        let id = id.get().ok_or("PipeWire did not make the sink")?;
+        if let (Some(r), Some(b)) = (&record, &before) {
+            keep_record(r, b);
+        }
+        let _give_back = GiveBack {
+            id,
+            before,
+            record,
+            now: repriseaudio::snapshot_now,
+            set: set_default_wait,
+        };
+        if !set_default_wait(id) {
+            log::warn!("sound: \"{DESCRIPTION}\" did not become the default sink");
+        }
+        report(ready, true);
+        main_loop.run();
+        Ok(())
+    })
+}
+
+/// One viewer's thread: capture the shared sink's monitor at `rate` into `samples`.
+fn capture(
+    rate: u32,
+    samples: Samples,
+    stopped: pipewire::channel::Receiver<()>,
+) -> Result<(), String> {
+    pipewire::init();
+    on_pipewire(stopped, |main_loop, core, _| {
+        let mut props = properties! {
+            *pipewire::keys::MEDIA_TYPE => "Audio",
+            *pipewire::keys::MEDIA_CATEGORY => "Capture",
+            *pipewire::keys::APP_NAME => "Remote Desktop",
+            "stream.capture.sink" => "true",
+            "target.object" => NAME,
+            "node.dont-reconnect" => "true",
+        };
+        props.insert("node.latency", format!("{}/{rate}", rate / 50));
+        let stream =
+            StreamRc::new(core.clone(), "Remote client", props).map_err(|e| e.to_string())?;
+        let weak = main_loop.downgrade();
+        let _listener = stream
+            .add_local_listener_with_user_data(samples)
+            .state_changed(move |_, _, _, new| {
+                if let StreamState::Error(e) = new {
+                    log::warn!("sound: capture: {e}");
+                    if let Some(l) = weak.upgrade() {
+                        l.quit();
+                    }
                 }
-            }
-        })
-        .process(|stream, samples| {
-            let Some(mut buffer) = stream.dequeue_buffer() else {
-                return;
-            };
-            let Some(data) = buffer.datas_mut().first_mut() else {
-                return;
-            };
-            let chunk = data.chunk();
-            let (offset, size) = (chunk.offset() as usize, chunk.size() as usize);
-            if let Some(bytes) = data.data().and_then(|d| d.get(offset..offset + size)) {
-                samples(bytes);
-            }
-        })
-        .register()
-        .map_err(|e| e.to_string())?;
-    let param = format_param(rate)?;
-    let pod = Pod::from_bytes(&param).ok_or("bad format pod")?;
-    stream
-        .connect(
-            spa::utils::Direction::Input,
-            None,
-            StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS,
-            &mut [pod],
-        )
-        .map_err(|e| e.to_string())?;
-    log::info!("sound: capturing \"{DESCRIPTION}\"");
-    main_loop.run();
-    let _ = stream.disconnect();
-    Ok(())
+            })
+            .process(|stream, samples| {
+                let Some(mut buffer) = stream.dequeue_buffer() else {
+                    return;
+                };
+                let Some(data) = buffer.datas_mut().first_mut() else {
+                    return;
+                };
+                let chunk = data.chunk();
+                let (offset, size) = (chunk.offset() as usize, chunk.size() as usize);
+                if let Some(bytes) = data.data().and_then(|d| d.get(offset..offset + size)) {
+                    samples(bytes);
+                }
+            })
+            .register()
+            .map_err(|e| e.to_string())?;
+        let param = format_param(rate)?;
+        let pod = Pod::from_bytes(&param).ok_or("bad format pod")?;
+        stream
+            .connect(
+                spa::utils::Direction::Input,
+                None,
+                StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS,
+                &mut [pod],
+            )
+            .map_err(|e| e.to_string())?;
+        log::info!("sound: capturing \"{DESCRIPTION}\"");
+        main_loop.run();
+        let _ = stream.disconnect();
+        Ok(())
+    })
 }
 
 fn roundtrip(
@@ -579,11 +724,77 @@ mod tests {
             drop(ending);
         });
         let started = Instant::now();
-        drop(Sink {
+        drop(Worker {
             stop,
             thread: Some((thread, ended)),
         });
         assert!(started.elapsed() < Duration::from_millis(100));
+    }
+
+    #[test]
+    fn acquire_returns_the_live_one() {
+        let slot = Mutex::new(Weak::new());
+        let made = Cell::new(0);
+        let make = || {
+            made.set(made.get() + 1);
+            Ok(())
+        };
+        let first = acquire(&slot, |_| true, make).unwrap();
+        let second = acquire(&slot, |_| true, make).unwrap();
+        assert_eq!(made.get(), 1);
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn acquire_makes_a_new_one_after_the_last_drop() {
+        let slot = Mutex::new(Weak::new());
+        let made = Cell::new(0);
+        let make = || {
+            made.set(made.get() + 1);
+            Ok(())
+        };
+        drop(acquire(&slot, |_| true, make).unwrap());
+        drop(acquire(&slot, |_| true, make).unwrap());
+        assert_eq!(made.get(), 2);
+    }
+
+    #[test]
+    fn acquire_replaces_a_dead_one() {
+        let slot = Mutex::new(Weak::new());
+        let made = Cell::new(0);
+        let make = || {
+            made.set(made.get() + 1);
+            Ok(made.get())
+        };
+        let dead = acquire(&slot, |_| true, make).unwrap();
+        let fresh = acquire(&slot, |n| *n != 1, make).unwrap();
+        assert_eq!(made.get(), 2);
+        assert!(!Arc::ptr_eq(&dead, &fresh));
+        let again = acquire(&slot, |n| *n != 1, make).unwrap();
+        assert!(
+            Arc::ptr_eq(&fresh, &again),
+            "the replacement is the one held"
+        );
+    }
+
+    struct Counted<'a>(&'a Cell<u32>);
+
+    impl Drop for Counted<'_> {
+        fn drop(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    #[test]
+    fn the_shared_sink_stays_until_its_last_user_goes() {
+        let dropped = Cell::new(0);
+        let slot = Mutex::new(Weak::new());
+        let first = acquire(&slot, |_| true, || Ok(Counted(&dropped))).unwrap();
+        let second = acquire(&slot, |_| true, || Ok(Counted(&dropped))).unwrap();
+        drop(first);
+        assert_eq!(dropped.get(), 0, "one user is left");
+        drop(second);
+        assert_eq!(dropped.get(), 1, "gone with the last user");
     }
 
     thread_local! {

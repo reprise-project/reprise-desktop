@@ -20,6 +20,7 @@ use ironrdp_server::{
 use repriseconf::remote::{EncoderChoice, Quality, RemoteDesktop};
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -36,9 +37,32 @@ const MAX_POINTER: usize = 96;
 /// again, and as long again before the next encoder takes over.
 const HOLD: Duration = Duration::from_secs(1);
 
-/// The size the client was last told, shared by connections so a reconnect starts at the
-/// picture's size.
+/// A desktop size shared between the parts of the server that read it.
 pub type ToldSize = Arc<Mutex<DesktopSize>>;
+
+/// The size one connection told its client, and the size last told on any connection, which
+/// the next connection starts at.
+#[derive(Clone)]
+struct Told {
+    size: ToldSize,
+    last: ToldSize,
+}
+
+impl Told {
+    fn new(last: ToldSize) -> Told {
+        let size = Arc::new(Mutex::new(*last.lock().unwrap()));
+        Told { size, last }
+    }
+
+    fn get(&self) -> DesktopSize {
+        *self.size.lock().unwrap()
+    }
+
+    fn set(&self, size: DesktopSize) {
+        *self.size.lock().unwrap() = size;
+        *self.last.lock().unwrap() = size;
+    }
+}
 
 /// The H.264 encoders found at start.
 #[derive(Default)]
@@ -76,6 +100,8 @@ pub async fn probed(probed: &mut Probed) -> Arc<Picture> {
 pub struct Links {
     pub config: watch::Receiver<RemoteDesktop>,
     pub status: watch::Sender<Status>,
+    /// How many [`Live`]s run; the last to drop puts the configured encoder back in `status`.
+    pub lives: Arc<AtomicUsize>,
 }
 
 /// What the stream offers while H.264 is sent: the tiled modifiers when there are any. LINEAR
@@ -104,7 +130,7 @@ pub fn frame_interval(frame_rate: u32) -> Duration {
 }
 
 pub struct Display {
-    told: ToldSize,
+    told: Told,
     picture: Probed,
     /// The connection's graphics pipeline, when an H.264 encoder works or the probe still runs.
     gfx: Option<Gfx>,
@@ -118,15 +144,16 @@ pub struct Display {
 }
 
 impl Display {
+    /// A connection that starts at `last`, the size last told on any connection.
     pub fn new(
-        told: ToldSize,
+        last: ToldSize,
         input: Feed,
         picture: Probed,
         gfx: Option<Gfx>,
         links: Links,
     ) -> Display {
         Display {
-            told,
+            told: Told::new(last),
             picture,
             gfx,
             links,
@@ -146,7 +173,7 @@ struct Session {
 #[async_trait::async_trait]
 impl RdpServerDisplay for Display {
     async fn size(&mut self) -> DesktopSize {
-        *self.told.lock().unwrap()
+        self.told.get()
     }
 
     async fn updates(
@@ -174,7 +201,7 @@ impl RdpServerDisplay for Display {
                 tokio::task::spawn_local(input::serve(
                     grant.clone(),
                     feed.events,
-                    self.told.clone(),
+                    self.told.size.clone(),
                 ));
             }
             let path = self.gfx.as_ref().map(|gfx| H264 {
@@ -270,12 +297,13 @@ struct HeldWarp {
 struct Live {
     frames: UnboundedReceiver<Frame>,
     sizes: UnboundedReceiver<SizeChange>,
-    told: ToldSize,
+    told: Told,
     worker: Worker,
     /// None when no H.264 encoder works.
     h264: Option<H264>,
     config: watch::Receiver<RemoteDesktop>,
     status: watch::Sender<Status>,
+    lives: Arc<AtomicUsize>,
     quality: Quality,
     choice: EncoderChoice,
     /// Counts encoder choices, so a frame coded before the latest is told apart.
@@ -319,13 +347,18 @@ impl Live {
     fn new(
         frames: UnboundedReceiver<Frame>,
         sizes: UnboundedReceiver<SizeChange>,
-        told: ToldSize,
+        told: Told,
         worker: Worker,
         h264: Option<H264>,
         moves: SharedMoves,
         links: Links,
     ) -> Live {
-        let Links { mut config, status } = links;
+        let Links {
+            mut config,
+            status,
+            lives,
+        } = links;
+        lives.fetch_add(1, Ordering::Relaxed);
         let cfg = *config.borrow_and_update();
         let mut live = Live {
             frames,
@@ -335,6 +368,7 @@ impl Live {
             h264,
             config,
             status,
+            lives,
             quality: cfg.quality,
             choice: cfg.encoder,
             choices: 0,
@@ -497,7 +531,7 @@ impl Live {
             height: u16::try_from(size.1).unwrap_or(u16::MAX),
         };
         self.held_resize = None;
-        if *self.told.lock().unwrap() == want {
+        if self.told.get() == want {
             return false;
         }
         if self.h264.as_ref().is_some_and(|p| p.gfx.negotiating()) {
@@ -505,7 +539,7 @@ impl Live {
             self.pending = None;
             return true;
         }
-        *self.told.lock().unwrap() = want;
+        self.told.set(want);
         if self.last.as_ref().is_some_and(|f| f.size != size) {
             self.last = None;
         }
@@ -768,8 +802,11 @@ impl Live {
 }
 
 impl Drop for Live {
-    /// The connection ended: the status names what the config picks again.
+    /// The last connection ended: the status names what the config picks again.
     fn drop(&mut self) {
+        if self.lives.fetch_sub(1, Ordering::Relaxed) > 1 {
+            return;
+        }
         let working = (self.h264.as_ref()).map_or_else(Vec::new, |p| p.picture.backends());
         let label = choice::configured(self.config.borrow().encoder, &working);
         show_encoder(&self.status, &label);
@@ -897,9 +934,14 @@ mod tests {
     use tokio::sync::mpsc::unbounded_channel;
 
     fn live(told: DesktopSize) -> (Live, ToldSize, Frames, Sizes) {
+        live_on(&Arc::new(Mutex::new(told)))
+    }
+
+    /// A connection started from `last`, with the size it told its client.
+    fn live_on(last: &ToldSize) -> (Live, ToldSize, Frames, Sizes) {
         let (frames, frames_rx) = unbounded_channel();
         let (sizes, sizes_rx) = unbounded_channel();
-        let told = Arc::new(Mutex::new(told));
+        let told = Told::new(last.clone());
         let worker = Worker::spawn(Switch::bitmaps).unwrap();
         let live = Live::new(
             frames_rx,
@@ -910,14 +952,23 @@ mod tests {
             SharedMoves::default(),
             links().0,
         );
-        (live, told, frames, sizes)
+        (live, told.size, frames, sizes)
     }
 
     /// Links to the default config, with its sender and the status they report to.
     fn links() -> (Links, watch::Sender<RemoteDesktop>, watch::Receiver<Status>) {
         let (config_tx, config) = watch::channel(RemoteDesktop::default());
         let (status, status_rx) = watch::channel(Status::default());
-        (Links { config, status }, config_tx, status_rx)
+        let lives = Arc::default();
+        (
+            Links {
+                config,
+                status,
+                lives,
+            },
+            config_tx,
+            status_rx,
+        )
     }
 
     type Frames = tokio::sync::mpsc::UnboundedSender<Frame>;
@@ -995,6 +1046,41 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_second_viewers_resize_leaves_the_first_viewers_size_alone() {
+        let last = Arc::new(Mutex::new(DesktopSize {
+            width: 4,
+            height: 2,
+        }));
+        let (_first, first_told, _first_frames, _first_sizes) = live_on(&last);
+        let (mut second, second_told, frames, sizes) = live_on(&last);
+        frames.send(frame((4, 2), SMALL)).unwrap();
+        bitmap_size(second.next().await);
+        sizes.send(SizeChange { size: (2, 2) }).unwrap();
+        assert!(matches!(
+            second.next().await,
+            Some(DisplayUpdate::Resize(_))
+        ));
+        let small = DesktopSize {
+            width: 2,
+            height: 2,
+        };
+        assert_eq!(*second_told.lock().unwrap(), small);
+        assert_eq!(
+            *first_told.lock().unwrap(),
+            DesktopSize {
+                width: 4,
+                height: 2
+            },
+            "the first viewer keeps 4x2"
+        );
+        assert_eq!(
+            *last.lock().unwrap(),
+            small,
+            "the next viewer starts at 2x2"
+        );
+    }
+
     /// Fails its `n`th encode, then encodes as bitmaps again.
     struct FailsOnce {
         n: usize,
@@ -1058,10 +1144,10 @@ mod tests {
     async fn a_frame_that_failed_is_sent_again_on_a_static_screen() {
         let (frames, frames_rx) = unbounded_channel();
         let (_sizes, sizes_rx) = unbounded_channel();
-        let told = Arc::new(Mutex::new(DesktopSize {
+        let told = Told::new(Arc::new(Mutex::new(DesktopSize {
             width: 4,
             height: 2,
-        }));
+        })));
         let switch = || {
             Switch::bitmaps().with_bitmap(Box::new(FailsOnce {
                 n: 2,
@@ -1225,10 +1311,10 @@ mod tests {
         let live = Live::new(
             frames_rx,
             sizes_rx,
-            Arc::new(Mutex::new(DesktopSize {
+            Told::new(Arc::new(Mutex::new(DesktopSize {
                 width: 4,
                 height: 2,
-            })),
+            }))),
             Worker::spawn(switch).unwrap(),
             Some(path),
             SharedMoves::default(),
@@ -1536,10 +1622,10 @@ mod tests {
         let mut live = Live::new(
             frames_rx,
             sizes_rx,
-            Arc::new(Mutex::new(DesktopSize {
+            Told::new(Arc::new(Mutex::new(DesktopSize {
                 width: 4,
                 height: 2,
-            })),
+            }))),
             Worker::spawn(Switch::bitmaps).unwrap(),
             Some(path),
             SharedMoves::default(),
@@ -1585,7 +1671,7 @@ mod tests {
         let live = Live::new(
             frames_rx,
             sizes_rx,
-            Arc::new(Mutex::new(UNSHARED)),
+            Told::new(Arc::new(Mutex::new(UNSHARED))),
             Worker::spawn(Switch::bitmaps).unwrap(),
             Some(path),
             SharedMoves::default(),
@@ -1679,7 +1765,7 @@ mod tests {
         let mut live = Live::new(
             frames_rx,
             sizes_rx,
-            Arc::new(Mutex::new(UNSHARED)),
+            Told::new(Arc::new(Mutex::new(UNSHARED))),
             Worker::spawn(Switch::bitmaps).unwrap(),
             Some(path),
             SharedMoves::default(),
@@ -1697,6 +1783,46 @@ mod tests {
             using: None,
         });
         assert_eq!(status.borrow().encoder, "RemoteFX (no H.264 encoder)");
+    }
+
+    #[tokio::test]
+    async fn the_encoder_label_is_reset_when_the_last_connection_ends() {
+        let (links, _config, status) = links();
+        let start = |links: Links| {
+            let path = H264 {
+                gfx: Gfx::default(),
+                offer: Offer::detached(),
+                picture: picture(&[Backend::X264]),
+                modifiers: vec![DRM_FORMAT_MOD_LINEAR],
+                on: false,
+            };
+            Live::new(
+                unbounded_channel().1,
+                unbounded_channel().1,
+                Told::new(Arc::new(Mutex::new(UNSHARED))),
+                Worker::spawn(Switch::bitmaps).unwrap(),
+                Some(path),
+                SharedMoves::default(),
+                links,
+            )
+        };
+        let mut first = start(links.clone());
+        let second = start(links);
+        first.finish(Done {
+            epoch: first.epoch,
+            encoded: Ok(Encoded::Nothing),
+            choice: first.choices,
+            using: None,
+        });
+        assert_eq!(status.borrow().encoder, choice::BITMAP_LABEL);
+        drop(second);
+        assert_eq!(
+            status.borrow().encoder,
+            choice::BITMAP_LABEL,
+            "the first connection still sends bitmaps"
+        );
+        drop(first);
+        assert_eq!(status.borrow().encoder, "Software H.264");
     }
 
     #[test]

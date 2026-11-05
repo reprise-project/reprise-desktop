@@ -1,4 +1,5 @@
-//! `[remote_desktop]`: reprise-rdp's port, picture quality, frame rate, video encoder and sound.
+//! `[remote_desktop]`: reprise-rdp's port, picture quality, frame rate, video encoder, sound and
+//! how many viewers it takes.
 //! Each key that is missing or out of range keeps its default alone.
 
 use serde::Deserialize;
@@ -77,6 +78,8 @@ pub struct RemoteDesktop {
     pub frame_rate: u32,
     pub encoder: EncoderChoice,
     pub sound: bool,
+    /// 1 to 16 connected at once.
+    pub max_viewers: usize,
 }
 
 impl Default for RemoteDesktop {
@@ -87,6 +90,7 @@ impl Default for RemoteDesktop {
             frame_rate: 60,
             encoder: EncoderChoice::Auto,
             sound: true,
+            max_viewers: 4,
         }
     }
 }
@@ -144,6 +148,11 @@ fn read(t: &toml::Table) -> (RemoteDesktop, Vec<&'static str>) {
             v.clone().try_into().ok()
         }),
         sound: key(t, "sound", &mut bad, d.sound, toml::Value::as_bool),
+        max_viewers: key(t, "max_viewers", &mut bad, d.max_viewers, |v| {
+            v.as_integer()
+                .filter(|n| (1..=16).contains(n))
+                .map(|n| n as usize)
+        }),
     };
     (rd, bad)
 }
@@ -174,8 +183,15 @@ mod tests {
     fn an_empty_section_gives_the_defaults() {
         let d = from_table(&toml::Table::new());
         assert_eq!(
-            (d.port, d.quality, d.frame_rate, d.encoder, d.sound),
-            (3389, Quality::Balanced, 60, EncoderChoice::Auto, true)
+            (
+                d.port,
+                d.quality,
+                d.frame_rate,
+                d.encoder,
+                d.sound,
+                d.max_viewers
+            ),
+            (3389, Quality::Balanced, 60, EncoderChoice::Auto, true, 4)
         );
     }
 
@@ -210,6 +226,24 @@ quality = \"sharp\"",
     fn frame_rate_is_30_or_60() {
         let t: toml::Table = toml::from_str("frame_rate = 45").unwrap();
         assert_eq!(from_table(&t).frame_rate, 60);
+    }
+
+    #[test]
+    fn max_viewers_is_1_to_16() {
+        for (text, want) in [
+            ("1", 1),
+            ("16", 16),
+            ("0", 4),
+            ("17", 4),
+            ("-1", 4),
+            ("\"2\"", 4),
+        ] {
+            let t: toml::Table = toml::from_str(&format!("max_viewers = {text}")).unwrap();
+            let (rd, bad) = read(&t);
+            assert_eq!(rd.max_viewers, want, "max_viewers = {text}");
+            let invalid: &[&str] = if want == 4 { &["max_viewers"] } else { &[] };
+            assert_eq!(bad, invalid, "max_viewers = {text}");
+        }
     }
 
     #[test]
