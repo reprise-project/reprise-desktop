@@ -1103,6 +1103,7 @@ mod tests {
             sources: vec![dev(60, "mic", "Built-in Microphone", 0.8, true, Some(40))],
             default_sink: Some("speaker".into()),
             default_source: Some("mic".into()),
+            configured_sink: None,
             cards: vec![
                 card(40, "Built-in Audio", false),
                 card(41, "USB Headset", true),

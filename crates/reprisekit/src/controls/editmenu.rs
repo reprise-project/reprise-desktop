@@ -32,6 +32,8 @@ pub struct Live {
     pub paste: bool,
     /// A password field: Cut and Copy stay greyed over a selection.
     pub secret: bool,
+    /// A read-only field: only Copy and Select All are live.
+    pub read_only: bool,
 }
 
 impl Live {
@@ -43,6 +45,7 @@ impl Live {
             selection: spot.selected,
             paste,
             secret: spot.secret,
+            read_only: spot.read_only,
         }
     }
 
@@ -54,6 +57,7 @@ impl Live {
             selection: edit.has_selection(),
             paste,
             secret: edit.is_secret(),
+            read_only: edit.is_read_only(),
         }
     }
 }
@@ -93,11 +97,12 @@ pub fn items(live: Live) -> Vec<MenuItem> {
         .map(|row| match row {
             None => MenuItem::Separator,
             Some(cmd) => MenuItem::item(&label(*cmd)).enabled(match cmd {
-                Command::Undo => live.undo,
-                Command::Redo => live.redo,
-                Command::Cut | Command::Copy => live.selection && !live.secret,
-                Command::Delete => live.selection,
-                Command::Paste => live.paste,
+                Command::Undo => live.undo && !live.read_only,
+                Command::Redo => live.redo && !live.read_only,
+                Command::Cut => live.selection && !live.secret && !live.read_only,
+                Command::Copy => live.selection && !live.secret,
+                Command::Delete => live.selection && !live.read_only,
+                Command::Paste => live.paste && !live.read_only,
                 Command::SelectAll => true,
             }),
         })
@@ -315,6 +320,7 @@ mod tests {
             selection: true,
             paste: true,
             secret: false,
+            read_only: false,
         });
         assert!(enabled(&all).iter().flatten().all(|on| *on));
         let paste = tree(Live {
@@ -404,6 +410,22 @@ mod tests {
                 None,
                 Some(true)
             ]
+        );
+    }
+
+    #[test]
+    fn a_read_only_field_keeps_copy_and_select_all_live() {
+        let mut shown = TextEdit::new("3F:9A", false);
+        shown.set_read_only(true);
+        shown.select_all();
+        let r = Rect::new(10, 10, 100, 20);
+        let live = Live::of(&shown.spot(r, r), true);
+        assert_eq!(live, Live::of_edit(&shown, true));
+        let on: Vec<bool> = enabled(&tree(live)).into_iter().flatten().collect();
+        assert_eq!(
+            on,
+            [false, false, false, true, false, false, true],
+            "Undo, Redo, Cut, Paste and Delete greyed; Copy and Select All live"
         );
     }
 

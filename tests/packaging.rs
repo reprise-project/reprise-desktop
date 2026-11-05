@@ -1,5 +1,5 @@
-//! Both PKGBUILDs build reprise-apps, link every program crate to it and install every desktop
-//! entry, and CI installs their dependencies.
+//! Both PKGBUILDs build reprise-apps, link every program crate to it (or build and install it on
+//! its own) and install every desktop entry, and CI installs their dependencies.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -86,12 +86,23 @@ fn both_pkgbuilds_link_every_program_and_install_every_desktop_entry() {
             text.contains(r#"ln -s reprise-apps "$pkgdir/usr/bin/$app""#),
             "{path} links each program to reprise-apps"
         );
-        let uninstalled: Vec<_> = apps.difference(&installed).collect();
+        let uninstalled: Vec<_> = (apps.difference(&installed))
+            .filter(|app| !built.contains(*app))
+            .collect();
         assert!(
             uninstalled.is_empty(),
             "{path} links every program: {uninstalled:?}"
         );
-        let missing: Vec<_> = entries.difference(&installed).collect();
+        for app in apps.intersection(&built) {
+            let binary = format!("target/release/{app}");
+            assert!(
+                (text.lines()).any(|l| l.contains("install -Dm755") && l.contains(&binary)),
+                "{path} installs {app}, built on its own"
+            );
+        }
+        let missing: Vec<_> = (entries.difference(&installed))
+            .filter(|e| !text.contains(&format!("data/apps/{e}.desktop")))
+            .collect();
         assert!(
             missing.is_empty(),
             "{path} installs every desktop entry: {missing:?}"

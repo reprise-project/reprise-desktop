@@ -84,6 +84,17 @@ struct SessionState {
     constraints_done: bool,
     stopped: bool,
     frame: Option<Result<(), FailureReason>>,
+    /// The damage events of the frame last asked for.
+    damage: Vec<Rect>,
+}
+
+/// A damaged region in buffer pixels, as the compositor sent it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -482,6 +493,18 @@ impl Wayland {
         self.take_answer(Which::Main)
     }
 
+    /// The damage the compositor sent with the frame last answered; empty
+    /// when nothing changed since the frame before.
+    pub fn damage(&self) -> &[Rect] {
+        &self.state.main.damage
+    }
+
+    /// Whether the reply to the cursor frame last asked for came, without
+    /// taking it; the socket is read by [`Wayland::answer`].
+    pub fn cursor_answered(&self) -> bool {
+        self.state.cursor.frame.is_some()
+    }
+
     fn ask_on(
         &mut self,
         session: &ExtImageCopyCaptureSessionV1,
@@ -493,7 +516,9 @@ impl Wayland {
         frame.attach_buffer(buf.wl_buffer());
         frame.damage_buffer(0, 0, w as i32, h as i32);
         frame.capture();
-        self.state.session(which).frame = None;
+        let s = self.state.session(which);
+        s.frame = None;
+        s.damage.clear();
         Asked(frame)
     }
 
@@ -1193,6 +1218,17 @@ impl Dispatch<ExtImageCopyCaptureFrameV1, Which> for State {
         let s = state.session(*which);
         match event {
             ext_image_copy_capture_frame_v1::Event::Ready => s.frame = Some(Ok(())),
+            ext_image_copy_capture_frame_v1::Event::Damage {
+                x,
+                y,
+                width,
+                height,
+            } => s.damage.push(Rect {
+                x,
+                y,
+                width,
+                height,
+            }),
             ext_image_copy_capture_frame_v1::Event::Failed {
                 reason: WEnum::Value(r),
             } => s.frame = Some(Err(r)),
@@ -1274,6 +1310,43 @@ delegate_noop!(State: ignore ExtImageCopyCaptureManagerV1);
 delegate_noop!(State: ignore ExtOutputImageCaptureSourceManagerV1);
 delegate_noop!(State: ignore ExtForeignToplevelImageCaptureSourceManagerV1);
 delegate_noop!(State: ignore ExtImageCaptureSourceV1);
+
+#[cfg(test)]
+impl Wayland {
+    /// A connection over `socket` with no globals and one `wl_display.sync` sent: the peer
+    /// answers it with [`sync_done`].
+    pub(crate) fn over(socket: std::os::unix::net::UnixStream) -> Wayland {
+        let conn = Connection::from_socket(socket).expect("connection");
+        let queue = conn.new_event_queue::<State>();
+        let qh = queue.handle();
+        let shm = wl_shm::WlShm::inert(conn.backend().downgrade());
+        conn.display().sync(&qh, ());
+        conn.flush().expect("flush");
+        Wayland {
+            conn,
+            queue,
+            qh,
+            state: State::new(),
+            shm,
+            dmabuf: None,
+            _seat: None,
+            copy_capture: None,
+            output_sources: None,
+            toplevel_sources: None,
+            toplevel_list: None,
+        }
+    }
+}
+
+/// `wl_callback.done` for the callback [`Wayland::over`] creates, in native-endian words.
+#[cfg(test)]
+pub(crate) fn sync_done() -> Vec<u8> {
+    let (callback, size, opcode, serial) = (2u32, 12u32, 0u32, 7u32);
+    [callback, size << 16 | opcode, serial]
+        .into_iter()
+        .flat_map(u32::to_ne_bytes)
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {

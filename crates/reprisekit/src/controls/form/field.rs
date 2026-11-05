@@ -84,8 +84,8 @@ impl Form {
         ev
     }
 
-    /// A drag at (`x`, `y`): over an enabled, unmasked edit field or editable combo the field
-    /// shows a drop caret there and takes the drag (`true`); anywhere else the drop caret goes.
+    /// A drag at (`x`, `y`): `true` with a drop caret there over an enabled, unmasked, writable
+    /// field or editable combo; anywhere else the drop caret goes.
     pub fn drag_over(&mut self, x: i32, y: i32, text: &TextRenderer, px: u32) -> bool {
         self.drag_leave();
         let Some(Hit { item, part, .. }) = self.hit(x, y, text, px) else {
@@ -95,7 +95,9 @@ impl Form {
         let placed = self.at(&self.items[item]);
         let it = &mut self.items[item];
         let takes = match (part, &mut it.control) {
-            (Part::Edit(_), Control::Edit { edit, .. }) => !edit.is_secret(),
+            (Part::Edit(_), Control::Edit { edit, .. }) => {
+                !edit.is_secret() && !edit.is_read_only()
+            }
             (Part::Combo(combo::Hit::Field), Control::Combo(c)) => {
                 c.drag_over(&combo::layout(c, placed, &cm), x, y)
             }

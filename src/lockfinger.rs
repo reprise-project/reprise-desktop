@@ -1,6 +1,7 @@
 //! The lock screen's PAM conversations, each in a child of the compositor binary so no PAM module runs in the compositor and the lock can end one at any time: the fingerprint's (`--fingerprint-conversation USER`) and the password's (`--password-conversation USER`, the password on stdin).
 //! A child writes `I <info>` and `E <error>` lines and `= <pam_authenticate rc>` last; only `= 0` unlocks.
 //! The password's child asks a further prompt with `? <text>` (blind) or `?? <text>` (echoed) and reads its answer as the next line of stdin, which stays open until the conversation ends.
+//! reprise-rdp runs the same password conversation as `--rdp-password-conversation USER`, under its own PAM service.
 
 use crate::lock::{self, Verdict, Verifier, ffi};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
@@ -15,6 +16,7 @@ use std::time::{Duration, Instant};
 pub const SERVICE: &str = "reprise-fingerprint";
 pub const FLAG: &str = "--fingerprint-conversation";
 pub const PASSWORD_FLAG: &str = "--password-conversation";
+pub const RDP_SERVICE: &str = "reprise-rdp";
 /// Time an ended conversation gets to release the reader after SIGINT before it is killed.
 pub const RELEASE_GRACE: Duration = Duration::from_millis(500);
 
@@ -245,8 +247,33 @@ pub fn reap_ended(now: Instant) -> Option<Instant> {
     ending.iter().map(|&(_, d)| d).min()
 }
 
+/// Who a password conversation checks the password for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PasswordFor {
+    Unlock,
+    RemoteDesktop,
+}
+
+impl PasswordFor {
+    /// The PAM service; Remote Desktop's never falls back to the lock screen's stack.
+    fn service(self) -> &'static str {
+        match self {
+            PasswordFor::Unlock => lock::PamVerifier::lock_service(),
+            PasswordFor::RemoteDesktop => RDP_SERVICE,
+        }
+    }
+
+    /// A remote login also passes the account stack, so an expired or locked account is refused.
+    fn verifier(self) -> lock::PamVerifier {
+        lock::PamVerifier {
+            service: self.service(),
+            account: self == PasswordFor::RemoteDesktop,
+        }
+    }
+}
+
 /// The password conversation's child: the password and further answers from stdin, `lock::PamVerifier`, and its prompts and verdict as lines on stdout.
-pub fn password_main(user: &str) -> i32 {
+pub fn password_main(user: &str, purpose: PasswordFor) -> i32 {
     log::set_max_level(log::LevelFilter::Warn);
     // SAFETY: no other thread exists yet; the sigset is a zeroed local. `main` blocked SIGINT,
     // which here is to end the conversation at once.
@@ -270,7 +297,7 @@ pub fn password_main(user: &str) -> i32 {
     }
     // `File`, not `Stdin`: stdin's buffer would keep a copy of the password nobody zeroes.
     password_conversation(
-        &lock::PamVerifier,
+        &purpose.verifier(),
         user,
         std::fs::File::from(input),
         std::fs::File::from(out),
@@ -478,6 +505,19 @@ pub(crate) mod tests {
         let mut c = Command::new("sh");
         c.arg("-c").arg(script);
         Conversation::start(c).expect("sh starts")
+    }
+
+    #[test]
+    fn the_remote_desktop_conversation_runs_its_own_pam_service() {
+        assert_eq!(PasswordFor::RemoteDesktop.service(), "reprise-rdp");
+        assert!(matches!(PasswordFor::Unlock.service(), "reprise" | "login"));
+    }
+
+    #[test]
+    fn only_the_remote_desktop_conversation_checks_the_account() {
+        let rdp = PasswordFor::RemoteDesktop.verifier();
+        assert_eq!((rdp.service, rdp.account), ("reprise-rdp", true));
+        assert!(!PasswordFor::Unlock.verifier().account);
     }
 
     struct FakeVerifier(Verdict);

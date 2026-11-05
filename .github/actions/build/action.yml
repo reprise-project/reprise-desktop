@@ -13,7 +13,7 @@ runs:
       env:
         ARCH_ARCHIVE: ${{ inputs.arch-archive }}
       run: >-
-        bash "$GITHUB_WORKSPACE"/.github/pacman.sh rust clang python pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire ttf-dejavu shared-mime-info
+        bash "$GITHUB_WORKSPACE"/.github/pacman.sh rust clang python pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire zlib ffmpeg ttf-dejavu shared-mime-info
     - name: Install cargo-nextest 0.9.149
       shell: bash
       run: |

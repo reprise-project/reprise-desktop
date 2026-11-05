@@ -38,7 +38,10 @@ pub use lists::{
     fit_shortcut_columns, list_key, new_list, new_location_list, new_shortcut_list,
     show_locations_loading,
 };
-pub use system::{CHARGE_LIMIT, advanced, backup, power, sounds, startup};
+pub use system::{
+    CHARGE_LIMIT, REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup, power,
+    remote_desktop, show_remote, sounds, startup,
+};
 
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).
 pub const CLIENT: (i32, i32) = (398, 528);

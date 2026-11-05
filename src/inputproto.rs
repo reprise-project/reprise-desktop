@@ -51,7 +51,7 @@ pub mod proto {
     wayland_scanner::generate_server_code!("protocols/reprise-input-v1.xml");
 }
 
-const VERSION: u32 = 6;
+const VERSION: u32 = 7;
 
 pub const DEVICE_KEYBOARD: u32 = 1;
 pub const DEVICE_POINTER: u32 = 2;
@@ -158,9 +158,10 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
                 capture,
                 devices,
             } => {
-                let kind = match kind {
-                    WEnum::Value(Kind::Sender) => crate::eis::Kind::Sender,
-                    WEnum::Value(Kind::Receiver) => crate::eis::Kind::Receiver,
+                let (kind, present) = match kind {
+                    WEnum::Value(Kind::Sender) => (crate::eis::Kind::Sender, false),
+                    WEnum::Value(Kind::RemoteSession) => (crate::eis::Kind::Sender, true),
+                    WEnum::Value(Kind::Receiver) => (crate::eis::Kind::Receiver, false),
                     _ => {
                         resource.post_error(Error::InvalidKind, "kind");
                         return;
@@ -179,7 +180,7 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
                     resource.post_error(Error::CaptureForbidden, "sender with a capture");
                     return;
                 }
-                match state.eis_connect(fd, kind, cap, devices) {
+                match state.eis_connect(fd, kind, present, cap, devices) {
                     Ok(ec) => {
                         if let Some(c) = cap {
                             // A capture has one receiver; a second replaces the first, and disconnecting

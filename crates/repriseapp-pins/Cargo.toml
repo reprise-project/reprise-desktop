@@ -17,6 +17,7 @@ hashbrown = { version = "0.17", default-features = false, features = ["default-h
 regex-automata = "0.4"
 regex-syntax = { version = "0.8", default-features = false, features = ["std", "unicode"] }
 rustix = { version = "1", features = ["event", "fs", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+socket2 = { version = "0.6", features = ["all"] }
 toml_datetime = { version = "1", features = ["serde"] }
 toml_edit.workspace = true
 tracing = { version = "0.1", features = ["log"] }

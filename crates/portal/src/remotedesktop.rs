@@ -1,7 +1,5 @@
-//! `org.freedesktop.impl.portal.RemoteDesktop` v2: input injection granted through the permit
-//! dialog (remembered by restore token only when the user ticks Remember), served over libei via
-//! ConnectToEIS. Keycode and keysym Notify methods go through the session's `reprise_keys_v1`;
-//! pointer and touch are left to libei.
+//! `org.freedesktop.impl.portal.RemoteDesktop` v2 over libei: input granted by the permit dialog,
+//! or without it to the enabled server (`trusted`); keycode and keysym Notify use reprise_keys_v1.
 
 use crate::inputlink::{Link, live};
 use crate::inputproto::reprise_input_v1::Device;
@@ -25,6 +23,8 @@ pub(crate) struct RemoteSession {
     persist: u32,
     restored: bool,
     granted: bool,
+    /// Started for the remote desktop server without a dialog (`crate::trusted`).
+    trusted: bool,
     eis: Option<crate::inputlink::EisHandle>,
     keys: Option<crate::inputlink::KeysHandle>,
     pub(crate) screencast: CastState,
@@ -162,11 +162,21 @@ impl RemoteDesktop {
         }
         let key = session_handle.to_string();
         let parent = crate::dialog::parent_handle(&parent_window);
+        let trusted = app_id == crate::trusted::APP_ID
+            && crate::trusted::trusted(
+                &app_id,
+                crate::trusted::session_caller(conn, session_handle.as_str()).await,
+                crate::trusted::unit_facts(conn).await.as_ref(),
+            );
         let (devices, restored, mut requested) = {
             let mut sessions = self.sessions.lock().unwrap();
             let Some(s) = sessions.get_mut(&key).and_then(SessionData::remote_mut) else {
                 return Ok((RESPONSE_OTHER, empty()));
             };
+            if trusted {
+                s.devices = DEVICE_KEYBOARD | DEVICE_POINTER;
+            }
+            s.trusted = trusted;
             (s.devices, s.restored, s.persist)
         };
         if let Some(p) = options
@@ -175,8 +185,12 @@ impl RemoteDesktop {
         {
             requested = p;
         }
+        if trusted {
+            log::info!("RemoteDesktop.Start for {app_id:?}: trusted");
+            requested = 0;
+        }
         let mut remember = restored;
-        if !restored {
+        if !restored && !trusted {
             let cancel = Arc::new(AtomicBool::new(false));
             crate::export_request(server, &handle, cancel.clone(), &self.frontend).await?;
             if let Some(s) = self.sessions.lock().unwrap().get_mut(&key) {
@@ -229,6 +243,11 @@ impl RemoteDesktop {
                     &key,
                     &app_id,
                     parent,
+                    if trusted {
+                        crate::Pick::Origin
+                    } else {
+                        crate::Pick::Ask
+                    },
                 )
                 .await
                 {
@@ -288,7 +307,7 @@ impl RemoteDesktop {
             return Err(zbus::fdo::Error::Failed("no such session".into()));
         };
         let (ours, theirs) = crate::inputlink::socketpair()?;
-        s.eis = Some(link.connect_sender(ours, s.devices));
+        s.eis = Some(link.connect_sender(ours, s.devices, s.trusted));
         log::info!("RemoteDesktop.ConnectToEIS for {app_id:?}");
         Ok(theirs.into())
     }

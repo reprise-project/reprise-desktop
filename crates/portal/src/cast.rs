@@ -4,8 +4,9 @@
 //! fd. The thread keeps one buffer out with the compositor and, as soon
 //! as the frame is ready, stamps the header, hands it on and asks for
 //! the next; nothing blocks the loop. A source that does not change
-//! keeps the buffer out, and the consumer holds the last frame. The
-//! consumer therefore reads frames the compositor wrote directly, no
+//! keeps the buffer out, and a frame with no damage and no cursor change
+//! is asked again into its buffer, so the consumer holds the last frame.
+//! The consumer therefore reads frames the compositor wrote directly, no
 //! copy in between.
 //!
 //! Buffers: when the capture session names a dma-buf device, one
@@ -29,8 +30,8 @@
 //! window falls back to hidden.
 
 use crate::wayland::{
-    Asked, CaptureBuffer, CaptureError, Constraints, CursorInfo, DmaBuffer, Gbm, ShmBuffer, Target,
-    Wayland, fourcc_of_shm_format, shm_format_of_fourcc,
+    Asked, CaptureBuffer, CaptureError, Constraints, CursorInfo, DmaBuffer, Gbm, Rect, ShmBuffer,
+    Target, Wayland, fourcc_of_shm_format, shm_format_of_fourcc,
 };
 use pipewire::spa;
 use pipewire::spa::pod::deserialize::PodDeserializer;
@@ -44,6 +45,7 @@ use std::cell::RefCell;
 use std::io::Cursor;
 use std::os::fd::AsRawFd;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use wayland_client::protocol::wl_shm;
 use wayland_protocols::ext::image_copy_capture::v1::client::ext_image_copy_capture_frame_v1::FailureReason;
 
@@ -63,6 +65,10 @@ pub enum CursorMode {
 /// is 64 px on most hardware, 256 on some; the meta is sized for the
 /// plane the compositor announced, capped here.
 const MAX_CURSOR_PX: u32 = 256;
+
+/// The most regions a frame's `SPA_META_VideoDamage` lists; more become
+/// their bounding box.
+const MAX_DAMAGE_RECTS: usize = 16;
 
 /// A running stream: its PipeWire node id and the handle to stop it.
 pub struct Cast {
@@ -166,9 +172,12 @@ struct Data {
     main_loop: pipewire::main_loop::MainLoopWeak,
     /// The buffer out with the compositor, by address, and its frame.
     asked: Option<(usize, Asked)>,
+    /// An unchanged frame's buffer, by address, kept one wake for the cursor image still out.
+    held: Option<usize>,
     seq: u64,
     /// Frames answered so far, for the debug log of the first captures.
     calls: u64,
+    damage: DamageState,
 }
 
 /// A frame buffer of either kind.
@@ -185,11 +194,14 @@ impl Buffer {
         }
     }
 
-    /// The bytes of the first plane, for the chunk after a capture.
-    fn size(&self) -> u32 {
+    /// The bytes of each plane, for the chunks after a capture. An aux plane (CCS) has fewer
+    /// rows than the image.
+    fn sizes(&self) -> Vec<u32> {
         match self {
-            Buffer::Shm(b) => b.size as u32,
-            Buffer::Dma(b) => (b.planes[0].stride * b.height).min(b.planes[0].len),
+            Buffer::Shm(b) => vec![b.size as u32],
+            Buffer::Dma(b) => (b.planes.iter())
+                .map(|p| (p.stride * b.height).min(p.len))
+                .collect(),
         }
     }
 }
@@ -209,6 +221,9 @@ struct CursorPlane {
     /// The image of the last cursor frame answered, stamped until the
     /// next one comes.
     image: Option<Vec<u8>>,
+    /// The position last stamped, to tell whether a frame with nothing
+    /// else changed must still go out for the cursor.
+    sent: Option<CursorInfo>,
 }
 
 /// Open the cursor session and a buffer for its image. Fails when the
@@ -237,6 +252,7 @@ fn cursor_plane(
         id: 0,
         asked: None,
         image: None,
+        sent: None,
     })
 }
 
@@ -304,8 +320,10 @@ fn run(
         reported: Some(report),
         main_loop: main_loop.downgrade(),
         asked: None,
+        held: None,
         seq: 0,
         calls: 0,
+        damage: DamageState::new(),
     };
     let data_gbm = data.gbm.is_some();
     let fd = Fd(data.wl.fd());
@@ -408,6 +426,7 @@ fn on_param(stream: &pipewire::stream::Stream, d: &mut Data, id: u32, pod: Optio
         return;
     }
     let size = info.size();
+    d.damage.invalidate();
     log::info!(
         "format negotiated: {:?} {}x{}",
         info.format(),
@@ -575,11 +594,7 @@ fn on_add_buffer(d: &mut Data, buf: *mut pw_sys::pw_buffer) -> Result<(), String
                         data.data = std::ptr::null_mut();
                         data.maxsize = plane.len;
                         data.mapoffset = 0;
-                        let chunk = &mut *data.chunk;
-                        chunk.offset = plane.offset;
-                        // An aux plane (CCS) has fewer rows than the image.
-                        chunk.size = (plane.stride * h).min(plane.len);
-                        chunk.stride = plane.stride as i32;
+                        unfilled(&mut *data.chunk, plane.offset, plane.stride);
                     }
                 }
                 d.buffers.push((buf as usize, Buffer::Dma(dma)));
@@ -611,18 +626,33 @@ fn on_add_buffer(d: &mut Data, buf: *mut pw_sys::pw_buffer) -> Result<(), String
         data.data = std::ptr::null_mut();
         data.maxsize = shm.size as u32;
         data.mapoffset = 0;
-        let chunk = &mut *data.chunk;
-        chunk.offset = 0;
-        chunk.size = shm.size as u32;
-        chunk.stride = shm.stride as i32;
+        unfilled(&mut *data.chunk, 0, shm.stride);
     }
     d.buffers.push((buf as usize, Buffer::Shm(shm)));
     Ok(())
 }
 
+/// A new buffer's chunk: where its plane lies, and no frame until a capture fills it.
+fn unfilled(chunk: &mut spa_sys::spa_chunk, offset: u32, stride: u32) {
+    chunk.offset = offset;
+    chunk.size = 0;
+    chunk.stride = stride as i32;
+    chunk.flags = spa_sys::SPA_CHUNK_FLAG_CORRUPTED as i32;
+}
+
+/// A chunk whose plane a capture just filled with `size` bytes.
+fn filled(chunk: &mut spa_sys::spa_chunk, size: u32) {
+    chunk.flags = 0;
+    chunk.size = size;
+}
+
 fn on_remove_buffer(d: &mut Data, buf: *mut pw_sys::pw_buffer) {
     if d.asked.as_ref().is_some_and(|(k, _)| *k == buf as usize) {
         d.asked = None;
+        d.damage.invalidate();
+    }
+    if d.held == Some(buf as usize) {
+        d.held = None;
     }
     d.buffers.retain(|(k, _)| *k != buf as usize);
     // The fds belong to the buffers just dropped.
@@ -648,22 +678,50 @@ impl AsRawFd for Fd {
 /// Every graph cycle, and whenever the compositor sent events: hand the
 /// answered buffer on, then ask for a frame into the next free one.
 fn on_process(stream: &pipewire::stream::Stream, d: &mut Data) {
-    if d.wl.stopped() {
-        d.quit();
-        return;
-    }
-    if d.asked.is_some() {
-        let Some(result) = d.wl.answer() else {
+    let mut queued = None;
+    match wake(&mut d.wl, d.asked.is_some()) {
+        Wake::Ended => {
+            d.quit();
+            return;
+        }
+        Wake::Nothing if d.asked.is_some() => {
             d.wl.flush();
             return;
-        };
-        let (buf, asked) = d.asked.take().expect("checked above");
-        drop(asked);
-        hand_on(stream, d, buf as *mut pw_sys::pw_buffer, result);
+        }
+        Wake::Nothing => {
+            if let Some(buf) = d.held.take() {
+                hand_on(stream, d, buf as *mut pw_sys::pw_buffer, Ok(()), false);
+                if d.asked.is_some() {
+                    d.wl.flush();
+                    return;
+                }
+                queued = Some(buf);
+            }
+        }
+        Wake::Answered(result) => {
+            let (buf, asked) = d.asked.take().expect("answered only with a frame out");
+            drop(asked);
+            hand_on(stream, d, buf as *mut pw_sys::pw_buffer, result, true);
+            if d.asked.is_some() || d.held.is_some() {
+                // The frame was unchanged and its buffer is out again or held.
+                d.wl.flush();
+                return;
+            }
+            queued = Some(buf);
+        }
     }
     // SAFETY: the buffer is kept in `d.asked` until `hand_on` queues it
     // back, or queued back here.
-    let buf = unsafe { stream.dequeue_raw_buffer() };
+    let mut buf = unsafe { stream.dequeue_raw_buffer() };
+    if !buf.is_null() && queued == Some(buf as usize) {
+        // A second listing of the frame just queued, its stale io id recycled by a
+        // renegotiation: dropping this listing's busy count leaves the queued one.
+        log::debug!("buffer {buf:p} listed twice; dropping the second listing");
+        // SAFETY: `buf` was dequeued just above, so its spa_buffer is live.
+        unsafe { drop_busy((*buf).buffer) };
+        // SAFETY: as above.
+        buf = unsafe { stream.dequeue_raw_buffer() };
+    }
     if !buf.is_null() {
         match d.buffers.iter().position(|(k, _)| *k == buf as usize) {
             Some(i) => {
@@ -677,17 +735,48 @@ fn on_process(stream: &pipewire::stream::Stream, d: &mut Data) {
     d.wl.flush();
 }
 
+/// What a wake of the cast loop found on the compositor's side.
+#[derive(Debug, PartialEq)]
+enum Wake {
+    /// The session or the connection ended.
+    Ended,
+    /// The answer to the frame out with the compositor.
+    Answered(Result<(), CaptureError>),
+    /// No frame is out, or its answer has not come.
+    Nothing,
+}
+
+/// Read what the compositor sent and take the answer to the frame out, if `out`. Every wake
+/// reads, frame out or not: the loop watches the socket level-triggered.
+fn wake(wl: &mut Wayland, out: bool) -> Wake {
+    let answer = wl.answer();
+    if wl.stopped() || answer == Some(Err(CaptureError::Gone)) {
+        return Wake::Ended;
+    }
+    match answer {
+        Some(r) if out => Wake::Answered(r),
+        _ => Wake::Nothing,
+    }
+}
+
 /// Queue `buf` back on `stream` with the compositor's `result` for it:
-/// the frame, or an empty or corrupted chunk.
+/// the frame, or an empty or corrupted chunk. An unchanged frame is not
+/// queued: `buf` goes back to the compositor for the next one, or, if
+/// `may_hold`, is held in `d.held` while a cursor image is out.
 fn hand_on(
     stream: &pipewire::stream::Stream,
     d: &mut Data,
     buf: *mut pw_sys::pw_buffer,
     result: Result<(), CaptureError>,
+    may_hold: bool,
 ) {
     let Some(i) = d.buffers.iter().position(|(k, _)| *k == buf as usize) else {
+        d.damage.invalidate();
         return;
     };
+    if result.is_err() {
+        d.damage.invalidate();
+    }
     d.calls += 1;
     if d.calls <= 8 || d.calls.is_multiple_of(200) {
         log::debug!("frame #{}: {:?}", d.calls, result);
@@ -697,20 +786,37 @@ fn hand_on(
     // ALLOC_BUFFERS gives a chunk.
     unsafe {
         let sb = (*buf).buffer;
-        let chunk = &mut *(*(*sb).datas).chunk;
         match result {
             Ok(()) => {
-                chunk.flags = 0;
-                chunk.size = d.buffers[i].1.size();
+                let size = (d.constraints.width, d.constraints.height);
+                let damage = d.damage.answered(Some(d.wl.damage()), size);
+                if damage.is_none() {
+                    match unchanged(cursor_moved(sb, d), cursor_image_out(sb, d), may_hold) {
+                        Unchanged::Send => {}
+                        Unchanged::Hold => {
+                            d.held = Some(buf as usize);
+                            return;
+                        }
+                        Unchanged::Ask => {
+                            let asked = d.wl.ask(&d.session, d.buffers[i].1.capture_buffer());
+                            d.asked = Some((buf as usize, asked));
+                            return;
+                        }
+                    }
+                }
+                // on_add_buffer gave the buffer a data entry per plane.
+                for (p, size) in d.buffers[i].1.sizes().into_iter().enumerate() {
+                    filled(&mut *(*(*sb).datas.add(p)).chunk, size);
+                }
                 d.seq += 1;
                 stamp_header(sb, d.seq, 0);
+                stamp_damage(sb, size, &damage.unwrap_or_default());
                 stamp_cursor(sb, d);
             }
             Err(CaptureError::Failed(FailureReason::BufferConstraints)) => {
                 // The source changed size: adopt the new constraints and
                 // re-announce the format; PipeWire reallocates the buffers.
-                chunk.flags = spa_sys::SPA_CHUNK_FLAG_CORRUPTED as i32;
-                chunk.size = 0;
+                corrupted(sb);
                 d.constraints = d.wl.constraints();
                 d.modifier = None;
                 log::info!(
@@ -722,17 +828,192 @@ fn hand_on(
                 let mut refs: Vec<&Pod> = params.iter().map(|p| &**p).collect();
                 let _ = stream.update_params(&mut refs);
             }
-            Err(CaptureError::Failed(FailureReason::Stopped)) | Err(CaptureError::Gone) => {
-                chunk.flags = spa_sys::SPA_CHUNK_FLAG_CORRUPTED as i32;
-                chunk.size = 0;
+            Err(CaptureError::Failed(FailureReason::Stopped)) => {
+                corrupted(sb);
                 d.quit();
             }
-            Err(CaptureError::Failed(_)) | Err(CaptureError::Timeout) => {
-                chunk.flags = spa_sys::SPA_CHUNK_FLAG_CORRUPTED as i32;
-                chunk.size = 0;
+            // wake() ends the cast on Gone before an answer gets here.
+            Err(CaptureError::Failed(_) | CaptureError::Timeout | CaptureError::Gone) => {
+                corrupted(sb);
             }
         }
         stream.queue_raw_buffer(buf);
+    }
+}
+
+/// Mark every plane of `sb` as holding no picture.
+///
+/// # Safety
+/// `sb` is a dequeued buffer with `n_datas` data entries, each with a chunk.
+unsafe fn corrupted(sb: *mut spa_sys::spa_buffer) {
+    // SAFETY: as the caller promises.
+    let datas = unsafe { std::slice::from_raw_parts_mut((*sb).datas, (*sb).n_datas as usize) };
+    for data in datas {
+        // SAFETY: as above.
+        let chunk = unsafe { &mut *data.chunk };
+        chunk.flags = spa_sys::SPA_CHUNK_FLAG_CORRUPTED as i32;
+        chunk.size = 0;
+    }
+}
+
+/// What becomes of an answered frame with no new damage.
+#[derive(Debug, PartialEq)]
+enum Unchanged {
+    /// The cursor moved or has a new image: the frame goes out for it.
+    Send,
+    /// A cursor image is still out: the buffer waits one wake for it.
+    Hold,
+    /// The buffer goes back to the compositor for the next change.
+    Ask,
+}
+
+fn unchanged(cursor_changed: bool, image_out: bool, may_hold: bool) -> Unchanged {
+    if cursor_changed {
+        Unchanged::Send
+    } else if image_out && may_hold {
+        Unchanged::Hold
+    } else {
+        Unchanged::Ask
+    }
+}
+
+/// Whether the cursor image asked for after the last frame sent has not come yet.
+unsafe fn cursor_image_out(sb: *mut spa_sys::spa_buffer, d: &Data) -> bool {
+    // SAFETY: `sb` is the buffer the caller dequeued from the stream and still holds.
+    let meta = unsafe { find_meta(sb, spa_sys::SPA_META_Cursor) };
+    meta.is_some()
+        && d.cursor.as_ref().is_some_and(|p| p.asked.is_some())
+        && !d.wl.cursor_answered()
+}
+
+/// Fill the `SPA_META_VideoDamage` with `rects` if the consumer asked
+/// for one.
+unsafe fn stamp_damage(sb: *mut spa_sys::spa_buffer, size: (u32, u32), rects: &[Rect]) {
+    // SAFETY: `sb` is the buffer the caller dequeued from the stream and
+    // still holds.
+    let Some(meta) = (unsafe { find_meta(sb, spa_sys::SPA_META_VideoDamage) }) else {
+        return;
+    };
+    // SAFETY: as in `stamp_cursor`: `data` is non-null and holds `size`
+    // bytes nothing else touches while we hold the buffer.
+    let out =
+        unsafe { std::slice::from_raw_parts_mut((*meta).data as *mut u8, (*meta).size as usize) };
+    let room = out.len() / std::mem::size_of::<spa_sys::spa_meta_region>();
+    write_damage_meta(out, &damage_regions(rects, size, room));
+}
+
+/// What the consumer knows of the source, to decide each answered
+/// frame's damage.
+struct DamageState {
+    /// The next frame sent is whole: set at start, on each format
+    /// negotiation and after a frame that did not reach the consumer.
+    full: bool,
+}
+
+impl DamageState {
+    fn new() -> DamageState {
+        DamageState { full: true }
+    }
+
+    /// The consumer's picture is new or missed a frame.
+    fn invalidate(&mut self) {
+        self.full = true;
+    }
+
+    /// The damage to send with a frame of `size` the compositor answered
+    /// with `rects` (`None` for a source that reports no damage), or
+    /// `None` when nothing changed: an ext frame without damage events.
+    fn answered(&mut self, rects: Option<&[Rect]>, size: (u32, u32)) -> Option<Vec<Rect>> {
+        match rects {
+            _ if std::mem::take(&mut self.full) => Some(vec![full_rect(size)]),
+            None => Some(vec![full_rect(size)]),
+            Some([]) => None,
+            Some(r) => Some(r.to_vec()),
+        }
+    }
+}
+
+/// Whether the frame in `sb` must go out for its `SPA_META_Cursor`
+/// alone: the cursor moved, left, or has a new image since the last.
+unsafe fn cursor_moved(sb: *mut spa_sys::spa_buffer, d: &Data) -> bool {
+    let Some(plane) = d.cursor.as_ref() else {
+        return false;
+    };
+    // SAFETY: `sb` is the buffer the caller dequeued from the stream and
+    // still holds.
+    if unsafe { find_meta(sb, spa_sys::SPA_META_Cursor) }.is_none() {
+        return false;
+    }
+    let image_in = plane.asked.is_some() && d.wl.cursor_answered();
+    cursor_changed(plane.sent, d.wl.cursor_info(), image_in)
+}
+
+fn cursor_changed(sent: Option<CursorInfo>, now: CursorInfo, image_in: bool) -> bool {
+    image_in || sent != Some(now)
+}
+
+fn full_rect((w, h): (u32, u32)) -> Rect {
+    Rect {
+        x: 0,
+        y: 0,
+        width: w.min(i32::MAX as u32) as i32,
+        height: h.min(i32::MAX as u32) as i32,
+    }
+}
+
+/// `rects` clamped to a frame of `size`, without the empty ones; their
+/// bounding box alone when more than `max` remain.
+fn damage_regions(rects: &[Rect], size: (u32, u32), max: usize) -> Vec<Rect> {
+    let (w, h) = (i64::from(size.0), i64::from(size.1));
+    let edges: Vec<(i64, i64, i64, i64)> = rects
+        .iter()
+        .map(|r| {
+            let (x, y) = (i64::from(r.x), i64::from(r.y));
+            (
+                x.max(0),
+                y.max(0),
+                (x + i64::from(r.width)).min(w),
+                (y + i64::from(r.height)).min(h),
+            )
+        })
+        .filter(|(x0, y0, x1, y1)| x1 > x0 && y1 > y0)
+        .collect();
+    let rect = |(x0, y0, x1, y1): (i64, i64, i64, i64)| Rect {
+        x: x0 as i32,
+        y: y0 as i32,
+        width: (x1 - x0) as i32,
+        height: (y1 - y0) as i32,
+    };
+    if edges.len() <= max {
+        return edges.into_iter().map(rect).collect();
+    }
+    let bounds = edges.iter().fold(
+        (i64::MAX, i64::MAX, i64::MIN, i64::MIN),
+        |(ax0, ay0, ax1, ay1), &(x0, y0, x1, y1)| {
+            (ax0.min(x0), ay0.min(y0), ax1.max(x1), ay1.max(y1))
+        },
+    );
+    vec![rect(bounds)]
+}
+
+/// Lay `rects` into `out` as `spa_meta_region`s, as many as fit; the
+/// slots after them are zeroed, and a region of size 0 ends the list.
+fn write_damage_meta(out: &mut [u8], rects: &[Rect]) {
+    let len = std::mem::size_of::<spa_sys::spa_meta_region>();
+    out.fill(0);
+    for (slot, r) in out.chunks_exact_mut(len).zip(rects) {
+        let region = spa_sys::spa_meta_region {
+            region: spa_sys::spa_region {
+                position: spa_sys::spa_point { x: r.x, y: r.y },
+                size: spa_sys::spa_rectangle {
+                    width: r.width.max(0) as u32,
+                    height: r.height.max(0) as u32,
+                },
+            },
+        };
+        // SAFETY: `region` is plain C data and the view is exactly its size.
+        let bytes = unsafe { std::slice::from_raw_parts(&region as *const _ as *const u8, len) };
+        slot.copy_from_slice(bytes);
     }
 }
 
@@ -750,6 +1031,7 @@ unsafe fn stamp_cursor(sb: *mut spa_sys::spa_buffer, d: &mut Data) {
         return;
     };
     let info = d.wl.cursor_info();
+    plane.sent = Some(info);
     let answer = if plane.asked.is_some() {
         d.wl.cursor_answer()
     } else {
@@ -813,6 +1095,23 @@ unsafe fn find_meta(sb: *mut spa_sys::spa_buffer, type_: u32) -> Option<*mut spa
         (0..(*sb).n_metas as usize)
             .map(|i| (*sb).metas.add(i))
             .find(|m| (**m).type_ == type_ && !(**m).data.is_null())
+    }
+}
+
+/// Undo the `SPA_META_Busy` count `pw_stream_dequeue_buffer` raised on `sb`, for a dequeue
+/// that is neither queued nor returned.
+unsafe fn drop_busy(sb: *mut spa_sys::spa_buffer) {
+    // SAFETY: relies on the caller passing a live `sb`; a busy meta at least
+    // `spa_meta_busy` long holds one, which other processes update atomically.
+    unsafe {
+        let Some(m) = find_meta(sb, spa_sys::SPA_META_Busy) else {
+            return;
+        };
+        if ((*m).size as usize) < std::mem::size_of::<spa_sys::spa_meta_busy>() {
+            return;
+        }
+        let busy = (*m).data.cast::<spa_sys::spa_meta_busy>();
+        AtomicU32::from_ptr(&raw mut (*busy).count).fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -1076,8 +1375,9 @@ fn format_pod(
 
 /// `Buffers` (2..8 of them; DmaBuf with `dmabuf_planes` blocks and
 /// MemFd when a modifier was negotiated, MemFd alone otherwise) and
-/// `Meta` params: the header, and the cursor of `cursor_meta` bytes in
-/// metadata cursor mode.
+/// `Meta` params: the header, the damage (1 to [`MAX_DAMAGE_RECTS`]
+/// regions), and the cursor of `cursor_meta` bytes in metadata cursor
+/// mode.
 fn buffer_params(
     width: u32,
     height: u32,
@@ -1142,7 +1442,29 @@ fn buffer_params(
             ),
         ],
     }));
-    let mut params = vec![buffers, header];
+    let region = std::mem::size_of::<spa_sys::spa_meta_region>() as i32;
+    let damage = OwnedPod::serialize(&pod::Value::Object(pod::Object {
+        type_: spa_sys::SPA_TYPE_OBJECT_ParamMeta,
+        id: spa_sys::SPA_PARAM_Meta,
+        properties: vec![
+            prop(
+                spa_sys::SPA_PARAM_META_type,
+                pod::Value::Id(Id(spa_sys::SPA_META_VideoDamage)),
+            ),
+            prop(
+                spa_sys::SPA_PARAM_META_size,
+                pod::Value::Choice(pod::ChoiceValue::Int(Choice(
+                    ChoiceFlags::empty(),
+                    ChoiceEnum::Range {
+                        default: region * MAX_DAMAGE_RECTS as i32,
+                        min: region,
+                        max: region * MAX_DAMAGE_RECTS as i32,
+                    },
+                ))),
+            ),
+        ],
+    }));
+    let mut params = vec![buffers, header, damage];
     if let Some(size) = cursor_meta {
         params.push(OwnedPod::serialize(&pod::Value::Object(pod::Object {
             type_: spa_sys::SPA_TYPE_OBJECT_ParamMeta,
@@ -1165,6 +1487,54 @@ mod tests {
 
     fn read_u32(b: &[u8], at: usize) -> u32 {
         u32::from_ne_bytes(b[at..at + 4].try_into().unwrap())
+    }
+
+    fn readable(fd: std::os::fd::RawFd) -> bool {
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one valid pollfd, no wait.
+        unsafe { libc::poll(&mut pfd, 1, 0) == 1 }
+    }
+
+    #[test]
+    fn a_wake_with_no_frame_out_reads_what_the_compositor_sent() {
+        use std::io::Write;
+        let (ours, mut theirs) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let mut wl = Wayland::over(ours);
+        theirs
+            .write_all(&crate::wayland::sync_done())
+            .expect("write");
+        assert!(readable(wl.fd()));
+        assert_eq!(wake(&mut wl, false), Wake::Nothing);
+        assert!(!readable(wl.fd()), "the socket is read empty");
+    }
+
+    #[test]
+    fn a_closed_compositor_ends_the_cast_with_no_frame_out() {
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let mut wl = Wayland::over(ours);
+        drop(theirs);
+        assert_eq!(wake(&mut wl, false), Wake::Ended);
+    }
+
+    #[test]
+    fn a_buffer_is_no_frame_until_a_capture_fills_it() {
+        // SAFETY: a plain C struct, for which all zeroes is valid.
+        let mut chunk: spa_sys::spa_chunk = unsafe { std::mem::zeroed() };
+        chunk.size = 4096;
+        unfilled(&mut chunk, 64, 256);
+        assert_eq!((chunk.offset, chunk.stride), (64, 256));
+        assert_eq!(chunk.size, 0, "a new buffer holds no bytes");
+        assert_ne!(
+            chunk.flags & spa_sys::SPA_CHUNK_FLAG_CORRUPTED as i32,
+            0,
+            "a new buffer is marked corrupted"
+        );
+        filled(&mut chunk, 4096);
+        assert_eq!((chunk.size, chunk.flags), (4096, 0));
     }
 
     #[test]
@@ -1195,6 +1565,25 @@ mod tests {
         // SAFETY: as above.
         let second = unsafe { find_meta(&mut sb, spa_sys::SPA_META_Cursor) };
         assert_eq!(second, Some(metas[1..].as_mut_ptr()));
+    }
+
+    #[test]
+    fn drop_busy_takes_one_from_the_busy_count() {
+        let mut busy = spa_sys::spa_meta_busy { flags: 0, count: 2 };
+        let mut metas = [spa_sys::spa_meta {
+            type_: spa_sys::SPA_META_Busy,
+            size: std::mem::size_of::<spa_sys::spa_meta_busy>() as u32,
+            data: (&raw mut busy).cast(),
+        }];
+        let mut sb = spa_sys::spa_buffer {
+            n_metas: 1,
+            n_datas: 0,
+            metas: metas.as_mut_ptr(),
+            datas: std::ptr::null_mut(),
+        };
+        // SAFETY: `sb` points at `metas`, whose data is `busy`; both outlive the call.
+        unsafe { drop_busy(&mut sb) };
+        assert_eq!(busy.count, 1);
     }
 
     #[test]
@@ -1276,5 +1665,174 @@ mod tests {
         write_cursor_meta(&mut small, 2, info, Some(bm));
         assert_eq!(read_u32(&small, 0), 2);
         assert_eq!(read_u32(&small, 24), 0, "does not fit: no bitmap");
+    }
+
+    fn rect(x: i32, y: i32, width: i32, height: i32) -> Rect {
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn damage_is_clamped_to_the_frame() {
+        let got = damage_regions(&[rect(1900, 1060, 100, 100)], (1920, 1080), 16);
+        assert_eq!(got, vec![rect(1900, 1060, 20, 20)]);
+        let got = damage_regions(&[rect(-10, -5, 30, 15)], (1920, 1080), 16);
+        assert_eq!(got, vec![rect(0, 0, 20, 10)]);
+    }
+
+    #[test]
+    fn empty_damage_is_dropped() {
+        let got = damage_regions(
+            &[
+                rect(10, 10, 0, 5),
+                rect(10, 10, 5, 0),
+                rect(2000, 10, 50, 50),
+                rect(5, 5, 10, 10),
+            ],
+            (1920, 1080),
+            16,
+        );
+        assert_eq!(got, vec![rect(5, 5, 10, 10)]);
+    }
+
+    #[test]
+    fn too_many_rects_become_their_bounding_box() {
+        let rects: Vec<Rect> = (0..17).map(|i| rect(10 + i * 20, 50 + i, 10, 10)).collect();
+        let got = damage_regions(&rects, (1920, 1080), 16);
+        assert_eq!(got, vec![rect(10, 50, 330, 26)]);
+        assert_eq!(damage_regions(&rects[..16], (1920, 1080), 16).len(), 16);
+    }
+
+    const FHD: (u32, u32) = (1920, 1080);
+
+    #[test]
+    fn a_first_frame_is_fully_damaged() {
+        let full = Some(vec![rect(0, 0, 1920, 1080)]);
+        let small = [rect(5, 5, 10, 10)];
+        let mut d = DamageState::new();
+        assert_eq!(d.answered(Some(&small), FHD), full);
+        assert_eq!(d.answered(Some(&small), FHD), Some(small.to_vec()));
+        assert_eq!(
+            d.answered(None, FHD),
+            full,
+            "a source without damage reports is fully damaged"
+        );
+    }
+
+    #[test]
+    fn an_unchanged_frame_is_not_queued() {
+        let mut d = DamageState::new();
+        assert_eq!(
+            d.answered(Some(&[]), FHD),
+            Some(vec![rect(0, 0, 1920, 1080)]),
+            "the first frame goes out whole"
+        );
+        assert_eq!(d.answered(Some(&[]), FHD), None);
+        assert_eq!(d.answered(Some(&[]), FHD), None);
+        let small = [rect(5, 5, 10, 10)];
+        assert_eq!(d.answered(Some(&small), FHD), Some(small.to_vec()));
+    }
+
+    #[test]
+    fn a_frame_after_a_dropped_one_is_fully_damaged() {
+        let full = Some(vec![rect(0, 0, 1920, 1080)]);
+        let small = [rect(5, 5, 10, 10)];
+        let mut d = DamageState::new();
+        d.answered(Some(&small), FHD);
+        d.invalidate();
+        assert_eq!(d.answered(Some(&small), FHD), full);
+        d.invalidate();
+        assert_eq!(
+            d.answered(Some(&[]), FHD),
+            full,
+            "an unchanged frame after a drop is sent whole"
+        );
+        assert_eq!(d.answered(Some(&small), FHD), Some(small.to_vec()));
+    }
+
+    #[test]
+    fn a_renegotiated_stream_starts_fully_damaged() {
+        let small = [rect(5, 5, 10, 10)];
+        let mut d = DamageState::new();
+        d.answered(Some(&small), FHD);
+        d.invalidate();
+        assert_eq!(
+            d.answered(Some(&small), (1280, 720)),
+            Some(vec![rect(0, 0, 1280, 720)]),
+            "the whole 1280x720 frame"
+        );
+    }
+
+    #[test]
+    fn a_cursor_move_on_an_unchanged_screen_is_sent() {
+        let at = |x| CursorInfo {
+            entered: true,
+            x,
+            y: 10,
+            hotspot: (0, 0),
+        };
+        assert!(cursor_changed(None, at(5), false), "nothing stamped yet");
+        assert!(!cursor_changed(Some(at(5)), at(5), false));
+        assert!(cursor_changed(Some(at(5)), at(6), false));
+        assert!(cursor_changed(Some(at(5)), at(5), true), "a new image");
+        let left = CursorInfo {
+            entered: false,
+            ..at(5)
+        };
+        assert!(cursor_changed(Some(at(5)), left, false));
+    }
+
+    #[test]
+    fn an_unchanged_frame_waits_one_wake_for_a_cursor_image_out() {
+        assert_eq!(unchanged(true, true, true), Unchanged::Send);
+        assert_eq!(
+            unchanged(false, true, true),
+            Unchanged::Hold,
+            "held while the cursor image is out"
+        );
+        assert_eq!(
+            unchanged(false, true, false),
+            Unchanged::Ask,
+            "a held frame whose image did not come goes back"
+        );
+        assert_eq!(unchanged(false, false, true), Unchanged::Ask);
+    }
+
+    #[test]
+    fn a_failed_capture_marks_every_plane_corrupted() {
+        // SAFETY: plain C structs, for which all zeroes is valid.
+        let mut chunks: [spa_sys::spa_chunk; 2] = unsafe { std::mem::zeroed() };
+        // SAFETY: as above.
+        let mut datas: [spa_sys::spa_data; 2] = unsafe { std::mem::zeroed() };
+        for (data, chunk) in datas.iter_mut().zip(&mut chunks) {
+            chunk.size = 4096;
+            data.chunk = chunk;
+        }
+        // SAFETY: as above.
+        let mut sb: spa_sys::spa_buffer = unsafe { std::mem::zeroed() };
+        sb.n_datas = 2;
+        sb.datas = datas.as_mut_ptr();
+        // SAFETY: `sb` has two data entries, each with a chunk.
+        unsafe { corrupted(&mut sb) };
+        for chunk in &chunks {
+            assert_eq!(
+                (chunk.size, chunk.flags),
+                (0, spa_sys::SPA_CHUNK_FLAG_CORRUPTED as i32),
+                "both planes"
+            );
+        }
+    }
+
+    #[test]
+    fn damage_meta_lists_the_rects_then_an_empty_region() {
+        let region = std::mem::size_of::<spa_sys::spa_meta_region>();
+        let mut out = vec![0xFFu8; 3 * region];
+        write_damage_meta(&mut out, &[rect(1, 2, 3, 4)]);
+        let words: Vec<u32> = (0..out.len() / 4).map(|i| read_u32(&out, i * 4)).collect();
+        assert_eq!(words, vec![1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 }

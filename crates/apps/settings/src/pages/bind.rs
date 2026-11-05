@@ -5,7 +5,10 @@ use super::desktop::{
     DESKTOP_CONTROLS, DRAG_SNAP_CONTROLS, DURATION_CONTROLS, FPS_CONTROLS, REVEAL_CONTROLS,
 };
 use super::input::{MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS};
-use super::system::{ALLOW_BOOST, BELL, NOTIFICATION_SOUND, SOUND_CONTROLS};
+use super::system::{
+    ALLOW_BOOST, BELL, NOTIFICATION_SOUND, QUALITY_VALUE, REMOTE_ENCODER, REMOTE_FRAME_RATE,
+    REMOTE_PORT, REMOTE_QUALITY, REMOTE_SOUND, SOUND_CONTROLS,
+};
 use super::{
     CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN, GTK_FIXED_ROWS,
     KB_ADD, KB_LAYOUTS, KB_REMOVE, KB_UP, KELVIN_MAX, KELVIN_MIN, KELVIN_STEP, MK_ACCEL, MK_SPEED,
@@ -23,10 +26,11 @@ use reprisekit::textedit::TextEdit;
 use reprisekit::theme::Color;
 
 use crate::model::{
-    CURSOR_SIZES, Choices, DESKTOPS_DEFAULT, FONT_SMOOTHINGS, HOT_CORNERS, INTERFACES,
-    MENU_ANIMATIONS, PAGER_MARKS, POSITIONS, QT_PLATFORM_THEMES, STARTMENU_STYLES,
-    SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES, Settings, TASKBAR_BUTTONS,
-    TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, WATER_STYLES,
+    CURSOR_SIZES, Choices, DESKTOPS_DEFAULT, FONT_SMOOTHINGS, FRAME_RATES, HOT_CORNERS, INTERFACES,
+    MENU_ANIMATIONS, PAGER_MARKS, POSITIONS, QT_PLATFORM_THEMES, REMOTE_ENCODERS, REMOTE_QUALITIES,
+    STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES, Settings,
+    TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, WATER_STYLES,
+    remote_quality_row,
 };
 
 pub(super) enum Bind {
@@ -63,6 +67,8 @@ pub(super) enum Bind {
     Time(&'static str, Lens<Settings, String>),
     Delay(&'static str, Lens<Settings, i64>),
     Steps(&'static str, Lens<Settings, i64>, Steps),
+    /// The Remote Desktop quality trackbar: its positions stand for [`REMOTE_QUALITIES`], in order.
+    Quality(&'static str, Lens<Settings, String>),
     /// A scheme combo: the interface's own row (`own`) stands for the empty string, any other row for its name.
     Scheme(&'static str, Lens<Settings, String>, &'static str),
     /// The glass colour combo: a swatch row for its name, the Custom row for `Settings::glass_custom`.
@@ -281,6 +287,11 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Num("lock_fade", lens!(lock_fade)),
         Bind::Num(crate::saverpage::AWAY_AFTER, lens!(away_after_s)),
         Bind::Num("low_space_percent", lens!(low_space_percent)),
+        Bind::Num(REMOTE_PORT, lens!(remote_port)),
+        Bind::Quality(REMOTE_QUALITY, lens!(remote_quality)),
+        Bind::NamedNum(REMOTE_FRAME_RATE, lens!(remote_frame_rate), FRAME_RATES),
+        Bind::Named(REMOTE_ENCODER, lens!(remote_encoder), REMOTE_ENCODERS),
+        Bind::Flag(REMOTE_SOUND, lens!(remote_sound)),
         Bind::Track("mouse_speed", lens!(mouse_speed)),
         Bind::Flag("mouse_accel", lens!(mouse_accel)),
         Bind::Flag("mouse_natural", lens!(mouse_natural)),
@@ -367,6 +378,7 @@ impl Bind {
             | Bind::Time(id, _)
             | Bind::Delay(id, _)
             | Bind::Steps(id, _, _)
+            | Bind::Quality(id, _)
             | Bind::Scheme(id, _, _)
             | Bind::GlassColor(id, _)
             | Bind::Level(id, _, _)
@@ -389,6 +401,7 @@ impl Bind {
             | Bind::Radio(_, at, _)
             | Bind::Switch(_, at, _, _)
             | Bind::Time(_, at)
+            | Bind::Quality(_, at)
             | Bind::Scheme(_, at, _)
             | Bind::GlassColor(_, at)
             | Bind::Hex(_, at) => at.get_mut(s).push('\u{1}'),
@@ -577,6 +590,9 @@ pub fn write_form(form: &mut Form, s: &Settings) {
             (Bind::Steps(_, at, steps), Control::TrackBar(t)) => {
                 t.set(steps.pos(*at.get(s)));
             }
+            (Bind::Quality(_, at), Control::TrackBar(t)) => {
+                t.set(remote_quality_row(at.get(s)));
+            }
             (Bind::Scheme(_, at, own), Control::Combo(c)) => {
                 let want = match at.get(s).as_str() {
                     "" => *own,
@@ -618,7 +634,7 @@ pub fn write_form(form: &mut Form, s: &Settings) {
 /// greys the auto-hide triggers while auto-hide is off, the Sounds page the sound theme while
 /// neither notifications nor the bell play a sound, and the Advanced page
 /// the debug overlay's captures check while the overlay is off and the thumbnail cache's size
-/// while the cache is off. Runs from
+/// while the cache is off; the Remote Desktop page names the quality picked. Runs from
 /// `write` and after every read-back.
 pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     crate::appearancepage::follow(sheet, s);
@@ -707,6 +723,8 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         tb.set_enabled(id, s.taskbar_auto_hide);
     }
     tb.set_enabled(TRAY_CUSTOMIZE, s.taskbar_tray_overflow);
+    let quality = REMOTE_QUALITIES[remote_quality_row(&s.remote_quality)].1;
+    sheet.pages[Page::RemoteDesktop.index()].set_text(QUALITY_VALUE, quality);
     let adv = &mut sheet.pages[Page::Advanced.index()];
     adv.set_enabled(DEBUG_IN_CAPTURES, s.debug_overlay);
     for id in THUMBS_SIZE {
@@ -860,6 +878,11 @@ pub fn read_one(sheet: &PropSheet, id: &str, s: &mut Settings) {
                 }
                 (Bind::Steps(_, at, steps), Control::TrackBar(t)) => {
                     *at.get_mut(s) = steps.value(t.pos)
+                }
+                (Bind::Quality(_, at), Control::TrackBar(t)) => {
+                    if let Some((v, _)) = REMOTE_QUALITIES.get(t.pos) {
+                        *at.get_mut(s) = v.to_string();
+                    }
                 }
                 (Bind::Scheme(_, at, own), Control::Combo(c)) => {
                     if let Some(v) = c.items.get(c.selected) {

@@ -272,7 +272,7 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 ## Reprise Settings
 
-One window, 23 pages, four headings. Only one runs at a time.
+One window, 26 pages, four headings. Only one runs at a time.
 
 - **Look**
   - **Appearance:** interface and colour scheme. Under Glass: mode,
@@ -327,6 +327,15 @@ One window, 23 pages, four headings. Only one runs at a time.
     a script's window stays open when it ends, and the program for
     every file type, which Browse... can pick by its file when it has no
     desktop entry.
+  - **Remote Desktop:** Allow remote connections turns the server on or off
+    at once, enabling and starting its user unit or stopping and disabling
+    it, and the lines under it say where it listens and which video encoder
+    it uses. The port, picture quality, frame rate, video encoder and Play
+    sound on the remote computer wait for Apply; encoders that don't work
+    on this computer are greyed, and with the server off only Automatic is
+    lit. The certificate's fingerprint is there to
+    check on the connecting computer, with New Certificate... beside it,
+    and the connected computer is listed with Disconnect.
   - **Advanced:** clipboard history, screenshots, recent files, location,
     desktop water, the debug overlay, the thumbnail cache (Clear removes
     only the thumbnails Reprise kept and says how much went), thumbnails from
@@ -604,6 +613,17 @@ network time.
   password says so. systemd's services wait 25 s for the password: in Date
   and Time a prompt left open longer closes, and the program says to try
   again.
+- **Remote Desktop server.** `reprise-rdp` lets one RDP client at a time use
+  the session. It runs as the user unit `app-org.reprise.RemoteDesktop.service`,
+  which Settings > Remote Desktop enables or disables, and has no window. It
+  shares the screen and takes input through the portal like any other remote
+  control tool, but the portal asks nothing while the unit is enabled. On
+  the session bus it is `org.reprise.RemoteDesktop`, which Settings reads for
+  the status lines and the connected computer. Its journal lines name each
+  client's address, logins, the encoder and why a connection ended
+  (`journalctl --user -u app-org.reprise.RemoteDesktop`). See
+  [features.md](features.md#remote-desktop) for connecting and
+  [security.md](security.md#remote-desktop) for logins.
 - **About Reprise.** Version, operating system, kernel, model, processor,
   graphics, memory (in kilobytes, total and available), disk, displays and
   uptime, with a Copy button for bug reports. The programs' own Help > About

@@ -192,6 +192,7 @@ impl Notepad {
             selection: self.edit.has_selection(),
             paste: repriseapp::clipboard_has_text(),
             secret: false,
+            read_only: false,
         };
         self.context = Some(editmenu::Menu::open(
             live,

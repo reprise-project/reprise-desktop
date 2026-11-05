@@ -444,11 +444,13 @@ fn backlight_read(sysfs: &Sysfs, name: &str) -> Option<Reading> {
     })
 }
 
+/// Level 0 writes 0, turning the backlight off; other levels keep [`backlight_floor`].
 async fn backlight_write(buses: &mut Buses, sysfs: &Sysfs, name: &str, level: u8) -> bool {
     let Some((_, max)) = sysfs_levels(&sysfs.class("backlight"), name) else {
         return false;
     };
-    let v = from_percent(level, max, backlight_floor(max));
+    let floor = if level == 0 { 0 } else { backlight_floor(max) };
+    let v = from_percent(level, max, floor);
     if sysfs.direct {
         let path = sysfs.class("backlight").join(name).join("brightness");
         std::fs::write(path, v.to_string()).is_ok()
@@ -825,6 +827,16 @@ pub struct MediaState {
     jobs: Option<Sender<Job>>,
     repeat: Option<RegistrationToken>,
     repeating: Option<(u32, Action)>,
+}
+
+#[cfg(test)]
+impl MediaState {
+    /// The jobs from now on, as the worker would get them.
+    pub(crate) fn capture(&mut self) -> Receiver<Job> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.jobs = Some(tx);
+        rx
+    }
 }
 
 /// Whether holding the key keeps stepping: level actions do, the toggles fire once per press.
@@ -1255,6 +1267,12 @@ mod tests {
             "16384"
         );
         assert_eq!(run(read("DP-9", 3)), Outcome::Read(None));
+        assert_eq!(run(set("eDP-1", 0, 4)), Outcome::Wrote);
+        assert_eq!(
+            std::fs::read_to_string(d.0.join("class/backlight/amdgpu_bl1/brightness")).unwrap(),
+            "0",
+            "level 0 is off, under the floor"
+        );
     }
 
     /// A sysfs root with DP-2 on DDC bus 8, and a fake `ddcutil` running `script` in it.

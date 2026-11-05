@@ -237,6 +237,10 @@ struct Cli {
     /// Check the password on stdin for USER and exit (the lock starts it; see `lockfinger`)
     #[arg(long, hide = true, value_name = "USER")]
     password_conversation: Option<String>,
+    /// Check the password on stdin for USER with PAM's `reprise-rdp` service and exit (reprise-rdp
+    /// starts it)
+    #[arg(long, hide = true, value_name = "USER")]
+    rdp_password_conversation: Option<String>,
     /// Start a new session after the last one crashed, the crashes of this login so far (the
     /// restart passes it; see `crash`)
     #[arg(long, hide = true, value_name = "CRASHES")]
@@ -259,7 +263,16 @@ fn main() {
         std::process::exit(lockfinger::child_main(user));
     }
     if let Some(user) = cli.password_conversation.as_deref() {
-        std::process::exit(lockfinger::password_main(user));
+        std::process::exit(lockfinger::password_main(
+            user,
+            lockfinger::PasswordFor::Unlock,
+        ));
+    }
+    if let Some(user) = cli.rdp_password_conversation.as_deref() {
+        std::process::exit(lockfinger::password_main(
+            user,
+            lockfinger::PasswordFor::RemoteDesktop,
+        ));
     }
     crash::install(cli.after_crash);
     if let Err(e) = fdlimit::raise() {

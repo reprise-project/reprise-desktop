@@ -237,8 +237,9 @@ impl State {
         }
     }
 
-    /// Nothing is sent when no client has the keyboard.
-    fn type_text(&mut self, text: &str) {
+    /// Type `text` to the keyboard's client through a keymap made for it. Nothing is sent when no
+    /// client has the keyboard.
+    pub(crate) fn type_text(&mut self, text: &str) {
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
         };
