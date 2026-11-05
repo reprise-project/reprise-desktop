@@ -335,7 +335,7 @@ fn the_layouts_list_names_each_layout_and_its_buttons_follow_it() {
 }
 
 #[test]
-fn the_shortcut_list_shows_keys_and_action_with_the_spawn_command() {
+fn the_shortcut_list_shows_keys_and_the_actions_plain_name() {
     let mut lv = new_shortcut_list();
     let s = Settings {
         shortcuts: vec![
@@ -346,8 +346,8 @@ fn the_shortcut_list_shows_keys_and_action_with_the_spawn_command() {
     };
     fill_shortcuts(&mut lv, &s, &|a| a.into());
     assert_eq!(lv.rows.len(), 2);
-    assert_eq!(lv.rows[0].cells, vec!["Super+Return", "terminal"]);
-    assert_eq!(lv.rows[1].cells, vec!["Super+t", "spawn foot"]);
+    assert_eq!(lv.rows[0].cells, vec!["Super+Return", "Terminal"]);
+    assert_eq!(lv.rows[1].cells, vec!["Super+t", "Run foot"]);
     assert!(lv.checks.is_none());
 }
 

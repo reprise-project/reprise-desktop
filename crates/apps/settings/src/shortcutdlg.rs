@@ -1,14 +1,14 @@
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W};
-use reprisekit::controls::combo::Combo;
+use reprisekit::controls::combo::{Combo, ListItem};
 use reprisekit::controls::form::{self, Control, Form, Item};
 use reprisekit::controls::hotkey::{Chord, HotKey};
 use reprisekit::raster::Rect;
 
 use repriseconf::keybind::NONE;
 
-use crate::model::{ACTIONS, Shortcut, check_keys, check_program_keys, default_chord};
+use crate::model::{ACTIONS, Shortcut, action_text, check_keys, check_program_keys, default_chord};
 
-pub const CLIENT: (i32, i32) = (320, 160);
+pub const CLIENT: (i32, i32) = (330, 160);
 
 const MARGIN: i32 = 12;
 const LABEL_W: i32 = 64;
@@ -34,8 +34,8 @@ const HINT: [&str; 2] = [
     "Backspace or Clear empties it.",
 ];
 
-/// The action list: the compositor's actions, then "none", which unbinds a
-/// default's chord.
+/// The action list's ids: the compositor's actions, then "none", which
+/// unbinds a default's chord. The combo shows each by [`action_text`].
 fn choices() -> Vec<&'static str> {
     ACTIONS.iter().copied().chain([NONE]).collect()
 }
@@ -88,7 +88,13 @@ impl ShortcutDialog {
             Item::new(
                 "action",
                 Rect::new(FIELD_X, ROW_Y[1], FIELD_W, 21),
-                Control::Combo(Combo::new(&choices(), selected, 8)),
+                Control::Combo(Combo::with_items(
+                    (choices().iter())
+                        .map(|a| ListItem::new(action_text(a, None)))
+                        .collect(),
+                    selected,
+                    8,
+                )),
             ),
             label("command_l", ROW_Y[2], "&Command:"),
             edit("command", ROW_Y[2], &sc.command, sc.action == "spawn"),
@@ -197,9 +203,11 @@ impl ShortcutDialog {
             .map(Chord::shown)
             .unwrap_or_default();
         if let Some(o) = self.conflict() {
+            // The name gets the second line: the longest default chord and name do not fit on one.
+            let what = action_text(&o.action, Some(&o.command));
             return [
-                format!("{shown} is already the {} shortcut.", o.action),
-                "Press other keys, or change that one first.".into(),
+                format!("{shown} is already used for"),
+                format!("\"{what}\". Press other keys."),
             ];
         }
         let keys = self.value().keys;
@@ -211,7 +219,10 @@ impl ShortcutDialog {
         match checked {
             Err(why) if !keys.is_empty() => [why, String::new()],
             Ok(()) if !self.program && self.action() == NONE && !default_chord(&keys) => [
-                "Only a default shortcut can be set to none.".into(),
+                format!(
+                    "Only a default shortcut can be set to \"{}\".",
+                    action_text(NONE, None)
+                ),
                 "Remove a shortcut you added instead.".into(),
             ],
             _ => HINT.map(String::from),
@@ -248,12 +259,12 @@ impl ShortcutDialog {
         }
     }
 
+    /// The picked action's id; empty for a program, whose combo lists no actions.
     fn action(&self) -> String {
         match self.form.item("action").map(|i| &i.control) {
-            Some(Control::Combo(c)) => c
-                .items
+            Some(Control::Combo(c)) if !self.program => choices()
                 .get(c.selected)
-                .map(|i| i.text.clone())
+                .map(|a| a.to_string())
                 .unwrap_or_default(),
             _ => String::new(),
         }
@@ -336,6 +347,30 @@ mod tests {
     }
 
     #[test]
+    fn the_action_list_shows_plain_names_and_keeps_ids() {
+        let mut d = ShortcutDialog::new(None, Vec::new());
+        let Some(Control::Combo(c)) = d.form.item("action").map(|i| &i.control) else {
+            panic!("the action combo");
+        };
+        let rows: Vec<&str> = c.items.iter().map(|i| i.text.as_str()).collect();
+        let plain: Vec<String> = choices().iter().map(|a| action_text(a, None)).collect();
+        assert_eq!(rows, plain);
+        let frame = rows
+            .iter()
+            .position(|r| *r == "Hide or show the frame")
+            .unwrap();
+        chord(&mut d, &[(SUPER_L, "Super_L"), (0x6a, "j")]);
+        if let Some(Control::Combo(c)) = d.form.item_mut("action").map(|i| &mut i.control) {
+            c.selected = frame;
+        }
+        d.event(form::Event::Changed("action"));
+        assert_eq!(
+            d.event(form::Event::Pressed(OK)),
+            Outcome::Accept(Shortcut::new("Super+j", "toggleframe", ""))
+        );
+    }
+
+    #[test]
     fn a_pressed_chord_lights_ok_and_clear() {
         let mut d = ShortcutDialog::new(None, Vec::new());
         assert_eq!(
@@ -373,14 +408,28 @@ mod tests {
         assert_eq!(
             note(&d),
             [
-                "Super + Q is already the close shortcut.",
-                "Press other keys, or change that one first."
+                "Super + Q is already used for",
+                "\"Close the window\". Press other keys."
             ]
         );
         chord(&mut d, &[(SUPER_L, "Super_L"), (0x77, "w")]);
         assert!(d.conflict().is_none());
         assert!(enabled(&d, OK));
         assert_eq!(note(&d), HINT);
+    }
+
+    #[test]
+    fn a_taken_spawn_is_named_by_its_command() {
+        let others = vec![Shortcut::new("Super+t", "spawn", "foot")];
+        let mut d = ShortcutDialog::new(None, others);
+        chord(&mut d, &[(SUPER_L, "Super_L"), (0x74, "t")]);
+        assert_eq!(
+            note(&d),
+            [
+                "Super + T is already used for",
+                "\"Run foot\". Press other keys."
+            ]
+        );
     }
 
     #[test]
@@ -434,7 +483,10 @@ mod tests {
         );
         chord(&mut d, &[(SUPER_L, "Super_L"), (0x78, "x")]);
         assert!(!enabled(&d, OK), "Super+x is no default");
-        assert_eq!(note(&d)[0], "Only a default shortcut can be set to none.");
+        assert_eq!(
+            note(&d)[0],
+            "Only a default shortcut can be set to \"Nothing\"."
+        );
         pick(&mut d, "lock");
         assert!(enabled(&d, OK));
         assert_eq!(note(&d), HINT);
@@ -540,12 +592,12 @@ mod tests {
                 i.id
             );
         }
-        assert_eq!(d.form.item(KEYS).unwrap().rect, Rect::new(80, 12, 147, 20));
-        assert_eq!(d.form.item(CLEAR).unwrap().rect, Rect::new(233, 10, 75, 23));
-        assert_eq!(d.form.item(OK).unwrap().rect, Rect::new(152, 125, 75, 23));
+        assert_eq!(d.form.item(KEYS).unwrap().rect, Rect::new(80, 12, 157, 20));
+        assert_eq!(d.form.item(CLEAR).unwrap().rect, Rect::new(243, 10, 75, 23));
+        assert_eq!(d.form.item(OK).unwrap().rect, Rect::new(162, 125, 75, 23));
         assert_eq!(
             d.form.item(CANCEL).unwrap().rect,
-            Rect::new(233, 125, 75, 23)
+            Rect::new(243, 125, 75, 23)
         );
     }
 }

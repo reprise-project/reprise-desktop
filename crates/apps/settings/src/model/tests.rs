@@ -1500,3 +1500,17 @@ fn a_bad_program_key_from_the_file_does_not_block_apply() {
     s.programs[0].keys = "F9".into();
     assert_eq!(validate(&s, &base), Ok(()));
 }
+
+#[test]
+fn shortcut_rows_read_as_plain_names() {
+    assert_eq!(action_text("toggleframe", None), "Hide or show the frame");
+    assert_eq!(action_text("exit", None), "Quit Reprise");
+    assert_eq!(action_text("spawn", Some("foot")), "Run foot");
+    assert_eq!(action_text("spawn", None), "Run a command");
+    assert_eq!(action_text("spawn", Some("")), "Run a command");
+    assert_eq!(action_text(repriseconf::keybind::NONE, None), "Nothing");
+    assert_eq!(action_text("bogus", None), "bogus");
+    for a in ACTIONS.iter().filter(|a| **a != "spawn") {
+        assert!(repriseconf::keybind::describe(a).is_some(), "{a}");
+    }
+}
