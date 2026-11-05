@@ -642,25 +642,7 @@ pub fn write_form(form: &mut Form, s: &Settings) {
     }
 }
 
-/// Grey what depends on another control: the tap button map without
-/// tap-to-click; the Layouts buttons by the list (Add up to four, Remove on a
-/// row, Move Up below the first); the night light's controls by its check box
-/// and times by the fixed schedule; the StickyKeys, SlowKeys and delay
-/// options; the colour filter's intensity unless a correction is picked; on
-/// Window Switcher, the preview check box while Alt+Tab shows thumbnails and
-/// the 3D switcher outside Glass; on Virtual Desktops, the count and animation without "Use
-/// virtual desktops". The Appearance page is rebuilt for the pending interface and its
-/// sample redrawn; the Background page greys the position without a wallpaper,
-/// the file name extensions without the desktop's files, the water style
-/// while water is off and its note without a fluid style, and shows the look's desktop
-/// colour on its Color button; the Taskbar page greys the auto-hide triggers while auto-hide is
-/// off, the picture rate while nothing shows a live picture, and small icons and the Start button
-/// glow outside Glass; the Start Menu page greys the banner outside the Classic style; the
-/// Notifications page greys the quiet hours' times while they are off and the balloon style
-/// outside Glass, and the Advanced page
-/// the debug overlay's captures check while the overlay is off and the thumbnail cache's size
-/// while the cache is off; the Remote Desktop page names the quality picked. Runs from
-/// `write` and after every read-back.
+/// Grey and refill the controls that follow another's value; runs from `write` and every read-back.
 pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     crate::appearancepage::follow(sheet, s);
     crate::backgroundpage::follow(&mut sheet.pages[Page::Background.index()], s);

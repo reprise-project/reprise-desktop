@@ -27,7 +27,7 @@ mod input;
 mod lists;
 mod system;
 
-pub use appearance::{effects, fonts_and_icons, night_light};
+pub use appearance::{effects, fonts_and_icons, night_light, text_size_note};
 pub use bind::{
     fill_layouts, follow, keys_of, layout_selection, read_one, show_keys, system_layout, write,
     write_form, write_forms,
