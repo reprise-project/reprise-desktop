@@ -20,7 +20,7 @@ pub use io::keys;
 pub use io::{copy_keys, keys_apart, load, rebase, save, switch_interface, validate};
 pub use shortcuts::{
     ACTIONS, ProgramShortcut, Row, Shortcut, action_text, check_keys, check_program_keys,
-    default_chord, forget, program_text, row,
+    chord_text, default_chord, forget, keys_for, program_text, row,
 };
 
 /// Every key the sheet edits, with the compositor's default in place of a

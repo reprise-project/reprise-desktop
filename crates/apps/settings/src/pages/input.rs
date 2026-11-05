@@ -2,8 +2,8 @@
 
 use super::{
     Area, CURSOR_DEFAULT_ROW, CURSOR_PREVIEW, DELAY_STEPS, DOUBLE_CLICK, GX, KB_ADD, KB_LAYOUTS,
-    KB_REMOVE, KB_UP, MK_ACCEL, MK_SPEED, SC_ADD, SC_EDIT, SC_REMOVE, SPEED_STEPS, X, button,
-    combo, edit, ends_track, group, shortcuts, spin, updown,
+    KB_REMOVE, KB_SWITCH_NOTE, KB_UP, MK_ACCEL, MK_SPEED, SC_ADD, SC_EDIT, SC_REMOVE, SPEED_STEPS,
+    X, button, combo, edit, ends_track, group, shortcuts, spin, updown,
 };
 use crate::model::{CURSOR_SIZES, TEXT_SIZES};
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_H, BUTTON_W, LINE_H};
@@ -12,7 +12,7 @@ use reprisekit::controls::listbox::ListBox;
 use reprisekit::raster::Rect;
 use reprisekit::trackbar::{self, TrackBar};
 
-/// The Layouts list: four 17 px rows inside its 2 px frame, between the label column and the button column.
+/// The Layouts list: three 17 px rows inside its 2 px frame, between the label column and the button column.
 const LAYOUTS_Y: i32 = 62;
 
 fn layouts(a: Area) -> Rect {
@@ -20,7 +20,7 @@ fn layouts(a: Area) -> Rect {
         GX + 84,
         LAYOUTS_Y,
         a.gw() - 84 - BUTTON_W - 6,
-        4 * reprisekit::controls::listbox::ROW_H + 4,
+        3 * reprisekit::controls::listbox::ROW_H + 4,
     )
 }
 
@@ -33,7 +33,7 @@ pub fn keyboard(a: Area) -> Form {
             edit(id, GX + 84, y - 4, gw - 84),
         ]
     };
-    // The layouts in switching order, an empty list being the system default; each button 4 px under the last, beside the list.
+    // The layouts in switching order, an empty list showing the system default greyed; each button 4 px under the last, beside the list.
     items.push(Item::label_at(
         "layouts_label",
         GX,
@@ -54,6 +54,14 @@ pub fn keyboard(a: Area) -> Form {
     items.push(button(KB_ADD, bx, LAYOUTS_Y, "Add..."));
     items.push(button(KB_REMOVE, bx, LAYOUTS_Y + step, "Remo&ve"));
     items.push(button(KB_UP, bx, LAYOUTS_Y + 2 * step, "Move &Up"));
+    let list = layouts(a);
+    items.push(Item::label_at(
+        KB_SWITCH_NOTE,
+        list.x,
+        list.bottom() + 5,
+        list.width,
+        "",
+    ));
     items.push(Item::check(
         "layout_per_window",
         GX + 84,

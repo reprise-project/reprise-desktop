@@ -34,6 +34,7 @@ fn with(s: &Settings) -> PropSheet {
             cursor_themes: &cursor_themes(),
             sound_themes: &sound_themes(),
             layouts: &reg(),
+            system_layout: "us",
             heads: &[],
         },
     )
@@ -459,7 +460,8 @@ fn enabled_on(s: &PropSheet, page: Page, id: &str) -> bool {
     match &s.pages[page.index()].item(id).unwrap().control {
         Control::Check { enabled, .. }
         | Control::Label { enabled, .. }
-        | Control::Edit { enabled, .. } => *enabled,
+        | Control::Edit { enabled, .. }
+        | Control::Button { enabled, .. } => *enabled,
         Control::Combo(c) => c.enabled,
         Control::UpDown(u) => u.enabled,
         Control::TrackBar(t) => t.enabled,
@@ -563,7 +565,7 @@ fn render_the_pages() {
         ..Settings::default()
     };
     let mut sheet = with(&two);
-    fill_layouts(&mut sheet, &two, &reg(), Some(1));
+    fill_layouts(&mut sheet, &two, &reg(), "us", Some(1));
     let pic = crate::cursors::preview("Adwaita", 32, preview_size(Area::MIN), theme.colors.window);
     sheet.pages[Page::Cursor.index()].set_picture(CURSOR_PREVIEW, pic);
     backgroundpage::show(

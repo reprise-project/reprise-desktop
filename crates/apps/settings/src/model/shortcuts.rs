@@ -158,6 +158,29 @@ pub fn action_text(action: &str, command: Option<&str>) -> String {
     }
 }
 
+/// Every chord bound to `action`, joined by " or ", each as its modifiers then the key's cap
+/// ("Super+=", "Shift+Left Alt"); None when nothing binds it.
+pub fn keys_for(binds: &[Shortcut], action: &str) -> Option<String> {
+    let shown: Vec<String> = (binds.iter())
+        .filter(|b| b.action == action)
+        .map(|b| chord_text(&b.keys))
+        .collect();
+    (!shown.is_empty()).then(|| shown.join(" or "))
+}
+
+/// `keys` as the page shows them: the modifiers as written, then the key's cap ("Shift+Left Alt").
+pub fn chord_text(keys: &str) -> String {
+    let (mods, key) = keys.rsplit_once('+').unwrap_or(("", keys));
+    let key = key.trim();
+    let key = repriseconf::keybind::keysym(key)
+        .map_or_else(|| key.to_string(), repriseconf::keybind::key_text);
+    if mods.is_empty() {
+        key
+    } else {
+        format!("{}+{key}", mods.trim_end())
+    }
+}
+
 pub fn program_text(p: &ProgramShortcut, name: &str) -> String {
     let what = if p.description.is_empty() {
         &p.id

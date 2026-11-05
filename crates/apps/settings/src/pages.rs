@@ -29,7 +29,8 @@ mod system;
 
 pub use appearance::{effects, fonts_and_icons, night_light};
 pub use bind::{
-    fill_layouts, follow, keys_of, layout_selection, read_one, write, write_form, write_forms,
+    fill_layouts, follow, keys_of, layout_selection, read_one, show_keys, system_layout, write,
+    write_form, write_forms,
 };
 pub use desktop::{FORGET_FRAMES, search, switcher, taskbar, virtual_desktops, window_behavior};
 pub use input::{cursor, keyboard, mouse_touchpad, preview_size, text_and_keys};
@@ -271,6 +272,8 @@ pub const KB_LAYOUTS: &str = "kb_layouts";
 pub const KB_ADD: &str = "kb_add";
 pub const KB_REMOVE: &str = "kb_remove";
 pub const KB_UP: &str = "kb_up";
+/// The note under the Layouts list naming the keys that switch layouts ([`show_keys`]).
+pub const KB_SWITCH_NOTE: &str = "kb_switch_note";
 
 fn edit(id: &'static str, x: i32, y: i32, w: i32) -> Item {
     Item::edit(id, Rect::new(x, y, w, EDIT_H), "", true)

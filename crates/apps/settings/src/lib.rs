@@ -392,6 +392,8 @@ struct SettingsApp {
     remote_acting: bool,
 
     xkb: Vec<reprisefs::xkb::Layout>,
+    /// The layout an empty `[keyboard] layout` gives, read once at start.
+    system_layout: String,
     add_layout: Option<layoutdlg::LayoutDialog>,
 
     add_item: Option<additem::AddItemDialog>,
@@ -462,7 +464,8 @@ impl SettingsApp {
         page: Option<(Page, Option<String>)>,
         requests: Option<instance::Requests>,
     ) -> SettingsApp {
-        let mut app = SettingsApp::open(repriseconf::config_path());
+        let system = pages::system_layout(std::env::var("XKB_DEFAULT_LAYOUT").ok().as_deref());
+        let mut app = SettingsApp::open(repriseconf::config_path(), system);
         if let Some((p, focus)) = page {
             app.sheet.tabs.open = p.index();
             app.sheet.reveal_open();
@@ -515,6 +518,7 @@ impl SettingsApp {
             cursor_themes: &[],
             sound_themes: &[],
             layouts: &[],
+            system_layout: &self.system_layout,
             heads: &[],
         };
         for p in Page::all() {
@@ -570,7 +574,8 @@ impl SettingsApp {
         }
     }
 
-    fn open(path: PathBuf) -> SettingsApp {
+    /// The app on the config at `path`; `system_layout` is what an empty `[keyboard] layout` gives.
+    fn open(path: PathBuf, system_layout: String) -> SettingsApp {
         let (text, open_error) = read_config(&path);
         let loaded = model::load(&text);
         let xkb = reprisefs::xkb::load("");
@@ -583,6 +588,7 @@ impl SettingsApp {
                 cursor_themes: &cursors::themes(),
                 sound_themes: &repriseaudio::sounds::themes(&repriseaudio::sounds::sound_dirs()),
                 layouts: &xkb,
+                system_layout: &system_layout,
                 heads: &[],
             },
         );
@@ -643,6 +649,7 @@ impl SettingsApp {
             locations_due: true,
             locating: None,
             xkb,
+            system_layout,
             add_layout: None,
             add_item: None,
             rename: None,

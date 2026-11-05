@@ -72,8 +72,8 @@ pub fn fit_shortcut_columns(
     lv.fill_beside_bar(1, rect, cm);
 }
 
-/// Refill `lv` from `s` in [`crate::model::row`]'s order: the desktop's binds
-/// by [`crate::model::action_text`], each program shortcut as
+/// Refill `lv` from `s` in [`crate::model::row`]'s order, keys by [`crate::model::chord_text`]:
+/// the desktop's binds by [`crate::model::action_text`], each program shortcut as
 /// "Program: description", then each program refused one. `name` gives a
 /// program's name for its app id.
 pub fn fill_shortcuts(lv: &mut ListView, s: &Settings, name: &dyn Fn(&str) -> String) {
@@ -84,13 +84,17 @@ pub fn fill_shortcuts(lv: &mut ListView, s: &Settings, name: &dyn Fn(&str) -> St
     let binds = s.shortcuts.iter().map(|sc| {
         let command = (sc.action == "spawn").then_some(sc.command.as_str());
         row(
-            sc.keys.clone(),
+            crate::model::chord_text(&sc.keys),
             crate::model::action_text(&sc.action, command),
         )
     });
     let programs = s.programs.iter().map(|p| {
-        let keys = if p.keys.is_empty() { "None" } else { &p.keys };
-        row(keys.into(), crate::model::program_text(p, &name(&p.app)))
+        let keys = if p.keys.is_empty() {
+            "None".into()
+        } else {
+            crate::model::chord_text(&p.keys)
+        };
+        row(keys, crate::model::program_text(p, &name(&p.app)))
     });
     let denied =
         (s.denied.iter()).map(|app| row(String::new(), format!("{}: not allowed", name(app))));

@@ -17,7 +17,7 @@ fn tmp(tag: &str) -> PathBuf {
 }
 
 fn app(tag: &str) -> SettingsApp {
-    SettingsApp::open(tmp(tag).join("config.toml"))
+    SettingsApp::open(tmp(tag).join("config.toml"), "us".into())
 }
 
 fn test_ctx() -> Ctx {
@@ -332,7 +332,7 @@ fn the_background_list_picks_and_writes_a_builtin() {
     let dir = tmp("builtin");
     let path = dir.join("config.toml");
     std::fs::write(&path, "[appearance]\ninterface = \"blue\"\n").unwrap();
-    let mut a = SettingsApp::open(path.clone());
+    let mut a = SettingsApp::open(path.clone(), "us".into());
     let at = backgroundpage::selected(&a.sheet.pages[Page::Background.index()]);
     assert_eq!(
         at.map(backgroundpage::row),
@@ -370,7 +370,7 @@ fn a_picture_picked_for_one_desktop_is_written_to_its_entry() {
         "[workspaces]\ncount = 3\n[wallpaper]\nimage = \"reprise:tarn/blue\"\n",
     )
     .unwrap();
-    let mut a = SettingsApp::open(path.clone());
+    let mut a = SettingsApp::open(path.clone(), "us".into());
     let bg = Page::Background.index();
     let use_for = |a: &mut SettingsApp, i: usize| {
         a.sheet.pages[bg].set_combo(backgroundpage::USE_FOR, i);
@@ -431,7 +431,7 @@ fn a_slideshow_folder_survives_a_switch_to_picture_and_its_first_picture_reaches
     let path = dir.join("config.toml");
     let wall = walls.join("dunes.jpg");
     std::fs::write(&path, format!("[wallpaper]\nimage = {:?}\n", wall)).unwrap();
-    let mut a = SettingsApp::open(path);
+    let mut a = SettingsApp::open(path, "us".into());
     let state = dir.join("settings.toml");
     a.state_path = Some(state.clone());
     let bg = Page::Background.index();
@@ -475,7 +475,7 @@ fn a_picture_added_to_the_slideshow_folder_becomes_the_monitors_first_slide() {
     std::fs::write(trips.join("coast.jpg"), b"x").unwrap();
     let path = dir.join("config.toml");
     std::fs::write(&path, format!("[wallpaper]\nslideshow = {:?}\n", trips)).unwrap();
-    let mut a = SettingsApp::open(path);
+    let mut a = SettingsApp::open(path, "us".into());
     let settle = |a: &mut SettingsApp| {
         for _ in 0..500 {
             a.wake();
@@ -504,7 +504,7 @@ fn the_script_open_combo_shows_and_writes_script_open() {
     let dir = tmp("script-open");
     let path = dir.join("config.toml");
     std::fs::write(&path, "terminal = \"foot\"\n").unwrap();
-    let mut a = SettingsApp::open(path.clone());
+    let mut a = SettingsApp::open(path.clone(), "us".into());
     let dp = Page::DefaultPrograms.index();
     let combo = |a: &SettingsApp| a.sheet.pages[dp].combo_selected(defaultspage::SCRIPT_OPEN);
     assert_eq!(combo(&a), Some(0), "Run it");
@@ -533,7 +533,7 @@ fn the_script_combo_shows_and_writes_script_terminal() {
     let dir = tmp("script-end");
     let path = dir.join("config.toml");
     std::fs::write(&path, "terminal = \"foot\"\n").unwrap();
-    let mut a = SettingsApp::open(path.clone());
+    let mut a = SettingsApp::open(path.clone(), "us".into());
     let dp = Page::DefaultPrograms.index();
     let combo = |a: &SettingsApp| a.sheet.pages[dp].combo_selected(defaultspage::SCRIPT_END);
     assert_eq!(combo(&a), Some(0), "Keep its window open");
@@ -562,7 +562,7 @@ fn the_drive_combo_shows_and_writes_on_insert() {
     let dir = tmp("drive-insert");
     let path = dir.join("config.toml");
     std::fs::write(&path, "[drives]\non_insert = \"mount\"\n").unwrap();
-    let mut a = SettingsApp::open(path.clone());
+    let mut a = SettingsApp::open(path.clone(), "us".into());
     let dp = Page::DefaultPrograms.index();
     assert_eq!(
         a.sheet.pages[dp].combo_selected(defaultspage::DRIVE_INSERT),
@@ -620,7 +620,7 @@ fn a_drop_on_a_page_field_is_read_into_the_settings() {
 fn a_config_written_elsewhere_shows_on_the_open_sheet_and_apply_keeps_it() {
     let path = tmp("config-changed").join("config.toml");
     std::fs::write(&path, "").unwrap();
-    let mut a = SettingsApp::open(path.clone());
+    let mut a = SettingsApp::open(path.clone(), "us".into());
     a.want.slow_keys = true;
     std::fs::write(&path, "[accessibility]\nmouse_keys = true\n").unwrap();
     assert!(a.config_changed());
@@ -663,7 +663,7 @@ fn a_program_row_edits_its_keys_and_delete_forgets_it() {
          [portal]\nshortcuts_denied = [\"org.example.NoSuchNotes\"]\n",
     )
     .unwrap();
-    let mut app = SettingsApp::open(dir.join("config.toml"));
+    let mut app = SettingsApp::open(dir.join("config.toml"), "us".into());
     let n = app.want.shortcuts.len();
     assert_eq!(
         app.shortcuts.rows[n].cells,
@@ -699,7 +699,7 @@ fn a_program_row_edits_its_keys_and_delete_forgets_it() {
 fn a_rebound_zoom_key_rewrites_the_magnifier_note() {
     let dir = tmp("zoom-note");
     std::fs::write(dir.join("config.toml"), "").unwrap();
-    let mut app = SettingsApp::open(dir.join("config.toml"));
+    let mut app = SettingsApp::open(dir.join("config.toml"), "us".into());
     let note = |app: &SettingsApp| match &app.sheet.pages[Page::MagnifierFilters.index()]
         .item("mag_note")
         .unwrap()
@@ -731,7 +731,7 @@ fn a_programs_taken_keys_name_the_program() {
          [[global_shortcuts]]\napp = \"org.example.NoSuchApp\"\nid = \"mute\"\nkeys = \"F9\"\n",
     )
     .unwrap();
-    let app = SettingsApp::open(dir.join("config.toml"));
+    let app = SettingsApp::open(dir.join("config.toml"), "us".into());
     let taken = app.taken_keys(None);
     let n = app.want.shortcuts.len();
     assert_eq!(taken[n].action, "org.example.NoSuchApp: Hold to talk");
@@ -1369,7 +1369,7 @@ fn the_location_list_is_read_off_the_loop_once_the_advanced_page_shows() {
     let dir = tmp("location-lazy");
     let file = dir.join("location.toml");
     std::fs::write(&file, "[apps]\n\"org.example.NoSuchMaps\" = true\n").unwrap();
-    let mut app = SettingsApp::open(dir.join("config.toml"));
+    let mut app = SettingsApp::open(dir.join("config.toml"), "us".into());
     app.location_file = file;
     assert!(app.locations.rows.is_empty(), "opening reads no answers");
     app.ensure_locations();
@@ -1408,7 +1408,7 @@ fn forget_drops_a_location_answer_from_the_file() {
         "[apps]\n\"org.example.NoSuchMaps\" = true\n\"org.example.NoSuchWeather\" = false\n",
     )
     .unwrap();
-    let mut app = SettingsApp::open(dir.join("config.toml"));
+    let mut app = SettingsApp::open(dir.join("config.toml"), "us".into());
     app.location_file = file.clone();
     read_locations_on_advanced(&mut app);
     let cells: Vec<Vec<String>> = app.locations.rows.iter().map(|r| r.cells.clone()).collect();
@@ -1532,7 +1532,7 @@ fn restore_defaults_takes_only_the_pages_keys_out_of_the_file() {
         "# mine\n[sounds]\nbell = false\ntheme = \"oxygen\"\n\n[taskbar]\nauto_hide = true\n",
     )
     .unwrap();
-    let mut a = SettingsApp::open(path.clone());
+    let mut a = SettingsApp::open(path.clone(), "us".into());
     let lit = |a: &SettingsApp, p: Page| match a.sheet.pages[p.index()].item(propsheet::RESTORE) {
         Some(it) => matches!(it.control, form::Control::Button { enabled: true, .. }),
         None => panic!("{p:?} has no Restore Defaults"),
