@@ -706,6 +706,13 @@ impl Explorer {
         self.pins.as_ref().map(|p| p.current()).unwrap_or_default()
     }
 
+    /// Pins `dir` to the places bar, or unpins it, in the bookmarks file the pins are read from.
+    pub(crate) fn set_pinned(&self, dir: &std::path::Path, pin: bool) {
+        let file = (self.pins.as_ref())
+            .map_or_else(reprisefs::pins::bookmarks_file, |p| p.file().to_path_buf());
+        reprisefs::pins::set_pinned(&file, dir, pin);
+    }
+
     pub(crate) fn flush_settings(&mut self) {
         if std::mem::take(&mut self.settings_dirty) {
             if let Some(px) = self.window_px {

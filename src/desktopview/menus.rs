@@ -30,6 +30,15 @@ type Rows = Vec<(MenuItem, Option<DesktopCommand>)>;
 
 const SEP: (MenuItem, Option<DesktopCommand>) = (MenuItem::Separator, None);
 
+/// Pin to Places, or Unpin from Places when `pinned`; no row for a folder that cannot be
+/// pinned from here (`None`).
+fn pin_row(pinned: Option<bool>) -> Option<(MenuItem, Option<DesktopCommand>)> {
+    pinned.map(|p| match p {
+        false => (entry(PIN), Some(DesktopCommand::Pin(true))),
+        true => (entry(UNPIN), Some(DesktopCommand::Pin(false))),
+    })
+}
+
 fn split(rows: Rows) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     rows.into_iter().unzip()
 }
@@ -184,11 +193,7 @@ pub fn icon_menu(m: IconMenu) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     if m.is_dir {
         rows.push((entry("E&xplore"), Some(Explore)));
         rows.push((entry(TERMINAL), Some(OpenTerminal)));
-        match m.pinned {
-            Some(false) => rows.push((entry(PIN), Some(Pin(true)))),
-            Some(true) => rows.push((entry(UNPIN), Some(Pin(false)))),
-            None => {}
-        }
+        rows.extend(pin_row(m.pinned));
         if !m.in_set {
             rows.extend([SEP, (disabled_row("S&haring and Security..."), None)]);
         }
@@ -272,12 +277,14 @@ pub fn open_with_menu(apps: &[(String, String)]) -> (Vec<MenuItem>, Vec<Option<D
 }
 
 /// A place icon's menu. Documents and Home (real folders) open, explore, open in the
-/// terminal and have Copy, and Properties with `sheet` (a folder that exists); Computer opens
+/// terminal, pin to the places bar as `pinned` says (as [`icon_menu`] does) and have Copy, and
+/// Properties with `sheet` (a folder that exists); Computer opens
 /// and ends on Reprise Settings and About Reprise, after a separator. All three
 /// Create Shortcut, Delete (hide) and Rename.
 pub fn place_menu(
     place: desktop::Place,
     sheet: bool,
+    pinned: Option<bool>,
 ) -> (Vec<MenuItem>, Vec<Option<DesktopCommand>>) {
     use DesktopCommand::*;
     let computer = place == desktop::Place::Computer;
@@ -286,9 +293,9 @@ pub fn place_menu(
         rows.extend([
             (entry("E&xplore"), Some(Explore)),
             (entry(TERMINAL), Some(OpenTerminal)),
-            SEP,
-            (entry("&Copy"), Some(Copy)),
         ]);
+        rows.extend(pin_row(pinned));
+        rows.extend([SEP, (entry("&Copy"), Some(Copy))]);
     }
     rows.extend([
         SEP,
@@ -335,10 +342,17 @@ impl State {
         use desktop::Kind;
         let view = self.desktop.as_ref()?;
         let entry = view.entries.get(index)?;
+        // A place's `is_dir` says it opens a folder; Computer's does not.
+        let pinned = (entry.is_dir && self.selection_around(index).len() <= 1)
+            .then_some(self.dialogs.pins.as_ref())
+            .flatten()
+            .map(|p| reprisefs::pins::is_pinned(&p.current(), &entry.path));
         Some(match entry.kind {
             // The scan's fullness, which its icon shows.
             Kind::RecycleBin => bin_menu(entry.icon == "user-trash"),
-            Kind::Place(place) => place_menu(place, matches!(entry.target, Target::Open(_))),
+            Kind::Place(place) => {
+                place_menu(place, matches!(entry.target, Target::Open(_)), pinned)
+            }
             Kind::File => {
                 let is_dir = entry.is_dir;
                 let (print, edit) = if is_dir {
@@ -356,10 +370,7 @@ impl State {
                     in_set: self.selection_around(index).len() > 1,
                     script: matches!(entry.target, Target::Run(_, Program::Script))
                         .then_some(self.config.script_open),
-                    pinned: (is_dir && self.selection_around(index).len() <= 1)
-                        .then_some(self.dialogs.pins.as_ref())
-                        .flatten()
-                        .map(|p| reprisefs::pins::is_pinned(&p.current(), &entry.path)),
+                    pinned,
                 })
             }
         })

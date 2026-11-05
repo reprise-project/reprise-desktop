@@ -69,9 +69,9 @@ fn render_desktop_menu() {
         "desktopmenu-preview.png",
     );
     let places = [
-        place_menu(desktop::Place::Documents, true).0,
-        place_menu(desktop::Place::Computer, false).0,
-        place_menu(desktop::Place::Home, true).0,
+        place_menu(desktop::Place::Documents, true, Some(false)).0,
+        place_menu(desktop::Place::Computer, false, None).0,
+        place_menu(desktop::Place::Home, true, Some(true)).0,
     ];
     let canvases: Vec<Canvas> = places.iter().map(|items| draw(items, true)).collect();
     let w: u32 = canvases.iter().map(|c| c.width + 8).sum();
@@ -656,7 +656,7 @@ fn recycle_bin_menu_greys_empty_and_entry_cannot_be_trashed() {
     // Properties wherever there is a folder behind them; Computer has
     // Reprise Settings and About Reprise last, after a separator. All
     // three Delete and Rename.
-    let (items, commands) = place_menu(desktop::Place::Documents, true);
+    let (items, commands) = place_menu(desktop::Place::Documents, true, None);
     let folder_rows = vec![
         Some(Open),
         Some(Explore),
@@ -671,8 +671,11 @@ fn recycle_bin_menu_greys_empty_and_entry_cannot_be_trashed() {
         Some(IconProperties),
     ];
     assert_eq!(commands, folder_rows);
-    assert_eq!(place_menu(desktop::Place::Home, true), (items, commands));
-    let (items, commands) = place_menu(desktop::Place::Computer, false);
+    assert_eq!(
+        place_menu(desktop::Place::Home, true, None),
+        (items, commands)
+    );
+    let (items, commands) = place_menu(desktop::Place::Computer, false, None);
     assert_eq!(
         commands,
         vec![
@@ -1325,4 +1328,74 @@ fn a_lone_folder_pins_or_unpins_from_its_menu() {
         ..Default::default()
     });
     assert!(!commands.iter().any(|c| matches!(c, Some(Pin(_)))));
+}
+
+#[test]
+fn documents_and_home_pin_and_unpin_from_their_menus() {
+    use DesktopCommand::*;
+    let dir = std::env::temp_dir().join(format!("reprise-desk-pins-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let marks = dir.join("gtk-3.0/bookmarks");
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    create(&mut h.state, dir.join("Desktop"), Default::default(), None);
+    let pins = reprisefs::pins::Pins::start_at(marks.clone(), || {});
+    pins.wait_first(std::time::Duration::from_secs(5));
+    h.state.dialogs.pins = Some(pins);
+    let place = |place, dir: &str| desktop::DesktopEntry {
+        is_dir: true,
+        target: Target::Open(PathBuf::from(dir)),
+        path: PathBuf::from(dir),
+        kind: desktop::Kind::Place(place),
+        ..file(dir)
+    };
+    let view = h.state.desktop.as_mut().unwrap();
+    view.entries = vec![
+        place(desktop::Place::Documents, "/home/u/Documents"),
+        place(desktop::Place::Home, "/home/u"),
+        desktop::place("computer").unwrap(),
+        desktop::recycle_bin(PathBuf::from("/home/u/.local/share/Trash/files"), true),
+    ];
+    let pin_row = |state: &crate::compositor::State, i: usize| {
+        let (items, commands) = state.icon_menu_rows(i).unwrap();
+        let at = commands.iter().position(|c| matches!(c, Some(Pin(_))))?;
+        let MenuItem::Entry { label, .. } = &items[at] else {
+            panic!("the Pin row is an entry");
+        };
+        Some((label.clone(), commands[at].clone().unwrap()))
+    };
+    assert_eq!(pin_row(&h.state, 2), None, "Computer is not a folder");
+    assert_eq!(
+        pin_row(&h.state, 3),
+        None,
+        "the Recycle Bin is not a folder"
+    );
+    let wait_for = |state: &crate::compositor::State, i: usize, label: &str| {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while pin_row(state, i).is_none_or(|(l, _)| l != label) {
+            assert!(std::time::Instant::now() < end, "row {i} reads {label}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    let bookmarks = || std::fs::read_to_string(&marks).unwrap_or_default();
+    for (i, id, dir) in [
+        (0, desktop::Place::Documents, "/home/u/Documents"),
+        (1, desktop::Place::Home, "/home/u"),
+    ] {
+        let aim = || Some(desktop::IconId::System(desktop::Kind::Place(id)));
+        assert_eq!(
+            pin_row(&h.state, i),
+            Some(("Pin to Places".to_string(), Pin(true)))
+        );
+        h.state.desktop_command(Pin(true), aim());
+        crate::state::flush();
+        assert_eq!(bookmarks(), format!("file://{dir}\n"));
+        wait_for(&h.state, i, "Unpin from Places");
+        assert_eq!(pin_row(&h.state, i).unwrap().1, Pin(false));
+        h.state.desktop_command(Pin(false), aim());
+        crate::state::flush();
+        assert_eq!(bookmarks(), "", "{dir} unpinned");
+        wait_for(&h.state, i, "Pin to Places");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
 }

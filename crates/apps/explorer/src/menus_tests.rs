@@ -286,13 +286,13 @@ fn the_context_menus_answer_for_their_submenu_rows() {
 
 #[test]
 fn the_tree_menus_first_row_follows_the_node() {
-    let shut = tree_menu(false, true, true);
+    let shut = tree_menu(false, true, true, None);
     assert_eq!(label(shut.items(), 0), "Expand");
     assert!(enabled(shut.items(), 0));
     assert_eq!(shut.command(&[0]), Command::ToggleNode);
-    let open = tree_menu(true, true, true);
+    let open = tree_menu(true, true, true, None);
     assert_eq!(label(open.items(), 0), "Collapse");
-    let leaf = tree_menu(false, false, true);
+    let leaf = tree_menu(false, false, true, None);
     assert!(!enabled(leaf.items(), 0));
 }
 
@@ -300,7 +300,7 @@ fn the_tree_menus_first_row_follows_the_node() {
 /// not a plain folder greys the file rows; Rename stays greyed (no tree editor).
 #[test]
 fn the_tree_menu_never_acts_on_the_views_selection() {
-    let m = tree_menu(false, true, true);
+    let m = tree_menu(false, true, true, None);
     assert_eq!(label(m.items(), 1), "Explore");
     assert_eq!(m.command(&[1]), Command::OpenNode);
     assert_eq!(m.command(&[2]), Command::OpenNode);
@@ -319,7 +319,7 @@ fn the_tree_menu_never_acts_on_the_views_selection() {
             ("Properties".to_string(), Command::NodeProperties),
         ]
     );
-    let place = tree_menu(false, true, false);
+    let place = tree_menu(false, true, false, None);
     assert!(live(&place).is_empty());
 }
 
@@ -819,4 +819,16 @@ fn a_lone_folders_menu_pins_or_unpins_it() {
     assert_eq!(label(m.items(), 5), "Disk Usage", "under the pin row");
     let m = item_menu(&pinned(None), ItemKind::Folder, false, &[], &[]);
     assert_eq!(label(m.items(), 4), "Disk Usage", "no pin row");
+}
+
+#[test]
+fn a_tree_node_with_a_folder_pins_or_unpins_it() {
+    let m = tree_menu(false, true, false, Some(false));
+    assert_eq!(label(m.items(), 3), "Pin to Places");
+    assert_eq!(m.command(&[3]), Command::NodePin(true));
+    let m = tree_menu(false, true, true, Some(true));
+    assert_eq!(label(m.items(), 3), "Unpin from Places");
+    assert_eq!(m.command(&[3]), Command::NodePin(false));
+    let m = tree_menu(false, true, false, None);
+    assert!(!(0..m.items().len()).any(|i| matches!(m.command(&[i]), Command::NodePin(_))));
 }

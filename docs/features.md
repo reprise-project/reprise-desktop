@@ -330,8 +330,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   delete says why in a box.
   File name keeps its editing keys.
 - **Pinned folders.** Pin to Places on a folder's right-click menu (in
-  Explorer, on the desktop and in a file dialog's list) pins it; Unpin from
-  Places takes it off. Pinned folders sit after the built-in tiles in every
+  Explorer's view and Folders tree, on the desktop and in a file dialog's
+  list) pins it; Unpin from Places takes it off. The Documents and Home
+  places count as folders, Computer and the Recycle Bin do not. Pinned folders sit after the built-in tiles in every
   file dialog's places bar (Reprise's programs, the portal's dialog, Run's
   Browse), where a pinned tile's own menu opens, unpins or moves it up and
   down, and the bar scrolls once they overflow it. Explorer's task pane lists
