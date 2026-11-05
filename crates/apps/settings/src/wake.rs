@@ -182,10 +182,18 @@ impl SettingsApp {
     }
 
     /// Open `page`, with the keyboard on control `focus` when one is named and live, else as a
-    /// page opens. True when anything moved.
+    /// page opens; a query hiding the page is cleared. True when anything moved.
     pub(crate) fn open_page(&mut self, page: Page, focus: Option<&str>) -> bool {
+        let hidden = self
+            .search_hits
+            .get(page.index())
+            .is_some_and(Option::is_none);
+        if hidden {
+            self.sheet.search.clear();
+            self.search("");
+        }
         if self.sheet.tabs.open == page.index() && focus.is_none() {
-            return false;
+            return hidden;
         }
         self.blur_side_lists();
         self.sheet.set_open(page.index());
