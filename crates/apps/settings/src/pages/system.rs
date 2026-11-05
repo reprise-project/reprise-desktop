@@ -489,6 +489,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
             "quality_sharp",
             QUALITY_VALUE,
         ],
+        "Picture quality",
         181,
         27,
         (left, right),
