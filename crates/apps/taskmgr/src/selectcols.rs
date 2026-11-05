@@ -6,13 +6,14 @@ use reprisekit::raster::Rect;
 
 use crate::columns::{Column, SPECS};
 
-pub const CLIENT: (i32, i32) = (260, 232);
 pub const OK: &str = "ok";
 pub const CANCEL: &str = "cancel";
 
 const EDGE: i32 = 10;
 const FIRST: i32 = 34;
 const STEP: i32 = 20;
+/// Tall enough for a check box per column above the buttons.
+pub const CLIENT: (i32, i32) = (260, FIRST + SPECS.len() as i32 * STEP + 15 + BUTTON_H);
 
 pub fn form(shown: &[Column]) -> Form {
     let (w, h) = CLIENT;
@@ -55,4 +56,19 @@ pub fn picked(f: &Form) -> Vec<Column> {
         .filter(|s| f.checked(s.key) == Some(true))
         .map(|s| s.col)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_check_box_sits_above_the_buttons() {
+        let f = form(&[]);
+        let ok = f.rect(OK).unwrap();
+        for s in &SPECS {
+            let r = f.rect(s.key).unwrap();
+            assert!(r.bottom() <= ok.y, "{}: {r:?} above {ok:?}", s.key);
+        }
+    }
 }

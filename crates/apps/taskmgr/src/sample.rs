@@ -27,6 +27,9 @@ pub struct ProcRow {
     /// Bytes per second read from and written to storage since the last reading; None while the
     /// Disk column is hidden or where `/proc/<pid>/io` is unreadable.
     pub disk: Option<u64>,
+    /// The share of its busiest GPU engine, 0 to 1; None while the GPU column is hidden or
+    /// where none of its DRM clients we can read gives engine time.
+    pub gpu: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -180,6 +183,7 @@ impl Sampler {
                 threads: p.stat.threads,
                 cmdline,
                 disk,
+                gpu: None,
             });
         }
         self.cmdlines.retain(|k, _| ticks.contains_key(k));
@@ -191,8 +195,11 @@ impl Sampler {
         }
         let keys: Vec<(i32, u64)> = procs.iter().map(|p| (p.pid, p.start)).collect();
         let devices = (self.devices.as_mut())
-            .map(|d| d.sample(Instant::now(), &keys))
+            .map(|d| d.sample(now, &keys))
             .unwrap_or_default();
+        for p in &mut procs {
+            p.gpu = devices.proc_gpu.get(&p.pid).copied();
+        }
         Snapshot {
             procs,
             cpu: load,
@@ -301,6 +308,49 @@ mod tests {
             p.uid.to_string(),
             "an unknown uid reads as its number"
         );
+    }
+
+    #[test]
+    fn gpu_shares_are_read_only_for_the_gpu_column() {
+        let root = tempfile::tempdir().unwrap();
+        let proc = root.path().join("proc");
+        std::fs::create_dir_all(&proc).unwrap();
+        let cpu = "cpu 0 0 0 1000 0 0 0 0\n";
+        write(
+            &proc,
+            cpu,
+            &[(10, stat(10, "game", 1, 5)), (11, stat(11, "shell", 1, 6))],
+        );
+        std::fs::create_dir_all(proc.join("10/fd")).unwrap();
+        std::fs::create_dir_all(proc.join("10/fdinfo")).unwrap();
+        std::os::unix::fs::symlink("/dev/dri/renderD128", proc.join("10/fd/3")).unwrap();
+        let fdinfo = |ns: u64| {
+            format!(
+                "drm-driver:\ti915\ndrm-client-id:\t4\ndrm-pdev:\t0000:00:02.0\n\
+                 drm-engine-render:\t{ns} ns\n"
+            )
+        };
+        std::fs::write(proc.join("10/fdinfo/3"), fdinfo(0)).unwrap();
+        let mut s = Sampler {
+            devices: Some(devices::Sampler::new(root.path())),
+            ..Sampler::new(&proc, None, HashMap::new())
+        };
+        let t0 = Instant::now();
+        let gpu = |snap: &Snapshot, pid: i32| snap.procs.iter().find(|p| p.pid == pid).unwrap().gpu;
+        s.sample_at(t0);
+        std::fs::write(proc.join("10/fdinfo/3"), fdinfo(500_000_000)).unwrap();
+        let hidden = s.sample_at(t0 + std::time::Duration::from_secs(1));
+        assert_eq!(gpu(&hidden, 10), None, "the column is hidden");
+        s.devices.as_mut().unwrap().proc_gpu = true;
+        s.sample_at(t0 + std::time::Duration::from_secs(2));
+        std::fs::write(proc.join("10/fdinfo/3"), fdinfo(750_000_000)).unwrap();
+        let next = s.sample_at(t0 + std::time::Duration::from_secs(3));
+        assert_eq!(
+            gpu(&next, 10),
+            Some(0.25),
+            "a quarter second busy in a second"
+        );
+        assert_eq!(gpu(&next, 11), None, "no DRM client");
     }
 
     #[test]
