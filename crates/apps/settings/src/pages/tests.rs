@@ -156,6 +156,18 @@ fn every_dialog_fits_its_text_under_every_interface() {
                 crate::shortcutdlg::ShortcutDialog::new(Some(&long), vec![]).form,
             ),
             (
+                "Shortcut taken".into(),
+                crate::shortcutdlg::ShortcutDialog::new(
+                    Some(&Shortcut::new("Super+Ctrl+Shift+Left", "close", "")),
+                    vec![Shortcut::new(
+                        "Super+Ctrl+Shift+Left",
+                        "desktop-carry-prev",
+                        "",
+                    )],
+                )
+                .form,
+            ),
+            (
                 "Program shortcut".into(),
                 crate::shortcutdlg::ShortcutDialog::for_program("Ctrl+Alt+T", vec![]).form,
             ),

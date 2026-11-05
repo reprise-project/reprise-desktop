@@ -145,6 +145,19 @@ pub fn check_program_keys(keys: &str, shown: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// What a bind's row says it does: the plain name, "Run" and `command` for a spawn. An unknown
+/// action comes back as-is, which the conflict note relies on for `taken_keys`' program texts.
+pub fn action_text(action: &str, command: Option<&str>) -> String {
+    match action {
+        "spawn" => match command.filter(|c| !c.is_empty()) {
+            Some(c) => format!("Run {c}"),
+            None => "Run a command".into(),
+        },
+        repriseconf::keybind::NONE => "Nothing".into(),
+        a => repriseconf::keybind::describe(a).map_or_else(|| a.into(), |(_, what)| what.into()),
+    }
+}
+
 pub fn program_text(p: &ProgramShortcut, name: &str) -> String {
     let what = if p.description.is_empty() {
         &p.id

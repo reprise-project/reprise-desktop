@@ -3,6 +3,9 @@
 
 use std::time::Duration;
 
+use repriseconf::keybind::{
+    self, ACCESSIBILITY, DESKTOPS, LAUNCH, MEDIA, PROGRAMS, SCREENSHOTS, SYSTEM, WINDOWS, key_text,
+};
 use reprisekit::controls::keysheet::{self, Binding, Group, KeySheet};
 use reprisekit::look::panel;
 use reprisescene::{Input, TreeId};
@@ -84,14 +87,6 @@ pub fn is_shown(state: &State) -> bool {
     state.key_sheet.panel.is_some()
 }
 
-const WINDOWS: &str = "Windows";
-const DESKTOPS: &str = "Desktops";
-const LAUNCH: &str = "Launch and search";
-const SCREENSHOTS: &str = "Screenshots";
-const MEDIA: &str = "Media";
-const ACCESSIBILITY: &str = "Accessibility";
-const SYSTEM: &str = "System";
-const PROGRAMS: &str = "Programs";
 const GROUPS: [&str; 8] = [
     WINDOWS,
     DESKTOPS,
@@ -105,126 +100,17 @@ const GROUPS: [&str; 8] = [
 
 /// The group `a` is listed under and what its row says.
 fn describe(a: &Action) -> (&'static str, String) {
-    use crate::desktops::Step;
-    use crate::magnifier::ZoomStep;
-    use crate::snap::Dir;
-    let (group, what) = match a {
-        Action::Spawn(cmd) => return (PROGRAMS, format!("Run {cmd}")),
-        Action::Exec { app, .. } => return (PROGRAMS, format!("Start {app}")),
-        Action::Close => (WINDOWS, "Close the window"),
-        Action::Cycle => (WINDOWS, "Switch windows"),
-        Action::CycleApp => (WINDOWS, "Switch the app's windows"),
-        Action::Flip => (WINDOWS, "Switch windows in 3D"),
-        Action::Maximize => (WINDOWS, "Maximize"),
-        Action::Minimize => (WINDOWS, "Minimize"),
-        Action::WindowMenu => (WINDOWS, "Window menu"),
-        Action::ShowDesktop => (WINDOWS, "Show the desktop"),
-        Action::ToggleFrame => (WINDOWS, "Hide or show the frame"),
-        Action::AlwaysOnTop => (WINDOWS, "Always on top"),
-        Action::MiniView => (WINDOWS, "Mini view"),
-        Action::Center => (WINDOWS, "Centre the window"),
-        Action::Tab(false) => (WINDOWS, "Next tab"),
-        Action::Tab(true) => (WINDOWS, "Previous tab"),
-        Action::Snap(Dir::Left) => (WINDOWS, "Snap left"),
-        Action::Snap(Dir::Right) => (WINDOWS, "Snap right"),
-        Action::Snap(Dir::Up) => (WINDOWS, "Snap up"),
-        Action::Snap(Dir::Down) => (WINDOWS, "Snap down"),
-        Action::SnapLayouts => (WINDOWS, "Snap layouts"),
-        Action::Overview => (WINDOWS, "Window overview"),
-        Action::Desktop(Step::Prev) => (DESKTOPS, "Previous desktop"),
-        Action::Desktop(Step::Next) => (DESKTOPS, "Next desktop"),
-        Action::CarryToDesktop(Step::Prev) => (DESKTOPS, "Take the window to the previous one"),
-        Action::CarryToDesktop(Step::Next) => (DESKTOPS, "Take the window to the next one"),
-        Action::AllDesktops => (DESKTOPS, "Show on all desktops"),
-        Action::Launcher => (LAUNCH, "Launcher"),
-        Action::StartMenu => (LAUNCH, "Start menu"),
-        Action::Run => (LAUNCH, "Run"),
-        Action::TaskManager => (LAUNCH, "Task Manager"),
-        Action::Terminal => (LAUNCH, "Terminal"),
-        Action::ClipboardHistory => (LAUNCH, "Clipboard history"),
-        Action::EmojiPicker => (LAUNCH, "Emoji picker"),
-        Action::ColorPicker => (LAUNCH, "Colour picker"),
-        Action::Screenshot => (SCREENSHOTS, "Whole screen"),
-        Action::ScreenshotWindow => (SCREENSHOTS, "Window"),
-        Action::ScreenshotRegion => (SCREENSHOTS, "Area"),
-        Action::ScreenshotContent => (SCREENSHOTS, "Window without its frame"),
-        Action::VolumeUp => (MEDIA, "Volume up"),
-        Action::VolumeDown => (MEDIA, "Volume down"),
-        Action::Mute => (MEDIA, "Mute"),
-        Action::MicMute => (MEDIA, "Mute the microphone"),
-        Action::BrightnessUp => (MEDIA, "Brighter"),
-        Action::BrightnessDown => (MEDIA, "Dimmer"),
-        Action::KbdBrightnessUp => (MEDIA, "Keyboard backlight up"),
-        Action::KbdBrightnessDown => (MEDIA, "Keyboard backlight down"),
-        Action::PlayPause => (MEDIA, "Play or pause"),
-        Action::Next => (MEDIA, "Next track"),
-        Action::Prev => (MEDIA, "Previous track"),
-        Action::Stop => (MEDIA, "Stop"),
-        Action::Wifi => (MEDIA, "Wireless on or off"),
-        Action::Zoom(ZoomStep::In) => (ACCESSIBILITY, "Zoom in"),
-        Action::Zoom(ZoomStep::Out) => (ACCESSIBILITY, "Zoom out"),
-        Action::Zoom(ZoomStep::Reset) => (ACCESSIBILITY, "Zoom back"),
-        Action::ColorFilter => (ACCESSIBILITY, "Colour filter"),
-        Action::Lock => (SYSTEM, "Lock"),
-        Action::LogOff => (SYSTEM, "Log off"),
-        Action::TurnOff => (SYSTEM, "Turn off"),
-        Action::Exit => (SYSTEM, "Quit Reprise"),
-        Action::DoNotDisturb => (SYSTEM, "Do not disturb"),
-        Action::NightLight => (SYSTEM, "Night light"),
-        Action::FocusTaskbar => (SYSTEM, "Go to the taskbar"),
-        Action::FocusTray => (SYSTEM, "Go to the notification area"),
-        Action::NextLayout => (SYSTEM, "Next keyboard layout"),
-    };
-    (group, what.to_string())
+    match a {
+        Action::Spawn(cmd) => (PROGRAMS, format!("Run {cmd}")),
+        Action::Exec { app, .. } => (PROGRAMS, format!("Start {app}")),
+        a => named(a.name().unwrap_or_default()),
+    }
 }
 
-/// Keysym `sym` as a key cap names it: a letter in capitals, a typed sign as
-/// itself, a named key in words ("Page Down", "Print").
-pub fn key_text(sym: u32) -> String {
-    if let Some(c) = char::from_u32(sym).filter(|_| (0x21..=0x7e).contains(&sym)) {
-        return c.to_ascii_uppercase().to_string();
-    }
-    let name = repriseconf::keybind::key_name(sym).unwrap_or_else(|| format!("{sym:#x}"));
-    let fixed = match name.as_str() {
-        "Return" | "return" => "Enter",
-        "space" => "Space",
-        "Escape" | "escape" => "Esc",
-        "Sys_Req" | "sys_req" => "SysRq",
-        "Prior" => "Page Up",
-        "Next" => "Page Down",
-        "Super_L" | "super_l" => "Left Super",
-        "Super_R" | "super_r" => "Right Super",
-        "Alt_L" | "alt_l" => "Left Alt",
-        "Alt_R" | "alt_r" => "Right Alt",
-        "Shift_L" | "shift_l" => "Left Shift",
-        "Shift_R" | "shift_r" => "Right Shift",
-        "Control_L" | "control_l" => "Left Ctrl",
-        "Control_R" | "control_r" => "Right Ctrl",
-        _ => "",
-    };
-    if !fixed.is_empty() {
-        return fixed.to_string();
-    }
-    let name = name.strip_prefix("XF86").unwrap_or(&name);
-    // Underscores and case steps split words: "Page_Down", "AudioRaiseVolume".
-    let mut out = String::new();
-    let mut prev: Option<char> = None;
-    for c in name.chars() {
-        if c == '_' {
-            out.push(' ');
-        } else {
-            if c.is_uppercase() && prev.is_some_and(char::is_lowercase) {
-                out.push(' ');
-            }
-            out.push(c);
-        }
-        prev = Some(c);
-    }
-    let mut chars = out.chars();
-    chars
-        .next()
-        .map(|f| f.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
+/// The group and row text of action id `name`; an id `ACTION_NAMES` lacks shows as itself under
+/// System.
+fn named(name: &str) -> (&'static str, String) {
+    keybind::describe(name).map_or((SYSTEM, name.to_string()), |(g, w)| (g, w.to_string()))
 }
 
 /// A chord as the sheet lists it: "Super+Ctrl+Alt+Shift+" then the key.
@@ -445,6 +331,23 @@ mod tests {
 
     const KEY_A: u32 = 30;
     const KEY_LEFTMETA: u32 = 125;
+
+    #[test]
+    fn an_action_the_names_lack_shows_its_id_under_system() {
+        assert_eq!(named("bogus"), (SYSTEM, "bogus".to_string()));
+        assert_eq!(
+            named("toggleframe"),
+            (WINDOWS, "Hide or show the frame".to_string())
+        );
+    }
+
+    #[test]
+    fn every_named_action_parses_and_names_itself() {
+        for (id, _, _) in repriseconf::keybind::ACTION_NAMES {
+            let a = Action::from_parts(id, None).unwrap();
+            assert_eq!(a.name(), Some(*id));
+        }
+    }
 
     #[test]
     fn a_hold_waits_shows_and_ends_without_a_tap() {
