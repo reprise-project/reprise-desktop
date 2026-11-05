@@ -74,6 +74,8 @@ URL, so download it first and install the local file:
 - Character Map names characters and groups them by block with the
   `unicode_names2` and `unicode-blocks` crates, built in; they need no runtime
   library
+- A stuck main loop's backtrace is walked and named with the `backtrace`
+  crate, built in; it needs no runtime library
 
 ### To run
 

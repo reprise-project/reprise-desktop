@@ -122,6 +122,8 @@ gbm-sys = "0.4"
 # an idle server (`xwayland`). Smithay's xwayland still pulls in 0.13; no
 # types cross between the two connections, so both versions build.
 x11rb = { version = "0.14", default-features = false, features = ["res"] }
+# Walks and names the main thread's stack for a stall report (`stall`).
+backtrace = "0.3"
 reprisekit = { path = "crates/reprisekit" }
 repriseapp-pins = { path = "crates/repriseapp-pins" }
 reprisescene = { path = "crates/reprisescene" }

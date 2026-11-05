@@ -211,6 +211,7 @@ pub fn setup(state: &mut State, startup: Stamp) {
     let source = Generic::new(fd, Interest::READ, Mode::Level);
     let added = state.handle.insert_source(source, |_, _, state| {
         state.config_watch.drain();
+        crate::stall::reload_hook();
         sync(state);
         Ok(PostAction::Continue)
     });
