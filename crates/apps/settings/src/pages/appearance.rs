@@ -22,7 +22,7 @@ pub fn fonts_and_icons(
     qt_tools: bool,
 ) -> Form {
     let gw = a.gw();
-    let mut items = vec![group(a, "fonts_group", 44, 84, "Fonts")];
+    let mut items = vec![group(a, "fonts_group", 44, 102, "Fonts")];
     let half = (gw - 8) / 2;
     items.extend(field(
         "family_label",
@@ -53,85 +53,103 @@ pub fn fonts_and_icons(
         ),
     ));
     items.push(Item::label_at("font_size_units", GX + 104, 108, 20, "px"));
-    items.push(Item::check("font_antialias", GX + 160, 108, "Antia&lias"));
+    items.push(Item::new(
+        "fonts_note",
+        Rect::new(GX, 126, gw, LINE_H),
+        Control::Lines(vec![
+            "Text size on the Text & Keys page enlarges all text.".into(),
+        ]),
+    ));
 
-    items.push(group(a, "icons_group", 138, 56, "Icons"));
-    items.push(Item::label_at("theme_label", GX, 162, 56, "&Theme:"));
+    let cw = a.combo(Area::MIN.gw() - 88);
+    items.push(group(a, "smoothing_group", 154, 72, "Font Smoothing"));
+    items.push(Item::label_at(
+        "reprise_text_label",
+        GX,
+        176,
+        84,
+        "Reprise text:",
+    ));
+    items.push(Item::check(
+        "font_antialias",
+        GX + 88,
+        176,
+        "S&mooth the edges",
+    ));
+    items.push(Item::label_at(
+        "smoothing_label",
+        GX,
+        202,
+        84,
+        "&Other programs:",
+    ));
+    items.push(choice("font_smoothing", GX + 88, 198, cw, FONT_SMOOTHINGS));
+
+    items.push(group(a, "icons_group", 236, 48, "Icons"));
+    items.push(Item::label_at("theme_label", GX, 260, 56, "&Theme:"));
     items.push(combo(
         "icon_theme",
         GX + 60,
-        158,
+        256,
         a.combo(Area::MIN.gw() - 60),
         icon_themes,
         icon_themes.len().clamp(1, 8),
     ));
 
-    items.push(group(a, "windows_group", 204, 66, "Windows"));
+    items.push(group(a, "windows_group", 294, 66, "Window Frames"));
     items.extend(spin(
         "frame_label",
         "frame_width",
         GX,
-        226,
+        316,
         110,
         "Frame &width:",
         (0, 32),
     ));
-    items.push(Item::label_at("frame_units", GX + 170, 226, 20, "px"));
+    items.push(Item::label_at("frame_units", GX + 170, 316, 20, "px"));
     items.extend(spin(
         "caption_label",
         "caption_height",
         GX,
-        252,
+        342,
         110,
         "Caption &height:",
         (12, 128),
     ));
-    items.push(Item::label_at("caption_units", GX + 170, 252, 20, "px"));
+    items.push(Item::label_at("caption_units", GX + 170, 342, 20, "px"));
 
-    // GTK and Qt look: `(Automatic)` and Automatic follow the look's darkness,
-    // the Reprise rows its colours. Their font smoothing is apart from the Fonts
-    // group's Antialias, which is Reprise's own text.
     let mut gtk: Vec<String> = GTK_FIXED_ROWS
         .iter()
         .map(|(_, row)| row.to_string())
         .collect();
     gtk.extend(gtk_themes.iter().cloned());
-    let cw = a.combo(Area::MIN.gw() - 88);
-    items.push(group(a, "toolkits_group", 306, 114, "Programs"));
-    items.push(Item::label_at("gtk_label", GX, 330, 84, "GTK th&eme:"));
+    items.push(group(a, "toolkits_group", 370, 86, "Programs"));
+    items.push(Item::label_at("gtk_label", GX, 394, 84, "GTK th&eme:"));
     items.push(combo(
         "gtk_theme",
         GX + 88,
-        326,
+        390,
         cw,
         &gtk,
         gtk.len().clamp(1, 8),
     ));
-    items.push(Item::label_at("qt_label", GX, 356, 84, "&Qt style:"));
-    let mut qt = choice("qt_platform_theme", GX + 88, 352, cw, QT_PLATFORM_THEMES);
+    items.push(Item::label_at("qt_label", GX, 420, 84, "&Qt style:"));
+    let mut qt = choice("qt_platform_theme", GX + 88, 416, cw, QT_PLATFORM_THEMES);
     if let Control::Combo(c) = &mut qt.control
         && let Some(row) = c.items.iter_mut().find(|i| i.text == REPRISE_TOOLKIT_ROW)
     {
         row.greyed = !qt_tools;
     }
     items.push(qt);
-    items.push(Item::label_at(
-        "smoothing_label",
-        GX,
-        382,
-        84,
-        "Fo&nt smoothing:",
-    ));
-    items.push(choice("font_smoothing", GX + 88, 378, cw, FONT_SMOOTHINGS));
     items.push(Item::check(
         "gtk4_colors",
         GX,
-        404,
+        442,
         "GTK&4 and libadwaita in the look's colours",
     ));
     items.push(Item::new(
         "toolkits_note",
-        Rect::new(X, 422, a.w, LINE_H),
+        Rect::new(X, 460, a.w, LINE_H),
         Control::Lines(vec![
             "Qt and GTK4 programs take a new style when they next start.".into(),
         ]),
