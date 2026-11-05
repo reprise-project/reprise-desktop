@@ -72,6 +72,7 @@ impl TextBox {
     fn metrics(&self) -> Metrics {
         Metrics {
             font_px: self.font.px,
+            bold: self.font.bold,
             line_h: self.line_h(),
             bars_always: false,
             flat: true,

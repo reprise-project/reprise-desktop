@@ -9,7 +9,7 @@ use crate::pointer::Pointer;
 use crate::raster::{Canvas, Rect};
 use crate::text::{Align, TextRenderer};
 use crate::textedit::{
-    Caret, Doc, Edit, EditKey, Op, Spot, Surrounding, TextSpot, Undo, index_at, words,
+    Caret, Doc, Edit, EditKey, Op, Spot, Surrounding, TextSpot, Undo, index_at_weight, words,
 };
 use accesskit::{NodeId, Role};
 use std::cell::RefCell;
@@ -206,7 +206,7 @@ pub struct MultiEdit {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Widths {
-    key: (u32, usize),
+    key: (u32, bool, usize),
     px: Vec<Option<i32>>,
     widest: Option<i32>,
 }
@@ -852,6 +852,8 @@ impl MultiEdit {
 #[derive(Clone, Copy, Debug)]
 pub struct Metrics {
     pub font_px: u32,
+    /// The text is measured, wrapped and drawn at the renderer's bold weight.
+    pub bold: bool,
     pub line_h: i32,
     pub tab_cols: usize,
     /// Always reserve both scrollbars (a bar whose text fits draws disabled); off, a bar shows only
@@ -878,6 +880,7 @@ impl Default for Metrics {
     fn default() -> Self {
         Metrics {
             font_px: 13,
+            bold: false,
             line_h: 13,
             tab_cols: 8,
             bars_always: true,
@@ -978,7 +981,7 @@ fn row_x(text: &TextRenderer, m: &Metrics, edit: &MultiEdit, wrap: Option<i32>, 
     let p = edit.clamp(p);
     let row = edit.row(text, m, wrap, edit.row_of(text, m, wrap, p));
     let raw = &edit.lines[row.line][row.start..p.col.max(row.start)];
-    text.measure(&expand(raw, m.tab_cols), false, m.font_px)
+    text.measure(&expand(raw, m.tab_cols), m.bold, m.font_px)
 }
 
 /// The column on `row` nearest `x` px from the row's start.
@@ -986,7 +989,12 @@ fn row_col(text: &TextRenderer, m: &Metrics, edit: &MultiEdit, row: Row, x: i32)
     let line = &edit.lines[row.line];
     let raw = &line[row.start..row.end];
     let e = expand(raw, m.tab_cols);
-    let col = row.start + raw_col(raw, index_at(text, &e, x, m.font_px), m.tab_cols);
+    let col = row.start
+        + raw_col(
+            raw,
+            index_at_weight(text, &e, x, m.bold, m.font_px),
+            m.tab_cols,
+        );
     col.min(row.end_col(line))
 }
 
@@ -1011,7 +1019,7 @@ pub fn caret_point(
 /// The widest line's width in px at `m.font_px`.
 pub fn widest_px(text: &TextRenderer, m: &Metrics, edit: &MultiEdit) -> i32 {
     let mut w = edit.widths.borrow_mut();
-    let key = (m.font_px, m.tab_cols);
+    let key = (m.font_px, m.bold, m.tab_cols);
     if w.key != key || w.px.len() != edit.lines.len() {
         *w = Widths {
             key,
@@ -1022,14 +1030,15 @@ pub fn widest_px(text: &TextRenderer, m: &Metrics, edit: &MultiEdit) -> i32 {
     if let Some(widest) = w.widest {
         return widest;
     }
-    let widest =
-        w.px.iter_mut()
-            .zip(&edit.lines)
-            .map(|(px, line)| {
-                *px.get_or_insert_with(|| text.measure(&expand(line, m.tab_cols), false, m.font_px))
-            })
-            .max()
-            .unwrap_or(0);
+    let widest = w
+        .px
+        .iter_mut()
+        .zip(&edit.lines)
+        .map(|(px, line)| {
+            *px.get_or_insert_with(|| text.measure(&expand(line, m.tab_cols), m.bold, m.font_px))
+        })
+        .max()
+        .unwrap_or(0);
     w.widest = Some(widest);
     widest
 }
@@ -1307,7 +1316,7 @@ impl View {
     ) -> View {
         let (line, page) = match bar {
             ScrollBar::Vertical => (1, lay.rows as i32),
-            ScrollBar::Horizontal => (text.measure("M", false, m.font_px).max(1), lay.inner.width),
+            ScrollBar::Horizontal => (text.measure("M", m.bold, m.font_px).max(1), lay.inner.width),
         };
         let by = Press::of(hit).by(line as i64, page as i64) as i32;
         let mut v = self;
@@ -1526,7 +1535,7 @@ pub fn draw(
             .map(|p| p.splice(line, edit.caret.col - row.start));
         let line = composed.as_ref().map_or(line, |(t, ..)| t);
         let shown = expand(line, m.tab_cols);
-        let width = text.measure(&shown, false, m.font_px);
+        let width = text.measure(&shown, m.bold, m.font_px);
         let r = Rect::new(x0, y, width.max(1), line_h);
         let row_from = Pos {
             line: li,
@@ -1548,10 +1557,10 @@ pub fn draw(
             } else {
                 shown.len()
             };
-            let xa = x0 + text.measure(&shown[..sa], false, m.font_px);
-            let mut xb = x0 + text.measure(&shown[..sb], false, m.font_px);
+            let xa = x0 + text.measure(&shown[..sa], m.bold, m.font_px);
+            let mut xb = x0 + text.measure(&shown[..sb], m.bold, m.font_px);
             if row.last && li < b.line {
-                xb += text.measure(" ", false, m.font_px);
+                xb += text.measure(" ", m.bold, m.font_px);
             }
             let run = Rect::new(xa, y, (xb - xa).max(0), line_h);
             c.fill_rect(run.intersect(&clip), cs.hilight);
@@ -1560,7 +1569,7 @@ pub fn draw(
                 r,
                 clip,
                 &shown,
-                false,
+                m.bold,
                 cs.button_text,
                 Align::Left,
                 m.font_px,
@@ -1570,7 +1579,7 @@ pub fn draw(
                 run,
                 clip,
                 &shown[sa..sb],
-                false,
+                m.bold,
                 cs.hilight_text,
                 Align::Left,
                 m.font_px,
@@ -1581,7 +1590,7 @@ pub fn draw(
                 r,
                 clip,
                 &shown,
-                false,
+                m.bold,
                 cs.button_text,
                 Align::Left,
                 m.font_px,
@@ -1589,11 +1598,11 @@ pub fn draw(
         }
         let col_x = |col: usize| {
             let e = expanded_col(line, col, m.tab_cols);
-            x0 + text.measure(&shown[..e.min(shown.len())], false, m.font_px)
+            x0 + text.measure(&shown[..e.min(shown.len())], m.bold, m.font_px)
         };
         if let Some((_, run, _)) = &composed {
             let base = text
-                .baseline(r, false, m.font_px)
+                .baseline(r, m.bold, m.font_px)
                 .unwrap_or(y + line_h - 3 * s);
             let (xa, xb) = (col_x(run.start), col_x(run.end));
             let ul = Rect::new(xa, base + s, xb - xa, s);
@@ -1736,7 +1745,7 @@ pub fn access(
             let row = edit.row(text, m, lay.wrap, ri);
             let run = &edit.lines[row.line][row.start..row.end];
             let y = lay.inner.y + 1 + (ri as i32 - view.top as i32) * m.line_h;
-            let w = text.measure(&expand(run, m.tab_cols), false, m.font_px);
+            let w = text.measure(&expand(run, m.tab_cols), m.bold, m.font_px);
             access::Line {
                 text: run,
                 start: starts[row.line] + row.start,

@@ -31,7 +31,7 @@ impl Row {
 /// inside one wider than a row. Spaces ending a row hang past it; tabs stop from the row's start.
 pub fn breaks(text: &TextRenderer, m: &Metrics, line: &str, width: i32) -> Vec<usize> {
     let tab_cols = m.tab_cols.max(1);
-    let space = text.advance(' ', false, m.font_px);
+    let space = text.advance(' ', m.bold, m.font_px);
     let mut out = Vec::new();
     let (mut row, mut x, mut col) = (0, 0, 0);
     // The word being read: its first byte, and the row's x and column there.
@@ -41,7 +41,7 @@ pub fn breaks(text: &TextRenderer, m: &Metrics, line: &str, width: i32) -> Vec<u
             let n = tab_cols - col % tab_cols;
             (n as i32 * space, n)
         } else {
-            let adv = g.chars().map(|c| text.advance(c, false, m.font_px)).sum();
+            let adv = g.chars().map(|c| text.advance(c, m.bold, m.font_px)).sum();
             (adv, g.chars().count())
         };
         if g.starts_with(char::is_whitespace) {
@@ -69,8 +69,8 @@ pub fn breaks(text: &TextRenderer, m: &Metrics, line: &str, width: i32) -> Vec<u
 /// Each line's breaks at one width, with the row each line starts on.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Slot {
-    /// Font px, tab columns and width.
-    key: Option<(u32, usize, i32)>,
+    /// Font px, weight, tab columns and width.
+    key: Option<(u32, bool, usize, i32)>,
     breaks: Vec<Option<Vec<usize>>>,
     /// Per line, its first row's index, and one more entry holding the row count. `None` until
     /// every line's breaks are known.
@@ -121,7 +121,7 @@ impl MultiEdit {
         f: impl FnOnce(&[usize], &[Option<Vec<usize>>]) -> R,
     ) -> R {
         let mut w = self.wraps.borrow_mut();
-        let key = Some((m.font_px, m.tab_cols, width));
+        let key = Some((m.font_px, m.bold, m.tab_cols, width));
         let n = self.lines.len();
         let found = (w.slots.iter()).position(|s| s.key == key && s.breaks.len() == n);
         let i = found.unwrap_or_else(|| {
