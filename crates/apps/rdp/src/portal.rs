@@ -200,12 +200,18 @@ async fn fd(
 }
 
 async fn close_on(conn: &Connection, session: &OwnedObjectPath) {
-    if let Err(e) = conn
-        .call_method(Some(PORTAL), session, Some(SESSION), "Close", &())
-        .await
-    {
-        log::info!("closing the portal session: {e}");
+    match (conn.call_method(Some(PORTAL), session, Some(SESSION), "Close", &())).await {
+        Ok(_) => {}
+        Err(e) if already_closed(&e) => log::debug!("the portal session was already closed"),
+        Err(e) => log::info!("closing the portal session: {e}"),
     }
+}
+
+/// Close answered by no session object: the frontend closes a session itself when a request
+/// on it fails, as Start does with no screen to share.
+fn already_closed(e: &zbus::Error) -> bool {
+    use zbus::fdo::Error as Fdo;
+    matches!(e, zbus::Error::FDO(e) if matches!(**e, Fdo::UnknownMethod(_) | Fdo::UnknownObject(_)))
 }
 
 type Options = HashMap<&'static str, Variant<'static>>;
@@ -317,6 +323,23 @@ pub(crate) mod tests {
             keyboard: true,
             pointer: true,
         }
+    }
+
+    #[test]
+    fn a_close_of_a_session_the_frontend_already_closed_is_not_an_error() {
+        let fdo = |e| zbus::Error::FDO(Box::new(e));
+        let gone =
+            "Object does not exist at path \"/org/freedesktop/portal/desktop/session/1_1/x\"";
+        assert!(already_closed(&fdo(zbus::fdo::Error::UnknownMethod(
+            gone.into()
+        ))));
+        assert!(already_closed(&fdo(zbus::fdo::Error::UnknownObject(
+            gone.into()
+        ))));
+        assert!(!already_closed(&fdo(zbus::fdo::Error::AccessDenied(
+            "no".into()
+        ))));
+        assert!(!already_closed(&zbus::Error::InterfaceNotFound));
     }
 
     #[test]
