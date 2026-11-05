@@ -1,9 +1,10 @@
 use super::*;
 use crate::locations::location_answers;
-use repriseapp::{BTN_LEFT, BTN_RIGHT, Extended, KeyInput, PointerInput};
+use repriseapp::{BTN_LEFT, BTN_RIGHT, Extended, KeyInput, Mods, PointerInput};
 use repriseconf::pages::Hit;
 use reprisekit::classic::widgets::BarHit;
 use reprisekit::controls::{form, listview, pagelist, propsheet};
+use reprisekit::textedit::keysym;
 use reprisekit::theme::FontConfig;
 use std::sync::atomic::Ordering;
 
@@ -63,7 +64,7 @@ fn press_side_row(a: &mut SettingsApp, ctx: &mut Ctx, row: usize, time: u32) {
         y,
         button: BTN_LEFT,
         time,
-        mods: repriseapp::Mods::default(),
+        mods: Mods::default(),
     };
     a.event(MAIN, Event::Pointer(press), ctx);
 }
@@ -74,8 +75,11 @@ fn a_field_copies_its_selection_and_takes_a_paste() {
     let mut ctx = test_ctx();
     a.open_page(Page::WindowBehavior, Some("snap_layouts"));
     a.event(MAIN, Event::Pasted("1|1 2\nmore".into()), &mut ctx);
-    let windows = Page::WindowBehavior.index();
-    let text = |a: &SettingsApp| match &a.sheet.pages[windows].item("snap_layouts").unwrap().control
+    let behavior = Page::WindowBehavior.index();
+    let text = |a: &SettingsApp| match &a.sheet.pages[behavior]
+        .item("snap_layouts")
+        .unwrap()
+        .control
     {
         form::Control::Edit { edit, .. } => edit.text.clone(),
         _ => unreachable!(),
@@ -87,49 +91,46 @@ fn a_field_copies_its_selection_and_takes_a_paste() {
     assert!(a.event(MAIN, Event::Key(ctrl(b'v')), &mut ctx).paste);
 }
 
-fn ctrl(ch: u8) -> KeyInput {
+/// A key press of `sym` with `mods`, typing `text` when it types, as the window reads it.
+fn key_input(sym: u32, mods: Mods, text: Option<&str>) -> KeyInput {
     KeyInput {
-        sym: u32::from(ch),
-        utf8: None,
-        mods: repriseapp::Mods {
-            ctrl: true,
-            ..Default::default()
-        },
-        edit: reprisekit::textedit::key_for(u32::from(ch), true, false, None),
+        sym,
+        utf8: text.map(str::to_string),
+        mods,
+        edit: reprisekit::textedit::key_for(sym, mods.ctrl, mods.shift, text),
     }
 }
 
-fn typed(a: &mut SettingsApp, ctx: &mut Ctx, text: &str) {
-    let k = KeyInput {
-        sym: 0,
-        utf8: Some(text.into()),
-        mods: Default::default(),
-        edit: Some(reprisekit::textedit::EditKey::Insert(text.into())),
+fn ctrl(ch: u8) -> KeyInput {
+    let mods = Mods {
+        ctrl: true,
+        ..Mods::default()
     };
-    a.event(MAIN, Event::Key(k), ctx);
+    key_input(u32::from(ch), mods, None)
 }
 
-fn enter(a: &mut SettingsApp, ctx: &Ctx) {
-    let k = KeyInput {
-        sym: reprisekit::textedit::keysym::RETURN,
-        utf8: None,
-        mods: repriseapp::Mods::default(),
-        edit: None,
-    };
-    a.key(k, &ctx.forms().controls());
+fn typed(a: &mut SettingsApp, ctx: &mut Ctx, text: &str) {
+    a.event(
+        MAIN,
+        Event::Key(key_input(0, Mods::default(), Some(text))),
+        ctx,
+    );
+}
+
+fn press_key(a: &mut SettingsApp, ctx: &Ctx, sym: u32, mods: Mods) {
+    a.key(key_input(sym, mods, None), &ctx.forms().controls());
+}
+
+fn plain_key(a: &mut SettingsApp, ctx: &Ctx, sym: u32) {
+    press_key(a, ctx, sym, Mods::default());
 }
 
 fn tab(a: &mut SettingsApp, ctx: &Ctx, back: bool) {
-    let k = KeyInput {
-        sym: reprisekit::textedit::keysym::TAB,
-        utf8: None,
-        mods: repriseapp::Mods {
-            shift: back,
-            ..Default::default()
-        },
-        edit: None,
+    let mods = Mods {
+        shift: back,
+        ..Mods::default()
     };
-    a.key(k, &ctx.forms().controls());
+    press_key(a, ctx, keysym::TAB, mods);
 }
 
 #[test]
@@ -187,17 +188,12 @@ const SIDE_LIST: [bool; 4] = [false, true, false, false];
 const PAGE: [bool; 4] = [false, false, false, true];
 
 fn ctrl_key(a: &mut SettingsApp, ctx: &Ctx, sym: u32, shift: bool) {
-    let k = KeyInput {
-        sym,
-        utf8: None,
-        mods: repriseapp::Mods {
-            ctrl: true,
-            shift,
-            ..Default::default()
-        },
-        edit: reprisekit::textedit::key_for(sym, true, shift, None),
+    let mods = Mods {
+        ctrl: true,
+        shift,
+        alt: false,
     };
-    a.key(k, &ctx.forms().controls());
+    press_key(a, ctx, sym, mods);
 }
 
 fn press_search_field(a: &mut SettingsApp, ctx: &mut Ctx) {
@@ -213,7 +209,7 @@ fn press_search_field(a: &mut SettingsApp, ctx: &mut Ctx) {
         y: field.y + 4,
         button: BTN_LEFT,
         time: 0,
-        mods: repriseapp::Mods::default(),
+        mods: Mods::default(),
     };
     a.event(MAIN, Event::Pointer(press), ctx);
 }
@@ -226,7 +222,7 @@ fn press_control(a: &mut SettingsApp, ctx: &mut Ctx, id: &str, button: u32) {
         y: r.y + 4,
         button,
         time: 0,
-        mods: repriseapp::Mods::default(),
+        mods: Mods::default(),
     };
     a.event(MAIN, Event::Pointer(press), ctx);
 }
@@ -264,7 +260,7 @@ fn the_search_field_and_a_side_list_never_hold_the_keyboard_together() {
         "the page's last stop (Apply is greyed)"
     );
 
-    let tab_sym = reprisekit::textedit::keysym::TAB;
+    let tab_sym = keysym::TAB;
     ctrl_key(&mut a, &ctx, tab_sym, true);
     ctrl_key(&mut a, &ctx, u32::from(b'f'), false);
     assert_eq!(holders(&a), FIELD, "Ctrl+F on the page before Keyboard");
@@ -305,7 +301,7 @@ fn the_search_field_and_the_location_list_never_hold_the_keyboard_together() {
         "a press in the field takes it from the list"
     );
 
-    let tab_sym = reprisekit::textedit::keysym::TAB;
+    let tab_sym = keysym::TAB;
     ctrl_key(&mut a, &ctx, tab_sym, true);
     assert_ne!(registry::open(&a.sheet), Page::Privacy);
     ctrl_key(&mut a, &ctx, u32::from(b'f'), false);
@@ -345,7 +341,7 @@ fn a_double_click_on_a_file_type_opens_the_chooser_like_enter() {
     let double = mime(&a).expect("the chooser opens on a double click");
 
     a.chooser = None;
-    enter(&mut a, &ctx);
+    plain_key(&mut a, &ctx, keysym::RETURN);
     assert_eq!(mime(&a), Some(double), "Enter opens it for the same type");
 }
 
@@ -404,17 +400,13 @@ fn browse_in_the_chooser_picks_a_program_file_into_its_list() {
     a.defaults = Some(defaultspage::tests::defaults());
     a.refill_defaults();
     press_side_row(&mut a, &mut ctx, 1, 1000);
-    enter(&mut a, &ctx);
+    plain_key(&mut a, &ctx, keysym::RETURN);
     assert!(a.chooser.is_some());
-    let alt_b = Event::Key(KeyInput {
-        sym: 'b' as u32,
-        utf8: Some("b".into()),
-        mods: repriseapp::Mods {
-            alt: true,
-            ..Default::default()
-        },
-        edit: reprisekit::textedit::key_for('b' as u32, false, false, Some("b")),
-    });
+    let alt = Mods {
+        alt: true,
+        ..Mods::default()
+    };
+    let alt_b = Event::Key(key_input('b' as u32, alt, Some("b")));
     a.event(CHOOSER_WIN, alt_b, &mut ctx);
     assert!(
         a.add.is_some() && a.add_for == Pick::Program,
@@ -478,7 +470,7 @@ fn a_double_click_on_a_shortcut_edits_it_like_enter() {
     assert!(a.shortcut.is_some(), "a double click opens the editor");
     let target = a.shortcut_target.take();
     a.shortcut = None;
-    enter(&mut a, &ctx);
+    plain_key(&mut a, &ctx, keysym::RETURN);
     assert!(a.shortcut.is_some());
     assert_eq!(a.shortcut_target, target, "Enter edits the same row");
 }
@@ -975,7 +967,7 @@ fn yes_after_ok_writes_the_output_and_quits() {
     let yes = q.dialog.form.item(monitordlg::YES).expect("a Yes button");
     let r = yes.placed(&ctx.forms().controls());
     let (x, y) = (r.x + r.width / 2, r.y + r.height / 2);
-    let mods = repriseapp::Mods::default();
+    let mods = Mods::default();
     let press = PointerInput::Press {
         x,
         y,
@@ -1360,7 +1352,7 @@ fn the_page_scrollbar_over_the_side_list_scrolls_the_page() {
         y,
         button: BTN_LEFT,
         time: 0,
-        mods: repriseapp::Mods::default(),
+        mods: Mods::default(),
     };
     app.event(MAIN, Event::Pointer(press), &mut ctx);
     assert!(app.sheet.page_offset().1 < 0, "the page scrolled down");
@@ -1818,12 +1810,7 @@ fn other_on_the_colour_button_opens_the_color_dialog_whose_ok_sets_the_desktop()
         i: 28,
     });
     d.dlg.add_custom();
-    let enter = Event::Key(KeyInput {
-        sym: reprisekit::textedit::keysym::RETURN,
-        utf8: None,
-        mods: Default::default(),
-        edit: None,
-    });
+    let enter = Event::Key(key_input(keysym::RETURN, Mods::default(), None));
     a.event(COLOR_WIN, enter, &mut ctx);
     assert!(a.color_dlg.is_none(), "Enter is OK");
     assert_eq!(BASIC[28], reprisekit::theme::Color::rgb(0, 0, 0xFF));
@@ -1849,12 +1836,7 @@ fn unchecking_run_as_asks_first_and_only_ok_unchecks_it() {
     pages::fill_list(&mut a.list, &a.entries, &[true]);
     a.sheet.tabs.open = Page::Startup.index();
     a.list.selection.focus = Some(0);
-    let key = |sym| KeyInput {
-        sym,
-        utf8: None,
-        mods: repriseapp::Mods::default(),
-        edit: None,
-    };
+    let key = |sym| key_input(sym, Mods::default(), None);
 
     a.list_key(&form::Key::Space, &cm);
     assert_eq!(
@@ -1866,32 +1848,14 @@ fn unchecking_run_as_asks_first_and_only_ok_unchecks_it() {
         a.asking.as_ref().map(|q| q.msg.fields.text.as_str()),
         Some(apply::RUN_AS_QUESTION)
     );
-    a.event(
-        ASK_WIN,
-        Event::Key(key(reprisekit::textedit::keysym::ESCAPE)),
-        &mut ctx,
-    );
+    a.event(ASK_WIN, Event::Key(key(keysym::ESCAPE)), &mut ctx);
     assert!(a.asking.is_none());
     assert_eq!(a.list.checks, Some(vec![true]), "Cancel keeps it");
 
     a.list_key(&form::Key::Space, &cm);
-    a.event(
-        ASK_WIN,
-        Event::Key(key(reprisekit::textedit::keysym::RETURN)),
-        &mut ctx,
-    );
+    a.event(ASK_WIN, Event::Key(key(keysym::RETURN)), &mut ctx);
     assert_eq!(a.list.checks, Some(vec![false]), "OK unchecks it");
     assert!(a.dirty(), "Apply writes it");
-}
-
-fn plain_key(a: &mut SettingsApp, ctx: &Ctx, sym: u32) {
-    let k = KeyInput {
-        sym,
-        utf8: None,
-        mods: repriseapp::Mods::default(),
-        edit: None,
-    };
-    a.key(k, &ctx.forms().controls());
 }
 
 fn focused_id(a: &SettingsApp) -> Option<&'static str> {
@@ -1921,7 +1885,7 @@ fn a_query_filters_the_list_and_enter_focuses_the_control_it_found() {
     let list = a.sheet.list_mut().unwrap();
     assert!(list.shows(pagelist::Pick::Page(adv)));
     assert!(!list.shows(pagelist::Pick::Page(Page::Appearance.index())));
-    enter(&mut a, &ctx);
+    plain_key(&mut a, &ctx, keysym::RETURN);
     assert_eq!(registry::open(&a.sheet), Page::Advanced);
     assert_eq!(focused_id(&a), Some(pages::DEBUG_OVERLAY));
     assert!(!a.sheet.tabs.focused);
@@ -1941,7 +1905,7 @@ fn enter_on_a_found_control_takes_the_keyboard_from_the_location_list() {
         Some(Hit::Keyword(Some("clipboard_history"))),
         "a keyword naming one control"
     );
-    enter(&mut a, &ctx);
+    plain_key(&mut a, &ctx, keysym::RETURN);
     assert_eq!(registry::open(&a.sheet), Page::Privacy);
     assert_eq!(focused_id(&a), Some("clipboard_history"));
     assert_eq!(holders(&a), PAGE);
@@ -1951,23 +1915,15 @@ fn enter_on_a_found_control_takes_the_keyboard_from_the_location_list() {
 fn escape_on_the_found_control_clears_the_query_and_keeps_the_sheet_open() {
     let (mut a, mut ctx) = (app("search-escape"), test_ctx());
     find(&mut a, &mut ctx, "debug overlay");
-    enter(&mut a, &ctx);
-    let escape = |a: &mut SettingsApp| {
-        let k = KeyInput {
-            sym: reprisekit::textedit::keysym::ESCAPE,
-            utf8: None,
-            mods: repriseapp::Mods::default(),
-            edit: None,
-        };
-        a.key(k, &ctx.forms().controls())
-    };
+    plain_key(&mut a, &ctx, keysym::RETURN);
+    let escape = keysym::ESCAPE;
     let cancelled = |a: &SettingsApp| matches!(a.display.pending, Some(displayhost::Press::Cancel));
-    escape(&mut a);
+    plain_key(&mut a, &ctx, escape);
     assert!(!cancelled(&a));
     assert!(a.search_hits.is_empty());
     assert_eq!(a.sheet.list_mut().unwrap().filter(), None);
     assert_eq!(focused_id(&a), Some(pages::DEBUG_OVERLAY));
-    escape(&mut a);
+    plain_key(&mut a, &ctx, escape);
     assert!(cancelled(&a), "with the field empty Escape cancels");
 }
 
@@ -1978,7 +1934,7 @@ fn enter_on_a_found_page_already_open_focuses_the_control_it_found() {
     find(&mut a, &mut ctx, "repeat delay");
     let kbd = Page::Keyboard.index();
     assert_eq!(a.search_hits[kbd], Some(Hit::Control("repeat_delay")));
-    enter(&mut a, &ctx);
+    plain_key(&mut a, &ctx, keysym::RETURN);
     assert_eq!(registry::open(&a.sheet), Page::Keyboard);
     assert_eq!(focused_id(&a), Some("repeat_delay"));
     assert!(!a.shortcuts_focus, "the shortcut list lets go");
@@ -2007,7 +1963,7 @@ fn a_found_page_clicked_in_the_list_focuses_the_control_it_found() {
         y,
         button: BTN_LEFT,
         time: 0,
-        mods: repriseapp::Mods::default(),
+        mods: Mods::default(),
     };
     a.event(MAIN, Event::Pointer(press), &mut ctx);
     assert_eq!(registry::open(&a.sheet), Page::Advanced);
@@ -2019,7 +1975,7 @@ fn a_found_page_clicked_in_the_list_focuses_the_control_it_found() {
 fn down_and_tab_from_the_field_open_a_found_page_without_focusing_its_control() {
     let (mut a, mut ctx) = (app("search-down"), test_ctx());
     find(&mut a, &mut ctx, "debug overlay");
-    plain_key(&mut a, &ctx, reprisekit::textedit::keysym::DOWN);
+    plain_key(&mut a, &ctx, keysym::DOWN);
     assert_eq!(registry::open(&a.sheet), Page::Advanced);
     assert!(a.sheet.tabs.focused);
     assert_eq!(focused_id(&a), None);
@@ -2162,7 +2118,7 @@ fn enter_on_a_greyed_found_control_leaves_the_keyboard_on_the_list() {
         !a.sheet.pages[page].can_focus("glass_fast_drag"),
         "greyed under Classic"
     );
-    enter(&mut a, &ctx);
+    plain_key(&mut a, &ctx, keysym::RETURN);
     assert_eq!(a.sheet.tabs.open, page);
     assert_eq!(holders(&a), [false, false, true, false]);
 }

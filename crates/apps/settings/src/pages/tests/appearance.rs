@@ -1204,17 +1204,7 @@ fn the_widget_boxes_tick_what_stands_and_write_desktop_widgets() {
     assert_eq!(page.checked("widget_clock"), Some(true));
     assert_eq!(page.checked("widget_calendar"), Some(false));
     assert_eq!(page.checked("widget_meter"), Some(true));
-    let mut tick = |id: &str, on: bool| {
-        if let Some(Control::Check { checked, .. }) =
-            s.pages[p.index()].item_mut(id).map(|i| &mut i.control)
-        {
-            *checked = on;
-        }
-    };
-    tick("widget_calendar", true);
-    tick("widget_meter", false);
-    for id in ["widget_clock", "widget_calendar", "widget_meter"] {
-        read_one(&s, id, &mut got);
-    }
+    tick(&mut s, &mut got, p, "widget_calendar", true);
+    tick(&mut s, &mut got, p, "widget_meter", false);
     assert_eq!(got.desktop_widgets, ["clock", "calendar"]);
 }

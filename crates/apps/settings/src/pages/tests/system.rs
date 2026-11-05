@@ -220,11 +220,10 @@ fn the_program_switches_pin_their_pixels_in_every_look() {
     );
 }
 
-/// The bell check writes `[sounds] bell`; the theme combo lists the installed sound themes, keeps
-/// a configured one that is missing, writes the pick, and stays lit with the bell off since
+/// The theme combo keeps a configured theme that is missing and stays lit with the bell off:
 /// notifications play from it too.
 #[test]
-fn the_sound_theme_and_the_bell_write_their_keys() {
+fn the_bell_and_the_sound_theme_write_their_keys() {
     let root = std::env::temp_dir().join(format!("reprise-settings-sounds-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     for f in ["ocean/index.theme", "deep/stereo/bell.oga"] {
@@ -801,20 +800,6 @@ fn client() -> reprisebus::remote::Client {
     }
 }
 
-/// Whether `id` on `page` is lit; panics for a control with no greyed state.
-fn lit(page: &Form, id: &str) -> bool {
-    match &page.item(id).unwrap_or_else(|| panic!("{id}")).control {
-        Control::Check { enabled, .. }
-        | Control::Label { enabled, .. }
-        | Control::Edit { enabled, .. }
-        | Control::Button { enabled, .. } => *enabled,
-        Control::Combo(c) => c.enabled,
-        Control::UpDown(u) => u.enabled,
-        Control::TrackBar(t) => t.enabled,
-        _ => panic!("{id} has no greyed state"),
-    }
-}
-
 /// Everything under the check box that greys with it.
 const REMOTE_GREYED: [&str; 18] = [
     "status",
@@ -1003,14 +988,14 @@ fn an_unknown_quality_shows_balanced() {
 fn allow_reflects_the_unit() {
     let off = remote_desktop(Area::MIN, None, false);
     assert_eq!(off.checked("allow"), Some(false));
-    assert!(lit(&off, "allow"), "the check box itself stays lit");
+    assert!(enabled(&off, "allow"), "the check box itself stays lit");
     assert!(
-        lit(&off, "allow_note"),
+        enabled(&off, "allow_note"),
         "the note under the check box stays lit"
     );
     for id in REMOTE_GREYED {
         assert!(
-            !lit(&off, id),
+            !enabled(&off, id),
             "{id} greys while remote connections are off"
         );
     }
@@ -1022,7 +1007,7 @@ fn allow_reflects_the_unit() {
     let on = remote_desktop(Area::MIN, Some(&serving(vec![client()])), true);
     assert_eq!(on.checked("allow"), Some(true));
     for id in REMOTE_GREYED {
-        assert!(lit(&on, id), "{id} is lit while the server runs");
+        assert!(enabled(&on, id), "{id} is lit while the server runs");
     }
 }
 
@@ -1063,10 +1048,10 @@ fn the_status_line_says_where_the_server_listens() {
 #[test]
 fn disconnect_greys_without_a_client() {
     let idle = remote_desktop(Area::MIN, Some(&serving(Vec::new())), true);
-    assert!(!lit(&idle, "disconnect"));
-    assert!(lit(&idle, "regenerate"));
+    assert!(!enabled(&idle, "disconnect"));
+    assert!(enabled(&idle, "regenerate"));
     let busy = remote_desktop(Area::MIN, Some(&serving(vec![client()])), true);
-    assert!(lit(&busy, "disconnect"));
+    assert!(enabled(&busy, "disconnect"));
     let Control::ListBox { list, .. } = &busy.item("clients").unwrap().control else {
         panic!("the clients are a list box");
     };
@@ -1079,11 +1064,11 @@ fn disconnect_greys_without_a_client() {
     let silent = remote_desktop(Area::MIN, None, true);
     for id in ["disconnect", "regenerate"] {
         assert!(
-            !lit(&silent, id),
+            !enabled(&silent, id),
             "{id} greys while the server does not answer"
         );
     }
-    assert!(lit(&silent, "port"), "the settings stay lit");
+    assert!(enabled(&silent, "port"), "the settings stay lit");
 }
 
 fn viewer(address: &str) -> reprisebus::remote::Client {
@@ -1154,7 +1139,7 @@ fn the_selection_follows_its_address_when_a_row_above_goes() {
         selected_client(&page, Some(&left)),
         Some("192.168.1.31:40100")
     );
-    assert!(lit(&page, "disconnect"));
+    assert!(enabled(&page, "disconnect"));
     show_remote(
         &mut page,
         Some(&serving(Vec::new())),
@@ -1163,7 +1148,7 @@ fn the_selection_follows_its_address_when_a_row_above_goes() {
         keep.as_deref(),
     );
     assert_eq!(client_row(&page), None);
-    assert!(!lit(&page, "disconnect"));
+    assert!(!enabled(&page, "disconnect"));
 }
 
 #[test]

@@ -588,7 +588,7 @@ mod tests {
     }
 
     #[test]
-    fn track_bars_are_named_after_their_setting() {
+    fn unlabelled_controls_are_named_after_their_setting() {
         let pages = every_page(Area::MIN);
         for (p, id, name) in [
             (Page::Display, crate::displaypage::MODE, "Screen resolution"),
