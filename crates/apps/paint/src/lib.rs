@@ -3,6 +3,7 @@ reprisebus::test_session!();
 
 mod art;
 mod bitmap;
+mod colors;
 mod dialogs;
 mod doc;
 mod file;
@@ -11,6 +12,7 @@ mod history;
 mod input;
 mod menu;
 mod shapes;
+mod state;
 mod textbox;
 mod view;
 
@@ -18,6 +20,7 @@ reprisekit::strings!("paint");
 
 use bitmap::{Bitmap, WHITE};
 use doc::{Doc, Tool};
+use repriseapp::colordlg::ColorDialog;
 use repriseapp::filedlg::Host;
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{self, MsgBox};
@@ -44,6 +47,7 @@ const FONTS: WinId = WinId::named("fonts");
 const ABOUT: WinId = WinId::named("about");
 const OPEN: WinId = WinId::named("open");
 const SAVEAS: WinId = WinId::named("saveas");
+const COLORS: WinId = WinId::named("colors");
 
 /// A fresh picture's size.
 const NEW_SIZE: (i32, i32) = (480, 320);
@@ -87,6 +91,15 @@ struct Paint {
     /// The pointer over the picture, in picture pixels.
     hover: Option<(i32, i32)>,
     clicks: DoubleClick<()>,
+    /// Presses on the colour box's wells, by well and button.
+    well_clicks: DoubleClick<(usize, u32)>,
+    /// The colour box's wells, which Edit Colors can change.
+    wells: Vec<reprisekit::theme::Color>,
+    /// The Color dialog's custom colours.
+    custom: [reprisekit::theme::Color; reprisekit::controls::colordlg::CUSTOM],
+    /// Where the custom colours are kept; `None` keeps them for this run only.
+    state_path: Option<PathBuf>,
+    edit_colors: Option<(ColorDialog, colors::Target)>,
     alt_arm: AltArm,
     /// Shift is held, as the last key events had it.
     shift: bool,
@@ -140,6 +153,12 @@ impl Paint {
             held: None,
             hover: None,
             clicks: DoubleClick::default(),
+            well_clicks: DoubleClick::default(),
+            wells: art::PALETTE.iter().map(|&(c, _)| c).collect(),
+            custom: [reprisekit::theme::Color::rgb(0xFF, 0xFF, 0xFF);
+                reprisekit::controls::colordlg::CUSTOM],
+            state_path: None,
+            edit_colors: None,
             alt_arm: AltArm::default(),
             shift: false,
             tool_hot: None,
@@ -262,6 +281,9 @@ impl App for Paint {
                 modal: true,
             });
         }
+        if let Some((d, _)) = &self.edit_colors {
+            kids.push(d.child(COLORS, self.forms.text));
+        }
         if self.about {
             kids.push(Child {
                 id: ABOUT,
@@ -302,6 +324,7 @@ impl App for Paint {
             DIALOG => self.dialog_event(ev, ctx),
             FONTS => self.fonts_event(ev, ctx),
             ABOUT => self.about_event(ev),
+            COLORS => self.colors_event(ev, ctx),
             OPEN => self.open_event(ev, ctx),
             SAVEAS => self.saveas_event(ev, ctx),
             _ => self.main_event(ev, ctx),
@@ -329,6 +352,11 @@ impl App for Paint {
                 };
                 if let Some(f) = f {
                     form::draw(c, &self.dialog_text, &self.form_look(), f, true, px);
+                }
+            }
+            COLORS => {
+                if let Some((d, _)) = &self.edit_colors {
+                    d.draw(c, &self.dialog_text, &self.form_look(), px);
                 }
             }
             ABOUT => {
@@ -411,6 +439,11 @@ impl Extended for Paint {
                     oneshot::access_form(f, tree, dt, fpx);
                 }
             }
+            COLORS => {
+                if let Some((d, _)) = &self.edit_colors {
+                    d.access(tree, dt, fpx);
+                }
+            }
             ABOUT => {
                 let f = self.about_form();
                 f.drawn_with(&self.forms.paint());
@@ -432,6 +465,9 @@ pub fn main(args: Vec<std::ffi::OsString>) {
     let path = args.into_iter().next().map(PathBuf::from);
     let mut paint = Paint::new(path);
     paint.forms = repriseapp::start_forms();
+    let state = state::path();
+    paint.custom = state::custom_colors(&state);
+    paint.state_path = Some(state);
     repriseapp::run(Box::new(paint)).unwrap_or_else(|e| e.exit());
 }
 
