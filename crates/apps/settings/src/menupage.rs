@@ -3,9 +3,11 @@
 
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W};
 use reprisekit::controls::form::{Control, Form, Item};
+use reprisekit::controls::menu::expand_label;
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::treeview::{self, Node, Style, TreeView};
 use reprisekit::raster::{Canvas, Rect};
+use reprisekit::text::{escape_mnemonic, split_mnemonic};
 
 use crate::pages::{Area, GX, group};
 use crate::startmenu::{self, Entry, Target};
@@ -55,10 +57,19 @@ pub fn page(a: Area) -> Form {
 }
 
 pub fn shown(e: &Entry) -> String {
+    shown_as(e, &login())
+}
+
+/// The tree's text for `e` with `{user}` filled in; the entry's label keeps the placeholder.
+pub fn shown_as(e: &Entry, user: &str) -> String {
     match e.label() {
-        Some(l) => reprisekit::text::split_mnemonic(l).0,
+        Some(l) => split_mnemonic(&expand_label(l, &escape_mnemonic(user))).0,
         None => SEPARATOR.into(),
     }
+}
+
+fn login() -> String {
+    std::env::var("USER").unwrap_or_default()
 }
 
 fn nodes(entries: &[Entry]) -> Vec<Node> {
@@ -309,15 +320,15 @@ mod tests {
         assert_eq!(
             labels(&f, &[]),
             [
-                "Programs",
-                "Documents",
-                "Settings",
-                "Search",
-                "Help and Support",
-                "Run...",
-                "(Separator)",
-                "Log Off {user}...",
-                "Turn Off Computer...",
+                "Programs".to_string(),
+                "Documents".into(),
+                "Settings".into(),
+                "Search".into(),
+                "Help and Support".into(),
+                "Run...".into(),
+                "(Separator)".into(),
+                format!("Log Off {}...", login()),
+                "Turn Off Computer...".into(),
             ]
         );
         let t = tv(&f).unwrap();
@@ -327,6 +338,22 @@ mod tests {
         assert!(
             !t.node(&[0, 0]).unwrap().has_children,
             "Programs is filled at open"
+        );
+    }
+
+    #[test]
+    fn log_off_shows_the_login_name_and_keeps_the_placeholder_in_the_menu() {
+        let m = default_menu();
+        assert_eq!(shown_as(&m[7], "jan"), "Log Off jan...");
+        assert_eq!(
+            shown_as(&m[7], "a&b"),
+            "Log Off a&b...",
+            "an & in the name is text"
+        );
+        assert_eq!(
+            m[7].label(),
+            Some("&Log Off {user}..."),
+            "the written label keeps {{user}}"
         );
     }
 
