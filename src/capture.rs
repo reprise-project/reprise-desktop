@@ -6,13 +6,14 @@
 //! waits for the output's next drawn frame or the window's next commit,
 //! so an idle screen costs a screencast nothing.
 //! A pointer cursor session on an output copies the pointer's image and
-//! follows it over the output.
+//! follows it over the output. A session is ongoing (a screencast, not a
+//! screenshot) from its second frame.
 //!
 //! The shm copy follows niri's `render_to_shm` in
 //! `src/render_helpers/mod.rs` (GPL-3.0-or-later).
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::time::Instant;
 
 use smithay::{
     backend::{
@@ -59,8 +60,6 @@ use crate::{
 /// The side of a cursor session's buffer, in logical pixels: room for
 /// the largest pointer image the themes ship.
 const CURSOR_BOX: i32 = 64;
-
-struct Opened(Instant);
 
 /// The open ext sessions and the frames waiting for an output's next frame.
 #[derive(Default)]
@@ -121,24 +120,11 @@ impl Captures {
         }
     }
 
-    pub fn live(&self) -> (usize, usize) {
-        let windows = self
-            .sessions
-            .iter()
-            .filter(|s| matches!(shown(&s.source()), Some(Shown::Window(_))))
-            .count();
-        (self.sessions.len() - windows, windows)
-    }
-
-    /// What the ext sessions open for at least `age` show.
-    pub fn targets(&self, age: Duration) -> Vec<Captured<Output, WindowId>> {
+    /// What the ongoing ext sessions show.
+    pub fn targets(&self) -> Vec<Captured<Output, WindowId>> {
         self.sessions
             .iter()
-            .filter(|s| {
-                s.user_data()
-                    .get::<Opened>()
-                    .is_some_and(|o| o.0.elapsed() >= age)
-            })
+            .filter(|s| asked(s).ongoing())
             .filter_map(|s| match shown(&s.source())? {
                 Shown::Output(o) => Some(Captured::Output(o)),
                 Shown::Window(w) => Some(Captured::Window(w)),
@@ -151,9 +137,7 @@ impl Captures {
         self.waiting
             .iter()
             .filter_map(|w| match w {
-                Waiting::Wlr(s) if s.with_damage && s.is_alive() => {
-                    Some((s.info.output.clone(), s.info.region))
-                }
+                Waiting::Wlr(s) if s.with_damage && s.is_alive() => Some(wlr_key(s)),
                 _ => None,
             })
             .collect()
@@ -214,7 +198,7 @@ pub fn window_committed(state: &mut State, w: WindowId) {
 pub fn window_gone(state: &mut State, w: WindowId) {
     let on = Some(Shown::Window(w));
     state.captures.stop(|s| *s == on);
-    crate::privacy::sessions_changed(state);
+    crate::privacy::captures_changed(state);
     crate::captureborder::refresh(state);
 }
 
@@ -608,15 +592,19 @@ fn complete(
 
 fn window_constraints(state: &State, w: WindowId) -> Option<BufferConstraints> {
     let size = window_size(state, w)?;
-    let b = state.backend.as_ref()?;
-    Some(BufferConstraints {
-        size: (size.w, size.h).into(),
+    Some(constraints(state, (size.w, size.h).into()))
+}
+
+/// A `size` buffer in shm, or a dmabuf on the render node once there is one.
+fn constraints(state: &State, size: Size<i32, smithay::utils::Buffer>) -> BufferConstraints {
+    BufferConstraints {
+        size,
         shm: vec![wl_shm::Format::Xrgb8888, wl_shm::Format::Argb8888],
-        dma: Some(DmabufConstraints {
+        dma: state.backend.as_ref().map(|b| DmabufConstraints {
             node: b.render_node,
             formats: dmabuf_formats(&b.renderer),
         }),
-    })
+    }
 }
 
 /// Copy the pointer's image, its top-left at the buffer's, into the
@@ -770,6 +758,37 @@ impl Fresh {
     }
 }
 
+/// How many frames a session asked for, counting to two.
+#[derive(Default)]
+struct Asked(AtomicU8);
+
+impl Asked {
+    /// Count a frame; true for the second, which makes the session ongoing.
+    fn frame(&self) -> bool {
+        let n = self.0.load(Ordering::Relaxed);
+        if n < 2 {
+            self.0.store(n + 1, Ordering::Relaxed);
+        }
+        n == 1
+    }
+
+    fn ongoing(&self) -> bool {
+        self.0.load(Ordering::Relaxed) >= 2
+    }
+}
+
+fn asked(session: &SessionRef) -> &Asked {
+    session
+        .user_data()
+        .insert_if_missing_threadsafe(Asked::default);
+    session.user_data().get::<Asked>().expect("inserted above")
+}
+
+fn wlr_key(screencopy: &Screencopy) -> WlrKey {
+    let info = &screencopy.info;
+    (info.output.clone(), info.region, screencopy.client())
+}
+
 fn fresh(session: &SessionRef) -> &Fresh {
     session
         .user_data()
@@ -779,8 +798,7 @@ fn fresh(session: &SessionRef) -> &Fresh {
 
 impl ScreencopyHandler for State {
     fn screencopy_frame(&mut self, screencopy: Screencopy) {
-        crate::privacy::legacy_frame(self);
-        let key = (screencopy.info.output.clone(), screencopy.info.region);
+        let key = wlr_key(&screencopy);
         if screencopy.with_damage && screencopy.info.output.current_mode().is_some() {
             let output = screencopy.info.output.clone();
             if first_copy(&screencopy) {
@@ -793,6 +811,7 @@ impl ScreencopyHandler for State {
             fill_wlr(self, screencopy);
         }
         crate::captureborder::wlr_frame(self, key);
+        crate::privacy::captures_changed(self);
     }
 }
 
@@ -851,24 +870,11 @@ impl ImageCopyCaptureHandler for State {
             Shown::Window(w) => return window_constraints(self, w),
         };
         let size = output.current_mode()?.size;
-        let b = self.backend.as_ref()?;
-        Some(BufferConstraints {
-            size: (size.w, size.h).into(),
-            shm: vec![wl_shm::Format::Xrgb8888, wl_shm::Format::Argb8888],
-            dma: Some(DmabufConstraints {
-                node: b.render_node,
-                formats: dmabuf_formats(&b.renderer),
-            }),
-        })
+        Some(constraints(self, (size.w, size.h).into()))
     }
 
     fn new_session(&mut self, session: Session) {
-        session
-            .user_data()
-            .insert_if_missing_threadsafe(|| Opened(Instant::now()));
         self.captures.sessions.push(session);
-        crate::privacy::sessions_changed(self);
-        crate::captureborder::session_opened(self);
     }
 
     fn cursor_capture_constraints(
@@ -902,6 +908,10 @@ impl ImageCopyCaptureHandler for State {
     }
 
     fn frame(&mut self, session: &SessionRef, frame: Frame) {
+        if asked(session).frame() {
+            crate::privacy::captures_changed(self);
+            crate::captureborder::refresh(self);
+        }
         let shows = shown(&session.source());
         let changed = fresh(session).get();
         match shows {
@@ -933,7 +943,7 @@ impl ImageCopyCaptureHandler for State {
 
     fn session_destroyed(&mut self, session: SessionRef) {
         self.captures.sessions.retain(|s| *s != session);
-        crate::privacy::sessions_changed(self);
+        crate::privacy::captures_changed(self);
         self.captures
             .waiting
             .retain(|w| !matches!(w, Waiting::Ext { session: s, .. } if *s == session));

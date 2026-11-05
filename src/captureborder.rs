@@ -9,32 +9,32 @@ use smithay::{
         utils::CommitCounter,
     },
     output::Output,
-    reexports::calloop::{
-        RegistrationToken,
-        timer::{TimeoutAction, Timer},
+    reexports::{
+        calloop::{
+            RegistrationToken,
+            timer::{TimeoutAction, Timer},
+        },
+        wayland_server::backend::ClientId,
     },
     utils::{Logical, Physical, Rectangle},
 };
 
-use crate::compositor::State;
+use crate::{compositor::State, window::WindowId};
 
 const COLOUR: [u8; 3] = [0xFF, 0x20, 0x20];
 /// Design pixels; whole physical pixels at the output's scale.
 const WIDTH: i32 = 3;
 
-/// Two wlr-screencopy frames of one area this close together make it a
-/// recording rather than a screenshot.
+/// Two wlr-screencopy frames of one area from one client this close
+/// together make it a recording rather than a screenshot.
 const SUSTAIN: Duration = Duration::from_secs(1);
 /// How long a recording's border outlives its last frame.
 const HOLD: Duration = Duration::from_secs(1);
 const TICK: Duration = Duration::from_millis(250);
-/// An ext session gets a border once open this long, so a one-frame
-/// screenshot never flashes one.
-const GRACE: Duration = Duration::from_millis(300);
 
-/// A wlr-screencopy capture: the output and, for an area, its
-/// output-local logical rect.
-pub type WlrKey = (Output, Option<Rectangle<i32, Logical>>);
+/// A wlr-screencopy capture: the output, for an area its output-local
+/// logical rect, and the client asking.
+pub type WlrKey = (Output, Option<Rectangle<i32, Logical>>, Option<ClientId>);
 
 #[derive(Default)]
 pub struct CaptureBorder {
@@ -182,19 +182,27 @@ fn strips(
     ])
 }
 
+/// What is being recorded or shared now: the ongoing ext sessions and
+/// wlr captures. A screenshot is neither; the border, the sharing
+/// indicator and the automatic Do Not Disturb all go by this.
+pub fn ongoing(state: &State) -> Vec<Captured<Output, WindowId>> {
+    let mut targets = state.captures.targets();
+    let waiting = state.captures.wlr_waiting();
+    let now = Instant::now();
+    targets.extend(live_wlr(&state.capture_border.tracks, &waiting, now).map(
+        |(o, r, _)| match r {
+            Some(r) => Captured::Region(o.clone(), *r),
+            None => Captured::Output(o.clone()),
+        },
+    ));
+    targets
+}
+
 fn current_edges(state: &State) -> Vec<Edge> {
     if !state.config.capture_border {
         return Vec::new();
     }
-    let mut targets = state.captures.targets(GRACE);
-    let waiting = state.captures.wlr_waiting();
-    let now = Instant::now();
-    targets.extend(
-        live_wlr(&state.capture_border.tracks, &waiting, now).map(|(o, r)| match r {
-            Some(r) => Captured::Region(o.clone(), *r),
-            None => Captured::Output(o.clone()),
-        }),
-    );
+    let targets = ongoing(state);
     if targets.is_empty() {
         return Vec::new();
     }
@@ -260,19 +268,6 @@ pub fn refresh(state: &mut State) {
         log::info!("capture border around {} rects", now.len());
         state.capture_border.shown = now;
         crate::backend::schedule_all(state, crate::backend::Ask::Scene);
-    }
-}
-
-/// An ext session opened: look again once it is `GRACE` old.
-pub fn session_opened(state: &mut State) {
-    let armed = state
-        .handle
-        .insert_source(Timer::from_duration(GRACE), |_, _, state| {
-            refresh(state);
-            TimeoutAction::Drop
-        });
-    if let Err(e) = armed {
-        log::warn!("capture border: timer: {e}");
     }
 }
 
