@@ -1,5 +1,5 @@
 //! BT.709 in full range, which RDP clients decode whatever the stream signals (MS-RDPEGFX
-//! 3.3.8.3.1). NVENC converts RGB itself, to limited-range BT.601.
+//! 3.3.8.3.1). Every encoder gets YUV: NVENC would convert RGB to limited-range BT.601.
 
 use ffmpeg::color::Range;
 

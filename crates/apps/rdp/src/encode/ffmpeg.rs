@@ -76,7 +76,7 @@ impl Ffmpeg {
         quality: Quality,
     ) -> Result<Ffmpeg, EncodeError> {
         let devices = match backend.gpu() {
-            Some(gpu) => Some(Devices::open(gpu, device, backend == Backend::Nvenc)?),
+            Some(gpu) => Some(Devices::open(gpu, device)?),
             None => None,
         };
         Ok(Ffmpeg {
@@ -308,8 +308,8 @@ impl Encoder for Ffmpeg {
         self.quality = quality;
     }
 
-    /// The next frame reopens the encoder in the other mode as an IDR. NVENC and Vulkan code
-    /// AVC420 only.
+    /// The next frame reopens the encoder in the other mode as an IDR. Vulkan codes AVC420
+    /// only.
     fn set_avc444(&mut self, on: bool) {
         self.avc444 = on;
     }
@@ -373,6 +373,7 @@ mod tests {
     use super::*;
     use crate::encode::Switch;
     use crate::encode::avc444;
+    use crate::encode::gl::Gl;
     use crate::encode::probe::RENDER_NODE;
     use crate::stream::XRGB8888;
     use ::ffmpeg::frame;
@@ -1049,5 +1050,320 @@ mod tests {
             "AVC444",
             "the next dma-buf frame"
         );
+    }
+
+    const COLOUR_SIZE: (u32, u32) = (1920, 1080);
+    /// Black, white, three greys, the primaries and secondaries and a skin tone.
+    const PATCHES: [[u8; 3]; 12] = [
+        [0, 0, 0],
+        [255, 255, 255],
+        [128, 128, 128],
+        [64, 64, 64],
+        [192, 192, 192],
+        [255, 0, 0],
+        [0, 255, 0],
+        [0, 0, 255],
+        [224, 172, 140],
+        [0, 255, 255],
+        [255, 0, 255],
+        [255, 255, 0],
+    ];
+    /// 1-px columns below the patches, at odd and even x, in the colours after the greys.
+    const LINES: usize = 14;
+
+    fn patch(i: usize) -> Rect {
+        let (column, row) = (i as u32 % 4, i as u32 / 4);
+        Rect {
+            x: 80 + column * 440,
+            y: 40 + row * 300,
+            width: 400,
+            height: 260,
+        }
+    }
+
+    fn line(i: usize) -> (Rect, [u8; 3]) {
+        let rect = Rect {
+            x: 100 + 7 * i as u32,
+            y: 930,
+            width: 1,
+            height: 120,
+        };
+        (rect, PATCHES[5 + i % 7])
+    }
+
+    /// The colour picture as solid rectangles on white, each over the ones before.
+    fn colour_rects() -> Vec<(Rect, [u8; 3])> {
+        let mut rects = vec![(Rect::full(COLOUR_SIZE), [255, 255, 255])];
+        rects.extend((0..PATCHES.len()).map(|i| (patch(i), PATCHES[i])));
+        rects.extend((0..LINES).map(line));
+        rects
+    }
+
+    /// `rects` in an XRGB8888 dma-buf on `gl`'s device: LINEAR, else the driver's choice. A
+    /// buffer the CPU cannot map is cleared rectangle by rectangle on the GPU.
+    fn colour_frame(
+        gl: &Gl,
+        linear: bool,
+        rects: &[(Rect, [u8; 3])],
+    ) -> Result<(Frame, gbm::BufferObject<()>), EncodeError> {
+        let (w, h) = COLOUR_SIZE;
+        let err = |e: std::io::Error| EncodeError(e.to_string());
+        let rendering = gbm::BufferObjectFlags::RENDERING;
+        let format = gbm::Format::Xrgb8888;
+        let mut bo = match linear {
+            // NVIDIA allocates LINEAR only for buffers it does not render to.
+            true => [rendering, gbm::BufferObjectFlags::empty()]
+                .into_iter()
+                .find_map(|flags| {
+                    let linear = [gbm::Modifier::Linear].into_iter();
+                    (gl.gbm
+                        .create_buffer_object_with_modifiers2::<()>(w, h, format, linear, flags))
+                    .ok()
+                })
+                .ok_or_else(|| EncodeError("no LINEAR buffer".into()))?,
+            false => (gl.gbm.create_buffer_object::<()>(w, h, format, rendering)).map_err(err)?,
+        };
+        let mut pixels = vec![[0u8; 3]; (w * h) as usize];
+        for (r, colour) in rects {
+            for y in r.y..r.y + r.height {
+                pixels[(y * w + r.x) as usize..][..r.width as usize].fill(*colour);
+            }
+        }
+        let mapped = bo.map_mut(0, 0, w, h, |m| {
+            let stride = m.stride() as usize;
+            let buf = m.buffer_mut();
+            for (y, row) in pixels.chunks_exact(w as usize).enumerate() {
+                for (x, &[r, g, b]) in row.iter().enumerate() {
+                    buf[y * stride + x * 4..][..4].copy_from_slice(&[b, g, r, 255]);
+                }
+            }
+        });
+        let frame = Frame::unleased(
+            FrameBuffer::Dmabuf {
+                objects: vec![Arc::new(bo.fd().map_err(|e| EncodeError(e.to_string()))?)],
+                fourcc: XRGB8888,
+                modifier: bo.modifier().into(),
+                planes: vec![crate::stream::Plane {
+                    object: 0,
+                    offset: bo.offset(0),
+                    stride: bo.stride(),
+                }],
+            },
+            COLOUR_SIZE,
+        );
+        if mapped.is_err() {
+            clear(gl, &frame, rects)?;
+        }
+        Ok((frame, bo))
+    }
+
+    /// `rects` cleared into `frame`'s dma-buf in order.
+    fn clear(gl: &Gl, frame: &Frame, rects: &[(Rect, [u8; 3])]) -> Result<(), EncodeError> {
+        use glow::HasContext;
+        let FrameBuffer::Dmabuf {
+            objects,
+            fourcc,
+            modifier,
+            planes,
+        } = &frame.buffer
+        else {
+            unreachable!("a dma-buf frame");
+        };
+        gl.current()?;
+        let image = gl.import(objects, *fourcc, *modifier, planes, frame.size)?;
+        let g = &gl.gl;
+        // SAFETY: GL calls on the current context; what is made here is deleted here.
+        let status = unsafe {
+            let texture = g.create_texture().unwrap();
+            gl.bind_image(texture, image);
+            let fb = g.create_framebuffer().unwrap();
+            g.bind_framebuffer(glow::FRAMEBUFFER, Some(fb));
+            let colour = glow::COLOR_ATTACHMENT0;
+            g.framebuffer_texture_2d(
+                glow::FRAMEBUFFER,
+                colour,
+                glow::TEXTURE_2D,
+                Some(texture),
+                0,
+            );
+            let status = g.check_framebuffer_status(glow::FRAMEBUFFER);
+            g.enable(glow::SCISSOR_TEST);
+            for (r, rgb) in rects {
+                let [red, green, blue] = rgb.map(|c| f32::from(c) / 255.0);
+                g.scissor(r.x as i32, r.y as i32, r.width as i32, r.height as i32);
+                g.clear_color(red, green, blue, 1.0);
+                g.clear(glow::COLOR_BUFFER_BIT);
+            }
+            g.disable(glow::SCISSOR_TEST);
+            g.finish();
+            g.bind_framebuffer(glow::FRAMEBUFFER, None);
+            g.delete_framebuffer(fb);
+            g.delete_texture(texture);
+            (status, g.get_error())
+        };
+        gl.destroy_image(image);
+        match status {
+            (glow::FRAMEBUFFER_COMPLETE, glow::NO_ERROR) => Ok(()),
+            other => Err(EncodeError(format!("clearing: {other:#x?}"))),
+        }
+    }
+
+    /// The RGB FreeRDP shows for a full-range BT.709 sample (libfreerdp/primitives
+    /// prim_internal.h).
+    fn freerdp(y: u8, u: u8, v: u8) -> [u8; 3] {
+        let (y, d, e) = (i32::from(y) * 256, i32::from(u) - 128, i32::from(v) - 128);
+        let c = |x: i32| (x >> 8).clamp(0, 255) as u8;
+        [c(y + 403 * e), c(y - 48 * d - 120 * e), c(y + 475 * d)]
+    }
+
+    /// What a client shows from a decoded 4:2:0 picture.
+    fn shown_420(picture: &frame::Video) -> impl Fn(u32, u32) -> [u8; 3] + '_ {
+        move |x, y| {
+            let at = |plane: usize, x: u32, y: u32| {
+                picture.data(plane)[y as usize * picture.stride(plane) + x as usize]
+            };
+            freerdp(at(0, x, y), at(1, x / 2, y / 2), at(2, x / 2, y / 2))
+        }
+    }
+
+    /// What a client shows from combined 4:4:4 planes.
+    fn shown_444(p: &avc444::Planes444) -> impl Fn(u32, u32) -> [u8; 3] + '_ {
+        move |x, y| {
+            let at = (y * p.width + x) as usize;
+            freerdp(p.y[at], p.u[at], p.v[at])
+        }
+    }
+
+    /// The largest per-channel difference between `want` and the median colour shown over
+    /// `pixels`.
+    fn median_error(
+        shown: &impl Fn(u32, u32) -> [u8; 3],
+        pixels: impl Iterator<Item = (u32, u32)>,
+        want: [u8; 3],
+    ) -> u8 {
+        let samples: Vec<[u8; 3]> = pixels.map(|(x, y)| shown(x, y)).collect();
+        (0..3)
+            .map(|c| {
+                let mut channel: Vec<u8> = samples.iter().map(|s| s[c]).collect();
+                channel.sort_unstable();
+                channel[channel.len() / 2].abs_diff(want[c])
+            })
+            .max()
+            .expect("three channels")
+    }
+
+    /// The largest per-channel error of the patches, each read on a grid inside it.
+    fn patch_error(shown: impl Fn(u32, u32) -> [u8; 3]) -> u8 {
+        let inside = |r: Rect| {
+            let xs = (r.x + 60..r.x + r.width - 60).step_by(7);
+            xs.flat_map(move |x| {
+                (r.y + 60..r.y + r.height - 60)
+                    .step_by(7)
+                    .map(move |y| (x, y))
+            })
+        };
+        (0..PATCHES.len())
+            .map(|i| median_error(&shown, inside(patch(i)), PATCHES[i]))
+            .max()
+            .expect("patches")
+    }
+
+    fn nvenc() -> Ffmpeg {
+        silence();
+        Ffmpeg::new(
+            Backend::Nvenc,
+            Path::new(RENDER_NODE),
+            60,
+            Quality::Balanced,
+        )
+        .expect("NVENC on this machine")
+    }
+
+    fn gl() -> Gl {
+        Gl::new(Path::new(RENDER_NODE)).expect("OpenGL ES on the render node")
+    }
+
+    #[test]
+    #[ignore = "needs an NVIDIA GPU with NVENC"]
+    fn nvenc_codes_the_colour_pattern_in_full_range_bt709() {
+        let gl = gl();
+        let (frame, _bo) = colour_frame(&gl, false, &colour_rects()).unwrap();
+        let mut encoder = nvenc();
+        let data = avc(encoder.encode(&frame, true).unwrap()).0;
+        let picture = Decoder::new().decode(&data);
+        assert_eq!(picture.color_range(), ::ffmpeg::color::Range::JPEG);
+        let error = patch_error(shown_420(&picture));
+        eprintln!("largest patch error {error}");
+        assert!(error <= 3, "a patch is off by {error}");
+        let shm = frame_of(COLOUR_SIZE);
+        assert!(
+            encoder.encode(&shm, true).is_err(),
+            "a shared-memory frame is refused, not copied to the GPU"
+        );
+        let (linear, _linear_bo) = colour_frame(&gl, true, &colour_rects()).unwrap();
+        assert!(
+            nvenc().encode(&linear, true).is_err(),
+            "a LINEAR buffer is refused, as NVIDIA's GL does not sample one as a 2D texture"
+        );
+    }
+
+    /// A shared-memory frame of `size`.
+    fn frame_of(size: (u32, u32)) -> Frame {
+        frame(size, 0, vec![Rect::full(size)])
+    }
+
+    #[test]
+    #[ignore = "needs an NVIDIA GPU with NVENC"]
+    fn nvenc_codes_avc444_views() {
+        let gl = gl();
+        let (frame, _bo) = colour_frame(&gl, false, &colour_rects()).unwrap();
+        let mut encoder = nvenc();
+        encoder.set_avc444(true);
+        let (main, aux, regions) = views(encoder.encode(&frame, true).unwrap());
+        assert_eq!(regions, [Rect::full(COLOUR_SIZE)]);
+        let mut decoder = Decoder::new();
+        let main = nv12(&decoder.decode(&main));
+        let aux = nv12(&decoder.decode(&aux.expect("the lines need the auxiliary view")));
+        let back = avc444::tests::crop(&avc444::combine_v1(&main, &aux), COLOUR_SIZE);
+        let only_main = main_only(&main, COLOUR_SIZE);
+        let error = patch_error(shown_444(&back));
+        assert!(error <= 3, "a patch is off by {error}");
+        for i in 0..LINES {
+            let (r, want) = line(i);
+            let pixels = || (r.y + 10..r.y + r.height - 10).map(|y| (r.x, y));
+            let full = median_error(&shown_444(&back), pixels(), want);
+            let half = median_error(&shown_444(&only_main), pixels(), want);
+            eprintln!(
+                "line {i} at x {}: off by {full}, {half} from the main view",
+                r.x
+            );
+            assert!(
+                full < half / 2,
+                "line {i} is off by {full}, {half} from the main view alone"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "needs an NVIDIA GPU with NVENC"]
+    fn nvenc_codes_1080p_faster_than_60_fps() {
+        let gl = gl();
+        let inverted: Vec<_> = (colour_rects().into_iter())
+            .map(|(r, c)| (r, c.map(|v| 255 - v)))
+            .collect();
+        let frames = [
+            colour_frame(&gl, false, &colour_rects()).unwrap(),
+            colour_frame(&gl, false, &inverted).unwrap(),
+        ];
+        let mut encoder = nvenc();
+        avc(encoder.encode(&frames[0].0, true).unwrap());
+        const PICTURES: u32 = 240;
+        let started = std::time::Instant::now();
+        for n in 0..PICTURES {
+            avc(encoder.encode(&frames[(n % 2) as usize].0, false).unwrap());
+        }
+        let rate = f64::from(PICTURES) / started.elapsed().as_secs_f64();
+        eprintln!("NVENC codes {rate:.0} pictures a second at 1920x1080");
+        assert!(rate > 60.0, "{rate:.0} pictures a second");
     }
 }
