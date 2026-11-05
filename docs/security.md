@@ -154,7 +154,12 @@ It checks the password as the Unlock Computer dialog does, in a
 stdin, but under its own PAM service, `reprise-rdp`: `pam_unix` for `auth`
 and `account` and nothing else. That stack has no pam_faillock, so wrong
 passwords sent over the network never lock the account at the lock screen.
-A further PAM prompt fails the login.
+A further PAM prompt fails the login, and so does a helper with no verdict
+within 30 s, which is killed. A refusal by the account stack (an expired
+account or password) is logged with PAM's reason. On each login `pam_unix`
+logs `setuid failed` at debug priority: it tries to become root before it
+runs `unix_chkpwd` for the account check, which the helper, running as you,
+can't do. `unix_chkpwd` is setuid root, so the check still runs.
 
 The TLS certificate is self-signed, made on the first start for the host
 name, and kept in `$XDG_DATA_HOME/reprise/rdp/` (`cert.pem`, and `key.pem`

@@ -1032,15 +1032,17 @@ pub fn key(state: &mut State, pressed: bool, handle: &KeysymHandle<'_>) -> bool 
     false
 }
 
-/// Text typed into the dialog's field without a key; a locker's own surface takes none.
+/// Text typed without a key: into the dialog's field, or to the locker holding the lock.
 pub fn type_text(state: &mut State, text: &str) {
-    if crate::sessionlock::holds_input(state)
-        || !state.lock.active.as_ref().is_some_and(Lock::dialog_shown)
-        || text.chars().any(char::is_control)
-    {
+    if text.chars().any(char::is_control) {
         return;
     }
-    edit(state, LockKey::Text(text));
+    crate::sessionlock::check_alive(state);
+    if crate::sessionlock::holds_input(state) {
+        state.type_text(text);
+    } else if state.lock.active.as_ref().is_some_and(Lock::dialog_shown) {
+        edit(state, LockKey::Text(text));
+    }
 }
 
 /// Apply `key` to the dialog's field: submit it, or redraw.

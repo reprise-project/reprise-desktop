@@ -909,7 +909,7 @@ impl RdpServer {
                 // IPv6 socket: on Linux, dual-stack is the default
                 // (net.ipv6.bindv6only=0), so IPv4 clients connect as
                 // IPv4-mapped addresses (::ffff:x.x.x.x). On platforms
-                // where IPV6_V6ONLY defaults to 1 (Windows, some BSDs),
+                // where IPV6_V6ONLY defaults to 1 (some BSDs, among others),
                 // only IPv6 clients will be accepted and a separate IPv4
                 // listener would be needed.
                 TcpSocket::new_v6().context("create IPv6 socket")?
@@ -918,8 +918,8 @@ impl RdpServer {
 
         // SO_REUSEADDR prevents EADDRINUSE when restarting the server while
         // the previous socket is still in TIME_WAIT. Only set on Unix;
-        // on Windows SO_REUSEADDR has different semantics that allow a
-        // second process to bind the same port, which is a security risk.
+        // elsewhere SO_REUSEADDR can let a second process bind the same
+        // port, which is a security risk.
         #[cfg(unix)]
         socket.set_reuseaddr(true).context("set SO_REUSEADDR")?;
 

@@ -7,9 +7,10 @@ use ironrdp_server::{
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{IpAddr, SocketAddr};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::Instant;
@@ -31,6 +32,9 @@ fn helper_beside(server: &Path) -> PathBuf {
 
 /// The helper's environment: what PAM modules and their messages read. Everything else is dropped.
 const KEPT_ENV: [&str; 5] = ["PATH", "LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"];
+
+/// How long the helper has to give its verdict before it is killed and the check fails.
+const HELPER_LIMIT: Duration = Duration::from_secs(30);
 
 const FREE_FAILURES: u32 = 3;
 const MAX_WAIT: Duration = Duration::from_secs(60);
@@ -130,26 +134,33 @@ fn wait_after(failures: u32) -> Duration {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verdict {
     Accepted,
     Rejected,
+    /// PAM refused the login and said why, e.g. for an expired account.
+    Refused(String),
     /// PAM asked for more than the password, which a remote login cannot answer.
     Prompted,
 }
 
-/// The verdict in the helper's output: `= 0` accepts unless a `?` or `??` prompt came first.
+/// The verdict in the helper's output: `= 0` accepts unless a `?` or `??` prompt came first;
+/// `E` lines before another code are PAM's reason.
 pub fn helper_verdict(lines: &str) -> Verdict {
     let mut verdict = Verdict::Rejected;
+    let mut notices = Vec::new();
     for line in lines.lines() {
         if line.starts_with('?') {
             return Verdict::Prompted;
         }
+        if let Some(notice) = line.strip_prefix("E ") {
+            notices.push(notice);
+        }
         if let Some(rc) = line.strip_prefix("= ") {
-            verdict = if rc == "0" {
-                Verdict::Accepted
-            } else {
-                Verdict::Rejected
+            verdict = match rc {
+                "0" => Verdict::Accepted,
+                _ if notices.is_empty() => Verdict::Rejected,
+                _ => Verdict::Refused(notices.join(" ")),
             };
         }
     }
@@ -259,15 +270,17 @@ impl PasswordCheck {
         let helper = self.helper.clone();
         let user = self.user.clone();
         let attempt = self.throttle.lock().unwrap().failed(peer.ip());
-        let verdict = tokio::task::spawn_blocking(move || converse(&helper, &user, &line))
-            .await
-            .map_err(io::Error::other)??;
+        let verdict =
+            tokio::task::spawn_blocking(move || converse(&helper, &user, &line, HELPER_LIMIT))
+                .await
+                .map_err(io::Error::other)??;
         match verdict {
             Verdict::Accepted => {
                 self.throttle.lock().unwrap().succeeded(peer.ip(), attempt);
                 return Ok(true);
             }
             Verdict::Rejected => log::warn!("{peer}: wrong password for {}", self.user),
+            Verdict::Refused(why) => log::warn!("{peer}: refused {}: {why}", self.user),
             Verdict::Prompted => log::warn!(
                 "{peer}: refused {}: PAM asks for more than the password",
                 self.user
@@ -278,8 +291,8 @@ impl PasswordCheck {
 }
 
 /// Run the helper with `line` (the password and a newline) on its stdin. A further prompt gets
-/// EOF, which fails the conversation.
-fn converse(helper: &Path, user: &str, line: &[u8]) -> io::Result<Verdict> {
+/// EOF, which fails the conversation, and a helper still running after `limit` is killed.
+fn converse(helper: &Path, user: &str, line: &[u8], limit: Duration) -> io::Result<Verdict> {
     let mut child = Command::new(helper)
         .arg("--rdp-password-conversation")
         .arg(user)
@@ -293,9 +306,26 @@ fn converse(helper: &Path, user: &str, line: &[u8]) -> io::Result<Verdict> {
         .env("REPRISE_LOG_STDERR", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        // Its own group, so the watchdog also kills a PAM module's child that holds stdout open.
+        .process_group(0)
         .spawn()?;
     let mut stdin = child.stdin.take();
     let stdout = child.stdout.take().ok_or(io::ErrorKind::BrokenPipe)?;
+    // Only this thread reaps the child, after the watchdog ends, so a kill never hits a reused pid.
+    let child = Arc::new(Mutex::new(child));
+    let (answered, answer) = mpsc::channel::<()>();
+    let watchdog = std::thread::spawn({
+        let child = child.clone();
+        move || {
+            let late = answer.recv_timeout(limit) == Err(mpsc::RecvTimeoutError::Timeout);
+            if late {
+                let pid = child.lock().unwrap().id() as libc::pid_t;
+                // SAFETY: killpg takes no pointers; the group's leader is unreaped until we return.
+                unsafe { libc::killpg(pid, libc::SIGKILL) };
+            }
+            late
+        }
+    });
     if let Some(s) = stdin.as_mut() {
         s.write_all(line)?;
     }
@@ -311,7 +341,15 @@ fn converse(helper: &Path, user: &str, line: &[u8]) -> io::Result<Verdict> {
         out.push('\n');
     }
     drop(stdin);
-    let status = child.wait()?;
+    drop(answered);
+    let late = watchdog.join().unwrap_or(false);
+    let status = child.lock().unwrap().wait()?;
+    if late {
+        return Err(io::Error::other(format!(
+            "{} gave no verdict within {limit:?}",
+            helper.display()
+        )));
+    }
     if !ended {
         return Err(io::Error::other(format!(
             "{} gave no verdict ({status})",
@@ -433,9 +471,10 @@ pub(crate) mod tests {
     #[test]
     fn the_helper_lines_give_the_verdict() {
         assert_eq!(helper_verdict("= 0\n"), Verdict::Accepted);
+        assert_eq!(helper_verdict("= 7\n"), Verdict::Rejected);
         assert_eq!(
-            helper_verdict("E Authentication failure\n= 7\n"),
-            Verdict::Rejected
+            helper_verdict("E Your account has expired.\nE Ask the admin.\n= 7\n"),
+            Verdict::Refused("Your account has expired. Ask the admin.".into())
         );
         assert_eq!(helper_verdict("? Verification code:\n"), Verdict::Prompted);
         assert_eq!(
@@ -573,6 +612,65 @@ pub(crate) mod tests {
             1,
             "counted like a wrong password"
         );
+    }
+
+    #[test]
+    fn a_helper_that_hangs_is_killed_and_fails_the_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let _scripts = SCRIPTS.blocking_lock();
+        let path = script(dir.path(), "read -r pw\nexec sleep 60\n");
+        let started = std::time::Instant::now();
+        let e = converse(&path, "alice", b"secret\n", Duration::from_millis(200)).unwrap_err();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "killed, not waited for"
+        );
+        assert!(
+            e.to_string().ends_with("gave no verdict within 200ms"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn a_hung_helper_s_child_holding_stdout_is_killed_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let _scripts = SCRIPTS.blocking_lock();
+        let path = script(dir.path(), "read -r pw\nsleep 60 &\nexec sleep 60\n");
+        let started = std::time::Instant::now();
+        let e = converse(&path, "alice", b"secret\n", Duration::from_millis(200)).unwrap_err();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the background sleep is killed too"
+        );
+        assert!(
+            e.to_string().ends_with("gave no verdict within 200ms"),
+            "{e}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_account_pam_refuses_logs_pams_reason() {
+        crate::listen::tests::capture_log();
+        let dir = tempfile::tempdir().unwrap();
+        let _scripts = SCRIPTS.lock().await;
+        let path = script(
+            dir.path(),
+            "read -r pw\necho 'E Your account has expired.'\necho '= 7'\n",
+        );
+        let check = PasswordCheck::new(
+            "alice".into(),
+            &path,
+            SocketAddr::new(A, 50000),
+            Arc::default(),
+        );
+        let decision = check
+            .validate(&credentials("alice", "secret"))
+            .await
+            .unwrap();
+        assert_eq!(decision, CredentialDecision::Reject);
+        assert!(crate::listen::tests::logged(
+            "192.0.2.1:50000: refused alice: Your account has expired."
+        ));
     }
 
     #[tokio::test]

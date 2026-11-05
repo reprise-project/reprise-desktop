@@ -1354,6 +1354,25 @@ mod tests {
     }
 
     #[test]
+    fn remote_text_reaches_the_locker_holding_the_lock() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let (_lock, _surface) = h.map_lock_surface(&mut c);
+        assert!(crate::sessionlock::holds_input(&h.state));
+        let (peer, keyboard) = sender_keyboard(&mut h);
+        h.roundtrip(&mut c);
+        c.side.keys.clear();
+        send_keysym(&mut h, &peer, &keyboard, 0x0101_F600);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            c.side.keys,
+            [(1, true), (1, false)],
+            "the first key of a keymap made for the emoji"
+        );
+    }
+
+    #[test]
     fn remote_text_goes_to_start_search_and_not_the_window_behind() {
         let mut config = crate::config::Config::default();
         config.startmenu_style = crate::config::StartMenuStyle::Glass;

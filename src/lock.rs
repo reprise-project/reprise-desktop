@@ -378,7 +378,7 @@ impl Verifier for PamVerifier {
         );
         if rc != ffi::PAM_SUCCESS {
             log::warn!(
-                "pam: authentication failed for {user}: {} {:?}",
+                "pam: refused {user}: {} {:?}",
                 pam_text(handle, rc),
                 creds.notices.borrow()
             );
