@@ -1,6 +1,6 @@
 //! Reprise Settings: a property sheet over `config.toml` and the XDG autostart directories.
 //!
-//! Pages are listed in `registry::GROUPS`; `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files; a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes, the Advanced page's Forget and Clear and the Backup page's Export... and Import... (`backup`, also `--export`/`--import FILE`) act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
+//! Pages are listed in `registry::GROUPS`; Ctrl+F or typing on the list puts the keyboard in the search field over it, which shows only the pages a query matches (`searchhost`). `--page night-light` opens on one (`--focus mouse_keys` then focuses a control there), and a second start hands its page to the running sheet (`reprisebus::instance`). OK and Apply rewrite `config.toml` with `toml_edit` and the autostart files; a change written elsewhere while the sheet is open is reread (`configwatch`). The Startup list's Add... and Remove, Quick Launch changes, the Advanced page's Forget and Clear and the Backup page's Export... and Import... (`backup`, also `--export`/`--import FILE`) act at once. The Display page goes through wlr-output-management (`repriseapp::heads`); only a Yes on the Monitor Settings question writes `[[outputs]]`.
 
 #[cfg(test)]
 reprisebus::test_session!();
@@ -43,6 +43,7 @@ mod renamedlg;
 mod saverdlg;
 mod saverhost;
 mod saverpage;
+mod searchhost;
 mod shortcutdlg;
 mod sidelists;
 mod startmenu;
@@ -335,6 +336,8 @@ struct SettingsApp {
     loaded: model::Settings,
     want: model::Settings,
     sheet: PropSheet,
+    /// Each page's hit for the search field's query (`searchhost`); empty while the field is.
+    search_hits: Vec<Option<repriseconf::pages::Hit>>,
 
     entries: Vec<Entry>,
     applied_checks: Vec<bool>,
@@ -464,8 +467,7 @@ impl SettingsApp {
     ) -> SettingsApp {
         let mut app = SettingsApp::open(repriseconf::config_path());
         if let Some((p, focus)) = page {
-            app.sheet.tabs.open = p.index();
-            app.sheet.reveal_open();
+            app.sheet.set_open(p.index());
             if let Some(id) = focus {
                 app.sheet.focus_control(&id);
             }
@@ -604,6 +606,7 @@ impl SettingsApp {
             want: loaded.clone(),
             loaded,
             sheet,
+            search_hits: Vec::new(),
             entries: Vec::new(),
             applied_checks: Vec::new(),
             desktops: reprisefs::autostart::desktop_names(

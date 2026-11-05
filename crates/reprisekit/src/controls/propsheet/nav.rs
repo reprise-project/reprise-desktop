@@ -40,11 +40,17 @@ pub(super) fn nav_key(
     let is_list = list.is_some();
     let was = tabs.open;
     if let Some(back) = ctrl_tab {
-        return if tabs.cycle(back) {
-            turned(tabs, pages, was);
-            StripKey::Turned
-        } else {
-            StripKey::None
+        let next = match list {
+            Some(list) => list.cycle(was, back),
+            None => tabs.cycle(back).then_some(tabs.open),
+        };
+        return match next {
+            Some(k) => {
+                tabs.open = k;
+                turned(tabs, pages, was);
+                StripKey::Turned
+            }
+            None => StripKey::None,
         };
     }
     let Some(page) = pages.get_mut(was) else {

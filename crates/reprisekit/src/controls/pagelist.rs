@@ -316,6 +316,25 @@ impl PageList {
             Pick::Link(k) => f.links[k],
         }
     }
+
+    pub fn filter(&self) -> Option<&Filter> {
+        self.filter.as_ref()
+    }
+
+    /// The shown page after page `open` (before it when `back`), wrapping round the list, as
+    /// Ctrl+Tab steps; `None` when no other page shows.
+    pub fn cycle(&self, open: usize, back: bool) -> Option<usize> {
+        let n = self.page_count();
+        (1..n)
+            .map(|d| {
+                if back {
+                    (open + n - d) % n
+                } else {
+                    (open + d) % n
+                }
+            })
+            .find(|&k| self.shows(Pick::Page(k)))
+    }
 }
 
 fn pick_of(row: &Row) -> Option<Pick> {
@@ -1375,6 +1394,24 @@ mod tests {
         list.cursor = Some(0);
         list.set_filter(Some(&only([true; 3], [true, false])));
         assert_eq!(list.cursor, Some(0), "a shown link keeps it");
+    }
+
+    #[test]
+    fn cycle_steps_round_the_shown_pages() {
+        let mut list = PageList::new(LINK_GROUPS);
+        assert_eq!(
+            (list.cycle(2, false), list.cycle(0, true)),
+            (Some(0), Some(2))
+        );
+        list.set_filter(Some(&only([true, false, true], [true; 2])));
+        assert_eq!(
+            (list.cycle(0, false), list.cycle(0, true)),
+            (Some(2), Some(2))
+        );
+        assert_eq!(list.cycle(1, false), Some(2), "from a hidden open page");
+        list.set_filter(Some(&only([true, false, false], [true; 2])));
+        assert_eq!(list.cycle(0, false), None, "no other page shows");
+        assert_eq!(list.filter(), Some(&only([true, false, false], [true; 2])));
     }
 
     #[test]

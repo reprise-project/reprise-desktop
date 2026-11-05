@@ -16,8 +16,8 @@
 //! ([`PropSheet::reveal_open`]). The keys also rest on a live link row, which
 //! opens nothing; Enter on it, or a press on it, comes back as [`Event::Link`].
 //! A search field sits over the list, 4 px above it, the tab stop before the list.
-//! Ctrl+F ([`find_key`]) and typing on the list reach the field, Escape empties it, and Enter
-//! opens the first row it leaves.
+//! Ctrl+F ([`find_key`]) and typing on the list reach the field, Escape empties it wherever
+//! the keyboard is, and Enter opens the first row it leaves.
 //! Ctrl+Tab, Ctrl+Page Down and their reverses step pages in either mode
 //! ([`page_step`]).
 //!
