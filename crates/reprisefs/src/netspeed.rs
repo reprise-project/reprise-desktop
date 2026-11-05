@@ -121,30 +121,68 @@ impl Meter {
     /// interface new since then adds nothing, and one whose counter went down (the interface was
     /// recreated, or a 32-bit counter wrapped) adds nothing that way until the next sample.
     pub fn sample(&mut self, now: Instant, counters: &[(String, Counters)]) -> Option<Rate> {
+        let (secs, moved) = self.moved(now, counters)?;
+        let (down, up) = (moved.iter()).fold((0, 0), |(d, u), (_, m)| (d + m.rx, u + m.tx));
+        Some(Rate {
+            down: per_sec(down, secs),
+            up: per_sec(up, secs),
+        })
+    }
+
+    /// [`Meter::sample`] for each interface on its own, in `counters`' order; one new since the
+    /// previous sample is left out.
+    pub fn sample_each(
+        &mut self,
+        now: Instant,
+        counters: &[(String, Counters)],
+    ) -> Option<Vec<(String, Rate)>> {
+        let (secs, moved) = self.moved(now, counters)?;
+        Some(
+            moved
+                .into_iter()
+                .map(|(name, m)| {
+                    let r = Rate {
+                        down: per_sec(m.rx, secs),
+                        up: per_sec(m.tx, secs),
+                    };
+                    (name, r)
+                })
+                .collect(),
+        )
+    }
+
+    /// The seconds since the previous sample and the bytes each interface it knew moved since.
+    fn moved(
+        &mut self,
+        now: Instant,
+        counters: &[(String, Counters)],
+    ) -> Option<(f64, Vec<(String, Counters)>)> {
         let next: HashMap<String, Counters> = counters.iter().cloned().collect();
         let (then, prev) = self.last.replace((now, next))?;
         let secs = now.saturating_duration_since(then).as_secs_f64();
         if secs <= 0.0 {
             return None;
         }
-        let (mut down, mut up) = (0u64, 0u64);
-        for (name, c) in counters {
-            let Some(p) = prev.get(name) else {
-                continue;
-            };
-            down += c.rx.saturating_sub(p.rx);
-            up += c.tx.saturating_sub(p.tx);
-        }
-        let per = |b: u64| (b as f64 / secs).round() as u64;
-        Some(Rate {
-            down: per(down),
-            up: per(up),
-        })
+        let moved = (counters.iter())
+            .filter_map(|(name, c)| {
+                let p = prev.get(name)?;
+                let m = Counters {
+                    rx: c.rx.saturating_sub(p.rx),
+                    tx: c.tx.saturating_sub(p.tx),
+                };
+                Some((name.clone(), m))
+            })
+            .collect();
+        Some((secs, moved))
     }
 
     pub fn clear(&mut self) {
         self.last = None;
     }
+}
+
+fn per_sec(bytes: u64, secs: f64) -> u64 {
+    (bytes as f64 / secs).round() as u64
 }
 
 /// `bps` in SI units: "0 B/s", "999 B/s", "2.4 KB/s", "120 KB/s", "1.0 MB/s", "12 GB/s". One
@@ -223,6 +261,18 @@ mod tests {
             &[c("eth0", 200, 20), c("wlan0", 5_000_300, 5_000_030)],
         );
         assert_eq!(r, Some(Rate { down: 400, up: 40 }));
+    }
+
+    #[test]
+    fn each_interface_has_its_own_rate_and_a_new_one_waits_a_sample() {
+        let mut m = Meter::default();
+        let t = Instant::now();
+        assert_eq!(m.sample_each(t, &[c("eth0", 0, 0)]), None);
+        let r = m.sample_each(
+            t + Duration::from_millis(500),
+            &[c("eth0", 100, 10), c("wlan0", 7, 7)],
+        );
+        assert_eq!(r, Some(vec![("eth0".into(), Rate { down: 200, up: 20 })]));
     }
 
     #[test]

@@ -5,7 +5,9 @@
 reprisebus::test_session!();
 
 mod columns;
+mod devices;
 mod pages;
+mod perf;
 mod procfs;
 mod sample;
 mod scopes;
@@ -25,9 +27,7 @@ use repriseapp::ctxmenu::{self, Popup};
 use repriseapp::detailslist::{List, Press};
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{self, MsgBox};
-use repriseapp::{
-    App, BTN_LEFT, BTN_RIGHT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId,
-};
+use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
 use reprisebus::tray::Hung;
 use reprisefs::apps::AppEntry;
 use reprisekit::access::Tree;
@@ -196,12 +196,13 @@ pub struct TaskMgr {
     per_core: bool,
     /// Options > Always On Top.
     on_top: bool,
+    perf: perf::Perf,
     /// The CPU history graph's menu.
     popup: Option<Popup<Act>>,
     bar: Bar,
     form: Form,
-    /// The page and size `form` was built for.
-    form_for: Option<(Page, (i32, i32))>,
+    /// The page, Performance pane and size `form` was built for.
+    form_for: Option<(Page, Option<perf::Pane>, (i32, i32))>,
     ask: Option<(Ask, MsgBox)>,
     /// Select Columns, while open.
     pick: Option<Form>,
@@ -245,6 +246,7 @@ impl TaskMgr {
             swap: History::new(HISTORY),
             per_core: false,
             on_top: false,
+            perf: perf::Perf::new(),
             popup: None,
             bar: Bar::new(Vec::<(&str, _)>::new()),
             form: Form::new(Vec::new()),
@@ -537,6 +539,7 @@ impl TaskMgr {
 
     /// Takes in a new snapshot: the rows, the histories and what End Task waits on.
     fn take(&mut self, s: Snapshot, ctx: &mut Ctx) {
+        self.perf.take(&s);
         if let Some(cpu) = s.cpu {
             self.cpu.push(cpu);
             if self.cores.len() != s.cores.len() {
@@ -831,11 +834,10 @@ impl TaskMgr {
                 return Reply::redraw();
             }
         }
-        if button == BTN_RIGHT
-            && let Some(g) = lay.perf.as_ref().map(|p| p.graph_groups[0])
-            && g.contains(x, y)
+        if let Some(pl) = &lay.perf
+            && let Some(r) = self.perf_press(at, button, pl, ctx)
         {
-            return self.open_history_menu(x, y, ctx, false);
+            return r;
         }
         if let Some(r) = lay.list
             && r.contains(x, y)
@@ -876,6 +878,10 @@ impl TaskMgr {
             (Some(r), Some(l)) => l.motion(x, y, r, ctx),
             _ => false,
         };
+        let perf = match &lay.perf {
+            Some(pl) => self.perf_motion(x, y, pl, ctx),
+            None => false,
+        };
         let tip_was = self.tip.as_ref().is_some_and(|t| t.shown);
         if let (Some(r), Page::Processes) = (lay.list, self.page()) {
             let l = self.procs.layout(r, ctx);
@@ -901,7 +907,7 @@ impl TaskMgr {
         }
         let hit = self.form.hit(x, y, &ctx.text, px);
         let form = !matches!(self.form.motion(x, y, hit), form::Event::None);
-        let redraw = title || tab || list || form || tip_was;
+        let redraw = title || tab || list || form || tip_was || perf;
         Reply {
             redraw,
             tick,
@@ -963,9 +969,10 @@ impl TaskMgr {
         {
             return redraw(moved);
         }
-        let menu_key = k.sym == keysym::MENU || (k.sym == keysym::F10 && k.mods.shift);
-        if menu_key && let Some(g) = lay.perf.as_ref().map(|p| p.graph_groups[0]) {
-            return self.open_history_menu(g.x + 20, g.y + 20, ctx, true);
+        if let Some(pl) = &lay.perf
+            && let Some(r) = self.perf_key(k, pl, ctx)
+        {
+            return r;
         }
         match (k.sym, self.page()) {
             (keysym::F5, _) => self.act(Act::Refresh),
@@ -1037,6 +1044,10 @@ impl TaskMgr {
             Event::CloseRequest => quit(),
             Event::Resized => {
                 self.fit_lists(ctx);
+                let inner = pages::layout(self, ctx).inner;
+                if let Some(r) = perf::layout(inner, perf::Pane::Sensors).sensors {
+                    self.perf.sensors.fit_last(r, ctx);
+                }
                 Reply::redraw()
             }
             Event::OnTop(on) => self.act(Act::OnTop(on)),
@@ -1051,7 +1062,7 @@ impl TaskMgr {
             }
             Event::Pointer(PointerInput::Motion { x, y }) => self.motion(x, y, ctx),
             Event::Pointer(PointerInput::Release { .. }) => {
-                let list = self.list().is_some_and(|l| l.release(ctx));
+                let list = self.list().is_some_and(|l| l.release(ctx)) | self.perf_release(ctx);
                 self.note_widths();
                 let ev = self.form.release();
                 let r = self.form_event(ev, ctx);
@@ -1062,7 +1073,7 @@ impl TaskMgr {
             }
             Event::Pointer(PointerInput::Leave) => {
                 let tip = self.tip.take().is_some_and(|t| t.shown);
-                let list = self.list().is_some_and(|l| l.leave(ctx));
+                let list = self.list().is_some_and(|l| l.leave(ctx)) | self.perf_leave(ctx);
                 let title = self.bar.leave() && ctx.styled();
                 let tab = self.tabs.hover(None) && ctx.styled();
                 let form = !matches!(self.form.leave(), form::Event::None);
@@ -1070,6 +1081,9 @@ impl TaskMgr {
             }
             Event::Pointer(PointerInput::Scroll { rows, x, y }) => {
                 let lay = pages::layout(self, ctx);
+                if let Some(pl) = &lay.perf {
+                    return redraw(self.perf_wheel(rows, x, y, pl, ctx));
+                }
                 match (lay.list, self.list()) {
                     (Some(r), Some(l)) if r.contains(x, y) => redraw(l.wheel(rows, r, ctx)),
                     _ => Reply::none(),
