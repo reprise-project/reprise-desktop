@@ -469,7 +469,7 @@ mod tests {
                     continue;
                 }
                 C::Lines(lines) | C::GreyedLines(lines) => {
-                    label = Some(lines.join(" "));
+                    label = Some(shown(&lines.join(" ")));
                     continue;
                 }
                 C::Group(_) => {
@@ -507,8 +507,32 @@ mod tests {
         out
     }
 
+    #[test]
+    fn track_bars_are_named_after_their_setting() {
+        let pages = every_page(Area::MIN);
+        for (p, id, name) in [
+            (Page::Display, crate::displaypage::MODE, "Screen resolution"),
+            (Page::NightLight, "nl_temperature", "Color temperature"),
+            (Page::Mouse, "mouse_speed", "Pointer speed"),
+            (Page::Mouse, "touchpad_speed", "Touchpad speed"),
+            (Page::Accessibility, "slow_keys_delay", "SlowKeys delay"),
+            (Page::RemoteDesktop, "quality", "Picture quality"),
+            (Page::Appearance, "glass_dark_to", "Dark until"),
+        ] {
+            let (_, f) = &pages[p.index()];
+            let named = control_labels(f).into_iter().find(|(i, _)| *i == id);
+            assert_eq!(named, Some((id, name.to_string())), "{}", p.label());
+        }
+    }
+
     /// Labels made from run-time data, compared by id only.
     const RUNTIME_LABELS: &[(Page, &str)] = &[(Page::Background, "home")]; // the user's name
+
+    /// Whether a control's label is left out of search: a tablet row's id is its position on
+    /// the pad, so its label changes with the pad.
+    fn unlisted(p: Page, id: &str) -> bool {
+        p == Page::Tablet && crate::tabletpage::ROW_IDS.contains(&id)
+    }
 
     #[test]
     fn every_control_label_is_in_its_pages_search_terms() {
@@ -524,7 +548,7 @@ mod tests {
         for (p, f) in every_page(Area::MIN).into_iter().chain(appearance) {
             let (_, terms) = built.iter_mut().find(|(q, _)| *q == p).unwrap();
             for t in control_labels(&f) {
-                if !terms.contains(&t) {
+                if !unlisted(p, t.0) && !terms.contains(&t) {
                     terms.push(t);
                 }
             }
@@ -552,6 +576,15 @@ mod tests {
                 .iter()
                 .filter(|l| !built.iter().any(|t| same(*p, t, l)))
                 .collect();
+            let twice: Vec<_> = listed
+                .iter()
+                .enumerate()
+                .filter(|(i, l)| listed[..*i].iter().any(|k| k.0 == l.0))
+                .map(|(_, l)| l)
+                .collect();
+            if !twice.is_empty() {
+                report += &format!("Page::{p:?} lists an id twice:\n{}", lines(twice));
+            }
             if !missing.is_empty() {
                 report += &format!("Page::{p:?} is missing:\n{}", lines(missing));
             }

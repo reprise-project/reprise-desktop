@@ -351,11 +351,13 @@ pub fn time_edit(id: &'static str, x: i32, y: i32, w: i32) -> Item {
 /// right-aligned above the right end: the labels are `ends` wide, the trackbar
 /// grows with the column up to [`TRACK_MAX`], and the right label and value
 /// follow its end. `y` is the end labels' row; the value sits `value_dy`
-/// above it. Returns the value, left label, trackbar and right label.
+/// above it. The trackbar is `name` to a reader. Returns the value, left label,
+/// trackbar and right label.
 #[allow(clippy::too_many_arguments)]
 fn ends_track(
     a: Area,
     ids: [&'static str; 4],
+    name: &'static str,
     y: i32,
     value_dy: i32,
     ends: (&str, &str),
@@ -370,7 +372,7 @@ fn ends_track(
     [
         Item::value_at(value_id, right + 44 - 80, y - value_dy, 80, ""),
         Item::label_at(left_id, GX, y, 44, ends.0),
-        Item::new(track_id, track, Control::TrackBar(bar)),
+        Item::new(track_id, track, Control::TrackBar(bar)).named(name),
         Item::label_at(right_id, right, y, 44, ends.1),
     ]
 }

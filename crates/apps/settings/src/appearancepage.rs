@@ -200,7 +200,7 @@ pub fn page(s: &Settings, a: Area) -> Form {
             Item::label_at(DARK_HOURS[0], rx, y(452), rw, "Dark &hours:"),
             time_edit(DARK_HOURS[1], rx, y(468), TIME_W),
             Item::label_at(DARK_HOURS[2], rx + TIME_W + 4, y(472), 14, "to"),
-            time_edit(DARK_HOURS[3], rx + TIME_W + 22, y(468), TIME_W),
+            time_edit(DARK_HOURS[3], rx + TIME_W + 22, y(468), TIME_W).named("Dark until"),
         ]);
     }
     Form::new(items)

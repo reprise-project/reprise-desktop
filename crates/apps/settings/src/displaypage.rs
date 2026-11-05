@@ -583,11 +583,14 @@ pub fn page(d: &Display, a: Area) -> Form {
     let sizes = d.resolutions().len().max(1);
     let mut bar = TrackBar::new(d.resolution_index(), sizes);
     bar.enabled = !d.mode_locked();
-    items.push(Item::new(
-        MODE,
-        Rect::new(65, 113 + dy, 71, trackbar::HEIGHT),
-        Control::TrackBar(bar),
-    ));
+    items.push(
+        Item::new(
+            MODE,
+            Rect::new(65, 113 + dy, 71, trackbar::HEIGHT),
+            Control::TrackBar(bar),
+        )
+        .named("Screen resolution"),
+    );
     items.push(Item::aligned(
         "mode_label",
         Rect::new(X, 143 + dy, 172, 13),
