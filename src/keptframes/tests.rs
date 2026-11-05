@@ -302,6 +302,19 @@ fn forgetting_drops_every_kept_place() {
 }
 
 #[test]
+fn a_harness_forgetting_its_frames_leaves_another_harness_file_alone() {
+    let kept = one_screen();
+    std::fs::write(&kept.state.wm.kept.path, "kept").unwrap();
+    let mut other = one_screen();
+    other.state.forget_window_frames();
+    crate::state::flush();
+    assert_eq!(
+        std::fs::read_to_string(&kept.state.wm.kept.path).unwrap(),
+        "kept"
+    );
+}
+
+#[test]
 fn reloading_reads_the_file_and_drops_the_pending_write() {
     let mut h = one_screen();
     let mut c = h.connect();
