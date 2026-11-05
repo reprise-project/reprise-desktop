@@ -95,9 +95,13 @@ fn both_pkgbuilds_link_every_program_and_install_every_desktop_entry() {
             "{path} links every program: {uninstalled:?}"
         );
         for app in apps.intersection(&built) {
-            let binary = format!("target/release/{app}");
+            let binaries = [
+                format!("target/release/{app}"),
+                format!("target/$_profile/{app}"),
+            ];
             assert!(
-                (text.lines()).any(|l| l.contains("install -Dm755") && l.contains(&binary)),
+                (text.lines()).any(|l| l.contains("install -Dm755")
+                    && binaries.iter().any(|b| l.contains(b.as_str()))),
                 "{path} installs {app}, built on its own"
             );
         }
@@ -183,15 +187,18 @@ fn pacman_sh(lines: &[&str], what: &str) -> BTreeSet<String> {
 #[test]
 fn ci_installs_every_pkgbuild_dependency() {
     let read = |path: &str| std::fs::read_to_string(root().join(path)).expect("CI file reads");
-    let action = read(".github/actions/build/action.yml");
-    let ci = read(".github/workflows/ci.yml");
+    let image = read(".github/ci-image/packages");
     let nightly = read(".github/workflows/nightly.yml");
     let lists = [
-        ("the build action", action.lines().collect()),
-        ("ci.yml's package job", job(&ci, "package")),
-        ("nightly.yml's build job", job(&nightly, "build")),
-    ]
-    .map(|(what, lines): (&str, Vec<&str>)| (what, pacman_sh(&lines, what)));
+        (
+            "the CI image",
+            image.split_whitespace().map(str::to_string).collect(),
+        ),
+        (
+            "nightly.yml's build job",
+            pacman_sh(&job(&nightly, "build"), "nightly.yml's build job"),
+        ),
+    ];
     for pkgbuild in PKGBUILDS {
         let text = std::fs::read_to_string(root().join(pkgbuild)).expect("PKGBUILD reads");
         for dep in deps(&text, "depends")
@@ -217,22 +224,28 @@ fn deps_reads_a_wrapped_array() {
 }
 
 #[test]
-fn every_workflow_pins_the_same_archive_date() {
+fn ci_pins_one_archive_date() {
     let dates: Vec<(&str, String)> = [
-        ".github/workflows/ci.yml",
+        ".github/ci-image/Dockerfile",
         ".github/workflows/nightly.yml",
         ".github/workflows/supply.yml",
     ]
     .into_iter()
     .flat_map(|path| {
-        let text = std::fs::read_to_string(root().join(path)).expect("workflow reads");
+        let text = std::fs::read_to_string(root().join(path)).expect("CI file reads");
         (text.lines())
-            .filter_map(|l| l.trim().strip_prefix("ARCH_ARCHIVE: "))
+            .filter_map(|l| {
+                let l = l.trim();
+                (l.strip_prefix("ARCH_ARCHIVE: ")).or_else(|| l.strip_prefix("ARG ARCH_ARCHIVE="))
+            })
             .map(|date| (path, date.to_string()))
             .collect::<Vec<_>>()
     })
     .collect();
-    for path in [".github/workflows/ci.yml", ".github/workflows/supply.yml"] {
+    for path in [
+        ".github/ci-image/Dockerfile",
+        ".github/workflows/supply.yml",
+    ] {
         assert!(
             dates.iter().any(|(p, _)| *p == path),
             "{path} sets ARCH_ARCHIVE"
