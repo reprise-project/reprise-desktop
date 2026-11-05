@@ -138,8 +138,9 @@ pub fn keyboard(a: Area) -> Form {
 /// The Motion group of the Pointer Options: the speed label, Slow and Fast
 /// around a trackbar, and "Enhance pointer precision" under it. `y` is the
 /// label's row; the items span 62 px. `ids` are the label, Slow, the trackbar,
-/// Fast and the check; the page has two of these, so only the mouse's carries the access keys.
-fn motion(a: Area, y: i32, ids: [&'static str; 5], keys: bool) -> [Item; 5] {
+/// Fast and the check, and the trackbar is `name` to a reader; the page has two of these, so
+/// only the mouse's carries the access keys.
+fn motion(a: Area, y: i32, ids: [&'static str; 5], name: &'static str, keys: bool) -> [Item; 5] {
     let [label_id, slow_id, track_id, fast_id, check_id] = ids;
     let (speed, enhance) = if keys {
         ("Select a &pointer speed:", "&Enhance pointer precision")
@@ -154,7 +155,8 @@ fn motion(a: Area, y: i32, ids: [&'static str; 5], keys: bool) -> [Item; 5] {
             track_id,
             track,
             Control::TrackBar(TrackBar::new(SPEED_STEPS / 2, SPEED_STEPS)),
-        ),
+        )
+        .named(name),
         Item::label_at(fast_id, track.right() + 4, y + 21, 26, "Fast"),
         Item::check(check_id, GX, y + 49, enhance),
     ]
@@ -181,6 +183,7 @@ pub fn mouse(a: Area) -> Form {
             "mouse_fast",
             "mouse_accel",
         ],
+        "Pointer speed",
         true,
     ));
     items.push(Item::check(
@@ -201,6 +204,7 @@ pub fn mouse(a: Area) -> Form {
             "touchpad_fast",
             "touchpad_accel",
         ],
+        "Touchpad speed",
         false,
     ));
     items.push(Item::check("tap_to_click", GX, 305, "&Tap to click"));
@@ -341,6 +345,7 @@ pub fn accessibility(a: Area) -> Form {
             "slow_long",
             "slow_delay_value",
         ],
+        "SlowKeys delay",
         274,
         27,
         ("Shorter", "Longer"),

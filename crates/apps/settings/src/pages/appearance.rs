@@ -177,6 +177,7 @@ pub fn night_light(a: Area) -> Form {
     items.extend(ends_track(
         a,
         ["nl_warm", "nl_temperature", "nl_cool", "nl_temp_value"],
+        "Color temperature",
         117,
         27,
         ("Warmer", "Cooler"),
