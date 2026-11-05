@@ -26,7 +26,7 @@ mod watcher;
 
 use item::{call_item, decode_names, fetch_item, provide_token};
 use menu::{get_layout, send_menu_event};
-use notifications::{Notifications, Senders};
+use notifications::{Notifications, Programs, Senders};
 use watcher::{Published, Watcher, split_service};
 
 const WATCHER_NAME: &str = "org.kde.StatusNotifierWatcher";
@@ -71,6 +71,7 @@ struct Shell {
     events: Sender<TrayEvent>,
     eventfd: RawFd,
     pads: crate::tabletpad::Shared,
+    programs: Arc<Mutex<Programs>>,
 }
 
 #[zbus::interface(name = "org.reprise.Tray")]
@@ -147,6 +148,11 @@ impl Shell {
     async fn tablet_pads(&self) -> Vec<reprisebus::tray::PadWire> {
         let pads = lock(&self.pads);
         pads.iter().map(reprisebus::tray::Pad::wire).collect()
+    }
+
+    /// The programs that sent notifications this session, as (key, name).
+    async fn notification_programs(&self) -> Vec<(String, String)> {
+        lock(&self.programs).0.clone()
     }
 }
 
@@ -593,6 +599,7 @@ async fn setup(
 ) -> Result<Loop, String> {
     let icons: Icons = Arc::new(Mutex::new(load_icons(&icon_theme)));
     let senders: Arc<Mutex<Senders>> = Arc::default();
+    let programs: Arc<Mutex<Programs>> = Arc::default();
     let conn = zbus::connection::Builder::session()
         .method_timeout(METHOD_TIMEOUT)
         .build()
@@ -634,6 +641,7 @@ async fn setup(
                 eventfd,
                 next_id: std::sync::atomic::AtomicU32::new(1),
                 senders: senders.clone(),
+                programs: programs.clone(),
                 icons: icons.clone(),
             },
         )
@@ -677,6 +685,7 @@ async fn setup(
                 events: events.clone(),
                 eventfd,
                 pads,
+                programs,
             },
         )
         .await

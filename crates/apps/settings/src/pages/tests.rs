@@ -3,7 +3,7 @@ use super::desktop::{DESKTOP_NAMES, DRAG_SNAP_CONTROLS, FPS_CONTROLS, REVEAL_CON
 use super::*;
 use crate::model::{Settings, Shortcut, WATER_STYLES};
 use crate::registry::Page;
-use crate::{appearancepage, backgroundpage, registry};
+use crate::{appearancepage, backgroundpage, notifypage, registry};
 use reprisefs::autostart::Entry;
 use reprisefs::xkb::Layout;
 use reprisekit::controls::propsheet;
@@ -611,6 +611,8 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
         on(Page::Sounds),
         [
             "notifications.sound",
+            "notifications.no_balloons",
+            "notifications.no_sounds",
             "sounds.theme",
             "sounds.bell",
             "sounds.allow_boost"

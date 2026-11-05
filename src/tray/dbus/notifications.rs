@@ -69,6 +69,27 @@ impl Senders {
     }
 }
 
+/// The programs that sent notifications this session as (key, name), in the order they first
+/// came; Settings lists them beside `[notifications] no_balloons` and `no_sounds`.
+#[derive(Default)]
+pub(super) struct Programs(pub(super) Vec<(String, String)>);
+
+impl Programs {
+    const MAX: usize = 200;
+
+    pub(super) fn saw(&mut self, key: &str, name: &str) {
+        if key.is_empty() {
+            return;
+        }
+        let full = self.0.len() >= Self::MAX;
+        match self.0.iter_mut().find(|(k, _)| k == key) {
+            Some(p) => p.1 = name.to_string(),
+            None if !full => self.0.push((key.to_string(), name.to_string())),
+            None => {}
+        }
+    }
+}
+
 /// Whether `name` has an owner on the bus; true when the bus cannot say.
 async fn on_bus(conn: &Connection, name: &str) -> bool {
     let Ok(dbus) = zbus::fdo::DBusProxy::new(conn).await else {
@@ -85,6 +106,7 @@ pub(super) struct Notifications {
     pub(super) eventfd: RawFd,
     pub(super) next_id: std::sync::atomic::AtomicU32,
     pub(super) senders: Arc<Mutex<Senders>>,
+    pub(super) programs: Arc<Mutex<Programs>>,
     pub(super) icons: Icons,
 }
 
@@ -134,7 +156,12 @@ impl Notifications {
         let sound = hints.balloon_sound();
         let entry = hints.desktop_entry.as_deref().and_then(desktop_entry);
         let (app_icon, image) = notification_icons(&self.icons, &hints, app_icon, entry.as_ref());
-        let app = entry.map_or(app_name, |e| e.name);
+        let key = clip(
+            notify::program_key(hints.desktop_entry.as_deref(), &app_name),
+            notify::KEY_CHARS,
+        );
+        let app = clip(entry.map_or(app_name, |e| e.name), SUMMARY_CHARS);
+        lock(&self.programs).saw(&key, &app);
         let actions = notify::actions(&actions);
         let action_icons = if hints.action_icons {
             action_icons(&self.icons, &actions)
@@ -159,7 +186,8 @@ impl Notifications {
             self.eventfd,
             TrayEvent::Notify(Notification {
                 id,
-                app: clip(app, SUMMARY_CHARS),
+                app,
+                key,
                 summary: clip(summary, SUMMARY_CHARS),
                 body: clip(notify::plain_text(&body), BODY_CHARS),
                 app_icon,

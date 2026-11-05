@@ -7,10 +7,12 @@ use super::{
     field, group, list, locations, spin,
 };
 use crate::model::WATER_STYLES;
+use crate::notifypage;
 use reprisebus::charge::ChargeLimit;
 use repriseconf::ThumbnailCache;
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
+use reprisekit::controls::listbox::{self, ListBox};
 use reprisekit::raster::Rect;
 
 /// The task manager, the switches with no page of their own, the location
@@ -196,8 +198,9 @@ pub fn backup(a: Area) -> Form {
     ])
 }
 
-/// The sound theme picked from `sound_themes`, the events that play from it, then the volume's
-/// reach.
+/// The sound theme picked from `sound_themes`, the events that play from it, the volume's reach,
+/// then each program's notification switches ([`notifypage`]). The program list takes the page's
+/// extra height.
 pub fn sounds(a: Area, sound_themes: &[String]) -> Form {
     Form::new(vec![
         group(a, "sound_theme_group", 44, 52, "Sound Theme"),
@@ -227,6 +230,22 @@ pub fn sounds(a: Area, sound_themes: &[String]) -> Form {
             a.gw() - 18,
             "Sliders and the volume keys go on to 150%.",
         ),
+        group(a, "notify_group", 274, 144 + a.dh, "Program Notifications"),
+        Item::new(
+            notifypage::PROGRAMS,
+            Rect::new(
+                GX,
+                294,
+                a.gw(),
+                notifypage::ROWS as i32 * listbox::ROW_H + 4 + a.dh,
+            ),
+            Control::ListBox {
+                list: ListBox::new(Vec::new(), None),
+                icons: Vec::new(),
+            },
+        ),
+        Item::check(notifypage::BALLOONS, GX, 391 + a.dh, "Show &balloons").enabled(false),
+        Item::check(notifypage::SOUNDS, GX + 140, 391 + a.dh, "Play s&ounds").enabled(false),
     ])
 }
 

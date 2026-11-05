@@ -326,6 +326,39 @@ fn quiet_hours_run_past_midnight_and_are_off_by_default() {
 }
 
 #[test]
+fn per_program_switches_match_ignoring_case_and_default_to_everything_on() {
+    let all = Config::default().notifications;
+    assert!(all.shows_balloons("discord") && all.plays_sounds("discord"));
+    let text =
+        "[notifications]\nno_balloons = [\"discord\"]\nno_sounds = [\"org.mozilla.Thunderbird\"]\n";
+    let n = Config::parse(text).unwrap().notifications;
+    assert!(!n.shows_balloons("Discord"), "no_balloons matches any case");
+    assert!(
+        n.plays_sounds("discord"),
+        "no_balloons keeps the sound switch"
+    );
+    assert!(n.shows_balloons("org.mozilla.Thunderbird"));
+    assert!(!n.plays_sounds("org.mozilla.thunderbird"));
+}
+
+#[test]
+fn set_program_listed_adds_once_and_drops_every_spelling() {
+    let mut list = vec![
+        "Discord".to_string(),
+        "mail".to_string(),
+        "discord".to_string(),
+    ];
+    assert!(
+        !set_program_listed(&mut list, "DISCORD", true),
+        "already listed"
+    );
+    assert!(set_program_listed(&mut list, "discord", false));
+    assert_eq!(list, ["mail"]);
+    assert!(set_program_listed(&mut list, "chat", true));
+    assert_eq!(list, ["mail", "chat"]);
+}
+
+#[test]
 fn screenshot_save_defaults_on_and_is_configurable() {
     assert!(Config::default().screenshot.save);
     let c = Config::parse("[screenshot]\nsave = false\n").unwrap();

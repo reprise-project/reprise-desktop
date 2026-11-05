@@ -414,6 +414,11 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   a notification, Delete dismisses it and the Menu key lists its actions.
 - **Bursts fold together.** A program that sends more than three balloons in
   ten seconds gets one "5 new from Mail" balloon instead.
+- **Per program.** Right-click a program's group in the history, or press the
+  Menu key on it, for Don't Show Balloons and No Sounds. Its notifications
+  still go into the history, and critical ones still show. Settings > Sounds
+  lists the programs that sent notifications this session with the same two
+  switches (`[notifications] no_balloons` and `no_sounds`).
 - **Do Not Disturb** holds back all but the critical ones. They still go into
   the history. It also turns itself on during `[notifications] quiet_hours`,
   and while a full-screen window has focus or the screen is shared unless

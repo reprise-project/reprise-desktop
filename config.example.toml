@@ -341,6 +341,12 @@ suspend_after = 0            # run [power] standby
 #                            # then they show; critical ones always show
 # auto_dnd = true            # balloons also wait while a full-screen window has focus and
 #                            # while the screen is shared; false shows them then
+# no_balloons = []           # programs whose balloons go to the history only, e.g.
+#                            # ["discord"]; critical ones still show. A program is its
+#                            # desktop entry id (org.mozilla.Thunderbird), else the name
+#                            # it sends (notify-send -a). Settings > Sounds and a right
+#                            # click on its group in the history also set these
+# no_sounds = []             # programs whose balloons show without a sound
 
 # [sounds]                   # Settings > Sounds also sets these
 # theme = "freedesktop"      # an XDG sound theme under /usr/share/sounds or
