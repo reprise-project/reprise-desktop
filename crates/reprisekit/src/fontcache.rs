@@ -419,6 +419,19 @@ mod tests {
     }
 
     #[test]
+    fn the_tests_scan_reads_and_keeps_nothing_of_the_users_own() {
+        let temp = std::env::temp_dir();
+        assert!(
+            cache_path().is_some_and(|p| p.starts_with(&temp)),
+            "the scan is kept under the temp folder"
+        );
+        assert!(
+            config_home().is_some_and(|p| p.starts_with(&temp)),
+            "fontconfig reads its config under the temp folder"
+        );
+    }
+
+    #[test]
     fn a_stored_scan_loads_back_face_for_face() {
         let dir = scratch("roundtrip");
         let (path, db) = stored(&dir);
