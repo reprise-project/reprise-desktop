@@ -279,6 +279,30 @@ fn the_search_field_and_a_side_list_never_hold_the_keyboard_together() {
     assert_eq!(holders(&a), PAGE, "a right press in the arguments field");
 }
 
+#[test]
+fn a_side_list_never_fires_the_pages_access_keys() {
+    let alt = Mods {
+        alt: true,
+        ..Mods::default()
+    };
+    for (page, letter) in [(Page::Startup, "r"), (Page::Keyboard, "d")] {
+        let (mut a, mut ctx) = (app("side-list-letters"), test_ctx());
+        a.open_page(page, None);
+        assert_eq!(holders(&a), SIDE_LIST, "{page:?}");
+        typed(&mut a, &mut ctx, letter);
+        assert_eq!(
+            holders(&a),
+            SIDE_LIST,
+            "{page:?}: {letter} stays on the list"
+        );
+        a.key(
+            key_input(u32::from(b'a'), alt, Some("a")),
+            &ctx.forms().controls(),
+        );
+        assert_eq!(holders(&a), PAGE, "{page:?}: Alt+A takes it to the page");
+    }
+}
+
 /// Privacy's location list sits mid-form, after its check: the field and the list hand the
 /// keyboard over as on the other pages, but opening the page never gives it to the list.
 #[test]
