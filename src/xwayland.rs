@@ -863,8 +863,7 @@ impl XwmHandler for State {
         if let Some(win) = self.win_mut(w) {
             (win.x, win.y) = (geometry.loc.x, geometry.loc.y);
         }
-        self.relayout(w);
-        self.redraw_all();
+        self.redraw_changed(|s| s.relayout(w));
     }
 
     fn property_notify(&mut self, _xwm: XwmId, window: X11Surface, property: WmWindowProperty) {
@@ -886,8 +885,7 @@ impl XwmHandler for State {
             // follows.
             WmWindowProperty::NormalHints => {
                 if self.win(w).is_some_and(|w| w.mapped) {
-                    self.relayout(w);
-                    self.redraw_all();
+                    self.redraw_changed(|s| s.relayout(w));
                 }
             }
             WmWindowProperty::Hints => self.x11_urgency(w, urgent(&window)),

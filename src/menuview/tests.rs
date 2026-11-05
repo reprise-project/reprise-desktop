@@ -542,3 +542,21 @@ fn a_menu_asks_for_frames_only_on_the_outputs_it_draws_on() {
         "a menu at TEST-1's right edge casts its shadow onto TEST-2"
     );
 }
+
+#[test]
+fn a_key_in_a_menu_asks_only_the_outputs_the_menu_is_on() {
+    const KEY_DOWN: u32 = 108;
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    h.state.open_desktop_menu((300, 300));
+    h.run_for(400);
+    crate::backend::take_asks();
+    h.key(KEY_DOWN, true);
+    h.key(KEY_DOWN, false);
+    let mut asked: Vec<String> = (crate::backend::take_asks().into_iter())
+        .map(|(o, _)| o)
+        .collect();
+    asked.dedup();
+    assert_eq!(asked, ["TEST-1"], "the highlight moves on TEST-1 only");
+}
