@@ -46,7 +46,7 @@ pub use system::{
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).
 pub const CLIENT: (i32, i32) = (398, 528);
 
-/// The Pointers page's preview and the combo row standing for an empty `[cursor] theme`.
+/// The Cursor page's preview and the combo row standing for an empty `[cursor] theme`.
 pub const CURSOR_PREVIEW: &str = "cursor_preview";
 pub const CURSOR_DEFAULT_ROW: &str = "(Default)";
 

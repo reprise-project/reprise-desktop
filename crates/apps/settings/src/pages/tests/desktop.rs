@@ -46,7 +46,7 @@ fn switcher_values_go_in_and_come_back_out() {
 #[test]
 fn the_desktops_page_geometry() {
     let s = built();
-    let p = Page::Desktops;
+    let p = Page::VirtualDesktops;
     assert_eq!(rect(&s, p, "desktops_group"), Rect::new(20, 44, 358, 244));
     assert_eq!(rect(&s, p, "use_desktops"), Rect::new(32, 64, 13, 13));
     assert_eq!(rect(&s, p, "desktops_label"), Rect::new(50, 88, 206, 13));
@@ -87,7 +87,7 @@ fn the_desktops_page_geometry() {
 
 #[test]
 fn the_wheel_on_desktop_box_writes_its_key_and_greys_with_one_desktop() {
-    let p = Page::Desktops;
+    let p = Page::VirtualDesktops;
     let mut got = Settings::default();
     let s = with(&got);
     assert_eq!(s.pages[p.index()].checked("wheel_on_desktop"), Some(false));
@@ -114,7 +114,7 @@ fn the_wheel_on_desktop_box_writes_its_key_and_greys_with_one_desktop() {
 
 #[test]
 fn desktop_names_go_in_apart_by_commas_and_come_back_entry_for_entry() {
-    let p = Page::Desktops;
+    let p = Page::VirtualDesktops;
     let mut s = with(&Settings {
         desktop_names: vec!["Work".into(), "".into(), "Chat".into()],
         ..Settings::default()
@@ -170,7 +170,7 @@ fn the_desktop_names_rows_pin_their_pixels_in_every_look() {
 
 #[test]
 fn the_widget_boxes_tick_what_stands_and_write_desktop_widgets() {
-    let p = Page::Desktops;
+    let p = Page::VirtualDesktops;
     let mut got = Settings {
         desktop_widgets: vec!["meter".into(), "clock".into()],
         ..Settings::default()
@@ -232,7 +232,7 @@ fn use_virtual_desktops_sets_one_and_greys_the_rest() {
         ..Settings::default()
     };
     let mut s = with(&one);
-    let p = Page::Desktops;
+    let p = Page::VirtualDesktops;
     assert_eq!(s.pages[p.index()].checked("use_desktops"), Some(false));
     for id in [
         "desktops",
@@ -273,7 +273,7 @@ fn use_virtual_desktops_sets_one_and_greys_the_rest() {
 
 #[test]
 fn the_duration_and_the_refresh_rate_follow_what_uses_them() {
-    let p = Page::Desktops;
+    let p = Page::VirtualDesktops;
     let still = Settings {
         switcher_preview: false,
         preview_taskbar: false,
@@ -317,7 +317,7 @@ fn named_combos_show_labels_and_carry_values() {
     };
     assert_eq!(shown(Page::Switcher, "switcher_style"), "Thumbnails");
     assert_eq!(
-        shown(Page::Desktops, "desktop_animation"),
+        shown(Page::VirtualDesktops, "desktop_animation"),
         "Slide vertically"
     );
     let mut got = Settings::default();
@@ -336,7 +336,7 @@ fn named_combos_show_labels_and_carry_values() {
 
 #[test]
 fn the_pager_mark_greys_outside_glass() {
-    let p = Page::Desktops;
+    let p = Page::VirtualDesktops;
     let with_interface = |interface: &str, desktops: i64| Settings {
         interface: interface.into(),
         desktops,
@@ -358,7 +358,7 @@ fn the_pager_mark_greys_outside_glass() {
 
 #[test]
 fn the_snap_bar_and_distance_grey_with_drag_snapping_off() {
-    let p = Page::Windows;
+    let p = Page::WindowBehavior;
     let off = Settings {
         snap_enabled: false,
         ..Settings::default()
@@ -398,7 +398,7 @@ fn the_pager_mark_combo_carries_its_value() {
         ..Settings::default()
     };
     let s = with(&want);
-    match &s.pages[Page::Desktops.index()]
+    match &s.pages[Page::VirtualDesktops.index()]
         .item("pager_mark")
         .unwrap()
         .control
@@ -575,7 +575,7 @@ fn the_reveal_check_boxes_grey_while_auto_hide_is_off() {
 #[test]
 fn the_launcher_page_geometry() {
     let s = built();
-    let p = Page::Launcher;
+    let p = Page::Search;
     assert_eq!(
         rect(&s, p, "launcher_search_group"),
         Rect::new(20, 44, 358, 108)
@@ -597,7 +597,7 @@ fn launcher_values_go_in_and_come_back_out() {
         ..Settings::default()
     };
     let s = with(&want);
-    let page = &s.pages[Page::Launcher.index()];
+    let page = &s.pages[Page::Search.index()];
     assert_eq!(page.checked("launcher_files"), Some(false));
     assert_eq!(page.checked("launcher_windows"), Some(false));
     let mut got = Settings::default();
@@ -608,7 +608,7 @@ fn launcher_values_go_in_and_come_back_out() {
 #[test]
 fn the_windows_page_geometry() {
     let s = built();
-    let p = Page::Windows;
+    let p = Page::WindowBehavior;
     assert_eq!(rect(&s, p, "snap_group"), Rect::new(20, 44, 358, 172));
     assert_eq!(rect(&s, p, "snap_enabled"), Rect::new(32, 66, 13, 13));
     assert_eq!(rect(&s, p, "snap_picker"), Rect::new(32, 90, 13, 13));
@@ -663,7 +663,7 @@ fn the_windows_page_reads_back_tabs_shaking_the_picker_the_bar_the_distance_and_
         ..Settings::default()
     };
     let s = with(&want);
-    let p = &s.pages[Page::Windows.index()];
+    let p = &s.pages[Page::WindowBehavior.index()];
     match &p.item("title_double_click").unwrap().control {
         Control::Combo(c) => assert_eq!(c.items[c.selected].text, "Roll up"),
         _ => panic!("title_double_click is a combo"),

@@ -3,10 +3,10 @@ use crate::{SettingsApp, notifypage, registry};
 use repriseapp::Reply;
 
 impl SettingsApp {
-    /// Ask the compositor which programs sent notifications each time the Sounds page opens, and
+    /// Ask the compositor which programs sent notifications each time the Sound page opens, and
     /// keep the list in step with the pending settings. True when the list was refilled.
     pub(crate) fn ensure_notify_programs(&mut self) -> bool {
-        if registry::open(&self.sheet) != Page::Sounds {
+        if registry::open(&self.sheet) != Page::Sound {
             self.notify_fresh = false;
             return false;
         }
@@ -30,17 +30,17 @@ impl SettingsApp {
             notifypage::programs(&self.notify_seen, &self.want, |k| names.get(k).cloned());
         let changed = programs != self.notify_programs;
         self.notify_programs = programs;
-        let page = &mut self.sheet.pages[Page::Sounds.index()];
+        let page = &mut self.sheet.pages[Page::Sound.index()];
         notifypage::fill(page, &self.notify_programs, &self.want);
         changed
     }
 
     pub(crate) fn notify_changed(&mut self, id: &str) -> Reply {
-        let page = &self.sheet.pages[Page::Sounds.index()];
+        let page = &self.sheet.pages[Page::Sound.index()];
         if notifypage::read(page, &self.notify_programs, id, &mut self.want) {
             self.sync_apply();
         }
-        let page = &mut self.sheet.pages[Page::Sounds.index()];
+        let page = &mut self.sheet.pages[Page::Sound.index()];
         notifypage::fill(page, &self.notify_programs, &self.want);
         Reply::redraw()
     }

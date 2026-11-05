@@ -1,5 +1,6 @@
 //! Settings pages and separate settings programs with their search words. [`GROUPS`]
-//! fixes the pages' order; [`Page::find`] is the one matcher Settings and Start share.
+//! fixes the list's order, pages and program links alike; [`Page::find`] is the one
+//! matcher Settings and Start share.
 
 mod terms;
 
@@ -9,30 +10,38 @@ use crate::search::{all_words, word_starts};
 pub enum Page {
     Appearance,
     Background,
-    ScreenSaver,
-    Display,
-    NightLight,
+    ScreenSaverLock,
     FontsAndIcons,
     Effects,
     Taskbar,
     StartMenu,
-    Launcher,
+    Search,
     Switcher,
-    Desktops,
-    Windows,
+    VirtualDesktops,
+    WindowBehavior,
+    Display,
+    NightLight,
+    Sound,
     Keyboard,
-    Mouse,
+    MouseTouchpad,
+    Cursor,
     Tablet,
-    Pointers,
-    Accessibility,
-    Vision,
-    Sounds,
+    TextKeys,
+    MagnifierFilters,
+    RemoteDesktop,
     Power,
     Startup,
     DefaultPrograms,
-    RemoteDesktop,
     Advanced,
     Backup,
+}
+
+/// A row under a heading of the Settings list: a page, or a separate program by its
+/// [`PROGRAMS`] id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Entry {
+    Page(Page),
+    Program(&'static str),
 }
 
 /// What a search matched: the label, a keyword, or a control's label (its id, for --focus).
@@ -43,58 +52,92 @@ pub enum Hit {
     Control(&'static str),
 }
 
-pub const GROUPS: &[(&str, &[Page])] = &[
+pub const GROUPS: &[(&str, &[Entry])] = &[
     (
-        "Look",
+        "Personalize",
         &[
-            Page::Appearance,
-            Page::Background,
-            Page::ScreenSaver,
-            Page::Display,
-            Page::NightLight,
-            Page::FontsAndIcons,
-            Page::Effects,
+            Entry::Page(Page::Appearance),
+            Entry::Page(Page::Background),
+            Entry::Page(Page::ScreenSaverLock),
+            Entry::Page(Page::FontsAndIcons),
+            Entry::Page(Page::Effects),
         ],
     ),
     (
-        "Desktop",
+        "Taskbar & Windows",
         &[
-            Page::Taskbar,
-            Page::StartMenu,
-            Page::Launcher,
-            Page::Switcher,
-            Page::Desktops,
-            Page::Windows,
+            Entry::Page(Page::Taskbar),
+            Entry::Page(Page::StartMenu),
+            Entry::Page(Page::Search),
+            Entry::Page(Page::Switcher),
+            Entry::Page(Page::VirtualDesktops),
+            Entry::Page(Page::WindowBehavior),
         ],
     ),
     (
-        "Input",
+        "Display & Sound",
         &[
-            Page::Keyboard,
-            Page::Mouse,
-            Page::Tablet,
-            Page::Pointers,
-            Page::Accessibility,
-            Page::Vision,
+            Entry::Page(Page::Display),
+            Entry::Page(Page::NightLight),
+            Entry::Page(Page::Sound),
         ],
     ),
+    (
+        "Devices",
+        &[
+            Entry::Page(Page::Keyboard),
+            Entry::Page(Page::MouseTouchpad),
+            Entry::Page(Page::Cursor),
+            Entry::Page(Page::Tablet),
+        ],
+    ),
+    (
+        "Accessibility",
+        &[
+            Entry::Page(Page::TextKeys),
+            Entry::Page(Page::MagnifierFilters),
+        ],
+    ),
+    ("Network", &[Entry::Page(Page::RemoteDesktop)]),
     (
         "System",
         &[
-            Page::Sounds,
-            Page::Power,
-            Page::Startup,
-            Page::DefaultPrograms,
-            Page::RemoteDesktop,
-            Page::Advanced,
-            Page::Backup,
+            Entry::Page(Page::Power),
+            Entry::Page(Page::Startup),
+            Entry::Page(Page::DefaultPrograms),
+            Entry::Page(Page::Advanced),
+            Entry::Page(Page::Backup),
         ],
     ),
 ];
 
+/// Old `--page` names, each still opening its renamed page.
+const ALIASES: &[(&str, Page)] = &[
+    ("screen-saver", Page::ScreenSaverLock),
+    ("launcher", Page::Search),
+    ("desktops", Page::VirtualDesktops),
+    ("windows", Page::WindowBehavior),
+    ("mouse", Page::MouseTouchpad),
+    ("pointers", Page::Cursor),
+    ("accessibility", Page::TextKeys),
+    ("vision", Page::MagnifierFilters),
+    ("sounds", Page::Sound),
+];
+
+/// The list entry a `--page` name opens.
+pub fn named(slug: &str) -> Option<Entry> {
+    Page::named(slug).map(Entry::Page)
+}
+
 impl Page {
+    /// The pages in list order.
     pub fn all() -> impl Iterator<Item = Page> {
-        GROUPS.iter().flat_map(|(_, pages)| pages.iter().copied())
+        GROUPS.iter().flat_map(|(_, entries)| {
+            entries.iter().filter_map(|e| match e {
+                Entry::Page(p) => Some(*p),
+                Entry::Program(_) => None,
+            })
+        })
     }
 
     pub fn at(i: usize) -> Option<Page> {
@@ -111,24 +154,24 @@ impl Page {
         match self {
             Page::Appearance => "Appearance",
             Page::Background => "Background",
-            Page::ScreenSaver => "Screen Saver",
+            Page::ScreenSaverLock => "Screen Saver & Lock",
             Page::Display => "Display",
             Page::NightLight => "Night Light",
             Page::FontsAndIcons => "Fonts & Icons",
             Page::Effects => "Effects",
             Page::Taskbar => "Taskbar",
             Page::StartMenu => "Start Menu",
-            Page::Launcher => "Launcher",
+            Page::Search => "Search",
             Page::Switcher => "Window Switcher",
-            Page::Desktops => "Desktops",
-            Page::Windows => "Windows",
+            Page::VirtualDesktops => "Virtual Desktops",
+            Page::WindowBehavior => "Window Behavior",
             Page::Keyboard => "Keyboard",
-            Page::Mouse => "Mouse",
+            Page::MouseTouchpad => "Mouse & Touchpad",
             Page::Tablet => "Tablet",
-            Page::Pointers => "Pointers",
-            Page::Accessibility => "Accessibility",
-            Page::Vision => "Vision",
-            Page::Sounds => "Sounds",
+            Page::Cursor => "Cursor",
+            Page::TextKeys => "Text & Keys",
+            Page::MagnifierFilters => "Magnifier & Filters",
+            Page::Sound => "Sound",
             Page::Power => "Power",
             Page::Startup => "Startup",
             Page::DefaultPrograms => "Default Programs",
@@ -156,7 +199,7 @@ impl Page {
                 "high contrast",
             ],
             Page::Background => &["wallpaper", "picture", "slideshow", "extensions"],
-            Page::ScreenSaver => &[
+            Page::ScreenSaverLock => &[
                 "screensaver",
                 "starfield",
                 "mystify",
@@ -189,7 +232,7 @@ impl Page {
                 "peek",
             ],
             Page::StartMenu => &["menu", "pinned", "quick launch"],
-            Page::Launcher => &["search", "run"],
+            Page::Search => &["launcher", "run"],
             Page::Switcher => &[
                 "alt tab",
                 "alt+tab",
@@ -197,8 +240,9 @@ impl Page {
                 "overview",
                 "hot corner",
             ],
-            Page::Desktops => &["workspaces", "virtual desktops", "widgets"],
-            Page::Windows => &[
+            Page::VirtualDesktops => &["workspaces", "desktops", "widgets"],
+            Page::WindowBehavior => &[
+                "windows",
                 "tiling",
                 "snap",
                 "snapping",
@@ -216,7 +260,7 @@ impl Page {
                 "repeat",
                 "language",
             ],
-            Page::Mouse => &[
+            Page::MouseTouchpad => &[
                 "touchpad",
                 "trackpad",
                 "pointer speed",
@@ -226,8 +270,9 @@ impl Page {
                 "acceleration",
             ],
             Page::Tablet => &["pen", "drawing tablet", "pad", "express keys", "wacom"],
-            Page::Pointers => &["cursor", "cursor theme", "large cursor"],
-            Page::Accessibility => &[
+            Page::Cursor => &["pointers", "cursor theme", "large cursor"],
+            Page::TextKeys => &[
+                "accessibility",
                 "sticky keys",
                 "slow keys",
                 "mouse keys",
@@ -235,7 +280,8 @@ impl Page {
                 "large text",
                 "a11y",
             ],
-            Page::Vision => &[
+            Page::MagnifierFilters => &[
+                "vision",
                 "color",
                 "colour",
                 "filter",
@@ -246,7 +292,8 @@ impl Page {
                 "magnifier",
                 "zoom",
             ],
-            Page::Sounds => &[
+            Page::Sound => &[
+                "sounds",
                 "sound theme",
                 "notification sounds",
                 "bell",
@@ -323,8 +370,14 @@ impl Page {
             .replace(' ', "-")
     }
 
+    /// The page `name` opens: its slug, or an old name the page went by.
     pub fn named(name: &str) -> Option<Page> {
-        Page::all().find(|p| p.slug() == name)
+        Page::all().find(|p| p.slug() == name).or_else(|| {
+            ALIASES
+                .iter()
+                .find(|(old, _)| *old == name)
+                .map(|&(_, p)| p)
+        })
     }
 }
 
@@ -422,10 +475,23 @@ mod tests {
     }
 
     #[test]
+    fn the_slugs_the_compositor_and_portal_pass_are_current() {
+        for s in [
+            "night-light",
+            "keyboard",
+            "taskbar",
+            "background",
+            "text-and-keys",
+        ] {
+            assert_eq!(Page::named(s).map(Page::slug).as_deref(), Some(s));
+        }
+    }
+
+    #[test]
     fn a_page_is_found_by_label_then_keyword_then_control_label() {
         assert_eq!(Page::NightLight.find("night"), Some(Hit::Label));
         assert_eq!(Page::FontsAndIcons.find("icons fonts"), Some(Hit::Label));
-        assert_eq!(Page::Mouse.find("mouse speed"), Some(Hit::Keyword));
+        assert_eq!(Page::MouseTouchpad.find("mouse speed"), Some(Hit::Keyword));
         assert_eq!(
             Page::DefaultPrograms.find("default browser"),
             Some(Hit::Keyword)

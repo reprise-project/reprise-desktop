@@ -1,4 +1,4 @@
-//! The Vision page: the screen's colour filter (`[accessibility] color_filter` and
+//! The Magnifier & Filters page: the screen's colour filter (`[accessibility] color_filter` and
 //! `color_filter_intensity`) with a preview of what it does to six colours, and the magnifier's
 //! following (`[accessibility] magnifier_follow`) with the keys that zoom. The intensity greys unless a
 //! colour-blind correction is picked; the preview follows the pending choice, the zoom keys' note the

@@ -1,4 +1,4 @@
-//! Taskbar, Launcher, Switcher, Desktops and Windows.
+//! Taskbar, Search, Window Switcher, Virtual Desktops and Window Behavior.
 
 use super::{Area, GX, TRAY_CUSTOMIZE, X, button, choice, edit, group, spin};
 use reprisekit::classic::widgets::{BUTTON_H, BUTTON_W, LINE_H};
@@ -114,11 +114,11 @@ pub fn windows(a: Area) -> Form {
     Form::new(items)
 }
 
-/// The Windows page's Forget Positions under the remember check: the compositor drops every
+/// The Window Behavior page's Forget Positions under the remember check: the compositor drops every
 /// window place it kept, for every set of screens.
 pub const FORGET_FRAMES: &str = "forget_window_frames";
 
-/// The Windows page controls that grey with drag snapping off.
+/// The Window Behavior page controls that grey with drag snapping off.
 pub(super) const DRAG_SNAP_CONTROLS: [&str; 4] = [
     "snap_bar",
     "snap_distance_label",
@@ -354,7 +354,7 @@ pub(super) const REVEAL_CONTROLS: [&str; 3] = [
     "taskbar_reveal_on_attention",
 ];
 
-/// The Launcher page: the Search group's checks for files and folders and for open windows, with
+/// The Search page: the Search group's checks for files and folders and for open windows, with
 /// what they add under them.
 pub fn launcher(a: Area) -> Form {
     Form::new(vec![

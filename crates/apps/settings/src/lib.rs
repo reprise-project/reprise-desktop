@@ -246,11 +246,22 @@ fn page_arg(mut args: impl Iterator<Item = String>) -> Option<(Page, Option<Stri
         *slot = value.or_else(|| args.next());
     }
     let name = page?;
-    let page = Page::named(&name);
-    if page.is_none() {
+    let Some(page) = Page::named(&name) else {
         log::warn!("--page {name:?} names no page");
+        return None;
+    };
+    let page = focus.as_deref().map_or(page, |id| holding(page, id));
+    Some((page, focus))
+}
+
+/// `page`, or the page whose search terms hold control `id` when `page`'s don't
+/// (a control that moved pages keeps its `--focus` callers).
+fn holding(page: Page, id: &str) -> Page {
+    let holds = |p: &Page| p.terms().iter().any(|&(i, _)| i == id);
+    if holds(&page) {
+        return page;
     }
-    Some((page?, focus))
+    Page::all().find(holds).unwrap_or(page)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -366,7 +377,7 @@ struct SettingsApp {
     pad_picked: usize,
     pads_fresh: bool,
 
-    /// The Sounds page's programs: those the compositor saw send notifications (asked each time
+    /// The Sound page's programs: those the compositor saw send notifications (asked each time
     /// the page opens, `notify_fresh`) and those the config lists.
     notify_programs: Vec<notifypage::Program>,
     notify_seen: Vec<(String, String)>,
@@ -389,7 +400,7 @@ struct SettingsApp {
     saver_dlg: Option<saverdlg::SaverDialog>,
     saver_preview: Option<(saverpage::Preview, std::time::Instant)>,
     saver_ticking: bool,
-    /// BlueZ's paired devices, listed each time the Screen Saver page opens.
+    /// BlueZ's paired devices, listed each time the Screen Saver & Lock page opens.
     away_devices: Vec<reprisebus::bluez::Device>,
     away_fresh: bool,
     saver_photos: Option<(String, Receiver<Vec<PathBuf>>)>,
@@ -478,7 +489,7 @@ impl SettingsApp {
 
     /// Lay the sheet out for a main window of client `size`: the sheet
     /// takes it (no smaller than its smallest), every page takes the
-    /// layout its builder gives it there, and the Pointers preview is
+    /// layout its builder gives it there, and the Cursor preview is
     /// drawn again at its new size. What the controls hold stays. A window
     /// smaller than the smallest sheet shows it scrolled. True when
     /// anything moved.
@@ -711,7 +722,7 @@ impl SettingsApp {
             return;
         }
         let pic = cursors::preview(&key.0, key.1, pages::preview_size(self.area()), window);
-        self.sheet.pages[Page::Pointers.index()].set_picture(pages::CURSOR_PREVIEW, pic);
+        self.sheet.pages[Page::Cursor.index()].set_picture(pages::CURSOR_PREVIEW, pic);
         self.preview_for = Some(key);
     }
 
@@ -890,7 +901,7 @@ impl App for SettingsApp {
         self.ensure_remote();
         if win == repriseapp::MAIN
             && !self.saver_ticking
-            && self.sheet.tabs.open == Page::ScreenSaver.index()
+            && self.sheet.tabs.open == Page::ScreenSaverLock.index()
         {
             self.saver_ticking = true;
             reply.tick = true;

@@ -310,7 +310,7 @@ fn first_ink(c: &Canvas, r: Rect) -> Option<i32> {
 }
 
 /// The text under a check box or radio starts at that choice's label column in
-/// every look: the shortcuts note, the Desktops page's indented rows and the
+/// every look: the shortcuts note, the indented rows on Virtual Desktops and the
 /// Night Light times row under "At fixed times". That row takes the check
 /// box's column, so under Classic and Blue, whose radio label sits a pixel left
 /// of a check box's, it starts a pixel right of the radio's.
@@ -560,7 +560,7 @@ fn render_the_pages() {
     let mut sheet = with(&two);
     fill_layouts(&mut sheet, &two, &reg(), Some(1));
     let pic = crate::cursors::preview("Adwaita", 32, preview_size(Area::MIN), theme.colors.window);
-    sheet.pages[Page::Pointers.index()].set_picture(CURSOR_PREVIEW, pic);
+    sheet.pages[Page::Cursor.index()].set_picture(CURSOR_PREVIEW, pic);
     backgroundpage::show(
         &mut sheet.pages[Page::Background.index()],
         &two,
@@ -676,7 +676,7 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
     let s = built();
     let on = |p: Page| names(&keys_of(&s.pages[p.index()]));
     assert_eq!(
-        on(Page::Sounds),
+        on(Page::Sound),
         [
             "notifications.sound",
             "notifications.no_balloons",
@@ -686,7 +686,7 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
             "sounds.allow_boost"
         ]
     );
-    assert_eq!(on(Page::Pointers), ["cursor.theme", "cursor.size"]);
+    assert_eq!(on(Page::Cursor), ["cursor.theme", "cursor.size"]);
     assert_eq!(
         on(Page::Background),
         [
@@ -704,7 +704,7 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
         "the wallpaper list's keys too"
     );
     assert!(on(Page::Keyboard).contains(&"keyboard.layout".to_string()));
-    assert!(on(Page::ScreenSaver).contains(&"screensaver.name".to_string()));
+    assert!(on(Page::ScreenSaverLock).contains(&"screensaver.name".to_string()));
     for p in [Page::Display, Page::StartMenu, Page::Tablet, Page::Backup] {
         assert_eq!(on(p), Vec::<String>::new(), "{p:?} writes no config key");
     }

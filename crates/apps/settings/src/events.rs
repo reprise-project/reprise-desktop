@@ -32,7 +32,7 @@ impl SettingsApp {
                 if p == Page::Tablet.index() {
                     return self.tablet_changed(id);
                 }
-                if p == Page::Sounds.index()
+                if p == Page::Sound.index()
                     && [
                         notifypage::PROGRAMS,
                         notifypage::BALLOONS,
@@ -53,16 +53,16 @@ impl SettingsApp {
                     self.interface_moved(&from);
                 }
                 if id == saverpage::SAVER {
-                    let row = self.sheet.pages[Page::ScreenSaver.index()].combo_selected(id);
+                    let row = self.sheet.pages[Page::ScreenSaverLock.index()].combo_selected(id);
                     saverpage::pick(&mut self.want, row.unwrap_or(0));
                 }
                 if id == saverpage::AWAY {
-                    let row = self.sheet.pages[Page::ScreenSaver.index()].combo_selected(id);
+                    let row = self.sheet.pages[Page::ScreenSaverLock.index()].combo_selected(id);
                     saverpage::pick_away(&self.away_devices, &mut self.want, row.unwrap_or(0));
                 }
                 if id == saverpage::WAIT
                     && let Some(form::Control::UpDown(u)) = self.sheet.pages
-                        [Page::ScreenSaver.index()]
+                        [Page::ScreenSaverLock.index()]
                     .item(id)
                     .map(|i| &i.control)
                 {

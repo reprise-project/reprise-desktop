@@ -879,7 +879,7 @@ fn the_effects_page_geometry() {
     assert_eq!(rect(&s, p, "taskbar_group"), Rect::new(20, 296, 358, 48));
     assert_eq!(rect(&s, p, "taskbar_slide"), Rect::new(GX, 318, 13, 13));
     for id in ["notification_sound", "sound_theme"] {
-        assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Sounds");
+        assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Sound");
     }
     inside_page(&s, p);
 }

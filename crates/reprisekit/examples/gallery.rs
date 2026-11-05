@@ -1375,7 +1375,7 @@ fn render_backgrounds() -> Canvas {
     c
 }
 
-/// The Screen Saver page's monitor with each saver at seed 7 after a second.
+/// The Screen Saver & Lock page's monitor with each saver at seed 7 after a second.
 fn render_savers() -> Canvas {
     use reprisekit::saver::{Kind, Options, Saver};
     let text = TextRenderer::load(&FontConfig::default());

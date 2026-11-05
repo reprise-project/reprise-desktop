@@ -35,7 +35,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("slideshow_interval", "Change picture every:"),
             ("slideshow_shuffle", "Shuffle"),
         ],
-        Page::ScreenSaver => &[
+        Page::ScreenSaverLock => &[
             ("saver_settings", "Settings..."),
             ("saver_preview", "Preview"),
             ("saver_wait", "Wait:"),
@@ -146,7 +146,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("ql_up", "Move Up"),
             ("ql_down", "Move Down"),
         ],
-        Page::Launcher => &[
+        Page::Search => &[
             (
                 "launcher_files",
                 "Also find files and folders in my home folder",
@@ -165,7 +165,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("switcher_flip", "Show windows in 3D with Super+Tab"),
             ("hot_corner", "Hot corner:"),
         ],
-        Page::Desktops => &[
+        Page::VirtualDesktops => &[
             ("use_desktops", "Use virtual desktops"),
             ("desktops", "Number of desktops:"),
             ("desktop_animation", "Switch animation:"),
@@ -185,7 +185,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("widget_calendar", "Calendar"),
             ("widget_meter", "System meter"),
         ],
-        Page::Windows => &[
+        Page::WindowBehavior => &[
             (
                 "snap_enabled",
                 "Snap a dragged window to screen edges and layouts",
@@ -233,7 +233,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("osd_caps_lock", "Show Caps Lock on screen"),
             ("osd_num_lock", "Show Num Lock on screen"),
         ],
-        Page::Mouse => &[
+        Page::MouseTouchpad => &[
             ("double_click_ms", "Double-click speed"),
             ("mouse_speed", "Pointer speed"),
             ("mouse_accel", "Enhance pointer precision"),
@@ -257,8 +257,8 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("tablet_ring_step", "Ring step:"),
             ("tablet_strip_step", "Strip step:"),
         ],
-        Page::Pointers => &[("cursor_theme", "Scheme:"), ("cursor_size", "Size:")],
-        Page::Accessibility => &[
+        Page::Cursor => &[("cursor_theme", "Scheme:"), ("cursor_size", "Size:")],
+        Page::TextKeys => &[
             ("text_size", "Text size:"),
             ("sticky_keys", "Use StickyKeys"),
             (
@@ -277,7 +277,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("mouse_keys_acceleration", "MouseKeys acceleration"),
             ("key_shortcuts", "Use the keyboard shortcuts"),
         ],
-        Page::Vision => &[
+        Page::MagnifierFilters => &[
             ("color_filter", "Color filter:"),
             ("color_filter_intensity", "Intensity:"),
             (
@@ -285,7 +285,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "When zoomed in, follow the text cursor and focus",
             ),
         ],
-        Page::Sounds => &[
+        Page::Sound => &[
             ("sound_theme", "Sound theme:"),
             ("notification_sound", "Play a sound for notifications"),
             ("bell", "Play a sound when a program rings the bell"),
