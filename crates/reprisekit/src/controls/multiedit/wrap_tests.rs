@@ -48,6 +48,21 @@ fn a_row_breaks_before_the_word_that_crosses_the_edge() {
 }
 
 #[test]
+fn bold_text_breaks_where_its_bold_words_cross_the_edge() {
+    let text = font();
+    let m = Metrics {
+        font_px: 20,
+        bold: true,
+        ..wrapping()
+    };
+    let regular = text.measure("xx xx", false, m.font_px);
+    let bold = text.measure("xx xx", true, m.font_px);
+    assert!(regular < bold, "bold is wider: {regular} < {bold}");
+    assert_eq!(breaks(&text, &m, "xx xx xx", bold), [6]);
+    assert_eq!(breaks(&text, &m, "xx xx xx", regular), [3, 6]);
+}
+
+#[test]
 fn a_word_wider_than_a_row_breaks_inside_it() {
     let (text, m) = (font(), wrapping());
     let w = text.measure("xxxxx", false, m.font_px);

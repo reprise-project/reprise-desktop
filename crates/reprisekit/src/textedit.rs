@@ -1142,13 +1142,24 @@ pub fn paths_line<P: AsRef<std::path::Path>>(paths: &[P]) -> String {
 
 /// Byte index in `s` nearest to `x` px: the char boundary whose prefix advance is closest, so a click on a glyph's right half lands after it; ties go earlier. The walk stops at the first prefix reaching `x`.
 pub fn index_at(text: &crate::text::TextRenderer, s: &str, x: i32, px: u32) -> usize {
+    index_at_weight(text, s, x, false, px)
+}
+
+/// [`index_at`] for text drawn bold when `bold`.
+pub fn index_at_weight(
+    text: &crate::text::TextRenderer,
+    s: &str,
+    x: i32,
+    bold: bool,
+    px: u32,
+) -> usize {
     let mut best = (0usize, x.abs());
     let mut pen = 0;
     for (i, ch) in s.char_indices() {
         if pen >= x {
             break;
         }
-        pen += text.advance(ch, false, px);
+        pen += text.advance(ch, bold, px);
         let d = (pen - x).abs();
         if d < best.1 {
             best = (i + ch.len_utf8(), d);
