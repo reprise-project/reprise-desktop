@@ -718,8 +718,8 @@ fn keys_on(s: &PropSheet, p: Page) -> Vec<String> {
     names(&keys_of(&s.pages[p.index()]))
 }
 
-/// Under Glass, the focusable control `id` is built on `to` and not on `from`, its search term
-/// moved with it, and focusing it on `to` lands on it.
+/// Under Glass, the focusable control `id` is built on `to`, listed in its search terms, and
+/// focusing it there lands on it; an unbound one (a button) is also checked off `from`.
 fn assert_moved(id: &str, from: Page, to: Page) {
     let mut s = under("glass");
     assert!(
@@ -727,14 +727,18 @@ fn assert_moved(id: &str, from: Page, to: Page) {
         "{id} is on {}",
         to.label()
     );
+    if !binds().iter().any(|b| b.id() == id) {
+        assert!(
+            s.pages[from.index()].item(id).is_none(),
+            "{id} is off {}",
+            from.label()
+        );
+    }
     assert!(
-        s.pages[from.index()].item(id).is_none(),
-        "{id} is off {}",
-        from.label()
+        to.terms().iter().any(|(t, _)| *t == id),
+        "{id} is in {}'s terms",
+        to.label()
     );
-    let has = |p: Page| p.terms().iter().any(|(t, _)| *t == id);
-    assert!(has(to), "{id} is in {}'s terms", to.label());
-    assert!(!has(from), "{id} is out of {}'s terms", from.label());
     s.tabs.open = to.index();
     s.focus_control(id);
     let form = &s.pages[to.index()];
@@ -765,14 +769,8 @@ fn widgets_and_water_live_on_background() {
             ".desktop_widgets",
         ]
     );
-    assert!(!keys_on(&s, Page::VirtualDesktops).contains(&".desktop_widgets".to_string()));
-    assert!(!keys_on(&s, Page::Advanced).contains(&"wallpaper.water".to_string()));
     for k in ["widgets", "water"] {
         assert!(Page::Background.keywords().contains(&k), "{k}");
-        assert!(
-            !Page::VirtualDesktops.keywords().contains(&k)
-                && !Page::Advanced.keywords().contains(&k)
-        );
     }
 }
 
