@@ -1035,6 +1035,7 @@ pub(crate) mod tests {
                 cursor_themes: &[],
                 sound_themes: &[],
                 layouts: &[],
+                system_layout: "us",
                 heads: &[],
             },
         );

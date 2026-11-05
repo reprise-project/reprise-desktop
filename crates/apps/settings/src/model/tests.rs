@@ -1514,3 +1514,17 @@ fn shortcut_rows_read_as_plain_names() {
         assert!(repriseconf::keybind::describe(a).is_some(), "{a}");
     }
 }
+
+#[test]
+fn keys_for_names_the_bound_chords() {
+    let d = Settings::default().shortcuts;
+    assert_eq!(keys_for(&d, "launcher").as_deref(), Some("Super+Space"));
+    assert_eq!(keys_for(&d, "overview").as_deref(), Some("Super+W"));
+    assert_eq!(keys_for(&d, "flip").as_deref(), Some("Super+Tab"));
+    assert_eq!(
+        keys_for(&d, "next-layout").as_deref(),
+        Some("Shift+Left Alt")
+    );
+    assert_eq!(keys_for(&d, "zoom-in").as_deref(), Some("Super+="));
+    assert_eq!(keys_for(&[], "launcher"), None);
+}

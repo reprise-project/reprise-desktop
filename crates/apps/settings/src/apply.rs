@@ -190,7 +190,7 @@ impl SettingsApp {
         }
         model::copy_keys(&keys, &def, &mut self.want);
         self.config_changed();
-        pages::write(&mut self.sheet, &self.want, &self.xkb);
+        pages::write(&mut self.sheet, &self.want, &self.xkb, &self.system_layout);
         self.fill_wallpapers();
         self.want_preview();
         self.sync_apply();
@@ -332,7 +332,7 @@ impl SettingsApp {
         }
         model::rebase(&mut self.want, &self.loaded, &fresh);
         self.loaded = fresh;
-        pages::write(&mut self.sheet, &self.want, &self.xkb);
+        pages::write(&mut self.sheet, &self.want, &self.xkb, &self.system_layout);
         self.menu_icons_due = true;
         self.fill_shortcuts();
         self.fill_wallpapers();
@@ -343,7 +343,7 @@ impl SettingsApp {
 
     pub(crate) fn revert(&mut self) {
         self.want = self.loaded.clone();
-        pages::write(&mut self.sheet, &self.want, &self.xkb);
+        pages::write(&mut self.sheet, &self.want, &self.xkb, &self.system_layout);
         self.menu_icons_due = true;
         self.fill_shortcuts();
         let checks = self.applied_checks.clone();

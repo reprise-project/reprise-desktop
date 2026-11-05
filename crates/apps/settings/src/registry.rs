@@ -21,6 +21,8 @@ pub struct Sources<'a> {
     pub cursor_themes: &'a [String],
     pub sound_themes: &'a [String],
     pub layouts: &'a [Layout],
+    /// The layout an empty `[keyboard] layout` gives ([`crate::pages::system_layout`]).
+    pub system_layout: &'a str,
     pub heads: &'a [repriseapp::heads::Head],
 }
 
@@ -89,7 +91,7 @@ pub fn sheet(s: &Settings, src: &Sources) -> PropSheet {
         rows.iter().map(|(h, l)| (*h, l.as_slice())).collect();
     let forms = Page::all().map(|p| build(p, src, Area::MIN)).collect();
     let mut sheet = PropSheet::with_list(&groups, forms, pages::CLIENT);
-    pages::write(&mut sheet, s, src.layouts);
+    pages::write(&mut sheet, s, src.layouts, src.system_layout);
     sheet
 }
 
@@ -115,6 +117,7 @@ mod tests {
                 cursor_themes: &[],
                 sound_themes: &[],
                 layouts: &[],
+                system_layout: "us",
                 heads: &[],
             },
         )
@@ -286,6 +289,7 @@ mod tests {
             cursor_themes: &themes,
             sound_themes: &themes,
             layouts: &[],
+            system_layout: "us",
             heads: &[],
         };
         let glass = Settings {

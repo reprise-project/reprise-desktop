@@ -11,7 +11,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::theme::Color;
 use reprisekit::trackbar::{self, TrackBar};
 
-use crate::model::{Choices, Settings, Shortcut};
+use crate::model::{Choices, Settings, Shortcut, keys_for};
 use crate::pages::{Area, GX, choice, group};
 
 /// The filters the combo lists, in the order of `colorfilter::Filter::ALL`.
@@ -113,20 +113,13 @@ pub fn show_zoom_keys(page: &mut Form, binds: &[Shortcut]) {
 /// The zoom note's lines: the keys bound to zoom-in, zoom-out and zoom-reset, then where to change
 /// them. A note too long for the group drops the pointer to the Keyboard page first.
 fn zoom_note(binds: &[Shortcut]) -> Vec<String> {
-    let keys = |action: &str| {
-        let shown: Vec<String> = (binds.iter())
-            .filter(|b| b.action == action)
-            .map(|b| shown_keys(&b.keys))
-            .collect();
-        (!shown.is_empty()).then(|| shown.join(" or "))
-    };
     let parts: Vec<String> = [
         ("zoom-in", "zooms in, up to 8x"),
         ("zoom-out", "zooms out"),
         ("zoom-reset", "goes back to 1x"),
     ]
     .into_iter()
-    .filter_map(|(action, does)| keys(action).map(|k| format!("{k} {does}")))
+    .filter_map(|(action, does)| keys_for(binds, action).map(|k| format!("{k} {does}")))
     .collect();
     let sentence = match parts.as_slice() {
         [] => return vec!["No keys zoom. The Keyboard page binds them.".into()],
@@ -144,21 +137,6 @@ fn zoom_note(binds: &[Shortcut]) -> Vec<String> {
     };
     lines.truncate(NOTE_LINES);
     lines
-}
-
-/// `keys` as the note names them: a key that types a character shows it ("Super+equal" reads "Super+=").
-fn shown_keys(keys: &str) -> String {
-    let (mods, key) = keys.rsplit_once('+').unwrap_or(("", keys));
-    let key = key.trim();
-    let typed = repriseconf::keybind::keysym(key)
-        .filter(|sym| (0x21..=0x7e).contains(sym))
-        .and_then(char::from_u32);
-    let key = typed.map_or_else(|| key.to_string(), String::from);
-    if mods.is_empty() {
-        key
-    } else {
-        format!("{}+{key}", mods.trim_end())
-    }
 }
 
 /// The preview's bitmap: the sample colours over the same colours through `filter` at `intensity` (0 to 1).
@@ -193,7 +171,6 @@ pub fn follow(page: &mut Form, s: &Settings) {
             frame: 2,
         };
     }
-    show_zoom_keys(page, &s.shortcuts);
 }
 
 #[cfg(test)]
@@ -245,7 +222,7 @@ mod tests {
         assert_eq!(
             zoom_note(&binds),
             [
-                "Ctrl+Alt++ or Super+KP_Add zooms in, up to 8x and",
+                "Ctrl+Alt++ or Super+KP Add zooms in, up to 8x and",
                 "Ctrl+Alt+Home goes back to 1x. The Keyboard page changes",
                 "these keys.",
             ]

@@ -245,7 +245,7 @@ fn the_keyboard_page_geometry() {
     );
     assert_eq!(
         rect(&s, Page::Keyboard, KB_LAYOUTS),
-        Rect::new(116, 62, 169, 72)
+        Rect::new(116, 62, 169, 55)
     );
     assert_eq!(rect(&s, Page::Keyboard, KB_ADD), Rect::new(291, 62, 75, 23));
     assert_eq!(
@@ -372,11 +372,11 @@ fn the_layouts_list_names_each_layout_and_its_buttons_follow_it() {
     assert!(enabled(&s, KB_ADD));
     assert!(!enabled(&s, KB_REMOVE), "nothing picked");
     assert!(!enabled(&s, KB_UP));
-    fill_layouts(&mut s, &two, &reg(), Some(1));
+    fill_layouts(&mut s, &two, &reg(), "us", Some(1));
     assert!(enabled(&s, KB_REMOVE));
     assert!(enabled(&s, KB_UP));
     s.pages[Page::Keyboard.index()].focus_id(KB_UP);
-    fill_layouts(&mut s, &two, &reg(), Some(0));
+    fill_layouts(&mut s, &two, &reg(), "us", Some(0));
     assert!(!enabled(&s, KB_UP), "the first cannot move up");
     assert_eq!(
         s.pages[Page::Keyboard.index()].focus(),
@@ -387,25 +387,109 @@ fn the_layouts_list_names_each_layout_and_its_buttons_follow_it() {
         kb_layout: "us,hu,de,fr".into(),
         ..Settings::default()
     };
-    fill_layouts(&mut s, &four, &reg(), None);
+    fill_layouts(&mut s, &four, &reg(), "us", None);
     assert!(!enabled(&s, KB_ADD), "four is the most");
     assert_eq!(rows(&s)[2], "de", "an unknown code shows as itself");
 }
 
 #[test]
-fn the_shortcut_list_shows_keys_and_the_actions_plain_name() {
+fn an_empty_layout_list_shows_the_layout_in_use_greyed() {
+    assert_eq!(system_layout(None), "us");
+    assert_eq!(system_layout(Some("de,us")), "de");
+    let mut s = with(&Settings::default());
+    let list = |s: &mut PropSheet| match s.pages[Page::Keyboard.index()]
+        .item_mut(KB_LAYOUTS)
+        .map(|i| &mut i.control)
+    {
+        Some(Control::ListBox { list, .. }) => list.clone(),
+        _ => panic!("a list box"),
+    };
+    let l = list(&mut s);
+    assert_eq!(
+        (l.items.as_slice(), l.greyed.as_slice(), l.selected),
+        (
+            &["English (US) (system default)".to_string()][..],
+            &[true][..],
+            None
+        )
+    );
+    if let Some(Control::ListBox { list, .. }) = s.pages[Page::Keyboard.index()]
+        .item_mut(KB_LAYOUTS)
+        .map(|i| &mut i.control)
+    {
+        list.selected = Some(0);
+    }
+    follow(&mut s, &Settings::default());
+    assert!(
+        !enabled_on(&s, Page::Keyboard, KB_REMOVE),
+        "nothing to remove"
+    );
+    assert!(!enabled_on(&s, Page::Keyboard, KB_UP), "nothing to move");
+    fill_layouts(&mut s, &Settings::default(), &reg(), "hu", None);
+    assert_eq!(list(&mut s).items, ["Hungarian (system default)"]);
+}
+
+#[test]
+fn the_keyboard_page_names_its_switch_keys_and_units() {
+    let s = built();
+    let p = Page::Keyboard;
+    assert_eq!(rect(&s, p, KB_LAYOUTS), Rect::new(GX + 84, 62, 169, 55));
+    assert_eq!(
+        lines(&s, p, KB_SWITCH_NOTE),
+        ["Shift+Left Alt switches them."]
+    );
+    assert_eq!(
+        rect(&s, p, KB_SWITCH_NOTE),
+        Rect::new(GX + 84, 122, 169, 13)
+    );
+    assert_eq!(lines(&s, p, "rate_units"), ["a second"]);
+    assert_eq!(rect(&s, p, "rate_units"), Rect::new(GX + 140, 222, 50, 13));
+    assert_eq!(
+        rect(&s, p, "repeat_delay"),
+        Rect::new(GX + 240, 218, 50, 20)
+    );
+    assert_eq!(rect(&s, p, "delay_units"), Rect::new(GX + 296, 222, 20, 13));
+    inside_page(&s, p);
+}
+
+#[test]
+fn the_switch_note_follows_the_next_layout_keys() {
+    let mut s = built();
+    let rebound = [
+        Shortcut::new("Super+space", "next-layout", ""),
+        Shortcut::new("Alt+Shift_R", "next-layout", ""),
+    ];
+    show_keys(&mut s, &rebound);
+    assert_eq!(
+        lines(&s, Page::Keyboard, KB_SWITCH_NOTE),
+        ["Super+Space or Alt+Right Shift switches them."]
+    );
+    show_keys(&mut s, &[]);
+    assert_eq!(
+        lines(&s, Page::Keyboard, KB_SWITCH_NOTE),
+        ["No key switches them."]
+    );
+}
+
+#[test]
+fn the_shortcut_list_shows_key_caps_and_the_actions_plain_name() {
     let mut lv = new_shortcut_list();
     let s = Settings {
         shortcuts: vec![
             Shortcut::new("Super+Return", "terminal", ""),
             Shortcut::new("Super+t", "spawn", "foot"),
+            Shortcut::new("Shift+Alt_L", "next-layout", ""),
         ],
         ..Settings::default()
     };
     fill_shortcuts(&mut lv, &s, &|a| a.into());
-    assert_eq!(lv.rows.len(), 2);
-    assert_eq!(lv.rows[0].cells, vec!["Super+Return", "Terminal"]);
-    assert_eq!(lv.rows[1].cells, vec!["Super+t", "Run foot"]);
+    assert_eq!(lv.rows.len(), 3);
+    assert_eq!(lv.rows[0].cells, vec!["Super+Enter", "Terminal"]);
+    assert_eq!(lv.rows[1].cells, vec!["Super+T", "Run foot"]);
+    assert_eq!(
+        lv.rows[2].cells,
+        vec!["Shift+Left Alt", "Next keyboard layout"]
+    );
     assert!(lv.checks.is_none());
 }
 
@@ -542,7 +626,7 @@ fn two_finger_tap_follows_tap_to_click() {
         tap_to_click: false,
         ..Settings::default()
     };
-    write(&mut s, &off, &reg());
+    write(&mut s, &off, &reg(), "us");
     assert!(!enabled(&s));
 }
 
