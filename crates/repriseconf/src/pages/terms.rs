@@ -361,10 +361,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "recent_files",
                 "Show recently used files in menus and file dialogs",
             ),
-            (
-                "clipboard_history",
-                "Keep a clipboard history (Super+V opens it)",
-            ),
+            ("clipboard_history", "Keep a clipboard history"),
             (
                 "capture_border",
                 "Show a red border around what is being shared",

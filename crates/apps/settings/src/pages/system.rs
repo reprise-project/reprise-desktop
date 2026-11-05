@@ -6,7 +6,9 @@ use super::{
     THUMBS_CLEAR, THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, X, button, choice, combo, edit,
     ends_track, field, group, list, locations, spin, time,
 };
-use crate::model::{FRAME_RATES, GLASS_NOTIFY_STYLES, REMOTE_ENCODERS, REMOTE_QUALITIES};
+use crate::model::{
+    FRAME_RATES, GLASS_NOTIFY_STYLES, REMOTE_ENCODERS, REMOTE_QUALITIES, Shortcut, keys_for,
+};
 use crate::notifypage;
 use reprisebus::remote::{Client, Status};
 use repriseconf::ThumbnailCache;
@@ -159,6 +161,19 @@ pub fn advanced(a: Area) -> Form {
     Form::new(items)
 }
 
+pub(super) const CLIPBOARD_HISTORY: &str = "clipboard_history";
+
+/// The clipboard history check's label, naming the keys that open the history.
+pub(super) fn clipboard_label(binds: &[Shortcut]) -> String {
+    match keys_for(binds, "clipboard-history") {
+        Some(k) => format!(
+            "Keep a &clipboard history ({} opens it)",
+            reprisekit::text::escape_mnemonic(&k)
+        ),
+        None => "Keep a &clipboard history".into(),
+    }
+}
+
 /// The location check, its answers (a `ListView` the host draws at [`locations`]) with
 /// Forget, the recent files and clipboard histories, and the border around a shared screen.
 pub fn privacy(a: Area) -> Form {
@@ -179,12 +194,7 @@ pub fn privacy(a: Area) -> Form {
             244 + dh,
             "Show recently used &files in menus and file dialogs",
         ),
-        Item::check(
-            "clipboard_history",
-            GX,
-            266 + dh,
-            "Keep a &clipboard history (Super+V opens it)",
-        ),
+        Item::check(CLIPBOARD_HISTORY, GX, 266 + dh, &clipboard_label(&[])),
         group(a, "sharing_group", 302 + dh, 48, "Screen Sharing"),
         Item::check(
             "capture_border",
