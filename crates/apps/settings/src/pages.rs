@@ -40,8 +40,8 @@ pub use lists::{
     show_locations_loading,
 };
 pub use system::{
-    REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup, power, privacy,
-    remote_desktop, selected_client, show_remote, sound, startup,
+    REMOTE_ALLOW, REMOTE_DISCONNECT, REMOTE_REGENERATE, advanced, backup, notifications, power,
+    privacy, remote_desktop, selected_client, show_remote, sound, startup,
 };
 
 /// The client every page is built for at [`Area::MIN`]; the sheet puts each page right of its list ([`PropSheet::on_page`]).

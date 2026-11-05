@@ -1,4 +1,5 @@
 use super::*;
+use crate::pages::system::NOTIFICATION_SOUND;
 
 #[test]
 fn the_sound_page_geometry() {
@@ -9,29 +10,158 @@ fn the_sound_page_geometry() {
     assert_eq!(rect(&s, p, "sound_theme"), Rect::new(116, 66, 200, 21));
     assert_eq!(
         rect(&s, p, "sound_events_group"),
-        Rect::new(20, 106, 358, 74)
+        Rect::new(20, 106, 358, 48)
+    );
+    assert_eq!(rect(&s, p, "bell"), Rect::new(GX, 128, 13, 13));
+    assert_eq!(rect(&s, p, "volume_group"), Rect::new(20, 164, 358, 74));
+    assert_eq!(rect(&s, p, "allow_boost"), Rect::new(GX, 186, 13, 13));
+    assert_eq!(rect(&s, p, "allow_boost_note").y, 206);
+    inside_page(&s, p);
+}
+
+#[test]
+fn notifications_gather_on_their_own_page() {
+    for id in [NOTIFICATION_SOUND, notifypage::PROGRAMS] {
+        assert_moved(id, Page::Sound, Page::Notifications);
+    }
+    assert_moved(
+        "glass_notification_style",
+        Page::Appearance,
+        Page::Notifications,
+    );
+    for i in ["classic", "glass"] {
+        assert_eq!(
+            keys_on(&under(i), Page::Notifications),
+            [
+                "glass.notification_style",
+                "notifications.sound",
+                "notifications.no_balloons",
+                "notifications.no_sounds",
+                "notifications.quiet_hours",
+                "notifications.auto_dnd"
+            ],
+            "{i}"
+        );
+    }
+    assert_eq!(
+        keys_on(&built(), Page::Sound),
+        ["sounds.theme", "sounds.bell", "sounds.allow_boost"]
+    );
+    assert!(
+        !keys_on(&under("glass"), Page::Appearance).contains(&"glass.notification_style".into())
+    );
+    for k in ["balloons", "do not disturb", "dnd", "quiet hours", "popups"] {
+        assert!(Page::Notifications.keywords().contains(&k), "{k}");
+    }
+    assert_eq!(Page::named("notifications"), Some(Page::Notifications));
+}
+
+#[test]
+fn the_notifications_page_geometry() {
+    let s = built();
+    let p = Page::Notifications;
+    assert_eq!(rect(&s, p, "balloons_group"), Rect::new(20, 44, 358, 92));
+    assert_eq!(rect(&s, p, NOTIFICATION_SOUND), Rect::new(GX, 66, 13, 13));
+    assert_eq!(
+        rect(&s, p, "glass_notification_style"),
+        Rect::new(GX + 88, 88, 120, 21)
     );
     assert_eq!(
-        rect(&s, p, "notification_sound"),
-        Rect::new(GX, 128, 13, 13)
+        rect(&s, p, notifypage::STYLE_NOTE),
+        Rect::new(GX, 114, 334, 13)
     );
-    assert_eq!(rect(&s, p, "bell"), Rect::new(GX, 154, 13, 13));
-    assert_eq!(rect(&s, p, "volume_group"), Rect::new(20, 190, 358, 74));
-    assert_eq!(rect(&s, p, "allow_boost"), Rect::new(GX, 212, 13, 13));
-    assert_eq!(rect(&s, p, "notify_group"), Rect::new(20, 274, 358, 144));
+    assert_eq!(rect(&s, p, "dnd_group"), Rect::new(20, 146, 358, 116));
+    assert_eq!(
+        rect(&s, p, notifypage::AUTO_DND),
+        Rect::new(GX, 168, 13, 13)
+    );
+    assert_eq!(rect(&s, p, notifypage::QUIET), Rect::new(GX, 192, 13, 13));
+    assert_eq!(rect(&s, p, "quiet_from").y, 212);
+    assert_eq!(rect(&s, p, "notify_group"), Rect::new(20, 272, 358, 144));
     assert_eq!(
         rect(&s, p, notifypage::PROGRAMS),
-        Rect::new(GX, 294, 334, 89)
+        Rect::new(GX, 292, 334, 89)
     );
     assert_eq!(
         rect(&s, p, notifypage::BALLOONS),
-        Rect::new(GX, 391, 13, 13)
+        Rect::new(GX, 389, 13, 13)
     );
     assert_eq!(
         rect(&s, p, notifypage::SOUNDS),
-        Rect::new(GX + 140, 391, 13, 13)
+        Rect::new(GX + 140, 389, 13, 13)
     );
     inside_page(&s, p);
+}
+
+#[test]
+fn quiet_hours_tick_to_both_times_and_untick_to_none() {
+    let mut s = built();
+    let mut got = Settings::default();
+    assert!(got.quiet_hours.is_empty() && got.auto_dnd);
+    follow(&mut s, &got);
+    for id in notifypage::QUIET_TIMES {
+        assert!(
+            !enabled_on(&s, Page::Notifications, id),
+            "{id} greyed while off"
+        );
+    }
+    tick(
+        &mut s,
+        &mut got,
+        Page::Notifications,
+        notifypage::QUIET,
+        true,
+    );
+    assert_eq!(got.quiet_hours, ["22:00", "07:00"]);
+    for id in notifypage::QUIET_TIMES {
+        assert!(enabled_on(&s, Page::Notifications, id), "{id} lit while on");
+    }
+    tick(
+        &mut s,
+        &mut got,
+        Page::Notifications,
+        notifypage::QUIET,
+        false,
+    );
+    assert_eq!(got.quiet_hours, Vec::<String>::new());
+    tick(
+        &mut s,
+        &mut got,
+        Page::Notifications,
+        notifypage::AUTO_DND,
+        false,
+    );
+    assert!(!got.auto_dnd);
+}
+
+#[test]
+fn quiet_hours_show_the_file_and_a_time_change_writes_its_end() {
+    let mut got = Settings {
+        quiet_hours: vec!["23:15".into(), "06:30".into()],
+        ..Settings::default()
+    };
+    let mut s = with(&got);
+    let p = Page::Notifications;
+    assert_eq!(s.pages[p.index()].checked(notifypage::QUIET), Some(true));
+    let to = notifypage::QUIET_TIMES[3];
+    if let Some(Control::Time(t)) = s.pages[p.index()].item_mut(to).map(|i| &mut i.control) {
+        assert_eq!((t.h, t.m), (6, 30));
+        t.set(8, 0, 0);
+    }
+    read_one(&s, to, &mut got);
+    assert_eq!(got.quiet_hours, ["23:15", "08:00"]);
+}
+
+#[test]
+fn the_notification_style_greys_with_a_note_outside_glass() {
+    let classic = under("classic");
+    let p = Page::Notifications;
+    assert!(!enabled_on(&classic, p, "glass_notification_style"));
+    assert_eq!(
+        lines(&classic, p, notifypage::STYLE_NOTE),
+        ["Only Glass draws balloons in a style."]
+    );
+    assert!(enabled_on(&under("glass"), p, "glass_notification_style"));
 }
 
 #[test]
@@ -40,7 +170,7 @@ fn the_program_switches_pin_their_pixels_in_every_look() {
         notify_no_sounds: vec!["chat".into()],
         ..Settings::default()
     };
-    let mut f = sound(Area::MIN, &[]);
+    let mut f = notifications(Area::MIN);
     let programs = notifypage::programs(
         &[
             ("mail".into(), "Mail".into()),
@@ -50,7 +180,7 @@ fn the_program_switches_pin_their_pixels_in_every_look() {
         |_| None,
     );
     notifypage::fill(&mut f, &programs, &s);
-    let row = Rect::new(20, 274, 358, 144);
+    let row = Rect::new(20, 272, 358, 144);
     let Some(none) = row_pins(&f, row) else {
         return;
     };
@@ -71,11 +201,11 @@ fn the_program_switches_pin_their_pixels_in_every_look() {
     );
 }
 
-/// The checks write `[notifications] sound` and `[sounds] bell` and grey the theme combo while
-/// both are off; the combo lists the installed sound themes, keeps a configured one that is
-/// missing, and writes the pick.
+/// The bell check writes `[sounds] bell`; the theme combo lists the installed sound themes, keeps
+/// a configured one that is missing, writes the pick, and stays lit with the bell off since
+/// notifications play from it too.
 #[test]
-fn the_sound_theme_and_the_sound_checks_write_their_keys() {
+fn the_sound_theme_and_the_bell_write_their_keys() {
     let root = std::env::temp_dir().join(format!("reprise-settings-sounds-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     for f in ["ocean/index.theme", "deep/stereo/bell.oga"] {
@@ -110,25 +240,23 @@ fn the_sound_theme_and_the_sound_checks_write_their_keys() {
         rows(&s, p, id),
         (vec!["deep".into(), "ocean".into(), "gone".into()], 2)
     );
-    assert_eq!(s.pages[p.index()].checked("notification_sound"), Some(true));
     assert_eq!(s.pages[p.index()].checked("bell"), Some(true));
 
     let mut got = want.clone();
     pick(&mut s, &mut got, p, id, 1);
     assert_eq!(got.sound_theme, "ocean");
-
-    for id in ["sound_theme_label", id] {
-        assert!(enabled_on(&s, p, id), "{id} is lit with the sound on");
-    }
-    tick(&mut s, &mut got, p, "notification_sound", false);
-    assert!(!got.notification_sound);
-    for id in ["sound_theme_label", id] {
-        assert!(enabled_on(&s, p, id), "{id} stays lit for the bell");
-    }
     tick(&mut s, &mut got, p, "bell", false);
     assert!(!got.bell);
+    tick(
+        &mut s,
+        &mut got,
+        Page::Notifications,
+        NOTIFICATION_SOUND,
+        false,
+    );
+    assert!(!got.notification_sound);
     for id in ["sound_theme_label", id] {
-        assert!(!enabled_on(&s, p, id), "{id} greys with both sounds off");
+        assert!(enabled_on(&s, p, id), "{id} stays lit");
     }
     assert_eq!(
         got,

@@ -9,8 +9,7 @@ use reprisekit::theme::{Color, ColorScheme, FontConfig, Theme};
 use reprisekit::trackbar::{self, TrackBar};
 
 use crate::model::{
-    GLASS_FRAMES, GLASS_MATERIALS, GLASS_MODES, GLASS_NOTIFY_STYLES, INTERFACES, Settings,
-    text_to_list,
+    GLASS_FRAMES, GLASS_MATERIALS, GLASS_MODES, INTERFACES, Settings, text_to_list,
 };
 use crate::pages::{Area, COMBO_MAX, TRACK_MAX, X, choice, time_edit};
 use crate::registry::Page;
@@ -177,14 +176,6 @@ pub fn page(s: &Settings, a: Area) -> Form {
             Item::check("glass_transparency", X, y(384), "Enable &transparency"),
             Item::check("glass_fast_drag", X, y(406), "Faster &glass while dragging"),
             Item::check("glass_blur_frames", X, y(428), "Sho&w frames behind glass"),
-            Item::label_at("notify_label", X, y(452), half_w, "N&otifications:"),
-            choice(
-                "glass_notification_style",
-                X,
-                y(468),
-                half_w,
-                GLASS_NOTIFY_STYLES,
-            ),
             Item::check("glass_streaks", rx, y(384), "Show &reflections"),
             Item::label_at("intensity_label", rx, y(288), rw, "Color i&ntensity:"),
             Item::new(

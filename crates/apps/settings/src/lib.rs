@@ -380,7 +380,7 @@ struct SettingsApp {
     pad_picked: usize,
     pads_fresh: bool,
 
-    /// The Sound page's programs: those the compositor saw send notifications (asked each time
+    /// The Notifications page's programs: those the compositor saw send notifications (asked each time
     /// the page opens, `notify_fresh`) and those the config lists.
     notify_programs: Vec<notifypage::Program>,
     notify_seen: Vec<(String, String)>,

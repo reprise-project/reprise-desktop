@@ -501,8 +501,11 @@ mod tests {
         );
         assert_eq!(
             rank("dis"),
-            [Setting::Page(Page::Display)],
-            "a word's start, not its middle"
+            [
+                Setting::Page(Page::Display),
+                Setting::Page(Page::Notifications)
+            ],
+            "a word's start, not its middle: Display, then \"do not disturb\""
         );
         assert_eq!(
             rank("sleep"),
@@ -514,7 +517,8 @@ mod tests {
         assert_eq!(rank("dpi"), [Setting::Page(Page::Display)]);
         assert_eq!(rank("lock screen"), [Setting::Page(Page::ScreenSaverLock)]);
         assert_eq!(rank("hot corner"), [Setting::Page(Page::Switcher)]);
-        assert_eq!(rank("notifications"), [Setting::Page(Page::Sound)]);
+        assert_eq!(rank("notifications"), [Setting::Page(Page::Notifications)]);
+        assert_eq!(rank("quiet hours"), [Setting::Page(Page::Notifications)]);
         assert_eq!(rank("clipboard"), [Setting::Page(Page::Privacy)]);
         assert_eq!(rank("print queue"), [Setting::App(2)]);
         assert_eq!(rank("firmware"), [Setting::App(3)]);
