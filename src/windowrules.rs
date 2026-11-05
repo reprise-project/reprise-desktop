@@ -49,12 +49,94 @@ pub struct WindowRule {
     pub sticky: Option<bool>,
     /// Windows matching rules with the same name share one tab group.
     pub tab_group: Option<String>,
+    /// Written by the window menu's Always Open Here (`from_menu = true`), which checks, replaces
+    /// and removes it.
+    pub from_menu: bool,
 }
 
 impl WindowRule {
     pub fn matches(&self, app_id: &str, title: &str) -> bool {
         glob(&self.app_id, app_id) && self.title.as_deref().is_none_or(|t| glob(t, title))
     }
+
+    /// The rule Always Open Here writes for `app_id`: frame `at` (the normal frame, relative to
+    /// its screen) on monitor `monitor`, maximized or not, on top and sticky only when set.
+    pub fn open_here(
+        app_id: &str,
+        monitor: String,
+        at: &Remembered,
+        on_top: bool,
+        sticky: bool,
+    ) -> WindowRule {
+        let side = |v: i32| v.clamp(1, 32767);
+        let coord = |v: i32| v.clamp(-32768, 32767);
+        WindowRule {
+            app_id: app_id.into(),
+            size: Some((side(at.width), side(at.height))),
+            position: Some((coord(at.x), coord(at.y))),
+            output: Some(monitor),
+            state: Some(if at.maximized {
+                WindowState::Maximized
+            } else {
+                WindowState::Normal
+            }),
+            always_on_top: on_top.then_some(true),
+            sticky: sticky.then_some(true),
+            from_menu: true,
+            ..WindowRule::default()
+        }
+    }
+
+    /// The rule as a `[[window_rules]]` table, with only the keys it sets.
+    pub fn to_table(&self) -> toml_edit::Table {
+        use toml_edit::{Array, value};
+        let pair = |(a, b): (i32, i32)| value(Array::from_iter([i64::from(a), i64::from(b)]));
+        let mut t = toml_edit::Table::new();
+        t["app_id"] = value(&self.app_id);
+        if let Some(s) = &self.title {
+            t["title"] = value(s);
+        }
+        if let Some(s) = self.size {
+            t["size"] = pair(s);
+        }
+        if let Some(p) = self.position {
+            t["position"] = pair(p);
+        }
+        if let Some(o) = &self.output {
+            t["output"] = value(o);
+        }
+        if let Some(s) = self.state {
+            t["state"] = value(s.name());
+        }
+        if let Some(d) = self.desktop {
+            t["desktop"] = value(d as i64 + 1);
+        }
+        if let Some(on) = self.always_on_top {
+            t["always_on_top"] = value(on);
+        }
+        if let Some(on) = self.sticky {
+            t["sticky"] = value(on);
+        }
+        if let Some(g) = &self.tab_group {
+            t["tab_group"] = value(g);
+        }
+        if self.from_menu {
+            t["from_menu"] = value(true);
+        }
+        t
+    }
+}
+
+/// Whether `rules` hold Always Open Here's rule for `app_id`.
+pub fn has_open_here(rules: &[WindowRule], app_id: &str) -> bool {
+    rules.iter().any(|r| r.from_menu && r.app_id == app_id)
+}
+
+/// Drops Always Open Here's rule for `app_id` from `rules` and appends `rule` in its place, so
+/// it applies after every hand-written rule.
+pub fn put_open_here(rules: &mut Vec<WindowRule>, app_id: &str, rule: Option<WindowRule>) {
+    rules.retain(|r| !(r.from_menu && r.app_id == app_id));
+    rules.extend(rule);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -362,6 +444,65 @@ mod tests {
         assert_eq!(build.desktop, Some(2));
         assert_eq!(build.tab_group.as_deref(), Some("shells"));
         assert_eq!(want(&[], "foot", "", Want::default()), Want::default());
+    }
+
+    #[test]
+    fn always_open_here_pins_the_frame_screen_and_set_flags_only() {
+        let at = Remembered {
+            output: "DP-1".into(),
+            x: 120,
+            y: -8,
+            width: 700,
+            height: 500,
+            maximized: false,
+            text_size: 150,
+        };
+        let r = WindowRule::open_here("foot", "Dell|U2720Q|ABC".into(), &at, false, false);
+        assert_eq!(
+            r,
+            WindowRule {
+                size: Some((700, 500)),
+                position: Some((120, -8)),
+                output: Some("Dell|U2720Q|ABC".into()),
+                state: Some(WindowState::Normal),
+                from_menu: true,
+                ..rule("foot")
+            }
+        );
+        let max = Remembered {
+            maximized: true,
+            ..at
+        };
+        let r = WindowRule::open_here("foot", "eDP-1".into(), &max, true, true);
+        assert_eq!(r.state, Some(WindowState::Maximized));
+        assert_eq!(r.size, Some((700, 500)), "the restored size");
+        assert_eq!((r.always_on_top, r.sticky), (Some(true), Some(true)));
+        assert_eq!(r.desktop, None);
+        assert_eq!(r.title, None);
+    }
+
+    #[test]
+    fn open_here_replaces_its_own_rule_last_and_keeps_hand_written_ones() {
+        let hand = WindowRule {
+            size: Some((300, 200)),
+            ..rule("foot")
+        };
+        let mine = |x: i32| WindowRule {
+            position: Some((x, 0)),
+            from_menu: true,
+            ..rule("foot")
+        };
+        let other = WindowRule {
+            from_menu: true,
+            ..rule("kitty")
+        };
+        let mut rules = vec![mine(1), hand.clone(), other.clone()];
+        assert!(has_open_here(&rules, "foot"));
+        assert!(!has_open_here(std::slice::from_ref(&hand), "foot"));
+        put_open_here(&mut rules, "foot", Some(mine(2)));
+        assert_eq!(rules, [hand.clone(), other.clone(), mine(2)]);
+        put_open_here(&mut rules, "foot", None);
+        assert_eq!(rules, [hand, other]);
     }
 
     #[test]

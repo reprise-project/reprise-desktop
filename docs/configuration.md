@@ -42,7 +42,7 @@ while an editor saves it doesn't.
 | `[switcher]`, `[overview]` | Alt+Tab, the 3D switcher, the window overview |
 | `[workspaces]` | virtual desktops, their names, their animation and the wheel over the desktop |
 | `[window_snapping]`, `[windows]` | snapping, layouts, tabs, shake, window memory, title bar double click, dimming windows without the focus |
-| `[[window_rules]]` | per-program size, place, desktop and state |
+| `[[window_rules]]` | per-program size, place, screen (by connector or monitor id), desktop and state; `from_menu = true` marks the rule the window menu's Always Open Here wrote ([features.md](features.md#windows)) |
 | `[session]` | session restore and leftover programs |
 | `[updates]` | `restart_notice`: Software Updates says when a kernel update or `/run/reboot-required` calls for a restart, on by default (Settings > Startup) |
 | `[keyboard]`, `[mouse]`, `[touchpad]`, `[touchscreen]`, `[gestures]` | input |

@@ -309,6 +309,7 @@ fn window_rule(f: FileWindowRule, at: &str) -> Result<WindowRule, String> {
         always_on_top: f.always_on_top,
         sticky: f.sticky,
         tab_group: f.tab_group,
+        from_menu: f.from_menu.unwrap_or(false),
     })
 }
 
