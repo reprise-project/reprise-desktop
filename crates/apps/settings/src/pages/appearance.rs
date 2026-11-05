@@ -56,9 +56,7 @@ pub fn fonts_and_icons(
     items.push(Item::new(
         "fonts_note",
         Rect::new(GX, 126, gw, LINE_H),
-        Control::Lines(vec![
-            "Text size on the Text & Keys page enlarges all text.".into(),
-        ]),
+        Control::Lines(vec![text_size_note()]),
     ));
 
     let cw = a.combo(Area::MIN.gw() - 88);
@@ -343,3 +341,11 @@ pub(super) const HOVER_CONTROLS: [&str; 6] = [
     "hover_out_ms",
     "out_units",
 ];
+
+/// The note sending a reader to the setting that enlarges all text.
+pub fn text_size_note() -> String {
+    format!(
+        "Text size on the {} page enlarges all text.",
+        crate::registry::Page::TextKeys.label()
+    )
+}
