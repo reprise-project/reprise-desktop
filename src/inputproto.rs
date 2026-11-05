@@ -1,8 +1,9 @@
 //! `reprise_input_v1`: the private global reprise-portal binds to hand in EIS
 //! sockets, drive pointer barriers, receive global shortcuts, press
 //! RemoteDesktop keys without libei, hear which sandboxed apps have a
-//! window and open the colour picker. Glue only: each request calls into `eis`,
-//! `inputcapture`, `globalshortcuts`, `remotekeys`, `toplevels` or `colorpickview`.
+//! window, open the colour picker and mark the remote desktop server's capture
+//! connection. Glue only: each request calls into `eis`, `inputcapture`,
+//! `globalshortcuts`, `remotekeys`, `toplevels` or `colorpickview`, or sets `ClientState`.
 //!
 //! Protocol objects carry ids, not the objects themselves: a resource whose
 //! object the compositor already dropped finds nothing behind its id.
@@ -51,7 +52,7 @@ pub mod proto {
     wayland_scanner::generate_server_code!("protocols/reprise-input-v1.xml");
 }
 
-const VERSION: u32 = 7;
+const VERSION: u32 = 8;
 
 pub const DEVICE_KEYBOARD: u32 = 1;
 pub const DEVICE_POINTER: u32 = 2;
@@ -143,7 +144,7 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
     fn request(
         &self,
         state: &mut State,
-        _client: &Client,
+        client: &Client,
         resource: &RepriseInputV1,
         request: reprise_input_v1::Request,
         _dh: &DisplayHandle,
@@ -234,6 +235,12 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
             Request::PickColor { id } => {
                 let r = data_init.init(id, ColorPickData);
                 state.open_color_pick(crate::colorpickview::Asker::Portal(r));
+            }
+            Request::RemoteCapture => {
+                if let Some(d) = client.get_data::<crate::compositor::ClientState>() {
+                    d.remote_capture
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                }
             }
             Request::Destroy => {}
         }

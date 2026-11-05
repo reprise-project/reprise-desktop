@@ -346,16 +346,21 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
         Page::RemoteDesktop => &[
             ("allow", "Allow remote connections to this computer"),
             ("port", "Port:"),
+            ("fingerprint", "Fingerprint (SHA-256):"),
+            ("regenerate", "New Certificate..."),
             ("quality", "Picture quality"),
             ("frame_rate", "Frame rate:"),
             ("video_encoder", "Video encoder:"),
             ("remote_sound", "Play sound on the remote computer"),
-            ("fingerprint", "Fingerprint (SHA-256):"),
-            ("regenerate", "New Certificate..."),
+            ("clients", "Connected computers:"),
             ("disconnect", "Disconnect"),
             (
                 "remote_lock",
                 "Lock this computer when the last one disconnects",
+            ),
+            (
+                "remote_border",
+                "Show a red border while a remote computer is connected",
             ),
         ],
         Page::Privacy => &[

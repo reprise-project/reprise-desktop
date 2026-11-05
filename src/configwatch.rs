@@ -412,7 +412,9 @@ pub fn reload(state: &mut State, cfg: Config) {
     if old.location != state.config.location {
         crate::location::config_changed(state);
     }
-    if old.capture_border != state.config.capture_border {
+    if old.capture_border != state.config.capture_border
+        || old.remote_desktop.capture_border != state.config.remote_desktop.capture_border
+    {
         crate::captureborder::refresh(state);
     }
     if changes.workspaces {

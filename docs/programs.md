@@ -366,7 +366,9 @@ matched control focused.
     lit. The certificate's fingerprint is there to
     check on the connecting computer, with New Certificate... beside it,
     and every connected computer is listed; Disconnect ends the selected
-    one.
+    one. Under the list, two check boxes decide whether the last computer
+    to leave locks this one and whether the red capture border shows while
+    one is connected.
 - **System**
   - **Power Options...**
   - **Startup:** autostart entries, session restore and ending the programs

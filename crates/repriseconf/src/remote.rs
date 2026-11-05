@@ -1,5 +1,6 @@
 //! `[remote_desktop]`: reprise-rdp's port, picture quality, frame rate, video encoder, sound, how
-//! many viewers it takes and whether the last to leave locks the session.
+//! many viewers it takes, whether the last to leave locks the session and whether the compositor
+//! borders the screen it shares.
 //! Each key that is missing or out of range keeps its default alone.
 
 use serde::Deserialize;
@@ -81,6 +82,9 @@ pub struct RemoteDesktop {
     /// 1 to 16 connected at once.
     pub max_viewers: usize,
     pub lock_on_leave: bool,
+    /// Whether the compositor borders what the server captures; `[privacy] capture_border` off
+    /// turns it off as well.
+    pub capture_border: bool,
 }
 
 impl Default for RemoteDesktop {
@@ -93,6 +97,7 @@ impl Default for RemoteDesktop {
             sound: true,
             max_viewers: 4,
             lock_on_leave: true,
+            capture_border: false,
         }
     }
 }
@@ -162,6 +167,13 @@ fn read(t: &toml::Table) -> (RemoteDesktop, Vec<&'static str>) {
             d.lock_on_leave,
             toml::Value::as_bool,
         ),
+        capture_border: key(
+            t,
+            "capture_border",
+            &mut bad,
+            d.capture_border,
+            toml::Value::as_bool,
+        ),
     };
     (rd, bad)
 }
@@ -199,7 +211,8 @@ mod tests {
                 d.encoder,
                 d.sound,
                 d.max_viewers,
-                d.lock_on_leave
+                d.lock_on_leave,
+                d.capture_border
             ),
             (
                 3389,
@@ -208,7 +221,8 @@ mod tests {
                 EncoderChoice::Auto,
                 true,
                 4,
-                true
+                true,
+                false
             )
         );
     }
@@ -254,6 +268,24 @@ quality = \"sharp\"",
                 bad.contains(&"lock_on_leave"),
                 invalid,
                 "lock_on_leave = {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn capture_border_reads_true_or_false() {
+        for (text, want, invalid) in [
+            ("true", true, false),
+            ("false", false, false),
+            ("\"on\"", false, true),
+        ] {
+            let t: toml::Table = toml::from_str(&format!("capture_border = {text}")).unwrap();
+            let (rd, bad) = read(&t);
+            assert_eq!(rd.capture_border, want, "capture_border = {text}");
+            assert_eq!(
+                bad.contains(&"capture_border"),
+                invalid,
+                "capture_border = {text}"
             );
         }
     }

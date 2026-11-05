@@ -651,10 +651,9 @@ pub struct FileConfig {
     /// `[portal]` is read by reprise-portal; accepted here so the file parses.
     #[allow(dead_code)]
     pub portal: Option<serde::de::IgnoredAny>,
-    /// `[remote_desktop]` is read by `crate::remote::remote_desktop`; accepted here so the file
-    /// parses.
-    #[allow(dead_code)]
-    pub remote_desktop: Option<serde::de::IgnoredAny>,
+    /// `[remote_desktop]`, through `crate::remote::from_table`, which takes any key it can't
+    /// read at its default; reprise-rdp warns of those.
+    pub remote_desktop: Option<toml::Value>,
     /// `[recycle_bin]` is read by `reprisefs::bincap::Policy`; accepted here so the file parses.
     #[allow(dead_code)]
     pub recycle_bin: Option<serde::de::IgnoredAny>,

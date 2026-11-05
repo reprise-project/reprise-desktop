@@ -412,6 +412,7 @@ pub(super) const REMOTE_FRAME_RATE: &str = "frame_rate";
 pub(super) const REMOTE_ENCODER: &str = "video_encoder";
 pub(super) const REMOTE_SOUND: &str = "remote_sound";
 pub(super) const REMOTE_LOCK_ON_LEAVE: &str = "remote_lock";
+pub(super) const REMOTE_BORDER: &str = "remote_border";
 /// The certificate's fingerprint: a read-only edit, so it can be selected and copied.
 const REMOTE_FINGERPRINT: &str = "fingerprint";
 pub const REMOTE_REGENERATE: &str = "regenerate";
@@ -419,7 +420,7 @@ const CLIENTS: &str = "clients";
 pub const REMOTE_DISCONNECT: &str = "disconnect";
 
 /// What greys with the switch off; New Certificate and Disconnect also need the server answering.
-const REMOTE_CONTROLS: [&str; 17] = [
+const REMOTE_CONTROLS: [&str; 18] = [
     REMOTE_STATUS,
     ENCODER,
     "port_label",
@@ -435,6 +436,7 @@ const REMOTE_CONTROLS: [&str; 17] = [
     REMOTE_ENCODER,
     REMOTE_SOUND,
     REMOTE_LOCK_ON_LEAVE,
+    REMOTE_BORDER,
     "fingerprint_label",
     REMOTE_FINGERPRINT,
 ];
@@ -462,7 +464,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         .under_check(),
         Item::label_at(REMOTE_STATUS, X, 80, a.w - 18, "").under_check(),
         Item::label_at(ENCODER, X, 96, a.w - 18, "").under_check(),
-        group(a, "connection_group", 120, 183, "Connection"),
+        group(a, "connection_group", 120, 229, "Connection"),
     ];
     items.extend(spin(
         "port_label",
@@ -474,9 +476,25 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         (1024, 65535),
     ));
     items.push(Item::label_at(
-        "quality_label",
+        "fingerprint_label",
         GX,
         170,
+        gw,
+        "&Fingerprint (SHA-256):",
+    ));
+    items.push(edit(REMOTE_FINGERPRINT, GX, 186, gw - NEW_CERTIFICATE_W - 6).read_only());
+    items.push(Item::button_at(
+        REMOTE_REGENERATE,
+        a.gright() - NEW_CERTIFICATE_W,
+        184,
+        NEW_CERTIFICATE_W,
+        "&New Certificate...",
+        true,
+    ));
+    items.push(Item::label_at(
+        "quality_label",
+        GX,
+        216,
         200,
         "Picture &quality:",
     ));
@@ -490,7 +508,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
             QUALITY_VALUE,
         ],
         "Picture quality",
-        197,
+        243,
         27,
         (left, right),
         GX + 46,
@@ -499,7 +517,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::label_at(
         "frame_rate_label",
         GX,
-        230,
+        272,
         114,
         "Frame &rate:",
     ));
@@ -507,7 +525,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::combo(
         REMOTE_FRAME_RATE,
         GX + 118,
-        226,
+        268,
         160,
         &rates,
         rates.len(),
@@ -515,7 +533,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::label_at(
         "video_encoder_label",
         GX,
-        256,
+        298,
         114,
         "Video &encoder:",
     ));
@@ -523,7 +541,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::combo(
         REMOTE_ENCODER,
         GX + 118,
-        252,
+        294,
         160,
         &encoders,
         encoders.len(),
@@ -531,30 +549,19 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::check(
         REMOTE_SOUND,
         GX,
-        282,
+        328,
         "Play &sound on the remote computer",
     ));
-    items.push(group(a, "certificate_group", 313, 66, "Certificate"));
     items.push(Item::label_at(
-        "fingerprint_label",
-        GX,
-        333,
-        gw,
-        "&Fingerprint (SHA-256):",
+        "clients_label",
+        X,
+        359,
+        200,
+        "Connected computers:",
     ));
-    items.push(edit(REMOTE_FINGERPRINT, GX, 349, gw - NEW_CERTIFICATE_W - 6).read_only());
-    items.push(Item::button_at(
-        REMOTE_REGENERATE,
-        a.gright() - NEW_CERTIFICATE_W,
-        347,
-        NEW_CERTIFICATE_W,
-        "&New Certificate...",
-        true,
-    ));
-    items.push(group(a, "client_group", 389, 85, "Connected Computers"));
     items.push(Item::new(
         CLIENTS,
-        Rect::new(GX, 409, gw - BUTTON_W - 6, 2 * listbox::ROW_H + 4),
+        Rect::new(X, 375, a.w - BUTTON_W - 6, 3 * listbox::ROW_H + 4),
         Control::ListBox {
             list: ListBox::new(Vec::new(), None),
             icons: Vec::new(),
@@ -562,15 +569,21 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     ));
     items.push(button(
         REMOTE_DISCONNECT,
-        a.gright() - BUTTON_W,
-        409,
+        a.right() - BUTTON_W,
+        375,
         "&Disconnect",
     ));
     items.push(Item::check(
         REMOTE_LOCK_ON_LEAVE,
-        GX,
-        453,
+        X,
+        438,
         "&Lock this computer when the last one disconnects",
+    ));
+    items.push(Item::check(
+        REMOTE_BORDER,
+        X,
+        460,
+        "Show a red &border while a remote computer is connected",
     ));
     let mut page = Form::new(items);
     show_remote(&mut page, status, enabled, None, None);
