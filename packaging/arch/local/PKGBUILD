@@ -80,6 +80,9 @@ _repo() {
   printf '%s' "${REPRISE_REPO:-$startdir/../../..}"
 }
 
+# CI's package check builds with a faster profile; a package for use is built with release.
+_profile=${REPRISE_CARGO_PROFILE:-release}
+
 pkgver() {
   cd "$(_repo)"
   local ver
@@ -105,14 +108,14 @@ build() {
   export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=/usr/src/debug/$pkgbase --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
   # Named explicitly: the workspace has a root package, so a bare build
   # would build only that.
-  cargo build --release --locked -p reprise -p reprise-portal -p reprise-apps -p reprise-rdp
+  cargo build --profile "$_profile" --locked -p reprise -p reprise-portal -p reprise-apps -p reprise-rdp
 }
 
 package() {
   cd "$(_repo)"
-  install -Dm755 "$srcdir/target/release/reprise" "$pkgdir/usr/bin/reprise"
+  install -Dm755 "$srcdir/target/$_profile/reprise" "$pkgdir/usr/bin/reprise"
   # One binary holds every program; each name links to it.
-  install -Dm755 "$srcdir/target/release/reprise-apps" "$pkgdir/usr/bin/reprise-apps"
+  install -Dm755 "$srcdir/target/$_profile/reprise-apps" "$pkgdir/usr/bin/reprise-apps"
   for app in reprise-notepad reprise-explorer reprise-about reprise-sound reprise-volume reprise-settings reprise-power reprise-datetime reprise-accounts reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers reprise-terminal reprise-phone reprise-diskusage reprise-notes reprise-fonts reprise-imageviewer reprise-paint reprise-calc reprise-charmap reprise-taskmgr; do
     ln -s reprise-apps "$pkgdir/usr/bin/$app"
     install -Dm644 "data/apps/$app.desktop" "$pkgdir/usr/share/applications/$app.desktop"
@@ -120,10 +123,10 @@ package() {
   for app in reprise-sound reprise-power reprise-network reprise-bluetooth reprise-drives reprise-polkit reprise-updates reprise-printers reprise-phone reprise-notes; do
     install -Dm644 "data/autostart/$app.desktop" "$pkgdir/etc/xdg/autostart/$app.desktop"
   done
-  install -Dm755 "$srcdir/target/release/reprise-rdp" "$pkgdir/usr/bin/reprise-rdp"
+  install -Dm755 "$srcdir/target/$_profile/reprise-rdp" "$pkgdir/usr/bin/reprise-rdp"
   install -Dm644 data/systemd/app-org.reprise.RemoteDesktop.service "$pkgdir/usr/lib/systemd/user/app-org.reprise.RemoteDesktop.service"
   install -Dm644 data/apps/org.reprise.RemoteDesktop.desktop "$pkgdir/usr/share/applications/org.reprise.RemoteDesktop.desktop"
-  install -Dm755 "$srcdir/target/release/reprise-portal" "$pkgdir/usr/bin/reprise-portal"
+  install -Dm755 "$srcdir/target/$_profile/reprise-portal" "$pkgdir/usr/bin/reprise-portal"
   install -Dm644 data/portal/reprise.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/reprise.portal"
   install -Dm644 data/portal/reprise-settings.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/reprise-settings.portal"
   install -Dm644 data/portal/org.freedesktop.impl.portal.desktop.reprise.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.reprise.service"

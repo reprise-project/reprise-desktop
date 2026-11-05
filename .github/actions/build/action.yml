@@ -1,30 +1,16 @@
 name: build
-description: Installs the build dependencies, then runs fmt, clippy and the tests as an unprivileged user.
+description: Runs fmt, clippy and the tests as an unprivileged user.
 inputs:
-  arch-archive:
-    description: Arch Linux Archive date (YYYY/MM/DD) to pin the pacman repos to; empty for the live mirrors.
-    default: ""
+  setup:
+    description: Install the CI image's packages first, for a container other than the CI image.
+    default: "false"
 runs:
   using: composite
   steps:
-    # PKGBUILD depends, plus the fallback font and the MIME database the tests read.
     - name: Install dependencies
+      if: inputs.setup == 'true'
       shell: bash
-      env:
-        ARCH_ARCHIVE: ${{ inputs.arch-archive }}
-      run: >-
-        bash "$GITHUB_WORKSPACE"/.github/pacman.sh rust clang python pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire zlib ffmpeg ttf-dejavu shared-mime-info
-    - name: Install cargo-nextest 0.9.149
-      shell: bash
-      run: |
-        curl -LsSf -o /tmp/nextest.tar.gz https://get.nexte.st/0.9.149/linux
-        echo '32d1d8c0567b7a80bee2bad8bb09125c846da96bc009b2de11ec08557290c770  /tmp/nextest.tar.gz' | sha256sum -c
-        tar xzf /tmp/nextest.tar.gz -C /usr/local/bin
-    # Tests that assert a read-only directory refuses a write only mean
-    # something as an unprivileged user; the container runs as root.
-    - name: Create the build user
-      shell: bash
-      run: useradd -m builder
+      run: bash "$GITHUB_WORKSPACE"/.github/ci-image/setup.sh
     # Keyed on rustc, Cargo.lock and the job; drops the workspace's own artifacts before saving.
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
     # The Tahoma the pixel tests are pinned to.

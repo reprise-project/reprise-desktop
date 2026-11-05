@@ -1,0 +1,65 @@
+name: package
+# What ships: the desktop entries validate and makepkg builds and installs every binary. A
+# pull request that touches none of these paths leaves it to the nightly build after the merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - Cargo.lock
+      - "**/build.rs"
+      - config.example.toml
+      - data/**
+      - packaging/**
+      - .github/ci-image/**
+      - .github/pacman.sh
+      - .github/workflows/package.yml
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  packages: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/reprise-project/reprise-ci:2026-10-25-f7b0d8395c9e
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      CARGO_INCREMENTAL: 0
+      # Optimising takes most of the build; the nightly builds what ships, this job checks the
+      # packaging.
+      REPRISE_CARGO_PROFILE: vm
+      CARGO_PROFILE_VM_OPT_LEVEL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # pkgver counts the commits.
+          fetch-depth: 0
+      # OnlyShowIn=reprise is not in the menu-spec registry: registering the name or renaming it
+      # to X-Reprise is still open, so that one error is filtered out. DesktopNames is the
+      # display managers' session key, which the validator does not know.
+      - name: Validate the desktop entries
+        run: |
+          out=$(desktop-file-validate data/reprise.desktop data/apps/*.desktop data/autostart/*.desktop 2>&1 || true)
+          printf '%s\n' "$out"
+          ! printf '%s\n' "$out" | grep -v -e 'key "OnlyShowIn" .* unregistered value "reprise"' -e 'reprise.desktop: error: file contains key "DesktopNames"' | grep -E ': (error|warning): '
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /home/builder/.cargo/registry
+            /home/builder/.cargo/git
+            /home/builder/makepkg/build/reprise/src/target
+          key: package-o0-${{ hashFiles('Cargo.lock') }}
+          restore-keys: package-o0-
+      # The checkout and the cache come back owned by root.
+      - run: chown -R builder "$GITHUB_WORKSPACE" /home/builder
+      - name: Build the package
+        run: >-
+          runuser -u builder -- env HOME=/home/builder REPRISE_MAKEPKG_DIR=/home/builder/makepkg
+          packaging/arch/local/build.sh --noconfirm --nodeps --noarchive
