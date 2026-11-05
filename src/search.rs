@@ -8,8 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
-use repriseconf::pages::{PROGRAMS, Page};
-use repriseconf::search::word_starts;
+use repriseconf::pages::{Hit, PROGRAMS, Page};
 use reprisefs::apps::AppEntry;
 use reprisekit::controls::launcher::FileRow;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -72,27 +71,29 @@ pub const PAGE_ICON: &str = "preferences-system";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Setting {
     Page(Page),
+    /// A control on the page, by the id `--focus` takes.
+    Control(Page, &'static str),
     App(usize),
 }
 
 impl Setting {
     pub fn name(self, apps: &[AppEntry]) -> String {
         match self {
-            Setting::Page(p) => p.label().to_string(),
+            Setting::Page(p) | Setting::Control(p, _) => p.label().to_string(),
             Setting::App(i) => apps[i].name.clone(),
         }
     }
 
     pub fn icon(self, apps: &[AppEntry]) -> Option<String> {
         match self {
-            Setting::Page(_) => Some(PAGE_ICON.to_string()),
+            Setting::Page(_) | Setting::Control(..) => Some(PAGE_ICON.to_string()),
             Setting::App(i) => apps[i].icon.clone(),
         }
     }
 }
 
-/// The settings pages and programs `query` finds, at most `max`: name-word
-/// matches, then keyword matches. Programs not installed or already in `programs` are left out.
+/// The settings pages and programs `query` finds, at most `max`: label matches, then keyword
+/// matches, then control-label matches. Programs not installed or already in `programs` are left out.
 pub fn rank_settings(
     query: &str,
     apps: &[AppEntry],
@@ -102,21 +103,34 @@ pub fn rank_settings(
     if query.trim().chars().count() < SETTINGS_MIN_CHARS {
         return Vec::new();
     }
-    let pages = Page::all().map(|p| (Setting::Page(p), p.label().to_string(), p.keywords()));
+    let pages = Page::all().filter_map(|p| {
+        Some(match p.find(query)? {
+            Hit::Control(id) => (Hit::Control(id), Setting::Control(p, id)),
+            hit => (hit, Setting::Page(p)),
+        })
+    });
     let installed = PROGRAMS.iter().filter_map(|p| {
         let i = apps.iter().position(|a| a.id == p.id)?;
-        (!programs.contains(&i)).then(|| (Setting::App(i), apps[i].name.clone(), p.keywords))
+        if programs.contains(&i) {
+            return None;
+        }
+        Some((p.find(query, &apps[i].name)?, Setting::App(i)))
     });
-    let all: Vec<_> = pages.chain(installed).collect();
-    let by_name = all.iter().filter(|(_, name, _)| word_starts(query, name));
-    let by_keyword = all.iter().filter(|(_, name, keywords)| {
-        !word_starts(query, name) && keywords.iter().any(|k| word_starts(query, k))
+    let mut found: Vec<(Hit, Setting)> = pages.chain(installed).collect();
+    found.sort_by_key(|&(hit, _)| match hit {
+        Hit::Label => 0,
+        Hit::Keyword => 1,
+        Hit::Control(_) => 2,
     });
-    by_name
-        .chain(by_keyword)
-        .map(|(s, ..)| *s)
-        .take(max)
-        .collect()
+    found.into_iter().map(|(_, s)| s).take(max).collect()
+}
+
+/// The command that opens Settings on `page`, with `focus` (a control id) focused.
+fn page_argv(page: Page, focus: Option<&str>) -> Vec<String> {
+    let slug = page.slug();
+    let mut argv = vec![SETTINGS_PROGRAM, "--page", &slug];
+    argv.extend(focus.iter().flat_map(|&id| ["--focus", id]));
+    argv.into_iter().map(String::from).collect()
 }
 
 /// The answer row's text and what Enter copies: a sum (`= 14`, `14`) or a unit conversion
@@ -243,9 +257,8 @@ pub(crate) fn file_row(
 impl State {
     pub fn open_setting(&mut self, s: Setting) {
         match s {
-            Setting::Page(p) => {
-                self.spawn_argv_activated(&[SETTINGS_PROGRAM, "--page", &p.slug()]);
-            }
+            Setting::Page(p) => self.spawn_argv_activated(&page_argv(p, None)),
+            Setting::Control(p, id) => self.spawn_argv_activated(&page_argv(p, Some(id))),
             Setting::App(i) => {
                 if let Some(entry) = self.app_index.get(i).cloned() {
                     self.launch_app(&entry);
@@ -453,6 +466,13 @@ mod tests {
         }
     }
 
+    fn without_controls(found: Vec<Setting>) -> Vec<Setting> {
+        found
+            .into_iter()
+            .filter(|s| !matches!(s, Setting::Control(..)))
+            .collect()
+    }
+
     #[test]
     fn settings_are_found_by_name_then_by_keyword() {
         let apps = [
@@ -461,7 +481,7 @@ mod tests {
             installed("reprise-printers.desktop", "Printers"),
             installed("reprise-updates.desktop", "Software Updates"),
         ];
-        let rank = |q: &str| rank_settings(q, &apps, &[], 8);
+        let rank = |q: &str| without_controls(rank_settings(q, &apps, &[], 8));
         assert_eq!(rank("wifi"), [Setting::App(0)]);
         assert_eq!(rank("Wi-Fi"), [Setting::App(0)]);
         assert_eq!(
@@ -507,17 +527,57 @@ mod tests {
 
     #[test]
     fn the_page_is_found_by_rdp_and_remmina() {
-        let rank = |q: &str| rank_settings(q, &[], &[], 8);
+        let rank = |q: &str| without_controls(rank_settings(q, &[], &[], 8));
         for q in ["rdp", "remmina", "remote", "desktop sharing"] {
             assert_eq!(rank(q), [Setting::Page(Page::RemoteDesktop)], "{q}");
         }
     }
 
     #[test]
+    fn a_control_label_finds_its_page_after_names_and_keywords() {
+        let rank = |q: &str| rank_settings(q, &[], &[], 8);
+        assert!(rank("repeat delay").contains(&Setting::Control(Page::Keyboard, "repeat_delay")));
+        assert_eq!(
+            rank("default browser").first(),
+            Some(&Setting::Page(Page::DefaultPrograms))
+        );
+        assert_eq!(
+            rank("mouse speed").first(),
+            Some(&Setting::Page(Page::Mouse))
+        );
+        let found = rank("keyboard");
+        assert_eq!(found.first(), Some(&Setting::Page(Page::Keyboard)));
+        let first_control = found.iter().position(|s| matches!(s, Setting::Control(..)));
+        let last_page = found.iter().rposition(|s| matches!(s, Setting::Page(_)));
+        if let (Some(c), Some(p)) = (first_control, last_page) {
+            assert!(p < c, "name and keyword rows before control rows");
+        }
+    }
+
+    #[test]
+    fn a_control_row_opens_its_page_focused() {
+        assert_eq!(
+            page_argv(Page::Keyboard, Some("repeat_delay")),
+            [
+                "reprise-settings",
+                "--page",
+                "keyboard",
+                "--focus",
+                "repeat_delay"
+            ]
+        );
+        assert_eq!(
+            page_argv(Page::NightLight, None),
+            ["reprise-settings", "--page", "night-light"]
+        );
+    }
+
+    #[test]
     fn a_settings_program_listed_or_missing_is_left_out() {
         let apps = [installed("reprise-network.desktop", "Network Connections")];
-        assert!(rank_settings("network", &apps, &[0], 8).is_empty());
-        assert!(rank_settings("bluetooth", &apps, &[], 8).is_empty());
+        let no_app = |found: Vec<Setting>| !found.iter().any(|s| matches!(s, Setting::App(_)));
+        assert!(no_app(rank_settings("network", &apps, &[0], 8)));
+        assert!(no_app(rank_settings("bluetooth", &apps, &[], 8)));
         assert_eq!(rank_settings("sc", &apps, &[], 1).len(), 1, "capped");
     }
 
