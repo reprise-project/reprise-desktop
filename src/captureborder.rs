@@ -287,10 +287,12 @@ pub fn wlr_frame(state: &mut State, key: WlrKey) {
 }
 
 /// While wlr captures are tracked: forget the stale ones and drop a
-/// border whose hold ran out or whose recorder went.
+/// border whose hold ran out or whose recorder went. A recording ends
+/// here, with no request of its own, so the sharing dot hears of it too.
 fn tick(state: &mut State) -> TimeoutAction {
     let waiting = state.captures.wlr_waiting();
     prune(&mut state.capture_border.tracks, &waiting, Instant::now());
+    crate::privacy::captures_changed(state);
     refresh(state);
     if state.capture_border.tracks.is_empty() {
         state.capture_border.tick = None;
