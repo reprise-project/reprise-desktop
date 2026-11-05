@@ -15,6 +15,7 @@ pub enum Column {
     Memory,
     Threads,
     Disk,
+    Gpu,
     CommandLine,
 }
 
@@ -35,7 +36,7 @@ pub struct Spec {
 
 /// Every column in the order they show. Image Name always shows; Command Line comes last, where
 /// the list's leftover width goes.
-pub const SPECS: [Spec; 8] = [
+pub const SPECS: [Spec; 9] = [
     Spec {
         col: Column::Name,
         key: "name",
@@ -107,6 +108,16 @@ pub const SPECS: [Spec; 8] = [
         ascending: false,
     },
     Spec {
+        col: Column::Gpu,
+        key: "gpu",
+        title: "GPU",
+        label: "&GPU Usage",
+        width: 48,
+        right: true,
+        shown: false,
+        ascending: false,
+    },
+    Spec {
         col: Column::CommandLine,
         key: "command_line",
         title: "Command Line",
@@ -166,6 +177,9 @@ pub fn text(col: Column, p: &ProcRow) -> String {
         Column::Memory => kb_text(p.mem_kb),
         Column::Threads => p.threads.to_string(),
         Column::Disk => p.disk.map(rate_text).unwrap_or_default(),
+        Column::Gpu => (p.gpu)
+            .map(|g| format!("{:02}", (g * 100.0).round() as u64))
+            .unwrap_or_default(),
         Column::CommandLine => command_line(p),
     }
 }
@@ -179,6 +193,7 @@ fn order(col: Column, a: &ProcRow, b: &ProcRow) -> Ordering {
         Column::Memory => a.mem_kb.cmp(&b.mem_kb),
         Column::Threads => a.threads.cmp(&b.threads),
         Column::Disk => a.disk.cmp(&b.disk),
+        Column::Gpu => (a.gpu.unwrap_or(-1.0)).total_cmp(&b.gpu.unwrap_or(-1.0)),
         Column::CommandLine => command_line(a).cmp(&command_line(b)),
     }
 }
@@ -230,6 +245,22 @@ mod tests {
             [3, 1, 2],
             "an unreadable rate sorts below any rate"
         );
+    }
+
+    #[test]
+    fn the_gpu_share_is_a_percentage_blank_and_last_where_unreadable() {
+        let mut rows = vec![
+            row(1, "a", 0.0, 0),
+            row(2, "b", 0.0, 0),
+            row(3, "c", 0.0, 0),
+        ];
+        rows[0].gpu = Some(0.054);
+        rows[2].gpu = Some(0.0);
+        assert_eq!(text(Column::Gpu, &rows[0]), "05");
+        assert_eq!(text(Column::Gpu, &rows[1]), "");
+        sort(&mut rows, Column::Gpu, false);
+        let pids: Vec<i32> = rows.iter().map(|p| p.pid).collect();
+        assert_eq!(pids, [1, 3, 2]);
     }
 
     #[test]

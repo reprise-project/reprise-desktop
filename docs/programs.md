@@ -460,8 +460,10 @@ another program).
   row for its command line. Show processes from all users lists everyone's,
   read only. End Process asks first. View > Select Columns... adds Threads,
   Disk (bytes read from and written to storage per second, blank for other
-  users' processes) and Command Line (a process with no arguments, such as a
-  kernel thread, shows its name in brackets). Drag a divider to widen a column.
+  users' processes), GPU (the share of its busiest GPU engine, blank where
+  Task Manager reads no GPU time for it) and Command Line (a process with no
+  arguments, such as a kernel thread, shows its name in brackets). Drag a
+  divider to widen a column.
 - **Performance:** a list of devices on the left, each with a small history
   and its figure now; the one picked fills the right.
   - **CPU** and **Memory:** the load and the memory in use, now and over the

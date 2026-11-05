@@ -57,6 +57,7 @@ fn proc(pid: i32, name: &str, uid: u32, cpu: f64, mem_kb: u64) -> ProcRow {
         threads: 2,
         cmdline: format!("/usr/bin/{name} --flag"),
         disk: None,
+        gpu: None,
     }
 }
 
@@ -354,6 +355,7 @@ enum Sent {
     Every(Option<Duration>),
     Now,
     Disk(bool),
+    Gpu(bool),
 }
 
 fn sent(rx: &std::sync::mpsc::Receiver<worker::Cmd>) -> Vec<Sent> {
@@ -362,6 +364,7 @@ fn sent(rx: &std::sync::mpsc::Receiver<worker::Cmd>) -> Vec<Sent> {
             worker::Cmd::Every(d) => Sent::Every(d),
             worker::Cmd::Now => Sent::Now,
             worker::Cmd::Disk(on) => Sent::Disk(on),
+            worker::Cmd::Gpu(on) => Sent::Gpu(on),
         })
         .collect()
 }
@@ -529,14 +532,34 @@ fn the_disk_column_turns_the_io_reading_on_and_off() {
     t.worker = Some(worker::Handle { tx, rx });
     open(&mut t, &mut ctx, Page::Processes);
     pick_columns(&mut t, &mut ctx, &["disk"]);
-    assert_eq!(sent(&cmds), [Sent::Disk(true)]);
+    assert_eq!(sent(&cmds), [Sent::Disk(true), Sent::Gpu(false)]);
     let mut s = snapshot();
     s.procs[2].disk = Some(2048);
     t.take(s, &mut ctx);
     assert_eq!(t.procs.view.rows[0].cells[5], "2 KB/s");
     assert_eq!(t.procs.view.rows[1].cells[5], "", "blank where unreadable");
     t.set_columns(columns::defaults());
-    assert_eq!(sent(&cmds), [Sent::Disk(false)]);
+    assert_eq!(sent(&cmds), [Sent::Disk(false), Sent::Gpu(false)]);
+}
+
+#[test]
+fn the_gpu_column_turns_the_gpu_client_reading_on_and_off() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    let (tx, cmds) = std::sync::mpsc::channel();
+    let (_out, rx) = std::sync::mpsc::channel();
+    t.worker = Some(worker::Handle { tx, rx });
+    open(&mut t, &mut ctx, Page::Processes);
+    pick_columns(&mut t, &mut ctx, &["gpu"]);
+    assert_eq!(sent(&cmds), [Sent::Disk(false), Sent::Gpu(true)]);
+    let mut s = snapshot();
+    s.procs[2].gpu = Some(0.25);
+    t.take(s, &mut ctx);
+    assert_eq!(t.procs.view.columns[5].title, "GPU");
+    assert_eq!(t.procs.view.rows[0].cells[5], "25");
+    assert_eq!(t.procs.view.rows[1].cells[5], "", "blank without a client");
+    t.set_columns(columns::defaults());
+    assert_eq!(sent(&cmds), [Sent::Disk(false), Sent::Gpu(false)]);
 }
 
 #[test]
