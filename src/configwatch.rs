@@ -10,7 +10,7 @@ use inotify::WatchMask;
 use smithay::reexports::calloop::{Interest, Mode, PostAction, generic::Generic};
 
 use crate::compositor::State;
-use crate::config::{Config, StartMenuStyle};
+use crate::config::{Config, KEEPS_SETTINGS, Notice, StartMenuStyle};
 use crate::dirwatch::{DirWatch, Want};
 use crate::window::WindowId;
 
@@ -268,11 +268,8 @@ where
         let want = find();
         // Before the read, so a write between the two is not missed.
         let added = job.adder.run(&want);
-        let cfg = if job.hit || since.is_some_and(|s| stamp(&path) != s) {
-            self::read(&path, &base)
-        } else {
-            None
-        };
+        let cfg =
+            (job.hit || since.is_some_and(|s| stamp(&path) != s)).then(|| self::read(&path, &base));
         Box::new(move |state: &mut State| {
             if state.config_watch.landed(&want, added) {
                 // A later read follows; this one may be older than the file.
@@ -282,34 +279,41 @@ where
                     return;
                 }
             }
-            if let Some((cfg, notice, table)) = cfg {
-                if notice != state.config_notice {
-                    if let Some(body) = &notice {
-                        crate::notifyview::notice(state, "Configuration", body);
-                    }
-                    state.config_notice = notice;
+            match cfg {
+                Some(Read::Parsed(cfg, notice, table)) => {
+                    announce(state, notice);
+                    let cfg = crate::darkmode::apply(&mut state.dark_mode, *cfg, &table);
+                    state.config_file = table;
+                    reprisefs::binage::poke();
+                    reload(state, cfg);
                 }
-                let cfg = crate::darkmode::apply(&mut state.dark_mode, cfg, &table);
-                state.config_file = table;
-                reprisefs::binage::poke();
-                reload(state, cfg);
+                Some(Read::Kept(Some(notice))) => announce(state, Some(notice)),
+                Some(Read::Kept(None)) | None => {}
             }
         })
     });
 }
 
+/// What a read of the config file found.
+#[derive(Debug)]
+pub(crate) enum Read {
+    /// The config, the notice naming the keys that failed and the table read.
+    Parsed(Box<Config>, Option<Notice>, toml::Table),
+    /// The file did not parse or could not be read, so the running config stays. No notice
+    /// for a file gone or replaced during the read: the save in progress reads it again.
+    Kept(Option<Notice>),
+}
+
 /// The config at `path` with the keys that fail kept at their values in `base` (see
-/// [`Config::parse_over`]), the notice naming them and the table read; None when the file cannot
-/// be read or parsed at all.
-pub(crate) fn read(
-    path: &Path,
-    base: &toml::Table,
-) -> Option<(Config, Option<String>, toml::Table)> {
+/// [`Config::parse_over`]).
+pub(crate) fn read(path: &Path, base: &toml::Table) -> Read {
+    let before = stamp(path);
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) => {
             log::error!("config {}: {e}; keeping the old one", path.display());
-            return None;
+            let settled = e.kind() != std::io::ErrorKind::NotFound && stamp(path) == before;
+            return Read::Kept(settled.then(|| crate::config::unreadable_notice(path, &e)));
         }
     };
     match Config::parse_over(&text, base) {
@@ -323,14 +327,41 @@ pub(crate) fn read(
                 };
                 log::warn!("config {}: {}: {}; {kept}", path.display(), d.key, d.error);
             }
-            let notice = (!dropped.is_empty()).then(|| crate::config::dropped_notice(&dropped));
-            Some((cfg, notice, table))
+            let notice = (!dropped.is_empty())
+                .then(|| Notice::plain(crate::config::dropped_notice(&dropped)));
+            Read::Parsed(Box::new(cfg), notice, table)
         }
         Err(e) => {
-            log::error!("config: {e}; keeping the old one");
-            None
+            log::error!("config {}: {e}; keeping the old one", path.display());
+            let e = crate::config::parse_error(&text, &e);
+            Read::Kept(Some(crate::config::broken_notice(path, &e, KEEPS_SETTINGS)))
         }
     }
+}
+
+/// Shows `notice` unless it is the one up last.
+pub fn announce(state: &mut State, notice: Option<Notice>) {
+    let Some(n) = fresh(&mut state.config_notice, notice) else {
+        return;
+    };
+    if n.edit {
+        let editor = reprisefs::props::default_app_entry("text/plain", &state.app_index);
+        let path = std::path::absolute(&state.config_path).unwrap_or(state.config_path.clone());
+        let open = reprisefs::props::open_file(&path, editor, &state.config.terminal);
+        crate::notifyview::notice_opening(state, "Configuration", &n.body, open.argv);
+    } else {
+        crate::notifyview::notice(state, "Configuration", &n.body);
+    }
+}
+
+/// `notice` when it differs from `shown`, which it replaces: saving the same error again stays
+/// quiet, and a read with nothing to say (None) lets the next error through.
+fn fresh(shown: &mut Option<Notice>, notice: Option<Notice>) -> Option<Notice> {
+    if *shown == notice {
+        return None;
+    }
+    shown.clone_from(&notice);
+    notice
 }
 
 pub(crate) fn closes_start(old: StartMenuStyle, new: StartMenuStyle) -> bool {
@@ -687,6 +718,116 @@ mod tests {
         );
     }
 
+    /// Reads `text` as the config through the watch, as an event naming the file does.
+    fn save(h: &mut crate::harness::Harness, text: &str) {
+        std::fs::write(&h.state.config_path, text).unwrap();
+        let path = h.state.config_path.clone();
+        sync_with(&mut h.state, move || wants(&path), Some(Stamp(None)));
+        let end = Instant::now() + Duration::from_secs(5);
+        while h.state.config_watch.syncing() && Instant::now() < end {
+            h.run_for(10);
+        }
+    }
+
+    #[test]
+    fn a_broken_save_keeps_the_config_and_a_good_save_clears_its_notice() {
+        let mut h = crate::harness::Harness::new();
+        crate::fsjobs::setup(&mut h.state);
+        let path = crate::harness::scratch().join("configwatch-broken/config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        h.state.config_path = path;
+        h.state.config_watch.watch = Some(DirWatch::new().unwrap());
+
+        save(&mut h, "[window_snapping]\ndistance = 15\n");
+        assert_eq!(h.state.config.window_snapping.distance, 15);
+        save(
+            &mut h,
+            "[window_snapping]\ndistance = 20\nterminal = \"foot\n",
+        );
+        assert_eq!(
+            h.state.config.window_snapping.distance, 15,
+            "a file that does not parse keeps the running config"
+        );
+        let notice = h
+            .state
+            .config_notice
+            .clone()
+            .expect("the broken file is up");
+        assert_eq!(
+            notice.body,
+            "config.toml line 3, column 17: invalid basic string, expected `\"`.\n\
+             Reprise keeps the settings from before. Click here to open the file."
+        );
+        save(&mut h, "[window_snapping]\ndistance = 20\n");
+        assert_eq!(
+            h.state.config.window_snapping.distance, 20,
+            "the fix applies"
+        );
+        assert_eq!(h.state.config_notice, None, "a good save clears the notice");
+    }
+
+    #[test]
+    fn a_notice_goes_up_once_per_error_and_again_after_a_good_read() {
+        let broken = Notice::plain("config.toml line 3, column 2: duplicate key.".into());
+        let other = Notice::plain("config.toml line 4, column 1: duplicate key.".into());
+        let mut shown = None;
+        assert_eq!(
+            fresh(&mut shown, Some(broken.clone())),
+            Some(broken.clone())
+        );
+        assert_eq!(
+            fresh(&mut shown, Some(broken.clone())),
+            None,
+            "the same error"
+        );
+        assert_eq!(
+            fresh(&mut shown, Some(other.clone())),
+            Some(other),
+            "a new error"
+        );
+        assert_eq!(fresh(&mut shown, None), None, "a good read");
+        assert_eq!(shown, None);
+        assert_eq!(
+            fresh(&mut shown, Some(broken.clone())),
+            Some(broken),
+            "the first error again, after the good read"
+        );
+    }
+
+    /// A save by rename leaves the path missing for a moment (the old file moved to a backup
+    /// before the new one goes in); a read then is silent, and only an error that stays is told.
+    #[test]
+    fn only_a_file_that_stays_unreadable_gets_a_notice() {
+        let dir = crate::harness::scratch().join("configwatch-unreadable");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "terminal = \"foot\"\n").unwrap();
+        std::fs::rename(&path, dir.join("config.toml~")).unwrap();
+        let mid_save = read(&path, &toml::Table::new());
+        assert!(
+            matches!(mid_save, Read::Kept(None)),
+            "a file gone mid-save is not told, got {mid_save:?}"
+        );
+        let tmp = dir.join(".config.toml.swp");
+        std::fs::write(&tmp, "terminal = \"foot\"\n").unwrap();
+        std::fs::rename(&tmp, &path).unwrap();
+        assert!(
+            matches!(read(&path, &toml::Table::new()), Read::Parsed(_, None, _)),
+            "the saved file reads with nothing to tell"
+        );
+
+        std::fs::write(&path, b"terminal = \"\xff\"\n").unwrap();
+        let Read::Kept(Some(notice)) = read(&path, &toml::Table::new()) else {
+            panic!("a file that stays unreadable is told");
+        };
+        assert_eq!(
+            notice.body,
+            "Reprise could not read config.toml: invalid data.\n\
+             Reprise keeps the settings from before."
+        );
+    }
+
     #[test]
     fn a_reload_redraws_the_layout_for_output_keys_alone_and_nothing_for_an_identical_config() {
         let old = Config::default();
@@ -808,7 +949,9 @@ mod tests {
              [[keybinds]]\nkeys = \"Super+q\"\naction = \"none\"\n",
         )
         .unwrap();
-        let (cfg, _, _) = read(&path, &toml::Table::new()).expect("the file parses");
+        let Read::Parsed(cfg, _, _) = read(&path, &toml::Table::new()) else {
+            panic!("the file parses");
+        };
         std::fs::remove_file(&path).unwrap();
         let on = |keys: &str| {
             let (mods, keysym) = crate::config::parse_keybind(keys).unwrap();

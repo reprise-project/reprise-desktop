@@ -11,6 +11,19 @@ sections it doesn't touch alone. Use whichever you like. They don't fight.
 Some defaults depend on the interface; [interfaces.md](interfaces.md#defaults-by-interface)
 lists them. Glass's `[glass]` section is documented there too.
 
+## A broken save
+
+A key whose value Reprise can't use keeps its previous value (its default at
+login) and a notice names it. A file that isn't TOML at all, such as an
+unclosed quote or a table written twice, changes nothing: Reprise keeps the
+settings from before, and a notice names the file, the line and column, and
+what is wrong there. Clicking the notice opens the file in your text editor.
+Saving the same error again doesn't repeat the notice, and the next save that
+parses applies as usual. At login a broken file starts Reprise with the
+defaults, with the same notice. A file that can't be read (its permissions, or
+bytes that aren't UTF-8) gets a notice too; one that is gone for a moment
+while an editor saves it doesn't.
+
 ## Sections
 
 | Section | What it covers |

@@ -1,4 +1,5 @@
 use super::*;
+use crate::configwatch::Read;
 use crate::keys::*;
 use crate::windowrules::WindowState;
 use reprisekit::theme::Color;
@@ -395,7 +396,16 @@ fn load_malformed_file_falls_back() {
     let (c, notice, _) = Config::load(Some(&path));
     std::fs::remove_file(&path).unwrap();
     assert_eq!(c, Config::default());
-    assert!(notice.is_some(), "a file that is not TOML gets a notice");
+    let notice = notice.expect("a file that is not TOML gets a notice");
+    let name = path.file_name().unwrap().to_string_lossy();
+    assert_eq!(
+        notice.body,
+        format!(
+            "{name} line 1, column 12: string values must be quoted, expected literal string.\n\
+             Reprise started with the defaults. Click here to open the file."
+        )
+    );
+    assert!(notice.edit, "a click opens the file");
 }
 
 #[test]
@@ -439,7 +449,7 @@ fn load_drops_only_the_keys_that_fail() {
     let (loaded, notice, _) = Config::load(Some(&path));
     std::fs::remove_file(&path).unwrap();
     assert_eq!(loaded, c);
-    let notice = notice.expect("dropped keys get a notice");
+    let notice = notice.expect("dropped keys get a notice").body;
     assert!(
         notice.contains("future_key, keybinds, power.newer_key"),
         "{notice}"
@@ -455,13 +465,15 @@ fn a_reload_drops_only_the_keys_that_fail_and_names_them() {
     std::fs::write(&path, "terminal = [\n").unwrap();
     let broken = crate::configwatch::read(&path, &toml::Table::new());
     std::fs::remove_file(&path).unwrap();
-    let (c, notice, _) = read.expect("the file reloads");
+    let Read::Parsed(c, notice, _) = read else {
+        panic!("the file reloads, got {read:?}");
+    };
     assert_eq!(c.terminal, "foot", "the keys that parse apply");
-    let notice = notice.expect("the dropped key gets a notice");
+    let notice = notice.expect("the dropped key gets a notice").body;
     assert!(notice.contains("future_key"), "{notice}");
     assert!(
-        broken.is_none(),
-        "a file that does not parse keeps the old config"
+        matches!(broken, Read::Kept(Some(_))),
+        "a file that does not parse keeps the old config, got {broken:?}"
     );
 }
 
@@ -470,7 +482,9 @@ fn a_reload_keeps_the_running_value_of_a_key_that_fails() {
     let path =
         std::env::temp_dir().join(format!("reprise-reload-keep-{}.toml", std::process::id()));
     std::fs::write(&path, "[[outputs]]\nname = \"A\"\nscale = 2.0\n").unwrap();
-    let (_, _, base) = crate::configwatch::read(&path, &toml::Table::new()).unwrap();
+    let Read::Parsed(_, _, base) = crate::configwatch::read(&path, &toml::Table::new()) else {
+        panic!("the first file reads");
+    };
     std::fs::write(
         &path,
         "terminal = \"foot\"\n[[outputs]]\nname = \"A\"\nscale = \"1,5\"\n",
@@ -478,11 +492,13 @@ fn a_reload_keeps_the_running_value_of_a_key_that_fails() {
     .unwrap();
     let read = crate::configwatch::read(&path, &base);
     std::fs::remove_file(&path).unwrap();
-    let (c, notice, _) = read.expect("the file reloads");
+    let Read::Parsed(c, notice, _) = read else {
+        panic!("the file reloads, got {read:?}");
+    };
     assert_eq!(c.outputs.len(), 1);
     assert_eq!(c.outputs[0].scale, 2.0, "the output keeps scale 2");
     assert_eq!(c.terminal, "foot", "the other keys in the file apply");
-    let notice = notice.expect("the dropped key gets a notice");
+    let notice = notice.expect("the dropped key gets a notice").body;
     assert!(
         notice.contains("outputs") && notice.contains("previous"),
         "{notice}"
@@ -636,4 +652,44 @@ fn small_icons_shrinks_the_glass_bar_and_the_usable_area() {
     )
     .unwrap();
     assert_eq!(c.theme.metrics.taskbar_height, 36);
+}
+
+#[test]
+fn a_parse_error_names_the_line_and_column_toml_names() {
+    for text in [
+        "terminal = \"foot\n",
+        "[taskbar]\nx = 1\n[taskbar]\ny = 2\n",
+        "terminal\n",
+        "a = [",
+        "a = \"é\" b\n",
+        "a = 1\n\n  b c = 2\n",
+    ] {
+        let e = toml::from_str::<toml::Table>(text).unwrap_err();
+        let (line, column) = parse_error(text, &e.to_string()).at.unwrap();
+        let header = format!("TOML parse error at line {line}, column {column}\n");
+        assert!(e.to_string().starts_with(&header), "{text:?}: {e}");
+    }
+}
+
+#[test]
+fn a_broken_file_notice_names_the_file_line_column_and_message() {
+    let path = std::path::Path::new("/home/u/.config/reprise/config.toml");
+    let text = "[taskbar]\nauto_hide = true\n[taskbar]\n";
+    let e = parse_error(text, "");
+    assert_eq!(e.at, Some((3, 2)));
+    assert_eq!(
+        broken_notice(path, &e, KEEPS_SETTINGS).body,
+        "config.toml line 3, column 2: duplicate key.\n\
+         Reprise keeps the settings from before. Click here to open the file."
+    );
+    let built = parse_error(
+        "terminal = 1\n",
+        "invalid type: integer `1`, expected a string\nmore",
+    );
+    assert_eq!(built.at, None, "TOML that builds no config has no place");
+    assert_eq!(
+        broken_notice(path, &built, KEEPS_SETTINGS).body,
+        "config.toml: invalid type: integer `1`, expected a string.\n\
+         Reprise keeps the settings from before. Click here to open the file."
+    );
 }

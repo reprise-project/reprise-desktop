@@ -13,6 +13,21 @@ use std::path::{Path, PathBuf};
 
 const UNREADABLE_NOTICE: &str = "Reprise could not read config.toml and started with the \
                                  defaults. `journalctl --user -t reprise` names the error.";
+const STARTED_WITH_DEFAULTS: &str = "Reprise started with the defaults.";
+pub(crate) const KEEPS_SETTINGS: &str = "Reprise keeps the settings from before.";
+
+/// A balloon about the config file. A click on an `edit` one opens the file in the text editor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub body: String,
+    pub edit: bool,
+}
+
+impl Notice {
+    pub fn plain(body: String) -> Notice {
+        Notice { body, edit: false }
+    }
+}
 
 impl Config {
     pub fn default_path() -> PathBuf {
@@ -130,7 +145,7 @@ impl Config {
     /// Load for startup. A key that does not parse is dropped to its
     /// default and a non-TOML file yields all defaults. Returns a notice when anything was dropped,
     /// and the table read, the base of the first reload.
-    pub fn load(path: Option<&Path>) -> (Config, Option<String>, toml::Table) {
+    pub fn load(path: Option<&Path>) -> (Config, Option<Notice>, toml::Table) {
         let path = path
             .map(Path::to_path_buf)
             .unwrap_or_else(Config::default_path);
@@ -144,7 +159,7 @@ impl Config {
                 log::error!("config {}: {e}; using defaults", path.display());
                 return (
                     Config::default(),
-                    Some(UNREADABLE_NOTICE.to_string()),
+                    Some(Notice::plain(UNREADABLE_NOTICE.to_string())),
                     toml::Table::new(),
                 );
             }
@@ -163,15 +178,12 @@ impl Config {
                         d.error
                     );
                 }
-                (c, Some(dropped_notice(&dropped)), table)
+                (c, Some(Notice::plain(dropped_notice(&dropped))), table)
             }
             Err(e) => {
                 log::error!("config {}: {e}; using defaults", path.display());
-                (
-                    Config::default(),
-                    Some(UNREADABLE_NOTICE.to_string()),
-                    toml::Table::new(),
-                )
+                let notice = broken_notice(&path, &parse_error(&text, &e), STARTED_WITH_DEFAULTS);
+                (Config::default(), Some(notice), toml::Table::new())
             }
         }
     }
@@ -326,4 +338,74 @@ pub(crate) fn dropped_notice(dropped: &[repriseconf::config::DroppedKey]) -> Str
          `journalctl --user -t reprise` names the errors.",
         keys.join(", ")
     )
+}
+
+/// Why a config file was refused whole: where toml stopped reading it (1-based line, column in
+/// characters) and its message, or no place for TOML that builds no config.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ParseError {
+    pub at: Option<(usize, usize)>,
+    pub message: String,
+}
+
+/// The [`ParseError`] for `text`, which [`Config::parse_over`] refused with `error`.
+pub(crate) fn parse_error(text: &str, error: &str) -> ParseError {
+    let Err(e) = toml::from_str::<toml::Table>(text) else {
+        return ParseError {
+            at: None,
+            message: error.lines().next().unwrap_or_default().trim().to_string(),
+        };
+    };
+    let lines: Vec<&str> = (e.message().lines().map(str::trim))
+        .filter(|l| !l.is_empty())
+        .collect();
+    ParseError {
+        at: e.span().map(|s| position(text, s.start)),
+        message: lines.join(", "),
+    }
+}
+
+/// The 1-based line and column of byte `at` of `text`, numbered as toml's own error message does.
+fn position(text: &str, at: usize) -> (usize, usize) {
+    let bytes = text.as_bytes();
+    let Some(last) = bytes.len().checked_sub(1) else {
+        return (1, at + 1);
+    };
+    let index = at.min(last);
+    let line_start = (bytes[..index].iter().rposition(|&b| b == b'\n')).map_or(0, |i| i + 1);
+    let line = bytes[..line_start].iter().filter(|&&b| b == b'\n').count();
+    let column = std::str::from_utf8(&bytes[line_start..=index])
+        .map_or(index - line_start, |s| s.chars().count() - 1);
+    (line + 1, column + at - index + 1)
+}
+
+/// The notice for the config file at `path` that `e` refused; `then` says what Reprise runs with.
+pub(crate) fn broken_notice(path: &Path, e: &ParseError, then: &str) -> Notice {
+    let name = file_name(path);
+    let at = match e.at {
+        Some((line, column)) => format!(" line {line}, column {column}"),
+        None => String::new(),
+    };
+    Notice {
+        body: format!(
+            "{name}{at}: {}.\n{then} Click here to open the file.",
+            e.message.trim_end_matches('.')
+        ),
+        edit: true,
+    }
+}
+
+/// The notice for the config file at `path`, there but unreadable with `e`, on a reload.
+pub(crate) fn unreadable_notice(path: &Path, e: &std::io::Error) -> Notice {
+    Notice::plain(format!(
+        "Reprise could not read {}: {}.\n{KEEPS_SETTINGS}",
+        file_name(path),
+        e.kind()
+    ))
+}
+
+fn file_name(path: &Path) -> std::borrow::Cow<'_, str> {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
 }
