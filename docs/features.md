@@ -565,9 +565,15 @@ are.
 - **Input methods.** fcitx5 and ibus work in programs and in Reprise's own
   fields: Run, the launcher, the Start menu's search, a desktop rename and
   the dialogs. Spin boxes take digits only and leave the input method off.
-  With ibus, leave `GTK_IM_MODULE` and `QT_IM_MODULE` unset so programs
-  use Wayland's text input: set to `ibus`, they make ibus show its
-  candidate list as a window of its own, away from the caret.
+  One input method runs at a time, and fcitx5 starts on its own through
+  its autostart entry. ibus does not: quit fcitx5 (or hide its autostart
+  entry), then run `ibus start --type wayland`, from a terminal or an
+  autostart entry of your own. `ibus-daemon -drx` leaves Wayland programs
+  without ibus, and `/usr/lib/ibus/ibus-wayland` exits with "No
+  input_method global" while another input method is running. With ibus,
+  leave `GTK_IM_MODULE` and `QT_IM_MODULE` unset so programs use
+  Wayland's text input: set to `ibus`, they make ibus show its candidate
+  list as a window of its own, away from the caret.
 - **Drop text into fields.** Text dragged from any program lands in a
   text field of Reprise's programs and dialogs, Run included, where the
   drop caret shows, and a drag held at the field's edge scrolls it.
