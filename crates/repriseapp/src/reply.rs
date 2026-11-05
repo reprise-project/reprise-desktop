@@ -69,9 +69,8 @@ pub struct Reply {
     pub copy_primary: Option<String>,
     /// Arrives as `Event::PastedPrimary` on the window this reply is for.
     pub paste_primary: bool,
-    /// Run each argument vector as a process of its own, no shell between, detached and reaped in
-    /// the background. Each gets an xdg-activation token asked for on the last input, so its
-    /// window takes the focus even when a running copy shows it.
+    /// Run each argument vector as its own process, no shell, reaped in the background, with a
+    /// token asked for on the last input so its window takes the focus even from a running copy.
     pub spawn: Vec<Vec<OsString>>,
     /// The desktop entry id `spawn` runs as: each process starts in that app's scope
     /// (`reprisefs::scope`).
