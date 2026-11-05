@@ -234,7 +234,7 @@ impl Page {
                 "adaptive sync",
             ],
             Page::NightLight => &["blue light", "colour temperature", "color temperature"],
-            Page::FontsAndIcons => &["font", "icon theme", "gtk", "qt"],
+            Page::FontsAndIcons => &["font", "antialias", "smoothing", "icon theme", "gtk", "qt"],
             Page::Effects => &["animations", "shadows"],
             Page::Taskbar => &[
                 "tray",
@@ -510,6 +510,12 @@ mod tests {
     fn a_page_is_found_by_label_then_keyword_then_control_label() {
         assert_eq!(Page::NightLight.find("night"), Some(Hit::Label));
         assert_eq!(Page::FontsAndIcons.find("icons fonts"), Some(Hit::Label));
+        assert_eq!(Page::FontsAndIcons.find("smoothing"), Some(Hit::Keyword));
+        assert_eq!(
+            Page::FontsAndIcons.find("font smoothing"),
+            Some(Hit::Keyword)
+        );
+        assert_eq!(Page::FontsAndIcons.find("antialias"), Some(Hit::Keyword));
         assert_eq!(Page::MouseTouchpad.find("mouse speed"), Some(Hit::Keyword));
         assert_eq!(
             Page::DefaultPrograms.find("default browser"),
