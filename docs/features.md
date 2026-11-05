@@ -726,6 +726,12 @@ dialogs. [More in programs.md](programs.md#explorer).
   usual protocols. See [protocols.md](protocols.md).
 - **A debug overlay** (`[debug] overlay`) shows frame times, commit times, damage, clients
   and memory in the corner of each screen. For when you want to know why.
+- **A stuck main loop leaves a trace.** A main-loop turn running for 2 s
+  writes the main thread's backtrace, state and system call to the journal,
+  again at 10 s and every 30 s after, and how long it took once it ends;
+  nothing is stopped or restarted. `REPRISE_STALL_ON_RELOAD=<ms>` in
+  Reprise's environment holds the loop `ms` each time a file in the config
+  folder is written (`touch` one), to try it.
 - **A stuck display commit leaves Reprise running.** Each monitor's frames,
   power changes and gamma go to the kernel from that monitor's own thread,
   the reset that turns every display off on a return from another VT from

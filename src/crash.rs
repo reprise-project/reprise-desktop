@@ -219,6 +219,7 @@ fn restart(argv: Vec<OsString>) {
             libc::CLOSE_RANGE_CLOEXEC as libc::c_int,
         )
     };
+    crate::stall::before_exec();
     let exe = exec_path(std::fs::read_link(SELF_EXE), is_running_image);
     let mut c = std::process::Command::new(exe);
     if let Some((first, rest)) = argv.split_first() {
