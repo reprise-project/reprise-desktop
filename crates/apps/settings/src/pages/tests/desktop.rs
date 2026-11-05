@@ -168,7 +168,7 @@ fn the_switcher_page_geometry_with_its_key_notes() {
         ["Super+Tab shows them; Glass only."]
     );
     let classic = under("classic");
-    assert!(!enabled_on(&classic, p, "switcher_flip") && !enabled_on(&classic, p, FLIP_NOTE));
+    assert!(!enabled_on(&classic, p, "switcher_flip"));
     let q = Page::Search;
     assert_eq!(
         rect(&s, q, "launcher_search_group"),
@@ -525,10 +525,12 @@ fn the_flip_check_greys_outside_glass() {
     assert_eq!(s.pages[p.index()].checked("switcher_flip"), Some(true));
     follow(&mut s, &on("blue"));
     assert!(!enabled_on(&s, p, "switcher_flip"), "greyed under Blue");
-    assert!(!enabled_on(&s, p, FLIP_NOTE), "its note greyed under Blue");
+    assert!(
+        enabled_on(&s, p, FLIP_NOTE),
+        "its note says why, so it stays lit"
+    );
     follow(&mut s, &on("glass"));
     assert!(enabled_on(&s, p, "switcher_flip"), "enabled under Glass");
-    assert!(enabled_on(&s, p, FLIP_NOTE), "its note enabled under Glass");
 }
 
 #[test]
@@ -661,6 +663,10 @@ fn glass_only_taskbar_controls_grey_with_a_note_elsewhere() {
     assert_eq!(
         lines(&classic, Page::Taskbar, "orb_glow_note"),
         ["The glow shows under Glass only."]
+    );
+    assert!(
+        enabled_on(&classic, Page::Taskbar, "orb_glow_note"),
+        "the note says why, so it stays lit"
     );
     assert!(!enabled_on(&classic, Page::Taskbar, "taskbar_small_icons"));
     assert_eq!(
