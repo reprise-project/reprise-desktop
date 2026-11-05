@@ -30,6 +30,8 @@ A crate's tests never see your session: `#[cfg(test)]
 reprisebus::test_session!();` at its root gives the test binary an empty
 HOME, XDG folders and runtime folder of its own and no session bus, system
 bus or display. A new crate whose tests touch any of them adds that line.
+reprisekit, which links no bus, sets up its HOME and XDG folders the same
+way in `src/testsession.rs`.
 
 Pixel tests that depend on the UI font are pinned to Wine 9.0's Tahoma.
 `scripts/test-fonts.sh` downloads it into your cache and prints the
