@@ -162,7 +162,7 @@ pub fn build(tree: &mut TreeView, places: &mut Vec<Place>, icons: &mut IconCache
 }
 
 /// Read a tree node's children. The Desktop holds Documents, Home, Computer and the Recycle Bin, then
-/// its own subfolders; Computer holds its drives and the user's Home. A child that was there before
+/// its own subfolders; Computer holds its drives. A child that was there before
 /// keeps its node (open or not, with what it holds), and a selection below the node follows its child
 /// to the new row, or lands on the node when that child is gone.
 pub fn fill(
