@@ -840,3 +840,83 @@ fn render_pages() {
         }
     }
 }
+
+fn right_click(t: &mut TaskMgr, ctx: &mut Ctx, (x, y): (i32, i32)) {
+    t.event(
+        MAIN,
+        Event::Pointer(PointerInput::Press {
+            x,
+            y,
+            button: repriseapp::BTN_RIGHT,
+            time: 0,
+            mods: Mods::default(),
+        }),
+        ctx,
+    );
+}
+
+fn view_marks(t: &TaskMgr) -> Vec<bool> {
+    let view = t.bar.menus[2].at(&[3]).unwrap();
+    (view.items().iter())
+        .map(|i| matches!(i, MenuItem::Entry { checked: true, .. }))
+        .collect()
+}
+
+#[test]
+fn the_cpu_graph_menu_picks_the_same_view_as_the_view_menu() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    open(&mut t, &mut ctx, Page::Performance);
+    let perf = pages::layout(&t, &ctx).perf.unwrap();
+    right_click(&mut t, &mut ctx, centre(perf.graph_groups[0]));
+    assert!(t.popup.is_some());
+    assert!(
+        t.popup(MAIN, &ctx).is_some(),
+        "the menu is hosted on a popup"
+    );
+    for k in [keysym::DOWN, keysym::DOWN, keysym::RETURN] {
+        t.event(MAIN, key(k), &mut ctx);
+    }
+    assert!(t.popup.is_none());
+    assert!(t.per_core, "One Graph Per CPU");
+    assert_eq!(view_marks(&t), [false, true], "View > CPU History follows");
+
+    t.event(MAIN, key(keysym::MENU), &mut ctx);
+    assert!(
+        t.popup.is_some(),
+        "the Menu key opens it on the Performance page"
+    );
+    t.event(MAIN, key(keysym::RETURN), &mut ctx);
+    assert!(!t.per_core, "by keyboard its first row is picked");
+    assert_eq!(view_marks(&t), [true, false]);
+
+    right_click(&mut t, &mut ctx, centre(perf.graph_groups[1]));
+    assert!(t.popup.is_none(), "the memory graph has no menu");
+}
+
+#[test]
+fn shift_f10_opens_the_graph_menu_and_f10_still_opens_the_menu_bar() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    open(&mut t, &mut ctx, Page::Performance);
+    let shift_f10 = Event::Key(KeyInput {
+        sym: keysym::F10,
+        utf8: None,
+        mods: Mods {
+            shift: true,
+            ..Mods::default()
+        },
+        edit: None,
+    });
+    t.event(MAIN, shift_f10, &mut ctx);
+    assert!(t.popup.is_some());
+    assert!(t.bar.active.is_none());
+    t.event(MAIN, key(keysym::ESCAPE), &mut ctx);
+    assert!(t.popup.is_none());
+    t.event(MAIN, key(keysym::F10), &mut ctx);
+    assert!(t.bar.active.is_some());
+    t.event(MAIN, key(keysym::ESCAPE), &mut ctx);
+    open(&mut t, &mut ctx, Page::Processes);
+    t.event(MAIN, key(keysym::MENU), &mut ctx);
+    assert!(t.popup.is_none(), "only on the Performance page");
+}

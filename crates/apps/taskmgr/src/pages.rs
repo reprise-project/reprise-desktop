@@ -412,6 +412,9 @@ pub fn draw(t: &mut TaskMgr, c: &mut Canvas, ctx: &Ctx) {
     }
     statusbar::draw(c, &ctx.text, &p, &status_bar(t), lay.status, px);
     t.bar.draw(c, &ctx.text, &ctx.theme, &lay.bar);
+    if let Some(m) = &t.popup {
+        m.draw(c, ctx);
+    }
     if let Some(tip) = t.tip.as_ref().filter(|tip| tip.shown)
         && let Some(row) = t.proc_rows.iter().find(|r| r.pid == tip.pid)
         && !row.cmdline.is_empty()
@@ -457,7 +460,8 @@ pub fn access(t: &mut TaskMgr, tree: &mut Tree, ctx: &Ctx) {
         perfgraph::access(tree, ROOT, perf.graphs[1], "Memory Usage History", &mem);
     }
     statusbar::access(&status_bar(t), lay.status, ctx.theme.text, tree, ROOT);
-    if let Some(f) = menus.or(focus) {
+    let popup = t.popup.as_ref().map(|m| m.access(tree, ROOT));
+    if let Some(f) = menus.or(popup).or(focus) {
         tree.set_focus(f);
     }
 }
