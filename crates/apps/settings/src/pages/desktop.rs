@@ -7,8 +7,8 @@ use reprisekit::raster::Rect;
 
 use crate::model::{
     DESKTOPS_MAX, DIM_INACTIVE_MAX, HOT_CORNERS, PAGER_MARKS, PREVIEW_FPS_MAX, SNAP_DISTANCE_MAX,
-    STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES, SWITCHER_STYLES,
-    TASKBAR_BUTTONS, TASKBAR_POSITIONS, TITLE_DOUBLE_CLICKS,
+    SWITCH_ANIMATIONS, SWITCH_MS_MAX, SWITCHER_SIZES, SWITCHER_STYLES, TASKBAR_BUTTONS,
+    TASKBAR_POSITIONS, TITLE_DOUBLE_CLICKS,
 };
 
 /// How windows snap, tab and come back: the Snapping group holds
@@ -248,7 +248,7 @@ pub fn virtual_desktops(a: Area) -> Form {
 
 /// The edge the bar sits on and how windows become task buttons, then one
 /// check box per optional part of the taskbar, auto-hide with its three
-/// triggers indented under it, and the Start button's logo, menu banner and menu style.
+/// triggers indented under it, and the Start button's logo.
 pub fn taskbar(a: Area) -> Form {
     let mut items = vec![
         Item::label_at("location_label", X, 48, 100, "Taskbar l&ocation:"),
@@ -257,10 +257,6 @@ pub fn taskbar(a: Area) -> Form {
         choice("taskbar_buttons", X + 104, 72, 230, TASKBAR_BUTTONS),
     ];
     let checks = [
-        (
-            "taskbar_pinned",
-            "Show the Quick Launch programs as &pinned task buttons",
-        ),
         (
             "taskbar_small_icons",
             "Use &small icons on a shorter taskbar",
@@ -286,7 +282,7 @@ pub fn taskbar(a: Area) -> Form {
     items.push(button(
         TRAY_CUSTOMIZE,
         a.right() - BUTTON_W,
-        185,
+        167,
         "C&ustomize...",
     ));
     items.push(Item::new(
@@ -311,34 +307,12 @@ pub fn taskbar(a: Area) -> Form {
     for (i, (id, text)) in REVEAL_CONTROLS.into_iter().zip(reveals).enumerate() {
         items.push(Item::check(id, X, 278 + 20 * i as i32, text).under_check());
     }
-    items.push(group(a, "start_group", 338, 94, "Start Button"));
+    items.push(group(a, "start_group", 338, 44, "Start Button"));
     items.push(Item::check(
         "start_icon",
         GX,
         360,
         "Show the icon theme's &logo on the Start button",
-    ));
-    items.push(Item::label_at(
-        "banner_label",
-        GX,
-        384,
-        110,
-        "Start menu ba&nner:",
-    ));
-    items.push(edit("startmenu_banner", GX + 114, 380, a.gw() - 114));
-    items.push(Item::label_at(
-        "startmenu_style_label",
-        GX,
-        412,
-        110,
-        "Start menu st&yle:",
-    ));
-    items.push(choice(
-        "startmenu_style",
-        GX + 114,
-        408,
-        a.combo(Area::MIN.gw() - 114),
-        STARTMENU_STYLES,
     ));
     Form::new(items)
 }

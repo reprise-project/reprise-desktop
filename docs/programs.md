@@ -290,9 +290,10 @@ One window, 26 pages, seven headings. Only one runs at a time.
   - **Effects:** window animations, highlight fades, menu shadows and how menus
     open (fade, slide or none) and taskbar slides.
 - **Taskbar & Windows**
-  - **Taskbar:** position, button mode, pinned programs, Peek, Show desktop,
-    tray overflow, auto-hide, and the Start button and menu style.
-  - **Start Menu:** the Start menu tree and the Quick Launch buttons.
+  - **Taskbar:** position, button mode, Peek, Show desktop, tray overflow,
+    auto-hide, and the Start button's logo.
+  - **Start Menu:** the menu style and banner, the Start menu tree, the Quick
+    Launch buttons and whether they show as pinned task buttons.
   - **Search:** whether the launcher searches your files and open windows.
   - **Window Switcher:** Alt+Tab's icons or thumbnails, picture size, Peek,
     the 3D switcher and the overview's hot corner.

@@ -172,7 +172,10 @@ fn the_advanced_page_geometry() {
     assert_eq!(rect(&s, p, "note"), Rect::new(20, 440, 275, 26));
     assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 440, 75, 23));
     for id in ["banner_label", "startmenu_banner", "start_icon"] {
-        assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Taskbar");
+        assert!(
+            s.pages[p.index()].item(id).is_none(),
+            "{id} is not on Advanced"
+        );
     }
     inside_page(&s, p);
 }
