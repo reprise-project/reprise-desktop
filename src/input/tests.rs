@@ -440,3 +440,130 @@ fn letting_go_of_every_button_ends_the_held_move_and_tells_the_client() {
         assert_eq!(h.state.buttons_down, 0, "{name}");
     }
 }
+
+fn asked_outputs() -> Vec<String> {
+    let mut on: Vec<String> = (crate::backend::take_asks().into_iter())
+        .filter(|(_, a)| *a == crate::backend::Ask::Scene)
+        .map(|(o, _)| o)
+        .collect();
+    on.sort();
+    on.dedup();
+    on
+}
+
+fn two_outputs(config: crate::config::Config) -> crate::harness::Harness {
+    let mut h = crate::harness::Harness::with_config(config);
+    h.output("TEST-1", 1024, 768);
+    h.output("TEST-2", 1024, 768);
+    h
+}
+
+/// Glass, whose taskbars combine one app's windows into one button: a focus change between two
+/// windows of one app redraws no bar.
+fn glass(extra: &str) -> crate::config::Config {
+    crate::config::Config::parse(&format!("[appearance]\ninterface = \"glass\"\n{extra}"))
+        .expect("config")
+}
+
+fn centre(h: &crate::harness::Harness, w: WindowId) -> (f64, f64) {
+    let r = h.state.win(w).expect("the window").frame_rect();
+    (f64::from(r.x + r.width / 2), f64::from(r.y + r.height / 2))
+}
+
+#[test]
+fn a_click_on_a_window_asks_only_the_outputs_it_changes() {
+    let mut h = two_outputs(glass(""));
+    let mut c = h.connect();
+    let a = h.map_toplevel(&mut c, "app", 300, 200);
+    let b = h.map_toplevel(&mut c, "app", 300, 200);
+    h.state.move_to(a.id, 50, 50);
+    h.state.move_to(b.id, 500, 50);
+    h.dispatch();
+    let (x, y) = centre(&h, a.id);
+    h.pointer_to(x, y);
+    // Let the bars' slide-in of the new buttons finish.
+    h.run_for(600);
+    crate::backend::take_asks();
+    h.click(x, y);
+    assert_eq!(h.state.focused, Some(a.id), "the click focuses a");
+    assert_eq!(asked_outputs(), ["TEST-1"], "both windows lie on TEST-1");
+    h.click(x, y);
+    assert!(
+        asked_outputs().iter().all(|o| o == "TEST-1"),
+        "a click on the focused window asks no other output"
+    );
+    h.state.move_to(b.id, 1200, 50);
+    h.dispatch();
+    let (x, y) = centre(&h, b.id);
+    h.pointer_to(x, y);
+    h.run_for(600);
+    crate::backend::take_asks();
+    h.click(x, y);
+    assert_eq!(h.state.focused, Some(b.id));
+    assert_eq!(
+        asked_outputs(),
+        ["TEST-1", "TEST-2"],
+        "a goes inactive on TEST-1, b comes up on TEST-2"
+    );
+}
+
+#[test]
+fn a_focus_change_asks_the_outputs_of_the_shades_it_moves() {
+    for dim in [0, 20] {
+        let mut h = two_outputs(glass(&format!(
+            "[windows]\ndim_inactive = {dim}\n[effects]\nwindow_animation = false\n"
+        )));
+        let mut c = h.connect();
+        let a = h.map_toplevel(&mut c, "app", 300, 200);
+        let b = h.map_toplevel(&mut c, "app", 300, 200);
+        let d = h.map_dialog(&mut c, "app", Some(b), "", (120, 80));
+        h.state.move_to(a.id, 50, 50);
+        h.state.move_to(b.id, 500, 50);
+        h.state.move_to(d.id, 1200, 50);
+        h.state.focus_window(b.id);
+        h.run_for(600);
+        crate::backend::take_asks();
+        h.state.focus_window(a.id);
+        let win = h.state.win(d.id).expect("the dialog");
+        assert_eq!(
+            h.state.scene.enabled(win.dim),
+            dim > 0,
+            "b's dialog shades at once"
+        );
+        let want: &[&str] = if dim > 0 {
+            &["TEST-1", "TEST-2"]
+        } else {
+            &["TEST-1"]
+        };
+        assert_eq!(asked_outputs(), want, "the dialog lies on TEST-2");
+        h.state.focus_window(a.id);
+        assert_eq!(asked_outputs(), Vec::<String>::new(), "a stays focused");
+    }
+}
+
+#[test]
+fn a_caption_press_under_fast_drag_glass_asks_every_output() {
+    let config = glass("");
+    assert!(config.glass.fast_drag);
+    let mut h = two_outputs(config);
+    let mut c = h.connect();
+    let a = h.map_toplevel(&mut c, "a", 300, 200);
+    h.state.move_to(a.id, 50, 50);
+    h.dispatch();
+    let r = h.state.win(a.id).expect("a").frame_rect();
+    let (x, y) = (f64::from(r.x + r.width / 2), f64::from(r.y + 10));
+    h.pointer_to(x, y);
+    crate::backend::take_asks();
+    h.button(crate::harness::LEFT, true);
+    assert!(
+        matches!(h.state.interaction, Interaction::Move { .. }),
+        "the caption press holds a move"
+    );
+    assert_eq!(
+        asked_outputs(),
+        ["TEST-1", "TEST-2"],
+        "the blur quality changes on every output"
+    );
+    h.button(crate::harness::LEFT, false);
+    assert_eq!(asked_outputs(), ["TEST-1", "TEST-2"], "and changes back");
+}
