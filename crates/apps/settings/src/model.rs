@@ -43,7 +43,6 @@ pub struct Settings {
     /// `desktop_extensions`: one of [`DESKTOP_EXTENSIONS`]' values.
     pub desktop_extensions: String,
     pub start_icon: bool,
-    pub adaptive_sync: bool,
     /// `[switcher] preview`: a live picture of the selected window in the
     /// icon style.
     pub switcher_preview: bool,
@@ -438,7 +437,6 @@ impl Settings {
                 &c.desktop_extensions,
             ),
             start_icon: c.start_icon,
-            adaptive_sync: c.adaptive_sync,
             switcher_preview: c.switcher.preview,
             switcher_desktop: c.switcher.desktop,
             switcher_peek: c.switcher.peek,
