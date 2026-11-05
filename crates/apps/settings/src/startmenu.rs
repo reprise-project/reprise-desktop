@@ -258,7 +258,7 @@ pub fn default_menu() -> Vec<Entry> {
                 Entry::item(
                     "&Network Connections",
                     "network-workgroup",
-                    cmd("nm-connection-editor"),
+                    cmd("reprise-network"),
                 )
                 .tipped(
                     "Displays existing network connections on this computer and helps you \
@@ -442,6 +442,16 @@ mod tests {
         let have = load(text);
         write(&mut doc, want, &have, &[]);
         doc.to_string()
+    }
+
+    #[test]
+    fn network_connections_opens_reprise_network() {
+        let m = default_menu();
+        assert!(matches!(
+            get(&m, &[2, 2]),
+            Some(Entry::Item { label, target: Target::Command(c), .. })
+                if label == "&Network Connections" && c == "reprise-network"
+        ));
     }
 
     #[test]
