@@ -80,6 +80,17 @@ impl SettingsApp {
         self.focus_locations(false);
     }
 
+    /// Let go of the side lists once the search field, the page list or a page control holds the
+    /// keyboard, so one thing holds it.
+    pub(crate) fn sheet_took_keyboard(&mut self) {
+        if self.sheet.search_focused
+            || self.sheet.tabs.focused
+            || self.sheet.open().focus().is_some()
+        {
+            self.blur_side_lists();
+        }
+    }
+
     /// The side list's keys while focused. Space toggles a Startup check.
     pub(crate) fn list_key(&mut self, key: &form::Key, cm: &ControlMetrics) -> Reply {
         let Some((list, rect, _)) = self.side_list() else {
