@@ -29,7 +29,11 @@ const WIDTH: i32 = 3;
 /// together make it a recording rather than a screenshot.
 const SUSTAIN: Duration = Duration::from_secs(1);
 /// How long a recording's border outlives its last frame.
+#[cfg(not(test))]
 const HOLD: Duration = Duration::from_secs(1);
+/// Shorter than the sharing dot's test hold, so tests see the dot outlast it.
+#[cfg(test)]
+const HOLD: Duration = Duration::from_millis(100);
 const TICK: Duration = Duration::from_millis(250);
 
 /// A wlr-screencopy capture: the output, for an area its output-local
@@ -108,6 +112,12 @@ fn live_wlr<'a, K: PartialEq>(
             waiting.contains(&t.key) || (t.sustained && now.duration_since(t.last) <= HOLD)
         })
         .map(|t| &t.key)
+}
+
+/// The newest frame of a wlr recording still tracked.
+pub fn last_recorded(state: &State) -> Option<Instant> {
+    let tracks = &state.capture_border.tracks;
+    tracks.iter().filter(|t| t.sustained).map(|t| t.last).max()
 }
 
 /// What `targets` puts a border around, deduplicated: a whole output
@@ -409,8 +419,12 @@ mod tests {
         arrive(&mut tracks, 'a', t0 + Duration::from_millis(40));
         let at = |ms| t0 + Duration::from_millis(ms);
         assert_eq!(live_wlr(&tracks, &[], at(40)).collect::<Vec<_>>(), [&'a']);
-        assert_eq!(live_wlr(&tracks, &[], at(1040)).count(), 1, "held");
-        assert_eq!(live_wlr(&tracks, &[], at(1100)).count(), 0, "hold over");
+        assert_eq!(live_wlr(&tracks, &[], at(40) + HOLD).count(), 1, "held");
+        assert_eq!(
+            live_wlr(&tracks, &[], at(100) + HOLD).count(),
+            0,
+            "hold over"
+        );
     }
 
     #[test]
