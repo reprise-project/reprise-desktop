@@ -26,6 +26,7 @@ mod events;
 mod filepick;
 mod keyboardhost;
 mod layoutdlg;
+mod linkhost;
 mod locations;
 mod magnifierpage;
 mod menuhost;
@@ -358,6 +359,10 @@ struct SettingsApp {
     custom_colors: [reprisekit::theme::Color; reprisekit::controls::colordlg::CUSTOM],
     shortcut_target: Option<model::Row>,
     app_names: HashMap<String, String>,
+    /// Where desktop entries are looked up ([`linkhost::dirs`]).
+    app_dirs: Vec<PathBuf>,
+    /// Each link row's shown entry, in `repriseconf::pages::links()` order.
+    links: Vec<Option<reprisefs::apps::AppEntry>>,
 
     defaults: Option<defaultspage::Defaults>,
     types: ListView,
@@ -629,6 +634,8 @@ impl SettingsApp {
                 reprisekit::controls::colordlg::CUSTOM],
             shortcut_target: None,
             app_names: HashMap::new(),
+            app_dirs: linkhost::dirs(),
+            links: Vec::new(),
             defaults: None,
             pads: Vec::new(),
             pad_picked: 0,
@@ -719,6 +726,8 @@ impl SettingsApp {
         app.sync_restore();
         app.quick_reload(None);
         app.show_monitor();
+        app.find_links();
+        app.show_links();
         app
     }
 

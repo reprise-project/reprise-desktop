@@ -1,10 +1,11 @@
-//! The search field over the page list: a query shows the pages it matches ([`Page::find`]);
-//! Enter or a press on a found row focuses the control the query named.
+//! The search field over the page list: a query shows the pages ([`Page::find`]) and link rows
+//! ([`repriseconf::pages::Program::find`]) it matches; Enter or a press on a found page row focuses the control the
+//! query named.
 
 use crate::SettingsApp;
 use crate::registry::Page;
 use repriseapp::Reply;
-use repriseconf::pages::Hit;
+use repriseconf::pages::{Hit, links};
 use reprisekit::controls::pagelist::Filter;
 
 /// The list's filter for `query` and each page's hit, in `Page::all()` order; `None` for a
@@ -16,7 +17,7 @@ pub(crate) fn find(query: &str) -> Option<(Filter, Vec<Option<Hit>>)> {
     let hits: Vec<Option<Hit>> = Page::all().map(|p| p.find(query)).collect();
     let filter = Filter {
         pages: hits.iter().map(Option::is_some).collect(),
-        links: Vec::new(),
+        links: links().map(|p| p.find(query, p.label).is_some()).collect(),
     };
     Some((filter, hits))
 }
@@ -76,7 +77,14 @@ mod tests {
             (f.pages.len(), hits.len()),
             (Page::all().count(), Page::all().count())
         );
-        assert!(f.links.is_empty());
+        assert_eq!(f.links.len(), links().count());
         assert_eq!(hits[Page::NightLight.index()], Some(Hit::Label));
+        let link = |q: &str, id: &str| {
+            let (f, _) = find(q).unwrap();
+            f.links[links().position(|p| p.id == id).unwrap()]
+        };
+        assert!(link("wifi", "reprise-network.desktop"));
+        assert!(link("bluetooth", "reprise-bluetooth.desktop"));
+        assert!(!link("wifi", "reprise-bluetooth.desktop"));
     }
 }

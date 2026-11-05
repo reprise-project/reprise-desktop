@@ -2036,7 +2036,63 @@ fn a_query_that_shows_the_same_rows_keeps_the_list_scrolled() {
 }
 
 #[test]
-fn a_link_redraws_the_list() {
-    let mut a = app("search-link");
-    assert!(a.sheet_event(propsheet::Event::Link(0)).redraw);
+fn a_link_row_starts_its_program_in_its_app_scope_and_settings_stays() {
+    use repriseconf::pages::links;
+    use std::ffi::OsString;
+    let mut a = app("links");
+    let net = links()
+        .position(|p| p.id == "reprise-network.desktop")
+        .unwrap();
+    let bt = links()
+        .position(|p| p.id == "reprise-bluetooth.desktop")
+        .unwrap();
+    a.links = links()
+        .map(|p| {
+            (p.id == "reprise-network.desktop").then(|| {
+                reprisefs::apps::parse_desktop(
+                    "[Desktop Entry]\nType=Application\nName=Network Connections\nExec=reprise-network\n",
+                    p.id,
+                )
+                .unwrap()
+            })
+        })
+        .collect();
+    a.show_links();
+    let r = a.sheet_event(propsheet::Event::Link(net));
+    assert_eq!(r.spawn, [vec![OsString::from("reprise-network")]]);
+    assert_eq!(r.spawn_app.as_deref(), Some("reprise-network.desktop"));
+    assert_eq!(
+        registry::open(&a.sheet),
+        Page::Appearance,
+        "Settings stays on its page"
+    );
+    let list = a.sheet.list_mut().unwrap();
+    assert!(list.links[net].enabled);
+    assert_eq!(
+        (
+            list.links[net].label.as_str(),
+            list.links[net].name.as_str()
+        ),
+        ("Connections", "Network Connections"),
+        "a screen reader hears the program's whole name"
+    );
+    assert!(!list.links[bt].enabled, "not installed: greyed");
+    assert!(a.sheet_event(propsheet::Event::Link(bt)).spawn.is_empty());
+}
+
+#[test]
+fn open_program_starts_a_shown_entry_and_nothing_for_a_missing_one() {
+    use std::ffi::OsString;
+    let mut a = app("open-program");
+    let dir = tmp("open-program-apps");
+    std::fs::write(
+        dir.join("reprise-sound.desktop"),
+        "[Desktop Entry]\nType=Application\nName=Sounds\nExec=reprise-sound\n",
+    )
+    .unwrap();
+    a.app_dirs = vec![dir];
+    let r = a.open_program("reprise-sound.desktop");
+    assert_eq!(r.spawn, [vec![OsString::from("reprise-sound")]]);
+    assert_eq!(r.spawn_app.as_deref(), Some("reprise-sound.desktop"));
+    assert!(a.open_program("reprise-updates.desktop").spawn.is_empty());
 }

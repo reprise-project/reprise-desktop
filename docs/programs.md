@@ -272,7 +272,10 @@ asks first. Programs see `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 ## Reprise Settings
 
-One window, 26 pages, seven headings. Only one runs at a time.
+One window, 26 pages, seven headings. Only one runs at a time. A row ending
+in "..." starts a separate settings program in its own window, as Start
+does, and Settings stays on its page; the row is greyed when the program has
+no desktop entry that shows in menus.
 
 - **Personalize**
   - **Appearance:** interface and colour scheme. Under Glass: mode,
@@ -320,10 +323,12 @@ One window, 26 pages, seven headings. Only one runs at a time.
   - **Cursor:** cursor theme and size.
   - **Tablet:** what each pad button, pad key, ring, strip and dial does,
     and how far a ring or strip turns per step.
+  - **Bluetooth...** and **Printers...**
 - **Accessibility**
   - **Text & Keys:** text size, StickyKeys, SlowKeys and MouseKeys.
   - **Magnifier & Filters:** colour filters and the magnifier.
 - **Network**
+  - **Connections...** (Network Connections)
   - **Remote Desktop:** Allow remote connections turns the server on or off
     at once, enabling and starting its user unit or stopping and disabling
     it, and the lines under it say where it listens and which video encoder
@@ -344,6 +349,7 @@ One window, 26 pages, seven headings. Only one runs at a time.
     a script's window stays open when it ends, and the program for
     every file type, which Browse... can pick by its file when it has no
     desktop entry.
+  - **Date and Time...**, **User Accounts...** and **Software Updates...**
   - **Advanced:** clipboard history, screenshots, recent files, location,
     the debug overlay, the thumbnail cache (Clear removes
     only the thumbnails Reprise kept and says how much went), thumbnails from

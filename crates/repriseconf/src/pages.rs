@@ -92,6 +92,8 @@ pub const GROUPS: &[(&str, &[Entry])] = &[
             Entry::Page(Page::MouseTouchpad),
             Entry::Page(Page::Cursor),
             Entry::Page(Page::Tablet),
+            Entry::Program("reprise-bluetooth.desktop"),
+            Entry::Program("reprise-printers.desktop"),
         ],
     ),
     (
@@ -101,7 +103,13 @@ pub const GROUPS: &[(&str, &[Entry])] = &[
             Entry::Page(Page::MagnifierFilters),
         ],
     ),
-    ("Network", &[Entry::Page(Page::RemoteDesktop)]),
+    (
+        "Network",
+        &[
+            Entry::Program("reprise-network.desktop"),
+            Entry::Page(Page::RemoteDesktop),
+        ],
+    ),
     (
         "System",
         &[
@@ -109,6 +117,9 @@ pub const GROUPS: &[(&str, &[Entry])] = &[
             Entry::Page(Page::Startup),
             Entry::Page(Page::DefaultPrograms),
             Entry::Page(Page::Privacy),
+            Entry::Program("reprise-datetime.desktop"),
+            Entry::Program("reprise-accounts.desktop"),
+            Entry::Program("reprise-updates.desktop"),
             Entry::Page(Page::Advanced),
             Entry::Page(Page::Backup),
         ],
@@ -407,10 +418,19 @@ impl Page {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Program {
     pub id: &'static str,
+    /// The program's name, as search and menus show it.
+    pub label: &'static str,
+    /// The link row's text where the heading above says the rest; [`Program::row_label`].
+    pub short_label: Option<&'static str>,
     pub keywords: &'static [&'static str],
 }
 
 impl Program {
+    /// The link row's text; the list adds the "...".
+    pub fn row_label(&self) -> &'static str {
+        self.short_label.unwrap_or(self.label)
+    }
+
     /// `name` is the program's desktop-entry name; a program has no control hits.
     pub fn find(&self, query: &str, name: &str) -> Option<Hit> {
         find_by_name(query, name, self.keywords)
@@ -425,15 +445,34 @@ fn find_by_name(query: &str, name: &str, keywords: &[&str]) -> Option<Hit> {
     all_words(query, &hay).then_some(Hit::Keyword)
 }
 
+/// The program `id` (a desktop entry id) names.
+pub fn program(id: &str) -> Option<&'static Program> {
+    PROGRAMS.iter().find(|p| p.id == id)
+}
+
+/// The list's link rows in [`GROUPS`] order; a link's number is its place here.
+pub fn links() -> impl Iterator<Item = &'static Program> {
+    GROUPS.iter().flat_map(|(_, entries)| {
+        entries.iter().filter_map(|e| match e {
+            Entry::Program(id) => Some(program(id).expect("every link is in PROGRAMS")),
+            Entry::Page(_) => None,
+        })
+    })
+}
+
 pub const PROGRAMS: &[Program] = &[
     Program {
         id: "reprise-network.desktop",
+        label: "Network Connections",
+        short_label: Some("Connections"),
         keywords: &[
             "network", "wifi", "wi-fi", "wireless", "wlan", "ethernet", "wired", "vpn", "internet",
         ],
     },
     Program {
         id: "reprise-sound.desktop",
+        label: "Sounds and Audio Devices",
+        short_label: None,
         keywords: &[
             "sound",
             "audio",
@@ -445,10 +484,14 @@ pub const PROGRAMS: &[Program] = &[
     },
     Program {
         id: "reprise-bluetooth.desktop",
+        label: "Bluetooth",
+        short_label: None,
         keywords: &["bluetooth", "pairing"],
     },
     Program {
         id: "reprise-power.desktop",
+        label: "Power Options",
+        short_label: None,
         keywords: &[
             "battery",
             "power profile",
@@ -462,18 +505,26 @@ pub const PROGRAMS: &[Program] = &[
     },
     Program {
         id: "reprise-datetime.desktop",
+        label: "Date and Time",
+        short_label: None,
         keywords: &["clock", "date", "time", "time zone", "timezone"],
     },
     Program {
         id: "reprise-accounts.desktop",
+        label: "User Accounts",
+        short_label: None,
         keywords: &["user", "users", "account", "password", "picture"],
     },
     Program {
         id: "reprise-printers.desktop",
+        label: "Printers",
+        short_label: None,
         keywords: &["printer", "printing", "print queue", "cups"],
     },
     Program {
         id: "reprise-updates.desktop",
+        label: "Software Updates",
+        short_label: None,
         keywords: &["upgrade", "packages", "flatpak", "firmware"],
     },
 ];
@@ -547,6 +598,31 @@ mod tests {
     fn the_switcher_page_is_found_by_3d_and_flip() {
         assert_eq!(Page::Switcher.find("3d"), Some(Hit::Keyword));
         assert_eq!(Page::Switcher.find("flip"), Some(Hit::Keyword));
+    }
+
+    #[test]
+    fn link_rows_name_programs_in_tree_order() {
+        let labels: Vec<&str> = links().map(|p| p.label).collect();
+        assert_eq!(
+            labels,
+            [
+                "Bluetooth",
+                "Printers",
+                "Network Connections",
+                "Date and Time",
+                "User Accounts",
+                "Software Updates"
+            ]
+        );
+        let rows: Vec<&str> = links().map(Program::row_label).collect();
+        assert_eq!(rows[2], "Connections", "the Network heading says the rest");
+        for (_, entries) in GROUPS {
+            for e in *entries {
+                if let Entry::Program(id) = e {
+                    assert!(program(id).is_some(), "{id} is in PROGRAMS");
+                }
+            }
+        }
     }
 
     #[test]

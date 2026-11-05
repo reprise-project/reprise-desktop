@@ -68,17 +68,22 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
     }
 }
 
-/// Each heading of [`GROUPS`] with its pages' rows, in list order. Program entries
-/// get no row.
+/// Each heading of [`GROUPS`] with its rows, in list order.
 fn page_rows() -> Vec<(&'static str, Vec<pagelist::Item<'static>>)> {
     GROUPS
         .iter()
         .map(|(heading, entries)| {
             let labels = entries
                 .iter()
-                .filter_map(|e| match e {
-                    Entry::Page(p) => Some(pagelist::Item::Page(p.label())),
-                    Entry::Program(_) => None,
+                .map(|e| match e {
+                    Entry::Page(p) => pagelist::Item::Page(p.label()),
+                    Entry::Program(id) => {
+                        let p = repriseconf::pages::program(id).expect("every link is in PROGRAMS");
+                        pagelist::Item::Link {
+                            label: p.row_label(),
+                            name: p.label,
+                        }
+                    }
                 })
                 .collect();
             (*heading, labels)
@@ -228,8 +233,8 @@ mod tests {
         assert_eq!(open(&s), Page::Appearance, "the first page opens");
     }
 
-    /// The list's inside is 456 px at the smallest sheet: 35 rows at 619 px, so it scrolls
-    /// until the sheet is 163 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// The list's inside is 456 px at the smallest sheet: 41 rows at 721 px, so it scrolls
+    /// until the sheet is 265 px taller. On a sheet 56 px shorter, a page opened from its end
     /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
@@ -239,16 +244,16 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 35, "seven headings over 28 pages");
-        assert_eq!((list.total, list.inner.height), (619, 456));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 163 px");
-        sheet.size.1 += 163;
+        assert_eq!(list.rows.len(), 41, "seven headings, 28 pages, six links");
+        assert_eq!((list.total, list.inner.height), (721, 456));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 265 px");
+        sheet.size.1 += 265;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 219;
+        sheet.size.1 -= 321;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (619, 400));
+        assert_eq!((list.total, list.inner.height), (721, 400));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();
@@ -275,6 +280,38 @@ mod tests {
         assert_eq!(l.top, 0, "Home scrolls back to the Personalize heading");
         sheet.key(Key::End, None);
         assert_eq!(row(&sheet).0.bottom(), row(&sheet).1.bottom());
+    }
+
+    /// Every row's text, a link's with its dots, fits beside the scrollbar in each look at
+    /// scale 1 and 2, where the list is at its narrowest.
+    #[test]
+    fn every_list_row_fits_beside_the_scrollbar_in_every_look() {
+        use reprisekit::interface::Interface;
+        use reprisekit::interfaces::theme_for;
+        let mut sheet = built();
+        let font = sheet.font;
+        let mut labels = sheet.tabs.labels.clone();
+        let list = sheet.list_mut().unwrap();
+        labels.extend(list.links.iter().map(|l| format!("{}...", l.label)));
+        for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+            let theme = theme_for(i);
+            let p = theme.paint();
+            let cm = p.look.controls().grown(p.text);
+            let lay = pagelist::layout(list, Rect::new(0, 0, pagelist::WIDTH, 456), &cm);
+            assert!(lay.scrollbar.is_some());
+            for s in [1, 2] {
+                let theme = theme_for(i).scaled(s);
+                let text = TextRenderer::load(&theme.fonts);
+                let room = s * (lay.rows[1].width - pagelist::PAGE_X);
+                for l in &labels {
+                    let w = text.dialog(font).measure(l, false, theme.fonts.size_px);
+                    assert!(
+                        w <= room,
+                        "{i:?} at {s}x: {l} is {w} px, the row holds {room}"
+                    );
+                }
+            }
+        }
     }
 
     const LARGE: (i32, i32) = (1400, 900);
