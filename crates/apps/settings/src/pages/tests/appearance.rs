@@ -281,7 +281,6 @@ fn the_glass_rows_show_under_glass_only() {
 fn the_scheme_list_is_the_interfaces_own() {
     let p = Page::Appearance;
     let (classic, at) = rows(&built(), p, appearancepage::CLASSIC_SCHEME);
-    assert_eq!(classic, reprisekit::schemes::names().collect::<Vec<_>>());
     assert_eq!(
         classic[at],
         appearancepage::classic_default(),
@@ -314,6 +313,26 @@ fn the_scheme_list_is_the_interfaces_own() {
         "no Custom row"
     );
     assert_eq!((glass[0].as_str(), at), ("Sky", 0));
+}
+
+#[test]
+fn high_contrast_schemes_follow_the_others() {
+    let s = built();
+    let (rows, _) = rows(&s, Page::Appearance, appearancepage::CLASSIC_SCHEME);
+    let n = rows.len();
+    assert_eq!(
+        &rows[n - 4..],
+        [
+            "High Contrast #1",
+            "High Contrast #2",
+            "High Contrast Black",
+            "High Contrast White"
+        ]
+    );
+    let rest: Vec<&str> = reprisekit::schemes::names()
+        .filter(|n| !n.starts_with("High Contrast"))
+        .collect();
+    assert_eq!(&rows[..n - 4], rest.as_slice());
 }
 
 #[test]
