@@ -77,7 +77,7 @@ pub enum ShortcutEvent {
 }
 
 enum Cmd {
-    ConnectSender(OwnedFd, u32, u32),
+    ConnectSender(OwnedFd, u32, u32, bool),
     CreateCapture(u32, async_channel::Sender<CaptureEvent>),
     ConnectReceiver(u32, OwnedFd, u32),
     SetBarriers(u32, Vec<Barrier>),
@@ -255,7 +255,7 @@ impl Link {
             registry_queue_init::<State>(&conn).map_err(|e| format!("registry: {e}"))?;
         let qh = queue.handle();
         let input: RepriseInputV1 = globals
-            .bind(&qh, 2..=6, ())
+            .bind(&qh, 2..=7, ())
             .map_err(|e| format!("reprise_input_v1: {e}"))?;
         let shortcuts = input.version() >= 3;
         let keys = input.version() >= 4;
@@ -353,10 +353,11 @@ impl Link {
         (s.zones.clone(), s.zone_set)
     }
 
-    /// A sender gets the devices in the `reprise_input_v1` mask `devices` and no others.
-    pub fn connect_sender(&self, fd: OwnedFd, devices: u32) -> EisHandle {
+    /// A sender gets the devices in the `reprise_input_v1` mask `devices` and no others; a
+    /// `remote_session` one is the remote desktop server's, counted as a user at the computer.
+    pub fn connect_sender(&self, fd: OwnedFd, devices: u32, remote_session: bool) -> EisHandle {
         let id = self.alloc();
-        self.send(Cmd::ConnectSender(fd, id, devices));
+        self.send(Cmd::ConnectSender(fd, id, devices, remote_session));
         EisHandle {
             link: self.clone(),
             id,
@@ -510,10 +511,15 @@ impl State {
 
     fn handle(&mut self, qh: &QueueHandle<State>, cmd: Cmd) {
         match cmd {
-            Cmd::ConnectSender(fd, id, devices) => {
+            Cmd::ConnectSender(fd, id, devices, remote_session) => {
+                let kind = if remote_session && self.input.version() >= 7 {
+                    Kind::RemoteSession
+                } else {
+                    Kind::Sender
+                };
                 let c = self
                     .input
-                    .connect_eis(fd.as_fd(), Kind::Sender, None, devices, qh, ());
+                    .connect_eis(fd.as_fd(), kind, None, devices, qh, ());
                 self.eis.insert(id, c);
             }
             Cmd::CreateCapture(id, tx) => {
@@ -1144,6 +1150,33 @@ mod tests {
         );
         let (link, _hang_up, _fake) = start_with_fake(5);
         assert!(link.pick_color().is_none(), "a v5 global has no pick_color");
+    }
+
+    #[test]
+    fn only_the_remote_desktop_servers_sender_is_a_remote_session() {
+        for (version, remote_session, kind) in [(7, true, 3), (7, false, 1), (6, true, 1)] {
+            let (ours, mut theirs) = UnixStream::pair().unwrap();
+            let compositor = std::thread::spawn(move || {
+                let input = fake_compositor(&mut theirs, 2, version);
+                theirs
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                loop {
+                    let (object, opcode, body) = request(&mut theirs).unwrap();
+                    if (object, opcode) == (input, 0) {
+                        break u32::from_ne_bytes(body[4..8].try_into().unwrap());
+                    }
+                }
+            });
+            let link = Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap();
+            let (fd, _peer) = UnixStream::pair().unwrap();
+            let _eis = link.connect_sender(fd.into(), Device::Keyboard as u32, remote_session);
+            assert_eq!(
+                compositor.join().unwrap(),
+                kind,
+                "v{version}, remote session {remote_session}"
+            );
+        }
     }
 
     #[test]

@@ -231,6 +231,7 @@ mod tests {
             sources: vec![dev(50, "mic", &[0.6]), dev(51, "line", &[0.3, 0.3])],
             default_sink: Some("speakers".into()),
             default_source: Some("line".into()),
+            configured_sink: None,
             cards: Vec::new(),
             apps: vec![App {
                 key: "firefox".into(),

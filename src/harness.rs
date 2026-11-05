@@ -560,6 +560,117 @@ impl Harness {
         self.roundtrip(c);
         (lock, surface)
     }
+
+    /// A libei client of `kind` on a socket pair, as the portal hands one out, that binds the
+    /// keyboard and text on the seat it is offered; returns once the compositor made its device.
+    pub fn ei_keyboard(&mut self, kind: crate::eis::Kind) -> EiPeer {
+        self.ei_keyboard_as(kind, false)
+    }
+
+    /// [`Harness::ei_keyboard`] for the remote desktop server's sender, which counts as present.
+    pub fn ei_remote_session(&mut self) -> EiPeer {
+        self.ei_keyboard_as(crate::eis::Kind::Sender, true)
+    }
+
+    fn ei_keyboard_as(&mut self, kind: crate::eis::Kind, present: bool) -> EiPeer {
+        use reis::{
+            PendingRequestResult, ei,
+            event::{DeviceCapability, EiEvent, EiEventConverter},
+            handshake::EiHandshaker,
+        };
+        let (ours, theirs) = UnixStream::pair().expect("socket pair");
+        let id = (self.state)
+            .eis_connect(
+                ours.into(),
+                kind,
+                present,
+                None,
+                crate::inputproto::DEVICE_KEYBOARD,
+            )
+            .expect("eis_connect");
+        let context = ei::Context::new(theirs).expect("ei context");
+        let context_type = match kind {
+            crate::eis::Kind::Sender => ei::handshake::ContextType::Sender,
+            crate::eis::Kind::Receiver => ei::handshake::ContextType::Receiver,
+        };
+        let mut handshaker = EiHandshaker::new("reprise-test", context_type);
+        let mut events: Option<EiEventConverter> = None;
+        let mut heard = Vec::new();
+        for _ in 0..200 {
+            self.run_for(5);
+            let _ = context.read();
+            while let Some(r) = context.pending_event() {
+                let PendingRequestResult::Request(ev) = r else {
+                    panic!("the compositor sent the ei client something it cannot parse");
+                };
+                match &mut events {
+                    None => {
+                        if let Some(resp) = handshaker.handle_event(ev).expect("handshake") {
+                            events = Some(EiEventConverter::new(&context, resp));
+                        }
+                    }
+                    Some(conv) => conv.handle_event(ev).expect("ei event"),
+                }
+            }
+            while let Some(e) = events.as_mut().and_then(|c| c.next_event()) {
+                match e {
+                    EiEvent::SeatAdded(s) => s
+                        .seat
+                        .bind_capabilities(DeviceCapability::Keyboard | DeviceCapability::Text),
+                    other => heard.push(other),
+                }
+            }
+            let _ = context.flush();
+            let bound = self.state.inputproto.eis.get(id);
+            if bound.is_some_and(|c| c.devices().is_some())
+                && let Some(events) = events
+            {
+                return EiPeer {
+                    id,
+                    context,
+                    events,
+                    heard,
+                };
+            }
+        }
+        panic!("the ei client never got its keyboard");
+    }
+
+    /// Turn the loop and add what the compositor sent `peer` to its `heard`.
+    pub fn ei_hear(&mut self, peer: &mut EiPeer) {
+        self.run_for(5);
+        let _ = peer.context.read();
+        while let Some(r) = peer.context.pending_event() {
+            let reis::PendingRequestResult::Request(ev) = r else {
+                panic!("the compositor sent the ei client something it cannot parse");
+            };
+            peer.events.handle_event(ev).expect("ei event");
+        }
+        peer.heard
+            .extend(std::iter::from_fn(|| peer.events.next_event()));
+    }
+
+    /// Close `peer`'s socket and turn the loop until the compositor has let it go.
+    pub fn ei_close(&mut self, peer: EiPeer) {
+        let id = peer.id;
+        drop(peer);
+        for _ in 0..200 {
+            self.run_for(5);
+            if self.state.inputproto.eis.get(id).is_none() {
+                return;
+            }
+        }
+        panic!("the compositor kept a closed ei client");
+    }
+}
+
+/// A connected libei client from [`Harness::ei_keyboard`]; dropping it closes its socket.
+pub struct EiPeer {
+    pub id: crate::eis::EisId,
+    pub context: reis::ei::Context,
+    events: reis::event::EiEventConverter,
+    /// What the compositor sent past the seat, oldest first.
+    pub heard: Vec<reis::event::EiEvent>,
 }
 
 /// A client's xdg popup.

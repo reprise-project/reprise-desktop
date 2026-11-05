@@ -1,0 +1,12 @@
+[Unit]
+Description=Reprise Remote Desktop server
+PartOf=graphical-session.target
+After=graphical-session.target wireplumber.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/reprise-rdp
+Restart=on-failure
+
+[Install]
+WantedBy=reprise-session.target

@@ -1,19 +1,21 @@
-//! Sounds, Power, Startup, Advanced and Backup.
+//! Sounds, Power, Startup, Remote Desktop, Advanced and Backup.
 
 use super::{
     ADD, Area, BACKUP_EXPORT, BACKUP_IMPORT, BACKUP_STATUS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY,
     EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE, THUMBNAILERS, THUMBS, THUMBS_CLEAR,
     THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, WATER, WATER_STYLE, X, button, choice, combo, edit,
-    field, group, list, locations, spin,
+    ends_track, field, group, list, locations, spin,
 };
-use crate::model::WATER_STYLES;
+use crate::model::{FRAME_RATES, REMOTE_ENCODERS, REMOTE_QUALITIES, WATER_STYLES};
 use crate::notifypage;
 use reprisebus::charge::ChargeLimit;
+use reprisebus::remote::Status;
 use repriseconf::ThumbnailCache;
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
 use reprisekit::controls::listbox::{self, ListBox};
 use reprisekit::raster::Rect;
+use reprisekit::trackbar::TrackBar;
 
 /// The task manager, the switches with no page of their own, the location
 /// answers programs were given (a [`ListView`](reprisekit::controls::listview::ListView) the host draws over the page at
@@ -407,4 +409,236 @@ pub fn startup(a: Area) -> Form {
             "&Tell me when an update needs a restart",
         ),
     ])
+}
+
+/// The Remote Desktop page's switch, acted on at once rather than through Apply.
+pub const REMOTE_ALLOW: &str = "allow";
+const REMOTE_STATUS: &str = "status";
+const ENCODER: &str = "encoder";
+pub(super) const REMOTE_PORT: &str = "port";
+pub(super) const REMOTE_QUALITY: &str = "quality";
+pub(super) const QUALITY_VALUE: &str = "quality_value";
+pub(super) const REMOTE_FRAME_RATE: &str = "frame_rate";
+pub(super) const REMOTE_ENCODER: &str = "video_encoder";
+pub(super) const REMOTE_SOUND: &str = "remote_sound";
+/// The certificate's fingerprint: a read-only edit, so it can be selected and copied.
+const REMOTE_FINGERPRINT: &str = "fingerprint";
+pub const REMOTE_REGENERATE: &str = "regenerate";
+const CLIENTS: &str = "clients";
+pub const REMOTE_DISCONNECT: &str = "disconnect";
+
+/// What greys with the switch off; New Certificate and Disconnect also need the server answering.
+const REMOTE_CONTROLS: [&str; 16] = [
+    REMOTE_STATUS,
+    ENCODER,
+    "port_label",
+    REMOTE_PORT,
+    "quality_label",
+    "quality_speed",
+    REMOTE_QUALITY,
+    "quality_sharp",
+    QUALITY_VALUE,
+    "frame_rate_label",
+    REMOTE_FRAME_RATE,
+    "video_encoder_label",
+    REMOTE_ENCODER,
+    REMOTE_SOUND,
+    "fingerprint_label",
+    REMOTE_FINGERPRINT,
+];
+
+const NEW_CERTIFICATE_W: i32 = 110;
+
+/// The Remote Desktop page as `status` and `enabled` (the server's unit) leave it; the host
+/// follows the server with [`show_remote`].
+pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
+    let gw = a.gw();
+    let mut items = vec![
+        Item::check(
+            REMOTE_ALLOW,
+            X,
+            44,
+            "Allow remote &connections to this computer",
+        ),
+        Item::label_at(REMOTE_STATUS, X, 64, a.w - 18, "").under_check(),
+        Item::label_at(ENCODER, X, 80, a.w - 18, "").under_check(),
+        group(a, "connection_group", 104, 186, "Connection"),
+    ];
+    items.extend(spin(
+        "port_label",
+        REMOTE_PORT,
+        GX,
+        128,
+        114,
+        "&Port:",
+        (1024, 65535),
+    ));
+    items.push(Item::label_at(
+        "quality_label",
+        GX,
+        154,
+        200,
+        "Picture &quality:",
+    ));
+    let (left, right) = (REMOTE_QUALITIES[0].1, REMOTE_QUALITIES[2].1);
+    items.extend(ends_track(
+        a,
+        [
+            "quality_speed",
+            REMOTE_QUALITY,
+            "quality_sharp",
+            QUALITY_VALUE,
+        ],
+        181,
+        27,
+        (left, right),
+        GX + 46,
+        TrackBar::new(1, REMOTE_QUALITIES.len()),
+    ));
+    items.push(Item::label_at(
+        "frame_rate_label",
+        GX,
+        214,
+        114,
+        "Frame &rate:",
+    ));
+    let rates: Vec<&str> = FRAME_RATES.iter().map(|r| r.1).collect();
+    items.push(Item::combo(
+        REMOTE_FRAME_RATE,
+        GX + 118,
+        210,
+        160,
+        &rates,
+        rates.len(),
+    ));
+    items.push(Item::label_at(
+        "video_encoder_label",
+        GX,
+        240,
+        114,
+        "Video &encoder:",
+    ));
+    let encoders: Vec<&str> = REMOTE_ENCODERS.iter().map(|e| e.1).collect();
+    items.push(Item::combo(
+        REMOTE_ENCODER,
+        GX + 118,
+        236,
+        160,
+        &encoders,
+        encoders.len(),
+    ));
+    items.push(Item::check(
+        REMOTE_SOUND,
+        GX,
+        266,
+        "Play &sound on the remote computer",
+    ));
+    items.push(group(a, "certificate_group", 300, 66, "Certificate"));
+    items.push(Item::label_at(
+        "fingerprint_label",
+        GX,
+        320,
+        gw,
+        "&Fingerprint (SHA-256):",
+    ));
+    items.push(edit(REMOTE_FINGERPRINT, GX, 336, gw - NEW_CERTIFICATE_W - 6).read_only());
+    items.push(Item::button_at(
+        REMOTE_REGENERATE,
+        a.gright() - NEW_CERTIFICATE_W,
+        334,
+        NEW_CERTIFICATE_W,
+        "&New Certificate...",
+        true,
+    ));
+    items.push(group(a, "client_group", 376, 68, "Connected Computer"));
+    items.push(Item::new(
+        CLIENTS,
+        Rect::new(GX, 396, gw - BUTTON_W - 6, 2 * listbox::ROW_H + 4),
+        Control::ListBox {
+            list: ListBox::new(Vec::new(), None),
+            icons: Vec::new(),
+        },
+    ));
+    items.push(button(
+        REMOTE_DISCONNECT,
+        a.gright() - BUTTON_W,
+        396,
+        "&Disconnect",
+    ));
+    let mut page = Form::new(items);
+    show_remote(&mut page, status, enabled, None);
+    page
+}
+
+/// Put the server's state on the page in place, so an open drop-down survives an unchanged poll;
+/// encoders the server lacks are greyed (all but Automatic while it does not answer).
+pub fn show_remote(page: &mut Form, status: Option<&Status>, enabled: bool, address: Option<&str>) {
+    page.set_check(REMOTE_ALLOW, enabled);
+    page.set_enabled(REMOTE_ALLOW, true);
+    for id in REMOTE_CONTROLS {
+        page.set_enabled(id, enabled);
+    }
+    page.set_text(REMOTE_STATUS, &remote_status(status, enabled, address));
+    let shown = status.filter(|_| enabled);
+    let encoder = shown.map_or(String::new(), |s| format!("Video: {}", s.encoder));
+    page.set_text(ENCODER, &encoder);
+    let offered = shown.map_or(&[][..], |s| s.encoders.as_slice());
+    if let Some(Control::Combo(c)) = page.item_mut(REMOTE_ENCODER).map(|i| &mut i.control) {
+        for (item, (value, _)) in c.items.iter_mut().zip(REMOTE_ENCODERS) {
+            item.greyed = *value != "auto" && !offered.iter().any(|o| o == value);
+        }
+    }
+    let fingerprint = shown.map_or("", |s| s.fingerprint.as_str());
+    if let Some(Control::Edit { edit, first, .. }) =
+        page.item_mut(REMOTE_FINGERPRINT).map(|i| &mut i.control)
+        && edit.text != fingerprint
+    {
+        edit.set_selected(fingerprint);
+        edit.set_selection(0, 0);
+        first.set(0);
+    }
+    let clients = shown.map_or(&[][..], |s| s.clients.as_slice());
+    let items: Vec<String> = clients.iter().map(|c| client_address(&c.address)).collect();
+    let detail: Vec<String> = clients
+        .iter()
+        .map(|c| {
+            let since = reprisefs::listing::date_text(c.since as i64, reprisefs::locale::is_12h());
+            format!("{}, since {since}", c.user)
+        })
+        .collect();
+    if let Some(Control::ListBox { list, .. }) = page.item_mut(CLIENTS).map(|i| &mut i.control)
+        && (list.items != items || list.detail != detail)
+    {
+        let keep = list.selected.filter(|&i| i < items.len());
+        *list = ListBox::new(items, keep);
+        list.detail = detail;
+    }
+    page.set_enabled(REMOTE_REGENERATE, shown.is_some());
+    page.set_enabled(REMOTE_DISCONNECT, !clients.is_empty());
+}
+
+/// The status line: off, not answering, listening on its port at `address`, or why it cannot listen.
+pub(super) fn remote_status(
+    status: Option<&Status>,
+    enabled: bool,
+    address: Option<&str>,
+) -> String {
+    let Some(s) = status.filter(|_| enabled) else {
+        return if enabled { "Not answering" } else { "Off" }.into();
+    };
+    if let Some(why) = s.listening.strip_prefix("error: ") {
+        return format!("Not listening: {why}");
+    }
+    let port = s.listening.rsplit_once(':').map_or("", |(_, p)| p);
+    match address {
+        Some(at) => format!("Listening on port {port} at {at}"),
+        None => format!("Listening on port {port}"),
+    }
+}
+
+/// A client's address without its port.
+fn client_address(address: &str) -> String {
+    address
+        .parse::<std::net::SocketAddr>()
+        .map_or_else(|_| address.to_string(), |a| a.ip().to_string())
 }

@@ -13,22 +13,36 @@ description = "No code: turns on, for every build, the union of features the wor
 [dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
 bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "derive", "extern_crate_alloc", "wasm_simd"] }
+crossbeam-utils = "0.8"
+crypto-common = { version = "0.2", features = ["getrandom", "rand_core"] }
+ctutils = { version = "0.4", features = ["subtle"] }
+flate2 = { version = "1", features = ["zlib"] }
 getrandom = { version = "0.4", features = ["std", "sys_rng"] }
+hybrid-array = { version = "0.4", features = ["alloc", "subtle", "zeroize"] }
 libc.workspace = true
 libm = { version = "0.2" }
 log = { workspace = true, features = ["std"] }
 memchr = { version = "2" }
 phf_shared = { version = "0.14", default-features = false, features = ["std"] }
+ppv-lite86 = { version = "0.2", features = ["simd", "std"] }
 proc-macro2 = { version = "1" }
 quote = { version = "1" }
+scopeguard = "1"
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
+subtle = { version = "2", features = ["i128"] }
 syn = { version = "3", features = ["extra-traits", "fold", "full", "visit-mut"] }
+tinystr = { version = "0.8", features = ["zerovec"] }
 uuid = { version = "1", features = ["serde", "v4"] }
+zerocopy = { version = "0.8", features = ["derive"] }
+zeroize = { workspace = true, features = ["zeroize_derive"] }
+zerovec = { version = "0.11", features = ["derive", "yoke"] }
 
 # Host side (proc macros, build scripts) resolves features separately.
 [build-dependencies]
 bitflags = { version = "2", default-features = false, features = ["std"] }
+cc = { version = "1", features = ["parallel"] }
+displaydoc = "0.2"
 libc.workspace = true
 log = { workspace = true, features = ["std"] }
 memchr = { version = "2" }
@@ -38,4 +52,5 @@ quote = { version = "1" }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
 smallvec = { version = "1", default-features = false, features = ["const_new", "union"] }
 syn = { version = "3", features = ["extra-traits", "fold", "full", "visit-mut"] }
-syn2 = { package = "syn", version = "2", features = ["extra-traits", "full", "visit-mut"] }
+syn2 = { package = "syn", version = "2", features = ["extra-traits", "full", "visit", "visit-mut"] }
+zerocopy = { version = "0.8", features = ["derive"] }

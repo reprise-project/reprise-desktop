@@ -99,7 +99,7 @@ pub struct ImeClient {
 
 impl ImeClient {
     pub fn sync(&mut self, spot: Option<TextSpot>) -> Vec<Request> {
-        let spot = spot.filter(|s| !s.digits);
+        let spot = spot.filter(|s| !s.digits && !s.read_only);
         let out = plan(self.sent.as_ref(), spot.as_ref(), self.from_ime);
         self.sent = spot;
         self.from_ime = false;
@@ -162,6 +162,7 @@ mod tests {
             can_undo: false,
             can_redo: false,
             selected: false,
+            read_only: false,
             digits: false,
         }
     }
@@ -205,6 +206,17 @@ mod tests {
             [Request::Disable, Request::Commit],
             "focus moving from a text field to a spin box turns it off"
         );
+    }
+
+    #[test]
+    fn a_read_only_field_turns_no_input_method_on() {
+        let shown = TextSpot {
+            read_only: true,
+            ..spot(0, 5, "3F:9A", 2)
+        };
+        let mut c = ImeClient::default();
+        assert_eq!(c.sync(Some(shown)), []);
+        assert_eq!(c.sent(), None);
     }
 
     #[test]

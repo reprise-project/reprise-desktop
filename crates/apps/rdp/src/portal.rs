@@ -1,0 +1,329 @@
+//! A connection's RemoteDesktop portal session (keyboard, pointer, the shared output cast onto
+//! it), on a bus connection in its own thread that callers reach through a channel.
+
+use futures_util::StreamExt;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use std::collections::HashMap;
+use std::os::fd::OwnedFd;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::mpsc;
+use std::sync::{LazyLock, OnceLock};
+use std::time::Duration;
+use zbus::zvariant::{DeserializeDict, DynamicType, Type, Variant};
+use zbus::{Connection, MessageStream, OwnedObjectPath, OwnedVariant};
+
+const PORTAL: &str = "org.freedesktop.portal.Desktop";
+const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
+const REMOTE: &str = "org.freedesktop.portal.RemoteDesktop";
+const SCREENCAST: &str = "org.freedesktop.portal.ScreenCast";
+const REQUEST: &str = "org.freedesktop.portal.Request";
+const SESSION: &str = "org.freedesktop.portal.Session";
+
+const KEYBOARD: u32 = 1;
+const POINTER: u32 = 2;
+const MONITOR: u32 = 1;
+const CURSOR_METADATA: u32 = 4;
+/// How long a request may go unanswered: no dialog is expected, so a silent portal is stuck.
+const ANSWER: Duration = Duration::from_secs(30);
+
+/// A started session: the output's stream and logical place in the layout, the EIS socket and
+/// the allowed input devices. Dropping it closes the session.
+pub struct Grant {
+    pub pw_fd: OwnedFd,
+    pub node: u32,
+    pub size: (u32, u32),
+    pub position: (i32, i32),
+    pub mapping_id: Option<String>,
+    pub eis_fd: OwnedFd,
+    pub session: OwnedObjectPath,
+    pub keyboard: bool,
+    pub pointer: bool,
+}
+
+enum Command {
+    Open(tokio::sync::oneshot::Sender<Result<Grant, String>>),
+    Close(OwnedObjectPath),
+}
+
+/// Start a session; ends with it closed again when any step fails.
+pub async fn open() -> Result<Grant, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    OPEN.send_modify(|n| *n += 1);
+    if commands().send(Command::Open(tx)).is_err() {
+        OPEN.send_modify(|n| *n -= 1);
+        return Err(GONE.to_string());
+    }
+    rx.await.map_err(|_| GONE.to_string())?
+}
+
+/// Resolves once every session asked for is closed or failed to open.
+pub async fn closed() {
+    let _ = OPEN.subscribe().wait_for(|n| *n == 0).await;
+}
+
+/// Sessions from the request to open them until they are closed.
+static OPEN: LazyLock<tokio::sync::watch::Sender<usize>> =
+    LazyLock::new(|| tokio::sync::watch::Sender::new(0));
+
+impl Drop for Grant {
+    fn drop(&mut self) {
+        if commands()
+            .send(Command::Close(self.session.clone()))
+            .is_err()
+        {
+            OPEN.send_modify(|n| *n -= 1);
+        }
+    }
+}
+
+const GONE: &str = "the portal thread is gone";
+
+fn commands() -> &'static mpsc::Sender<Command> {
+    static COMMANDS: OnceLock<mpsc::Sender<Command>> = OnceLock::new();
+    COMMANDS.get_or_init(|| {
+        let (tx, rx) = mpsc::channel();
+        if let Err(e) = std::thread::Builder::new()
+            .name("reprise-rdp-portal".into())
+            .spawn(move || serve(rx))
+        {
+            log::error!("no portal thread: {e}");
+        }
+        tx
+    })
+}
+
+fn serve(rx: mpsc::Receiver<Command>) {
+    let mut bus: Option<Connection> = None;
+    for command in rx {
+        match command {
+            Command::Open(reply) => {
+                let opened = zbus::block_on(async {
+                    let conn = match &bus {
+                        Some(c) => c.clone(),
+                        None => {
+                            let c = Connection::session().await.map_err(|e| e.to_string())?;
+                            bus = Some(c.clone());
+                            c
+                        }
+                    };
+                    open_on(&conn).await
+                });
+                if opened.is_err() {
+                    OPEN.send_modify(|n| *n -= 1);
+                }
+                let _ = reply.send(opened);
+            }
+            Command::Close(session) => {
+                if let Some(conn) = &bus {
+                    zbus::block_on(close_on(conn, &session));
+                }
+                OPEN.send_modify(|n| *n -= 1);
+            }
+        }
+    }
+}
+
+async fn open_on(conn: &Connection) -> Result<Grant, String> {
+    let token = next_token();
+    let created: CreateResults = request(conn, REMOTE, "CreateSession", |mut options| {
+        options.insert("session_handle_token", Variant::from(token));
+        (options,)
+    })
+    .await?;
+    let session =
+        OwnedObjectPath::try_from(created.session_handle.ok_or("CreateSession: no session")?)
+            .map_err(|e| e.to_string())?;
+    match start(conn, &session).await {
+        Ok(grant) => Ok(grant),
+        Err(e) => {
+            close_on(conn, &session).await;
+            Err(e)
+        }
+    }
+}
+
+async fn start(conn: &Connection, session: &OwnedObjectPath) -> Result<Grant, String> {
+    let _: Ignored = request(conn, REMOTE, "SelectDevices", |mut options| {
+        options.insert("types", Variant::from(KEYBOARD | POINTER));
+        (session, options)
+    })
+    .await?;
+    let _: Ignored = request(conn, SCREENCAST, "SelectSources", |mut options| {
+        options.insert("types", Variant::from(MONITOR));
+        options.insert("cursor_mode", Variant::from(CURSOR_METADATA));
+        (session, options)
+    })
+    .await?;
+    let started: StartResults =
+        request(conn, REMOTE, "Start", |options| (session, "", options)).await?;
+    let (node, stream) = (started.streams.unwrap_or_default().into_iter().next())
+        .ok_or("Start: no stream was shared")?;
+    let size = stream.size.ok_or("Start: the stream has no size")?;
+    let pw_fd = fd(conn, SCREENCAST, "OpenPipeWireRemote", session).await?;
+    let eis_fd = fd(conn, REMOTE, "ConnectToEIS", session).await?;
+    let devices = started.devices.unwrap_or(KEYBOARD | POINTER);
+    Ok(Grant {
+        pw_fd,
+        node,
+        size: (size.0.max(0) as u32, size.1.max(0) as u32),
+        position: stream.position.unwrap_or_default(),
+        mapping_id: stream.mapping_id,
+        eis_fd,
+        session: session.clone(),
+        keyboard: devices & KEYBOARD != 0,
+        pointer: devices & POINTER != 0,
+    })
+}
+
+async fn fd(
+    conn: &Connection,
+    iface: &str,
+    method: &str,
+    session: &OwnedObjectPath,
+) -> Result<OwnedFd, String> {
+    let reply = conn
+        .call_method(
+            Some(PORTAL),
+            PORTAL_PATH,
+            Some(iface),
+            method,
+            &(session, HashMap::<&str, Variant>::new()),
+        )
+        .await
+        .map_err(|e| format!("{method}: {e}"))?;
+    let fd: zbus::OwnedFd = reply
+        .body()
+        .deserialize()
+        .map_err(|e| format!("{method}: {e}"))?;
+    Ok(fd.into())
+}
+
+async fn close_on(conn: &Connection, session: &OwnedObjectPath) {
+    if let Err(e) = conn
+        .call_method(Some(PORTAL), session, Some(SESSION), "Close", &())
+        .await
+    {
+        log::info!("closing the portal session: {e}");
+    }
+}
+
+type Options = HashMap<&'static str, Variant<'static>>;
+type Ignored = HashMap<String, OwnedVariant>;
+
+#[derive(DeserializeDict, Type)]
+#[zvariant(signature = "a{sv}")]
+struct CreateResults {
+    session_handle: Option<String>,
+}
+
+#[derive(DeserializeDict, Type)]
+#[zvariant(signature = "a{sv}")]
+struct StartResults {
+    devices: Option<u32>,
+    streams: Option<Vec<(u32, StreamProps)>>,
+}
+
+#[derive(DeserializeDict, Type)]
+#[zvariant(signature = "a{sv}")]
+struct StreamProps {
+    position: Option<(i32, i32)>,
+    size: Option<(i32, i32)>,
+    mapping_id: Option<String>,
+}
+
+fn next_token() -> String {
+    static SERIAL: AtomicU32 = AtomicU32::new(0);
+    format!("reprise_rdp_{}", SERIAL.fetch_add(1, Ordering::Relaxed))
+}
+
+/// The request object the portal answers on, derived from our unique name and the handle
+/// token, so the Response can be subscribed before the call.
+fn request_path(unique: &str, token: &str) -> String {
+    let sender = unique.trim_start_matches(':').replace('.', "_");
+    format!("{PORTAL_PATH}/request/{sender}/{token}")
+}
+
+/// Call `method` with the body `body` builds around the options carrying a fresh handle token,
+/// and wait for its Response: the results on success, the method and code otherwise.
+async fn request<B, R>(
+    conn: &Connection,
+    iface: &str,
+    method: &str,
+    body: impl FnOnce(Options) -> B,
+) -> Result<R, String>
+where
+    B: Serialize + DynamicType,
+    R: DeserializeOwned + Type,
+{
+    let failed = |e: zbus::Error| format!("{method}: {e}");
+    let token = next_token();
+    let unique = conn
+        .unique_name()
+        .map(|n| n.to_string())
+        .unwrap_or_default();
+    let path = request_path(&unique, &token);
+    let rule = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .interface(REQUEST)
+        .member("Response")
+        .path(path.as_str())
+        .build()
+        .map_err(failed)?;
+    let mut responses = MessageStream::for_match_rule(rule, conn, None)
+        .await
+        .map_err(failed)?;
+    let options = Options::from([("handle_token", Variant::from(token))]);
+    conn.call_method(
+        Some(PORTAL),
+        PORTAL_PATH,
+        Some(iface),
+        method,
+        &body(options),
+    )
+    .await
+    .map_err(failed)?;
+    let runtime = zruntime::SharedRuntime::current().map_err(|e| format!("{method}: {e}"))?;
+    let answer = runtime
+        .timeout(ANSWER, responses.next())
+        .await
+        .map_err(|_| format!("{method}: no answer in {} s", ANSWER.as_secs()))?
+        .ok_or_else(|| format!("{method}: the bus closed"))?
+        .map_err(failed)?;
+    let (code, results): (u32, R) = answer.body().deserialize().map_err(failed)?;
+    match code {
+        0 => Ok(results),
+        1 => Err(format!("{method}: refused")),
+        _ => Err(format!("{method}: failed")),
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    /// A grant of no portal session, counted open like one until it is dropped.
+    pub(crate) fn grant() -> Grant {
+        OPEN.send_modify(|n| *n += 1);
+        let null = || OwnedFd::from(std::fs::File::open("/dev/null").unwrap());
+        Grant {
+            pw_fd: null(),
+            node: 0,
+            size: (0, 0),
+            position: (0, 0),
+            mapping_id: None,
+            eis_fd: null(),
+            session: OwnedObjectPath::try_from("/org/reprise/test/session").unwrap(),
+            keyboard: true,
+            pointer: true,
+        }
+    }
+
+    #[test]
+    fn the_request_path_follows_the_unique_name_and_token() {
+        assert_eq!(
+            request_path(":1.42", "reprise_rdp_3"),
+            "/org/freedesktop/portal/desktop/request/1_42/reprise_rdp_3"
+        );
+    }
+}

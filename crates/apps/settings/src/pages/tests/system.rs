@@ -668,3 +668,393 @@ fn the_backup_page_lines_fit() {
         }
     }
 }
+
+fn serving(clients: Vec<reprisebus::remote::Client>) -> reprisebus::remote::Status {
+    reprisebus::remote::Status {
+        listening: "0.0.0.0:3389".into(),
+        clients,
+        encoder: "VA-API H.264".into(),
+        encoders: vec!["vaapi".into(), "software".into(), "none".into()],
+        fingerprint: "3F:9A:0C:51:E2:7B:44:D8:19:A6:5E:C0:2D:93:7F:B1:08:6C:E4:5A:21:DF:90:3B:C7:12:6E:A8:F5:04:9D:B3".into(),
+    }
+}
+
+fn client() -> reprisebus::remote::Client {
+    reprisebus::remote::Client {
+        address: "192.168.1.30:51234".into(),
+        user: "user".into(),
+        since: 1_762_000_000,
+    }
+}
+
+/// Whether `id` on `page` is lit; panics for a control with no greyed state.
+fn lit(page: &Form, id: &str) -> bool {
+    match &page.item(id).unwrap_or_else(|| panic!("{id}")).control {
+        Control::Check { enabled, .. }
+        | Control::Label { enabled, .. }
+        | Control::Edit { enabled, .. }
+        | Control::Button { enabled, .. } => *enabled,
+        Control::Combo(c) => c.enabled,
+        Control::UpDown(u) => u.enabled,
+        Control::TrackBar(t) => t.enabled,
+        _ => panic!("{id} has no greyed state"),
+    }
+}
+
+/// Everything under the check box that greys with it.
+const REMOTE_GREYED: [&str; 18] = [
+    "status",
+    "encoder",
+    "port_label",
+    "port",
+    "quality_label",
+    "quality_speed",
+    "quality",
+    "quality_sharp",
+    "quality_value",
+    "frame_rate_label",
+    "frame_rate",
+    "video_encoder_label",
+    "video_encoder",
+    "remote_sound",
+    "fingerprint_label",
+    "fingerprint",
+    "regenerate",
+    "disconnect",
+];
+
+#[test]
+fn the_remote_desktop_page_geometry() {
+    let s = built();
+    let p = Page::RemoteDesktop;
+    assert_eq!(rect(&s, p, "allow"), Rect::new(20, 44, 13, 13));
+    assert_eq!(rect(&s, p, "status"), Rect::new(38, 64, 340, 13));
+    assert_eq!(rect(&s, p, "encoder"), Rect::new(38, 80, 340, 13));
+    assert_eq!(
+        rect(&s, p, "connection_group"),
+        Rect::new(20, 104, 358, 186)
+    );
+    assert_eq!(rect(&s, p, "port_label"), Rect::new(GX, 128, 114, 13));
+    assert_eq!(rect(&s, p, "port"), Rect::new(150, 124, 50, 20));
+    assert_eq!(rect(&s, p, "quality_label"), Rect::new(GX, 154, 200, 13));
+    assert_eq!(rect(&s, p, "quality_speed"), Rect::new(GX, 181, 44, 13));
+    assert_eq!(rect(&s, p, "quality"), Rect::new(78, 175, 238, 26));
+    assert_eq!(rect(&s, p, "quality_sharp"), Rect::new(322, 181, 44, 13));
+    assert_eq!(rect(&s, p, "quality_value"), Rect::new(286, 154, 80, 13));
+    assert_eq!(rect(&s, p, "frame_rate_label"), Rect::new(GX, 214, 114, 13));
+    assert_eq!(
+        rect(&s, p, "frame_rate"),
+        Rect::new(150, 210, 160, combo::COMBO_H)
+    );
+    assert_eq!(
+        rect(&s, p, "video_encoder_label"),
+        Rect::new(GX, 240, 114, 13)
+    );
+    assert_eq!(
+        rect(&s, p, "video_encoder"),
+        Rect::new(150, 236, 160, combo::COMBO_H)
+    );
+    assert_eq!(rect(&s, p, "remote_sound"), Rect::new(GX, 266, 13, 13));
+    assert_eq!(
+        rect(&s, p, "certificate_group"),
+        Rect::new(20, 300, 358, 66)
+    );
+    assert_eq!(
+        rect(&s, p, "fingerprint_label"),
+        Rect::new(GX, 320, 334, 13)
+    );
+    assert_eq!(rect(&s, p, "fingerprint"), Rect::new(GX, 336, 218, 20));
+    assert_eq!(rect(&s, p, "regenerate"), Rect::new(256, 334, 110, 23));
+    assert_eq!(rect(&s, p, "client_group"), Rect::new(20, 376, 358, 68));
+    assert_eq!(rect(&s, p, "clients"), Rect::new(GX, 396, 253, 38));
+    assert_eq!(rect(&s, p, "disconnect"), Rect::new(291, 396, 75, 23));
+    inside_page(&s, p);
+    let page = &s.pages[p.index()];
+    assert_eq!(
+        rows(&s, p, "frame_rate"),
+        (
+            vec!["30 frames per second".into(), "60 frames per second".into()],
+            1
+        ),
+        "60 unless set"
+    );
+    assert_eq!(page.track_pos("quality"), Some(1), "balanced unless set");
+    assert_eq!(
+        rows(&s, p, "video_encoder"),
+        (
+            vec![
+                "Automatic".into(),
+                "Hardware, VA-API".into(),
+                "Hardware, NVENC".into(),
+                "Hardware, Vulkan".into(),
+                "Software (x264)".into(),
+                "None (RemoteFX)".into(),
+            ],
+            0
+        ),
+        "automatic unless set"
+    );
+}
+
+/// The encoder rows lit, top to bottom.
+fn encoders_lit(page: &Form) -> Vec<bool> {
+    match &page.item("video_encoder").unwrap().control {
+        Control::Combo(c) => c.items.iter().map(|i| !i.greyed).collect(),
+        _ => panic!("the encoder is a drop-down"),
+    }
+}
+
+#[test]
+fn unavailable_encoders_are_greyed() {
+    let software_only = reprisebus::remote::Status {
+        encoders: vec!["software".into(), "none".into()],
+        ..serving(Vec::new())
+    };
+    let mut page = remote_desktop(Area::MIN, Some(&software_only), true);
+    assert_eq!(
+        encoders_lit(&page),
+        [true, false, false, false, true, true],
+        "Automatic, Software and None"
+    );
+    show_remote(&mut page, None, true, None);
+    assert_eq!(
+        encoders_lit(&page),
+        [true, false, false, false, false, false],
+        "only Automatic while the server does not answer"
+    );
+    assert_eq!(
+        encoders_lit(&remote_desktop(Area::MIN, Some(&software_only), false)),
+        [true, false, false, false, false, false],
+        "only Automatic while it is off"
+    );
+}
+
+/// Alt+A stays Apply's: an access key takes the page's first match, and the sheet's buttons
+/// come after the page's controls.
+#[test]
+fn no_remote_desktop_control_shares_an_access_key_with_the_sheet_buttons() {
+    let s = built();
+    let items = &s.pages[Page::RemoteDesktop.index()].items;
+    let key = |c: &Control| match c {
+        Control::Label { text, .. } => reprisekit::text::access_key(text),
+        Control::Check { label, .. }
+        | Control::Radio { label, .. }
+        | Control::Button { label, .. } => reprisekit::text::access_key(label),
+        _ => None,
+    };
+    let sheet = [propsheet::OK, propsheet::CANCEL, propsheet::APPLY];
+    let buttons: Vec<char> = items
+        .iter()
+        .filter(|it| sheet.contains(&it.id))
+        .filter_map(|it| key(&it.control))
+        .collect();
+    assert_eq!(buttons, ['a'], "Apply carries the sheet's one access key");
+    for it in items.iter().filter(|it| !sheet.contains(&it.id)) {
+        if let Some(k) = key(&it.control) {
+            assert!(!buttons.contains(&k), "{} takes Alt+{k}", it.id);
+        }
+    }
+}
+
+#[test]
+fn an_unknown_quality_shows_balanced() {
+    let got = crate::model::load("[remote_desktop]\nquality = \"ultra\"\n");
+    let s = with(&got);
+    let page = &s.pages[Page::RemoteDesktop.index()];
+    assert_eq!(page.track_pos("quality"), Some(1));
+    assert!(
+        matches!(
+            &page.item("quality_value").unwrap().control,
+            Control::Label { text, .. } if text == "Balanced"
+        ),
+        "the name above the trackbar is Balanced"
+    );
+}
+
+#[test]
+fn allow_reflects_the_unit() {
+    let off = remote_desktop(Area::MIN, None, false);
+    assert_eq!(off.checked("allow"), Some(false));
+    assert!(lit(&off, "allow"), "the check box itself stays lit");
+    for id in REMOTE_GREYED {
+        assert!(
+            !lit(&off, id),
+            "{id} greys while remote connections are off"
+        );
+    }
+    let Control::Label { text, .. } = &off.item("status").unwrap().control else {
+        panic!("the status is a label");
+    };
+    assert_eq!(text, "Off");
+
+    let on = remote_desktop(Area::MIN, Some(&serving(vec![client()])), true);
+    assert_eq!(on.checked("allow"), Some(true));
+    for id in REMOTE_GREYED {
+        assert!(lit(&on, id), "{id} is lit while the server runs");
+    }
+}
+
+#[test]
+fn the_status_line_says_where_the_server_listens() {
+    let s = serving(Vec::new());
+    assert_eq!(
+        crate::pages::system::remote_status(None, false, None),
+        "Off"
+    );
+    assert_eq!(
+        crate::pages::system::remote_status(Some(&s), false, None),
+        "Off",
+        "a disabled unit is off whatever still answers"
+    );
+    assert_eq!(
+        crate::pages::system::remote_status(None, true, None),
+        "Not answering"
+    );
+    assert_eq!(
+        crate::pages::system::remote_status(Some(&s), true, Some("192.168.1.20")),
+        "Listening on port 3389 at 192.168.1.20"
+    );
+    assert_eq!(
+        crate::pages::system::remote_status(Some(&s), true, None),
+        "Listening on port 3389"
+    );
+    let failed = reprisebus::remote::Status {
+        listening: "error: Address already in use (os error 98)".into(),
+        ..s
+    };
+    assert_eq!(
+        crate::pages::system::remote_status(Some(&failed), true, Some("192.168.1.20")),
+        "Not listening: Address already in use (os error 98)"
+    );
+}
+
+#[test]
+fn disconnect_greys_without_a_client() {
+    let idle = remote_desktop(Area::MIN, Some(&serving(Vec::new())), true);
+    assert!(!lit(&idle, "disconnect"));
+    assert!(lit(&idle, "regenerate"));
+    let busy = remote_desktop(Area::MIN, Some(&serving(vec![client()])), true);
+    assert!(lit(&busy, "disconnect"));
+    let Control::ListBox { list, .. } = &busy.item("clients").unwrap().control else {
+        panic!("the clients are a list box");
+    };
+    assert_eq!(list.items, ["192.168.1.30"], "the address without its port");
+    assert!(
+        list.detail[0].starts_with("user, since "),
+        "{:?}",
+        list.detail
+    );
+    let silent = remote_desktop(Area::MIN, None, true);
+    for id in ["disconnect", "regenerate"] {
+        assert!(
+            !lit(&silent, id),
+            "{id} greys while the server does not answer"
+        );
+    }
+    assert!(lit(&silent, "port"), "the settings stay lit");
+}
+
+#[test]
+fn port_quality_frame_rate_and_encoder_round_trip_through_apply() {
+    let mut got = crate::model::load("");
+    let base = got.clone();
+    let mut s = with(&got);
+    let p = Page::RemoteDesktop;
+    let page = &mut s.pages[p.index()];
+    if let Some(Control::UpDown(u)) = page.item_mut("port").map(|i| &mut i.control) {
+        assert_eq!((u.min, u.max, u.value()), (1024, 65535, 3389));
+        u.set(3390);
+    }
+    page.set_track("quality", 2);
+    read_one(&s, "port", &mut got);
+    read_one(&s, "quality", &mut got);
+    pick(&mut s, &mut got, p, "frame_rate", 0);
+    pick(&mut s, &mut got, p, "video_encoder", 4);
+    assert!(
+        matches!(
+            &s.pages[p.index()].item("quality_value").unwrap().control,
+            Control::Label { text, .. } if text == "Sharp"
+        ),
+        "the trackbar's stop is named above it"
+    );
+    let out = crate::model::save("", &got, &base).expect("parses");
+    let doc: toml_edit::DocumentMut = out.parse().unwrap();
+    let table = doc["remote_desktop"]
+        .as_table()
+        .expect("the section")
+        .to_string();
+    let rd = repriseconf::remote::from_table(&table.parse().unwrap());
+    assert_eq!(
+        (rd.port, rd.quality, rd.frame_rate, rd.encoder),
+        (
+            3390,
+            repriseconf::remote::Quality::Sharp,
+            30,
+            repriseconf::remote::EncoderChoice::Software
+        )
+    );
+    let back = crate::model::load(&out);
+    let shown = with(&back);
+    let page = &shown.pages[p.index()];
+    assert_eq!(page.track_pos("quality"), Some(2));
+    assert_eq!(page.combo_selected("frame_rate"), Some(0));
+    assert_eq!(page.combo_selected("video_encoder"), Some(4));
+}
+
+#[test]
+fn sound_on_the_remote_computer_round_trips_through_apply() {
+    let mut got = crate::model::load("");
+    let base = got.clone();
+    let mut s = with(&got);
+    let p = Page::RemoteDesktop;
+    let page = &mut s.pages[p.index()];
+    assert_eq!(page.checked("remote_sound"), Some(true), "on unless set");
+    page.set_check("remote_sound", false);
+    read_one(&s, "remote_sound", &mut got);
+    let out = crate::model::save("", &got, &base).expect("parses");
+    let doc: toml_edit::DocumentMut = out.parse().unwrap();
+    let table = doc["remote_desktop"].as_table().expect("the section");
+    let rd = repriseconf::remote::from_table(&table.to_string().parse().unwrap());
+    assert!(!rd.sound, "sound = false is written");
+    let back = with(&crate::model::load(&out));
+    assert_eq!(back.pages[p.index()].checked("remote_sound"), Some(false));
+}
+
+/// The page with a client connected and the defaults in its settings, Classic at 100%.
+#[test]
+fn the_remote_desktop_page_pixels() {
+    if !reprisekit::text::test_tahoma() {
+        return;
+    }
+    let theme = Theme {
+        access_keys: true,
+        ..Theme::default()
+    };
+    let text = TextRenderer::load(&FontConfig::default());
+    let px = theme.fonts.size_px;
+    let mut s = built();
+    let (dx, dy) = s.page_offset();
+    let page = &mut s.pages[Page::RemoteDesktop.index()];
+    show_remote(
+        page,
+        Some(&serving(vec![client()])),
+        true,
+        Some("192.168.1.20"),
+    );
+    // The local time zone writes the time; the pins hold one.
+    if let Some(Control::ListBox { list, .. }) = page.item_mut("clients").map(|i| &mut i.control) {
+        list.detail = vec!["user, since 11/1/2026 12:26".into()];
+    }
+    let area = Rect::new(dx + 20, dy + 44, 358, 400);
+    let mut c = Canvas::new(area.right() as u32, area.bottom() as u32);
+    c.fill_rect(c.bounds(), theme.colors.button_face);
+    form::draw(&mut c, &text, &theme.paint(), page, false, px);
+    let h = c
+        .copy_rect(area)
+        .pixels
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
+            (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
+        });
+    assert_eq!(h, 837_434_193_978_331_532, "the page with a client");
+}

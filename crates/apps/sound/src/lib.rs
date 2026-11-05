@@ -852,6 +852,7 @@ mod tests {
             sources: vec![device(50, "mic")],
             default_sink: Some("speakers".into()),
             default_source: Some("mic".into()),
+            configured_sink: None,
             cards: vec![],
             apps: vec![app("firefox", &[90, 91], 0.8), app("mpv", &[92], 0.5)],
         }

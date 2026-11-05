@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Remote Desktop
+Comment=Lets other computers connect to this session over RDP.
+Exec=reprise-rdp
+Icon=reprise
+NoDisplay=true
+Terminal=false

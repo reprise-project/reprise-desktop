@@ -159,6 +159,7 @@ impl Notes {
             selection: n.edit.has_selection(),
             paste: repriseapp::clipboard_has_text(),
             secret: false,
+            read_only: false,
         };
         let rows = menu_rows(n.colour);
         let menu = editmenu::Menu::open_with(live, rows, at, &self.menu_ctx(ctx), by_keyboard);

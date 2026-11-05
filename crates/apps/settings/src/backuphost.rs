@@ -15,6 +15,7 @@ pub(crate) enum Then {
     Export(PathBuf),
     Import(PathBuf, Bundle),
     RestoreDefaults(Page),
+    NewCertificate,
 }
 
 /// The question box: its text, OK and Cancel, and what OK does.
@@ -80,6 +81,7 @@ impl SettingsApp {
             Then::Export(path) => self.export(&path),
             Then::Import(path, bundle) => self.import(&path, &bundle),
             Then::RestoreDefaults(p) => self.restore_defaults(p),
+            Then::NewCertificate => self.remote_act(crate::remotehost::Act::NewCertificate),
         }
     }
 

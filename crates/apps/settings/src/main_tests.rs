@@ -1487,6 +1487,67 @@ fn the_charge_limit_row_follows_what_upower_says() {
     assert_eq!(charge_row(&a), None, "the battery went away");
 }
 
+fn remote_read(a: &mut SettingsApp, remote: remotehost::Remote, failed: Option<String>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    tx.send(remotehost::Reading { remote, failed }).unwrap();
+    a.remote_job = Some(rx);
+    assert!(a.remote_done());
+}
+
+fn remote_label(a: &SettingsApp, id: &str) -> String {
+    match &a.sheet.pages[Page::RemoteDesktop.index()]
+        .item(id)
+        .unwrap()
+        .control
+    {
+        form::Control::Label { text, .. } => text.clone(),
+        c => panic!("{id} is a label, not {c:?}"),
+    }
+}
+
+#[test]
+fn the_remote_desktop_page_follows_what_the_server_says() {
+    let mut a = app("remote");
+    let status = reprisebus::remote::Status {
+        listening: "0.0.0.0:3389".into(),
+        clients: vec![reprisebus::remote::Client {
+            address: "192.168.1.30:51234".into(),
+            user: "user".into(),
+            since: 1_762_000_000,
+        }],
+        encoder: "VA-API H.264".into(),
+        encoders: vec!["vaapi".into(), "none".into()],
+        fingerprint: "3F:9A".into(),
+    };
+    let serving = remotehost::Remote {
+        enabled: true,
+        status: Some(status),
+        address: Some("192.168.1.20".into()),
+    };
+    remote_read(&mut a, serving, None);
+    let page = &a.sheet.pages[Page::RemoteDesktop.index()];
+    assert_eq!(page.checked(pages::REMOTE_ALLOW), Some(true));
+    assert_eq!(
+        remote_label(&a, "status"),
+        "Listening on port 3389 at 192.168.1.20"
+    );
+    assert_eq!(remote_label(&a, "encoder"), "Video: VA-API H.264");
+    assert_eq!(page.edit_text("fingerprint"), "3F:9A");
+    assert!(a.error.is_none());
+    assert_eq!(a.want, a.loaded, "the switch is no change for Apply");
+
+    remote_read(
+        &mut a,
+        remotehost::Remote::default(),
+        Some("Remote Desktop could not be turned on.".into()),
+    );
+    assert!(a.error.is_some(), "a failed switch says why");
+    let page = &a.sheet.pages[Page::RemoteDesktop.index()];
+    assert_eq!(page.checked(pages::REMOTE_ALLOW), Some(false));
+    assert_eq!(remote_label(&a, "status"), "Off");
+    assert_eq!(page.edit_text("fingerprint"), "");
+}
+
 /// Restore Defaults on Sounds asks with the page's keys the file sets, then takes only those out
 /// of `config.toml`; a page whose keys are all at their defaults has it greyed, and a page that
 /// writes no key has none.

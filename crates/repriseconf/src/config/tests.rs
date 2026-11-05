@@ -7,8 +7,9 @@ mod appearance;
 mod outputs;
 
 #[test]
-fn the_portal_table_belongs_to_the_portal() {
+fn tables_other_programs_read_parse() {
     assert!(Config::parse("[portal]\nshortcuts_denied = [\"com.example.App\"]\n").is_ok());
+    assert!(Config::parse("[remote_desktop]\nport = 3390\n").is_ok());
 }
 
 #[test]

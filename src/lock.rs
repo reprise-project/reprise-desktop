@@ -313,6 +313,7 @@ pub(crate) mod ffi {
             pamh: *mut *mut pam_handle_t,
         ) -> c_int;
         pub fn pam_authenticate(pamh: *mut pam_handle_t, flags: c_int) -> c_int;
+        pub fn pam_acct_mgmt(pamh: *mut pam_handle_t, flags: c_int) -> c_int;
         pub fn pam_end(pamh: *mut pam_handle_t, pam_status: c_int) -> c_int;
         pub fn pam_strerror(pamh: *mut pam_handle_t, errnum: c_int) -> *const c_char;
         pub fn pam_set_item(
@@ -323,14 +324,18 @@ pub(crate) mod ffi {
     }
 }
 
-/// PAM through libpam. The service is `reprise` when our own file is
-/// installed under `/etc/pam.d`, otherwise `login`, which every
-/// distribution ships, so an unpackaged build can still be unlocked (on
-/// Arch that stack runs pam_nologin in `auth`, so /run/nologin blocks it).
-pub struct PamVerifier;
+/// PAM through libpam with `service`; with `account`, its account stack too.
+pub struct PamVerifier {
+    pub service: &'static str,
+    pub account: bool,
+}
 
 impl PamVerifier {
-    pub fn service() -> &'static str {
+    /// The lock screen's service: `reprise` when our own file is installed
+    /// under `/etc/pam.d`, otherwise `login`, which every distribution
+    /// ships, so an unpackaged build can still be unlocked (on Arch that
+    /// stack runs pam_nologin in `auth`, so /run/nologin blocks it).
+    pub fn lock_service() -> &'static str {
         if Path::new("/etc/pam.d/reprise").exists() {
             "reprise"
         } else {
@@ -341,11 +346,9 @@ impl PamVerifier {
 
 impl Verifier for PamVerifier {
     fn verify(&self, user: &str, password: &str, ask: &mut Ask<'_>) -> Verdict {
-        // pam_authenticate alone, as swaylock and hyprlock do: pam_acct_mgmt
-        // (an expired password, /run/nologin, a time rule) would fail after
-        // the right password and read as "incorrect", with the live
-        // session behind it unreachable.
-        let service = PamVerifier::service();
+        // Unlocking runs no account stack: an expired password, /run/nologin or a time rule
+        // would fail after the right password and leave the live session behind it unreachable.
+        let service = self.service;
         let (Ok(cservice), Ok(cuser)) = (CString::new(service), CString::new(user)) else {
             return Err(Vec::new());
         };
@@ -366,8 +369,13 @@ impl Verifier for PamVerifier {
             );
             return Err(Vec::new());
         }
-        // SAFETY: `handle` is the live handle pam_start just returned.
-        let rc = unsafe { ffi::pam_authenticate(handle, 0) };
+        let rc = authenticate_then_account(
+            self.account,
+            // SAFETY: `handle` is the live handle pam_start just returned.
+            || unsafe { ffi::pam_authenticate(handle, 0) },
+            // SAFETY: as above; pam_authenticate succeeded on it.
+            || unsafe { ffi::pam_acct_mgmt(handle, 0) },
+        );
         if rc != ffi::PAM_SUCCESS {
             log::warn!(
                 "pam: authentication failed for {user}: {} {:?}",
@@ -382,6 +390,18 @@ impl Verifier for PamVerifier {
         } else {
             Err(creds.notices.take())
         }
+    }
+}
+
+/// `authenticate`, then with `account` `acct_mgmt`: the first failure, or success.
+fn authenticate_then_account(
+    account: bool,
+    authenticate: impl FnOnce() -> c_int,
+    acct_mgmt: impl FnOnce() -> c_int,
+) -> c_int {
+    match authenticate() {
+        ffi::PAM_SUCCESS if account => acct_mgmt(),
+        rc => rc,
     }
 }
 
@@ -915,6 +935,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_account_stack_runs_only_when_asked_and_after_a_good_password() {
+        let account_ran = std::cell::Cell::new(false);
+        let acct = |rc| {
+            let account_ran = &account_ran;
+            move || {
+                account_ran.set(true);
+                rc
+            }
+        };
+        const EXPIRED: c_int = 13;
+        let ok = || ffi::PAM_SUCCESS;
+        assert_eq!(authenticate_then_account(true, ok, acct(EXPIRED)), EXPIRED);
+        assert!(account_ran.take());
+        assert_eq!(
+            authenticate_then_account(true, ok, acct(ffi::PAM_SUCCESS)),
+            ffi::PAM_SUCCESS
+        );
+        assert!(account_ran.take());
+        let wrong = || ffi::PAM_AUTH_ERR;
+        assert_eq!(
+            authenticate_then_account(true, wrong, acct(ffi::PAM_SUCCESS)),
+            ffi::PAM_AUTH_ERR
+        );
+        assert!(!account_ran.take(), "a wrong password ends it");
+        assert_eq!(
+            authenticate_then_account(false, ok, acct(EXPIRED)),
+            ffi::PAM_SUCCESS,
+            "unlocking ignores the account"
+        );
+        assert!(!account_ran.take());
+    }
+
+    #[test]
     fn typing_backspace_and_escape_edit_the_field() {
         let mut s = LockState::new();
         assert!(!s.key(LockKey::Text("ab")));
@@ -1215,7 +1268,7 @@ mod tests {
 
     #[test]
     fn pam_service_prefers_our_own_file() {
-        let s = PamVerifier::service();
+        let s = PamVerifier::lock_service();
         assert!(s == "reprise" || s == "login");
         if std::path::Path::new("/etc/pam.d/reprise").exists() {
             assert_eq!(s, "reprise");
@@ -1226,7 +1279,7 @@ mod tests {
 
     #[test]
     fn libpam_starts_a_handle_through_the_declared_bindings() {
-        let service = CString::new(PamVerifier::service()).unwrap();
+        let service = CString::new(PamVerifier::lock_service()).unwrap();
         let user = CString::new("nobody").unwrap();
         let conv = ffi::pam_conv {
             conv: Some(converse),

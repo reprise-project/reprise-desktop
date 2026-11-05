@@ -47,7 +47,25 @@ typed or what is playing.
 On Arch, `packaging/arch/PKGBUILD` packages the compositor, the programs, the
 session file, the PAM files and the portal backend. The programs are one
 binary, `/usr/bin/reprise-apps`, and `reprise-notepad` and the other program
-names are symlinks to it.
+names are symlinks to it. The Remote Desktop server is a binary of its own,
+`/usr/bin/reprise-rdp`, run by the user unit
+`app-org.reprise.RemoteDesktop.service` with the desktop entry
+`org.reprise.RemoteDesktop.desktop` beside it; the unit is installed but
+not enabled. A build installed by hand needs all three: the portal skips
+its prompt only for that unit running `/usr/bin/reprise-rdp` or
+`/usr/local/bin/reprise-rdp`, and the server checks passwords with the
+`reprise` in the same directory.
+
+The PAM files are `reprise` (the lock screen's password),
+`reprise-fingerprint` (its fingerprint) and `reprise-rdp` (Remote Desktop
+logins). `reprise-rdp` runs `pam_unix` alone, without `system-auth`, so wrong
+Remote Desktop passwords never reach pam_faillock and never lock the account
+locally. The Remote Desktop server throttles them instead: a growing wait per
+address after three failures, and a 10 minute pause of every login after 10
+failures within 10 minutes (see [security](security.md#remote-desktop)). A
+build installed by hand needs `data/pam.d/reprise-rdp` in `/etc/pam.d/`;
+without it PAM falls back to the `other` service, which on Arch refuses
+every login and elsewhere may run the full system stack.
 
 Every push to main also publishes a package as the
 [Nightly release](https://github.com/reprise-project/reprise-desktop/releases/tag/nightly).
@@ -76,6 +94,16 @@ URL, so download it first and install the local file:
   library
 - A stuck main loop's backtrace is walked and named with the `backtrace`
   crate, built in; it needs no runtime library
+- The Remote Desktop server (`reprise-rdp`) is built on the IronRDP crates,
+  Tokio, rustls and rcgen, built in. rustls's aws-lc-rs compiles its C library
+  with the C compiler. IronRDP turns on flate2's zlib backend, which every
+  program shares, so zlib is a runtime requirement
+- `reprise-rdp` encodes H.264 through FFmpeg 9 (libavcodec, libavfilter,
+  libavutil, libswscale) with the `ffmpeg-the-third` crate, whose bindings are
+  generated from FFmpeg's headers at build time (clang)
+- `reprise-rdp` draws the full-colour (AVC444) views on the GPU with OpenGL
+  ES through the `khronos-egl` and `glow` crates, built in; it loads libEGL
+  at run time, from the Mesa and libglvnd listed below
 
 ### To run
 
@@ -85,7 +113,9 @@ URL, so download it first and install the local file:
   drivers), libglvnd and libdisplay-info
 - libxkbcommon and xkeyboard-config, whose registry names the keyboard
   layouts in the tray and in Reprise Settings
-- freetype2, fontconfig, PAM, libxcrypt, dbus and PipeWire
+- freetype2, fontconfig, PAM, libxcrypt, dbus, PipeWire 1.4 or later, zlib
+  and FFmpeg 9 (with libx264, which Remote Desktop encodes on when the GPU
+  cannot, and libopus, which it sends sound to the client in)
 - Xwayland, for X11 programs. Reprise starts it on the first X11 connection
   and stops it when X11 programs have gone quiet.
 - A UI font: Wine's Tahoma is recommended (`ttf-tahoma` on Arch, from the
@@ -108,7 +138,8 @@ desktop and stays out of the way when it's missing.
 
 **Sound, power and hardware**
 
-- WirePlumber, for the volume applet, Volume Control and the volume keys
+- WirePlumber, for the volume applet, Volume Control, the volume keys and
+  sound on a Remote Desktop client
 - pipewire-pulse, for desktop and microphone audio in OBS and browsers
 - sound-theme-freedesktop, for the notification balloons' sound
 - UPower, for the battery icon, power alarms and battery idle timeouts, and
@@ -171,6 +202,15 @@ desktop and stays out of the way when it's missing.
 - geoclue, for programs that ask for your location. Reprise is its agent
   (the package's `/etc/geoclue/conf.d/90-reprise.conf` lets it); without an
   agent geoclue refuses everyone.
+
+- A VA-API driver with an H.264 encoder, for hardware H.264 in Remote
+  Desktop: `intel-media-driver` on Intel graphics, `libva-mesa-driver` on
+  AMD (Arch's `mesa` package provides it). On NVIDIA, `nvidia-utils` (CUDA
+  and NVENC); the NVENC path has not been tried on NVIDIA hardware yet,
+  and its colours may look slightly washed out.
+  Without a hardware encoder, Remote Desktop encodes H.264 on the CPU with
+  x264 through FFmpeg's libx264, which Arch's `ffmpeg` links; a client
+  without H.264 gets RemoteFX bitmaps.
 
 **Portals and toolkits**
 

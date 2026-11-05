@@ -248,6 +248,70 @@ fn a_masked_or_greyed_field_takes_no_drop() {
     assert!(!f.drag_leave());
 }
 
+/// `edit_form` with its field read-only and holding `text`.
+fn read_only_form(text: &str) -> Form {
+    let mut f = edit_form();
+    f.items[1] = Item::edit("find", f.items[1].rect, text, true).read_only();
+    f
+}
+
+#[test]
+fn a_read_only_field_takes_the_focus_and_copies_but_no_typing_paste_or_drop() {
+    let t = tr();
+    let mut f = read_only_form("3F:9A");
+    assert_eq!(f.focus, Some(1), "it still takes the focus");
+    assert_eq!(f.key(Key::Char('x')), Event::Redraw);
+    assert_eq!(f.paste("pasted".into()), Event::Redraw);
+    assert_eq!(
+        f.key(Key::Edit(EditKey::Home { select: true })),
+        Event::Changed("find"),
+        "the selection moves"
+    );
+    assert_eq!(
+        f.focused_edit().and_then(|e| e.copy_text()).as_deref(),
+        Some("3F:9A")
+    );
+    assert!(!f.drag_over(120, 15, &t, PX), "a drag gets no drop caret");
+    assert_eq!(f.edit_text("find"), "3F:9A");
+    let mut tree = crate::access::Tree::window("Find", (220, 170));
+    f.access(&mut tree, crate::access::ROOT, &t, 11);
+    let node = tree
+        .nodes()
+        .find(|(_, n)| n.role() == Role::TextInput)
+        .map(|(_, n)| n.clone())
+        .expect("the edit has a node");
+    assert!(node.is_read_only());
+}
+
+/// A read-only field draws as a writable one does, on the window colour with its text black.
+#[test]
+fn a_read_only_field_pixels() {
+    if !crate::text::test_tahoma() {
+        return;
+    }
+    let t = tr();
+    let cs = &Theme::default().colors;
+    let shot = |f: &Form| {
+        let mut c = Canvas::new(200, 40);
+        c.fill_rect(c.bounds(), cs.button_face);
+        draw(&mut c, &t, &classic_paint(cs, 1), f, true, PX);
+        c
+    };
+    let mut writable = edit_form();
+    writable.items[1] = Item::edit("find", writable.items[1].rect, "3F:9A", true);
+    let shown = shot(&read_only_form("3F:9A"));
+    assert_eq!(shown.pixels, shot(&writable).pixels);
+    let field = edit_form().items[1].rect;
+    assert_eq!(shown.get(field.right() - 4, field.y + 3), cs.window.argb());
+    let h = shown.pixels.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
+        (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
+    });
+    assert_eq!(
+        h, 13_058_433_092_486_595_037,
+        "the focused read-only field with its caret"
+    );
+}
+
 #[test]
 fn a_drag_resting_at_a_fields_edge_scrolls_it_without_moving_the_caret() {
     let t = tr();

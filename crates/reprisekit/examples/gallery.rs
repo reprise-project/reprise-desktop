@@ -4308,6 +4308,13 @@ fn render(theme: &Theme, with_blue: bool) -> Canvas {
         let mut kept = TextEdit::secret();
         kept.set_cue("Leave empty to keep the saved key");
         let key = form::Form::new(vec![
+            Item::edit(
+                "fingerprint",
+                Rect::new(216, 3079, 198, 20),
+                "3F:9A:0C:51:E2:7B:44:D8:19:A6",
+                true,
+            )
+            .read_only(),
             Item::new(
                 "key",
                 Rect::new(16, 3105, 150, 20),

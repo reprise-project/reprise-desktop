@@ -8,7 +8,7 @@ const SECRET_CAPACITY: usize = 256;
 /// Most text a single-line edit holds, in bytes; a paste is cut on a char boundary to fit.
 pub const MAX_LEN: usize = 32_767;
 
-/// Text with a caret and a selection anchor, byte offsets on char boundaries; `caret == anchor` means nothing selected. A `secret` edit holds a password: no undo snapshot, no buffer freed without zeroizing, zeroized on drop, `Debug` redacted.
+/// Text with a caret and a selection anchor, byte offsets on char boundaries; `caret == anchor` means nothing selected. A `secret` edit holds a password: no undo snapshot, no buffer freed without zeroizing, zeroized on drop, `Debug` redacted. A `read_only` edit refuses every key that would change its text; the caret, the selection and Copy work as ever.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct TextEdit {
     pub text: String,
@@ -16,6 +16,7 @@ pub struct TextEdit {
     anchor: usize,
     undo: Undo<usize>,
     secret: bool,
+    read_only: bool,
     cue: String,
 }
 
@@ -30,6 +31,7 @@ impl std::fmt::Debug for TextEdit {
         d.field("caret", &self.caret)
             .field("anchor", &self.anchor)
             .field("secret", &self.secret)
+            .field("read_only", &self.read_only)
             .field("cue", &self.cue)
             .finish()
     }
@@ -422,6 +424,22 @@ pub enum EditKey {
     },
 }
 
+impl EditKey {
+    /// The key changes the text (Paste only through the [`EditKey::Insert`] its text arrives as).
+    pub fn edits(&self) -> bool {
+        matches!(
+            self,
+            EditKey::Insert(_)
+                | EditKey::Backspace { .. }
+                | EditKey::Delete { .. }
+                | EditKey::Cut
+                | EditKey::Undo
+                | EditKey::Redo
+                | EditKey::DeleteSurrounding { .. }
+        )
+    }
+}
+
 /// Whether an edit has keyboard focus and, if so, which half of the blink its caret is in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Caret {
@@ -535,6 +553,8 @@ pub struct TextSpot {
     /// `None` for a secret field, which never hands its text out.
     pub surrounding: Option<Surrounding>,
     pub secret: bool,
+    /// The field refuses edits: no input method turns on over it.
+    pub read_only: bool,
     pub multiline: bool,
     /// The edit has a step to undo, for its edit menu's Undo.
     pub can_undo: bool,
@@ -567,6 +587,7 @@ impl TextEdit {
             text,
             undo: Undo::default(),
             secret: false,
+            read_only: false,
             cue: String::new(),
         }
     }
@@ -595,12 +616,21 @@ impl TextEdit {
             anchor: 0,
             undo: Undo::default(),
             secret: true,
+            read_only: false,
             cue: String::new(),
         }
     }
 
     pub fn is_secret(&self) -> bool {
         self.secret
+    }
+
+    pub fn set_read_only(&mut self, on: bool) {
+        self.read_only = on;
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// Greyed text the field shows while it is empty; it is never part of the value.
@@ -632,10 +662,11 @@ impl TextEdit {
     }
 
     pub fn set_selected(&mut self, text: impl Into<String>) {
-        let secret = self.secret;
+        let (secret, read_only) = (self.secret, self.read_only);
         let cue = std::mem::take(&mut self.cue);
         *self = TextEdit::new(text, true);
         self.secret = secret;
+        self.read_only = read_only;
         self.cue = cue;
     }
 
@@ -683,6 +714,12 @@ impl TextEdit {
     }
 
     pub fn key(&mut self, key: EditKey) -> bool {
+        if self.read_only && key.edits() {
+            if let EditKey::Insert(mut s) = key {
+                s.zeroize();
+            }
+            return false;
+        }
         let (caret, anchor) = (self.caret, self.anchor);
         // Set by every arm that changes the text. Nothing here clones the edit, so a secret field's text is never copied.
         let mut edited = false;
@@ -831,6 +868,7 @@ impl TextEdit {
             surrounding: (!self.secret)
                 .then(|| Surrounding::around(&self.text, self.caret, self.anchor)),
             secret: self.secret,
+            read_only: self.read_only,
             multiline: false,
             can_undo: self.can_undo(),
             can_redo: self.can_redo(),
@@ -1324,6 +1362,40 @@ mod tests {
         assert_eq!(sel.selection(), 0..3);
         assert!(sel.all_selected());
         assert!(!TextEdit::new("", true).all_selected());
+    }
+
+    #[test]
+    fn a_read_only_edit_moves_and_selects_but_keeps_its_text() {
+        let mut t = e("ab cd");
+        t.key(EditKey::Insert("e".into()));
+        t.set_read_only(true);
+        for k in [
+            EditKey::Insert("x".into()),
+            EditKey::Backspace { word: false },
+            EditKey::Delete { word: true },
+            EditKey::Undo,
+            EditKey::DeleteSurrounding {
+                before: 1,
+                after: 0,
+            },
+        ] {
+            assert!(!t.key(k.clone()), "{k:?} is refused");
+        }
+        assert!(!t.paste("pasted", &[]));
+        assert!(!t.drop_text(0, &DropLine::Text("dropped".into())));
+        assert_eq!(t.text, "ab cde");
+        assert!(t.key(EditKey::Left {
+            select: true,
+            word: true
+        }));
+        assert_eq!(t.selected_text(), "cde");
+        assert!(!t.key(EditKey::Cut), "a cut keeps the text");
+        assert_eq!(t.text, "ab cde");
+        t.set_selected("new");
+        assert!(
+            t.is_read_only(),
+            "replacing the text keeps the field read-only"
+        );
     }
 
     #[test]

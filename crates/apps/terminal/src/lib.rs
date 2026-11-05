@@ -944,6 +944,7 @@ impl Terminal {
             can_undo: false,
             can_redo: false,
             selected: false,
+            read_only: false,
             digits: false,
         });
     }

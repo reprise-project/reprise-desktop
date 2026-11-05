@@ -29,6 +29,7 @@ mod remotedesktop;
 mod screenshot;
 mod shortcutconf;
 mod stills;
+mod trusted;
 mod wallpaper;
 mod wayland;
 
@@ -504,6 +505,7 @@ impl ScreenCast {
             &key,
             &app_id,
             parent,
+            Pick::Ask,
         )
         .await
         {
@@ -533,6 +535,15 @@ pub(crate) struct Started {
     pub(crate) restore_data: Option<(String, u32, OwnedVariant)>,
 }
 
+/// How Start picks what to capture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pick {
+    /// A remembered target, else the share dialog.
+    Ask,
+    /// The output at layout origin (0,0), not remembered and with no dialog.
+    Origin,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn pick_and_cast(
     sessions: &Sessions,
@@ -543,6 +554,7 @@ pub(crate) async fn pick_and_cast(
     key: &str,
     app_id: &str,
     parent: Option<String>,
+    pick: Pick,
 ) -> Result<Started, u32> {
     let (types, cursor_mode, persist_mode, restore) = {
         let sessions = sessions.lock().unwrap();
@@ -560,9 +572,10 @@ pub(crate) async fn pick_and_cast(
         s.picking = Some(cancel.clone());
     }
     let app = app_id.to_string();
-    let chosen =
-        blocking::unblock(move || choose(types, restore, &app, persist_mode > 0, parent, cancel))
-            .await;
+    let chosen = blocking::unblock(move || {
+        choose(types, restore, &app, persist_mode > 0, parent, cancel, pick)
+    })
+    .await;
     let _ = server.remove::<Request, _>(handle.clone()).await;
     if let Some(s) = sessions.lock().unwrap().get_mut(key) {
         s.picking = None;
@@ -756,10 +769,10 @@ fn as_str<'a>(v: &'a Variant<'a>) -> Option<&'a str> {
     }
 }
 
-/// Pick what to capture and whether to remember it: a remembered target
-/// that still exists (remembered again), else the share dialog, modal on
-/// `parent`, which offers Remember when `offer_remember`. Blocking; runs
-/// off the bus thread.
+/// Pick what to capture and whether to remember it: for [`Pick::Ask`] a
+/// remembered target that still exists (remembered again), else the share
+/// dialog, modal on `parent`, which offers Remember when `offer_remember`.
+/// Blocking; runs off the bus thread.
 fn choose(
     types: u32,
     restore: Option<Target>,
@@ -767,11 +780,22 @@ fn choose(
     offer_remember: bool,
     parent: Option<String>,
     cancel: Arc<AtomicBool>,
+    pick: Pick,
 ) -> Result<Option<(Target, Option<wayland::OutputInfo>, bool)>, String> {
     let wl = Wayland::connect()?;
     let outputs = wl.outputs();
     let toplevels = wl.toplevels();
     drop(wl);
+    if pick == Pick::Origin {
+        let o = (outputs.iter())
+            .find(|o| (o.x, o.y) == (0, 0))
+            .ok_or("no output at the layout origin")?;
+        return Ok(Some((
+            Target::Output(o.name.clone()),
+            Some(o.clone()),
+            false,
+        )));
+    }
     let info_for = |t: &Target| match t {
         Target::Output(n) => outputs.iter().find(|o| &o.name == n).cloned(),
         Target::Toplevel(_) => None,

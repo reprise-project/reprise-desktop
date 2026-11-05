@@ -247,6 +247,15 @@ impl Item {
         )
     }
 
+    /// An edit field that refuses edits ([`TextEdit::set_read_only`]); other controls are
+    /// returned unchanged.
+    pub fn read_only(mut self) -> Item {
+        if let Control::Edit { edit, .. } = &mut self.control {
+            edit.set_read_only(true);
+        }
+        self
+    }
+
     pub fn checked(mut self, on: bool) -> Item {
         if let Control::Check { checked, .. } | Control::Radio { checked, .. } = &mut self.control {
             *checked = on;

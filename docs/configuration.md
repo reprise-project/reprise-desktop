@@ -59,6 +59,7 @@ while an editor saves it doesn't.
 | `[thumbnail_cache]` | whether thumbnails are kept, the cap, and whether installed thumbnailers make them for PDFs, videos and fonts |
 | `[storage]` | the low disk space warning |
 | `[bluetooth]` | `battery_warning`: the percent a connected device's battery warns at, 15 by default, 0 off (Bluetooth Devices > Options) |
+| `[remote_desktop]` | the Remote Desktop server's port, picture quality, frame rate, video encoder and sound ([below](#remote-desktop)) |
 | `[debug]` | the debug overlay |
 | `[osd]` | `caps_lock`, `num_lock`: whether the key's on or off shows on screen when it changes, both on by default (Settings > Keyboard) |
 | `[[keybinds]]` | shortcuts, layered over the defaults; `action = "none"` unbinds a chord |
@@ -156,6 +157,25 @@ window leaves fullscreen; the lock, screen off and suspend steps keep their
 timeouts unless a program inhibits idle.
 `speed` (1 to 10), `stars`, `shapes`, `cycle_colors`, `folder` (for Photos;
 Pictures when left out) and `photo_seconds` tune them.
+
+## Remote Desktop
+
+`[remote_desktop]` configures the server; whether it runs is the enabled
+state of its user unit, which Settings > Remote Desktop turns on and off
+([features.md](features.md#remote-desktop)). The server reads the section
+again on every save. A missing or invalid key keeps its default, and the
+journal names the invalid ones.
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `port` | 1 to 65535, the TCP port on every interface. A change moves the listener at once and ends a connected session; a port that can't be bound is tried again on the next save | `3389` |
+| `quality` | `"speed"`, `"balanced"`, `"sharp"`: H.264 quantizer 30, 25 or 21. Balanced and Sharp send full colour (AVC444) to a client that offers it, Speed reduced colour (AVC420) | `"balanced"` |
+| `frame_rate` | `30` or `60`, frames a second at most | `60` |
+| `encoder` | `"auto"`: the first of VA-API, NVENC, Vulkan and x264 that codes a test frame at start. `"vaapi"`, `"nvenc"`, `"vulkan"`, `"software"` (x264) pick one; one that doesn't work here falls back to `"auto"` with a journal line, and one that fails while coding hands over to the next that works, then to RemoteFX bitmaps. `"none"` sends RemoteFX bitmaps only | `"auto"` |
+| `sound` | `true` plays this computer's sound on the client, not here; `false` plays nothing there | `true` |
+
+`quality`, `frame_rate` and `encoder` reach a connected client at the next
+frame, and `sound` at once.
 
 ## Lock when away
 

@@ -332,6 +332,9 @@ impl State {
             self.ime_grab_modifiers();
         }
         self.follow_layout();
+        if keyboard.modifier_state() != mods_before {
+            self.eis_modifiers_changed();
+        }
         self.show_lock_osd(&mods_before, &keyboard.modifier_state());
         if keyboard.modifier_state().shift != mods_before.shift {
             self.dialog_shift(keyboard.modifier_state().shift);

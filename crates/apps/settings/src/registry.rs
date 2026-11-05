@@ -26,7 +26,7 @@ pub struct Sources<'a> {
 /// Page `p` for area `a` before any value is pushed in. The Appearance,
 /// Display, Tablet and Power pages depend on what they show; the host rebuilds
 /// those ([`crate::appearancepage::follow`], [`crate::displaypage::refresh`],
-/// `tabletpage::page`, `chargehost`).
+/// `tabletpage::page`, `chargehost`). Remote Desktop starts off and `remotehost` fills it in.
 pub fn build(p: Page, src: &Sources, a: Area) -> Form {
     match p {
         Page::Appearance => crate::appearancepage::page(&Settings::default(), a),
@@ -57,6 +57,7 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
         Page::Power => pages::power(a, None),
         Page::Startup => pages::startup(a),
         Page::DefaultPrograms => crate::defaultspage::page(a),
+        Page::RemoteDesktop => pages::remote_desktop(a, None, false),
         Page::Advanced => pages::advanced(a),
         Page::Backup => pages::backup(a),
     }
@@ -136,6 +137,7 @@ mod tests {
                 "Power",
                 "Startup",
                 "Default Programs",
+                "Remote Desktop",
                 "Advanced",
                 "Backup",
             ]
@@ -183,8 +185,8 @@ mod tests {
         assert_eq!(open(&s), GROUPS[0].1[0], "the first page opens");
     }
 
-    /// The list's inside is 480 px at the smallest sheet: 29 rows at 505 px, so it scrolls
-    /// until the sheet is 25 px taller. On a sheet 56 px shorter, a page opened from its end
+    /// The list's inside is 480 px at the smallest sheet: 30 rows at 522 px, so it scrolls
+    /// until the sheet is 42 px taller. On a sheet 56 px shorter, a page opened from its end
     /// (keys or `--page`) comes into view.
     #[test]
     fn the_list_scrolls_to_the_open_page() {
@@ -194,16 +196,16 @@ mod tests {
         let px = Theme::default().fonts.size_px;
         let mut sheet = built();
         let list = sheet.layout(&text, px).list.expect("a list sheet");
-        assert_eq!(list.rows.len(), 29, "four headings over 25 pages");
-        assert_eq!((list.total, list.inner.height), (505, 480));
-        assert!(list.scrollbar.is_some(), "the rows overflow by 25 px");
-        sheet.size.1 += 25;
+        assert_eq!(list.rows.len(), 30, "four headings over 26 pages");
+        assert_eq!((list.total, list.inner.height), (522, 480));
+        assert!(list.scrollbar.is_some(), "the rows overflow by 42 px");
+        sheet.size.1 += 42;
         let list = sheet.layout(&text, px).list.unwrap();
         assert!(list.scrollbar.is_none(), "every row shows");
 
-        sheet.size.1 -= 81;
+        sheet.size.1 -= 98;
         let list = sheet.layout(&text, px).list.unwrap();
-        assert_eq!((list.total, list.inner.height), (505, 424));
+        assert_eq!((list.total, list.inner.height), (522, 424));
         let bar = list.scrollbar.expect("the rows overflow");
         assert_eq!(bar.right(), list.inner.right() + bar.width);
         let last = *list.rows.last().unwrap();

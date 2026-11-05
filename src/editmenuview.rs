@@ -54,6 +54,7 @@ impl State {
                     selection: m.has_selection(),
                     paste,
                     secret: false,
+                    read_only: false,
                 }),
             },
             Editor::Rename => self.desktop.as_ref()?.rename.as_ref().map(|(_, e)| line(e)),
