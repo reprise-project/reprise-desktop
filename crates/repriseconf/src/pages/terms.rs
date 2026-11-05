@@ -234,7 +234,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("osd_num_lock", "Show Num Lock on screen"),
         ],
         Page::Mouse => &[
-            ("double_click_ms", "Double-click speed:"),
+            ("double_click_ms", "Double-click speed"),
             ("mouse_speed", "Pointer speed"),
             ("mouse_accel", "Enhance pointer precision"),
             ("mouse_natural", "Reverse scrolling direction"),
@@ -273,8 +273,8 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("slow_keys_delay", "SlowKeys delay"),
             ("mouse_keys", "Use MouseKeys"),
             ("mouse_keys_num_lock", "Only while Num Lock is on"),
-            ("mouse_keys_speed", "Speed:"),
-            ("mouse_keys_acceleration", "Acceleration:"),
+            ("mouse_keys_speed", "MouseKeys speed"),
+            ("mouse_keys_acceleration", "MouseKeys acceleration"),
             ("key_shortcuts", "Use the keyboard shortcuts"),
         ],
         Page::Vision => &[
