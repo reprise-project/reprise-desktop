@@ -728,46 +728,46 @@ fn the_remote_desktop_page_geometry() {
     let s = built();
     let p = Page::RemoteDesktop;
     assert_eq!(rect(&s, p, "allow"), Rect::new(20, 44, 13, 13));
-    assert_eq!(rect(&s, p, "status"), Rect::new(38, 64, 340, 13));
-    assert_eq!(rect(&s, p, "encoder"), Rect::new(38, 80, 340, 13));
+    assert_eq!(rect(&s, p, "status"), Rect::new(38, 80, 340, 13));
+    assert_eq!(rect(&s, p, "encoder"), Rect::new(38, 96, 340, 13));
     assert_eq!(
         rect(&s, p, "connection_group"),
-        Rect::new(20, 104, 358, 183)
+        Rect::new(20, 120, 358, 183)
     );
-    assert_eq!(rect(&s, p, "port_label"), Rect::new(GX, 128, 114, 13));
-    assert_eq!(rect(&s, p, "port"), Rect::new(150, 124, 50, 20));
-    assert_eq!(rect(&s, p, "quality_label"), Rect::new(GX, 154, 200, 13));
-    assert_eq!(rect(&s, p, "quality_speed"), Rect::new(GX, 181, 44, 13));
-    assert_eq!(rect(&s, p, "quality"), Rect::new(78, 175, 238, 26));
-    assert_eq!(rect(&s, p, "quality_sharp"), Rect::new(322, 181, 44, 13));
-    assert_eq!(rect(&s, p, "quality_value"), Rect::new(286, 154, 80, 13));
-    assert_eq!(rect(&s, p, "frame_rate_label"), Rect::new(GX, 214, 114, 13));
+    assert_eq!(rect(&s, p, "port_label"), Rect::new(GX, 144, 114, 13));
+    assert_eq!(rect(&s, p, "port"), Rect::new(150, 140, 50, 20));
+    assert_eq!(rect(&s, p, "quality_label"), Rect::new(GX, 170, 200, 13));
+    assert_eq!(rect(&s, p, "quality_speed"), Rect::new(GX, 197, 44, 13));
+    assert_eq!(rect(&s, p, "quality"), Rect::new(78, 191, 238, 26));
+    assert_eq!(rect(&s, p, "quality_sharp"), Rect::new(322, 197, 44, 13));
+    assert_eq!(rect(&s, p, "quality_value"), Rect::new(286, 170, 80, 13));
+    assert_eq!(rect(&s, p, "frame_rate_label"), Rect::new(GX, 230, 114, 13));
     assert_eq!(
         rect(&s, p, "frame_rate"),
-        Rect::new(150, 210, 160, combo::COMBO_H)
+        Rect::new(150, 226, 160, combo::COMBO_H)
     );
     assert_eq!(
         rect(&s, p, "video_encoder_label"),
-        Rect::new(GX, 240, 114, 13)
+        Rect::new(GX, 256, 114, 13)
     );
     assert_eq!(
         rect(&s, p, "video_encoder"),
-        Rect::new(150, 236, 160, combo::COMBO_H)
+        Rect::new(150, 252, 160, combo::COMBO_H)
     );
-    assert_eq!(rect(&s, p, "remote_sound"), Rect::new(GX, 266, 13, 13));
+    assert_eq!(rect(&s, p, "remote_sound"), Rect::new(GX, 282, 13, 13));
     assert_eq!(
         rect(&s, p, "certificate_group"),
-        Rect::new(20, 297, 358, 66)
+        Rect::new(20, 313, 358, 66)
     );
     assert_eq!(
         rect(&s, p, "fingerprint_label"),
-        Rect::new(GX, 317, 334, 13)
+        Rect::new(GX, 333, 334, 13)
     );
-    assert_eq!(rect(&s, p, "fingerprint"), Rect::new(GX, 333, 218, 20));
-    assert_eq!(rect(&s, p, "regenerate"), Rect::new(256, 331, 110, 23));
-    assert_eq!(rect(&s, p, "client_group"), Rect::new(20, 373, 358, 102));
-    assert_eq!(rect(&s, p, "clients"), Rect::new(GX, 393, 253, 72));
-    assert_eq!(rect(&s, p, "disconnect"), Rect::new(291, 393, 75, 23));
+    assert_eq!(rect(&s, p, "fingerprint"), Rect::new(GX, 349, 218, 20));
+    assert_eq!(rect(&s, p, "regenerate"), Rect::new(256, 347, 110, 23));
+    assert_eq!(rect(&s, p, "client_group"), Rect::new(20, 389, 358, 85));
+    assert_eq!(rect(&s, p, "clients"), Rect::new(GX, 409, 253, 55));
+    assert_eq!(rect(&s, p, "disconnect"), Rect::new(291, 409, 75, 23));
     inside_page(&s, p);
     let page = &s.pages[p.index()];
     assert_eq!(
@@ -794,6 +794,20 @@ fn the_remote_desktop_page_geometry() {
         ),
         "automatic unless set"
     );
+}
+
+#[test]
+fn the_remote_switch_says_it_acts_at_once() {
+    let s = built();
+    let p = Page::RemoteDesktop;
+    assert_eq!(
+        lines(&s, p, "allow_note"),
+        ["Turning this on or off takes effect at once."]
+    );
+    assert_eq!(rect(&s, p, "allow_note"), Rect::new(38, 64, 340, 13));
+    assert_eq!(rect(&s, p, "connection_group").y, 120);
+    assert_eq!(rect(&s, p, "client_group"), Rect::new(20, 389, 358, 85));
+    inside_page(&s, p);
 }
 
 /// The encoder rows lit, top to bottom.
@@ -876,6 +890,10 @@ fn allow_reflects_the_unit() {
     let off = remote_desktop(Area::MIN, None, false);
     assert_eq!(off.checked("allow"), Some(false));
     assert!(lit(&off, "allow"), "the check box itself stays lit");
+    assert!(
+        lit(&off, "allow_note"),
+        "the note under the check box stays lit"
+    );
     for id in REMOTE_GREYED {
         assert!(
             !lit(&off, id),

@@ -413,6 +413,7 @@ pub fn startup(a: Area) -> Form {
 
 /// The Remote Desktop page's switch, acted on at once rather than through Apply.
 pub const REMOTE_ALLOW: &str = "allow";
+const REMOTE_NOTE: &str = "allow_note";
 const REMOTE_STATUS: &str = "status";
 const ENCODER: &str = "encoder";
 pub(super) const REMOTE_PORT: &str = "port";
@@ -460,15 +461,23 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
             44,
             "Allow remote &connections to this computer",
         ),
-        Item::label_at(REMOTE_STATUS, X, 64, a.w - 18, "").under_check(),
-        Item::label_at(ENCODER, X, 80, a.w - 18, "").under_check(),
-        group(a, "connection_group", 104, 183, "Connection"),
+        Item::label_at(
+            REMOTE_NOTE,
+            X,
+            64,
+            a.w - 18,
+            "Turning this on or off takes effect at once.",
+        )
+        .under_check(),
+        Item::label_at(REMOTE_STATUS, X, 80, a.w - 18, "").under_check(),
+        Item::label_at(ENCODER, X, 96, a.w - 18, "").under_check(),
+        group(a, "connection_group", 120, 183, "Connection"),
     ];
     items.extend(spin(
         "port_label",
         REMOTE_PORT,
         GX,
-        128,
+        144,
         114,
         "&Port:",
         (1024, 65535),
@@ -476,7 +485,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::label_at(
         "quality_label",
         GX,
-        154,
+        170,
         200,
         "Picture &quality:",
     ));
@@ -490,7 +499,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
             QUALITY_VALUE,
         ],
         "Picture quality",
-        181,
+        197,
         27,
         (left, right),
         GX + 46,
@@ -499,7 +508,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::label_at(
         "frame_rate_label",
         GX,
-        214,
+        230,
         114,
         "Frame &rate:",
     ));
@@ -507,7 +516,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::combo(
         REMOTE_FRAME_RATE,
         GX + 118,
-        210,
+        226,
         160,
         &rates,
         rates.len(),
@@ -515,7 +524,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::label_at(
         "video_encoder_label",
         GX,
-        240,
+        256,
         114,
         "Video &encoder:",
     ));
@@ -523,7 +532,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::combo(
         REMOTE_ENCODER,
         GX + 118,
-        236,
+        252,
         160,
         &encoders,
         encoders.len(),
@@ -531,30 +540,30 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::check(
         REMOTE_SOUND,
         GX,
-        266,
+        282,
         "Play &sound on the remote computer",
     ));
-    items.push(group(a, "certificate_group", 297, 66, "Certificate"));
+    items.push(group(a, "certificate_group", 313, 66, "Certificate"));
     items.push(Item::label_at(
         "fingerprint_label",
         GX,
-        317,
+        333,
         gw,
         "&Fingerprint (SHA-256):",
     ));
-    items.push(edit(REMOTE_FINGERPRINT, GX, 333, gw - NEW_CERTIFICATE_W - 6).read_only());
+    items.push(edit(REMOTE_FINGERPRINT, GX, 349, gw - NEW_CERTIFICATE_W - 6).read_only());
     items.push(Item::button_at(
         REMOTE_REGENERATE,
         a.gright() - NEW_CERTIFICATE_W,
-        331,
+        347,
         NEW_CERTIFICATE_W,
         "&New Certificate...",
         true,
     ));
-    items.push(group(a, "client_group", 373, 102, "Connected Computers"));
+    items.push(group(a, "client_group", 389, 85, "Connected Computers"));
     items.push(Item::new(
         CLIENTS,
-        Rect::new(GX, 393, gw - BUTTON_W - 6, 4 * listbox::ROW_H + 4),
+        Rect::new(GX, 409, gw - BUTTON_W - 6, 3 * listbox::ROW_H + 4),
         Control::ListBox {
             list: ListBox::new(Vec::new(), None),
             icons: Vec::new(),
@@ -563,7 +572,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(button(
         REMOTE_DISCONNECT,
         a.gright() - BUTTON_W,
-        393,
+        409,
         "&Disconnect",
     ));
     let mut page = Form::new(items);

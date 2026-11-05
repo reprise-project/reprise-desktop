@@ -362,6 +362,15 @@ fn rect(sheet: &PropSheet, page: Page, id: &str) -> Rect {
     Rect::new(r.x - dx, r.y - dy, r.width, r.height)
 }
 
+/// A note's rows: a `Control::Lines`' lines, or a label's text as one row.
+fn lines(s: &PropSheet, page: Page, id: &str) -> Vec<String> {
+    match &s.pages[page.index()].item(id).unwrap().control {
+        Control::Lines(rows) | Control::GreyedLines(rows) => rows.clone(),
+        Control::Label { text, .. } => vec![text.clone()],
+        _ => panic!("{id} is no note"),
+    }
+}
+
 fn inside_page(sheet: &PropSheet, page: Page) {
     let text = TextRenderer::load(&FontConfig::default());
     let px = Theme::default().fonts.size_px;
