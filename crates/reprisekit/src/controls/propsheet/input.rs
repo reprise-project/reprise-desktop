@@ -1,8 +1,9 @@
 use crate::classic::widgets::{LINE_H, bar_hit};
 use crate::controls::form;
 use crate::controls::pagelist::{self, PageList, Pick};
-use crate::controls::tabstrip;
+use crate::controls::{searchfield, tabstrip};
 use crate::text::TextRenderer;
+use crate::textedit::EditKey;
 
 use super::nav::{StripKey, nav_click, nav_key, page_clicked};
 use super::{APPLY, CANCEL, Event, Hit, Nav, OK, PropSheet};
@@ -20,6 +21,7 @@ impl PropSheet {
     /// scroll the control into view.
     pub fn focus_control(&mut self, id: &str) {
         self.tabs.focused = false;
+        self.search_focused = false;
         self.settle_cursor();
         self.open_mut().focus_id(id);
         self.reveal_focus();
@@ -48,6 +50,35 @@ impl PropSheet {
         }
     }
 
+    /// The search field lets go of the keyboard once the list or a page control holds it.
+    fn settle_search(&mut self) {
+        if self.tabs.focused || self.open().focus().is_some() {
+            self.search_focused = false;
+        }
+    }
+
+    /// The search field takes the keyboard from the list and the page.
+    fn take_search(&mut self) {
+        self.tabs.focused = false;
+        self.drop_cursor();
+        self.open_mut().set_focus(None);
+        self.search_focused = true;
+    }
+
+    /// The search field takes the keyboard in the Tab cycle, selecting what it holds.
+    fn tab_to_search(&mut self) {
+        self.take_search();
+        self.search.focus();
+    }
+
+    /// The focused edit: the search field's while it has the keyboard, else the open page's.
+    pub fn focused_edit(&self) -> Option<form::FocusedEdit<'_>> {
+        if self.search_focused {
+            return Some(form::FocusedEdit::Line(&self.search.edit));
+        }
+        self.open().focused_edit()
+    }
+
     /// Open tab `i` from the host, as a click does. True when another page opened.
     pub fn open_tab(&mut self, i: usize) -> bool {
         i != self.tabs.open && self.tab_click(i) == StripKey::Turned
@@ -56,11 +87,37 @@ impl PropSheet {
     /// The strip's part of a key, before the open page's (see `nav_key`). For a host
     /// that routes the page's keys itself.
     pub fn strip_key(&mut self, key: &form::Key, ctrl_tab: Option<bool>) -> StripKey {
+        let tab = match key {
+            form::Key::Tab { back } if ctrl_tab.is_none() && self.is_list() => Some(*back),
+            _ => None,
+        };
+        // In list mode the search field is the stop before the list: Tab runs field, list,
+        // page, field.
+        match tab {
+            Some(back) if self.search_focused => {
+                self.search_focused = false;
+                if back {
+                    self.open_mut().focus_edge(true);
+                } else {
+                    self.tabs.focused = true;
+                }
+                return StripKey::Moved;
+            }
+            Some(true) if self.tabs.focused => {
+                self.tab_to_search();
+                return StripKey::Moved;
+            }
+            _ => {}
+        }
+        let was = self.tabs.focused;
         let list = match &mut self.nav {
             Nav::List(list) => Some(list),
             Nav::Tabs => None,
         };
         let r = nav_key(&mut self.tabs, &mut self.pages, key, ctrl_tab, list);
+        if tab == Some(false) && !was && self.tabs.focused {
+            self.tab_to_search();
+        }
         self.after_nav(r)
     }
 
@@ -74,6 +131,7 @@ impl PropSheet {
     /// and starts unscrolled; a link the keys rest on shows its row.
     fn after_nav(&mut self, r: StripKey) -> StripKey {
         self.settle_cursor();
+        self.settle_search();
         match (r, self.cursor()) {
             (StripKey::Turned, _) => {
                 self.drop_cursor();
@@ -93,12 +151,16 @@ impl PropSheet {
         let i = self.tabs.open;
         page_clicked(&mut self.tabs, &self.pages[i]);
         self.settle_cursor();
+        self.settle_search();
     }
 
     /// A key for the sheet: the strip's keys ([`PropSheet::strip_key`]) first, the open page's
     /// after. `ctrl_tab` is `Some(back)` for Ctrl+Tab and Ctrl+Shift+Tab, which turn
     /// the tabs; `key` is then ignored.
     pub fn key(&mut self, key: form::Key, ctrl_tab: Option<bool>) -> Event {
+        if let (true, None, form::Key::Edit(k)) = (self.search_focused, ctrl_tab, &key) {
+            return self.search_key(k.clone());
+        }
         if key == form::Key::Enter
             && ctrl_tab.is_none()
             && self.tabs.focused
@@ -116,6 +178,7 @@ impl PropSheet {
         }
         let i = self.tabs.open;
         let ev = self.pages[i].key(key);
+        self.settle_search();
         match self.event(i, ev) {
             Event::None if self.reveal_focus() => Event::Redraw,
             ev => {
@@ -125,9 +188,20 @@ impl PropSheet {
         }
     }
 
+    /// An editing key for the search field: [`Event::Search`] when its text changed.
+    fn search_key(&mut self, k: EditKey) -> Event {
+        let was = self.search.text().to_owned();
+        self.search.key(k);
+        if self.search.text() != was {
+            Event::Search
+        } else {
+            Event::Redraw
+        }
+    }
+
     /// [`Form::shove`] on the open page; `None` while the strip has the focus.
     pub fn shove(&mut self, dir: crate::controls::arrange::Dir) -> Option<Event> {
-        if self.tabs.focused {
+        if self.tabs.focused || self.search_focused {
             return None;
         }
         let i = self.tabs.open;
@@ -136,6 +210,13 @@ impl PropSheet {
     }
 
     pub fn paste(&mut self, text: String) -> Event {
+        if self.search_focused {
+            return if self.search.edit.paste(&text, &[]) {
+                Event::Search
+            } else {
+                Event::None
+            };
+        }
         let i = self.tabs.open;
         let ev = self.pages[i].paste(text);
         self.event(i, ev)
@@ -148,6 +229,10 @@ impl PropSheet {
 
     pub fn hit(&self, x: i32, y: i32, text: &TextRenderer, px: u32) -> Option<Hit> {
         let l = self.layout(text, px);
+        if let Some(field) = l.search.filter(|&f| searchfield::hit(f, x, y)) {
+            let font = text.dialog(self.font);
+            return Some(Hit::Search(self.search.caret_at(field, x, font, px, 1)));
+        }
         if let (Nav::List(list), Some(lay)) = (&self.nav, &l.list)
             && lay.frame.contains(x, y)
         {
@@ -179,10 +264,13 @@ impl PropSheet {
             return Event::None;
         };
         let moved = self.open_mut().focus_at(x, y, text, px) != form::Event::None;
-        if self.open().focus() != Some(h.item) || !(moved || self.tabs.focused) {
+        if self.open().focus() != Some(h.item)
+            || !(moved || self.tabs.focused || self.search_focused)
+        {
             return Event::None;
         }
         self.tabs.focused = false;
+        self.search_focused = false;
         self.settle_cursor();
         self.reveal_focus();
         Event::Redraw
@@ -222,6 +310,11 @@ impl PropSheet {
                 };
             }
             Some(Hit::Link(k)) => return self.link_click(k),
+            Some(Hit::Search(i)) => {
+                self.take_search();
+                self.search.edit.place(i, false);
+                return Event::Redraw;
+            }
             Some(Hit::ListBar(b)) => {
                 self.on_list(|list, lay| list.bar_press(b, lay));
                 return Event::Redraw;
@@ -254,6 +347,7 @@ impl PropSheet {
         }
         list.cursor = Some(k);
         self.tabs.focused = true;
+        self.search_focused = false;
         self.open_mut().set_focus(None);
         Event::Link(k)
     }
@@ -303,6 +397,9 @@ impl PropSheet {
     /// The wheel over the page list scrolls it a row per row; elsewhere it is the
     /// open page's ([`Form::wheel`]).
     pub fn wheel(&mut self, hit: Option<Hit>, rows: i32) -> Event {
+        if let Some(Hit::Search(_)) = hit {
+            return Event::None;
+        }
         if self.is_list()
             && matches!(
                 hit,

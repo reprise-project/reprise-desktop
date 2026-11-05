@@ -1,15 +1,16 @@
 use crate::controls::form;
 use crate::controls::hosted::{Hosted, Spot};
-use crate::controls::{pagelist, tabstrip};
+use crate::controls::{pagelist, searchfield, tabstrip};
 use crate::look::Paint;
 use crate::look::widgets::{draw_hscrollbar, draw_page, draw_scrollbar, group_label_ink};
 use crate::raster::Canvas;
 use crate::text::{Align, TextRenderer};
+use crate::textedit::Caret;
 
 use super::{Nav, PropSheet};
 
 /// Draw the sheet onto a canvas already filled with face: the page, the tabs (or
-/// the list and the open page's name), then the open page's controls and buttons.
+/// the search field, the list and the open page's name), then the open page's controls and buttons.
 pub fn draw(
     c: &mut Canvas,
     text: &TextRenderer,
@@ -32,6 +33,11 @@ pub fn draw(
     let nav_text = text.dialog(sheet.font);
     match (&sheet.nav, &l.list) {
         (Nav::List(list), Some(lay)) => {
+            if let Some(field) = l.search {
+                let focused = sheet.search_focused;
+                let caret = Caret::new(focused, sheet.open().caret);
+                searchfield::draw(c, nav_text, p, &sheet.search, field, focused, caret, px);
+            }
             pagelist::draw(c, nav_text, p, list, &sheet.tabs, lay, cues, px);
             if let Some(name) = sheet.tabs.labels.get(sheet.tabs.open) {
                 let ink = group_label_ink(p);

@@ -71,7 +71,7 @@ fn list_sheet() -> PropSheet {
 }
 
 /// A list sheet of 30 pages under one heading: 527 px of rows in the
-/// list's 376 px inside.
+/// list's 352 px inside.
 fn long_list_sheet() -> PropSheet {
     let labels: Vec<String> = (0..30).map(|i| format!("Page {i}")).collect();
     let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -209,7 +209,7 @@ fn a_reader_scrolls_a_page_list_row_in_without_turning_to_it() {
     assert_eq!(r.row, 29);
     let (x, y) = (r.at.0 as i32, r.at.1 as i32);
     assert_eq!(s.reveal(x, y, r.row, &text, px), Event::Redraw);
-    assert_eq!(list_top(&s), 151, "the last row's bottom at the inside's");
+    assert_eq!(list_top(&s), 175, "the last row's bottom at the inside's");
     assert_eq!(s.tabs.open, 0, "the open page stays");
     assert_eq!(s.reveal(x, y, r.row, &text, px), Event::None);
 }
@@ -286,17 +286,17 @@ fn a_long_page_list_scrolls_to_the_open_page() {
     let px = Theme::default().fonts.size_px;
     let mut s = long_list_sheet();
     let lay = s.layout(&text, px).list.unwrap();
-    assert_eq!((lay.total, lay.inner.height), (527, 376));
-    assert_eq!(lay.scrollbar, Some(Rect::new(128, 10, 16, 376)));
-    assert_eq!(s.hit(30, 30, &text, px), Some(Hit::Tab(0)));
-    assert_eq!(s.hit(30, 12, &text, px), Some(Hit::List), "the heading");
-    assert_eq!(s.hit(135, 12, &text, px), Some(Hit::ListBar(BarHit::Back)));
+    assert_eq!((lay.total, lay.inner.height), (527, 352));
+    assert_eq!(lay.scrollbar, Some(Rect::new(128, 34, 16, 352)));
+    assert_eq!(s.hit(30, 54, &text, px), Some(Hit::Tab(0)));
+    assert_eq!(s.hit(30, 36, &text, px), Some(Hit::List), "the heading");
+    assert_eq!(s.hit(135, 36, &text, px), Some(Hit::ListBar(BarHit::Back)));
 
     // The keys: End brings the last row's bottom to the inside's.
     assert_eq!(s.click(Some(Hit::Tab(0))), Event::Redraw);
     assert!(s.tabs.focused);
     assert_eq!(s.key(form::Key::End, None), Event::Redraw);
-    assert_eq!((s.tabs.open, list_top(&s)), (29, 151));
+    assert_eq!((s.tabs.open, list_top(&s)), (29, 175));
     assert_eq!(s.hit(30, 380, &text, px), Some(Hit::Tab(29)));
     assert_eq!(s.key(form::Key::Home, None), Event::Redraw);
     assert_eq!(list_top(&s), 0);
@@ -323,10 +323,10 @@ fn a_long_page_list_scrolls_to_the_open_page() {
         "the thumb draws pressed"
     );
     assert_eq!(s.motion(135, 900, None), Event::Redraw);
-    assert_eq!(list_top(&s), 151);
+    assert_eq!(list_top(&s), 175);
     assert_eq!(s.release(), Event::Redraw, "and at rest once let go");
     assert_eq!(s.motion(135, thumb.y, None), Event::None, "let go");
-    assert_eq!(list_top(&s), 151);
+    assert_eq!(list_top(&s), 175);
 
     // A host opening a page itself reveals it after.
     s.tabs.open = 0;
@@ -335,7 +335,8 @@ fn a_long_page_list_scrolls_to_the_open_page() {
 }
 
 /// A list sheet is its pages' client plus the list: 146 px wider, the
-/// list from the strip's top-left down to the page's bottom, the page
+/// search field at the strip's top-left, the list 4 px under it down to
+/// the page's bottom, the page
 /// and its controls 146 px right of where they were built, the
 /// buttons in the whole sheet's bottom-right corner.
 #[test]
@@ -348,9 +349,10 @@ fn a_list_sheets_geometry() {
     assert_eq!(s.size, (544, 424), "no tabs to wrap");
     let l = s.layout(&text, px);
     assert_eq!(l.page, Rect::new(152, 28, 386, 360));
+    assert_eq!(l.search, Some(Rect::new(6, 8, 140, 20)));
     assert_eq!(
         l.list.as_ref().map(|l| l.frame),
-        Some(Rect::new(6, 8, 140, 380))
+        Some(Rect::new(6, 32, 140, 356))
     );
     assert_eq!(l.title, Rect::new(152, 10, 386, 17));
     assert!(l.tabs.is_empty());
@@ -367,12 +369,18 @@ fn a_list_sheets_geometry() {
     assert_eq!(s.page_offset(), (146, 0), "the origin is the pages' own");
     assert_eq!(s.open().origin, (3, 21));
     let l = s.layout(&text, px);
-    assert_eq!(l.list.map(|l| l.frame), Some(Rect::new(9, 29, 140, 380)));
+    assert_eq!(l.search, Some(Rect::new(9, 29, 140, 20)));
+    assert_eq!(l.list.map(|l| l.frame), Some(Rect::new(9, 53, 140, 356)));
     assert_eq!(s.open().rect("check"), Some(Rect::new(169, 71, 13, 13)));
     s.set_page(2, check_page("New"));
     assert_eq!(s.pages[2].rect("check"), Some(Rect::new(169, 71, 13, 13)));
     // A tab sheet's pages have not moved.
     assert_eq!(sheet(&["General"], (398, 424)).page_offset(), (0, 0));
+    assert_eq!(
+        sheet(&["General"], (398, 424)).layout(&text, px).search,
+        None,
+        "a tab sheet has none"
+    );
 }
 
 #[test]
@@ -1951,6 +1959,215 @@ fn restore_defaults_draws_in_every_look() {
                 15_751_631_490_463_045_461
             ],
             "Classic, Blue, Glass"
+        );
+    }
+}
+
+/// At 200% the field doubles and the list starts the doubled gap below it.
+#[test]
+fn the_search_field_grows_with_the_text() {
+    let theme = Theme::default();
+    let text = TextRenderer::load(&FontConfig::default());
+    let u = TextUnits::new(22, 11);
+    let s = list_sheet();
+    s.drawn_with(&Paint {
+        text: u,
+        ..theme.paint()
+    });
+    let l = s.layout(&text, 22);
+    assert_eq!(l.search, Some(Rect::new(12, 16, 280, 40)));
+    assert_eq!(l.list.unwrap().frame.y, 64);
+}
+
+#[test]
+fn a_press_in_the_search_field_takes_the_keyboard_and_edits_report_the_text() {
+    use crate::textedit::EditKey;
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut s = list_sheet();
+    let hit = s.hit(10, 15, &text, 11);
+    assert_eq!(hit, Some(Hit::Search(0)));
+    assert_eq!(s.click(hit), Event::Redraw);
+    assert!(s.search_focused && !s.tabs.focused);
+    assert_eq!(s.open().focus(), None);
+    let edit = |s: &mut PropSheet, k| s.key(form::Key::Edit(k), None);
+    assert_eq!(edit(&mut s, EditKey::Insert("mo".into())), Event::Search);
+    assert_eq!(s.search.text(), "mo");
+    assert_eq!(
+        edit(&mut s, EditKey::Backspace { word: false }),
+        Event::Search
+    );
+    assert_eq!(s.search.text(), "m");
+    assert_eq!(
+        edit(
+            &mut s,
+            EditKey::Left {
+                select: false,
+                word: false
+            }
+        ),
+        Event::Redraw,
+        "no change, no search"
+    );
+    edit(&mut s, EditKey::SelectAll);
+    assert_eq!(s.paste("power\nignored".into()), Event::Search);
+    assert_eq!(s.search.text(), "power");
+    assert!(matches!(s.focused_edit(), Some(form::FocusedEdit::Line(e)) if e.text == "power"));
+    assert_eq!(s.wheel(Some(Hit::Search(0)), 3), Event::None);
+    s.click(s.hit(170, 55, &text, 11));
+    assert!(!s.search_focused, "a page control takes the keyboard back");
+    s.click(s.hit(10, 15, &text, 11));
+    s.focus_control("check");
+    assert!(!s.search_focused);
+}
+
+/// Tab runs field, list, the page's controls, its buttons, and back to the field.
+#[test]
+fn tab_runs_from_the_field_through_the_list_and_page_back_to_the_field() {
+    let mut s = list_sheet();
+    let tab = |s: &mut PropSheet, back| s.key(form::Key::Tab { back }, None);
+    s.click(Some(Hit::Search(0)));
+    tab(&mut s, false);
+    assert!(s.tabs.focused && !s.search_focused);
+    tab(&mut s, false);
+    assert_eq!(s.open().focus(), Some(0));
+    tab(&mut s, false); // OK
+    tab(&mut s, false); // Cancel (Apply is greyed)
+    tab(&mut s, false);
+    assert!(s.search_focused, "off the last button onto the field");
+    tab(&mut s, true);
+    let f = s.open().focus().unwrap();
+    assert_eq!(
+        s.open().items[f].id,
+        CANCEL,
+        "Shift+Tab off the field to the page's last stop"
+    );
+    s.click(Some(Hit::Search(0)));
+    tab(&mut s, false);
+    tab(&mut s, true);
+    assert!(s.search_focused, "Shift+Tab off the list to the field");
+    tab(&mut s, false);
+    tab(&mut s, false);
+    tab(&mut s, true);
+    assert!(
+        s.tabs.focused,
+        "Shift+Tab off the page's first control to the list"
+    );
+}
+
+#[test]
+fn a_reader_hears_the_search_field_before_the_list() {
+    use crate::access::{ROOT, Tree, accesskit::Role};
+    let text = TextRenderer::load(&FontConfig::default());
+    let mut s = list_sheet();
+    s.click(Some(Hit::Search(0)));
+    let mut tree = Tree::window("T", s.size);
+    let (_, focus) = s.access(&mut tree, ROOT, &text, 11);
+    let field = tree.find(Role::TextInput, "Search").expect("the field");
+    assert_eq!(focus, Some(field));
+    let kids = tree.get(ROOT).unwrap().children().to_vec();
+    let list = tree
+        .nodes()
+        .find(|(_, n)| n.role() == Role::List)
+        .unwrap()
+        .0;
+    assert!(kids.iter().position(|&k| k == field) < kids.iter().position(|&k| k == list));
+}
+
+/// FNV-1a over the pixels, for pins.
+fn hash(c: &Canvas) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for y in 0..c.height as i32 {
+        for x in 0..c.width as i32 {
+            for b in c.get(x, y).to_le_bytes() {
+                h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+    }
+    h
+}
+
+/// Rest: the empty field showing its cue, the page focused. Typed: "mo" in the focused field,
+/// caret shown. The field's pixels are `searchfield::draw`'s at the layout's rect.
+#[test]
+fn the_search_field_draws_in_every_look() {
+    use crate::controls::searchfield;
+    use crate::interface::Interface;
+    use crate::textedit::{Caret, EditKey};
+    let mut hashes = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for sc in [1, 2] {
+            for typed in [false, true] {
+                let theme = crate::interfaces::theme_for(i).scaled(sc);
+                let text = TextRenderer::load(&theme.fonts);
+                let (p, px) = (theme.paint(), theme.fonts.size_px);
+                let mut s = link_sheet();
+                grey(&mut s, 1);
+                if typed {
+                    s.click(Some(Hit::Search(0)));
+                    s.key(form::Key::Edit(EditKey::Insert("mo".into())), None);
+                    s.open_mut().caret = true;
+                }
+                let (w, h) = ((s.size.0 * sc) as u32, (s.size.1 * sc) as u32);
+                let mut c = Canvas::new(w, h);
+                c.fill_rect(c.bounds(), theme.colors.button_face);
+                draw(&mut c, &text, &p, &s, false, px);
+                let l = s.layout(&text, px);
+                let field = l.search.expect("a list sheet's field");
+                let mut want = Canvas::new(w, h);
+                want.fill_rect(want.bounds(), theme.colors.button_face);
+                let caret = Caret::new(s.search_focused, s.open().caret);
+                searchfield::draw(
+                    &mut want,
+                    text.dialog(s.font),
+                    &p,
+                    &s.search,
+                    field,
+                    s.search_focused,
+                    caret,
+                    px,
+                );
+                let f = field.scaled(sc);
+                for y in f.y..f.bottom() {
+                    for x in f.x..f.right() {
+                        assert_eq!(
+                            c.get(x, y),
+                            want.get(x, y),
+                            "{i:?} x{sc} typed {typed}: the field at ({x}, {y})"
+                        );
+                    }
+                }
+                let list = l.list.unwrap().frame.scaled(sc);
+                for y in f.bottom()..list.y {
+                    for x in f.x..f.right() {
+                        assert_eq!(
+                            c.get(x, y),
+                            theme.colors.button_face.argb(),
+                            "{i:?} x{sc}: the gap at ({x}, {y})"
+                        );
+                    }
+                }
+                hashes.push(hash(&c));
+            }
+        }
+    }
+    if crate::text::test_tahoma() {
+        assert_eq!(
+            hashes,
+            [
+                13_734_105_841_231_725_477,
+                8_540_630_767_303_374_645,
+                13_749_963_363_385_055_413,
+                13_938_254_622_102_580_021,
+                18_344_086_528_093_623_235,
+                1_027_420_804_912_379_122,
+                16_027_834_627_997_073_328,
+                4_276_650_307_115_636_736,
+                10_754_388_277_530_216_744,
+                3_888_777_649_561_378_003,
+                1_263_881_998_547_729_795,
+                9_342_056_638_551_148_414
+            ],
+            "Classic, Blue, Glass; each at 1x then 2x; each at rest then typed"
         );
     }
 }
