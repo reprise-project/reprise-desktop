@@ -502,7 +502,7 @@ fn the_taskbar_page_geometry() {
     assert_eq!(rect(&s, p, "fps_units"), Rect::new(208, 366, 170, 13));
     assert!(
         s.pages[p.index()].item("recent_files").is_none(),
-        "recent_files is on Advanced"
+        "recent_files is on Privacy"
     );
     assert_eq!(rect(&s, p, "start_icon"), Rect::new(32, 408, 13, 13));
     assert_eq!(rect(&s, p, "orb_glow_label"), Rect::new(32, 434, 110, 13));

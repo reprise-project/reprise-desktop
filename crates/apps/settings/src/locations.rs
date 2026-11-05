@@ -1,4 +1,4 @@
-//! The Advanced page's list of programs that asked for the location, and its Forget.
+//! The Privacy page's list of programs that asked for the location, and its Forget.
 
 use crate::registry::Page;
 use crate::{SettingsApp, pages, registry};
@@ -83,12 +83,12 @@ fn read_locations(file: &std::path::Path) -> Located {
 }
 
 impl SettingsApp {
-    /// Read the location list off the loop the first time the Advanced page shows: the
+    /// Read the location list off the loop the first time the Privacy page shows: the
     /// permission store can take seconds to answer. The list says it is loading until then.
     pub(crate) fn ensure_locations(&mut self) {
         if !self.locations_due
             || self.locating.is_some()
-            || registry::open(&self.sheet) != Page::Advanced
+            || registry::open(&self.sheet) != Page::Privacy
         {
             return;
         }
@@ -110,7 +110,7 @@ impl SettingsApp {
 
     pub(crate) fn sync_forget(&mut self) {
         let on = self.locating.is_none() && self.locations.selection.focus.is_some();
-        self.sheet.pages[Page::Advanced.index()].set_enabled(pages::FORGET, on);
+        self.sheet.pages[Page::Privacy.index()].set_enabled(pages::FORGET, on);
     }
 
     /// Forget drops the picked answer at once, from the state file or the portal's permission

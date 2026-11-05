@@ -8410,12 +8410,13 @@ fn render_long_list_sheets() -> Canvas {
                 Page("Power"),
                 Page("Startup"),
                 Page("Default Programs"),
+                Page("Privacy"),
                 Page("Advanced"),
                 Page("Backup"),
             ],
         ),
     ];
-    render_list_sheets_of(groups, 25, |_| {})
+    render_list_sheets_of(groups, 26, |_| {})
 }
 
 /// The list sheets with link rows among the pages, Printers greyed.

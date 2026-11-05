@@ -170,7 +170,7 @@ impl SettingsApp {
                 let r = self.on_page(defaultspage::list(self.area()));
                 pages::draw_list(c, &ctx.text, &forms, &self.types, r, form_px, 1);
             }
-            if open == Page::Advanced.index() {
+            if open == Page::Privacy.index() {
                 let r = self.on_page(pages::locations(self.area()));
                 pages::draw_list(c, &ctx.text, &forms, &self.locations, r, form_px, 1);
             }

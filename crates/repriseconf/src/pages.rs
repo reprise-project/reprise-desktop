@@ -32,6 +32,7 @@ pub enum Page {
     Power,
     Startup,
     DefaultPrograms,
+    Privacy,
     Advanced,
     Backup,
 }
@@ -105,6 +106,7 @@ pub const GROUPS: &[(&str, &[Entry])] = &[
             Entry::Page(Page::Power),
             Entry::Page(Page::Startup),
             Entry::Page(Page::DefaultPrograms),
+            Entry::Page(Page::Privacy),
             Entry::Page(Page::Advanced),
             Entry::Page(Page::Backup),
         ],
@@ -175,6 +177,7 @@ impl Page {
             Page::Power => "Power",
             Page::Startup => "Startup",
             Page::DefaultPrograms => "Default Programs",
+            Page::Privacy => "Privacy",
             Page::RemoteDesktop => "Remote Desktop",
             Page::Advanced => "Advanced",
             Page::Backup => "Backup",
@@ -323,15 +326,14 @@ impl Page {
                 "file types",
             ],
             Page::RemoteDesktop => &["remote", "rdp", "remmina", "desktop sharing"],
-            Page::Advanced => &[
-                "screenshots",
-                "task manager",
-                "thumbnails",
-                "cache",
-                "privacy",
+            Page::Privacy => &[
                 "location",
                 "clipboard",
+                "recent files",
+                "history",
+                "screen sharing",
             ],
+            Page::Advanced => &["screenshots", "task manager", "thumbnails", "cache"],
             Page::Backup => &["export", "import", "back up", "transfer", "move settings"],
         }
     }
