@@ -137,7 +137,15 @@ fn the_key_notes_follow_rebinding() {
         lines(&s, Page::Switcher, OVERVIEW_NOTE),
         ["Super+W shows this desktop's windows side by side."]
     );
+    assert_eq!(
+        lines(&s, Page::Privacy, "clipboard_history"),
+        ["Keep a &clipboard history (Super+V opens it)"]
+    );
     show_keys(&mut s, &[]);
+    assert_eq!(
+        lines(&s, Page::Privacy, "clipboard_history"),
+        ["Keep a &clipboard history"]
+    );
     assert_eq!(
         lines(&s, Page::Search, SEARCH_NOTE),
         [
@@ -510,6 +518,30 @@ fn the_snap_bar_and_distance_grey_with_drag_snapping_off() {
     for id in DRAG_SNAP_CONTROLS {
         assert!(enabled_on(&s, p, id), "{id} follows drag snapping back on");
     }
+}
+
+#[test]
+fn a_key_note_shows_an_ampersand_key_as_typed() {
+    let binds = ["flip", "overview", "next-layout", "clipboard-history"]
+        .map(|action| Shortcut::new("Super+ampersand", action, ""));
+    let mut s = built();
+    show_keys(&mut s, &binds);
+    assert_eq!(
+        lines(&s, Page::Switcher, FLIP_NOTE),
+        ["Super+&& shows them; Glass only."]
+    );
+    assert_eq!(
+        lines(&s, Page::Switcher, OVERVIEW_NOTE),
+        ["Super+&& shows this desktop's windows side by side."]
+    );
+    assert_eq!(
+        lines(&s, Page::Keyboard, KB_SWITCH_NOTE),
+        ["Super+&& switches them."]
+    );
+    assert_eq!(
+        lines(&s, Page::Privacy, "clipboard_history"),
+        ["Keep a &clipboard history (Super+&& opens it)"]
+    );
 }
 
 #[test]
