@@ -30,7 +30,7 @@ root_name = dirs.pop(".", None)
 
 # Read by tests or include_str! across crates, or configure every build.
 everything = ("Cargo.toml", "Cargo.lock", ".config/", "data/", "protocols/", "scripts/",
-              "config.example.toml", ".github/workflows/ci.yml")
+              "config.example.toml", ".github/ci-image/", ".github/workflows/")
 inert = ("docs/", "packaging/", ".github/", "README.md", "CONTRIBUTING.md", "SECURITY.md",
          "LICENSE", ".gitignore")
 root_paths = ("src/", "tests/", "examples/", "benches/", "build.rs")

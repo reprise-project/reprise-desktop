@@ -21,10 +21,14 @@ tests.
 `scripts/affected-tests [BASE]` runs only the tests of the crates changed
 since BASE (default `origin/main`) and the crates that depend on them.
 
-CI runs the same three commands in an `archlinux:latest` container as an
-unprivileged user (`.github/workflows/ci.yml` installs the packages). Run
+CI runs the same three commands as an unprivileged user in an Arch Linux
+image built from `.github/ci-image/` (`packages` lists what it installs). Run
 the tests as a normal user too: some check that a read-only directory
 refuses a write, which root ignores.
+
+A change under `.github/ci-image/` or to `.github/pacman.sh` needs a new image
+tag: put the output of `.github/ci-image/tag.sh` in the workflows. Pushing the
+branch builds the image; rerun the pull request's checks once that finishes.
 
 A crate's tests never see your session: `#[cfg(test)]
 reprisebus::test_session!();` at its root gives the test binary an empty

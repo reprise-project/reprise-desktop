@@ -1,0 +1,30 @@
+name: image
+# Any branch: a pull request that changes the image needs it built before its CI can run.
+on:
+  push:
+    paths:
+      - .github/ci-image/**
+      - .github/pacman.sh
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  # The tag hashes the inputs, so an existing tag is already this image.
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build and push the CI image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          image=$(.github/ci-image/tag.sh)
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo "$image is already pushed"
+            exit 0
+          fi
+          docker build -t "$image" -f .github/ci-image/Dockerfile .github
+          docker push "$image"

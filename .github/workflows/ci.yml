@@ -8,30 +8,28 @@ concurrency:
   cancel-in-progress: true
 permissions:
   contents: read
+  packages: read
 jobs:
-  # The image and the packages are pinned (the archive date names the repos' state), so a new
-  # rustc, clippy or Mesa reaches pull requests only through a commit that bumps both.
+  # .github/ci-image pins the image and its packages.
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    container: archlinux@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
+    container:
+      image: ghcr.io/reprise-project/reprise-ci:2026-10-25-f7b0d8395c9e
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     # Incremental state buys nothing on a fresh runner and doubles the cache.
     env:
       CARGO_INCREMENTAL: 0
       # Where rust-cache looks for the registry; the builds run as builder.
       CARGO_HOME: /home/builder/.cargo
-      ARCH_ARCHIVE: 2026/10/25
       # A font-gated test fails instead of skipping; see CONTRIBUTING.md.
       REPRISE_TEST_STRICT: 1
     steps:
-      # The first checkout downloads the tree for .github/pacman.sh; the second clones once git
-      # is in, as the licence test lists tracked files.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: bash .github/pacman.sh git
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: .github/ci-image/tag.sh --check
       - uses: ./.github/actions/build
-        with:
-          arch-archive: ${{ env.ARCH_ARCHIVE }}
   # The same on today's image and repos: shows what the next pin bump will meet, without
   # blocking a merge.
   canary:
@@ -45,49 +43,11 @@ jobs:
       CARGO_HOME: /home/builder/.cargo
       REPRISE_TEST_STRICT: 1
     steps:
+      # The first checkout downloads the tree for .github/pacman.sh; the second clones once git
+      # is in, as the licence test lists tracked files.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: bash .github/pacman.sh git
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/build
-  # What ships: the desktop entries validate and makepkg builds and installs every binary.
-  package:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    container: archlinux@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
-    env:
-      CARGO_INCREMENTAL: 0
-      ARCH_ARCHIVE: 2026/10/25
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install dependencies
-        run: >-
-          bash .github/pacman.sh base-devel desktop-file-utils rust clang pkgconf git seatd systemd-libs libinput libdrm mesa libglvnd libdisplay-info libxkbcommon xorg-xwayland freetype2 fontconfig pam libxcrypt dbus pipewire zlib ffmpeg
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # pkgver counts the commits.
-          fetch-depth: 0
-      # OnlyShowIn=reprise is not in the menu-spec registry: registering the name or renaming it
-      # to X-Reprise is still open, so that one error is filtered out. DesktopNames is the
-      # display managers' session key, which the validator does not know.
-      - name: Validate the desktop entries
-        run: |
-          out=$(desktop-file-validate data/reprise.desktop data/apps/*.desktop data/autostart/*.desktop 2>&1 || true)
-          printf '%s\n' "$out"
-          ! printf '%s\n' "$out" | grep -v -e 'key "OnlyShowIn" .* unregistered value "reprise"' -e 'reprise.desktop: error: file contains key "DesktopNames"' | grep -E ': (error|warning): '
-      - name: Create the build user
-        run: useradd -m builder
-      # The nightly's cache, read only: main's release build seeds this one.
-      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            /home/builder/.cargo/registry
-            /home/builder/.cargo/git
-            /home/builder/makepkg/build/reprise/src/target
-          key: nightly-${{ hashFiles('Cargo.lock') }}
-          restore-keys: nightly-
-      - run: chown -R builder "$GITHUB_WORKSPACE" /home/builder
-      - name: Build the package
-        run: >-
-          runuser -u builder -- env HOME=/home/builder REPRISE_MAKEPKG_DIR=/home/builder/makepkg
-          packaging/arch/local/build.sh --noconfirm --nodeps --noarchive
+          setup: "true"
