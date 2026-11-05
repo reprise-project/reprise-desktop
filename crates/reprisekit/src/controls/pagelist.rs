@@ -287,7 +287,7 @@ impl PageList {
         self.filter = filter.cloned();
         self.top = 0;
         if let Some(k) = self.cursor
-            && !self.flag(Pick::Link(k))
+            && !self.shows(Pick::Link(k))
         {
             self.cursor = None;
         }
@@ -301,12 +301,13 @@ impl PageList {
             Some(Row::Heading(_)) => self.rows[row + 1..]
                 .iter()
                 .map_while(pick_of)
-                .any(|p| self.flag(p)),
-            Some(r) => pick_of(r).is_some_and(|p| self.flag(p)),
+                .any(|p| self.shows(p)),
+            Some(r) => pick_of(r).is_some_and(|p| self.shows(p)),
         }
     }
 
-    fn flag(&self, pick: Pick) -> bool {
+    /// Whether `pick`'s row shows under the filter.
+    pub fn shows(&self, pick: Pick) -> bool {
         let Some(f) = &self.filter else {
             return true;
         };
