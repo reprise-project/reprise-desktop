@@ -195,6 +195,18 @@ quality = \"sharp\"",
     }
 
     #[test]
+    fn port_0_and_a_sound_that_is_not_true_or_false_are_invalid() {
+        let t: toml::Table =
+            toml::from_str("port = 0\nsound = \"off\"\nquality = \"ultra\"").unwrap();
+        let (rd, bad) = read(&t);
+        assert_eq!(
+            (rd.port, rd.sound, rd.quality),
+            (3389, true, Quality::Balanced)
+        );
+        assert_eq!(bad, ["port", "quality", "sound"]);
+    }
+
+    #[test]
     fn frame_rate_is_30_or_60() {
         let t: toml::Table = toml::from_str("frame_rate = 45").unwrap();
         assert_eq!(from_table(&t).frame_rate, 60);
