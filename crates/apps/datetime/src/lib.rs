@@ -3,6 +3,9 @@
 //! time through systemd-timedated; polkit asks for a password when
 //! needed. The sheet's date and time tick with the clock until edited.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod sheet;
 mod timedate;
 

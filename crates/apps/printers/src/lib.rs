@@ -4,6 +4,9 @@
 //! credentials, any other through cups-pk-helper and polkit. Everything here is glue between the
 //! worker thread and the window modules.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod addwiz;
 mod avahi;
 mod cups;

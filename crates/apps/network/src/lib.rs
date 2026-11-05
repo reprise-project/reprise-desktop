@@ -9,6 +9,9 @@
 //! own the models and hand back [`folder::Outcome`] and its siblings, and this
 //! file turns those into `nm::Cmd`s and windows.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod chooser;
 mod folder;
 mod hotspot;

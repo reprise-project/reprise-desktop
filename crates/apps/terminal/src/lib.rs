@@ -2,6 +2,9 @@
 //! With the tabs in the caption each tab is a window of its own; the program ends with its last
 //! window.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod chrome;
 mod cwd;
 mod drop;

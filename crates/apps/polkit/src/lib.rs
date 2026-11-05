@@ -9,6 +9,9 @@
 //! No main window: the process lives for the session, and each request opens a
 //! modal dialog, one at a time; the rest queue.
 
+#[cfg(test)]
+reprisebus::test_session!();
+
 mod agent;
 mod dialog;
 mod helper;
