@@ -18,12 +18,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use repriseapp::detailslist::{List, Press};
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{self, MsgBox};
 use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
+use reprisebus::tray::Hung;
 use reprisefs::apps::AppEntry;
 use reprisekit::access::Tree;
 use reprisekit::controls::form::{self, Form};
@@ -106,6 +108,18 @@ pub struct AppRow {
     pub app: String,
     pub name: String,
     pub icon: Option<String>,
+    /// A window of it stopped answering pings.
+    pub hung: bool,
+}
+
+impl AppRow {
+    pub fn status(&self) -> &'static str {
+        if self.hung {
+            "Not Responding"
+        } else {
+            "Running"
+        }
+    }
 }
 
 /// What End Task or End Process is waiting on.
@@ -156,6 +170,9 @@ pub struct TaskMgr {
     tabs: TabStrip,
     apps: List,
     app_rows: Vec<AppRow>,
+    /// The windows not answering pings, as the compositor reports them.
+    hung: Vec<Hung>,
+    hung_rx: Option<Receiver<Vec<Hung>>>,
     procs: List,
     proc_rows: Vec<ProcRow>,
     /// Process start times by pid, from the last snapshot.
@@ -203,6 +220,8 @@ impl TaskMgr {
             tabs: TabStrip::new(&["Applications", "Processes", "Performance"], 0),
             apps: List::new(vec![Column::new("Task", 260), Column::new("Status", 100)]),
             app_rows: Vec::new(),
+            hung: Vec::new(),
+            hung_rx: None,
             procs: List::new(Vec::new()),
             proc_rows: Vec::new(),
             starts: HashMap::new(),
@@ -475,20 +494,34 @@ impl TaskMgr {
         self.check_ending();
     }
 
+    fn set_hung(&mut self, hung: Vec<Hung>, ctx: &mut Ctx) {
+        if hung != self.hung {
+            self.hung = hung;
+            self.refresh_apps(ctx);
+        }
+    }
+
     fn refresh_apps(&mut self, ctx: &mut Ctx) {
         let keep = (self.apps.selected())
             .and_then(|i| self.app_rows.get(i))
             .map(|r| r.unit.clone());
         let entries = self.entries.clone();
-        self.app_rows = (self.snap.scopes.iter())
-            .map(|sc| app_row(sc, &entries))
+        let scopes = &self.snap.scopes;
+        self.app_rows = (scopes.iter())
+            .map(|sc| AppRow {
+                hung: not_responding(sc, scopes, &entries, &self.hung),
+                ..app_row(sc, &entries)
+            })
             .collect();
         let rows: Vec<listview::Row> = (0..self.app_rows.len())
             .map(|i| {
                 let icon = self.app_rows[i].icon.clone();
                 listview::Row {
                     icon: icon.and_then(|n| self.icon(&n, ctx)),
-                    cells: vec![self.app_rows[i].name.clone(), "Running".into()],
+                    cells: vec![
+                        self.app_rows[i].name.clone(),
+                        self.app_rows[i].status().into(),
+                    ],
                 }
             })
             .collect();
@@ -550,7 +583,7 @@ impl TaskMgr {
         {
             e.asked = true;
             let (target, name) = (e.target.clone(), e.name.clone());
-            self.ask = Some((Ask::EndNow(target), end_now_box(&name)));
+            self.ask = Some((Ask::EndNow(target), end_now_box(&name, true)));
         }
     }
 
@@ -558,6 +591,13 @@ impl TaskMgr {
         let Some(row) = self.selected_app().cloned() else {
             return Reply::none();
         };
+        if row.hung {
+            self.ending
+                .retain(|e| e.target != Target::Scope(row.unit.clone()));
+            let b = end_now_box(&row.name, false);
+            self.ask = Some((Ask::EndNow(Target::Scope(row.unit)), b));
+            return Reply::redraw_all();
+        }
         worker::kill_scope(row.unit.clone(), SIGTERM);
         self.wait_for(Target::Scope(row.unit), row.name);
         Reply::redraw()
@@ -901,6 +941,10 @@ impl TaskMgr {
                 for s in got {
                     self.take(s, ctx);
                 }
+                let hung = self.hung_rx.as_ref().and_then(|rx| rx.try_iter().last());
+                if let Some(h) = hung {
+                    self.set_hung(h, ctx);
+                }
                 pages::follow_form(self, ctx);
                 Reply::redraw_all()
             }
@@ -961,7 +1005,24 @@ fn app_row(sc: &scopes::Scope, entries: &[AppEntry]) -> AppRow {
         app: sc.app.clone(),
         name: e.map_or_else(|| sc.app.clone(), |e| e.name.clone()),
         icon: e.and_then(|e| e.icon.clone()),
+        hung: false,
     }
+}
+
+/// Whether a window of scope `sc`'s program is among `hung`: one whose client runs in the scope,
+/// or one whose client is in no scope (a sandboxed program's) and whose app id is the program's,
+/// as Switch To matches it.
+pub fn not_responding(
+    sc: &scopes::Scope,
+    scopes: &[scopes::Scope],
+    entries: &[AppEntry],
+    hung: &[Hung],
+) -> bool {
+    hung.iter().any(|(id, pid)| {
+        let pid = i32::try_from(*pid).unwrap_or(0);
+        sc.pids.contains(&pid)
+            || (!scopes.iter().any(|s| s.pids.contains(&pid)) && window_of(&sc.app, entries, id))
+    })
 }
 
 /// Whether a window reporting app id `window` belongs to the program started from entry `app`:
@@ -990,13 +1051,19 @@ pub fn grouped(n: u64) -> String {
     out
 }
 
-fn end_now_box(name: &str) -> MsgBox {
+/// End Now for `name`, which `asked` to end first, or found not responding.
+fn end_now_box(name: &str, asked: bool) -> MsgBox {
+    let why = if asked {
+        "is not responding to the request to end"
+    } else {
+        "is not responding"
+    };
     MsgBox::new(
         format!("End Program - {name}"),
         Fields {
             text: format!(
-                "{name} is not responding to the request to end.\n\nTo end it now, click End \
-                 Now. Anything it has not saved is lost."
+                "{name} {why}.\n\nTo end it now, click End Now. Anything it has not saved is \
+                 lost."
             ),
             icon: None,
             buttons: vec!["&End Now".into(), "Cancel".into()],
@@ -1057,6 +1124,14 @@ impl App for TaskMgr {
     fn start(&mut self, waker: repriseapp::Waker) -> repriseapp::Start {
         if let Some(mut s) = self.sampler.take() {
             s.disk = self.columns.contains(&ProcColumn::Disk);
+            let (tx, rx) = std::sync::mpsc::channel();
+            let wake = waker.clone();
+            reprisebus::tray::watch_responding(move |h| {
+                if tx.send(h).is_ok() {
+                    wake.wake();
+                }
+            });
+            self.hung_rx = Some(rx);
             self.worker = Some(worker::spawn(s, move || waker.wake()));
             self.follow_visibility();
         }

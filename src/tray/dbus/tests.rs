@@ -369,6 +369,7 @@ fn test_loop(conn: Connection, events: Sender<TrayEvent>, eventfd: RawFd) -> Loo
         icons: Arc::new(Mutex::new(IconCache::new(IconTheme::load("hicolor", &[])))),
         sizes: Arc::new(Mutex::new(vec![16])),
         senders: Arc::default(),
+        responding: Arc::default(),
     }
 }
 
@@ -846,4 +847,15 @@ fn the_session_programs_keep_first_order_and_take_the_latest_name() {
             ("chat".to_string(), "Chat".to_string()),
         ]
     );
+}
+
+#[test]
+fn the_ping_round_runs_from_the_first_watcher_to_the_last_leaving() {
+    let mut r = Responding::default();
+    assert!(r.watch(":1.7"), "the first watcher starts it");
+    assert!(!r.watch(":1.7"), "a second call is no new watcher");
+    assert!(!r.watch(":1.8"));
+    assert!(!r.left(":1.9"), "someone else leaving changes nothing");
+    assert!(!r.left(":1.7"), "one watcher is left");
+    assert!(r.left(":1.8"), "the last leaving stops it");
 }

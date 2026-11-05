@@ -6,14 +6,15 @@ use super::{TrayCommand, TrayEvent, TrayItem};
 use crate::icontheme::{IconCache, IconTheme};
 use crate::mutex::lock;
 use futures_util::stream::{BoxStream, SelectAll, StreamExt};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
-use zbus::object_server::InterfaceRef;
+use zbus::message::Header;
+use zbus::object_server::{InterfaceRef, SignalEmitter};
 use zbus::proxy::CacheProperties;
 use zbus::{Connection, Proxy};
 
@@ -72,6 +73,26 @@ struct Shell {
     eventfd: RawFd,
     pads: crate::tabletpad::Shared,
     programs: Arc<Mutex<Programs>>,
+    responding: Arc<Mutex<Responding>>,
+}
+
+/// The bus names following `NotRespondingChanged`, and the windows it last named.
+#[derive(Default)]
+struct Responding {
+    watchers: HashSet<String>,
+    hung: Vec<reprisebus::tray::Hung>,
+}
+
+impl Responding {
+    /// `sender` follows the list: whether it is the first.
+    fn watch(&mut self, sender: &str) -> bool {
+        self.watchers.insert(sender.to_string()) && self.watchers.len() == 1
+    }
+
+    /// `name` left the bus: whether it was the last to follow the list.
+    fn left(&mut self, name: &str) -> bool {
+        self.watchers.remove(name) && self.watchers.is_empty()
+    }
 }
 
 #[zbus::interface(name = "org.reprise.Tray")]
@@ -154,6 +175,27 @@ impl Shell {
     async fn notification_programs(&self) -> Vec<(String, String)> {
         lock(&self.programs).0.clone()
     }
+
+    /// The windows not answering pings now. Until the caller leaves the bus, every window is
+    /// pinged now and then and `NotRespondingChanged` follows the list.
+    async fn watch_responding(
+        &self,
+        #[zbus(header)] hdr: Header<'_>,
+    ) -> Vec<reprisebus::tray::Hung> {
+        let mut r = lock(&self.responding);
+        if let Some(sender) = hdr.sender()
+            && r.watch(sender)
+        {
+            emit(&self.events, self.eventfd, TrayEvent::WatchResponding(true));
+        }
+        r.hung.clone()
+    }
+
+    #[zbus(signal)]
+    async fn not_responding_changed(
+        emitter: &SignalEmitter<'_>,
+        windows: &[reprisebus::tray::Hung],
+    ) -> zbus::Result<()>;
 }
 
 /// Property caching off: the lazy cache backs every `Get` with one `GetAll`, so one failure poisons
@@ -230,6 +272,7 @@ struct Loop {
     icons: Icons,
     sizes: Sizes,
     senders: Arc<Mutex<Senders>>,
+    responding: Arc<Mutex<Responding>>,
 }
 
 impl Loop {
@@ -472,6 +515,15 @@ impl Loop {
                         .await;
                 }
             }
+            TrayCommand::NotResponding(hung) => {
+                lock(&self.responding).hung = hung.clone();
+                let shell = (self.conn.object_server())
+                    .interface::<_, Shell>(reprisebus::tray::PATH)
+                    .await;
+                if let Ok(iface) = shell {
+                    let _ = Shell::not_responding_changed(iface.signal_emitter(), &hung).await;
+                }
+            }
             TrayCommand::Replied { id, text } => {
                 if let Ok(iface) = self.notifications().await {
                     let emitter = iface.signal_emitter();
@@ -538,6 +590,9 @@ impl Loop {
                         self.remove_items_on(&name).await;
                         if lock(&self.senders).sent_by(&name) {
                             self.emit(TrayEvent::NotifySenderGone(name.clone()));
+                        }
+                        if lock(&self.responding).left(&name) {
+                            self.emit(TrayEvent::WatchResponding(false));
                         }
                         let dropped = self.screensaver.update(|h| h.forget(&name));
                         if dropped > 0 {
@@ -678,6 +733,7 @@ async fn setup(
             log::warn!("settings portal: {SETTINGS_NAME}: {e}; dark mode stays unknown to portals")
         }
     }
+    let responding = Arc::new(Mutex::new(Responding::default()));
     conn.object_server()
         .at(
             reprisebus::tray::PATH,
@@ -686,6 +742,7 @@ async fn setup(
                 eventfd,
                 pads,
                 programs,
+                responding: responding.clone(),
             },
         )
         .await
@@ -758,6 +815,7 @@ async fn setup(
         icons,
         sizes: Arc::new(Mutex::new(sizes)),
         senders,
+        responding,
     })
 }
 

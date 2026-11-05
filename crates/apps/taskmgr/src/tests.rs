@@ -599,6 +599,67 @@ fn columns_widths_and_view_picks_persist_in_the_state_file() {
     );
 }
 
+fn statuses(t: &TaskMgr) -> Vec<String> {
+    t.apps
+        .view
+        .rows
+        .iter()
+        .map(|r| r.cells[1].clone())
+        .collect()
+}
+
+#[test]
+fn a_program_whose_window_stopped_answering_reads_not_responding() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    assert_eq!(statuses(&t), ["Running"; 3]);
+    t.set_hung(vec![("org.kde.ark".into(), 42)], &mut ctx);
+    assert_eq!(statuses(&t), ["Not Responding", "Running", "Running"]);
+    t.set_hung(Vec::new(), &mut ctx);
+    assert_eq!(
+        statuses(&t),
+        ["Running"; 3],
+        "an answer brings Running back"
+    );
+}
+
+#[test]
+fn a_hung_window_is_its_program_by_pid_and_else_by_app_id() {
+    let s = snapshot();
+    let entries = [
+        entry("org.kde.ark", "Ark", None),
+        entry("reprise-notepad", "Notepad", Some("reprise.notepad")),
+    ];
+    let hung = |sc: usize, id: &str, pid: u32| {
+        not_responding(&s.scopes[sc], &s.scopes, &entries, &[(id.into(), pid)])
+    };
+    assert!(hung(0, "anything", 41), "its client runs in the scope");
+    assert!(
+        !hung(0, "org.kde.ark", 40),
+        "a client in another scope is that program's"
+    );
+    assert!(
+        hung(1, "reprise.notepad", 9999),
+        "a client in no scope goes by its app id"
+    );
+    assert!(!hung(0, "reprise.notepad", 9999));
+}
+
+#[test]
+fn end_task_on_a_program_not_responding_offers_end_now_at_once() {
+    let mut ctx = ctx();
+    let mut t = loaded(&mut ctx);
+    t.set_hung(vec![("org.kde.ark".into(), 41)], &mut ctx);
+    click_row(&mut t, &mut ctx, 0);
+    t.event(MAIN, key(keysym::DELETE), &mut ctx);
+    let unit = t.app_rows[0].unit.clone();
+    assert!(matches!(&t.ask, Some((Ask::EndNow(Target::Scope(u)), _)) if *u == unit));
+    assert!(
+        t.ending.is_empty(),
+        "nothing waits on a request it cannot answer"
+    );
+}
+
 #[test]
 fn the_histories_take_each_sample() {
     let mut ctx = ctx();
@@ -699,6 +760,16 @@ fn the_pages_are_pinned_in_every_interface_at_1_and_2() {
                 ctx.at_scale(d, |ctx| t.draw(MAIN, &mut c, ctx));
                 got.push((format!("{i:?} {page:?} @{d}"), fnv(&c)));
             }
+        }
+        open(&mut t, &mut ctx, Page::Applications);
+        t.set_hung(vec![("org.kde.ark".into(), 41)], &mut ctx);
+        t.event(MAIN, Event::Pointer(PointerInput::Leave), &mut ctx);
+        for d in [1, 2] {
+            t.follow_scale(MAIN, d, &mut ctx);
+            let (w, h) = ctx.size;
+            let mut c = Canvas::with_scale(w as u32, h as u32, d);
+            ctx.at_scale(d, |ctx| t.draw(MAIN, &mut c, ctx));
+            got.push((format!("{i:?} Applications not responding @{d}"), fnv(&c)));
         }
         t.act(Act::SelectColumns);
         let main = ctx.size;

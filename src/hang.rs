@@ -25,6 +25,10 @@ use crate::window::{Kind, WindowId};
 /// Least time between two pings input sends to one window.
 pub const PING_EVERY: Duration = Duration::from_secs(2);
 
+/// Least time between two pings to one window while a Task Manager watches which answer
+/// (`State::watch_responding`).
+pub const WATCH_EVERY: Duration = Duration::from_secs(5);
+
 /// How long a client has to answer a ping (sent by input or by a close) before it counts as hung
 /// and a close asked of it opens End Program.
 pub const PING_TIMEOUT: Duration = Duration::from_secs(5);
@@ -52,11 +56,16 @@ pub struct Liveness {
 impl Liveness {
     /// Input reached the window at `now`: whether to ping its client.
     pub fn input(&mut self, now: Instant, outstanding: bool) -> bool {
+        self.due(now, outstanding, PING_EVERY)
+    }
+
+    /// Whether a ping is due at `now`: none is out and the last went `every` ago or more.
+    pub fn due(&mut self, now: Instant, outstanding: bool, every: Duration) -> bool {
         self.settle(outstanding);
         !outstanding
             && self
                 .last_ping
-                .is_none_or(|t| now.saturating_duration_since(t) >= PING_EVERY)
+                .is_none_or(|t| now.saturating_duration_since(t) >= every)
     }
 
     /// A ping went out at `now`.
@@ -69,6 +78,11 @@ impl Liveness {
     pub fn timed_out(&mut self) {
         self.waiting = false;
         self.hung = true;
+    }
+
+    /// Whether its last ping timed out and nothing showed the client running since.
+    pub fn is_hung(&self) -> bool {
+        self.hung
     }
 
     /// The client showed it is running (it answered a ping or committed a new frame): whether it
@@ -249,6 +263,10 @@ pub struct Hang {
     /// `threads` is not yet dropped.
     dying_check: Option<(RegistrationToken, Instant)>,
     next_key: u64,
+    /// The ping round's timer, while a Task Manager watches.
+    watch: Option<RegistrationToken>,
+    /// The windows last reported not responding (`TrayCommand::NotResponding`).
+    not_responding: Vec<reprisebus::tray::Hung>,
 }
 
 /// The pids the periodic [`dying`] check reads: those with a window not yet dropped. None stops
@@ -364,6 +382,70 @@ impl State {
         }
     }
 
+    /// Whether a Task Manager watches which windows answer. While one does, each window is
+    /// pinged every `WATCH_EVERY`, so a client that stops answering is known without input.
+    pub fn watch_responding(&mut self, on: bool) {
+        if on == self.hang.watch.is_some() {
+            return;
+        }
+        if let Some(t) = self.hang.watch.take() {
+            self.handle.remove(t);
+        }
+        if !on {
+            return;
+        }
+        let timer = self
+            .handle
+            .insert_source(Timer::immediate(), |_, _, state| {
+                state.ping_round();
+                TimeoutAction::ToDuration(WATCH_EVERY)
+            });
+        match timer {
+            Ok(t) => self.hang.watch = Some(t),
+            Err(e) => log::warn!("ping round timer: {}", e.error),
+        }
+    }
+
+    /// Ping every mapped window whose client is due one.
+    fn ping_round(&mut self) {
+        let now = Instant::now();
+        let ids: Vec<WindowId> = (self.windows.iter())
+            .filter(|w| w.mapped)
+            .map(|w| w.id)
+            .collect();
+        for w in ids {
+            let outstanding = self.ping_outstanding(w);
+            if (self.window_hang(w).liveness).due(now, outstanding, WATCH_EVERY) {
+                self.ping(w);
+            }
+        }
+        self.publish_responding();
+    }
+
+    /// Each mapped window whose client does not answer: its app id and pid.
+    pub fn not_responding(&self) -> Vec<reprisebus::tray::Hung> {
+        let mut out: Vec<reprisebus::tray::Hung> = (self.windows.iter())
+            .filter(|w| w.mapped)
+            .filter(|w| (self.hang.windows.get(&w.id)).is_some_and(|h| h.liveness.is_hung()))
+            .map(|w| {
+                let pid = self.client_pid(w.id).and_then(|p| u32::try_from(p).ok());
+                (w.app_id(), pid.unwrap_or(0))
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Tell the bus when [`Self::not_responding`] changed.
+    fn publish_responding(&mut self) {
+        let now = self.not_responding();
+        if now != self.hang.not_responding {
+            self.hang.not_responding = now.clone();
+            crate::tray::send(self, crate::tray::TrayCommand::NotResponding(now));
+        }
+    }
+
     /// Window `w` committed: its client is running.
     pub fn window_alive(&mut self, w: WindowId) {
         self.recovered(&[w]);
@@ -372,18 +454,23 @@ impl State {
     /// Windows `ws` showed their client is running: close End Program for each that was hung.
     fn recovered(&mut self, ws: &[WindowId]) {
         let mut pids = Vec::new();
+        let mut any = false;
         for &w in ws {
             let was_hung = self
                 .hang
                 .windows
                 .get_mut(&w)
                 .is_some_and(|h| h.liveness.alive());
+            any |= was_hung;
             if was_hung && let Some(pid) = self.client_pid(w) {
                 pids.push(pid);
             }
         }
         if !pids.is_empty() {
             self.close_end_programs(|p| pids.contains(&p), "is responding again");
+        }
+        if any {
+            self.publish_responding();
         }
     }
 
@@ -473,6 +560,7 @@ impl State {
             self.window_hang(w).liveness.timed_out();
             self.offer_end(w);
         }
+        self.publish_responding();
     }
 
     /// A [`dying`] program never answers again, but a thread of it stuck on a dead mount keeps its
@@ -1116,6 +1204,66 @@ mod tests {
             h.state.hang.dying_check.is_some(),
             "a timed-out ping arms the check"
         );
+    }
+
+    #[test]
+    fn a_watched_window_that_stops_answering_is_reported_until_it_answers() {
+        const PID: i32 = i32::MAX - 812;
+        let mut h = crate::harness::Harness::new();
+        h.output("o", 800, 600);
+        let (_tx, _wake, heard) = crate::tray::headless(&mut h.state);
+        let reported = || {
+            std::iter::from_fn(|| heard.try_recv().ok())
+                .filter_map(|c| match c {
+                    crate::tray::TrayCommand::NotResponding(l) => Some(l),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut c = h.connect_as(PID);
+        let t = h.map_toplevel(&mut c, "app", 200, 100);
+        let target = h.state.ping_target(t.id).expect("ping target");
+        h.dispatch();
+        assert!(
+            !h.state.hang.pings.contains_key(&target),
+            "nothing pings a window no input reached"
+        );
+        h.state.watch_responding(true);
+        h.dispatch();
+        assert!(
+            h.state.hang.pings.contains_key(&target),
+            "the watch pings it at once"
+        );
+        h.state.ping_timed_out(target);
+        let hung = vec![("app".to_string(), PID as u32)];
+        assert_eq!(h.state.not_responding(), hung);
+        assert_eq!(reported(), [hung], "the change goes to the bus once");
+        h.state.ping_round();
+        assert_eq!(
+            reported(),
+            Vec::<Vec<_>>::new(),
+            "and not again while it stands"
+        );
+        h.roundtrip(&mut c);
+        assert!(h.state.not_responding().is_empty(), "the answer clears it");
+        assert_eq!(reported(), [vec![]]);
+        h.state.watch_responding(false);
+        assert!(
+            h.state.hang.watch.is_none(),
+            "the last watcher gone stops the round"
+        );
+    }
+
+    #[test]
+    fn a_ping_round_waits_five_seconds_per_window() {
+        let t0 = Instant::now();
+        let mut l = Liveness::default();
+        assert!(l.due(t0, false, WATCH_EVERY), "never pinged");
+        l.pinged(t0);
+        assert!(!l.due(at(t0, 1000), true, WATCH_EVERY), "one is out");
+        l.alive();
+        assert!(!l.due(at(t0, 4999), false, WATCH_EVERY));
+        assert!(l.due(at(t0, 5000), false, WATCH_EVERY));
     }
 
     #[test]
