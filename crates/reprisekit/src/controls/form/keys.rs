@@ -298,6 +298,7 @@ impl Form {
                         b.open = false;
                         Event::Redraw
                     }
+                    Key::Access(ch) | Key::Char(ch) if b.other_key(ch) => Event::Pressed(id),
                     _ => Event::None,
                 },
                 _ => Event::None,

@@ -20,6 +20,7 @@ const SWATCH: i32 = 19;
 const POPUP_LINE: (i32, i32, i32) = (4, 92, 141);
 const POPUP_OTHER: (i32, i32, i32, i32) = (4, 145, 67, 23);
 const POPUP_CURRENT: (i32, i32, i32, i32) = (72, 145, 23, 23);
+const OTHER_LABEL: &str = "&Other...";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ColorButton {
@@ -58,6 +59,16 @@ impl ColorButton {
         self.open = !self.open;
         self.at = None;
         true
+    }
+
+    /// Other...'s access key, `ch` in either case: the popup closes and the host answers with
+    /// the Color dialog, as for a click on it.
+    pub fn other_key(&mut self, ch: char) -> bool {
+        let hit = self.open && ch.to_lowercase().eq(crate::text::access_key(OTHER_LABEL));
+        if hit {
+            self.open = false;
+        }
+        hit
     }
 
     pub fn pick(&mut self, k: usize) -> bool {
@@ -222,7 +233,7 @@ pub fn draw_popup(
         text,
         p,
         other_rect(button).scaled(s),
-        "&Other...",
+        OTHER_LABEL,
         false,
         Interaction::Idle,
         true,
