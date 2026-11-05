@@ -49,13 +49,17 @@ impl PropSheet {
     }
 
     /// Give the keyboard to control `id` on the open page, taking it from the page strip, and
-    /// scroll the control into view.
-    pub fn focus_control(&mut self, id: &str) {
+    /// scroll the control into view. False, changing nothing, when no live control has the id.
+    pub fn focus_control(&mut self, id: &str) -> bool {
+        if !self.open().can_focus(id) {
+            return false;
+        }
         self.tabs.focused = false;
         self.search_focused = false;
         self.settle_cursor();
         self.open_mut().focus_id(id);
         self.reveal_focus();
+        true
     }
 
     /// The link the page list's keyboard rests on.

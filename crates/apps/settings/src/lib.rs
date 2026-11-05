@@ -481,10 +481,7 @@ impl SettingsApp {
         let system = pages::system_layout(std::env::var("XKB_DEFAULT_LAYOUT").ok().as_deref());
         let mut app = SettingsApp::open(repriseconf::config_path(), system);
         if let Some((p, focus)) = page {
-            app.sheet.set_open(p.index());
-            if let Some(id) = focus {
-                app.sheet.focus_control(&id);
-            }
+            app.open_page(p, focus.as_deref());
         }
         app.requests = requests;
         app.text_size = repriseconf::text_size();

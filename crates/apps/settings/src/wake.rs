@@ -181,16 +181,16 @@ impl SettingsApp {
         }
     }
 
-    /// Open `page`, with the keyboard on control `focus` when one is named. True when anything moved.
+    /// Open `page`, with the keyboard on control `focus` when one is named and live, else as a
+    /// page opens. True when anything moved.
     pub(crate) fn open_page(&mut self, page: Page, focus: Option<&str>) -> bool {
         if self.sheet.tabs.open == page.index() && focus.is_none() {
             return false;
         }
         self.blur_side_lists();
         self.sheet.set_open(page.index());
-        match focus {
-            Some(id) => self.sheet.focus_control(id),
-            None => self.tab_opened(),
+        if !focus.is_some_and(|id| self.sheet.focus_control(id)) {
+            self.tab_opened();
         }
         true
     }
