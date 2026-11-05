@@ -308,11 +308,18 @@ impl Paint {
                 if l.colors.contains(x, y) {
                     let pal = self.palette();
                     if let Some(i) = palette::hit(&palette::layout(&pal, l.colors), x, y) {
-                        let c = art::PALETTE[i].0.argb();
-                        if button == BTN_LEFT {
-                            self.doc.primary = c;
-                        } else {
+                        let c = self.wells[i].argb();
+                        let secondary = button != BTN_LEFT;
+                        if secondary {
                             self.doc.secondary = c;
+                        } else {
+                            self.doc.primary = c;
+                        }
+                        let click = ctx.theme.metrics.click(x, y, time);
+                        if self.well_clicks.press((i, button), click) {
+                            self.commit_text();
+                            self.open_colors(secondary, Some(i));
+                            return Reply::redraw_all();
                         }
                         return Reply::redraw();
                     }

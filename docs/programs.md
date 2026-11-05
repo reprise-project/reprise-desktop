@@ -175,6 +175,13 @@ tip, eraser or spray size, outline and fill, or whether a selection covers what 
 left button draws in the first color and the right in the second; a left or right click on the
 color box picks them. Shift keeps lines level or at 45° and shapes square.
 
+Colors > Edit Colors... opens the Color dialog on the first color; a double-click on a well of the
+color box opens it on that well, as the first color with the left button or the second with the
+right. Pick one of the 48 basic colors or 16 custom ones, or press Define Custom Colors >> for a
+hue and saturation field, a luminosity bar and Hue/Sat/Lum and Red/Green/Blue boxes; Add to Custom
+Colors puts the color in a custom well. OK sets the color and the well. The custom colors are kept
+in `~/.local/state/reprise/paint.toml`.
+
 A selection moves with the pointer, Ctrl drags a copy, and Cut, Copy and Paste carry pictures on
 the clipboard as PNG; a pasted picture larger than the canvas grows it. The text tool types into
 a box with the font, size and bold set in the Fonts toolbar, and the text goes on the picture when

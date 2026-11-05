@@ -10,6 +10,7 @@ pub mod about;
 mod access;
 mod app;
 mod clipboard;
+pub mod colordlg;
 mod ctx;
 pub mod ctxmenu;
 pub mod decode;

@@ -70,6 +70,22 @@ filedlg-menu-unpin = Unp&in from Places
 filedlg-menu-move-up = Move &Up
 filedlg-menu-move-down = Move &Down
 
+## The Color dialog
+colordlg-title = Color
+colordlg-basic = &Basic colors:
+colordlg-custom = &Custom colors:
+colordlg-define = &Define Custom Colors >>
+colordlg-add = &Add to Custom Colors
+colordlg-preview = Color|Solid
+colordlg-hue = Hu&e:
+colordlg-sat = &Sat:
+colordlg-lum = &Lum:
+colordlg-red = &Red:
+colordlg-green = &Green:
+colordlg-blue = Bl&ue:
+colordlg-field = Hue and saturation
+colordlg-lum-bar = Luminosity
+
 ## About boxes
 about-copy = &Copy
 

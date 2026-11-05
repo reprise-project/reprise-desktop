@@ -7,6 +7,7 @@ use crate::doc::{FillStyle, TOOLS};
 use crate::shapes::{Brush, Tip};
 use reprisekit::access::ROOT;
 use reprisekit::classic::widgets::{BarHit, ScrollParts, bar_hit};
+use reprisekit::controls::colordlg;
 use reprisekit::controls::menubar;
 use reprisekit::controls::palette::{self, Palette};
 use reprisekit::controls::scrollbar;
@@ -365,9 +366,17 @@ impl Paint {
 
     pub(crate) fn palette(&self) -> Palette {
         Palette {
-            swatches: art::PALETTE
+            swatches: self
+                .wells
                 .iter()
-                .map(|&(c, name)| (c, name.to_string()))
+                .zip(art::PALETTE)
+                .map(|(&c, (first, name))| {
+                    let name = match c == first {
+                        true => name.to_string(),
+                        false => colordlg::hex(c),
+                    };
+                    (c, name)
+                })
                 .collect(),
             rows: 2,
             primary: art::color_of(self.doc.primary),

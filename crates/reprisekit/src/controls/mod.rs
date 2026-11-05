@@ -12,6 +12,7 @@ pub mod captiontabs;
 pub mod charmap;
 pub mod cliphistory;
 pub mod colorbutton;
+pub mod colordlg;
 pub mod colorpick;
 pub mod combo;
 pub mod copyprogress;

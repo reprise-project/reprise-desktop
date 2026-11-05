@@ -28,7 +28,7 @@ pub(crate) fn test_ctx() -> Ctx {
     }
 }
 
-fn press(x: i32, y: i32, button: u32) -> Event {
+pub(crate) fn press(x: i32, y: i32, button: u32) -> Event {
     Event::Pointer(PointerInput::Press {
         x,
         y,
@@ -38,7 +38,7 @@ fn press(x: i32, y: i32, button: u32) -> Event {
     })
 }
 
-fn release(x: i32, y: i32, button: u32) -> Event {
+pub(crate) fn release(x: i32, y: i32, button: u32) -> Event {
     Event::Pointer(PointerInput::Release {
         x,
         y,
@@ -51,7 +51,7 @@ fn motion(x: i32, y: i32) -> Event {
     Event::Pointer(PointerInput::Motion { x, y })
 }
 
-fn key(sym: u32, ctrl: bool) -> Event {
+pub(crate) fn key(sym: u32, ctrl: bool) -> Event {
     Event::Key(KeyInput {
         sym,
         utf8: None,

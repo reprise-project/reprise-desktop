@@ -21,7 +21,8 @@ pub(crate) mod title {
     pub const EDIT: usize = 1;
     pub const VIEW: usize = 2;
     pub const IMAGE: usize = 3;
-    pub const HELP: usize = 4;
+    pub const COLORS: usize = 4;
+    pub const HELP: usize = 5;
 }
 
 pub(crate) mod row {
@@ -53,6 +54,8 @@ pub(crate) mod row {
     pub const ATTRIBUTES: usize = 3;
     pub const CLEAR_IMAGE: usize = 4;
     pub const CROP: usize = 5;
+
+    pub const EDIT_COLORS: usize = 0;
 
     pub const ABOUT: usize = 0;
 }
@@ -108,6 +111,7 @@ pub(crate) fn menus() -> Vec<(String, Vec<MenuItem>)> {
                 mi(&tr!("menu-crop"), None),
             ],
         ),
+        (tr!("menu-colors"), vec![mi(&tr!("menu-edit-colors"), None)]),
         (tr!("menu-help"), vec![mi(&tr!("menu-about"), None)]),
     ]
 }
@@ -183,6 +187,10 @@ impl Paint {
             (title::IMAGE, row::CROP) => {
                 self.doc.crop();
                 self.hold_scroll(ctx);
+            }
+            (title::COLORS, row::EDIT_COLORS) => {
+                self.commit_text();
+                self.open_colors(false, None);
             }
             (title::HELP, row::ABOUT) => self.about = true,
             _ => {}
