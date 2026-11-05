@@ -66,7 +66,7 @@ pub fn fonts_and_icons(
         icon_themes.len().clamp(1, 8),
     ));
 
-    items.push(group(a, "windows_group", 204, 92, "Windows"));
+    items.push(group(a, "windows_group", 204, 66, "Windows"));
     items.extend(spin(
         "frame_label",
         "frame_width",
@@ -87,16 +87,6 @@ pub fn fonts_and_icons(
         (12, 128),
     ));
     items.push(Item::label_at("caption_units", GX + 170, 252, 20, "px"));
-    items.extend(spin(
-        "taskbar_label",
-        "taskbar_height",
-        GX,
-        278,
-        110,
-        "Tas&kbar height:",
-        (8, 256),
-    ));
-    items.push(Item::label_at("taskbar_units", GX + 170, 278, 20, "px"));
 
     // GTK and Qt look: `(Automatic)` and Automatic follow the look's darkness,
     // the Reprise rows its colours. Their font smoothing is apart from the Fonts
@@ -215,7 +205,7 @@ pub fn night_light(a: Area) -> Form {
 }
 
 /// The Effects page: window animations and the fade of hovered buttons, each a check with its two durations
-/// indented under it, and the screen's fade; then the menus' shadow, timings and opening, and the task buttons' slide.
+/// indented under it, and the screen's fade; then the menus' shadow, timings and opening.
 pub fn effects(a: Area) -> Form {
     let mut items = vec![group(a, "effects_group", 44, 158, "Windows")];
     items.push(Item::check(
@@ -308,14 +298,6 @@ pub fn effects(a: Area) -> Form {
         256,
         110,
         MENU_ANIMATIONS,
-    ));
-    items.push(group(a, "taskbar_group", 296, 48, "Taskbar"));
-
-    items.push(Item::check(
-        "taskbar_slide",
-        GX,
-        318,
-        "Slide &taskbar buttons as they are dragged",
     ));
     Form::new(items)
 }

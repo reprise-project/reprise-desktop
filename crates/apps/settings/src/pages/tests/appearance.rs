@@ -36,8 +36,6 @@ fn the_appearance_page_geometry() {
     assert_eq!(rect(&g, p, "glass_intensity"), Rect::new(232, 304, 146, 26));
     assert_eq!(rect(&g, p, "blur_label"), Rect::new(232, 334, 146, 13));
     assert_eq!(rect(&g, p, "glass_blur"), Rect::new(232, 350, 146, 26));
-    assert_eq!(rect(&g, p, "orb_glow_label"), Rect::new(232, 406, 146, 13));
-    assert_eq!(rect(&g, p, "glass_orb_glow"), Rect::new(232, 422, 146, 26));
     assert_eq!(rect(&g, p, "notify_label"), Rect::new(20, 452, 90, 13));
     assert_eq!(
         rect(&g, p, "glass_notification_style"),
@@ -96,10 +94,10 @@ fn the_mode_combo_offers_the_schedules_and_the_hours_grey_unless_picked() {
     }
     assert_eq!(
         rect(&s, p, "dark_hours_label"),
-        Rect::new(232, 452, 146, 13)
+        Rect::new(232, 406, 146, 13)
     );
-    assert_eq!(rect(&s, p, "glass_dark_from"), Rect::new(232, 468, 62, 20));
-    assert_eq!(rect(&s, p, "glass_dark_to"), Rect::new(316, 468, 62, 20));
+    assert_eq!(rect(&s, p, "glass_dark_from"), Rect::new(232, 422, 62, 20));
+    assert_eq!(rect(&s, p, "glass_dark_to"), Rect::new(316, 422, 62, 20));
     inside_page(&s, p);
     if let Some(Control::Time(tf)) = s.pages[p.index()]
         .item_mut("glass_dark_from")
@@ -123,7 +121,7 @@ fn the_dark_hours_row_pins_its_pixels_in_every_look() {
     };
     let mut f = appearancepage::page(&s, Area::MIN);
     write_form(&mut f, &s);
-    let row = Rect::new(232, 452, 146, 36);
+    let row = Rect::new(232, 406, 146, 36);
     let Some(on) = row_pins(&f, row) else {
         return;
     };
@@ -212,7 +210,6 @@ fn the_glass_rows_show_under_glass_only() {
         "glass_intensity",
         "glass_blur",
         "glass_streaks",
-        "glass_orb_glow",
         "glass_notification_style",
     ];
     let p = Page::Appearance;
@@ -439,7 +436,7 @@ fn the_blur_trackbar_starts_at_blur_1() {
 
 #[test]
 fn the_start_button_glow_trackbar_writes_orb_glow() {
-    let p = Page::Appearance;
+    let p = Page::Taskbar;
     let mut got = Settings {
         interface: "glass".into(),
         glass_orb_glow: 70,
@@ -830,15 +827,7 @@ fn the_fonts_and_icons_page_geometry() {
     );
     assert_eq!(
         rect(&s, Page::FontsAndIcons, "windows_group"),
-        Rect::new(20, 204, 358, 92)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "taskbar_height"),
-        Rect::new(146, 274, 50, 20)
-    );
-    assert_eq!(
-        rect(&s, Page::FontsAndIcons, "taskbar_units"),
-        Rect::new(202, 278, 20, 13)
+        Rect::new(20, 204, 358, 66)
     );
     assert_eq!(
         rect(&s, Page::FontsAndIcons, "toolkits_group"),
@@ -897,8 +886,7 @@ fn the_effects_page_geometry() {
     assert_eq!(rect(&s, p, "menu_hover_units"), Rect::new(300, 234, 20, 13));
     assert_eq!(rect(&s, p, "menu_fade_ms"), Rect::new(96, 256, 50, 20));
     assert_eq!(rect(&s, p, "menu_animation"), Rect::new(246, 256, 110, 21));
-    assert_eq!(rect(&s, p, "taskbar_group"), Rect::new(20, 296, 358, 48));
-    assert_eq!(rect(&s, p, "taskbar_slide"), Rect::new(GX, 318, 13, 13));
+    assert!(s.pages[p.index()].item("taskbar_group").is_none());
     for id in ["notification_sound", "sound_theme"] {
         assert!(s.pages[p.index()].item(id).is_none(), "{id} is on Sound");
     }
@@ -980,24 +968,6 @@ fn the_effect_spins_grey_with_their_check() {
     );
     set_check(&mut s, &mut got, "hover_fade", false);
     assert!(!enabled_on(&s, p, "hover_in_ms") && !enabled_on(&s, p, "hover_out_ms"));
-}
-
-#[test]
-fn the_taskbar_slide_check_goes_in_and_comes_back_out() {
-    let mut got = Settings::for_interface("glass");
-    let mut s = with(&got);
-    let checked = |s: &PropSheet| match &s.pages[Page::Effects.index()]
-        .item("taskbar_slide")
-        .unwrap()
-        .control
-    {
-        Control::Check { checked, .. } => *checked,
-        _ => panic!("taskbar_slide is a check"),
-    };
-    assert!(checked(&s), "Glass slides its task buttons");
-    set_check(&mut s, &mut got, "taskbar_slide", false);
-    assert!(!got.taskbar_slide);
-    assert!(!checked(&with(&Settings::for_interface("classic"))));
 }
 
 #[test]

@@ -237,6 +237,7 @@ impl Page {
                 "auto-hide",
                 "autohide",
                 "peek",
+                "previews",
             ],
             Page::StartMenu => &["menu", "pinned", "quick launch", "banner"],
             Page::Search => &["launcher", "run"],

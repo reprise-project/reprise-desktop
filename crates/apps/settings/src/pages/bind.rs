@@ -2,7 +2,8 @@
 
 use super::appearance::{ANIM_CONTROLS, HOVER_CONTROLS, NL_CONTROLS, NL_TIMES};
 use super::desktop::{
-    DESKTOP_CONTROLS, DRAG_SNAP_CONTROLS, DURATION_CONTROLS, FPS_CONTROLS, REVEAL_CONTROLS,
+    DESKTOP_CONTROLS, DRAG_SNAP_CONTROLS, DURATION_CONTROLS, FPS_CONTROLS, GLOW_CONTROLS,
+    REVEAL_CONTROLS,
 };
 use super::input::{MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS};
 use super::system::{
@@ -625,15 +626,15 @@ pub fn write_form(form: &mut Form, s: &Settings) {
 /// and times by the fixed schedule; the StickyKeys, SlowKeys and delay
 /// options; the colour filter's intensity unless a correction is picked; on
 /// Window Switcher, the preview check box while Alt+Tab shows thumbnails and
-/// the 3D switcher outside Glass; on Virtual Desktops, the refresh rate while nothing
-/// shows a live picture, and the count and animation without "Use virtual
-/// desktops". The Appearance page is rebuilt for the pending interface and its
+/// the 3D switcher outside Glass; on Virtual Desktops, the count and animation without "Use
+/// virtual desktops". The Appearance page is rebuilt for the pending interface and its
 /// sample redrawn; the Background page greys the position without a wallpaper,
 /// the file name extensions without the desktop's files, the water style
 /// while water is off and its note without a fluid style, and shows the look's desktop
-/// colour on its Color button; the Taskbar page
-/// greys the auto-hide triggers while auto-hide is off, the Start Menu page the banner outside the
-/// Classic style, the Sound page the sound theme while
+/// colour on its Color button; the Taskbar page greys the auto-hide triggers while auto-hide is
+/// off, the picture rate while nothing shows a live picture, and small icons and the Start button
+/// glow outside Glass; the Start Menu page greys the banner outside the Classic style; the Sound
+/// page greys the sound theme while
 /// neither notifications nor the bell play a sound, and the Advanced page
 /// the debug overlay's captures check while the overlay is off and the thumbnail cache's size
 /// while the cache is off; the Remote Desktop page names the quality picked. Runs from
@@ -661,9 +662,6 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         wp.set_enabled(id, s.snap_enabled);
     }
     let dp = &mut sheet.pages[Page::VirtualDesktops.index()];
-    for id in FPS_CONTROLS {
-        dp.set_enabled(id, live);
-    }
     for id in DESKTOP_CONTROLS {
         dp.set_enabled(id, many);
     }
@@ -723,6 +721,14 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         tb.set_enabled(id, s.taskbar_auto_hide);
     }
     tb.set_enabled(TRAY_CUSTOMIZE, s.taskbar_tray_overflow);
+    for id in FPS_CONTROLS {
+        tb.set_enabled(id, live);
+    }
+    let glass = s.interface == "glass";
+    for id in GLOW_CONTROLS {
+        tb.set_enabled(id, glass);
+    }
+    tb.set_enabled("taskbar_small_icons", glass);
     let sm = &mut sheet.pages[Page::StartMenu.index()];
     for id in ["banner_label", "startmenu_banner"] {
         sm.set_enabled(id, s.startmenu_style == "classic");

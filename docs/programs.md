@@ -288,17 +288,17 @@ One window, 26 pages, seven headings. Only one runs at a time.
   - **Fonts & Icons:** the UI and dialog fonts, the icon theme, frame and
     caption sizes, and how GTK and Qt programs are themed.
   - **Effects:** window animations, highlight fades, menu shadows and how menus
-    open (fade, slide or none) and taskbar slides.
+    open (fade, slide or none).
 - **Taskbar & Windows**
-  - **Taskbar:** position, button mode, Peek, Show desktop, tray overflow,
-    auto-hide, and the Start button's logo.
+  - **Taskbar:** position, height, button mode, Peek, Show desktop, tray
+    overflow, button slides, auto-hide, live window pictures and their rate,
+    and the Start button's logo and glow (Glass).
   - **Start Menu:** the menu style and banner, the Start menu tree, the Quick
     Launch buttons and whether they show as pinned task buttons.
   - **Search:** whether the launcher searches your files and open windows.
   - **Window Switcher:** Alt+Tab's icons or thumbnails, picture size, Peek,
     the 3D switcher and the overview's hot corner.
-  - **Virtual Desktops:** how many, how they animate, their names and the
-    taskbar's live previews.
+  - **Virtual Desktops:** how many, how they animate and their names.
   - **Window Behavior:** snapping, snap layouts, the snap bar, window tabs
     and window memory.
 - **Display & Sound**
