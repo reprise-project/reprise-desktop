@@ -525,6 +525,7 @@ impl State {
             self.snap_on_map(w);
         }
         self.sync_toplevel(w);
+        self.on_top_changed(w);
         self.write_x11_state(w);
         self.window_opening(w);
         crate::peek::window_mapped(self, w);

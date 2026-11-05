@@ -98,6 +98,7 @@ impl State {
         self.scene.raise_to_top(tree);
         self.raise_children(w);
         self.redraw_all();
+        self.on_top_changed(w);
     }
 
     fn owned_by(&self, w: WindowId) -> Vec<WindowId> {

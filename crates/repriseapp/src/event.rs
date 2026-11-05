@@ -90,6 +90,9 @@ pub enum Event {
     /// `Reply::paste_image`; empty when the clipboard holds no picture.
     PastedImage(Vec<u8>),
     Focus(bool),
+    /// The window menu, a key or a window rule put the main window on top or took it off, for a
+    /// program whose [`Extended::on_top`](crate::Extended::on_top) is `Some`.
+    OnTop(bool),
     /// The compositor suspended the window (it is minimized, nothing of it shows) or shows it
     /// again; sent on each change.
     Suspended(bool),

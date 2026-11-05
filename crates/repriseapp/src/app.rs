@@ -41,6 +41,12 @@ pub trait Extended {
     fn tab_with(&self, _win: WinId) -> Option<WinId> {
         None
     }
+    /// Whether the main window stays above the other windows, for a program that keeps that
+    /// choice itself; `None` leaves it to the window menu. The host asks the compositor on each
+    /// change, and a change made elsewhere arrives as [`Event::OnTop`](crate::Event::OnTop).
+    fn on_top(&self) -> Option<bool> {
+        None
+    }
     /// The smallest client size resizable window `win` can be dragged
     /// to, read when its window is made; `None` keeps a child's wanted
     /// size, or `MIN_SIZE` for the main window, as the floor.

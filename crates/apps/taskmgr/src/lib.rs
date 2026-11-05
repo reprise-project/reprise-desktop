@@ -152,6 +152,7 @@ enum Act {
     Speed(Speed),
     PerCore(bool),
     SelectColumns,
+    OnTop(bool),
 }
 
 struct Tip {
@@ -190,6 +191,8 @@ pub struct TaskMgr {
     mem: History,
     swap: History,
     per_core: bool,
+    /// Options > Always On Top.
+    on_top: bool,
     bar: Bar,
     form: Form,
     /// The page and size `form` was built for.
@@ -236,6 +239,7 @@ impl TaskMgr {
             mem: History::new(HISTORY),
             swap: History::new(HISTORY),
             per_core: false,
+            on_top: false,
             bar: Bar::new(Vec::<(&str, _)>::new()),
             form: Form::new(Vec::new()),
             form_for: None,
@@ -267,6 +271,8 @@ impl TaskMgr {
         }
         let mut file = MenuTree::new();
         file.push(MenuItem::item("E&xit Task Manager"));
+        let mut options = MenuTree::new();
+        options.push(MenuItem::item("&Always On Top").checked(self.on_top));
         let mut speed = MenuTree::new();
         for s in Speed::ALL {
             speed.push(
@@ -293,17 +299,22 @@ impl TaskMgr {
         view.push_sub(MenuItem::item("&CPU History"), history);
         view.push(MenuItem::item("&Select Columns...").enabled(self.page() == Page::Processes));
         let keep = (self.bar.active, self.bar.underline, self.bar.hot);
-        self.bar = Bar::with_trees(vec![("&File", file), ("&View", view)]);
+        self.bar = Bar::with_trees(vec![
+            ("&File", file),
+            ("&Options", options),
+            ("&View", view),
+        ]);
         (self.bar.active, self.bar.underline, self.bar.hot) = keep;
     }
 
-    fn menu_act(title: usize, path: &[usize]) -> Option<Act> {
+    fn menu_act(&self, title: usize, path: &[usize]) -> Option<Act> {
         Some(match (title, path) {
             (0, [0]) => Act::Quit,
-            (1, [0]) => Act::Refresh,
-            (1, [1, i]) => Act::Speed(*Speed::ALL.get(*i)?),
-            (1, [3, i]) => Act::PerCore(*i == 1),
-            (1, [4]) => Act::SelectColumns,
+            (1, [0]) => Act::OnTop(!self.on_top),
+            (2, [0]) => Act::Refresh,
+            (2, [1, i]) => Act::Speed(*Speed::ALL.get(*i)?),
+            (2, [3, i]) => Act::PerCore(*i == 1),
+            (2, [4]) => Act::SelectColumns,
             _ => return None,
         })
     }
@@ -317,6 +328,7 @@ impl TaskMgr {
                 self.follow_visibility();
             }
             Act::PerCore(on) => self.per_core = on,
+            Act::OnTop(on) => self.on_top = on,
             Act::SelectColumns => {
                 self.pick = Some(selectcols::form(&self.columns));
                 return Reply::redraw_all();
@@ -327,9 +339,10 @@ impl TaskMgr {
         Reply::redraw()
     }
 
-    /// Takes the state kept at `path`: the View menu's picks and the Processes columns.
+    /// Takes the state kept at `path`: the Options and View menus' picks and the Processes columns.
     pub fn restore(&mut self, path: PathBuf) {
         let s = State::load(&path);
+        self.on_top = s.on_top;
         self.speed = s.speed;
         self.per_core = s.per_core;
         if let Some(keys) = &s.columns {
@@ -346,6 +359,7 @@ impl TaskMgr {
     fn kept(&self) -> State {
         let key = |c: &ProcColumn| columns::spec(*c).key.to_string();
         State {
+            on_top: self.on_top,
             speed: self.speed,
             per_core: self.per_core,
             columns: (self.columns != columns::defaults())
@@ -748,7 +762,7 @@ impl TaskMgr {
         if button == BTN_LEFT {
             match self.bar.press(x, y, &lay.bar, &ctx.text, &ctx.theme, px) {
                 Action::Chosen { title, path, .. } => {
-                    return match Self::menu_act(title, &path) {
+                    return match self.menu_act(title, &path) {
                         Some(a) => self.act(a),
                         None => Reply::redraw(),
                     };
@@ -860,7 +874,7 @@ impl TaskMgr {
             let px = ctx.theme.fonts.size_px;
             match self.bar.key(bk, &lay.bar, &ctx.text, &ctx.theme, px) {
                 Action::Chosen { title, path, .. } => {
-                    return match Self::menu_act(title, &path) {
+                    return match self.menu_act(title, &path) {
                         Some(a) => self.act(a),
                         None => Reply::redraw(),
                     };
@@ -958,6 +972,7 @@ impl TaskMgr {
                 self.fit_lists(ctx);
                 Reply::redraw()
             }
+            Event::OnTop(on) => self.act(Act::OnTop(on)),
             Event::Tick => self.tick(),
             Event::Key(k) => self.key(&k, ctx),
             Event::KeyUp(k) => self.key_up(&k, ctx),
@@ -1173,6 +1188,10 @@ impl App for TaskMgr {
 impl repriseapp::Extended for TaskMgr {
     fn min_size(&self, _win: WinId) -> Option<(i32, i32)> {
         Some(pages::MIN)
+    }
+
+    fn on_top(&self) -> Option<bool> {
+        Some(self.on_top)
     }
 
     fn popup(&mut self, win: WinId, _ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
