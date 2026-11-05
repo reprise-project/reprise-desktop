@@ -14,6 +14,7 @@ use reprisekit::controls::form;
 use reprisekit::controls::listview;
 use reprisekit::controls::metrics::ControlMetrics;
 use reprisekit::controls::propsheet;
+use reprisekit::textedit::EditKey;
 
 impl SettingsApp {
     pub(crate) fn sheet_event(&mut self, ev: propsheet::Event) -> Reply {
@@ -255,9 +256,7 @@ impl SettingsApp {
         }
         if propsheet::find_key(k.sym, k.mods.ctrl, k.mods.shift, k.mods.alt) {
             let ev = self.sheet.focus_search();
-            if self.sheet.search_focused {
-                self.blur_side_lists();
-            }
+            self.sheet_took_keyboard();
             return self.sheet_event(ev);
         }
         let Some(key) = dialog_key(&k) else {
@@ -275,6 +274,13 @@ impl SettingsApp {
                 return self.side_tab(back);
             }
             if held {
+                // A plain letter would reach the page as an access key (R presses Remove).
+                if let form::Key::Edit(EditKey::Insert(s)) = &key
+                    && s.chars().count() == 1
+                    && s != " "
+                {
+                    return Reply::none();
+                }
                 // On the Startup and locations lists Enter stays the
                 // sheet's OK.
                 if key == form::Key::Enter
@@ -289,6 +295,7 @@ impl SettingsApp {
         }
         let from_field = key == form::Key::Enter && self.sheet.search_focused;
         let ev = self.sheet.key(key, None);
+        self.sheet_took_keyboard();
         if from_field && self.sheet.tabs.focused {
             self.search_opened();
         }
@@ -422,13 +429,13 @@ impl SettingsApp {
                 let hit = self.sheet.hit(x, y, &ctx.text, px);
                 let was = self.sheet.tabs.open;
                 let ev = self.sheet.click(hit);
-                if self.sheet.tabs.focused || self.sheet.search_focused {
-                    self.blur_side_lists();
-                } else if self.sheet.tabs.open != was {
+                self.sheet_took_keyboard();
+                if self.sheet.tabs.open != was
+                    && !self.sheet.tabs.focused
+                    && !self.sheet.search_focused
+                {
                     self.blur_side_lists();
                     self.tab_opened();
-                } else if self.sheet.open().focus().is_some() {
-                    self.blur_side_lists();
                 }
                 if self.sheet.tabs.open != was {
                     self.search_opened();
@@ -505,8 +512,8 @@ impl SettingsApp {
             }) => {
                 let hit = self.sheet.hit(x, y, &ctx.text, px);
                 let ev = self.sheet.right_press(hit);
-                if self.sheet.open().focus().is_some() && !self.over_side_list(x, y, ctx) {
-                    self.blur_side_lists();
+                if !self.over_side_list(x, y, ctx) {
+                    self.sheet_took_keyboard();
                 }
                 self.sheet_event(ev)
             }
