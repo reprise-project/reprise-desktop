@@ -50,8 +50,7 @@ impl Host {
     }
 
     /// Run `argv` with a token asked for as [`Host::raise`] does for window `win`, so its window
-    /// may take the focus. Without xdg-activation, or when this program is quitting and would not
-    /// see the token, it runs at once, tokenless.
+    /// may take the focus; tokenless at once without xdg-activation or while this program quits.
     pub(crate) fn start(&self, win: WinId, argv: Vec<OsString>) {
         if self.activation.is_some() && self.seat.is_some() && !self.exit {
             self.request_token(win, TokenFor::Start(argv, self.key_last));
