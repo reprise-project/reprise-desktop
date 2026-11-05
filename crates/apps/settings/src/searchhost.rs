@@ -1,6 +1,5 @@
-//! The search field over the page list: a query shows the pages ([`Page::find`]) and link rows
-//! ([`repriseconf::pages::Program::find`]) it matches; Enter or a press on a found page row focuses the control the
-//! query named.
+//! The search field over the page list: a query shows the pages and link rows it matches, and
+//! opening a found page focuses the control the query named.
 
 use crate::SettingsApp;
 use crate::registry::Page;

@@ -1,6 +1,5 @@
-//! The page list's link rows and the page buttons that start a program: each starts it from its
-//! desktop entry, in its app scope as Start does; a program without a shown entry greys its row
-//! or button.
+//! The link rows and page buttons that start a program from its desktop entry, in its app scope;
+//! a program without a shown entry greys its row or button.
 
 use crate::SettingsApp;
 use crate::pages::PROGRAM_BUTTONS;

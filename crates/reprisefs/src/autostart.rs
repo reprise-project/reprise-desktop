@@ -253,8 +253,7 @@ pub fn copy_text(e: &Entry) -> String {
         escape_value(&e.exec_line),
         e.hidden
     );
-    // The shadow replaces the system entry outright, so the keys that gated
-    // it come along.
+    // A copy replaces the system entry outright, so the keys that gated it come along.
     if !e.only_show_in.is_empty() {
         out.push_str(&format!("OnlyShowIn={};\n", e.only_show_in.join(";")));
     }
