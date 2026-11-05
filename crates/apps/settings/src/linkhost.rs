@@ -1,7 +1,9 @@
-//! The page list's link rows: each starts a separate settings program from its desktop entry, in
-//! its app scope as Start does; a program without a shown entry greys its row.
+//! The page list's link rows and the page buttons that start a program: each starts it from its
+//! desktop entry, in its app scope as Start does; a program without a shown entry greys its row
+//! or button.
 
 use crate::SettingsApp;
+use crate::pages::PROGRAM_BUTTONS;
 use repriseapp::Reply;
 use repriseconf::pages::links;
 use reprisefs::apps::{AppEntry, launch_argv, parse_desktop, read_desktop_file};
@@ -38,8 +40,14 @@ impl SettingsApp {
         self.links = links().map(|p| find(p.id, &self.app_dirs)).collect();
     }
 
-    /// Grey each link row whose program has no shown entry.
+    /// Grey each link row and page button whose program has no shown entry.
     pub(crate) fn show_links(&mut self) {
+        for (button, program) in PROGRAM_BUTTONS {
+            let shown = find(program, &self.app_dirs).is_some();
+            for page in &mut self.sheet.pages {
+                page.set_enabled(button, shown);
+            }
+        }
         let Some(list) = self.sheet.list_mut() else {
             return;
         };
@@ -58,10 +66,6 @@ impl SettingsApp {
 
     /// Start the program whose desktop entry id is `desktop_id`; nothing when it has no shown
     /// entry.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no page button starts a program yet")
-    )]
     pub(crate) fn open_program(&mut self, desktop_id: &str) -> Reply {
         match find(desktop_id, &self.app_dirs) {
             Some(e) => launch(&e, &self.loaded.terminal),

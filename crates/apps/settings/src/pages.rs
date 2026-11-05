@@ -185,6 +185,20 @@ impl Area {
 }
 
 pub const EDIT_FILE: &str = "edit_file";
+/// The Sound page's button that opens Sounds and Audio Devices.
+pub const AUDIO_DEVICES: &str = "audio_devices";
+
+/// Each page button that starts a program, with the program's desktop entry id.
+pub const PROGRAM_BUTTONS: [(&str, &str); 1] = [(AUDIO_DEVICES, "reprise-sound.desktop")];
+
+/// The desktop entry id of the program page button `id` opens, if it opens one.
+pub fn program_for(id: &str) -> Option<&'static str> {
+    PROGRAM_BUTTONS
+        .iter()
+        .find(|(button, _)| *button == id)
+        .map(|(_, program)| *program)
+}
+
 /// The Backup page's buttons and the line saying what the last Export or Import did.
 pub const BACKUP_EXPORT: &str = "backup_export";
 pub const BACKUP_IMPORT: &str = "backup_import";
