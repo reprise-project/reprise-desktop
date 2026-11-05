@@ -59,7 +59,7 @@ while an editor saves it doesn't.
 | `[thumbnail_cache]` | whether thumbnails are kept, the cap, and whether installed thumbnailers make them for PDFs, videos and fonts |
 | `[storage]` | the low disk space warning |
 | `[bluetooth]` | `battery_warning`: the percent a connected device's battery warns at, 15 by default, 0 off (Bluetooth Devices > Options) |
-| `[remote_desktop]` | the Remote Desktop server's port, picture quality, frame rate, video encoder, sound and lock on leave ([below](#remote-desktop)) |
+| `[remote_desktop]` | the Remote Desktop server's port, picture quality, frame rate, video encoder, sound, lock on leave and capture border ([below](#remote-desktop)) |
 | `[debug]` | the debug overlay |
 | `[osd]` | `caps_lock`, `num_lock`: whether the key's on or off shows on screen when it changes, both on by default (Settings > Keyboard) |
 | `[[keybinds]]` | shortcuts, layered over the defaults; `action = "none"` unbinds a chord |
@@ -175,6 +175,7 @@ journal names the invalid ones.
 | `sound` | `true` plays this computer's sound on the client, not here; `false` plays nothing there | `true` |
 | `max_viewers` | 1 to 16, how many computers may be connected at once, counting those still logging in; one more is closed before it logs in, as is a third from an address with two logging in. Read as each computer connects | `4` |
 | `lock_on_leave` | `true` locks the session when the last logged-in computer leaves; `false` leaves it unlocked. Read as each computer logs in and leaves | `true` |
+| `capture_border` | `true` draws the red capture border around the screen the server shares while a computer is connected, if `[privacy] capture_border` is on; `false` leaves it off. The Sharing icon shows either way, and every other capture keeps its border. Read by the compositor on each save | `false` |
 
 `quality`, `frame_rate` and `encoder` reach a connected client at the next
 frame, and `sound` at once.

@@ -80,6 +80,8 @@ pub struct Config {
     pub recent_files: bool,
     pub location: bool,
     pub capture_border: bool,
+    /// `[remote_desktop]`; the compositor reads its `capture_border`.
+    pub remote_desktop: crate::remote::RemoteDesktop,
     /// `[updates] restart_notice`: Software Updates says when the running system needs a restart.
     pub restart_notice: bool,
     pub debug: DebugConfig,
@@ -165,6 +167,7 @@ impl Default for Config {
             recent_files: true,
             location: true,
             capture_border: true,
+            remote_desktop: crate::remote::RemoteDesktop::default(),
             restart_notice: true,
             debug: DebugConfig::default(),
             shortcut_overlay: ShortcutOverlay::default(),

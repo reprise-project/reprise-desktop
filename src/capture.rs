@@ -125,11 +125,12 @@ impl Captures {
         }
     }
 
-    /// What the ongoing ext sessions show.
-    pub fn targets(&self) -> Vec<Captured<Output, WindowId>> {
+    /// What the ongoing ext sessions show, those for the remote desktop server only `with_remote`.
+    pub fn targets(&self, with_remote: bool) -> Vec<Captured<Output, WindowId>> {
         self.sessions
             .iter()
             .filter(|s| asked(s).ongoing())
+            .filter(|s| with_remote || !for_remote_desktop(s))
             .filter_map(|s| match shown(&s.source())? {
                 Shown::Output(o) => Some(Captured::Output(o)),
                 Shown::Window(w) => Some(Captured::Window(w)),
@@ -843,6 +844,14 @@ fn asked(session: &SessionRef) -> &Asked {
         .user_data()
         .insert_if_missing_threadsafe(Asked::default);
     session.user_data().get::<Asked>().expect("inserted above")
+}
+
+/// Whether `session`'s client marked itself the remote desktop server's capture connection.
+fn for_remote_desktop(session: &SessionRef) -> bool {
+    session.client().is_some_and(|c| {
+        c.get_data::<crate::compositor::ClientState>()
+            .is_some_and(|d| d.remote_capture.load(Ordering::Relaxed))
+    })
 }
 
 fn wlr_key(screencopy: &Screencopy) -> WlrKey {

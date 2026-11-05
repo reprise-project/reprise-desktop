@@ -4,7 +4,7 @@
     reprise private protocol: input injection and capture for reprise-portal.
   </copyright>
 
-  <interface name="reprise_input_v1" version="7">
+  <interface name="reprise_input_v1" version="8">
     <description summary="EIS sockets and pointer barriers for the portal">
       One global. connect_eis hands the compositor one end of a socketpair
       to run libei's EIS side on; create_capture makes an object that owns
@@ -13,6 +13,8 @@
       shortcuts. create_keys makes an object that presses keys for one
       RemoteDesktop session. watch_sandboxed makes an object that lists
       the sandboxed apps with a window. pick_color opens the colour picker.
+      remote_capture marks a capture connection as the remote desktop
+      server's.
     </description>
 
     <enum name="kind">
@@ -97,6 +99,16 @@
         colour picker and answers on the new object.
       </description>
       <arg name="id" type="new_id" interface="reprise_color_pick_v1"/>
+    </request>
+
+    <request name="remote_capture" since="8">
+      <description summary="this connection captures for the remote desktop server">
+        The portal sends it on the connection that captures the screen
+        for the session it starts without a dialog for the remote desktop
+        server, before it opens the capture session. For the rest of the
+        connection its captures still count as sharing, but get the red
+        capture border only with [remote_desktop] capture_border.
+      </description>
     </request>
   </interface>
 

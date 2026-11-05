@@ -749,6 +749,7 @@ fn save_round_trips_every_field() {
         remote_encoder: "software".into(),
         remote_sound: false,
         remote_lock_on_leave: false,
+        remote_capture_border: true,
         desktops: 1,
         desktop_animation: "slide-vertical".into(),
         desktop_animation_ms: 350,

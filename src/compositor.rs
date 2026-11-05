@@ -1082,6 +1082,9 @@ pub struct ClientState {
     /// Whether it runs in a sandbox, for the global filters (`sandbox`).
     pub sandbox: crate::sandbox::ClientSandbox,
     peer: crate::clientlog::ClientPeer,
+    /// Set by the portal's `reprise_input_v1.remote_capture`: this client's captures serve
+    /// Reprise's remote desktop server.
+    pub remote_capture: std::sync::atomic::AtomicBool,
     /// The pid `State::client_pid` reports in place of the socket's, so a test's client can
     /// stand for another process.
     #[cfg(test)]
@@ -1096,6 +1099,7 @@ impl ClientState {
             compositor_state: CompositorClientState::default(),
             sandbox: crate::sandbox::ClientSandbox::of_stream(stream, context),
             peer: crate::clientlog::ClientPeer::of_stream(stream),
+            remote_capture: Default::default(),
             #[cfg(test)]
             pid: None,
         }

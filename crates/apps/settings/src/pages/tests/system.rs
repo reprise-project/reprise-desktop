@@ -777,7 +777,7 @@ fn client() -> reprisebus::remote::Client {
 }
 
 /// Everything under the check box that greys with it.
-const REMOTE_GREYED: [&str; 19] = [
+const REMOTE_GREYED: [&str; 20] = [
     "status",
     "encoder",
     "port_label",
@@ -793,6 +793,7 @@ const REMOTE_GREYED: [&str; 19] = [
     "video_encoder",
     "remote_sound",
     "remote_lock",
+    "remote_border",
     "fingerprint_label",
     "fingerprint",
     "regenerate",
@@ -809,43 +810,44 @@ fn the_remote_desktop_page_geometry() {
     assert_eq!(rect(&s, p, "encoder"), Rect::new(38, 96, 340, 13));
     assert_eq!(
         rect(&s, p, "connection_group"),
-        Rect::new(20, 120, 358, 183)
+        Rect::new(20, 120, 358, 229)
     );
     assert_eq!(rect(&s, p, "port_label"), Rect::new(GX, 144, 114, 13));
     assert_eq!(rect(&s, p, "port"), Rect::new(150, 140, 50, 20));
-    assert_eq!(rect(&s, p, "quality_label"), Rect::new(GX, 170, 200, 13));
-    assert_eq!(rect(&s, p, "quality_speed"), Rect::new(GX, 197, 44, 13));
-    assert_eq!(rect(&s, p, "quality"), Rect::new(78, 191, 238, 26));
-    assert_eq!(rect(&s, p, "quality_sharp"), Rect::new(322, 197, 44, 13));
-    assert_eq!(rect(&s, p, "quality_value"), Rect::new(286, 170, 80, 13));
-    assert_eq!(rect(&s, p, "frame_rate_label"), Rect::new(GX, 230, 114, 13));
+    assert_eq!(
+        rect(&s, p, "fingerprint_label"),
+        Rect::new(GX, 170, 334, 13)
+    );
+    assert_eq!(rect(&s, p, "fingerprint"), Rect::new(GX, 186, 218, 20));
+    assert_eq!(rect(&s, p, "regenerate"), Rect::new(256, 184, 110, 23));
+    assert_eq!(rect(&s, p, "quality_label"), Rect::new(GX, 216, 200, 13));
+    assert_eq!(rect(&s, p, "quality_speed"), Rect::new(GX, 243, 44, 13));
+    assert_eq!(rect(&s, p, "quality"), Rect::new(78, 237, 238, 26));
+    assert_eq!(rect(&s, p, "quality_sharp"), Rect::new(322, 243, 44, 13));
+    assert_eq!(rect(&s, p, "quality_value"), Rect::new(286, 216, 80, 13));
+    assert_eq!(rect(&s, p, "frame_rate_label"), Rect::new(GX, 272, 114, 13));
     assert_eq!(
         rect(&s, p, "frame_rate"),
-        Rect::new(150, 226, 160, combo::COMBO_H)
+        Rect::new(150, 268, 160, combo::COMBO_H)
     );
     assert_eq!(
         rect(&s, p, "video_encoder_label"),
-        Rect::new(GX, 256, 114, 13)
+        Rect::new(GX, 298, 114, 13)
     );
     assert_eq!(
         rect(&s, p, "video_encoder"),
-        Rect::new(150, 252, 160, combo::COMBO_H)
+        Rect::new(150, 294, 160, combo::COMBO_H)
     );
-    assert_eq!(rect(&s, p, "remote_sound"), Rect::new(GX, 282, 13, 13));
+    assert_eq!(rect(&s, p, "remote_sound"), Rect::new(GX, 328, 13, 13));
+    assert_eq!(rect(&s, p, "clients_label"), Rect::new(20, 359, 200, 13));
     assert_eq!(
-        rect(&s, p, "certificate_group"),
-        Rect::new(20, 313, 358, 66)
+        rect(&s, p, "clients"),
+        Rect::new(20, 375, 277, 55),
+        "three rows"
     );
-    assert_eq!(
-        rect(&s, p, "fingerprint_label"),
-        Rect::new(GX, 333, 334, 13)
-    );
-    assert_eq!(rect(&s, p, "fingerprint"), Rect::new(GX, 349, 218, 20));
-    assert_eq!(rect(&s, p, "regenerate"), Rect::new(256, 347, 110, 23));
-    assert_eq!(rect(&s, p, "client_group"), Rect::new(20, 389, 358, 85));
-    assert_eq!(rect(&s, p, "clients"), Rect::new(GX, 409, 253, 38));
-    assert_eq!(rect(&s, p, "disconnect"), Rect::new(291, 409, 75, 23));
-    assert_eq!(rect(&s, p, "remote_lock"), Rect::new(GX, 453, 13, 13));
+    assert_eq!(rect(&s, p, "disconnect"), Rect::new(303, 375, 75, 23));
+    assert_eq!(rect(&s, p, "remote_lock"), Rect::new(20, 438, 13, 13));
+    assert_eq!(rect(&s, p, "remote_border"), Rect::new(20, 460, 13, 13));
     inside_page(&s, p);
     let page = &s.pages[p.index()];
     assert_eq!(
@@ -1260,6 +1262,25 @@ fn locking_when_the_last_remote_computer_leaves_round_trips_through_apply() {
     assert_eq!(back.pages[p.index()].checked("remote_lock"), Some(false));
 }
 
+#[test]
+fn the_remote_desktop_border_round_trips_through_apply() {
+    let mut got = crate::model::load("");
+    let base = got.clone();
+    let mut s = with(&got);
+    let p = Page::RemoteDesktop;
+    let page = &mut s.pages[p.index()];
+    assert_eq!(page.checked("remote_border"), Some(false), "off unless set");
+    page.set_check("remote_border", true);
+    read_one(&s, "remote_border", &mut got);
+    let out = crate::model::save("", &got, &base).expect("parses");
+    let doc: toml_edit::DocumentMut = out.parse().unwrap();
+    let table = doc["remote_desktop"].as_table().expect("the section");
+    let rd = repriseconf::remote::from_table(&table.to_string().parse().unwrap());
+    assert!(rd.capture_border, "capture_border = true is written");
+    let back = with(&crate::model::load(&out));
+    assert_eq!(back.pages[p.index()].checked("remote_border"), Some(true));
+}
+
 /// The page with one client, selected, and the defaults in its settings, Classic at 100%.
 #[test]
 fn the_remote_desktop_page_pixels() {
@@ -1298,7 +1319,7 @@ fn the_remote_desktop_page_pixels() {
             (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
         });
     assert_eq!(
-        h, 5_057_494_088_244_633_774,
+        h, 982_033_152_719_353_713,
         "the page with its client selected"
     );
 }

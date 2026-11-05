@@ -1,5 +1,6 @@
 //! The red border around each output, window and area being captured (`[privacy]
-//! capture_border`). Only the backend's screen frames add it, so no capture shows it.
+//! capture_border`, and `[remote_desktop] capture_border` for the remote desktop server's).
+//! Only the backend's screen frames add it, so no capture shows it.
 
 use std::time::{Duration, Instant};
 
@@ -196,7 +197,12 @@ fn strips(
 /// wlr captures. A screenshot is neither; the border, the sharing
 /// indicator and the automatic Do Not Disturb all go by this.
 pub fn ongoing(state: &State) -> Vec<Captured<Output, WindowId>> {
-    let mut targets = state.captures.targets();
+    shared(state, true)
+}
+
+/// [`ongoing`], the remote desktop server's captures only `with_remote`.
+fn shared(state: &State, with_remote: bool) -> Vec<Captured<Output, WindowId>> {
+    let mut targets = state.captures.targets(with_remote);
     let waiting = state.captures.wlr_waiting();
     let now = Instant::now();
     targets.extend(live_wlr(&state.capture_border.tracks, &waiting, now).map(
@@ -212,7 +218,7 @@ fn current_edges(state: &State) -> Vec<Edge> {
     if !state.config.capture_border {
         return Vec::new();
     }
-    let targets = ongoing(state);
+    let targets = shared(state, state.config.remote_desktop.capture_border);
     if targets.is_empty() {
         return Vec::new();
     }
@@ -503,6 +509,35 @@ mod tests {
         assert_eq!(s[0].loc, (0, 0).into());
         assert_eq!(s[1].loc.y, 1050, "below the frame, above the taskbar");
         assert_eq!(s[3].loc.x, 1917);
+    }
+
+    #[test]
+    fn a_remote_desktop_capture_is_shared_without_a_border_and_another_capture_has_one() {
+        let size = (64, 48);
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", size.0, size.1);
+        let screen = [Edge {
+            rect: rect(0, 0, size.0, size.1),
+            outside: false,
+        }];
+        let mut rdp = h.connect_remote_capture(size);
+        let mut s = rdp.ext_session(&mut h);
+        rdp.ext_frame(&mut h, &mut s);
+        rdp.ext_frame(&mut h, &mut s);
+        assert!(h.state.privacy.sharing_shown(), "the Sharing icon shows");
+        assert!(current_edges(&h.state).is_empty(), "no border");
+        h.state.config.remote_desktop.capture_border = true;
+        assert_eq!(current_edges(&h.state), screen, "bordered when set");
+        h.state.config.remote_desktop.capture_border = false;
+        let mut other = h.connect_capture(size);
+        let mut t = other.ext_session(&mut h);
+        other.ext_frame(&mut h, &mut t);
+        other.ext_frame(&mut h, &mut t);
+        assert_eq!(
+            current_edges(&h.state),
+            screen,
+            "another capture is bordered"
+        );
     }
 
     #[test]

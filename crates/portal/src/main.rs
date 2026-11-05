@@ -540,7 +540,8 @@ pub(crate) struct Started {
 pub(crate) enum Pick {
     /// A remembered target, else the share dialog.
     Ask,
-    /// The output at layout origin (0,0), not remembered and with no dialog.
+    /// The output at layout origin (0,0), not remembered and with no dialog: the remote desktop
+    /// server's, whose capture the compositor tells apart (`Wayland::connect_remote_capture`).
     Origin,
 }
 
@@ -592,7 +593,7 @@ pub(crate) async fn pick_and_cast(
     let t2 = target.clone();
     let cast = match blocking::unblock(move || {
         let _turn = lock(&CAST_TURN);
-        Cast::start(t2, mode)
+        Cast::start(t2, mode, pick == Pick::Origin)
     })
     .await
     {

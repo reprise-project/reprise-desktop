@@ -150,6 +150,10 @@ pub(super) fn fields() -> Vec<Field> {
             k("remote_desktop", "lock_on_leave"),
             lens!(remote_lock_on_leave),
         ),
+        Field::Flag(
+            k("remote_desktop", "capture_border"),
+            lens!(remote_capture_border),
+        ),
         Field::Int(k("workspaces", "count"), lens!(desktops)),
         Field::Strings(k("workspaces", "names"), lens!(desktop_names)),
         Field::Text(k("workspaces", "animation"), lens!(desktop_animation)),

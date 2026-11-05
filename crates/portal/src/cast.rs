@@ -83,8 +83,9 @@ pub struct Cast {
 }
 
 impl Cast {
-    /// Start capturing `target`; returns once PipeWire assigned the node.
-    pub fn start(target: Target, cursor: CursorMode) -> Result<Cast, String> {
+    /// Start capturing `target`, for the remote desktop server when `remote`; returns once
+    /// PipeWire assigned the node.
+    pub fn start(target: Target, cursor: CursorMode, remote: bool) -> Result<Cast, String> {
         let (tx, rx) = std::sync::mpsc::channel::<NodeReport>();
         let (stop, stop_rx) = pipewire::channel::channel::<()>();
         let (ended_tx, ended) = std::sync::mpsc::channel::<()>();
@@ -92,7 +93,7 @@ impl Cast {
             .name("reprise-portal-cast".into())
             .spawn(move || {
                 let _ended = ended_tx;
-                if let Err(e) = run(target, cursor, tx.clone(), stop_rx) {
+                if let Err(e) = run(target, cursor, remote, tx.clone(), stop_rx) {
                     log::warn!("cast thread: {e}");
                     let _ = tx.send(Err(e));
                 }
@@ -259,10 +260,15 @@ fn cursor_plane(
 fn run(
     target: Target,
     cursor: CursorMode,
+    remote: bool,
     report: std::sync::mpsc::Sender<NodeReport>,
     stop_rx: pipewire::channel::Receiver<()>,
 ) -> Result<(), String> {
-    let mut wl = Wayland::connect()?;
+    let mut wl = if remote {
+        Wayland::connect_remote_capture()?
+    } else {
+        Wayland::connect()?
+    };
     let mut session = wl.open_session(&target, cursor == CursorMode::Embedded)?;
     let constraints = wl.constraints();
     let plane = if cursor == CursorMode::Metadata {
