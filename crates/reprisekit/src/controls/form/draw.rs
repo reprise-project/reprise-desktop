@@ -492,7 +492,7 @@ pub fn draw(c: &mut Canvas, text: &TextRenderer, p: &Paint, form: &Form, cues: b
             Control::Memo(memo) => {
                 let m = Memo::metrics(px, &cm, grow);
                 let lay = multiedit::layout(text, &m, &memo.edit, r, s);
-                memo.rows.set(lay.rows);
+                memo.lay.set(Some(lay));
                 let mut view = memo.view.get();
                 let caret = memo.edit.caret();
                 if memo.followed.get() != Some(caret) {

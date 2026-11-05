@@ -398,7 +398,7 @@ impl Form {
                         }
                     }
                     (Control::Memo(m), key @ (Key::PageUp | Key::PageDown)) => {
-                        let rows = m.rows.get().max(1);
+                        let rows = m.rows().max(1);
                         if m.edit.step_lines(key == Key::PageDown, rows) {
                             Event::Redraw
                         } else {

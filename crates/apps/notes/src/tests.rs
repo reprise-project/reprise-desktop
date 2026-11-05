@@ -360,3 +360,104 @@ fn a_note_pins_in_every_interface_at_scale_1_and_2() {
     let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
     assert_eq!(got, want);
 }
+
+fn edit_key(sym: u32, edit: EditKey) -> Event {
+    Event::Key(KeyInput {
+        sym,
+        utf8: None,
+        mods: Mods::default(),
+        edit: Some(edit),
+    })
+}
+
+const PARAGRAPH: &str = "Call the plumber about the sink before Friday, and ask whether the old tap \
+                         can stay or needs replacing too";
+
+#[test]
+fn a_long_paragraph_wraps_and_rewraps_when_the_note_is_resized() {
+    let mut ctx = test_ctx();
+    let mut n = Notes::new(None, false);
+    let win = n.add(Saved {
+        id: "1".into(),
+        text: PARAGRAPH.into(),
+        colour: Colour::Yellow,
+        size: None,
+    });
+    n.event(win, Event::Focus(true), &mut ctx);
+    let rows = |n: &Notes, ctx: &Ctx| {
+        let lay = n.edit_layout(n.note(win).unwrap(), ctx);
+        assert_eq!(lay.hscroll, None, "a note never scrolls sideways");
+        lay.total
+    };
+    let narrow = rows(&n, &ctx);
+    assert!(narrow > 2, "{narrow} rows");
+    n.event(
+        win,
+        edit_key(keysym::END, EditKey::End { select: false }),
+        &mut ctx,
+    );
+    let end = n.notes[0].edit.caret();
+    assert!(end.col < PARAGRAPH.len(), "End stays on the first row");
+    n.event(win, sym_key(keysym::DOWN), &mut ctx);
+    n.event(
+        win,
+        edit_key(keysym::HOME, EditKey::Home { select: false }),
+        &mut ctx,
+    );
+    assert_eq!(
+        n.notes[0].edit.caret().col,
+        end.col + 1,
+        "the second row's start"
+    );
+    ctx.size = (NOTE_SIZE.0 * 2, NOTE_SIZE.1);
+    n.event(win, Event::Resized, &mut ctx);
+    let wide = rows(&n, &ctx);
+    assert!(
+        wide < narrow,
+        "{wide} rows at twice the width, {narrow} before"
+    );
+}
+
+#[test]
+fn a_wrapped_note_pins_in_every_interface_at_scale_1_and_2() {
+    if !reprisekit::text::test_tahoma() {
+        return;
+    }
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        for scale in [1, 2] {
+            let mut ctx = ctx_with(reprisekit::interfaces::theme_for(i));
+            let mut n = Notes::new(None, false);
+            let win = n.add(Saved {
+                id: "1".into(),
+                text: format!("{PARAGRAPH}\n\n{PARAGRAPH}\n\n{PARAGRAPH}"),
+                colour: Colour::Green,
+                size: None,
+            });
+            n.event(win, Event::Focus(true), &mut ctx);
+            n.event(
+                win,
+                edit_key(keysym::END, EditKey::End { select: false }),
+                &mut ctx,
+            );
+            n.event(
+                win,
+                Event::Pointer(PointerInput::Motion { x: 8, y: 8 }),
+                &mut ctx,
+            );
+            let mut c = Canvas::with_scale(NOTE_SIZE.0 as u32, NOTE_SIZE.1 as u32, scale);
+            ctx.at_scale(scale, |ctx| n.draw(win, &mut c, ctx));
+            got.push((format!("{i:?}@{scale}"), fnv(&c)));
+        }
+    }
+    let want: [(&str, u64); 6] = [
+        ("Classic@1", 0xbd65_0eff_fafd_2165),
+        ("Classic@2", 0x635b_9319_cd6d_6fc9),
+        ("Blue@1", 0xcd9d_8fdb_3b76_0f80),
+        ("Blue@2", 0x6d8d_17f2_3dc6_8234),
+        ("Glass@1", 0xc0f3_985b_a5f1_eb75),
+        ("Glass@2", 0xa7dc_96fe_3f1e_2773),
+    ];
+    let want: Vec<(String, u64)> = want.iter().map(|(k, h)| (k.to_string(), *h)).collect();
+    assert_eq!(got, want);
+}

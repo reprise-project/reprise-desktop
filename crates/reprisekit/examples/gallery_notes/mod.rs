@@ -62,6 +62,7 @@ pub fn render(s: i32) -> Canvas {
                 line_h: 16,
                 bars_always: false,
                 flat: true,
+                wrap: true,
                 bar: theme.look.controls().scroll,
                 thumb_min: theme.look.controls().thumb_min,
                 ..Default::default()
@@ -69,7 +70,7 @@ pub fn render(s: i32) -> Canvas {
             let lines = if j == 2 {
                 "Milk\nBread\nEggs\nCoffee\nRice\nTea\nApples\nSoap"
             } else {
-                "Call the plumber\nabout the sink"
+                "Call the plumber about the sink before Friday"
             };
             let edit = MultiEdit::new(lines);
             let lay = multiedit::layout(&text, &m, &edit, stickynote::layout(r).text, 1);

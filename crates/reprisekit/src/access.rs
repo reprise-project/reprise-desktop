@@ -601,8 +601,14 @@ pub fn text_runs(
     caret: usize,
 ) {
     let mut ids = Vec::with_capacity(lines.len());
-    let mut prev: Option<NodeId> = None;
+    // The last run when it ended in a soft wrap.
+    let mut soft: Option<NodeId> = None;
     for (k, line) in lines.iter().enumerate() {
+        // Runs share a line only when a soft wrap joins them; rows left out sit between others.
+        let prev = soft.filter(|_| {
+            let before = &lines[k - 1];
+            before.start + before.text.len() == line.start
+        });
         let mut n = node(Role::TextRun, line.rect);
         let mut value = String::with_capacity(line.text.len() + 1);
         value.push_str(line.text);
@@ -644,12 +650,11 @@ pub fn text_runs(
         }
         let id = tree.push(parent, k, n);
         if let Some(p) = prev
-            && !lines[k - 1].hard_break
             && let Some(pn) = tree.get_mut(p)
         {
             pn.set_next_on_line(id);
         }
-        prev = (!line.hard_break).then_some(id);
+        soft = (!line.hard_break).then_some(id);
         ids.push(id);
     }
     if ids.is_empty() {

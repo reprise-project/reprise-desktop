@@ -164,9 +164,9 @@ pub struct Memo {
     pub enabled: bool,
     /// Where the caret was when `draw` last scrolled to it; the view follows only once it moves.
     followed: Cell<Option<multiedit::Pos>>,
-    /// The lines the last draw fit in the box, which the wheel scrolls
-    /// against: a form has no text renderer at wheel time to lay it out.
-    rows: Cell<usize>,
+    /// The last draw's layout, which the wheel scrolls against: a form
+    /// has no text renderer at wheel time to lay it out.
+    lay: Cell<Option<multiedit::Layout>>,
 }
 
 impl Memo {
@@ -176,8 +176,13 @@ impl Memo {
             view: Cell::new(multiedit::View::default()),
             enabled,
             followed: Cell::new(None),
-            rows: Cell::new(1),
+            lay: Cell::new(None),
         }
+    }
+
+    /// The rows the last draw fit in the box.
+    pub(crate) fn rows(&self) -> usize {
+        self.lay.get().map_or(1, |l| l.rows)
     }
 
     /// How a memo lays its text out at font size `px`: the dialog line

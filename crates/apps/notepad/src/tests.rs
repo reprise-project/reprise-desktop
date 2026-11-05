@@ -343,6 +343,7 @@ fn at_col(np: &Notepad, ctx: &Ctx, col: usize) -> (i32, i32) {
         &np.mono,
         &np.metrics,
         &np.edit,
+        &el,
         multiedit::Pos { line: 0, col },
     );
     (el.inner.x + 1 + x - np.view.left, el.inner.y + 2)
@@ -562,7 +563,7 @@ fn shift_f10_opens_the_context_menu_under_the_caret_and_it_draws_over_the_text()
     assert!(np.bar.open.is_none(), "Shift+F10 is not the menu bar's F10");
     let chain = np.context.as_ref().expect("Shift+F10 opens the menu");
     let el = np.edit_layout(&ctx);
-    let caret_x = multiedit::x_of(&np.mono, &np.metrics, &np.edit, np.edit.caret());
+    let caret_x = multiedit::x_of(&np.mono, &np.metrics, &np.edit, &el, np.edit.caret());
     assert_eq!(
         (chain.rect().x, chain.rect().y),
         (
