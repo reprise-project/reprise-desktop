@@ -17,6 +17,7 @@ pub(crate) fn hand_focus(sheet: &mut PropSheet, list: &mut ListView, held: &mut 
     if on {
         sheet.open_mut().set_focus(None);
         sheet.tabs.focused = false;
+        sheet.search_focused = false;
     }
 }
 
@@ -116,8 +117,12 @@ impl SettingsApp {
         Reply::redraw()
     }
 
-    /// Tab on a page whose side list comes first: focus runs page list → side list → the form → OK → Cancel → Apply → page list. Only one dotted rectangle is ever on the sheet.
+    /// Tab on a page whose side list comes first: focus runs search field → page list → side list → the form → OK → Cancel → Apply → search field. One part holds the keyboard at a time.
     pub(crate) fn side_tab(&mut self, back: bool) -> Reply {
+        if self.sheet.search_focused {
+            let ev = self.sheet.key(form::Key::Tab { back }, None);
+            return self.sheet_event(ev);
+        }
         if let Some(after) = self.side_list_after() {
             return self.mid_list_tab(after, back);
         }
