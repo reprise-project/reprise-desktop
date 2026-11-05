@@ -348,13 +348,14 @@ no desktop entry that shows in menus.
     a script's window stays open when it ends, and the program for
     every file type, which Browse... can pick by its file when it has no
     desktop entry.
+  - **Privacy:** location answers, recent files, clipboard history and the
+    red border around what is being shared.
   - **Date and Time...**, **User Accounts...** and **Software Updates...**
-  - **Advanced:** clipboard history, screenshots, recent files, location,
-    the debug overlay, the thumbnail cache (Clear removes
-    only the thumbnails Reprise kept and says how much went), thumbnails from
-    the installed thumbnailers, the Turn Off commands, the low disk space
-    warning, and an Edit File... button for when
-    you'd rather just open `config.toml`.
+  - **Advanced:** the task manager, screenshots, the update restart notice,
+    the Turn Off commands, the low disk space warning, the thumbnail cache
+    (Clear removes only the thumbnails Reprise kept and says how much went),
+    thumbnails from the installed thumbnailers, the debug overlay, and an
+    Edit File... button for when you'd rather just open `config.toml`.
   - **Backup:** Export... saves your settings and remembered places in one
     file (`reprise-settings-YYYY-MM-DD.toml`); Import... puts them back, on
     this computer or another. The page lists what the file holds:
@@ -556,7 +557,7 @@ finish updating" with Restart Now and Later, once a boot, and the tray icon and
 the window say it until the restart. Logging in after such an update and before
 restarting notices it too. Restart Now goes the way Start's Restart does:
 programs are asked to close first, so they can ask about unsaved work, and the
-prompt listing what is left can still cancel it. Settings > Startup turns it
+prompt listing what is left can still cancel it. Settings > Advanced turns it
 off (`[updates] restart_notice`).
 
 ## Disk Usage
