@@ -237,7 +237,7 @@ impl PropSheet {
             .flat_map(|(_, items)| items.iter())
             .filter_map(|it| match it {
                 pagelist::Item::Page(l) => Some(*l),
-                pagelist::Item::Link(_) => None,
+                pagelist::Item::Link { .. } => None,
             })
             .collect();
         assert_eq!(labels.len(), pages.len(), "one page per tab");

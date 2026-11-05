@@ -24,7 +24,8 @@ pub const WIDTH: i32 = 140;
 pub const ADVANCE: i32 = WIDTH + 6;
 pub const ROW_H: i32 = 17;
 const HEADING_X: i32 = 4;
-const PAGE_X: i32 = 14;
+/// A page or link row's text, in from the row's left edge.
+pub const PAGE_X: i32 = 14;
 const HEADING_GAP: i32 = 4;
 const HIGHLIGHT_PAD: i32 = 2;
 
@@ -32,7 +33,12 @@ const HIGHLIGHT_PAD: i32 = 2;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Item<'a> {
     Page(&'a str),
-    Link(&'a str),
+    /// `label` is the row's text and `name` what a screen reader reads; the list adds "..."
+    /// to both.
+    Link {
+        label: &'a str,
+        name: &'a str,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +58,7 @@ pub enum Pick {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Link {
     pub label: String,
+    pub name: String,
     pub enabled: bool,
 }
 
@@ -92,10 +99,11 @@ impl PageList {
                         rows.push(Row::Page(page));
                         page += 1;
                     }
-                    Item::Link(label) => {
+                    Item::Link { label, name } => {
                         rows.push(Row::Link(links.len()));
                         links.push(Link {
                             label: (*label).to_string(),
+                            name: (*name).to_string(),
                             enabled: true,
                         });
                     }
@@ -597,7 +605,12 @@ pub fn access(
                 tree.push(id, i, n);
             }
             Row::Page(_) | Row::Link(_) => {
-                let (label, enabled) = row_text(list, strip, row).unwrap_or_default();
+                let (mut label, enabled) = row_text(list, strip, row).unwrap_or_default();
+                if let Row::Link(k) = row
+                    && let Some(l) = list.links.get(*k)
+                {
+                    label = format!("{}...", l.name);
+                }
                 let mut n = access::node(Role::ListItem, *r);
                 n.set_bounds(access::row_bounds(lay.inner, *r));
                 n.set_label(label);
@@ -1135,9 +1148,15 @@ mod tests {
         (
             "Devices",
             &[
-                Item::Link("Bluetooth"),
+                Item::Link {
+                    label: "Bluetooth",
+                    name: "Bluetooth Devices",
+                },
                 Item::Page("Mouse"),
-                Item::Link("Printers"),
+                Item::Link {
+                    label: "Printers",
+                    name: "Printers",
+                },
             ],
         ),
     ];
@@ -1164,10 +1183,12 @@ mod tests {
             vec![
                 Link {
                     label: "Bluetooth".into(),
+                    name: "Bluetooth Devices".into(),
                     enabled: true
                 },
                 Link {
                     label: "Printers".into(),
+                    name: "Printers".into(),
                     enabled: true
                 },
             ]
@@ -1304,7 +1325,7 @@ mod tests {
     }
 
     #[test]
-    fn the_list_reads_a_link_as_an_item_named_with_its_dots() {
+    fn the_list_reads_a_link_as_an_item_named_by_its_name_with_its_dots() {
         let mut list = PageList::new(LINK_GROUPS);
         list.set_link_enabled(1, false);
         let lay = layout(&list, LINK_FRAME, &ControlMetrics::CLASSIC);
@@ -1312,7 +1333,11 @@ mod tests {
         let mut tree = Tree::window("T", (160, 160));
         let nodes = access(&list, &strip, &lay, &mut tree, ROOT, "pages");
         assert_eq!((nodes.pages.len(), nodes.links.len()), (3, 2));
-        let bt = tree.find(Role::ListItem, "Bluetooth...").unwrap();
+        let bt = tree.find(Role::ListItem, "Bluetooth Devices...").unwrap();
+        assert!(
+            tree.find(Role::ListItem, "Bluetooth...").is_none(),
+            "the name, not the row's text"
+        );
         assert_eq!(nodes.links[0], Some(bt));
         let n = tree.get(bt).unwrap();
         assert_eq!((n.position_in_set(), n.size_of_set()), (Some(3), Some(5)));

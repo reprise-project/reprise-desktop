@@ -213,7 +213,7 @@ impl SettingsApp {
                 _ => Reply::redraw(),
             },
             propsheet::Event::Page(..) => Reply::redraw(),
-            propsheet::Event::Link(_) => Reply::redraw(),
+            propsheet::Event::Link(i) => self.open_link(i),
             propsheet::Event::Search => {
                 let query = self.sheet.search.text().to_owned();
                 self.search(&query)
