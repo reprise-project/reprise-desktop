@@ -382,6 +382,21 @@ mod tests {
     }
 
     #[test]
+    fn typing_an_emoji_gives_the_client_back_its_keymap_and_layout() {
+        let (mut h, mut c) = crate::harness::Harness::on_second_layout();
+        let seat = h.state.keymap_text().expect("the seat's keymap");
+        h.state.type_text("😀");
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.keys, [(1, true), (1, false)]);
+        assert_eq!(c.side.keymap_text(), seat);
+        assert_eq!(
+            h.layout_heard(&mut c),
+            (1, 1, 1),
+            "de, and the client hears it"
+        );
+    }
+
+    #[test]
     fn a_pick_moves_to_the_front_of_the_recent_ones() {
         let mut e = Emoji::default();
         e.used("😀");

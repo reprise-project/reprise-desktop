@@ -15,7 +15,7 @@
 use reprisekit::classic::frame::{Edges, FrameGeometry};
 use smithay::{
     backend::input::{Event, InputBackend, InputTime, KeyState, KeyboardKeyEvent},
-    input::keyboard::{FilterResult, KeyboardSource, Keycode, ModifiersState, xkb},
+    input::keyboard::{FilterResult, KeyboardSource, Keycode, xkb},
     reexports::{
         calloop::{
             RegistrationToken,
@@ -868,14 +868,8 @@ impl State {
         }))
     }
 
-    /// Put `mask` on the seat keyboard's xkb state and tell the focused
-    /// client.
-    ///
-    /// Smithay sets a modifier state only from its named flags, with
-    /// nothing latched and the layout dropped, so the flags `mask` makes go
-    /// in first (they are what the binds and the client read) and the
-    /// exact mask, latched part and layout included, goes on the xkb state
-    /// after them.
+    /// Put `m` on the seat keyboard's xkb state and tell the focused client, layout group
+    /// included.
     pub fn set_xkb_mask(&mut self, m: XkbMask) {
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
@@ -890,24 +884,23 @@ impl State {
                 m.layout_locked,
             );
         };
-        let flags = keyboard.with_xkb_state(self, |ctx| {
+        keyboard.with_xkb_state(self, |mut ctx| {
+            let group = {
+                let x = ctx.xkb().lock().unwrap();
+                // SAFETY: the keymap is only read; the scratch state is ours.
+                let mut scratch = xkb::State::new(unsafe { x.keymap() });
+                update(&mut scratch);
+                scratch.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE)
+            };
+            // Unlike set_modifier_state this keeps the group the client hears, but it locks the
+            // whole group, so a held or latched one goes back on after it.
+            ctx.set_modifier_mask(m.depressed, m.latched, m.locked, group);
             let x = ctx.xkb().lock().unwrap();
-            // SAFETY: the keymap is only read; the scratch state is ours.
-            let mut scratch = xkb::State::new(unsafe { x.keymap() });
-            update(&mut scratch);
-            let mut flags = ModifiersState::default();
-            flags.update_with(&scratch);
-            flags
-        });
-        keyboard.set_modifier_state(flags);
-        keyboard.with_xkb_state(self, |ctx| {
-            let x = ctx.xkb().lock().unwrap();
-            // SAFETY: the clone shares the keyboard's own state, as the
-            // update must, and is dropped before the lock.
+            // SAFETY: the clone shares the keyboard's own state, as the update must, and is
+            // dropped before the lock.
             let mut state = unsafe { x.state() }.clone();
             update(&mut state);
         });
-        keyboard.advertise_modifier_state(self);
     }
 }
 
@@ -1518,5 +1511,16 @@ mod tests {
         h.key(KEY_A, false);
         h.key(KEY_LEFTMETA, false);
         assert!(h.state.menus.is_empty());
+    }
+
+    #[test]
+    fn a_mask_with_a_held_group_keeps_it_held_and_the_client_hears_it() {
+        let (mut h, mut c) = crate::harness::Harness::on_second_layout();
+        let (mut mask, _) = h.state.xkb_mask().expect("the seat's mask");
+        (mask.layout_depressed, mask.layout_locked) = (1, 0);
+        h.state.set_xkb_mask(mask);
+        let (now, _) = h.state.xkb_mask().unwrap();
+        assert_eq!((now.layout_depressed, now.layout_locked), (1, 0));
+        assert_eq!(h.layout_heard(&mut c), (1, 1, 1));
     }
 }

@@ -116,6 +116,31 @@ impl Harness {
         Harness { event_loop, state }
     }
 
+    /// `[keyboard] layout = "us,de"` with one focused window, switched to de; the window's
+    /// client has heard group 1.
+    pub fn on_second_layout() -> (Harness, TestClient) {
+        let config = Config::parse("[keyboard]\nlayout = \"us,de\"\n").expect("the config");
+        let mut h = Harness::with_config(config);
+        h.state.apply_keyboard();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.state.set_layout(1);
+        h.roundtrip(&mut c);
+        assert_eq!(c.side.group, 1, "the client hears de");
+        (h, c)
+    }
+
+    /// The seat's layout group, the tray's, and the one `c` last heard.
+    pub fn layout_heard(&mut self, c: &mut TestClient) -> (u32, u32, u32) {
+        self.roundtrip(c);
+        (
+            self.state.active_layout(),
+            self.state.key_input.layouts.current,
+            c.side.group,
+        )
+    }
+
     /// One turn of the loop: what is ready runs, then the turn's end (`State::turn_end`).
     pub fn dispatch(&mut self) {
         self.event_loop
