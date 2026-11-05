@@ -1,4 +1,4 @@
-//! The Screen Saver page: a monitor running the pending saver, the saver
+//! The Screen Saver & Lock page: a monitor running the pending saver, the saver
 //! combo, Settings... and Preview, and the minutes of no input that start it
 //! (`[idle] blank_after`, shown in seconds on the Power page). Below, the paired Bluetooth
 //! device whose going away locks the session (`[lock]`).

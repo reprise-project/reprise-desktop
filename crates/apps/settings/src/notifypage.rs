@@ -1,4 +1,4 @@
-//! The Sounds page's program list: this session's senders and the programs `[notifications]
+//! The Sound page's program list: this session's senders and the programs `[notifications]
 //! no_balloons` and `no_sounds` name, with Show balloons and Play sounds for the picked one.
 
 use crate::model::Settings;

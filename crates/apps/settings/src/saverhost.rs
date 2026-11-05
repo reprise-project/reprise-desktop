@@ -39,9 +39,10 @@ impl SettingsApp {
         }
     }
 
-    /// Step the Screen Saver page's monitor saver and put the frame up. Whether it wants the next tick.
+    /// Step the Screen Saver & Lock page's monitor saver and put the frame up. Whether it
+    /// wants the next tick.
     pub(crate) fn saver_tick(&mut self, ctx: &Ctx) -> bool {
-        if self.sheet.tabs.open != Page::ScreenSaver.index() {
+        if self.sheet.tabs.open != Page::ScreenSaverLock.index() {
             self.saver_preview = None;
             return false;
         }
@@ -91,13 +92,14 @@ impl SettingsApp {
                 })
             }));
         }
-        saverpage::show(&mut self.sheet.pages[Page::ScreenSaver.index()], frame);
+        saverpage::show(&mut self.sheet.pages[Page::ScreenSaverLock.index()], frame);
         true
     }
 
-    /// List the paired devices when the Screen Saver page comes up. Whether the page changed.
+    /// List the paired devices when the Screen Saver & Lock page comes up. Whether the page
+    /// changed.
     pub(crate) fn ensure_away_devices(&mut self) -> bool {
-        if crate::registry::open(&self.sheet) != Page::ScreenSaver {
+        if crate::registry::open(&self.sheet) != Page::ScreenSaverLock {
             self.away_fresh = false;
             return false;
         }
@@ -112,7 +114,7 @@ impl SettingsApp {
 
     pub(crate) fn follow_away(&mut self) {
         saverpage::follow_away(
-            &mut self.sheet.pages[Page::ScreenSaver.index()],
+            &mut self.sheet.pages[Page::ScreenSaverLock.index()],
             &self.away_devices,
             &self.want,
         );

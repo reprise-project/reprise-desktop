@@ -739,7 +739,7 @@ impl Dialog {
                 button(
                     "&Settings...",
                     DialogAction::Spawn(format!(
-                        "reprise-settings --page accessibility --focus {}",
+                        "reprise-settings --page text-and-keys --focus {}",
                         aid.key()
                     )),
                     false,

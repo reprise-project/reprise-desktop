@@ -71,9 +71,9 @@ fn press_side_row(a: &mut SettingsApp, ctx: &mut Ctx, row: usize, time: u32) {
 fn a_field_copies_its_selection_and_takes_a_paste() {
     let mut a = app("field-clipboard");
     let mut ctx = test_ctx();
-    a.open_page(Page::Windows, Some("snap_layouts"));
+    a.open_page(Page::WindowBehavior, Some("snap_layouts"));
     a.event(MAIN, Event::Pasted("1|1 2\nmore".into()), &mut ctx);
-    let windows = Page::Windows.index();
+    let windows = Page::WindowBehavior.index();
     let text = |a: &SettingsApp| match &a.sheet.pages[windows].item("snap_layouts").unwrap().control
     {
         form::Control::Edit { edit, .. } => edit.text.clone(),
@@ -624,7 +624,7 @@ fn a_config_written_elsewhere_shows_on_the_open_sheet_and_apply_keeps_it() {
     a.want.slow_keys = true;
     std::fs::write(&path, "[accessibility]\nmouse_keys = true\n").unwrap();
     assert!(a.config_changed());
-    let ax = &a.sheet.pages[Page::Accessibility.index()];
+    let ax = &a.sheet.pages[Page::TextKeys.index()];
     assert_eq!(ax.checked("mouse_keys"), Some(true));
     let speed = &ax.item("mouse_keys_speed").unwrap().control;
     assert!(
@@ -700,7 +700,7 @@ fn a_rebound_zoom_key_rewrites_the_vision_note() {
     let dir = tmp("zoom-note");
     std::fs::write(dir.join("config.toml"), "").unwrap();
     let mut app = SettingsApp::open(dir.join("config.toml"));
-    let note = |app: &SettingsApp| match &app.sheet.pages[Page::Vision.index()]
+    let note = |app: &SettingsApp| match &app.sheet.pages[Page::MagnifierFilters.index()]
         .item("mag_note")
         .unwrap()
         .control
@@ -953,7 +953,7 @@ fn the_window_resizes_and_its_size_is_kept() {
     let startup = Page::Startup.index();
     let add = |app: &SettingsApp| app.sheet.pages[startup].item(pages::ADD).unwrap().rect;
     let before = add(&app);
-    let windows = Page::Windows.index();
+    let windows = Page::WindowBehavior.index();
     let tabs = !app.sheet.pages[windows].checked("window_tabs").unwrap();
     app.sheet.pages[windows].set_check("window_tabs", tabs);
 
@@ -1228,7 +1228,7 @@ fn export_and_import_take_a_file_and_run_without_a_window() {
 #[test]
 fn the_focus_argument_names_a_control_on_the_page() {
     let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string()));
-    let mouse_keys = Some((Page::Accessibility, Some("mouse_keys".to_string())));
+    let mouse_keys = Some((Page::TextKeys, Some("mouse_keys".to_string())));
     assert_eq!(
         args(&["--page", "accessibility", "--focus", "mouse_keys"]),
         mouse_keys
@@ -1238,6 +1238,31 @@ fn the_focus_argument_names_a_control_on_the_page() {
         mouse_keys
     );
     assert_eq!(args(&["--focus", "mouse_keys"]), None, "no page, no focus");
+    assert_eq!(
+        args(&["--page", "text-and-keys", "--focus", "mouse_keys"]),
+        Some((Page::TextKeys, Some("mouse_keys".into())))
+    );
+}
+
+#[test]
+fn focus_on_a_moved_control_opens_its_new_page() {
+    let args = |v: &[&str]| page_arg(v.iter().map(|s| s.to_string()));
+    assert_eq!(
+        args(&["--page", "sound", "--focus", "mouse_keys"]),
+        Some((Page::TextKeys, Some("mouse_keys".into())))
+    );
+    assert_eq!(
+        args(&["--page", "sound", "--focus", "nowhere"]),
+        Some((Page::Sound, Some("nowhere".into()))),
+        "an id no page holds leaves the page as named"
+    );
+}
+
+#[test]
+fn a_handed_old_name_opens_its_renamed_page() {
+    let mut a = app("old-name");
+    assert!(a.request(&page_request("vision")));
+    assert_eq!(registry::open(&a.sheet), Page::MagnifierFilters);
 }
 
 #[test]
@@ -1252,7 +1277,7 @@ fn a_request_with_a_control_opens_its_page_with_the_keyboard_on_it() {
         page.focus().map(|i| page.items[i].id)
     };
     assert!(a.request(&req("accessibility", "mouse_keys")));
-    assert_eq!(a.sheet.tabs.open, Page::Accessibility.index());
+    assert_eq!(a.sheet.tabs.open, Page::TextKeys.index());
     assert!(
         !a.sheet.tabs.focused,
         "the page strip lets go of the keyboard"
@@ -1495,7 +1520,7 @@ fn the_remote_desktop_page_follows_what_the_server_says() {
     assert_eq!(page.edit_text("fingerprint"), "");
 }
 
-/// Restore Defaults on Sounds asks with the page's keys the file sets, then takes only those out
+/// Restore Defaults on Sound asks with the page's keys the file sets, then takes only those out
 /// of `config.toml`; a page whose keys are all at their defaults has it greyed, and a page that
 /// writes no key has none.
 #[test]
@@ -1512,12 +1537,12 @@ fn restore_defaults_takes_only_the_pages_keys_out_of_the_file() {
         Some(it) => matches!(it.control, form::Control::Button { enabled: true, .. }),
         None => panic!("{p:?} has no Restore Defaults"),
     };
-    assert!(lit(&a, Page::Sounds) && lit(&a, Page::Taskbar));
-    let at = a.sheet.pages[Page::Sounds.index()]
+    assert!(lit(&a, Page::Sound) && lit(&a, Page::Taskbar));
+    let at = a.sheet.pages[Page::Sound.index()]
         .item(propsheet::RESTORE)
         .unwrap()
         .rect;
-    let ok = a.sheet.pages[Page::Sounds.index()]
+    let ok = a.sheet.pages[Page::Sound.index()]
         .item(propsheet::OK)
         .unwrap()
         .rect;
@@ -1527,7 +1552,7 @@ fn restore_defaults_takes_only_the_pages_keys_out_of_the_file() {
         "under the page's left edge"
     );
     assert_eq!(at.y, ok.y, "on the button row");
-    assert!(!lit(&a, Page::Pointers), "nothing there is off its default");
+    assert!(!lit(&a, Page::Cursor), "nothing there is off its default");
     for p in [Page::Display, Page::StartMenu, Page::Tablet, Page::Backup] {
         assert!(
             a.sheet.pages[p.index()].item(propsheet::RESTORE).is_none(),
@@ -1536,19 +1561,19 @@ fn restore_defaults_takes_only_the_pages_keys_out_of_the_file() {
     }
     a.want.cursor_size = 48;
     a.sync_apply();
-    assert!(lit(&a, Page::Pointers), "an unapplied change counts");
+    assert!(lit(&a, Page::Cursor), "an unapplied change counts");
 
-    let keys = a.restorable(Page::Sounds);
+    let keys = a.restorable(Page::Sound);
     assert_eq!(
-        apply::restore_question(Page::Sounds, &keys),
-        "Restore the defaults on the Sounds page?\n\
+        apply::restore_question(Page::Sound, &keys),
+        "Restore the defaults on the Sound page?\n\
          These settings are taken out of config.toml:\n    sounds.theme\n    sounds.bell"
     );
-    a.sheet.tabs.open = Page::Sounds.index();
+    a.sheet.tabs.open = Page::Sound.index();
     a.ask_restore();
     assert!(a.asking.is_some(), "it asks first");
     a.asking = None;
-    a.restore_defaults(Page::Sounds);
+    a.restore_defaults(Page::Sound);
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         "# mine\n\n[taskbar]\nauto_hide = true\n"
@@ -1558,11 +1583,8 @@ fn restore_defaults_takes_only_the_pages_keys_out_of_the_file() {
         (&a.want.sound_theme, a.want.bell),
         (&def.sound_theme, def.bell)
     );
-    assert!(!lit(&a, Page::Sounds), "greyed once at the defaults");
-    assert_eq!(
-        a.want.cursor_size, 48,
-        "the Pointers change is still pending"
-    );
+    assert!(!lit(&a, Page::Sound), "greyed once at the defaults");
+    assert_eq!(a.want.cursor_size, 48, "the Cursor change is still pending");
     assert!(a.dirty());
 }
 

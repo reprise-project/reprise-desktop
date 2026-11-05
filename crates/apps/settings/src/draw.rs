@@ -140,7 +140,7 @@ impl SettingsApp {
             }
             return;
         }
-        if self.sheet.tabs.open == Page::Pointers.index() {
+        if self.sheet.tabs.open == Page::Cursor.index() {
             self.refresh_preview(cs.window);
         }
         c.fill_rect(c.bounds(), cs.button_face);
