@@ -21,10 +21,13 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+use repriseapp::ctxmenu::{self, Popup};
 use repriseapp::detailslist::{List, Press};
 use repriseapp::keys::AltArm;
 use repriseapp::oneshot::{self, MsgBox};
-use repriseapp::{App, BTN_LEFT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId};
+use repriseapp::{
+    App, BTN_LEFT, BTN_RIGHT, Child, Ctx, Event, KeyInput, PointerInput, Reply, WinId,
+};
 use reprisebus::tray::Hung;
 use reprisefs::apps::AppEntry;
 use reprisekit::access::Tree;
@@ -193,6 +196,8 @@ pub struct TaskMgr {
     per_core: bool,
     /// Options > Always On Top.
     on_top: bool,
+    /// The CPU history graph's menu.
+    popup: Option<Popup<Act>>,
     bar: Bar,
     form: Form,
     /// The page and size `form` was built for.
@@ -240,6 +245,7 @@ impl TaskMgr {
             swap: History::new(HISTORY),
             per_core: false,
             on_top: false,
+            popup: None,
             bar: Bar::new(Vec::<(&str, _)>::new()),
             form: Form::new(Vec::new()),
             form_for: None,
@@ -282,16 +288,9 @@ impl TaskMgr {
             );
         }
         let mut history = MenuTree::new();
-        history.push(
-            MenuItem::item("&One Graph, All CPUs")
-                .radio(true)
-                .checked(!self.per_core),
-        );
-        history.push(
-            MenuItem::item("One Graph &Per CPU")
-                .radio(true)
-                .checked(self.per_core),
-        );
+        for (item, _) in self.history_items() {
+            history.push(item);
+        }
         let mut view = MenuTree::new();
         view.push(MenuItem::item("&Refresh Now").shortcut(Some("F5".into())));
         view.push_sub(MenuItem::item("&Update Speed"), speed);
@@ -305,6 +304,61 @@ impl TaskMgr {
             ("&View", view),
         ]);
         (self.bar.active, self.bar.underline, self.bar.hot) = keep;
+    }
+
+    /// View > CPU History's items, also the CPU history graph's menu.
+    fn history_items(&self) -> [(MenuItem, Act); 2] {
+        [
+            (
+                MenuItem::item("&One Graph, All CPUs")
+                    .radio(true)
+                    .checked(!self.per_core),
+                Act::PerCore(false),
+            ),
+            (
+                MenuItem::item("One Graph &Per CPU")
+                    .radio(true)
+                    .checked(self.per_core),
+                Act::PerCore(true),
+            ),
+        ]
+    }
+
+    /// Opens the CPU history graph's menu at `(x, y)`.
+    fn open_history_menu(&mut self, x: i32, y: i32, ctx: &Ctx, by_keyboard: bool) -> Reply {
+        let rows = (self.history_items().into_iter())
+            .map(|(item, act)| (item, Some(act)))
+            .collect();
+        self.popup = Popup::open(rows, x, y, ctx, by_keyboard);
+        Reply::redraw()
+    }
+
+    fn popup_event(&mut self, ev: &Event, ctx: &Ctx) -> Option<Reply> {
+        let popup = self.popup.as_mut()?;
+        let step = match ev {
+            Event::Pointer(PointerInput::Press { x, y, .. }) => popup.press(*x, *y, ctx),
+            Event::Pointer(PointerInput::Motion { x, y }) => {
+                return Some(redraw(popup.motion(*x, *y, ctx)));
+            }
+            Event::Key(k) => popup.key(k, ctx),
+            Event::Focus(false) => ctxmenu::Step::Closed,
+            _ => return None,
+        };
+        Some(match step {
+            ctxmenu::Step::Chosen(act) => {
+                self.popup = None;
+                match act {
+                    Some(a) => self.act(a),
+                    None => Reply::redraw(),
+                }
+            }
+            ctxmenu::Step::Closed => {
+                self.popup = None;
+                Reply::redraw()
+            }
+            ctxmenu::Step::Redraw => Reply::redraw(),
+            ctxmenu::Step::None => Reply::none(),
+        })
     }
 
     fn menu_act(&self, title: usize, path: &[usize]) -> Option<Act> {
@@ -777,6 +831,12 @@ impl TaskMgr {
                 return Reply::redraw();
             }
         }
+        if button == BTN_RIGHT
+            && let Some(g) = lay.perf.as_ref().map(|p| p.graph_groups[0])
+            && g.contains(x, y)
+        {
+            return self.open_history_menu(x, y, ctx, false);
+        }
         if let Some(r) = lay.list
             && r.contains(x, y)
         {
@@ -857,7 +917,7 @@ impl TaskMgr {
         self.alt_arm.interrupt();
         self.tip = None;
         let bar_key = match k.sym {
-            keysym::F10 => Some(Key::Activate),
+            keysym::F10 if !k.mods.shift => Some(Key::Activate),
             keysym::ESCAPE => Some(Key::Escape),
             keysym::LEFT | keysym::KP_LEFT => Some(Key::Left),
             keysym::RIGHT | keysym::KP_RIGHT => Some(Key::Right),
@@ -903,6 +963,10 @@ impl TaskMgr {
         {
             return redraw(moved);
         }
+        let menu_key = k.sym == keysym::MENU || (k.sym == keysym::F10 && k.mods.shift);
+        if menu_key && let Some(g) = lay.perf.as_ref().map(|p| p.graph_groups[0]) {
+            return self.open_history_menu(g.x + 20, g.y + 20, ctx, true);
+        }
         match (k.sym, self.page()) {
             (keysym::F5, _) => self.act(Act::Refresh),
             (keysym::DELETE | keysym::KP_DELETE, Page::Applications) => self.end_task(),
@@ -946,6 +1010,9 @@ impl TaskMgr {
 
     fn main_event(&mut self, ev: Event, ctx: &mut Ctx) -> Reply {
         pages::follow_form(self, ctx);
+        if let Some(r) = self.popup_event(&ev, ctx) {
+            return r;
+        }
         match ev {
             Event::Wake => {
                 let got: Vec<Snapshot> = match &self.worker {
@@ -1195,8 +1262,13 @@ impl repriseapp::Extended for TaskMgr {
     }
 
     fn popup(&mut self, win: WinId, _ctx: &Ctx) -> Option<Box<dyn Hosted + '_>> {
-        (win == repriseapp::MAIN && self.bar.open.is_some())
-            .then(|| Box::new(&mut self.bar) as Box<dyn Hosted>)
+        if win != repriseapp::MAIN {
+            return None;
+        }
+        if self.popup.is_some() {
+            return Some(Box::new(&mut self.popup));
+        }
+        (self.bar.open.is_some()).then(|| Box::new(&mut self.bar) as Box<dyn Hosted>)
     }
 
     fn follow_scale(&mut self, _win: WinId, scale: i32, ctx: &mut Ctx) {
