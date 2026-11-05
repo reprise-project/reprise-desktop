@@ -131,6 +131,8 @@ pub enum TrayEvent {
     /// Whether any `org.freedesktop.ScreenSaver` cookie is held: the idle
     /// timer is paused while one is.
     ScreenSaverInhibited(bool),
+    /// Whether any caller of `org.reprise.Tray.WatchResponding` is still on the bus.
+    WatchResponding(bool),
     /// `org.reprise.Tray.WindowIcon`, answered on `reply`.
     WindowIcon {
         lineages: Vec<Vec<crate::streamwindow::Step>>,
@@ -292,6 +294,8 @@ pub enum TrayCommand {
     /// The px item icons are drawn at now ([`icons::icon_sizes`]): every item is read again and its
     /// icon decoded at them.
     IconSizes(Vec<i32>),
+    /// The windows not answering pings changed: `NotRespondingChanged` goes out.
+    NotResponding(Vec<reprisebus::tray::Hung>),
     Shutdown,
 }
 
@@ -718,6 +722,10 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
         }
         TrayEvent::ReloadRemembered => {
             state.reload_remembered();
+            false
+        }
+        TrayEvent::WatchResponding(on) => {
+            state.watch_responding(on);
             false
         }
         TrayEvent::CloseRequest(id) => {

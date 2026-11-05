@@ -1,4 +1,4 @@
-//! The compositor's own tray calls on the session bus: Customize..., Identify, screen saver Preview, Forget Positions, tablet pads, the programs that sent notifications, the window icon a sound program borrows, reprise-power's critical battery turn-off, and Software Updates' Restart Now.
+//! The compositor's own tray calls on the session bus: Customize..., Identify, screen saver Preview, Forget Positions, tablet pads, the programs that sent notifications, the window icon a sound program borrows, which windows stopped answering, reprise-power's critical battery turn-off, and Software Updates' Restart Now.
 
 pub const NAME: &str = "org.reprise.Tray";
 pub const PATH: &str = "/org/reprise/Tray";
@@ -188,6 +188,48 @@ pub fn preview_screen_saver(name: &str) -> zbus::Result<()> {
         "PreviewScreenSaver",
         &(name,),
     ))?;
+    Ok(())
+}
+
+/// A window not answering pings, as `WatchResponding` and `NotRespondingChanged` name it: its
+/// app id and its client's pid, 0 when unknown.
+pub type Hung = (String, u32);
+
+/// Call `changed` from a thread of its own with the windows not answering pings: once when the
+/// watch starts, then on each change. While the watch runs, the compositor pings every window
+/// every few seconds. A session without Reprise gets no calls.
+pub fn watch_responding(mut changed: impl FnMut(Vec<Hung>) + Send + 'static) {
+    let run = move || {
+        if let Err(e) = follow_responding(&mut changed) {
+            log::info!("not responding: {e}; every program reads as running");
+        }
+    };
+    if let Err(e) = std::thread::Builder::new()
+        .name("responding".into())
+        .spawn(run)
+    {
+        log::warn!("not responding thread: {e}");
+    }
+}
+
+fn follow_responding(changed: &mut impl FnMut(Vec<Hung>)) -> zbus::Result<()> {
+    let conn = crate::session()?;
+    let proxy: zbus::Proxy = crate::wait(
+        zbus::proxy::Builder::new(&conn)
+            .destination(NAME)
+            .path(PATH)
+            .interface(INTERFACE)
+            .cache_properties(zbus::proxy::CacheProperties::No)
+            .build(),
+    )?;
+    // Subscribed before the first read, so a change in between is not lost.
+    let signals = crate::wait(proxy.receive_signal("NotRespondingChanged"))?;
+    changed(crate::wait(proxy.call("WatchResponding", &()))?);
+    for msg in crate::blocking_iter(signals) {
+        if let Ok(hung) = msg.body().deserialize::<Vec<Hung>>() {
+            changed(hung);
+        }
+    }
     Ok(())
 }
 

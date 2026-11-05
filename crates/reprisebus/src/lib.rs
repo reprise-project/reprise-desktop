@@ -16,7 +16,8 @@
 //! [`appearance`] follows the compositor's look from a running program.
 //! [`filetransfer`] hands dragged files to and from sandboxed programs.
 //! [`tray`] asks the compositor to open the tray's Customize dialog, or
-//! to turn off for a critical battery. [`polkit`] asks whether a password
+//! to turn off for a critical battery, and follows which windows stopped
+//! answering. [`polkit`] asks whether a password
 //! prompt was dismissed. [`launcher`] shows a program's progress on its
 //! task button. [`journal`] starts the logger with journal priorities.
 //! The last six share a program's one session bus connection ([`session`]),

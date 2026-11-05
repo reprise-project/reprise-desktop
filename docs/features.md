@@ -177,7 +177,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   pointer. Super+Shift+B hides its frame. Esc during a caption drag puts the
   window back where it was.
 - **End Program.** Reprise pings windows, so one that stopped answering gets
-  End Program as soon as you close it instead of after a wait. A program
+  End Program as soon as you close it instead of after a wait. While Task
+  Manager is open, every window is pinged every 5 s and one that stopped
+  answering shows as Not Responding there. A program
   that has exited or been killed while one of its threads hangs on a dead
   mount stops answering too; its windows go without End Program, within a
   quarter second when another of its threads exits (Linux 6.9+), else within

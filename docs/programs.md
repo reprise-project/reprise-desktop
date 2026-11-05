@@ -451,7 +451,10 @@ another program).
 - **Applications:** each program started from the Start menu, the launcher or a
   desktop icon, with its icon and name. End Task asks the program and its
   helpers to close; one still running a few seconds later gets an End Now
-  prompt. Switch To (or a double click) brings its window up.
+  prompt. Switch To (or a double click) brings its window up. Status reads
+  Not Responding while a window of the program doesn't answer Reprise's
+  pings (checked every 5 s while Task Manager is open), and End Task on it
+  goes straight to End Now.
 - **Processes:** your processes with their PID, user, share of the CPU and
   resident memory; click a column title to sort by it, rest the pointer on a
   row for its command line. Show processes from all users lists everyone's,
