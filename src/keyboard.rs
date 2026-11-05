@@ -902,6 +902,34 @@ impl State {
             update(&mut state);
         });
     }
+
+    /// Press and release each xkb keycode of `codes` in turn for the focused client alone. An
+    /// input method's keyboard grab hears none of them: it would forward them later, under
+    /// whatever mask the seat has by then.
+    pub fn tap_past_ime(&mut self, codes: impl IntoIterator<Item = u32>) {
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        for code in codes {
+            for state in [KeyState::Pressed, KeyState::Released] {
+                let code = Keycode::new(code);
+                let Some(((), mods_changed)) =
+                    keyboard.input_intercept(KeyboardSource::MAIN, self, code, state, |_, _, _| ())
+                else {
+                    continue;
+                };
+                let serial = SERIAL_COUNTER.next_serial();
+                keyboard.input_forward_bypassing_grab(
+                    self,
+                    code,
+                    state,
+                    serial,
+                    InputTime::now(),
+                    mods_changed,
+                );
+            }
+        }
+    }
 }
 
 /// How far one arrow press moves the cursor (and with it the window or its

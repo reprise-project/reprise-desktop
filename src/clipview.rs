@@ -7,9 +7,7 @@
 
 use reprisekit::controls::cliphistory::{self, ClipHistory, Event, Hit, Key, Row};
 use reprisescene::{BufferId, TreeId};
-use smithay::backend::input::{InputTime, KeyState};
-use smithay::input::keyboard::{FilterResult, Keycode, xkb};
-use smithay::utils::SERIAL_COUNTER;
+use smithay::input::keyboard::{Keycode, xkb};
 
 use crate::compositor::{SceneOwner, State};
 use crate::dialogview::DialogKey;
@@ -233,9 +231,9 @@ impl State {
             .is_some_and(|w| self.config.clipboard.terminal_apps.contains(&w.app_id()))
     }
 
-    /// Send the focused client Ctrl+V (Ctrl+Shift+V for a terminal) as if
-    /// typed, then give it back the keyboard's real modifiers. Nothing is
-    /// sent when no client has the keyboard.
+    /// Send the focused client Ctrl+V (Ctrl+Shift+V for a terminal), past any
+    /// input method, then give it back the keyboard's real modifiers. Nothing
+    /// is sent when no client has the keyboard.
     fn send_paste(&mut self) {
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
@@ -268,16 +266,7 @@ impl State {
             })
             .unwrap_or(EVDEV_V + 8);
         self.set_xkb_mask(held);
-        for state in [KeyState::Pressed, KeyState::Released] {
-            keyboard.input::<(), _>(
-                self,
-                Keycode::new(code),
-                state,
-                SERIAL_COUNTER.next_serial(),
-                InputTime::now(),
-                |_, _, _| FilterResult::Forward,
-            );
-        }
+        self.tap_past_ime([code]);
         self.set_xkb_mask(real);
     }
 
@@ -364,6 +353,42 @@ mod tests {
             (1, 1, 1),
             "de, and the client hears it"
         );
+    }
+
+    #[test]
+    fn a_paste_holds_ctrl_for_its_v_alone_and_an_input_methods_grab_hears_none_of_it() {
+        use crate::harness::KeyHeard::{Key, Mods};
+        for ime in [false, true] {
+            let mut h = crate::harness::Harness::new();
+            h.output("TEST-1", 1024, 768);
+            let mut c = h.connect();
+            h.map_toplevel(&mut c, "test.app", 300, 200);
+            let mut m = ime.then(|| h.grabbing_input_method());
+            if let Some(m) = m.as_mut() {
+                h.roundtrip(m);
+                m.side.ims[0].grab_mods.clear();
+            }
+            h.roundtrip(&mut c);
+            c.side.key_log.clear();
+            h.state.send_paste();
+            h.roundtrip(&mut c);
+            assert_eq!(
+                c.side.key_log,
+                [
+                    Mods(0b100),
+                    Key(EVDEV_V, true),
+                    Key(EVDEV_V, false),
+                    Mods(0)
+                ],
+                "Control held for V alone (input method: {ime})"
+            );
+            if let Some(m) = m.as_mut() {
+                h.roundtrip(m);
+                let im = &m.side.ims[0];
+                assert!(im.grab_keys.is_empty(), "the grab heard {:?}", im.grab_keys);
+                assert!(im.grab_mods.is_empty(), "the grab heard {:?}", im.grab_mods);
+            }
+        }
     }
 
     #[test]

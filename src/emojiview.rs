@@ -6,9 +6,6 @@
 use reprisekit::controls::emojipicker::{self, EmojiPicker, Event, Hit, Key, RECENT};
 use reprisekit::emoji::{EmojiFont, Entry};
 use reprisescene::{BufferId, TreeId};
-use smithay::backend::input::{InputTime, KeyState};
-use smithay::input::keyboard::{FilterResult, Keycode};
-use smithay::utils::SERIAL_COUNTER;
 
 use crate::compositor::{SceneOwner, State};
 use crate::dialogview::DialogKey;
@@ -262,18 +259,7 @@ impl State {
             );
             return;
         }
-        for code in codes {
-            for state in [KeyState::Pressed, KeyState::Released] {
-                keyboard.input::<(), _>(
-                    self,
-                    Keycode::new(code + 8),
-                    state,
-                    SERIAL_COUNTER.next_serial(),
-                    InputTime::now(),
-                    |_, _, _| FilterResult::Forward,
-                );
-            }
-        }
+        self.tap_past_ime(codes.into_iter().map(|c| c + 8));
         if let Err(e) = keyboard.set_keymap_from_string(self, own) {
             log::warn!("emoji picker: could not restore the keymap: {e:?}");
         }
@@ -352,7 +338,7 @@ impl State {
 mod tests {
     use super::*;
     use reprisekit::textedit::EditKey;
-    use smithay::input::keyboard::xkb;
+    use smithay::input::keyboard::{Keycode, xkb};
 
     #[test]
     fn each_char_gets_one_key_and_repeats_reuse_it() {
@@ -379,6 +365,23 @@ mod tests {
         let syms = km.key_get_syms_by_level(Keycode::new(9), 0, 0);
         assert_eq!(syms.len(), 1);
         assert_eq!(xkb::keysym_to_utf32(syms[0]), 0x1F600);
+    }
+
+    #[test]
+    fn an_emoji_typed_under_an_input_methods_grab_reaches_the_client_alone() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        h.map_toplevel(&mut c, "test.app", 300, 200);
+        let mut m = h.grabbing_input_method();
+        h.roundtrip(&mut c);
+        c.side.keys.clear();
+        h.state.type_text("😀");
+        h.roundtrip(&mut c);
+        h.roundtrip(&mut m);
+        assert_eq!(c.side.keys, [(1, true), (1, false)]);
+        let im = &m.side.ims[0];
+        assert!(im.grab_keys.is_empty(), "the grab heard {:?}", im.grab_keys);
     }
 
     #[test]
