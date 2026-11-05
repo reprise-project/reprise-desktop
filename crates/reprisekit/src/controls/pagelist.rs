@@ -55,10 +55,18 @@ pub struct Link {
     pub enabled: bool,
 }
 
+/// Which rows a list shows: one flag per page and per link, in their numbering.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Filter {
+    pub pages: Vec<bool>,
+    pub links: Vec<bool>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PageList {
     pub rows: Vec<Row>,
     pub links: Vec<Link>,
+    filter: Option<Filter>,
     /// The link row the keyboard rests on; `None` unless the list has the keyboard.
     pub cursor: Option<usize>,
     /// How far the rows are scrolled up, in px; read through the layout,
@@ -97,6 +105,7 @@ impl PageList {
         PageList {
             rows,
             links,
+            filter: None,
             cursor: None,
             top: 0,
             drag: ThumbDrag::default(),
@@ -126,9 +135,13 @@ impl PageList {
         let Some(i) = self.rows.iter().position(|r| pick_of(r) == Some(pick)) else {
             return false;
         };
+        if !self.shown(i) {
+            return false;
+        }
         let (r, inner) = (lay.rows[i], lay.inner);
-        let first = match i.checked_sub(1).map(|h| &self.rows[h]) {
-            Some(Row::Heading(_)) => lay.rows[i - 1].y,
+        let above = (0..i).rev().find(|&h| self.shown(h));
+        let first = match above.map(|h| (h, &self.rows[h])) {
+            Some((h, Row::Heading(_))) => lay.rows[h].y,
             _ => r.y,
         };
         let top = if first < inner.y {
@@ -228,32 +241,79 @@ impl PageList {
     }
 
     /// Where a key on the focused list lands, from [`PageList::current`]: Up
-    /// and Down the nearest page or live link before or after it (itself at
-    /// an end), Home and End the first and the last. `None` for any other
-    /// key or when no row qualifies.
+    /// and Down the nearest shown page or live link before or after it (itself
+    /// at an end; from a hidden row, the last and the first), Home and End the
+    /// first and the last. `None` for any other key or when no row qualifies.
     pub fn target(&self, open: usize, key: &form::Key) -> Option<Pick> {
         let live: Vec<Pick> = self
-            .rows
-            .iter()
-            .filter_map(pick_of)
+            .picks()
             .filter(|p| match p {
                 Pick::Page(_) => true,
                 Pick::Link(k) => self.links.get(*k).is_some_and(|l| l.enabled),
             })
             .collect();
         let at = live.iter().position(|p| *p == self.current(open));
-        match key {
-            form::Key::Up => at.map(|i| live[i.saturating_sub(1)]),
-            form::Key::Down => at.map(|i| live[(i + 1).min(live.len() - 1)]),
-            form::Key::Home => live.first().copied(),
-            form::Key::End => live.last().copied(),
+        match (key, at) {
+            (form::Key::Up, Some(i)) => Some(live[i.saturating_sub(1)]),
+            (form::Key::Down, Some(i)) => Some(live[(i + 1).min(live.len() - 1)]),
+            (form::Key::Down | form::Key::Home, _) => live.first().copied(),
+            (form::Key::Up | form::Key::End, _) => live.last().copied(),
             _ => None,
         }
     }
 
-    /// The `n`th page or link down the list, as a reader counts the items.
+    /// The `n`th shown page or link down the list, as a reader counts the items.
     pub fn item(&self, n: usize) -> Option<Pick> {
-        self.rows.iter().filter_map(pick_of).nth(n)
+        self.picks().nth(n)
+    }
+
+    /// The shown pages and links, down the list.
+    fn picks(&self) -> impl Iterator<Item = Pick> + '_ {
+        (0..self.rows.len())
+            .filter(|&i| self.shown(i))
+            .filter_map(|i| pick_of(&self.rows[i]))
+    }
+
+    /// Show only the pages and links `filter` flags, or every row for `None`. Scrolls to the
+    /// top and lets go of a cursor whose link hides. Panics unless there is one flag per
+    /// page and per link.
+    pub fn set_filter(&mut self, filter: Option<&Filter>) {
+        if let Some(f) = filter {
+            assert!(
+                f.pages.len() == self.page_count() && f.links.len() == self.links.len(),
+                "one flag per row"
+            );
+        }
+        self.filter = filter.cloned();
+        self.top = 0;
+        if let Some(k) = self.cursor
+            && !self.flag(Pick::Link(k))
+        {
+            self.cursor = None;
+        }
+    }
+
+    /// Whether row `row` shows: a page or link its flag keeps, a heading with a shown row
+    /// under it.
+    pub fn shown(&self, row: usize) -> bool {
+        match self.rows.get(row) {
+            None => false,
+            Some(Row::Heading(_)) => self.rows[row + 1..]
+                .iter()
+                .map_while(pick_of)
+                .any(|p| self.flag(p)),
+            Some(r) => pick_of(r).is_some_and(|p| self.flag(p)),
+        }
+    }
+
+    fn flag(&self, pick: Pick) -> bool {
+        let Some(f) = &self.filter else {
+            return true;
+        };
+        match pick {
+            Pick::Page(k) => f.pages[k],
+            Pick::Link(k) => f.links[k],
+        }
     }
 }
 
@@ -287,10 +347,14 @@ pub fn layout(list: &PageList, frame: Rect, cm: &ControlMetrics) -> Layout {
     let mut y = 0;
     let mut tops = Vec::with_capacity(list.rows.len());
     for (i, row) in list.rows.iter().enumerate() {
-        if i > 0 && matches!(row, Row::Heading(_)) {
+        if !list.shown(i) {
+            tops.push((y, 0));
+            continue;
+        }
+        if y > 0 && matches!(row, Row::Heading(_)) {
             y += HEADING_GAP;
         }
-        tops.push(y);
+        tops.push((y, cm.list_row));
         y += cm.list_row;
     }
     let total = y;
@@ -301,7 +365,7 @@ pub fn layout(list: &PageList, frame: Rect, cm: &ControlMetrics) -> Layout {
     let top = held(list.top, inner.height, total);
     let rows = tops
         .into_iter()
-        .map(|t| Rect::new(inner.x, inner.y + t - top, inner.width, cm.list_row))
+        .map(|(t, h)| Rect::new(inner.x, inner.y + t - top, inner.width, h))
         .collect();
     Layout {
         frame,
@@ -336,13 +400,13 @@ pub fn hit_bar(lay: &Layout, x: i32, y: i32) -> Option<BarHit> {
     Some(bar_hit(&bar_parts(lay)?, x, y, false))
 }
 
-/// The page or link whose row is under (`x`, `y`): `None` on a heading, in
-/// a gap, off the rows or on a row scrolled out of the inside.
+/// The shown page or link whose row is under (`x`, `y`): `None` on a heading,
+/// in a gap, off the rows or on a row scrolled out of the inside.
 pub fn hit(list: &PageList, lay: &Layout, x: i32, y: i32) -> Option<Pick> {
     if !lay.inner.contains(x, y) {
         return None;
     }
-    let i = lay.rows.iter().position(|r| r.contains(x, y))?;
+    let i = (0..lay.rows.len()).find(|&i| list.shown(i) && lay.rows[i].contains(x, y))?;
     pick_of(list.rows.get(i)?)
 }
 
@@ -371,9 +435,9 @@ pub fn draw(
     let inner = lay.inner.scaled(s);
     let current = list.current(strip.open);
     c.with_clip(inner, |c| {
-        for (row, r) in list.rows.iter().zip(&lay.rows) {
+        for (i, (row, r)) in list.rows.iter().zip(&lay.rows).enumerate() {
             let r = r.scaled(s);
-            if r.intersect(&inner).is_empty() {
+            if !list.shown(i) || r.intersect(&inner).is_empty() {
                 continue;
             }
             if let Row::Heading(h) = row {
@@ -463,13 +527,13 @@ fn draw_item_row(
     }
 }
 
-/// The list's items, by page and by link number.
+/// The list's items, by page and by link number; `None` for a hidden row.
 pub struct Nodes {
     pub pages: Vec<Option<NodeId>>,
     pub links: Vec<Option<NodeId>>,
 }
 
-/// The list's `access` part: a list holding, row by row, each heading as
+/// The list's `access` part: a list holding, shown row by shown row, each heading as
 /// static text and each page or link as a list item named by its label (a
 /// link's with its dots), the selected one ([`PageList::current`]) selected.
 /// The list's bounds are its inside. A heading's bounds are its part inside,
@@ -487,7 +551,7 @@ pub fn access(
     let mut list_node = access::node(Role::List, lay.inner);
     list_node.set_label("Pages");
     let id = tree.push(parent, key, list_node);
-    let total = list.rows.iter().filter_map(pick_of).count();
+    let total = list.picks().count();
     let current = list.current(strip.open);
     let mut nodes = Nodes {
         pages: vec![None; list.page_count()],
@@ -495,6 +559,9 @@ pub fn access(
     };
     let mut place_in_set = 0;
     for (i, (row, r)) in list.rows.iter().zip(&lay.rows).enumerate() {
+        if !list.shown(i) {
+            continue;
+        }
         let shown = r.intersect(&lay.inner);
         let place = |n: &mut accesskit::Node| {
             if shown.is_empty() {
@@ -1240,6 +1307,106 @@ mod tests {
         assert_eq!(
             tree.get(nodes.pages[1].unwrap()).unwrap().is_selected(),
             Some(false)
+        );
+    }
+
+    fn only(pages: [bool; 3], links: [bool; 2]) -> Filter {
+        Filter {
+            pages: pages.to_vec(),
+            links: links.to_vec(),
+        }
+    }
+
+    #[test]
+    fn a_filter_hides_rows_and_the_headings_left_empty() {
+        let mut list = PageList::new(LINK_GROUPS);
+        list.set_filter(Some(&only([false, true, false], [true, false])));
+        let shown: Vec<usize> = (0..list.rows.len()).filter(|&i| list.shown(i)).collect();
+        assert_eq!(shown, [0, 2, 3, 4]);
+        let lay = layout(&list, LINK_FRAME, &ControlMetrics::CLASSIC);
+        let ys: Vec<i32> = shown.iter().map(|&i| lay.rows[i].y).collect();
+        assert_eq!(
+            ys,
+            [10, 27, 48, 65],
+            "shown rows close up, a gap before the second heading"
+        );
+        assert_eq!(lay.total, 72);
+        assert_eq!(lay.rows[1].height, 0, "a hidden row has no height");
+        assert_eq!(hit(&list, &lay, 30, 30), Some(Pick::Page(1)));
+        assert_eq!(hit(&list, &lay, 30, 70), Some(Pick::Link(0)));
+        assert_eq!(list.item(1), Some(Pick::Link(0)));
+        list.set_filter(Some(&only([false, false, true], [false, false])));
+        let lay = layout(&list, LINK_FRAME, &ControlMetrics::CLASSIC);
+        assert_eq!(
+            (lay.rows[3].y, lay.rows[5].y),
+            (10, 27),
+            "no gap over the first shown heading"
+        );
+        list.set_filter(None);
+        assert!((0..list.rows.len()).all(|i| list.shown(i)));
+    }
+
+    #[test]
+    fn the_keys_step_over_hidden_rows() {
+        use form::Key;
+        let mut list = PageList::new(LINK_GROUPS);
+        list.set_filter(Some(&only([false, true, false], [true, false])));
+        assert_eq!(
+            list.target(0, &Key::Down),
+            Some(Pick::Page(1)),
+            "from a hidden open page"
+        );
+        assert_eq!(list.target(1, &Key::Down), Some(Pick::Link(0)));
+        assert_eq!(list.target(0, &Key::Home), Some(Pick::Page(1)));
+        assert_eq!(list.target(0, &Key::End), Some(Pick::Link(0)));
+        list.set_filter(Some(&only([false; 3], [false; 2])));
+        assert_eq!(list.target(0, &Key::Down), None, "nothing to step to");
+        assert_eq!(list.item(0), None);
+    }
+
+    #[test]
+    fn a_new_filter_scrolls_to_the_top_and_drops_a_hidden_cursor() {
+        let mut list = PageList::new(LINK_GROUPS);
+        list.top = 33;
+        list.cursor = Some(1);
+        list.set_filter(Some(&only([true; 3], [true, false])));
+        assert_eq!((list.top, list.cursor), (0, None));
+        list.cursor = Some(0);
+        list.set_filter(Some(&only([true; 3], [true, false])));
+        assert_eq!(list.cursor, Some(0), "a shown link keeps it");
+    }
+
+    #[test]
+    #[should_panic(expected = "one flag per row")]
+    fn a_filter_with_the_wrong_count_is_refused() {
+        let mut f = only([true; 3], [true; 2]);
+        f.pages.pop();
+        PageList::new(LINK_GROUPS).set_filter(Some(&f));
+    }
+
+    #[test]
+    fn a_filter_hiding_every_row_leaves_an_empty_list() {
+        let text = TextRenderer::load(&FontConfig::default());
+        let theme = theme_for(Interface::Classic);
+        let (p, cs, px) = (theme.paint(), &theme.colors, theme.fonts.size_px);
+        let mut list = PageList::new(LINK_GROUPS);
+        list.set_filter(Some(&only([false; 3], [false; 2])));
+        let lay = layout(&list, LINK_FRAME, &ControlMetrics::CLASSIC);
+        assert_eq!((lay.total, lay.scrollbar), (0, None));
+        let mut c = Canvas::new(160, 160);
+        let strip = TabStrip::new(&["Night Light", "Effects", "Mouse"], 1);
+        draw(&mut c, &text, &p, &list, &strip, &lay, false, px);
+        let inner = lay.inner;
+        assert!(
+            (inner.y..inner.bottom())
+                .all(|y| (inner.x..inner.right()).all(|x| c.get(x, y) == cs.window.argb()))
+        );
+        let mut tree = Tree::window("T", (160, 160));
+        let nodes = access(&list, &strip, &lay, &mut tree, ROOT, "pages");
+        assert!(nodes.pages.iter().chain(&nodes.links).all(Option::is_none));
+        assert!(
+            !list.reveal(Pick::Page(1), &lay),
+            "a hidden page is not revealed"
         );
     }
 }
