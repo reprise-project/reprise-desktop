@@ -17,6 +17,17 @@ pub(super) fn picture_paths(home: Option<&Path>, user: &str) -> Vec<PathBuf> {
     v
 }
 
+/// `picture_paths` of the session's user; in tests none, so no test shows the user's picture.
+fn user_picture_paths() -> Vec<PathBuf> {
+    #[cfg(test)]
+    return Vec::new();
+    #[cfg(not(test))]
+    picture_paths(
+        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+        &crate::lock::current_user(),
+    )
+}
+
 /// The picture files carry no extension, so the icon cache does not take them.
 fn load_picture(path: &Path) -> Option<Canvas> {
     const MAX_BYTES: u64 = 4 << 20;
@@ -95,8 +106,7 @@ impl State {
             return;
         };
         self.spawn_fs_job(move || {
-            let home = std::env::var_os("HOME").map(PathBuf::from);
-            let paths = picture_paths(home.as_deref(), &crate::lock::current_user());
+            let paths = user_picture_paths();
             let found = read_pictures(&paths, &sizes);
             Box::new(move |state: &mut State| {
                 if !state.start_pictures.land(id, found) {
