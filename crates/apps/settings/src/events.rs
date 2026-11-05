@@ -427,6 +427,7 @@ impl SettingsApp {
                     return self.list_press(x, y, time, ctx);
                 }
                 let hit = self.sheet.hit(x, y, &ctx.text, px);
+                let page_row = matches!(hit, Some(propsheet::Hit::Tab(_)));
                 let was = self.sheet.tabs.open;
                 let ev = self.sheet.click(hit);
                 self.sheet_took_keyboard();
@@ -437,7 +438,7 @@ impl SettingsApp {
                     self.blur_side_lists();
                     self.tab_opened();
                 }
-                if self.sheet.tabs.open != was {
+                if page_row {
                     self.search_opened();
                 }
                 let r = self.sheet_event(ev);
