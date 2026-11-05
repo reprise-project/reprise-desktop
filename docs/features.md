@@ -415,8 +415,9 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
 
 ## Notifications
 
-- **Balloons** in the corner by the tray, with the buttons programs send. A
-  chat app's Reply opens a text field right there. Left alone for two
+- **Balloons** in the corner by the tray, with the buttons programs send:
+  up to three, then a "..." button with the rest. Buttons that do not fit on
+  one row wrap onto a second, so every label shows whole. A chat app's Reply opens a text field right there. Left alone for two
   minutes, the field folds away (keeping what you typed for the next Reply)
   and the balloon makes room for the next. A program that sets the
   `action-icons` hint gets each button's icon in place of its label, with

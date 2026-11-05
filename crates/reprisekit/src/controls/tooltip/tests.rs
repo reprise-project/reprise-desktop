@@ -559,22 +559,27 @@ fn an_action_with_an_icon_gets_an_icon_button_sized_by_the_icon() {
 }
 
 #[test]
-fn icon_buttons_keep_their_width_when_a_long_label_shrinks() {
+fn a_label_wider_than_the_row_takes_a_row_of_its_own_cut_to_it() {
     let t = TextRenderer::load(&FontConfig::default());
     let theme = Theme::default();
     let long = "a label long enough to overrun the whole balloon row on its own";
-    let lay = notify_layout(
-        &theme,
-        &t,
-        "Hi",
-        "Body",
-        &["call-stop", long],
-        &[true],
-        None,
+    let acts = ["call-stop", long, "Later"];
+    let lay = notify_layout(&theme, &t, "Hi", "Body", &acts, &[true], None);
+    let [icon, cut, later] = lay.buttons[..] else {
+        panic!("three buttons: {:?}", lay.buttons);
+    };
+    let room = NOTIFY_W - 2 * NOTIFY_PAD;
+    assert_eq!(icon.width, ICON_BUTTON_W);
+    assert_eq!(icon.right(), NOTIFY_W - NOTIFY_PAD);
+    assert_eq!(
+        cut,
+        Rect::new(NOTIFY_PAD, icon.bottom() + BUTTON_GAP, room, BUTTON_H)
     );
-    assert_eq!(lay.buttons[0].width, ICON_BUTTON_W);
-    assert_eq!(lay.buttons[1].right(), NOTIFY_W - NOTIFY_PAD);
-    assert_eq!(lay.buttons[0].x, NOTIFY_PAD, "the row fills the room");
+    assert_eq!(later.y, cut.bottom() + BUTTON_GAP, "Later on a third row");
+    assert_eq!(later.right(), NOTIFY_W - NOTIFY_PAD);
+    assert_eq!(lay.labels[0], None, "the icon button shows its icon");
+    assert!(lay.labels[1].as_ref().is_some_and(|l| l.ends_with("...")));
+    assert_eq!(lay.labels[2].as_deref(), Some("Later"));
 }
 
 #[test]
@@ -590,14 +595,149 @@ fn a_fourth_action_brings_the_more_button() {
     assert_eq!(notify_hit(&lay, more.x + 2, more.y + 2), NotifyHit::More);
     assert!(lay.buttons.iter().all(|b| b.width == BUTTON_W));
     assert_eq!(more.x - lay.buttons[2].right(), BUTTON_GAP);
+}
 
-    // Long labels overrun the 280 px row, so the labelled three share
-    // what the square button and the gaps leave, evenly.
-    let long = ["Open in a new window", "Mark as read", "Archive", "Delete"];
-    let lay = notify_layout(&theme, &t, "Hi", "Body", &long, &[], None);
-    let room = NOTIFY_W - 2 * NOTIFY_PAD - BUTTON_H - 3 * BUTTON_GAP;
-    assert!(lay.buttons.iter().all(|b| b.width == room / 3));
-    assert!(lay.buttons[0].x >= NOTIFY_PAD);
+#[test]
+fn flowed_buttons_fill_rows_right_aligned_in_order() {
+    let at = |x, width, row| Flowed { x, width, row };
+    assert_eq!(flow_buttons(&[], 100, 6), []);
+    assert_eq!(
+        flow_buttons(&[30, 40], 100, 6),
+        [at(24, 30, 0), at(60, 40, 0)]
+    );
+    assert_eq!(
+        flow_buttons(&[30, 40, 50], 100, 6),
+        [at(24, 30, 0), at(60, 40, 0), at(50, 50, 1)],
+        "the third would overrun the row"
+    );
+    assert_eq!(
+        flow_buttons(&[30, 140, 20], 100, 6),
+        [at(70, 30, 0), at(0, 100, 1), at(80, 20, 2)],
+        "one wider than the room is cut to it, alone on its row"
+    );
+}
+
+const LONG_ACTS: [&str; 4] = [
+    "Open the disk",
+    "Show Disk Usage",
+    "Empty Recycle Bin",
+    "Remind me tomorrow",
+];
+
+/// Each button's rect, `...` last, and the rows they stand on.
+fn button_rows(lay: &NotifyLayout) -> (Vec<Rect>, usize) {
+    let all: Vec<Rect> = lay.buttons.iter().copied().chain(lay.more).collect();
+    let mut ys: Vec<i32> = all.iter().map(|b| b.y).collect();
+    ys.dedup();
+    (all, ys.len())
+}
+
+#[test]
+fn long_labels_show_whole_on_wrapped_rows_in_every_balloon_look_size_and_scale() {
+    use crate::interface::Interface;
+    for i in [Interface::Classic, Interface::Blue] {
+        for pct in [100, 125, 150, 200] {
+            for s in [1, 2] {
+                let theme = crate::interfaces::theme_for(i)
+                    .with_text_size(pct)
+                    .scaled(s);
+                let t = TextRenderer::load(&theme.fonts);
+                let (pad, mut rows_before) = (NOTIFY_PAD * s, 0);
+                for n in 1..=LONG_ACTS.len() {
+                    let acts = &LONG_ACTS[..n];
+                    let lay = notify_layout(&theme, &t, "Low Disk Space", "Body", acts, &[], None);
+                    let at = format!("{i:?} {pct}% x{s}, {n} actions");
+                    let shown = n.min(NOTIFY_BUTTONS);
+                    let whole: Vec<Option<String>> =
+                        acts[..shown].iter().map(|a| Some(a.to_string())).collect();
+                    assert_eq!(lay.labels, whole, "{at}");
+                    assert_eq!(lay.more.is_some(), n > NOTIFY_BUTTONS, "{at}");
+                    let (all, rows) = button_rows(&lay);
+                    for (k, b) in all.iter().enumerate() {
+                        assert!(
+                            b.x >= pad
+                                && b.right() <= lay.bubble_w - pad
+                                && b.bottom() <= lay.bubble_h - pad,
+                            "{at}: button {k} {b:?} inside the bubble"
+                        );
+                        assert!(
+                            all[k + 1..].iter().all(|o| !b.intersects(*o)),
+                            "{at}: button {k} overlaps a later one"
+                        );
+                    }
+                    assert!(rows >= rows_before, "{at}: {rows} rows");
+                    rows_before = rows;
+                }
+                assert!(rows_before >= 2, "{i:?} {pct}% x{s}: the long set wraps");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_reply_row_takes_the_first_of_several_rows_and_the_size_stays() {
+    let t = TextRenderer::load(&FontConfig::default());
+    let theme = Theme::default();
+    let acts = &LONG_ACTS[..3];
+    let row = notify_layout(&theme, &t, "Ana", "Lunch?", acts, &[], None);
+    let lay = notify_layout(&theme, &t, "Ana", "Lunch?", acts, &[], Some(REPLY));
+    assert_eq!(button_rows(&row).1, 2);
+    assert_eq!(lay.height, row.height);
+    assert_eq!(lay.send.map(|b| b.y), Some(row.buttons[0].y));
+}
+
+fn fnv(c: &Canvas) -> u64 {
+    [c.width, c.height]
+        .iter()
+        .chain(c.pixels.iter())
+        .fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
+            p.to_le_bytes().iter().fold(h, |h, &b| {
+                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+            })
+        })
+}
+
+const WRAPPED_PINS: [u64; 6] = [
+    0x73acc913fd881244,
+    0x798b5b5a7a48f6e0,
+    0x4ca44806f82bf3a8,
+    0x0c239197338ab164,
+    0xd5ac7b09480b9329,
+    0xf26de3d28d2f147b,
+];
+
+/// Three long buttons on two rows: Classic and Blue at scale 1 and 2, and at 200% text.
+#[test]
+fn wrapped_button_rows_pins() {
+    use crate::interface::Interface;
+    if !crate::text::test_tahoma() {
+        return;
+    }
+    let mut got = Vec::new();
+    for i in [Interface::Classic, Interface::Blue] {
+        for (pct, s) in [(100, 1), (100, 2), (200, 1)] {
+            let theme = crate::interfaces::theme_for(i)
+                .with_text_size(pct)
+                .scaled(s);
+            let t = TextRenderer::load(&theme.fonts);
+            let lay = notify_layout(
+                &theme,
+                &t,
+                "Low Disk Space",
+                "The disk of / has only 812 MB free of 20.0 GB.",
+                &LONG_ACTS[..3],
+                &[],
+                None,
+            );
+            let hot = Some(NotifyHit::Button(2));
+            let c = draw_notify_balloon(&theme, &t, &lay, None, &[], None, hot, None);
+            got.push((format!("{i:?} {pct}% x{s}"), fnv(&c)));
+        }
+    }
+    let now: Vec<String> = got.iter().map(|(_, h)| format!("{h:#018x},")).collect();
+    for (i, (case, h)) in got.iter().enumerate() {
+        assert_eq!(*h, WRAPPED_PINS[i], "{case}; now:\n{}", now.join("\n"));
+    }
 }
 
 /// Blue's tip, in every variant, is a black 1 px frame round info_bk
