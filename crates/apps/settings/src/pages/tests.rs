@@ -777,7 +777,14 @@ fn restore_defaults_takes_a_pages_keys_from_its_controls() {
     );
     assert_eq!(keys_on(&s, Page::Cursor), ["cursor.theme", "cursor.size"]);
     assert!(keys_on(&s, Page::Keyboard).contains(&"keyboard.layout".to_string()));
-    assert!(keys_on(&s, Page::ScreenSaverLock).contains(&"screensaver.name".to_string()));
+    let saver = keys_on(&s, Page::ScreenSaverLock);
+    for key in [
+        "screensaver.name",
+        "idle.lock_after",
+        "wallpaper.lock_screen",
+    ] {
+        assert!(saver.contains(&key.to_string()), "{key} in {saver:?}");
+    }
     for p in [Page::Display, Page::Tablet, Page::Backup] {
         assert_eq!(
             keys_on(&s, p),

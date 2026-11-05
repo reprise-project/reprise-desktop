@@ -583,19 +583,16 @@ fn the_power_page_geometry() {
     assert_eq!(rect(&s, p, "poweroff"), Rect::new(106, 88, 260, 20));
     assert_eq!(rect(&s, p, "reboot"), Rect::new(106, 114, 260, 20));
     assert_eq!(rect(&s, p, "hibernate"), Rect::new(106, 140, 260, 20));
-    assert_eq!(rect(&s, p, "idle_group"), Rect::new(20, 180, 358, 196));
-    assert_eq!(rect(&s, p, "lock_after"), Rect::new(150, 200, 50, 20));
-    assert_eq!(rect(&s, p, "blank_after"), Rect::new(150, 252, 50, 20));
-    assert_eq!(rect(&s, p, "lock_fade"), Rect::new(150, 278, 50, 20));
-    assert_eq!(rect(&s, p, "idle_note"), Rect::new(32, 308, 334, 13));
-    assert_eq!(rect(&s, p, "lock_on_sleep"), Rect::new(32, 330, 13, 13));
-    assert_eq!(rect(&s, p, "lock_wallpaper"), Rect::new(32, 352, 13, 13));
-    assert_eq!(rect(&s, p, "storage_group"), Rect::new(20, 388, 358, 74));
+    assert_eq!(rect(&s, p, "idle_group"), Rect::new(20, 180, 358, 100));
+    assert_eq!(rect(&s, p, "screen_off_after"), Rect::new(150, 200, 50, 20));
+    assert_eq!(rect(&s, p, "blank_after"), Rect::new(150, 226, 50, 20));
+    assert_eq!(rect(&s, p, "idle_note"), Rect::new(32, 256, 334, 13));
+    assert_eq!(rect(&s, p, "storage_group"), Rect::new(20, 288, 358, 74));
     assert_eq!(
         rect(&s, p, "low_space_percent"),
-        Rect::new(150, 408, 50, 20)
+        Rect::new(150, 308, 50, 20)
     );
-    assert_eq!(rect(&s, p, "low_space_note"), Rect::new(32, 438, 334, 13));
+    assert_eq!(rect(&s, p, "low_space_note"), Rect::new(32, 338, 334, 13));
     inside_page(&s, p);
 }
 
@@ -682,16 +679,31 @@ fn a_startup_list_that_scrolls_draws_only_the_vertical_bar() {
 }
 
 #[test]
-fn the_lock_when_away_group_sits_under_the_screen_saver() {
+fn the_lock_group_sits_under_the_screen_saver() {
     let s = built();
     let p = Page::ScreenSaverLock;
-    assert_eq!(rect(&s, p, "away_group"), Rect::new(20, 338, 358, 118));
-    assert_eq!(rect(&s, p, "away_label"), Rect::new(32, 358, 334, 13));
-    assert_eq!(rect(&s, p, "away_device"), Rect::new(32, 374, 200, 21));
-    assert_eq!(rect(&s, p, "away_after_s"), Rect::new(76, 404, 50, 20));
-    assert_eq!(rect(&s, p, "away_units"), Rect::new(132, 408, 60, 13));
-    assert_eq!(rect(&s, p, "away_note"), Rect::new(32, 432, 334, 13));
+    assert_eq!(rect(&s, p, "saver_group"), Rect::new(20, 222, 358, 84));
+    assert_eq!(rect(&s, p, "lock_group"), Rect::new(20, 314, 358, 160));
+    assert_eq!(rect(&s, p, "lock_after"), Rect::new(150, 332, 50, 20));
+    assert_eq!(rect(&s, p, "lock_units"), Rect::new(206, 336, 160, 13));
+    assert_eq!(rect(&s, p, "lock_fade"), Rect::new(150, 356, 50, 20));
+    assert_eq!(rect(&s, p, "lock_on_sleep"), Rect::new(32, 382, 13, 13));
+    assert_eq!(rect(&s, p, "lock_wallpaper"), Rect::new(32, 404, 13, 13));
+    assert_eq!(rect(&s, p, "away_label"), Rect::new(32, 426, 334, 13));
+    assert_eq!(rect(&s, p, "away_device"), Rect::new(32, 442, 150, 21));
+    assert_eq!(rect(&s, p, "away_after_s"), Rect::new(236, 442, 50, 20));
+    assert_eq!(rect(&s, p, "away_units"), Rect::new(292, 446, 60, 13));
+    for id in ["away_group", "saver_note", "away_note"] {
+        assert!(s.pages[p.index()].item(id).is_none(), "{id} is gone");
+    }
     inside_page(&s, p);
+}
+
+#[test]
+fn the_lock_rows_move_from_power_to_screen_saver_and_lock() {
+    for id in ["lock_after", "lock_fade", "lock_on_sleep", "lock_wallpaper"] {
+        assert_moved(id, Page::Power, Page::ScreenSaverLock);
+    }
 }
 
 #[test]

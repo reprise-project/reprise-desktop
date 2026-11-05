@@ -316,75 +316,43 @@ pub fn power(a: Area) -> Form {
     items.extend(command("reboot_label", "reboot", 118, "&Restart:"));
     items.extend(command("hibernate_label", "hibernate", 144, "&Hibernate:"));
 
-    items.push(group(a, "idle_group", 180, 196, "Idle"));
+    items.push(group(a, "idle_group", 180, 100, "Idle"));
     // The up-down for a 114 px label sits at GX + 118 and is 50 wide, so the unit follows 6 px later.
     let seconds = |id: &'static str, y| Item::label_at(id, GX + 174, y, 60, "seconds");
-    items.extend(spin(
-        "lock_label",
-        "lock_after",
-        GX,
-        204,
-        114,
-        "&Lock after:",
-        (0, 99999),
-    ));
-    items.push(seconds("lock_units", 204));
     items.extend(spin(
         "screen_label",
         "screen_off_after",
         GX,
-        230,
+        204,
         114,
         "&Screen off after:",
         (0, 99999),
     ));
-    items.push(seconds("screen_units", 230));
+    items.push(seconds("screen_units", 204));
     items.extend(spin(
         "blank_label",
         "blank_after",
         GX,
-        256,
+        230,
         114,
         "Screen sa&ver after:",
         (0, 99999),
     ));
-    items.push(seconds("blank_units", 256));
-    items.extend(spin(
-        "fade_label",
-        "lock_fade",
-        GX,
-        282,
-        114,
-        "&Fade before lock:",
-        (0, 99999),
-    ));
-    items.push(seconds("fade_units", 282));
+    items.push(seconds("blank_units", 230));
     items.push(Item::label_at(
         "idle_note",
         GX,
-        308,
+        256,
         gw,
         "0 disables the step.",
     ));
-    items.push(Item::check(
-        "lock_on_sleep",
-        GX,
-        330,
-        "Lock the computer when it goes to slee&p",
-    ));
-    items.push(Item::check(
-        "lock_wallpaper",
-        GX,
-        352,
-        "Show the &wallpaper on the lock screen",
-    ));
 
-    items.push(group(a, "storage_group", 388, 74, "Low Disk Space"));
+    items.push(group(a, "storage_group", 288, 74, "Low Disk Space"));
     items.extend(spin(
         "low_space_label",
         "low_space_percent",
         GX,
-        412,
+        312,
         114,
         "Warn bel&ow:",
         (0, repriseconf::LOW_SPACE_MAX.into()),
@@ -392,14 +360,14 @@ pub fn power(a: Area) -> Form {
     items.push(Item::label_at(
         "low_space_units",
         GX + 174,
-        412,
+        312,
         gw - 174,
         "% free",
     ));
     items.push(Item::label_at(
         "low_space_note",
         GX,
-        438,
+        338,
         gw,
         "For the disks of your home folder and /. 0 turns it off.",
     ));

@@ -220,6 +220,7 @@ impl Page {
                 "idle",
                 "lock",
                 "lock screen",
+                "away",
             ],
             Page::Display => &[
                 "monitor",
