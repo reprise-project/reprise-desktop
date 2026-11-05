@@ -455,6 +455,116 @@ mod tests {
         }
     }
 
+    /// Each control `f`'s access tree names, with the label it is named by
+    /// (the rule `Form::access` follows), access keys dropped.
+    fn control_labels(f: &Form) -> Vec<(&'static str, String)> {
+        use reprisekit::controls::form::Control as C;
+        let shown = |s: &str| reprisekit::text::split_mnemonic(s).0;
+        let mut label = None;
+        let mut out = Vec::new();
+        for it in &f.items {
+            let named = match &it.control {
+                C::Label { text, .. } | C::GroupTitle(text) => {
+                    label = Some(shown(text));
+                    continue;
+                }
+                C::Lines(lines) | C::GreyedLines(lines) => {
+                    label = Some(lines.join(" "));
+                    continue;
+                }
+                C::Group(_) => {
+                    label = None;
+                    continue;
+                }
+                C::Separator
+                | C::Rule
+                | C::Blank
+                | C::Picture { .. }
+                | C::Monitor(_)
+                | C::Spectrum
+                | C::Sample { .. }
+                | C::Clock(_) => continue,
+                C::Check { label: l, .. }
+                | C::Radio { label: l, .. }
+                | C::Button { label: l, .. } => Some(shown(l)),
+                C::Edit { .. }
+                | C::Combo(_)
+                | C::ListBox { .. }
+                | C::Tree(_)
+                | C::UpDown(_)
+                | C::TrackBar(_)
+                | C::Color(_)
+                | C::Calendar(_)
+                | C::Time(_)
+                | C::HotKey(_)
+                | C::Memo(_)
+                | C::IconList(_)
+                | C::Arrange(_) => it.name.map(str::to_string).or(label),
+            };
+            label = None;
+            out.extend(named.map(|l| (it.id, l)));
+        }
+        out
+    }
+
+    /// Labels made from run-time data, compared by id only.
+    const RUNTIME_LABELS: &[(Page, &str)] = &[(Page::Background, "home")]; // the user's name
+
+    #[test]
+    fn every_control_label_is_in_its_pages_search_terms() {
+        let appearance = ["classic", "blue"].map(|interface| {
+            let s = Settings {
+                interface: interface.into(),
+                ..Settings::default()
+            };
+            (Page::Appearance, crate::appearancepage::page(&s, Area::MIN))
+        });
+        let mut built: Vec<(Page, Vec<(&str, String)>)> =
+            Page::all().map(|p| (p, Vec::new())).collect();
+        for (p, f) in every_page(Area::MIN).into_iter().chain(appearance) {
+            let (_, terms) = built.iter_mut().find(|(q, _)| *q == p).unwrap();
+            for t in control_labels(&f) {
+                if !terms.contains(&t) {
+                    terms.push(t);
+                }
+            }
+        }
+        let same = |p: Page, a: &(&str, String), b: &(&str, String)| {
+            a.0 == b.0 && (a.1 == b.1 || RUNTIME_LABELS.contains(&(p, a.0)))
+        };
+        let lines = |ts: Vec<&(&str, String)>| -> String {
+            ts.iter()
+                .map(|(id, l)| format!("        ({id:?}, {l:?}),\n"))
+                .collect()
+        };
+        let mut report = String::new();
+        for (p, built) in &built {
+            let listed: Vec<(&str, String)> = p
+                .terms()
+                .iter()
+                .map(|(id, l)| (*id, l.to_string()))
+                .collect();
+            let missing: Vec<_> = built
+                .iter()
+                .filter(|t| !listed.iter().any(|l| same(*p, t, l)))
+                .collect();
+            let stale: Vec<_> = listed
+                .iter()
+                .filter(|l| !built.iter().any(|t| same(*p, t, l)))
+                .collect();
+            if !missing.is_empty() {
+                report += &format!("Page::{p:?} is missing:\n{}", lines(missing));
+            }
+            if !stale.is_empty() {
+                report += &format!("Page::{p:?} lists, with no such control:\n{}", lines(stale));
+            }
+        }
+        assert!(
+            report.is_empty(),
+            "Page::terms (crates/repriseconf/src/pages/terms.rs) is out of step:\n{report}"
+        );
+    }
+
     #[test]
     fn the_area_follows_the_sheet_size() {
         assert_eq!(Area::MIN.sheet_size(), built().size);
