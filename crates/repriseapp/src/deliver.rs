@@ -3,13 +3,10 @@
 use crate::clipboard::{CLIPBOARD_FILES, CLIPBOARD_IMAGE, CLIPBOARD_TEXT, image_mime, text_mime};
 use crate::sizing::{bounded, sane_size};
 use crate::windows::send_tag;
-use crate::{
-    DropForm, Event, Host, MAIN, Reply, WinId, editmenu, fielddrop, filedlg, keys, spawn_in,
-};
+use crate::{DropForm, Event, Host, MAIN, Reply, WinId, editmenu, fielddrop, filedlg, keys};
 use reprisekit::controls::menu::MenuCtx;
 use reprisekit::raster::Rect;
 use smithay_client_toolkit::reexports::calloop::timer::{TimeoutAction, Timer};
-use std::ffi::OsString;
 use std::time::Duration;
 
 pub const TICK_MS: u64 = 50;
@@ -272,10 +269,8 @@ impl Host {
             self.paste_image(win);
         }
         for argv in reply.spawn {
-            self.spawn(&reprisefs::scope::in_scope(
-                &argv,
-                reply.spawn_app.as_deref(),
-            ));
+            let argv = reprisefs::scope::in_scope(&argv, reply.spawn_app.as_deref());
+            self.start(win, argv);
         }
         if let Some(accept) = reply.drag_accept {
             self.drag_accept(win, accept);
@@ -358,12 +353,6 @@ impl Host {
             }
         }
         self.drain_head_requests();
-    }
-
-    fn spawn(&mut self, argv: &[OsString]) {
-        if let Err(e) = spawn_in(argv, None, None) {
-            log::warn!("spawn {argv:?}: {e}");
-        }
     }
 }
 

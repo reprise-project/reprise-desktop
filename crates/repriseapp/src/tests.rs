@@ -2,7 +2,7 @@ use super::*;
 use crate::clipboard::{TEXT_MIME, pasted_text, read_capped, text_mime};
 use crate::deliver::{blink_target, input_blocked, modal_over, redraws, root_of, top_modal};
 use crate::draw::{buffer_damage, copy_pixels, next_buffer, surface_damage};
-use crate::reply::spawn_then;
+use crate::reply::{hand_over, spawn_then};
 use crate::runloop::turn;
 use crate::sizing::{
     MAX_SIDE, at_pick, configured_size, draw_scale, held_size, opening_size, rebounded, regrown,
@@ -113,17 +113,57 @@ fn only_a_kept_canvas_or_a_blink_damages_part_of_the_buffer() {
 #[test]
 fn a_spawned_program_is_handed_over_unreaped_as_this_process_s_child() {
     let (tx, rx) = std::sync::mpsc::channel();
-    spawn_then(&["true".into()], None, None, move |pid| {
-        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
-        let ppid = stat
-            .rsplit(") ")
-            .next()
-            .and_then(|rest| rest.split(' ').nth(1));
-        tx.send(ppid.map(str::to_owned)).unwrap();
-    })
+    spawn_then(
+        &["true".into()],
+        None,
+        None,
+        &Default::default(),
+        move |pid| {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+            let ppid = stat
+                .rsplit(") ")
+                .next()
+                .and_then(|rest| rest.split(' ').nth(1));
+            tx.send(ppid.map(str::to_owned)).unwrap();
+        },
+    )
     .unwrap();
     let ppid = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
     assert_eq!(ppid, Some(std::process::id().to_string()));
+}
+
+#[test]
+fn a_spawn_hands_the_child_its_token_and_by_key_mark_and_never_this_process_s_own() {
+    let env = |handoff: &reprisebus::instance::Handoff| {
+        let mut c = std::process::Command::new("true");
+        hand_over(&mut c, handoff);
+        let mut envs: Vec<_> = c
+            .get_envs()
+            .map(|(k, v)| (k.to_os_string(), v.map(|v| v.to_os_string())))
+            .collect();
+        envs.sort();
+        envs
+    };
+    let given = reprisebus::instance::Handoff {
+        token: Some("t".into()),
+        by_key: true,
+    };
+    assert_eq!(
+        env(&given),
+        [
+            ("DESKTOP_STARTUP_ID".into(), None),
+            ("REPRISE_KEYBOARD_LAUNCH".into(), Some("1".into())),
+            ("XDG_ACTIVATION_TOKEN".into(), Some("t".into())),
+        ]
+    );
+    assert_eq!(
+        env(&Default::default()),
+        [
+            ("DESKTOP_STARTUP_ID".into(), None),
+            ("REPRISE_KEYBOARD_LAUNCH".into(), None),
+            ("XDG_ACTIVATION_TOKEN".into(), None),
+        ]
+    );
 }
 
 struct Picker {

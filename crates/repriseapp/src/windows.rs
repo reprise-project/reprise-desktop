@@ -1,5 +1,6 @@
 //! Making, syncing and sizing the main window, child windows and the flyout.
 
+use crate::reply::spawn_handing;
 use crate::runloop::NoEvents;
 use crate::sizing::{
     at_pick, bounded, configured_size, held_size, opening_size, rebounded, regrown, sane_side,
@@ -8,6 +9,7 @@ use crate::sizing::{
 use crate::{
     Caption, Child, Event, Flyout, Host, MAIN, MIN_SIZE, Scaling, Shell, Slot, WinId, access,
 };
+use reprisebus::instance::Handoff;
 use reprisekit::cues::Cues;
 use reprisekit::raster::{Canvas, Rect};
 use smithay_client_toolkit::reexports::protocols::wp::keyboard_shortcuts_inhibit::zv1::client::zwp_keyboard_shortcuts_inhibitor_v1;
@@ -29,12 +31,40 @@ use smithay_client_toolkit::{
         xdg::window::{Window, WindowConfigure, WindowDecorations, WindowHandler},
     },
 };
+use std::ffi::OsString;
 use wayland_client::{Connection, QueueHandle, protocol::wl_output};
+
+/// What an xdg-activation token is asked for; `new_token` carries it out.
+pub(crate) enum TokenFor {
+    /// Present it for this window ([`Host::raise`]).
+    Raise(WinId),
+    /// Start this command line with it ([`Host::start`]); `true` after a key.
+    Start(Vec<OsString>, bool),
+}
 
 impl Host {
     /// Ask for a token on the last input for the keyboard's window, else for window `id` (a drop
     /// target the compositor trusts for a moment), which `new_token` presents for window `id`.
     pub(crate) fn raise(&self, id: WinId) {
+        self.request_token(id, TokenFor::Raise(id));
+    }
+
+    /// Run `argv` with a token asked for as [`Host::raise`] does for window `win`, so its window
+    /// may take the focus. Without xdg-activation, or when this program is quitting and would not
+    /// see the token, it runs at once, tokenless.
+    pub(crate) fn start(&self, win: WinId, argv: Vec<OsString>) {
+        if self.activation.is_some() && self.seat.is_some() && !self.exit {
+            self.request_token(win, TokenFor::Start(argv, self.key_last));
+        } else {
+            let handoff = Handoff {
+                token: None,
+                by_key: self.key_last,
+            };
+            spawn_handing(&argv, &handoff);
+        }
+    }
+
+    fn request_token(&self, id: WinId, udata: TokenFor) {
         let (Some(activation), Some(seat)) = (&self.activation, &self.seat) else {
             return;
         };
@@ -48,7 +78,7 @@ impl Host {
                 app_id: Some(self.app.app_id()),
                 seat_and_serial: Some((seat.clone(), self.last_serial)),
                 surface,
-                udata: Some(id),
+                udata,
             },
         );
     }
@@ -674,15 +704,23 @@ impl LayerShellHandler for Host {
 type Limits = ((i32, i32), Option<(i32, i32)>);
 
 impl ActivationHandler for Host {
-    /// The window a token was asked for ([`Host::raise`]).
-    type RequestUdata = Option<WinId>;
-    fn new_token(&mut self, token: String, data: &RequestData<Option<WinId>>) {
-        let surface = data
-            .udata
-            .and_then(|id| self.slots.iter().find(|s| s.id == id))
-            .map(|s| s.window.wl_surface());
-        if let (Some(surface), Some(activation)) = (surface, &self.activation) {
-            activation.activate::<Host>(surface, token);
+    type RequestUdata = TokenFor;
+    fn new_token(&mut self, token: String, data: &RequestData<TokenFor>) {
+        match &data.udata {
+            TokenFor::Raise(id) => {
+                let surface =
+                    (self.slots.iter().find(|s| s.id == *id)).map(|s| s.window.wl_surface());
+                if let (Some(surface), Some(activation)) = (surface, &self.activation) {
+                    activation.activate::<Host>(surface, token);
+                }
+            }
+            TokenFor::Start(argv, by_key) => {
+                let handoff = Handoff {
+                    token: Some(token),
+                    by_key: *by_key,
+                };
+                spawn_handing(argv, &handoff);
+            }
         }
     }
 }
