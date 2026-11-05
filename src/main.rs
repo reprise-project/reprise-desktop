@@ -190,6 +190,7 @@ mod snapbarview;
 mod snappickerview;
 mod snapview;
 mod spawn;
+mod stall;
 mod startmenu;
 mod startpanelview;
 mod state;
@@ -307,6 +308,7 @@ fn run(
     }
     let config = darkmode::apply(&mut Default::default(), config, &config_file);
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
+    stall::start(&event_loop.handle());
     let mut state = State::new(
         config,
         config_path,
