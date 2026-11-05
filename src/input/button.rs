@@ -29,6 +29,10 @@ impl State {
     /// A button went down or up: a press focuses what it lands on and may
     /// start a move, size or caption button press; the last release ends it.
     pub(crate) fn handle_button(&mut self, button: u32, state: ButtonState, time: InputTime) {
+        self.redraw_changed(|s| s.apply_button(button, state, time));
+    }
+
+    fn apply_button(&mut self, button: u32, state: ButtonState, time: InputTime) {
         self.settle_pointer();
         if self.capture_button(button, state) {
             return;
@@ -38,7 +42,6 @@ impl State {
         if state == ButtonState::Pressed && self.interaction.is_keyboard() {
             self.end_interaction();
             self.repoint(pos, time);
-            self.redraw_all();
             return;
         }
         if self.panels.region.is_some() {
@@ -116,7 +119,6 @@ impl State {
             self.end_interaction();
             self.repoint(pos, time);
         }
-        self.redraw_all();
     }
 
     /// Let go of every held button when the seat loses the device (a session
