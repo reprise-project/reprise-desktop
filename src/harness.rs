@@ -238,6 +238,20 @@ impl Harness {
         self.connect_with(None, |_| {})
     }
 
+    /// A new client whose input method holds the keyboard grab, as fcitx5 does while running.
+    pub fn grabbing_input_method(&mut self) -> TestClient {
+        let mut m = self.connect();
+        m.input_method();
+        self.roundtrip(&mut m);
+        m.grab_keyboard(0);
+        self.roundtrip(&mut m);
+        assert!(
+            crate::textinput::ime_holds_keyboard(&self.state.seat.get_keyboard().unwrap()),
+            "the input method's grab holds the keyboard"
+        );
+        m
+    }
+
     /// A client in a Flatpak sandbox.
     pub fn connect_sandboxed(&mut self) -> TestClient {
         self.connect_with(None, |d| d.sandbox.flatpak = true)
@@ -912,6 +926,14 @@ pub struct Shell {
     pub bounds: (i32, i32),
 }
 
+/// A `wl_keyboard` event: a key's evdev code and whether it went down, or the depressed
+/// modifiers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyHeard {
+    Key(u32, bool),
+    Mods(u32),
+}
+
 /// What an input method heard, in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImHeard {
@@ -976,6 +998,8 @@ pub struct ClientSide {
     pub keys: Vec<(u32, bool)>,
     /// The layout group the last `wl_keyboard.modifiers` named.
     pub group: u32,
+    /// Each key and modifiers event the keyboard heard, in order.
+    pub key_log: Vec<KeyHeard>,
     /// Each button event the pointer heard: its evdev code and whether it went down.
     pub buttons: Vec<(u32, bool)>,
     /// Each `reprise_sandboxed_v1` event heard: an app id for `app`, `None` for `done`.
@@ -1163,6 +1187,7 @@ impl wc::Dispatch<wl_keyboard::WlKeyboard, ()> for ClientSide {
             wl_keyboard::Event::Key { key, state, .. } => {
                 let down = state == wc::WEnum::Value(wl_keyboard::KeyState::Pressed);
                 st.keys.push((key, down));
+                st.key_log.push(KeyHeard::Key(key, down));
             }
             wl_keyboard::Event::Enter {
                 serial, surface, ..
@@ -1174,7 +1199,14 @@ impl wc::Dispatch<wl_keyboard::WlKeyboard, ()> for ClientSide {
                 st.keyboard_focus.take_if(|f| *f == surface);
             }
             wl_keyboard::Event::Keymap { fd, size, .. } => st.keymap = Some((fd, size)),
-            wl_keyboard::Event::Modifiers { group, .. } => st.group = group,
+            wl_keyboard::Event::Modifiers {
+                mods_depressed,
+                group,
+                ..
+            } => {
+                st.group = group;
+                st.key_log.push(KeyHeard::Mods(mods_depressed));
+            }
             _ => {}
         }
     }
