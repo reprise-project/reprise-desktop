@@ -1651,3 +1651,55 @@ fn other_on_the_colour_button_opens_the_color_dialog_whose_ok_sets_the_desktop()
     assert_eq!(winstate::custom_colors(&state)[0], BASIC[28]);
     let _ = std::fs::remove_dir_all(state.parent().unwrap());
 }
+
+#[test]
+fn unchecking_run_as_asks_first_and_only_ok_unchecks_it() {
+    let mut a = app("runas");
+    let mut ctx = test_ctx();
+    let cm = ctx.forms().controls();
+    a.entries = vec![
+        reprisefs::autostart::parse(
+            autostart::RUN_AS,
+            "[Desktop Entry]\nName=Run As\nExec=reprise-polkit\n",
+            false,
+        )
+        .unwrap(),
+    ];
+    a.applied_checks = vec![true];
+    pages::fill_list(&mut a.list, &a.entries, &[true]);
+    a.sheet.tabs.open = Page::Startup.index();
+    a.list.selection.focus = Some(0);
+    let key = |sym| KeyInput {
+        sym,
+        utf8: None,
+        mods: repriseapp::Mods::default(),
+        edit: None,
+    };
+
+    a.list_key(&form::Key::Space, &cm);
+    assert_eq!(
+        a.list.checks,
+        Some(vec![true]),
+        "checked until the question is answered"
+    );
+    assert_eq!(
+        a.asking.as_ref().map(|q| q.msg.fields.text.as_str()),
+        Some(apply::RUN_AS_QUESTION)
+    );
+    a.event(
+        ASK_WIN,
+        Event::Key(key(reprisekit::textedit::keysym::ESCAPE)),
+        &mut ctx,
+    );
+    assert!(a.asking.is_none());
+    assert_eq!(a.list.checks, Some(vec![true]), "Cancel keeps it");
+
+    a.list_key(&form::Key::Space, &cm);
+    a.event(
+        ASK_WIN,
+        Event::Key(key(reprisekit::textedit::keysym::RETURN)),
+        &mut ctx,
+    );
+    assert_eq!(a.list.checks, Some(vec![false]), "OK unchecks it");
+    assert!(a.dirty(), "Apply writes it");
+}

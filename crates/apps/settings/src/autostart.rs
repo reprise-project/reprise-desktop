@@ -5,6 +5,9 @@ use reprisefs::apps;
 use reprisefs::autostart::{self, Entry};
 use std::path::{Path, PathBuf};
 
+/// The id of the session's polkit agent, the only one it starts.
+pub const RUN_AS: &str = "reprise-polkit";
+
 pub fn location(e: &Entry) -> &'static str {
     if e.user { "User" } else { "System" }
 }

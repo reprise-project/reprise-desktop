@@ -1,5 +1,5 @@
-//! The Backup page's Export... and Import..., and the question box that confirms a step (these
-//! and Restore Defaults) before it writes.
+//! The Backup page's Export... and Import..., and the question box that confirms a step (these,
+//! Restore Defaults and turning off Run As) before it writes.
 
 use crate::backup::{self, Bundle, Roots};
 use crate::filepick::Pick;
@@ -16,6 +16,8 @@ pub(crate) enum Then {
     Import(PathBuf, Bundle),
     RestoreDefaults(Page),
     NewCertificate,
+    /// Uncheck this Startup row.
+    StopAutostart(usize),
 }
 
 /// The question box: its text, OK and Cancel, and what OK does.
@@ -82,6 +84,12 @@ impl SettingsApp {
             Then::Import(path, bundle) => self.import(&path, &bundle),
             Then::RestoreDefaults(p) => self.restore_defaults(p),
             Then::NewCertificate => self.remote_act(crate::remotehost::Act::NewCertificate),
+            Then::StopAutostart(row) => {
+                if let Some(c) = self.list.checks.as_mut().and_then(|c| c.get_mut(row)) {
+                    *c = false;
+                }
+                self.sync_apply();
+            }
         }
     }
 
