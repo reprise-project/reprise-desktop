@@ -713,8 +713,10 @@ are.
 
 ## Remote Desktop
 
-Another computer can use this session over RDP while you stay logged in
-here: one computer at a time, logged in with your own account's password.
+Other computers can use this session over RDP while you stay logged in
+here, logged in with your own account's password. Several may connect at
+once, up to `max_viewers` (4 unless set); every one sees the screen and
+controls the keyboard and mouse.
 It's meant for the home network. Reprise opens no firewall port and sets up
 no port forwarding; allow the port in your firewall if you run one.
 
@@ -761,35 +763,40 @@ no port forwarding; allow the port in your firewall if you run one.
   sharp. Speed and Vulkan send reduced colour, which takes less bandwidth.
 - **Keyboard and mouse.** Keys go by position and this computer's keyboard
   layout reads them. Characters the client sends as text are typed as they
-  are. Caps Lock and Num Lock follow the client. Five mouse buttons, the
-  wheel and the horizontal wheel work. Keys and buttons held when the client
-  leaves are let go.
+  are. Caps Lock and Num Lock follow the client; with several connected,
+  the lock keys of the first computer to send them set the session's until
+  it leaves. Five mouse buttons, the wheel and the horizontal wheel work. Keys
+  and buttons held when the client leaves are let go.
 - **Copy and paste.** Text and pictures copied on either side paste on the
   other while a client is connected, up to 16 MiB of text as RDP carries it
   (UTF-16, so about 8 MiB of plain ASCII) and 64 MiB of picture. Pasting
   something copied on the client ends empty if the client doesn't send it
   within 5 s. Files stay where they are.
 - **Sound.** With Play sound on the remote computer on (`sound`), this
-  computer's sound plays on the client and not here. A "Remote client"
-  output becomes the default while the client is connected; the one before
-  comes back when it leaves, unless you picked another meanwhile, and also
-  when the server stops or, after a crash, when it next starts. A change
-  while connected applies at once. Sound goes as Opus when the client takes
-  it, else as 16-bit PCM at 44.1 kHz. The client's own buffering sets most
-  of the delay: with FreeRDP's default it is about 110 ms, and
-  `/sound:latency:20` brings it to about 65 ms.
+  computer's sound plays on every connected client and not here. A "Remote
+  client" output becomes the default while a client is connected; the one
+  before comes back when the last leaves, unless you picked another
+  meanwhile, and also when the server stops or, after a crash, when it next
+  starts. A change while connected applies at once. Sound goes as Opus when
+  the client takes it, else as 16-bit PCM at 44.1 kHz. The client's own
+  buffering sets most of the delay: with FreeRDP's default it is about 110
+  ms, and `/sound:latency:20` brings it to about 65 ms.
 - **While a client is connected,** this screen keeps showing the session
   and its own keyboard and mouse keep working. The red dot shows the screen
   is shared. The screen saver and the idle lock keep their timeouts, and
   remote input counts as activity; screen off and idle suspend wait.
   Closing the lid turns the laptop's panel off instead of running
   `[power] lid_close`, and the session goes on; opening it turns the panel
-  back on. When the client leaves with the lid still shut, the lid action
-  runs 30 s later.
-- **Leaving locks.** When the client disconnects, or Disconnect on the
-  Settings page ends it, the session locks. A second computer that connects
-  meanwhile is turned away at once. A connection that dies without closing
-  ends within about 30 s.
+  back on. When the last client leaves with the lid still shut, the lid
+  action runs 30 s later.
+- **Disconnecting.** Connected Computers on the Settings page lists every
+  client; Disconnect ends the selected one.
+- **Leaving locks.** When the last logged-in client leaves, whether it
+  disconnects or Disconnect ends it, the session locks; a client that logs
+  in before the lock goes ahead keeps it unlocked. A computer that connects
+  while `max_viewers` computers are connected or logging in is turned away
+  at once, as is a third from an address with two still logging in. A
+  connection that dies without closing ends within about 30 s.
 
 ## Files
 

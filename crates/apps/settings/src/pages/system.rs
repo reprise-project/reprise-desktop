@@ -9,7 +9,7 @@ use super::{
 use crate::model::{FRAME_RATES, REMOTE_ENCODERS, REMOTE_QUALITIES, WATER_STYLES};
 use crate::notifypage;
 use reprisebus::charge::ChargeLimit;
-use reprisebus::remote::Status;
+use reprisebus::remote::{Client, Status};
 use repriseconf::ThumbnailCache;
 use reprisekit::classic::widgets::{BUTTON_GAP, BUTTON_W, LINE_H};
 use reprisekit::controls::form::{Control, Form, Item};
@@ -462,7 +462,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         ),
         Item::label_at(REMOTE_STATUS, X, 64, a.w - 18, "").under_check(),
         Item::label_at(ENCODER, X, 80, a.w - 18, "").under_check(),
-        group(a, "connection_group", 104, 186, "Connection"),
+        group(a, "connection_group", 104, 183, "Connection"),
     ];
     items.extend(spin(
         "port_label",
@@ -533,27 +533,27 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         266,
         "Play &sound on the remote computer",
     ));
-    items.push(group(a, "certificate_group", 300, 66, "Certificate"));
+    items.push(group(a, "certificate_group", 297, 66, "Certificate"));
     items.push(Item::label_at(
         "fingerprint_label",
         GX,
-        320,
+        317,
         gw,
         "&Fingerprint (SHA-256):",
     ));
-    items.push(edit(REMOTE_FINGERPRINT, GX, 336, gw - NEW_CERTIFICATE_W - 6).read_only());
+    items.push(edit(REMOTE_FINGERPRINT, GX, 333, gw - NEW_CERTIFICATE_W - 6).read_only());
     items.push(Item::button_at(
         REMOTE_REGENERATE,
         a.gright() - NEW_CERTIFICATE_W,
-        334,
+        331,
         NEW_CERTIFICATE_W,
         "&New Certificate...",
         true,
     ));
-    items.push(group(a, "client_group", 376, 68, "Connected Computer"));
+    items.push(group(a, "client_group", 373, 102, "Connected Computers"));
     items.push(Item::new(
         CLIENTS,
-        Rect::new(GX, 396, gw - BUTTON_W - 6, 2 * listbox::ROW_H + 4),
+        Rect::new(GX, 393, gw - BUTTON_W - 6, 4 * listbox::ROW_H + 4),
         Control::ListBox {
             list: ListBox::new(Vec::new(), None),
             icons: Vec::new(),
@@ -562,17 +562,23 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(button(
         REMOTE_DISCONNECT,
         a.gright() - BUTTON_W,
-        396,
+        393,
         "&Disconnect",
     ));
     let mut page = Form::new(items);
-    show_remote(&mut page, status, enabled, None);
+    show_remote(&mut page, status, enabled, None, None);
     page
 }
 
 /// Put the server's state on the page in place, so an open drop-down survives an unchanged poll;
-/// encoders the server lacks are greyed (all but Automatic while it does not answer).
-pub fn show_remote(page: &mut Form, status: Option<&Status>, enabled: bool, address: Option<&str>) {
+/// encoders the server lacks grey. Changed clients keep `keep` selected, else the first.
+pub fn show_remote(
+    page: &mut Form,
+    status: Option<&Status>,
+    enabled: bool,
+    address: Option<&str>,
+    keep: Option<&str>,
+) {
     page.set_check(REMOTE_ALLOW, enabled);
     page.set_enabled(REMOTE_ALLOW, true);
     for id in REMOTE_CONTROLS {
@@ -598,7 +604,10 @@ pub fn show_remote(page: &mut Form, status: Option<&Status>, enabled: bool, addr
         first.set(0);
     }
     let clients = shown.map_or(&[][..], |s| s.clients.as_slice());
-    let items: Vec<String> = clients.iter().map(|c| client_address(&c.address)).collect();
+    let items: Vec<String> = clients
+        .iter()
+        .map(|c| client_address(&c.address, clients))
+        .collect();
     let detail: Vec<String> = clients
         .iter()
         .map(|c| {
@@ -606,15 +615,27 @@ pub fn show_remote(page: &mut Form, status: Option<&Status>, enabled: bool, addr
             format!("{}, since {since}", c.user)
         })
         .collect();
-    if let Some(Control::ListBox { list, .. }) = page.item_mut(CLIENTS).map(|i| &mut i.control)
-        && (list.items != items || list.detail != detail)
-    {
-        let keep = list.selected.filter(|&i| i < items.len());
-        *list = ListBox::new(items, keep);
-        list.detail = detail;
+    let mut picked = false;
+    if let Some(Control::ListBox { list, .. }) = page.item_mut(CLIENTS).map(|i| &mut i.control) {
+        if list.items != items || list.detail != detail {
+            let kept = keep.and_then(|a| clients.iter().position(|c| c.address == a));
+            let first = (!clients.is_empty()).then_some(0);
+            *list = ListBox::new(items, kept.or(first));
+            list.detail = detail;
+        }
+        picked = list.selected.is_some();
     }
     page.set_enabled(REMOTE_REGENERATE, shown.is_some());
-    page.set_enabled(REMOTE_DISCONNECT, !clients.is_empty());
+    page.set_enabled(REMOTE_DISCONNECT, picked);
+}
+
+/// The address of the client selected on the page, as `status` lists it.
+pub fn selected_client<'a>(page: &Form, status: Option<&'a Status>) -> Option<&'a str> {
+    let Control::ListBox { list, .. } = &page.item(CLIENTS)?.control else {
+        return None;
+    };
+    let client = status?.clients.get(list.selected?)?;
+    Some(client.address.as_str())
 }
 
 /// The status line: off, not answering, listening on its port at `address`, or why it cannot listen.
@@ -636,9 +657,20 @@ pub(super) fn remote_status(
     }
 }
 
-/// A client's address without its port.
-fn client_address(address: &str) -> String {
-    address
-        .parse::<std::net::SocketAddr>()
-        .map_or_else(|_| address.to_string(), |a| a.ip().to_string())
+/// A client's address, without its port unless another of `clients` has the same IP.
+fn client_address(address: &str, clients: &[Client]) -> String {
+    let ip = |a: &str| a.parse::<std::net::SocketAddr>().ok().map(|a| a.ip());
+    let Some(own) = ip(address) else {
+        return address.to_string();
+    };
+    let shared = clients
+        .iter()
+        .filter(|c| ip(&c.address) == Some(own))
+        .count()
+        > 1;
+    if shared {
+        address.to_string()
+    } else {
+        own.to_string()
+    }
 }

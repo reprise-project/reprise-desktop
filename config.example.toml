@@ -389,14 +389,15 @@ suspend_after = 0            # run [power] standby
 # [remote_desktop]           # the Remote Desktop server; Settings > Remote Desktop
 #                            # also sets these and turns it on
 # port = 3389                # the TCP port it listens on, on every interface; a change
-#                            # moves it at once and ends a connected session
+#                            # moves it at once and ends every connected session
 # quality = "balanced"       # "speed", "balanced" or "sharp": sharper text costs bandwidth;
 #                            # "balanced" and "sharp" send full colour to a client that takes it
 # frame_rate = 60            # 30 or 60 frames a second at most
 # encoder = "auto"           # "auto", "vaapi", "nvenc", "vulkan", "software" (x264) or "none"
 #                            # (RemoteFX bitmaps); one that doesn't work here falls back to "auto"
-# sound = true               # true plays this computer's sound on the connected one, not
+# sound = true               # true plays this computer's sound on every connected one, not
 #                            # here; false plays nothing there
+# max_viewers = 4            # how many computers may be connected at once, 1 to 16
 
 # [debug]                    # Settings > Advanced also sets these
 # overlay = false            # true shows frame rate, render times, damage, clients
