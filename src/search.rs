@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use repriseconf::pages::{PROGRAMS, Page};
+use repriseconf::search::word_starts;
 use reprisefs::apps::AppEntry;
 use reprisekit::controls::launcher::FileRow;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -61,25 +62,6 @@ pub fn windows_first(best_window: Option<u32>, best_app: Option<u32>) -> bool {
         (Some(w), Some(a)) => w >= a,
         (w, _) => w.is_some(),
     }
-}
-
-/// Whether a word of `name` (split by `fuzzy::is_word_start`) starts with
-/// `query`, the rest of `query` running on from there ("sticky no" fits
-/// "Sticky Notes"). The Start menu lists only such names.
-pub fn word_starts(query: &str, name: &str) -> bool {
-    let query = query.trim().to_lowercase();
-    if query.is_empty() {
-        return false;
-    }
-    let name: Vec<char> = name.chars().collect();
-    (0..name.len()).any(|i| {
-        reprisekit::fuzzy::is_word_start(&name, i)
-            && name[i..]
-                .iter()
-                .flat_map(|c| c.to_lowercase())
-                .collect::<String>()
-                .starts_with(&query)
-    })
 }
 
 const SETTINGS_MIN_CHARS: usize = 2;
@@ -462,29 +444,6 @@ mod tests {
         ];
         assert_eq!(rank_apps("n", &apps, 1).len(), 1);
         assert!(!rank_apps("notes", &apps, 8).contains(&1));
-    }
-
-    #[test]
-    fn a_word_of_the_name_starts_with_the_text() {
-        for name in [
-            "Notepad",
-            "Sticky Notes",
-            "GNOME no-op",
-            "file_notes",
-            "a.Note",
-        ] {
-            assert!(word_starts("no", name), "{name}");
-        }
-        for name in ["Network Connections", "Print Editor", "Piano"] {
-            assert!(!word_starts("no", name), "{name}");
-        }
-        assert!(word_starts("NO", "Notepad"), "case-insensitive");
-        assert!(word_starts("sticky no", "Sticky Notes"));
-        assert!(
-            word_starts("calc", "KCalc"),
-            "an uppercase run ends before its last capital"
-        );
-        assert!(!word_starts("", "Notepad"));
     }
 
     fn installed(id: &str, name: &str) -> AppEntry {

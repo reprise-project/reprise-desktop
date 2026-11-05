@@ -725,6 +725,7 @@ pub mod keybind;
 pub mod location;
 pub mod pages;
 pub mod remote;
+pub mod search;
 
 pub mod system_icons {
     pub fn current(name: &str) -> Option<&str> {
