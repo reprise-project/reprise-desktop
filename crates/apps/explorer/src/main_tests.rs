@@ -3096,6 +3096,95 @@ fn computer_and_the_folders_tree_gain_and_lose_a_mounted_disk_image() {
     assert!(!ex.drive_mounts.contains(&mount));
 }
 
+/// The places under the Folders tree's Computer node, each checked to be the node the tree walks
+/// to for its place: a child whose chain runs elsewhere can be clicked but never selected.
+fn computer_nodes(ex: &Explorer) -> Vec<Place> {
+    let at = ex.tree_path_of(&Place::Computer).expect("a Computer node");
+    let node = ex.tree.node(&at).expect("the Computer node");
+    (node.children.iter().enumerate())
+        .map(|(i, n)| {
+            let place = ex.tree_places[n.id as usize].clone();
+            let mut path = at.clone();
+            path.push(i);
+            assert_eq!(
+                ex.tree_path_of(&place),
+                Some(path),
+                "{place:?} under Computer is where the tree walks to it"
+            );
+            place
+        })
+        .collect()
+}
+
+#[test]
+fn computer_in_the_folders_tree_holds_only_drives_across_an_image_mount_and_eject() {
+    use reprisefs::udisks::{Image, Snapshot, Volume};
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Computer, &mut ctx);
+    let drives: Vec<Place> = (ex.drives.iter())
+        .map(|d| Place::Folder(d.mount.clone()))
+        .collect();
+    assert_eq!(computer_nodes(&ex), drives);
+
+    let mount = PathBuf::from("/run/media/u/TESTISO");
+    let mounted = Snapshot {
+        disks: vec![],
+        volumes: vec![Volume {
+            path: "/block/loop0".into(),
+            device: "/dev/loop0".into(),
+            label: Some("TESTISO".into()),
+            fs_type: "iso9660".into(),
+            filesystem: true,
+            mounts: vec![mount.clone()],
+            image: Some(Image {
+                file: "/home/u/test.iso".into(),
+                loop_path: "/block/loop0".into(),
+            }),
+            ..Default::default()
+        }],
+    };
+    ex.volumes_changed(mounted, &mut ctx);
+    let with_image: Vec<Place> = (drives.iter().cloned())
+        .chain([Place::Folder(mount)])
+        .collect();
+    assert_eq!(computer_nodes(&ex), with_image);
+
+    ex.volumes_changed(Snapshot::default(), &mut ctx);
+    assert_eq!(computer_nodes(&ex), drives, "ejected, only the drives stay");
+}
+
+#[test]
+fn computer_in_the_folders_tree_holds_only_drives_across_a_stick_mount_and_removal() {
+    let mut ctx = test_ctx();
+    let mut ex = test_explorer(Place::Computer, &mut ctx);
+    let before = ex.drives.clone();
+    let stick = PathBuf::from("/run/media/u/STICK");
+    let mut plugged = before.clone();
+    plugged.push(reprisefs::places::Drive {
+        mount: stick,
+        device: "/dev/sdb1".into(),
+        fs: "vfat".into(),
+        label: Some("STICK".into()),
+        removable: true,
+        optical: false,
+        total: 1 << 30,
+        free: 1 << 29,
+    });
+    let places = |ds: &[reprisefs::places::Drive]| -> Vec<Place> {
+        ds.iter().map(|d| Place::Folder(d.mount.clone())).collect()
+    };
+
+    ex.drives_read("plugged".into(), plugged.clone(), &mut ctx);
+    assert_eq!(computer_nodes(&ex), places(&plugged));
+
+    ex.drives_read("pulled".into(), before.clone(), &mut ctx);
+    assert_eq!(
+        computer_nodes(&ex),
+        places(&before),
+        "removed, only the drives stay"
+    );
+}
+
 /// Long enough for the watch's one-second gap between wakes and its coalescing.
 fn wait_for_watch() {
     std::thread::sleep(std::time::Duration::from_millis(1500));
