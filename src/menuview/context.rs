@@ -87,6 +87,7 @@ impl State {
             owned: win.is_owned() || win.dialog_tag != crate::window::DialogTag::None,
             resizable: win.is_resizable(),
             on_top: self.stays_on_top(w),
+            open_here: self.open_here_state(w),
             mini: self.mini_views.of(w).is_some(),
             desktops: self.desktops.count,
             sticky: self.win(self.home(w)).is_some_and(|h| h.sticky),
@@ -159,6 +160,7 @@ impl State {
                 let on = self.win(w).is_some_and(|x| x.on_top);
                 self.set_on_top(w, !on);
             }
+            WindowMenuRow::OpenHere => self.toggle_open_here(w),
             WindowMenuRow::MiniView => crate::miniview::toggle(self, w),
             WindowMenuRow::Close => self.close(w),
             WindowMenuRow::AllDesktops => {

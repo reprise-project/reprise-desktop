@@ -15,6 +15,8 @@ pub enum WindowMenuRow {
     /// Rolls the window up to its caption, or back down.
     Shade,
     AlwaysOnTop,
+    /// Writes or removes the window rule that opens the program's windows where this one is.
+    OpenHere,
     /// Opens or closes the window's mini view (`miniview`).
     MiniView,
     AllDesktops,
@@ -35,6 +37,18 @@ pub struct TabRows {
     pub grouped: bool,
 }
 
+/// The Always Open Here row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenHereState {
+    /// A dialog: no row.
+    Absent,
+    /// No app id a rule could match.
+    Greyed,
+    Off,
+    /// A rule Always Open Here wrote matches the program.
+    On,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WindowMenuState {
     pub maximized: bool,
@@ -49,6 +63,7 @@ pub struct WindowMenuState {
     pub resizable: bool,
     /// Always on Top is checked. An owned window shows its owner's state greyed.
     pub on_top: bool,
+    pub open_here: OpenHereState,
     /// Mini View is checked: the window has one open.
     pub mini: bool,
     pub desktops: usize,
@@ -107,10 +122,12 @@ pub fn window_menu(
         let label = if shaded { "Roll Do&wn" } else { "Roll &Up" };
         (Shade, label, shaded || normal, None, None)
     });
-    let mut group = vec![
-        (AlwaysOnTop, "Always on &Top", !state.owned, None, None),
-        (MiniView, "M&ini View", true, None, None),
-    ];
+    let mut group = vec![(AlwaysOnTop, "Always on &Top", !state.owned, None, None)];
+    if state.open_here != OpenHereState::Absent {
+        let enabled = state.open_here != OpenHereState::Greyed;
+        group.push((OpenHere, "Always &Open Here", enabled, None, None));
+    }
+    group.push((MiniView, "M&ini View", true, None, None));
     if state.desktops > 1 {
         group.push((
             AllDesktops,
@@ -157,6 +174,7 @@ pub fn window_menu(
                 .enabled(enabled)
                 .checked(
                     (row == AlwaysOnTop && state.on_top)
+                        || (row == OpenHere && state.open_here == OpenHereState::On)
                         || (row == MiniView && state.mini)
                         || (row == AllDesktops && state.sticky),
                 )
@@ -276,6 +294,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
             sticky: false,
@@ -325,6 +344,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
             sticky: false,
@@ -349,6 +369,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
             sticky: false,
@@ -370,6 +391,7 @@ mod tests {
             owned: true,
             resizable: false,
             on_top: false,
+            open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
             sticky: false,
@@ -395,6 +417,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: true,
+            open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
             sticky: false,
@@ -413,6 +436,60 @@ mod tests {
     }
 
     #[test]
+    fn always_open_here_follows_always_on_top_checked_greyed_or_absent() {
+        let st = WindowMenuState {
+            maximized: false,
+            minimized: false,
+            from_taskbar: false,
+            owned: false,
+            resizable: true,
+            on_top: false,
+            open_here: OpenHereState::Off,
+            mini: false,
+            desktops: 1,
+            sticky: false,
+            tabs: None,
+            shade: None,
+        };
+        let checked =
+            |items: &[MenuItem]| matches!(&items[7], MenuItem::Entry { checked: true, .. });
+        let (items, actions) = window_menu(st, None);
+        assert_eq!(items.len(), 11);
+        assert_eq!(row(&items, 6), ("Always on Top", true, false));
+        assert_eq!(row(&items, 7), ("Always Open Here", true, false));
+        assert_eq!(actions[7], Some(WindowMenuRow::OpenHere));
+        assert_eq!(row(&items, 8), ("Mini View", true, false));
+        assert!(!checked(&items));
+        assert!(matches!(
+            &items[7],
+            MenuItem::Entry {
+                mnemonic: Some(7),
+                ..
+            }
+        ));
+        let on = WindowMenuState {
+            open_here: OpenHereState::On,
+            ..st
+        };
+        assert!(checked(&window_menu(on, None).0));
+        let greyed = WindowMenuState {
+            open_here: OpenHereState::Greyed,
+            ..st
+        };
+        assert_eq!(
+            row(&window_menu(greyed, None).0, 7),
+            ("Always Open Here", false, false)
+        );
+        let dialog = WindowMenuState {
+            open_here: OpenHereState::Absent,
+            ..st
+        };
+        let (items, actions) = window_menu(dialog, None);
+        assert_eq!(items.len(), 10);
+        assert!(!actions.contains(&Some(WindowMenuRow::OpenHere)));
+    }
+
+    #[test]
     fn several_desktops_add_the_desktop_rows_after_always_on_top() {
         let st = WindowMenuState {
             maximized: false,
@@ -421,6 +498,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            open_here: OpenHereState::Absent,
             mini: false,
             desktops: 4,
             sticky: false,
@@ -462,6 +540,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
             sticky: false,
@@ -572,6 +651,7 @@ mod tests {
             owned: false,
             resizable: false,
             on_top: false,
+            open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
             sticky: false,
@@ -601,6 +681,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            open_here: OpenHereState::Off,
             mini: false,
             desktops: 1,
             sticky: false,
@@ -636,6 +717,7 @@ mod tests {
             owned: false,
             resizable: true,
             on_top: false,
+            open_here: OpenHereState::Absent,
             mini: false,
             desktops: 1,
             sticky: false,

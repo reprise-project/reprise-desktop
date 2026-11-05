@@ -10,7 +10,8 @@ use smithay::utils::Rectangle;
 
 use crate::compositor::State;
 use crate::window::{Kind, Window, WindowId, area_client, first_configure_size, x11_geometry};
-use crate::windowrules::{Remembered, Want, WindowState};
+use crate::windowrules::{Remembered, Want, WindowRule, WindowState, has_open_here, put_open_here};
+use crate::winmenu::OpenHereState;
 
 pub struct Wm {
     pub kept: crate::keptframes::KeptFrames,
@@ -66,11 +67,12 @@ impl Window {
     /// keep their own placement (file dialogs their app's, `filedlggeom`),
     /// X11 menus and tooltips their own place.
     pub fn placeable(&self) -> bool {
-        !self.override_redirect
-            && !self.is_owned()
-            && !self.is_modal()
-            && !self.file_dialog
-            && !self.app().is_empty()
+        !self.places_itself() && !self.app().is_empty()
+    }
+
+    /// A dialog or an X11 menu or tooltip: rules never place it.
+    fn places_itself(&self) -> bool {
+        self.override_redirect || self.is_owned() || self.is_modal() || self.file_dialog
     }
 
     /// The last app id seen once the client is gone: a disconnecting client can
@@ -250,13 +252,13 @@ impl State {
         want
     }
 
+    /// The output `want` names, by connector or monitor id, else the one under the pointer.
     pub fn placement_output(&self, want: Option<&Want>) -> Option<Output> {
         let named = want.and_then(|w| w.output.as_deref()).and_then(|name| {
-            self.scene
-                .outputs()
-                .iter()
+            (self.scene.outputs().iter())
                 .find(|o| o.name() == name && self.layout_box(Some(o)).width > 0)
                 .cloned()
+                .or_else(|| self.output_of_monitor(name))
         });
         named.or_else(|| {
             let p = self.pointer_location();
@@ -407,6 +409,62 @@ impl State {
             maximized: win.maximized,
             text_size: self.config.accessibility.text_size,
         })
+    }
+
+    /// The monitor id (`outputlayouts::monitor_ids`) of the laid-out output named `name`.
+    fn monitor_of_output(&self, name: &str) -> Option<String> {
+        let outs: Vec<&Output> = (self.scene.outputs().iter())
+            .filter(|o| self.layout_box(Some(o)).width > 0)
+            .collect();
+        let ids = crate::outputlayouts::monitor_ids(&outs);
+        (outs.into_iter().zip(ids)).find_map(|(o, m)| (o.name() == name).then_some(m))
+    }
+
+    /// Always Open Here's row in `w`'s window menu.
+    pub(crate) fn open_here_state(&self, w: WindowId) -> OpenHereState {
+        let Some(win) = self.win(w) else {
+            return OpenHereState::Absent;
+        };
+        let app = win.app();
+        if win.places_itself() || win.dialog_tag != crate::window::DialogTag::None {
+            OpenHereState::Absent
+        } else if app.is_empty() || app.contains(['*', '?']) {
+            OpenHereState::Greyed
+        } else if has_open_here(&self.config.window_rules, &app) {
+            OpenHereState::On
+        } else {
+            OpenHereState::Off
+        }
+    }
+
+    /// Always Open Here picked: removes its rule for `w`'s program, or writes one opening the
+    /// program's windows where `w` is now. The live rules change at once; the config watch
+    /// rereads the same from the file.
+    pub(crate) fn toggle_open_here(&mut self, w: WindowId) {
+        let state = self.open_here_state(w);
+        let Some(app) = self.win(w).map(Window::app) else {
+            return;
+        };
+        let rule = match state {
+            OpenHereState::On => None,
+            OpenHereState::Off => {
+                let Some(at) = self.frame_of(w) else {
+                    return;
+                };
+                let Some(monitor) = self.monitor_of_output(&at.output) else {
+                    return;
+                };
+                let (on_top, sticky) = (
+                    self.stays_on_top(w),
+                    self.win(self.home(w)).is_some_and(|h| h.sticky),
+                );
+                Some(WindowRule::open_here(&app, monitor, &at, on_top, sticky))
+            }
+            OpenHereState::Absent | OpenHereState::Greyed => return,
+        };
+        log::info!("window {app:?}: Always Open Here {rule:?}");
+        put_open_here(&mut self.config.window_rules, &app, rule.clone());
+        crate::configwrite::save_open_here(&self.config_path, app, rule);
     }
 
     /// Keep where `w` is (`frame_of`) as its app's remembered frame.

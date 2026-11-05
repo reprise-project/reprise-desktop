@@ -111,9 +111,16 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   the window menu, or double-click the icon to close. Super and a left drag
   moves a window by its body.
 - **Window menu.** Alt+Space, or a right-click on the caption: Restore,
-  Move, Size, Minimize, Maximize, Roll Up, Always on Top, Mini View, Show
-  on All Desktops, Move to Desktop, the tab commands and Close. Move and Size work
-  from the keyboard.
+  Move, Size, Minimize, Maximize, Roll Up, Always on Top, Always Open Here,
+  Mini View, Show on All Desktops, Move to Desktop, the tab commands and
+  Close. Move and Size work from the keyboard.
+- **Always Open Here.** Ticked in the window menu, it writes a window rule
+  for the program's app id: its windows open on this screen, at this place
+  and size (the restored one when maximized), maximized if it is, and on top
+  or on every desktop when it is. Unlike window memory, moving a window
+  later does not change it. Ticking it on another window of the program
+  replaces the rule; unticking removes it. Greyed for a window without an
+  app id, and dialogs don't have it.
 - **Roll up.** Roll Up in the window menu (or a caption double-click set to
   it) leaves only the window's title bar, at its width; the program keeps
   running at its size and gets no input. It moves like any window. Roll Down,
@@ -162,7 +169,10 @@ the Super tap, Super+Shift+Esc and the VT switch keys can be rebound.
   globs, and pin their size, position, screen, desktop, state, always-on-top
   or sticky flag. `tab_group = "name"` puts every window its rules name the
   same into one tab group, each new one as the last tab. A window you pull
-  out of that group stays out of it until you group it again.
+  out of that group stays out of it until you group it again. Every rule
+  that matches applies in file order, so a later one wins key by key. The
+  window menu's Always Open Here writes its rule last, marked
+  `from_menu = true`, and leaves your own rules as they are.
 - **Small conveniences.** Super+C centres a window on the screen under the
   pointer. Super+Shift+B hides its frame. Esc during a caption drag puts the
   window back where it was.

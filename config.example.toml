@@ -550,7 +550,8 @@ suspend_after = 0            # run [power] standby
 # title = "*build*"          # optional; matched once, when the window opens
 # size = [800, 600]          # outer size, frame included
 # position = [40, 40]        # frame's top-left from the screen's top-left, kept inside the work area
-# output = "DP-1"            # the screen by connector name; the one under the pointer when absent
+# output = "DP-1"            # the screen by connector name or monitor id ("make|model|serial");
+#                            # the one under the pointer when absent
 # state = "maximized"        # normal, maximized, minimized or fullscreen
 # desktop = 2                # 1 to [workspaces] count
 # always_on_top = true
@@ -559,6 +560,8 @@ suspend_after = 0            # run [power] standby
 #                            # first one opens on its own, later ones join it as the last tab; a
 #                            # window pulled out of the group is passed over until regrouped
 #                            # dialogs keep centring on their owner; fixed-size windows ignore size
+# from_menu = true           # written by the window menu's Always Open Here, which ticks, replaces
+#                            # and removes it; one per app id, last so it beats hand-written rules
 
 # [window_snapping]          # snap a window to the screen's edges and the zones of its layout
 # enabled = true             # drag snapping; the Super+arrow binds always work
