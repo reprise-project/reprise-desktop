@@ -1235,7 +1235,8 @@ mod tests {
         let mut h = test_head("DP-1");
         h.adaptive_sync = AdaptiveSync::Unsupported;
         let d = Display::with_heads(vec![h]);
-        let groups: &[(&str, &[pagelist::Item])] = &[("Look", &[pagelist::Item::Page("Display")])];
+        let groups: &[(&str, &[pagelist::Item])] =
+            &[("Display & Sound", &[pagelist::Item::Page("Display")])];
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let theme = reprisekit::interfaces::theme_for(i);
             let text = TextRenderer::load(&theme.fonts);
@@ -1268,7 +1269,8 @@ mod tests {
     #[test]
     fn a_read_moves_the_pick_and_the_rebuild_keeps_the_focus() {
         let mut d = Display::with_heads(vec![test_head("DP-1")]);
-        let groups: &[(&str, &[pagelist::Item])] = &[("Look", &[pagelist::Item::Page("Display")])];
+        let groups: &[(&str, &[pagelist::Item])] =
+            &[("Display & Sound", &[pagelist::Item::Page("Display")])];
         let mut sheet =
             PropSheet::with_list(groups, vec![page(&d, Area::MIN)], crate::pages::CLIENT);
         sheet.pages[0].set_track(MODE, 0);

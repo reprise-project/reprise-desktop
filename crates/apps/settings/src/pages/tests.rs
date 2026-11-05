@@ -466,7 +466,12 @@ fn every_spin_shows_its_unit() {
 }
 
 fn enabled_on(s: &PropSheet, page: Page, id: &str) -> bool {
-    match &s.pages[page.index()].item(id).unwrap().control {
+    enabled(&s.pages[page.index()], id)
+}
+
+/// Whether `id` on `f` is lit; panics for a control with no greyed state.
+fn enabled(f: &Form, id: &str) -> bool {
+    match &f.item(id).unwrap_or_else(|| panic!("{id}")).control {
         Control::Check { enabled, .. }
         | Control::Label { enabled, .. }
         | Control::Edit { enabled, .. }
