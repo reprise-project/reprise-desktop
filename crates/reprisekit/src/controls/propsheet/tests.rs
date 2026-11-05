@@ -51,8 +51,16 @@ fn check_page(label: &str) -> Form {
     )])
 }
 
-const LIST_GROUPS: &[(&str, &[&str])] =
-    &[("Look", &["Night Light", "Effects"]), ("Input", &["Mouse"])];
+const LIST_GROUPS: &[(&str, &[pagelist::Item])] = &[
+    (
+        "Look",
+        &[
+            pagelist::Item::Page("Night Light"),
+            pagelist::Item::Page("Effects"),
+        ],
+    ),
+    ("Input", &[pagelist::Item::Page("Mouse")]),
+];
 
 fn list_sheet() -> PropSheet {
     let pages = ["Night Light", "Effects", "Mouse"]
@@ -68,7 +76,35 @@ fn long_list_sheet() -> PropSheet {
     let labels: Vec<String> = (0..30).map(|i| format!("Page {i}")).collect();
     let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
     let pages = labels.iter().map(|l| check_page(l)).collect();
-    PropSheet::with_list(&[("All", &labels)], pages, (398, 424))
+    let items: Vec<pagelist::Item> = labels.into_iter().map(pagelist::Item::Page).collect();
+    PropSheet::with_list(&[("All", &items)], pages, (398, 424))
+}
+
+const LINK_GROUPS: &[(&str, &[pagelist::Item])] = &[
+    (
+        "Look",
+        &[
+            pagelist::Item::Page("Night Light"),
+            pagelist::Item::Page("Effects"),
+        ],
+    ),
+    (
+        "Devices",
+        &[
+            pagelist::Item::Link("Bluetooth"),
+            pagelist::Item::Page("Mouse"),
+            pagelist::Item::Link("Printers"),
+        ],
+    ),
+];
+
+/// Two pages under Look; Bluetooth, Mouse and Printers under Devices, the first and last links.
+fn link_sheet() -> PropSheet {
+    let pages = ["Night Light", "Effects", "Mouse"]
+        .into_iter()
+        .map(check_page)
+        .collect();
+    PropSheet::with_list(LINK_GROUPS, pages, (398, 424))
 }
 
 fn list_top(s: &PropSheet) -> i32 {
@@ -76,6 +112,65 @@ fn list_top(s: &PropSheet) -> i32 {
         Nav::List(l) => l.top,
         Nav::Tabs => unreachable!(),
     }
+}
+
+fn cursor(s: &PropSheet) -> Option<usize> {
+    match &s.nav {
+        Nav::List(l) => l.cursor,
+        Nav::Tabs => unreachable!(),
+    }
+}
+
+fn grey(s: &mut PropSheet, link: usize) {
+    match &mut s.nav {
+        Nav::List(l) => l.set_link_enabled(link, false),
+        Nav::Tabs => unreachable!(),
+    }
+}
+
+#[test]
+fn a_press_on_a_link_row_comes_back_as_its_link() {
+    let text = TextRenderer::load(&FontConfig::default());
+    let px = Theme::default().fonts.size_px;
+    let mut s = link_sheet();
+    grey(&mut s, 1);
+    let rows = s.layout(&text, px).list.unwrap().rows;
+    let at = |r: Rect| (r.x + 20, r.y + 5);
+    let (x, y) = at(rows[4]);
+    assert_eq!(s.hit(x, y, &text, px), Some(Hit::Link(0)));
+    assert_eq!(s.click(Some(Hit::Link(0))), Event::Link(0));
+    assert_eq!(
+        (s.tabs.open, s.tabs.focused),
+        (0, true),
+        "the page stays; the list takes the keyboard"
+    );
+    assert_eq!(cursor(&s), Some(0));
+    assert_eq!(s.click(Some(Hit::Link(1))), Event::None, "a greyed link");
+    assert_eq!(cursor(&s), Some(0));
+}
+
+#[test]
+fn enter_on_the_link_the_list_rests_on_opens_it() {
+    let mut s = link_sheet();
+    s.tabs.open = 1;
+    s.click(Some(Hit::Tab(1)));
+    assert_eq!(s.key(form::Key::Down, None), Event::Redraw);
+    assert_eq!(
+        (s.tabs.open, cursor(&s)),
+        (1, Some(0)),
+        "resting on a link opens nothing"
+    );
+    assert_eq!(s.key(form::Key::Enter, None), Event::Link(0));
+    assert_eq!(s.key(form::Key::Down, None), Event::Redraw);
+    assert_eq!((s.tabs.open, cursor(&s)), (2, None));
+    s.key(form::Key::Up, None);
+    assert_eq!(cursor(&s), Some(0));
+    s.key(form::Key::Tab { back: false }, None);
+    assert_eq!(
+        (s.tabs.focused, cursor(&s)),
+        (false, None),
+        "leaving the list lets go of the link"
+    );
 }
 
 #[test]
@@ -458,6 +553,14 @@ fn a_list_sheets_open_item_names_the_page_it_holds() {
     let mut tree = Tree::window("T", s.size);
     let (_, focus) = s.access(&mut tree, ROOT, &text, 11);
     assert_eq!(focus, tree.find(Role::ListItem, "Effects"));
+    let mut s = link_sheet();
+    s.tabs.open = 1;
+    s.click(Some(Hit::Link(0)));
+    let mut tree = Tree::window("T", s.size);
+    let (panel, focus) = s.access(&mut tree, ROOT, &text, 11);
+    assert_eq!(focus, tree.find(Role::ListItem, "Bluetooth..."));
+    let effects = tree.find(Role::ListItem, "Effects").unwrap();
+    assert_eq!(tree.get(panel).unwrap().labelled_by(), &[effects]);
 }
 
 #[test]

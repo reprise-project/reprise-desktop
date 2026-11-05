@@ -1,7 +1,7 @@
 //! Keys and clicks on the tab strip or the page list, and turning pages.
 
 use crate::controls::form::{self, Form};
-use crate::controls::pagelist;
+use crate::controls::pagelist::{PageList, Pick};
 use crate::controls::tabstrip::TabStrip;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,15 +27,17 @@ pub enum StripKey {
 /// page focuses the new page's first tab stop. Everything else, Enter and Escape
 /// included, is [`StripKey::Pass`]: the page's default button or Cancel answers.
 ///
-/// With `list` the focused list takes Up, Down, Home and End
-/// ([`pagelist::target`]); Left and Right do nothing; Page Up and Down go to the page.
+/// With `list` the focused list takes Up, Down, Home and End ([`PageList::target`]):
+/// a page opens, a live link takes the list's cursor ([`StripKey::Moved`]); Left and
+/// Right do nothing; Page Up and Down go to the page.
 pub(super) fn nav_key(
     tabs: &mut TabStrip,
     pages: &mut [Form],
     key: &form::Key,
     ctrl_tab: Option<bool>,
-    list: bool,
+    list: Option<&mut PageList>,
 ) -> StripKey {
+    let is_list = list.is_some();
     let was = tabs.open;
     if let Some(back) = ctrl_tab {
         return if tabs.cycle(back) {
@@ -76,17 +78,30 @@ pub(super) fn nav_key(
             StripKey::Moved
         }
         form::Key::Up | form::Key::Down | form::Key::Home | form::Key::End
-            if tabs.focused && list =>
+            if tabs.focused && is_list =>
         {
-            let to = pagelist::target(was, tabs.labels.len(), &key).unwrap_or(was);
-            if to == was {
+            let Some(list) = list else {
                 return StripKey::None;
+            };
+            match list.target(was, &key) {
+                Some(Pick::Page(k)) if k != was => {
+                    list.cursor = None;
+                    tabs.open = k;
+                    turned(tabs, pages, was);
+                    StripKey::Turned
+                }
+                Some(Pick::Page(_)) if list.cursor.is_some() => {
+                    list.cursor = None;
+                    StripKey::Moved
+                }
+                Some(Pick::Link(k)) if list.cursor != Some(k) => {
+                    list.cursor = Some(k);
+                    StripKey::Moved
+                }
+                _ => StripKey::None,
             }
-            tabs.open = to;
-            turned(tabs, pages, was);
-            StripKey::Turned
         }
-        form::Key::Left | form::Key::Right if tabs.focused && !list => {
+        form::Key::Left | form::Key::Right if tabs.focused && !is_list => {
             if tabs.step(key == form::Key::Right) {
                 turned(tabs, pages, was);
                 StripKey::Turned

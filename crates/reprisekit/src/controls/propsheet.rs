@@ -13,8 +13,10 @@
 //! right of where they were built; the open page's name is drawn in bold where
 //! the tabs would be. The list is a tab stop like the strip. Up, Down, Home and
 //! End on it open pages, and a page opened any way scrolls its row into view
-//! ([`PropSheet::reveal_open`]). Ctrl+Tab, Ctrl+Page Down and their reverses step
-//! pages in either mode ([`page_step`]).
+//! ([`PropSheet::reveal_open`]). The keys also rest on a live link row, which
+//! opens nothing; Enter on it, or a press on it, comes back as [`Event::Link`].
+//! Ctrl+Tab, Ctrl+Page Down and their reverses step pages in either mode
+//! ([`page_step`]).
 //!
 //! Tabs that wrap onto more rows push the page down 18 px a row; a host calls
 //! [`PropSheet::fit_tabs`] to grow the sheet by as much.
@@ -117,11 +119,15 @@ pub enum Event {
     Ok,
     Cancel,
     Apply,
+    /// Link `k` of the page list was pressed, or Enter was pressed with the list resting on it.
+    Link(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Tab(usize),
+    /// A link row of the page list, greyed or not.
+    Link(usize),
     ListBar(BarHit),
     List,
     /// The page's scrollbar, while the page scrolls ([`PropSheet::fit`]).
@@ -198,16 +204,23 @@ impl PropSheet {
     }
 
     /// A sheet whose pages are picked from a list down its left side ([`pagelist`]):
-    /// `groups` are the headings, each with its pages' labels, and `pages` one per
-    /// label in that order, built for a `client` sized sheet. The sheet is
-    /// [`pagelist::ADVANCE`] wider. Labels carry no `&` access key. Panics unless
-    /// there is one page per label.
+    /// `groups` are the headings, each with its rows, and `pages` one per
+    /// [`pagelist::Item::Page`] in that order, built for a `client` sized sheet. The
+    /// sheet is [`pagelist::ADVANCE`] wider. Labels carry no `&` access key. Panics
+    /// unless there is one page per page row.
     pub fn with_list(
-        groups: &[(&str, &[&str])],
+        groups: &[(&str, &[pagelist::Item<'_>])],
         pages: Vec<Form>,
         client: (i32, i32),
     ) -> PropSheet {
-        let labels: Vec<&str> = groups.iter().flat_map(|(_, l)| l.iter().copied()).collect();
+        let labels: Vec<&str> = groups
+            .iter()
+            .flat_map(|(_, items)| items.iter())
+            .filter_map(|it| match it {
+                pagelist::Item::Page(l) => Some(*l),
+                pagelist::Item::Link(_) => None,
+            })
+            .collect();
         assert_eq!(labels.len(), pages.len(), "one page per tab");
         let mut sheet = PropSheet {
             tabs: TabStrip::new(&labels, 0),

@@ -4,6 +4,7 @@
 
 use reprisefs::xkb::Layout;
 use reprisekit::controls::form::Form;
+use reprisekit::controls::pagelist;
 use reprisekit::controls::propsheet::PropSheet;
 
 use crate::model::Settings;
@@ -63,16 +64,16 @@ pub fn build(p: Page, src: &Sources, a: Area) -> Form {
     }
 }
 
-/// Each heading of [`GROUPS`] with its pages' labels, in list order. Program entries
+/// Each heading of [`GROUPS`] with its pages' rows, in list order. Program entries
 /// get no row.
-fn page_rows() -> Vec<(&'static str, Vec<&'static str>)> {
+fn page_rows() -> Vec<(&'static str, Vec<pagelist::Item<'static>>)> {
     GROUPS
         .iter()
         .map(|(heading, entries)| {
             let labels = entries
                 .iter()
                 .filter_map(|e| match e {
-                    Entry::Page(p) => Some(p.label()),
+                    Entry::Page(p) => Some(pagelist::Item::Page(p.label())),
                     Entry::Program(_) => None,
                 })
                 .collect();
@@ -84,7 +85,8 @@ fn page_rows() -> Vec<(&'static str, Vec<&'static str>)> {
 /// The whole sheet at [`Area::MIN`] with `s` pushed in ([`pages::write`]).
 pub fn sheet(s: &Settings, src: &Sources) -> PropSheet {
     let rows = page_rows();
-    let groups: Vec<(&str, &[&str])> = rows.iter().map(|(h, l)| (*h, l.as_slice())).collect();
+    let groups: Vec<(&str, &[pagelist::Item])> =
+        rows.iter().map(|(h, l)| (*h, l.as_slice())).collect();
     let forms = Page::all().map(|p| build(p, src, Area::MIN)).collect();
     let mut sheet = PropSheet::with_list(&groups, forms, pages::CLIENT);
     pages::write(&mut sheet, s, src.layouts);
@@ -98,7 +100,6 @@ pub fn open(sheet: &PropSheet) -> Page {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reprisekit::controls::pagelist;
     use reprisekit::raster::Rect;
     use reprisekit::text::TextRenderer;
     use reprisekit::theme::{FontConfig, Theme};
