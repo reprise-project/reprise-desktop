@@ -11,11 +11,36 @@ use super::{APPLY, CANCEL, Event, Hit, Nav, OK, PropSheet};
 
 impl PropSheet {
     /// Scroll the open page's row fully into view in list mode. Opening a page
-    /// through the sheet does this itself; a host that sets `tabs.open` calls it
-    /// after. True when the rows moved.
+    /// through the sheet does this itself, [`PropSheet::set_open`] too. True when the rows moved.
     pub fn reveal_open(&mut self) -> bool {
         let open = self.tabs.open;
         self.on_list(|list, lay| list.reveal(Pick::Page(open), lay))
+    }
+
+    /// Open page `i` from the host, leaving the focus to the host: the list lets go of a link
+    /// it rests on and scrolls the page's row into view.
+    pub fn set_open(&mut self, i: usize) {
+        self.tabs.open = i;
+        self.drop_cursor();
+        self.reveal_open();
+    }
+
+    /// Take the keyboard from the page, the list and the search field, for a host part beside
+    /// the page that takes it.
+    pub fn blur(&mut self) {
+        self.open_mut().set_focus(None);
+        self.tabs.focused = false;
+        self.search_focused = false;
+        self.drop_cursor();
+    }
+
+    /// Give the page list the keyboard from a host part beside the page, as Shift+Tab off the
+    /// page's first stop does; with the open row hidden it opens the first shown page.
+    pub fn focus_list(&mut self) {
+        self.open_mut().set_focus(None);
+        self.search_focused = false;
+        self.tabs.focused = true;
+        self.rest_on_shown();
     }
 
     /// Give the keyboard to control `id` on the open page, taking it from the page strip, and
@@ -275,9 +300,8 @@ impl PropSheet {
                 self.search.edit.place(end, false);
                 Some(self.search_key(k.clone()))
             }
-            form::Key::Escape
-                if (self.search_focused || self.tabs.focused) && !self.search.text().is_empty() =>
-            {
+            // An open list on the page takes Escape first.
+            form::Key::Escape if !self.search.text().is_empty() && !self.open().popup_open() => {
                 self.search.clear();
                 Some(Event::Search)
             }

@@ -213,8 +213,11 @@ impl SettingsApp {
                 _ => Reply::redraw(),
             },
             propsheet::Event::Page(..) => Reply::redraw(),
-            propsheet::Event::Link(_) => Reply::none(),
-            propsheet::Event::Search => Reply::redraw(),
+            propsheet::Event::Link(_) => Reply::redraw(),
+            propsheet::Event::Search => {
+                let query = self.sheet.search.text().to_owned();
+                self.search(&query)
+            }
             propsheet::Event::Apply => {
                 if self.apply() {
                     self.display.pending = Some(displayhost::Press::Apply);
@@ -279,7 +282,11 @@ impl SettingsApp {
                 }
             }
         }
+        let from_field = key == form::Key::Enter && self.sheet.search_focused;
         let ev = self.sheet.key(key, None);
+        if from_field && self.sheet.tabs.focused {
+            self.search_opened();
+        }
         self.sheet_event(ev)
     }
 
@@ -417,6 +424,9 @@ impl SettingsApp {
                     self.tab_opened();
                 } else if self.sheet.open().focus().is_some() {
                     self.blur_side_lists();
+                }
+                if self.sheet.tabs.open != was {
+                    self.search_opened();
                 }
                 let r = self.sheet_event(ev);
                 Reply {

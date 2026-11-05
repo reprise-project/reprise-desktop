@@ -1,8 +1,9 @@
 use super::*;
 use crate::locations::location_answers;
 use repriseapp::{BTN_LEFT, BTN_RIGHT, Extended, KeyInput, PointerInput};
+use repriseconf::pages::Hit;
 use reprisekit::classic::widgets::BarHit;
-use reprisekit::controls::{form, listview, propsheet};
+use reprisekit::controls::{form, listview, pagelist, propsheet};
 use reprisekit::theme::FontConfig;
 use std::sync::atomic::Ordering;
 
@@ -80,7 +81,14 @@ fn a_field_copies_its_selection_and_takes_a_paste() {
         _ => unreachable!(),
     };
     assert_eq!(text(&a), "1|1 2", "the paste's first line goes in");
-    let ctrl = |ch: u8| KeyInput {
+    a.event(MAIN, Event::Key(ctrl(b'a')), &mut ctx);
+    let r = a.event(MAIN, Event::Key(ctrl(b'c')), &mut ctx);
+    assert_eq!(r.copy.as_deref(), Some("1|1 2"));
+    assert!(a.event(MAIN, Event::Key(ctrl(b'v')), &mut ctx).paste);
+}
+
+fn ctrl(ch: u8) -> KeyInput {
+    KeyInput {
         sym: u32::from(ch),
         utf8: None,
         mods: repriseapp::Mods {
@@ -88,11 +96,17 @@ fn a_field_copies_its_selection_and_takes_a_paste() {
             ..Default::default()
         },
         edit: reprisekit::textedit::key_for(u32::from(ch), true, false, None),
+    }
+}
+
+fn typed(a: &mut SettingsApp, ctx: &mut Ctx, text: &str) {
+    let k = KeyInput {
+        sym: 0,
+        utf8: Some(text.into()),
+        mods: Default::default(),
+        edit: Some(reprisekit::textedit::EditKey::Insert(text.into())),
     };
-    a.event(MAIN, Event::Key(ctrl(b'a')), &mut ctx);
-    let r = a.event(MAIN, Event::Key(ctrl(b'c')), &mut ctx);
-    assert_eq!(r.copy.as_deref(), Some("1|1 2"));
-    assert!(a.event(MAIN, Event::Key(ctrl(b'v')), &mut ctx).paste);
+    a.event(MAIN, Event::Key(k), ctx);
 }
 
 fn enter(a: &mut SettingsApp, ctx: &Ctx) {
@@ -1782,4 +1796,170 @@ fn unchecking_run_as_asks_first_and_only_ok_unchecks_it() {
     );
     assert_eq!(a.list.checks, Some(vec![false]), "OK unchecks it");
     assert!(a.dirty(), "Apply writes it");
+}
+
+fn plain_key(a: &mut SettingsApp, ctx: &Ctx, sym: u32) {
+    let k = KeyInput {
+        sym,
+        utf8: None,
+        mods: repriseapp::Mods::default(),
+        edit: None,
+    };
+    a.key(k, &ctx.forms().controls());
+}
+
+fn focused_id(a: &SettingsApp) -> Option<&'static str> {
+    let page = a.sheet.open();
+    page.focus().map(|f| page.items[f].id)
+}
+
+/// Ctrl+F, then `query` typed into the search field.
+fn find(a: &mut SettingsApp, ctx: &mut Ctx, query: &str) {
+    a.event(MAIN, Event::Key(ctrl(b'f')), ctx);
+    assert!(a.sheet.search_focused);
+    typed(a, ctx, query);
+}
+
+#[test]
+fn a_query_filters_the_list_and_enter_focuses_the_control_it_found() {
+    let (mut a, mut ctx) = (app("search-enter"), test_ctx());
+    find(&mut a, &mut ctx, "debug overlay");
+    let adv = Page::Advanced.index();
+    assert_eq!(a.search_hits[adv], Some(Hit::Control(pages::DEBUG_OVERLAY)));
+    assert!(
+        a.search_hits
+            .iter()
+            .enumerate()
+            .all(|(i, h)| i == adv || h.is_none())
+    );
+    let list = a.sheet.list_mut().unwrap();
+    assert!(list.shows(pagelist::Pick::Page(adv)));
+    assert!(!list.shows(pagelist::Pick::Page(Page::Appearance.index())));
+    enter(&mut a, &ctx);
+    assert_eq!(registry::open(&a.sheet), Page::Advanced);
+    assert_eq!(focused_id(&a), Some(pages::DEBUG_OVERLAY));
+    assert!(!a.sheet.tabs.focused && !a.locations_focus);
+}
+
+#[test]
+fn escape_on_the_found_control_clears_the_query_and_keeps_the_sheet_open() {
+    let (mut a, mut ctx) = (app("search-escape"), test_ctx());
+    find(&mut a, &mut ctx, "debug overlay");
+    enter(&mut a, &ctx);
+    let escape = |a: &mut SettingsApp| {
+        let k = KeyInput {
+            sym: reprisekit::textedit::keysym::ESCAPE,
+            utf8: None,
+            mods: repriseapp::Mods::default(),
+            edit: None,
+        };
+        a.key(k, &ctx.forms().controls())
+    };
+    let cancelled = |a: &SettingsApp| matches!(a.display.pending, Some(displayhost::Press::Cancel));
+    escape(&mut a);
+    assert!(!cancelled(&a));
+    assert!(a.search_hits.is_empty());
+    assert_eq!(a.sheet.list_mut().unwrap().filter(), None);
+    assert_eq!(focused_id(&a), Some(pages::DEBUG_OVERLAY));
+    escape(&mut a);
+    assert!(cancelled(&a), "with the field empty Escape cancels");
+}
+
+#[test]
+fn enter_on_a_found_page_already_open_focuses_the_control_it_found() {
+    let (mut a, mut ctx) = (app("search-enter-open"), test_ctx());
+    a.open_page(Page::Keyboard, None);
+    find(&mut a, &mut ctx, "repeat delay");
+    let kbd = Page::Keyboard.index();
+    assert_eq!(a.search_hits[kbd], Some(Hit::Control("repeat_delay")));
+    enter(&mut a, &ctx);
+    assert_eq!(registry::open(&a.sheet), Page::Keyboard);
+    assert_eq!(focused_id(&a), Some("repeat_delay"));
+    assert!(!a.shortcuts_focus, "the shortcut list lets go");
+}
+
+#[test]
+fn a_found_page_clicked_in_the_list_focuses_the_control_it_found() {
+    let (mut a, mut ctx) = (app("search-click"), test_ctx());
+    ctx.size = (1920, 1080);
+    a.event(MAIN, Event::Resized, &mut ctx);
+    find(&mut a, &mut ctx, "debug overlay");
+    let adv = Page::Advanced.index();
+    let px = a.sheet.open().units().px(ctx.theme.fonts.size_px);
+    let inner = a
+        .sheet
+        .layout(&ctx.text, px)
+        .list
+        .expect("a page list")
+        .inner;
+    let x = inner.x + 20;
+    let y = (inner.y..inner.bottom())
+        .find(|&y| a.sheet.hit(x, y, &ctx.text, px) == Some(propsheet::Hit::Tab(adv)))
+        .expect("the Advanced row shows");
+    let press = PointerInput::Press {
+        x,
+        y,
+        button: BTN_LEFT,
+        time: 0,
+        mods: repriseapp::Mods::default(),
+    };
+    a.event(MAIN, Event::Pointer(press), &mut ctx);
+    assert_eq!(registry::open(&a.sheet), Page::Advanced);
+    assert_eq!(focused_id(&a), Some(pages::DEBUG_OVERLAY));
+}
+
+/// The keys that step the list keep the keyboard on it, so the next row is a key away.
+#[test]
+fn down_and_tab_from_the_field_open_a_found_page_without_focusing_its_control() {
+    let (mut a, mut ctx) = (app("search-down"), test_ctx());
+    find(&mut a, &mut ctx, "debug overlay");
+    plain_key(&mut a, &ctx, reprisekit::textedit::keysym::DOWN);
+    assert_eq!(registry::open(&a.sheet), Page::Advanced);
+    assert!(a.sheet.tabs.focused);
+    assert_eq!(focused_id(&a), None);
+
+    let (mut a, mut ctx) = (app("search-tab"), test_ctx());
+    find(&mut a, &mut ctx, "debug overlay");
+    tab(&mut a, &ctx, false);
+    assert_eq!(registry::open(&a.sheet), Page::Advanced);
+    assert!(a.sheet.tabs.focused);
+    assert_eq!(focused_id(&a), None);
+}
+
+#[test]
+fn an_emptied_query_drops_the_hits() {
+    let mut a = app("search-clear");
+    a.open_page(Page::Backup, None);
+    a.sheet
+        .search
+        .key(reprisekit::textedit::EditKey::Insert("night".into()));
+    a.sheet_event(propsheet::Event::Search);
+    assert!(a.search_hits[Page::NightLight.index()].is_some());
+    a.sheet.search.clear();
+    a.sheet_event(propsheet::Event::Search);
+    assert!(a.search_hits.is_empty());
+    let list = a.sheet.list_mut().unwrap();
+    assert_eq!(list.filter(), None, "every row shows again");
+    assert!(list.top > 0, "the open page's row scrolls back into view");
+}
+
+#[test]
+fn a_query_that_shows_the_same_rows_keeps_the_list_scrolled() {
+    let mut a = app("search-scroll");
+    a.search("s");
+    a.sheet.list_mut().unwrap().top = 40;
+    a.search("s ");
+    assert_eq!(a.sheet.list_mut().unwrap().top, 40);
+    a.search("sw");
+    assert_eq!(
+        a.sheet.list_mut().unwrap().top,
+        0,
+        "fewer rows start at the top"
+    );
+}
+
+#[test]
+fn a_link_redraws_the_list() {
+    let mut a = app("search-link");
+    assert!(a.sheet_event(propsheet::Event::Link(0)).redraw);
 }

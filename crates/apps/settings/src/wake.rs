@@ -187,8 +187,7 @@ impl SettingsApp {
             return false;
         }
         self.blur_side_lists();
-        self.sheet.tabs.open = page.index();
-        self.sheet.reveal_open();
+        self.sheet.set_open(page.index());
         match focus {
             Some(id) => self.sheet.focus_control(id),
             None => self.tab_opened(),
