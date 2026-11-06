@@ -14,9 +14,6 @@ pub type Monitor = (i32, i32, i32, i32, u32);
 /// How long Display Control layouts must stop coming before the last one is published.
 pub const SETTLE: Duration = Duration::from_millis(250);
 
-/// How the compositor's names for the screens it makes for lock mode begin.
-const REMOTE_SCREEN: &str = "REMOTE-";
-
 /// The viewers shown the session together, from the first one joining until the last one's
 /// display goes. One for the server, shared by every connection.
 #[derive(Clone)]
@@ -176,19 +173,6 @@ pub fn from_display_control(
     }
     monitors.sort_by_key(|(primary, _)| !primary);
     Ok(monitors.into_iter().map(|(_, m)| m).collect())
-}
-
-/// Whether a grant shares screens, every one made for lock mode, named as in `mapping_ids`. In
-/// show mode, or where the portal fell back to it, the physical screens are shared instead.
-pub fn remote_screens<'a>(mapping_ids: impl IntoIterator<Item = Option<&'a str>>) -> bool {
-    let mut any = false;
-    for id in mapping_ids {
-        if !id.is_some_and(|name| name.starts_with(REMOTE_SCREEN)) {
-            return false;
-        }
-        any = true;
-    }
-    any
 }
 
 #[cfg(test)]
@@ -389,17 +373,5 @@ pub(crate) mod tests {
             from_display_control(&dc, 16, 125).unwrap(),
             [(0, 0, 1920, 1080, 150), (-1280, 0, 1280, 1024, 125)]
         );
-    }
-
-    #[test]
-    fn only_screens_made_for_lock_mode_are_a_lock_mode_grant() {
-        assert!(remote_screens(
-            [Some("REMOTE-1"), Some("REMOTE-2")].into_iter()
-        ));
-        assert!(!remote_screens(
-            [Some("REMOTE-1"), Some("eDP-1")].into_iter()
-        ));
-        assert!(!remote_screens([Some("REMOTE-1"), None].into_iter()));
-        assert!(!remote_screens(std::iter::empty()));
     }
 }
