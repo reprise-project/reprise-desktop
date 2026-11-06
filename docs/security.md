@@ -224,9 +224,10 @@ that dies with a client shown the session locks it when it next starts.
 shown the session with it off doesn't lock on a stop or the next start, and
 the last to leave doesn't lock while it is off.
 
-The client shares the clipboard only while it is logged in. `reprise-rdp`
-opens its data control connection once the client's clipboard channel is up,
-after the login, and closes it when the client leaves, clearing a selection
+The client shares the clipboard only while it is shown the session.
+`reprise-rdp` opens its data control connection once the client's clipboard
+channel is up and the client has the picture and input, and closes it when
+the client leaves, clearing a selection
 the client still holds. A copy on either side only lists its formats to the
 other, and `reprise-rdp` fetches the bytes when a program on the other side
 reads them. With `[clipboard] history` on, Reprise reads every new copy for

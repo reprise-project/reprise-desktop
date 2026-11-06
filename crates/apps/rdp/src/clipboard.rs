@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::watch;
 
 pub const TEXT_MAX: usize = 16 << 20;
 pub const PICTURE_MAX: usize = 64 << 20;
@@ -515,10 +516,20 @@ fn take_answer(response: &FormatDataResponse<'_>, limit: usize) -> Option<Vec<u8
 }
 
 /// Gives each connection's server a [`Backend`] that starts the desktop side once the client's
-/// clipboard channel is up.
-#[derive(Default)]
+/// clipboard channel is up; nothing crosses until the client is shown the session.
 pub struct Factory {
     events: Option<UnboundedSender<ServerEvent>>,
+    shown: watch::Receiver<bool>,
+}
+
+impl Factory {
+    /// `shown` is the connection's [`crate::listen::Shown`].
+    pub fn new(shown: watch::Receiver<bool>) -> Factory {
+        Factory {
+            events: None,
+            shown,
+        }
+    }
 }
 
 impl ServerEventSender for Factory {
@@ -531,6 +542,7 @@ impl CliprdrBackendFactory for Factory {
     fn build_cliprdr_backend(&self) -> Box<dyn CliprdrBackend> {
         Box::new(Backend {
             events: self.events.clone(),
+            shown: self.shown.clone(),
             desktop: None,
         })
     }
@@ -542,6 +554,7 @@ impl CliprdrServerFactory for Factory {}
 #[derive(Debug)]
 struct Backend {
     events: Option<UnboundedSender<ServerEvent>>,
+    shown: watch::Receiver<bool>,
     desktop: Option<wlclip::Link>,
 }
 
@@ -568,7 +581,7 @@ impl CliprdrBackend for Backend {
         if self.desktop.is_none()
             && let Some(events) = &self.events
         {
-            self.desktop = Some(wlclip::start(events.clone()));
+            self.desktop = Some(wlclip::start(events.clone(), self.shown.clone()));
         }
     }
 

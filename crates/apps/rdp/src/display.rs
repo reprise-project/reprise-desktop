@@ -217,7 +217,7 @@ impl RdpServerDisplay for Display {
                 ));
             }
             if let Some(shown) = self.shown.take() {
-                let _ = shown.send(());
+                shown.send();
             }
             let path = self.gfx.as_ref().map(|gfx| H264 {
                 gfx: gfx.clone(),
