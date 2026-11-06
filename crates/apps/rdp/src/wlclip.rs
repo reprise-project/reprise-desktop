@@ -82,6 +82,28 @@ impl Link {
     }
 }
 
+impl Link {
+    pub fn stopper(&self) -> Stopper {
+        Stopper(self.mailbox.clone())
+    }
+
+    /// Whether its thread still runs.
+    #[cfg(test)]
+    pub fn alive(&self) -> bool {
+        self.mailbox.send(Msg::Read(None))
+    }
+}
+
+/// Stops a [`Link`]'s thread while the link is still held.
+#[derive(Debug)]
+pub struct Stopper(Mailbox);
+
+impl Stopper {
+    pub fn stop(&self) {
+        self.0.send(Msg::Stop);
+    }
+}
+
 impl Drop for Link {
     fn drop(&mut self) {
         self.mailbox.send(Msg::Stop);
