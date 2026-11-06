@@ -23,6 +23,7 @@ const SESSION: &str = "org.freedesktop.portal.Session";
 const KEYBOARD: u32 = 1;
 const POINTER: u32 = 2;
 const MONITOR: u32 = 1;
+const VIRTUAL: u32 = 4;
 const CURSOR_METADATA: u32 = 4;
 /// How long a request may go unanswered: no dialog is expected, so a silent portal is stuck.
 const ANSWER: Duration = Duration::from_secs(30);
@@ -47,6 +48,8 @@ pub struct Screen {
     pub position: (i32, i32),
     pub size: (u32, u32),
     pub mapping_id: Option<String>,
+    /// Cast from a virtual output, as lock mode's screens are, not a monitor.
+    pub virtual_output: bool,
 }
 
 impl Grant {
@@ -203,6 +206,7 @@ fn screens(streams: Option<Vec<(u32, StreamProps)>>) -> Result<Vec<Screen>, Stri
                 position: stream.position.unwrap_or_default(),
                 size: (size.0.max(0) as u32, size.1.max(0) as u32),
                 mapping_id: stream.mapping_id,
+                virtual_output: stream.source_type == Some(VIRTUAL),
             })
         })
         .collect()
@@ -268,6 +272,7 @@ struct StreamProps {
     position: Option<(i32, i32)>,
     size: Option<(i32, i32)>,
     mapping_id: Option<String>,
+    source_type: Option<u32>,
 }
 
 fn next_token() -> String {
@@ -351,6 +356,7 @@ pub(crate) mod tests {
                 position: (0, 0),
                 size: (0, 0),
                 mapping_id: None,
+                virtual_output: false,
             }],
             eis_fd: null(),
             session: OwnedObjectPath::try_from("/org/reprise/test/session").unwrap(),
@@ -402,6 +408,7 @@ pub(crate) mod tests {
             position: (x, 0),
             size: (width, 1080),
             mapping_id: Some(name.into()),
+            virtual_output: false,
         };
         assert_eq!(
             screens(started.streams).unwrap(),
@@ -411,6 +418,25 @@ pub(crate) mod tests {
             ],
             "the screens in the order the portal sent them"
         );
+    }
+
+    #[test]
+    fn start_results_mark_the_streams_cast_from_virtual_outputs() {
+        use zbus::wire::{LE, serialized::Context, to_bytes};
+        let stream = |source_type: u32| {
+            HashMap::from([
+                ("size", Variant::from((1920, 1080))),
+                ("source_type", Variant::from(source_type)),
+            ])
+        };
+        let streams = vec![(52u32, stream(VIRTUAL)), (47u32, stream(MONITOR))];
+        let results = HashMap::from([("streams", Variant::from(streams))]);
+        let bytes = to_bytes(Context::new(LE, 0), &results).unwrap();
+        let (started, _): (StartResults, _) = bytes.deserialize().unwrap();
+        let virtual_outputs: Vec<bool> = (screens(started.streams).unwrap().iter())
+            .map(|s| s.virtual_output)
+            .collect();
+        assert_eq!(virtual_outputs, [true, false]);
     }
 
     /// The frontend's RemoteDesktop and ScreenCast calls, answering each request at once with

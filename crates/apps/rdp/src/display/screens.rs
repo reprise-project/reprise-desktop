@@ -9,21 +9,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 
-/// Runs once every one of `screens` streams went, so the connection ends as its screens gone, or
-/// as the console taking over when they are lock mode's, and not while one still shows.
-pub(super) fn gone_with_all(
-    ending: Ending,
-    screens: usize,
-    took_over: bool,
-) -> impl Fn() + Clone + Send + 'static {
+/// Runs once every one of `screens` streams went, so the connection ends as its screens gone, and
+/// not while one still shows.
+pub(super) fn gone_with_all(ending: Ending, screens: usize) -> impl Fn() + Clone + Send + 'static {
     let left = Arc::new(AtomicUsize::new(screens));
     move || {
-        if left.fetch_sub(1, Ordering::AcqRel) != 1 {
-            return;
-        }
-        match took_over {
-            true => ending.console_took_over(),
-            false => ending.screen_gone(),
+        if left.fetch_sub(1, Ordering::AcqRel) == 1 {
+            ending.screen_gone();
         }
     }
 }
@@ -398,7 +390,7 @@ mod tests {
     #[test]
     fn the_connection_ends_as_its_screens_gone_once_every_stream_went() {
         let ending = Ending::default();
-        let gone = gone_with_all(ending.clone(), 2, false);
+        let gone = gone_with_all(ending.clone(), 2);
         gone();
         assert_eq!(
             ending.end(),
@@ -407,14 +399,6 @@ mod tests {
         );
         gone();
         assert_eq!(ending.end(), crate::listen::End::ScreenGone);
-    }
-
-    #[test]
-    fn a_connection_whose_lock_mode_screens_went_ends_as_the_console_taking_over() {
-        let ending = Ending::default();
-        let gone = gone_with_all(ending.clone(), 1, true);
-        gone();
-        assert_eq!(ending.end(), crate::listen::End::ConsoleTookOver);
     }
 
     #[tokio::test]
