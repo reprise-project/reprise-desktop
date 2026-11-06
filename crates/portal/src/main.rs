@@ -838,9 +838,8 @@ fn choose(
     })
 }
 
-/// For [`Pick::All`] [`every_screen`]; for [`Pick::Ask`] a remembered target that still exists
-/// (remembered again), else what `dialog` picks from the share dialog's rows. None when the
-/// dialog is cancelled.
+/// [`every_screen`] for [`Pick::All`]; for [`Pick::Ask`] a remembered target still there, else
+/// what `dialog` picks from the share dialog's rows. None when the dialog is cancelled.
 fn choose_from(
     pick: Pick,
     types: u32,
@@ -891,9 +890,8 @@ fn choose_from(
     }))
 }
 
-/// The outputs a trusted session shares, in screen order: the primary ([`origin_output`]) first,
-/// then top to bottom and left to right. An output at a negative position is left out, since the
-/// compositor's EIS gives it no region, unless that leaves none.
+/// The outputs a trusted session shares, [`origin_output`] first, then top to bottom and left to
+/// right. One at a negative position has no EIS region and is left out, unless that leaves none.
 fn every_screen(outputs: &[wayland::OutputInfo]) -> Vec<wayland::OutputInfo> {
     let placed: Vec<_> = (outputs.iter())
         .filter(|o| o.x >= 0 && o.y >= 0)

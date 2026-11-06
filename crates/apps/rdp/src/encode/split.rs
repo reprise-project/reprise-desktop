@@ -57,9 +57,8 @@ enum Route {
 }
 
 impl Views {
-    /// Views of pictures of `size` in DRM `fourcc` scaled to `target`, drawn on `devices`' GPU
-    /// (render node `node`) or, without devices, on the CPU. VA-API and CUDA take them from the
-    /// GPU.
+    /// Views of `size` pictures in DRM `fourcc` scaled to `target`, drawn on `devices`' GPU (render
+    /// node `node`), else on the CPU; VA-API and CUDA take them from the GPU.
     pub fn new(
         devices: Option<&Devices>,
         node: &Path,
@@ -202,9 +201,8 @@ pub struct CudaViews {
 }
 
 impl CudaViews {
-    /// Views of pictures of `size` scaled to `target` on render node `node`, copied out at
-    /// `coded` (at most the views' size) into frames of CUDA device `cuda`: both views with
-    /// `aux`, else the main view only.
+    /// Views of `size` pictures scaled to `target` on render node `node`, copied out at `coded` (at
+    /// most the views' size) into CUDA device `cuda`'s frames: both views with `aux`, else the main.
     pub fn new(
         node: &Path,
         cuda: &Ref,

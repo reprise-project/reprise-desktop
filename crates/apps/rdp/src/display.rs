@@ -209,8 +209,8 @@ impl RdpServerDisplay for Display {
         self.told.get()
     }
 
-    /// Runs on every activation: the first was offered the desktop the client's monitors span,
-    /// a later one the size of the last resize.
+    /// Runs on every activation: a client confirming the desktop its monitors span gets it, any
+    /// other the size this connection told last, which starts at [`Display::new`]'s `last`.
     async fn request_initial_size(&mut self, client_size: DesktopSize) -> DesktopSize {
         let confirmed = (client_size.width, client_size.height);
         if self.client.desktop() == Some(confirmed) {

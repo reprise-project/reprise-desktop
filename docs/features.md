@@ -683,7 +683,7 @@ are.
 - **Capture border.** A red border on the screen around the screen, window
   or area being recorded or shared. Recordings never show it, and a single
   screenshot draws none. Settings > Privacy turns it off. The Remote Desktop
-  server's screen gets none unless Settings > Remote Desktop asks for it.
+  server's screens get none unless Settings > Remote Desktop asks for it.
 - **Prompts.** Screen sharing, remote control, input capture, location and
   camera access through the portal all ask first. Cancel or Deny is the default button, so a
   stray Enter never grants anything.
@@ -739,16 +739,20 @@ no port forwarding; allow the port in your firewall if you run one.
   that insists on NLA is refused, and the journal says to choose TLS. After
   a fourth wrong password from an address, each further try waits longer
   ([security.md](security.md#remote-desktop)).
-- **The picture.** Every screen. A client with several monitors
-  (`xfreerdp3 /multimon`) gets each screen on its own
-  monitor, fitted to it with its shape kept: the screen at the top left of
-  the layout goes on the client's primary monitor and the others follow,
-  top then left. A client monitor left over stays black, and a client with
-  fewer monitors than there are screens shows them all side by side, scaled
-  together to fit. A client in one window or on one monitor sees every
-  screen side by side as they are laid out here, each at its own size; a
-  smaller window scales the picture if the client is set to. A client
-  without H.264 gets that side-by-side picture too. Unplugging one of this
+- **The picture.** The client sees every screen. Screens at a negative
+  position in the layout are left out, unless none is at a non-negative
+  one. A client with several monitors (`xfreerdp3 /multimon`) gets each
+  screen on its own monitor, fitted to it with its shape kept: the screen
+  at the top left of the layout goes on the client's primary monitor and
+  the others follow, top then left. A client monitor left over stays black,
+  and a client with fewer monitors than there are screens shows them all
+  side by side, scaled together to fit. Client monitors that overlap or
+  span more than 8192 pixels get the side-by-side picture. A client in one
+  window or on one monitor sees every screen side by side as they are laid
+  out here, each at its own size; a smaller window scales the picture if
+  the client is set to. A side-by-side picture wider or taller than 8192
+  pixels is scaled to fit. A client without H.264 gets that side-by-side
+  picture too, cut at 8192 pixels instead of scaled. Unplugging one of this
   computer's screens reconnects the client to the screens left; one plugged
   in shows from the next connection. The lock screen shows too, and the
   client's keyboard unlocks it. The client draws the pointer itself, so it
