@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::watch;
 use wayland_client::backend::WaylandError;
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{wl_registry, wl_seat::WlSeat};
@@ -87,8 +88,9 @@ impl Drop for Link {
     }
 }
 
-/// Start the thread for one connection; its events go to `rdp`.
-pub fn start(rdp: UnboundedSender<ServerEvent>) -> Link {
+/// Start the thread for one connection; its events go to `rdp`. It reaches the session's
+/// clipboard once `shown` is true.
+pub fn start(rdp: UnboundedSender<ServerEvent>, shown: watch::Receiver<bool>) -> Link {
     let (tx, rx) = mpsc::channel();
     let mut link = Link {
         mailbox: Mailbox { tx, wake: None },
@@ -112,7 +114,7 @@ pub fn start(rdp: UnboundedSender<ServerEvent>) -> Link {
     let answer_limit = link.answer_limit.clone();
     let spawned = std::thread::Builder::new()
         .name("clipboard".into())
-        .spawn(move || run(rdp, mailbox, answer_limit, &rx, &woken));
+        .spawn(move || run(rdp, mailbox, answer_limit, shown, &rx, &woken));
     if let Err(e) = spawned {
         log::warn!("clipboard: cannot spawn: {e}; copy and paste with the client is off");
     }
@@ -123,22 +125,26 @@ fn run(
     rdp: UnboundedSender<ServerEvent>,
     mailbox: Mailbox,
     answer_limit: Arc<AtomicUsize>,
+    shown: watch::Receiver<bool>,
     rx: &mpsc::Receiver<Msg>,
     woken: &UnixStream,
 ) {
-    let served = connect(mailbox).and_then(|(conn, queue, wl)| {
-        let app = App {
-            model: Clipboard::new(rdp.clone(), answer_limit),
-            wl,
-            done: false,
-            started: false,
+    // What the client sends meanwhile waits in `rx`.
+    if zbus::block_on(crate::listen::shown(shown)) {
+        let served = connect(mailbox).and_then(|(conn, queue, wl)| {
+            let app = App {
+                model: Clipboard::new(rdp.clone(), answer_limit),
+                wl,
+                done: false,
+                started: false,
+            };
+            serve(&conn, queue, app, rx, woken)
+        });
+        let Err(e) = served else {
+            return;
         };
-        serve(&conn, queue, app, rx, woken)
-    });
-    let Err(e) = served else {
-        return;
-    };
-    log::warn!("clipboard: {e}; copy and paste with the client is off");
+        log::warn!("clipboard: {e}; copy and paste with the client is off");
+    }
     while let Ok(msg) = rx.recv() {
         match msg {
             Msg::ClientAsks(_) => {
@@ -480,3 +486,50 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
 
 delegate_noop!(App: ignore ExtDataControlManagerV1);
 delegate_noop!(App: ignore WlSeat);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// Whether a paste answer reaches `rdp` within `within`.
+    fn answered(
+        rdp: &mut tokio::sync::mpsc::UnboundedReceiver<ServerEvent>,
+        within: Duration,
+    ) -> bool {
+        let until = Instant::now() + within;
+        while Instant::now() < until {
+            if let Ok(ServerEvent::Clipboard(ClipboardMessage::SendFormatData(_))) = rdp.try_recv()
+            {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    #[test]
+    fn a_paste_asked_before_the_client_is_shown_the_session_waits_for_it() {
+        let (tx, mut rdp) = tokio::sync::mpsc::unbounded_channel();
+        let (shown, on_shown) = watch::channel(false);
+        let link = start(tx, on_shown);
+        link.send(Msg::ClientAsks(ClipboardFormatId::CF_UNICODETEXT));
+        assert!(
+            !answered(&mut rdp, Duration::from_millis(300)),
+            "the session's clipboard is not reached before the client is shown it"
+        );
+        shown.send_replace(true);
+        // The test session has no Wayland display, so the paste then ends empty.
+        assert!(answered(&mut rdp, Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn a_paste_on_a_connection_whose_display_went_unshown_ends_empty() {
+        let (tx, mut rdp) = tokio::sync::mpsc::unbounded_channel();
+        let (shown, on_shown) = watch::channel(false);
+        let link = start(tx, on_shown);
+        drop(shown);
+        link.send(Msg::ClientAsks(ClipboardFormatId::CF_UNICODETEXT));
+        assert!(answered(&mut rdp, Duration::from_secs(5)));
+    }
+}
