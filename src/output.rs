@@ -163,6 +163,22 @@ pub fn place(outputs: &[Slot]) -> Vec<(i32, i32)> {
         .collect()
 }
 
+/// Where the remote screens go: their asked positions shifted as a block, its top-left corner
+/// at `origin`.
+pub fn place_block(origin: (i32, i32), asked: &[(i32, i32)]) -> Vec<(i32, i32)> {
+    let left = asked.iter().map(|p| p.0).min().unwrap_or(0);
+    let top = asked.iter().map(|p| p.1).min().unwrap_or(0);
+    (asked.iter())
+        .map(|&(x, y)| (origin.0 + x - left, origin.1 + y - top))
+        .collect()
+}
+
+fn move_output(output: &Output, (x, y): (i32, i32)) {
+    if output.current_location() != Point::from((x, y)) {
+        output.change_current_state(None, None, None, Some((x, y).into()));
+    }
+}
+
 /// The point of `rects` nearest to `pos`: `pos` itself inside one, else
 /// the closest point on an edge (right and bottom excluded). None without a rect.
 pub fn closest_point(rects: &[Rect], pos: (f64, f64)) -> Option<(f64, f64)> {
@@ -648,23 +664,33 @@ impl State {
         crate::idle::outputs_changed(self);
     }
 
+    /// The physical outputs first, then the remote screens beside them (`virtualout::remote_origin`).
     fn place_outputs(&mut self) {
         let outputs = self.scene.outputs().to_vec();
-        let asked: Vec<Slot> = outputs
+        let before: Vec<(Output, Rect)> = outputs
+            .iter()
+            .filter_map(|o| Some((o.clone(), laid_out(o).0.get()?)))
+            .collect();
+        let (remote, physical): (Vec<Output>, Vec<Output>) = outputs
+            .iter()
+            .cloned()
+            .partition(crate::virtualout::is_remote);
+        let asked: Vec<Slot> = physical
             .iter()
             .map(|o| {
                 let size = reprisescene::output_rect(o).map_or((0, 0), |r| (r.size.w, r.size.h));
                 (placement(o).0.get().map(|p| (p.x, p.y)), size)
             })
             .collect();
-        let before: Vec<(Output, Rect)> = outputs
-            .iter()
-            .filter_map(|o| Some((o.clone(), laid_out(o).0.get()?)))
+        for (o, at) in physical.iter().zip(place(&asked)) {
+            move_output(o, at);
+        }
+        let asked: Vec<(i32, i32)> = (remote.iter())
+            .map(|o| placement(o).0.get().map_or((0, 0), |p| (p.x, p.y)))
             .collect();
-        for (o, (x, y)) in outputs.iter().zip(place(&asked)) {
-            if o.current_location() != Point::from((x, y)) {
-                o.change_current_state(None, None, None, Some((x, y).into()));
-            }
+        let origin = crate::virtualout::remote_origin(self);
+        for (o, at) in remote.iter().zip(place_block(origin, &asked)) {
+            move_output(o, at);
         }
         let after: Vec<(Output, Rect)> = outputs
             .iter()
