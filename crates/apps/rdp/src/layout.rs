@@ -255,11 +255,13 @@ fn usable(client: &[Monitor]) -> Result<((u16, u16), Vec<Monitor>), &'static str
     if client.iter().any(|m| m.right < m.left || m.bottom < m.top) {
         return Err("a monitor has no size");
     }
-    if !client
+    // The acceptor echoes the client's monitors only when exactly one is primary.
+    let primaries = client
         .iter()
-        .any(|m| m.flags.contains(MonitorFlags::PRIMARY))
-    {
-        return Err("no primary monitor");
+        .filter(|m| m.flags.contains(MonitorFlags::PRIMARY))
+        .count();
+    if primaries != 1 {
+        return Err("not exactly one primary monitor");
     }
     let left = client.iter().map(|m| m.left).min().unwrap_or(0);
     let top = client.iter().map(|m| m.top).min().unwrap_or(0);
@@ -558,7 +560,17 @@ mod tests {
             monitor(0, 0, 1919, 1079, false),
             monitor(1920, 0, 3839, 1079, false),
         ];
-        for client in [&zero_size[..], &inverted, &seventeen, &no_primary] {
+        let two_primaries = [
+            monitor(0, 0, 1919, 1079, true),
+            monitor(1920, 0, 3839, 1079, true),
+        ];
+        for client in [
+            &zero_size[..],
+            &inverted,
+            &seventeen,
+            &no_primary,
+            &two_primaries,
+        ] {
             let layout = Layout::new(&screens, client);
             assert_eq!(layout.kind, Kind::Whole, "{client:?} is ignored");
             assert_eq!(layout.desktop, (3200, 1080));
