@@ -5,7 +5,6 @@ use futures_util::StreamExt;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
-use std::io;
 use std::os::fd::OwnedFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
@@ -31,7 +30,8 @@ const ANSWER: Duration = Duration::from_secs(30);
 /// A started session: the shared screens, the EIS socket and the allowed input devices.
 /// Dropping it closes the session.
 pub struct Grant {
-    pw_fd: OwnedFd,
+    /// One PipeWire connection per screen, in `screens` order.
+    pw_fds: Vec<OwnedFd>,
     /// In the portal's screen order, the primary first.
     pub screens: Vec<Screen>,
     pub eis_fd: OwnedFd,
@@ -50,9 +50,10 @@ pub struct Screen {
 }
 
 impl Grant {
-    /// A PipeWire remote of its own for one stream thread.
-    pub fn pipewire_fd(&self) -> io::Result<OwnedFd> {
-        self.pw_fd.try_clone()
+    /// Each screen's PipeWire remote, in `screens` order; a second call returns none. Every
+    /// fd is a client connection of its own: two pw_cores on one socket break each other.
+    pub fn take_pipewire_fds(&mut self) -> Vec<OwnedFd> {
+        std::mem::take(&mut self.pw_fds)
     }
 }
 
@@ -173,11 +174,14 @@ async fn start(conn: &Connection, session: &OwnedObjectPath) -> Result<Grant, St
     let started: StartResults =
         request(conn, REMOTE, "Start", |options| (session, "", options)).await?;
     let screens = screens(started.streams)?;
-    let pw_fd = fd(conn, SCREENCAST, "OpenPipeWireRemote", session).await?;
+    let mut pw_fds = Vec::with_capacity(screens.len());
+    for _ in &screens {
+        pw_fds.push(fd(conn, SCREENCAST, "OpenPipeWireRemote", session).await?);
+    }
     let eis_fd = fd(conn, REMOTE, "ConnectToEIS", session).await?;
     let devices = started.devices.unwrap_or(KEYBOARD | POINTER);
     Ok(Grant {
-        pw_fd,
+        pw_fds,
         screens,
         eis_fd,
         session: session.clone(),
@@ -341,7 +345,7 @@ pub(crate) mod tests {
         OPEN.send_modify(|n| *n += 1);
         let null = || OwnedFd::from(std::fs::File::open("/dev/null").unwrap());
         Grant {
-            pw_fd: null(),
+            pw_fds: vec![null()],
             screens: vec![Screen {
                 node: 0,
                 position: (0, 0),
@@ -406,6 +410,171 @@ pub(crate) mod tests {
                 screen(47, 0, 1920, "HDMI-A-1")
             ],
             "the screens in the portal's order, the primary first"
+        );
+    }
+
+    /// The frontend's RemoteDesktop and ScreenCast calls, answering each request at once with
+    /// two shared screens.
+    struct Fake {
+        remotes: std::sync::Arc<std::sync::Mutex<Vec<std::os::unix::net::UnixStream>>>,
+    }
+
+    type Asked = HashMap<String, OwnedVariant>;
+
+    async fn answer(
+        conn: &Connection,
+        hdr: &zbus::message::Header<'_>,
+        options: &Asked,
+        results: HashMap<&str, Variant<'_>>,
+    ) -> zbus::fdo::Result<OwnedObjectPath> {
+        let token = String::try_from(options["handle_token"].try_clone().unwrap()).unwrap();
+        let path = request_path(hdr.sender().unwrap().as_str(), &token);
+        let body = (0u32, results);
+        (conn.emit_signal(None::<&str>, path.as_str(), REQUEST, "Response", &body)).await?;
+        Ok(OwnedObjectPath::try_from(path).unwrap())
+    }
+
+    fn socket() -> (zbus::OwnedFd, std::os::unix::net::UnixStream) {
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        (OwnedFd::from(ours).into(), theirs)
+    }
+
+    #[zbus::interface(name = "org.freedesktop.portal.RemoteDesktop")]
+    impl Fake {
+        async fn create_session(
+            &self,
+            options: Asked,
+            #[zbus(connection)] conn: &Connection,
+            #[zbus(header)] hdr: zbus::message::Header<'_>,
+        ) -> zbus::fdo::Result<OwnedObjectPath> {
+            let session =
+                Variant::from("/org/freedesktop/portal/desktop/session/1_1/s".to_string());
+            answer(
+                conn,
+                &hdr,
+                &options,
+                HashMap::from([("session_handle", session)]),
+            )
+            .await
+        }
+
+        async fn select_devices(
+            &self,
+            _session: OwnedObjectPath,
+            options: Asked,
+            #[zbus(connection)] conn: &Connection,
+            #[zbus(header)] hdr: zbus::message::Header<'_>,
+        ) -> zbus::fdo::Result<OwnedObjectPath> {
+            answer(conn, &hdr, &options, HashMap::new()).await
+        }
+
+        async fn start(
+            &self,
+            _session: OwnedObjectPath,
+            _parent: String,
+            options: Asked,
+            #[zbus(connection)] conn: &Connection,
+            #[zbus(header)] hdr: zbus::message::Header<'_>,
+        ) -> zbus::fdo::Result<OwnedObjectPath> {
+            let stream = |x: i32| {
+                HashMap::from([
+                    ("position", Variant::from((x, 0))),
+                    ("size", Variant::from((1920, 1080))),
+                ])
+            };
+            let results = HashMap::from([
+                ("devices", Variant::from(KEYBOARD | POINTER)),
+                (
+                    "streams",
+                    Variant::from(vec![(63u32, stream(0)), (74u32, stream(1920))]),
+                ),
+            ]);
+            answer(conn, &hdr, &options, results).await
+        }
+
+        #[zbus(name = "ConnectToEIS")]
+        async fn connect_to_eis(
+            &self,
+            _session: OwnedObjectPath,
+            _options: Asked,
+        ) -> zbus::OwnedFd {
+            socket().0
+        }
+    }
+
+    struct FakeCast(Fake);
+
+    #[zbus::interface(name = "org.freedesktop.portal.ScreenCast")]
+    impl FakeCast {
+        async fn select_sources(
+            &self,
+            _session: OwnedObjectPath,
+            options: Asked,
+            #[zbus(connection)] conn: &Connection,
+            #[zbus(header)] hdr: zbus::message::Header<'_>,
+        ) -> zbus::fdo::Result<OwnedObjectPath> {
+            answer(conn, &hdr, &options, HashMap::new()).await
+        }
+
+        #[zbus(name = "OpenPipeWireRemote")]
+        async fn open_pipewire_remote(
+            &self,
+            _session: OwnedObjectPath,
+            _options: Asked,
+        ) -> zbus::OwnedFd {
+            let (ours, theirs) = socket();
+            self.0.remotes.lock().unwrap().push(theirs);
+            ours
+        }
+    }
+
+    #[test]
+    fn each_screen_gets_a_pipewire_remote_of_its_own() {
+        use std::os::unix::fs::MetadataExt;
+        let Some(bus) = crate::control::tests::bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let remotes = std::sync::Arc::default();
+        let fake = || Fake {
+            remotes: std::sync::Arc::clone(&remotes),
+        };
+        let mut grant = zbus::block_on(async {
+            let _portal = zbus::connection::Builder::address(bus.1.as_str())
+                .name(PORTAL)
+                .serve_at(PORTAL_PATH, fake())
+                .serve_at(PORTAL_PATH, FakeCast(fake()))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(bus.1.as_str())
+                .build()
+                .await
+                .unwrap();
+            OPEN.send_modify(|n| *n += 1);
+            open_on(&conn).await.unwrap()
+        });
+        let fds = grant.take_pipewire_fds();
+        assert_eq!(
+            remotes.lock().unwrap().len(),
+            2,
+            "one OpenPipeWireRemote call per screen"
+        );
+        let socket = |fd: &OwnedFd| {
+            std::fs::File::from(fd.try_clone().unwrap())
+                .metadata()
+                .unwrap()
+                .ino()
+        };
+        assert_eq!(fds.len(), 2, "a PipeWire fd for each of the two screens");
+        assert_ne!(
+            socket(&fds[0]),
+            socket(&fds[1]),
+            "the screens' fds are different sockets"
+        );
+        assert!(
+            grant.take_pipewire_fds().is_empty(),
+            "the fds are handed out once"
         );
     }
 
