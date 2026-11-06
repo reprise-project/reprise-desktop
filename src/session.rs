@@ -645,8 +645,11 @@ impl Session {
 
 /// Take the open windows' apps and tab groups as the session to restore at
 /// the next login (empty when `[session] restore` is off) and queue the
-/// state file's write.
+/// state file's write. Lock mode keeps the last one: its places are on Remote outputs.
 pub fn save(state: &mut State) {
+    if crate::console::remote_side(state) {
+        return;
+    }
     let (saved, tabs, snaps) = if state.config.session.restore {
         let saving = |w: &crate::window::Window| w.mapped && w.placeable();
         let open: Vec<(String, usize)> = state
