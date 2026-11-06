@@ -217,7 +217,8 @@ closing, Disconnect, a dropped network, locks without waiting. A client that
 logged in but never got the picture and input (with no screen to share,
 say) leaves the session as it was. Stopping the server, as turning Remote
 Desktop off does, locks the session before a shown client's connection
-closes, and at once while the lock waits for a reconnect. A server
+closes, and at once while the lock waits for a reconnect; each client is
+then told the server ended it, so it doesn't reconnect. A server
 that dies with a client shown the session locks it when it next starts.
 `[remote_desktop] lock_on_leave = false` turns these locks off: a client
 shown the session with it off doesn't lock on a stop or the next start, and

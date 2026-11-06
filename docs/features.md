@@ -806,7 +806,9 @@ no port forwarding; allow the port in your firewall if you run one.
   back on. When the last client leaves with the lid still shut, the lid
   action runs 30 s later.
 - **Disconnecting.** Connected computers on the Settings page lists every
-  client; Disconnect ends the selected one.
+  client; Disconnect ends the selected one. Turning Remote Desktop off ends
+  every client. Each is told it was disconnected on purpose, so a client set
+  to reconnect after a network drop stays off.
 - **Leaving locks.** When the last client shown the session leaves, whether
   it disconnects or Disconnect ends it, the session locks; a client shown it
   before the lock goes ahead keeps it unlocked. A client that logged in but

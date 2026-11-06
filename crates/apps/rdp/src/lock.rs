@@ -3,7 +3,6 @@
 use crate::listen::{End, Leave};
 use repriseconf::remote::RemoteDesktop;
 use std::cell::Cell;
-use std::convert::Infallible;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -110,21 +109,6 @@ pub async fn lock_if_marked(marker: Option<&Path>, lock: impl Future<Output = bo
     if lock.await {
         let _ = fs::remove_file(marker);
     }
-}
-
-/// Serves until `stop`, then locks if a client is still logged in. Awaited inside the LocalSet
-/// that runs the connections, so the lock comes before they are dropped.
-pub async fn until_stopped(
-    serving: impl Future<Output = Infallible>,
-    stop: impl Future<Output = ()>,
-    marker: Option<&Path>,
-    lock: impl Future<Output = bool>,
-) {
-    tokio::select! {
-        never = serving => match never {},
-        () = stop => log::info!("stopping"),
-    }
-    lock_if_marked(marker, lock).await;
 }
 
 /// `job` on a thread of its own, given up on after `wait`.
@@ -244,6 +228,11 @@ impl<F: AsyncFn() -> bool> Leave for LockOnLeave<F> {
             let _ = fs::remove_file(m);
         }
     }
+
+    /// Locks if a client is still logged in, while its connection is open.
+    async fn stopping(&self) {
+        lock_if_marked(self.marker.as_deref(), (self.lock)()).await;
+    }
 }
 
 /// `then`, once every portal session is closed or [`CLOSE_WAIT`] has passed.
@@ -305,62 +294,18 @@ mod tests {
         assert_eq!(*locks.borrow(), 1, "no runtime dir, no lock");
     }
 
-    /// Records its name as it is dropped.
-    struct Open(Rc<RefCell<Vec<&'static str>>>);
-
-    impl Drop for Open {
-        fn drop(&mut self) {
-            self.0.borrow_mut().push("dropped");
-        }
-    }
-
-    #[test]
-    fn a_stop_with_a_client_logged_in_locks_before_the_connection_is_dropped() {
+    #[tokio::test]
+    async fn a_stop_with_a_client_logged_in_locks_and_clears_the_marker() {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("logged-in");
-        mark(&marker);
-        let steps = Rc::new(RefCell::new(Vec::new()));
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let local = tokio::task::LocalSet::new();
-        local.block_on(&rt, async {
-            let connection = Open(steps.clone());
-            tokio::task::spawn_local(async move {
-                let _connection = connection;
-                std::future::pending::<()>().await
-            });
-            tokio::task::yield_now().await;
-            let lock = async {
-                steps.borrow_mut().push("locked");
-                true
-            };
-            until_stopped(std::future::pending(), async {}, Some(&marker), lock).await;
-        });
-        drop(local);
-        assert_eq!(*steps.borrow(), ["locked", "dropped"]);
+        let locks = Rc::new(Cell::new(0));
+        let leave = LockOnLeave::with_lock(Some(marker.clone()), counted(&locks));
+        leave.stopping().await;
+        assert_eq!(locks.get(), 0, "no client logged in, no lock");
+        leave.arrived();
+        leave.stopping().await;
+        assert_eq!(locks.get(), 1);
         assert!(!marker.exists());
-    }
-
-    #[test]
-    fn a_stop_with_no_client_logged_in_does_not_lock() {
-        let dir = tempfile::tempdir().unwrap();
-        let marker = dir.path().join("logged-in");
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        let locked = Rc::new(RefCell::new(false));
-        rt.block_on(until_stopped(
-            std::future::pending(),
-            async {},
-            Some(&marker),
-            async {
-                *locked.borrow_mut() = true;
-                true
-            },
-        ));
-        assert!(!*locked.borrow());
     }
 
     /// A lock that counts its calls and succeeds.
@@ -673,22 +618,14 @@ mod tests {
                 let _gone = leaving(&leave, End::ScreenGone);
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 let started = tokio::time::Instant::now();
-                let stopped = Rc::new(Cell::new(0));
-                until_stopped(
-                    std::future::pending(),
-                    async {},
-                    Some(&marker),
-                    counted(&stopped)(),
-                )
-                .await;
-                assert_eq!(stopped.get(), 1, "the stop locks");
+                leave.stopping().await;
+                assert_eq!(locks.get(), 1, "the stop locks");
                 assert_eq!(
                     started.elapsed(),
                     Duration::ZERO,
                     "without waiting the grace out"
                 );
                 assert!(!marker.exists());
-                assert_eq!(locks.get(), 0);
             })
             .await;
     }

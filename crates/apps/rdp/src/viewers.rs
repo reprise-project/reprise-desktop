@@ -12,6 +12,8 @@ pub const LOGGING_IN_PER_IP: usize = 2;
 pub enum Kick {
     Asked,
     PortChanged,
+    /// The server is stopping.
+    Stopped,
 }
 
 /// Why [`Viewers::join`] turned a connection away.
