@@ -75,9 +75,8 @@ impl Gpu {
         }
     }
 
-    /// The filter and options turning mapped RGB of `source` into BT.709 NV12 of `target`.
-    /// Naming the primaries and transfer on both sides keeps drivers from converting them or
-    /// using BT.601.
+    /// The filter and options turning mapped RGB of `source` into BT.709 NV12 of `target`; naming
+    /// the primaries and transfer on both sides keeps drivers from converting them or using BT.601.
     pub(super) fn to_nv12(
         self,
         source: (u32, u32),
