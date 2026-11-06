@@ -1,5 +1,6 @@
-//! The client's picture: frames as H.264 on the graphics pipeline or as bitmaps, the pointer as
-//! pointer updates. The portal session opens on the first activation after the login.
+//! The client's picture: each shared screen's frames as H.264 on its own graphics surface or as
+//! bitmaps, the pointer as pointer updates. The portal session opens on the first activation
+//! after the login.
 
 use crate::client::ClientLayout;
 use crate::control::Status;
@@ -9,6 +10,7 @@ use crate::encode::probe::Backend;
 use crate::encode::{Done, Encoded, Encoder, Job, Switch, Worker};
 use crate::gfx::{Gfx, Prepared, Video};
 use crate::input::{self, Feed, SharedMoves};
+use crate::layout::{Desk, Kind, ScreenRect, SharedDesk};
 use crate::listen::{Ending, Shown};
 use crate::portal::{self, Grant};
 use crate::stream::{
@@ -145,7 +147,7 @@ pub struct Display {
     gfx: Option<Gfx>,
     session: Option<Session>,
     /// The picture's state between activations; out while an [`Updates`] sends from it.
-    live: Arc<Mutex<Option<Live>>>,
+    live: Arc<Mutex<Option<Lives>>>,
     /// The client's input, until the portal session it goes to is open.
     input: Option<Feed>,
     moves: SharedMoves,
@@ -156,21 +158,23 @@ pub struct Display {
     client: ClientLayout,
 }
 
+/// What a connection tells its display: how to report the session shown and its screens gone,
+/// and the monitors its client sent.
+pub struct Connection {
+    pub shown: Shown,
+    pub ending: Ending,
+    pub client: ClientLayout,
+}
+
 impl Display {
     /// A connection that starts at `last`, the size last told on any connection.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "each is a link the connection's display keeps"
-    )]
     pub fn new(
         last: ToldSize,
         input: Feed,
         picture: Probed,
         gfx: Option<Gfx>,
         links: Links,
-        shown: Shown,
-        ending: Ending,
-        client: ClientLayout,
+        connection: Connection,
     ) -> Display {
         Display {
             told: Told::new(last),
@@ -181,16 +185,27 @@ impl Display {
             live: Arc::default(),
             moves: input.moves.clone(),
             input: Some(input),
-            shown: Some(shown),
-            ending,
-            client,
+            shown: Some(connection.shown),
+            ending: connection.ending,
+            client: connection.client,
         }
     }
 }
 
 struct Session {
     _grant: Arc<Grant>,
-    _stream: stream::Stream,
+    _streams: Vec<stream::Stream>,
+}
+
+/// Runs once every one of `screens` streams went, so the connection ends as its screens gone and
+/// not while one still shows.
+fn gone_with_all(ending: Ending, screens: usize) -> impl Fn() + Clone + Send + 'static {
+    let left = Arc::new(AtomicUsize::new(screens));
+    move || {
+        if left.fetch_sub(1, Ordering::AcqRel) == 1 {
+            ending.screen_gone();
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -222,61 +237,79 @@ impl RdpServerDisplay for Display {
             let picture = probed(&mut self.picture).await;
             let grant =
                 (portal::open().await).map_err(|e| unshared("the screen is not shared", e))?;
-            let screen = &grant.screens[0];
-            log::info!(
-                "sharing {} at {:?}, {}x{} logical",
-                screen.mapping_id.as_deref().unwrap_or("the screen"),
-                screen.position,
-                screen.size.0,
-                screen.size.1
-            );
-            let ending = self.ending.clone();
-            let fd = (grant.pipewire_fd())
-                .map_err(|e| unshared("the screen stream did not start", e))?;
-            let (stream, frames, sizes) =
-                stream::spawn(fd, screen.node, &[DRM_FORMAT_MOD_LINEAR], move || {
-                    ending.screen_gone()
+            for screen in &grant.screens {
+                log::info!(
+                    "sharing {} at {:?}, {}x{} logical",
+                    screen.mapping_id.as_deref().unwrap_or("the screen"),
+                    screen.position,
+                    screen.size.0,
+                    screen.size.1
+                );
+            }
+            let gone = gone_with_all(self.ending.clone(), grant.screens.len());
+            let mut streams = Vec::new();
+            for screen in &grant.screens {
+                let fd = (grant.pipewire_fd())
+                    .map_err(|e| unshared("the screen stream did not start", e))?;
+                let (stream, frames, sizes) =
+                    stream::spawn(fd, screen.node, &[DRM_FORMAT_MOD_LINEAR], gone.clone())
+                        .map_err(|e| unshared("the screen stream did not start", e))?;
+                streams.push((stream, frames, sizes));
+            }
+            let screens = (grant.screens.iter())
+                .map(|s| ScreenRect {
+                    position: s.position,
+                    logical: s.size,
+                    pixels: s.size,
                 })
-                .map_err(|e| unshared("the screen stream did not start", e))?;
+                .collect();
+            let joint = Joint::new(Desk::new(screens, &self.client.monitors()));
             let grant = Arc::new(grant);
             if let Some(feed) = self.input.take() {
                 tokio::task::spawn_local(input::serve(
                     grant.clone(),
                     feed.events,
-                    self.told.size.clone(),
+                    joint.desk.clone(),
                 ));
             }
             if let Some(shown) = self.shown.take() {
                 shown.send();
             }
-            let path = self.gfx.as_ref().map(|gfx| H264 {
-                gfx: gfx.clone(),
-                offer: stream.offer(),
-                picture: picture.clone(),
-                modifiers: vec![DRM_FORMAT_MOD_LINEAR],
-                on: false,
-            });
-            let device = picture.device.clone();
-            let worker = Worker::spawn(move || {
-                Switch::new(Box::new(move |backend, quality, frame_rate| {
-                    Ffmpeg::new(backend, &device, frame_rate, quality)
-                        .map(|f| Box::new(f) as Box<dyn Encoder>)
-                }))
-            })
-            .map_err(|e| ServerError::io("no encoding thread", e))?;
+            let mut lives = Vec::new();
+            let mut kept = Vec::new();
+            for (screen, (stream, frames, sizes)) in streams.into_iter().enumerate() {
+                let path = self.gfx.as_ref().map(|gfx| H264 {
+                    gfx: gfx.clone(),
+                    offer: stream.offer(),
+                    picture: picture.clone(),
+                    modifiers: vec![DRM_FORMAT_MOD_LINEAR],
+                    on: false,
+                });
+                let device = picture.device.clone();
+                let worker = Worker::spawn(move || {
+                    Switch::new(Box::new(move |backend, quality, frame_rate| {
+                        Ffmpeg::new(backend, &device, frame_rate, quality)
+                            .map(|f| Box::new(f) as Box<dyn Encoder>)
+                    }))
+                })
+                .map_err(|e| ServerError::io("no encoding thread", e))?;
+                let live = Live::new(
+                    frames,
+                    sizes,
+                    self.told.clone(),
+                    worker,
+                    path,
+                    self.moves.clone(),
+                    self.links.clone(),
+                );
+                lives.push(live.on(&joint, screen));
+                kept.push(stream);
+            }
             self.session = Some(Session {
                 _grant: grant,
-                _stream: stream,
+                _streams: kept,
             });
-            *self.live.lock().unwrap() = Some(Live::new(
-                frames,
-                sizes,
-                self.told.clone(),
-                worker,
-                path,
-                self.moves.clone(),
-                self.links.clone(),
-            ));
+            *self.live.lock().unwrap() = Some(Lives::new(lives));
         }
         let mut live = (self.live.lock().unwrap().take())
             .ok_or_else(|| ServerError::reason("display", "the picture is already being sent"))?;
@@ -299,10 +332,10 @@ fn unshared(what: &str, e: impl std::fmt::Display) -> ServerError {
     )
 }
 
-/// Sends from a [`Live`] and puts it back when the activation ends.
+/// Sends from the [`Lives`] and puts them back when the activation ends.
 struct Updates {
-    live: Option<Live>,
-    slot: Arc<Mutex<Option<Live>>>,
+    live: Option<Lives>,
+    slot: Arc<Mutex<Option<Lives>>>,
 }
 
 impl Drop for Updates {
@@ -321,15 +354,90 @@ impl RdpServerDisplayUpdates for Updates {
     }
 }
 
+/// Each shared screen's [`Live`], one stream each; the connection goes on while any streams.
+struct Lives {
+    screens: Vec<Live>,
+}
+
+impl Lives {
+    fn new(screens: Vec<Live>) -> Lives {
+        Lives { screens }
+    }
+
+    fn activate(&mut self) {
+        self.screens.iter_mut().for_each(Live::activate);
+    }
+
+    /// The next update of any screen; None once every screen's stream ended. Cancel safe, as
+    /// [`Live::next`] is.
+    async fn next(&mut self) -> Option<DisplayUpdate> {
+        loop {
+            // Each turn starts at the next screen, so a busy one cannot keep the others waiting.
+            self.screens.rotate_left(1);
+            let running: Vec<_> = (self.screens.iter_mut())
+                .filter(|live| !live.ended)
+                .map(|live| Box::pin(live.next()))
+                .collect();
+            if running.is_empty() {
+                return None;
+            }
+            let (update, _, _) = futures_util::future::select_all(running).await;
+            if update.is_some() {
+                return update;
+            }
+        }
+    }
+}
+
 /// What the client shows of the pointer.
-#[derive(PartialEq)]
+#[derive(PartialEq, Default)]
 enum Pointer {
+    #[default]
     Unknown,
     Hidden,
     Shown(CursorImage),
 }
 
-/// The H.264 path of a connection.
+/// The pointer the client shows, which every screen of a connection updates.
+#[derive(Default)]
+struct Seat {
+    pointer: Pointer,
+    /// The screen whose stream last had the pointer over it.
+    over: Option<usize>,
+    /// The screen and its stream pixel the pointer was last sent at.
+    position: Option<(usize, (i32, i32))>,
+}
+
+/// What the screens of one connection share: where each lands on the client, and its pointer.
+#[derive(Clone)]
+struct Joint {
+    desk: SharedDesk,
+    /// Counts layout changes, so the other screens paint their surfaces again.
+    relaid: Arc<watch::Sender<u64>>,
+    seat: Arc<Mutex<Seat>>,
+}
+
+impl Joint {
+    fn new(desk: Desk) -> Joint {
+        Joint {
+            desk: Arc::new(Mutex::new(desk)),
+            relaid: Arc::new(watch::Sender::new(0)),
+            seat: Arc::default(),
+        }
+    }
+
+    /// One screen that has not streamed yet, and no client monitors.
+    fn alone() -> Joint {
+        let unknown = ScreenRect {
+            position: (0, 0),
+            logical: (0, 0),
+            pixels: (0, 0),
+        };
+        Joint::new(Desk::new(vec![unknown], &[]))
+    }
+}
+
+/// The H.264 path of one screen.
 struct H264 {
     gfx: Gfx,
     offer: Offer,
@@ -349,7 +457,14 @@ struct HeldWarp {
     at: (u16, u16),
 }
 
+/// One shared screen's picture on its way to the client.
 struct Live {
+    /// This screen's index in `joint`'s desk.
+    screen: usize,
+    joint: Joint,
+    relaid: watch::Receiver<u64>,
+    /// The stream ended; the other screens go on.
+    ended: bool,
     frames: UnboundedReceiver<Frame>,
     sizes: UnboundedReceiver<SizeChange>,
     told: Told,
@@ -384,9 +499,6 @@ struct Live {
     epoch: u64,
     queue: VecDeque<DisplayUpdate>,
     keyframe: bool,
-    pointer: Pointer,
-    /// The pointer position last sent to the client.
-    position: Option<(i32, i32)>,
     held: Option<HeldWarp>,
     /// The client's own pointer moves, which are not sent back to it.
     moves: SharedMoves,
@@ -416,7 +528,12 @@ impl Live {
         } = links;
         lives.fetch_add(1, Ordering::Relaxed);
         let cfg = *config.borrow_and_update();
+        let joint = Joint::alone();
         let mut live = Live {
+            screen: 0,
+            relaid: joint.relaid.subscribe(),
+            joint,
+            ended: false,
             frames,
             sizes,
             told,
@@ -440,8 +557,6 @@ impl Live {
             epoch: 0,
             queue: VecDeque::new(),
             keyframe: true,
-            pointer: Pointer::Unknown,
-            position: None,
             held: None,
             moves,
             failing: false,
@@ -452,13 +567,24 @@ impl Live {
         live
     }
 
+    /// This Live as screen `screen` of the connection's `joint`.
+    fn on(mut self, joint: &Joint, screen: usize) -> Live {
+        self.screen = screen;
+        self.joint = joint.clone();
+        self.relaid = joint.relaid.subscribe();
+        self
+    }
+
     /// The client (re)started showing the desktop: everything is sent again.
     fn activate(&mut self) {
         self.queue.clear();
         self.keyframe = true;
         self.epoch += 1;
-        self.pointer = Pointer::Unknown;
-        self.position = None;
+        {
+            let mut seat = self.joint.seat.lock().unwrap();
+            seat.pointer = Pointer::Unknown;
+            seat.position = None;
+        }
         self.held = None;
         if self.held_resize.is_none() {
             self.pending = self.last.clone();
@@ -469,11 +595,17 @@ impl Live {
     /// The next update; None once the stream ended. Cancel safe: what was taken off the
     /// channels is kept in `self` before any await.
     async fn next(&mut self) -> Option<DisplayUpdate> {
+        if self.ended {
+            return None;
+        }
         loop {
             if let Some(update) = self.queue.pop_front() {
                 return Some(update);
             }
             self.start(Instant::now());
+            if !self.queue.is_empty() {
+                continue;
+            }
             let wait = self.pending.is_some() && !self.busy;
             let at = tokio::time::Instant::from_std(self.next_at);
             let held = self.held.map(|h| tokio::time::Instant::from_std(h.until));
@@ -489,6 +621,7 @@ impl Live {
             tokio::select! {
                 biased;
                 Ok(()) = self.config.changed() => self.follow_config(),
+                Ok(()) = self.relaid.changed() => self.repaint(),
                 size = self.sizes.recv() => match size {
                     Some(s) => {
                         self.resize(s.size);
@@ -517,7 +650,44 @@ impl Live {
             }
         }
         log::info!("the screen stream ended");
+        self.ended = true;
         None
+    }
+
+    /// Send the last frame again, whole: another screen moved this one's surface.
+    fn repaint(&mut self) {
+        self.relaid.borrow_and_update();
+        self.keyframe = true;
+        if self.pending.is_none() && self.held_resize.is_none() {
+            self.pending = self.last.clone();
+        }
+    }
+
+    /// Change the connection's desk with `change`, telling the other screens when it moved
+    /// them; the desktop it spans now.
+    fn relayout(&mut self, change: impl FnOnce(&mut Desk) -> bool) -> DesktopSize {
+        let mut desk = self.joint.desk.lock().unwrap();
+        if change(&mut desk) {
+            self.joint.relaid.send_modify(|n| *n += 1);
+            self.relaid.borrow_and_update();
+        }
+        let (width, height) = desk.layout().desktop;
+        DesktopSize { width, height }
+    }
+
+    /// Lay every screen out at its own pixels, as bitmaps are; the client is resized to it, or
+    /// else this screen is painted again.
+    fn go_whole(&mut self) {
+        log::info!("laying the screens out whole for bitmaps");
+        let want = self.relayout(Desk::whole);
+        match self.told.get() == want {
+            true => self.repaint(),
+            false => self.tell(want),
+        }
+    }
+
+    fn whole(&self) -> bool {
+        self.joint.desk.lock().unwrap().layout().kind == Kind::Whole
     }
 
     /// Take the quality, frame rate and encoder the config now has, keeping the client. A new
@@ -573,7 +743,7 @@ impl Live {
                 log::info!("sending bitmaps");
                 self.coding = None;
                 path.on = false;
-                path.gfx.close();
+                path.gfx.close(self.screen);
                 path.offer.modifiers(&[DRM_FORMAT_MOD_LINEAR]);
                 self.keyframe = true;
             }
@@ -585,11 +755,9 @@ impl Live {
     /// Queue a resize when the client was told another size, or hold it while the client opens
     /// the graphics pipeline; true if it was either.
     fn resize(&mut self, size: (u32, u32)) -> bool {
-        let want = DesktopSize {
-            width: u16::try_from(size.0).unwrap_or(u16::MAX),
-            height: u16::try_from(size.1).unwrap_or(u16::MAX),
-        };
         self.held_resize = None;
+        let screen = self.screen;
+        let want = self.relayout(|desk| desk.resized(screen, size));
         if self.told.get() == want {
             return false;
         }
@@ -598,15 +766,20 @@ impl Live {
             self.pending = None;
             return true;
         }
-        self.told.set(want);
         if self.last.as_ref().is_some_and(|f| f.size != size) {
             self.last = None;
         }
+        self.tell(want);
+        true
+    }
+
+    /// Queue a resize of the client to `want`.
+    fn tell(&mut self, want: DesktopSize) {
+        self.told.set(want);
         self.pending = None;
         self.epoch += 1;
         self.queue.push_back(DisplayUpdate::Resize(want));
         self.keyframe = true;
-        true
     }
 
     /// Take `frame`, merged with any newer ones already waiting, as the next to encode.
@@ -640,10 +813,14 @@ impl Live {
             return;
         }
         let (mut h264, mut avc444) = (false, false);
+        let desk = self.joint.desk.clone();
+        let desk = desk.lock().unwrap();
+        let layout = desk.layout();
+        let target = layout.target(self.screen);
         if let Some(path) = &mut self.h264
             && self.using.is_some()
         {
-            match path.gfx.prepare(frame.size) {
+            match path.gfx.prepare(layout, self.screen) {
                 Prepared::Ready {
                     new,
                     avc444: offered,
@@ -674,6 +851,18 @@ impl Live {
                 }
             }
         }
+        let fitted = layout.kind != Kind::Whole;
+        drop(desk);
+        if !h264 && fitted {
+            match self.h264.as_ref().is_some_and(|p| p.gfx.negotiating()) {
+                true => {
+                    self.pending = Some(frame);
+                    self.next_at = now + self.interval;
+                }
+                false => self.go_whole(),
+            }
+            return;
+        }
         let (reader, readable) = match (&self.h264, self.using) {
             (Some(path), Some(b)) if h264 => (Some(b), path.picture.modifiers(b)),
             _ => (None, &[DRM_FORMAT_MOD_LINEAR][..]),
@@ -690,7 +879,9 @@ impl Live {
             quality: self.quality,
             frame_rate: self.frame_rate,
             avc444,
-            target: None,
+            target: target
+                .filter(|_| h264)
+                .map(|t| (u32::from(t.w), u32::from(t.h))),
             epoch: self.epoch,
             order: self.order.take(),
             choice: self.choices,
@@ -774,7 +965,18 @@ impl Live {
         }
         let failed = match done.encoded {
             Ok(Encoded::Bitmap(updates)) => {
-                (self.queue).extend(updates.into_iter().map(DisplayUpdate::Bitmap));
+                match self.whole() {
+                    true => {
+                        let at = self.joint.desk.lock().unwrap().layout().target(self.screen);
+                        let (x, y) = at.map_or((0, 0), |t| (t.x, t.y));
+                        (self.queue).extend(updates.into_iter().map(|mut u| {
+                            u.x = u.x.saturating_add(x);
+                            u.y = u.y.saturating_add(y);
+                            DisplayUpdate::Bitmap(u)
+                        }));
+                    }
+                    false => self.go_whole(),
+                }
                 false
             }
             Ok(Encoded::Avc420 { data, regions }) => {
@@ -811,31 +1013,43 @@ impl Live {
     }
 
     fn send(&self, video: Video<'_>, regions: &[stream::Rect]) -> bool {
-        (self.h264.as_ref()).is_some_and(|path| path.gfx.send(video, regions, self.quality.qp()))
+        let qp = self.quality.qp();
+        (self.h264.as_ref()).is_some_and(|path| path.gfx.send(self.screen, video, regions, qp))
     }
 
+    /// The pointer as this screen's `frame` has it. A screen the pointer is not over leaves it
+    /// to the screen it is over.
     fn pointer_updates(&mut self, frame: &Frame) {
         let Some(cursor) = &frame.cursor else {
             return;
         };
+        let mut seat = self.joint.seat.lock().unwrap();
         let pointer = match &cursor.image {
             Some(image) => Pointer::Shown(image.clone()),
-            None => Pointer::Hidden,
+            None if seat.over.is_none_or(|s| s == self.screen) => Pointer::Hidden,
+            None => return,
         };
-        if pointer != self.pointer {
+        seat.over = cursor.image.as_ref().map(|_| self.screen);
+        if pointer != seat.pointer {
             self.queue.push_back(match &pointer {
                 Pointer::Shown(image) => DisplayUpdate::RGBAPointer(rdp_pointer(image)),
                 _ => DisplayUpdate::HidePointer,
             });
-            self.pointer = pointer;
+            seat.pointer = pointer;
         }
         self.held = None;
-        if cursor.image.is_some() && self.position != Some(cursor.position) {
-            let clamp = |v: i32, max: u32| v.clamp(0, max.saturating_sub(1) as i32) as u16;
-            let at = (
+        if cursor.image.is_some() && seat.position != Some((self.screen, cursor.position)) {
+            drop(seat);
+            let clamp = |v: i32, max: u32| v.clamp(0, max.saturating_sub(1) as i32) as u32;
+            let p = (
                 clamp(cursor.position.0, frame.size.0),
                 clamp(cursor.position.1, frame.size.1),
             );
+            let layout = self.joint.desk.lock().unwrap();
+            let Some(at) = layout.layout().to_client(self.screen, p) else {
+                return;
+            };
+            drop(layout);
             self.place_pointer(cursor.position, at);
         }
     }
@@ -853,7 +1067,8 @@ impl Live {
             return;
         }
         moves.sent();
-        self.position = Some(position);
+        drop(moves);
+        self.joint.seat.lock().unwrap().position = Some((self.screen, position));
         self.queue
             .push_back(DisplayUpdate::PointerPosition(PointerPositionAttribute {
                 x: at.0,
@@ -1071,9 +1286,11 @@ mod tests {
             watch::channel(None).1,
             None,
             links().0,
-            Shown::default(),
-            Ending::default(),
-            client,
+            Connection {
+                shown: Shown::default(),
+                ending: Ending::default(),
+                client,
+            },
         )
     }
 
@@ -1983,6 +2200,433 @@ mod tests {
         );
         drop(first);
         assert_eq!(status.borrow().encoder, "Software H.264");
+    }
+
+    /// Codes an empty access unit over its whole target, noting each frame's backend and target.
+    struct Fitted {
+        backend: Backend,
+        target: Option<(u32, u32)>,
+        fits: Fits,
+    }
+
+    type Fits = Arc<Mutex<Vec<(Backend, Option<(u32, u32)>)>>>;
+
+    impl Encoder for Fitted {
+        fn encode(
+            &mut self,
+            frame: &Frame,
+            _: bool,
+        ) -> Result<Encoded, crate::encode::EncodeError> {
+            self.fits.lock().unwrap().push((self.backend, self.target));
+            Ok(Encoded::Avc420 {
+                data: vec![0, 0, 0, 1, 0x65],
+                regions: vec![Rect::full(self.target.unwrap_or(frame.size))],
+            })
+        }
+
+        fn set_target(&mut self, target: Option<(u32, u32)>) {
+            self.target = target;
+        }
+    }
+
+    /// A switch of [`Fitted`] encoders noting into `fits`; `refused` will not open.
+    fn fitted(fits: &Fits, refused: Option<Backend>) -> impl FnOnce() -> Switch + Send + use<> {
+        let fits = fits.clone();
+        move || {
+            Switch::new(Box::new(move |backend, _, _| {
+                match Some(backend) == refused {
+                    true => Err(crate::encode::EncodeError(
+                        "no encoding session left".into(),
+                    )),
+                    false => Ok(Box::new(Fitted {
+                        backend,
+                        target: None,
+                        fits: fits.clone(),
+                    })),
+                }
+            }))
+        }
+    }
+
+    /// One connection's screens, each with the sender of its frames.
+    struct Screens {
+        lives: Vec<Live>,
+        frames: Vec<Frames>,
+        _sizes: Vec<Sizes>,
+        told: ToldSize,
+        joint: Joint,
+    }
+
+    /// The Lives of `screens` for a client that sent `client` and was told `told`, H.264 on
+    /// `gfx` with `working` when given, each screen coding with the switch `switch` makes for it.
+    fn screens<S: FnOnce() -> Switch + Send + 'static>(
+        screens: &[ScreenRect],
+        client: &[ironrdp_pdu::gcc::Monitor],
+        told: (u16, u16),
+        gfx: Option<(&Gfx, &[Backend])>,
+        switch: impl Fn(usize) -> S,
+    ) -> Screens {
+        let joint = Joint::new(Desk::new(screens.to_vec(), client));
+        let told = Told::new(Arc::new(Mutex::new(DesktopSize {
+            width: told.0,
+            height: told.1,
+        })));
+        let links = links().0;
+        let (mut lives, mut frames, mut sizes) = (Vec::new(), Vec::new(), Vec::new());
+        for screen in 0..screens.len() {
+            let (frames_tx, frames_rx) = unbounded_channel();
+            let (sizes_tx, sizes_rx) = unbounded_channel();
+            let path = gfx.map(|(gfx, working)| H264 {
+                gfx: gfx.clone(),
+                offer: Offer::detached(),
+                picture: picture(working),
+                modifiers: vec![DRM_FORMAT_MOD_LINEAR],
+                on: false,
+            });
+            let live = Live::new(
+                frames_rx,
+                sizes_rx,
+                told.clone(),
+                Worker::spawn(switch(screen)).unwrap(),
+                path,
+                SharedMoves::default(),
+                links.clone(),
+            );
+            lives.push(live.on(&joint, screen));
+            frames.push(frames_tx);
+            sizes.push(sizes_tx);
+        }
+        Screens {
+            lives,
+            frames,
+            _sizes: sizes,
+            told: told.size,
+            joint,
+        }
+    }
+
+    fn screen(x: i32, y: i32, w: u32, h: u32) -> ScreenRect {
+        ScreenRect {
+            position: (x, y),
+            logical: (w, h),
+            pixels: (w, h),
+        }
+    }
+
+    /// A primary 800x400 client monitor with a 400x200 one to its right.
+    fn two_monitors() -> Vec<ironrdp_pdu::gcc::Monitor> {
+        use ironrdp_pdu::gcc::{Monitor, MonitorFlags};
+        vec![
+            Monitor {
+                left: 0,
+                top: 0,
+                right: 799,
+                bottom: 399,
+                flags: MonitorFlags::PRIMARY,
+            },
+            Monitor {
+                left: 800,
+                top: 0,
+                right: 1199,
+                bottom: 199,
+                flags: MonitorFlags::empty(),
+            },
+        ]
+    }
+
+    /// A `size` frame in a LINEAR dma-buf, which the test encoders never read.
+    fn linear(size: (u32, u32)) -> Frame {
+        let mut frame = frame(size, Rect::full(size));
+        let fd = std::fs::File::open("/dev/null").unwrap();
+        frame.buffer = FrameBuffer::Dmabuf {
+            objects: vec![Arc::new(fd.into())],
+            fourcc: stream::XRGB8888,
+            modifier: DRM_FORMAT_MOD_LINEAR,
+            planes: Vec::new(),
+        };
+        frame
+    }
+
+    /// The surface of each frame `pdus` carry, in order.
+    fn surfaces_drawn(pdus: &[ironrdp_egfx::pdu::GfxPdu]) -> Vec<u16> {
+        use ironrdp_egfx::pdu::GfxPdu;
+        (pdus.iter())
+            .filter_map(|pdu| match pdu {
+                GfxPdu::WireToSurface1(w) => Some(w.surface_id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_picture_from_each_screen_goes_to_its_own_surface() {
+        use ironrdp_egfx::pdu::GfxPdu;
+        let (gfx, (_server, mut events)) = ready_gfx();
+        let fits = Fits::default();
+        let mut c = screens(
+            &[screen(0, 0, 400, 200), screen(400, 0, 400, 200)],
+            &two_monitors(),
+            (1200, 400),
+            Some((&gfx, &[Backend::X264])),
+            |_| fitted(&fits, None),
+        );
+        code(&mut c.lives[1], frame((400, 200), SMALL)).await;
+        code(&mut c.lives[0], frame((400, 200), SMALL)).await;
+        let pdus = crate::gfx::tests::sent(&mut events);
+        let made: Vec<_> = (pdus.iter())
+            .filter_map(|pdu| match pdu {
+                GfxPdu::CreateSurface(c) => Some((c.surface_id, c.width, c.height)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(made, [(0, 400, 200), (1, 800, 400)]);
+        assert_eq!(
+            surfaces_drawn(&pdus),
+            [0, 1],
+            "screen 1 first, then screen 0"
+        );
+        assert_eq!(
+            *fits.lock().unwrap(),
+            [
+                (Backend::X264, Some((400, 200))),
+                (Backend::X264, Some((800, 400)))
+            ],
+            "each screen is coded at its target"
+        );
+        assert!(
+            c.lives.iter().all(|l| l.queue.is_empty()),
+            "a paired client keeps the desktop its monitors span"
+        );
+        assert_eq!(
+            *c.told.lock().unwrap(),
+            DesktopSize {
+                width: 1200,
+                height: 400
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn an_encoder_that_will_not_open_falls_back_for_that_screen_only() {
+        let (gfx, (_server, mut events)) = ready_gfx();
+        let fits = Fits::default();
+        let mut c = screens(
+            &[screen(0, 0, 400, 200), screen(400, 0, 400, 200)],
+            &[],
+            (800, 200),
+            Some((&gfx, &[VAAPI, Backend::X264])),
+            |screen| fitted(&fits, (screen == 1).then_some(VAAPI)),
+        );
+        for live in &mut c.lives {
+            code(live, linear((400, 200))).await;
+        }
+        assert_eq!(c.lives[0].using, Some(VAAPI));
+        assert_eq!(c.lives[1].using, Some(Backend::X264));
+        assert!(c.lives.iter().all(|l| l.h264.as_ref().unwrap().on));
+        let coded: Vec<Backend> = fits.lock().unwrap().iter().map(|f| f.0).collect();
+        assert_eq!(coded, [VAAPI, Backend::X264]);
+        let pdus = crate::gfx::tests::sent(&mut events);
+        assert_eq!(surfaces_drawn(&pdus), [0, 1], "both screens show H.264");
+    }
+
+    #[tokio::test]
+    async fn a_screen_whose_stream_ends_leaves_the_others_running() {
+        let mut c = screens(
+            &[screen(0, 0, 4, 2), screen(4, 0, 4, 2)],
+            &[],
+            (8, 2),
+            None,
+            |_| Switch::bitmaps,
+        );
+        let mut lives = Lives::new(std::mem::take(&mut c.lives));
+        drop(c.frames.pop());
+        let mut sent = 0;
+        for _ in 0..3 {
+            c.frames[0].send(frame((4, 2), SMALL)).unwrap();
+            bitmap_size(next_of(&mut lives).await);
+            sent += 1;
+            assert!(
+                lives.screens.iter().any(|l| l.screen == 1 && l.ended),
+                "the second screen's stream ended"
+            );
+        }
+        assert_eq!(sent, 3, "the first screen keeps sending");
+        c.frames.clear();
+        assert!(next_of(&mut lives).await.is_none(), "over once both ended");
+    }
+
+    async fn next_of(lives: &mut Lives) -> Option<DisplayUpdate> {
+        let next = tokio::time::timeout(Duration::from_secs(5), lives.next());
+        next.await.expect("an update or the end")
+    }
+
+    #[test]
+    fn the_connection_ends_as_its_screens_gone_once_every_stream_went() {
+        let ending = Ending::default();
+        let gone = gone_with_all(ending.clone(), 2);
+        gone();
+        assert_eq!(
+            ending.end(),
+            crate::listen::End::Left,
+            "one screen still streams"
+        );
+        gone();
+        assert_eq!(ending.end(), crate::listen::End::ScreenGone);
+    }
+
+    #[tokio::test]
+    async fn bitmap_clients_get_each_screen_at_its_offset() {
+        let mut c = screens(
+            &[screen(0, 0, 4, 2), screen(4, 0, 2, 2)],
+            &[],
+            (6, 2),
+            None,
+            |_| Switch::bitmaps,
+        );
+        c.frames[1].send(frame((2, 2), Rect::full((2, 2)))).unwrap();
+        match c.lives[1].next().await {
+            Some(DisplayUpdate::Bitmap(b)) => {
+                assert_eq!((b.x, b.y, b.width.get(), b.height.get()), (4, 0, 2, 2));
+            }
+            other => panic!("a bitmap, not {other:?}"),
+        }
+        c.frames[0].send(frame((4, 2), Rect::full((4, 2)))).unwrap();
+        match c.lives[0].next().await {
+            Some(DisplayUpdate::Bitmap(b)) => assert_eq!((b.x, b.y), (0, 0)),
+            other => panic!("a bitmap, not {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_paired_screen_that_falls_back_to_bitmaps_resizes_the_client_to_whole() {
+        let (gfx, (_server, _events)) = ready_gfx();
+        let fits = Fits::default();
+        let mut c = screens(
+            &[screen(0, 0, 400, 200), screen(400, 0, 400, 200)],
+            &two_monitors(),
+            (1200, 400),
+            Some((&gfx, &[Backend::X264])),
+            |screen| fitted(&fits, (screen == 1).then_some(Backend::X264)),
+        );
+        code(&mut c.lives[0], frame((400, 200), SMALL)).await;
+        code(&mut c.lives[1], frame((400, 200), SMALL)).await;
+        assert_eq!(c.lives[1].using, None, "screen 1 has no H.264 left");
+        let whole = DesktopSize {
+            width: 800,
+            height: 200,
+        };
+        assert!(
+            matches!(
+                c.lives[1].queue.pop_front(),
+                Some(DisplayUpdate::Resize(size)) if size == whole
+            ),
+            "the client is resized to every screen at its own pixels, no bitmap first"
+        );
+        assert!(c.lives[1].queue.is_empty());
+        assert_eq!(*c.told.lock().unwrap(), whole);
+        assert_eq!(c.joint.desk.lock().unwrap().layout().kind, Kind::Whole);
+        assert!(
+            c.lives[0].relaid.has_changed().unwrap(),
+            "the other screen paints again"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_paired_client_opening_the_pipeline_waits_for_it_rather_than_bitmaps() {
+        use ironrdp_dvc::DvcProcessor;
+        use ironrdp_egfx::pdu::{CapabilitiesAdvertisePdu, CapabilitiesV81Flags, CapabilitySet};
+        let gfx = Gfx::default();
+        let (_bridge, server) = gfx.open();
+        let fits = Fits::default();
+        let mut c = screens(
+            &[screen(0, 0, 400, 200), screen(400, 0, 400, 200)],
+            &two_monitors(),
+            (1200, 400),
+            Some((&gfx, &[Backend::X264])),
+            |_| fitted(&fits, None),
+        );
+        let live = &mut c.lives[0];
+        live.take(frame((400, 200), SMALL));
+        live.start(Instant::now());
+        assert!(!live.busy, "no bitmap while the client opens the pipeline");
+        assert!(live.pending.is_some(), "the frame waits");
+        assert_eq!(c.joint.desk.lock().unwrap().layout().kind, Kind::Paired);
+        let advertise = ironrdp_egfx::pdu::GfxPdu::CapabilitiesAdvertise(
+            CapabilitiesAdvertisePdu::from_typed(&[CapabilitySet::V8_1 {
+                flags: CapabilitiesV81Flags::AVC420_ENABLED,
+            }]),
+        );
+        let payload = ironrdp_core::encode_vec(&advertise).unwrap();
+        server.lock().unwrap().process(0, &payload).unwrap();
+        live.next_at = Instant::now();
+        live.start(Instant::now());
+        assert!(
+            live.busy,
+            "the frame goes as H.264 once the pipeline is open"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bitmap_client_with_two_monitors_is_resized_to_whole() {
+        let mut c = screens(
+            &[screen(0, 0, 400, 200), screen(400, 0, 400, 200)],
+            &two_monitors(),
+            (1200, 400),
+            None,
+            |_| Switch::bitmaps,
+        );
+        c.frames[0].send(frame((400, 200), SMALL)).unwrap();
+        assert!(matches!(
+            c.lives[0].next().await,
+            Some(DisplayUpdate::Resize(DesktopSize {
+                width: 800,
+                height: 200
+            }))
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_pointer_shows_from_the_screen_it_is_over() {
+        let mut c = screens(
+            &[screen(0, 0, 4, 2), screen(4, 0, 4, 2)],
+            &[],
+            (8, 2),
+            None,
+            |_| Switch::bitmaps,
+        );
+        let image = CursorImage {
+            width: 1,
+            height: 1,
+            hotspot: (0, 0),
+            bgra: bytes::Bytes::from_static(&[255; 4]),
+        };
+        let at = |position, image: Option<&CursorImage>| {
+            let mut f = frame((4, 2), SMALL);
+            f.cursor = Some(stream::Cursor {
+                position,
+                image: image.cloned(),
+            });
+            f
+        };
+        c.lives[1].pointer_updates(&at((1, 1), Some(&image)));
+        assert!(matches!(
+            c.lives[1].queue.pop_front(),
+            Some(DisplayUpdate::RGBAPointer(_))
+        ));
+        assert!(matches!(
+            c.lives[1].queue.pop_front(),
+            Some(DisplayUpdate::PointerPosition(p)) if (p.x, p.y) == (5, 1)
+        ));
+        c.lives[0].pointer_updates(&at((9, 1), None));
+        assert!(
+            c.lives[0].queue.is_empty(),
+            "a screen the pointer is not over leaves it shown"
+        );
+        c.lives[1].pointer_updates(&at((5, 1), None));
+        assert!(matches!(
+            c.lives[1].queue.pop_front(),
+            Some(DisplayUpdate::HidePointer)
+        ));
     }
 
     #[test]

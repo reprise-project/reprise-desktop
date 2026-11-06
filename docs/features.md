@@ -717,7 +717,7 @@ are.
 
 Other computers can use this session over RDP while you stay logged in
 here, logged in with your own account's password. Several may connect at
-once, up to `max_viewers` (4 unless set); every one sees the screen and
+once, up to `max_viewers` (4 unless set); every one sees the screens and
 controls the keyboard and mouse.
 It's meant for the home network. Reprise opens no firewall port and sets up
 no port forwarding; allow the port in your firewall if you run one.
@@ -739,11 +739,21 @@ no port forwarding; allow the port in your firewall if you run one.
   that insists on NLA is refused, and the journal says to choose TLS. After
   a fourth wrong password from an address, each further try waits longer
   ([security.md](security.md#remote-desktop)).
-- **The picture.** The screen at the top left of the layout, at its own
-  size; a smaller client window scales it if the client is set to. The lock
-  screen shows too, and the client's keyboard unlocks it. The client draws
-  the pointer itself, so it moves without lag. Only what changed is sent,
-  and a still screen sends nothing.
+- **The picture.** Every screen. A client with several monitors
+  (`xfreerdp3 /multimon`) gets each screen on its own
+  monitor, fitted to it with its shape kept: the screen at the top left of
+  the layout goes on the client's primary monitor and the others follow,
+  top then left. A client monitor left over stays black, and a client with
+  fewer monitors than there are screens shows them all side by side, scaled
+  together to fit. A client in one window or on one monitor sees every
+  screen side by side as they are laid out here, each at its own size; a
+  smaller window scales the picture if the client is set to. A client
+  without H.264 gets that side-by-side picture too. Unplugging one of this
+  computer's screens reconnects the client to the screens left; one plugged
+  in shows from the next connection. The lock screen shows too, and the
+  client's keyboard unlocks it. The client draws the pointer itself, so it
+  moves without lag. Only what changed is sent, and a still screen sends
+  nothing.
 - **No monitor.** While Remote Desktop is on and no monitor is connected
   (switched to another computer on a KVM, or never plugged in since boot),
   a standby screen holds the desktop. It runs at the last monitor's size,
@@ -753,8 +763,7 @@ no port forwarding; allow the port in your firewall if you run one.
   watches. Settings > Displays and output management tools don't list it.
   A monitor coming back takes its place; viewers reconnect once then. The
   standby takes the last monitor's place even away from the layout's
-  origin, and the server shares the screen at the origin, else the topmost,
-  leftmost one.
+  origin.
 - **Encoders.** At start the server tries each H.264 encoder on a test
   frame: VA-API (Intel and AMD), NVENC (NVIDIA; tried on a GeForce RTX
   4080 SUPER with driver 615.78), Vulkan and x264 on the CPU. Automatic

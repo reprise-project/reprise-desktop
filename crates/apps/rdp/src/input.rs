@@ -1,10 +1,10 @@
 //! The client's keyboard and mouse, sent into the session as a libei sender on the portal
 //! session's EIS socket. Unicode keys go as `ei_text` keysyms.
 
-use crate::display::ToldSize;
 use crate::geometry::{self, Region};
 use crate::keymap::{self, Locks, Scancodes, Utf16};
-use crate::portal::{Grant, Screen};
+use crate::layout::{Layout, SharedDesk};
+use crate::portal::Grant;
 use ironrdp_pdu::input::fast_path::SynchronizeFlags;
 use ironrdp_server::{KeyboardEvent, MouseButton, MouseEvent, RdpServerInputHandler};
 use reis::PendingRequestResult;
@@ -357,8 +357,8 @@ impl RdpServerInputHandler for Input {
 
 /// Send `feed`'s events into the session of `grant` until the client's input ends. Runs on the
 /// connection's `LocalSet`.
-pub async fn serve(grant: Arc<Grant>, mut events: UnboundedReceiver<Event>, told: ToldSize) {
-    if let Err(e) = Sender::run(&grant, &mut events, &told).await {
+pub async fn serve(grant: Arc<Grant>, mut events: UnboundedReceiver<Event>, desk: SharedDesk) {
+    if let Err(e) = Sender::run(&grant, &mut events, &desk).await {
         log::warn!("remote input stopped: {e}");
     }
     while events.recv().await.is_some() {}
@@ -477,7 +477,7 @@ impl Waiting {
 /// The EIS connection as a sender: one keyboard and one absolute pointer device.
 struct Sender<'a> {
     grant: &'a Grant,
-    told: &'a ToldSize,
+    desk: &'a SharedDesk,
     events: Option<EiEventConverter>,
     keyboard: Option<reis::event::Device>,
     pointer: Option<reis::event::Device>,
@@ -490,7 +490,7 @@ impl<'a> Sender<'a> {
     async fn run(
         grant: &'a Grant,
         feed: &mut UnboundedReceiver<Event>,
-        told: &'a ToldSize,
+        desk: &'a SharedDesk,
     ) -> Result<(), String> {
         let fd = grant.eis_fd.try_clone().map_err(|e| e.to_string())?;
         let context = ei::Context::new(UnixStream::from(fd)).map_err(|e| e.to_string())?;
@@ -503,7 +503,7 @@ impl<'a> Sender<'a> {
             EiHandshaker::new("Remote Desktop", ei::handshake::ContextType::Sender);
         let mut sender = Sender {
             grant,
-            told,
+            desk,
             events: None,
             keyboard: None,
             pointer: None,
@@ -631,13 +631,12 @@ impl<'a> Sender<'a> {
                 let Some(pointer) = &self.pointer else {
                     return;
                 };
-                let region = self.region(pointer);
-                let told = *self.told.lock().unwrap();
-                let (x, y) = geometry::to_logical(
-                    (x, y),
-                    (u32::from(told.width), u32::from(told.height)),
-                    region,
-                );
+                let desk = self.desk.lock().unwrap();
+                let at = to_logical(desk.layout(), (x, y), |screen| self.region(pointer, screen));
+                drop(desk);
+                let Some((x, y)) = at else {
+                    return;
+                };
                 self.on_pointer(|d| {
                     (d.interface::<ei::PointerAbsolute>())
                         .map(|p| p.motion_absolute(x as f32, y as f32))
@@ -703,16 +702,13 @@ impl<'a> Sender<'a> {
         device.device().frame(serial, now_us());
     }
 
-    fn screen(&self) -> &Screen {
-        &self.grant.screens[0]
-    }
-
-    /// The shared output's region on `pointer`, or where the portal said it was.
-    fn region(&self, pointer: &reis::event::Device) -> Region {
+    /// Shared screen `screen`'s region on `pointer`, or where the portal said it was.
+    fn region(&self, pointer: &reis::event::Device, screen: usize) -> Region {
+        let screen = &self.grant.screens[screen];
         let shared = pointer
             .regions()
             .iter()
-            .find(|r| r.mapping_id.is_some() && r.mapping_id == self.screen().mapping_id);
+            .find(|r| r.mapping_id.is_some() && r.mapping_id == screen.mapping_id);
         match shared {
             Some(r) => Region {
                 x: r.x as i32,
@@ -720,17 +716,29 @@ impl<'a> Sender<'a> {
                 width: r.width,
                 height: r.height,
             },
-            None => {
-                let screen = self.screen();
-                Region {
-                    x: screen.position.0,
-                    y: screen.position.1,
-                    width: screen.size.0,
-                    height: screen.size.1,
-                }
-            }
+            None => Region {
+                x: screen.position.0,
+                y: screen.position.1,
+                width: screen.size.0,
+                height: screen.size.1,
+            },
         }
     }
+}
+
+/// The logical layout point under client point `p`: on the screen `layout` draws there, whose
+/// place in the layout `region` gives. None outside every screen.
+fn to_logical(
+    layout: &Layout,
+    p: (u16, u16),
+    region: impl Fn(usize) -> Region,
+) -> Option<(f64, f64)> {
+    let (screen, at) = layout.to_screen(p)?;
+    Some(geometry::to_logical(
+        at,
+        layout.pixels(screen)?,
+        region(screen),
+    ))
 }
 
 fn key_state(pressed: bool) -> ei::keyboard::KeyState {
@@ -1197,5 +1205,64 @@ mod tests {
     #[test]
     fn no_client_move_means_no_echo() {
         assert!(!Moves::default().is_echo((0, 0), Instant::now()));
+    }
+
+    #[test]
+    fn input_on_the_second_monitor_lands_on_the_second_screen() {
+        use crate::layout::ScreenRect;
+        use ironrdp_pdu::gcc::{Monitor, MonitorFlags};
+        let screen = |x, w, h| ScreenRect {
+            position: (x, 0),
+            logical: (w, h),
+            pixels: (w, h),
+        };
+        let monitor = |left, right, bottom, flags| Monitor {
+            left,
+            top: 0,
+            right,
+            bottom,
+            flags,
+        };
+        let layout = Layout::new(
+            &[screen(0, 1920, 1200), screen(1920, 1920, 1080)],
+            &[
+                monitor(0, 2559, 1439, MonitorFlags::PRIMARY),
+                monitor(2560, 4479, 1079, MonitorFlags::empty()),
+            ],
+        );
+        let regions = [
+            Region {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1200,
+            },
+            Region {
+                x: 1920,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+        ];
+        let region = |screen: usize| regions[screen];
+        assert_eq!(
+            to_logical(&layout, (2560 + 960, 540), region),
+            Some((2880.0, 540.0))
+        );
+        assert_eq!(
+            to_logical(&layout, (128 + 1152, 720), region),
+            Some((960.0, 600.0)),
+            "the primary monitor shows the first screen, scaled"
+        );
+        assert_eq!(
+            to_logical(&layout, (10, 10), region),
+            None,
+            "a letterbox bar"
+        );
+        assert_eq!(
+            to_logical(&layout, (3000, 1200), region),
+            None,
+            "below the second monitor"
+        );
     }
 }
