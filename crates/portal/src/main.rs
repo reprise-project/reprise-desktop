@@ -540,8 +540,9 @@ pub(crate) struct Started {
 pub(crate) enum Pick {
     /// A remembered target, else the share dialog.
     Ask,
-    /// The output at layout origin (0,0), not remembered and with no dialog: the remote desktop
-    /// server's, whose capture the compositor tells apart (`Wayland::connect_remote_capture`).
+    /// The output at the layout origin (0,0), else the top-left-most ([`origin_output`]), not
+    /// remembered and with no dialog: the remote desktop server's, whose capture the compositor
+    /// tells apart (`Wayland::connect_remote_capture`).
     Origin,
 }
 
@@ -788,9 +789,7 @@ fn choose(
     let toplevels = wl.toplevels();
     drop(wl);
     if pick == Pick::Origin {
-        let o = (outputs.iter())
-            .find(|o| (o.x, o.y) == (0, 0))
-            .ok_or("no output at the layout origin")?;
+        let o = origin_output(&outputs).ok_or("no output to share")?;
         return Ok(Some((
             Target::Output(o.name.clone()),
             Some(o.clone()),
@@ -831,6 +830,13 @@ fn choose(
     lastpick::save(app_id, &t);
     let info = info_for(&t);
     Ok(Some((t, info, remember)))
+}
+
+/// The output whose top-left is the layout origin, else the top-left-most: the topmost, and of
+/// those the leftmost.
+fn origin_output(outputs: &[wayland::OutputInfo]) -> Option<&wayland::OutputInfo> {
+    (outputs.iter().find(|o| (o.x, o.y) == (0, 0)))
+        .or_else(|| outputs.iter().min_by_key(|o| (o.y, o.x)))
 }
 
 /// The share dialog's rows: the outputs and the windows `types` asks for.
@@ -1217,6 +1223,40 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_remote_desktop_shares_the_origin_output_else_the_top_left_most() {
+        let at = |name: &str, x, y| wayland::OutputInfo {
+            name: name.into(),
+            x,
+            y,
+            width: 1920,
+            height: 1080,
+            ..Default::default()
+        };
+        let name = |outputs: &[wayland::OutputInfo]| origin_output(outputs).map(|o| o.name.clone());
+        let beside = [at("DP-2", 1920, 0), at("DP-1", 0, 0)];
+        assert_eq!(name(&beside).as_deref(), Some("DP-1"), "the origin output");
+        let moved = [at("HEADLESS-1", 1920, 0)];
+        assert_eq!(
+            name(&moved).as_deref(),
+            Some("HEADLESS-1"),
+            "the only output, away from the origin"
+        );
+        let staggered = [at("DP-1", 0, 200), at("DP-2", 1920, 0), at("DP-3", 3840, 0)];
+        assert_eq!(
+            name(&staggered).as_deref(),
+            Some("DP-2"),
+            "the topmost, then the leftmost"
+        );
+        let left = [at("DP-1", 0, 0), at("DP-2", -1920, 0)];
+        assert_eq!(
+            name(&left).as_deref(),
+            Some("DP-1"),
+            "the origin output wins over one further left"
+        );
+        assert_eq!(name(&[]), None);
+    }
 
     #[test]
     fn persistence_needs_a_ticked_remember_and_caps_at_until_revoked() {
