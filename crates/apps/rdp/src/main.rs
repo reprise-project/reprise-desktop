@@ -104,10 +104,10 @@ fn main() -> ExitCode {
             status,
             config: config_rx.clone(),
             disconnect: disconnect_rx,
-            leave: lock::LockOnLeave::new(marker.clone(), config_rx.clone()),
+            leave: lock::LockOnLeave::new(marker, config_rx.clone()),
         };
         let sync_owner = input::SyncOwner::default();
-        let serving = listen::serve(server, intake, logins, |shown, ending| {
+        let handlers = |shown, ending| {
             let (input, feed) = input::Input::new(sync_owner.clone());
             let h264 = probed
                 .borrow()
@@ -129,8 +129,8 @@ fn main() -> ExitCode {
             let sound: Box<dyn ironrdp_server::SoundServerFactory> =
                 Box::new(sound::Factory::new(config_rx.clone()));
             (display, input, factory, Some(clipboard), Some(sound))
-        });
-        lock::until_stopped(serving, terminated(), marker.as_deref(), lock::lock()).await;
+        };
+        listen::serve(server, intake, logins, handlers, terminated()).await;
     });
     // Dropping the connections gives the shared sink's default back before the process ends.
     drop(local);
