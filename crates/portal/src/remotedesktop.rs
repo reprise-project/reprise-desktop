@@ -243,7 +243,10 @@ impl RemoteDesktop {
             Some(0) => {}
             Some(_) => {
                 if trusted {
-                    locked = crate::lockmode::begin(conn, caller, live(&self.link)).await;
+                    match crate::lockmode::begin(conn, caller, live(&self.link)).await {
+                        Ok(l) => locked = l,
+                        Err(crate::lockmode::NotBegun) => return Ok((RESPONSE_OTHER, empty())),
+                    }
                 }
                 let pick = if trusted {
                     crate::lockmode::pick(locked.as_ref())
