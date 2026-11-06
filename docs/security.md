@@ -83,9 +83,9 @@ the app id `org.reprise.RemoteDesktop`, only while the user unit
 `app-org.reprise.RemoteDesktop.service` is enabled and active, and only when
 that unit's main process runs `reprise-rdp` from `/usr/bin` or
 `/usr/local/bin` and is the process that asked. A sandboxed app's requests
-reach the portal through its bus proxy, so they never pass. Such a session gets the keyboard, the pointer and the
-screen at the layout origin (0,0), else the topmost and then leftmost one,
-and leaves no restore token behind.
+reach the portal through its bus proxy, so they never pass. Such a session gets the keyboard, the pointer and
+every screen whose top left lies at a non-negative position in the layout,
+or every screen when none does, and leaves no restore token behind.
 As with `reprise_input_v1`, this is no boundary against code running as you.
 
 ## X11 programs
