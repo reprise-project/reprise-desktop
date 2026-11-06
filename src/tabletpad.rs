@@ -28,6 +28,7 @@ use smithay::reexports::input::{
 
 use crate::compositor::State;
 use crate::config::{Action, parse_keybind};
+use crate::inputproto::InputSource;
 use crate::keys::{KEY_Alt_L, KEY_Control_L, KEY_Shift_L, KEY_Super_L};
 use crate::keys::{MOD_ALT, MOD_CTRL, MOD_LOGO, MOD_SHIFT};
 
@@ -556,8 +557,8 @@ impl State {
 
     /// Press `mods`, then the key giving `keysym` (with Shift when the
     /// keysym is that key's second level); the evdev codes pressed, in
-    /// order.
-    fn pad_chord_down(&mut self, mods: u32, keysym: u32) -> Vec<u32> {
+    /// order. A pad's keys are the computer's own, as its chord's release is.
+    pub(crate) fn pad_chord_down(&mut self, mods: u32, keysym: u32) -> Vec<u32> {
         let Some((code, level)) = self.key_for_sym(keysym) else {
             log::warn!("tablet pad: no key gives keysym {keysym:#x}");
             return Vec::new();
@@ -569,16 +570,20 @@ impl State {
             .filter_map(|&(_, sym)| self.key_for_sym(sym).map(|(c, _)| c))
             .collect();
         codes.push(code);
-        for &c in &codes {
-            self.handle_key(crate::eis::evdev_key(c), true, InputTime::now());
-        }
+        self.with_source(InputSource::Physical, |s| {
+            for &c in &codes {
+                s.handle_key(crate::eis::evdev_key(c), true, InputTime::now());
+            }
+        });
         codes
     }
 
-    fn pad_chord_up(&mut self, codes: Vec<u32>) {
-        for c in codes.into_iter().rev() {
-            self.handle_key(crate::eis::evdev_key(c), false, InputTime::now());
-        }
+    pub(crate) fn pad_chord_up(&mut self, codes: Vec<u32>) {
+        self.with_source(InputSource::Physical, |s| {
+            for c in codes.into_iter().rev() {
+                s.handle_key(crate::eis::evdev_key(c), false, InputTime::now());
+            }
+        });
     }
 }
 
