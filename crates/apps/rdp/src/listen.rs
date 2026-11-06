@@ -32,6 +32,10 @@ use tokio::sync::{mpsc, oneshot, watch};
 pub trait Leave {
     fn arrived(&self) {}
     fn left(&self, why: End) -> impl Future<Output = ()>;
+    /// Runs once as the server stops, before any connection is told to end.
+    fn stopping(&self) -> impl Future<Output = ()> {
+        std::future::ready(())
+    }
 }
 
 /// Why a connection shown the session ended.
@@ -89,14 +93,15 @@ pub type Handlers<D, I> = (
 
 /// Serve clients from `intake` for `server.user`, each checked by `logins` and served by
 /// `handlers`, which reports through its [`Shown`] and [`Ending`]. A client arriving with
-/// `max_viewers` connected is closed at once.
+/// `max_viewers` connected is closed at once. On `stop`, [`Leave::stopping`] runs, then every
+/// connection is told the server stopped and this returns once each has closed.
 pub async fn serve<D, I, L>(
     mut server: Server<L>,
     mut intake: impl Intake,
     logins: impl Logins,
     mut handlers: impl FnMut(Shown, Ending) -> Handlers<D, I>,
-) -> Infallible
-where
+    stop: impl Future<Output = ()>,
+) where
     D: RdpServerDisplay + 'static,
     I: RdpServerInputHandler + 'static,
     L: Leave + 'static,
@@ -107,8 +112,11 @@ where
         leave: server.leave,
         viewers: RefCell::default(),
     });
+    let (alive, mut all_closed) = mpsc::channel::<Infallible>(1);
+    tokio::pin!(stop);
     loop {
         tokio::select! {
+            () = &mut stop => break,
             Some(request) = server.disconnect.recv() => match request {
                 Request::All => shared.viewers.borrow_mut().kick_all(Kick::Asked),
                 Request::Client(address, reply) => {
@@ -154,12 +162,17 @@ where
                     .with_cliprdr_factory(clipboard)
                     .with_sound_factory(sound)
                     .build();
-                let viewer = Viewer { id, peer, kicked, ending };
+                let viewer = Viewer { id, peer, kicked, ending, alive: alive.clone() };
                 let shared = shared.clone();
                 tokio::task::spawn_local(run(rdp, stream, viewer, check, budget, on_shown, shared));
             }
         }
     }
+    log::info!("stopping");
+    shared.leave.stopping().await;
+    shared.viewers.borrow_mut().kick_all(Kick::Stopped);
+    drop(alive);
+    let _ = all_closed.recv().await;
 }
 
 /// What every connection of one [`serve`] shares.
@@ -192,6 +205,8 @@ struct Viewer {
     peer: SocketAddr,
     kicked: oneshot::Receiver<Kick>,
     ending: Ending,
+    /// Held until the connection has closed; [`serve`] waits for every one as it stops.
+    alive: mpsc::Sender<Infallible>,
 }
 
 async fn run<L: Leave + 'static, C: Login>(
@@ -208,6 +223,7 @@ async fn run<L: Leave + 'static, C: Login>(
         peer,
         kicked,
         ending,
+        alive,
     } = viewer;
     log::info!("{peer}: connected");
     let arrived = Rc::new(Cell::new(false));
@@ -242,6 +258,7 @@ async fn run<L: Leave + 'static, C: Login>(
         std::future::pending::<Infallible>().await
     };
     let told = server.error_info_disconnect_handle();
+    let mut stopped = false;
     let ended = {
         let connection = server.run_connection(stream);
         tokio::pin!(connection);
@@ -252,9 +269,11 @@ async fn run<L: Leave + 'static, C: Login>(
             match kick {
                 Kick::Asked => log::info!("{peer}: disconnected by request"),
                 Kick::PortChanged => log::info!("{peer}: disconnected; the port changed"),
+                Kick::Stopped => log::info!("{peer}: disconnected; the server is stopping"),
             }
             shared.forget(id, peer);
-            tell_and_end(connection.as_mut(), |why| drop(told.disconnect(why))).await;
+            tell_and_end(connection.as_mut(), told_for(kick), |why| drop(told.disconnect(why))).await;
+            stopped = kick == Kick::Stopped;
             None
         }
         () = login_expired(&*check, budget) => {
@@ -265,6 +284,7 @@ async fn run<L: Leave + 'static, C: Login>(
         }
     };
     shared.forget(id, peer);
+    drop(alive);
     if let Some(ended) = ended {
         if !check.accepted() && seen.lock().unwrap().refuses_tls() {
             log::warn!(
@@ -276,6 +296,10 @@ async fn run<L: Leave + 'static, C: Login>(
             Ok(()) => log::info!("{peer}: disconnected"),
             Err(e) => log::info!("{peer}: disconnected: {}", e.report()),
         }
+    }
+    // A stop has locked already, through `Leave::stopping`.
+    if stopped {
+        return;
     }
     if arrived.replace(false) {
         drop(server);
@@ -305,17 +329,28 @@ impl<L: Leave + 'static> Drop for Unwound<L> {
 }
 
 /// What a kicked client is told. A client told nothing takes the closed socket for a network
-/// failure and reconnects with its saved password; Remmina does within a second.
-const KICKED: ErrorInfo =
-    ErrorInfo::ProtocolIndependentCode(ProtocolIndependentCode::RpcInitiatedDisconnectByuser);
-/// How long a kicked connection may take to send [`KICKED`] and close. One still logging in is
-/// not told; it is closed when this runs out.
+/// failure and reconnects with its saved password; Remmina does within a second. FreeRDP names
+/// a stop "initiated by an administrative tool on the server".
+fn told_for(kick: Kick) -> ErrorInfo {
+    let code = match kick {
+        Kick::Asked | Kick::PortChanged => ProtocolIndependentCode::RpcInitiatedDisconnectByuser,
+        Kick::Stopped => ProtocolIndependentCode::RpcInitiatedDisconnect,
+    };
+    ErrorInfo::ProtocolIndependentCode(code)
+}
+
+/// How long a kicked connection may take to send its [`told_for`] and close. One still logging
+/// in is not told; it is closed when this runs out.
 const TOLD: Duration = Duration::from_secs(2);
 
-/// Passes [`KICKED`] to `tell` for the server to send, then runs `connection` until the server has
+/// Passes `why` to `tell` for the server to send, then runs `connection` until the server has
 /// sent it and closed, or for [`TOLD`].
-async fn tell_and_end(connection: Pin<&mut impl Future>, tell: impl FnOnce(ErrorInfo)) {
-    tell(KICKED);
+async fn tell_and_end(
+    connection: Pin<&mut impl Future>,
+    why: ErrorInfo,
+    tell: impl FnOnce(ErrorInfo),
+) {
+    tell(why);
     let _ = tokio::time::timeout(TOLD, connection).await;
 }
 
@@ -475,6 +510,9 @@ pub(crate) mod tests {
         status: watch::Receiver<Status>,
         config: watch::Sender<RemoteDesktop>,
         disconnect: mpsc::UnboundedSender<Request>,
+        stop: Option<oneshot::Sender<()>>,
+        /// Ends once [`serve`] returned.
+        served: tokio::task::JoinHandle<()>,
     }
 
     /// A login that is accepted as the connection arrives.
@@ -534,6 +572,16 @@ pub(crate) mod tests {
         config: RemoteDesktop,
         logins: impl Logins + 'static,
     ) -> Running {
+        start_leaving(local, config, logins, |_| ()).await
+    }
+
+    /// [`start_with`], leaving through what `leave` makes of the status.
+    async fn start_leaving<L: Leave + 'static>(
+        local: &LocalSet,
+        config: RemoteDesktop,
+        logins: impl Logins + 'static,
+        leave: impl FnOnce(watch::Receiver<Status>) -> L,
+    ) -> Running {
         let port = config.port;
         let dir = tempfile::tempdir().unwrap();
         let identity = crate::cert::load_or_create(dir.path()).unwrap();
@@ -551,9 +599,10 @@ pub(crate) mod tests {
             status,
             config: config_rx,
             disconnect: disconnect_rx,
-            leave: (),
+            leave: leave(status_rx.clone()),
         };
-        local.spawn_local(serve(server, intake, logins, |_, _| {
+        let (stop, stopped) = oneshot::channel::<()>();
+        let handlers = |_, _| {
             (
                 crate::Grey,
                 crate::input::Input::new(Default::default()).0,
@@ -561,7 +610,14 @@ pub(crate) mod tests {
                 None,
                 None,
             )
-        }));
+        };
+        // A dropped `Running` leaves it serving.
+        let stopped = async {
+            if stopped.await.is_err() {
+                std::future::pending().await
+            }
+        };
+        let served = local.spawn_local(serve(server, intake, logins, handlers, stopped));
         let reported = status_rx.wait_for(|s| !s.listening.is_empty());
         let listening = (tokio::time::timeout(Duration::from_secs(5), reported).await)
             .expect("where it listens is reported")
@@ -576,6 +632,8 @@ pub(crate) mod tests {
             status: status_rx,
             config,
             disconnect,
+            stop: Some(stop),
+            served,
         }
     }
 
@@ -1182,6 +1240,7 @@ pub(crate) mod tests {
                         peer,
                         kicked,
                         ending: ending.clone(),
+                        alive: mpsc::channel(1).0,
                     },
                     check.clone(),
                     HANDSHAKE,
@@ -1243,6 +1302,57 @@ pub(crate) mod tests {
             .await;
     }
 
+    /// How many clients were listed as the server stopped.
+    struct ListedAtStop(watch::Receiver<Status>, Rc<Cell<Option<usize>>>);
+
+    impl Leave for ListedAtStop {
+        async fn left(&self, _: End) {}
+        async fn stopping(&self) {
+            self.1.set(Some(self.0.borrow().clients.len()));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stop_locks_with_every_client_connected_then_ends_them() {
+        let local = LocalSet::new();
+        local
+            .run_until(async {
+                let at_stop = Rc::new(Cell::new(None));
+                let config = RemoteDesktop {
+                    max_viewers: 4,
+                    ..RemoteDesktop::default()
+                };
+                let leave = |status| ListedAtStop(status, at_stop.clone());
+                let mut s = start_leaving(&local, config, Admitted, leave).await;
+                let [(mut a, _), (mut b, _)] = two_listed(&mut s).await;
+                s.stop.take().unwrap().send(()).unwrap();
+                assert!(closed_soon(&mut a).await, "the first client is ended");
+                assert!(closed_soon(&mut b).await, "the second client is ended");
+                let served = tokio::time::timeout(Duration::from_secs(5), s.served).await;
+                assert!(served.is_ok(), "the server returns once both closed");
+                assert_eq!(at_stop.get(), Some(2), "the lock comes before either ends");
+            })
+            .await;
+    }
+
+    #[test]
+    fn a_stop_tells_the_client_the_server_ended_it_and_a_kick_that_the_user_did() {
+        let code = |kick| match told_for(kick) {
+            ErrorInfo::ProtocolIndependentCode(code) => code,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            code(Kick::Stopped),
+            ProtocolIndependentCode::RpcInitiatedDisconnect
+        );
+        for kick in [Kick::Asked, Kick::PortChanged] {
+            assert_eq!(
+                code(kick),
+                ProtocolIndependentCode::RpcInitiatedDisconnectByuser
+            );
+        }
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_kick_tells_the_client_it_was_disconnected_by_the_user_before_closing() {
         let (sent, closes) = oneshot::channel();
@@ -1253,7 +1363,7 @@ pub(crate) mod tests {
             closed.set(true);
         });
         let started = tokio::time::Instant::now();
-        tell_and_end(connection, |why| {
+        tell_and_end(connection, told_for(Kick::Asked), |why| {
             told.set(Some(why));
             sent.send(()).unwrap();
         })
@@ -1270,7 +1380,8 @@ pub(crate) mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_kicked_connection_that_does_not_close_is_dropped_after_2_s() {
         let started = tokio::time::Instant::now();
-        tell_and_end(std::pin::pin!(std::future::pending::<()>()), drop).await;
+        let why = told_for(Kick::Asked);
+        tell_and_end(std::pin::pin!(std::future::pending::<()>()), why, drop).await;
         assert_eq!(started.elapsed(), Duration::from_secs(2));
     }
 
@@ -1373,6 +1484,7 @@ pub(crate) mod tests {
                     peer,
                     kicked,
                     ending: Ending::default(),
+                    alive: mpsc::channel(1).0,
                 };
                 let ran = run(
                     rdp,
