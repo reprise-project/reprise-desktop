@@ -1,5 +1,5 @@
 //! Logins: the session user's password, checked by the compositor's PAM conversation helper, a
-//! per-address wait after repeated failures, and a pause of every login after many.
+//! per-address back-off after repeated failures, and a pause of every login after many.
 
 use ironrdp_server::{
     CredentialDecision, CredentialValidationError, CredentialValidator, Credentials,
@@ -33,8 +33,8 @@ fn helper_beside(server: &Path) -> PathBuf {
 /// The helper's environment: what PAM modules and their messages read. Everything else is dropped.
 const KEPT_ENV: [&str; 5] = ["PATH", "LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES"];
 
-/// The time a connection has to log in, on top of any wait its address is serving. A password
-/// check in flight when it runs out is finished first.
+/// The time a connection has to log in. A password check in flight when it runs out is finished
+/// first.
 pub const HANDSHAKE: Duration = Duration::from_secs(10);
 
 /// How long the helper has to give its verdict before it is killed and the check fails.
@@ -49,8 +49,8 @@ const PAUSE_AFTER: usize = 10;
 const PAUSE_WINDOW: Duration = Duration::from_secs(600);
 const PAUSE: Duration = Duration::from_secs(600);
 
-/// Failed logins: from the fourth an address waits, doubling up to `MAX_WAIT`, until a success
-/// or `FORGET` without a failure.
+/// Failed logins: from the fourth an address is refused for a back-off, doubling up to `MAX_WAIT`,
+/// until a success or `FORGET` without a failure.
 /// A login counts as failed from the start of its check, so a check cut short still counts.
 #[derive(Default)]
 pub struct Throttle {
@@ -70,7 +70,7 @@ struct Failures {
 }
 
 impl Throttle {
-    /// How long `peer` still has to wait before its next login is checked.
+    /// How long `peer` is still refused before its next login is checked.
     pub fn delay(&self, peer: IpAddr) -> Duration {
         self.peers.get(&peer).map_or(Duration::ZERO, |f| {
             f.until.saturating_duration_since(Instant::now())
@@ -191,6 +191,8 @@ pub trait Logins {
     type Check: Login;
     /// `peer`'s login and the time it has to log in.
     fn check(&self, peer: SocketAddr) -> (Arc<Self::Check>, Duration);
+    /// How long connections from `peer` are still refused after failed logins.
+    fn backoff(&self, peer: IpAddr) -> Duration;
 }
 
 /// The session user's password, with one [`Throttle`] for every connection.
@@ -208,6 +210,14 @@ impl PasswordLogins {
             throttle: Arc::default(),
         }
     }
+
+    #[cfg(test)]
+    pub fn sharing(user: String, throttle: Arc<Mutex<Throttle>>) -> PasswordLogins {
+        PasswordLogins {
+            throttle,
+            ..PasswordLogins::new(user)
+        }
+    }
 }
 
 impl Logins for PasswordLogins {
@@ -216,8 +226,11 @@ impl Logins for PasswordLogins {
     fn check(&self, peer: SocketAddr) -> (Arc<PasswordCheck>, Duration) {
         let check =
             PasswordCheck::new(self.user.clone(), &self.helper, peer, self.throttle.clone());
-        let budget = HANDSHAKE + self.throttle.lock().unwrap().delay(peer.ip());
-        (Arc::new(check), budget)
+        (Arc::new(check), HANDSHAKE)
+    }
+
+    fn backoff(&self, peer: IpAddr) -> Duration {
+        self.throttle.lock().unwrap().delay(peer)
     }
 }
 
@@ -419,8 +432,16 @@ impl CredentialValidator for PasswordCheck {
         credentials: &Credentials,
     ) -> Result<CredentialDecision, CredentialValidationError> {
         let _in_flight = InFlight::start(&self.login);
-        // A wait cut short by a dropped connection is served before the next check.
-        tokio::time::sleep(self.delay()).await;
+        // Another connection from this address may have failed since this one was let in.
+        let backoff = self.delay();
+        if !backoff.is_zero() {
+            log::info!(
+                "{}: refused; {} s of back-off left",
+                self.peer,
+                backoff.as_secs_f32().ceil()
+            );
+            return Ok(CredentialDecision::Reject);
+        }
         if self.throttle.lock().unwrap().paused() {
             log::info!("{}: refused; logins are paused", self.peer);
             return Ok(CredentialDecision::Reject);
@@ -436,7 +457,6 @@ impl CredentialValidator for PasswordCheck {
         }
         // Logs a pause this failure starts.
         self.throttle.lock().unwrap().paused();
-        tokio::time::sleep(self.delay()).await;
         Ok(CredentialDecision::Reject)
     }
 }
@@ -767,6 +787,47 @@ pub(crate) mod tests {
             () = started(dir.path()) => {}
         }
         assert_eq!(throttle.lock().unwrap().failures(A), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_address_in_back_off_is_rejected_at_once_without_the_helper() {
+        let dir = tempfile::tempdir().unwrap();
+        let throttle = Arc::<Mutex<Throttle>>::default();
+        for _ in 0..FREE_FAILURES + 1 {
+            throttle.lock().unwrap().failed(A);
+        }
+        let started = Instant::now();
+        assert_eq!(
+            validate_from(dir.path(), &throttle, "alice", "secret").await,
+            CredentialDecision::Reject
+        );
+        assert_eq!(started.elapsed(), Duration::ZERO, "no wait is served");
+        assert!(!dir.path().join("args").exists(), "the helper must not run");
+        assert_eq!(
+            throttle.lock().unwrap().failures(A),
+            4,
+            "no failure is added"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failure_that_starts_a_back_off_is_rejected_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let throttle = Arc::<Mutex<Throttle>>::default();
+        for _ in 0..FREE_FAILURES {
+            throttle.lock().unwrap().failed(A);
+        }
+        let started = Instant::now();
+        assert_eq!(
+            validate_from(dir.path(), &throttle, "alice", "guess").await,
+            CredentialDecision::Reject
+        );
+        assert_eq!(
+            started.elapsed(),
+            Duration::ZERO,
+            "the back-off is not waited out"
+        );
+        assert_eq!(throttle.lock().unwrap().delay(A), Duration::from_secs(2));
     }
 
     /// `PAUSE_AFTER` failures, each from its own address.
