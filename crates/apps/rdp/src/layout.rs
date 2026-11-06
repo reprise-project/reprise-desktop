@@ -255,13 +255,16 @@ fn usable(client: &[Monitor]) -> Result<((u16, u16), Vec<Monitor>), &'static str
     if client.iter().any(|m| m.right < m.left || m.bottom < m.top) {
         return Err("a monitor has no size");
     }
-    // The acceptor echoes the client's monitors only when exactly one is primary.
-    let primaries = client
+    // The acceptor echoes the client's monitors only under the same rules: exactly one
+    // primary, at (0, 0) (MS-RDPBCGR 2.2.1.3.6.1).
+    let mut primaries = client
         .iter()
-        .filter(|m| m.flags.contains(MonitorFlags::PRIMARY))
-        .count();
-    if primaries != 1 {
+        .filter(|m| m.flags.contains(MonitorFlags::PRIMARY));
+    let (Some(primary), None) = (primaries.next(), primaries.next()) else {
         return Err("not exactly one primary monitor");
+    };
+    if (primary.left, primary.top) != (0, 0) {
+        return Err("the primary monitor is not at 0,0");
     }
     let left = client.iter().map(|m| m.left).min().unwrap_or(0);
     let top = client.iter().map(|m| m.top).min().unwrap_or(0);
@@ -479,10 +482,10 @@ mod tests {
                 screen(0, 1080, 1920, 1080),
             ],
             &[
-                monitor(1920, 1080, 3839, 2159, false),
-                monitor(1920, 0, 3839, 1079, true),
                 monitor(0, 1080, 1919, 2159, false),
-                monitor(0, 0, 1919, 1079, false),
+                monitor(0, 0, 1919, 1079, true),
+                monitor(-1920, 1080, -1, 2159, false),
+                monitor(-1920, 0, -1, 1079, false),
             ],
         );
         assert_eq!(
@@ -564,12 +567,17 @@ mod tests {
             monitor(0, 0, 1919, 1079, true),
             monitor(1920, 0, 3839, 1079, true),
         ];
+        let primary_off_origin = [
+            monitor(-1920, 0, -1, 1079, false),
+            monitor(1, 0, 1920, 1079, true),
+        ];
         for client in [
             &zero_size[..],
             &inverted,
             &seventeen,
             &no_primary,
             &two_primaries,
+            &primary_off_origin,
         ] {
             let layout = Layout::new(&screens, client);
             assert_eq!(layout.kind, Kind::Whole, "{client:?} is ignored");
