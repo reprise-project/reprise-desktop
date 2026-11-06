@@ -707,7 +707,8 @@ impl State {
 
     /// Windows keep their place on an output that moved in the layout (an arrangement change, or
     /// an output left of it growing): each moves by its output's move, restore boxes included.
-    /// Windows on a Remote output keep their relative place on it (`homes::refit_remote`).
+    /// Windows on a Remote output keep their relative place on it (`homes::refit_remote`); lock
+    /// mode's first layout sends every window to one (`homes::send_all`).
     fn carry_windows(&mut self, before: &[(Output, Rect)], after: &[(Output, Rect)]) {
         let windows: Vec<(WindowId, Rect)> = self
             .windows
@@ -736,6 +737,9 @@ impl State {
                 shift(&mut win.snapped);
             }
             self.move_to(w, r.x + dx, r.y + dy);
+        }
+        if remote.is_empty() {
+            crate::console::homes::send_all(self);
         }
     }
 
@@ -828,7 +832,11 @@ impl State {
     /// last recorded, else its box without the taskbar's strip. An empty
     /// result is a real answer, so a full-height exclusive zone is honoured.
     pub fn usable_area(&self, output: Option<&Output>) -> Rect {
-        let b = self.layout_box(output);
+        self.usable_area_at(output, self.layout_box(output))
+    }
+
+    /// [`State::usable_area`] for `output` laid out at `b`, its box before or after a relayout.
+    pub fn usable_area_at(&self, output: Option<&Output>, b: Rect) -> Rect {
         if b.width <= 0 {
             return b;
         }

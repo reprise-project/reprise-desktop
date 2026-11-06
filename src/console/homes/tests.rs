@@ -256,6 +256,70 @@ fn resizing_the_remote_screen_keeps_windows_in_their_relative_place() {
 }
 
 #[test]
+fn resizing_the_remote_screen_keeps_a_zoned_window_filling_its_zone() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "zoned", 400, 300);
+    let mut s = begin(&mut h, &[(0, 0, 1920, 1080, 100)]);
+    let r = remotes(&h)[0].clone();
+    let right = |a: Rect| Rect::new(a.x + a.width / 2, a.y, a.width / 2, a.height);
+    h.state.snap_to_zone(t.id, right(area(&h, &r)));
+    h.roundtrip(&mut c);
+    s.lock.set_layout(&[(0, 0, 2560, 1440, 100)]);
+    h.roundtrip(&mut s.portal);
+    h.roundtrip(&mut c);
+    assert_eq!(
+        frame(&h, t.id),
+        right(area(&h, &r)),
+        "the right half of the remote's work area"
+    );
+}
+
+#[test]
+fn a_remote_screen_going_away_keeps_its_maximized_window_on_the_remote_side_and_its_home() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let dp = h.output("DP-2", 1280, 1024);
+    let mut c = h.connect();
+    let max = h.map_toplevel(&mut c, "max", 500, 400);
+    place(&mut h, &mut c, max, &dp, (0.1, 0.1));
+    h.state.set_maximized(max.id, true);
+    let normal = h.map_toplevel(&mut c, "normal", 300, 200);
+    place(&mut h, &mut c, normal, &dp, (0.25, 0.25));
+    let mut s = begin(
+        &mut h,
+        &[(0, 0, 1920, 1080, 100), (1920, 0, 2560, 1440, 100)],
+    );
+    h.roundtrip(&mut c);
+    let r = remotes(&h);
+    assert_eq!(frame(&h, max.id), area(&h, &r[1]), "maximized on REMOTE-2");
+    let on_second = rel(frame(&h, normal.id), h.state.layout_box(Some(&r[1])));
+    s.lock.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut s.portal);
+    h.roundtrip(&mut c);
+    assert_eq!(
+        frame(&h, max.id),
+        area(&h, &r[0]),
+        "maximized on the remote primary"
+    );
+    let win = h.state.win(max.id).expect("the window");
+    assert!(
+        win.maximized && win.home.is_some(),
+        "still maximized, its home kept"
+    );
+    let first = h.state.layout_box(Some(&r[0]));
+    near(rel(frame(&h, normal.id), first), on_second, first);
+    end(&mut h, s, &mut c);
+    assert_eq!(frame(&h, max.id), area(&h, &dp), "maximized on DP-2 again");
+    near(
+        rel(frame(&h, normal.id), area(&h, &dp)),
+        (0.25, 0.25),
+        area(&h, &dp),
+    );
+}
+
+#[test]
 fn new_windows_in_lock_mode_open_on_a_remote_screen() {
     let mut h = Harness::new();
     h.output("eDP-1", 1920, 1080);

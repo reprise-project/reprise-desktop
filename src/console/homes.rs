@@ -57,6 +57,8 @@ pub enum Fit {
 pub struct Home {
     /// The monitor id (`outputlayouts::monitor_ids`) of the output under its frame's centre.
     pub monitor: String,
+    /// That output's connector, for when the id changed (a twin monitor came or went).
+    pub connector: String,
     /// Its frame, as fractions of that output's work area; so are the other rects.
     pub rel: RelRect,
     pub fit: Fit,
@@ -66,9 +68,13 @@ pub struct Home {
     pub snapped_rel: Option<RelRect>,
 }
 
-/// Lock mode began: each window keeps its home and goes to the same relative place on the
-/// Remote output paired with its own ([`console_outputs`] order), else on the remote primary.
+/// Lock mode's first layout pass placed the Remote outputs: each window keeps its home and goes to
+/// the same relative place on the Remote output paired with its own ([`console_outputs`] order),
+/// else on the remote primary. Runs from `carry_windows`; outside lock mode it does nothing.
 pub fn send_all(state: &mut State) {
+    if !crate::console::remote_side(state) {
+        return;
+    }
     let remotes = remote_outputs(state);
     let Some(primary) = remotes.first().cloned() else {
         return;
@@ -80,14 +86,13 @@ pub fn send_all(state: &mut State) {
             continue;
         };
         let from = state.usable_area(Some(&outs[i]));
-        let home = home_of(state, w, &ids[i], from);
+        let home = home_of(state, w, (&ids[i], &outs[i].name()), from);
         if let Some(win) = state.win_mut(w) {
             win.home = home;
         }
         let to = remotes.get(i).unwrap_or(&primary).clone();
         carry(state, w, from, &to, None);
     }
-    state.update_layout();
 }
 
 /// Lock mode ends, before the Remote outputs go: each window goes home, else to the console
@@ -104,7 +109,10 @@ pub fn bring_back(state: &mut State) {
             continue;
         };
         let from = state.usable_area(Some(&remotes[r]));
-        let at_home = (home.as_ref()).and_then(|h| ids.iter().position(|id| *id == h.monitor));
+        let at_home = (home.as_ref()).and_then(|h| {
+            (ids.iter().position(|id| *id == h.monitor))
+                .or_else(|| outs.iter().position(|o| o.name() == h.connector))
+        });
         let Some(to) = outs.get(at_home.unwrap_or(0)).cloned() else {
             continue;
         };
@@ -121,21 +129,31 @@ pub fn bring_back(state: &mut State) {
     }
 }
 
-/// The Remote outputs went from the boxes `before` to `after`: each window on one keeps its
-/// relative place there. A grouped window is left to its group's refit.
-pub fn refit_remote(state: &mut State, before: &[(Output, Rect)], after: &[(Output, Rect)]) {
-    let moves: Vec<(WindowId, Rect, Rect)> = (movable(state).into_iter())
+/// An output and its layout box.
+type Placed = (Output, Rect);
+
+/// The Remote outputs went from the boxes `before` to `after`, and those in `console.gone` left:
+/// each window on one keeps its relative place there, or on the remote primary for one that left.
+/// A grouped window goes with its group, which refits its zones.
+pub fn refit_remote(state: &mut State, before: &[Placed], after: &[Placed]) {
+    let gone = std::mem::take(&mut state.console.gone);
+    let primary = (state.first_output()).map(|o| (o.clone(), state.layout_box(Some(&o))));
+    let moves: Vec<(WindowId, Placed, Placed)> = (movable(state).into_iter())
         .filter_map(|w| {
             let (x, y) = anchor(state.win(w)?);
-            let (o, old) = before.iter().find(|(_, b)| b.contains(x, y))?;
-            let (_, new) = after.iter().find(|(n, _)| n == o)?;
-            (old != new).then_some((w, *old, *new))
+            let (o, old) = before.iter().chain(&gone).find(|(_, b)| b.contains(x, y))?;
+            let to = after.iter().find(|(n, _)| n == o).or(primary.as_ref())?;
+            (*old != to.1 || *o != to.0).then(|| (w, (o.clone(), *old), to.clone()))
         })
         .collect();
-    for (w, old, new) in moves {
+    for (w, (from, old), (to, new)) in moves {
         let Some(fit) = fit_of(state, w) else {
             continue;
         };
+        let zone_area = (
+            state.usable_area_at(Some(&from), old),
+            state.usable_area_at(Some(&to), new),
+        );
         let Some(win) = state.win_mut(w) else {
             continue;
         };
@@ -145,8 +163,14 @@ pub fn refit_remote(state: &mut State, before: &[(Output, Rect)], after: &[(Outp
         let frame = win.frame_rect();
         match fit {
             Fit::Maximized | Fit::Fullscreen => centre(state, w, new),
+            Fit::Grouped if from != to && state.wm.snap.group_output(w) == Some(&from.name()) => {
+                state.wm.snap.move_group(w, &to.name());
+            }
             Fit::Grouped => {}
-            Fit::Snapped => state.snap_commit(w, RelRect::of(frame, old).at(new)),
+            Fit::Snapped => {
+                let zone = RelRect::of(frame, zone_area.0).at(zone_area.1);
+                state.snap_commit(w, zone);
+            }
             Fit::Normal => {
                 let r = carried(frame, old, new);
                 state.move_to(w, r.x, r.y);
@@ -209,11 +233,17 @@ fn fit_of(state: &State, w: WindowId) -> Option<Fit> {
     })
 }
 
-fn home_of(state: &State, w: WindowId, monitor: &str, area: Rect) -> Option<Home> {
+fn home_of(
+    state: &State,
+    w: WindowId,
+    (monitor, connector): (&str, &str),
+    area: Rect,
+) -> Option<Home> {
     let win = state.win(w)?;
     let rel = |r: Option<Rect>| r.map(|r| RelRect::of(r, area));
     Some(Home {
         monitor: monitor.to_string(),
+        connector: connector.to_string(),
         rel: RelRect::of(win.unshaded_frame(), area),
         fit: fit_of(state, w)?,
         saved_rel: rel(win.saved),

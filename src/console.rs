@@ -8,6 +8,7 @@ use smithay::utils::Transform;
 use crate::compositor::State;
 use crate::inputproto::proto::reprise_lock_screen_v1::{Reason, RepriseLockScreenV1};
 use crate::output::quarter_scale;
+use crate::raster::Rect;
 use crate::virtualout::{Kind, Spec};
 
 /// mHz; a Remote output's frames follow its captures, not this.
@@ -44,6 +45,8 @@ pub struct Console {
     /// The object whose layouts apply, kept after it goes until `objects` empties.
     leader: Option<ObjectId>,
     layout: Vec<RemoteMonitor>,
+    /// Remote outputs this layout removes, at their last boxes, for `homes::refit_remote`.
+    pub(crate) gone: Vec<(Output, Rect)>,
 }
 
 /// The most monitors a layout may have.
@@ -109,9 +112,9 @@ pub fn begin(state: &mut State, object: ObjectId, layout: Vec<RemoteMonitor>) {
     }
     state.console.leader = Some(object);
     log::info!("lock mode: begins with {} remote screens", layout.len());
+    state.console.owner = Owner::Remote;
     apply(state, layout);
     crate::lockview::lock(state);
-    on_begin(state);
     send_screens(state, &state.console.objects);
 }
 
@@ -161,12 +164,6 @@ fn leave(state: &mut State) {
     apply(state, Vec::new());
 }
 
-/// The Remote outputs are laid out and the console is locked.
-fn on_begin(state: &mut State) {
-    state.console.owner = Owner::Remote;
-    homes::send_all(state);
-}
-
 /// Lock mode ends; the Remote outputs go after this.
 fn on_end(state: &mut State) {
     homes::bring_back(state);
@@ -199,6 +196,11 @@ fn apply(state: &mut State, layout: Vec<RemoteMonitor>) {
         crate::virtualout::create(state, &name, *s, Kind::Remote);
     }
     let gone = remotes.get(specs.len()..).unwrap_or_default();
+    if remote_side(state) {
+        state.console.gone = (gone.iter())
+            .map(|o| (o.clone(), state.layout_box(Some(o))))
+            .collect();
+    }
     for o in gone {
         crate::virtualout::remove(state, o);
         state.forget_output(o);
