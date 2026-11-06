@@ -739,8 +739,9 @@ impl State {
         }
     }
 
-    /// Centre each ordinary window with neither frame centre nor origin on an output (its size lags
-    /// until the client commits) on the pointer's output. Lock mode counts Remote outputs only.
+    /// Centre each ordinary window whose frame centre is on no output on the pointer's output; a
+    /// zoned window or one awaiting a size stays while its origin is on one, as its size lags until
+    /// the client commits. Lock mode counts Remote outputs only.
     pub fn rescue_offscreen(&mut self) {
         let pos = self.pointer_location();
         let pointed = self.output_at(pos.x, pos.y);
@@ -758,7 +759,10 @@ impl State {
             .filter(|w| w.mapped && !w.maximized && !w.fullscreen && !w.override_redirect)
             .filter(|w| {
                 let r = w.frame_rect();
-                !self.centre_on_an_output(r) && !self.on_an_output(r.x, r.y)
+                let lagging = w.size_serial.is_some()
+                    || w.snapped.is_some()
+                    || self.wm.snap.group_of(w.id).is_some();
+                !self.centre_on_an_output(r) && !(lagging && self.on_an_output(r.x, r.y))
             })
             .map(|w| w.id)
             .collect();
