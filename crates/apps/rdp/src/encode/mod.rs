@@ -58,8 +58,8 @@ impl std::fmt::Display for EncodeError {
     }
 }
 
-/// Builds the H.264 encoder of a backend, coding at a quality.
-pub type Make = Box<dyn FnMut(Backend, Quality) -> Result<Box<dyn Encoder>, EncodeError>>;
+/// Builds the H.264 encoder of a backend, coding at a quality and a frame rate.
+pub type Make = Box<dyn FnMut(Backend, Quality, u32) -> Result<Box<dyn Encoder>, EncodeError>>;
 
 /// H.264 from the first backend of [`Switch::select`]'s order that starts and codes, each failure
 /// handing on to the next; bitmaps after the last, or when the connection takes no H.264.
@@ -71,6 +71,8 @@ pub struct Switch {
     /// `order[at]`'s encoder, built on its first frame.
     h264: Option<Box<dyn Encoder>>,
     quality: Quality,
+    /// The frame rate `h264` was opened at; its time base and level follow it.
+    frame_rate: u32,
     avc444: bool,
     bitmap: Box<dyn Encoder>,
 }
@@ -84,6 +86,7 @@ impl Switch {
             at: 0,
             h264: None,
             quality: Quality::Balanced,
+            frame_rate: 60,
             avc444: false,
             bitmap: Box::new(Bitmap),
         }
@@ -92,7 +95,7 @@ impl Switch {
     /// A switch that never codes H.264.
     #[cfg(test)]
     pub fn bitmaps() -> Switch {
-        Switch::new(Box::new(|_, _| Err(EncodeError("no H.264 here".into()))))
+        Switch::new(Box::new(|_, _, _| Err(EncodeError("no H.264 here".into()))))
     }
 
     #[cfg(test)]
@@ -122,7 +125,7 @@ impl Switch {
         while let Some(&backend) = self.order.get(self.at) {
             let made = match self.h264.take() {
                 Some(encoder) => Ok(encoder),
-                None => (self.make)(backend, self.quality).map(|mut encoder| {
+                None => (self.make)(backend, self.quality, self.frame_rate).map(|mut encoder| {
                     encoder.set_avc444(self.avc444);
                     encoder
                 }),
@@ -162,6 +165,16 @@ impl Switch {
         }
     }
 
+    /// Code at `frame_rate` from the next frame on; a new rate opens a new encoder there, an IDR.
+    pub fn set_frame_rate(&mut self, frame_rate: u32) {
+        if frame_rate != self.frame_rate {
+            self.frame_rate = frame_rate;
+            if self.h264.take().is_some() {
+                log::info!("reopening the H.264 encoder at {frame_rate} frames a second");
+            }
+        }
+    }
+
     pub fn set_avc444(&mut self, on: bool) {
         self.avc444 = on;
         if let Some(h264) = &mut self.h264 {
@@ -196,6 +209,7 @@ pub struct Job {
     pub keyframe: bool,
     pub h264: bool,
     pub quality: Quality,
+    pub frame_rate: u32,
     /// Both AVC444 views are asked for.
     pub avc444: bool,
     /// Handed back in [`Done`], to tell a result from before an activation apart.
@@ -244,6 +258,7 @@ fn run(mut switch: Switch, jobs: std::sync::mpsc::Receiver<Job>, done: Unbounded
             switch.select(order);
         }
         switch.set_quality(job.quality);
+        switch.set_frame_rate(job.frame_rate);
         switch.set_avc444(job.avc444);
         let encoded = switch.encode(&job.frame, job.keyframe, job.h264);
         let finished = Done {
@@ -282,7 +297,7 @@ mod tests {
 
     #[test]
     fn a_va_error_falls_back_to_bitmap() {
-        let mut switch = Switch::new(Box::new(|_, _| Ok(Box::new(Broken))));
+        let mut switch = Switch::new(Box::new(|_, _, _| Ok(Box::new(Broken))));
         switch.select(vec![Backend::X264]);
         let damage = Rect {
             x: 1,
@@ -325,7 +340,7 @@ mod tests {
         crate::listen::tests::capture_log();
         let coded = Coded::default();
         let log = coded.clone();
-        let mut switch = Switch::new(Box::new(move |backend, _| match backend {
+        let mut switch = Switch::new(Box::new(move |backend, _, _| match backend {
             Backend::Nvenc => Err(EncodeError("no CUDA".into())),
             _ => Ok(Box::new(Recorder(backend, log.clone()))),
         }));
@@ -370,7 +385,7 @@ mod tests {
     fn a_tiled_frame_a_gpu_failed_on_is_not_handed_to_the_cpu() {
         let coded = Coded::default();
         let log = coded.clone();
-        let mut switch = Switch::new(Box::new(move |backend, _| match backend {
+        let mut switch = Switch::new(Box::new(move |backend, _, _| match backend {
             VAAPI => Ok(Box::new(Broken)),
             _ => Ok(Box::new(Recorder(backend, log.clone()))),
         }));
@@ -409,7 +424,9 @@ mod tests {
     #[test]
     fn an_encoder_that_failed_to_start_falls_back_on_the_first_h264_frame() {
         let worker = Worker::spawn(|| {
-            Switch::new(Box::new(|_, _| Err(EncodeError("no H.264 encoder".into()))))
+            Switch::new(Box::new(|_, _, _| {
+                Err(EncodeError("no H.264 encoder".into()))
+            }))
         })
         .unwrap();
         let mut done = worker.done;
@@ -426,6 +443,7 @@ mod tests {
                 keyframe: false,
                 h264,
                 quality: Quality::Balanced,
+                frame_rate: 60,
                 avc444: false,
                 epoch,
                 order: (epoch == 1).then(|| vec![Backend::X264]),

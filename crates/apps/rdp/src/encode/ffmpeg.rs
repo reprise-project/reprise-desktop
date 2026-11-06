@@ -638,8 +638,8 @@ mod tests {
     fn an_encoder_that_fails_to_open_falls_back_on_the_first_frame() {
         silence();
         let vaapi = Backend::Vaapi { low_power: false };
-        let mut switch = Switch::new(Box::new(|backend, quality| {
-            Ffmpeg::new(backend, Path::new("/dev/null"), 60, quality)
+        let mut switch = Switch::new(Box::new(|backend, quality, frame_rate| {
+            Ffmpeg::new(backend, Path::new("/dev/null"), frame_rate, quality)
                 .map(|f| Box::new(f) as Box<dyn Encoder>)
         }));
         switch.select(vec![vaapi]);
@@ -676,7 +676,7 @@ mod tests {
     fn an_encoder_that_fails_on_its_first_frame_falls_back_once() {
         crate::listen::tests::capture_log();
         let keyframes = Arc::default();
-        let mut switch = Switch::new(Box::new(|_, _| Ok(Box::new(x264()))))
+        let mut switch = Switch::new(Box::new(|_, _, _| Ok(Box::new(x264()))))
             .with_bitmap(Box::new(Keyframes(Arc::clone(&keyframes))));
         switch.select(vec![Backend::X264]);
         let size = (4, 2);
