@@ -19,7 +19,13 @@ layout(location = 1) out vec4 out1;
 layout(location = 2) out vec4 out2;
 
 vec3 rgb(ivec2 at) {
+#ifdef SCALED
+    // A frame of another size, sampled linearly where the picture's pixel centres fall on it.
+    vec2 centre = (vec2(clamp(at, ivec2(0), size - 1)) + 0.5) / vec2(size);
+    return floor(texture(src, centre).rgb * 255.0 + 0.5);
+#else
     return floor(texelFetch(src, clamp(at, ivec2(0), size - 1), 0).rgb * 255.0 + 0.5);
+#endif
 }
 
 float row(float offset, vec3 k, vec3 c) {

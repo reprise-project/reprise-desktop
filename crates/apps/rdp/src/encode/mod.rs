@@ -28,6 +28,9 @@ pub trait Encoder {
 
     /// Code both AVC444 views from the next frame on, or AVC420 only.
     fn set_avc444(&mut self, _on: bool) {}
+
+    /// Code pictures scaled to `target` from the next frame on; None codes them at their own size.
+    fn set_target(&mut self, _target: Option<(u32, u32)>) {}
 }
 
 pub enum Encoded {
@@ -74,6 +77,7 @@ pub struct Switch {
     /// The frame rate `h264` was opened at; its time base and level follow it.
     frame_rate: u32,
     avc444: bool,
+    target: Option<(u32, u32)>,
     bitmap: Box<dyn Encoder>,
 }
 
@@ -88,6 +92,7 @@ impl Switch {
             quality: Quality::Balanced,
             frame_rate: 60,
             avc444: false,
+            target: None,
             bitmap: Box::new(Bitmap),
         }
     }
@@ -127,6 +132,7 @@ impl Switch {
                 Some(encoder) => Ok(encoder),
                 None => (self.make)(backend, self.quality, self.frame_rate).map(|mut encoder| {
                     encoder.set_avc444(self.avc444);
+                    encoder.set_target(self.target);
                     encoder
                 }),
             };
@@ -182,6 +188,13 @@ impl Switch {
         }
     }
 
+    pub fn set_target(&mut self, target: Option<(u32, u32)>) {
+        self.target = target;
+        if let Some(h264) = &mut self.h264 {
+            h264.set_target(target);
+        }
+    }
+
     /// The backend that codes the next H.264 frame; None for bitmaps only.
     pub fn using(&self) -> Option<Backend> {
         self.order.get(self.at).copied()
@@ -212,6 +225,8 @@ pub struct Job {
     pub frame_rate: u32,
     /// Both AVC444 views are asked for.
     pub avc444: bool,
+    /// The size the client shows the picture at; None for the frame's own.
+    pub target: Option<(u32, u32)>,
     /// Handed back in [`Done`], to tell a result from before an activation apart.
     pub epoch: u64,
     /// A new encoder choice's backends, for [`Switch::select`].
@@ -260,6 +275,7 @@ fn run(mut switch: Switch, jobs: std::sync::mpsc::Receiver<Job>, done: Unbounded
         switch.set_quality(job.quality);
         switch.set_frame_rate(job.frame_rate);
         switch.set_avc444(job.avc444);
+        switch.set_target(job.target);
         let encoded = switch.encode(&job.frame, job.keyframe, job.h264);
         let finished = Done {
             epoch: job.epoch,
@@ -421,6 +437,78 @@ mod tests {
         assert!(reads(None, &dmabuf(DRM_FORMAT_MOD_LINEAR)));
     }
 
+    /// The targets each encoder a [`Switch`] made was given.
+    type Targets = std::sync::Arc<std::sync::Mutex<Vec<Option<(u32, u32)>>>>;
+
+    struct Sized(Targets);
+
+    impl Encoder for Sized {
+        fn encode(&mut self, frame: &Frame, _: bool) -> Result<Encoded, EncodeError> {
+            Ok(Encoded::Avc420 {
+                data: vec![0, 0, 0, 1, 0x65],
+                regions: vec![Rect::full(frame.size)],
+            })
+        }
+
+        fn set_target(&mut self, target: Option<(u32, u32)>) {
+            self.0.lock().unwrap().push(target);
+        }
+    }
+
+    #[test]
+    fn a_frame_rate_reopen_keeps_the_target() {
+        let targets = Targets::default();
+        let given = targets.clone();
+        let mut switch = Switch::new(Box::new(move |_, _, _| Ok(Box::new(Sized(given.clone())))));
+        switch.select(vec![Backend::X264]);
+        switch.set_target(Some((960, 540)));
+        let frame = Frame::detached(vec![0; 4 * 2 * 4], (4, 2), vec![Rect::full((4, 2))]);
+        switch.encode(&frame, false, true).unwrap();
+        switch.set_frame_rate(30);
+        switch.encode(&frame, false, true).unwrap();
+        assert_eq!(
+            *targets.lock().unwrap(),
+            [Some((960, 540)), Some((960, 540))],
+            "the encoder reopened at 30 frames a second codes at 960x540 too"
+        );
+    }
+
+    #[test]
+    fn an_unscaled_target_adds_no_pass() {
+        use hwmap::Gpu;
+        let (source, half) = ((1920, 1080), (960, 540));
+        let options = |gpu: Gpu, target| {
+            let (name, options) = gpu.to_nv12(source, target).unwrap();
+            format!("{name}={}", options.to_str().unwrap())
+        };
+        assert_eq!(
+            options(Gpu::Vaapi, source),
+            "scale_vaapi=format=nv12:out_color_matrix=bt709:out_range=full:\
+             out_color_primaries=bt709:out_color_transfer=iec61966-2-1"
+        );
+        assert_eq!(
+            options(Gpu::Vulkan, source),
+            "libplacebo=format=nv12:colorspace=bt709:range=pc:dithering=none"
+        );
+        assert_eq!(
+            options(Gpu::Vaapi, half),
+            format!("{}:w=960:h=540", options(Gpu::Vaapi, source)),
+            "the conversion scales in the same filter"
+        );
+        assert_eq!(
+            options(Gpu::Vulkan, half),
+            format!("{}:w=960:h=540", options(Gpu::Vulkan, source))
+        );
+        for pass in 0..split::PASSES {
+            assert_eq!(
+                split::fragment(pass, false),
+                format!("#version 300 es\n#define PASS {pass}\n{}", split::FRAGMENT),
+                "pass {pass} reads the picture texel by texel"
+            );
+            assert!(split::fragment(pass, true).contains("#define SCALED\n"));
+        }
+    }
+
     #[test]
     fn an_encoder_that_failed_to_start_falls_back_on_the_first_h264_frame() {
         let worker = Worker::spawn(|| {
@@ -445,6 +533,7 @@ mod tests {
                 quality: Quality::Balanced,
                 frame_rate: 60,
                 avc444: false,
+                target: None,
                 epoch,
                 order: (epoch == 1).then(|| vec![Backend::X264]),
                 choice: 1,
