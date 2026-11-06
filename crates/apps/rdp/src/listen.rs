@@ -79,7 +79,23 @@ pub struct Server<L> {
 }
 
 /// Sent by a connection's display once its portal session is granted and its input is served.
-pub type Shown = oneshot::Sender<()>;
+pub struct Shown(watch::Sender<bool>);
+
+impl Shown {
+    pub fn send(self) {
+        self.0.send_replace(true);
+    }
+
+    /// True once sent; closed with it false if the display goes first.
+    pub fn subscribe(&self) -> watch::Receiver<bool> {
+        self.0.subscribe()
+    }
+}
+
+/// Until `shown` is sent; whether it was.
+pub async fn shown(mut shown: watch::Receiver<bool>) -> bool {
+    shown.wait_for(|s| *s).await.is_ok()
+}
 
 /// What serves one connection: a display, an input handler, maybe a graphics pipeline, maybe a
 /// clipboard and maybe sound.
@@ -146,9 +162,9 @@ pub async fn serve<D, I, L>(
                     }
                 };
                 let (check, budget) = logins.check(peer);
-                let (shown, on_shown) = oneshot::channel();
+                let (shown, on_shown) = watch::channel(false);
                 let ending = Ending::default();
-                let (display, input, gfx, clipboard, sound) = handlers(shown, ending.clone());
+                let (display, input, gfx, clipboard, sound) = handlers(Shown(shown), ending.clone());
                 let local = stream
                     .local_addr()
                     .unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
@@ -215,7 +231,7 @@ async fn run<L: Leave + 'static, C: Login>(
     viewer: Viewer,
     check: Arc<C>,
     budget: Duration,
-    on_shown: oneshot::Receiver<()>,
+    on_shown: watch::Receiver<bool>,
     shared: Rc<Shared<L>>,
 ) {
     let Viewer {
@@ -251,7 +267,7 @@ async fn run<L: Leave + 'static, C: Login>(
                 since,
             })
         });
-        if on_shown.await.is_ok() {
+        if shown(on_shown).await {
             shared.leave.arrived();
             arrived.set(true);
         }
@@ -1173,10 +1189,7 @@ pub(crate) mod tests {
                 CredentialDecision::Accept
             );
         }
-        let (shown_tx, on_shown) = oneshot::channel();
-        if shown {
-            shown_tx.send(()).unwrap();
-        }
+        let on_shown = watch::channel(shown).1;
         let steps = Steps::default();
         let (input, mut events) = mpsc::unbounded_channel();
         let (open, open_rx) = watch::channel(true);
@@ -1492,7 +1505,7 @@ pub(crate) mod tests {
                     viewer,
                     check,
                     HANDSHAKE,
-                    oneshot::channel().1,
+                    watch::channel(false).1,
                     shared,
                 );
                 tokio::time::timeout(Duration::from_secs(10), ran)
