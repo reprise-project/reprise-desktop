@@ -779,16 +779,29 @@ pub fn click(state: &mut State, at: (f64, f64), button: u32) {
 
 /// Tell a listening screen reader about key `k` (xkb keycode `code`),
 /// pressed or released, while one of the compositor's trees has the
-/// keyboard. Never while locked: `focus_of` gives the lock screen no
-/// tree. Call before the key updates the keyboard's state, so the text
-/// is what the key types.
+/// keyboard. Call before the key updates the keyboard's state, so the
+/// text is what the key types.
 pub fn echo_key(state: &mut State, code: Keycode, k: &KeyPress, time: u32) {
-    if !state.access.slots.iter().any(|x| x.active) || focus_of(&keyboard(state)).is_none() {
+    if !state.access.slots.iter().any(|x| x.active) {
         return;
     }
-    let Some(kb) = state.seat.get_keyboard() else {
+    let Some(note) = key_note(state, code, k, time) else {
         return;
     };
+    state
+        .access
+        .keys
+        .get_or_insert_with(KeyEcho::spawn)
+        .send(note);
+}
+
+/// What `echo_key` reports, or None. Never under the console lock: every
+/// key typed then goes to the lock, even with a tree in lock mode's focus.
+fn key_note(state: &mut State, code: Keycode, k: &KeyPress, time: u32) -> Option<KeyNote> {
+    if state.console_locked() || focus_of(&keyboard(state)).is_none() {
+        return None;
+    }
+    let kb = state.seat.get_keyboard()?;
     let keysym = k.syms.first().copied().unwrap_or(0);
     let typed = kb.with_xkb_state(state, |ctx| {
         let x = ctx.xkb().lock().unwrap();
@@ -800,7 +813,7 @@ pub fn echo_key(state: &mut State, code: Keycode, k: &KeyPress, time: u32) {
         Some(t) => t.as_str().to_string(),
         None => crate::winmenu::keysym_name(keysym),
     };
-    let note = KeyNote {
+    Some(KeyNote {
         pressed: k.pressed,
         keysym,
         keycode: code.raw(),
@@ -808,12 +821,7 @@ pub fn echo_key(state: &mut State, code: Keycode, k: &KeyPress, time: u32) {
         time,
         text: Zeroizing::new(text),
         is_text: typed.is_some(),
-    };
-    state
-        .access
-        .keys
-        .get_or_insert_with(KeyEcho::spawn)
-        .send(note);
+    })
 }
 
 #[cfg(test)]
@@ -945,6 +953,36 @@ mod tests {
                 })
             ),
             "another program's flyout closes and the click reaches the icon"
+        );
+    }
+
+    #[test]
+    fn in_lock_mode_lock_dialog_keys_are_not_echoed_to_accessibility() {
+        use crate::config::PowerAction;
+        use crate::lockview::Origin;
+        let a = crate::keyboard::key_press(vec![u32::from('a')], 0, true);
+        let code = Keycode::new(38);
+        let open_dialog = |s: &mut State| {
+            crate::power::run_action(s, PowerAction::Ask, Origin::Desktop);
+            assert!(
+                s.active_dialog_id().is_some(),
+                "the dialog has the keyboard"
+            );
+        };
+        let mut h = crate::harness::Harness::new();
+        h.output("eDP-1", 1920, 1080);
+        open_dialog(&mut h.state);
+        let note = key_note(&mut h.state, code, &a, 0).expect("unlocked, the key is echoed");
+        assert_eq!(note.text.as_str(), "a");
+        let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
+        open_dialog(&mut h.state);
+        assert!(
+            focus_of(&keyboard(&h.state)).is_some(),
+            "a tree has the focus"
+        );
+        assert!(
+            key_note(&mut h.state, code, &a, 0).is_none(),
+            "a key typed into the lock is not echoed"
         );
     }
 
