@@ -399,18 +399,18 @@ impl State {
         crate::power::remote_control_changed(self);
     }
 
-    /// Disconnect every `present` sender, releasing nothing it holds.
-    pub fn eis_revoke_remote_sessions(&mut self) {
+    /// Disconnect every sender, releasing nothing it holds.
+    pub fn eis_revoke_senders(&mut self) {
         let clients = &mut self.inputproto.eis.clients;
-        let present: Vec<EisId> = (clients.iter_mut())
-            .filter(|c| c.kind == Kind::Sender && c.present)
+        let senders: Vec<EisId> = (clients.iter_mut())
+            .filter(|c| c.kind == Kind::Sender)
             .map(|c| {
                 c.pressed_keys.clear();
                 c.pressed_buttons.clear();
                 c.id
             })
             .collect();
-        for id in present {
+        for id in senders {
             self.eis_disconnect(id);
         }
     }

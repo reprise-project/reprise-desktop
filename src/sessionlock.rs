@@ -303,9 +303,11 @@ impl SessionLockHandler for State {
     }
 
     fn unlock(&mut self) {
-        // A locker the compositor finished still passes Smithay's check, and lock mode's lock is
-        // not its to lift.
-        let Some(c) = self.lock.console.as_mut().and_then(|l| l.client.take()) else {
+        // Smithay stays locked by the last locker it confirmed, even once finished, so only a
+        // confirmed lock is the caller's.
+        let Some(c) =
+            (self.lock.console.as_mut()).and_then(|l| l.client.take_if(|c| c.locker.is_none()))
+        else {
             log::warn!("session lock: ignored an unlock from a locker that holds no lock");
             return;
         };
@@ -644,5 +646,29 @@ mod tests {
         lock.unlock_and_destroy();
         h.roundtrip(&mut c);
         assert!(!h.state.console_locked());
+    }
+
+    #[test]
+    fn a_finished_lockers_unlock_leaves_a_newer_lockers_lock_up() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut a = h.connect();
+        let (old, _surface) = h.map_lock_surface(&mut a);
+        h.run_for(2300);
+        h.roundtrip(&mut a);
+        crate::lockview::unlock(&mut h.state);
+        h.roundtrip(&mut a);
+        assert!(!h.state.console_locked());
+        let mut b = h.connect();
+        let (_new, _surface) = h.map_lock_surface(&mut b);
+        assert!(holds_input(&h.state));
+        assert!(
+            !confirmed(&mut h.state),
+            "the newer lock waits for its covers"
+        );
+        old.unlock_and_destroy();
+        h.roundtrip(&mut a);
+        assert!(h.state.console_locked(), "the console stays locked");
+        assert!(holds_input(&h.state), "the newer locker keeps its lock");
     }
 }
