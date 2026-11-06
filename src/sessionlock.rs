@@ -248,6 +248,11 @@ impl SessionLockHandler for State {
         if !self.is_locked() {
             return;
         }
+        // Before the outputs are listed, so the cover wait counts no Remote one.
+        crate::console::stop(
+            self,
+            crate::inputproto::proto::reprise_lock_screen_v1::Reason::Replaced,
+        );
         let tree = self.scene.tree_create(self.layers.lock);
         let outputs: Vec<Output> = self
             .scene

@@ -12,6 +12,7 @@ use super::{ClientSide, TestClient};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Heard {
     Screen(String),
+    Done,
     Ended(u32),
 }
 
@@ -56,16 +57,16 @@ impl LockScreen {
         self.heard.lock().unwrap().clone()
     }
 
-    /// The names of the `screen` events heard, then forgotten.
+    /// The names of the `screen` events heard, then forgotten with the `done`s.
     pub fn take_screens(&self) -> Vec<String> {
         let mut heard = self.heard.lock().unwrap();
         let screens = (heard.iter())
             .filter_map(|e| match e {
                 Heard::Screen(n) => Some(n.clone()),
-                Heard::Ended(_) => None,
+                Heard::Done | Heard::Ended(_) => None,
             })
             .collect();
-        heard.retain(|e| !matches!(e, Heard::Screen(_)));
+        heard.retain(|e| matches!(e, Heard::Ended(_)));
         screens
     }
 }
@@ -82,6 +83,7 @@ impl wc::Dispatch<RepriseLockScreenV1, Log> for ClientSide {
         use reprise_lock_screen_v1::Event;
         heard.lock().unwrap().push(match ev {
             Event::Screen { name } => Heard::Screen(name),
+            Event::Done => Heard::Done,
             Event::Ended { reason } => Heard::Ended(match reason {
                 wc::WEnum::Value(r) => r as u32,
                 wc::WEnum::Unknown(v) => v,

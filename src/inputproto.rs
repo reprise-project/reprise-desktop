@@ -9,6 +9,8 @@
 //! Protocol objects carry ids, not the objects themselves: a resource whose
 //! object the compositor already dropped finds nothing behind its id.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use smithay::reexports::wayland_server::{
     Client, DataInit, DisplayHandle, New, Resource, WEnum, backend::ClientId,
 };
@@ -240,16 +242,14 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
             }
             Request::RemoteCapture => {
                 if let Some(d) = client.get_data::<crate::compositor::ClientState>() {
-                    d.remote_capture
-                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    d.remote_capture.store(true, Ordering::Relaxed);
                 }
             }
             Request::LockScreen { id } => {
-                let available = state.config.power.locker.trim().is_empty();
-                let r = data_init.init(id, LockScreenData { available });
-                if !available {
-                    log::info!("lock mode: unavailable while [power] locker is set");
-                    r.ended(reprise_lock_screen_v1::Reason::Unavailable);
+                let r = data_init.init(id, LockScreenData::default());
+                if let Some(reason) = crate::console::refusal(state) {
+                    log::info!("lock mode: refused with {reason:?}");
+                    send_ended(&r, reason);
                 }
             }
             Request::Destroy => {}
@@ -257,9 +257,18 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
     }
 }
 
+#[derive(Default)]
 pub struct LockScreenData {
-    /// False once `ended(unavailable)` went: the object does nothing.
-    available: bool,
+    /// Set once `ended` went: the object does nothing more.
+    ended: AtomicBool,
+}
+
+/// Send `r` `ended(reason)`; its later requests do nothing.
+pub fn send_ended(r: &RepriseLockScreenV1, reason: reprise_lock_screen_v1::Reason) {
+    if let Some(d) = r.data::<LockScreenData>() {
+        d.ended.store(true, Ordering::Relaxed);
+    }
+    r.ended(reason);
 }
 
 impl Dispatch2<RepriseLockScreenV1, State> for LockScreenData {
@@ -276,7 +285,7 @@ impl Dispatch2<RepriseLockScreenV1, State> for LockScreenData {
         let Request::SetLayout { monitors } = request else {
             return;
         };
-        if !self.available {
+        if self.ended.load(Ordering::Relaxed) {
             return;
         }
         let Some(layout) = crate::console::parse_layout(&monitors) else {
@@ -285,6 +294,9 @@ impl Dispatch2<RepriseLockScreenV1, State> for LockScreenData {
         };
         if crate::console::holds(state, &resource.id()) {
             crate::console::relayout(state, resource.id(), layout);
+        } else if let Some(reason) = crate::console::refusal(state) {
+            log::info!("lock mode: refused with {reason:?}");
+            send_ended(resource, reason);
         } else {
             crate::console::begin(state, resource.id(), layout);
         }
