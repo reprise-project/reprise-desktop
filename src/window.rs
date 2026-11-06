@@ -194,6 +194,8 @@ pub struct Window {
     pub saved: Option<Rect>,
     pub saved_fullscreen: Option<Rect>,
     pub snapped: Option<Rect>,
+    /// Where it was on the computer's own screens while lock mode keeps it on a remote one.
+    pub home: Option<crate::console::homes::Home>,
     /// Where it was as it last unmapped; the next map goes back there.
     pub last_frame: Option<LastFrame>,
     pub resize_anchor: Option<ResizeAnchor>,
