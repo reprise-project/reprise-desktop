@@ -20,6 +20,8 @@ const L: u32 = 38;
 const APOSTROPHE: u32 = 40;
 const X: u32 = 45;
 const SUPER: u32 = 125;
+/// "hunter2" as evdev codes.
+const HUNTER2: [u32; 7] = [35, 22, 49, 20, 18, 19, 3];
 
 fn covers(h: &Harness, side: Side) -> Vec<String> {
     (h.state.lock.on(side).iter())
@@ -75,6 +77,11 @@ fn settle(h: &mut Harness) {
 
 fn message(h: &Harness, side: Side) -> Option<String> {
     h.state.lock.on(side)?.state.message.clone()
+}
+
+fn assert_remote_locked_alone(h: &Harness) {
+    assert!(h.state.desktop_locked(), "the remote side stays locked");
+    assert_eq!(covers(h, Side::Remote), ["REMOTE-1"]);
 }
 
 fn assert_remote_locked(h: &Harness) {
@@ -238,4 +245,53 @@ fn remote_unlock_failures_back_off() {
         Some(lock::INCORRECT),
         "the console's check runs at once"
     );
+}
+
+#[test]
+fn the_console_password_leaves_the_remote_lock_up() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    hunter2(&mut h);
+    h.from(InputSource::Remote, lockview::lock_desktop);
+    tap(&mut h, &HUNTER2);
+    tap(&mut h, &[ENTER]);
+    settle(&mut h);
+    assert!(!h.state.console_locked(), "the console unlocks");
+    assert_remote_locked_alone(&h);
+}
+
+#[test]
+fn both_sides_verifying_at_once_each_get_their_own_verdict() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    h.state.lock.helpers = Helpers {
+        password: |_, _| sh(r#"read p; sleep 0.2; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#),
+        finger: |_| None,
+        ..Helpers::default()
+    };
+    h.from(InputSource::Remote, lockview::lock_desktop);
+    remote_submit(&mut h, "hunter2");
+    tap(&mut h, &[X, ENTER]);
+    assert!(verifying(&h, Side::Remote) && verifying(&h, Side::Console));
+    settle(&mut h);
+    assert!(!h.state.desktop_locked(), "the remote side unlocks");
+    assert!(h.state.console_locked(), "the console stays locked");
+    assert_eq!(message(&h, Side::Console).as_deref(), Some(lock::INCORRECT));
+}
+
+#[test]
+fn a_physical_lock_key_in_lock_mode_keeps_the_console_dialog_and_leaves_the_remote_side_alone() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    h.key(SUPER, true);
+    h.key(L, true);
+    h.key(L, false);
+    h.key(SUPER, false);
+    let console = h
+        .state
+        .lock
+        .console
+        .as_ref()
+        .expect("the console stays locked");
+    assert!(console.dialog_shown(), "the console's dialog is up");
+    assert_eq!(covers(&h, Side::Console), ["eDP-1"]);
+    assert!(!h.state.desktop_locked(), "the remote side stays unlocked");
+    assert!(covers(&h, Side::Remote).is_empty());
 }
