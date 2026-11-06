@@ -193,16 +193,19 @@ impl RdpServerDisplay for Display {
             let picture = probed(&mut self.picture).await;
             let grant =
                 (portal::open().await).map_err(|e| unshared("the screen is not shared", e))?;
+            let screen = &grant.screens[0];
             log::info!(
                 "sharing {} at {:?}, {}x{} logical",
-                grant.mapping_id.as_deref().unwrap_or("the screen"),
-                grant.position,
-                grant.size.0,
-                grant.size.1
+                screen.mapping_id.as_deref().unwrap_or("the screen"),
+                screen.position,
+                screen.size.0,
+                screen.size.1
             );
             let ending = self.ending.clone();
+            let fd = (grant.pipewire_fd())
+                .map_err(|e| unshared("the screen stream did not start", e))?;
             let (stream, frames, sizes) =
-                stream::spawn(&grant, &[DRM_FORMAT_MOD_LINEAR], move || {
+                stream::spawn(fd, screen.node, &[DRM_FORMAT_MOD_LINEAR], move || {
                     ending.screen_gone()
                 })
                 .map_err(|e| unshared("the screen stream did not start", e))?;
