@@ -13,12 +13,18 @@ use crate::inputproto::InputSource;
 /// The cursor the Console outputs draw in lock mode.
 pub static CURSOR: CursorImageStatus = CursorImageStatus::Named(CursorIcon::Default);
 
-/// Lock mode begins: the computer's pointer stays where it was, on its own outputs; the seat's
-/// goes to the Remote outputs.
+/// Lock mode begins: the computer's pointer stays where it was, on its own outputs; the seat lets
+/// go of its buttons, fingers and pens and its pointer goes to the Remote outputs.
 pub fn begin(state: &mut State) {
     let at = state.pointer_location();
     state.console.pointer = state.clamp_to_side(at, Side::Console);
-    state.with_source(InputSource::Other, |s| s.pointer_to(at, InputTime::now()));
+    state.with_source(InputSource::Other, |s| {
+        let now = InputTime::now();
+        s.release_all_buttons(now);
+        s.cancel_client_touch(now);
+        s.tools_leave(now);
+        s.pointer_to(at, now);
+    });
     redraw(state);
 }
 

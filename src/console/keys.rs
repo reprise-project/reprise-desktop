@@ -18,7 +18,8 @@ pub struct Keys {
 }
 
 /// Lock mode begins: the private state takes over the keys the seat holds and its lock keys,
-/// then the seat lets go of every key, so a client it focuses later hears none held.
+/// then the seat lets go of every key, StickyKeys' modifiers and the mouse keys, so a client it
+/// focuses later hears none held.
 pub fn begin(state: &mut State) {
     let Some(keyboard) = state.seat.get_keyboard() else {
         return;
@@ -46,6 +47,8 @@ pub fn begin(state: &mut State) {
     }
     state.stop_field_repeat();
     state.stop_media_repeat();
+    state.aids_release_sticky();
+    state.mousekeys_forget();
     state.eis_modifiers_changed();
 }
 

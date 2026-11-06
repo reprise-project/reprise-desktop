@@ -140,6 +140,14 @@ impl MouseKeys {
         self.on
     }
 
+    /// Let go of every key and the held button, sending no release: the seat lets go of the
+    /// button itself.
+    pub fn forget(&mut self) {
+        self.dirs.clear();
+        self.taken.clear();
+        self.held = None;
+    }
+
     pub fn pick(&self) -> u32 {
         self.pick
     }
@@ -315,6 +323,13 @@ impl State {
                 }
             }
         }
+    }
+
+    /// The keypad stops driving the pointer: no direction moves it, no button stays held.
+    pub fn mousekeys_forget(&mut self) {
+        self.key_input.mouse_keys.model.forget();
+        self.arm_mousekeys();
+        self.redraw_taskbars();
     }
 
     fn arm_mousekeys(&mut self) {
