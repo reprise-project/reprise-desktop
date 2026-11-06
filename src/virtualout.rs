@@ -235,9 +235,8 @@ fn tick(state: &mut State, output: &Output) {
     }
 }
 
-/// A frame with nothing to scan out: what animates steps, surfaces enter or leave, the lock, fade
-/// and sleep covers count it shown, presentation feedback reports it shown at the tick, frame
-/// callbacks go and the captures waiting for it fill.
+/// A frame with nothing to scan out: it does everything a monitor's flip does (animations, covers,
+/// presentation feedback, frame callbacks, captures) at the tick.
 fn frame(state: &mut State, output: &Output) {
     state.settle_moves();
     let shows_at = state.now();
