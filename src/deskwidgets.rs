@@ -284,7 +284,7 @@ impl State {
             let none = HashSet::new();
             let icons = if *out == primary { &icon_cells } else { &none };
             for (p, (spot, new)) in here.iter().zip(arrange(grid, area, &here, icons)) {
-                if new {
+                if new && !crate::virtualout::is_remote(out) {
                     let cells = self.widgets.store.cells.entry(p.kind).or_default();
                     cells.insert(id.clone(), desktop::to_saved(grid, spot.cell));
                     saved_any = true;

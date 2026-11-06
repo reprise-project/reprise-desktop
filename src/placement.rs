@@ -445,8 +445,11 @@ impl State {
 
     /// Always Open Here picked: removes its rule for `w`'s program, or writes one opening the
     /// program's windows where `w` is now. The live rules change at once; the config watch
-    /// rereads the same from the file.
+    /// rereads the same from the file. Lock mode ignores it, as `w` is on a Remote output.
     pub(crate) fn toggle_open_here(&mut self, w: WindowId) {
+        if crate::console::remote_side(self) {
+            return;
+        }
         let state = self.open_here_state(w);
         let Some(app) = self.win(w).map(Window::app) else {
             return;
