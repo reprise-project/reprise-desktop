@@ -225,9 +225,8 @@ impl RdpServerDisplay for Display {
                 on: false,
             });
             let device = picture.device.clone();
-            let frame_rate = self.links.config.borrow().frame_rate;
             let worker = Worker::spawn(move || {
-                Switch::new(Box::new(move |backend, quality| {
+                Switch::new(Box::new(move |backend, quality, frame_rate| {
                     Ffmpeg::new(backend, &device, frame_rate, quality)
                         .map(|f| Box::new(f) as Box<dyn Encoder>)
                 }))
@@ -329,6 +328,7 @@ struct Live {
     status: watch::Sender<Status>,
     lives: Arc<AtomicUsize>,
     quality: Quality,
+    frame_rate: u32,
     choice: EncoderChoice,
     /// Counts encoder choices, so a frame coded before the latest is told apart.
     choices: u64,
@@ -394,6 +394,7 @@ impl Live {
             status,
             lives,
             quality: cfg.quality,
+            frame_rate: cfg.frame_rate,
             choice: cfg.encoder,
             choices: 0,
             order: None,
@@ -487,15 +488,17 @@ impl Live {
         None
     }
 
-    /// Take the quality, frame rate and encoder the config now has, keeping the client.
+    /// Take the quality, frame rate and encoder the config now has, keeping the client. A new
+    /// frame rate reopens the encoder, so the next frame is a keyframe.
     fn follow_config(&mut self) {
         let cfg = *self.config.borrow_and_update();
-        let requality = cfg.quality != self.quality;
+        let recode = (cfg.quality, cfg.frame_rate) != (self.quality, self.frame_rate);
         self.quality = cfg.quality;
+        self.frame_rate = cfg.frame_rate;
         self.interval = frame_interval(cfg.frame_rate);
         if cfg.encoder != self.choice {
             self.choose(cfg.encoder);
-        } else if requality {
+        } else if recode {
             self.keyframe = true;
         } else {
             return;
@@ -653,6 +656,7 @@ impl Live {
             keyframe: std::mem::take(&mut self.keyframe),
             h264,
             quality: self.quality,
+            frame_rate: self.frame_rate,
             avc444,
             epoch: self.epoch,
             order: self.order.take(),
@@ -1302,10 +1306,14 @@ mod tests {
         live: Live,
         coded: Coded,
         modes: Modes,
+        /// The frame rate each encoder was opened at.
+        opened: Opened,
         config: watch::Sender<RemoteDesktop>,
         status: watch::Receiver<Status>,
         _client: Client,
     }
+
+    type Opened = Arc<Mutex<Vec<u32>>>;
 
     fn coding(working: &[Backend]) -> Coding {
         coding_on(working, ready_gfx(), None)
@@ -1321,8 +1329,11 @@ mod tests {
         let (_sizes, sizes_rx) = unbounded_channel();
         let (coded, modes) = (Coded::default(), Modes::default());
         let (log, mode_log) = (coded.clone(), modes.clone());
+        let opened = Opened::default();
+        let open_log = opened.clone();
         let switch = move || {
-            Switch::new(Box::new(move |backend, quality| {
+            Switch::new(Box::new(move |backend, quality, frame_rate| {
+                open_log.lock().unwrap().push(frame_rate);
                 Ok(Box::new(Coder {
                     backend,
                     quality,
@@ -1357,6 +1368,7 @@ mod tests {
             live,
             coded,
             modes,
+            opened,
             config,
             status,
             _client: client,
@@ -1389,6 +1401,26 @@ mod tests {
             [(Backend::X264, true, 25), (Backend::X264, true, 21)],
             "balanced, then a sharp keyframe"
         );
+    }
+
+    #[tokio::test]
+    async fn a_frame_rate_change_reopens_the_encoder_on_a_keyframe() {
+        let mut c = coding(&[Backend::X264]);
+        code(&mut c.live, frame((4, 2), SMALL)).await;
+        c.config.send_modify(|c| c.frame_rate = 120);
+        c.live.follow_config();
+        c.live.next_at = Instant::now();
+        c.live.start(Instant::now());
+        assert!(c.live.busy, "the last frame goes again with no new one");
+        let done = c.live.worker.done.recv().await.unwrap();
+        c.live.finish(done);
+        assert_eq!(*c.opened.lock().unwrap(), [60, 120]);
+        assert_eq!(
+            *c.coded.lock().unwrap(),
+            [(Backend::X264, true, 25), (Backend::X264, true, 25)],
+            "the new encoder starts on a keyframe"
+        );
+        assert_eq!(c.live.interval, frame_interval(120));
     }
 
     #[tokio::test]
