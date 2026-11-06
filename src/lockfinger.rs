@@ -1,7 +1,7 @@
 //! The lock screen's PAM conversations, each in a child of the compositor binary so no PAM module runs in the compositor and the lock can end one at any time: the fingerprint's (`--fingerprint-conversation USER`) and the password's (`--password-conversation USER`, the password on stdin).
 //! A child writes `I <info>` and `E <error>` lines and `= <pam_authenticate rc>` last; only `= 0` unlocks.
 //! The password's child asks a further prompt with `? <text>` (blind) or `?? <text>` (echoed) and reads its answer as the next line of stdin, which stays open until the conversation ends.
-//! reprise-rdp runs the same password conversation as `--rdp-password-conversation USER`, under its own PAM service.
+//! reprise-rdp and lock mode's remote Unlock dialog run it as `--rdp-password-conversation USER`, under the Remote Desktop PAM service.
 
 use crate::lock::{self, Verdict, Verifier, ffi};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 pub const SERVICE: &str = "reprise-fingerprint";
 pub const FLAG: &str = "--fingerprint-conversation";
 pub const PASSWORD_FLAG: &str = "--password-conversation";
+pub const RDP_PASSWORD_FLAG: &str = "--rdp-password-conversation";
 pub const RDP_SERVICE: &str = "reprise-rdp";
 /// Time an ended conversation gets to release the reader after SIGINT before it is killed.
 pub const RELEASE_GRACE: Duration = Duration::from_millis(500);
@@ -68,9 +69,13 @@ pub fn finger_command(user: &str) -> Option<Command> {
     Some(c)
 }
 
-pub fn password_command(user: &str) -> Command {
+pub fn password_command(user: &str, purpose: PasswordFor) -> Command {
+    let flag = match purpose {
+        PasswordFor::Unlock => PASSWORD_FLAG,
+        PasswordFor::RemoteDesktop => RDP_PASSWORD_FLAG,
+    };
     let mut c = Command::new("/proc/self/exe");
-    c.arg0("reprise").arg(format!("{PASSWORD_FLAG}={user}"));
+    c.arg0("reprise").arg(format!("{flag}={user}"));
     c
 }
 
@@ -247,7 +252,8 @@ pub fn reap_ended(now: Instant) -> Option<Instant> {
     ending.iter().map(|&(_, d)| d).min()
 }
 
-/// Who a password conversation checks the password for.
+/// Who a password conversation checks the password for: the console's lock, or a Remote Desktop
+/// login and lock mode's remote Unlock dialog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PasswordFor {
     Unlock,
