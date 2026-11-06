@@ -13,6 +13,14 @@ fn a_screen_that_cannot_be_shared_tells_the_client_its_display_failed_to_start()
     assert_eq!(code, ProtocolIndependentCode::CloseStackOnDriverFailure);
 }
 
+#[test]
+fn a_grant_without_a_remote_for_every_screen_fails_to_start() {
+    let mut grant = crate::portal::tests::grant();
+    assert_eq!(remotes(&mut grant).unwrap().len(), 1);
+    let e = remotes(&mut grant).expect_err("no remote is left");
+    assert!(matches!(e.kind(), ServerErrorKind::ErrorInfo(_)), "{e:?}");
+}
+
 fn live(told: DesktopSize) -> (Live, ToldSize, Frames, Sizes) {
     live_on(&Arc::new(Mutex::new(told)))
 }
