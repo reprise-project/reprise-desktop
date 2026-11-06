@@ -315,7 +315,7 @@ mod tests {
             h.output("TEST-1", 1024, 768);
             h.state.session.was_locked = true;
             on_start(&mut h.state, after_crash, false);
-            h.state.is_locked()
+            h.state.console_locked()
         };
         assert!(start(true));
         assert!(!start(false));
@@ -377,6 +377,6 @@ mod tests {
         h.output("TEST-1", 1024, 768);
         h.state.session.was_locked = false;
         on_start(&mut h.state, true, true);
-        assert!(h.state.is_locked());
+        assert!(h.state.console_locked());
     }
 }

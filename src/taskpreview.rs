@@ -235,7 +235,7 @@ fn preview_bounds(b: Rect, p: &BarPlacement) -> Rect {
 
 fn show(state: &mut State, bar: TreeId, i: usize) {
     hide(state);
-    if state.is_locked() {
+    if state.desktop_locked() {
         return;
     }
     let live = state.task_windows();

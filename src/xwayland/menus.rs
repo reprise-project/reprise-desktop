@@ -114,7 +114,7 @@ pub fn dismiss(state: &mut State) {
     let Some(pointer) = state.seat.get_pointer() else {
         return;
     };
-    if pointer.is_grabbed() || state.is_locked() {
+    if pointer.is_grabbed() || state.desktop_locked() {
         return;
     }
     let Some((at, btn)) = press_at(state.output_area(), &windows, &popups) else {

@@ -95,7 +95,7 @@ impl State {
     /// `pointer_free` short of the seat's grab.
     pub(crate) fn shell_leaves_pointer(&self) -> bool {
         matches!(self.interaction, Interaction::Idle)
-            && !self.is_locked()
+            && !self.console_locked()
             && !self.drag_running()
             && !self.panels.takes_pointer()
             && !Popup::open(self).any(Popup::owns_pointer)
@@ -302,7 +302,7 @@ impl State {
     pub fn repoint(&mut self, pos: Point<f64, Logical>, time: InputTime) {
         self.pointers.hovered_at = Some(Instant::now());
         self.pointers.owed = None;
-        if self.is_locked() {
+        if self.console_locked() {
             crate::lockview::motion(self, pos, time);
             return;
         }

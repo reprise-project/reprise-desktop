@@ -79,7 +79,7 @@ impl State {
             self.close_clipview();
             return;
         }
-        if self.is_locked() || !self.config.clipboard.history {
+        if self.desktop_locked() || !self.config.clipboard.history {
             return;
         }
         let anchor = self.panel_anchor();

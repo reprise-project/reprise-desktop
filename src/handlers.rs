@@ -323,8 +323,8 @@ impl XdgShellHandler for State {
 
     /// During a drag the menu's grabs wait for the drag's end (`dnd`).
     fn grab(&mut self, surface: PopupSurface, _seat: WlSeat, serial: Serial) {
-        // No client takes the keyboard under the lock.
-        if self.is_locked() {
+        // No client takes the keyboard under the desktop's lock.
+        if self.desktop_locked() {
             return;
         }
         let kind = PopupKind::Xdg(surface);
@@ -456,7 +456,7 @@ impl XdgDialogHandler for State {
             win.modal = modal;
         }
         if modal
-            && !self.is_locked()
+            && !self.desktop_locked()
             && let Some(f) = self.focused
             && self.modal_target(f) != f
         {

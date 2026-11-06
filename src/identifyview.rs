@@ -39,17 +39,18 @@ fn badge_origin(b: Rect) -> (i32, i32) {
 }
 
 /// Number the outputs called `names`, the first 1, on every output in
-/// the layout that is named; the rest show nothing.
+/// the layout that is named and not under its side's lock; the rest show
+/// nothing.
 pub fn show(state: &mut State, names: &[String]) {
     hide(state);
-    if state.is_locked() {
-        return;
-    }
     let outputs = state.scene.outputs().to_vec();
     for out in outputs {
         let Some(k) = names.iter().position(|n| *n == out.name()) else {
             continue;
         };
+        if state.locked_on(&out) {
+            continue;
+        }
         let b = state.layout_box(Some(&out));
         if b.width <= 0 {
             continue;

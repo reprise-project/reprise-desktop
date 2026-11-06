@@ -204,7 +204,7 @@ impl State {
         self.finish_window_anims();
         self.cancel_switch_anim();
         let cfg = self.config.workspace_animation;
-        if !cfg.enabled() || self.is_locked() {
+        if !cfg.enabled() || self.desktop_locked() {
             return;
         }
         let outputs: Vec<Output> = self
@@ -252,7 +252,7 @@ impl State {
 
     pub fn desktop_drag(&mut self, p: f64) -> bool {
         use crate::desktops::Step;
-        if self.is_locked() {
+        if self.desktop_locked() {
             return false;
         }
         let step = if p < 0.0 { Step::Prev } else { Step::Next };

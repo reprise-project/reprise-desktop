@@ -25,6 +25,7 @@ use reprisescene::{BufferId, RectId, TreeId};
 
 use crate::compose::Fed;
 use crate::compositor::State;
+use crate::console::Side;
 use crate::editkeys::KeyText;
 use crate::input::{BTN_LEFT, Interaction};
 use crate::keys;
@@ -400,7 +401,7 @@ fn on_result(state: &mut State) -> PostAction {
 /// Lock the session, then start `[power] locker` if one is set. No-op when already locked.
 pub fn lock(state: &mut State) {
     crate::crash::set_locked(true);
-    if state.is_locked() {
+    if state.console_locked() {
         return;
     }
     engage(state);
@@ -424,12 +425,12 @@ pub fn start_dialog_finger(state: &mut State) {
     }
 }
 
-/// Engage the lock: cover every output, clear client focus, route input to the dialog. No-op when
-/// already locked. A locker's own lock comes through here directly so it does not start another
-/// locker. Window captures go blank while it holds (`capture::render_window`).
+/// Engage the lock: cover every Console output, clear client focus, route input to the dialog.
+/// No-op when already locked. A locker's own lock comes through here directly so it does not start
+/// another locker. Console-side window captures go blank while it holds (`capture::render_window`).
 pub fn engage(state: &mut State) {
     crate::crash::set_locked(true);
-    if state.is_locked() {
+    if state.console_locked() {
         return;
     }
     crate::state::save_screen_locked(true);
@@ -604,15 +605,61 @@ pub fn unlock(state: &mut State) {
 }
 
 impl State {
-    pub fn is_locked(&self) -> bool {
+    /// The lock is engaged: it covers the computer's own outputs and holds their input.
+    pub fn console_locked(&self) -> bool {
         self.lock.active.is_some()
+    }
+
+    /// The desktop's lock: the console's, or in lock mode the remote side's.
+    pub fn desktop_locked(&self) -> bool {
+        !crate::console::remote_side(self) && self.console_locked()
+    }
+
+    /// The lock of `output`'s side.
+    pub fn locked_on(&self, output: &Output) -> bool {
+        match crate::console::side_of(output) {
+            Side::Console => self.console_locked(),
+            Side::Remote => self.desktop_locked(),
+        }
+    }
+
+    /// The lock of the side whose output holds `w`'s frame centre; the console's off every output.
+    pub fn window_locked(&self, w: WindowId) -> bool {
+        let Some(r) = self.win(w).map(crate::window::Window::frame_rect) else {
+            return self.console_locked();
+        };
+        let centre = (f64::from(r.x + r.width / 2), f64::from(r.y + r.height / 2));
+        (self.scene.outputs().iter())
+            .find(|o| reprisescene::output_rect(o).is_some_and(|b| b.to_f64().contains(centre)))
+            .map_or(self.console_locked(), |o| self.locked_on(o))
+    }
+
+    /// The lock that `origin`'s request answers to.
+    pub fn locked_for(&self, origin: Origin) -> bool {
+        match origin {
+            Origin::Console => self.console_locked(),
+            Origin::Desktop => self.desktop_locked(),
+        }
     }
 }
 
+/// Where a power or session-end request comes from: the computer's own keys, lid or battery, or
+/// the desktop's menus and dialogs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    Console,
+    Desktop,
+}
+
 /// Cover `output` (or refit its cover to its box, the theme's background and the wallpaper) with an
-/// opaque rect, the wallpaper and a centred dialog. An output with no layout box loses its cover.
+/// opaque rect, the wallpaper and a centred dialog. A Remote output or one with no layout box loses
+/// its cover.
 fn cover_output(state: &mut State, output: &Output) {
-    if !state.is_locked() {
+    if !state.console_locked() {
+        return;
+    }
+    if crate::console::side_of(output) == Side::Remote {
+        forget_output(state, output);
         return;
     }
     #[cfg(test)]
@@ -752,9 +799,9 @@ fn forget_output(state: &mut State, output: &Output) {
     state.scene.destroy(lo.tree);
 }
 
-/// Re-cover every output after a layout, theme or wallpaper change.
+/// Re-cover every Console output after a layout, theme or wallpaper change.
 pub fn refit(state: &mut State) {
-    if !state.is_locked() {
+    if !state.console_locked() {
         return;
     }
     let outputs: Vec<Output> = state.scene.outputs().to_vec();
@@ -1184,10 +1231,10 @@ mod tests {
     fn the_password_conversation_unlocks_on_its_success_only() {
         let mut h = locked(|_| sh(r#"read p; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#));
         check(&mut h, "hunter1");
-        assert!(h.state.is_locked());
+        assert!(h.state.console_locked());
         assert_eq!(message(&h).as_deref(), Some(lock::INCORRECT));
         check(&mut h, "hunter2");
-        assert!(!h.state.is_locked());
+        assert!(!h.state.console_locked());
     }
 
     #[test]
@@ -1203,7 +1250,7 @@ mod tests {
     fn a_rejection_shows_the_conversations_text() {
         let mut h = locked(|_| sh("read p; echo 'E Account locked.'; echo '= 7'"));
         check(&mut h, "hunter2");
-        assert!(h.state.is_locked());
+        assert!(h.state.console_locked());
         assert_eq!(message(&h).as_deref(), Some("Account locked."));
     }
 
@@ -1211,7 +1258,7 @@ mod tests {
     fn a_conversation_that_ends_without_a_result_reads_as_unavailable() {
         let mut h = locked(|_| sh("exit 0"));
         check(&mut h, "hunter2");
-        assert!(h.state.is_locked());
+        assert!(h.state.console_locked());
         assert_eq!(message(&h).as_deref(), Some(lock::UNAVAILABLE));
     }
 
@@ -1247,7 +1294,7 @@ mod tests {
         assert_eq!(l.state.input, "", "the field is cleared for the answer");
         assert!(l.pending.as_ref().unwrap().timer.is_none());
         check(&mut h, "123456");
-        assert!(!h.state.is_locked());
+        assert!(!h.state.console_locked());
     }
 
     #[test]
@@ -1347,7 +1394,7 @@ mod tests {
         }
         let start = std::time::Instant::now();
         unlock(&mut h.state);
-        assert!(!h.state.is_locked());
+        assert!(!h.state.console_locked());
         assert!(
             !crate::lockfinger::tests::ended(pid),
             "unlock returns while the child runs"
@@ -1370,7 +1417,7 @@ mod tests {
         h.state.lock.helpers.finger = |_| Some(sh("echo 'I ready'; exec sleep 60"));
         let mut c = h.connect();
         let (_lock, _surface) = h.map_lock_surface(&mut c);
-        assert!(h.state.is_locked());
+        assert!(h.state.console_locked());
         assert!(!finger(&h), "a locker's lock starts none");
         drop(c);
         h.run_for(50);

@@ -241,7 +241,7 @@ impl State {
     /// Move the seat's keyboard to `w`. An exclusive layer surface keeps it
     /// instead: the window still draws as active.
     pub fn claim_keyboard(&mut self, w: WindowId) {
-        if self.is_locked() || crate::layer::holds_keyboard(self) {
+        if self.desktop_locked() || crate::layer::holds_keyboard(self) {
             return;
         }
         let surface = self.win(w).map(|x| x.wl_surface().clone());
@@ -252,14 +252,14 @@ impl State {
     }
 
     /// Send the seat's keyboard focus to `surface`, or take it from every surface
-    /// with None. While locked, every surface but the locker's own is ignored; a rolled-up
-    /// window's surface gets None.
+    /// with None. While the desktop is locked, every surface but the locker's own is ignored; a
+    /// rolled-up window's surface gets None.
     pub fn enter_keyboard(
         &mut self,
         surface: Option<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
     ) {
         if let Some(s) = &surface
-            && self.is_locked()
+            && self.desktop_locked()
             && !crate::sessionlock::is_lock_surface(self, s)
         {
             return;

@@ -35,7 +35,7 @@ fn rgba(argb: u32) -> [f32; 4] {
 impl State {
     /// The bind: open the overlay. No-op while locked or already open.
     pub fn open_region(&mut self) {
-        if self.panels.region.is_some() || self.is_locked() {
+        if self.panels.region.is_some() || self.desktop_locked() {
             return;
         }
         // The overlay takes the button, so whatever it held ends here

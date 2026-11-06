@@ -548,7 +548,7 @@ impl State {
     }
 
     fn pad_action(&mut self, a: &Action) {
-        if self.is_locked() || self.inputproto.gated() {
+        if self.console_locked() || self.inputproto.gated() {
             return;
         }
         self.run_action(a, 0);

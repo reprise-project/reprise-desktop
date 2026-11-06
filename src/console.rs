@@ -167,18 +167,10 @@ fn on_end(state: &mut State) {
     state.console.owner = Owner::Console;
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the lock, input and window moves follow the side")
-)]
 pub fn remote_side(state: &State) -> bool {
     state.console.owner == Owner::Remote
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the lock, input and window moves follow the side")
-)]
 pub fn side_of(output: &Output) -> Side {
     if crate::virtualout::is_remote(output) {
         Side::Remote

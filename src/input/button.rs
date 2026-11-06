@@ -144,7 +144,7 @@ impl State {
     }
 
     pub(crate) fn press(&mut self, button: u32, pos: Point<f64, Logical>, time: InputTime) {
-        if self.is_locked() {
+        if self.console_locked() {
             crate::lockview::button(self, button, pos);
             return;
         }

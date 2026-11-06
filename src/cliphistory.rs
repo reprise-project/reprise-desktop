@@ -297,7 +297,7 @@ impl State {
             self.panels.history.history.clear();
             return;
         }
-        if self.is_locked() {
+        if self.desktop_locked() {
             return;
         }
         if let Some(offers) = self.own_offers() {

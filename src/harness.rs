@@ -72,7 +72,7 @@ use crate::{
 mod capture;
 mod lockscreen;
 
-pub use lockscreen::Heard;
+pub use lockscreen::{Heard, LockScreen};
 
 /// `BTN_LEFT`.
 pub const LEFT: u32 = 0x110;

@@ -47,7 +47,7 @@ impl State {
     }
 
     pub fn focus_bar_item(&mut self, tree: TreeId, at: TaskbarHit) {
-        if self.is_locked() || crate::layer::holds_keyboard(self) || self.dialog_is_modal() {
+        if self.desktop_locked() || crate::layer::holds_keyboard(self) || self.dialog_is_modal() {
             return;
         }
         let Some(output) = self.bar(tree).map(|b| b.output.clone()) else {

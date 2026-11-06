@@ -483,7 +483,7 @@ impl WaylandDndGrabHandler for State {
             return;
         };
         let busy = self.dnd.running() || self.interaction != crate::input::Interaction::Idle;
-        let shut = self.is_locked() || self.inputproto.gated();
+        let shut = self.desktop_locked() || self.inputproto.gated();
         let ok = |focus: Option<&WlSurface>| {
             may_start(busy, focus.is_some_and(|f| source.same_client_as(f)), shut)
         };

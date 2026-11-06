@@ -10,6 +10,7 @@ use crate::config::{Action, PowerAction};
 use crate::dialogview::DialogKey;
 use crate::input::{BTN_LEFT, BTN_RIGHT};
 use crate::keys;
+use crate::lockview::Origin;
 use crate::raster::Rect;
 
 use super::lists::jump_file;
@@ -307,7 +308,7 @@ impl State {
             }
             Spot::Shutdown => {
                 self.close_start_panel();
-                crate::power::run_action(self, PowerAction::TurnOff);
+                crate::power::run_action(self, PowerAction::TurnOff, Origin::Desktop);
             }
             Spot::LogOff => {
                 self.close_start_panel();

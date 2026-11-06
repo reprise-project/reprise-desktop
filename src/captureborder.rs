@@ -222,13 +222,12 @@ fn current_edges(state: &State) -> Vec<Edge> {
     if targets.is_empty() {
         return Vec::new();
     }
-    let locked = state.is_locked();
     edges(&targets, reprisescene::output_rect, |w| {
         let win = state.win(w)?;
         let f = win.frame_rect();
         Some(WindowView {
             frame: Rectangle::new((f.x, f.y).into(), (f.width, f.height).into()),
-            mapped: win.mapped && !locked,
+            mapped: win.mapped && !state.window_locked(w),
             minimized: state.minimized_along_chain(w),
             on_current_desktop: state.on_current_desktop(w),
         })

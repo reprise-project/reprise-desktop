@@ -232,7 +232,7 @@ pub fn focus_of(k: &Keyboard) -> Option<Surface> {
 fn keyboard(state: &State) -> Keyboard {
     Keyboard {
         color_pick: state.panels.colorpick.is_some(),
-        elsewhere: state.is_locked()
+        elsewhere: state.desktop_locked()
             || state.inputproto.gated()
             || state.panels.takes_pointer()
             || state.interaction.is_keyboard(),
@@ -492,7 +492,7 @@ fn move_keyboard(state: &mut State, focus: Option<Surface>) {
                 s.is_alive() && own.as_ref().is_some_and(|o| o.client() == s.client())
             };
             match lent.filter(same) {
-                Some(s) if !state.is_locked() => state.enter_keyboard(Some(s)),
+                Some(s) if !state.desktop_locked() => state.enter_keyboard(Some(s)),
                 _ => state.claim_keyboard(w),
             }
         }
@@ -753,7 +753,7 @@ fn reveal(state: &mut State, surface: Surface, r: Reveal) {
 
 /// Click pointer `button` at layout point `at` as a press and release would, without moving the pointer: the press goes through `State::press`, the release through the interaction it started, with `State::pointer_location` reading `at` meanwhile. No client hears it. Nothing happens while locked, mid-gesture or with a button held.
 pub fn click(state: &mut State, at: (f64, f64), button: u32) {
-    if state.is_locked() || state.interaction != Interaction::Idle || state.buttons_down > 0 {
+    if state.desktop_locked() || state.interaction != Interaction::Idle || state.buttons_down > 0 {
         return;
     }
     let real = state.pointer_location();

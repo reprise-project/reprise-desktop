@@ -160,7 +160,7 @@ impl State {
         };
         if !goes_out(&d.sources)
             || self.dnd.running()
-            || self.is_locked()
+            || self.desktop_locked()
             || self.inputproto.gated()
         {
             return false;
@@ -257,7 +257,7 @@ impl State {
     }
 
     fn own_drop(&mut self, sources: Vec<DragSource>, target: DropTarget, answer: Answer) {
-        if self.is_locked() {
+        if self.desktop_locked() {
             return;
         }
         let pos = self.pointer_location();

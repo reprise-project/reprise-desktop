@@ -566,7 +566,7 @@ pub fn holds_keyboard(state: &State) -> bool {
 
 pub fn focus_layer(state: &mut State, wl: &WlSurface) {
     state.layers_shell.focused = Some(wl.clone());
-    if state.is_locked() {
+    if state.desktop_locked() {
         return;
     }
     state.enter_keyboard(Some(wl.clone()));
