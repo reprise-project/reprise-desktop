@@ -1072,8 +1072,8 @@ impl State {
     }
 
     fn lock_splash_at(&self, at: Point<f64, Logical>) -> Option<Output> {
-        let l = self.lock.active.as_ref()?;
         let out = self.output_at(at.x, at.y)?;
+        let l = self.lock.covering(&out)?;
         let lo = l.outputs.iter().find(|lo| lo.output == out)?;
         let dialog = l.dialog_shown().then_some(lo.dialog_rect);
         lock_splash_allowed(dialog, (at.x, at.y)).then_some(out)

@@ -194,7 +194,7 @@ fn outside_lock_mode_eis_keys_still_unlock_the_lock_dialog() {
     h.remote_key(A, false);
     assert_eq!(lock_input(&h), "a");
     h.remote_key(ENTER, true);
-    let l = h.state.lock.active.as_ref().expect("locked");
+    let l = h.state.lock.console.as_ref().expect("locked");
     assert!(l.state.verifying, "Enter hands the password to the check");
 }
 

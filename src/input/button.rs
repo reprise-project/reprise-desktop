@@ -153,7 +153,7 @@ impl State {
 
     pub(crate) fn press(&mut self, button: u32, pos: Point<f64, Logical>, time: InputTime) {
         if self.desktop_locked() {
-            crate::lockview::button(self, button, pos);
+            crate::lockview::desk_button(self, button, pos);
             return;
         }
         if self.drag_running() {

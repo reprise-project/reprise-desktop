@@ -569,9 +569,9 @@ fn fired(state: &mut State) {
     if due(cfg.lock_after) && !state.idle.steps.locked_fired {
         state.idle.steps.locked_fired = true;
         end_dim(state);
-        if !state.console_locked() {
+        if !state.desktop_locked() {
             log::info!("idle for {}s: locking", cfg.lock_after);
-            crate::lockview::lock(state);
+            crate::lockview::lock_desktop(state);
         }
     }
     if due(cfg.screen_off_after) && !state.idle.steps.screen_off {

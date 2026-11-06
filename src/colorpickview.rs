@@ -392,7 +392,7 @@ mod tests {
             loupe,
             asker: Asker::Bind,
         });
-        s.lock.active.as_mut().unwrap().state.input = "secret".into();
+        s.lock.console.as_mut().unwrap().state.input = "secret".into();
         h.remote_pointer_to(2200.0, 300.0);
         for b in [ButtonState::Pressed, ButtonState::Released] {
             h.from(crate::inputproto::InputSource::Remote, |s| {
