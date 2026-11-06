@@ -370,7 +370,7 @@ impl KeyFilter {
         }
     }
 
-    fn clear_sticky(&mut self) -> bool {
+    pub fn clear_sticky(&mut self) -> bool {
         let had = self.latched | self.locked != 0;
         self.latched = 0;
         self.locked = 0;
@@ -499,6 +499,14 @@ impl State {
             && !self.console_locked()
         {
             self.open_dialog(crate::dialog::Dialog::key_aid_prompt(aid));
+        }
+    }
+
+    /// StickyKeys lets go of what it latched and locked, on the seat's keyboard too.
+    pub fn aids_release_sticky(&mut self) {
+        if self.key_input.aids.filter.clear_sticky() {
+            self.sync_aids();
+            self.redraw_taskbars();
         }
     }
 

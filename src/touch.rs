@@ -602,7 +602,7 @@ impl State {
     /// Cancel what every client has of touch: its other fingers go nowhere
     /// until they lift. Smithay cancels only points that had an event since
     /// the last frame, so each client point first gets a motion where it is.
-    fn cancel_client_touch(&mut self, time: InputTime) {
+    pub(crate) fn cancel_client_touch(&mut self, time: InputTime) {
         let Some(touch) = self.seat.get_touch() else {
             return;
         };
