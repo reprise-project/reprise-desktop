@@ -79,8 +79,10 @@ you.
 Lock mode (`lock_screen`, version 9) is how the portal hands the remote
 desktop server screens of its own: the compositor makes one virtual screen
 per monitor of the client's layout and locks the session if it isn't
-locked. The lock stays when lock mode ends. With `[power] locker` set, lock
-mode is unavailable: the object ends at once and nothing is made.
+locked. The lock stays when lock mode ends. With `[power] locker` set, or
+while a locker client holds the lock, lock mode is unavailable: the object
+ends at once and nothing is made. A locker client that takes the lock during
+lock mode ends it.
 
 Reprise's remote desktop server starts its sessions without the permission
 dialog, since nobody may be at the screen to answer it. Turning Remote
