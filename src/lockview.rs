@@ -1,6 +1,5 @@
-//! The lock screen on the scene: per output an opaque cover, the wallpaper with `[wallpaper] lock_screen`
-//! and a dialog in `layers.lock`, key and pointer routing while locked, and the PAM conversation children.
-//! In lock mode the remote side has a lock of its own. Pure state lives in `lock.rs` and `lockfinger.rs`.
+//! The lock screen on the scene, one lock per side in lock mode: covers, wallpaper and dialog in
+//! `layers.lock`, input routing and the PAM children. Pure state lives in `lock.rs` and `lockfinger.rs`.
 
 use std::os::fd::BorrowedFd;
 use std::process::Command;
@@ -382,9 +381,8 @@ fn abort_verification(state: &mut State, side: Side, message: &str) {
     redraw(state);
 }
 
-/// What `side`'s password conversation said since the last wake: a further prompt relabels the field
-/// for its answer; its verdict unlocks that side or shows why not; an end without one reads as "could
-/// not be checked", never as accepted.
+/// What `side`'s password conversation said: a prompt relabels the field, a verdict unlocks or says
+/// why not, and an end without one reads as "could not be checked", never as accepted.
 fn on_result(state: &mut State, side: Side) -> PostAction {
     let Some(l) = state.lock.on_mut(side) else {
         return PostAction::Remove;
@@ -468,9 +466,8 @@ pub fn lock_all(state: &mut State) {
     lock_remote(state);
 }
 
-/// Lock mode's remote side locks: the desktop is sealed as for the session lock and the Remote
-/// outputs get covers and a dialog taking the remote's input. No-op outside lock mode or when
-/// already locked. No fingerprint conversation: the reader is the computer's.
+/// Seal the desktop and cover the Remote outputs with a dialog taking the remote's input; no-op outside
+/// lock mode or when locked. No fingerprint conversation: the reader is the computer's.
 pub fn lock_remote(state: &mut State) {
     if !crate::console::remote_side(state) || state.lock.remote.is_some() {
         return;
@@ -693,9 +690,8 @@ fn unlock_side(state: &mut State, side: Side) {
     }
 }
 
-/// A layer surface that claimed (or held) exclusive keyboard interactivity while locked outranks
-/// everything; otherwise the layer surface, window or desktop that had the keyboard when the lock
-/// engaged, else the top window.
+/// Focus a layer surface that claimed exclusive keyboard interactivity while locked, else what held
+/// the keyboard when the lock engaged, else the top window.
 fn refocus(state: &mut State, (prev, prev_layer, prev_desktop): Refocus) {
     if crate::layer::holds_keyboard(state) {
         // Recorded, not entered, while locked (by `layer::focus_layer` or mapping with exclusive interactivity).
@@ -779,9 +775,8 @@ fn cover_side(state: &mut State, side: Side) {
     }
 }
 
-/// Cover `output` with its side's lock (or refit its cover to its box, the theme's background and
-/// the wallpaper): an opaque rect, the wallpaper and a centred dialog. An output with no layout box
-/// loses its cover.
+/// Cover `output` with its side's lock, or refit the cover: an opaque rect, the wallpaper and a
+/// centred dialog. An output with no layout box loses its cover.
 fn cover_output(state: &mut State, output: &Output) {
     let side = crate::console::side_of(output);
     if state.lock.on(side).is_none() {
@@ -1163,9 +1158,8 @@ fn desk_side(state: &State) -> Side {
     }
 }
 
-/// A seat key while the desktop is locked, from the keyboard filter. Returns whether it goes on to the
-/// focused surface: a locker's, when one holds the lock. Otherwise the dialog takes presses and every
-/// key is consumed.
+/// A seat key while the desktop is locked: true sends it on to a locker holding the lock; otherwise
+/// the dialog takes presses and every key is consumed.
 pub fn key(state: &mut State, pressed: bool, handle: &KeysymHandle<'_>) -> bool {
     let side = desk_side(state);
     if side == Side::Console && crate::sessionlock::holds_input(state) {
