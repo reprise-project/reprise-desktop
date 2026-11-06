@@ -4,7 +4,7 @@
     reprise private protocol: input injection and capture for reprise-portal.
   </copyright>
 
-  <interface name="reprise_input_v1" version="8">
+  <interface name="reprise_input_v1" version="9">
     <description summary="EIS sockets and pointer barriers for the portal">
       One global. connect_eis hands the compositor one end of a socketpair
       to run libei's EIS side on; create_capture makes an object that owns
@@ -14,7 +14,7 @@
       RemoteDesktop session. watch_sandboxed makes an object that lists
       the sandboxed apps with a window. pick_color opens the colour picker.
       remote_capture marks a capture connection as the remote desktop
-      server's.
+      server's. lock_screen starts lock mode for the remote desktop server.
     </description>
 
     <enum name="kind">
@@ -110,6 +110,62 @@
         capture border only with [remote_desktop] capture_border.
       </description>
     </request>
+
+    <request name="lock_screen" since="9">
+      <description summary="give the remote client screens of its own">
+        The portal makes one for each session it starts without a dialog
+        for the remote desktop server in lock mode. While at least one
+        lives, the computer's own screens show the session lock and the
+        desktop moves to virtual screens laid out as the first object's
+        set_layout asks.
+      </description>
+      <arg name="id" type="new_id" interface="reprise_lock_screen_v1"/>
+    </request>
+  </interface>
+
+  <interface name="reprise_lock_screen_v1" version="1">
+    <description summary="one session's hold on lock mode">
+      With [power] locker set, ended(unavailable) is sent at once and the
+      object does nothing. Otherwise the first set_layout of the first
+      living object creates one virtual screen per monitor and locks the
+      session if it isn't locked; the oldest living object's later
+      layouts resize them. A later object's layouts are ignored, and its
+      first set_layout hears the screens that exist. Lock mode lasts until
+      the last object is destroyed; the lock stays.
+    </description>
+
+    <enum name="reason">
+      <entry name="console_unlocked" value="1" summary="the session was unlocked at the computer"/>
+      <entry name="unavailable" value="2" summary="[power] locker is set"/>
+      <entry name="replaced" value="3" summary="another lock took the computer's screens"/>
+    </enum>
+
+    <request name="set_layout">
+      <description summary="the client's monitors">
+        Each entry is x, y, width and height as int and the scale in
+        percent as uint, in the client's physical pixels, primary first.
+        A layout with no entry, more than 16, a size outside 1 to 16384
+        or a partial entry is ignored.
+      </description>
+      <arg name="monitors" type="array"/>
+    </request>
+
+    <request name="destroy" type="destructor"/>
+
+    <event name="screen">
+      <description summary="a virtual screen made for this lock mode">
+        Sent once per screen, primary first, after each layout change and
+        after this object's first set_layout. The name is the wl_output's.
+      </description>
+      <arg name="name" type="string"/>
+    </event>
+
+    <event name="ended">
+      <description summary="lock mode is over for this object">
+        Nothing more is sent; the portal destroys the object.
+      </description>
+      <arg name="reason" type="uint" enum="reason"/>
+    </event>
   </interface>
 
   <interface name="reprise_eis_client_v1" version="1">

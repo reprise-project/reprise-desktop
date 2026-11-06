@@ -394,6 +394,7 @@ pub struct State {
     pub awaylock: crate::awaylock::AwayLock,
     pub virtual_outputs: crate::virtualout::VirtualOutputs,
     pub standby: crate::standby::Standby,
+    pub console: crate::console::Console,
     pub night: crate::nightlight::NightLight,
     pub dark_mode: crate::darkmode::DarkMode,
     /// wlr-layer-shell: panels, docks, launchers, backgrounds (`layer`).
@@ -749,6 +750,7 @@ impl State {
             awaylock: crate::awaylock::AwayLock::default(),
             virtual_outputs: Default::default(),
             standby: Default::default(),
+            console: Default::default(),
             night: crate::nightlight::NightLight::new(&dh),
             dark_mode: Default::default(),
             layers_shell: crate::layer::LayerShell::new(&dh),
