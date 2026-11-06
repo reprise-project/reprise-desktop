@@ -65,9 +65,10 @@ impl Ending {
         self.0.fetch_max(SCREEN_GONE, Ordering::AcqRel);
     }
 
-    /// Marks a grant of lock mode's screens: every stream cast from a virtual output.
-    pub fn granted(&self, screens: &[Screen]) {
-        if !screens.is_empty() && screens.iter().all(|s| s.virtual_output) {
+    /// Marks a grant of lock mode's screens: a grant to a run that `locks` the console, with
+    /// every stream cast from a virtual output. The standby screen is virtual too.
+    pub fn granted(&self, locks: bool, screens: &[Screen]) {
+        if locks && !screens.is_empty() && screens.iter().all(|s| s.virtual_output) {
             self.0.fetch_max(LOCK_MODE, Ordering::AcqRel);
         }
     }
