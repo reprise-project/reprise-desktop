@@ -1,7 +1,6 @@
 //! The shared screen's PipeWire stream, read on its own thread. A [`Frame`] keeps its buffer
 //! out of the stream, away from the producer, until its last reference drops.
 
-use crate::portal::Grant;
 use bytes::Bytes;
 use pipewire::spa;
 use pipewire::spa::pod::deserialize::PodDeserializer;
@@ -190,10 +189,12 @@ impl Drop for Lease {
     }
 }
 
-/// Consume `grant`'s stream, offering dma-bufs with `modifiers` and memfds; the receivers close
-/// when it ends, and `gone` runs first when it ends because its screen went.
+/// Consume `node`'s stream on the PipeWire remote `fd`, offering dma-bufs with `modifiers` and
+/// memfds; the receivers close when it ends, and `gone` runs first when it ends because its
+/// screen went.
 pub fn spawn(
-    grant: &Grant,
+    fd: OwnedFd,
+    node: u32,
     modifiers: &[u64],
     gone: impl Fn() + Send + 'static,
 ) -> Result<
@@ -204,8 +205,6 @@ pub fn spawn(
     ),
     String,
 > {
-    let fd = grant.pw_fd.try_clone().map_err(|e| e.to_string())?;
-    let node = grant.node;
     let modifiers = modifiers.to_vec();
     let (frames_tx, frames) = unbounded_channel();
     let (sizes_tx, sizes) = unbounded_channel();

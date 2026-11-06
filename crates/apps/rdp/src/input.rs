@@ -4,7 +4,7 @@
 use crate::display::ToldSize;
 use crate::geometry::{self, Region};
 use crate::keymap::{self, Locks, Scancodes, Utf16};
-use crate::portal::Grant;
+use crate::portal::{Grant, Screen};
 use ironrdp_pdu::input::fast_path::SynchronizeFlags;
 use ironrdp_server::{KeyboardEvent, MouseButton, MouseEvent, RdpServerInputHandler};
 use reis::PendingRequestResult;
@@ -703,12 +703,16 @@ impl<'a> Sender<'a> {
         device.device().frame(serial, now_us());
     }
 
+    fn screen(&self) -> &Screen {
+        &self.grant.screens[0]
+    }
+
     /// The shared output's region on `pointer`, or where the portal said it was.
     fn region(&self, pointer: &reis::event::Device) -> Region {
         let shared = pointer
             .regions()
             .iter()
-            .find(|r| r.mapping_id.is_some() && r.mapping_id == self.grant.mapping_id);
+            .find(|r| r.mapping_id.is_some() && r.mapping_id == self.screen().mapping_id);
         match shared {
             Some(r) => Region {
                 x: r.x as i32,
@@ -716,12 +720,15 @@ impl<'a> Sender<'a> {
                 width: r.width,
                 height: r.height,
             },
-            None => Region {
-                x: self.grant.position.0,
-                y: self.grant.position.1,
-                width: self.grant.size.0,
-                height: self.grant.size.1,
-            },
+            None => {
+                let screen = self.screen();
+                Region {
+                    x: screen.position.0,
+                    y: screen.position.1,
+                    width: screen.size.0,
+                    height: screen.size.1,
+                }
+            }
         }
     }
 }
