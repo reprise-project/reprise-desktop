@@ -191,10 +191,12 @@ impl Drop for Lease {
 }
 
 /// Consume `grant`'s stream, offering dma-bufs with `modifiers` and memfds. Frames and size
-/// changes come out of the receivers, which close when the stream ends.
+/// changes come out of the receivers, which close when the stream ends; `gone` runs before they
+/// close when it ends because its screen went.
 pub fn spawn(
     grant: &Grant,
     modifiers: &[u64],
+    gone: impl Fn() + Send + 'static,
 ) -> Result<
     (
         Stream,
@@ -218,7 +220,7 @@ pub fn spawn(
                 sizes: sizes_tx,
                 control: back,
             };
-            if let Err(e) = run(fd, node, modifiers, out, control_rx) {
+            if let Err(e) = run(fd, node, modifiers, out, control_rx, gone) {
                 log::warn!("screen stream: {e}");
             }
         })
@@ -305,6 +307,7 @@ fn run(
     modifiers: Vec<u64>,
     out: Out,
     control: pipewire::channel::Receiver<Control>,
+    gone: impl Fn() + 'static,
 ) -> Result<(), String> {
     pipewire::init();
     let main_loop = pipewire::main_loop::MainLoopRc::new(None).map_err(|e| e.to_string())?;
@@ -312,13 +315,14 @@ fn run(
     let core = context.connect_fd_rc(fd, None).map_err(|e| e.to_string())?;
     // A stream whose node went only pauses, waiting for another: the screen it showed is gone.
     let registry = core.get_registry_rc().map_err(|e| e.to_string())?;
-    let gone = main_loop.downgrade();
+    let quit = main_loop.downgrade();
     let _node_gone = registry
         .add_listener_local()
         .global_remove(move |id| {
             if id == node {
                 log::info!("screen stream: the shared screen is gone");
-                if let Some(l) = gone.upgrade() {
+                gone();
+                if let Some(l) = quit.upgrade() {
                     l.quit();
                 }
             }

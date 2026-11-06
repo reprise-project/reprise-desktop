@@ -9,8 +9,8 @@ use super::desktop::{
 use super::input::{MOUSE_KEYS_CONTROLS, SLOW_CONTROLS, STICKY_CONTROLS};
 use super::system::{
     ALLOW_BOOST, BELL, CLIPBOARD_HISTORY, NOTIFICATION_SOUND, QUALITY_VALUE, REMOTE_BORDER,
-    REMOTE_ENCODER, REMOTE_FRAME_RATE, REMOTE_LOCK_ON_LEAVE, REMOTE_PORT, REMOTE_QUALITY,
-    REMOTE_SOUND, SOUND_CONTROLS, clipboard_label,
+    REMOTE_ENCODER, REMOTE_FRAME_RATE, REMOTE_LOCK_GRACE, REMOTE_LOCK_ON_LEAVE, REMOTE_PORT,
+    REMOTE_QUALITY, REMOTE_SOUND, SOUND_CONTROLS, clipboard_label, follow_lock,
 };
 use super::{
     CURSOR_FIXED_ROWS, DEBUG_IN_CAPTURES, DEBUG_OVERLAY, DELAY_MAX, DELAY_MIN, DOUBLE_CLICK,
@@ -32,10 +32,10 @@ use reprisekit::theme::Color;
 
 use crate::model::{
     CURSOR_SIZES, Choices, DESKTOPS_DEFAULT, FONT_SMOOTHINGS, FRAME_RATES, HOT_CORNERS, INTERFACES,
-    MENU_ANIMATIONS, PAGER_MARKS, POSITIONS, QT_PLATFORM_THEMES, REMOTE_ENCODERS, REMOTE_QUALITIES,
-    STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES, Settings, Shortcut,
-    TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS, WATER_STYLES, keys_for,
-    remote_quality_row,
+    LOCK_GRACES, MENU_ANIMATIONS, PAGER_MARKS, POSITIONS, QT_PLATFORM_THEMES, REMOTE_ENCODERS,
+    REMOTE_QUALITIES, STARTMENU_STYLES, SWITCH_ANIMATIONS, SWITCHER_SIZES, SWITCHER_STYLES,
+    Settings, Shortcut, TASKBAR_BUTTONS, TASKBAR_POSITIONS, TEXT_SIZES, TITLE_DOUBLE_CLICKS,
+    WATER_STYLES, keys_for, remote_quality_row,
 };
 
 pub(super) enum Bind {
@@ -305,6 +305,7 @@ pub(super) fn binds() -> Vec<Bind> {
         Bind::Named(REMOTE_ENCODER, lens!(remote_encoder), REMOTE_ENCODERS),
         Bind::Flag(REMOTE_SOUND, lens!(remote_sound)),
         Bind::Flag(REMOTE_LOCK_ON_LEAVE, lens!(remote_lock_on_leave)),
+        Bind::NamedNum(REMOTE_LOCK_GRACE, lens!(remote_lock_grace_s), LOCK_GRACES),
         Bind::Flag(REMOTE_BORDER, lens!(remote_capture_border)),
         Bind::Track("mouse_speed", lens!(mouse_speed)),
         Bind::Flag("mouse_accel", lens!(mouse_accel)),
@@ -738,7 +739,9 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
         sm.set_enabled(id, s.startmenu_style == "classic");
     }
     let quality = REMOTE_QUALITIES[remote_quality_row(&s.remote_quality)].1;
-    sheet.pages[Page::RemoteDesktop.index()].set_text(QUALITY_VALUE, quality);
+    let rd = &mut sheet.pages[Page::RemoteDesktop.index()];
+    rd.set_text(QUALITY_VALUE, quality);
+    follow_lock(rd);
     let adv = &mut sheet.pages[Page::Advanced.index()];
     adv.set_enabled(DEBUG_IN_CAPTURES, s.debug_overlay);
     for id in THUMBS_SIZE {

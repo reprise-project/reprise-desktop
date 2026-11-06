@@ -179,6 +179,14 @@ pub const FRAME_RATES: &[(i64, &str)] = &[
     (144, "144 frames per second"),
 ];
 
+/// How long the Remote Desktop lock waits when the last viewer's screen went.
+pub const LOCK_GRACES: &[(i64, &str)] = &[
+    (0, "Don't wait"),
+    (5, "5 seconds"),
+    (10, "10 seconds"),
+    (30, "30 seconds"),
+];
+
 pub const SLIDE_INTERVALS: &[(i64, &str)] = &[
     (1, "1 minute"),
     (5, "5 minutes"),
