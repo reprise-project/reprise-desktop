@@ -367,6 +367,53 @@ fn a_console_unlock_cuts_every_remote_desktop_session_off() {
 }
 
 #[test]
+fn a_console_unlock_cuts_a_permitted_remote_desktop_session_off() {
+    use crate::eis::Kind;
+    use crate::inputproto::{DEVICE_KEYBOARD, DEVICE_POINTER};
+    let mut h = computer();
+    let mut c = h.connect();
+    let t = mapped(&mut h, &mut c, 100, 100);
+    h.state.focus_window(t.id);
+    let (_portal, _lock) = begin(&mut h);
+    let mut peer = h.ei_keyboard_as(Kind::Sender, false, DEVICE_KEYBOARD | DEVICE_POINTER);
+    h.ei_hear(&mut peer);
+    let capture = h.ei_keyboard(Kind::Receiver);
+    unlock_at_the_computer(&mut h);
+    assert_lock_mode_over(&h);
+    assert!(
+        h.state.inputproto.eis.get(peer.id).is_none(),
+        "the sender is gone"
+    );
+    assert!(
+        h.state.inputproto.eis.get(capture.id).is_some(),
+        "the input capture receiver stays"
+    );
+    h.ei_hear(&mut peer);
+    assert!(
+        (peer.heard.iter()).any(|e| matches!(e, EiEvent::Disconnected(_))),
+        "the sender hears it is disconnected"
+    );
+    h.roundtrip(&mut c);
+    c.side.key_log.clear();
+    c.side.buttons.clear();
+    let pointer = h.state.pointer_location();
+    let (x, y) = centre(&h, t.id);
+    ei_type_and_click(&mut h, &peer, x as f32, y as f32);
+    h.roundtrip(&mut c);
+    assert_eq!(
+        keys_heard(&c),
+        [],
+        "no key from the sender reaches the window"
+    );
+    assert_eq!(
+        c.side.buttons,
+        [],
+        "no click from the sender reaches the window"
+    );
+    assert_eq!(h.state.pointer_location(), pointer, "the pointer stays put");
+}
+
+#[test]
 fn a_finished_lockers_unlock_leaves_the_console_lock_and_lock_mode_up() {
     let mut h = computer();
     let mut locker = h.connect();

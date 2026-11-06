@@ -637,7 +637,13 @@ impl Harness {
         )
     }
 
-    fn ei_keyboard_as(&mut self, kind: crate::eis::Kind, present: bool, devices: u32) -> EiPeer {
+    /// [`Harness::ei_keyboard`] with `present` and the `devices` mask it binds.
+    pub fn ei_keyboard_as(
+        &mut self,
+        kind: crate::eis::Kind,
+        present: bool,
+        devices: u32,
+    ) -> EiPeer {
         use reis::{
             PendingRequestResult, ei,
             event::{EiEvent, EiEventConverter},
