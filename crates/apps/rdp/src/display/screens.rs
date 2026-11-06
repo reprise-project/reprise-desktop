@@ -298,11 +298,8 @@ mod tests {
         );
         assert_eq!(
             *fits.lock().unwrap(),
-            [
-                (Backend::X264, Some((400, 200))),
-                (Backend::X264, Some((800, 400)))
-            ],
-            "each screen is coded at its target"
+            [(Backend::X264, None), (Backend::X264, Some((800, 400)))],
+            "each screen is coded at its target, a target of its own size unscaled"
         );
         assert!(
             c.lives.iter().all(|l| l.queue.is_empty()),
@@ -314,6 +311,25 @@ mod tests {
                 width: 1200,
                 height: 400
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn an_odd_sized_screen_alone_is_coded_unscaled() {
+        let (gfx, (_server, _events)) = ready_gfx();
+        let fits = Fits::default();
+        let mut c = screens(
+            &[screen(0, 0, 1365, 767)],
+            &[],
+            (1365, 767),
+            Some((&gfx, &[Backend::X264])),
+            |_| fitted(&fits, None),
+        );
+        code(&mut c.lives[0], frame((1365, 767), SMALL)).await;
+        assert_eq!(
+            *fits.lock().unwrap(),
+            [(Backend::X264, None)],
+            "its even target is no scale"
         );
     }
 
