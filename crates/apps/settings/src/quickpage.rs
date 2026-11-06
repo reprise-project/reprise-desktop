@@ -22,14 +22,14 @@ pub const REMOVE: &str = "ql_remove";
 pub const UP: &str = "ql_up";
 pub const DOWN: &str = "ql_down";
 
-/// The group, under the Start menu group; it moves down with the page's extra height.
+/// The group, under the Start menu's tree; it moves down with the page's extra height.
 fn group_rect(a: Area) -> Rect {
-    Rect::new(X, 316 + a.dh, a.w, 156)
+    Rect::new(X, 284 + a.dh, a.w, 156)
 }
 pub fn list_rect(a: Area) -> Rect {
     Rect::new(
         GX,
-        358 + a.dh,
+        326 + a.dh,
         a.gw() - BUTTON_W - 8,
         6 * listbox::ROW_H + 4,
     )
@@ -51,7 +51,7 @@ pub fn items(a: Area) -> Vec<Item> {
         Item::check(
             "taskbar_pinned",
             GX,
-            336 + a.dh,
+            304 + a.dh,
             "Show the Quick Launch programs as pinned tas&k buttons",
         ),
         Item::new(
@@ -296,16 +296,17 @@ mod tests {
     }
 
     #[test]
-    fn the_group_sits_under_the_start_menus_with_its_buttons_beside_the_list() {
+    fn the_group_sits_under_the_start_menus_tree_with_its_buttons_beside_the_list() {
         let f = Form::new(items(Area::MIN));
-        assert_eq!(list_rect(Area::MIN), Rect::new(32, 358, 251, 106));
+        assert_eq!(list_rect(Area::MIN), Rect::new(32, 326, 251, 106));
         let tops: Vec<i32> = [ADD, REMOVE, UP, DOWN]
             .iter()
             .map(|id| f.item(id).unwrap().rect.y)
             .collect();
-        assert_eq!(tops, [358, 385, 412, 439]);
+        assert_eq!(tops, [326, 353, 380, 407]);
         assert!(group_rect(Area::MIN).bottom() >= list_rect(Area::MIN).bottom() + 8);
         let menu = crate::menupage::page(Area::MIN);
-        assert!(group_rect(Area::MIN).y > menu.item("sm_group").unwrap().rect.bottom());
+        let down = menu.item(crate::menupage::DOWN).unwrap().rect;
+        assert!(group_rect(Area::MIN).y > down.bottom());
     }
 }

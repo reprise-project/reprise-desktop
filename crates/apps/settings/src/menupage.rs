@@ -11,7 +11,7 @@ use reprisekit::raster::{Canvas, Rect};
 use reprisekit::text::{escape_mnemonic, split_mnemonic};
 
 use crate::model::STARTMENU_STYLES;
-use crate::pages::{Area, GX, X, choice, edit, group};
+use crate::pages::{Area, X, choice, edit};
 use crate::startmenu::{self, Entry, Target};
 
 pub const TREE: &str = "sm_tree";
@@ -24,7 +24,7 @@ pub const DOWN: &str = "sm_down";
 pub const STYLE_NOTE: &str = "startmenu_style_note";
 
 pub fn tree_rect(a: Area) -> Rect {
-    Rect::new(GX, 140, a.gw() - BUTTON_W - 8, 152 + a.dh)
+    Rect::new(X, 116, a.w - BUTTON_W - 8, 152 + a.dh)
 }
 const BUTTON_STEP: i32 = BUTTON_H + 4;
 
@@ -52,8 +52,7 @@ pub fn page(a: Area) -> Form {
                 "Only the Classic style shows the banner and menu below.".into(),
             ]),
         ),
-        group(a, "sm_group", 120, 186 + a.dh, "Start menu"),
-        Item::new(TREE, tree_rect, Control::Tree(tree(&[]))),
+        Item::new(TREE, tree_rect, Control::Tree(tree(&[]))).named("Start menu"),
     ];
     let buttons = [
         (ADD, "&Add..."),
@@ -65,7 +64,7 @@ pub fn page(a: Area) -> Form {
     ];
     for (i, (id, text)) in buttons.into_iter().enumerate() {
         let r = Rect::new(
-            a.gright() - BUTTON_W,
+            a.right() - BUTTON_W,
             tree_rect.y + i as i32 * BUTTON_STEP,
             BUTTON_W,
             BUTTON_H,
@@ -474,9 +473,9 @@ mod tests {
     }
 
     #[test]
-    fn the_tree_fills_the_group_beside_a_column_of_six_buttons() {
+    fn the_tree_runs_beside_a_column_of_six_buttons() {
         let f = page(Area::MIN);
-        assert_eq!(tree_rect(Area::MIN), Rect::new(32, 140, 251, 152));
+        assert_eq!(tree_rect(Area::MIN), Rect::new(20, 116, 275, 152));
         let tops: Vec<(i32, i32)> = [ADD, FOLDER, RENAME, REMOVE, UP, DOWN]
             .iter()
             .map(|id| {
@@ -487,18 +486,13 @@ mod tests {
         assert_eq!(
             tops,
             [
-                (291, 140),
-                (291, 167),
-                (291, 194),
-                (291, 221),
-                (291, 248),
-                (291, 275)
+                (303, 116),
+                (303, 143),
+                (303, 170),
+                (303, 197),
+                (303, 224),
+                (303, 251)
             ]
-        );
-        let group = f.item("sm_group").unwrap().rect;
-        assert!(
-            group.bottom() >= tree_rect(Area::MIN).bottom() + 8
-                && group.bottom() >= 275 + BUTTON_H + 8
         );
     }
 

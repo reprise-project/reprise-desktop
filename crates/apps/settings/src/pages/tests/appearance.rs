@@ -566,10 +566,6 @@ fn the_background_page_geometry() {
         rect(&s, p, backgroundpage::MODE),
         Rect::new(289, 40, 89, 21)
     );
-    assert_eq!(
-        rect(&s, p, backgroundpage::INTERVAL),
-        Rect::new(166, 413, 120, 21)
-    );
     assert_eq!(rect(&s, p, "position_label"), Rect::new(219, 230, 75, 13));
     assert_eq!(
         rect(&s, p, "wallpaper_position"),
@@ -609,14 +605,17 @@ fn the_background_page_geometry() {
     assert_eq!(rect(&s, p, "widgets_group"), Rect::new(219, 300, 159, 82));
     assert_eq!(rect(&s, p, "widget_clock"), Rect::new(231, 322, 13, 13));
     assert_eq!(rect(&s, p, "widget_meter"), Rect::new(231, 366, 13, 13));
-    assert_eq!(rect(&s, p, "slideshow_group"), Rect::new(20, 393, 358, 48));
+    assert_eq!(
+        rect(&s, p, backgroundpage::INTERVAL),
+        Rect::new(154, 392, 120, 21)
+    );
     assert_eq!(
         rect(&s, p, "slideshow_shuffle"),
-        Rect::new(296, 417, 13, 13)
+        Rect::new(284, 396, 13, 13)
     );
-    assert_eq!(rect(&s, p, WATER), Rect::new(20, 455, 13, 13));
-    assert_eq!(rect(&s, p, WATER_STYLE), Rect::new(132, 451, 80, 21));
-    assert_eq!(rect(&s, p, "water_note"), Rect::new(218, 455, 160, 13));
+    assert_eq!(rect(&s, p, WATER), Rect::new(20, 424, 13, 13));
+    assert_eq!(rect(&s, p, WATER_STYLE), Rect::new(132, 420, 80, 21));
+    assert_eq!(rect(&s, p, "water_note"), Rect::new(218, 424, 160, 13));
     inside_page(&s, p);
 }
 
@@ -790,19 +789,22 @@ fn the_fonts_and_icons_page_geometry() {
         Rect::new(GX + 88, 176, 13, 13)
     );
     assert_eq!(rect(&s, p, "font_smoothing").y, 198);
-    assert_eq!(rect(&s, p, "icons_group"), Rect::new(20, 236, 358, 48));
-    assert_eq!(rect(&s, p, "icon_theme"), Rect::new(92, 256, 274, 21));
-    assert_eq!(rect(&s, p, "windows_group"), Rect::new(20, 294, 358, 66));
-    assert_eq!(rect(&s, p, "frame_units").y, 316);
-    assert_eq!(rect(&s, p, "caption_units").y, 342);
-    assert_eq!(rect(&s, p, "toolkits_group"), Rect::new(20, 370, 358, 86));
-    assert_eq!(rect(&s, p, "gtk_theme"), Rect::new(120, 390, 246, 21));
+    assert_eq!(rect(&s, p, "icons_group"), Rect::new(20, 234, 358, 48));
+    assert_eq!(rect(&s, p, "icon_theme"), Rect::new(92, 254, 274, 21));
+    assert_eq!(rect(&s, p, "windows_group"), Rect::new(20, 290, 358, 46));
+    assert_eq!(rect(&s, p, "frame_width"), Rect::new(112, 308, 50, 20));
+    assert_eq!(rect(&s, p, "frame_units"), Rect::new(168, 312, 20, 13));
+    assert_eq!(rect(&s, p, "caption_label"), Rect::new(196, 312, 88, 13));
+    assert_eq!(rect(&s, p, "caption_height"), Rect::new(288, 308, 50, 20));
+    assert_eq!(rect(&s, p, "caption_units"), Rect::new(344, 312, 20, 13));
+    assert_eq!(rect(&s, p, "toolkits_group"), Rect::new(20, 344, 358, 86));
+    assert_eq!(rect(&s, p, "gtk_theme"), Rect::new(120, 364, 246, 21));
     assert_eq!(
         rect(&s, p, "qt_platform_theme"),
-        Rect::new(120, 416, 246, 21)
+        Rect::new(120, 390, 246, 21)
     );
-    assert_eq!(rect(&s, p, "gtk4_colors"), Rect::new(32, 442, 13, 13));
-    assert_eq!(rect(&s, p, "toolkits_note").y, 460);
+    assert_eq!(rect(&s, p, "gtk4_colors"), Rect::new(32, 416, 13, 13));
+    assert_eq!(rect(&s, p, "toolkits_note").y, 434);
     let fi = &s.pages[p.index()];
     assert!(
         fi.item("menus_group").is_none(),

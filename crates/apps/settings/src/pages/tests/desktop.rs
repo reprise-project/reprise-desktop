@@ -33,16 +33,15 @@ fn start_menu_holds_its_style_banner_and_quick_launch_check() {
         rect(&s, p, crate::menupage::STYLE_NOTE),
         Rect::new(20, 94, 358, 13)
     );
-    assert_eq!(rect(&s, p, "sm_group"), Rect::new(20, 120, 358, 186));
     assert_eq!(
         crate::menupage::tree_rect(Area::MIN),
-        Rect::new(32, 140, 251, 152)
+        Rect::new(20, 116, 275, 152)
     );
-    assert_eq!(rect(&s, p, "ql_group"), Rect::new(20, 316, 358, 156));
-    assert_eq!(rect(&s, p, "taskbar_pinned"), Rect::new(32, 336, 13, 13));
+    assert_eq!(rect(&s, p, "ql_group"), Rect::new(20, 284, 358, 156));
+    assert_eq!(rect(&s, p, "taskbar_pinned"), Rect::new(32, 304, 13, 13));
     assert_eq!(
         crate::quickpage::list_rect(Area::MIN),
-        Rect::new(32, 358, 251, 106)
+        Rect::new(32, 326, 251, 106)
     );
     inside_page(&s, p);
 }
@@ -605,15 +604,14 @@ fn the_taskbar_page_geometry() {
             "{id} sits under the auto-hide label"
         );
     }
-    assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(20, 346, 13, 13));
-    assert_eq!(rect(&s, p, "fps_label"), Rect::new(38, 366, 110, 13));
-    assert_eq!(rect(&s, p, "previews_fps"), Rect::new(152, 362, 50, 20));
-    assert_eq!(rect(&s, p, "fps_units"), Rect::new(208, 366, 170, 13));
-    assert_eq!(rect(&s, p, "start_group"), Rect::new(20, 386, 358, 88));
-    assert_eq!(rect(&s, p, "start_icon"), Rect::new(32, 408, 13, 13));
-    assert_eq!(rect(&s, p, "orb_glow_label"), Rect::new(32, 434, 110, 13));
-    assert_eq!(rect(&s, p, "glass_orb_glow"), Rect::new(146, 428, 150, 26));
-    assert_eq!(rect(&s, p, "orb_glow_note"), Rect::new(32, 456, 334, 13));
+    assert_eq!(rect(&s, p, "preview_taskbar"), Rect::new(20, 344, 13, 13));
+    assert_eq!(rect(&s, p, "fps_label"), Rect::new(38, 364, 110, 13));
+    assert_eq!(rect(&s, p, "previews_fps"), Rect::new(152, 360, 50, 20));
+    assert_eq!(rect(&s, p, "fps_units"), Rect::new(208, 364, 170, 13));
+    assert_eq!(rect(&s, p, "start_icon"), Rect::new(20, 386, 13, 13));
+    assert_eq!(rect(&s, p, "orb_glow_label"), Rect::new(20, 410, 110, 13));
+    assert_eq!(rect(&s, p, "glass_orb_glow"), Rect::new(134, 404, 150, 26));
+    assert_eq!(rect(&s, p, "orb_glow_note"), Rect::new(20, 434, 358, 13));
     inside_page(&s, p);
 }
 

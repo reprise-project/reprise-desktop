@@ -36,17 +36,11 @@ pub const ALL_DESKTOPS: &str = "All desktops";
 /// The file name extensions combo and its label, greyed while the desktop shows no files.
 pub const EXTENSIONS: &str = "desktop_extensions";
 const EXTENSIONS_LABEL: &str = "extensions_label";
-/// The Slideshow group's top at [`Area::MIN`], 11 px under the Desktop icons group.
-const SLIDE_Y: i32 = 393;
-/// The slideshow's interval combo and Shuffle check, and the group round
-/// them, greyed for one picture.
+/// The slideshow row's top at [`Area::MIN`], 10 px under the Desktop icons group.
+const SLIDE_Y: i32 = 392;
+/// The slideshow's interval combo and Shuffle check, greyed for one picture.
 pub const INTERVAL: &str = "slideshow_interval";
-const SLIDE_CONTROLS: [&str; 4] = [
-    "slideshow_group",
-    "interval_label",
-    INTERVAL,
-    "slideshow_shuffle",
-];
+const SLIDE_CONTROLS: [&str; 3] = ["interval_label", INTERVAL, "slideshow_shuffle"];
 const WATER_NOTE: &str = "water_note";
 pub const NONE_ROW: &str = "(None)";
 pub const MONITOR_RECT: Rect = Rect::new(X, 44, 191, 168);
@@ -151,7 +145,7 @@ pub fn label(path: &Path) -> String {
 /// The page with an empty list and a black monitor; the host fills the
 /// list ([`fill`] or [`fill_folders`]) and the screen ([`show`]). The
 /// list takes the page's extra height; the controls under it in the
-/// right column, the Slideshow group and the water row move down, and the
+/// right column, the slideshow row and the water row move down, and the
 /// Desktop icons group stays under the monitor.
 pub fn page(a: Area) -> Form {
     let right = a.right() - BUTTON_W;
@@ -205,33 +199,28 @@ pub fn page(a: Area) -> Form {
         Item::check("desktop_icons", GX, 310, "&Show the files in ~/Desktop"),
         Item::label_at(EXTENSIONS_LABEL, GX, 334, 167, "File name e&xtensions:"),
         choice(EXTENSIONS, GX, 350, 167, DESKTOP_EXTENSIONS),
-        Item::group(
-            "slideshow_group",
-            Rect::new(X, SLIDE_Y + dh, a.w, 48),
-            "Slideshow",
-        ),
         Item::label_at(
             "interval_label",
-            GX,
-            SLIDE_Y + 24 + dh,
+            X,
+            SLIDE_Y + 4 + dh,
             130,
             "Change picture &every:",
         ),
         Item::combo(
             INTERVAL,
-            GX + 134,
-            SLIDE_Y + 20 + dh,
+            X + 134,
+            SLIDE_Y + dh,
             120,
             &intervals,
             intervals.len(),
         ),
-        Item::check("slideshow_shuffle", GX + 264, SLIDE_Y + 24 + dh, "Sh&uffle"),
-        Item::check(WATER, X, 455 + dh, "Desktop &water:"),
-        choice(WATER_STYLE, X + 112, 451 + dh, 80, WATER_STYLES).named("Water style"),
+        Item::check("slideshow_shuffle", X + 264, SLIDE_Y + 4 + dh, "Sh&uffle"),
+        Item::check(WATER, X, SLIDE_Y + 32 + dh, "Desktop &water:"),
+        choice(WATER_STYLE, X + 112, SLIDE_Y + 28 + dh, 80, WATER_STYLES).named("Water style"),
         Item::label_at(
             WATER_NOTE,
             X + 198,
-            455 + dh,
+            SLIDE_Y + 32 + dh,
             a.w - 198,
             "Drag on the desktop to stir.",
         ),

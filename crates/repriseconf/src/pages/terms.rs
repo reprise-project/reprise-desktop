@@ -39,6 +39,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("water_style", "Water style"),
         ],
         Page::ScreenSaverLock => &[
+            ("saver", "Screen saver:"),
             ("saver_settings", "Settings..."),
             ("saver_preview", "Preview"),
             ("saver_wait", "Wait:"),
@@ -144,6 +145,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
         Page::StartMenu => &[
             ("startmenu_style", "Start menu style:"),
             ("startmenu_banner", "Banner:"),
+            ("sm_tree", "Start menu"),
             ("sm_add", "Add..."),
             ("sm_folder", "New Folder"),
             ("sm_rename", "Rename..."),
@@ -235,8 +237,8 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
             ("sc_add", "Add..."),
             ("sc_edit", "Edit..."),
             ("sc_remove", "Delete"),
-            ("osd_caps_lock", "Show Caps Lock on screen"),
-            ("osd_num_lock", "Show Num Lock on screen"),
+            ("osd_caps_lock", "Show Caps Lock"),
+            ("osd_num_lock", "Show Num Lock"),
         ],
         Page::MouseTouchpad => &[
             ("double_click_ms", "Double-click speed"),

@@ -371,12 +371,9 @@ pub fn time_edit(id: &'static str, x: i32, y: i32, w: i32) -> Item {
     )
 }
 
-/// A trackbar between two end labels across a group's inside, its value
-/// right-aligned above the right end: the labels are `ends` wide, the trackbar
-/// grows with the column up to [`TRACK_MAX`], and the right label and value
-/// follow its end. `y` is the end labels' row; the value sits `value_dy`
-/// above it. The trackbar is `name` to a reader. Returns the value, left label,
-/// trackbar and right label.
+/// A trackbar `name` between 44 px `ends` labels on row `y`, across a column from `x` ([`GX`] in a
+/// group, [`X`] on the page) to as far in from the right, growing up to [`TRACK_MAX`]; its value
+/// sits right-aligned `value_dy` above. Returns the value, left label, trackbar and right label.
 #[allow(clippy::too_many_arguments)]
 fn ends_track(
     a: Area,
@@ -385,17 +382,18 @@ fn ends_track(
     y: i32,
     value_dy: i32,
     ends: (&str, &str),
-    track_x: i32,
+    x: i32,
     bar: TrackBar,
 ) -> [Item; 4] {
     let [left_id, track_id, right_id, value_id] = ids;
-    // At `Area::MIN` the bar stops 50 px short of the inside's right, where the 44 px right label starts 6 px later.
-    let w = a.track(Area::MIN.gright() - 50 - track_x);
+    let track_x = x + 46;
+    // At `Area::MIN` the bar stops 50 px short of the column's right, where the 44 px right label starts 6 px later.
+    let w = a.track(Area::MIN.right() - (x - X) - 50 - track_x);
     let track = Rect::new(track_x, y - 6, w, trackbar::HEIGHT);
     let right = track.right() + 6;
     [
         Item::value_at(value_id, right + 44 - 80, y - value_dy, 80, ""),
-        Item::label_at(left_id, GX, y, 44, ends.0),
+        Item::label_at(left_id, x, y, 44, ends.0),
         Item::new(track_id, track, Control::TrackBar(bar)).named(name),
         Item::label_at(right_id, right, y, 44, ends.1),
     ]
