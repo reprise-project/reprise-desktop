@@ -1,6 +1,6 @@
 //! Background jobs and second-start requests, answered when they wake the loop.
 
-use crate::registry::Page;
+use crate::registry::{self, Page};
 use crate::{
     PAGE_ACTION, SettingsApp, backgroundpage, locations::Located, pages, take, wallpapers,
 };
@@ -181,9 +181,10 @@ impl SettingsApp {
         }
     }
 
-    /// Open `page`, with the keyboard on control `focus` when one is named and live, else as a
-    /// page opens; a query hiding the page is cleared. True when anything moved.
+    /// Open `page` with the keyboard on control `focus` when named and live, else as a page opens,
+    /// `focus` kept pending; a query hiding the page is cleared. True when anything moved.
     pub(crate) fn open_page(&mut self, page: Page, focus: Option<&str>) -> bool {
+        self.pending_focus = None;
         let hidden = self
             .search_hits
             .get(page.index())
@@ -200,6 +201,26 @@ impl SettingsApp {
         if !focus.is_some_and(|id| self.sheet.focus_control(id)) {
             self.tab_opened();
         }
+        self.pending_focus = focus
+            .filter(|id| self.sheet.open().item(id).is_some())
+            .map(|id| (page, id.to_string()));
+        true
+    }
+
+    /// Give the pending control the keyboard, scrolled into view, once it is lit on its open page;
+    /// called after each fit to the window, as a read can light it before the window has a size.
+    pub(crate) fn take_pending_focus(&mut self) -> bool {
+        let Some((page, id)) = self.pending_focus.take() else {
+            return false;
+        };
+        if registry::open(&self.sheet) != page {
+            return false;
+        }
+        if !self.sheet.focus_control(&id) {
+            self.pending_focus = Some((page, id));
+            return false;
+        }
+        self.blur_side_lists();
         true
     }
 }
