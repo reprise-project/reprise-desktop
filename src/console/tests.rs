@@ -261,10 +261,172 @@ fn a_layout_of_no_whole_entry_or_no_area_is_ignored() {
         "a partial entry"
     );
     assert_eq!(parse_layout(&entry(0, 1080)), None, "no width");
-    assert_eq!(parse_layout(&entry(1920, 16385)), None, "too tall");
-    assert_eq!(parse_layout(&entry(64, 64).repeat(17)), None, "17 monitors");
+    assert_eq!(parse_layout(&entry(199, 1080)), None, "too narrow");
+    assert_eq!(parse_layout(&entry(1920, 8193)), None, "too tall");
+    assert!(parse_layout(&entry(200, 8192)).is_some(), "the bounds pass");
     assert_eq!(
-        parse_layout(&entry(64, 64).repeat(16)).map(|l| l.len()),
+        parse_layout(&entry(200, 200).repeat(17)),
+        None,
+        "17 monitors"
+    );
+    assert_eq!(
+        parse_layout(&entry(200, 200).repeat(16)).map(|l| l.len()),
         Some(16)
     );
+}
+
+#[test]
+fn screens_are_followed_by_done_and_a_smaller_layout_replaces_the_list() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut portal = h.connect_portal();
+    let first = portal.lock_screen();
+    first.set_layout(&[(0, 0, 1920, 1080, 100), (1920, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut portal);
+    let screen = |n: &str| Heard::Screen(n.into());
+    assert_eq!(
+        first.heard(),
+        [screen("REMOTE-1"), screen("REMOTE-2"), Heard::Done]
+    );
+    first.take_screens();
+    let second = portal.lock_screen();
+    second.set_layout(&[(0, 0, 1280, 720, 100)]);
+    h.roundtrip(&mut portal);
+    assert_eq!(
+        second.heard(),
+        [screen("REMOTE-1"), screen("REMOTE-2"), Heard::Done]
+    );
+    second.take_screens();
+    first.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut portal);
+    assert_eq!(first.heard(), [screen("REMOTE-1"), Heard::Done]);
+    assert_eq!(second.heard(), [screen("REMOTE-1"), Heard::Done]);
+}
+
+#[test]
+fn a_layout_with_extreme_positions_is_refused_without_panicking() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut portal = h.connect_portal();
+    let lock = portal.lock_screen();
+    let far = i32::MAX - 50;
+    lock.set_layout(&[(0, far, 1920, 1080, 100), (1920, far, 1920, 1080, 100)]);
+    lock.set_layout(&[(i32::MIN, 0, 1920, 1080, 100)]);
+    lock.set_layout(&[(131_073, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut portal);
+    assert!(lock.heard().is_empty(), "no screen is made");
+    assert!(remote_names(&h).is_empty());
+    assert!(!remote_side(&h.state));
+    lock.set_layout(&[
+        (-131_072, 131_072, 8192, 8192, 100),
+        (-131_072 + 8192, 131_072, 8192, 8192, 100),
+    ]);
+    h.roundtrip(&mut portal);
+    assert_eq!(
+        lock.take_screens(),
+        ["REMOTE-1", "REMOTE-2"],
+        "the bounds pass"
+    );
+}
+
+#[test]
+fn after_the_first_object_goes_later_layouts_are_still_ignored() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut portal = h.connect_portal();
+    let first = portal.lock_screen();
+    let second = portal.lock_screen();
+    first.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    second.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut portal);
+    second.take_screens();
+    first.object.destroy();
+    second.set_layout(&[(0, 0, 1280, 720, 100), (1280, 0, 1280, 720, 100)]);
+    h.roundtrip(&mut portal);
+    assert!(second.heard().is_empty(), "nothing changed");
+    assert_eq!(remote_names(&h), ["REMOTE-1"]);
+    let remote = &crate::virtualout::remote_outputs(&h.state)[0];
+    assert_eq!(size_and_scale(remote), ((1920, 1080), 1.0));
+    second.object.destroy();
+    h.roundtrip(&mut portal);
+    let third = portal.lock_screen();
+    third.set_layout(&[(0, 0, 1280, 720, 100)]);
+    h.roundtrip(&mut portal);
+    third.set_layout(&[(0, 0, 2560, 1440, 100)]);
+    h.roundtrip(&mut portal);
+    let remote = &crate::virtualout::remote_outputs(&h.state)[0];
+    assert_eq!(
+        size_and_scale(remote),
+        ((2560, 1440), 1.0),
+        "the next lock mode has a new first object"
+    );
+}
+
+#[test]
+fn lock_mode_is_refused_while_a_locker_client_holds_the_lock() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut locker = h.connect();
+    let (_lock, _surface) = h.map_lock_surface(&mut locker);
+    assert!(crate::sessionlock::holds_input(&h.state));
+    let mut portal = h.connect_portal();
+    let lock = portal.lock_screen();
+    lock.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut portal);
+    lock.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut portal);
+    assert_eq!(lock.heard(), [Heard::Ended(3)], "ended(replaced) once");
+    assert!(remote_names(&h).is_empty());
+    assert!(!remote_side(&h.state));
+}
+
+#[test]
+fn a_locker_client_taking_the_lock_ends_lock_mode() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut portal = h.connect_portal();
+    let first = portal.lock_screen();
+    let second = portal.lock_screen();
+    first.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    second.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut portal);
+    first.take_screens();
+    second.take_screens();
+    let mut locker = h.connect();
+    let (_lock, _surface) = h.map_lock_surface(&mut locker);
+    h.roundtrip(&mut portal);
+    assert_eq!(first.heard(), [Heard::Ended(3)]);
+    assert_eq!(second.heard(), [Heard::Ended(3)]);
+    assert!(!remote_side(&h.state));
+    assert_eq!(output_names(&h), ["eDP-1"], "the remote screens go");
+    assert!(
+        crate::sessionlock::holds_input(&h.state),
+        "the locker holds the lock"
+    );
+    first.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut portal);
+    assert_eq!(
+        first.heard(),
+        [Heard::Ended(3)],
+        "an ended object does nothing"
+    );
+    assert!(remote_names(&h).is_empty());
+}
+
+#[test]
+fn dropping_the_portal_connection_ends_lock_mode_and_keeps_the_lock() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut portal = h.connect_portal();
+    let first = portal.lock_screen();
+    let second = portal.lock_screen();
+    first.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    second.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut portal);
+    assert!(remote_side(&h.state));
+    drop((first, second, portal));
+    h.run_for(50);
+    assert!(!remote_side(&h.state), "lock mode ends");
+    assert_eq!(output_names(&h), ["eDP-1"], "the remote screens go");
+    assert!(h.state.is_locked(), "the console lock stays");
 }

@@ -6,7 +6,7 @@ use smithay::reexports::wayland_server::{Resource, backend::ObjectId};
 use smithay::utils::Transform;
 
 use crate::compositor::State;
-use crate::inputproto::proto::reprise_lock_screen_v1::RepriseLockScreenV1;
+use crate::inputproto::proto::reprise_lock_screen_v1::{Reason, RepriseLockScreenV1};
 use crate::output::quarter_scale;
 use crate::virtualout::{Kind, Spec};
 
@@ -41,17 +41,23 @@ pub struct RemoteMonitor {
 pub struct Console {
     pub owner: Owner,
     objects: Vec<ObjectId>,
+    /// The object whose layouts apply, kept after it goes until `objects` empties.
+    leader: Option<ObjectId>,
     layout: Vec<RemoteMonitor>,
 }
 
 /// The most monitors a layout may have.
 const MAX_MONITORS: usize = 16;
 
-/// The most pixels a monitor may have on a side.
-const MAX_SIDE: i32 = 16384;
+/// The pixels a monitor may have on a side (MS-RDPEDISP).
+const SIDES: std::ops::RangeInclusive<i32> = 200..=8192;
+
+/// The farthest a monitor may start from the origin on either axis. With [`SIDES`] it keeps
+/// every sum of positions and lengths far inside i32.
+const MAX_COORD: i32 = 8192 * 16;
 
 /// `set_layout`'s array: x, y, width, height (i32) and scale percent (u32) per monitor, in native
-/// byte order. None for no monitor, too many, a partial entry or a size off 1 to [`MAX_SIDE`].
+/// byte order. None for no monitor, too many, a partial entry, or a side or start out of bounds.
 pub fn parse_layout(bytes: &[u8]) -> Option<Vec<RemoteMonitor>> {
     let (entries, rest) = bytes.as_chunks::<20>();
     if !rest.is_empty() || !(1..=MAX_MONITORS).contains(&entries.len()) {
@@ -67,10 +73,13 @@ pub fn parse_layout(bytes: &[u8]) -> Option<Vec<RemoteMonitor>> {
             scale: u32::from_ne_bytes(word(e, 4)),
         })
         .collect();
-    let fits = |v: i32| (1..=MAX_SIDE).contains(&v);
-    (monitors.iter())
-        .all(|m| fits(m.width) && fits(m.height))
-        .then_some(monitors)
+    let fits = |m: &RemoteMonitor| {
+        SIDES.contains(&m.width)
+            && SIDES.contains(&m.height)
+            && (-MAX_COORD..=MAX_COORD).contains(&m.x)
+            && (-MAX_COORD..=MAX_COORD).contains(&m.y)
+    };
+    monitors.iter().all(fits).then_some(monitors)
 }
 
 /// Whether `object` has begun and still holds lock mode.
@@ -78,8 +87,19 @@ pub fn holds(state: &State, object: &ObjectId) -> bool {
     state.console.objects.contains(object)
 }
 
-/// `object`'s first layout. The first object enters lock mode with it; a later one hears the
-/// screens there are.
+/// Why an object may not begin: `[power] locker` is set, or a locker client holds the lock.
+pub fn refusal(state: &State) -> Option<Reason> {
+    if !state.config.power.locker.trim().is_empty() {
+        Some(Reason::Unavailable)
+    } else if crate::sessionlock::holds_input(state) {
+        Some(Reason::Replaced)
+    } else {
+        None
+    }
+}
+
+/// `object`'s first layout. The first object enters lock mode with it and leads it; a later one
+/// hears the screens there are.
 pub fn begin(state: &mut State, object: ObjectId, layout: Vec<RemoteMonitor>) {
     let first = state.console.objects.is_empty();
     state.console.objects.push(object.clone());
@@ -87,6 +107,7 @@ pub fn begin(state: &mut State, object: ObjectId, layout: Vec<RemoteMonitor>) {
         send_screens(state, &[object]);
         return;
     }
+    state.console.leader = Some(object);
     log::info!("lock mode: begins with {} remote screens", layout.len());
     apply(state, layout);
     crate::lockview::lock(state);
@@ -94,9 +115,9 @@ pub fn begin(state: &mut State, object: ObjectId, layout: Vec<RemoteMonitor>) {
     send_screens(state, &state.console.objects);
 }
 
-/// A later layout of `object`; only the oldest living object's applies.
+/// A later layout of `object`; only the leader's applies.
 pub fn relayout(state: &mut State, object: ObjectId, layout: Vec<RemoteMonitor>) {
-    if state.console.objects.first() != Some(&object) || state.console.layout == layout {
+    if state.console.leader.as_ref() != Some(&object) || state.console.layout == layout {
         return;
     }
     log::info!("lock mode: {} remote screens", layout.len());
@@ -112,10 +133,28 @@ pub fn end(state: &mut State, object: ObjectId) {
     };
     objects.remove(i);
     if objects.is_empty() {
-        log::info!("lock mode: ends");
-        on_end(state);
-        apply(state, Vec::new());
+        leave(state);
     }
+}
+
+/// End lock mode for every object with `ended(reason)`; the lock stays.
+pub fn stop(state: &mut State, reason: Reason) {
+    if state.console.objects.is_empty() {
+        return;
+    }
+    for id in std::mem::take(&mut state.console.objects) {
+        if let Ok(r) = RepriseLockScreenV1::from_id(&state.dh, id) {
+            crate::inputproto::send_ended(&r, reason);
+        }
+    }
+    leave(state);
+}
+
+fn leave(state: &mut State) {
+    log::info!("lock mode: ends");
+    state.console.leader = None;
+    on_end(state);
+    apply(state, Vec::new());
 }
 
 /// The Remote outputs are laid out and the console is locked.
@@ -183,6 +222,7 @@ fn send_screens(state: &State, objects: &[ObjectId]) {
         for o in &remotes {
             r.screen(o.name());
         }
+        r.done();
     }
 }
 
@@ -212,10 +252,8 @@ fn specs(layout: &[RemoteMonitor]) -> Vec<Spec> {
         .collect()
 }
 
-/// One axis of [`specs`]. `along` gives a monitor's start and length on this axis, then its start
-/// and length across, in physical pixels; `logical` is each length in layout units. A monitor
-/// whose start meets another's end, the two overlapping across, still meets it; any other starts
-/// at its physical coordinate over its own scale.
+/// One axis of [`specs`]; `along` gives a start and length on this axis, then across, in pixels.
+/// A monitor that meets another edge to edge still meets it; any other sits at start / scale.
 fn axis(
     layout: &[RemoteMonitor],
     along: impl Fn(&RemoteMonitor) -> (i32, i32, i32, i32),
@@ -226,16 +264,20 @@ fn axis(
     order.sort_by_key(|&i| along(&layout[i]).0);
     let mut at: Vec<Option<i32>> = vec![None; layout.len()];
     for &i in &order {
-        let (start, _, across, across_len) = along(&layout[i]);
+        let (start, _, across, across_len) = wide(along(&layout[i]));
         let meets = (0..layout.len()).find_map(|j| {
             let placed = at[j]?;
-            let (s, len, a, a_len) = along(&layout[j]);
+            let (s, len, a, a_len) = wide(along(&layout[j]));
             (s + len == start && a < across + across_len && across < a + a_len)
-                .then_some(placed + logical[j])
+                .then_some(placed.saturating_add(logical[j]))
         });
-        at[i] = Some(meets.unwrap_or_else(|| (f64::from(start) / scales[i]).round() as i32));
+        at[i] = Some(meets.unwrap_or_else(|| (start as f64 / scales[i]).round() as i32));
     }
     at.into_iter().map(|a| a.unwrap_or(0)).collect()
+}
+
+fn wide((a, b, c, d): (i32, i32, i32, i32)) -> (i64, i64, i64, i64) {
+    (a.into(), b.into(), c.into(), d.into())
 }
 
 #[cfg(test)]

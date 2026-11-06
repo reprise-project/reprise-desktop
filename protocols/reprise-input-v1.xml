@@ -125,27 +125,30 @@
 
   <interface name="reprise_lock_screen_v1" version="1">
     <description summary="one session's hold on lock mode">
-      With [power] locker set, ended(unavailable) is sent at once and the
-      object does nothing. Otherwise the first set_layout of the first
-      living object creates one virtual screen per monitor and locks the
-      session if it isn't locked; the oldest living object's later
-      layouts resize them. A later object's layouts are ignored, and its
-      first set_layout hears the screens that exist. Lock mode lasts until
-      the last object is destroyed; the lock stays.
+      The object hears ended(unavailable) while [power] locker is set and
+      ended(replaced) while a locker client holds the session lock, when
+      it is made or at its first set_layout, and nothing is created.
+      Otherwise the first object's first set_layout creates one virtual
+      screen per monitor and locks the session if it isn't locked. Only
+      that object's later layouts resize them; once it is destroyed, no
+      layout applies until the last object goes. A later object's first
+      set_layout hears the screens that exist. Lock mode lasts until the
+      last object is destroyed, or until a locker client takes the lock,
+      which sends every object ended(replaced). The lock stays either way.
     </description>
 
     <enum name="reason">
       <entry name="console_unlocked" value="1" summary="the session was unlocked at the computer"/>
       <entry name="unavailable" value="2" summary="[power] locker is set"/>
-      <entry name="replaced" value="3" summary="another lock took the computer's screens"/>
+      <entry name="replaced" value="3" summary="a locker client holds the session lock"/>
     </enum>
 
     <request name="set_layout">
       <description summary="the client's monitors">
         Each entry is x, y, width and height as int and the scale in
         percent as uint, in the client's physical pixels, primary first.
-        A layout with no entry, more than 16, a size outside 1 to 16384
-        or a partial entry is ignored.
+        A layout is ignored with no entry, more than 16, a partial entry,
+        a side outside 200 to 8192, or an x or y beyond 131072 either way.
       </description>
       <arg name="monitors" type="array"/>
     </request>
@@ -154,10 +157,18 @@
 
     <event name="screen">
       <description summary="a virtual screen made for this lock mode">
-        Sent once per screen, primary first, after each layout change and
-        after this object's first set_layout. The name is the wl_output's.
+        Sent once per screen, primary first, then done: after each layout
+        change and after this object's first set_layout. The name is the
+        wl_output's.
       </description>
       <arg name="name" type="string"/>
+    </event>
+
+    <event name="done">
+      <description summary="the screens are all sent">
+        The screen events since the last done are the whole list; it
+        replaces the one before.
+      </description>
     </event>
 
     <event name="ended">

@@ -169,7 +169,10 @@ pub fn place_block(origin: (i32, i32), asked: &[(i32, i32)]) -> Vec<(i32, i32)> 
     let left = asked.iter().map(|p| p.0).min().unwrap_or(0);
     let top = asked.iter().map(|p| p.1).min().unwrap_or(0);
     (asked.iter())
-        .map(|&(x, y)| (origin.0 + x - left, origin.1 + y - top))
+        .map(|&(x, y)| {
+            let at = |o: i32, v: i32, min: i32| o.saturating_add(v.saturating_sub(min));
+            (at(origin.0, x, left), at(origin.1, y, top))
+        })
         .collect()
 }
 
