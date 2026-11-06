@@ -62,6 +62,10 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::{self, ZwlrLayerShellV1},
     zwlr_layer_surface_v1::{self, ZwlrLayerSurfaceV1},
 };
+use wayland_protocols_wlr::virtual_pointer::v1::client::{
+    zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1,
+    zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1,
+};
 
 use crate::{
     compositor::{ClientState, Host, State},
@@ -854,6 +858,9 @@ impl TestClient {
                 "zwp_virtual_keyboard_manager_v1" => {
                     self.side.vk_manager = Some(registry.bind(name, 1, &qh, ()));
                 }
+                "zwlr_virtual_pointer_manager_v1" => {
+                    self.side.vp_manager = Some(registry.bind(name, 1, &qh, ()));
+                }
                 "zwlr_layer_shell_v1" => {
                     self.side.layer_shell = Some(registry.bind(name, version.min(4), &qh, ()));
                 }
@@ -1031,6 +1038,14 @@ impl TestClient {
         self.side.vks.len() - 1
     }
 
+    /// A wlr virtual pointer on the seat, bound to no output.
+    pub fn virtual_pointer(&mut self) -> ZwlrVirtualPointerV1 {
+        let qh = self.qh();
+        (self.side.vp_manager.as_ref())
+            .expect("zwlr_virtual_pointer_manager_v1")
+            .create_virtual_pointer(Some(self.seat()), &qh, ())
+    }
+
     /// A virtual keyboard under keymap `text` (xkb text format); its index in `vks`.
     pub fn virtual_keyboard_with(&mut self, text: &str) -> usize {
         let qh = self.qh();
@@ -1183,6 +1198,7 @@ pub struct ClientSide {
     im_manager: Option<ZwpInputMethodManagerV2>,
     ti_manager: Option<ZwpTextInputManagerV3>,
     vk_manager: Option<ZwpVirtualKeyboardManagerV1>,
+    vp_manager: Option<ZwlrVirtualPointerManagerV1>,
     pub ims: Vec<InputMethod>,
     pub text_inputs: Vec<ZwpTextInputV3>,
     pub vks: Vec<ZwpVirtualKeyboardV1>,
@@ -1699,6 +1715,8 @@ wc::delegate_noop!(ClientSide: ignore ZwpTextInputManagerV3);
 wc::delegate_noop!(ClientSide: ignore ZwpTextInputV3);
 wc::delegate_noop!(ClientSide: ignore ZwpVirtualKeyboardManagerV1);
 wc::delegate_noop!(ClientSide: ignore ZwpVirtualKeyboardV1);
+wc::delegate_noop!(ClientSide: ignore ZwlrVirtualPointerManagerV1);
+wc::delegate_noop!(ClientSide: ignore ZwlrVirtualPointerV1);
 wc::delegate_noop!(ClientSide: ignore ZwlrLayerShellV1);
 wc::delegate_noop!(ClientSide: ignore ExtSessionLockManagerV1);
 wc::delegate_noop!(ClientSide: ignore ExtSessionLockV1);

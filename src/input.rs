@@ -374,10 +374,18 @@ pub fn clamp_to(pos: Point<f64, Logical>, area: Rectangle<i32, Logical>) -> Poin
 impl State {
     /// One event of the computer's own devices.
     pub fn process_input<B: InputBackend>(&mut self, event: InputEvent<B>) {
-        self.with_source(InputSource::Physical, |s| s.process_physical(event));
+        self.process_input_from(InputSource::Physical, event);
     }
 
-    fn process_physical<B: InputBackend>(&mut self, event: InputEvent<B>) {
+    pub fn process_input_from<B: InputBackend>(
+        &mut self,
+        source: InputSource,
+        event: InputEvent<B>,
+    ) {
+        self.with_source(source, |s| s.process_event(event));
+    }
+
+    fn process_event<B: InputBackend>(&mut self, event: InputEvent<B>) {
         if !matches!(
             event,
             InputEvent::PointerMotion { .. } | InputEvent::PointerMotionAbsolute { .. }
