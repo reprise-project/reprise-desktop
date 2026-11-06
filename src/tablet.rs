@@ -212,7 +212,7 @@ impl State {
         let (transform, mut area) = tablet_output(entry.and_then(|e| e.output.as_deref()), &names)
             .and_then(|t| outputs.iter().find(|(n, ..)| n == t))
             .map_or_else(
-                || (Transform::Normal, self.output_area()),
+                || (Transform::Normal, self.absolute_area()),
                 |(_, t, r)| (*t, *r),
             );
         if entry.is_some_and(|e| e.keep_aspect) {

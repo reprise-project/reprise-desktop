@@ -36,6 +36,19 @@ impl State {
             .unwrap_or_else(|| Rectangle::from_size((1, 1).into()))
     }
 
+    /// The box an absolute device spans: every output's, in lock mode the Console outputs' for
+    /// the computer's own devices.
+    pub(crate) fn absolute_area(&self) -> Rectangle<i32, Logical> {
+        if !crate::console::physical(self) {
+            return self.output_area();
+        }
+        (self.scene.outputs().iter())
+            .filter(|o| crate::console::side_of(o) == crate::console::Side::Console)
+            .filter_map(reprisescene::output_rect)
+            .reduce(|a, b| a.merge(b))
+            .unwrap_or_else(|| self.output_area())
+    }
+
     /// Move the seat's pointer to `pos`; in lock mode the computer's own moves the console's.
     pub fn pointer_to(&mut self, pos: Point<f64, Logical>, time: InputTime) {
         if crate::console::physical(self) {

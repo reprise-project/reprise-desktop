@@ -402,7 +402,7 @@ impl State {
                 crate::console::pointer::by(self, event.delta());
             }
             InputEvent::PointerMotionAbsolute { event } if crate::console::physical(self) => {
-                let area = self.output_area();
+                let area = self.absolute_area();
                 let pos = event.position_transformed(area.size) + area.loc.to_f64();
                 crate::console::pointer::to(self, pos);
             }

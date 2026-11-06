@@ -316,8 +316,6 @@ fn release_timed(state: &mut State, head: Head, output: &Output) {
     crate::surfaceproto::before_frame(state, output, shows_at);
 }
 
-/// A frame asked for by pointer motion alone (`Ask::Pointer`): when the last
-/// frame put the pointer on its own plane, move the plane and queue that.
 /// The cursor an output draws: the computer's own on a Console output in lock mode.
 fn own_cursor(
     own: bool,
@@ -330,6 +328,8 @@ fn own_cursor(
     }
 }
 
+/// A frame asked for by pointer motion alone (`Ask::Pointer`): when the last
+/// frame put the pointer on its own plane, move the plane and queue that.
 /// Some(whether a frame was queued); None when the frame must be drawn normally.
 pub(super) fn pointer_frame(
     state: &mut State,
