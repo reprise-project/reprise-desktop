@@ -404,6 +404,9 @@ suspend_after = 0            # run [power] standby
 #                            # switch), seconds to wait for it to reconnect before locking
 # capture_border = false     # true draws [privacy] capture_border's red border around the
 #                            # screen while a computer is connected too
+# laptop_screen = "lock"     # "lock": while a computer is connected, this screen shows the
+#                            # lock and the viewer gets screens sized to its window; "show"
+#                            # keeps the session on this screen too, as does a [power] locker
 
 # [debug]                    # Settings > Advanced also sets these
 # overlay = false            # true shows frame rate, render times, damage, clients

@@ -476,7 +476,8 @@ fn enabled(f: &Form, id: &str) -> bool {
         Control::Check { enabled, .. }
         | Control::Label { enabled, .. }
         | Control::Edit { enabled, .. }
-        | Control::Button { enabled, .. } => *enabled,
+        | Control::Button { enabled, .. }
+        | Control::Radio { enabled, .. } => *enabled,
         Control::Combo(c) => c.enabled,
         Control::UpDown(u) => u.enabled,
         Control::TrackBar(t) => t.enabled,

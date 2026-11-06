@@ -1,6 +1,4 @@
-//! `[remote_desktop]`: reprise-rdp's port, picture quality, frame rate, video encoder, sound, how
-//! many viewers it takes, whether and when the last to leave locks the session and whether the
-//! compositor borders the screen it shares.
+//! `[remote_desktop]`: reprise-rdp's settings, each key described in docs/configuration.md.
 //! Each key that is missing or out of range keeps its default alone.
 
 use serde::Deserialize;
@@ -71,6 +69,27 @@ impl EncoderChoice {
     }
 }
 
+/// What this computer's own screen does while a computer is connected.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LaptopScreen {
+    /// It goes on showing the session.
+    Show,
+    /// It shows the lock, and the viewer works on screens sized to its window.
+    #[default]
+    Lock,
+}
+
+impl LaptopScreen {
+    /// Its name in `config.toml`.
+    pub fn name(self) -> &'static str {
+        match self {
+            LaptopScreen::Show => "show",
+            LaptopScreen::Lock => "lock",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RemoteDesktop {
     pub port: u16,
@@ -88,6 +107,7 @@ pub struct RemoteDesktop {
     /// Whether the compositor borders what the server captures; `[privacy] capture_border` off
     /// turns it off as well.
     pub capture_border: bool,
+    pub laptop_screen: LaptopScreen,
 }
 
 impl Default for RemoteDesktop {
@@ -102,6 +122,7 @@ impl Default for RemoteDesktop {
             lock_on_leave: true,
             lock_grace_s: 5,
             capture_border: false,
+            laptop_screen: LaptopScreen::Lock,
         }
     }
 }
@@ -201,6 +222,9 @@ fn read(t: &toml::Table) -> (RemoteDesktop, Vec<&'static str>) {
             d.capture_border,
             toml::Value::as_bool,
         ),
+        laptop_screen: key(t, "laptop_screen", &mut bad, d.laptop_screen, |v| {
+            v.clone().try_into().ok()
+        }),
     };
     (rd, bad)
 }
@@ -240,7 +264,8 @@ mod tests {
                 d.max_viewers,
                 d.lock_on_leave,
                 d.lock_grace_s,
-                d.capture_border
+                d.capture_border,
+                d.laptop_screen
             ),
             (
                 3389,
@@ -251,7 +276,8 @@ mod tests {
                 4,
                 true,
                 5,
-                false
+                false,
+                LaptopScreen::Lock
             )
         );
     }
@@ -390,6 +416,33 @@ quality = \"sharp\"",
                 bad.contains(&"capture_border"),
                 invalid,
                 "capture_border = {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn laptop_screen_reads_show_or_lock() {
+        for (text, want, invalid) in [
+            ("\"show\"", LaptopScreen::Show, false),
+            ("\"lock\"", LaptopScreen::Lock, false),
+            ("\"x\"", LaptopScreen::Lock, true),
+        ] {
+            let t: toml::Table = toml::from_str(&format!("laptop_screen = {text}")).unwrap();
+            let (rd, bad) = read(&t);
+            assert_eq!(rd.laptop_screen, want, "laptop_screen = {text}");
+            assert_eq!(
+                bad.contains(&"laptop_screen"),
+                invalid,
+                "laptop_screen = {text}"
+            );
+        }
+        for s in [LaptopScreen::Show, LaptopScreen::Lock] {
+            let t: toml::Table =
+                toml::from_str(&format!("laptop_screen = \"{}\"", s.name())).unwrap();
+            assert_eq!(
+                from_table(&t).laptop_screen,
+                s,
+                "{s:?} reads back by its name"
             );
         }
     }

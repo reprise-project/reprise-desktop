@@ -365,6 +365,8 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "remote_border",
                 "Show a red border while a remote computer is connected",
             ),
+            ("remote_screen_show", "Stays on"),
+            ("remote_screen_lock", "Locks and fits the remote window"),
         ],
         Page::Privacy => &[
             ("privacy_location", "Let programs ask for your location"),
