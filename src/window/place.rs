@@ -92,6 +92,13 @@ pub fn area_client(m: &Metrics, area: Rect, chrome: Chrome) -> (i32, i32) {
     FrameGeometry::client_size_for_total(m, area.width, area.height, false, chrome)
 }
 
+/// `size` after its bounds went from `was` to `now`: a side that fitted `was` and is longer
+/// than `now` takes `now`'s; any other side keeps its length.
+pub(super) fn shrunk_into(size: (i32, i32), was: (i32, i32), now: (i32, i32)) -> (i32, i32) {
+    let side = |v: i32, was: i32, now: i32| if v <= was && v > now { now } else { v };
+    (side(size.0, was.0, now.0), side(size.1, was.1, now.1))
+}
+
 /// Client size for a first configure; a CSD client is asked for the whole frame. A normal size
 /// fits `area` and goes under the client's `limits` only where they would not fit it.
 pub fn first_configure_size(
@@ -252,13 +259,15 @@ impl State {
     /// Send xdg toplevel `w` the bounds of the work area its frame's centre is on, when they
     /// differ from the ones it last heard.
     pub fn refresh_bounds(&mut self, w: WindowId) {
-        if self.set_bounds(w) {
+        if self.set_bounds(w, false) {
             self.send_configure(w);
         }
     }
 
     /// Put the bounds `refresh_bounds` sends into `w`'s pending state; true when they changed.
-    pub(super) fn set_bounds(&self, w: WindowId) -> bool {
+    /// With `shrink` (the work area changed under the window) a normal window that fitted the
+    /// old bounds and is larger than the new ones is also asked for a size inside them.
+    pub(super) fn set_bounds(&self, w: WindowId, shrink: bool) -> bool {
         let Some(win) = self.win(w).filter(|w| w.mapped) else {
             return false;
         };
@@ -272,8 +281,18 @@ impl State {
             return false;
         }
         let most = area_client(&self.config.theme.metrics, area, win.chrome());
+        let shrink = shrink && !win.maximized && !win.fullscreen && win.snapped.is_none();
+        let own = win.client_size();
         t.with_pending_state(|s| {
             let was = s.bounds.replace(most.into());
+            if shrink && let Some(was) = was {
+                // The size the configure would repeat, else the one the window took itself.
+                let size = s.size.map_or(own, |z| (z.w, z.h));
+                let fit = shrunk_into(size, (was.w, was.h), most);
+                if fit != size {
+                    s.size = Some(fit.into());
+                }
+            }
             was != s.bounds
         })
     }

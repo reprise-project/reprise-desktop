@@ -189,12 +189,12 @@ impl State {
         }
     }
 
-    /// The work areas changed: maximized, fullscreen and snapped windows refit to theirs, and
-    /// every xdg toplevel hears its new bounds.
+    /// The work areas changed: maximized, fullscreen and snapped windows refit to theirs, every
+    /// xdg toplevel hears its new bounds, and a normal one that no longer fits them is asked to.
     pub fn refit_maximized(&mut self) {
         let bounded: Vec<WindowId> = (self.windows.iter())
             .map(|w| w.id)
-            .filter(|&w| self.set_bounds(w))
+            .filter(|&w| self.set_bounds(w, true))
             .collect();
         let fits: Vec<WindowId> = self
             .windows

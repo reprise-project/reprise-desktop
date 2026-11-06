@@ -847,6 +847,7 @@ impl TestClient {
             pending: (0, 0),
             size: (0, 0),
             bounds: (0, 0),
+            heard: Vec::new(),
         });
         i
     }
@@ -1073,6 +1074,8 @@ pub struct Shell {
     pub size: (i32, i32),
     /// The bounds the last toplevel configure carried; (0, 0) before any.
     pub bounds: (i32, i32),
+    /// Every bounds the toplevel's configures carried, oldest first.
+    pub heard: Vec<(i32, i32)>,
 }
 
 /// A `wl_keyboard` event: a key's evdev code and whether it went down, or the depressed
@@ -1271,6 +1274,7 @@ impl wc::Dispatch<xdg_toplevel::XdgToplevel, usize> for ClientSide {
             }
             xdg_toplevel::Event::ConfigureBounds { width, height } => {
                 st.shells[i].bounds = (width, height);
+                st.shells[i].heard.push((width, height));
             }
             xdg_toplevel::Event::Close => st.closes.push(i),
             _ => {}

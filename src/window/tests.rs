@@ -777,6 +777,85 @@ fn a_window_hears_new_bounds_when_the_taskbar_moves_or_hides() {
     );
 }
 
+/// A 1920x1080 output and a toplevel that fills its bounds, as Settings does at 200%.
+fn filling_the_bounds() -> (
+    crate::harness::Harness,
+    crate::harness::TestClient,
+    crate::harness::Toplevel,
+) {
+    let mut h = crate::harness::Harness::new();
+    h.output("TEST-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+    h.roundtrip(&mut c);
+    let most = c.side.shells[t.shell].bounds.1;
+    h.resize_self(&mut c, t, 1000, most);
+    (h, c, t)
+}
+
+/// Reload `cfg` and return the bounds `t` heard and the client size it took.
+fn after_reload(
+    h: &mut crate::harness::Harness,
+    c: &mut crate::harness::TestClient,
+    t: crate::harness::Toplevel,
+    cfg: &str,
+) -> (Vec<(i32, i32)>, (i32, i32)) {
+    c.side.shells[t.shell].heard.clear();
+    crate::configwatch::reload(&mut h.state, crate::config::Config::parse(cfg).unwrap());
+    h.roundtrip(c);
+    let heard = std::mem::take(&mut c.side.shells[t.shell].heard);
+    (heard, h.state.win(t.id).unwrap().client_size())
+}
+
+#[test]
+fn a_window_filling_its_bounds_is_asked_to_fit_the_smaller_ones_of_a_look_switch() {
+    let (mut h, mut c, t) = filling_the_bounds();
+    let classic = c.side.shells[t.shell].bounds;
+    // A restore leaves the size it sent in the configures after it.
+    h.state.set_maximized(t.id, true);
+    h.roundtrip(&mut c);
+    h.state.set_maximized(t.id, false);
+    h.roundtrip(&mut c);
+    assert_eq!(h.state.win(t.id).unwrap().client_size(), (1000, classic.1));
+    let (heard, size) = after_reload(&mut h, &mut c, t, "[appearance]\ninterface = \"glass\"\n");
+    let glass = c.side.shells[t.shell].bounds;
+    assert!(
+        glass.1 < classic.1,
+        "Glass leaves less height: {classic:?} -> {glass:?}"
+    );
+    assert_eq!(
+        heard,
+        [glass],
+        "one set of bounds, from the new taskbar and frame"
+    );
+    assert_eq!(size, (1000, glass.1), "the window shrinks into them");
+    let (_, size) = after_reload(&mut h, &mut c, t, "");
+    assert_eq!(
+        size,
+        (1000, glass.1),
+        "larger bounds leave the size to the window"
+    );
+}
+
+#[test]
+fn a_window_filling_its_bounds_is_asked_to_fit_them_when_the_taskbar_or_text_grows() {
+    for cfg in [
+        "[metrics]\ntaskbar_height = 48\n",
+        "[accessibility]\ntext_size = 200\n",
+    ] {
+        let (mut h, mut c, t) = filling_the_bounds();
+        let first = c.side.shells[t.shell].bounds;
+        let (heard, size) = after_reload(&mut h, &mut c, t, cfg);
+        let now = c.side.shells[t.shell].bounds;
+        assert!(
+            now.1 < first.1,
+            "{cfg:?} leaves less height: {first:?} -> {now:?}"
+        );
+        assert_eq!(heard, [now], "{cfg:?} sends one set of bounds");
+        assert_eq!(size, (1000, now.1), "{cfg:?} shrinks the window into them");
+    }
+}
+
 #[test]
 fn a_window_hears_new_bounds_when_its_output_changes_mode_or_scale() {
     use smithay::output::{Mode, Scale};
