@@ -14,7 +14,7 @@ use crate::encode::probe::Backend;
 use crate::encode::{Done, Encoded, Encoder, Job, Switch, Worker};
 use crate::gfx::{Gfx, Prepared, Video};
 use crate::input::{self, Feed, SharedMoves};
-use crate::layout::{Desk, Kind, ScreenRect};
+use crate::layout::{Desk, Kind, Pairing, ScreenRect};
 use crate::listen::{Ending, Shown};
 use crate::portal::{self, Grant};
 use crate::stream::{
@@ -175,6 +175,8 @@ pub struct Display {
     /// The client's Display Control layouts, read by its run once it joins.
     layouts: UnboundedSender<Vec<console::Monitor>>,
     layouts_rx: Option<UnboundedReceiver<Vec<console::Monitor>>>,
+    /// The screens' joint once granted, which takes the layouts this viewer publishes.
+    published_to: Arc<Mutex<Option<Joint>>>,
 }
 
 /// What a connection tells its display: how to report the session shown and its screens gone,
@@ -214,6 +216,7 @@ impl Display {
             joined: None,
             layouts,
             layouts_rx: Some(layouts_rx),
+            published_to: Arc::default(),
         }
     }
 
@@ -224,7 +227,12 @@ impl Display {
             let size = self.client_size.unwrap_or_else(|| self.told.get());
             let joined = self.console.join(self.client.console_layout(size));
             if let Some(layouts) = self.layouts_rx.take() {
-                joined.follow(layouts);
+                let to = self.published_to.clone();
+                joined.follow(layouts, move |layout| {
+                    if let Some(joint) = to.lock().unwrap().as_ref() {
+                        joint.set_client(&console::client_monitors(layout));
+                    }
+                });
             }
             self.joined = Some(joined);
         }
@@ -294,7 +302,10 @@ impl RdpServerDisplay for Display {
                 );
             }
             let fds = remotes(&mut grant)?;
-            self.ending.granted(lock, &grant.screens);
+            let pairing = match self.ending.granted(lock, &grant.screens) {
+                true => Pairing::InOrder,
+                false => Pairing::ByPlace,
+            };
             let gone = gone_with_all(self.ending.clone(), grant.screens.len());
             let mut streams = Vec::new();
             for (screen, fd) in grant.screens.iter().zip(fds) {
@@ -310,7 +321,8 @@ impl RdpServerDisplay for Display {
                     pixels: s.size,
                 })
                 .collect();
-            let joint = Joint::new(Desk::new(screens, &self.client.monitors()));
+            let joint = Joint::new(Desk::new(screens, &self.client.monitors(), pairing));
+            *self.published_to.lock().unwrap() = Some(joint.clone());
             let grant = Arc::new(grant);
             if let Some(feed) = self.input.take() {
                 tokio::task::spawn_local(input::serve(
@@ -595,7 +607,7 @@ impl Live {
             tokio::select! {
                 biased;
                 Ok(()) = self.config.changed() => self.follow_config(),
-                Ok(()) = self.relaid.changed() => self.repaint(),
+                Ok(()) = self.relaid.changed() => self.follow_desk(),
                 size = self.sizes.recv() => match size {
                     Some(s) => {
                         self.resize(s.size);
@@ -630,6 +642,15 @@ impl Live {
         if let Some(size) = self.held_resize.take()
             && !self.resize(size)
         {
+            self.repaint();
+        }
+    }
+
+    /// The desk changed elsewhere: the client is resized when its desktop did, else this
+    /// screen is painted again.
+    fn follow_desk(&mut self) {
+        let pixels = self.joint.desk.lock().unwrap().layout().pixels(self.screen);
+        if !pixels.is_some_and(|p| self.resize(p)) {
             self.repaint();
         }
     }
