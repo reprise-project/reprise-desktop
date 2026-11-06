@@ -576,15 +576,14 @@ pub fn retheme(state: &mut State) {
         }
         state.relayout(w);
     }
-    // A look switch can change the taskbar's height and the frame's
-    // metrics, both of which a maximized window fills to.
-    state.refit_maximized();
+    // A look switch can change the taskbar's height and the frame's metrics. The layer
+    // surfaces take the new work area first: windows refit to it and hear it as bounds.
+    crate::layer::outputs_changed(state);
     state.redraw_taskbars();
     for depth in 0..state.menus.len() {
         state.redraw_menu(depth);
     }
     state.refit_wallpaper();
-    crate::layer::outputs_changed(state);
     // After the taskbar took its new size, so the work area is the new one.
     for (w, was, was_area) in was {
         state.keep_on_screen_inside(w, was, was_area);
