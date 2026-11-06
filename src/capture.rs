@@ -72,6 +72,8 @@ pub struct Captures {
     sessions: Vec<Session>,
     cursor_sessions: Vec<CursorSession>,
     waiting: Vec<Waiting>,
+    /// Output frames whose render is in flight; one destroyed meanwhile never reaches its client.
+    drawing: Vec<(FrameRef, SessionRef)>,
     readbacks: Readbacks,
 }
 
@@ -596,7 +598,7 @@ fn fill_window(state: &mut State, w: WindowId, session: &SessionRef, frame: Fram
         fresh(session).clear();
     }
     let what = format!("capture of window {w:?}");
-    complete(state, drawn, frame, Transform::Normal, what, |_| ());
+    complete(state, drawn, frame, Transform::Normal, what, |_, _| ());
 }
 
 /// Sends `frame` ready with its damage once `drawn` is done, or fails it
@@ -608,26 +610,26 @@ fn complete(
     frame: Frame,
     transform: Transform,
     what: String,
-    then: impl FnOnce(bool) + 'static,
+    then: impl FnOnce(&mut State, bool) + 'static,
 ) {
     let now = state.now();
     let drawn = match drawn {
         Ok(d) => d,
         Err(e) => {
             log::warn!("{what}: {e}");
-            then(false);
+            then(state, false);
             return frame.fail(CaptureFailureReason::Unknown);
         }
     };
     let damage = drawn.damage.clone();
-    when_done(state, drawn, move |_, done| match done {
+    when_done(state, drawn, move |state, done| match done {
         Ok(()) => {
-            then(true);
+            then(state, true);
             frame.success(transform, damage, now);
         }
         Err(e) => {
             log::warn!("{what}: {e}");
-            then(false);
+            then(state, false);
             frame.fail(CaptureFailureReason::Unknown);
         }
     });
@@ -696,11 +698,18 @@ fn fill_cursor(state: &mut State, session: &CursorSessionRef, frame: Frame) {
     );
     let what = format!("cursor capture on {}", output.name());
     let session = session.clone();
-    complete(state, drawn, frame, Transform::Normal, what, move |ready| {
-        if ready {
-            session.set_cursor_hotspot((hotspot.x, hotspot.y));
-        }
-    });
+    complete(
+        state,
+        drawn,
+        frame,
+        Transform::Normal,
+        what,
+        move |_, ready| {
+            if ready {
+                session.set_cursor_hotspot((hotspot.x, hotspot.y));
+            }
+        },
+    );
 }
 
 /// Whether `buffer` is `size`. A frame asked before its source resized keeps the old size,
@@ -731,8 +740,13 @@ fn fill_ext(state: &mut State, output: &Output, session: &SessionRef, frame: Fra
         Target::of(&buffer),
         Some(&mut session_damage(session).borrow_mut()),
     );
+    let frame_ref = FrameRef::clone(&frame);
     if drawn.is_ok() {
         fresh(session).clear();
+        state
+            .captures
+            .drawing
+            .push((frame_ref.clone(), session.clone()));
     }
     let what = format!("capture of {}", output.name());
     let session = session.clone();
@@ -742,7 +756,8 @@ fn fill_ext(state: &mut State, output: &Output, session: &SessionRef, frame: Fra
         frame,
         output.current_transform(),
         what,
-        move |ready| {
+        move |state, ready| {
+            state.captures.drawing.retain(|(f, _)| *f != frame_ref);
             if !ready {
                 session_damage(&session).borrow_mut().forget();
             }
@@ -1075,6 +1090,11 @@ impl ImageCopyCaptureHandler for State {
         self.captures
             .waiting
             .retain(|w| !matches!(w, Waiting::Ext { frame: f, .. } if *f == frame));
+        let drawing = &mut self.captures.drawing;
+        if let Some(i) = drawing.iter().position(|(f, _)| *f == frame) {
+            let (_, session) = drawing.swap_remove(i);
+            session_damage(&session).borrow_mut().forget();
+        }
     }
 
     fn session_destroyed(&mut self, session: SessionRef) {
@@ -1225,6 +1245,38 @@ mod tests {
         d.forget();
         let damage = d.since_last(hd(), CLEAR, &[solid(&id, (10, 10, 20, 20))]);
         assert_eq!(damage, whole(1280, 720), "the whole 1280x720 buffer");
+    }
+
+    #[test]
+    fn a_frame_destroyed_while_drawn_leaves_the_next_fully_damaged() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 64, 48);
+        let mut client = h.connect_capture((64, 48));
+        let mut s = client.ext_session(&mut h);
+        let session = h.state.captures.sessions[0].as_ref();
+        super::fresh(&session).clear();
+        client.ext_frame(&mut h, &mut s);
+        let tracked = || super::session_damage(&session).borrow().0.is_some();
+        let none: &[SolidColorRenderElement] = &[];
+        super::session_damage(&session)
+            .borrow_mut()
+            .since_last(hd(), CLEAR, none);
+
+        client.ext_frame(&mut h, &mut s);
+        assert!(
+            tracked(),
+            "a destroyed frame that was not drawn keeps the damage"
+        );
+
+        let Some(super::Waiting::Ext { frame, .. }) = h.state.captures.waiting.first() else {
+            panic!("the frame waits for the output");
+        };
+        let drawn = (super::FrameRef::clone(frame), session.clone());
+        h.state.captures.waiting.clear();
+        h.state.captures.drawing.push(drawn);
+        client.ext_frame(&mut h, &mut s);
+        assert!(!tracked(), "the next frame is whole");
+        assert!(h.state.captures.drawing.is_empty());
     }
 
     #[test]
