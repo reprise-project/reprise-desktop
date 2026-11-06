@@ -358,6 +358,9 @@ pub(super) fn connector_disconnected(state: &mut State, head: Head) {
 
 pub fn heads(state: &State) -> Vec<HeadState> {
     let Some(b) = state.backend.as_ref() else {
+        #[cfg(test)]
+        return super::fake::heads(state);
+        #[cfg(not(test))]
         return Vec::new();
     };
     let current = |output: &Output, connector: &connector::Info| {
@@ -398,7 +401,11 @@ pub fn heads(state: &State) -> Vec<HeadState> {
 pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
     let head = match screen_of(output) {
         Some(Screen::Monitor(head)) => head,
-        Some(Screen::Virtual) | None => return false,
+        #[cfg(test)]
+        None => return super::fake::enable(state, output),
+        #[cfg(not(test))]
+        None => return false,
+        Some(Screen::Virtual) => return false,
     };
     let Some(b) = state.backend.as_mut() else {
         return false;
@@ -586,7 +593,11 @@ fn new_compositor(
 pub fn disable(state: &mut State, output: &Output) -> bool {
     let head = match screen_of(output) {
         Some(Screen::Monitor(head)) => head,
-        Some(Screen::Virtual) | None => return false,
+        #[cfg(test)]
+        None => return super::fake::disable(state, output),
+        #[cfg(not(test))]
+        None => return false,
+        Some(Screen::Virtual) => return false,
     };
     let Some(b) = state.backend.as_mut() else {
         return false;

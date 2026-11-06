@@ -10,6 +10,8 @@
 
 mod commit;
 mod devices;
+#[cfg(test)]
+mod fake;
 mod gamma;
 mod inputfds;
 mod links;

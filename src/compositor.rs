@@ -285,6 +285,9 @@ pub struct State {
     pub launcher_entries: crate::launcherentry::Entries,
     /// The DRM session, GPU and connectors; None only while starting.
     pub backend: Option<Backend>,
+    /// A test's connectors, standing in for `backend` (`backend::fake`).
+    #[cfg(test)]
+    pub test_heads: Vec<smithay::output::Output>,
     /// `[wallpaper] image` and its per-output buffers; None for the
     /// background colour alone.
     pub wallpaper: Option<Wallpaper>,
@@ -679,6 +682,8 @@ impl State {
                 Default::default()
             },
             backend: None,
+            #[cfg(test)]
+            test_heads: Vec::new(),
             // A slideshow picks its first picture once the loop runs.
             wallpaper: config
                 .wallpaper
