@@ -21,6 +21,7 @@ mod inputcapture;
 mod inputlink;
 mod inputproto;
 mod lastpick;
+mod lockmode;
 mod notification;
 mod owner;
 mod permit;
@@ -57,6 +58,7 @@ const RESPONSE_OTHER: u32 = 2;
 
 const SOURCE_MONITOR: u32 = 1;
 const SOURCE_WINDOW: u32 = 2;
+const SOURCE_VIRTUAL: u32 = 4;
 const CURSOR_HIDDEN: u32 = 1;
 const CURSOR_EMBEDDED: u32 = 2;
 const CURSOR_METADATA: u32 = 4;
@@ -538,13 +540,16 @@ pub(crate) struct Started {
 }
 
 /// How Start picks what to capture.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Pick {
     /// A remembered target, else the share dialog: one stream.
     Ask,
     /// The remote desktop server's pick, with no dialog and not remembered: [`every_screen`], a
     /// stream each. The compositor tells its capture apart (`Wayland::connect_remote_capture`).
     All,
+    /// [`Pick::All`] in lock mode: the outputs made for the client, in this order, cast as
+    /// virtual screens.
+    Remote(Vec<String>),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -575,6 +580,7 @@ pub(crate) async fn pick_and_cast(
         s.picking = Some(cancel.clone());
     }
     let app = app_id.to_string();
+    let remote = pick != Pick::Ask;
     let chosen = blocking::unblock(move || {
         choose(types, restore, &app, persist_mode > 0, parent, cancel, pick)
     })
@@ -592,7 +598,6 @@ pub(crate) async fn pick_and_cast(
         }
     };
     let targets: Vec<_> = chosen.targets.iter().map(|(t, _)| t.clone()).collect();
-    let remote = pick == Pick::All;
     let mut casts = match blocking::unblock(move || {
         let _turn = lock(&CAST_TURN);
         start_each(
@@ -612,7 +617,15 @@ pub(crate) async fn pick_and_cast(
     let streams = (casts.iter().zip(&chosen.targets))
         .map(|(c, (t, info))| {
             log::info!("Start: node {} for {t:?}", c.node_id);
-            stream_for(c.node_id, c.serial, t, info.as_ref(), (c.width, c.height))
+            let size = (c.width, c.height);
+            stream_for(
+                c.node_id,
+                c.serial,
+                t,
+                info.as_ref(),
+                size,
+                chosen.virtual_screens,
+            )
         })
         .collect();
     let persist_mode = granted_persist(persist_mode, chosen.remembered.is_some());
@@ -678,23 +691,29 @@ fn start_each<C>(
 }
 
 /// The Start result for cast `node` of `target`: an output's logical position and size, else the
-/// cast's own size in pixels.
+/// cast's own size in pixels. An output is a monitor unless `virtual_screen`.
 fn stream_for(
     node: u32,
     serial: u64,
     target: &Target,
     output: Option<&wayland::OutputInfo>,
     cast_size: (u32, u32),
+    virtual_screen: bool,
 ) -> (u32, StreamProps) {
     let pixels = (cast_size.0 as i32, cast_size.1 as i32);
+    let screen = if virtual_screen {
+        SOURCE_VIRTUAL
+    } else {
+        SOURCE_MONITOR
+    };
     let (source_type, position, mapping_id, size) = match (target, output) {
         (Target::Output(name), Some(o)) => (
-            SOURCE_MONITOR,
+            screen,
             Some((o.x, o.y)),
             Some(name.clone()),
             (o.width, o.height),
         ),
-        (Target::Output(name), None) => (SOURCE_MONITOR, None, Some(name.clone()), pixels),
+        (Target::Output(name), None) => (screen, None, Some(name.clone()), pixels),
         (Target::Toplevel(_), _) => (SOURCE_WINDOW, None, None, pixels),
     };
     (
@@ -804,6 +823,7 @@ fn as_str<'a>(v: &'a Variant<'a>) -> Option<&'a str> {
 struct Chosen {
     targets: Vec<(Target, Option<wayland::OutputInfo>)>,
     remembered: Option<Target>,
+    virtual_screens: bool,
 }
 
 /// Pick what to capture ([`choose_from`]); the share dialog is modal on `parent` and offers
@@ -838,8 +858,9 @@ fn choose(
     })
 }
 
-/// [`every_screen`] for [`Pick::All`]; for [`Pick::Ask`] a remembered target still there, else
-/// what `dialog` picks from the share dialog's rows. None when the dialog is cancelled.
+/// [`every_screen`] for [`Pick::All`], the named outputs for [`Pick::Remote`]; for [`Pick::Ask`] a
+/// remembered target still there, else what `dialog` picks from the share dialog's rows. None
+/// when the dialog is cancelled.
 fn choose_from(
     pick: Pick,
     types: u32,
@@ -848,8 +869,12 @@ fn choose_from(
     restore: Option<Target>,
     dialog: impl FnOnce(Vec<picker::Entry>) -> Option<(Target, bool)>,
 ) -> Result<Option<Chosen>, String> {
-    if pick == Pick::All {
-        let screens = every_screen(outputs);
+    let screens = match &pick {
+        Pick::Ask => None,
+        Pick::All => Some(every_screen(outputs)),
+        Pick::Remote(names) => Some(named_screens(names, outputs)?),
+    };
+    if let Some(screens) = screens {
         if screens.is_empty() {
             return Err("no output to share".into());
         }
@@ -859,6 +884,7 @@ fn choose_from(
         return Ok(Some(Chosen {
             targets,
             remembered: None,
+            virtual_screens: matches!(pick, Pick::Remote(_)),
         }));
     }
     let info_for = |t: &Target| match t {
@@ -874,6 +900,7 @@ fn choose_from(
             return Ok(Some(Chosen {
                 targets: vec![(t.clone(), info_for(&t))],
                 remembered: Some(t),
+                virtual_screens: false,
             }));
         }
     }
@@ -887,7 +914,21 @@ fn choose_from(
     Ok(Some(Chosen {
         targets: vec![(t.clone(), info_for(&t))],
         remembered: remember.then_some(t),
+        virtual_screens: false,
     }))
+}
+
+/// The outputs called `names`, in that order; Err when one is not there.
+fn named_screens(
+    names: &[String],
+    outputs: &[wayland::OutputInfo],
+) -> Result<Vec<wayland::OutputInfo>, String> {
+    (names.iter())
+        .map(|n| {
+            let found = outputs.iter().find(|o| &o.name == n).cloned();
+            found.ok_or_else(|| format!("no output {n}"))
+        })
+        .collect()
 }
 
 /// The outputs a trusted session shares, [`origin_output`] first, then top to bottom and left to
@@ -1333,7 +1374,9 @@ mod tests {
             .unwrap();
         assert_eq!(chosen.remembered, None, "a trusted start remembers nothing");
         let streams: Vec<_> = (chosen.targets.iter().zip(1..))
-            .map(|((t, info), node)| stream_for(node, u64::from(node), t, info.as_ref(), (2, 2)))
+            .map(|((t, info), node)| {
+                stream_for(node, u64::from(node), t, info.as_ref(), (2, 2), false)
+            })
             .collect();
         let nodes: Vec<_> = streams.iter().map(|s| s.0).collect();
         assert_eq!(nodes, [1, 2]);
@@ -1350,6 +1393,38 @@ mod tests {
             shared(&staggered),
             ["DP-1", "DP-2", "DP-3"],
             "top, then left"
+        );
+    }
+
+    #[test]
+    fn remote_screens_are_cast_as_virtual_and_the_standby_as_a_monitor() {
+        let outputs = [
+            at("eDP-1", 0, 0),
+            at("REMOTE-1", 0, 0),
+            at("REMOTE-2", 1920, 0),
+        ];
+        let source_types = |pick: Pick, outputs: &[wayland::OutputInfo]| -> Vec<u32> {
+            let chosen = choose_from(pick, SOURCE_MONITOR, outputs, &[], None, no_dialog)
+                .unwrap()
+                .unwrap();
+            let virtual_screens = chosen.virtual_screens;
+            (chosen.targets.iter())
+                .map(|(t, info)| stream_for(1, 1, t, info.as_ref(), (2, 2), virtual_screens))
+                .map(|(_, s)| s.source_type)
+                .collect()
+        };
+        let remote = Pick::Remote(vec!["REMOTE-1".into(), "REMOTE-2".into()]);
+        assert_eq!(source_types(remote, &outputs), [SOURCE_VIRTUAL; 2]);
+        assert_eq!(
+            source_types(Pick::All, &[at("HEADLESS-1", 0, 0)]),
+            [SOURCE_MONITOR],
+            "the standby screen in show mode"
+        );
+        assert_eq!(source_types(Pick::All, &outputs), [SOURCE_MONITOR; 3]);
+        let missing = Pick::Remote(vec!["REMOTE-3".into()]);
+        assert!(
+            choose_from(missing, SOURCE_MONITOR, &outputs, &[], None, no_dialog).is_err(),
+            "a screen that is not there fails the start"
         );
     }
 

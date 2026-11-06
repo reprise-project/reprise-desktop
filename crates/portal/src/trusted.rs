@@ -52,21 +52,26 @@ pub fn session_sender(session_handle: &str) -> Option<String> {
 /// The pid behind the connection that made the session at `session_handle`; None when it has
 /// gone or the bus does not answer.
 pub async fn session_caller(conn: &zbus::Connection, session_handle: &str) -> Option<u32> {
-    let sender = session_sender(session_handle)?;
+    pid_of(conn, &session_sender(session_handle)?).await
+}
+
+/// The pid behind the connection that owns `name`; None when it has gone or the bus does not
+/// answer.
+pub async fn pid_of(conn: &zbus::Connection, name: &str) -> Option<u32> {
     let pid = conn
         .call_method(
             Some("org.freedesktop.DBus"),
             "/org/freedesktop/DBus",
             Some("org.freedesktop.DBus"),
             "GetConnectionUnixProcessID",
-            &(sender.as_str(),),
+            &(name,),
         )
         .await
         .and_then(|reply| reply.body().deserialize::<u32>());
     match pid {
         Ok(pid) => Some(pid),
         Err(e) => {
-            log::info!("{sender}: no pid: {e}");
+            log::info!("{name}: no pid: {e}");
             None
         }
     }
