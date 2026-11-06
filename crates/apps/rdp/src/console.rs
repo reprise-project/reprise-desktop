@@ -155,6 +155,27 @@ impl Drop for Joined {
     }
 }
 
+/// The pixels a published monitor may have on a side, as the compositor takes them.
+const SIDES: std::ops::RangeInclusive<i32> = 200..=8192;
+/// The farthest a published monitor may start from the origin on either axis.
+const MAX_COORD: i32 = 8192 * 16;
+
+/// Why the compositor would refuse `client`'s monitors as a layout, if it would.
+pub fn publishable(client: &[gcc::Monitor]) -> Result<(), &'static str> {
+    let side = |min: i32, max: i32| i64::from(max) - i64::from(min) + 1;
+    let fits = |m: &gcc::Monitor| {
+        let sides = (side(m.left, m.right), side(m.top, m.bottom));
+        let sides = (i32::try_from(sides.0), i32::try_from(sides.1));
+        let start =
+            (-MAX_COORD..=MAX_COORD).contains(&m.left) && (-MAX_COORD..=MAX_COORD).contains(&m.top);
+        matches!(sides, (Ok(w), Ok(h)) if SIDES.contains(&w) && SIDES.contains(&h)) && start
+    };
+    match client.iter().all(fits) {
+        true => Ok(()),
+        false => Err("a monitor has a side outside 200 to 8192 or starts past 131072"),
+    }
+}
+
 /// `layout` as Client Monitor Data gives it, the first monitor primary.
 pub fn client_monitors(layout: &[Monitor]) -> Vec<gcc::Monitor> {
     (layout.iter().enumerate())
