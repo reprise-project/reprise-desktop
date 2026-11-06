@@ -44,16 +44,19 @@ impl State {
             self.repoint(pos, time);
             return;
         }
-        if self.panels.region.is_some() {
+        // Under the console lock a press goes to the lock dialog (`press`), never to what the
+        // remote side has open.
+        let locked = self.console_locked();
+        if !locked && self.panels.region.is_some() {
             self.region_button(button, state == ButtonState::Pressed);
             self.redraw_all();
             return;
         }
-        if self.panels.colorpick.is_some() {
+        if !locked && self.panels.colorpick.is_some() {
             self.color_pick_button(button, state == ButtonState::Pressed);
             return;
         }
-        if state == ButtonState::Pressed && self.switcher.is_open() {
+        if !locked && state == ButtonState::Pressed && self.switcher.is_open() {
             // The Alt+Tab panel owns the pointer: the press is its alone.
             self.buttons_down += 1;
             self.press_at = (pos.x, pos.y);
@@ -62,7 +65,7 @@ impl State {
             self.redraw_all();
             return;
         }
-        if state == ButtonState::Pressed && self.overview.view.is_some() {
+        if !locked && state == ButtonState::Pressed && self.overview.view.is_some() {
             self.buttons_down += 1;
             self.press_at = (pos.x, pos.y);
             self.keys_saw_button();
@@ -71,7 +74,7 @@ impl State {
             return;
         }
         if state == ButtonState::Pressed {
-            if self.buttons_down == 0 && !self.over_x11(pos) {
+            if !locked && self.buttons_down == 0 && !self.over_x11(pos) {
                 crate::xwayland::menus::dismiss(self);
             }
             // A press takes the keyboard from the taskbar.

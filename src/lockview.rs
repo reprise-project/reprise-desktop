@@ -434,11 +434,26 @@ pub fn engage(state: &mut State) {
         return;
     }
     crate::state::save_screen_locked(true);
+    crate::idle::end_dim(state);
+    seal(state, raise);
+    let outputs: Vec<Output> = state.scene.outputs().to_vec();
+    for o in &outputs {
+        cover_output(state, o);
+    }
+    state.set_cursor("default");
+    crate::power::hint(state, crate::power::Hint::Locked(true));
+    crate::idle::inhibition_changed(state);
+    state.redraw_all();
+    log::info!("session locked");
+}
+
+/// Close what the desktop has open and end its gestures, run `raise`, then take every grab and
+/// focus from clients. Lock mode ending under the console lock seals again with no `raise`.
+pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     state.close_menu();
     if let Some(c) = state.compose.as_mut() {
         c.reset();
     }
-    crate::idle::end_dim(state);
     state.release_capture();
     state.switcher_cancel();
     state.close_overview();
@@ -456,11 +471,28 @@ pub fn engage(state: &mut State) {
     // The emoji picker and clipboard history would type or paste into whatever has the keyboard after
     // unlock; the region overlay would take the pointer from the lock dialog.
     state.close_panels();
-    // Before the lock is up: the drag's end puts the pointer back on a client, which the focus clearing below takes away.
+    // Before the focus clearing below: the drag's end puts the pointer back on a client, which it takes away.
     state.cancel_drag();
     cancel_interaction(state);
     state.release_all_buttons(InputTime::now());
     state.caption_clicks.reset();
+    raise(state);
+    // A client's popup grab keeps the keyboard on its popup, refuses the focus changes below and would
+    // leave a locker without keys. Ending it closes the popup.
+    if let Some(k) = state.seat.get_keyboard() {
+        k.unset_grab(state);
+    }
+    if let Some(p) = state.seat.get_pointer() {
+        p.unset_grab(state, SERIAL_COUNTER.next_serial(), InputTime::now());
+    }
+    state.enter_keyboard(None);
+    let p = state.pointer_location();
+    state.pointer_motion(None, p, InputTime::now());
+    state.layers_shell.focused = None;
+}
+
+/// Put the lock up, remembering what had the keyboard for the unlock.
+fn raise(state: &mut State) {
     let prev_focus = state.focused;
     let prev_focused_layer = crate::layer::holds_keyboard(state)
         .then(|| state.layers_shell.focused.clone())
@@ -497,27 +529,6 @@ pub fn engage(state: &mut State) {
         client: None,
         awaiting: false,
     });
-    // A client's popup grab keeps the keyboard on its popup, refuses the focus changes below and would
-    // leave a locker without keys. Ending it closes the popup.
-    if let Some(k) = state.seat.get_keyboard() {
-        k.unset_grab(state);
-    }
-    if let Some(p) = state.seat.get_pointer() {
-        p.unset_grab(state, SERIAL_COUNTER.next_serial(), InputTime::now());
-    }
-    state.enter_keyboard(None);
-    let p = state.pointer_location();
-    state.pointer_motion(None, p, InputTime::now());
-    state.layers_shell.focused = None;
-    let outputs: Vec<Output> = state.scene.outputs().to_vec();
-    for o in &outputs {
-        cover_output(state, o);
-    }
-    state.set_cursor("default");
-    crate::power::hint(state, crate::power::Hint::Locked(true));
-    crate::idle::inhibition_changed(state);
-    state.redraw_all();
-    log::info!("session locked");
 }
 
 fn cancel_interaction(state: &mut State) {
@@ -610,7 +621,8 @@ impl State {
         self.lock.active.is_some()
     }
 
-    /// The desktop's lock: the console's, or in lock mode the remote side's.
+    /// The desktop's lock: the console's outside lock mode; false in lock mode, which has no
+    /// remote-side lock yet.
     pub fn desktop_locked(&self) -> bool {
         !crate::console::remote_side(self) && self.console_locked()
     }

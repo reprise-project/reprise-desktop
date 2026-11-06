@@ -38,9 +38,8 @@ fn badge_origin(b: Rect) -> (i32, i32) {
     (b.x + (b.width - BADGE) / 2, b.y + (b.height - BADGE) / 2)
 }
 
-/// Number the outputs called `names`, the first 1, on every output in
-/// the layout that is named and not under its side's lock; the rest show
-/// nothing.
+/// Number each output named in `names`, the first 1, unless its side is
+/// locked (`locked_on`); the rest show nothing.
 pub fn show(state: &mut State, names: &[String]) {
     hide(state);
     let outputs = state.scene.outputs().to_vec();

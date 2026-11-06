@@ -457,53 +457,11 @@ impl State {
         }
     }
 
-    /// A wheel or scroll frame, from the backend or an EIS sender: a tray
-    /// icon's, the notification history's (`tray_axis`), a dialog's, the
-    /// emoji picker's, the clipboard history's or the displays panel's when
-    /// the pointer is over one, the pager's (and the desktop's with
-    /// `wheel_on_desktop`), else the client's under the pointer.
+    /// A wheel or scroll frame, from the backend or an EIS sender: the shell's
+    /// (`shell_axis`), except under the console lock, else the client's under the pointer.
     pub fn handle_axis(&mut self, frame: AxisFrame) {
         self.settle_pointer();
-        // The wheel rolls the 3D switcher; the Alt+Tab panel and region
-        // overlay own the pointer and ignore it.
-        if self.switcher.stack.is_some() {
-            self.flip_wheel(frame.v120.map_or(0, |v| v.1), frame.axis.1);
-            return;
-        }
-        if self.switcher.panel.is_some() || self.panels.takes_pointer() {
-            return;
-        }
-        if self.tray_axis(&frame) {
-            return;
-        }
-        let hit = self.scene_hit(self.pointer_location());
-        if matches!(hit, Hit::EmojiView { .. }) {
-            let discrete = frame.v120.map_or(0, |v| v.1);
-            self.emoji_wheel(discrete, frame.axis.1);
-            return;
-        }
-        if matches!(hit, Hit::ClipView { .. }) {
-            self.clipview_wheel(frame.v120.map_or(0, |v| v.1), frame.axis.1);
-            return;
-        }
-        if matches!(hit, Hit::Displays { .. }) {
-            let pos = self.pointer_location();
-            let discrete = frame.v120.map_or(0, |v| v.1);
-            crate::displaysview::wheel(self, pos.x, pos.y, discrete, frame.axis.1);
-            return;
-        }
-        if let Hit::Dialog { index, button } = &hit
-            && self.dialog_wheel(*index, *button, frame.v120.map_or(0, |v| v.1), frame.axis.1)
-        {
-            return;
-        }
-        if matches!(hit, Hit::StartPanel { .. })
-            && self.start_panel_wheel(frame.v120.map_or(0, |v| v.1), frame.axis.1)
-        {
-            return;
-        }
-        if self.wheels_desktops(&hit) {
-            self.desktop_wheel(frame.v120.map_or(0, |v| v.1), frame.axis.1);
+        if !self.console_locked() && self.shell_axis(&frame) {
             return;
         }
         self.desktop_wheel = (0, 0.0);
@@ -513,6 +471,56 @@ impl State {
         };
         pointer.axis(self, frame);
         pointer.frame(self);
+    }
+
+    /// Whether the shell takes `frame`: a tray icon's, the notification history's
+    /// (`tray_axis`), a dialog's, the emoji picker's, the clipboard history's or the displays
+    /// panel's when the pointer is over one, the pager's (and the desktop's with
+    /// `wheel_on_desktop`).
+    fn shell_axis(&mut self, frame: &AxisFrame) -> bool {
+        // The wheel rolls the 3D switcher; the Alt+Tab panel and region
+        // overlay own the pointer and ignore it.
+        if self.switcher.stack.is_some() {
+            self.flip_wheel(frame.v120.map_or(0, |v| v.1), frame.axis.1);
+            return true;
+        }
+        if self.switcher.panel.is_some() || self.panels.takes_pointer() {
+            return true;
+        }
+        if self.tray_axis(frame) {
+            return true;
+        }
+        let hit = self.scene_hit(self.pointer_location());
+        if matches!(hit, Hit::EmojiView { .. }) {
+            let discrete = frame.v120.map_or(0, |v| v.1);
+            self.emoji_wheel(discrete, frame.axis.1);
+            return true;
+        }
+        if matches!(hit, Hit::ClipView { .. }) {
+            self.clipview_wheel(frame.v120.map_or(0, |v| v.1), frame.axis.1);
+            return true;
+        }
+        if matches!(hit, Hit::Displays { .. }) {
+            let pos = self.pointer_location();
+            let discrete = frame.v120.map_or(0, |v| v.1);
+            crate::displaysview::wheel(self, pos.x, pos.y, discrete, frame.axis.1);
+            return true;
+        }
+        if let Hit::Dialog { index, button } = &hit
+            && self.dialog_wheel(*index, *button, frame.v120.map_or(0, |v| v.1), frame.axis.1)
+        {
+            return true;
+        }
+        if matches!(hit, Hit::StartPanel { .. })
+            && self.start_panel_wheel(frame.v120.map_or(0, |v| v.1), frame.axis.1)
+        {
+            return true;
+        }
+        if self.wheels_desktops(&hit) {
+            self.desktop_wheel(frame.v120.map_or(0, |v| v.1), frame.axis.1);
+            return true;
+        }
+        false
     }
 }
 
