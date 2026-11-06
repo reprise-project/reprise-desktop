@@ -71,41 +71,11 @@ contexts are matched. A listed app can read everything you copy. See
 
 One more global, `reprise_input_v1`, carries remote control, input capture,
 global shortcuts, the list of sandboxed apps with a window, the colour
-picker and lock mode between the compositor and the portal. Reprise offers it only to a client whose process
+picker and, from version 9, lock mode ([Lock mode](#lock-mode)) between the
+compositor and the portal. Reprise offers it only to a client whose process
 runs `reprise-portal` from `/usr/bin` or `/usr/local/bin`. That keeps other
 clients from binding it directly; it is no boundary against code running as
 you.
-
-Lock mode (`lock_screen`, version 9) is how the portal hands the remote
-desktop server screens of its own: the compositor makes one virtual screen
-per monitor of the client's layout and locks the session if it isn't
-locked. The lock stays when lock mode ends. Unlocking at the computer, by
-password, fingerprint or logind's `Unlock`, ends lock mode: each object hears
-`ended(console_unlocked)`, every remote desktop session's input, the
-server's and any other the portal let in, is cut off at once (its libei
-connection is closed and its keys object goes inert), and
-the windows come back to the computer's own screens. With `[power] locker`
-set, or
-while a locker client holds the lock, lock mode is unavailable: the object
-ends at once and nothing is made. A locker client that takes the lock during
-lock mode ends it.
-
-The virtual screens lock on their own: after `lock_after` of remote
-idleness, from Start > Lock or the lock key on the remote side, and with
-logind's `Lock`, which locks both sides. Their Unlock dialog takes only remote
-input, and its password unlocks only the virtual screens; the computer's own
-screens stay locked. The remote side's lock
-goes when lock mode ends, while the computer's stays.
-
-The virtual screens' Unlock dialog checks its password as a Remote Desktop
-login does, under the `reprise-rdp` service (see
-[Remote Desktop](#remote-desktop)), never the lock screen's `reprise`. Wrong
-passwords typed on the remote side never reach pam_faillock or the
-fingerprint reader, so they can't lock the account at the computer. The
-dialog backs off after failures like a login from one address: the first
-three are free, the fourth starts a 2 s wait that doubles with each further
-failure up to 60 s, and a success or 20 minutes without a failure clears
-them. During the wait the dialog refuses to check and says how long is left.
 
 Reprise's remote desktop server starts its sessions without the permission
 dialog, since nobody may be at the screen to answer it. Turning Remote
@@ -114,10 +84,12 @@ the app id `org.reprise.RemoteDesktop`, only while the user unit
 `app-org.reprise.RemoteDesktop.service` is enabled and active, and only when
 that unit's main process runs `reprise-rdp` from `/usr/bin` or
 `/usr/local/bin` and is the process that asked. A sandboxed app's requests
-reach the portal through its bus proxy, so they never pass. Such a session gets the keyboard, the pointer and
-every screen whose top left lies at a non-negative position in the layout,
-or every screen when none does, and leaves no restore token behind.
-As with `reprise_input_v1`, this is no boundary against code running as you.
+reach the portal through its bus proxy, so they never pass. Such a session
+gets the keyboard, the pointer and every screen whose top left lies at a
+non-negative position in the layout, or every screen when none does, and
+leaves no restore token behind. In lock mode it gets the screens made for
+the client instead. As with `reprise_input_v1`, this is no boundary against
+code running as you.
 
 ## X11 programs
 
@@ -169,7 +141,8 @@ focus is refused as with the dialog, and the locker draws on top and does
 its own PAM check. The fingerprint helper doesn't run under a locker, which
 may claim the reader itself. If the locker crashes the session stays locked
 and the dialog comes back. A locker may take over a lock that has none, the
-dialog's or a crashed locker's, and unlock it.
+dialog's or a crashed locker's, and unlock it. A locker whose lock has ended
+can't unlock a lock taken after it.
 
 When the lock can't check a password at all (no login name, a broken PAM
 stack), switch to another VT, log in, and run `loginctl unlock-session`.
@@ -234,30 +207,32 @@ client has gone silent within about 30 s.
 
 Nothing is captured while no client is logged in: the portal session that
 shares the screen and takes input opens after the login and closes when the
-client leaves. The portal starts it without asking, as described under
-[The Wayland socket](#the-wayland-socket); turning Remote Desktop on is the
-consent. While it runs, the screen-sharing dot shows, this computer's
-screen keeps showing the session, and its own keyboard and mouse keep
-working, so someone at the computer sees and can take part in what the
-client does. When a logged-in client leaves, its held keys and buttons are
-let go; when it was the last one shown the session, the session then locks
-through logind, so the computer is not left open. When it left because the
-screen it showed went away, a monitor switched on a KVM say, the lock waits
-`[remote_desktop] lock_grace_s` seconds (5 unless set, at most 60) for a
-client to reconnect: one shown the session by then keeps it unlocked, from
-whichever address, since it logged in again. Until then the session stays
-unlocked, on a monitor that just came back too; `lock_grace_s = 0` locks at
-once. Every other leave, a client
-closing, Disconnect, a dropped network, locks without waiting. A client that
-logged in but never got the picture and input (with no screen to share,
-say) leaves the session as it was. Stopping the server, as turning Remote
-Desktop off does, locks the session before a shown client's connection
-closes, and at once while the lock waits for a reconnect; each client is
-then told the server ended it, so it doesn't reconnect. A server
-that dies with a client shown the session locks it when it next starts.
-`[remote_desktop] lock_on_leave = false` turns these locks off: a client
-shown the session with it off doesn't lock on a stop or the next start, and
-the last to leave doesn't lock while it is off.
+client leaves. The portal starts it without asking, as described under [The
+Wayland socket](#the-wayland-socket); turning Remote Desktop on is the
+consent. While it runs, the screen-sharing dot shows. In show mode this
+computer's screen keeps showing the session, and its own keyboard and mouse
+keep working, so someone at the computer sees and can take part in what the
+client does; in lock mode it shows the lock ([Lock mode](#lock-mode)). When
+a logged-in client leaves, its held keys and buttons are let go; when it was
+the last one shown the session, the session then locks through logind, so
+the computer is not left open. When it left because the screen it showed
+went away, a monitor switched on a KVM say, the lock waits `[remote_desktop]
+lock_grace_s` seconds (5 unless set, at most 60) for a client to reconnect:
+one shown the session by then keeps it unlocked, from whichever address,
+since it logged in again. Until then the session stays unlocked, on a
+monitor that just came back too; `lock_grace_s = 0` locks at once. Every
+other leave, a client closing, Disconnect, a dropped network, locks without
+waiting. A client that logged in but never got the picture and input (with
+no screen to share, say) leaves the session as it was. Stopping the server,
+as turning Remote Desktop off does, locks the session before a shown
+client's connection closes, and at once while the lock waits for a
+reconnect; each client is then told the server ended it, so it doesn't
+reconnect. A server that dies with a client shown the session locks it when
+it next starts. `[remote_desktop] lock_on_leave = false` turns these locks
+off: a client shown the session with it off doesn't lock on a stop or the
+next start, and the last to leave doesn't lock while it is off. None of
+these locks follow a lock-mode connection, as the session stayed locked here
+all through it.
 
 The client shares the clipboard only while it is shown the session.
 `reprise-rdp` opens its data control connection once the client's clipboard
@@ -269,6 +244,71 @@ reads them. With `[clipboard] history` on, Reprise reads every new copy for
 the history, so a client's text or picture crosses as soon as it is copied.
 Text and pictures cross, files and the primary selection don't. Text over
 16 MiB and pictures over 64 MiB are refused, measured on the wire.
+
+### Lock mode
+
+With `[remote_desktop] laptop_screen = "lock"`, the default, the first
+client shown the session starts lock mode, and it lasts until the last one
+goes. With `[power] locker` set, the server runs every connection in show
+mode instead.
+
+For each session it starts without a dialog for the server, the portal reads
+the `ConsoleLayout` property of `org.reprise.RemoteDesktop`, only when that
+name's owner is the process that started the session, and passes the
+client's monitors to the compositor through `reprise_input_v1`'s
+`lock_screen` (version 9). The compositor makes one virtual screen per
+monitor of the first object's layout, in a block to the right of the
+computer's own screens. Only that object's later layouts resize them, until
+the last object goes. A layout with no monitor, more than 16, a side outside
+200 to 8192 pixels or a corner more than 131072 pixels from the origin is
+ignored. The portal casts these screens alone and marks their streams
+virtual (`source_type` 4); every other stream, the standby screen's
+included, stays a monitor. A change in the number of monitors closes the
+session.
+
+As lock mode starts, the compositor locks the session if it isn't locked.
+This is the session lock as at any other time: logind's LockedHint is true
+and every one of the computer's own screens is covered. The computer's
+keyboard and pointer reach only the Unlock dialog on those screens, besides
+the keys that act at any lock screen. Its keys are read through a keyboard
+state of their own, so no key or modifier held at the computer reaches a
+window. The virtual screens have no cover and take only the client's input.
+
+The virtual screens lock on their own: after `lock_after` of remote
+idleness, from Start > Lock or the lock key on the remote side, and with
+logind's `Lock`, which locks both sides. Their Unlock dialog takes only
+remote input, and its password unlocks only the virtual screens; the
+computer's own screens stay locked. The remote side's lock goes when lock
+mode ends, while the computer's stays.
+
+The virtual screens' Unlock dialog checks its password as a Remote Desktop
+login does, under the `reprise-rdp` service, never the lock screen's
+`reprise`. Wrong passwords typed on the remote side never reach pam_faillock
+or the fingerprint reader, so they can't lock the account at the computer.
+The dialog backs off after failures like a login from one address: the first
+three are free, the fourth starts a 2 s wait that doubles with each further
+failure up to 60 s, and a success or 20 minutes without a failure clears
+them. During the wait the dialog refuses to check and says how long is left.
+
+Unlocking at the computer, by password, fingerprint or logind's `Unlock`,
+ends lock mode: each object hears `ended(console_unlocked)`, every libei
+sender, the server's and any other the portal let in, is cut off at once
+(its libei connection is closed and its keys object goes inert), the portal
+closes those sessions, and the windows come back to the computer's own
+screens. While a locker client holds the lock, the object hears
+`ended(replaced)` and nothing is made, and a locker client that takes the
+lock during lock mode ends it the same way. With `[power] locker` set, the
+object hears `ended(unavailable)`. Lock mode ending any other way leaves the
+session locked.
+
+The server never locks on leave after a lock-mode connection, since the
+session stayed locked here all through it. A connection counts as one only
+when the server ran it as lock mode, having read `laptop_screen = "lock"`
+and no locker when its run's first client was shown the session, and the
+portal marked every stream it granted virtual. One whose portal session fell
+back to the computer's own screens (a compositor without version 9, a
+refused `lock_screen`, no screens within 2 s) locks on leave as in show
+mode.
 
 ## Keyboard shortcuts
 
