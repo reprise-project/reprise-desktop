@@ -3,6 +3,10 @@
 
 use ironrdp_pdu::gcc::{MONITOR_COUNT_MAX, Monitor, MonitorFlags};
 
+/// The smallest and largest desktop side a client is offered: the acceptor's own bounds, inside
+/// ResetGraphics' 32766.
+const DESKTOP_SIDES: std::ops::RangeInclusive<u16> = 200..=8192;
+
 /// A shared screen: its place in the session's logical layout and its stream size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScreenRect {
@@ -287,6 +291,9 @@ fn usable(client: &[Monitor]) -> Result<ClientDesktop, &'static str> {
     let (Some(w), Some(h)) = (side(left, right), side(top, bottom)) else {
         return Err("the monitors span more than 65535 pixels");
     };
+    if !DESKTOP_SIDES.contains(&w) || !DESKTOP_SIDES.contains(&h) {
+        return Err("the monitors span less than 200 or more than 8192 pixels");
+    }
     let moved = client
         .iter()
         .map(|m| Monitor {
@@ -484,6 +491,24 @@ mod tests {
             ]
         );
         assert_eq!(targets(&layout), vec![(0, rect(1920, 0, 1920, 1080))]);
+    }
+
+    #[test]
+    fn a_client_box_the_acceptor_would_refuse_is_whole() {
+        let screens = [screen(0, 0, 1920, 1080), screen(1920, 0, 1280, 1024)];
+        let five_wide: Vec<Monitor> = (0..5)
+            .map(|i| monitor(i * 1920, 0, i * 1920 + 1919, 1079, i == 0))
+            .collect();
+        let short = [monitor(0, 0, 99, 99, true), monitor(100, 0, 199, 99, false)];
+        let widest: Vec<Monitor> = (0..4)
+            .map(|i| monitor(i * 2048, 0, i * 2048 + 2047, 1151, i == 0))
+            .collect();
+        for client in [&five_wide[..], &short] {
+            let layout = Layout::new(&screens, client);
+            assert_eq!(layout.kind, Kind::Whole, "{client:?} span past 200..=8192");
+            assert_eq!(client_desktop(client), None);
+        }
+        assert_eq!(client_desktop(&widest), Some((8192, 1152)));
     }
 
     #[test]
