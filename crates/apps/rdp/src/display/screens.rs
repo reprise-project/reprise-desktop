@@ -1,7 +1,7 @@
 //! The screens of one connection: their Lives, the layout and pointer they share, and their end.
 
 use super::Live;
-use crate::layout::{Desk, ScreenRect, SharedDesk};
+use crate::layout::{Desk, Pairing, ScreenRect, SharedDesk};
 use crate::listen::Ending;
 use crate::stream::CursorImage;
 use ironrdp_server::DisplayUpdate;
@@ -92,6 +92,13 @@ impl Joint {
         }
     }
 
+    /// The client's monitors are `client` now; the screens lay out again when that moved them.
+    pub(super) fn set_client(&self, client: &[ironrdp_pdu::gcc::Monitor]) {
+        if self.desk.lock().unwrap().set_client(client) {
+            self.relaid.send_modify(|n| *n += 1);
+        }
+    }
+
     /// One screen that has not streamed yet, and no client monitors.
     pub(super) fn alone() -> Joint {
         let unknown = ScreenRect {
@@ -99,7 +106,7 @@ impl Joint {
             logical: (0, 0),
             pixels: (0, 0),
         };
-        Joint::new(Desk::new(vec![unknown], &[]))
+        Joint::new(Desk::new(vec![unknown], &[], Pairing::ByPlace))
     }
 }
 
@@ -111,6 +118,7 @@ mod tests {
     };
     use crate::display::*;
     use crate::stream::Rect;
+    use futures_util::FutureExt;
     use tokio::sync::mpsc::unbounded_channel;
 
     /// Codes an empty access unit over its whole target, noting each frame's backend and target.
@@ -177,7 +185,7 @@ mod tests {
         gfx: Option<(&Gfx, &[Backend])>,
         switch: impl Fn(usize) -> S,
     ) -> Screens {
-        let joint = Joint::new(Desk::new(screens.to_vec(), client));
+        let joint = Joint::new(Desk::new(screens.to_vec(), client, Pairing::InOrder));
         let told = Told::new(Arc::new(Mutex::new(DesktopSize {
             width: told.0,
             height: told.1,
@@ -483,6 +491,29 @@ mod tests {
             live.busy,
             "the frame goes as H.264 once the pipeline is open"
         );
+    }
+
+    #[tokio::test]
+    async fn new_client_monitors_resize_the_client_to_the_desktop_they_span() {
+        let mut c = screens(
+            &[screen(0, 0, 400, 200), screen(400, 0, 400, 200)],
+            &two_monitors(),
+            (1200, 400),
+            None,
+            |_| Switch::bitmaps,
+        );
+        let mut resized = two_monitors();
+        resized[1].right = 1399;
+        c.joint.set_client(&resized);
+        let next = tokio::time::timeout(Duration::from_secs(5), c.lives[0].next());
+        assert!(matches!(
+            next.await.expect("an update"),
+            Some(DisplayUpdate::Resize(DesktopSize {
+                width: 1400,
+                height: 400
+            }))
+        ));
+        assert!(c.lives[1].next().now_or_never().is_none(), "told once");
     }
 
     #[tokio::test]

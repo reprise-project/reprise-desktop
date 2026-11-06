@@ -3,6 +3,7 @@
 
 use crate::control::Status;
 use ironrdp_displaycontrol::pdu::{DisplayControlCapabilities, DisplayControlMonitorLayout};
+use ironrdp_pdu::gcc;
 use repriseconf::remote::{LaptopScreen, RemoteDesktop};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -90,11 +91,14 @@ impl Console {
         });
     }
 
-    fn publish_as(&self, id: u64, layout: Vec<Monitor>) {
+    /// True if `id` owns the run, so `layout` was published.
+    fn publish_as(&self, id: u64, layout: Vec<Monitor>) -> bool {
         let run = self.0.run.lock().unwrap();
-        if run.owner == Some(id) {
+        let owner = run.owner == Some(id);
+        if owner {
             self.publish(layout);
         }
+        owner
     }
 }
 
@@ -111,8 +115,12 @@ impl Joined {
     }
 
     /// Publishes the last of each burst of `layouts` once none came for [`SETTLE`], while this
-    /// viewer's layout is the published one. Ends with the channel.
-    pub fn follow(&self, mut layouts: mpsc::UnboundedReceiver<Vec<Monitor>>) {
+    /// viewer's layout is the published one, and passes each to `published`. Ends with the channel.
+    pub fn follow(
+        &self,
+        mut layouts: mpsc::UnboundedReceiver<Vec<Monitor>>,
+        published: impl Fn(&[Monitor]) + Send + 'static,
+    ) {
         if self.console.0.run.lock().unwrap().owner != Some(self.id) {
             return;
         }
@@ -126,7 +134,9 @@ impl Joined {
                         Err(_) => break,
                     }
                 }
-                console.publish_as(id, last);
+                if console.publish_as(id, last.clone()) {
+                    published(&last);
+                }
             }
         });
     }
@@ -143,6 +153,22 @@ impl Drop for Joined {
             self.console.publish(Vec::new());
         }
     }
+}
+
+/// `layout` as Client Monitor Data gives it, the first monitor primary.
+pub fn client_monitors(layout: &[Monitor]) -> Vec<gcc::Monitor> {
+    (layout.iter().enumerate())
+        .map(|(i, &(x, y, w, h, _))| gcc::Monitor {
+            left: x,
+            top: y,
+            right: x.saturating_add(w - 1),
+            bottom: y.saturating_add(h - 1),
+            flags: match i {
+                0 => gcc::MonitorFlags::PRIMARY,
+                _ => gcc::MonitorFlags::empty(),
+            },
+        })
+        .collect()
 }
 
 /// The area each offered monitor may have, as MS-RDPEDISP's MaxMonitorAreaFactorA and B, as
@@ -273,7 +299,9 @@ pub(crate) mod tests {
         let (console, _config, status) = configured(LaptopScreen::Lock, false);
         let first = console.join(FIRST.to_vec());
         let (layouts, rx) = mpsc::unbounded_channel();
-        first.follow(rx);
+        let passed = Arc::new(Mutex::new(Vec::new()));
+        let to = passed.clone();
+        first.follow(rx, move |l| to.lock().unwrap().push(l.to_vec()));
         layouts.send(SECOND.to_vec()).unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         let last = vec![(0, 0, 1440, 900, 100)];
@@ -290,6 +318,7 @@ pub(crate) mod tests {
             last,
             "the burst's last layout, 250 ms after it"
         );
+        assert_eq!(*passed.lock().unwrap(), [last], "and it alone is passed on");
     }
 
     #[tokio::test(start_paused = true)]
@@ -300,7 +329,7 @@ pub(crate) mod tests {
         assert!(later.lock(), "a later viewer runs in its run's mode");
         assert_eq!(published(&status), FIRST, "its monitors are not published");
         let (layouts, rx) = mpsc::unbounded_channel();
-        later.follow(rx);
+        later.follow(rx, |_| panic!("a later viewer's layout is not passed on"));
         let _ = layouts.send(SECOND.to_vec());
         tokio::time::sleep(SETTLE * 2).await;
         assert_eq!(
@@ -324,7 +353,7 @@ pub(crate) mod tests {
         let first = console.join(FIRST.to_vec());
         let later = console.join(SECOND.to_vec());
         let (layouts, rx) = mpsc::unbounded_channel();
-        first.follow(rx);
+        first.follow(rx, |_| {});
         layouts.send(SECOND.to_vec()).unwrap();
         drop(first);
         tokio::time::sleep(SETTLE * 2).await;
@@ -337,7 +366,7 @@ pub(crate) mod tests {
 
         let first = console.join(FIRST.to_vec());
         let (layouts, rx) = mpsc::unbounded_channel();
-        first.follow(rx);
+        first.follow(rx, |_| {});
         layouts.send(SECOND.to_vec()).unwrap();
         drop(first);
         tokio::time::sleep(SETTLE * 2).await;
@@ -356,6 +385,30 @@ pub(crate) mod tests {
         assert!(!console.would_own(), "with no run, as configured");
         assert!(!console.join(SECOND.to_vec()).lock());
         assert!(published(&status).is_empty());
+    }
+
+    #[test]
+    fn a_published_layout_gives_client_monitors_with_the_first_primary() {
+        use gcc::MonitorFlags;
+        assert_eq!(
+            client_monitors(&[(0, 0, 1280, 720, 100), (-1024, 0, 1024, 768, 150)]),
+            [
+                gcc::Monitor {
+                    left: 0,
+                    top: 0,
+                    right: 1279,
+                    bottom: 719,
+                    flags: MonitorFlags::PRIMARY,
+                },
+                gcc::Monitor {
+                    left: -1024,
+                    top: 0,
+                    right: -1,
+                    bottom: 767,
+                    flags: MonitorFlags::empty(),
+                },
+            ]
+        );
     }
 
     #[test]
