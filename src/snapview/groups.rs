@@ -558,6 +558,31 @@ impl Snapping {
         self.move_undo = self.move_undo.take().filter(|u| u.window != w);
     }
 
+    /// The output `w`'s group is on.
+    pub fn group_output(&self, w: WindowId) -> Option<&str> {
+        self.group_index(w).map(|i| self.groups[i].output.as_str())
+    }
+
+    /// `w`'s group moves to `output` with its zones and the active layout it holds there;
+    /// `refit` lays its zones out on `output`'s area.
+    pub fn move_group(&mut self, w: WindowId, output: &str) {
+        let Some(i) = self.group_index(w) else {
+            return;
+        };
+        let g = &mut self.groups[i];
+        let from = (
+            std::mem::replace(&mut g.output, output.to_string()),
+            g.desktop,
+        );
+        let layout = g.layout.clone();
+        if let Some(a) = (self.active.get(&from))
+            .filter(|a| a.layout == layout)
+            .cloned()
+        {
+            self.active.entry((output.to_string(), from.1)).or_insert(a);
+        }
+    }
+
     pub fn outputs_gone(&mut self, live: &[String]) {
         self.active.retain(|(o, _), _| live.contains(o));
     }

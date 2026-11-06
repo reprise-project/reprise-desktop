@@ -99,6 +99,7 @@ impl State {
             saved: None,
             saved_fullscreen: None,
             snapped: None,
+            home: None,
             last_frame: None,
             resize_anchor: None,
             size_serial: None,
@@ -387,7 +388,7 @@ impl State {
             }
         };
         // An X11 client that placed itself away from the origin keeps that place unless a rule
-        // places it.
+        // places it, or lock mode finds it off the Remote outputs.
         if position.is_none()
             && remap.is_none()
             && let Some(at) = x11_at
@@ -400,7 +401,9 @@ impl State {
                 total.1,
             );
             let frame = self.caption_clear(frame);
-            (x, y) = (frame.x, frame.y);
+            if !crate::console::remote_side(self) || self.centre_on_an_output(frame) {
+                (x, y) = (frame.x, frame.y);
+            }
         }
         let desktops = self.desktops.count;
         if let Some(win) = self.win_mut(w) {

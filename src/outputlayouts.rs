@@ -170,8 +170,9 @@ impl State {
             return;
         }
         let ids = ids_of(&heads);
-        let primary = self.first_output();
+        let primary = self.console_primary();
         let shown: Vec<_> = (self.scene.outputs().iter())
+            .filter(|o| !crate::virtualout::is_remote(o))
             .filter_map(reprisescene::output_rect)
             .collect();
         let right = (shown.iter())

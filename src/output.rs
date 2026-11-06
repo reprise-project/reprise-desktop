@@ -707,6 +707,7 @@ impl State {
 
     /// Windows keep their place on an output that moved in the layout (an arrangement change, or
     /// an output left of it growing): each moves by its output's move, restore boxes included.
+    /// Windows on a Remote output keep their relative place on it (`homes::refit_remote`).
     fn carry_windows(&mut self, before: &[(Output, Rect)], after: &[(Output, Rect)]) {
         let windows: Vec<(WindowId, Rect)> = self
             .windows
@@ -715,7 +716,10 @@ impl State {
             .map(|w| (w.id, w.frame_rect()))
             .collect();
         let frames: Vec<Rect> = windows.iter().map(|w| w.1).collect();
-        let moves = carried(&frames, before, after);
+        let (remote, physical): (Vec<_>, Vec<_>) =
+            (before.iter().cloned()).partition(|(o, _)| crate::virtualout::is_remote(o));
+        let moves = carried(&frames, &physical, after);
+        crate::console::homes::refit_remote(self, &remote, after);
         for ((w, r), d) in windows.into_iter().zip(moves) {
             let Some((dx, dy)) = d else {
                 continue;
@@ -735,19 +739,27 @@ impl State {
         }
     }
 
-    /// Centre every ordinary window whose frame centre is on no output on
-    /// the output under the pointer. Maximized and fullscreen windows are
-    /// `refit_maximized`'s.
+    /// Centre each ordinary window with neither frame centre nor origin on an output (its size lags
+    /// until the client commits) on the pointer's output. Lock mode counts Remote outputs only.
     pub fn rescue_offscreen(&mut self) {
         let pos = self.pointer_location();
-        let Some(target) = self.output_at(pos.x, pos.y) else {
+        let pointed = self.output_at(pos.x, pos.y);
+        let target = if crate::console::remote_side(self) {
+            (pointed.filter(crate::virtualout::is_remote)).or_else(|| self.first_output())
+        } else {
+            pointed
+        };
+        let Some(target) = target else {
             return;
         };
         let lost: Vec<WindowId> = self
             .windows
             .iter()
             .filter(|w| w.mapped && !w.maximized && !w.fullscreen && !w.override_redirect)
-            .filter(|w| !self.centre_on_an_output(w.frame_rect()))
+            .filter(|w| {
+                let r = w.frame_rect();
+                !self.centre_on_an_output(r) && !self.on_an_output(r.x, r.y)
+            })
             .map(|w| w.id)
             .collect();
         for w in lost {
@@ -755,10 +767,16 @@ impl State {
         }
     }
 
-    /// Whether the centre of `r` lies on an output.
+    /// Whether the centre of `r` lies on an output; in lock mode, on a Remote output.
     pub fn centre_on_an_output(&self, r: Rect) -> bool {
-        let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
-        (self.scene.outputs().iter()).any(|o| self.layout_box(Some(o)).contains(cx, cy))
+        self.on_an_output(r.x + r.width / 2, r.y + r.height / 2)
+    }
+
+    fn on_an_output(&self, x: i32, y: i32) -> bool {
+        let remote = crate::console::remote_side(self);
+        (self.scene.outputs().iter())
+            .filter(|o| !remote || crate::virtualout::is_remote(o))
+            .any(|o| self.layout_box(Some(o)).contains(x, y))
     }
 
     /// Box of one output in layout coordinates, or of the whole layout for None.

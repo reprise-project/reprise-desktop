@@ -252,7 +252,8 @@ impl State {
         want
     }
 
-    /// The output `want` names, by connector or monitor id, else the one under the pointer.
+    /// The output `want` names, by connector or monitor id, else the one under the pointer. In
+    /// lock mode only a Remote output, else the remote primary.
     pub fn placement_output(&self, want: Option<&Want>) -> Option<Output> {
         let named = want.and_then(|w| w.output.as_deref()).and_then(|name| {
             (self.scene.outputs().iter())
@@ -260,10 +261,15 @@ impl State {
                 .cloned()
                 .or_else(|| self.output_of_monitor(name))
         });
-        named.or_else(|| {
-            let p = self.pointer_location();
-            self.output_at(p.x, p.y)
-        })
+        let p = self.pointer_location();
+        let found = named.or_else(|| self.output_at(p.x, p.y));
+        if !crate::console::remote_side(self) {
+            return found;
+        }
+        let pointed = self.output_at(p.x, p.y);
+        (found.into_iter().chain(pointed))
+            .find(crate::virtualout::is_remote)
+            .or_else(|| self.first_output())
     }
 
     /// Runs before an xdg toplevel's initial configure, and again while unmapped
@@ -467,8 +473,12 @@ impl State {
         crate::configwrite::save_open_here(&self.config_path, app, rule);
     }
 
-    /// Keep where `w` is (`frame_of`) as its app's remembered frame.
+    /// Keep where `w` is (`frame_of`) as its app's remembered frame; nothing in lock mode, where
+    /// it is on a Remote output.
     pub fn remember_window(&mut self, w: WindowId, last_only: bool) {
+        if crate::console::remote_side(self) {
+            return;
+        }
         let Some(win) = self.win(w) else {
             return;
         };

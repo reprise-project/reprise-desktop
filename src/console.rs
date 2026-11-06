@@ -164,10 +164,12 @@ fn leave(state: &mut State) {
 /// The Remote outputs are laid out and the console is locked.
 fn on_begin(state: &mut State) {
     state.console.owner = Owner::Remote;
+    homes::send_all(state);
 }
 
 /// Lock mode ends; the Remote outputs go after this.
 fn on_end(state: &mut State) {
+    homes::bring_back(state);
     state.console.owner = Owner::Console;
 }
 
@@ -275,6 +277,8 @@ fn axis(
 fn wide((a, b, c, d): (i32, i32, i32, i32)) -> (i64, i64, i64, i64) {
     (a.into(), b.into(), c.into(), d.into())
 }
+
+pub mod homes;
 
 #[cfg(test)]
 pub(crate) mod tests;
