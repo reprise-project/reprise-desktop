@@ -14,6 +14,8 @@ mod gfx;
 mod input;
 mod intake;
 mod keymap;
+#[cfg_attr(not(test), expect(dead_code))]
+mod layout;
 mod listen;
 mod lock;
 mod portal;
