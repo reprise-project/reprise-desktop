@@ -1,6 +1,7 @@
 //! The client's picture: frames as H.264 on the graphics pipeline or as bitmaps, the pointer as
 //! pointer updates. The portal session opens on the first activation after the login.
 
+use crate::client::ClientLayout;
 use crate::control::Status;
 use crate::encode::choice;
 use crate::encode::ffmpeg::Ffmpeg;
@@ -63,6 +64,12 @@ impl Told {
     fn set(&self, size: DesktopSize) {
         *self.size.lock().unwrap() = size;
         *self.last.lock().unwrap() = size;
+    }
+
+    /// The desktop a client was offered for its monitors; the next connection still starts at
+    /// `last`.
+    fn offered(&self, size: DesktopSize) {
+        *self.size.lock().unwrap() = size;
     }
 }
 
@@ -146,10 +153,15 @@ pub struct Display {
     /// Until the portal session is granted.
     shown: Option<Shown>,
     ending: Ending,
+    client: ClientLayout,
 }
 
 impl Display {
     /// A connection that starts at `last`, the size last told on any connection.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each is a link the connection's display keeps"
+    )]
     pub fn new(
         last: ToldSize,
         input: Feed,
@@ -158,6 +170,7 @@ impl Display {
         links: Links,
         shown: Shown,
         ending: Ending,
+        client: ClientLayout,
     ) -> Display {
         Display {
             told: Told::new(last),
@@ -170,6 +183,7 @@ impl Display {
             input: Some(input),
             shown: Some(shown),
             ending,
+            client,
         }
     }
 }
@@ -183,6 +197,21 @@ struct Session {
 impl RdpServerDisplay for Display {
     async fn size(&mut self) -> DesktopSize {
         self.told.get()
+    }
+
+    /// Runs on every activation: the first was offered the desktop the client's monitors span,
+    /// a later one the size of the last resize.
+    async fn request_initial_size(&mut self, client_size: DesktopSize) -> DesktopSize {
+        let confirmed = (client_size.width, client_size.height);
+        if self.client.desktop() == Some(confirmed) {
+            self.told.offered(client_size);
+        }
+        self.told.get()
+    }
+
+    /// The shared screens keep their size whatever layout a client asks for.
+    async fn offers_display_control(&mut self) -> bool {
+        false
     }
 
     async fn updates(
@@ -1032,6 +1061,68 @@ mod tests {
         width: 1,
         height: 1,
     };
+
+    /// A connection's display, started at [`UNSHARED`], whose client connected as `client`.
+    fn display(client: ClientLayout) -> Display {
+        let (_, feed) = input::Input::new(Default::default());
+        Display::new(
+            Arc::new(Mutex::new(UNSHARED)),
+            feed,
+            watch::channel(None).1,
+            None,
+            links().0,
+            Shown::default(),
+            Ending::default(),
+            client,
+        )
+    }
+
+    #[tokio::test]
+    async fn display_control_is_not_offered() {
+        assert!(
+            !display(ClientLayout::default())
+                .offers_display_control()
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn a_client_with_two_monitors_is_told_the_desktop_they_span() {
+        let mut display = display(crate::client::connected(crate::client::two_monitors()));
+        let span = DesktopSize {
+            width: 4480,
+            height: 1440,
+        };
+        assert_eq!(display.request_initial_size(span).await, span);
+        assert_eq!(display.size().await, span);
+    }
+
+    #[tokio::test]
+    async fn a_client_resized_from_the_desktop_its_monitors_span_keeps_the_new_size() {
+        let mut display = display(crate::client::connected(crate::client::two_monitors()));
+        let span = DesktopSize {
+            width: 4480,
+            height: 1440,
+        };
+        display.request_initial_size(span).await;
+        let resized = DesktopSize {
+            width: 1920,
+            height: 1200,
+        };
+        display.told.set(resized);
+        assert_eq!(display.request_initial_size(resized).await, resized);
+    }
+
+    #[tokio::test]
+    async fn a_whole_client_is_told_the_last_size() {
+        let one = crate::client::two_monitors()[..1].to_vec();
+        let mut display = display(crate::client::connected(one));
+        let asked = DesktopSize {
+            width: 2560,
+            height: 1440,
+        };
+        assert_eq!(display.request_initial_size(asked).await, UNSHARED);
+    }
 
     #[tokio::test]
     async fn an_activation_repaints_the_last_frame() {
