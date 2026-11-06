@@ -106,18 +106,36 @@ impl Default for RemoteDesktop {
     }
 }
 
-/// `[remote_desktop]`, read now. An unreadable file or section gives the defaults; the keys that
-/// fell back are logged in one warning.
+/// `[remote_desktop]`, read now. A missing, unreadable or non-TOML file gives the defaults; the
+/// keys that fell back are logged in one warning.
 pub fn remote_desktop() -> RemoteDesktop {
-    let path = crate::config_path();
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    let table = match toml::from_str::<toml::Table>(&text) {
-        Ok(t) => t,
-        Err(e) => {
-            log::warn!("{}: {e}; remote desktop uses its defaults", path.display());
-            return RemoteDesktop::default();
-        }
+    read_file(&crate::config_path()).unwrap_or_else(|e| {
+        log::warn!("{e}; remote desktop uses its defaults");
+        RemoteDesktop::default()
+    })
+}
+
+/// `[remote_desktop]` read again after the file changed. A file that cannot be read or is not
+/// TOML keeps `previous`; a missing one gives the defaults.
+pub fn reread_remote_desktop(previous: RemoteDesktop) -> RemoteDesktop {
+    reread(&crate::config_path(), previous)
+}
+
+fn reread(path: &std::path::Path, previous: RemoteDesktop) -> RemoteDesktop {
+    read_file(path).unwrap_or_else(|e| {
+        log::warn!("{e}; remote desktop keeps its settings");
+        previous
+    })
+}
+
+fn read_file(path: &std::path::Path) -> Result<RemoteDesktop, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
     };
+    let table =
+        toml::from_str::<toml::Table>(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     let (rd, bad) = match table.get("remote_desktop") {
         None => (RemoteDesktop::default(), Vec::new()),
         Some(toml::Value::Table(t)) => read(t),
@@ -130,7 +148,7 @@ pub fn remote_desktop() -> RemoteDesktop {
             bad.join(", ")
         );
     }
-    rd
+    Ok(rd)
 }
 
 /// The `[remote_desktop]` table's settings, each invalid key at its default.
@@ -236,6 +254,61 @@ mod tests {
                 false
             )
         );
+    }
+
+    /// A fresh directory for `tag`'s config file.
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("repriseconf-remote-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn on_port(port: u16) -> RemoteDesktop {
+        RemoteDesktop {
+            port,
+            ..RemoteDesktop::default()
+        }
+    }
+
+    #[test]
+    fn a_reread_that_cannot_read_the_file_keeps_the_previous_port() {
+        let dir = scratch("unreadable");
+        let path = dir.join("config.toml");
+        std::fs::write(&path, b"[remote_desktop]\nport = 4000\n\xff\n").unwrap();
+        assert_eq!(reread(&path, on_port(4000)).port, 4000, "invalid UTF-8");
+        std::fs::write(&path, "[remote_desktop]\nport = 4001\n").unwrap();
+        assert_eq!(
+            reread(&path, on_port(4000)).port,
+            4001,
+            "a good file is read"
+        );
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert_eq!(
+            reread(&path, on_port(4000)).port,
+            4000,
+            "a directory in its place"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_reread_of_a_file_that_is_not_toml_keeps_the_previous_settings() {
+        let dir = scratch("not-toml");
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "[remote_desktop]\nport = \n").unwrap();
+        assert_eq!(reread(&path, on_port(4000)), on_port(4000));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_reread_of_a_missing_file_gives_the_defaults() {
+        let dir = scratch("missing");
+        let path = dir.join("config.toml");
+        assert_eq!(reread(&path, on_port(4000)), RemoteDesktop::default());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

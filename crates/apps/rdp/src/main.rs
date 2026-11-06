@@ -167,7 +167,7 @@ fn follow_config(
     };
     tokio::task::spawn_local(async move {
         while woken.recv().await.is_some() {
-            let new = repriseconf::remote::remote_desktop();
+            let new = repriseconf::remote::reread_remote_desktop(*config.borrow());
             let old = config.send_replace(new);
             if (old.quality, old.frame_rate) != (new.quality, new.frame_rate) {
                 log::info!(
