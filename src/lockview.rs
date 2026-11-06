@@ -44,6 +44,8 @@ pub struct LockScreen {
     pub console: Option<Lock>,
     /// Lock mode's lock on the Remote outputs: the remote side's own dialog and password check.
     pub remote: Option<Lock>,
+    /// The remote side's failed checks; it outlives each remote lock.
+    pub remote_backoff: lock::Backoff,
     pub helpers: Helpers,
 }
 
@@ -53,6 +55,7 @@ impl LockScreen {
             session: SessionLock::new(dh),
             console: None,
             remote: None,
+            remote_backoff: lock::Backoff::default(),
             helpers: Helpers::default(),
         }
     }
@@ -85,7 +88,7 @@ impl LockScreen {
 /// The commands the PAM conversations run, for a user, how long a password check may take, and the
 /// first wait before a failed fingerprint conversation starts again; tests put scripts in their place.
 pub struct Helpers {
-    pub password: fn(&str) -> Command,
+    pub password: fn(&str, lockfinger::PasswordFor) -> Command,
     pub finger: fn(&str) -> Option<Command>,
     pub verify_timeout: Duration,
     pub finger_retry: Duration,
@@ -417,6 +420,9 @@ fn on_result(state: &mut State, side: Side) -> PostAction {
     match verdict {
         Some(Ok(())) => {
             l.state.verifying = false;
+            if side == Side::Remote {
+                state.lock.remote_backoff.succeeded();
+            }
             unlock_side(state, side);
         }
         Some(Err(notices)) => abort_verification(state, side, &lock::failure_text(&notices)),
@@ -1095,7 +1101,20 @@ fn submit(state: &mut State, side: Side) {
         redraw(state);
         return;
     }
-    let command = password_command(&l.user);
+    if side == Side::Remote {
+        let now = Instant::now();
+        let wait = state.lock.remote_backoff.wait(now);
+        if !wait.is_zero() {
+            drop(password);
+            abort_verification(state, side, &lock::backoff_text(wait));
+            return;
+        }
+        state.lock.remote_backoff.failed(now);
+    }
+    let Some(l) = state.lock.on_mut(side) else {
+        return;
+    };
+    let command = password_command(&l.user, password_for(side));
     let helper = match lockfinger::Conversation::start_password(command, password.as_bytes()) {
         Ok(c) => watch(state, c, move |s| on_result(s, side)),
         Err(e) => {
@@ -1118,6 +1137,14 @@ fn submit(state: &mut State, side: Side) {
         }
     }
     redraw(state);
+}
+
+/// The remote side checks under the Remote Desktop PAM service, which has no pam_faillock.
+fn password_for(side: Side) -> lockfinger::PasswordFor {
+    match side {
+        Side::Console => lockfinger::PasswordFor::Unlock,
+        Side::Remote => lockfinger::PasswordFor::RemoteDesktop,
+    }
 }
 
 /// Escape or Cancel under a further prompt drops it: its conversation ends and the field takes a
@@ -1347,7 +1374,7 @@ mod tests {
 
     #[test]
     fn the_restart_flag_is_set_by_a_lock_and_cleared_by_its_unlock() {
-        let mut h = locked(|_| sh("true"));
+        let mut h = locked(|_, _| sh("true"));
         assert!(crate::crash::locked());
         unlock(&mut h.state);
         assert!(!crate::crash::locked());
@@ -1364,7 +1391,7 @@ mod tests {
     }
 
     /// A harness locked behind the dialog, no fingerprint conversation, `password` as the password's.
-    fn locked(password: fn(&str) -> Command) -> crate::harness::Harness {
+    fn locked(password: fn(&str, lockfinger::PasswordFor) -> Command) -> crate::harness::Harness {
         let mut h = crate::harness::Harness::new();
         h.output("TEST-1", 1024, 768);
         h.state.lock.helpers = Helpers {
@@ -1394,7 +1421,7 @@ mod tests {
 
     #[test]
     fn the_password_conversation_unlocks_on_its_success_only() {
-        let mut h = locked(|_| sh(r#"read p; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#));
+        let mut h = locked(|_, _| sh(r#"read p; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#));
         check(&mut h, "hunter1");
         assert!(h.state.console_locked());
         assert_eq!(message(&h).as_deref(), Some(lock::INCORRECT));
@@ -1404,7 +1431,7 @@ mod tests {
 
     #[test]
     fn text_typed_without_a_key_goes_into_the_dialogs_field() {
-        let mut h = locked(|_| sh("read p; echo '= 7'"));
+        let mut h = locked(|_, _| sh("read p; echo '= 7'"));
         type_text(&mut h.state, "pé");
         type_text(&mut h.state, "\r");
         let l = h.state.lock.console.as_ref().expect("locked");
@@ -1413,7 +1440,7 @@ mod tests {
 
     #[test]
     fn a_rejection_shows_the_conversations_text() {
-        let mut h = locked(|_| sh("read p; echo 'E Account locked.'; echo '= 7'"));
+        let mut h = locked(|_, _| sh("read p; echo 'E Account locked.'; echo '= 7'"));
         check(&mut h, "hunter2");
         assert!(h.state.console_locked());
         assert_eq!(message(&h).as_deref(), Some("Account locked."));
@@ -1421,7 +1448,7 @@ mod tests {
 
     #[test]
     fn a_conversation_that_ends_without_a_result_reads_as_unavailable() {
-        let mut h = locked(|_| sh("exit 0"));
+        let mut h = locked(|_, _| sh("exit 0"));
         check(&mut h, "hunter2");
         assert!(h.state.console_locked());
         assert_eq!(message(&h).as_deref(), Some(lock::UNAVAILABLE));
@@ -1438,7 +1465,7 @@ mod tests {
 
     #[test]
     fn a_second_prompt_relabels_the_field_and_its_answer_unlocks() {
-        let mut h = locked(|_| {
+        let mut h = locked(|_, _| {
             sh(
                 r#"read p; echo '?? Verification code:'; read c; [ "$p $c" = "hunter2 123456" ] && echo '= 0' || echo '= 7'"#,
             )
@@ -1464,7 +1491,7 @@ mod tests {
 
     #[test]
     fn the_notices_before_a_second_prompt_show_with_it() {
-        let mut h = locked(|_| {
+        let mut h = locked(|_, _| {
             sh(
                 "read p; echo 'I Code sent to your phone'; echo '?? Verification code:'; exec sleep 60",
             )
@@ -1480,7 +1507,7 @@ mod tests {
 
     #[test]
     fn escape_under_a_second_prompt_ends_its_conversation() {
-        let mut h = locked(|_| sh("read p; echo '? One-time code:'; exec sleep 60"));
+        let mut h = locked(|_, _| sh("read p; echo '? One-time code:'; exec sleep 60"));
         let l = h.state.lock.console.as_mut().expect("locked");
         l.state.input.push_str("hunter2");
         submit(&mut h.state, Side::Console);
@@ -1507,7 +1534,7 @@ mod tests {
     #[test]
     fn caps_lock_shows_its_notice_while_on() {
         const KEY_CAPSLOCK: u32 = 58;
-        let mut h = locked(|_| sh("exit 0"));
+        let mut h = locked(|_, _| sh("exit 0"));
         let caps =
             |h: &crate::harness::Harness| h.state.lock.console.as_ref().unwrap().state.caps_lock;
         assert!(!caps(&h));
@@ -1521,7 +1548,7 @@ mod tests {
 
     #[test]
     fn a_layout_switch_while_locked_redraws_the_badge() {
-        let mut h = locked(|_| sh("exit 0"));
+        let mut h = locked(|_, _| sh("exit 0"));
         let badge = |h: &crate::harness::Harness| {
             h.state.lock.console.as_ref().unwrap().state.layout.clone()
         };
@@ -1541,7 +1568,7 @@ mod tests {
 
     #[test]
     fn a_check_that_never_answers_ends_as_unavailable_after_the_timeout() {
-        let mut h = locked(|_| sh("exec sleep 60"));
+        let mut h = locked(|_, _| sh("exec sleep 60"));
         h.state.lock.helpers.verify_timeout = std::time::Duration::from_millis(100);
         check(&mut h, "hunter2");
         let l = h.state.lock.console.as_ref().expect("still locked");
@@ -1553,7 +1580,7 @@ mod tests {
     #[test]
     fn unlocking_does_not_wait_for_a_fingerprint_child_that_ignores_the_interrupt() {
         let _reaping = crate::mutex::lock(&crate::lockfinger::tests::REAPING);
-        let mut h = locked(|_| sh("exit 0"));
+        let mut h = locked(|_, _| sh("exit 0"));
         h.state.lock.helpers.finger = |_| Some(sh("trap '' INT; echo 'I ready'; exec sleep 60"));
         let user = h.state.lock.console.as_ref().unwrap().user.clone();
         let finger = start_finger(&h.state, &user).expect("a fingerprint conversation");
@@ -1581,7 +1608,7 @@ mod tests {
 
     #[test]
     fn only_the_dialog_runs_the_fingerprint_conversation() {
-        let mut h = locked(|_| sh("exit 0"));
+        let mut h = locked(|_, _| sh("exit 0"));
         let finger =
             |h: &crate::harness::Harness| h.state.lock.console.as_ref().unwrap().finger.is_some();
         assert!(!finger(&h));
@@ -1610,7 +1637,7 @@ mod tests {
     fn a_failed_fingerprint_conversation_starts_again_with_a_growing_wait() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static STARTS: AtomicUsize = AtomicUsize::new(0);
-        let mut h = locked(|_| sh("exit 0"));
+        let mut h = locked(|_, _| sh("exit 0"));
         h.state.lock.helpers.finger = |_| {
             STARTS.fetch_add(1, Ordering::SeqCst);
             Some(sh("echo 'E Failed to match fingerprint'; exit 1"))
@@ -1638,7 +1665,7 @@ mod tests {
     fn a_fingerprint_conversation_that_keeps_ending_without_a_result_stops_starting() {
         use std::sync::atomic::{AtomicU32, Ordering};
         static STARTS: AtomicU32 = AtomicU32::new(0);
-        let mut h = locked(|_| sh("exit 0"));
+        let mut h = locked(|_, _| sh("exit 0"));
         h.state.lock.helpers.finger = |_| {
             STARTS.fetch_add(1, Ordering::SeqCst);
             Some(sh("exit 1"))
@@ -1656,7 +1683,7 @@ mod tests {
 
     #[test]
     fn a_fingerprint_conversation_without_a_reader_is_not_started_again() {
-        let mut h = locked(|_| sh("exit 0"));
+        let mut h = locked(|_, _| sh("exit 0"));
         h.state.lock.helpers.finger = |_| Some(sh("echo '= 9'"));
         start_dialog_finger(&mut h.state);
         turn_until(&mut h, "the conversation ends", |l| l.finger.is_none());

@@ -91,6 +91,16 @@ input, and its password unlocks only the virtual screens; the computer's own
 screens stay locked. logind's `Unlock` unlocks both. The remote side's lock
 goes when lock mode ends, while the computer's stays.
 
+The virtual screens' Unlock dialog checks its password as a Remote Desktop
+login does, under the `reprise-rdp` service (see
+[Remote Desktop](#remote-desktop)), never the lock screen's `reprise`. Wrong
+passwords typed on the remote side never reach pam_faillock or the
+fingerprint reader, so they can't lock the account at the computer. The
+dialog backs off after failures like a login from one address: the first
+three are free, the fourth starts a 2 s wait that doubles with each further
+failure up to 60 s, and a success or 20 minutes without a failure clears
+them. During the wait the dialog refuses to check and says how long is left.
+
 Reprise's remote desktop server starts its sessions without the permission
 dialog, since nobody may be at the screen to answer it. Turning Remote
 Desktop on in Settings is the consent. The portal skips the dialog only for
@@ -175,6 +185,8 @@ It checks the password as the Unlock Computer dialog does, in a
 stdin, but under its own PAM service, `reprise-rdp`: `pam_unix` for `auth`
 and `account` and nothing else. That stack has no pam_faillock, so wrong
 passwords sent over the network never lock the account at the lock screen.
+Lock mode's remote Unlock dialog runs the same helper under the same
+service.
 A further PAM prompt fails the login, and so does a helper with no verdict
 within 30 s, which is killed. A refusal by the account stack (an expired
 account or password) is logged with PAM's reason. On each login `pam_unix`
