@@ -6,7 +6,7 @@ use super::avc444::{self, Flat, Planes444};
 use super::colour;
 use super::cuda;
 use super::gl::{self, Gl, gl_err};
-use super::hwmap::{self, Devices, Gpu, Ref};
+use super::hwmap::{self, Devices, Gpu, Ref, Rescale};
 use crate::stream::{DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer, Plane, Rect};
 use ffmpeg::ffi;
 use ffmpeg::format::Pixel;
@@ -31,9 +31,10 @@ pub struct Split {
     pub flat: Flat,
 }
 
-/// Splits stream frames of one size and format.
+/// Splits stream frames of one size and format into views of a target size.
 pub struct Views {
     pub size: (u32, u32),
+    pub target: (u32, u32),
     pub fourcc: u32,
     route: Route,
 }
@@ -50,22 +51,26 @@ enum Route {
     Cpu {
         main: frame::Video,
         aux: frame::Video,
+        /// None where the target is the frame's size.
+        rescale: Option<Rescale>,
     },
 }
 
 impl Views {
-    /// Views of pictures of `size` in DRM `fourcc`, drawn on `devices`' GPU (render node `node`)
-    /// or, without devices, on the CPU. VA-API and CUDA take them from the GPU.
+    /// Views of pictures of `size` in DRM `fourcc` scaled to `target`, drawn on `devices`' GPU
+    /// (render node `node`) or, without devices, on the CPU. VA-API and CUDA take them from the
+    /// GPU.
     pub fn new(
         devices: Option<&Devices>,
         node: &Path,
         fourcc: u32,
         size: (u32, u32),
+        target: (u32, u32),
     ) -> Result<Views, EncodeError> {
-        let view = avc444::view_size(size);
+        let view = avc444::view_size(target);
         let route = match devices {
             Some(d) if d.gpu == Gpu::Vaapi => {
-                let split = Box::new(GpuSplit::new(node, size, Target::Dmabufs)?);
+                let split = Box::new(GpuSplit::new(node, size, target, Target::Dmabufs)?);
                 let mapped = hwmap::frames(
                     &d.device,
                     ffi::AVPixelFormat::VAAPI,
@@ -96,7 +101,7 @@ impl Views {
                 }
             }
             Some(d) if d.gpu == Gpu::Cuda => {
-                Route::Cuda(CudaViews::new(node, &d.device, size, view, true)?)
+                Route::Cuda(CudaViews::new(node, &d.device, size, target, view, true)?)
             }
             Some(_) => {
                 return Err(EncodeError(
@@ -106,10 +111,15 @@ impl Views {
             None => Route::Cpu {
                 main: frame::Video::new(Pixel::NV12, view.0, view.1),
                 aux: frame::Video::new(Pixel::NV12, view.0, view.1),
+                rescale: match target == size {
+                    true => None,
+                    false => Some(Rescale::new(fourcc, size, target)?),
+                },
             },
         };
         Ok(Views {
             size,
+            target,
             fourcc,
             route,
         })
@@ -144,21 +154,21 @@ impl Views {
                 referenced(main, aux, flat)
             }
             Route::Cuda(c) => c.views(frame, read),
-            Route::Cpu { main, aux } => {
+            Route::Cpu { main, aux, rescale } => {
                 for f in [&mut *main, &mut *aux] {
                     // SAFETY: a frame this route owns.
                     let writable = unsafe { ffi::av_frame_make_writable(f.as_mut_ptr()) };
                     hwmap::check(writable, "frame buffer")?;
                 }
                 let mut planes = None;
-                hwmap::read_rgb(frame, self.size, |pixels, stride| {
-                    planes = Some(Planes444::from_rgb(
-                        pixels,
-                        stride as usize,
-                        self.size,
-                        self.fourcc,
-                    ));
-                })?;
+                let (target, fourcc) = (self.target, self.fourcc);
+                let planes_of = |pixels: &[u8], stride: u32| {
+                    planes = Some(Planes444::from_rgb(pixels, stride as usize, target, fourcc));
+                };
+                match rescale {
+                    Some(rescale) => rescale.read(frame, planes_of)?,
+                    None => hwmap::read_rgb(frame, self.size, planes_of)?,
+                }
                 let planes = planes.expect("read_rgb calls back on success");
                 let (m, mut a) = avc444::split_v1(&planes);
                 avc444::keep_main_outside(&m, &mut a, read);
@@ -192,17 +202,18 @@ pub struct CudaViews {
 }
 
 impl CudaViews {
-    /// Views of pictures of `size` on render node `node`, copied out at `coded` (at most the
-    /// views' size) into frames of CUDA device `cuda`: both views with `aux`, else the main
-    /// view only.
+    /// Views of pictures of `size` scaled to `target` on render node `node`, copied out at
+    /// `coded` (at most the views' size) into frames of CUDA device `cuda`: both views with
+    /// `aux`, else the main view only.
     pub fn new(
         node: &Path,
         cuda: &Ref,
         size: (u32, u32),
+        target: (u32, u32),
         coded: (u32, u32),
         aux: bool,
     ) -> Result<CudaViews, EncodeError> {
-        let split = Box::new(GpuSplit::new(node, size, Target::Textures)?);
+        let split = Box::new(GpuSplit::new(node, size, target, Target::Textures)?);
         let planes: Vec<glow::Texture> = (split.views.iter())
             .take(if aux { 2 } else { 1 })
             .flat_map(|v| [v.luma.texture, v.chroma.texture])
@@ -275,9 +286,9 @@ fn reference(f: &frame::Video) -> Result<frame::Video, EncodeError> {
     Ok(copy)
 }
 
-const FRAGMENT: &str = include_str!("split.frag");
+pub(super) const FRAGMENT: &str = include_str!("split.frag");
 /// Luma, chroma and the flat macroblocks; see split.frag.
-const PASSES: usize = 3;
+pub(super) const PASSES: usize = 3;
 
 /// An NV12 view as GL textures of four bytes to a texel, one per plane.
 struct View {
@@ -327,7 +338,8 @@ struct Texture {
     texture: glow::Texture,
 }
 
-/// One GL context on the render node that draws the views of pictures of one size.
+/// One GL context on the render node that draws the views of pictures of one size, scaled to
+/// another.
 struct GpuSplit {
     programs: Vec<glow::Program>,
     /// Each pass's `read_rect`, in the passes that draw the auxiliary view.
@@ -341,13 +353,21 @@ struct GpuSplit {
     flags: Option<Texture>,
     /// Each pass's framebuffer and size.
     framebuffers: Vec<(glow::Framebuffer, (u32, u32))>,
+    /// The frames' size.
+    source: (u32, u32),
+    /// The picture's size in the views.
     size: (u32, u32),
     /// Dropped after the objects above are deleted.
     gl: Rc<Gl>,
 }
 
 impl GpuSplit {
-    fn new(node: &Path, size: (u32, u32), target: Target) -> Result<GpuSplit, EncodeError> {
+    fn new(
+        node: &Path,
+        source: (u32, u32),
+        size: (u32, u32),
+        target: Target,
+    ) -> Result<GpuSplit, EncodeError> {
         let mut split = GpuSplit {
             programs: Vec::new(),
             read_rects: Vec::new(),
@@ -356,6 +376,7 @@ impl GpuSplit {
             blocks: None,
             flags: None,
             framebuffers: Vec::new(),
+            source,
             size,
             gl: Rc::new(Gl::new(node)?),
         };
@@ -364,7 +385,7 @@ impl GpuSplit {
         // SAFETY: GL calls on the current context; drop deletes what was made if one fails.
         unsafe {
             for pass in 0..PASSES {
-                let p = program(gl, pass, size)?;
+                let p = program(gl, pass, size, source != size)?;
                 split.programs.push(p);
                 split
                     .read_rects
@@ -431,13 +452,14 @@ impl GpuSplit {
         else {
             return Err(EncodeError("a shared-memory frame cannot be mapped".into()));
         };
-        if frame.size.0 < self.size.0 || frame.size.1 < self.size.1 {
+        if frame.size.0 < self.source.0 || frame.size.1 < self.source.1 {
             return Err(EncodeError("the frame changed size".into()));
         }
         self.gl.current()?;
         let image = self
             .gl
-            .import(objects, *fourcc, *modifier, planes, self.size)?;
+            .import(objects, *fourcc, *modifier, planes, self.source)?;
+        let scaled = self.source != self.size;
         let gl = &self.gl.gl;
         let blocks = self.blocks.as_ref().expect("made with the views");
         // SAFETY: GL calls on the current context; the source texture and image are deleted
@@ -446,7 +468,10 @@ impl GpuSplit {
             let source = gl.create_texture().map_err(gl_err("texture"));
             let drawn = source.and_then(|source| {
                 self.gl.bind_image(source, image);
-                nearest(gl);
+                match scaled {
+                    true => linear(gl),
+                    false => nearest(gl),
+                }
                 gl.bind_vertex_array(self.vertices);
                 let corners = [read.x, read.y, read.x + read.width, read.y + read.height];
                 let [x0, y0, x1, y1] = corners.map(|v| v as i32);
@@ -522,13 +547,20 @@ impl Drop for GpuSplit {
     }
 }
 
+/// The source of pass `pass` of split.frag, sampling a picture of another size if `scaled`.
+pub(super) fn fragment(pass: usize, scaled: bool) -> String {
+    let scaled = if scaled { "#define SCALED\n" } else { "" };
+    format!("#version 300 es\n{scaled}#define PASS {pass}\n{FRAGMENT}")
+}
+
 /// Pass `pass` of split.frag for pictures of `size`, its uniforms set.
 unsafe fn program(
     gl: &glow::Context,
     pass: usize,
     size: (u32, u32),
+    scaled: bool,
 ) -> Result<glow::Program, EncodeError> {
-    let fragment = format!("#version 300 es\n#define PASS {pass}\n{FRAGMENT}");
+    let fragment = fragment(pass, scaled);
     // SAFETY: GL calls on the caller's current context.
     unsafe {
         let program =
@@ -551,6 +583,19 @@ unsafe fn nearest(gl: &glow::Context) {
     for filter in [glow::TEXTURE_MIN_FILTER, glow::TEXTURE_MAG_FILTER] {
         // SAFETY: GL calls on the caller's current context.
         unsafe { gl.tex_parameter_i32(glow::TEXTURE_2D, filter, glow::NEAREST as i32) };
+    }
+}
+
+/// Linear sampling for the bound texture, clamped at its edges, which a scaled picture reads.
+unsafe fn linear(gl: &glow::Context) {
+    // SAFETY: GL calls on the caller's current context.
+    unsafe {
+        for filter in [glow::TEXTURE_MIN_FILTER, glow::TEXTURE_MAG_FILTER] {
+            gl.tex_parameter_i32(glow::TEXTURE_2D, filter, glow::LINEAR as i32);
+        }
+        for wrap in [glow::TEXTURE_WRAP_S, glow::TEXTURE_WRAP_T] {
+            gl.tex_parameter_i32(glow::TEXTURE_2D, wrap, glow::CLAMP_TO_EDGE as i32);
+        }
     }
 }
 
@@ -747,7 +792,7 @@ pub(crate) mod tests {
     #[ignore = "needs OpenGL ES on /dev/dri/renderD128; run with --ignored where it has one"]
     fn gpu_split_equals_cpu_split() {
         let size = (100, 50);
-        let mut split = GpuSplit::new(Path::new(RENDER_NODE), size, Target::Dmabufs).unwrap();
+        let mut split = GpuSplit::new(Path::new(RENDER_NODE), size, size, Target::Dmabufs).unwrap();
         let gbm = gbm::Device::new(
             File::options()
                 .read(true)
@@ -805,5 +850,26 @@ pub(crate) mod tests {
             flat.blocks, grey,
             "only the grey macroblocks clear of the lines are flat"
         );
+    }
+
+    #[test]
+    #[ignore = "needs OpenGL ES on /dev/dri/renderD128; run with --ignored where it has one"]
+    fn gl_split_codes_a_half_size_target() {
+        use crate::encode::ffmpeg::tests::{colour_pixel, patch_error, shown_444};
+        let (source, half) = ((1920, 1080), (960, 540));
+        let node = Path::new(RENDER_NODE);
+        let mut split = GpuSplit::new(node, source, half, Target::Dmabufs).unwrap();
+        let gbm = gbm::Device::new(File::options().read(true).write(true).open(node).unwrap());
+        let (frame, _, _bo) = dmabuf_frame(&gbm.unwrap(), source, colour_pixel());
+        split.draw(&frame, Rect::full(half)).unwrap();
+        let view = avc444::view_size(half);
+        assert_eq!(view, (960, 544));
+        let (main, aux) = (
+            read_back(&split.views[0], view),
+            read_back(&split.views[1], view),
+        );
+        let back = avc444::tests::crop(&avc444::combine_v1(&main, &aux), half);
+        let error = patch_error(shown_444(&back), 2);
+        assert!(error <= 3, "a patch is off by {error}");
     }
 }

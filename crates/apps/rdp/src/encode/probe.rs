@@ -579,7 +579,8 @@ fn converts(
     modifier: u64,
 ) -> Result<(), super::EncodeError> {
     let frame = test_buffer(gbm, painter, format, Some(modifier))?;
-    let mut converter = Converter::new(Some(devices), format, (TEST_SIDE, TEST_SIDE), TEST_RATE)?;
+    let side = (TEST_SIDE, TEST_SIDE);
+    let mut converter = Converter::new(Some(devices), format, side, side, TEST_RATE)?;
     let converted = hwmap::download(&converter.convert(&frame)?)?;
     for y in (8..TEST_SIDE).step_by(16) {
         for x in (8..TEST_SIDE).step_by(16) {

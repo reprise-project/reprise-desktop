@@ -27,10 +27,12 @@ pub struct Ffmpeg {
     avc444: bool,
     /// The picture size the AVC444 views failed at, which codes AVC420 from then on.
     no_views: Option<(u32, u32)>,
+    /// The size pictures are coded at; None for each frame's own.
+    target: Option<(u32, u32)>,
     open: Option<Open>,
 }
 
-/// An encoder opened for one picture size, pixel format and quality.
+/// An encoder opened for one picture size, target size, pixel format and quality.
 struct Open {
     quality: Quality,
     input: Input,
@@ -46,10 +48,14 @@ enum Input {
 }
 
 impl Input {
-    fn fits(&self, size: (u32, u32), fourcc: u32, avc444: bool) -> bool {
+    fn fits(&self, size: (u32, u32), target: (u32, u32), fourcc: u32, avc444: bool) -> bool {
         match self {
-            Input::Avc420(c) => !avc444 && c.size == size && c.fourcc == fourcc,
-            Input::Avc444(v) => avc444 && v.size == size && v.fourcc == fourcc,
+            Input::Avc420(c) => {
+                !avc444 && (c.size, c.target) == (size, target) && c.fourcc == fourcc
+            }
+            Input::Avc444(v) => {
+                avc444 && (v.size, v.target) == (size, target) && v.fourcc == fourcc
+            }
         }
     }
 }
@@ -87,21 +93,29 @@ impl Ffmpeg {
             quality,
             avc444: false,
             no_views: None,
+            target: None,
             open: None,
         })
     }
 
-    /// `size` is the picture's for AVC444, which codes it padded to whole macroblocks.
-    fn open(&self, fourcc: u32, size: (u32, u32), avc444: bool) -> Result<Open, Failed> {
+    /// Frames of `size` coded at `target`, which AVC444 pads to whole macroblocks.
+    fn open(
+        &self,
+        fourcc: u32,
+        size: (u32, u32),
+        target: (u32, u32),
+        avc444: bool,
+    ) -> Result<Open, Failed> {
+        let devices = self.devices.as_ref();
         let (input, coded) = match avc444 {
             true => {
-                let views = Views::new(self.devices.as_ref(), &self.node, fourcc, size)
-                    .map_err(Failed::Views)?;
-                (Input::Avc444(views), avc444::view_size(size))
+                let views =
+                    Views::new(devices, &self.node, fourcc, size, target).map_err(Failed::Views)?;
+                (Input::Avc444(views), avc444::view_size(target))
             }
             false => {
-                let c = Converter::new(self.devices.as_ref(), fourcc, size, self.frame_rate)?;
-                (Input::Avc420(c), size)
+                let c = Converter::new(devices, fourcc, size, target, self.frame_rate)?;
+                (Input::Avc420(c), target)
             }
         };
         let mut input = input;
@@ -160,16 +174,18 @@ impl Ffmpeg {
         let fourcc = match &frame.buffer {
             FrameBuffer::Dmabuf { fourcc, .. } | FrameBuffer::Shm { fourcc, .. } => *fourcc,
         };
-        let size = match avc444 {
-            true => frame.size,
-            false => hwmap::even(frame.size),
+        let target = self.target.unwrap_or(frame.size);
+        let (size, target) = match avc444 {
+            true => (frame.size, target),
+            false => (hwmap::even(frame.size), hwmap::even(target)),
         };
+        let damage = scaled(&frame.damage, size, target);
         let regions = |n| match avc444 {
-            true => avc444::regions(frame.size, n, &frame.damage),
-            false => regions(frame.size, n, &frame.damage),
+            true => avc444::regions(target, n, &damage),
+            false => regions(target, n, &damage),
         };
         let current =
-            |o: &&mut Open| o.input.fits(size, fourcc, avc444) && o.quality == self.quality;
+            |o: &&mut Open| o.input.fits(size, target, fourcc, avc444) && o.quality == self.quality;
         let n = match self.open.as_mut().filter(current) {
             Some(o) if !keyframe && o.since_idr + 1 < IDR_INTERVAL => o.since_idr + 1,
             _ => 0,
@@ -179,7 +195,7 @@ impl Ffmpeg {
         }
         if self.open.as_mut().filter(current).is_none() {
             self.open = None;
-            self.open = Some(self.open(fourcc, size, avc444)?);
+            self.open = Some(self.open(fourcc, size, target, avc444)?);
         }
         let codec = self.backend.codec();
         let open = self.open.as_mut().expect("opened above");
@@ -314,6 +330,11 @@ impl Encoder for Ffmpeg {
         self.avc444 = on;
     }
 
+    /// A new target reopens the encoder on the next frame, as an IDR.
+    fn set_target(&mut self, target: Option<(u32, u32)>) {
+        self.target = target;
+    }
+
     fn encode(&mut self, frame: &Frame, keyframe: bool) -> Result<Encoded, EncodeError> {
         // The GPU draws the views from dma-bufs only; a shared-memory frame takes the AVC420 path.
         let gpu_views = self.devices.is_some();
@@ -346,6 +367,34 @@ impl Failed {
     }
 }
 
+/// `damage` to a picture of `size` as the parts of it scaled to `target` that change: grown by
+/// a pixel on both sides, which the linear sample reaches.
+fn scaled(damage: &[Rect], size: (u32, u32), target: (u32, u32)) -> Vec<Rect> {
+    if size == target {
+        return damage.to_vec();
+    }
+    let span = |start: u32, length: u32, from: u32, to: u32| {
+        let (from, to) = (u64::from(from.max(1)), u64::from(to));
+        let end = u64::from(start.saturating_add(length));
+        let first = (u64::from(start.saturating_sub(1)) * to / from).saturating_sub(1);
+        let last = ((end + 1) * to).div_ceil(from) + 1;
+        (first.min(to) as u32, last.min(to) as u32)
+    };
+    damage
+        .iter()
+        .filter_map(|r| {
+            let (x, right) = span(r.x, r.width, size.0, target.0);
+            let (y, bottom) = span(r.y, r.height, size.1, target.1);
+            (x < right && y < bottom).then(|| Rect {
+                x,
+                y,
+                width: right - x,
+                height: bottom - y,
+            })
+        })
+        .collect()
+}
+
 /// What the client updates from picture `n` after an IDR: the whole coded picture on the IDR,
 /// else the damage. Both stay inside the even size the stream codes (see [`hwmap::even`]).
 fn regions(size: (u32, u32), n: u32, damage: &[Rect]) -> Vec<Rect> {
@@ -369,7 +418,7 @@ fn regions(size: (u32, u32), n: u32, damage: &[Rect]) -> Vec<Rect> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::encode::Switch;
     use crate::encode::avc444;
@@ -1253,7 +1302,7 @@ mod tests {
     }
 
     /// What a client shows from combined 4:4:4 planes.
-    fn shown_444(p: &avc444::Planes444) -> impl Fn(u32, u32) -> [u8; 3] + '_ {
+    pub(crate) fn shown_444(p: &avc444::Planes444) -> impl Fn(u32, u32) -> [u8; 3] + '_ {
         move |x, y| {
             let at = (y * p.width + x) as usize;
             freerdp(p.y[at], p.u[at], p.v[at])
@@ -1278,12 +1327,15 @@ mod tests {
             .expect("three channels")
     }
 
-    /// The largest per-channel error of the patches, each read on a grid inside it.
-    fn patch_error(shown: impl Fn(u32, u32) -> [u8; 3]) -> u8 {
+    /// The largest per-channel error of the patches in a picture `1 / shrink` of
+    /// [`COLOUR_SIZE`], each read on a grid inside it.
+    pub(crate) fn patch_error(shown: impl Fn(u32, u32) -> [u8; 3], shrink: u32) -> u8 {
         let inside = |r: Rect| {
-            let xs = (r.x + 60..r.x + r.width - 60).step_by(7);
+            let (x, y, margin) = (r.x / shrink, r.y / shrink, 60 / shrink);
+            let (right, bottom) = ((r.x + r.width) / shrink, (r.y + r.height) / shrink);
+            let xs = (x + margin..right - margin).step_by(7);
             xs.flat_map(move |x| {
-                (r.y + 60..r.y + r.height - 60)
+                (y + margin..bottom - margin)
                     .step_by(7)
                     .map(move |y| (x, y))
             })
@@ -1292,6 +1344,17 @@ mod tests {
             .map(|i| median_error(&shown, inside(patch(i)), PATCHES[i]))
             .max()
             .expect("patches")
+    }
+
+    /// The colour picture's pixel at (`x`, `y`) of [`COLOUR_SIZE`].
+    pub(crate) fn colour_pixel() -> impl Fn(u32, u32) -> [u8; 3] {
+        let rects = colour_rects();
+        move |x, y| {
+            let inside = |r: &Rect| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
+            (rects.iter().rev())
+                .find(|(r, _)| inside(r))
+                .map_or([255, 255, 255], |&(_, c)| c)
+        }
     }
 
     fn nvenc() -> Ffmpeg {
@@ -1318,7 +1381,7 @@ mod tests {
         let data = avc(encoder.encode(&frame, true).unwrap()).0;
         let picture = Decoder::new().decode(&data);
         assert_eq!(picture.color_range(), ::ffmpeg::color::Range::JPEG);
-        let error = patch_error(shown_420(&picture));
+        let error = patch_error(shown_420(&picture), 1);
         eprintln!("largest patch error {error}");
         assert!(error <= 3, "a patch is off by {error}");
         let shm = frame_of(COLOUR_SIZE);
@@ -1352,7 +1415,7 @@ mod tests {
         let aux = nv12(&decoder.decode(&aux.expect("the lines need the auxiliary view")));
         let back = avc444::tests::crop(&avc444::combine_v1(&main, &aux), COLOUR_SIZE);
         let only_main = main_only(&main, COLOUR_SIZE);
-        let error = patch_error(shown_444(&back));
+        let error = patch_error(shown_444(&back), 1);
         assert!(error <= 3, "a patch is off by {error}");
         for i in 0..LINES {
             let (r, want) = line(i);
@@ -1368,6 +1431,109 @@ mod tests {
                 "line {i} is off by {full}, {half} from the main view alone"
             );
         }
+    }
+
+    /// `encoder` codes the colour picture in a GPU buffer at half its size, in AVC420 and in
+    /// AVC444, with each patch's colour within 3.
+    fn codes_a_half_size_target(mut encoder: Ffmpeg) {
+        let gl = gl();
+        let (frame, _bo) = colour_frame(&gl, false, &colour_rects()).unwrap();
+        let half = (960, 540);
+        encoder.set_target(Some(half));
+        let (data, regions) = avc(encoder.encode(&frame, true).unwrap());
+        assert_eq!(regions, [Rect::full(half)]);
+        let picture = Decoder::new().decode(&data);
+        assert_eq!((picture.width(), picture.height()), half);
+        let error = patch_error(shown_420(&picture), 2);
+        assert!(error <= 3, "AVC420: a patch is off by {error}");
+
+        encoder.set_avc444(true);
+        let (main, aux, regions) = views(encoder.encode(&frame, true).unwrap());
+        assert_eq!(regions, [Rect::full(half)]);
+        let mut decoder = Decoder::new();
+        let main = nv12(&decoder.decode(&main));
+        assert_eq!((main.width, main.height), (960, 544), "whole macroblocks");
+        let back = match aux {
+            Some(aux) => avc444::combine_v1(&main, &nv12(&decoder.decode(&aux))),
+            None => main_only(&main, (main.width, main.height)),
+        };
+        let error = patch_error(shown_444(&avc444::tests::crop(&back, half)), 2);
+        assert!(error <= 3, "AVC444: a patch is off by {error}");
+    }
+
+    #[test]
+    #[ignore = "needs VA-API H.264 on /dev/dri/renderD128; run with --ignored where it has one"]
+    fn vaapi_codes_a_half_size_target() {
+        silence();
+        let backend = (crate::encode::probe::probe().1.into_iter())
+            .map(|(b, _)| b)
+            .find(|b| matches!(b, Backend::Vaapi { .. }))
+            .expect("VA-API H.264 on this machine");
+        codes_a_half_size_target(
+            Ffmpeg::new(backend, Path::new(RENDER_NODE), 60, Quality::Balanced).unwrap(),
+        );
+    }
+
+    #[test]
+    #[ignore = "needs an NVIDIA GPU with NVENC"]
+    fn nvenc_codes_a_half_size_target() {
+        codes_a_half_size_target(nvenc());
+    }
+
+    #[test]
+    fn x264_codes_a_scaled_shm_frame() {
+        let colour = colour_pixel();
+        let (frame, _) = picture((1280, 720), |x, y| {
+            let [r, g, b] = colour(x * 3 / 2, y * 3 / 2);
+            (r, g, b)
+        });
+        let target = (640, 360);
+        for avc444 in [false, true] {
+            let mut encoder = x264();
+            encoder.set_target(Some(target));
+            encoder.set_avc444(avc444);
+            let mut decoder = Decoder::new();
+            let error = match encoder.encode(&frame, true).unwrap() {
+                Encoded::Avc420 { data, regions } => {
+                    assert_eq!(regions, [Rect::full(target)]);
+                    let picture = decoder.decode(&data);
+                    assert_eq!((picture.width(), picture.height()), target);
+                    patch_error(shown_420(&picture), 3)
+                }
+                Encoded::Avc444 { main, aux, regions } => {
+                    assert_eq!(regions, [Rect::full(target)]);
+                    let main = nv12(&decoder.decode(&main));
+                    assert_eq!((main.width, main.height), (640, 368));
+                    let aux = nv12(&decoder.decode(&aux.expect("the lines need the aux view")));
+                    let back = avc444::tests::crop(&avc444::combine_v1(&main, &aux), target);
+                    patch_error(shown_444(&back), 3)
+                }
+                _ => panic!("H.264"),
+            };
+            assert!(error <= 3, "AVC444 {avc444}: a patch is off by {error}");
+        }
+    }
+
+    #[test]
+    fn damage_grows_to_the_target_pixels_it_reaches() {
+        let r = |x, y, width, height| Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        let damage = [r(0, 0, 1, 1), r(100, 50, 20, 10), r(1270, 710, 10, 10)];
+        assert_eq!(
+            scaled(&damage, (1280, 720), (640, 360)),
+            [r(0, 0, 2, 2), r(48, 23, 14, 9), r(633, 353, 7, 7)],
+            "half size: a pixel and its sampled neighbours, inside the target"
+        );
+        assert_eq!(
+            scaled(&damage[1..2], (640, 360), (1280, 720)),
+            [r(197, 97, 46, 26)],
+            "double size"
+        );
+        assert_eq!(scaled(&damage, (64, 32), (64, 32)), damage, "unscaled");
     }
 
     #[test]
