@@ -91,6 +91,12 @@ pub fn carried<K: PartialEq>(
         .collect()
 }
 
+/// Give `to` the box `from` was last laid out at, so the next layout carries the windows on
+/// `from` along with `to` (`carry_windows`).
+pub fn inherit_box(to: &Output, from: &Output) {
+    laid_out(to).0.set(laid_out(from).0.get());
+}
+
 /// Put `output` at layout `pos` for good, or back to automatic placement with None.
 pub fn set_placement(output: &Output, pos: Option<Point<i32, Logical>>) {
     placement(output).0.set(pos);
@@ -214,14 +220,26 @@ pub struct HeadRequest {
 }
 
 impl State {
-    pub fn output_added(&mut self, _output: &Output) {
+    pub fn output_added(&mut self, output: &Output) {
+        let replaced = crate::standby::monitor_added(self, output);
         self.cancel_switch_anim();
         self.close_overview();
         self.finish_window_anims();
         self.update_layout();
+        if replaced.is_some() {
+            crate::notifyview::output_removed(self);
+        }
     }
 
     pub fn output_removed(&mut self, output: &Output) {
+        crate::standby::monitor_removed(self, output);
+        self.forget_output(output);
+        self.update_layout();
+        crate::notifyview::output_removed(self);
+    }
+
+    /// Drop what the shell keeps of `output`, gone from the scene; the caller lays out.
+    pub fn forget_output(&mut self, output: &Output) {
         self.cancel_switch_anim();
         self.close_overview();
         self.finish_window_anims();
@@ -254,8 +272,6 @@ impl State {
         }
         self.close_menus_off_scene();
         self.close_start_panel_off_scene();
-        self.update_layout();
-        crate::notifyview::output_removed(self);
     }
 
     /// Put `output` in the layout with its `[[outputs]]` settings, or take
@@ -293,7 +309,7 @@ impl State {
         }
         let name = output.name();
         let others: Vec<_> = (self.scene.outputs().iter())
-            .filter(|o| *o != output)
+            .filter(|o| *o != output && !crate::backend::is_virtual(o))
             .filter_map(reprisescene::output_rect)
             .collect();
         (self.output_places).back(&name, self.config.position_for_output_name(&name), &others)

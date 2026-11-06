@@ -15,6 +15,7 @@ use smithay::{
     reexports::{
         calloop::timer::{TimeoutAction, Timer},
         drm::control::{ModeTypeFlags, connector},
+        wayland_server::backend::GlobalId,
     },
 };
 use smithay_drm_extras::{display_info, drm_scanner::DrmScanEvent};
@@ -25,8 +26,8 @@ use super::gamma::{find_gamma, flush_gamma, read_lut};
 use super::render::send_job;
 use super::steps::{PendingMode, gated, on_quiet, watch};
 use super::{
-    Backend, COLOR_FORMATS, Compositor, Head, Hw, Kms, OutputHead, Parked, Scanout, Surface, Work,
-    commit, head_of, lock, schedule, surface_of,
+    Backend, COLOR_FORMATS, Compositor, Head, Hw, Kms, OutputScreen, Parked, Scanout, Screen,
+    Surface, Work, commit, lock, schedule, screen_of, surface_of,
 };
 
 pub struct HeadState {
@@ -245,7 +246,9 @@ fn connector_connected(
         },
     );
     set_preferred(&output, &connector);
-    output.user_data().insert_if_missing(|| OutputHead(head));
+    output
+        .user_data()
+        .insert_if_missing(|| OutputScreen(Screen::Monitor(head)));
     b.parked.insert(
         head,
         Parked {
@@ -393,8 +396,9 @@ pub fn heads(state: &State) -> Vec<HeadState> {
 }
 
 pub fn enable(state: &mut State, output: &Output, index: usize) -> bool {
-    let Some(head) = head_of(output) else {
-        return false;
+    let head = match screen_of(output) {
+        Some(Screen::Monitor(head)) => head,
+        Some(Screen::Virtual) | None => return false,
     };
     let Some(b) = state.backend.as_mut() else {
         return false;
@@ -580,8 +584,9 @@ fn new_compositor(
 }
 
 pub fn disable(state: &mut State, output: &Output) -> bool {
-    let Some(head) = head_of(output) else {
-        return false;
+    let head = match screen_of(output) {
+        Some(Screen::Monitor(head)) => head,
+        Some(Screen::Virtual) | None => return false,
     };
     let Some(b) = state.backend.as_mut() else {
         return false;
@@ -628,6 +633,13 @@ pub fn disable(state: &mut State, output: &Output) -> bool {
     }
     state.scene.remove_output(&output);
     state.captures.output_gone(&output);
+    retire_global(state, global);
+    true
+}
+
+/// Disable a gone output's `global` now and remove it 10 s later, once clients had time to
+/// unbind it.
+pub(crate) fn retire_global(state: &mut State, global: GlobalId) {
     state.dh.disable_global::<State>(global.clone());
     let dh = state.dh.clone();
     state
@@ -641,12 +653,12 @@ pub fn disable(state: &mut State, output: &Output) -> bool {
         )
         .map_err(|e| log::warn!("output global removal: {}", e.error))
         .ok();
-    true
 }
 
 pub fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
-    let Some(head) = head_of(output) else {
-        return false;
+    let head = match screen_of(output) {
+        Some(Screen::Monitor(head)) => head,
+        Some(Screen::Virtual) | None => return false,
     };
     let Some(b) = state.backend.as_mut() else {
         return false;
@@ -692,8 +704,9 @@ pub fn set_mode(state: &mut State, output: &Output, index: usize) -> bool {
 }
 
 pub fn set_vrr(state: &mut State, output: &Output, on: bool) -> bool {
-    let Some(head) = head_of(output) else {
-        return false;
+    let head = match screen_of(output) {
+        Some(Screen::Monitor(head)) => head,
+        Some(Screen::Virtual) | None => return false,
     };
     let Some(b) = state.backend.as_mut() else {
         return false;
@@ -784,7 +797,10 @@ pub(super) fn power_off(state: &mut State, head: Head) -> bool {
 }
 
 pub fn output_power(state: &State, output: &Output) -> Option<bool> {
-    let head = output.user_data().get::<OutputHead>()?.0;
+    let head = match screen_of(output)? {
+        Screen::Monitor(head) => head,
+        Screen::Virtual => return None,
+    };
     let s = state.backend.as_ref()?.surfaces.get(&head)?;
     Some(!s.hw.off)
 }
