@@ -111,9 +111,8 @@ pub fn rdp_changed(state: &mut State, on: bool) {
     }
 }
 
-/// `output` came into the layout. A monitor replaces the standby, taking over its box so the
-/// windows on it move with the monitor's place; the caller then lays out once. Returns the
-/// standby it replaced.
+/// `output` came into the layout: a monitor takes over the standby's box, keeping its windows in
+/// place, and the standby it replaced is returned for the caller's one layout pass.
 pub fn monitor_added(state: &mut State, output: &Output) -> Option<Output> {
     if crate::backend::is_virtual(output) {
         return None;

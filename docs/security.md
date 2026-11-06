@@ -210,7 +210,9 @@ through logind, so the computer is not left open. When it left because the
 screen it showed went away, a monitor switched on a KVM say, the lock waits
 `[remote_desktop] lock_grace_s` seconds (5 unless set, at most 60) for a
 client to reconnect: one shown the session by then keeps it unlocked, from
-whichever address, since it logged in again. Every other leave, a client
+whichever address, since it logged in again. Until then the session stays
+unlocked, on a monitor that just came back too; `lock_grace_s = 0` locks at
+once. Every other leave, a client
 closing, Disconnect, a dropped network, locks without waiting. A client that
 logged in but never got the picture and input (with no screen to share,
 say) leaves the session as it was. Stopping the server, as turning Remote

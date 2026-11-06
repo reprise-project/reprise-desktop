@@ -540,9 +540,8 @@ pub(crate) struct Started {
 pub(crate) enum Pick {
     /// A remembered target, else the share dialog.
     Ask,
-    /// The output at the layout origin (0,0), else the top-left-most ([`origin_output`]), not
-    /// remembered and with no dialog: the remote desktop server's, whose capture the compositor
-    /// tells apart (`Wayland::connect_remote_capture`).
+    /// The remote desktop server's pick, with no dialog and not remembered: [`origin_output`]. The
+    /// compositor tells its capture apart (`Wayland::connect_remote_capture`).
     Origin,
 }
 

@@ -147,9 +147,7 @@ async fn on_thread(
 }
 
 /// Locks once the last client shown the session ([`Leave`]) has left and the portal sessions are
-/// closed, which is after its held input was released, unless `lock_on_leave` is off as it leaves.
-/// A last leave because the screen went waits `lock_grace_s` first, for the client to reconnect.
-/// Its marker is kept from the first shown client with `lock_on_leave` on until then.
+/// closed; docs/security.md has the rules (`lock_on_leave`, `lock_grace_s`, the marker).
 pub struct LockOnLeave<F> {
     marker: Option<PathBuf>,
     present: Cell<usize>,
