@@ -40,6 +40,11 @@ impl KeysState {
     fn get_mut(&mut self, id: KeysId) -> Option<&mut Keys> {
         self.objects.iter_mut().find(|k| k.id == id)
     }
+
+    /// Forget every object and the keys it holds, releasing none: its later requests do nothing.
+    pub fn revoke_all(&mut self) {
+        self.objects.clear();
+    }
 }
 
 impl State {

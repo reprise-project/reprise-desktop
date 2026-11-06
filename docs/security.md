@@ -81,8 +81,10 @@ desktop server screens of its own: the compositor makes one virtual screen
 per monitor of the client's layout and locks the session if it isn't
 locked. The lock stays when lock mode ends. Unlocking at the computer, by
 password, fingerprint or logind's `Unlock`, ends lock mode: each object hears
-`ended(console_unlocked)` and the windows come back to the computer's own
-screens. With `[power] locker` set, or
+`ended(console_unlocked)`, every remote desktop session's input is cut off
+at once (its libei connection is closed and its keys object goes inert), and
+the windows come back to the computer's own screens. With `[power] locker`
+set, or
 while a locker client holds the lock, lock mode is unavailable: the object
 ends at once and nothing is made. A locker client that takes the lock during
 lock mode ends it.

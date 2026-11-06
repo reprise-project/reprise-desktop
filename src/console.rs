@@ -160,11 +160,16 @@ pub fn stop(state: &mut State, reason: Reason) {
     leave(state);
 }
 
-/// The console's lock unlocked in lock mode: lock mode ends with `ended(console_unlocked)`,
-/// and the caller hands the keyboard back.
+/// The console's lock unlocked in lock mode: every remote desktop session loses its input and
+/// lock mode ends with `ended(console_unlocked)`. The caller hands the keyboard back.
 pub fn console_unlocked(state: &mut State) {
     log::info!("lock mode: the console unlocked");
+    state.eis_revoke_remote_sessions();
+    state.inputproto.keys.revoke_all();
     stop(state, Reason::ConsoleUnlocked);
+    if remote_side(state) {
+        leave(state);
+    }
 }
 
 fn leave(state: &mut State) {

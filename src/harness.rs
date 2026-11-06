@@ -623,29 +623,29 @@ impl Harness {
     /// A libei client of `kind` on a socket pair, as the portal hands one out, that binds the
     /// keyboard and text on the seat it is offered; returns once the compositor made its device.
     pub fn ei_keyboard(&mut self, kind: crate::eis::Kind) -> EiPeer {
-        self.ei_keyboard_as(kind, false)
+        self.ei_keyboard_as(kind, false, crate::inputproto::DEVICE_KEYBOARD)
     }
 
-    /// [`Harness::ei_keyboard`] for the remote desktop server's sender, which counts as present.
+    /// [`Harness::ei_keyboard`] for the remote desktop server's sender, which counts as present
+    /// and binds the pointer too.
     pub fn ei_remote_session(&mut self) -> EiPeer {
-        self.ei_keyboard_as(crate::eis::Kind::Sender, true)
+        use crate::inputproto::{DEVICE_KEYBOARD, DEVICE_POINTER};
+        self.ei_keyboard_as(
+            crate::eis::Kind::Sender,
+            true,
+            DEVICE_KEYBOARD | DEVICE_POINTER,
+        )
     }
 
-    fn ei_keyboard_as(&mut self, kind: crate::eis::Kind, present: bool) -> EiPeer {
+    fn ei_keyboard_as(&mut self, kind: crate::eis::Kind, present: bool, devices: u32) -> EiPeer {
         use reis::{
             PendingRequestResult, ei,
-            event::{DeviceCapability, EiEvent, EiEventConverter},
+            event::{EiEvent, EiEventConverter},
             handshake::EiHandshaker,
         };
         let (ours, theirs) = UnixStream::pair().expect("socket pair");
         let id = (self.state)
-            .eis_connect(
-                ours.into(),
-                kind,
-                present,
-                None,
-                crate::inputproto::DEVICE_KEYBOARD,
-            )
+            .eis_connect(ours.into(), kind, present, None, devices)
             .expect("eis_connect");
         let context = ei::Context::new(theirs).expect("ei context");
         let context_type = match kind {
@@ -673,9 +673,9 @@ impl Harness {
             }
             while let Some(e) = events.as_mut().and_then(|c| c.next_event()) {
                 match e {
-                    EiEvent::SeatAdded(s) => s
-                        .seat
-                        .bind_capabilities(DeviceCapability::Keyboard | DeviceCapability::Text),
+                    EiEvent::SeatAdded(s) => {
+                        s.seat.bind_capabilities(crate::eis::allowed_caps(devices))
+                    }
                     other => heard.push(other),
                 }
             }

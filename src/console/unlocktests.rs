@@ -1,12 +1,12 @@
+use reis::event::EiEvent;
 use smithay::backend::input::{ButtonState, InputTime};
-use smithay::wayland::session_lock::SessionLockHandler;
 
 use super::inputtests::keys_heard;
 use super::locktests::{ENTER, HUNTER2, hunter2, settle, sh, tap};
 use super::remote_side;
 use crate::config::{Action, Config};
 use crate::desktops::Step;
-use crate::harness::{Harness, Heard, KeyHeard, LockScreen, TestClient, Toplevel};
+use crate::harness::{EiPeer, Harness, Heard, KeyHeard, LockScreen, TestClient, Toplevel};
 use crate::input::{BTN_LEFT, Interaction};
 use crate::inputproto::InputSource;
 use crate::inputproto::proto::reprise_lock_screen_v1::Reason;
@@ -183,11 +183,10 @@ type UnlockPath = (&'static str, fn(&mut Harness));
 
 #[test]
 fn every_console_unlock_in_lock_mode_ends_lock_mode() {
-    let paths: [UnlockPath; 4] = [
+    let paths: [UnlockPath; 3] = [
         ("the password", unlock_at_the_computer),
         ("the fingerprint", finger_at_the_computer),
         ("logind", |h| crate::lockview::unlock(&mut h.state)),
-        ("a locker", |h| SessionLockHandler::unlock(&mut h.state)),
     ];
     for (path, unlock) in paths {
         let mut h = computer();
@@ -299,4 +298,116 @@ fn a_console_unlock_with_nothing_focused_remotely_gives_back_the_console_focus()
     assert_eq!(keyboard_window(&h), None);
     unlock_at_the_computer(&mut h);
     assert_eq!(keyboard_window(&h), Some(a.id));
+}
+
+/// Sends a key, an absolute motion to (`x`, `y`) and a click from each of `peer`'s devices.
+fn ei_type_and_click(h: &mut Harness, peer: &EiPeer, x: f32, y: f32) {
+    use reis::ei;
+    let devices = (peer.heard.iter()).filter_map(|e| match e {
+        EiEvent::DeviceResumed(r) => Some(r.device.clone()),
+        _ => None,
+    });
+    for d in devices {
+        d.device().start_emulating(0, 0);
+        if let Some(k) = d.interface::<ei::Keyboard>() {
+            k.key(A, ei::keyboard::KeyState::Press);
+            k.key(A, ei::keyboard::KeyState::Released);
+        }
+        if let Some(p) = d.interface::<ei::PointerAbsolute>() {
+            p.motion_absolute(x, y);
+        }
+        if let Some(b) = d.interface::<ei::Button>() {
+            b.button(BTN_LEFT, ei::button::ButtonState::Press);
+            b.button(BTN_LEFT, ei::button::ButtonState::Released);
+        }
+        d.device().frame(0, 0);
+    }
+    let _ = peer.context.flush();
+    h.run_for(5);
+}
+
+#[test]
+fn a_console_unlock_cuts_every_remote_desktop_session_off() {
+    let mut h = computer();
+    let mut c = h.connect();
+    let t = mapped(&mut h, &mut c, 100, 100);
+    h.state.focus_window(t.id);
+    let (_portal, _lock) = begin(&mut h);
+    let mut peer = h.ei_remote_session();
+    h.ei_hear(&mut peer);
+    let keys = h.state.inputproto.keys.create();
+    let (x, y) = centre(&h, t.id);
+    h.remote_click(x, y);
+    h.state.keys_key(keys, SHIFT, true);
+    unlock_at_the_computer(&mut h);
+    assert_lock_mode_over(&h);
+    assert!(
+        h.state.inputproto.eis.get(peer.id).is_none(),
+        "the session's EIS client is gone"
+    );
+    h.ei_hear(&mut peer);
+    assert!(
+        (peer.heard.iter()).any(|e| matches!(e, EiEvent::Disconnected(_))),
+        "the session hears it is disconnected"
+    );
+    assert_eq!(keyboard_window(&h), Some(t.id));
+    h.roundtrip(&mut c);
+    c.side.key_log.clear();
+    c.side.buttons.clear();
+    let pointer = h.state.pointer_location();
+    let (x, y) = centre(&h, t.id);
+    ei_type_and_click(&mut h, &peer, x as f32, y as f32);
+    h.state.keys_key(keys, SHIFT, false);
+    h.state.keys_key(keys, A, true);
+    h.state.keys_key(keys, A, false);
+    h.roundtrip(&mut c);
+    assert_eq!(keys_heard(&c), [], "no remote key reaches the window");
+    assert_eq!(c.side.buttons, [], "no remote click reaches the window");
+    assert_eq!(h.state.pointer_location(), pointer, "the pointer stays put");
+}
+
+#[test]
+fn a_finished_lockers_unlock_leaves_the_console_lock_and_lock_mode_up() {
+    let mut h = computer();
+    let mut locker = h.connect();
+    let (lock, _surface) = h.map_lock_surface(&mut locker);
+    h.run_for(2300);
+    h.roundtrip(&mut locker);
+    crate::lockview::unlock(&mut h.state);
+    h.roundtrip(&mut locker);
+    assert!(!h.state.console_locked());
+    let (mut portal, screen) = begin(&mut h);
+    assert!(h.state.console_locked());
+    lock.unlock_and_destroy();
+    h.roundtrip(&mut locker);
+    h.roundtrip(&mut portal);
+    assert!(h.state.console_locked(), "the console stays locked");
+    assert!(remote_side(&h.state), "lock mode goes on");
+    assert!(ended(&screen).is_empty(), "the object hears no end");
+}
+
+#[test]
+fn a_console_unlock_ends_lock_mode_with_no_lock_screen_object_left() {
+    let mut h = computer();
+    let (_portal, _lock) = begin(&mut h);
+    h.state.console.objects.clear();
+    unlock_at_the_computer(&mut h);
+    assert!(!h.state.console_locked());
+    assert_lock_mode_over(&h);
+}
+
+#[test]
+fn a_console_unlock_after_the_remote_side_clicked_the_desktop_focuses_the_desktop() {
+    let mut h = computer();
+    let mut c = h.connect();
+    let a = mapped(&mut h, &mut c, 100, 100);
+    h.state.focus_window(a.id);
+    let (_portal, _lock) = begin(&mut h);
+    let remote = crate::virtualout::remote_outputs(&h.state)[0].clone();
+    let r = h.state.layout_box(Some(&remote));
+    h.remote_click(f64::from(r.x + r.width - 20), f64::from(r.y + 20));
+    assert_eq!(h.state.focused, None, "the desktop took the keyboard");
+    unlock_at_the_computer(&mut h);
+    assert_eq!(keyboard_window(&h), None);
+    assert_eq!(h.state.focused, None, "no window is focused");
 }
