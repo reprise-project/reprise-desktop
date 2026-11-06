@@ -54,9 +54,8 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// Whole without client monitors or with one, Paired when every screen gets a monitor,
-    /// else Scaled. Client monitors that cannot be used give Whole, and a Whole box past
-    /// [`DESKTOP_SIDES`] is Scaled into the largest desktop of its shape.
+    /// Whole without usable client monitors or with one, Paired when every screen gets a
+    /// monitor, else Scaled; a Whole box past [`DESKTOP_SIDES`] is Scaled to fit.
     pub fn new(screens: &[ScreenRect], client: &[Monitor]) -> Layout {
         let order = order(screens);
         let pixels = screens.iter().map(|s| s.pixels).collect();

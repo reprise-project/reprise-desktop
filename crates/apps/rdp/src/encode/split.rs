@@ -201,8 +201,8 @@ pub struct CudaViews {
 }
 
 impl CudaViews {
-    /// Views of `size` pictures scaled to `target` on render node `node`, copied out at `coded` (at
-    /// most the views' size) into CUDA device `cuda`'s frames: both views with `aux`, else the main.
+    /// Views of `size` pictures scaled to `target` on render node `node`, copied out at `coded`
+    /// (at most the views' size) into CUDA device `cuda`'s frames: both with `aux`, else the main.
     pub fn new(
         node: &Path,
         cuda: &Ref,
