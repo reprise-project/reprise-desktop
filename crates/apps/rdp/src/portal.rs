@@ -1,10 +1,11 @@
-//! A connection's RemoteDesktop portal session (keyboard, pointer, the shared output cast onto
+//! A connection's RemoteDesktop portal session (keyboard, pointer, the shared outputs cast onto
 //! it), on a bus connection in its own thread that callers reach through a channel.
 
 use futures_util::StreamExt;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
+use std::io;
 use std::os::fd::OwnedFd;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
@@ -27,18 +28,32 @@ const CURSOR_METADATA: u32 = 4;
 /// How long a request may go unanswered: no dialog is expected, so a silent portal is stuck.
 const ANSWER: Duration = Duration::from_secs(30);
 
-/// A started session: the output's stream and logical place in the layout, the EIS socket and
-/// the allowed input devices. Dropping it closes the session.
+/// A started session: the shared screens, the EIS socket and the allowed input devices.
+/// Dropping it closes the session.
 pub struct Grant {
-    pub pw_fd: OwnedFd,
-    pub node: u32,
-    pub size: (u32, u32),
-    pub position: (i32, i32),
-    pub mapping_id: Option<String>,
+    pw_fd: OwnedFd,
+    /// In the portal's screen order, the primary first.
+    pub screens: Vec<Screen>,
     pub eis_fd: OwnedFd,
     pub session: OwnedObjectPath,
     pub keyboard: bool,
     pub pointer: bool,
+}
+
+/// A shared output: its PipeWire node and logical place in the layout.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Screen {
+    pub node: u32,
+    pub position: (i32, i32),
+    pub size: (u32, u32),
+    pub mapping_id: Option<String>,
+}
+
+impl Grant {
+    /// A PipeWire remote of its own for one stream thread.
+    pub fn pipewire_fd(&self) -> io::Result<OwnedFd> {
+        self.pw_fd.try_clone()
+    }
 }
 
 enum Command {
@@ -157,23 +172,36 @@ async fn start(conn: &Connection, session: &OwnedObjectPath) -> Result<Grant, St
     .await?;
     let started: StartResults =
         request(conn, REMOTE, "Start", |options| (session, "", options)).await?;
-    let (node, stream) = (started.streams.unwrap_or_default().into_iter().next())
-        .ok_or("Start: no stream was shared")?;
-    let size = stream.size.ok_or("Start: the stream has no size")?;
+    let screens = screens(started.streams)?;
     let pw_fd = fd(conn, SCREENCAST, "OpenPipeWireRemote", session).await?;
     let eis_fd = fd(conn, REMOTE, "ConnectToEIS", session).await?;
     let devices = started.devices.unwrap_or(KEYBOARD | POINTER);
     Ok(Grant {
         pw_fd,
-        node,
-        size: (size.0.max(0) as u32, size.1.max(0) as u32),
-        position: stream.position.unwrap_or_default(),
-        mapping_id: stream.mapping_id,
+        screens,
         eis_fd,
         session: session.clone(),
         keyboard: devices & KEYBOARD != 0,
         pointer: devices & POINTER != 0,
     })
+}
+
+fn screens(streams: Option<Vec<(u32, StreamProps)>>) -> Result<Vec<Screen>, String> {
+    let streams = streams.unwrap_or_default();
+    if streams.is_empty() {
+        return Err("Start: no stream was shared".into());
+    }
+    (streams.into_iter())
+        .map(|(node, stream)| {
+            let size = stream.size.ok_or("Start: a stream has no size")?;
+            Ok(Screen {
+                node,
+                position: stream.position.unwrap_or_default(),
+                size: (size.0.max(0) as u32, size.1.max(0) as u32),
+                mapping_id: stream.mapping_id,
+            })
+        })
+        .collect()
 }
 
 async fn fd(
@@ -314,10 +342,12 @@ pub(crate) mod tests {
         let null = || OwnedFd::from(std::fs::File::open("/dev/null").unwrap());
         Grant {
             pw_fd: null(),
-            node: 0,
-            size: (0, 0),
-            position: (0, 0),
-            mapping_id: None,
+            screens: vec![Screen {
+                node: 0,
+                position: (0, 0),
+                size: (0, 0),
+                mapping_id: None,
+            }],
             eis_fd: null(),
             session: OwnedObjectPath::try_from("/org/reprise/test/session").unwrap(),
             keyboard: true,
@@ -340,6 +370,43 @@ pub(crate) mod tests {
             "no".into()
         ))));
         assert!(!already_closed(&zbus::Error::InterfaceNotFound));
+    }
+
+    #[test]
+    fn start_results_list_every_stream_in_screen_order() {
+        use zbus::wire::{LE, serialized::Context, to_bytes};
+        let stream = |x: i32, width: i32, name: &str| {
+            HashMap::from([
+                ("position", Variant::from((x, 0))),
+                ("size", Variant::from((width, 1080))),
+                ("source_type", Variant::from(MONITOR)),
+                ("mapping_id", Variant::from(name.to_string())),
+            ])
+        };
+        let streams = vec![
+            (52u32, stream(1920, 1280, "DP-2")),
+            (47u32, stream(0, 1920, "HDMI-A-1")),
+        ];
+        let results = HashMap::from([
+            ("devices", Variant::from(KEYBOARD)),
+            ("streams", Variant::from(streams)),
+        ]);
+        let bytes = to_bytes(Context::new(LE, 0), &results).unwrap();
+        let (started, _): (StartResults, _) = bytes.deserialize().unwrap();
+        let screen = |node, x, width, name: &str| Screen {
+            node,
+            position: (x, 0),
+            size: (width, 1080),
+            mapping_id: Some(name.into()),
+        };
+        assert_eq!(
+            screens(started.streams).unwrap(),
+            vec![
+                screen(52, 1920, 1280, "DP-2"),
+                screen(47, 0, 1920, "HDMI-A-1")
+            ],
+            "the screens in the portal's order, the primary first"
+        );
     }
 
     #[test]
