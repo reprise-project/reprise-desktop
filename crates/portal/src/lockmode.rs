@@ -3,9 +3,11 @@
 
 use crate::Pick;
 use crate::inputlink::{Link, LockEvent, LockScreenHandle, Monitor};
+use crate::inputproto::reprise_lock_screen_v1::Reason;
 use futures_lite::StreamExt;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
+use wayland_client::WEnum;
 
 const SERVER: &str = crate::trusted::APP_ID;
 const SERVER_PATH: &str = "/org/reprise/RemoteDesktop";
@@ -28,19 +30,30 @@ pub fn pick(locked: Option<&Locked>) -> Pick {
     }
 }
 
+/// A Start whose server asked for lock mode that the compositor neither began nor refused.
+#[derive(Debug, PartialEq, Eq)]
+pub struct NotBegun;
+
 /// Lock mode for a trusted Start by the process `caller`. None is show mode: the server it runs
-/// publishes no layout, or the compositor has no lock screens, ended it, or sent no screens in
-/// [`SCREENS_WAIT`].
+/// publishes no layout, or the compositor has no lock screens or ended it `unavailable` or
+/// `replaced`. Any other answer, or none in [`SCREENS_WAIT`], fails the Start.
 pub async fn begin(
     conn: &zbus::Connection,
     caller: Option<u32>,
     link: Option<&Link>,
-) -> Option<Locked> {
-    let (layout, layouts) = console_layout(conn, caller?).await?;
+) -> Result<Option<Locked>, NotBegun> {
+    let Some((layout, layouts)) = (match caller {
+        Some(caller) => console_layout(conn, caller).await,
+        None => None,
+    }) else {
+        return Ok(None);
+    };
     if layout.is_empty() {
-        return None;
+        return Ok(None);
     }
-    let lock = link?.lock_screen(&layout)?;
+    let Some(lock) = link.and_then(|l| l.lock_screen(&layout)) else {
+        return Ok(None);
+    };
     let events = lock.events();
     let first = futures_lite::future::or(async { events.recv().await.ok() }, async {
         async_io::Timer::after(SCREENS_WAIT).await;
@@ -49,15 +62,19 @@ pub async fn begin(
     match first.await {
         Some(LockEvent::Screens(screens)) if !screens.is_empty() => {
             log::info!("lock mode: casting {screens:?}");
-            Some(Locked {
+            Ok(Some(Locked {
                 lock,
                 screens,
                 layouts: Some(layouts),
-            })
+            }))
+        }
+        Some(LockEvent::Ended(WEnum::Value(why @ (Reason::Unavailable | Reason::Replaced)))) => {
+            log::info!("lock mode: not begun ({why:?}); sharing every screen");
+            Ok(None)
         }
         other => {
-            log::info!("lock mode: not begun ({other:?}); sharing every screen");
-            None
+            log::warn!("lock mode: not begun ({other:?}); the screen is not shared");
+            Err(NotBegun)
         }
     }
 }
@@ -381,6 +398,8 @@ mod tests {
         .await
     }
 
+    type Begun = Result<Pick, NotBegun>;
+
     /// `begin` for a server in this process publishing `layout`, asked by `caller`, on a
     /// compositor that answers each layout with `answer`. Returns the pick and the layouts the
     /// compositor was sent.
@@ -388,7 +407,7 @@ mod tests {
         layout: &[Monitor],
         caller: u32,
         answer: impl FnMut(&mut UnixStream, u32, usize) -> bool + Send + 'static,
-    ) -> Option<(Pick, Vec<Vec<u8>>)> {
+    ) -> Option<(Begun, Vec<Vec<u8>>)> {
         let bus = bus()?;
         let (ours, theirs) = UnixStream::pair().unwrap();
         let fake = compositor(theirs, answer);
@@ -396,7 +415,8 @@ mod tests {
         let pick = zbus::block_on(async {
             let _server = server(&bus, layout).await;
             let conn = connect(&bus).await;
-            pick(begin(&conn, Some(caller), Some(&link)).await.as_ref())
+            let begun = begin(&conn, Some(caller), Some(&link)).await;
+            begun.map(|locked| pick(locked.as_ref()))
         });
         let _marker = link.create_keys();
         Some((pick, fake.join().unwrap()))
@@ -414,6 +434,7 @@ mod tests {
         };
         assert_eq!(layouts, [words(&FIRST)], "the server's layout is asked for");
         let names = ["REMOTE-1".to_string(), "REMOTE-2".to_string()];
+        let pick = pick.unwrap();
         assert_eq!(pick, Pick::Remote(names.to_vec()));
         let outputs = [
             at("eDP-1", 0, 0),
@@ -441,24 +462,51 @@ mod tests {
             eprintln!("no dbus-daemon; skipped");
             return;
         };
-        assert_eq!(pick, Pick::All);
+        assert_eq!(pick, Ok(Pick::All));
         assert!(layouts.is_empty(), "no lock screen is made");
 
         let (pick, layouts) = begun(&FIRST, me + 1, never).unwrap();
-        assert_eq!(pick, Pick::All, "a layout another process publishes");
+        assert_eq!(pick, Ok(Pick::All), "a layout another process publishes");
         assert!(layouts.is_empty(), "is not read");
 
-        let unavailable = |sock: &mut UnixStream, lock, _| {
-            ended(sock, lock, UNAVAILABLE);
+        for (reason, name) in [(UNAVAILABLE, "unavailable"), (REPLACED, "replaced")] {
+            let refused = move |sock: &mut UnixStream, lock, _| {
+                ended(sock, lock, reason);
+                true
+            };
+            let (pick, layouts) = begun(&FIRST, me, refused).unwrap();
+            assert_eq!(pick, Ok(Pick::All), "ended({name})");
+            assert_eq!(layouts, [words(&FIRST)]);
+        }
+    }
+
+    #[test]
+    fn lock_mode_the_compositor_neither_begins_nor_refuses_fails_the_start() {
+        let me = std::process::id();
+        let silent = |_: &mut UnixStream, _, _| true;
+        let Some((pick, _)) = begun(&FIRST, me, silent) else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        assert_eq!(pick, Err(NotBegun), "no screens within {SCREENS_WAIT:?}");
+
+        let unlocked = |sock: &mut UnixStream, lock, _| {
+            ended(sock, lock, CONSOLE_UNLOCKED);
             true
         };
-        let (pick, layouts) = begun(&FIRST, me, unavailable).unwrap();
-        assert_eq!(pick, Pick::All, "ended(unavailable)");
-        assert_eq!(layouts, [words(&FIRST)]);
+        let (pick, _) = begun(&FIRST, me, unlocked).unwrap();
+        assert_eq!(pick, Err(NotBegun), "ended(console_unlocked) first");
 
-        let silent = |_: &mut UnixStream, _, _| true;
-        let (pick, _) = begun(&FIRST, me, silent).unwrap();
-        assert_eq!(pick, Pick::All, "no screens within {SCREENS_WAIT:?}");
+        let none = |sock: &mut UnixStream, lock, _| {
+            screens(sock, lock, &[]);
+            true
+        };
+        let (pick, _) = begun(&FIRST, me, none).unwrap();
+        assert_eq!(pick, Err(NotBegun), "no screens");
+
+        let lost = |_: &mut UnixStream, _, _| false;
+        let (pick, _) = begun(&FIRST, me, lost).unwrap();
+        assert_eq!(pick, Err(NotBegun), "the compositor's connection lost");
     }
 
     #[test]
@@ -485,6 +533,7 @@ mod tests {
             let conn = connect(&bus).await;
             let locked = begin(&conn, Some(std::process::id()), Some(&link))
                 .await
+                .unwrap()
                 .expect("lock mode");
             let follow = zruntime::spawn(held_in(&sessions, locked, conn));
             assert_eq!(within(answered_rx.recv()).await, Ok(1));
