@@ -303,9 +303,13 @@ impl SessionLockHandler for State {
     }
 
     fn unlock(&mut self) {
-        if let Some(c) = self.lock.console.as_mut().and_then(|l| l.client.take()) {
-            release(self, c, false);
-        }
+        // A locker the compositor finished still passes Smithay's check, and lock mode's lock is
+        // not its to lift.
+        let Some(c) = self.lock.console.as_mut().and_then(|l| l.client.take()) else {
+            log::warn!("session lock: ignored an unlock from a locker that holds no lock");
+            return;
+        };
+        release(self, c, false);
         log::info!("session lock: the locker unlocked");
         crate::lockview::unlock(self);
     }
@@ -626,5 +630,19 @@ mod tests {
             .map(|(o, _)| o.as_str())
             .collect();
         assert_eq!(scene, ["TEST-1"], "{asked:?}");
+    }
+
+    #[test]
+    fn the_locker_holding_the_lock_unlocks_it() {
+        let mut h = crate::harness::Harness::new();
+        h.output("TEST-1", 1024, 768);
+        let mut c = h.connect();
+        let (lock, _surface) = h.map_lock_surface(&mut c);
+        h.run_for(2300);
+        h.roundtrip(&mut c);
+        assert!(h.state.console_locked());
+        lock.unlock_and_destroy();
+        h.roundtrip(&mut c);
+        assert!(!h.state.console_locked());
     }
 }
