@@ -10,9 +10,11 @@ use smithay::{
             RegistrationToken,
             timer::{TimeoutAction, Timer},
         },
+        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback::Kind,
         wayland_server::backend::GlobalId,
     },
-    utils::Transform,
+    utils::{Monotonic, Transform},
+    wayland::presentation::Refresh,
 };
 
 use crate::{backend::Ask, compositor::State};
@@ -234,7 +236,8 @@ fn tick(state: &mut State, output: &Output) {
 }
 
 /// A frame with nothing to scan out: what animates steps, surfaces enter or leave, the lock, fade
-/// and sleep covers count it shown, frame callbacks go and the captures waiting for it fill.
+/// and sleep covers count it shown, presentation feedback reports it shown at the tick, frame
+/// callbacks go and the captures waiting for it fill.
 fn frame(state: &mut State, output: &Output) {
     state.settle_moves();
     let shows_at = state.now();
@@ -250,7 +253,11 @@ fn frame(state: &mut State, output: &Output) {
         s.pointer_shown = on;
     }
     let pass = state.scene.surface_pass(output);
-    (state.scene).update_surfaces(&pass, &Default::default());
+    let states = Default::default();
+    (state.scene).update_surfaces(&pass, &states);
+    let mut feedback = state.scene.take_presentation_feedback(&pass, &states);
+    let refresh = interval(captured, state.config.remote_desktop.frame_rate);
+    feedback.presented::<_, Monotonic>(shows_at, Refresh::fixed(refresh), 0, Kind::empty());
     crate::sessionlock::rendered(state, output, true, false);
     crate::sessionlock::presented(state, output);
     crate::power::rendered(state, output, true, false);
@@ -266,6 +273,29 @@ fn frame(state: &mut State, output: &Output) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::{Harness, Presented};
+
+    #[test]
+    fn a_standby_frame_presents_the_commit_at_its_interval() {
+        let mut h = Harness::new();
+        crate::standby::rdp_changed(&mut h.state, true);
+        h.dispatch();
+        let mut c = h.connect();
+        let t = h.map_toplevel(&mut c, "test.app", 300, 200);
+        h.run_for(1100);
+        let surface = c.side.shells[t.shell].surface.clone();
+        let feedback = c.presentation_feedback(&surface);
+        h.draw_self(&mut c, t, 0xff00_8000);
+        h.run_for(1100);
+        h.roundtrip(&mut c);
+        assert_eq!(
+            *feedback.lock().unwrap(),
+            Some(Presented::Shown {
+                refresh_ns: 1_000_000_000
+            }),
+            "shown at the next tick, an uncaptured standby's second apart"
+        );
+    }
 
     #[test]
     fn a_captured_screen_draws_at_the_frame_rate_up_to_144_and_else_once_a_second() {
