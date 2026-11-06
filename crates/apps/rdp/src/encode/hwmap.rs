@@ -75,10 +75,15 @@ impl Gpu {
         }
     }
 
-    /// The filter and options turning mapped RGB into BT.709 NV12. Naming the primaries and
-    /// transfer on both sides keeps drivers from converting them or using BT.601.
-    fn to_nv12(self) -> Result<(&'static str, CString), EncodeError> {
-        let (name, options) = match self {
+    /// The filter and options turning mapped RGB of `source` into BT.709 NV12 of `target`.
+    /// Naming the primaries and transfer on both sides keeps drivers from converting them or
+    /// using BT.601.
+    pub(super) fn to_nv12(
+        self,
+        source: (u32, u32),
+        target: (u32, u32),
+    ) -> Result<(&'static str, CString), EncodeError> {
+        let (name, mut options) = match self {
             Gpu::Vaapi => (
                 "scale_vaapi",
                 format!(
@@ -96,6 +101,9 @@ impl Gpu {
             ),
             Gpu::Cuda => return Err(EncodeError("CUDA frames are drawn, not filtered".into())),
         };
+        if target != source {
+            options += &format!(":w={}:h={}", target.0, target.1);
+        }
         Ok((name, CString::new(options).expect("no NUL in the options")))
     }
 }
@@ -188,7 +196,7 @@ pub(super) fn frames(
 }
 
 /// The pixel format of DRM `fourcc` in memory.
-fn sw_pixel(fourcc: u32) -> Result<ffi::AVPixelFormat, EncodeError> {
+pub(super) fn sw_pixel(fourcc: u32) -> Result<ffi::AVPixelFormat, EncodeError> {
     match fourcc {
         XRGB8888 => Ok(ffi::AVPixelFormat::BGR0),
         ARGB8888 => Ok(ffi::AVPixelFormat::BGRA),
@@ -280,9 +288,11 @@ pub(super) fn drm_frame(
     Ok(out)
 }
 
-/// Turns stream frames of one size and format into what the encoder takes.
+/// Turns stream frames of one size and format into what the encoder takes, scaled to a target
+/// size.
 pub struct Converter {
     pub size: (u32, u32),
+    pub target: (u32, u32),
     pub fourcc: u32,
     route: Route,
 }
@@ -305,39 +315,30 @@ enum Route {
 }
 
 impl Converter {
-    /// A converter for frames of DRM `fourcc` coded at `size` (even) and `frame_rate`, on
-    /// `devices` or, without them, the CPU.
+    /// A converter for frames of DRM `fourcc` read at `size` and coded at `target` (both even)
+    /// and `frame_rate`, on `devices` or, without them, the CPU.
     pub fn new(
         devices: Option<&Devices>,
         fourcc: u32,
         size: (u32, u32),
+        target: (u32, u32),
         frame_rate: u32,
     ) -> Result<Converter, EncodeError> {
         let sw = sw_pixel(fourcc)?;
         let route = match devices {
-            Some(d) if d.gpu == Gpu::Cuda => {
-                Route::Cuda(CudaViews::new(&d.node, &d.device, size, size, false)?)
-            }
+            Some(d) if d.gpu == Gpu::Cuda => Route::Cuda(CudaViews::new(
+                &d.node, &d.device, size, target, target, false,
+            )?),
             Some(d) => {
                 let mapped = frames(&d.device, d.gpu.pixel(), sw, size, 0)?;
                 Route::Filter {
                     gpu: d.gpu,
-                    graph: graph(&d.device, &mapped, d.gpu, size, frame_rate)?,
+                    graph: graph(&d.device, &mapped, d.gpu, (size, target), frame_rate)?,
                     mapped,
                 }
             }
             None => {
-                let mut sws = ffmpeg::software::scaling::Context::get(
-                    Pixel::from(sw),
-                    size.0,
-                    size.1,
-                    Pixel::YUV420P,
-                    size.0,
-                    size.1,
-                    ffmpeg::software::scaling::Flags::BILINEAR
-                        | ffmpeg::software::scaling::Flags::ACCURATE_RND,
-                )
-                .map_err(|e| EncodeError(format!("colour conversion: {e}")))?;
+                let mut sws = scaler(Pixel::from(sw), size, Pixel::YUV420P, target)?;
                 // SAFETY: a live scaler; the coefficient tables are static.
                 unsafe {
                     let bt709 = ffi::sws_getCoefficients(ffi::SWS_CS_ITU709);
@@ -354,12 +355,13 @@ impl Converter {
                 }
                 Route::Cpu {
                     sws,
-                    out: frame::Video::new(Pixel::YUV420P, size.0, size.1),
+                    out: frame::Video::new(Pixel::YUV420P, target.0, target.1),
                 }
             }
         };
         Ok(Converter {
             size,
+            target,
             fourcc,
             route,
         })
@@ -387,8 +389,8 @@ impl Converter {
         }
     }
 
-    /// `frame` cropped to `self.size`, as the encoder takes it: NV12 on the GPU or YUV 4:2:0 in
-    /// memory.
+    /// `frame` cropped to `self.size` and scaled to `self.target`, as the encoder takes it: NV12
+    /// on the GPU or YUV 4:2:0 in memory.
     pub fn convert(&mut self, frame: &Frame) -> Result<frame::Video, EncodeError> {
         match &mut self.route {
             Route::Filter { gpu, mapped, graph } => {
@@ -405,7 +407,7 @@ impl Converter {
                     let src = [pixels.as_ptr()];
                     let stride = [stride as libc::c_int];
                     // SAFETY: `pixels` holds `h` rows of `stride` bytes, each at least `w`
-                    // pixels wide; `out` is a writable YUV 4:2:0 frame of `w`x`h`.
+                    // pixels wide; `out` is a writable YUV 4:2:0 frame of the scaler's target.
                     unsafe {
                         let o = out.as_mut_ptr();
                         ffi::sws_scale(
@@ -428,6 +430,76 @@ impl Converter {
                 Ok(copy)
             }
         }
+    }
+}
+
+/// A bilinear swscale context from `from` pixels of `size` to `to` pixels of `target`.
+fn scaler(
+    from: Pixel,
+    size: (u32, u32),
+    to: Pixel,
+    target: (u32, u32),
+) -> Result<ffmpeg::software::scaling::Context, EncodeError> {
+    ffmpeg::software::scaling::Context::get(
+        from,
+        size.0,
+        size.1,
+        to,
+        target.0,
+        target.1,
+        ffmpeg::software::scaling::Flags::BILINEAR | ffmpeg::software::scaling::Flags::ACCURATE_RND,
+    )
+    .map_err(|e| EncodeError(format!("colour conversion: {e}")))
+}
+
+/// Pictures of DRM `fourcc` scaled on the CPU to a target size, in the same format.
+pub(super) struct Rescale {
+    size: (u32, u32),
+    sws: ffmpeg::software::scaling::Context,
+    out: frame::Video,
+}
+
+impl Rescale {
+    pub(super) fn new(
+        fourcc: u32,
+        size: (u32, u32),
+        target: (u32, u32),
+    ) -> Result<Rescale, EncodeError> {
+        let pixel = Pixel::from(sw_pixel(fourcc)?);
+        Ok(Rescale {
+            size,
+            sws: scaler(pixel, size, pixel, target)?,
+            out: frame::Video::new(pixel, target.0, target.1),
+        })
+    }
+
+    /// [`read_rgb`] of `frame` at the source size, scaled: `f` gets the target's pixels.
+    pub(super) fn read(
+        &mut self,
+        frame: &Frame,
+        f: impl FnOnce(&[u8], u32),
+    ) -> Result<(), EncodeError> {
+        let Rescale { size, sws, out } = self;
+        read_rgb(frame, *size, |pixels, stride| {
+            let src = [pixels.as_ptr()];
+            let stride = [stride as libc::c_int];
+            // SAFETY: `pixels` holds `size.1` rows of `stride` bytes; `out` is a writable frame
+            // of the scaler's target.
+            unsafe {
+                let o = out.as_mut_ptr();
+                ffi::sws_scale(
+                    sws.as_mut_ptr(),
+                    src.as_ptr(),
+                    stride.as_ptr(),
+                    0,
+                    size.1 as i32,
+                    (*o).data.as_ptr(),
+                    (*o).linesize.as_ptr(),
+                );
+            }
+        })?;
+        f(out.data(0), out.stride(0) as u32);
+        Ok(())
     }
 }
 
@@ -527,16 +599,17 @@ pub(super) fn map(drm: &frame::Video, mapped: &Ref, gpu: Gpu) -> Result<frame::V
 const INPUT_COLOUR: (ffi::AVColorSpace, ffi::AVColorRange) =
     (ffi::AVColorSpace::RGB, ffi::AVColorRange::JPEG);
 
-/// A graph from frames of `mapped` through the GPU's NV12 conversion on `device`.
+/// A graph from frames of `mapped` of the source size through the GPU's NV12 conversion to the
+/// target size on `device`.
 fn graph(
     device: &Ref,
     mapped: &Ref,
     gpu: Gpu,
-    (w, h): (u32, u32),
+    ((w, h), target): ((u32, u32), (u32, u32)),
     frame_rate: u32,
 ) -> Result<ffmpeg::filter::Graph, EncodeError> {
     let mut graph = ffmpeg::filter::Graph::new();
-    let (convert, options) = gpu.to_nv12()?;
+    let (convert, options) = gpu.to_nv12((w, h), target)?;
     let find = |name| {
         ffmpeg::filter::find(name).ok_or_else(|| EncodeError(format!("FFmpeg has no {name}")))
     };

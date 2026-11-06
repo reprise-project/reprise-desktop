@@ -661,6 +661,7 @@ impl Live {
             quality: self.quality,
             frame_rate: self.frame_rate,
             avc444,
+            target: None,
             epoch: self.epoch,
             order: self.order.take(),
             choice: self.choices,
