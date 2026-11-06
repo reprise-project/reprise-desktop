@@ -16,6 +16,12 @@ const BTN_LEFT: u32 = 0x110;
 /// menu's grab still closes on it.
 const BTN_FORWARD: u32 = 0x115;
 
+#[cfg(test)]
+thread_local! {
+    /// Calls of [`dismiss`] on this thread.
+    pub(crate) static DISMISSES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 /// Whether an override-redirect window of type `kind` is a menu that holds the X pointer grab
 /// while open.
 fn is_menu(kind: Option<WmWindowType>) -> bool {
@@ -87,6 +93,8 @@ pub fn keyboard_move_closes(to_x11: Option<bool>) -> bool {
 /// it. Not while the pointer is grabbed or the screen is locked. A menu is a typed one or an
 /// untyped override-redirect window that showed during an X pointer grab.
 pub fn dismiss(state: &mut State) {
+    #[cfg(test)]
+    DISMISSES.set(DISMISSES.get() + 1);
     let mut menus = Vec::new();
     let mut windows = Vec::new();
     let mut popups = Vec::new();

@@ -436,8 +436,14 @@ fn dropping_the_portal_connection_ends_lock_mode_and_keeps_the_lock() {
 }
 
 /// eDP-1 at 1920x1080 and, in lock mode, one 1280x720 Remote output at x 1920.
-fn in_lock_mode() -> (Harness, TestClient, crate::harness::LockScreen) {
-    let mut h = Harness::new();
+pub(crate) fn in_lock_mode() -> (Harness, TestClient, crate::harness::LockScreen) {
+    in_lock_mode_with(crate::config::Config::default())
+}
+
+fn in_lock_mode_with(
+    config: crate::config::Config,
+) -> (Harness, TestClient, crate::harness::LockScreen) {
+    let mut h = Harness::with_config(config);
     h.output("eDP-1", 1920, 1080);
     let mut portal = h.connect_portal();
     let lock = portal.lock_screen();
@@ -606,4 +612,119 @@ fn in_lock_mode_the_turn_off_dialog_opens_for_the_desktop_only() {
     assert!(h.state.dialogs.views.is_empty(), "a power key asks nothing");
     crate::power::run_action(&mut h.state, PowerAction::Ask, Origin::Desktop);
     assert_eq!(h.state.dialogs.views.len(), 1, "the desktop's ask opens it");
+}
+
+pub(crate) fn lock_input(h: &Harness) -> String {
+    h.state
+        .lock
+        .active
+        .as_ref()
+        .expect("locked")
+        .state
+        .input
+        .clone()
+}
+
+/// Type into the lock dialog, then click its Cancel button, which clears what was typed.
+pub(crate) fn click_lock_cancel(h: &mut Harness) {
+    h.state.lock.active.as_mut().expect("locked").state.input = "secret".into();
+    let c = h.state.lock.active.as_ref().unwrap().outputs[0]
+        .buttons
+        .cancel;
+    let (x, y) = (c.x + c.width / 2, c.y + c.height / 2);
+    h.click(f64::from(x), f64::from(y));
+}
+
+#[test]
+fn in_lock_mode_a_physical_wheel_over_a_remote_screen_switches_nothing() {
+    use smithay::backend::input::{Axis, AxisSource, InputTime};
+    use smithay::input::pointer::AxisFrame;
+    let (mut h, _portal, _lock) = in_lock_mode_with(crate::config::Config {
+        base: repriseconf::config::Config {
+            workspaces: 4,
+            wheel_on_desktop: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    h.pointer_to(2500.0, 300.0);
+    let notch_down = AxisFrame::new(InputTime::now())
+        .source(AxisSource::Wheel)
+        .value(Axis::Vertical, 15.0)
+        .v120(Axis::Vertical, 120);
+    h.state.handle_axis(notch_down);
+    assert_eq!(h.state.desktops.current, 0, "the first desktop stays");
+}
+
+#[test]
+fn in_lock_mode_a_click_with_the_overview_open_goes_to_the_lock() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 400, 300);
+    h.state.move_to(t.id, 2100, 200);
+    h.state.open_overview();
+    assert!(h.state.overview.view.is_some(), "the overview opens");
+    click_lock_cancel(&mut h);
+    assert_eq!(lock_input(&h), "", "Cancel cleared the field");
+}
+
+#[test]
+fn in_lock_mode_the_hot_corner_opens_nothing() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 400, 300);
+    h.state.move_to(t.id, 2100, 200);
+    h.state.config.hot_corner = crate::config::HotCorner::TopLeft;
+    h.pointer_to(5.0, 5.0);
+    h.pointer_to(0.0, 0.0);
+    assert!(h.state.overview.view.is_none());
+}
+
+#[test]
+fn in_lock_mode_a_press_does_not_dismiss_x11_menus() {
+    use crate::xwayland::menus::DISMISSES;
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    DISMISSES.set(0);
+    h.click(500.0, 500.0);
+    assert_eq!(DISMISSES.get(), 1, "unlocked, a press dismisses");
+    let (mut h, _portal, _lock) = in_lock_mode();
+    DISMISSES.set(0);
+    h.click(500.0, 500.0);
+    h.click(2500.0, 300.0);
+    assert_eq!(DISMISSES.get(), 0);
+}
+
+#[test]
+fn leaving_lock_mode_while_locked_closes_what_the_remote_opened() {
+    let (mut h, mut portal, lock) = in_lock_mode();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 400, 300);
+    h.state.move_to(t.id, 2100, 200);
+    let s = h.state.win(t.id).unwrap().wl_surface().clone();
+    h.state.enter_keyboard(Some(s.clone()));
+    h.state.open_overview();
+    assert!(h.state.overview.view.is_some(), "the overview opens");
+    assert_eq!(keyboard_focus(&h), Some(s), "the window has the keyboard");
+    lock.object.destroy();
+    h.roundtrip(&mut portal);
+    assert!(!remote_side(&h.state), "lock mode ends");
+    assert!(h.state.console_locked());
+    assert!(h.state.overview.view.is_none(), "the overview closed");
+    assert_eq!(keyboard_focus(&h), None, "no client has the keyboard");
+}
+
+#[test]
+fn in_lock_mode_no_capture_border_draws_on_a_locked_output() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    let edp = h.state.scene.outputs()[0].clone();
+    let mut cap = h.connect_capture((1920, 1080));
+    let mut s = cap.ext_session(&mut h);
+    cap.ext_frame(&mut h, &mut s);
+    cap.ext_frame(&mut h, &mut s);
+    assert!(
+        !crate::captureborder::ongoing(&h.state).is_empty(),
+        "eDP-1 is captured"
+    );
+    assert!(crate::captureborder::elements(&mut h.state, &edp).is_empty());
 }

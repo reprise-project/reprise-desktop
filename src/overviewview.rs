@@ -941,8 +941,8 @@ impl State {
         Some(tree)
     }
 
-    /// The pointer moved to `pos`: the hot corner opens the overview only
-    /// for a free pointer (no button, drag, move, modal or fullscreen window).
+    /// The pointer moved to `pos`: the hot corner opens the overview only for a
+    /// free pointer (no console lock, button, drag, move, modal or fullscreen window).
     pub fn hot_corner_motion(&mut self, x: f64, y: f64) {
         let corner = self.config.hot_corner;
         if corner == crate::config::HotCorner::None {
@@ -951,6 +951,7 @@ impl State {
         let bounds = self.layout_box(None);
         let fired = self.overview.corner.motion(corner, (x, y), bounds);
         if !fired
+            || self.console_locked()
             || self.overview.view.is_some()
             || self.buttons_down > 0
             || self.drag_running()
