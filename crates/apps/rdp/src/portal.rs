@@ -377,7 +377,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn start_results_list_every_stream_in_screen_order() {
+    fn start_results_keep_the_portal_order() {
         use zbus::wire::{LE, serialized::Context, to_bytes};
         let stream = |x: i32, width: i32, name: &str| {
             HashMap::from([
@@ -409,7 +409,7 @@ pub(crate) mod tests {
                 screen(52, 1920, 1280, "DP-2"),
                 screen(47, 0, 1920, "HDMI-A-1")
             ],
-            "the screens in the portal's order, the primary first"
+            "the screens in the order the portal sent them"
         );
     }
 
