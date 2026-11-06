@@ -789,6 +789,10 @@ impl Live {
             return;
         }
         self.unreadable = None;
+        // A target that only evens the frame is no scale: AVC444 codes it unscaled.
+        let target = (target.filter(|_| h264))
+            .map(|t| (u32::from(t.w), u32::from(t.h)))
+            .filter(|&t| t != crate::encode::hwmap::even(frame.size));
         self.worker.send(Job {
             frame,
             keyframe: std::mem::take(&mut self.keyframe),
@@ -796,9 +800,7 @@ impl Live {
             quality: self.quality,
             frame_rate: self.frame_rate,
             avc444,
-            target: target
-                .filter(|_| h264)
-                .map(|t| (u32::from(t.w), u32::from(t.h))),
+            target,
             epoch: self.epoch,
             order: self.order.take(),
             choice: self.choices,
