@@ -1,6 +1,7 @@
 //! Logins: the session user's password, checked by the compositor's PAM conversation helper, a
 //! per-address back-off after repeated failures, and a pause of every login after many.
 
+use crate::intake::Admission;
 use ironrdp_server::{
     CredentialDecision, CredentialValidationError, CredentialValidator, Credentials,
 };
@@ -189,8 +190,8 @@ pub trait Login: CredentialValidator + Send + Sync + 'static {
 /// Makes the login of each new connection.
 pub trait Logins {
     type Check: Login;
-    /// `peer`'s login and the time it has to log in.
-    fn check(&self, peer: SocketAddr) -> (Arc<Self::Check>, Duration);
+    /// `peer`'s login as `admission` asks and the time it has to log in.
+    fn check(&self, peer: SocketAddr, admission: Admission) -> (Arc<Self::Check>, Duration);
     /// How long connections from `peer` are still refused after failed logins.
     fn backoff(&self, peer: IpAddr) -> Duration;
 }
@@ -223,7 +224,8 @@ impl PasswordLogins {
 impl Logins for PasswordLogins {
     type Check = PasswordCheck;
 
-    fn check(&self, peer: SocketAddr) -> (Arc<PasswordCheck>, Duration) {
+    fn check(&self, peer: SocketAddr, admission: Admission) -> (Arc<PasswordCheck>, Duration) {
+        let Admission::Password = admission;
         let check =
             PasswordCheck::new(self.user.clone(), &self.helper, peer, self.throttle.clone());
         (Arc::new(check), HANDSHAKE)

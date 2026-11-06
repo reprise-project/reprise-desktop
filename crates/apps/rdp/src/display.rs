@@ -6,6 +6,7 @@ mod screens;
 mod tests;
 
 use crate::client::ClientLayout;
+use crate::console::{self, Console, Joined};
 use crate::control::Status;
 use crate::encode::choice;
 use crate::encode::ffmpeg::Ffmpeg;
@@ -19,6 +20,7 @@ use crate::portal::{self, Grant};
 use crate::stream::{
     self, CursorImage, DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer, Offer, SizeChange,
 };
+use ironrdp_displaycontrol::pdu::DisplayControlMonitorLayout;
 use ironrdp_pdu::pointer::PointerPositionAttribute;
 use ironrdp_pdu::rdp::server_error_info::ProtocolIndependentCode;
 use ironrdp_server::{
@@ -34,7 +36,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::watch;
 
 /// The size a client is first told before any picture was shared.
@@ -42,6 +44,9 @@ pub const UNSHARED: DesktopSize = DesktopSize {
     width: 1024,
     height: 768,
 };
+/// The most monitors a client's Display Control layout may give, as many as its Client Monitor
+/// Data holds.
+const MAX_MONITORS: u32 = 16;
 /// The largest pointer a client takes without the large pointer capability.
 const MAX_POINTER: usize = 96;
 /// How long a frame the encoder cannot read waits before the stream is asked to negotiate
@@ -162,14 +167,23 @@ pub struct Display {
     shown: Option<Shown>,
     ending: Ending,
     client: ClientLayout,
+    /// The size the client asked for on activation.
+    client_size: Option<DesktopSize>,
+    console: Console,
+    /// Its place in the console's run, from the first activation on.
+    joined: Option<Joined>,
+    /// The client's Display Control layouts, read by its run once it joins.
+    layouts: UnboundedSender<Vec<console::Monitor>>,
+    layouts_rx: Option<UnboundedReceiver<Vec<console::Monitor>>>,
 }
 
 /// What a connection tells its display: how to report the session shown and its screens gone,
-/// and the monitors its client sent.
+/// the monitors its client sent, and the console its run of viewers is on.
 pub struct Connection {
     pub shown: Shown,
     pub ending: Ending,
     pub client: ClientLayout,
+    pub console: Console,
 }
 
 impl Display {
@@ -182,6 +196,7 @@ impl Display {
         links: Links,
         connection: Connection,
     ) -> Display {
+        let (layouts, layouts_rx) = unbounded_channel();
         Display {
             told: Told::new(last),
             picture,
@@ -194,7 +209,26 @@ impl Display {
             shown: Some(connection.shown),
             ending: connection.ending,
             client: connection.client,
+            client_size: None,
+            console: connection.console,
+            joined: None,
+            layouts,
+            layouts_rx: Some(layouts_rx),
         }
+    }
+
+    /// Joins the console's run once and says whether it locks the console. Its first viewer
+    /// publishes the client's monitors and follows its Display Control layouts.
+    fn join(&mut self) -> bool {
+        if self.joined.is_none() {
+            let size = self.client_size.unwrap_or_else(|| self.told.get());
+            let joined = self.console.join(self.client.console_layout(size));
+            if let Some(layouts) = self.layouts_rx.take() {
+                joined.follow(layouts);
+            }
+            self.joined = Some(joined);
+        }
+        self.joined.as_ref().is_some_and(Joined::lock)
     }
 }
 
@@ -212,6 +246,7 @@ impl RdpServerDisplay for Display {
     /// Runs on every activation: a client confirming the desktop its monitors span gets it, any
     /// other the size this connection told last, which starts at [`Display::new`]'s `last`.
     async fn request_initial_size(&mut self, client_size: DesktopSize) -> DesktopSize {
+        self.client_size = Some(client_size);
         let confirmed = (client_size.width, client_size.height);
         if self.client.desktop() == Some(confirmed) {
             self.told.offered(client_size);
@@ -219,9 +254,19 @@ impl RdpServerDisplay for Display {
         self.told.get()
     }
 
-    /// The shared screens keep their size whatever layout a client asks for.
+    /// Lock mode's screens follow the client's layout; shared physical screens keep their size.
     async fn offers_display_control(&mut self) -> bool {
-        false
+        self.console.lock_mode()
+    }
+
+    async fn monitor_count(&mut self) -> u32 {
+        MAX_MONITORS
+    }
+
+    /// Called under the server's display lock, so it only passes the layout on.
+    fn request_layout(&mut self, layout: DisplayControlMonitorLayout) {
+        let monitors = console::from_display_control(&layout, self.client.scale());
+        let _ = self.layouts.send(monitors);
     }
 
     async fn updates(
@@ -229,6 +274,7 @@ impl RdpServerDisplay for Display {
         _: DisplayContext,
     ) -> ServerResult<Box<dyn RdpServerDisplayUpdates>> {
         if self.session.is_none() {
+            let lock = self.join();
             let picture = probed(&mut self.picture).await;
             let mut grant =
                 (portal::open().await).map_err(|e| unshared("the screen is not shared", e))?;
@@ -242,7 +288,9 @@ impl RdpServerDisplay for Display {
                 );
             }
             let fds = remotes(&mut grant)?;
-            let gone = gone_with_all(self.ending.clone(), grant.screens.len());
+            let mapping_ids = grant.screens.iter().map(|s| s.mapping_id.as_deref());
+            let took_over = lock && console::remote_screens(mapping_ids);
+            let gone = gone_with_all(self.ending.clone(), grant.screens.len(), took_over);
             let mut streams = Vec::new();
             for (screen, fd) in grant.screens.iter().zip(fds) {
                 let (stream, frames, sizes) =

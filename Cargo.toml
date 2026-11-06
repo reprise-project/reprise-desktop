@@ -67,6 +67,7 @@ inotify = { version = "0.11", default-features = false }
 ironrdp-ainput = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 ironrdp-cliprdr = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 ironrdp-core = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
+ironrdp-displaycontrol = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 ironrdp-dvc = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 ironrdp-egfx = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
 ironrdp-graphics = { git = "https://github.com/reprise-project/IronRDP.git", rev = "3ef780c076e0c5b3e6e6aac33deeadfd4317a160" }
