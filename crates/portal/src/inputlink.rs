@@ -10,6 +10,7 @@ use crate::inputproto::{
     reprise_input_capture_v1::{self, RepriseInputCaptureV1},
     reprise_input_v1::{Device, Kind, RepriseInputV1},
     reprise_keys_v1::{KeyState, RepriseKeysV1},
+    reprise_lock_screen_v1::{self, Reason, RepriseLockScreenV1},
     reprise_sandboxed_v1::{self, RepriseSandboxedV1},
     reprise_shortcuts_v1::{self, RepriseShortcutsV1},
 };
@@ -23,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use wayland_client::backend::WaylandError;
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{wl_output, wl_registry};
-use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, delegate_noop};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, delegate_noop};
 use wayland_protocols::xdg::xdg_output::zv1::client::{
     zxdg_output_manager_v1::ZxdgOutputManagerV1,
     zxdg_output_v1::{self, ZxdgOutputV1},
@@ -69,6 +70,16 @@ pub const MAX_SHORTCUTS: usize = 16;
 /// to the compositor's `inputcapture::MAX_CAPTURES_PER_CLIENT` (or lower).
 pub const MAX_CAPTURES: usize = 8;
 
+/// A remote client's monitor as `set_layout` takes it: x, y, width, height and scale in percent.
+pub type Monitor = (i32, i32, i32, i32, u32);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LockEvent {
+    /// The names of the screens made for lock mode, primary first.
+    Screens(Vec<String>),
+    Ended(WEnum<Reason>),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ShortcutEvent {
     Activated { id: String, time: u32 },
@@ -94,6 +105,9 @@ enum Cmd {
     DestroyKeys(u32),
     PickColor(u32, async_channel::Sender<Option<u32>>),
     DestroyPick(u32),
+    LockScreen(u32, Vec<u8>, async_channel::Sender<LockEvent>),
+    SetLayout(u32, Vec<u8>),
+    DestroyLockScreen(u32),
 }
 
 struct Shared {
@@ -116,6 +130,7 @@ pub struct Link {
     live_shortcuts: Arc<AtomicUsize>,
     keys: bool,
     picks: bool,
+    lock_screens: bool,
     sandboxed_changes: async_channel::Receiver<()>,
 }
 
@@ -243,6 +258,44 @@ impl Drop for PickHandle {
     }
 }
 
+/// One session's hold on lock mode. Dropping it destroys the `reprise_lock_screen_v1`; lock mode
+/// ends once no session holds one.
+pub struct LockScreenHandle {
+    link: Link,
+    id: u32,
+    events: async_channel::Receiver<LockEvent>,
+}
+
+impl LockScreenHandle {
+    pub fn set_layout(&self, layout: &[Monitor]) {
+        self.link
+            .send(Cmd::SetLayout(self.id, layout_bytes(layout)));
+    }
+
+    /// Closed once the object is gone: after `ended`, or with the connection.
+    pub fn events(&self) -> async_channel::Receiver<LockEvent> {
+        self.events.clone()
+    }
+}
+
+impl Drop for LockScreenHandle {
+    fn drop(&mut self) {
+        self.link.send(Cmd::DestroyLockScreen(self.id));
+    }
+}
+
+/// `set_layout`'s array: each monitor's five words in native byte order.
+fn layout_bytes(layout: &[Monitor]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(layout.len() * 20);
+    for &(x, y, w, h, scale) in layout {
+        for word in [x, y, w, h] {
+            bytes.extend(word.to_ne_bytes());
+        }
+        bytes.extend(scale.to_ne_bytes());
+    }
+    bytes
+}
+
 impl Link {
     pub fn start() -> Result<Link, String> {
         let conn = Connection::connect_to_env().map_err(|e| format!("wayland: {e}"))?;
@@ -255,11 +308,12 @@ impl Link {
             registry_queue_init::<State>(&conn).map_err(|e| format!("registry: {e}"))?;
         let qh = queue.handle();
         let input: RepriseInputV1 = globals
-            .bind(&qh, 2..=7, ())
+            .bind(&qh, 2..=9, ())
             .map_err(|e| format!("reprise_input_v1: {e}"))?;
         let shortcuts = input.version() >= 3;
         let keys = input.version() >= 4;
         let picks = input.version() >= 6;
+        let lock_screens = input.version() >= 9;
         let xdg: ZxdgOutputManagerV1 = globals
             .bind(&qh, 3..=3, ())
             .map_err(|e| format!("xdg_output: {e}"))?;
@@ -286,6 +340,7 @@ impl Link {
             shortcuts: HashMap::new(),
             keys: HashMap::new(),
             picks: HashMap::new(),
+            locks: HashMap::new(),
             _sandboxed: sandboxed,
             sandboxed_pending: BTreeSet::new(),
             sandboxed_changed: changed_tx,
@@ -317,6 +372,7 @@ impl Link {
             live_shortcuts: Arc::new(AtomicUsize::new(0)),
             keys,
             picks,
+            lock_screens,
             sandboxed_changes: changed_rx,
         };
         let dead = link.dead.clone();
@@ -430,6 +486,21 @@ impl Link {
         })
     }
 
+    /// Ask for lock mode with `layout`; None before v9.
+    pub fn lock_screen(&self, layout: &[Monitor]) -> Option<LockScreenHandle> {
+        if !self.lock_screens {
+            return None;
+        }
+        let id = self.alloc();
+        let (tx, rx) = async_channel::unbounded();
+        self.send(Cmd::LockScreen(id, layout_bytes(layout), tx));
+        Some(LockScreenHandle {
+            link: self.clone(),
+            id,
+            events: rx,
+        })
+    }
+
     fn alloc(&self) -> u32 {
         self.next_id.fetch_add(1, Ordering::SeqCst)
     }
@@ -469,6 +540,8 @@ struct State {
     shortcuts: HashMap<u32, (RepriseShortcutsV1, async_channel::Sender<ShortcutEvent>)>,
     keys: HashMap<u32, RepriseKeysV1>,
     picks: HashMap<u32, (RepriseColorPickV1, async_channel::Sender<Option<u32>>)>,
+    /// Each object with the screen names heard since its last `done`.
+    locks: HashMap<u32, LockScreen>,
     /// Held so the compositor goes on sending the list.
     _sandboxed: Option<RepriseSandboxedV1>,
     sandboxed_pending: BTreeSet<String>,
@@ -618,8 +691,34 @@ impl State {
                     p.destroy();
                 }
             }
+            Cmd::LockScreen(id, layout, events) => {
+                let object = self.input.lock_screen(qh, id);
+                object.set_layout(layout);
+                let lock = LockScreen {
+                    object,
+                    screens: Vec::new(),
+                    events,
+                };
+                self.locks.insert(id, lock);
+            }
+            Cmd::SetLayout(id, layout) => {
+                if let Some(l) = self.locks.get(&id) {
+                    l.object.set_layout(layout);
+                }
+            }
+            Cmd::DestroyLockScreen(id) => {
+                if let Some(l) = self.locks.remove(&id) {
+                    l.object.destroy();
+                }
+            }
         }
     }
+}
+
+struct LockScreen {
+    object: RepriseLockScreenV1,
+    screens: Vec<String>,
+    events: async_channel::Sender<LockEvent>,
 }
 
 fn key_state(pressed: bool) -> KeyState {
@@ -862,6 +961,34 @@ impl Dispatch<RepriseColorPickV1, u32> for State {
     }
 }
 
+impl Dispatch<RepriseLockScreenV1, u32> for State {
+    fn event(
+        state: &mut Self,
+        _: &RepriseLockScreenV1,
+        ev: reprise_lock_screen_v1::Event,
+        id: &u32,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some(lock) = state.locks.get_mut(id) else {
+            return;
+        };
+        match ev {
+            reprise_lock_screen_v1::Event::Screen { name } => lock.screens.push(name),
+            reprise_lock_screen_v1::Event::Done => {
+                let screens = std::mem::take(&mut lock.screens);
+                let _ = lock.events.try_send(LockEvent::Screens(screens));
+            }
+            reprise_lock_screen_v1::Event::Ended { reason } => {
+                let _ = lock.events.try_send(LockEvent::Ended(reason));
+                if let Some(l) = state.locks.remove(id) {
+                    l.object.destroy();
+                }
+            }
+        }
+    }
+}
+
 impl Dispatch<RepriseSandboxedV1, ()> for State {
     fn event(
         state: &mut Self,
@@ -914,11 +1041,11 @@ impl Dispatch<RepriseShortcutsV1, u32> for State {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    fn send(sock: &mut UnixStream, object: u32, opcode: u32, body: &[u8]) {
+    pub(crate) fn send(sock: &mut UnixStream, object: u32, opcode: u32, body: &[u8]) {
         let size = (8 + body.len()) as u32;
         let mut msg = object.to_ne_bytes().to_vec();
         msg.extend((size << 16 | opcode).to_ne_bytes());
@@ -926,7 +1053,7 @@ mod tests {
         sock.write_all(&msg).unwrap();
     }
 
-    fn put_string(body: &mut Vec<u8>, s: &str) {
+    pub(crate) fn put_string(body: &mut Vec<u8>, s: &str) {
         body.extend((s.len() as u32 + 1).to_ne_bytes());
         body.extend(s.as_bytes());
         body.push(0);
@@ -945,7 +1072,7 @@ mod tests {
         send(sock, registry, 0, &body);
     }
 
-    fn request(sock: &mut UnixStream) -> std::io::Result<(u32, u32, Vec<u8>)> {
+    pub(crate) fn request(sock: &mut UnixStream) -> std::io::Result<(u32, u32, Vec<u8>)> {
         let mut head = [0u8; 8];
         sock.read_exact(&mut head)?;
         let object = u32::from_ne_bytes(head[..4].try_into().unwrap());
@@ -958,7 +1085,7 @@ mod tests {
     /// Just enough compositor for `Link::start_on`: the two globals it binds, `reprise_input_v1` at
     /// `version`, and an answer to each of `syncs` syncs, ignoring other requests. Returns the object id
     /// the client bound `reprise_input_v1` to.
-    fn fake_compositor(sock: &mut UnixStream, syncs: usize, version: u32) -> u32 {
+    pub(crate) fn fake_compositor(sock: &mut UnixStream, syncs: usize, version: u32) -> u32 {
         let mut answered = 0;
         let mut registry = 0;
         let mut input = 0;
@@ -982,6 +1109,11 @@ mod tests {
             }
         }
         input
+    }
+
+    /// A link that is no process's lifeline, on the client end of a fake compositor's socket.
+    pub(crate) fn link_on(ours: UnixStream) -> Link {
+        Link::start_on(Connection::from_socket(ours).unwrap(), false).unwrap()
     }
 
     /// A link on a fake compositor serving `reprise_input_v1` at `version`. The fake hangs up when the sender sends or drops; the handle joins it.
