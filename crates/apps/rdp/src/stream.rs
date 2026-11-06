@@ -813,8 +813,11 @@ fn read_cursor(meta: &[u8]) -> Option<Cursor> {
 
 /// A memfd mapped read-only for as long as frames point into it.
 struct Mapping {
+    /// `len` bytes from the buffer's offset, inside the page-aligned mapping `base`/`base_len`.
     ptr: *mut libc::c_void,
     len: usize,
+    base: *mut libc::c_void,
+    base_len: usize,
 }
 
 // SAFETY: the mapping is read-only memory owned by this value; any thread may read it.
@@ -824,31 +827,38 @@ unsafe impl Sync for Mapping {}
 
 impl Mapping {
     fn new(fd: BorrowedFd, offset: u32, len: u32) -> std::io::Result<Mapping> {
+        // SAFETY: sysconf has no preconditions.
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u32;
+        let delta = offset % page;
+        let base_len = len as usize + delta as usize;
         // SAFETY: a fresh shared read-only mapping of `fd`; the result is checked below.
-        let ptr = unsafe {
+        let base = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
-                len as usize,
+                base_len,
                 libc::PROT_READ,
                 libc::MAP_SHARED,
                 fd.as_raw_fd(),
-                libc::off_t::from(offset),
+                libc::off_t::from(offset - delta),
             )
         };
-        if ptr == libc::MAP_FAILED {
+        if base == libc::MAP_FAILED {
             return Err(std::io::Error::last_os_error());
         }
         Ok(Mapping {
-            ptr,
+            // SAFETY: `delta` lies inside the `base_len` bytes just mapped.
+            ptr: unsafe { base.add(delta as usize) },
             len: len as usize,
+            base,
+            base_len,
         })
     }
 }
 
 impl Drop for Mapping {
     fn drop(&mut self) {
-        // SAFETY: `ptr`/`len` are this value's own mapping, unmapped once.
-        unsafe { libc::munmap(self.ptr, self.len) };
+        // SAFETY: `base`/`base_len` are this value's own mapping, unmapped once.
+        unsafe { libc::munmap(self.base, self.base_len) };
     }
 }
 
@@ -1068,6 +1078,21 @@ impl Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_buffer_at_an_offset_inside_a_page_maps_from_that_offset() {
+        use std::io::Write;
+        use std::os::fd::{AsFd, FromRawFd};
+        // SAFETY: a fresh memfd, owned from here on.
+        let mut file =
+            unsafe { std::fs::File::from_raw_fd(libc::memfd_create(c"frame".as_ptr(), 0)) };
+        let data: Vec<u8> = (0..3 * 4096u32).map(|i| (i % 251) as u8).collect();
+        file.write_all(&data).unwrap();
+        let map = Mapping::new(file.as_fd(), 4096 + 100, 300).unwrap();
+        // SAFETY: `ptr` maps `len` readable bytes while `map` lives.
+        let got = unsafe { std::slice::from_raw_parts(map.ptr as *const u8, map.len) };
+        assert_eq!(got, &data[4196..4496]);
+    }
 
     fn held(buf: usize, generation: u64) -> Held {
         Held {
