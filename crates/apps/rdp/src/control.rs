@@ -18,6 +18,8 @@ pub struct Status {
     /// The `[remote_desktop] encoder` values that work here besides `auto`.
     pub encoders: Vec<String>,
     pub fingerprint: String,
+    /// The monitors of lock mode's first viewer, primary first; empty in show mode.
+    pub console_layout: Vec<crate::console::Monitor>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -94,6 +96,9 @@ async fn serve(
         if now.fingerprint != sent.fingerprint {
             signalled(server.fingerprint_changed(emitter).await);
         }
+        if now.console_layout != sent.console_layout {
+            signalled(server.console_layout_changed(emitter).await);
+        }
         sent = now;
     }
     Ok(())
@@ -140,6 +145,13 @@ impl RemoteDesktop {
     #[zbus(property)]
     fn fingerprint(&self) -> String {
         self.status.borrow().fingerprint.clone()
+    }
+
+    /// x, y, width, height and scale percent of each monitor of lock mode's first viewer,
+    /// primary first, for the portal to make its screens from; empty in show mode.
+    #[zbus(property)]
+    fn console_layout(&self) -> Vec<(i32, i32, i32, i32, u32)> {
+        self.status.borrow().console_layout.clone()
     }
 
     /// Ends every connected client's session.
@@ -258,6 +270,7 @@ pub(crate) mod tests {
             assert_eq!(text(&all, "Encoder"), "RemoteFX (no H.264 encoder)");
             assert_eq!(text(&all, "Fingerprint"), "AB:CD");
             assert_eq!(all["Clients"].value_signature(), "a(sst)");
+            assert_eq!(all["ConsoleLayout"].value_signature(), "a(iiiiu)");
             assert_eq!(
                 <Vec<String>>::try_from(all["Encoders"].try_clone().unwrap()).unwrap(),
                 ["software", "none"]
@@ -297,6 +310,21 @@ pub(crate) mod tests {
                     .collect::<Vec<_>>(),
                 ["Listening"]
             );
+
+            let layout = vec![(0, 0, 2560, 1440, 150), (2560, 0, 1920, 1080, 100)];
+            status.send_modify(|s| s.console_layout = layout.clone());
+            let change = next_change().await;
+            let args = change.args().unwrap();
+            let changed = args.changed_properties();
+            assert_eq!(
+                changed.keys().copied().collect::<Vec<_>>(),
+                ["ConsoleLayout"]
+            );
+            let published = <Vec<(i32, i32, i32, i32, u32)>>::try_from(
+                changed["ConsoleLayout"].try_to_owned().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(published, layout);
 
             conn.call_method(Some(NAME), PATH, Some(NAME), "Disconnect", &())
                 .await

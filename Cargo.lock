@@ -4639,6 +4639,7 @@ dependencies = [
  "ironrdp-ainput",
  "ironrdp-cliprdr",
  "ironrdp-core",
+ "ironrdp-displaycontrol",
  "ironrdp-dvc",
  "ironrdp-egfx",
  "ironrdp-graphics",

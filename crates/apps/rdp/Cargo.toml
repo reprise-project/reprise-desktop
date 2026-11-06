@@ -20,6 +20,7 @@ repriseconf = { path = "../../repriseconf" }
 reprisebus = { path = "../../reprisebus" }
 repriseaudio = { path = "../../repriseaudio" }
 ironrdp-server.workspace = true
+ironrdp-displaycontrol.workspace = true
 ironrdp-pdu.workspace = true
 ironrdp-egfx.workspace = true
 ironrdp-dvc.workspace = true

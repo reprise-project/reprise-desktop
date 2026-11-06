@@ -19,7 +19,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime};
@@ -46,22 +46,31 @@ pub enum End {
     Left,
     /// The screen it showed went away; a client that reconnects is shown the screen now there.
     ScreenGone,
+    /// Lock mode ended with its screens: someone unlocked this computer at its own screen.
+    ConsoleTookOver,
 }
 
 /// Marked by a connection's display when the screen it shows goes, before the connection ends.
 #[derive(Clone, Default)]
-pub struct Ending(Arc<AtomicBool>);
+pub struct Ending(Arc<AtomicU8>);
+
+const SCREEN_GONE: u8 = 1;
+const CONSOLE_TOOK_OVER: u8 = 2;
 
 impl Ending {
     pub fn screen_gone(&self) {
-        self.0.store(true, Ordering::Release);
+        self.0.fetch_max(SCREEN_GONE, Ordering::AcqRel);
+    }
+
+    pub fn console_took_over(&self) {
+        self.0.fetch_max(CONSOLE_TOOK_OVER, Ordering::AcqRel);
     }
 
     pub(crate) fn end(&self) -> End {
-        if self.0.load(Ordering::Acquire) {
-            End::ScreenGone
-        } else {
-            End::Left
+        match self.0.load(Ordering::Acquire) {
+            CONSOLE_TOOK_OVER => End::ConsoleTookOver,
+            SCREEN_GONE => End::ScreenGone,
+            _ => End::Left,
         }
     }
 }
@@ -143,8 +152,8 @@ pub async fn serve<D, I, L>(
                 }
             },
             arrival = intake.next() => {
-                let (stream, peer) = match arrival {
-                    Arrival::Connection(stream, peer) => (stream, peer),
+                let (stream, peer, admission) = match arrival {
+                    Arrival::Connection { stream, peer, admission } => (stream, peer, admission),
                     Arrival::Moved => {
                         shared.viewers.borrow_mut().kick_all(Kick::PortChanged);
                         continue;
@@ -170,7 +179,7 @@ pub async fn serve<D, I, L>(
                         continue;
                     }
                 };
-                let (check, budget) = logins.check(peer);
+                let (check, budget) = logins.check(peer, admission);
                 let (shown, on_shown) = watch::channel(false);
                 let ending = Ending::default();
                 let (display, input, gfx, clipboard, sound, layout) =
@@ -490,7 +499,7 @@ impl AsyncWrite for Recorded {
 pub(crate) mod tests {
     use super::*;
     use crate::auth::{self, HANDSHAKE, PasswordCheck, PasswordLogins, Throttle};
-    use crate::intake::TcpIntake;
+    use crate::intake::{Admission, TcpIntake};
     use ironrdp_server::{CredentialDecision, CredentialValidator};
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Once;
@@ -567,7 +576,7 @@ pub(crate) mod tests {
 
     impl Logins for Admitted {
         type Check = Admitted;
-        fn check(&self, _: SocketAddr) -> (Arc<Admitted>, Duration) {
+        fn check(&self, _: SocketAddr, _: Admission) -> (Arc<Admitted>, Duration) {
             (Arc::new(Admitted), HANDSHAKE)
         }
         fn backoff(&self, _: IpAddr) -> Duration {
