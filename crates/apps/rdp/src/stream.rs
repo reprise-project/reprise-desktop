@@ -190,8 +190,7 @@ impl Drop for Lease {
 }
 
 /// Consume `node`'s stream on the PipeWire remote `fd`, offering dma-bufs with `modifiers` and
-/// memfds; the receivers close when it ends, and `gone` runs first when it ends because its
-/// screen went.
+/// memfds; the receivers close when it ends, after `gone` runs if its screen went.
 pub fn spawn(
     fd: OwnedFd,
     node: u32,
