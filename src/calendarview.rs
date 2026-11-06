@@ -147,7 +147,7 @@ fn calendar_anchor(
 
 fn open(state: &mut State, bar: TreeId) {
     close(state);
-    if state.is_locked() {
+    if state.desktop_locked() {
         return;
     }
     let Some((output, clock)) = state.bar(bar).map(|b| (b.output.clone(), b.layout.clock)) else {

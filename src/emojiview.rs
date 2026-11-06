@@ -116,7 +116,7 @@ impl State {
             self.close_emoji();
             return;
         }
-        if self.is_locked() {
+        if self.desktop_locked() {
             return;
         }
         self.panels.emoji.load();

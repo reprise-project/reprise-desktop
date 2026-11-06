@@ -34,6 +34,7 @@ use zbus::{OwnedFd as ZOwnedFd, OwnedObjectPath};
 
 use crate::compositor::State;
 use crate::config::PowerAction;
+use crate::lockview::Origin;
 use crate::media::Value;
 use crate::sessionlock::CoverWait;
 
@@ -534,7 +535,7 @@ pub fn setup(state: &mut State) {
     }
 }
 
-pub fn run_action(state: &mut State, a: PowerAction) {
+pub fn run_action(state: &mut State, a: PowerAction, origin: Origin) {
     log::info!("power: {}", a.name());
     match a {
         PowerAction::Nothing => {}
@@ -554,12 +555,13 @@ pub fn run_action(state: &mut State, a: PowerAction) {
                 state,
                 reprisekit::controls::endsession::Goal::TurnOff,
                 Some(cmd),
+                origin,
             );
         }
         PowerAction::Ask => {
             // Dialogs live under the lock cover, where no key reaches them: a locked
             // session has nothing to ask.
-            if state.is_locked() {
+            if state.locked_for(origin) {
                 log::info!("power: ask ignored while locked");
                 return;
             }
@@ -647,7 +649,7 @@ fn lid_shut(state: &mut State) {
         return;
     }
     let action = state.config.power.lid_close;
-    run_action(state, action);
+    run_action(state, action, Origin::Console);
 }
 
 fn darken_panels(state: &mut State) {
@@ -909,7 +911,7 @@ mod tests {
             let _peer = h.ei_remote_session();
             assert!(h.state.remote_controlled());
             switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
-            assert!(!h.state.is_locked(), "lid_close does not run");
+            assert!(!h.state.console_locked(), "lid_close does not run");
             assert_eq!(panel_sets(&jobs), [0], "the panel goes dark");
             switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::Off);
             assert_eq!(panel_sets(&jobs), [60], "opening the lid brings back 60%");
@@ -924,10 +926,13 @@ mod tests {
             h.ei_close(peer);
             assert!(!h.state.remote_controlled());
             assert_eq!(panel_sets(&jobs), [60], "the panel comes back at 60%");
-            assert!(!h.state.is_locked(), "the lid action waits out the grace");
+            assert!(
+                !h.state.console_locked(),
+                "the lid action waits out the grace"
+            );
             assert!(h.state.power.lid_timer.is_some(), "the lid check is armed");
             lid_grace_over(&mut h.state);
-            assert!(h.state.is_locked(), "lid_close ran");
+            assert!(h.state.console_locked(), "lid_close ran");
         }
 
         #[test]
@@ -960,7 +965,7 @@ mod tests {
             );
             assert!(h.state.power.lid_timer.is_some(), "the lid check is armed");
             lid_grace_over(&mut h.state);
-            assert!(h.state.is_locked(), "lid_close ran");
+            assert!(h.state.console_locked(), "lid_close ran");
         }
 
         fn record_in_scratch(name: &str) -> std::path::PathBuf {

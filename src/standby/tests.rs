@@ -158,7 +158,7 @@ fn a_lock_on_the_standby_is_confirmed_once_its_clock_shows_the_cover() {
     h.dispatch();
     let mut c = h.connect();
     let (_lock, _surface) = h.map_lock_surface(&mut c);
-    assert!(h.state.is_locked());
+    assert!(h.state.console_locked());
     h.run_for(1100);
     assert!(
         crate::sessionlock::confirmed(&mut h.state),

@@ -252,7 +252,7 @@ pub(crate) fn pick(state: &mut State, w: WindowId, out: &Output, cell: &PickCell
 
 fn show(state: &mut State, w: WindowId, keys: bool) {
     hide(state);
-    if state.is_locked() || !eligible(state, w) {
+    if state.desktop_locked() || !eligible(state, w) {
         return;
     }
     let Some(win) = state.win(w) else {

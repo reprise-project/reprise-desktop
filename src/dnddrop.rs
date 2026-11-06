@@ -489,7 +489,7 @@ impl State {
         if !source.alive() {
             return;
         }
-        if self.is_locked() {
+        if self.desktop_locked() {
             source.refuse();
             return;
         }

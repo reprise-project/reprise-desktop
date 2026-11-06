@@ -54,7 +54,7 @@ impl State {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
-        if !self.is_locked() {
+        if !self.console_locked() {
             pointer.relative_motion(
                 self,
                 self.pointers.focus.clone().map(|(s, o)| (s.into(), o)),
@@ -119,7 +119,7 @@ impl State {
     fn wanted_constraint(&self) -> Option<WlSurface> {
         // Menus, the switcher, the launcher, panels and dialogs take the keyboard without moving
         // the seat's focus off the window, so they are checked on their own.
-        if self.is_locked()
+        if self.console_locked()
             || self.interaction != Interaction::Idle
             || !self.menus.is_empty()
             || self.switcher.is_open()

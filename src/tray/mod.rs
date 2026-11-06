@@ -692,7 +692,7 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
             false
         }
         TrayEvent::Restart => {
-            if state.is_locked() {
+            if state.desktop_locked() {
                 log::info!("restart asked for while locked; ignored");
             } else {
                 let cmd = state.config.power.reboot.clone();
@@ -700,6 +700,7 @@ fn handle_event(state: &mut State, ev: TrayEvent) -> bool {
                     state,
                     reprisekit::controls::endsession::Goal::Restart,
                     Some(cmd),
+                    crate::lockview::Origin::Desktop,
                 );
             }
             false

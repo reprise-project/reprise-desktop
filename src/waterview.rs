@@ -956,7 +956,8 @@ impl State {
             self.redraw_all();
         }
         let b = self.layout_box(Some(output));
-        let covered = self.is_locked() || crate::saverview::running(self) || self.fullscreen_on(b);
+        let covered =
+            self.locked_on(output) || crate::saverview::running(self) || self.fullscreen_on(b);
         self.water.prepare(output, covered, Instant::now());
     }
 
@@ -1034,7 +1035,7 @@ impl State {
         if !self.water_on() {
             return;
         }
-        if self.is_locked() {
+        if self.console_locked() {
             if self.lock_splash_at(to).is_some() {
                 self.water_wake(Pane::Lock, from, to);
             }

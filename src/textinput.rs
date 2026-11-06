@@ -329,7 +329,7 @@ impl State {
 }
 
 fn keys_shut(state: &State) -> bool {
-    state.is_locked() || state.inputproto.gated()
+    state.desktop_locked() || state.inputproto.gated()
 }
 
 fn vk_request_passes(opcode: u16, shut: bool) -> bool {
@@ -807,7 +807,7 @@ pub fn ime_holds_keyboard(kb: &smithay::input::keyboard::KeyboardHandle<State>) 
 
 impl State {
     pub fn ime_sync_grab(&mut self) {
-        if self.is_locked() {
+        if self.desktop_locked() {
             self.ime_park_grab();
             return;
         }

@@ -495,7 +495,7 @@ impl State {
             self.redraw_taskbars();
         }
         if let Some(aid) = self.key_input.aids.prompt.take()
-            && !self.is_locked()
+            && !self.console_locked()
         {
             self.open_dialog(crate::dialog::Dialog::key_aid_prompt(aid));
         }

@@ -13,6 +13,7 @@ use smithay::reexports::calloop::{
 };
 
 use crate::compositor::State;
+use crate::lockview::Origin;
 use crate::window::WindowId;
 
 const PROMPT_AFTER: Duration = Duration::from_secs(5);
@@ -94,32 +95,32 @@ impl Mode {
     }
 }
 
-pub fn begin(state: &mut State, goal: Goal, cmd: Option<String>) {
-    check(state, goal, cmd, false);
+pub fn begin(state: &mut State, goal: Goal, cmd: Option<String>, origin: Origin) {
+    check(state, goal, cmd, false, origin);
 }
 
 pub fn begin_critical(state: &mut State, cmd: String) {
-    check(state, Goal::TurnOff, Some(cmd), true);
+    check(state, Goal::TurnOff, Some(cmd), true, Origin::Console);
 }
 
 /// Start the end once logind says the action is allowed, so a refusal
 /// closes nothing. A custom command has only its exit status to go by.
-fn check(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool) {
+fn check(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool, origin: Origin) {
     let verb = cmd.as_deref().and_then(logind_verb);
     let Some(verb) = verb.filter(|_| state.ending.is_none()) else {
-        start(state, goal, cmd, critical);
+        start(state, goal, cmd, critical, origin);
         return;
     };
     state.spawn_job(move || {
         let refused = zbus::block_on(can(verb));
         Box::new(move |state: &mut State| match refused {
-            None => start(state, goal, cmd, critical),
+            None => start(state, goal, cmd, critical, origin),
             Some(why) => refuse(state, Act::of(goal), &why),
         })
     });
 }
 
-fn start(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool) {
+fn start(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool, origin: Origin) {
     if let Some(e) = state.ending.as_mut() {
         let (mode, step) = e.mode.again(critical);
         if e.mode != Mode::Critical {
@@ -138,7 +139,7 @@ fn start(state: &mut State, goal: Goal, cmd: Option<String>, critical: bool) {
     state.session.kept = false;
     crate::session::end(state);
     state.session.kept = true;
-    if state.is_locked() {
+    if state.locked_for(origin) {
         log::info!("session end: locked, nobody to ask");
         go_on(state, goal, cmd, false);
         return;
@@ -1060,7 +1061,7 @@ mod tests {
         h.state.lock.helpers.finger = |_| None;
         crate::lockview::lock(&mut h.state);
         assert!(!crate::crash::is_ending());
-        begin(&mut h.state, Goal::LogOff, None);
+        begin(&mut h.state, Goal::LogOff, None, Origin::Desktop);
         assert!(h.state.session_fade.fading_out(), "the fade runs");
         assert!(
             crate::crash::is_ending(),

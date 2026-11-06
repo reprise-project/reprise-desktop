@@ -125,7 +125,8 @@ impl State {
     /// The bind, or a portal's PickColor: open the picker. One already open,
     /// the region overlay or the lock turn the asker away.
     pub fn open_color_pick(&mut self, asker: Asker) {
-        if self.panels.colorpick.is_some() || self.panels.region.is_some() || self.is_locked() {
+        let open = self.panels.colorpick.is_some() || self.panels.region.is_some();
+        if open || self.desktop_locked() {
             return asker.cancel();
         }
         let outputs = self.scene.outputs().to_vec();

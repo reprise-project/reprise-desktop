@@ -137,7 +137,7 @@ impl State {
     /// Cut or Copy aimed at icon `index`: its file and the other files of
     /// its selection go on the clipboard, `index` first.
     pub fn copy_icons(&mut self, index: usize, cut: bool) {
-        if self.is_locked() {
+        if self.desktop_locked() {
             return;
         }
         let set = self.selection_around(index);
@@ -167,7 +167,7 @@ impl State {
     /// gets a launcher instead. The files may come from a client, so they
     /// land once its pipe has closed.
     pub fn paste_files(&mut self, target: DropTarget, shortcut: bool) {
-        if self.is_locked() {
+        if self.desktop_locked() {
             return;
         }
         self.clip_files(move |state, clip| state.paste_clip(clip, &target, shortcut));
@@ -175,7 +175,7 @@ impl State {
 
     /// Paste on a launcher: the clipboard's files open in `app`, as Open With would open them.
     pub fn paste_open(&mut self, app: reprisefs::apps::AppEntry) {
-        if self.is_locked() {
+        if self.desktop_locked() {
             return;
         }
         self.clip_files(move |state, clip| {

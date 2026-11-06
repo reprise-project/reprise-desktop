@@ -245,7 +245,7 @@ impl State {
             return;
         }
         if self.inputproto.gated()
-            || self.is_locked()
+            || self.console_locked()
             || self.switcher.is_open()
             || self.panels.takes_pointer()
         {
@@ -331,7 +331,7 @@ impl State {
             InputEvent::GestureSwipeBegin { event } => {
                 let g = self.config.gestures;
                 let free = !self.inputproto.gated()
-                    && !self.is_locked()
+                    && !self.console_locked()
                     && self.switcher.panel.is_none()
                     && !self.panels.takes_pointer();
                 if g.enabled && free && event.fingers() == g.fingers {
@@ -375,7 +375,7 @@ impl State {
 
     fn swipe_moved(&mut self, axis: crate::gestures::Axis, p: f64, was_open: bool) {
         use crate::gestures::Axis;
-        if self.is_locked() {
+        if self.console_locked() {
             return;
         }
         match axis {
@@ -401,7 +401,7 @@ impl State {
     ) {
         use crate::desktops::Step;
         use crate::gestures::Axis;
-        if self.is_locked() {
+        if self.console_locked() {
             return;
         }
         match axis {

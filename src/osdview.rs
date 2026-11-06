@@ -205,13 +205,11 @@ impl State {
         Some((self.config.theme.scaled(scale), scale))
     }
 
-    /// Put `canvas` (a panel of `size` at scale 1) on screen in place of the last; false while locked, where the panel stays hidden.
+    /// Put `canvas` (a panel of `size` at scale 1) on the primary output in place of the last; false
+    /// under that output's side's lock, where the panel stays hidden.
     fn show_canvas(&mut self, canvas: Canvas, size: (i32, i32), restart_timer: bool) -> bool {
-        if self.is_locked() {
+        let Some(out) = self.first_output().filter(|o| !self.locked_on(o)) else {
             self.hide_osd();
-            return false;
-        }
-        let Some(out) = self.first_output() else {
             return false;
         };
         self.drop_panel();

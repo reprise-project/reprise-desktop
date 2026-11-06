@@ -128,7 +128,7 @@ impl XdgActivationHandler for State {
             if trusted { "focused" } else { "attention" }
         );
         let focused = self.focused == Some(w);
-        if trusted && !self.is_locked() {
+        if trusted && !self.desktop_locked() {
             if minimized {
                 self.set_minimized(w, false);
             } else {

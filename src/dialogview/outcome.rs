@@ -43,7 +43,7 @@ impl State {
             }
             Outcome::EndSession(goal, cmd) => {
                 self.close_dialog();
-                crate::sessionend::begin(self, goal, Some(cmd));
+                crate::sessionend::begin(self, goal, Some(cmd), crate::lockview::Origin::Desktop);
             }
             Outcome::SessionEnd(choice) => crate::sessionend::answer(self, choice),
             Outcome::Location { desktop_id, answer } => {
