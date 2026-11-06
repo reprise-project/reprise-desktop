@@ -1,6 +1,7 @@
 //! The standby screen: a virtual output holding the desktop while Remote Desktop is on and no
 //! monitor is in the layout (docs/features.md, Remote Desktop).
 
+use futures_util::{Stream, StreamExt};
 use smithay::{output::Output, reexports::calloop::channel, utils::Transform};
 
 use crate::{compositor::State, config::OutputConfig, virtualout::Spec};
@@ -166,7 +167,6 @@ pub fn setup(state: &mut State) {
 }
 
 async fn follow(tx: channel::Sender<bool>) {
-    use futures_util::StreamExt;
     let name = reprisebus::remote::NAME;
     let conn = match zbus::Connection::session().await {
         Ok(c) => c,
@@ -175,13 +175,36 @@ async fn follow(tx: channel::Sender<bool>) {
             return;
         }
     };
-    let mut changes = reprisebus::signals(&conn, name, Vec::new()).await;
-    loop {
-        let on = reprisebus::name_owner(&conn, name).await.is_some();
-        if tx.send(on).is_err() || changes.next().await.is_none() {
-            return;
-        }
+    let changes = reprisebus::signals(&conn, name, Vec::new()).await;
+    let conn = &conn;
+    let owned = move || async move { reprisebus::name_owner(conn, name).await.is_some() };
+    if report_owner(changes, owned, |on| tx.send(on).is_ok()).await {
+        log::warn!(
+            "standby: the session bus stopped reporting {name}'s owner; Remote Desktop counts as off"
+        );
     }
+}
+
+/// Report whether the name is `owned`, at the start and after each of `changes`, until `report`
+/// fails. When `changes` ends, an on is followed by a last off, and the result is true.
+async fn report_owner<F: Future<Output = bool>>(
+    mut changes: impl Stream + Unpin,
+    mut owned: impl FnMut() -> F,
+    mut report: impl FnMut(bool) -> bool,
+) -> bool {
+    let on = loop {
+        let on = owned().await;
+        if !report(on) {
+            return false;
+        }
+        if changes.next().await.is_none() {
+            break on;
+        }
+    };
+    if on {
+        report(false);
+    }
+    true
 }
 
 #[cfg(test)]
