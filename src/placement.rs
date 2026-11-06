@@ -426,7 +426,8 @@ impl State {
         (outs.into_iter().zip(ids)).find_map(|(o, m)| (o.name() == name).then_some(m))
     }
 
-    /// Always Open Here's row in `w`'s window menu.
+    /// Always Open Here's row in `w`'s window menu; greyed in lock mode, where `w` is on a Remote
+    /// output.
     pub(crate) fn open_here_state(&self, w: WindowId) -> OpenHereState {
         let Some(win) = self.win(w) else {
             return OpenHereState::Absent;
@@ -434,7 +435,7 @@ impl State {
         let app = win.app();
         if win.places_itself() || win.dialog_tag != crate::window::DialogTag::None {
             OpenHereState::Absent
-        } else if app.is_empty() || app.contains(['*', '?']) {
+        } else if crate::console::remote_side(self) || app.is_empty() || app.contains(['*', '?']) {
             OpenHereState::Greyed
         } else if has_open_here(&self.config.window_rules, &app) {
             OpenHereState::On
@@ -445,11 +446,8 @@ impl State {
 
     /// Always Open Here picked: removes its rule for `w`'s program, or writes one opening the
     /// program's windows where `w` is now. The live rules change at once; the config watch
-    /// rereads the same from the file. Lock mode ignores it, as `w` is on a Remote output.
+    /// rereads the same from the file.
     pub(crate) fn toggle_open_here(&mut self, w: WindowId) {
-        if crate::console::remote_side(self) {
-            return;
-        }
         let state = self.open_here_state(w);
         let Some(app) = self.win(w).map(Window::app) else {
             return;
