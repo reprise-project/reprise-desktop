@@ -444,8 +444,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_paired_client_opening_the_pipeline_waits_for_it_rather_than_bitmaps() {
-        use ironrdp_dvc::DvcProcessor;
-        use ironrdp_egfx::pdu::{CapabilitiesAdvertisePdu, CapabilitiesV81Flags, CapabilitySet};
         let gfx = Gfx::default();
         let (_bridge, server) = gfx.open();
         let fits = Fits::default();
@@ -462,18 +460,51 @@ mod tests {
         assert!(!live.busy, "no bitmap while the client opens the pipeline");
         assert!(live.pending.is_some(), "the frame waits");
         assert_eq!(c.joint.desk.lock().unwrap().layout().kind, Kind::Paired);
-        let advertise = ironrdp_egfx::pdu::GfxPdu::CapabilitiesAdvertise(
-            CapabilitiesAdvertisePdu::from_typed(&[CapabilitySet::V8_1 {
-                flags: CapabilitiesV81Flags::AVC420_ENABLED,
-            }]),
-        );
-        let payload = ironrdp_core::encode_vec(&advertise).unwrap();
-        server.lock().unwrap().process(0, &payload).unwrap();
+        crate::gfx::tests::client_opens(&server);
         live.next_at = Instant::now();
         live.start(Instant::now());
         assert!(
             live.busy,
             "the frame goes as H.264 once the pipeline is open"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_held_resize_another_screen_told_first_repaints_its_screen() {
+        let gfx = Gfx::default();
+        let (_bridge, server) = gfx.open();
+        let fits = Fits::default();
+        let mut c = screens(
+            &[screen(0, 0, 400, 200), screen(400, 0, 400, 200)],
+            &[],
+            (400, 200),
+            Some((&gfx, &[Backend::X264])),
+            |_| fitted(&fits, None),
+        );
+        for live in &mut c.lives {
+            live.take(frame((400, 200), SMALL));
+            assert_eq!(live.held_resize, Some((400, 200)));
+        }
+        crate::gfx::tests::client_opens(&server);
+        c.lives[0].opened();
+        let whole = DesktopSize {
+            width: 800,
+            height: 200,
+        };
+        assert!(matches!(
+            c.lives[0].queue.front(),
+            Some(DisplayUpdate::Resize(size)) if *size == whole
+        ));
+        c.lives.iter_mut().for_each(Live::activate);
+        assert!(
+            c.lives[1].pending.is_none(),
+            "screen 1 still holds its resize"
+        );
+        c.lives[1].opened();
+        assert!(c.lives[1].queue.is_empty(), "the client was told already");
+        assert!(
+            c.lives[1].pending.is_some(),
+            "screen 1 paints the frame it held back"
         );
     }
 

@@ -551,16 +551,22 @@ impl Live {
                         self.place_pointer(h.position, h.at);
                     }
                 }
-                () = negotiated, if opening.is_some() => {
-                    if let Some(size) = self.held_resize.take() {
-                        self.resize(size);
-                    }
-                }
+                () = negotiated, if opening.is_some() => self.opened(),
             }
         }
         log::info!("the screen stream ended");
         self.ended = true;
         None
+    }
+
+    /// The client opened the graphics pipeline or ran out of time: the held resize goes now, or
+    /// the frame it held back is painted, as another screen told the client the size first.
+    fn opened(&mut self) {
+        if let Some(size) = self.held_resize.take()
+            && !self.resize(size)
+        {
+            self.repaint();
+        }
     }
 
     /// Send the last frame again, whole: another screen moved this one's surface.

@@ -95,7 +95,19 @@ impl Gfx {
         let Some(at) = self.link.lock().unwrap().offered else {
             return;
         };
-        let _ = tokio::time::timeout_at(at + NEGOTIATION, self.ready.notified()).await;
+        let ready = self.ready.notified();
+        tokio::pin!(ready);
+        // Registered before the check, so an opening between the two still wakes it.
+        ready.as_mut().enable();
+        if self.open_now() {
+            return;
+        }
+        let _ = tokio::time::timeout_at(at + NEGOTIATION, ready).await;
+    }
+
+    fn open_now(&self) -> bool {
+        let server = self.link.lock().unwrap().server.clone();
+        server.is_some_and(|s| s.lock().unwrap().is_ready())
     }
 
     /// Ready `screen`'s surface for an H.264 frame at its target in `layout`. A desktop or
@@ -293,7 +305,7 @@ impl GraphicsPipelineHandler for Handler {
 
     fn on_ready(&mut self, negotiated: &CapabilitySet) {
         log::info!("graphics pipeline ready: {negotiated:?}");
-        self.0.notify_one();
+        self.0.notify_waiters();
     }
 }
 
@@ -341,6 +353,35 @@ pub(crate) mod tests {
         opened_with(CapabilitySet::V8_1 {
             flags: CapabilitiesV81Flags::AVC420_ENABLED,
         })
+    }
+
+    /// The client opens `server`'s pipeline with AVC420.
+    pub(crate) fn client_opens(server: &GfxServerHandle) {
+        client_sends(
+            server,
+            GfxPdu::CapabilitiesAdvertise(CapabilitiesAdvertisePdu::from_typed(&[
+                CapabilitySet::V8_1 {
+                    flags: CapabilitiesV81Flags::AVC420_ENABLED,
+                },
+            ])),
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn every_screen_waiting_for_the_pipeline_goes_on_once_it_opens() {
+        let gfx = Gfx::default();
+        let (_bridge, server) = gfx.open();
+        let start = tokio::time::Instant::now();
+        let opening = async {
+            tokio::task::yield_now().await;
+            client_opens(&server);
+        };
+        tokio::join!(gfx.negotiated(), gfx.negotiated(), opening);
+        gfx.negotiated().await;
+        assert!(
+            start.elapsed() < NEGOTIATION,
+            "both waiting and later screens go on at the opening"
+        );
     }
 
     fn client_sends(server: &GfxServerHandle, pdu: GfxPdu) {
