@@ -4,7 +4,7 @@ use super::{
     ADD, AUDIO_DEVICES, Area, BACKUP_EXPORT, BACKUP_IMPORT, BACKUP_STATUS, DEBUG_IN_CAPTURES,
     DEBUG_OVERLAY, EDIT_FILE, FORGET, GX, PRIVACY_LOCATION, REMOVE, THUMBNAILERS, THUMBS,
     THUMBS_CLEAR, THUMBS_CLEARED, THUMBS_MB, THUMBS_SIZE, X, button, choice, combo, edit,
-    ends_track, field, group, list, locations, spin, time,
+    ends_track, field, group, list, locations, radio, spin, time,
 };
 use crate::model::{
     FRAME_RATES, GLASS_NOTIFY_STYLES, LOCK_GRACES, REMOTE_ENCODERS, REMOTE_QUALITIES, Shortcut,
@@ -417,6 +417,11 @@ pub(super) const REMOTE_LOCK_GRACE: &str = "lock_grace";
 /// What greys with the lock check box off.
 const LOCK_GRACE_CONTROLS: [&str; 2] = ["lock_grace_label", REMOTE_LOCK_GRACE];
 pub(super) const REMOTE_BORDER: &str = "remote_border";
+pub(super) const REMOTE_SCREEN_SHOW: &str = "remote_screen_show";
+pub(super) const REMOTE_SCREEN_LOCK: &str = "remote_screen_lock";
+/// Says why the Lock radio is greyed; empty while no other locker is set.
+pub(super) const REMOTE_SCREEN_NOTE: &str = "remote_screen_note";
+pub(super) const LOCKER_NOTE: &str = "Lock mode is off while another locker is set in Power.";
 /// The certificate's fingerprint: a read-only edit, so it can be selected and copied.
 const REMOTE_FINGERPRINT: &str = "fingerprint";
 pub const REMOTE_REGENERATE: &str = "regenerate";
@@ -424,7 +429,7 @@ const CLIENTS: &str = "clients";
 pub const REMOTE_DISCONNECT: &str = "disconnect";
 
 /// What greys with the switch off; New Certificate and Disconnect also need the server answering.
-const REMOTE_CONTROLS: [&str; 18] = [
+const REMOTE_CONTROLS: [&str; 21] = [
     REMOTE_STATUS,
     ENCODER,
     "port_label",
@@ -441,23 +446,38 @@ const REMOTE_CONTROLS: [&str; 18] = [
     REMOTE_SOUND,
     REMOTE_LOCK_ON_LEAVE,
     REMOTE_BORDER,
+    "remote_screen_label",
+    REMOTE_SCREEN_SHOW,
+    REMOTE_SCREEN_LOCK,
     "fingerprint_label",
     REMOTE_FINGERPRINT,
 ];
 
 const NEW_CERTIFICATE_W: i32 = 110;
 const LOCK_GRACE_W: i32 = 96;
+/// Where the encoder's column starts, right of the frame rate's and the sound check box's.
+const ENCODER_X: i32 = X + 224;
+const ENCODER_W: i32 = Area::MIN.w - (ENCODER_X - X);
 
 /// The Remote Desktop page as `status` and `enabled` (the server's unit) leave it; the host
 /// follows the server with [`show_remote`].
 pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
-    let mut items = vec![
-        Item::check(
-            REMOTE_ALLOW,
-            X,
-            44,
-            "Allow remote &connections to this computer",
-        ),
+    let mut items = vec![Item::check(
+        REMOTE_ALLOW,
+        X,
+        44,
+        "Allow remote &connections to this computer",
+    )];
+    items.extend(spin(
+        "port_label",
+        REMOTE_PORT,
+        a.right() - 86,
+        44,
+        32,
+        "&Port:",
+        (1024, 65535),
+    ));
+    items.extend([
         Item::label_at(
             REMOTE_NOTE,
             X,
@@ -467,41 +487,24 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         )
         .under_check(),
         Item::label_at(REMOTE_STATUS, X, 80, a.w - 18, "").under_check(),
-        Item::label_at(ENCODER, X, 96, a.w - 18, "").under_check(),
-    ];
-    // Port shares the fingerprint label's row; the label goes last so it names the field under it.
-    items.extend(spin(
-        "port_label",
-        REMOTE_PORT,
-        a.right() - 86,
-        120,
-        32,
-        "&Port:",
-        (1024, 65535),
-    ));
-    items.push(Item::label_at(
-        "fingerprint_label",
-        X,
-        120,
-        a.w - 90,
-        "&Fingerprint (SHA-256):",
-    ));
-    items.push(edit(REMOTE_FINGERPRINT, X, 142, a.w - NEW_CERTIFICATE_W - 6).read_only());
-    items.push(Item::button_at(
-        REMOTE_REGENERATE,
-        a.right() - NEW_CERTIFICATE_W,
-        140,
-        NEW_CERTIFICATE_W,
-        "&New Certificate...",
-        true,
-    ));
-    items.push(Item::label_at(
-        "quality_label",
-        X,
-        172,
-        200,
-        "Picture &quality:",
-    ));
+        Item::label_at("fingerprint_label", X, 104, 126, "&Fingerprint (SHA-256):"),
+        edit(
+            REMOTE_FINGERPRINT,
+            X + 130,
+            100,
+            a.w - 130 - NEW_CERTIFICATE_W - 6,
+        )
+        .read_only(),
+        Item::button_at(
+            REMOTE_REGENERATE,
+            a.right() - NEW_CERTIFICATE_W,
+            98,
+            NEW_CERTIFICATE_W,
+            "&New Certificate...",
+            true,
+        ),
+        Item::label_at("quality_label", X, 130, 200, "Picture &quality:"),
+    ]);
     let (left, right) = (REMOTE_QUALITIES[0].1, REMOTE_QUALITIES[2].1);
     items.extend(ends_track(
         a,
@@ -512,103 +515,93 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
             QUALITY_VALUE,
         ],
         "Picture quality",
-        199,
+        157,
         27,
         (left, right),
         X,
         TrackBar::new(1, REMOTE_QUALITIES.len()),
     ));
-    items.push(Item::label_at(
-        "frame_rate_label",
-        X,
-        228,
-        114,
-        "Frame &rate:",
-    ));
     let rates: Vec<&str> = FRAME_RATES.iter().map(|r| r.1).collect();
-    items.push(Item::combo(
-        REMOTE_FRAME_RATE,
-        X + 118,
-        224,
-        160,
-        &rates,
-        rates.len(),
-    ));
-    items.push(Item::label_at(
-        "video_encoder_label",
-        X,
-        254,
-        114,
-        "Video &encoder:",
-    ));
     let encoders: Vec<&str> = REMOTE_ENCODERS.iter().map(|e| e.1).collect();
-    items.push(Item::combo(
-        REMOTE_ENCODER,
-        X + 118,
-        250,
-        160,
-        &encoders,
-        encoders.len(),
-    ));
-    items.push(Item::check(
-        REMOTE_SOUND,
-        X,
-        280,
-        "Play &sound on the remote computer",
-    ));
-    items.push(Item::label_at(
-        "clients_label",
-        X,
-        302,
-        200,
-        "Connected computers:",
-    ));
-    items.push(Item::new(
-        CLIENTS,
-        Rect::new(X, 318, a.w - BUTTON_W - 6, 3 * listbox::ROW_H + 4),
-        Control::ListBox {
-            list: ListBox::new(Vec::new(), None),
-            icons: Vec::new(),
-        },
-    ));
-    items.push(button(
-        REMOTE_DISCONNECT,
-        a.right() - BUTTON_W,
-        318,
-        "&Disconnect",
-    ));
-    items.push(Item::check(
-        REMOTE_LOCK_ON_LEAVE,
-        X,
-        379,
-        "&Lock this computer when the last one disconnects",
-    ));
+    items.extend([
+        Item::label_at("frame_rate_label", X, 184, 160, "Frame &rate:"),
+        Item::combo(REMOTE_FRAME_RATE, X, 200, 160, &rates, rates.len()),
+        Item::label_at(
+            "video_encoder_label",
+            ENCODER_X,
+            184,
+            ENCODER_W,
+            "Video &encoder:",
+        ),
+        Item::combo(
+            REMOTE_ENCODER,
+            ENCODER_X,
+            200,
+            ENCODER_W,
+            &encoders,
+            encoders.len(),
+        ),
+        Item::check(REMOTE_SOUND, X, 230, "Play &sound on the remote computer"),
+        Item::label_at(ENCODER, ENCODER_X, 230, a.right() - ENCODER_X, ""),
+        Item::label_at("clients_label", X, 252, 200, "Connected computers:"),
+        Item::new(
+            CLIENTS,
+            Rect::new(X, 268, a.w - BUTTON_W - 6, 3 * listbox::ROW_H + 4),
+            Control::ListBox {
+                list: ListBox::new(Vec::new(), None),
+                icons: Vec::new(),
+            },
+        ),
+        button(REMOTE_DISCONNECT, a.right() - BUTTON_W, 268, "&Disconnect"),
+        Item::check(
+            REMOTE_LOCK_ON_LEAVE,
+            X,
+            329,
+            "&Lock this computer when the last one disconnects",
+        ),
+    ]);
     let grace_x = a.right() - LOCK_GRACE_W;
-    items.push(
+    let graces: Vec<&str> = LOCK_GRACES.iter().map(|g| g.1).collect();
+    items.extend([
         Item::label_at(
             "lock_grace_label",
             X,
-            400,
+            350,
             grace_x - 6 - X - 18,
             "&Wait before locking on a screen change:",
         )
         .under_check(),
-    );
-    let graces: Vec<&str> = LOCK_GRACES.iter().map(|g| g.1).collect();
-    items.push(Item::combo(
-        REMOTE_LOCK_GRACE,
-        grace_x,
-        396,
-        LOCK_GRACE_W,
-        &graces,
-        graces.len(),
-    ));
-    items.push(Item::check(
-        REMOTE_BORDER,
-        X,
-        422,
-        "Show a red &border while a remote computer is connected",
-    ));
+        Item::combo(
+            REMOTE_LOCK_GRACE,
+            grace_x,
+            346,
+            LOCK_GRACE_W,
+            &graces,
+            graces.len(),
+        ),
+        Item::check(
+            REMOTE_BORDER,
+            X,
+            372,
+            "Show a red &border while a remote computer is connected",
+        ),
+        Item::label_at(
+            "remote_screen_label",
+            X,
+            394,
+            a.w,
+            "While connected, this computer's screen:",
+        ),
+        radio(REMOTE_SCREEN_SHOW, "remote_screen", X, 412, "Stays &on"),
+        radio(
+            REMOTE_SCREEN_LOCK,
+            "remote_screen",
+            X + 80,
+            412,
+            "Loc&ks and fits the remote window",
+        ),
+        Item::label_at(REMOTE_SCREEN_NOTE, X + 18, 430, a.w - 18, ""),
+    ]);
     let mut page = Form::new(items);
     show_remote(&mut page, status, enabled, None, None);
     page
@@ -672,6 +665,7 @@ pub fn show_remote(
     page.set_enabled(REMOTE_REGENERATE, shown.is_some());
     page.set_enabled(REMOTE_DISCONNECT, picked);
     follow_lock(page);
+    follow_screen(page);
 }
 
 /// Grey the lock's wait unless the lock check box is ticked and lit.
@@ -687,6 +681,20 @@ pub(super) fn follow_lock(page: &mut Form) {
     for id in LOCK_GRACE_CONTROLS {
         page.set_enabled(id, lit);
     }
+}
+
+/// Grey the Lock radio while the Stays on radio is greyed or [`REMOTE_SCREEN_NOTE`] names
+/// another locker.
+pub(super) fn follow_screen(page: &mut Form) {
+    let lit = matches!(
+        page.item(REMOTE_SCREEN_SHOW).map(|i| &i.control),
+        Some(Control::Radio { enabled: true, .. })
+    );
+    let held = matches!(
+        page.item(REMOTE_SCREEN_NOTE).map(|i| &i.control),
+        Some(Control::Label { text, .. }) if !text.is_empty()
+    );
+    page.set_enabled(REMOTE_SCREEN_LOCK, lit && !held);
 }
 
 /// The address of the client selected on the page, as `status` lists it.

@@ -206,7 +206,7 @@ pub struct Settings {
     pub low_space_percent: i64,
     /// `[remote_desktop] port`, `quality` (one of [`REMOTE_QUALITIES`]' values), `frame_rate`
     /// (30, 60, 120 or 144), `encoder` (one of [`REMOTE_ENCODERS`]' values), `sound`,
-    /// `lock_on_leave`, `lock_grace_s` (0 to 60) and `capture_border`.
+    /// `lock_on_leave`, `lock_grace_s` (0 to 60), `capture_border` and `laptop_screen`.
     pub remote_port: i64,
     pub remote_quality: String,
     pub remote_frame_rate: i64,
@@ -215,6 +215,7 @@ pub struct Settings {
     pub remote_lock_on_leave: bool,
     pub remote_lock_grace_s: i64,
     pub remote_capture_border: bool,
+    pub remote_laptop_screen: String,
 
     /// `[workspaces] count`, 1 to [`DESKTOPS_MAX`]; 1 turns virtual
     /// desktops off.
@@ -300,6 +301,8 @@ pub struct Settings {
     pub reboot: String,
     pub hibernate: String,
     pub lock_on_sleep: bool,
+    /// `[power] locker`, read only: the Remote Desktop page greys its Lock radio while it is set.
+    pub power_locker: String,
     /// `[wallpaper] lock_screen`: off under Classic, on under Blue and
     /// Glass ([`Settings::for_interface`]).
     pub lock_wallpaper: bool,
@@ -543,6 +546,7 @@ impl Settings {
             remote_lock_on_leave: remote.lock_on_leave,
             remote_lock_grace_s: remote.lock_grace_s.into(),
             remote_capture_border: remote.capture_border,
+            remote_laptop_screen: remote.laptop_screen.name().into(),
 
             desktops: c.workspaces as i64,
             desktop_animation: c.workspace_animation.style.name().into(),
@@ -611,6 +615,7 @@ impl Settings {
             reboot: c.power.reboot.clone(),
             hibernate: c.power.hibernate.clone(),
             lock_on_sleep: c.power.lock_on_sleep,
+            power_locker: c.power.locker.clone(),
             lock_wallpaper: c.wallpaper.lock_screen,
 
             lock_after: c.idle.lock_after.into(),

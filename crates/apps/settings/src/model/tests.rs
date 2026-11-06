@@ -751,6 +751,7 @@ fn save_round_trips_every_field() {
         remote_lock_on_leave: false,
         remote_lock_grace_s: 30,
         remote_capture_border: true,
+        remote_laptop_screen: "show".into(),
         desktops: 1,
         desktop_animation: "slide-vertical".into(),
         desktop_animation_ms: 350,
@@ -805,6 +806,8 @@ fn save_round_trips_every_field() {
         reboot: "loginctl reboot".into(),
         hibernate: "loginctl hibernate".into(),
         lock_on_sleep: false,
+        // Read only: save never writes it.
+        power_locker: String::new(),
         lock_wallpaper: true,
         lock_after: 300,
         blank_after: 120,

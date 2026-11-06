@@ -158,6 +158,10 @@ pub(super) fn fields() -> Vec<Field> {
             k("remote_desktop", "capture_border"),
             lens!(remote_capture_border),
         ),
+        Field::Text(
+            k("remote_desktop", "laptop_screen"),
+            lens!(remote_laptop_screen),
+        ),
         Field::Int(k("workspaces", "count"), lens!(desktops)),
         Field::Strings(k("workspaces", "names"), lens!(desktop_names)),
         Field::Text(k("workspaces", "animation"), lens!(desktop_animation)),

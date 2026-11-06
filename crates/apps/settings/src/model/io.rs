@@ -13,6 +13,9 @@ use repriseconf::config::parse_hhmm;
 use repriseconf::{Key, get, key as k, remove, set};
 use toml_edit::{Array, DocumentMut, Item, Value};
 
+/// Read for the Remote Desktop page and never written: no page sets it.
+const LOCKER: Key = k("power", "locker");
+
 fn defaults_in(doc: &DocumentMut) -> Settings {
     Settings::for_interface(get(doc, &INTERFACE).and_then(Item::as_str).unwrap_or(""))
 }
@@ -116,6 +119,9 @@ pub fn load(text: &str) -> Settings {
         s.startmenu = menu;
     }
     s.tablet_pads = crate::tabletpage::read(&doc);
+    if let Some(locker) = get(&doc, &LOCKER).and_then(Item::as_str) {
+        s.power_locker = locker.to_string();
+    }
     if glass_swatch(&s.glass_color).is_none() {
         s.glass_custom = s.glass_color.clone();
     }
@@ -215,6 +221,11 @@ pub fn rebase(want: &mut Settings, base: &Settings, fresh: &Settings) {
     follow(&mut want.denied, &base.denied, &fresh.denied);
     follow(&mut want.startmenu, &base.startmenu, &fresh.startmenu);
     follow(&mut want.tablet_pads, &base.tablet_pads, &fresh.tablet_pads);
+    follow(
+        &mut want.power_locker,
+        &base.power_locker,
+        &fresh.power_locker,
+    );
 }
 
 /// The keys whose values `a` and `b` hold apart, in the field table's order.
