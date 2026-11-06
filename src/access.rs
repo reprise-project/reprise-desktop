@@ -795,10 +795,10 @@ pub fn echo_key(state: &mut State, code: Keycode, k: &KeyPress, time: u32) {
         .send(note);
 }
 
-/// What `echo_key` reports, or None. Never under the console lock: every
-/// key typed then goes to the lock, even with a tree in lock mode's focus.
+/// What `echo_key` reports, or None. Never under the desktop's lock: every key typed then goes to
+/// the lock. The computer's own keys in lock mode never get here (`console::keys`).
 fn key_note(state: &mut State, code: Keycode, k: &KeyPress, time: u32) -> Option<KeyNote> {
-    if state.console_locked() || focus_of(&keyboard(state)).is_none() {
+    if state.desktop_locked() || focus_of(&keyboard(state)).is_none() {
         return None;
     }
     let kb = state.seat.get_keyboard()?;
@@ -957,7 +957,7 @@ mod tests {
     }
 
     #[test]
-    fn in_lock_mode_lock_dialog_keys_are_not_echoed_to_accessibility() {
+    fn keys_typed_into_the_desktops_lock_are_not_echoed_to_accessibility() {
         use crate::config::PowerAction;
         use crate::lockview::Origin;
         let a = crate::keyboard::key_press(vec![u32::from('a')], 0, true);
@@ -972,17 +972,18 @@ mod tests {
         let mut h = crate::harness::Harness::new();
         h.output("eDP-1", 1920, 1080);
         open_dialog(&mut h.state);
-        let note = key_note(&mut h.state, code, &a, 0).expect("unlocked, the key is echoed");
+        let note = key_note(&mut h.state, code, &a, 0).expect("unlocked, a key is echoed");
         assert_eq!(note.text.as_str(), "a");
-        let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
-        open_dialog(&mut h.state);
-        assert!(
-            focus_of(&keyboard(&h.state)).is_some(),
-            "a tree has the focus"
-        );
+        crate::lockview::lock(&mut h.state);
         assert!(
             key_note(&mut h.state, code, &a, 0).is_none(),
             "a key typed into the lock is not echoed"
+        );
+        let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
+        open_dialog(&mut h.state);
+        assert!(
+            key_note(&mut h.state, code, &a, 0).is_some(),
+            "in lock mode the remote side's keys are echoed"
         );
     }
 

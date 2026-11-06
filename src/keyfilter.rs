@@ -17,6 +17,7 @@ use smithay::{
 
 use crate::compositor::State;
 use crate::config::AccessibilityConfig;
+use crate::inputproto::InputSource;
 use crate::keyroute::{KeyPress, modifier_key};
 use crate::keys::*;
 
@@ -557,10 +558,17 @@ impl State {
     }
 
     fn aids_effects(&mut self, fx: Effects) {
+        // An accept from the aids' timer is the computer's keyboard's, as its release will be.
+        let source = match self.inputproto.source {
+            InputSource::Other => InputSource::Physical,
+            s => s,
+        };
         for code in fx.accept {
             // The press comes back through the key handler; its release
             // comes from the keyboard as usual.
-            self.handle_key(Keycode::new(code), true, InputTime::now());
+            self.with_source(source, |s| {
+                s.handle_key(Keycode::new(code), true, InputTime::now())
+            });
         }
         match fx.notice {
             Some(Notice::Prompt(aid)) => self.key_input.aids.prompt = Some(aid),

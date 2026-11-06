@@ -33,6 +33,7 @@ use crate::{
     dialogview::DialogKey,
     heldkeys::{HeldKeys, Owner},
     input::Interaction,
+    inputproto::InputSource,
     keyroute::{ChordState, GlobalBind, GlobalHit, KeyPress, KeyRoute, Modes},
     keys,
     raster::Rect,
@@ -119,8 +120,13 @@ impl State {
         self.handle_key(event.key_code(), pressed, Event::time(&event));
     }
 
-    /// One key event, xkb keycode `code`, from the seat's own keyboard.
+    /// One key event, xkb keycode `code`, from the seat's own keyboard; in lock mode the
+    /// computer's own goes to the console's lock instead (`console::keys`).
     pub(crate) fn handle_key(&mut self, code: Keycode, pressed: bool, time: InputTime) {
+        if crate::console::physical(self) {
+            crate::console::keys::key(self, code, pressed);
+            return;
+        }
         // A virtual keyboard's keymap gives way to the keyboard's own.
         self.vk_restore();
         self.route_key(code, pressed, time, KeyboardSource::MAIN);
@@ -137,6 +143,8 @@ impl State {
         source: KeyboardSource,
     ) {
         let from_seat = source == KeyboardSource::MAIN;
+        // The typing aids and mouse keys are the computer's, which in lock mode types elsewhere.
+        let aided = from_seat && !crate::console::remote_side(self);
         self.settle_pointer();
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
@@ -161,10 +169,10 @@ impl State {
         let mods_before = keyboard.modifier_state();
         let mut k = key_press(syms, keys::mask(&mods_before), pressed);
         k.place = keys::place_key_for(keycode).filter(|s| !k.lower.contains(s));
-        if from_seat && !self.aids_key(keycode, &k) {
+        if aided && !self.aids_key(keycode, &k) {
             return;
         }
-        if from_seat && !self.mousekeys_key(keycode, pressed, &mods_before) {
+        if aided && !self.mousekeys_key(keycode, pressed, &mods_before) {
             self.aids_after_key();
             return;
         }
@@ -349,14 +357,19 @@ impl State {
             self.drag_modifiers(held);
         }
 
+        // The power and sleep keys are the computer's own only from its keyboard.
+        let origin = match self.inputproto.source {
+            InputSource::Physical => crate::lockview::Origin::Console,
+            InputSource::Remote | InputSource::Other => crate::lockview::Origin::Desktop,
+        };
         match routed.route {
             KeyRoute::PowerKey => {
                 let a = self.config.power.power_button;
-                crate::power::run_action(self, a, crate::lockview::Origin::Console);
+                crate::power::run_action(self, a, origin);
             }
             KeyRoute::SleepKey => {
                 let a = self.config.power.sleep_button;
-                crate::power::run_action(self, a, crate::lockview::Origin::Console);
+                crate::power::run_action(self, a, origin);
             }
             KeyRoute::Media(a) => self.media_key_down(&a, keycode),
             KeyRoute::VtSwitch(n) => {
@@ -558,8 +571,9 @@ impl State {
     pub fn key_modes(&self) -> Modes {
         let desktop = self.desktop.as_ref();
         Modes {
-            can_switch_vt: self.backend.is_some(),
-            locked: self.console_locked(),
+            // In lock mode only the computer's own keys switch VTs (`console::keys`).
+            can_switch_vt: self.backend.is_some() && !crate::console::remote_side(self),
+            locked: self.desktop_locked(),
             captured: self.inputproto.gated(),
             saver_preview: crate::saverview::holds_keys(self),
             keyboard_interaction: self.interaction.is_keyboard(),

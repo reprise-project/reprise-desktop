@@ -71,7 +71,7 @@ struct Out {
     current: Option<PathBuf>,
 }
 
-/// Start `kind` on every output, replacing any saver running. `preview` is Preview's run, which the next input after a moment stops.
+/// Start `kind` on every output of the desktop's (`console::on_desk`), replacing any saver running. `preview` is Preview's run, which the next input after a moment stops.
 pub fn start(state: &mut State, kind: Kind, preview: bool) {
     stop(state);
     state.saver.generation += 1;
@@ -82,7 +82,10 @@ pub fn start(state: &mut State, kind: Kind, preview: bool) {
         if preview { " (preview)" } else { "" }
     );
     let opts = state.config.screensaver.options.clone();
-    let outputs: Vec<Output> = state.scene.outputs().to_vec();
+    let outputs: Vec<Output> = (state.scene.outputs().iter())
+        .filter(|o| crate::console::on_desk(state, o))
+        .cloned()
+        .collect();
     let mut outs = Vec::new();
     for (i, o) in outputs.into_iter().enumerate() {
         let b = state.layout_box(Some(&o));

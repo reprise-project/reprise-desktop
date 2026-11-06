@@ -3,9 +3,10 @@
 
 use smithay::output::Output;
 use smithay::reexports::wayland_server::{Resource, backend::ObjectId};
-use smithay::utils::Transform;
+use smithay::utils::{Logical, Point, Transform};
 
 use crate::compositor::State;
+use crate::inputproto::InputSource;
 use crate::inputproto::proto::reprise_lock_screen_v1::{Reason, RepriseLockScreenV1};
 use crate::output::quarter_scale;
 use crate::raster::Rect;
@@ -47,6 +48,9 @@ pub struct Console {
     layout: Vec<RemoteMonitor>,
     /// Remote outputs this layout removes, at their last boxes, for `homes::refit_remote`.
     pub(crate) gone: Vec<(Output, Rect)>,
+    pub(crate) keys: keys::Keys,
+    /// The computer's own pointer in lock mode (`pointer`).
+    pub(crate) pointer: Point<f64, Logical>,
 }
 
 /// The most monitors a layout may have.
@@ -115,6 +119,9 @@ pub fn begin(state: &mut State, object: ObjectId, layout: Vec<RemoteMonitor>) {
     state.console.owner = Owner::Remote;
     apply(state, layout);
     crate::lockview::lock(state);
+    keys::begin(state);
+    pointer::begin(state);
+    crate::idle::lock_mode_began(state);
     send_screens(state, &state.console.objects);
 }
 
@@ -160,8 +167,11 @@ fn leave(state: &mut State) {
     if state.console_locked() {
         crate::lockview::seal(state, |_| {});
     }
+    crate::idle::lock_mode_ends(state);
     on_end(state);
     apply(state, Vec::new());
+    keys::end(state);
+    pointer::end(state);
 }
 
 /// Lock mode ends; the Remote outputs go after this.
@@ -172,6 +182,17 @@ fn on_end(state: &mut State) {
 
 pub fn remote_side(state: &State) -> bool {
     state.console.owner == Owner::Remote
+}
+
+/// Whether the input being handled is the computer's own and lock mode keeps it for the console:
+/// its keys go to `keys`, its pointer to `pointer`, and nothing of it reaches the seat.
+pub fn physical(state: &State) -> bool {
+    remote_side(state) && state.inputproto.source == InputSource::Physical
+}
+
+/// Whether `output` is the desktop's: any outside lock mode, a Remote output in it.
+pub fn on_desk(state: &State, output: &Output) -> bool {
+    !remote_side(state) || side_of(output) == Side::Remote
 }
 
 pub fn side_of(output: &Output) -> Side {
@@ -211,6 +232,7 @@ fn apply(state: &mut State, layout: Vec<RemoteMonitor>) {
         crate::notifyview::output_removed(state);
     }
     state.console.layout = layout;
+    state.eis_readvertise();
 }
 
 fn send_screens(state: &State, objects: &[ObjectId]) {
@@ -281,6 +303,10 @@ fn wide((a, b, c, d): (i32, i32, i32, i32)) -> (i64, i64, i64, i64) {
 }
 
 pub mod homes;
+pub mod keys;
+pub mod pointer;
 
+#[cfg(test)]
+mod inputtests;
 #[cfg(test)]
 pub(crate) mod tests;

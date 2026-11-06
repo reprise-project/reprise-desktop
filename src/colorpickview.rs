@@ -123,10 +123,10 @@ fn pick_access(pick: &Pick) -> Option<reprisekit::access::Tree> {
 
 impl State {
     /// The bind, or a portal's PickColor: open the picker. One already open,
-    /// the region overlay or the console lock turn the asker away.
+    /// the region overlay or the desktop's lock turn the asker away.
     pub fn open_color_pick(&mut self, asker: Asker) {
         let open = self.panels.colorpick.is_some() || self.panels.region.is_some();
-        if open || self.console_locked() {
+        if open || self.desktop_locked() {
             return asker.cancel();
         }
         let outputs = self.scene.outputs().to_vec();
@@ -376,6 +376,34 @@ mod tests {
         });
         click_lock_cancel(&mut h);
         assert_eq!(lock_input(&h), "", "Cancel cleared the field");
+    }
+
+    #[test]
+    fn in_lock_mode_a_remote_right_click_cancels_the_color_picker() {
+        use crate::console::tests::{in_lock_mode, lock_input};
+        use smithay::backend::input::ButtonState;
+        let (mut h, _portal, _lock) = in_lock_mode();
+        let s = &mut h.state;
+        let tree = s.scene.tree_create(s.layers.overlay);
+        let loupe = s.scene.buffer_create(tree);
+        s.panels.colorpick = Some(ColorPickView {
+            pick: view((0, 0)),
+            tree,
+            loupe,
+            asker: Asker::Bind,
+        });
+        s.lock.active.as_mut().unwrap().state.input = "secret".into();
+        h.remote_pointer_to(2200.0, 300.0);
+        for b in [ButtonState::Pressed, ButtonState::Released] {
+            h.from(crate::inputproto::InputSource::Remote, |s| {
+                s.handle_button(BTN_RIGHT, b, InputTime::now())
+            });
+        }
+        assert!(
+            h.state.panels.colorpick.is_none(),
+            "the picker is cancelled"
+        );
+        assert_eq!(lock_input(&h), "secret", "the lock heard nothing");
     }
 
     #[test]

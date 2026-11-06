@@ -28,7 +28,12 @@ pub(super) fn press_closes_start_panel(hit: &Hit) -> bool {
 impl State {
     /// A button went down or up: a press focuses what it lands on and may
     /// start a move, size or caption button press; the last release ends it.
+    /// In lock mode the computer's own goes to the console's lock (`console::pointer`).
     pub(crate) fn handle_button(&mut self, button: u32, state: ButtonState, time: InputTime) {
+        if crate::console::physical(self) {
+            crate::console::pointer::button(self, button, state == ButtonState::Pressed);
+            return;
+        }
         self.redraw_changed(|s| s.apply_button(button, state, time));
     }
 
@@ -44,9 +49,9 @@ impl State {
             self.repoint(pos, time);
             return;
         }
-        // Under the console lock a press goes to the lock dialog (`press`), never to what the
-        // remote side has open.
-        let locked = self.console_locked();
+        // Under the desktop's lock a press goes to the lock dialog (`press`), never to what is
+        // open under it.
+        let locked = self.desktop_locked();
         if !locked && self.panels.region.is_some() {
             self.region_button(button, state == ButtonState::Pressed);
             self.redraw_all();
@@ -147,7 +152,7 @@ impl State {
     }
 
     pub(crate) fn press(&mut self, button: u32, pos: Point<f64, Logical>, time: InputTime) {
-        if self.console_locked() {
+        if self.desktop_locked() {
             crate::lockview::button(self, button, pos);
             return;
         }
