@@ -558,7 +558,8 @@ impl State {
     }
 
     fn aids_effects(&mut self, fx: Effects) {
-        // An accept from the aids' timer is the computer's keyboard's, as its release will be.
+        // The aids' timer runs as Other; a press it lets through counts as the computer's
+        // keyboard's, the only one the aids see in lock mode.
         let source = match self.inputproto.source {
             InputSource::Other => InputSource::Physical,
             s => s,

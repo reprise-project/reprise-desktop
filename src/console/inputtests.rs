@@ -261,3 +261,14 @@ fn in_lock_mode_the_remote_power_key_asks_the_desktop_and_the_physical_one_does_
         "the Turn Off dialog opens"
     );
 }
+
+#[test]
+fn in_lock_mode_a_tablet_pad_chord_types_into_the_console_and_the_client_hears_nothing() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    let (mut c, _) = remote_window(&mut h);
+    let codes = h.state.pad_chord_down(0, crate::keys::KEY_a);
+    h.state.pad_chord_up(codes);
+    h.roundtrip(&mut c);
+    assert_eq!(lock_input(&h), "a");
+    assert!(c.side.key_log.is_empty(), "heard {:?}", c.side.key_log);
+}

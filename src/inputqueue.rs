@@ -18,9 +18,15 @@ use smithay::{
 };
 
 use crate::compositor::State;
+use crate::inputproto::InputSource;
 
 /// Feed every queued libinput event to the backend's input handler, without reading the devices.
-pub fn take_queued(state: &mut State, mut libinput: libinput::Libinput) {
+/// Each is the computer's own input, the pads' and the devices' comings and goings too.
+pub fn take_queued(state: &mut State, libinput: libinput::Libinput) {
+    state.with_source(InputSource::Physical, |state| drain(state, libinput));
+}
+
+fn drain(state: &mut State, mut libinput: libinput::Libinput) {
     loop {
         if let Some(dial) = take_dial(&libinput) {
             crate::tabletpad::event(state, TabletPadEvent::Dial(dial));
