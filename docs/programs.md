@@ -368,7 +368,10 @@ matched control focused.
     and every connected computer is listed; Disconnect ends the selected
     one. Under the list, two check boxes decide whether the last computer
     to leave locks this one and whether the red capture border shows while
-    one is connected.
+    one is connected, and While connected, this computer's screen picks
+    Stays on or Locks and fits the remote window (lock mode). With
+    `[power] locker` set, Locks is greyed and a note under it says lock
+    mode is off while an external screen locker is set.
 - **System**
   - **Power Options...**
   - **Startup:** autostart entries, session restore and ending the programs
@@ -674,7 +677,10 @@ network time.
   the session bus it is `org.reprise.RemoteDesktop`, which Settings reads for
   the status lines and the connected computers. Its journal lines name each
   client's address, logins, the encoder and why a connection ended
-  (`journalctl --user -u app-org.reprise.RemoteDesktop`). See
+  (`journalctl --user -u app-org.reprise.RemoteDesktop`). In lock mode
+  its `ConsoleLayout` property holds the first client's monitors, which
+  the portal hands the compositor to make that client's screens; each
+  resize of the client's window updates it. See
   [features.md](features.md#remote-desktop) for connecting and
   [security.md](security.md#remote-desktop) for logins.
 - **About Reprise.** Version, operating system, kernel, model, processor,
