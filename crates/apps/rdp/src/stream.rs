@@ -310,6 +310,20 @@ fn run(
     let main_loop = pipewire::main_loop::MainLoopRc::new(None).map_err(|e| e.to_string())?;
     let context = pipewire::context::ContextRc::new(&main_loop, None).map_err(|e| e.to_string())?;
     let core = context.connect_fd_rc(fd, None).map_err(|e| e.to_string())?;
+    // A stream whose node went only pauses, waiting for another: the screen it showed is gone.
+    let registry = core.get_registry_rc().map_err(|e| e.to_string())?;
+    let gone = main_loop.downgrade();
+    let _node_gone = registry
+        .add_listener_local()
+        .global_remove(move |id| {
+            if id == node {
+                log::info!("screen stream: the shared screen is gone");
+                if let Some(l) = gone.upgrade() {
+                    l.quit();
+                }
+            }
+        })
+        .register();
     let stream = StreamRc::new(
         core,
         "Remote Desktop",
