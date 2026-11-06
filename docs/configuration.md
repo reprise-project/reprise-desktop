@@ -164,7 +164,10 @@ Pictures when left out) and `photo_seconds` tune them.
 state of its user unit, which Settings > Remote Desktop turns on and off
 ([features.md](features.md#remote-desktop)). The server reads the section
 again on every save. A missing or invalid key keeps its default, and the
-journal names the invalid ones.
+journal names the invalid ones. A save it can't read (its permissions, or
+bytes that aren't UTF-8) or that isn't TOML keeps the settings from before,
+so the port and the connected computers stay, and the journal says why. A
+removed file gives the defaults; at startup so does an unreadable one.
 
 | Key | Values | Default |
 | --- | --- | --- |
