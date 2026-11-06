@@ -22,12 +22,14 @@ use crate::stream::{
 use ironrdp_pdu::pointer::PointerPositionAttribute;
 use ironrdp_pdu::rdp::server_error_info::ProtocolIndependentCode;
 use ironrdp_server::{
-    DesktopSize, DisplayContext, DisplayUpdate, ErrorInfo, RGBAPointer, RdpServerDisplay,
-    RdpServerDisplayUpdates, ServerError, ServerErrorExt, ServerErrorKind, ServerResult,
+    BitmapUpdate, DesktopSize, DisplayContext, DisplayUpdate, ErrorInfo, RGBAPointer,
+    RdpServerDisplay, RdpServerDisplayUpdates, ServerError, ServerErrorExt, ServerErrorKind,
+    ServerResult,
 };
 use repriseconf::remote::{EncoderChoice, Quality, RemoteDesktop};
 use screens::{Joint, Lives, Pointer, gone_with_all};
 use std::collections::VecDeque;
+use std::num::NonZeroU16;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -882,13 +884,16 @@ impl Live {
             Ok(Encoded::Bitmap(updates)) => {
                 match self.whole() {
                     true => {
-                        let at = self.joint.desk.lock().unwrap().layout().target(self.screen);
-                        let (x, y) = at.map_or((0, 0), |t| (t.x, t.y));
-                        (self.queue).extend(updates.into_iter().map(|mut u| {
-                            u.x = u.x.saturating_add(x);
-                            u.y = u.y.saturating_add(y);
-                            DisplayUpdate::Bitmap(u)
-                        }));
+                        let desk = self.joint.desk.lock().unwrap();
+                        let layout = desk.layout();
+                        let at = layout.target(self.screen).map_or((0, 0), |t| (t.x, t.y));
+                        let desktop = layout.desktop;
+                        drop(desk);
+                        (self.queue).extend(
+                            (updates.into_iter())
+                                .filter_map(|u| on_desktop(u, at, desktop))
+                                .map(DisplayUpdate::Bitmap),
+                        );
                     }
                     false => self.go_whole(),
                 }
@@ -1020,6 +1025,20 @@ fn reads(frame: &Frame, backend: Option<Backend>, modifiers: &[u64]) -> bool {
             FrameBuffer::Dmabuf { modifier, .. } => modifiers.contains(modifier),
             FrameBuffer::Shm { .. } => true,
         }
+}
+
+/// Bitmap `u` moved by `at` and cut to `desktop`; None when none of it is on the desktop.
+fn on_desktop(u: BitmapUpdate, at: (u16, u16), desktop: (u16, u16)) -> Option<BitmapUpdate> {
+    let x = u32::from(u.x) + u32::from(at.0);
+    let y = u32::from(u.y) + u32::from(at.1);
+    let left = |at: u32, side: u16, len: NonZeroU16| {
+        let room = u32::from(side).checked_sub(at)?;
+        NonZeroU16::new(u16::try_from(room.min(u32::from(len.get()))).ok()?)
+    };
+    let (width, height) = (left(x, desktop.0, u.width)?, left(y, desktop.1, u.height)?);
+    let mut cut = u.sub(0, 0, width, height)?;
+    (cut.x, cut.y) = (u16::try_from(x).ok()?, u16::try_from(y).ok()?);
+    Some(cut)
 }
 
 /// `newer` carrying `older`'s damage too, as its bounding box past
