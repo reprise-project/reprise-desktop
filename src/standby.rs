@@ -4,7 +4,11 @@
 use futures_util::{Stream, StreamExt};
 use smithay::{output::Output, reexports::calloop::channel, utils::Transform};
 
-use crate::{compositor::State, config::OutputConfig, virtualout::Spec};
+use crate::{
+    compositor::State,
+    config::OutputConfig,
+    virtualout::{Kind, Spec},
+};
 
 #[derive(Default)]
 pub struct Standby {
@@ -73,6 +77,12 @@ fn spec_of(output: &Output) -> Option<Spec> {
     })
 }
 
+/// [`wanted`] for the layout now; never while remote screens hold the desktop.
+fn wanted_now(state: &State) -> bool {
+    wanted(state.standby.rdp_on, monitors(state))
+        && crate::virtualout::remote_outputs(state).is_empty()
+}
+
 fn monitors(state: &State) -> usize {
     (state.scene.outputs().iter())
         .filter(|o| !crate::backend::is_virtual(o))
@@ -81,9 +91,9 @@ fn monitors(state: &State) -> usize {
 
 fn add(state: &mut State) -> Output {
     let spec = spec(state.standby.last, &state.config.outputs);
-    let name = crate::virtualout::next_name(state);
+    let name = crate::virtualout::next_name(state, Kind::Standby);
     log::info!("standby: Remote Desktop is on and no monitor is in the layout; {name} stands in");
-    let output = crate::virtualout::create(state, &name, spec);
+    let output = crate::virtualout::create(state, &name, spec, Kind::Standby);
     state.standby.output = Some(output.clone());
     output
 }
@@ -96,7 +106,7 @@ pub fn rdp_changed(state: &mut State, on: bool) {
     log::info!("standby: Remote Desktop {}", if on { "on" } else { "off" });
     state.standby.rdp_on = on;
     let exists = state.standby.output.is_some();
-    match change(exists, wanted(on, monitors(state))) {
+    match change(exists, wanted_now(state)) {
         Change::Add => {
             let output = add(state);
             state.output_added(&output);
@@ -139,7 +149,7 @@ pub fn monitor_removed(state: &mut State, output: &Output) {
         state.standby.last = Some(s);
     }
     let exists = state.standby.output.is_some();
-    if change(exists, wanted(state.standby.rdp_on, monitors(state))) == Change::Add {
+    if change(exists, wanted_now(state)) == Change::Add {
         let standby = add(state);
         crate::output::inherit_box(&standby, output);
     }
