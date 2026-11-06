@@ -548,8 +548,8 @@ impl State {
         }
     }
 
-    fn pad_action(&mut self, a: &Action) {
-        if self.console_locked() || self.inputproto.gated() {
+    pub(crate) fn pad_action(&mut self, a: &Action) {
+        if self.console_holds_input() || self.inputproto.gated() {
             return;
         }
         self.run_action(a, 0);

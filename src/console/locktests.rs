@@ -15,13 +15,13 @@ use crate::lockview::{self, Helpers};
 use crate::startmenu::StartRow;
 
 const E: u32 = 18;
-const ENTER: u32 = 28;
+pub(super) const ENTER: u32 = 28;
 const L: u32 = 38;
 const APOSTROPHE: u32 = 40;
 const X: u32 = 45;
 const SUPER: u32 = 125;
 /// "hunter2" as evdev codes.
-const HUNTER2: [u32; 7] = [35, 22, 49, 20, 18, 19, 3];
+pub(super) const HUNTER2: [u32; 7] = [35, 22, 49, 20, 18, 19, 3];
 
 fn covers(h: &Harness, side: Side) -> Vec<String> {
     (h.state.lock.on(side).iter())
@@ -34,14 +34,14 @@ fn field(h: &Harness, side: Side) -> String {
     l.state.input.clone()
 }
 
-fn sh(script: &str) -> Command {
+pub(super) fn sh(script: &str) -> Command {
     let mut c = Command::new("sh");
     c.arg("-c").arg(script);
     c
 }
 
 /// The password conversation takes "hunter2"; no fingerprint conversation runs.
-fn hunter2(h: &mut Harness) {
+pub(super) fn hunter2(h: &mut Harness) {
     h.state.lock.helpers = Helpers {
         password: |_, _| sh(r#"read p; [ "$p" = hunter2 ] && echo '= 0' || echo '= 7'"#),
         finger: |_| None,
@@ -49,7 +49,7 @@ fn hunter2(h: &mut Harness) {
     };
 }
 
-fn tap(h: &mut Harness, codes: &[u32]) {
+pub(super) fn tap(h: &mut Harness, codes: &[u32]) {
     for &c in codes {
         h.key(c, true);
         h.key(c, false);
@@ -67,7 +67,7 @@ fn verifying(h: &Harness, side: Side) -> bool {
 }
 
 /// Turn the loop until neither side is verifying (or 5 s pass).
-fn settle(h: &mut Harness) {
+pub(super) fn settle(h: &mut Harness) {
     let end = Instant::now() + Duration::from_secs(5);
     while verifying(h, Side::Console) || verifying(h, Side::Remote) {
         assert!(Instant::now() < end, "the checks end");
@@ -77,11 +77,6 @@ fn settle(h: &mut Harness) {
 
 fn message(h: &Harness, side: Side) -> Option<String> {
     h.state.lock.on(side)?.state.message.clone()
-}
-
-fn assert_remote_locked_alone(h: &Harness) {
-    assert!(h.state.desktop_locked(), "the remote side stays locked");
-    assert_eq!(covers(h, Side::Remote), ["REMOTE-1"]);
 }
 
 fn assert_remote_locked(h: &Harness) {
@@ -248,7 +243,7 @@ fn remote_unlock_failures_back_off() {
 }
 
 #[test]
-fn the_console_password_leaves_the_remote_lock_up() {
+fn the_console_password_ends_lock_mode_and_the_remote_lock_with_it() {
     let (mut h, _portal, _lock) = in_lock_mode();
     hunter2(&mut h);
     h.from(InputSource::Remote, lockview::lock_desktop);
@@ -256,7 +251,9 @@ fn the_console_password_leaves_the_remote_lock_up() {
     tap(&mut h, &[ENTER]);
     settle(&mut h);
     assert!(!h.state.console_locked(), "the console unlocks");
-    assert_remote_locked_alone(&h);
+    assert!(!super::remote_side(&h.state), "lock mode ends");
+    assert!(h.state.lock.remote.is_none(), "the remote lock goes");
+    assert!(!h.state.desktop_locked());
 }
 
 #[test]

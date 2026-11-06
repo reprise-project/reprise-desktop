@@ -186,7 +186,7 @@ impl State {
 
     /// Whether tablet events may go to a client now: as for touch
     /// (`clients_may_have_touch`), and not under an input capture.
-    fn clients_may_have_tool(&self) -> bool {
+    pub(crate) fn clients_may_have_tool(&self) -> bool {
         self.clients_may_have_touch() && !self.inputproto.gated()
     }
 

@@ -18,8 +18,7 @@ pub struct Keys {
 }
 
 /// Lock mode begins: the private state takes over the keys the seat holds and its lock keys,
-/// then the seat lets go of every key, StickyKeys' modifiers and the mouse keys, so a client it
-/// focuses later hears none held.
+/// then the seat lets go of them.
 pub fn begin(state: &mut State) {
     let Some(keyboard) = state.seat.get_keyboard() else {
         return;
@@ -36,6 +35,23 @@ pub fn begin(state: &mut State) {
     });
     state.console.keys.caps_lock = private.as_ref().is_some_and(caps_on);
     state.console.keys.xkb = private;
+    let_go(state);
+}
+
+/// Lock mode ends: the computer's keys held now come back up unheard, as the seat never had
+/// them, and the seat lets go of the remote's.
+pub fn end(state: &mut State) {
+    state.console.keys = Keys::default();
+    let_go(state);
+}
+
+/// The seat lets go of every key, StickyKeys' modifiers and the mouse keys, so a client it
+/// focuses later hears none held.
+fn let_go(state: &mut State) {
+    let Some(keyboard) = state.seat.get_keyboard() else {
+        return;
+    };
+    let pressed = keyboard.pressed_keys();
     keyboard.release_source(state, KeyboardSource::MAIN);
     let now = InputTime::now();
     for code in &pressed {
@@ -45,15 +61,12 @@ pub fn begin(state: &mut State) {
             }
         }
     }
+    state.key_input.held.forget_held_back();
     state.stop_field_repeat();
     state.stop_media_repeat();
     state.aids_release_sticky();
     state.mousekeys_forget();
     state.eis_modifiers_changed();
-}
-
-pub fn end(state: &mut State) {
-    state.console.keys = Keys::default();
 }
 
 /// The keyboard's own keymap: the seat's, or `[keyboard]`'s while a virtual keyboard's is on it.

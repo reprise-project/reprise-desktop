@@ -79,7 +79,10 @@ you.
 Lock mode (`lock_screen`, version 9) is how the portal hands the remote
 desktop server screens of its own: the compositor makes one virtual screen
 per monitor of the client's layout and locks the session if it isn't
-locked. The lock stays when lock mode ends. With `[power] locker` set, or
+locked. The lock stays when lock mode ends. Unlocking at the computer, by
+password, fingerprint or logind's `Unlock`, ends lock mode: each object hears
+`ended(console_unlocked)` and the windows come back to the computer's own
+screens. With `[power] locker` set, or
 while a locker client holds the lock, lock mode is unavailable: the object
 ends at once and nothing is made. A locker client that takes the lock during
 lock mode ends it.
@@ -88,7 +91,7 @@ The virtual screens lock on their own: after `lock_after` of remote
 idleness, from Start > Lock or the lock key on the remote side, and with
 logind's `Lock`, which locks both sides. Their Unlock dialog takes only remote
 input, and its password unlocks only the virtual screens; the computer's own
-screens stay locked. logind's `Unlock` unlocks both. The remote side's lock
+screens stay locked. The remote side's lock
 goes when lock mode ends, while the computer's stays.
 
 The virtual screens' Unlock dialog checks its password as a Remote Desktop

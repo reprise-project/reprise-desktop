@@ -26,7 +26,7 @@ fn remote_window(h: &mut Harness) -> (TestClient, WindowId) {
     (c, t.id)
 }
 
-fn keys_heard(c: &TestClient) -> Vec<(u32, bool)> {
+pub(super) fn keys_heard(c: &TestClient) -> Vec<(u32, bool)> {
     (c.side.key_log.iter())
         .filter_map(|k| match *k {
             KeyHeard::Key(code, down) => Some((code, down)),
@@ -358,4 +358,13 @@ fn in_lock_mode_the_physical_power_key_turns_off_only_the_computers_screens() {
     h.key(POWER, false);
     assert!(crate::idle::console_dark(&h.state), "the panel goes off");
     assert!(!h.state.idle.steps.screen_off, "the remote screens stay on");
+}
+
+#[test]
+fn a_client_gesture_under_way_as_lock_mode_starts_ends_cancelled() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    h.state.pointers.client_gesture = Some(crate::pointers::Gesture::Pinch);
+    let (_portal, _lock) = lock_mode(&mut h);
+    assert_eq!(h.state.pointers.client_gesture, None);
 }
