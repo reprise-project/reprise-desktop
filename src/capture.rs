@@ -159,7 +159,7 @@ impl Captures {
     }
 }
 
-/// `output` runs a new mode: its sessions get the new buffer size.
+/// `output` runs a new mode or transform: its sessions get the new buffer size.
 pub fn constraints_changed(state: &mut State, output: &Output) {
     let sessions: Vec<SessionRef> = state
         .captures
@@ -260,20 +260,21 @@ impl<'a> Target<'a> {
 }
 
 /// Render `output`'s picture from `origin` (physical pixels from its
-/// top-left), `size` large, into `target`, its damage taken from `tracked`
-/// when given. The debug overlay shows only with `[debug] overlay_in_captures`.
+/// top-left), into a `size` buffer turned by `transform` from the layout,
+/// into `target`, its damage taken from `tracked` when given. The debug
+/// overlay shows only with `[debug] overlay_in_captures`.
 fn render_into(
     state: &mut State,
     output: &Output,
     origin: Point<i32, Physical>,
-    size: Size<i32, Physical>,
+    buffer: (Size<i32, Physical>, Transform),
     with_cursor: bool,
     target: Target<'_>,
     tracked: Option<&mut SessionDamage>,
 ) -> Result<Drawn, String> {
     let shown = state.config.debug.overlay_in_captures;
     state.without_debug_panels(shown, |state| {
-        render_scene_into(state, output, origin, size, with_cursor, target, tracked)
+        render_scene_into(state, output, origin, buffer, with_cursor, target, tracked)
     })
 }
 
@@ -281,7 +282,7 @@ fn render_scene_into(
     state: &mut State,
     output: &Output,
     origin: Point<i32, Physical>,
-    size: Size<i32, Physical>,
+    (size, transform): (Size<i32, Physical>, Transform),
     with_cursor: bool,
     target: Target<'_>,
     tracked: Option<&mut SessionDamage>,
@@ -326,7 +327,7 @@ fn render_scene_into(
         with_cursor,
     );
     let scale = output.current_scale().fractional_scale();
-    let at = (size, scale, output.current_transform());
+    let at = (size, scale, transform);
     let damage = tracked.map(|t| t.since_last(at, clear, &elements));
     let mut drawn = draw(
         renderer,
@@ -723,19 +724,26 @@ fn cursor_side(output: &Output) -> i32 {
     CURSOR_BOX * output.current_scale().fractional_scale().ceil() as i32
 }
 
+/// An ext output capture's buffer size: the output upright, as laid out,
+/// so a consumer needs no transform. wlr-screencopy keeps the panel's.
+fn upright_size(output: &Output) -> Option<Size<i32, Physical>> {
+    let mode = output.current_mode()?;
+    Some(output.current_transform().transform_size(mode.size))
+}
+
 fn fill_ext(state: &mut State, output: &Output, session: &SessionRef, frame: Frame) {
-    let Some(mode) = output.current_mode() else {
+    let Some(size) = upright_size(output) else {
         return frame.fail(CaptureFailureReason::Stopped);
     };
     let buffer = frame.buffer();
-    if !fits(&buffer, mode.size) {
+    if !fits(&buffer, size) {
         return frame.fail(CaptureFailureReason::BufferConstraints);
     }
     let drawn = render_into(
         state,
         output,
         (0, 0).into(),
-        mode.size,
+        (size, Transform::Normal),
         session.draw_cursor(),
         Target::of(&buffer),
         Some(&mut session_damage(session).borrow_mut()),
@@ -754,7 +762,7 @@ fn fill_ext(state: &mut State, output: &Output, session: &SessionRef, frame: Fra
         state,
         drawn,
         frame,
-        output.current_transform(),
+        Transform::Normal,
         what,
         move |state, ready| {
             state.captures.drawing.retain(|(f, _)| *f != frame_ref);
@@ -778,7 +786,7 @@ fn fill_wlr(state: &mut State, screencopy: Screencopy) {
         state,
         &info.output,
         info.region_loc,
-        info.buffer_size,
+        (info.buffer_size, info.output.current_transform()),
         info.overlay_cursor,
         buffer,
         None,
@@ -1020,7 +1028,7 @@ impl ImageCopyCaptureHandler for State {
             Shown::Output(o) => o,
             Shown::Window(w) => return window_constraints(self, w),
         };
-        let size = output.current_mode()?.size;
+        let size = upright_size(&output)?;
         Some(constraints(self, (size.w, size.h).into()))
     }
 
@@ -1303,6 +1311,38 @@ mod tests {
             (2 * on_1.w, 2 * on_1.h),
             "{on_1:?} at scale 1 doubles at scale 2"
         );
+    }
+
+    #[test]
+    fn an_output_capture_is_the_turned_output_upright_at_any_scale() {
+        let mut h = Harness::new();
+        let output = h.output("TEST-1", 1920, 1080);
+        let mut client = h.connect_capture((1920, 1080));
+        let _session = client.ext_session(&mut h);
+        assert_eq!(client.buffer_sizes(), [(1920, 1080)]);
+        for (transform, scale, size) in [
+            (Transform::_90, 1.0, (1080, 1920)),
+            (Transform::_180, 1.0, (1920, 1080)),
+            (Transform::_270, 2.0, (1080, 1920)),
+            (Transform::Flipped270, 1.5, (1080, 1920)),
+            (Transform::Normal, 1.0, (1920, 1080)),
+        ] {
+            let req = crate::output::HeadRequest {
+                enabled: true,
+                mode: None,
+                position: None,
+                transform,
+                scale,
+                adaptive_sync: false,
+            };
+            assert!(h.state.apply_head(&output, &req), "{transform:?} applies");
+            client.roundtrip(&mut h);
+            assert_eq!(
+                client.buffer_sizes().last(),
+                Some(&size),
+                "{transform:?} at scale {scale}: a {size:?} buffer"
+            );
+        }
     }
 
     #[test]
