@@ -668,7 +668,7 @@ pub fn drop_remote(state: &mut State) {
 }
 
 /// Unlock `side`, from its correct password or a whole unlock, and hand focus back unless the
-/// desktop is still locked. The console's unlock ends lock mode and keeps the remote's window.
+/// desktop is still locked. The console's unlock ends lock mode and keeps the remote side's focus.
 fn unlock_side(state: &mut State, side: Side) {
     let Some(mut prev) = teardown(state, side) else {
         return;
@@ -679,15 +679,15 @@ fn unlock_side(state: &mut State, side: Side) {
             let remote = remote_focus(state);
             crate::console::console_unlocked(state);
             let shown = |w: WindowId| state.win(w).is_some_and(|x| x.mapped && !x.hidden());
-            if let Some(w) = remote.filter(|&w| shown(w) && state.window_output(w).is_some()) {
-                prev = (Some(w), None, false);
+            match remote {
+                Some(RemoteFocus::Window(w)) if shown(w) && state.window_output(w).is_some() => {
+                    prev = (Some(w), None, false);
+                }
+                Some(RemoteFocus::Desktop) => prev = (None, None, true),
+                _ => {}
             }
         }
     }
-    debug_assert!(
-        state.console_locked() || !crate::console::remote_side(state),
-        "lock mode outlived the console's lock"
-    );
     crate::idle::inhibition_changed(state);
     if !state.desktop_locked() {
         refocus(state, prev);
@@ -703,14 +703,25 @@ fn unlock_side(state: &mut State, side: Side) {
     }
 }
 
-/// The window the remote side types into: the one its lock took the keyboard from, else the one
-/// with the keyboard.
-fn remote_focus(state: &State) -> Option<WindowId> {
+enum RemoteFocus {
+    Window(WindowId),
+    Desktop,
+}
+
+/// What the remote side types into: what its lock took the keyboard from, else the window with
+/// the keyboard, else the desktop once it clicked there. None when it picked nothing.
+fn remote_focus(state: &State) -> Option<RemoteFocus> {
     if let Some(l) = state.lock.remote.as_ref() {
-        return l.prev_focus;
+        return match l.prev_focus {
+            Some(w) => Some(RemoteFocus::Window(w)),
+            None => l.prev_desktop.then_some(RemoteFocus::Desktop),
+        };
     }
-    let s = state.seat.get_keyboard()?.current_focus()?;
-    state.window_for_surface(&s)
+    match state.seat.get_keyboard()?.current_focus() {
+        Some(s) => state.window_for_surface(&s).map(RemoteFocus::Window),
+        // `focused` stays the window from before lock mode until the remote side clicks the desktop.
+        None => state.focused.is_none().then_some(RemoteFocus::Desktop),
+    }
 }
 
 /// Focus a layer surface that claimed exclusive keyboard interactivity while locked, else what held
