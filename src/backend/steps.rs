@@ -15,7 +15,7 @@ use super::links::{check_links, retrain_link};
 use super::outputs::{Probe, scan_connectors, set_mode};
 use super::render::{callbacks_after_a_frame, render_waiting};
 use super::session::reset_device;
-use super::{Backend, Flip, Head, commit, head_of, is_master};
+use super::{Backend, Flip, Head, Screen, commit, is_master, screen_of};
 
 impl Backend {
     /// No commit holds the kernel's modeset locks (`commit::quiet`).
@@ -89,7 +89,10 @@ pub fn stalled(state: &State, output: &Output) -> bool {
     let Some(b) = state.backend.as_ref() else {
         return false;
     };
-    head_of(output).is_some_and(|c| b.held(c, std::time::Instant::now()))
+    match screen_of(output) {
+        Some(Screen::Monitor(head)) => b.held(head, std::time::Instant::now()),
+        Some(Screen::Virtual) | None => false,
+    }
 }
 
 /// Deferred work, in the order it runs: the device reset before the scan reads connectors

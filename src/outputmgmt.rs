@@ -126,6 +126,11 @@ impl OutputMgmt {
         }
     }
 
+    #[cfg(test)]
+    pub fn head_names(&self) -> Vec<String> {
+        self.heads.iter().map(|h| h.name.clone()).collect()
+    }
+
     /// Whether an apply waits for modes to settle.
     pub fn holds(&self) -> bool {
         !self.held.is_empty()

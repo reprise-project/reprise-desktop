@@ -125,6 +125,13 @@ impl Captures {
         }
     }
 
+    /// Whether a session or a waiting frame shows `output`.
+    pub fn shows_output(&self, output: &Output) -> bool {
+        let on = Some(Shown::Output(output.clone()));
+        self.sessions.iter().any(|s| shown(&s.source()) == on)
+            || self.waiting.iter().any(|w| w.shows() == on)
+    }
+
     /// What the ongoing ext sessions show, those for the remote desktop server only `with_remote`.
     pub fn targets(&self, with_remote: bool) -> Vec<Captured<Output, WindowId>> {
         self.sessions

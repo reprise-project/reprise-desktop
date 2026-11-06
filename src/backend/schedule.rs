@@ -8,7 +8,7 @@ use crate::compositor::State;
 use crate::glass::{Drawn, Under};
 
 use super::render::render;
-use super::{Head, head_of, surface_mut};
+use super::{Head, Screen, screen_of, surface_mut};
 
 pub fn schedule(state: &mut State, output: &Output) {
     state.toplevels.dirty = true;
@@ -70,8 +70,10 @@ pub fn take_asks() -> Vec<(String, Ask)> {
 fn request(state: &mut State, output: &Output, ask: Ask) {
     #[cfg(test)]
     ASKED.with_borrow_mut(|a| a.push((output.name(), ask)));
-    let Some(head) = head_of(output) else {
-        return;
+    let head = match screen_of(output) {
+        Some(Screen::Monitor(head)) => head,
+        Some(Screen::Virtual) => return crate::virtualout::ask(state, output, ask),
+        None => return,
     };
     let Some(s) = surface_mut(state, head) else {
         return;
@@ -129,8 +131,10 @@ pub(super) fn queue_render(state: &mut State, head: Head) {
 /// (`framepace::ask_at`). Glass re-blurs the moving water at `[glass] blur_rate`, like a
 /// program's content.
 pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant) {
-    let Some(head) = head_of(output) else {
-        return;
+    let head = match screen_of(output) {
+        Some(Screen::Monitor(head)) => head,
+        Some(Screen::Virtual) => return crate::virtualout::ask(state, output, Ask::Content),
+        None => return,
     };
     let Some(s) = surface_mut(state, head) else {
         return;
@@ -146,8 +150,10 @@ pub fn schedule_step(state: &mut State, output: &Output, at: std::time::Instant)
 /// Ask for the frame on `output` that shows at the first refresh at or after `at`
 /// (`framepace::start_for`): a timed commit's.
 pub fn schedule_shows_at(state: &mut State, output: &Output, at: std::time::Instant) {
-    let Some(head) = head_of(output) else {
-        return;
+    let head = match screen_of(output) {
+        Some(Screen::Monitor(head)) => head,
+        Some(Screen::Virtual) => return crate::virtualout::ask(state, output, Ask::Timed),
+        None => return,
     };
     let Some(s) = surface_mut(state, head) else {
         return;
@@ -205,16 +211,21 @@ fn arm_frame(state: &mut State, head: Head, output: &Output, fires: std::time::I
 pub fn schedule_pointer(state: &mut State, pointer: Point<f64, Logical>) {
     let outputs: Vec<Output> = state.scene.outputs().to_vec();
     for o in &outputs {
-        let wanted = head_of(o)
-            .and_then(|head| state.backend.as_ref()?.surfaces.get(&head))
-            .is_some_and(|s| {
-                pointer_ask_renders(
-                    reprisescene::output_rect(o),
-                    pointer,
-                    s.pointer_shown,
-                    state.magnifier.zooms(o),
-                )
-            });
+        let shown = match screen_of(o) {
+            Some(Screen::Monitor(head)) => (state.backend.as_ref())
+                .and_then(|b| b.surfaces.get(&head))
+                .map(|s| s.pointer_shown),
+            Some(Screen::Virtual) => Some(crate::virtualout::pointer_shown(state, o)),
+            None => None,
+        };
+        let wanted = shown.is_some_and(|shown| {
+            pointer_ask_renders(
+                reprisescene::output_rect(o),
+                pointer,
+                shown,
+                state.magnifier.zooms(o),
+            )
+        });
         if wanted {
             request(state, o, Ask::Pointer);
         }
@@ -227,10 +238,12 @@ pub fn schedule_pointer(state: &mut State, pointer: Point<f64, Logical>) {
 /// smithay sets the cursor from inside the pointer's lock.
 pub fn cursor_outputs(state: &State) -> Vec<Output> {
     let backend = state.backend.as_ref();
-    let shown = |o: &Output| {
-        head_of(o)
-            .and_then(|head| backend?.surfaces.get(&head))
-            .is_some_and(|s| s.pointer_shown)
+    let shown = |o: &Output| match screen_of(o) {
+        Some(Screen::Monitor(head)) => {
+            (backend.and_then(|b| b.surfaces.get(&head))).is_some_and(|s| s.pointer_shown)
+        }
+        Some(Screen::Virtual) => crate::virtualout::pointer_shown(state, o),
+        None => false,
     };
     let outputs = state.scene.outputs().iter();
     outputs

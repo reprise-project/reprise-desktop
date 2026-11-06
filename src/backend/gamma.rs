@@ -8,7 +8,7 @@ use crate::compositor::State;
 
 use super::render::send_job;
 use super::steps::watch;
-use super::{CrtcNow, Head, OutputHead, Surface, Work, commit, surface_of};
+use super::{CrtcNow, Head, Screen, Surface, Work, commit, screen_of, surface_of};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Lut {
@@ -157,7 +157,10 @@ fn lut_bytes(ramp: &[u16], size: usize) -> Vec<u8> {
 }
 
 pub fn gamma_size(state: &State, output: &Output) -> Option<usize> {
-    let head = output.user_data().get::<OutputHead>()?.0;
+    let head = match screen_of(output)? {
+        Screen::Monitor(head) => head,
+        Screen::Virtual => return None,
+    };
     let b = state.backend.as_ref()?;
     let s = b.surfaces.get(&head)?;
     s.hw.gamma.map(|g| g.size() as usize)

@@ -744,6 +744,14 @@ no port forwarding; allow the port in your firewall if you run one.
   screen shows too, and the client's keyboard unlocks it. The client draws
   the pointer itself, so it moves without lag. Only what changed is sent,
   and a still screen sends nothing.
+- **No monitor.** While Remote Desktop is on and no monitor is connected
+  (switched to another computer on a KVM, or never plugged in since boot),
+  a standby screen holds the desktop. It runs at the last monitor's size,
+  scale and place, else the first `[[outputs]]` entry's (the primary one if
+  set), else 1920x1080 at scale 1, and windows stay where they were. It is
+  drawn only for the viewers, at `frame_rate`, and once a second while none
+  watches. Settings > Displays and output management tools don't list it.
+  A monitor coming back takes its place; viewers reconnect once then.
 - **Encoders.** At start the server tries each H.264 encoder on a test
   frame: VA-API (Intel and AMD), NVENC (NVIDIA; tried on a GeForce RTX
   4080 SUPER with driver 615.78), Vulkan and x264 on the CPU. Automatic

@@ -76,10 +76,12 @@ use devices::{DeviceSet, Head, pick_gpu, secondaries};
 use gamma::{Gamma, Lut, write_gamma};
 pub use gamma::{gamma_size, set_gamma};
 use links::LINK_GOOD;
+pub(crate) use outputs::retire_global;
 pub use outputs::{
     HeadState, disable, enable, heads, output_power, set_mode, set_output_power, set_vrr,
 };
 use outputs::{Probe, asks_scan, connector_disconnected, scan_connectors};
+pub(crate) use render::{advance, send_frame_callbacks};
 pub use render::{answer_frames, take_stats};
 use render::{committed, retired, vblank};
 #[cfg(test)]
@@ -321,10 +323,29 @@ struct Parked {
     vrr_capable: bool,
 }
 
-struct OutputHead(Head);
+/// What shows an output: a monitor on a CRTC, or nothing behind it (`virtualout`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Screen {
+    Monitor(Head),
+    Virtual,
+}
 
-fn head_of(output: &Output) -> Option<Head> {
-    output.user_data().get::<OutputHead>().map(|h| h.0)
+struct OutputScreen(Screen);
+
+fn screen_of(output: &Output) -> Option<Screen> {
+    output.user_data().get::<OutputScreen>().map(|s| s.0)
+}
+
+/// Mark `output` as a virtual screen: the backend leaves it to `virtualout`.
+pub(crate) fn mark_virtual(output: &Output) {
+    output
+        .user_data()
+        .insert_if_missing(|| OutputScreen(Screen::Virtual));
+}
+
+/// Whether `output` is a virtual screen.
+pub fn is_virtual(output: &Output) -> bool {
+    screen_of(output) == Some(Screen::Virtual)
 }
 
 pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -855,7 +876,10 @@ fn surface_mut(state: &mut State, head: Head) -> Option<&mut Surface> {
 }
 
 fn surface_of<'a>(state: &'a mut State, output: &Output) -> Option<(&'a mut Backend, Head)> {
-    let head = head_of(output)?;
+    let head = match screen_of(output)? {
+        Screen::Monitor(head) => head,
+        Screen::Virtual => return None,
+    };
     let b = state.backend.as_mut()?;
     b.surfaces.contains_key(&head).then_some((b, head))
 }

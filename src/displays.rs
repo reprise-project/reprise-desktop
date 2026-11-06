@@ -346,6 +346,7 @@ pub fn outputs_changed(state: &mut State) {
         .scene
         .outputs()
         .iter()
+        .filter(|o| !crate::backend::is_virtual(o))
         .map(|o| {
             let r = state.layout_box(Some(o));
             let p = o.physical_properties();
