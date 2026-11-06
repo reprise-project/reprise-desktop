@@ -55,18 +55,22 @@ pub struct Layout {
 
 impl Layout {
     /// Whole without client monitors or with one, Paired when every screen gets a monitor,
-    /// else Scaled. Client monitors that cannot be used give Whole.
+    /// else Scaled. Client monitors that cannot be used give Whole, and a Whole box past
+    /// [`DESKTOP_SIDES`] is Scaled into the largest desktop of its shape.
     pub fn new(screens: &[ScreenRect], client: &[Monitor]) -> Layout {
-        let mut order: Vec<usize> = (0..screens.len()).collect();
-        order.sort_by_key(|&i| (screens[i].position.1, screens[i].position.0));
+        let order = order(screens);
         let pixels = screens.iter().map(|s| s.pixels).collect();
         let whole = whole(screens, &order);
         let Some((desktop, moved)) = of_client(client).ok().flatten() else {
+            if whole.size.0.max(whole.size.1) <= u32::from(*DESKTOP_SIDES.end()) {
+                return Layout::bitmaps(screens);
+            }
+            let desktop = fitted(whole.size);
             return Layout {
-                kind: Kind::Whole,
-                desktop: clamp16(whole.size),
-                monitors: vec![primary(clamp16(whole.size))],
-                placed: whole.placed(),
+                kind: Kind::Scaled,
+                desktop,
+                monitors: vec![primary(desktop)],
+                placed: whole.scaled_into(desktop),
                 pixels,
             };
         };
@@ -97,6 +101,22 @@ impl Layout {
                 placed: whole.scaled_into(desktop),
                 pixels,
             }
+        }
+    }
+
+    /// Whole, every screen at its own pixels as bitmaps are drawn; the desktop stops at
+    /// [`DESKTOP_SIDES`], and what lies past it is not shown.
+    pub fn bitmaps(screens: &[ScreenRect]) -> Layout {
+        let whole = whole(screens, &order(screens));
+        let max = *DESKTOP_SIDES.end();
+        let (w, h) = clamp16(whole.size);
+        let desktop = (w.min(max), h.min(max));
+        Layout {
+            kind: Kind::Whole,
+            desktop,
+            monitors: vec![primary(desktop)],
+            placed: whole.placed(),
+            pixels: screens.iter().map(|s| s.pixels).collect(),
         }
     }
 
@@ -135,19 +155,20 @@ impl Layout {
         Some(placed.target)
     }
 
-    /// The client point showing stream pixel `p` of `screen`.
+    /// The client point showing stream pixel `p` of `screen`; `None` past the desktop.
     pub fn to_client(&self, screen: usize, p: (u32, u32)) -> Option<(u16, u16)> {
         let t = self.target(screen)?;
         let pixels = self.pixels[screen];
         if p.0 >= pixels.0 || p.1 >= pixels.1 {
             return None;
         }
-        let axis = |p: u32, origin: u16, target: u16, pixels: u32| {
-            u16::try_from(u32::from(origin) + muldiv(p, u32::from(target), pixels)).ok()
+        let axis = |p: u32, origin: u16, target: u16, pixels: u32, desktop: u16| {
+            let at = u32::from(origin) + muldiv(p, u32::from(target), pixels);
+            u16::try_from(at).ok().filter(|&at| at < desktop)
         };
         Some((
-            axis(p.0, t.x, t.w, pixels.0)?,
-            axis(p.1, t.y, t.h, pixels.1)?,
+            axis(p.0, t.x, t.w, pixels.0, self.desktop.0)?,
+            axis(p.1, t.y, t.h, pixels.1, self.desktop.1)?,
         ))
     }
 }
@@ -203,6 +224,26 @@ impl Whole {
             })
             .collect()
     }
+}
+
+/// Screen indices by logical position, top then left.
+fn order(screens: &[ScreenRect]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..screens.len()).collect();
+    order.sort_by_key(|&i| (screens[i].position.1, screens[i].position.0));
+    order
+}
+
+/// The largest desktop within [`DESKTOP_SIDES`] of `size`'s shape, its sides even.
+fn fitted((w, h): (u32, u32)) -> (u16, u16) {
+    let (min, max) = (
+        u32::from(*DESKTOP_SIDES.start()),
+        u32::from(*DESKTOP_SIDES.end()),
+    );
+    let (w, h) = match w >= h {
+        true => (max, muldiv(h, max, w)),
+        false => (muldiv(w, max, h), max),
+    };
+    clamp16((even(w).max(min), even(h).max(min)))
 }
 
 /// Logical offsets become stream pixels at the largest scale among the screens on each axis,
@@ -264,8 +305,10 @@ pub fn client_desktop(client: &[Monitor]) -> Option<(u16, u16)> {
 #[derive(Debug)]
 pub struct Desk {
     screens: Vec<ScreenRect>,
-    /// Empty when they cannot be used or the connection went [`Kind::Whole`].
+    /// Empty when they cannot be used.
     client: Vec<Monitor>,
+    /// The client is sent bitmaps: [`Layout::bitmaps`] from then on.
+    bitmaps: bool,
     layout: Layout,
 }
 
@@ -287,6 +330,7 @@ impl Desk {
         Desk {
             screens,
             client,
+            bitmaps: false,
             layout,
         }
     }
@@ -304,14 +348,18 @@ impl Desk {
         self.relayout()
     }
 
-    /// Every screen at its offset, unscaled, from now on; true if the layout changed.
+    /// Every screen at its offset, unscaled, for bitmaps from now on; true if the layout
+    /// changed.
     pub fn whole(&mut self) -> bool {
-        self.client.clear();
+        self.bitmaps = true;
         self.relayout()
     }
 
     fn relayout(&mut self) -> bool {
-        let layout = Layout::new(&self.screens, &self.client);
+        let layout = match self.bitmaps {
+            true => Layout::bitmaps(&self.screens),
+            false => Layout::new(&self.screens, &self.client),
+        };
         let changed = layout != self.layout;
         self.layout = layout;
         changed
@@ -730,6 +778,66 @@ mod tests {
             assert_eq!(layout.kind, Kind::Whole, "{client:?} is ignored");
             assert_eq!(layout.desktop, (3200, 1080));
         }
+    }
+
+    #[test]
+    fn three_4k_screens_scale_into_8192() {
+        let screens = [
+            screen(0, 0, 3840, 2160),
+            screen(3840, 0, 3840, 2160),
+            screen(7680, 0, 3840, 2160),
+        ];
+        let layout = Layout::new(&screens, &[]);
+        assert_eq!(layout.kind, Kind::Scaled);
+        assert_eq!(layout.desktop, (8192, 1536));
+        assert_eq!(layout.monitors, vec![monitor(0, 0, 8191, 1535, true)]);
+        assert_eq!(
+            targets(&layout),
+            vec![
+                (0, rect(0, 0, 2730, 1536)),
+                (1, rect(2730, 0, 2730, 1536)),
+                (2, rect(5461, 0, 2730, 1536)),
+            ]
+        );
+
+        let bitmaps = Layout::bitmaps(&screens);
+        assert_eq!(bitmaps.kind, Kind::Whole);
+        assert_eq!(bitmaps.desktop, (8192, 2160), "bitmaps are cut at 8192");
+        assert_eq!(bitmaps.target(2), Some(rect(7680, 0, 3840, 2160)));
+        assert_eq!(bitmaps.to_client(2, (511, 0)), Some((8191, 0)));
+        assert_eq!(bitmaps.to_client(2, (512, 0)), None, "past the desktop");
+    }
+
+    #[test]
+    fn a_scale_2_screen_right_of_a_3840_wide_one_scales_into_8192() {
+        let laptop = ScreenRect {
+            position: (3840, 0),
+            logical: (1440, 900),
+            pixels: (2880, 1800),
+        };
+        let layout = Layout::new(&[screen(0, 0, 3840, 2160), laptop], &[]);
+        assert_eq!(layout.kind, Kind::Scaled, "the whole box is 10560 wide");
+        assert_eq!(layout.desktop, (8192, 1674));
+        assert_eq!(
+            targets(&layout),
+            vec![(0, rect(4, 0, 2976, 1674)), (1, rect(5956, 0, 2232, 1394))]
+        );
+    }
+
+    #[test]
+    fn a_desk_past_8192_for_bitmaps_is_whole_and_cut() {
+        let mut desk = Desk::new(
+            vec![
+                screen(0, 0, 3840, 2160),
+                screen(3840, 0, 3840, 2160),
+                screen(7680, 0, 3840, 2160),
+            ],
+            &[],
+        );
+        assert_eq!(desk.layout().kind, Kind::Scaled);
+        assert!(desk.whole());
+        assert_eq!(desk.layout().kind, Kind::Whole);
+        assert_eq!(desk.layout().desktop, (8192, 2160));
     }
 
     #[test]

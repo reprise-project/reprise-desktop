@@ -58,6 +58,29 @@ pub(super) fn frame(size: (u32, u32), damage: Rect) -> Frame {
     Frame::detached(vec![0; (size.0 * size.1 * 4) as usize], size, vec![damage])
 }
 
+#[test]
+fn a_bitmap_past_the_desktop_is_cut_to_it() {
+    let bitmap = BitmapUpdate {
+        x: 4,
+        y: 0,
+        width: NonZeroU16::new(8).unwrap(),
+        height: NonZeroU16::new(2).unwrap(),
+        format: ironrdp_server::PixelFormat::BgrX32,
+        data: bytes::Bytes::from(vec![0; 8 * 2 * 4]),
+        stride: std::num::NonZeroUsize::new(8 * 4).unwrap(),
+    };
+    let cut = on_desktop(bitmap.clone(), (6, 1), (14, 2)).expect("partly on the desktop");
+    assert_eq!(
+        (cut.x, cut.y, cut.width.get(), cut.height.get()),
+        (10, 1, 4, 1)
+    );
+    assert_eq!(cut.data.len(), 4 * 4);
+    assert!(
+        on_desktop(bitmap, (10, 0), (14, 2)).is_none(),
+        "wholly past the desktop"
+    );
+}
+
 pub(super) fn bitmap_size(update: Option<DisplayUpdate>) -> (u16, u16) {
     match update {
         Some(DisplayUpdate::Bitmap(b)) => (b.width.get(), b.height.get()),
