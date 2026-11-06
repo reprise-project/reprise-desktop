@@ -68,9 +68,8 @@ pub struct Home {
     pub snapped_rel: Option<RelRect>,
 }
 
-/// Lock mode's first layout pass placed the Remote outputs: each window keeps its home and goes to
-/// the same relative place on the Remote output paired with its own ([`console_outputs`] order),
-/// else on the remote primary. Runs from `carry_windows`; outside lock mode it does nothing.
+/// Once lock mode places the Remote outputs, each window keeps its home and goes to the same
+/// relative place on its paired Remote output ([`console_outputs`]), else the remote primary.
 pub fn send_all(state: &mut State) {
     if !crate::console::remote_side(state) {
         return;
@@ -132,9 +131,8 @@ pub fn bring_back(state: &mut State) {
 /// An output and its layout box.
 type Placed = (Output, Rect);
 
-/// The Remote outputs went from the boxes `before` to `after`, and those in `console.gone` left:
-/// each window on one keeps its relative place there, or on the remote primary for one that left.
-/// A grouped window goes with its group, which refits its zones.
+/// The Remote outputs went from `before` to `after` and `console.gone` left: a window keeps its
+/// relative place, or goes to the remote primary when its output left; a group refits its zones.
 pub fn refit_remote(state: &mut State, before: &[Placed], after: &[Placed]) {
     let gone = std::mem::take(&mut state.console.gone);
     let primary = (state.first_output()).map(|o| (o.clone(), state.layout_box(Some(&o))));

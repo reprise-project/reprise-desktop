@@ -340,6 +340,10 @@ fn lock_mode_keeps_the_last_session_and_writes_no_open_here_rule() {
         "{:?}",
         h.state.session.apps
     );
+    assert_eq!(
+        h.state.open_here_state(t.id),
+        crate::winmenu::OpenHereState::Greyed
+    );
     h.state.toggle_open_here(t.id);
     assert!(!crate::windowrules::has_open_here(
         &h.state.config.window_rules,
