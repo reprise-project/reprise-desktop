@@ -861,8 +861,6 @@ fn is_resize(update: Option<DisplayUpdate>) -> bool {
 
 #[tokio::test(start_paused = true)]
 async fn the_first_resize_waits_for_the_graphics_pipeline_to_open() {
-    use ironrdp_dvc::DvcProcessor;
-    use ironrdp_egfx::pdu::{CapabilitiesAdvertisePdu, CapabilitiesV81Flags, CapabilitySet};
     let gfx = Gfx::default();
     let (_bridge, server) = gfx.open();
     let (mut live, frames, _sizes) = opening(&gfx);
@@ -873,14 +871,7 @@ async fn the_first_resize_waits_for_the_graphics_pipeline_to_open() {
         early.is_err(),
         "no resize while the client opens the pipeline"
     );
-    let advertise =
-        ironrdp_egfx::pdu::GfxPdu::CapabilitiesAdvertise(CapabilitiesAdvertisePdu::from_typed(&[
-            CapabilitySet::V8_1 {
-                flags: CapabilitiesV81Flags::AVC420_ENABLED,
-            },
-        ]));
-    let payload = ironrdp_core::encode_vec(&advertise).unwrap();
-    server.lock().unwrap().process(0, &payload).unwrap();
+    crate::gfx::tests::client_opens(&server);
     assert!(
         is_resize(live.next().await),
         "the resize follows the opening"
