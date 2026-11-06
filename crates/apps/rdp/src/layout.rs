@@ -55,12 +55,10 @@ impl Layout {
         order.sort_by_key(|&i| (screens[i].position.1, screens[i].position.0));
         let pixels = screens.iter().map(|s| s.pixels).collect();
         let whole = whole(screens, &order);
-        let client = match client.len() {
-            0 | 1 => None,
-            _ => usable(client)
-                .inspect_err(|why| log::warn!("client monitors ignored: {why}"))
-                .ok(),
-        };
+        let client = of_client(client)
+            .inspect_err(|why| log::warn!("client monitors ignored: {why}"))
+            .ok()
+            .flatten();
         let Some((desktop, monitors)) = client else {
             return Layout {
                 kind: Kind::Whole,
@@ -247,8 +245,23 @@ fn whole(screens: &[ScreenRect], order: &[usize]) -> Whole {
     Whole { size, screens }
 }
 
-/// The client's desktop size and its monitors moved so their box starts at (0, 0).
-fn usable(client: &[Monitor]) -> Result<((u16, u16), Vec<Monitor>), &'static str> {
+/// The desktop `client`'s monitors span when they give Paired or Scaled, whatever the screens.
+pub fn client_desktop(client: &[Monitor]) -> Option<(u16, u16)> {
+    of_client(client).ok().flatten().map(|(desktop, _)| desktop)
+}
+
+/// A client's desktop size and its monitors moved so their box starts at (0, 0).
+type ClientDesktop = ((u16, u16), Vec<Monitor>);
+
+/// [`usable`] for two or more client monitors; fewer give Whole.
+fn of_client(client: &[Monitor]) -> Result<Option<ClientDesktop>, &'static str> {
+    match client.len() {
+        0 | 1 => Ok(None),
+        _ => usable(client).map(Some),
+    }
+}
+
+fn usable(client: &[Monitor]) -> Result<ClientDesktop, &'static str> {
     if client.len() > MONITOR_COUNT_MAX {
         return Err("more than 16 monitors");
     }
