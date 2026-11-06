@@ -18,10 +18,31 @@ const LOGIN1: &str = "org.freedesktop.login1";
 const CLOSE_WAIT: Duration = Duration::from_secs(5);
 /// How long logind may take to lock.
 const LOCK_WAIT: Duration = Duration::from_secs(5);
+/// How long a console unlock may take to clear `LockedHint` after lock mode's screens went, and
+/// how often it is read meanwhile.
+const HINT_WAIT: Duration = Duration::from_millis(500);
+const HINT_POLL: Duration = Duration::from_millis(50);
 
 /// The user's display session, through logind: `GetUser(uid)`, its `Display`, `Session.Lock`;
 /// no `Lock` once `given_up` is set, as the display session may be a newer one by then.
 pub async fn lock_session(conn: &Connection, given_up: &AtomicBool) -> zbus::Result<()> {
+    let session = display_session(conn).await?;
+    if given_up.load(Ordering::SeqCst) {
+        return Err(zbus::Error::Failure("given up on".into()));
+    }
+    conn.call_method(
+        Some(LOGIN1),
+        &session,
+        Some("org.freedesktop.login1.Session"),
+        "Lock",
+        &(),
+    )
+    .await?;
+    Ok(())
+}
+
+/// The user's display session's object path: logind's `GetUser(uid)`, then its `Display`.
+async fn display_session(conn: &Connection) -> zbus::Result<OwnedObjectPath> {
     // SAFETY: getuid has no preconditions and cannot fail.
     let uid = unsafe { libc::getuid() };
     let user: OwnedObjectPath = conn
@@ -52,18 +73,49 @@ pub async fn lock_session(conn: &Connection, given_up: &AtomicBool) -> zbus::Res
             "the user has no display session".into(),
         ));
     }
-    if given_up.load(Ordering::SeqCst) {
-        return Err(zbus::Error::Failure("given up on".into()));
+    Ok(session)
+}
+
+/// Whether logind's `LockedHint` on the user's display session is false, or turns false
+/// within [`HINT_WAIT`].
+async fn hint_unlocked(conn: &Connection) -> zbus::Result<bool> {
+    let session = display_session(conn).await?;
+    let until = std::time::Instant::now() + HINT_WAIT;
+    loop {
+        let hint: OwnedVariant = conn
+            .call_method(
+                Some(LOGIN1),
+                &session,
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.freedesktop.login1.Session", "LockedHint"),
+            )
+            .await?
+            .body()
+            .deserialize()?;
+        if !bool::try_from(hint)? {
+            return Ok(true);
+        }
+        if std::time::Instant::now() >= until {
+            return Ok(false);
+        }
+        std::thread::sleep(HINT_POLL);
     }
-    conn.call_method(
-        Some(LOGIN1),
-        &session,
-        Some("org.freedesktop.login1.Session"),
-        "Lock",
-        &(),
-    )
-    .await?;
-    Ok(())
+}
+
+/// [`hint_unlocked`] on the system bus, from a thread of its own; false when it cannot tell.
+pub async fn console_unlocked() -> bool {
+    let read = on_thread(LOCK_WAIT, |_| {
+        zbus::block_on(async {
+            let conn = Connection::system().await?;
+            hint_unlocked(&conn).await
+        })
+        .map_err(|e| e.to_string())
+    });
+    read.await.unwrap_or_else(|e| {
+        log::warn!("cannot read whether the console is locked: {e}");
+        false
+    })
 }
 
 /// [`lock_session`] on the system bus, from a thread of its own; whether it locked.
@@ -118,10 +170,10 @@ pub async fn lock_if_marked(marker: Option<&Path>, lock: impl Future<Output = bo
 }
 
 /// `job` on a thread of its own, given up on after `wait`; the flag it is passed is set then.
-async fn on_thread(
+async fn on_thread<T: Send + 'static>(
     wait: Duration,
-    job: impl FnOnce(&AtomicBool) -> Result<(), String> + Send + 'static,
-) -> Result<(), String> {
+    job: impl FnOnce(&AtomicBool) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let given_up = Arc::new(AtomicBool::new(false));
     let flag = given_up.clone();
@@ -250,6 +302,10 @@ impl<F: AsyncFn() -> bool> Leave for LockOnLeave<F> {
     /// Locks if a client is still logged in, while its connection is open.
     async fn stopping(&self) {
         lock_if_marked(self.marker.as_deref(), (self.lock)()).await;
+    }
+
+    async fn console_unlocked(&self) -> bool {
+        console_unlocked().await
     }
 }
 

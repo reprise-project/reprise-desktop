@@ -14,8 +14,8 @@ use ironrdp_cliprdr::pdu::{
 use ironrdp_server::{CliprdrServerFactory, ServerEvent, ServerEventSender};
 use std::collections::VecDeque;
 use std::io::Cursor;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::watch;
@@ -520,15 +520,51 @@ fn take_answer(response: &FormatDataResponse<'_>, limit: usize) -> Option<Vec<u8
 pub struct Factory {
     events: Option<UnboundedSender<ServerEvent>>,
     shown: watch::Receiver<bool>,
+    cut: Cut,
 }
 
 impl Factory {
-    /// `shown` is the connection's [`crate::listen::Shown`].
-    pub fn new(shown: watch::Receiver<bool>) -> Factory {
+    /// `shown` is the connection's [`crate::listen::Shown`]; `cut` stops its bridge.
+    pub fn new(shown: watch::Receiver<bool>, cut: Cut) -> Factory {
         Factory {
             events: None,
             shown,
+            cut,
         }
+    }
+}
+
+/// Stops a connection's clipboard bridge for good, and any it starts later.
+#[derive(Clone, Debug, Default)]
+pub struct Cut(Arc<Mutex<Cuts>>);
+
+#[derive(Debug, Default)]
+struct Cuts {
+    cut: bool,
+    bridges: Vec<wlclip::Stopper>,
+}
+
+impl Cut {
+    pub fn cut(&self) {
+        let mut cuts = self.0.lock().unwrap();
+        cuts.cut = true;
+        cuts.bridges.drain(..).for_each(|b| b.stop());
+    }
+
+    #[cfg(test)]
+    pub fn is_cut(&self) -> bool {
+        self.0.lock().unwrap().cut
+    }
+
+    /// `link`'s bridge, or None once cut.
+    fn keep(&self, link: impl FnOnce() -> wlclip::Link) -> Option<wlclip::Link> {
+        let mut cuts = self.0.lock().unwrap();
+        if cuts.cut {
+            return None;
+        }
+        let link = link();
+        cuts.bridges.push(link.stopper());
+        Some(link)
     }
 }
 
@@ -543,6 +579,7 @@ impl CliprdrBackendFactory for Factory {
         Box::new(Backend {
             events: self.events.clone(),
             shown: self.shown.clone(),
+            cut: self.cut.clone(),
             desktop: None,
         })
     }
@@ -555,6 +592,7 @@ impl CliprdrServerFactory for Factory {}
 struct Backend {
     events: Option<UnboundedSender<ServerEvent>>,
     shown: watch::Receiver<bool>,
+    cut: Cut,
     desktop: Option<wlclip::Link>,
 }
 
@@ -581,7 +619,8 @@ impl CliprdrBackend for Backend {
         if self.desktop.is_none()
             && let Some(events) = &self.events
         {
-            self.desktop = Some(wlclip::start(events.clone(), self.shown.clone()));
+            let shown = self.shown.clone();
+            self.desktop = self.cut.keep(|| wlclip::start(events.clone(), shown));
         }
     }
 
@@ -619,6 +658,24 @@ impl CliprdrBackend for Backend {
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    #[test]
+    fn a_cut_stops_the_bridge_and_any_started_later() {
+        let (rdp, _events) = mpsc::unbounded_channel();
+        let on_shown = watch::channel(false).1;
+        let cut = Cut::default();
+        let link = (cut.keep(|| wlclip::start(rdp.clone(), on_shown.clone())))
+            .expect("a bridge before the cut");
+        assert!(link.alive());
+        cut.cut();
+        let until = Instant::now() + Duration::from_secs(5);
+        while link.alive() {
+            assert!(Instant::now() < until, "the bridge's thread ends");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let later = cut.keep(|| panic!("no bridge starts after the cut"));
+        assert!(later.is_none());
+    }
 
     #[derive(Default)]
     struct Fake {

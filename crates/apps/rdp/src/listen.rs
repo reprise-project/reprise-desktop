@@ -4,6 +4,7 @@
 use crate::auth::{Login, Logins};
 use crate::cert::Identity;
 use crate::client::{self, ClientLayout};
+use crate::clipboard::Cut;
 use crate::control::{Client, Request, Status};
 use crate::intake::{Arrival, Intake};
 use crate::portal::Screen;
@@ -38,6 +39,10 @@ pub trait Leave {
     fn stopping(&self) -> impl Future<Output = ()> {
         std::future::ready(())
     }
+    /// Whether this computer's own screen was unlocked, asked as lock mode's screens go.
+    fn console_unlocked(&self) -> impl Future<Output = bool> {
+        std::future::ready(false)
+    }
 }
 
 /// Why a connection shown the session ended.
@@ -55,14 +60,60 @@ pub enum End {
 /// Marked by a connection's display when it is granted lock mode's screens or the screen it shows
 /// goes, before the connection ends.
 #[derive(Clone, Default)]
-pub struct Ending(Arc<AtomicU8>);
+pub struct Ending(Arc<Marks>);
+
+#[derive(Default)]
+struct Marks {
+    state: AtomicU8,
+    /// Set once a lock-mode grant's screens all went; [`run`] then ends the connection.
+    gone: Flag,
+    /// Set once [`run`] leaves the end to the display, whose updates then end.
+    released: Flag,
+    clipboard: Cut,
+}
+
+/// A flag set once and waited for.
+struct Flag(watch::Sender<bool>);
+
+impl Default for Flag {
+    fn default() -> Flag {
+        Flag(watch::Sender::new(false))
+    }
+}
+
+impl Flag {
+    fn set(&self) {
+        self.0.send_replace(true);
+    }
+
+    async fn wait(&self) {
+        let _ = self.0.subscribe().wait_for(|set| *set).await;
+    }
+}
 
 const SCREEN_GONE: u8 = 1;
 const LOCK_MODE: u8 = 2;
 
 impl Ending {
     pub fn screen_gone(&self) {
-        self.0.fetch_max(SCREEN_GONE, Ordering::AcqRel);
+        let was = self.0.state.fetch_max(SCREEN_GONE, Ordering::AcqRel);
+        if was == LOCK_MODE {
+            self.0.gone.set();
+        }
+    }
+
+    /// The clipboard bridge of this connection, stopped as lock mode's screens go.
+    pub fn clipboard(&self) -> Cut {
+        self.0.clipboard.clone()
+    }
+
+    /// Until [`run`] leaves the end of a lock-mode grant whose screens went to the display.
+    pub async fn released(&self) {
+        self.0.released.wait().await;
+    }
+
+    pub(crate) fn release(&self) {
+        self.0.released.set();
     }
 
     /// Marks a grant of lock mode's screens, true if it was one: a grant to a run that `locks`
@@ -70,13 +121,13 @@ impl Ending {
     pub fn granted(&self, locks: bool, screens: &[Screen]) -> bool {
         let lock_mode = locks && !screens.is_empty() && screens.iter().all(|s| s.virtual_output);
         if lock_mode {
-            self.0.fetch_max(LOCK_MODE, Ordering::AcqRel);
+            self.0.state.fetch_max(LOCK_MODE, Ordering::AcqRel);
         }
         lock_mode
     }
 
     pub(crate) fn end(&self) -> End {
-        match self.0.load(Ordering::Acquire) {
+        match self.0.state.load(Ordering::Acquire) {
             LOCK_MODE => End::LockMode,
             SCREEN_GONE => End::ScreenGone,
             _ => End::Left,
@@ -325,6 +376,14 @@ async fn run<L: Leave + 'static, C: Login>(
             log::warn!("{peer}: dropped; no login within {} s", budget.as_secs());
             None
         }
+        () = ending.0.gone.wait() => {
+            let tell = |why| drop(told.disconnect(why));
+            let ended = lock_mode_gone(connection.as_mut(), &ending, &shared.leave, tell).await;
+            if ended.is_none() {
+                log::info!("{peer}: disconnected; the console was unlocked");
+            }
+            ended
+        }
         never = present => match never {},
         }
     };
@@ -383,6 +442,28 @@ fn told_for(kick: Kick) -> ErrorInfo {
     };
     ErrorInfo::ProtocolIndependentCode(code)
 }
+
+/// Ends a connection whose lock-mode grant's screens all went, its clipboard bridge stopped
+/// first: told [`TOOK_OVER`] if `leave` finds the console unlocked, else ended by its display.
+async fn lock_mode_gone<F: Future>(
+    connection: Pin<&mut F>,
+    ending: &Ending,
+    leave: &impl Leave,
+    tell: impl FnOnce(ErrorInfo),
+) -> Option<F::Output> {
+    ending.0.clipboard.cut();
+    if leave.console_unlocked().await {
+        tell_and_end(connection, TOOK_OVER, tell).await;
+        return None;
+    }
+    ending.release();
+    Some(connection.await)
+}
+
+/// What a client is told when this computer's own screen was unlocked, so it does not
+/// reconnect and lock the screen again.
+const TOOK_OVER: ErrorInfo =
+    ErrorInfo::ProtocolIndependentCode(ProtocolIndependentCode::DisconnectedByOtherconnection);
 
 /// How long a kicked connection may take to send its [`told_for`] and close. One still logging
 /// in is not told; it is closed when this runs out.
@@ -1514,6 +1595,85 @@ pub(crate) mod tests {
             "the connection runs on until it has sent that"
         );
         assert!(started.elapsed() < TOLD, "and is not held once it closes");
+    }
+
+    /// A console whose screen was unlocked as `unlocked` says, noting whether `ending`'s
+    /// clipboard was cut by the time it was asked.
+    struct Console {
+        unlocked: bool,
+        ending: Ending,
+        cut_when_asked: Cell<Option<bool>>,
+    }
+
+    impl Leave for Console {
+        async fn left(&self, _: End) {}
+        async fn console_unlocked(&self) -> bool {
+            self.cut_when_asked
+                .set(Some(self.ending.clipboard().is_cut()));
+            self.unlocked
+        }
+    }
+
+    /// A lock-mode grant's ending whose screens all went, and a console unlocked or not.
+    async fn lock_mode_screens_gone(unlocked: bool) -> (Ending, Console) {
+        let ending = Ending::default();
+        let screen = crate::portal::Screen {
+            node: 0,
+            position: (0, 0),
+            size: (1920, 1080),
+            mapping_id: None,
+            virtual_output: true,
+        };
+        assert!(ending.granted(true, &[screen]));
+        ending.screen_gone();
+        tokio::time::timeout(Duration::from_secs(1), ending.0.gone.wait())
+            .await
+            .expect("the run hears the screens went");
+        let console = Console {
+            unlocked,
+            ending: ending.clone(),
+            cut_when_asked: Cell::new(None),
+        };
+        (ending, console)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_console_unlock_ending_lock_mode_tells_the_client_another_connection_took_over() {
+        let (ending, console) = lock_mode_screens_gone(true).await;
+        let (sent, closes) = oneshot::channel();
+        let told = Cell::new(None);
+        let connection = std::pin::pin!(async { closes.await.unwrap() });
+        let ended = lock_mode_gone(connection, &ending, &console, |why| {
+            told.set(Some(why));
+            sent.send(()).unwrap();
+        });
+        let ended = tokio::time::timeout(TOLD * 2, ended).await;
+        let ended = ended.expect("the connection ends once told");
+        assert_eq!(told.get(), Some(TOOK_OVER));
+        assert_eq!(
+            TOOK_OVER,
+            ErrorInfo::ProtocolIndependentCode(
+                ProtocolIndependentCode::DisconnectedByOtherconnection
+            )
+        );
+        assert!(ended.is_none());
+        assert_eq!(
+            console.cut_when_asked.get(),
+            Some(true),
+            "the clipboard is cut before the console is asked"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_monitor_count_change_ending_lock_mode_tells_the_client_nothing() {
+        let (ending, console) = lock_mode_screens_gone(false).await;
+        let told = Cell::new(None);
+        let display = ending.clone();
+        let connection = std::pin::pin!(async move { display.released().await });
+        let ended = lock_mode_gone(connection, &ending, &console, |why| told.set(Some(why))).await;
+        assert_eq!(told.get(), None, "the client reconnects to the new screens");
+        assert!(ended.is_some(), "the display ends the connection");
+        assert_eq!(console.cut_when_asked.get(), Some(true));
     }
 
     #[tokio::test(start_paused = true)]
