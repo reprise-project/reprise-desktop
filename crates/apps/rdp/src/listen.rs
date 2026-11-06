@@ -3,6 +3,7 @@
 
 use crate::auth::{Login, Logins};
 use crate::cert::Identity;
+use crate::client::{self, ClientLayout};
 use crate::control::{Client, Request, Status};
 use crate::intake::{Arrival, Intake};
 use crate::viewers::{Kick, LOGGING_IN_PER_IP, Refused, ViewerId, Viewers};
@@ -79,6 +80,7 @@ pub struct Server<L> {
 }
 
 /// Sent by a connection's display once its portal session is granted and its input is served.
+#[cfg_attr(test, derive(Default))]
 pub struct Shown(watch::Sender<bool>);
 
 impl Shown {
@@ -98,13 +100,14 @@ pub async fn shown(mut shown: watch::Receiver<bool>) -> bool {
 }
 
 /// What serves one connection: a display, an input handler, maybe a graphics pipeline, maybe a
-/// clipboard and maybe sound.
+/// clipboard, maybe sound, and the layout its client sends, which the display reads.
 pub type Handlers<D, I> = (
     D,
     I,
     Option<Box<dyn GfxServerFactory>>,
     Option<Box<dyn CliprdrServerFactory>>,
     Option<Box<dyn SoundServerFactory>>,
+    ClientLayout,
 );
 
 /// Serve clients from `intake` for `server.user`, each checked by `logins` and served by
@@ -170,7 +173,8 @@ pub async fn serve<D, I, L>(
                 let (check, budget) = logins.check(peer);
                 let (shown, on_shown) = watch::channel(false);
                 let ending = Ending::default();
-                let (display, input, gfx, clipboard, sound) = handlers(Shown(shown), ending.clone());
+                let (display, input, gfx, clipboard, sound, layout) =
+                    handlers(Shown(shown), ending.clone());
                 let local = stream
                     .local_addr()
                     .unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
@@ -183,6 +187,7 @@ pub async fn serve<D, I, L>(
                     .with_gfx_factory(gfx)
                     .with_cliprdr_factory(clipboard)
                     .with_sound_factory(sound)
+                    .with_connection_handler(Some(Box::new(client::Handler(layout))))
                     .build();
                 let viewer = Viewer { id, peer, kicked, ending, alive: alive.clone() };
                 let shared = shared.clone();
@@ -634,6 +639,7 @@ pub(crate) mod tests {
                 None,
                 None,
                 None,
+                ClientLayout::default(),
             )
         };
         // A dropped `Running` leaves it serving.

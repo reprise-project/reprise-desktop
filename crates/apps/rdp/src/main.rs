@@ -5,6 +5,7 @@ reprisebus::test_session!();
 
 mod auth;
 mod cert;
+mod client;
 mod clipboard;
 mod control;
 mod display;
@@ -118,6 +119,7 @@ fn main() -> ExitCode {
                 .is_none_or(|p| !p.working.is_empty());
             let gfx = h264.then(gfx::Gfx::default);
             let factory = gfx.as_ref().map(gfx::Gfx::factory);
+            let layout = client::ClientLayout::default();
             let display = display::Display::new(
                 last_told.clone(),
                 feed,
@@ -126,12 +128,20 @@ fn main() -> ExitCode {
                 links.clone(),
                 shown,
                 ending,
+                layout.clone(),
             );
             let clipboard: Box<dyn ironrdp_server::CliprdrServerFactory> =
                 Box::new(clipboard::Factory::new(on_shown));
             let sound: Box<dyn ironrdp_server::SoundServerFactory> =
                 Box::new(sound::Factory::new(config_rx.clone()));
-            (display, input, factory, Some(clipboard), Some(sound))
+            (
+                display,
+                input,
+                factory,
+                Some(clipboard),
+                Some(sound),
+                layout,
+            )
         };
         listen::serve(server, intake, logins, handlers, terminated()).await;
     });
