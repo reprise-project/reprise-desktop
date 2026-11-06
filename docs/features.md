@@ -739,7 +739,10 @@ no port forwarding; allow the port in your firewall if you run one.
   that insists on NLA is refused, and the journal says to choose TLS. After
   a fourth wrong password from an address, each further try waits longer
   ([security.md](security.md#remote-desktop)).
-- **The picture.** The client sees every screen. Screens at a negative
+- **The picture.** In lock mode the client sees the screens made for it,
+  each on its own monitor or one in its window (see Lock mode below); a
+  client without H.264 shows only one of them after a resize. In show mode
+  the client sees every screen. Screens at a negative
   position in the layout are left out, unless none is at a non-negative
   one. A client with several monitors (`xfreerdp3 /multimon`) gets each
   screen on its own monitor, fitted to it with its shape kept: the screen
@@ -767,7 +770,7 @@ no port forwarding; allow the port in your firewall if you run one.
   watches. Settings > Displays and output management tools don't list it.
   A monitor coming back takes its place; viewers reconnect once then. The
   standby takes the last monitor's place even away from the layout's
-  origin.
+  origin. In lock mode the client's own screens hold the desktop instead.
 - **Encoders.** At start the server tries each H.264 encoder on a test
   frame: VA-API (Intel and AMD), NVENC (NVIDIA; tried on a GeForce RTX
   4080 SUPER with driver 615.78), Vulkan and x264 on the CPU. Automatic
@@ -807,14 +810,38 @@ no port forwarding; allow the port in your firewall if you run one.
   the client takes it, else as 16-bit PCM at 44.1 kHz. The client's own
   buffering sets most of the delay: with FreeRDP's default it is about 110
   ms, and `/sound:latency:20` brings it to about 65 ms.
-- **While a client is connected,** this screen keeps showing the session
-  and its own keyboard and mouse keep working. The red dot shows the screen
-  is shared. The red capture border stays off unless Show a red border
-  while a remote computer is connected, under the list of connected
-  computers, is on (`capture_border`); a screen shared another way keeps
-  its border. The screen saver and the idle lock keep their timeouts, and
-  remote input counts as activity; screen off and idle suspend wait.
-  Closing the lid turns the laptop's panel off instead of running
+- **Lock mode.** While connected, this computer's screen, on the Settings
+  page (`laptop_screen`), picks what this computer shows. With Locks and
+  fits the remote window, the default, the session locks here when the first
+  client is shown it, and the client works on screens of its own: one per
+  client monitor at its size and scale, or one at the size of its window, to
+  the right of this computer's screens. The windows move over to them.
+  Resizing a client's window (`xfreerdp3 /dynamic-resolution`) resizes its
+  screen without a reconnect, and the windows keep their place on it. A
+  change in the client's number of monitors ends the connection; a client
+  set to reconnect comes back with a screen for each. With several clients,
+  the first one's monitors set the screens until the last one leaves. With
+  `[power] locker` set, lock mode is off, connections run as Stays on, and
+  Settings greys the Locks choice.
+- **Locks in lock mode.** This computer's keyboard and mouse reach only
+  its Unlock dialog, and its screens turn off after the idle screen-off
+  time without input here, whatever the client does; idle suspend waits.
+  The client's screens have a lock of their own: they lock after
+  `[idle] lock_after` without remote input, from Start > Lock or with the
+  lock key, and their Unlock dialog checks the password as a login does
+  ([security.md](security.md#lock-mode)). Unlocking at this computer, by
+  password, fingerprint or `loginctl unlock-session`, ends lock mode: every
+  client is disconnected and the windows come back here. When the last
+  client leaves, the session stays locked here.
+- **While a client is connected,** with Stays on (`laptop_screen =
+  "show"`), this screen keeps showing the session and its own keyboard and
+  mouse keep working. The screen saver and the idle lock keep their
+  timeouts, and remote input counts as activity; screen off and idle
+  suspend wait. In either mode the red dot shows the screen is shared. The
+  red capture border stays off unless Show a red border while a remote
+  computer is connected, under the list of connected computers, is on
+  (`capture_border`); a screen shared another way keeps its border. Closing
+  the lid turns the laptop's panel off instead of running
   `[power] lid_close`, and the session goes on; opening it turns the panel
   back on. When the last client leaves with the lid still shut, the lid
   action runs 30 s later.
@@ -822,21 +849,23 @@ no port forwarding; allow the port in your firewall if you run one.
   client; Disconnect ends the selected one. Turning Remote Desktop off ends
   every client. Each is told it was disconnected on purpose, so a client set
   to reconnect after a network drop stays off.
-- **Leaving locks.** When the last client shown the session leaves, whether
-  it disconnects or Disconnect ends it, the session locks; a client shown it
-  before the lock goes ahead keeps it unlocked. A client that logged in but
-  never got the picture leaves the session as it was. Clearing Lock this
-  computer when the last one disconnects, under the list of connected
-  computers (`lock_on_leave`), leaves it unlocked; it is read as each client
-  is shown the session and as it leaves. When the last client left because
-  the screen it showed went (a monitor unplugged or switched away on a KVM,
-  or one coming back in place of the standby screen), the lock waits Wait
-  before locking on a screen change (`lock_grace_s`, 5 seconds) for it to
-  reconnect: a client shown the session by then keeps it unlocked, and
-  Don't wait locks at once. A computer that connects
-  while `max_viewers` computers are connected or logging in is turned away
-  at once, as is a third from an address with two still logging in. A
-  connection that dies without closing ends within about 30 s.
+- **Leaving locks.** In show mode, when the last client shown the session
+  leaves, whether it disconnects or Disconnect ends it, the session locks; a
+  client shown it before the lock goes ahead keeps it unlocked. A client
+  that logged in but never got the picture leaves the session as it was.
+  Clearing Lock this computer when the last one disconnects, under the list
+  of connected computers (`lock_on_leave`), leaves it unlocked; it is read
+  as each client is shown the session and as it leaves. When the last client
+  left because the screen it showed went (a monitor unplugged or switched
+  away on a KVM, or one coming back in place of the standby screen), the
+  lock waits Wait before locking on a screen change (`lock_grace_s`, 5
+  seconds) for it to reconnect: a client shown the session by then keeps it
+  unlocked, and Don't wait locks at once. In lock mode the session stays
+  locked here all through, so a leave locks nothing and these two settings
+  don't apply. A computer that connects while `max_viewers` computers are
+  connected or logging in is turned away at once, as is a third from an
+  address with two still logging in. A connection that dies without closing
+  ends within about 30 s.
 
 ## Files
 
