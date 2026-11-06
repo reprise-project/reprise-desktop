@@ -190,9 +190,8 @@ impl Drop for Lease {
     }
 }
 
-/// Consume `grant`'s stream, offering dma-bufs with `modifiers` and memfds. Frames and size
-/// changes come out of the receivers, which close when the stream ends; `gone` runs before they
-/// close when it ends because its screen went.
+/// Consume `grant`'s stream, offering dma-bufs with `modifiers` and memfds; the receivers close
+/// when it ends, and `gone` runs first when it ends because its screen went.
 pub fn spawn(
     grant: &Grant,
     modifiers: &[u64],
