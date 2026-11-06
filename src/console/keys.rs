@@ -80,10 +80,10 @@ fn private_state(state: &mut State) -> Option<xkb::State> {
             xkb::KEYMAP_COMPILE_NO_FLAGS,
         )
     };
-    let Some(keymap) = keymap else {
-        log::error!("lock mode: the keymap does not compile; the computer's keys type nothing");
-        return None;
-    };
+    let keymap = keymap.or_else(|| {
+        log::error!("lock mode: the keymap does not compile; the computer's keys type as us");
+        xkb::Keymap::new_from_names(&ctx, "", "", "us", "", None, xkb::KEYMAP_COMPILE_NO_FLAGS)
+    })?;
     Some(xkb::State::new(&keymap))
 }
 

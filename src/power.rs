@@ -539,7 +539,7 @@ pub fn run_action(state: &mut State, a: PowerAction, origin: Origin) {
     log::info!("power: {}", a.name());
     match a {
         PowerAction::Nothing => {}
-        PowerAction::ScreenOff => crate::idle::screen_off(state),
+        PowerAction::ScreenOff => crate::idle::screen_off_by(state, origin),
         PowerAction::Lock => crate::lockview::lock(state),
         PowerAction::Standby => {
             let cmd = state.config.power.standby.clone();

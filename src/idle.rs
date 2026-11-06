@@ -393,6 +393,15 @@ pub fn lock_mode_ends(state: &mut State) {
     }
 }
 
+/// The Console outputs go off until the computer's own input comes.
+fn console_off(state: &mut State) {
+    if let Some(t) = state.idle.console.timer.take() {
+        state.handle.remove(t);
+    }
+    state.idle.console.off = true;
+    power_outputs(state, console_outputs(state), false);
+}
+
 /// Whether the Console side's clock darkened its outputs.
 #[cfg(test)]
 pub fn console_dark(state: &State) -> bool {
@@ -418,8 +427,7 @@ fn arm_console(state: &mut State) {
     match state.handle.insert_source(timer, |_, _, state| {
         state.idle.console.timer = None;
         log::info!("idle: the computer's own outputs off");
-        state.idle.console.off = true;
-        power_outputs(state, console_outputs(state), false);
+        console_off(state);
         TimeoutAction::Drop
     }) {
         Ok(t) => state.idle.console.timer = Some(t),
@@ -437,7 +445,17 @@ pub fn resumed(state: &mut State) {
     arm(state);
 }
 
-/// Power every output off as the screen-off step, so the next input powers them back on.
+/// A power action's screen-off: the computer's own keys in lock mode darken the Console outputs,
+/// anything else the desktop's.
+pub fn screen_off_by(state: &mut State, origin: crate::lockview::Origin) {
+    if origin == crate::lockview::Origin::Console && crate::console::remote_side(state) {
+        console_off(state);
+    } else {
+        screen_off(state);
+    }
+}
+
+/// Power the desktop's outputs off as the screen-off step, so the next input powers them back on.
 pub fn screen_off(state: &mut State) {
     state.idle.steps.screen_off = true;
     set_outputs_powered(state, false);
