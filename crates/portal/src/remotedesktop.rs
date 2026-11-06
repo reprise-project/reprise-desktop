@@ -244,7 +244,7 @@ impl RemoteDesktop {
                     &app_id,
                     parent,
                     if trusted {
-                        crate::Pick::Origin
+                        crate::Pick::All
                     } else {
                         crate::Pick::Ask
                     },
@@ -252,8 +252,8 @@ impl RemoteDesktop {
                 .await
                 {
                     Ok(st) => {
-                        streams.push(st.stream);
-                        kept = (st.persist_mode > 0).then_some(st.target);
+                        streams = st.streams;
+                        kept = st.remembered;
                     }
                     Err(code) => return Ok((code, empty())),
                 }
