@@ -363,11 +363,23 @@ pub fn relist_on_loop(state: &mut State) {
 }
 
 impl State {
-    /// The primary output: the one the saved layout or else `[[outputs]] primary` names while in
-    /// the layout, else the first with a non-empty layout box. Icons sit on it; balloons and the
-    /// media panel show there.
+    /// The primary output: the remote primary in lock mode, else [`State::console_primary`].
+    /// Icons sit on it; balloons and the media panel show there.
     pub(crate) fn first_output(&self) -> Option<Output> {
-        let shown = |o: &&Output| self.layout_box(Some(o)).width > 0;
+        if crate::console::remote_side(self) {
+            let remotes = crate::virtualout::remote_outputs(self);
+            return remotes
+                .into_iter()
+                .find(|o| self.layout_box(Some(o)).width > 0);
+        }
+        self.console_primary()
+    }
+
+    /// The computer's own primary output: the one the saved layout or else `[[outputs]] primary`
+    /// names while in the layout, else the first with a non-empty layout box.
+    pub(crate) fn console_primary(&self) -> Option<Output> {
+        let shown =
+            |o: &&Output| !crate::virtualout::is_remote(o) && self.layout_box(Some(o)).width > 0;
         let outputs = self.scene.outputs();
         let primary = (self.saved_primary()).or_else(|| self.config.primary_output_name());
         outputs

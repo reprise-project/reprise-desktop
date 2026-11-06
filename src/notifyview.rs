@@ -242,6 +242,11 @@ pub fn balloon_up(state: &State) -> bool {
     !state.notify.stack.is_empty()
 }
 
+#[cfg(test)]
+pub fn balloon_origins(state: &State) -> Vec<(i32, i32)> {
+    state.notify.stack.iter().map(|b| b.at).collect()
+}
+
 /// Seconds since the epoch, for the history's time column.
 fn now() -> i64 {
     std::time::SystemTime::now()

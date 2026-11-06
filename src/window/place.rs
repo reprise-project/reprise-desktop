@@ -173,11 +173,26 @@ pub fn centre_on(parent: Rect, size: (i32, i32), area: Rect) -> (i32, i32) {
 }
 
 impl State {
+    /// The output `w` fits to: the one under its frame's centre, but for a maximized or full
+    /// screen frame at an output's origin that output, as its size lags until the client commits.
+    fn fit_output(&self, w: WindowId) -> Option<smithay::output::Output> {
+        let win = self.win(w)?;
+        let r = win.frame_rect();
+        let at_origin = |o: &&smithay::output::Output| {
+            let (b, a) = (self.layout_box(Some(o)), self.usable_area(Some(o)));
+            (b.x, b.y) == (r.x, r.y) || (a.x, a.y) == (r.x, r.y)
+        };
+        let fitted = (win.maximized || win.fullscreen)
+            .then(|| self.scene.outputs().iter().find(at_origin).cloned())
+            .flatten();
+        fitted.or_else(|| self.output_at((r.x + r.width / 2) as f64, (r.y + r.height / 2) as f64))
+    }
+
     pub fn output_box_for_window(&self, w: WindowId) -> Rect {
         let Some(r) = self.win(w).map(Window::frame_rect) else {
             return Rect::default();
         };
-        let out = self.output_at((r.x + r.width / 2) as f64, (r.y + r.height / 2) as f64);
+        let out = self.fit_output(w);
         let b = self.layout_box(out.as_ref());
         if b.width <= 0 {
             return r;
@@ -301,7 +316,7 @@ impl State {
         let Some(r) = self.win(w).map(Window::frame_rect) else {
             return Rect::default();
         };
-        let out = self.output_at((r.x + r.width / 2) as f64, (r.y + r.height / 2) as f64);
+        let out = self.fit_output(w);
         if self.layout_box(out.as_ref()).width <= 0 {
             return r;
         }
