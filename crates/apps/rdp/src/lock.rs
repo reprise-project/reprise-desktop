@@ -5,6 +5,8 @@ use repriseconf::remote::RemoteDesktop;
 use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::{Notify, watch};
 use zbus::Connection;
@@ -17,8 +19,9 @@ const CLOSE_WAIT: Duration = Duration::from_secs(5);
 /// How long logind may take to lock.
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 
-/// The user's display session, through logind: `GetUser(uid)`, its `Display`, `Session.Lock`.
-pub async fn lock_session(conn: &Connection) -> zbus::Result<()> {
+/// The user's display session, through logind: `GetUser(uid)`, its `Display`, `Session.Lock`;
+/// no `Lock` once `given_up` is set, as the display session may be a newer one by then.
+pub async fn lock_session(conn: &Connection, given_up: &AtomicBool) -> zbus::Result<()> {
     // SAFETY: getuid has no preconditions and cannot fail.
     let uid = unsafe { libc::getuid() };
     let user: OwnedObjectPath = conn
@@ -49,6 +52,9 @@ pub async fn lock_session(conn: &Connection) -> zbus::Result<()> {
             "the user has no display session".into(),
         ));
     }
+    if given_up.load(Ordering::SeqCst) {
+        return Err(zbus::Error::Failure("given up on".into()));
+    }
     conn.call_method(
         Some(LOGIN1),
         &session,
@@ -62,10 +68,10 @@ pub async fn lock_session(conn: &Connection) -> zbus::Result<()> {
 
 /// [`lock_session`] on the system bus, from a thread of its own; whether it locked.
 pub async fn lock() -> bool {
-    let locked = on_thread(LOCK_WAIT, || {
+    let locked = on_thread(LOCK_WAIT, |given_up| {
         zbus::block_on(async {
             let conn = Connection::system().await?;
-            lock_session(&conn).await
+            lock_session(&conn, given_up).await
         })
         .map_err(|e| e.to_string())
     });
@@ -111,22 +117,27 @@ pub async fn lock_if_marked(marker: Option<&Path>, lock: impl Future<Output = bo
     }
 }
 
-/// `job` on a thread of its own, given up on after `wait`.
+/// `job` on a thread of its own, given up on after `wait`; the flag it is passed is set then.
 async fn on_thread(
     wait: Duration,
-    job: impl FnOnce() -> Result<(), String> + Send + 'static,
+    job: impl FnOnce(&AtomicBool) -> Result<(), String> + Send + 'static,
 ) -> Result<(), String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
+    let given_up = Arc::new(AtomicBool::new(false));
+    let flag = given_up.clone();
     std::thread::Builder::new()
         .name("reprise-rdp-lock".into())
         .spawn(move || {
-            let _ = tx.send(job());
+            let _ = tx.send(job(&flag));
         })
         .map_err(|e| e.to_string())?;
     match tokio::time::timeout(wait, rx).await {
         Ok(Ok(done)) => done,
         Ok(Err(_)) => Err("the lock thread ended".into()),
-        Err(_) => Err(format!("no answer in {} s", wait.as_secs())),
+        Err(_) => {
+            given_up.store(true, Ordering::SeqCst);
+            Err(format!("no answer in {} s", wait.as_secs()))
+        }
     }
 }
 
@@ -653,7 +664,7 @@ mod tests {
     async fn a_hung_logind_is_given_up_after_5_s() {
         let (_hold, hung) = std::sync::mpsc::channel::<()>();
         let started = tokio::time::Instant::now();
-        let lock = on_thread(LOCK_WAIT, move || {
+        let lock = on_thread(LOCK_WAIT, move |_| {
             let _ = hung.recv();
             Ok(())
         });
@@ -662,5 +673,30 @@ mod tests {
             .expect("the lock is given up on");
         assert_eq!(locked, Err("no answer in 5 s".into()));
         assert_eq!(started.elapsed(), LOCK_WAIT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_lock_that_answers_after_being_given_up_on_sees_the_flag() {
+        let (late, answer) = std::sync::mpsc::channel::<()>();
+        let (saw, seen) = std::sync::mpsc::channel();
+        let lock = on_thread(LOCK_WAIT, move |given_up| {
+            let _ = answer.recv();
+            let _ = saw.send(given_up.load(Ordering::SeqCst));
+            Ok(())
+        });
+        assert_eq!(lock.await, Err("no answer in 5 s".into()));
+        late.send(()).unwrap();
+        assert_eq!(seen.recv(), Ok(true), "the job is told it was given up on");
+    }
+
+    #[tokio::test]
+    async fn a_lock_that_answers_in_time_is_not_given_up_on() {
+        let (saw, seen) = std::sync::mpsc::channel();
+        let lock = on_thread(LOCK_WAIT, move |given_up| {
+            let _ = saw.send(given_up.load(Ordering::SeqCst));
+            Ok(())
+        });
+        assert_eq!(lock.await, Ok(()));
+        assert_eq!(seen.recv(), Ok(false));
     }
 }
