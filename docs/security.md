@@ -179,7 +179,8 @@ client's address:
 
 - **Per address.** The first three failures are free. After the fourth the
   address waits 2 s before its next password is checked, doubling with each
-  further failure up to 60 s. A success clears the address.
+  further failure up to 60 s. A success clears the address, and so do 20
+  minutes without a failure from it.
 - **Every address.** 10 failures within 10 minutes pause every login for 10
   minutes: no password is checked and the journal says so once. A success
   doesn't clear the failures before it.

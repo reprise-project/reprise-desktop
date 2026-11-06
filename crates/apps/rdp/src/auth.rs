@@ -42,12 +42,15 @@ const HELPER_LIMIT: Duration = Duration::from_secs(30);
 
 const FREE_FAILURES: u32 = 3;
 const MAX_WAIT: Duration = Duration::from_secs(60);
+/// How long after its last failure an address is forgotten.
+const FORGET: Duration = Duration::from_secs(1200);
 /// `PAUSE_AFTER` failures from any addresses within `PAUSE_WINDOW` pause every login for `PAUSE`.
 const PAUSE_AFTER: usize = 10;
 const PAUSE_WINDOW: Duration = Duration::from_secs(600);
 const PAUSE: Duration = Duration::from_secs(600);
 
-/// Failed logins: from the fourth an address waits, doubling up to `MAX_WAIT`, until a success.
+/// Failed logins: from the fourth an address waits, doubling up to `MAX_WAIT`, until a success
+/// or `FORGET` without a failure.
 /// A login counts as failed from the start of its check, so a check cut short still counts.
 #[derive(Default)]
 pub struct Throttle {
@@ -76,6 +79,8 @@ impl Throttle {
 
     pub fn failed(&mut self, peer: IpAddr) -> Attempt {
         let now = Instant::now();
+        self.peers
+            .retain(|_, f| now.duration_since(f.until - wait_after(f.count)) < FORGET);
         let f = self.peers.entry(peer).or_insert(Failures {
             count: 0,
             until: now,
@@ -504,6 +509,21 @@ pub(crate) mod tests {
         t.failed(B);
         assert_eq!(t.delay(A), Duration::from_secs(4));
         assert_eq!(t.delay(B), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_address_is_forgotten_20_minutes_after_its_last_failure() {
+        let mut t = Throttle::default();
+        for _ in 0..5 {
+            t.failed(A);
+        }
+        tokio::time::advance(FORGET - Duration::from_secs(1)).await;
+        t.failed(B);
+        assert_eq!(t.failures(A), 5, "a failure 1 s short of FORGET is kept");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        t.failed(B);
+        assert_eq!(t.failures(A), 0);
+        assert_eq!(t.failures(B), 2);
     }
 
     #[tokio::test(start_paused = true)]
