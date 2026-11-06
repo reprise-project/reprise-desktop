@@ -1,7 +1,7 @@
 //! `org.freedesktop.impl.portal.RemoteDesktop` v2 over libei: input granted by the permit dialog,
 //! or without it to the enabled server (`trusted`); keycode and keysym Notify use reprise_keys_v1.
 
-use crate::inputlink::{Link, live};
+use crate::inputlink::{Link, LockScreenHandle, live};
 use crate::inputproto::reprise_input_v1::Device;
 use crate::wayland::Target;
 use crate::{
@@ -9,6 +9,7 @@ use crate::{
     Sessions,
 };
 use std::collections::HashMap;
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use zbus::{ObjectPath, OwnedVariant, SerializeDict, Type, Variant};
@@ -281,12 +282,9 @@ impl RemoteDesktop {
         let follow = locked.map(|l| l.hold(conn.clone(), self.sessions.clone(), key.clone()));
         match (self.sessions.lock().unwrap().get_mut(&key)).and_then(SessionData::remote_mut) {
             Some(s) => {
-                s.granted = true;
-                if devices & DEVICE_KEYBOARD != 0 {
-                    s.keys = live(&self.link).and_then(|l| l.create_keys());
-                }
-                if let Some((lock, follow)) = follow {
-                    s.lock = Some(lock);
+                let (lock, follow) = follow.unzip();
+                s.grant(live(&self.link), lock);
+                if let Some(follow) = follow {
                     zruntime::spawn(follow).detach();
                 }
             }
@@ -315,19 +313,7 @@ impl RemoteDesktop {
         _options: HashMap<String, Variant<'_>>,
     ) -> zbus::fdo::Result<zbus::OwnedFd> {
         self.frontend.check(&hdr).await?;
-        let Some(link) = live(&self.link) else {
-            return Err(zbus::fdo::Error::Failed("no input link".into()));
-        };
-        let mut sessions = self.sessions.lock().unwrap();
-        let Some(s) = sessions
-            .get_mut(session_handle.as_str())
-            .and_then(SessionData::remote_mut)
-            .filter(|s| s.granted)
-        else {
-            return Err(zbus::fdo::Error::Failed("no such session".into()));
-        };
-        let (ours, theirs) = crate::inputlink::socketpair()?;
-        s.eis = Some(link.connect_sender(ours, s.devices, s.trusted));
+        let theirs = self.connect_sender(session_handle.as_str())?;
         log::info!("RemoteDesktop.ConnectToEIS for {app_id:?}");
         Ok(theirs.into())
     }
@@ -432,7 +418,44 @@ impl RemoteDesktop {
     }
 }
 
+impl RemoteSession {
+    /// Granted, holding `lock` while it casts lock mode, with a keys object from `link` if the
+    /// keyboard was granted and lock mode has not already ended.
+    pub(crate) fn grant(&mut self, link: Option<&Link>, lock: Option<Arc<LockScreenHandle>>) {
+        self.granted = true;
+        self.lock = lock;
+        if self.devices & DEVICE_KEYBOARD != 0 && !self.lock_ended() {
+            self.keys = link.and_then(Link::create_keys);
+        }
+    }
+
+    /// A session whose lock mode ended takes no new input objects.
+    fn lock_ended(&self) -> bool {
+        self.lock.as_ref().is_some_and(|l| l.ended())
+    }
+}
+
 impl RemoteDesktop {
+    /// ConnectToEIS for `session`: our end goes to the compositor, theirs is returned.
+    pub(crate) fn connect_sender(&self, session: &str) -> zbus::fdo::Result<OwnedFd> {
+        let Some(link) = live(&self.link) else {
+            return Err(zbus::fdo::Error::Failed("no input link".into()));
+        };
+        let mut sessions = self.sessions.lock().unwrap();
+        let Some(s) = (sessions.get_mut(session))
+            .and_then(SessionData::remote_mut)
+            .filter(|s| s.granted)
+        else {
+            return Err(zbus::fdo::Error::Failed("no such session".into()));
+        };
+        if s.lock_ended() {
+            return Err(zbus::fdo::Error::Failed("lock mode ended".into()));
+        }
+        let (ours, theirs) = crate::inputlink::socketpair()?;
+        s.eis = Some(link.connect_sender(ours, s.devices, s.trusted));
+        Ok(theirs)
+    }
+
     fn with_keys(
         &self,
         session_handle: &ObjectPath<'_>,
@@ -511,9 +534,73 @@ pub(crate) fn display_name(app_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inputlink::tests::{fake_compositor, link_on, request, send};
     use crate::{RESTORE_VENDOR, restore_data};
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
 
     const APP: &str = "org.example.Remote";
+
+    /// A v9 compositor that ends each lock-mode object `console_unlocked` on its layout.
+    fn unlocking_compositor(mut theirs: UnixStream) {
+        const LOCK_SCREEN: u32 = 8;
+        const SET_LAYOUT: u32 = 0;
+        const ENDED: u32 = 2;
+        const CONSOLE_UNLOCKED: u32 = 1;
+        std::thread::spawn(move || {
+            let input = fake_compositor(&mut theirs, 2, 9);
+            let timeout = Some(Duration::from_secs(5));
+            theirs.set_read_timeout(timeout).unwrap();
+            let mut lock = None;
+            while let Ok((object, opcode, body)) = request(&mut theirs) {
+                match (object, opcode) {
+                    (o, LOCK_SCREEN) if o == input => {
+                        lock = Some(u32::from_ne_bytes(body[..4].try_into().unwrap()));
+                    }
+                    (o, SET_LAYOUT) if Some(o) == lock => {
+                        send(&mut theirs, o, ENDED, &CONSOLE_UNLOCKED.to_ne_bytes());
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn a_session_whose_lock_mode_ended_gets_no_keys_and_no_eis() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        unlocking_compositor(theirs);
+        let link = link_on(ours);
+        let lock = Arc::new(link.lock_screen(&[(0, 0, 1280, 720, 100)]).unwrap());
+        let ended = zbus::block_on(lock.events().recv());
+        assert!(matches!(ended, Ok(crate::inputlink::LockEvent::Ended(_))));
+        assert!(lock.ended());
+        let sessions = Sessions::default();
+        let both = DEVICE_KEYBOARD | DEVICE_POINTER;
+        for (key, lock) in [("/ended", Some(lock)), ("/shown", None)] {
+            let mut session = RemoteSession {
+                devices: both,
+                ..RemoteSession::default()
+            };
+            session.grant(Some(&link), lock);
+            let data = SessionData::new(":1.7".into(), SessionKind::RemoteDesktop(session));
+            sessions.lock().unwrap().insert(key.into(), data);
+        }
+        let portal = RemoteDesktop {
+            sessions: sessions.clone(),
+            link: Some(link),
+            frontend: crate::Frontend::default(),
+        };
+        let keys = |key: &str| {
+            let mut map = sessions.lock().unwrap();
+            let s = map.get_mut(key).and_then(SessionData::remote_mut).unwrap();
+            s.keys.is_some()
+        };
+        assert!(!keys("/ended"), "no keys object once lock mode ended");
+        assert!(portal.connect_sender("/ended").is_err());
+        assert!(keys("/shown"), "a session without lock mode gets its keys");
+        assert!(portal.connect_sender("/shown").is_ok(), "and its sender");
+    }
 
     fn token(app_id: &str, grant: &str) -> Variant<'static> {
         Variant::from(restore_data(app_id, grant))
