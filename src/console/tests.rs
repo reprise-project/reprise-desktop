@@ -440,7 +440,7 @@ pub(crate) fn in_lock_mode() -> (Harness, TestClient, crate::harness::LockScreen
     in_lock_mode_with(crate::config::Config::default())
 }
 
-fn in_lock_mode_with(
+pub(crate) fn in_lock_mode_with(
     config: crate::config::Config,
 ) -> (Harness, TestClient, crate::harness::LockScreen) {
     let mut h = Harness::with_config(config);
@@ -547,7 +547,12 @@ fn in_lock_mode_the_remote_focus_moves_while_the_console_stays_locked() {
     assert_eq!(keyboard_focus(&h), Some(s));
     assert!(h.state.console_locked());
     assert_eq!(covered(&h), ["eDP-1"], "the cover stays up");
-    assert!(h.state.key_modes().locked, "keys still go to the lock");
+    h.key(30, true);
+    assert_eq!(
+        lock_input(&h),
+        "a",
+        "the computer's keys still go to the lock"
+    );
 }
 
 #[test]
@@ -636,27 +641,6 @@ pub(crate) fn click_lock_cancel(h: &mut Harness) {
 }
 
 #[test]
-fn in_lock_mode_a_physical_wheel_over_a_remote_screen_switches_nothing() {
-    use smithay::backend::input::{Axis, AxisSource, InputTime};
-    use smithay::input::pointer::AxisFrame;
-    let (mut h, _portal, _lock) = in_lock_mode_with(crate::config::Config {
-        base: repriseconf::config::Config {
-            workspaces: 4,
-            wheel_on_desktop: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    });
-    h.pointer_to(2500.0, 300.0);
-    let notch_down = AxisFrame::new(InputTime::now())
-        .source(AxisSource::Wheel)
-        .value(Axis::Vertical, 15.0)
-        .v120(Axis::Vertical, 120);
-    h.state.handle_axis(notch_down);
-    assert_eq!(h.state.desktops.current, 0, "the first desktop stays");
-}
-
-#[test]
 fn in_lock_mode_a_click_with_the_overview_open_goes_to_the_lock() {
     let (mut h, _portal, _lock) = in_lock_mode();
     let mut c = h.connect();
@@ -666,18 +650,6 @@ fn in_lock_mode_a_click_with_the_overview_open_goes_to_the_lock() {
     assert!(h.state.overview.view.is_some(), "the overview opens");
     click_lock_cancel(&mut h);
     assert_eq!(lock_input(&h), "", "Cancel cleared the field");
-}
-
-#[test]
-fn in_lock_mode_the_hot_corner_opens_nothing() {
-    let (mut h, _portal, _lock) = in_lock_mode();
-    let mut c = h.connect();
-    let t = h.map_toplevel(&mut c, "test.app", 400, 300);
-    h.state.move_to(t.id, 2100, 200);
-    h.state.config.hot_corner = crate::config::HotCorner::TopLeft;
-    h.pointer_to(5.0, 5.0);
-    h.pointer_to(0.0, 0.0);
-    assert!(h.state.overview.view.is_none());
 }
 
 #[test]

@@ -36,7 +36,12 @@ impl State {
             .unwrap_or_else(|| Rectangle::from_size((1, 1).into()))
     }
 
+    /// Move the seat's pointer to `pos`; in lock mode the computer's own moves the console's.
     pub fn pointer_to(&mut self, pos: Point<f64, Logical>, time: InputTime) {
+        if crate::console::physical(self) {
+            crate::console::pointer::to(self, pos);
+            return;
+        }
         let from = self.pointer_location();
         let pos = self.clamp_to_layout(pos);
         if !self.motion_only(pos, time) {
@@ -95,7 +100,7 @@ impl State {
     /// `pointer_free` short of the seat's grab.
     pub(crate) fn shell_leaves_pointer(&self) -> bool {
         matches!(self.interaction, Interaction::Idle)
-            && !self.console_locked()
+            && !self.desktop_locked()
             && !self.drag_running()
             && !self.panels.takes_pointer()
             && !Popup::open(self).any(Popup::owns_pointer)
@@ -302,7 +307,7 @@ impl State {
     pub fn repoint(&mut self, pos: Point<f64, Logical>, time: InputTime) {
         self.pointers.hovered_at = Some(Instant::now());
         self.pointers.owed = None;
-        if self.console_locked() {
+        if self.desktop_locked() {
             crate::lockview::motion(self, pos, time);
             return;
         }

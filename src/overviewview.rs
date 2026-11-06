@@ -948,10 +948,10 @@ impl State {
         if corner == crate::config::HotCorner::None {
             return;
         }
-        let bounds = self.layout_box(None);
+        let bounds = self.desk_box();
         let fired = self.overview.corner.motion(corner, (x, y), bounds);
         if !fired
-            || self.console_locked()
+            || self.desktop_locked()
             || self.overview.view.is_some()
             || self.buttons_down > 0
             || self.drag_running()

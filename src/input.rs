@@ -19,6 +19,7 @@ use reprisescene::TreeId;
 
 use crate::{
     compositor::State,
+    inputproto::InputSource,
     raster::Rect,
     taskbar::{TaskKey, TaskbarHit},
     window::WindowId,
@@ -371,7 +372,12 @@ pub fn clamp_to(pos: Point<f64, Logical>, area: Rectangle<i32, Logical>) -> Poin
 }
 
 impl State {
+    /// One event of the computer's own devices.
     pub fn process_input<B: InputBackend>(&mut self, event: InputEvent<B>) {
+        self.with_source(InputSource::Physical, |s| s.process_physical(event));
+    }
+
+    fn process_physical<B: InputBackend>(&mut self, event: InputEvent<B>) {
         if !matches!(
             event,
             InputEvent::PointerMotion { .. } | InputEvent::PointerMotionAbsolute { .. }
@@ -384,6 +390,14 @@ impl State {
         }
         match event {
             InputEvent::Keyboard { event } => self.key::<B>(event),
+            InputEvent::PointerMotion { event } if crate::console::physical(self) => {
+                crate::console::pointer::by(self, event.delta());
+            }
+            InputEvent::PointerMotionAbsolute { event } if crate::console::physical(self) => {
+                let area = self.output_area();
+                let pos = event.position_transformed(area.size) + area.loc.to_f64();
+                crate::console::pointer::to(self, pos);
+            }
             InputEvent::PointerMotion { event } => {
                 if self.capture_motion(event.delta()) {
                     return;
@@ -458,10 +472,14 @@ impl State {
     }
 
     /// A wheel or scroll frame, from the backend or an EIS sender: the shell's
-    /// (`shell_axis`), except under the console lock, else the client's under the pointer.
+    /// (`shell_axis`), except under the desktop's lock, else the client's under the pointer. The
+    /// computer's own in lock mode scrolls nothing.
     pub fn handle_axis(&mut self, frame: AxisFrame) {
+        if crate::console::physical(self) {
+            return;
+        }
         self.settle_pointer();
-        if !self.console_locked() && self.shell_axis(&frame) {
+        if !self.desktop_locked() && self.shell_axis(&frame) {
             return;
         }
         self.desktop_wheel = (0, 0.0);

@@ -66,9 +66,21 @@ pub struct InputProto {
     pub capture: crate::inputcapture::CaptureState,
     pub shortcuts: crate::globalshortcuts::ShortcutsState,
     pub keys: crate::remotekeys::KeysState,
-    /// Set while `eis` feeds a RemoteDesktop sender's request through the input
-    /// paths: the InputCapture gate lets it past (`gated`).
-    pub injecting: bool,
+    /// Where the input being handled comes from.
+    pub source: InputSource,
+}
+
+/// Where the input being handled comes from. In lock mode the computer's own goes to the
+/// console's lock (`console::physical`); the rest follows the desktop side.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InputSource {
+    /// The backend's devices.
+    Physical,
+    /// A RemoteDesktop sender or the trusted key injector.
+    Remote,
+    /// Virtual keyboards, virtual pointers and the compositor's own moves.
+    #[default]
+    Other,
 }
 
 impl InputProto {
@@ -79,7 +91,7 @@ impl InputProto {
             capture: Default::default(),
             shortcuts: Default::default(),
             keys: Default::default(),
-            injecting: false,
+            source: InputSource::Other,
         }
     }
 
@@ -92,7 +104,17 @@ impl InputProto {
     /// even while a capture holds the physical devices (a machine in a Deskflow
     /// chain is both a client and a server).
     pub fn gated(&self) -> bool {
-        self.captured() && !self.injecting
+        self.captured() && self.source != InputSource::Remote
+    }
+}
+
+impl State {
+    /// Run `f` with `source` as the input being handled, then put the last one back.
+    pub fn with_source<R>(&mut self, source: InputSource, f: impl FnOnce(&mut State) -> R) -> R {
+        let was = std::mem::replace(&mut self.inputproto.source, source);
+        let r = f(self);
+        self.inputproto.source = was;
+        r
     }
 }
 

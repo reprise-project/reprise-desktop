@@ -160,6 +160,18 @@ pub struct IdleState {
     dim_timer: Option<RegistrationToken>,
     dim_since: Instant,
     powered_off: Vec<Output>,
+    /// The Console side's own clock in lock mode, which only the computer's input restarts.
+    console: ConsoleIdle,
+}
+
+/// Lock mode's Console side idles on its own: only screen-off, after `screen_off_after`,
+/// whatever the remote side runs or holds.
+#[derive(Default)]
+struct ConsoleIdle {
+    since: Option<Instant>,
+    /// The timer powered the Console outputs off.
+    off: bool,
+    timer: Option<RegistrationToken>,
 }
 
 impl IdleState {
@@ -189,6 +201,7 @@ impl IdleState {
             dim_timer: None,
             dim_since: Instant::now(),
             powered_off: Vec::new(),
+            console: ConsoleIdle::default(),
         }
     }
 }
@@ -305,8 +318,13 @@ pub fn inhibition_changed(state: &mut State) {
 }
 
 /// Called from every input path: lifts the blank and the dim, powers the
-/// outputs back on, restarts the countdown.
+/// outputs back on, restarts the countdown. In lock mode the computer's own input restarts only
+/// the Console side's clock, and the rest wakes only the Remote outputs.
 pub fn notify_activity(state: &mut State) {
+    if crate::console::physical(state) {
+        console_activity(state);
+        return;
+    }
     notify_clients(state);
     let idle = &mut state.idle;
     idle.since_activity = Instant::now();
@@ -334,6 +352,79 @@ pub fn notify_activity(state: &mut State) {
     }
     let idle = state.idle.steps.is_idle();
     crate::power::hint(state, crate::power::Hint::Idle(idle));
+}
+
+/// The computer's own input in lock mode: its outputs come back on and its clock restarts.
+fn console_activity(state: &mut State) {
+    state.idle.console.since = Some(Instant::now());
+    if std::mem::take(&mut state.idle.console.off) {
+        power_outputs(state, console_outputs(state), true);
+    }
+    arm_console(state);
+}
+
+fn console_outputs(state: &State) -> Vec<Output> {
+    (state.scene.outputs().iter())
+        .filter(|o| crate::console::side_of(o) == crate::console::Side::Console)
+        .cloned()
+        .collect()
+}
+
+/// Lock mode began: the Console side's clock starts, dark if the outputs already were, and a
+/// saver over every output goes, to come back on the Remote outputs alone.
+pub fn lock_mode_began(state: &mut State) {
+    state.idle.console.since = Some(Instant::now());
+    state.idle.console.off = state.idle.steps.screen_off;
+    if std::mem::take(&mut state.idle.steps.blanked) {
+        blank(state, false);
+    }
+    arm_console(state);
+    arm(state);
+}
+
+/// Lock mode ends: Console outputs its clock darkened wake on the next input of any kind.
+pub fn lock_mode_ends(state: &mut State) {
+    if let Some(t) = state.idle.console.timer.take() {
+        state.handle.remove(t);
+    }
+    state.idle.console.since = None;
+    if std::mem::take(&mut state.idle.console.off) {
+        state.idle.steps.screen_off = true;
+    }
+}
+
+/// Whether the Console side's clock darkened its outputs.
+#[cfg(test)]
+pub fn console_dark(state: &State) -> bool {
+    state.idle.console.off
+}
+
+fn arm_console(state: &mut State) {
+    if let Some(t) = state.idle.console.timer.take() {
+        state.handle.remove(t);
+    }
+    let after = state
+        .config
+        .idle_for(state.power.on_battery)
+        .screen_off_after;
+    let Some(since) = state.idle.console.since else {
+        return;
+    };
+    if after == 0 || state.idle.console.off {
+        return;
+    }
+    let left = Duration::from_secs(after.into()).saturating_sub(since.elapsed());
+    let timer = Timer::from_duration(left.max(Duration::from_millis(1)));
+    match state.handle.insert_source(timer, |_, _, state| {
+        state.idle.console.timer = None;
+        log::info!("idle: the computer's own outputs off");
+        state.idle.console.off = true;
+        power_outputs(state, console_outputs(state), false);
+        TimeoutAction::Drop
+    }) {
+        Ok(t) => state.idle.console.timer = Some(t),
+        Err(e) => log::warn!("idle timer: {}", e.error),
+    }
 }
 
 /// The machine woke from sleep. The countdown starts again, but a wake is no activity: the
@@ -485,6 +576,7 @@ fn fired(state: &mut State) {
 
 pub fn config_changed(state: &mut State) {
     arm(state);
+    arm_console(state);
     crate::nightlight::update(state);
 }
 
@@ -618,11 +710,18 @@ fn set_output_powered(state: &mut State, output: &Output, on: bool) {
     }
 }
 
-/// Switch outputs off (or back on) for the idle timer. Only the outputs the
-/// timer itself switched off come back on: an output a client switched off
+/// Switch the desktop's outputs (`console::on_desk`) off (or back on) for the idle timer. Only
+/// the outputs the timer itself switched off come back on: an output a client switched off
 /// must not light up on the next keystroke.
 pub fn set_outputs_powered(state: &mut State, on: bool) {
-    let outputs: Vec<Output> = state.scene.outputs().to_vec();
+    let outputs: Vec<Output> = (state.scene.outputs().iter())
+        .filter(|o| crate::console::on_desk(state, o))
+        .cloned()
+        .collect();
+    power_outputs(state, outputs, on);
+}
+
+fn power_outputs(state: &mut State, outputs: Vec<Output>, on: bool) {
     let pairs: Vec<(bool, bool)> = outputs
         .iter()
         .map(|o| {
@@ -636,10 +735,9 @@ pub fn set_outputs_powered(state: &mut State, on: bool) {
         .into_iter()
         .map(|i| outputs[i].clone())
         .collect();
-    if on {
-        state.idle.powered_off.clear();
-    } else {
-        state.idle.powered_off = targets.clone();
+    state.idle.powered_off.retain(|o| !outputs.contains(o));
+    if !on {
+        state.idle.powered_off.extend(targets.iter().cloned());
     }
     for o in &targets {
         set_output_powered(state, o, on);

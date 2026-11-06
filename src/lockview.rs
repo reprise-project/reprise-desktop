@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use smithay::{
     backend::input::InputTime,
-    input::keyboard::KeysymHandle,
+    input::keyboard::{Keycode, KeysymHandle, xkb},
     output::Output,
     reexports::{
         calloop::{
@@ -839,7 +839,11 @@ pub fn refit(state: &mut State) {
     state.redraw_all();
 }
 
+/// Caps Lock of the keys the dialog reads: in lock mode the console's own.
 fn caps_lock(state: &State) -> bool {
+    if crate::console::remote_side(state) {
+        return state.console.keys.caps_lock;
+    }
     state
         .seat
         .get_keyboard()
@@ -1029,66 +1033,91 @@ pub fn key(state: &mut State, pressed: bool, handle: &KeysymHandle<'_>) -> bool 
             return true;
         }
     }
-    let shown = state.lock.active.as_ref().is_some_and(Lock::dialog_shown);
-    if shown
-        && state
-            .lock
-            .active
-            .as_ref()
-            .is_some_and(|l| l.state.caps_lock != caps_lock(state))
+    redraw_on_caps(state);
+    if !pressed || !dialog_shows(state) {
+        return false;
+    }
+    let typed = {
+        let Ok(xkb) = handle.xkb().lock() else {
+            return false;
+        };
+        // SAFETY: the state reference does not outlive the lock guard.
+        decode(state, unsafe { xkb.state() }, handle.raw_code())
+    };
+    if let Some(t) = typed {
+        type_key(state, t);
+    }
+    false
+}
+
+/// A key for the dialog decoded by `xkb`, the state after it: the console's own keys in lock mode
+/// (`console::keys`).
+pub fn key_with(state: &mut State, pressed: bool, xkb: &xkb::State, code: Keycode) {
+    if pressed
+        && dialog_shows(state)
+        && let Some(t) = decode(state, xkb, code)
+    {
+        type_key(state, t);
+    }
+}
+
+fn dialog_shows(state: &State) -> bool {
+    state.lock.active.as_ref().is_some_and(Lock::dialog_shown)
+}
+
+fn redraw_on_caps(state: &mut State) {
+    if dialog_shows(state)
+        && (state.lock.active.as_ref()).is_some_and(|l| l.state.caps_lock != caps_lock(state))
     {
         redraw(state);
     }
-    if !pressed || !shown {
-        return false;
-    }
+}
+
+/// What a pressed key types into the field.
+enum Typed {
+    Enter,
+    Backspace,
+    Escape,
+    Text(KeyText),
+}
+
+/// The key `code` under `xkb`, through the compose sequence; None while it types nothing.
+fn decode(state: &mut State, xkb: &xkb::State, code: Keycode) -> Option<Typed> {
     // Dead keys and the Compose key: a sequence types nothing until it ends, then its result.
     let fed = match state.compose.as_mut() {
-        Some(c) => c.feed(handle.modified_sym().raw()),
+        Some(c) => c.feed(xkb.key_get_one_sym(code).raw()),
         None => Fed::Plain,
     };
-    let text: KeyText;
-    let key = match fed {
-        Fed::Swallowed => return false,
-        Fed::Composed(t) => {
-            text = t;
-            LockKey::Text(text.as_str())
-        }
+    let typed = match fed {
+        Fed::Swallowed => return None,
+        Fed::Composed(t) => Typed::Text(t),
         Fed::Plain => {
-            let special = handle
-                .modified_syms()
-                .iter()
-                .find_map(|sym| match sym.raw() {
-                    keys::KEY_Return | keys::KEY_KP_Enter => Some(LockKey::Enter),
-                    keys::KEY_BackSpace => Some(LockKey::Backspace),
-                    keys::KEY_Escape => Some(LockKey::Escape),
-                    _ => None,
-                });
+            let special = (xkb.key_get_syms(code).iter()).find_map(|sym| match sym.raw() {
+                keys::KEY_Return | keys::KEY_KP_Enter => Some(Typed::Enter),
+                keys::KEY_BackSpace => Some(Typed::Backspace),
+                keys::KEY_Escape => Some(Typed::Escape),
+                _ => None,
+            });
             match special {
-                Some(key) => key,
-                None => {
-                    let Ok(xkb) = handle.xkb().lock() else {
-                        return false;
-                    };
-                    // SAFETY: the state reference does not outlive the lock guard.
-                    let t = KeyText::of_key(unsafe { xkb.state() }, handle.raw_code());
-                    drop(xkb);
-                    let Some(t) = t else {
-                        return false;
-                    };
-                    text = t;
-                    LockKey::Text(text.as_str())
-                }
+                Some(t) => t,
+                None => Typed::Text(KeyText::of_key(xkb, code)?),
             }
         }
     };
-    if let LockKey::Text(s) = key
-        && s.chars().any(char::is_control)
-    {
-        return false;
+    match &typed {
+        Typed::Text(t) if t.as_str().chars().any(char::is_control) => None,
+        _ => Some(typed),
     }
+}
+
+fn type_key(state: &mut State, t: Typed) {
+    let key = match &t {
+        Typed::Enter => LockKey::Enter,
+        Typed::Backspace => LockKey::Backspace,
+        Typed::Escape => LockKey::Escape,
+        Typed::Text(t) => LockKey::Text(t.as_str()),
+    };
     edit(state, key);
-    false
 }
 
 /// Text typed without a key: into the dialog's field, or to the locker holding the lock.
