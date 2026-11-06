@@ -205,10 +205,16 @@ screen keeps showing the session, and its own keyboard and mouse keep
 working, so someone at the computer sees and can take part in what the
 client does. When a logged-in client leaves, its held keys and buttons are
 let go; when it was the last one shown the session, the session then locks
-through logind, so the computer is not left open. A client that logged in
-but never got the picture and input (with no screen to share, say) leaves
-the session as it was. Stopping the server, as turning Remote Desktop off
-does, locks the session before a shown client's connection closes. A server
+through logind, so the computer is not left open. When it left because the
+screen it showed went away, a monitor switched on a KVM say, the lock waits
+`[remote_desktop] lock_grace_s` seconds (5 unless set, at most 60) for a
+client to reconnect: one shown the session by then keeps it unlocked, from
+whichever address, since it logged in again. Every other leave, a client
+closing, Disconnect, a dropped network, locks without waiting. A client that
+logged in but never got the picture and input (with no screen to share,
+say) leaves the session as it was. Stopping the server, as turning Remote
+Desktop off does, locks the session before a shown client's connection
+closes, and at once while the lock waits for a reconnect. A server
 that dies with a client shown the session locks it when it next starts.
 `[remote_desktop] lock_on_leave = false` turns these locks off: a client
 shown the session with it off doesn't lock on a stop or the next start, and

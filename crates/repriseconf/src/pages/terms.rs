@@ -358,6 +358,7 @@ pub(super) fn of(p: Page) -> &'static [(&'static str, &'static str)] {
                 "remote_lock",
                 "Lock this computer when the last one disconnects",
             ),
+            ("lock_grace", "Wait before locking on a screen change:"),
             (
                 "remote_border",
                 "Show a red border while a remote computer is connected",

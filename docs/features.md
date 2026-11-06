@@ -810,7 +810,12 @@ no port forwarding; allow the port in your firewall if you run one.
   never got the picture leaves the session as it was. Clearing Lock this
   computer when the last one disconnects, under the list of connected
   computers (`lock_on_leave`), leaves it unlocked; it is read as each client
-  is shown the session and as it leaves. A computer that connects
+  is shown the session and as it leaves. When the last client left because
+  the screen it showed went (a monitor unplugged or switched away on a KVM,
+  or one coming back in place of the standby screen), the lock waits Wait
+  before locking on a screen change (`lock_grace_s`, 5 seconds) for it to
+  reconnect: a client shown the session by then keeps it unlocked, and
+  Don't wait locks at once. A computer that connects
   while `max_viewers` computers are connected or logging in is turned away
   at once, as is a third from an address with two still logging in. A
   connection that dies without closing ends within about 30 s.

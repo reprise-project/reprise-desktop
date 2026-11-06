@@ -206,13 +206,14 @@ pub struct Settings {
     pub low_space_percent: i64,
     /// `[remote_desktop] port`, `quality` (one of [`REMOTE_QUALITIES`]' values), `frame_rate`
     /// (30, 60, 120 or 144), `encoder` (one of [`REMOTE_ENCODERS`]' values), `sound`,
-    /// `lock_on_leave` and `capture_border`.
+    /// `lock_on_leave`, `lock_grace_s` (0 to 60) and `capture_border`.
     pub remote_port: i64,
     pub remote_quality: String,
     pub remote_frame_rate: i64,
     pub remote_encoder: String,
     pub remote_sound: bool,
     pub remote_lock_on_leave: bool,
+    pub remote_lock_grace_s: i64,
     pub remote_capture_border: bool,
 
     /// `[workspaces] count`, 1 to [`DESKTOPS_MAX`]; 1 turns virtual
@@ -540,6 +541,7 @@ impl Settings {
             remote_encoder: remote.encoder.name().into(),
             remote_sound: remote.sound,
             remote_lock_on_leave: remote.lock_on_leave,
+            remote_lock_grace_s: remote.lock_grace_s.into(),
             remote_capture_border: remote.capture_border,
 
             desktops: c.workspaces as i64,
