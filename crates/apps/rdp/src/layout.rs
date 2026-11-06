@@ -384,6 +384,13 @@ fn usable(client: &[Monitor]) -> Result<ClientDesktop, &'static str> {
     if client.iter().any(|m| m.right < m.left || m.bottom < m.top) {
         return Err("a monitor has no size");
     }
+    let overlap = |a: &Monitor, b: &Monitor| {
+        a.left <= b.right && b.left <= a.right && a.top <= b.bottom && b.top <= a.bottom
+    };
+    let mut pairs = (0..client.len()).flat_map(|i| (i + 1..client.len()).map(move |j| (i, j)));
+    if pairs.any(|(i, j)| overlap(&client[i], &client[j])) {
+        return Err("two monitors overlap");
+    }
     // The acceptor echoes the client's monitors only under the same rules: exactly one
     // primary, at (0, 0) (MS-RDPBCGR 2.2.1.3.6.1).
     let mut primaries = client
@@ -766,6 +773,10 @@ mod tests {
             monitor(-1920, 0, -1, 1079, false),
             monitor(1, 0, 1920, 1079, true),
         ];
+        let overlapping = [
+            monitor(0, 0, 1919, 1079, true),
+            monitor(1919, 0, 3838, 1079, false),
+        ];
         for client in [
             &zero_size[..],
             &inverted,
@@ -773,6 +784,7 @@ mod tests {
             &no_primary,
             &two_primaries,
             &primary_off_origin,
+            &overlapping,
         ] {
             let layout = Layout::new(&screens, client);
             assert_eq!(layout.kind, Kind::Whole, "{client:?} is ignored");
