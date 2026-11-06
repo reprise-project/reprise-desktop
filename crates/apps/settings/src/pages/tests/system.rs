@@ -1475,6 +1475,25 @@ fn the_lock_radio_greys_with_a_note_while_a_locker_is_set() {
     );
 }
 
+#[test]
+fn a_blank_locker_leaves_the_lock_radio_lit() {
+    let blank = crate::model::load("[power]\nlocker = \"  \"\n");
+    let mut s = with(&blank);
+    let p = Page::RemoteDesktop;
+    show_remote(
+        &mut s.pages[p.index()],
+        Some(&serving(Vec::new())),
+        true,
+        None,
+        None,
+    );
+    assert!(
+        enabled_on(&s, p, "remote_screen_lock"),
+        "a whitespace-only locker leaves the Lock radio lit"
+    );
+    assert_eq!(lines(&s, p, "remote_screen_note"), [""], "no note then");
+}
+
 /// The page with one client, selected, and the defaults in its settings, Classic at 100%.
 #[test]
 fn the_remote_desktop_page_pixels() {

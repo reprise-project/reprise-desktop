@@ -745,7 +745,7 @@ pub fn follow(sheet: &mut PropSheet, s: &Settings) {
     let rd = &mut sheet.pages[Page::RemoteDesktop.index()];
     rd.set_text(QUALITY_VALUE, quality);
     follow_lock(rd);
-    let held = !s.power_locker.is_empty();
+    let held = !s.power_locker.trim().is_empty();
     rd.set_text(REMOTE_SCREEN_NOTE, if held { LOCKER_NOTE } else { "" });
     follow_screen(rd);
     let adv = &mut sheet.pages[Page::Advanced.index()];
