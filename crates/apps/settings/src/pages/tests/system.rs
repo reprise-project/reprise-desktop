@@ -1444,7 +1444,7 @@ fn the_laptop_screen_radios_round_trip_through_apply() {
 
 #[test]
 fn the_lock_radio_greys_with_a_note_while_a_locker_is_set() {
-    let note = "Lock mode is off while another locker is set in Power.";
+    let note = "Lock mode is off while an external screen locker is set.";
     let locker = crate::model::load("[power]\nlocker = \"swaylock\"\n");
     let mut s = with(&locker);
     let p = Page::RemoteDesktop;
