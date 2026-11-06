@@ -60,8 +60,8 @@ The PAM files are `reprise` (the lock screen's password),
 `reprise-fingerprint` (its fingerprint) and `reprise-rdp` (Remote Desktop
 logins). `reprise-rdp` runs `pam_unix` alone, without `system-auth`, so wrong
 Remote Desktop passwords never reach pam_faillock and never lock the account
-locally. The Remote Desktop server throttles them instead: a growing wait per
-address after three failures, and a 10 minute pause of every login after 10
+locally. The Remote Desktop server throttles them instead: a growing back-off
+per address after three failures, during which its connections are refused, and a 10 minute pause of every login after 10
 failures within 10 minutes (see [security](security.md#remote-desktop)). A
 build installed by hand needs `data/pam.d/reprise-rdp` in `/etc/pam.d/`;
 without it PAM falls back to the `other` service, which on Arch refuses

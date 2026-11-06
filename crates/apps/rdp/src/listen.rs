@@ -109,7 +109,7 @@ pub type Handlers<D, I> = (
 
 /// Serve clients from `intake` for `server.user`, each checked by `logins` and served by
 /// `handlers`, which reports through its [`Shown`] and [`Ending`]. A client arriving with
-/// `max_viewers` connected is closed at once. On `stop`, [`Leave::stopping`] runs, then every
+/// `max_viewers` connected, or from an address in back-off, is closed at once. On `stop`, [`Leave::stopping`] runs, then every
 /// connection is told the server stopped and this returns once each has closed.
 pub async fn serve<D, I, L>(
     mut server: Server<L>,
@@ -147,6 +147,12 @@ pub async fn serve<D, I, L>(
                         continue;
                     }
                 };
+                let backoff = logins.backoff(peer.ip());
+                if !backoff.is_zero() {
+                    let ip = peer.ip();
+                    log::info!("{peer}: closed; {ip} has {} s of back-off left after failed logins", backoff.as_secs_f32().ceil());
+                    continue;
+                }
                 let cap = server.config.borrow().max_viewers;
                 let joined = shared.viewers.borrow_mut().join(peer, cap);
                 let (id, kicked) = match joined {
@@ -559,6 +565,9 @@ pub(crate) mod tests {
         fn check(&self, _: SocketAddr) -> (Arc<Admitted>, Duration) {
             (Arc::new(Admitted), HANDSHAKE)
         }
+        fn backoff(&self, _: IpAddr) -> Duration {
+            Duration::ZERO
+        }
     }
 
     async fn start(local: &LocalSet) -> SocketAddr {
@@ -845,6 +854,98 @@ pub(crate) mod tests {
                 let line = format!("{peer}: closed; 1 viewers are connected");
                 let lines = LINES.lock().unwrap().clone();
                 assert!(lines.contains(&line), "{line:?} in {lines:?}");
+            })
+            .await;
+    }
+
+    /// A connection to `addr` from `ip`, one of the 127/8 addresses.
+    async fn connect_from(ip: [u8; 4], addr: SocketAddr) -> TcpStream {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind(SocketAddr::from((ip, 0))).unwrap();
+        socket.connect(addr).await.unwrap()
+    }
+
+    /// A server for `max_viewers` whose logins share `throttle`, where 127.0.0.1 has failed
+    /// `failures` times.
+    async fn start_throttled(
+        local: &LocalSet,
+        max_viewers: usize,
+        failures: u32,
+    ) -> (Running, Arc<Mutex<Throttle>>) {
+        let throttle = Arc::<Mutex<Throttle>>::default();
+        for _ in 0..failures {
+            throttle
+                .lock()
+                .unwrap()
+                .failed(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        }
+        let config = RemoteDesktop {
+            port: 0,
+            max_viewers,
+            ..RemoteDesktop::default()
+        };
+        let logins = PasswordLogins::sharing("alice".into(), throttle.clone());
+        (start_with(local, config, logins).await, throttle)
+    }
+
+    #[tokio::test]
+    async fn an_address_in_back_off_is_closed_before_it_takes_a_place() {
+        capture_log();
+        let local = LocalSet::new();
+        local
+            .run_until(async {
+                let (s, _throttle) = start_throttled(&local, 1, 6).await;
+                for _ in 0..3 {
+                    let mut refused = TcpStream::connect(s.addr).await.unwrap();
+                    let closed =
+                        tokio::time::timeout(Duration::from_secs(5), until_closed(&mut refused))
+                            .await;
+                    assert_eq!(closed.ok(), Some(0), "closed at once with nothing sent");
+                    let peer = refused.local_addr().unwrap();
+                    assert!(logged(&format!(
+                        "{peer}: closed; 127.0.0.1 has 8 s of back-off left after failed logins"
+                    )));
+                }
+                let mut other = connect_from([127, 0, 0, 2], s.addr).await;
+                assert!(
+                    confirmed(&mut other).await,
+                    "another address takes the only place"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_address_is_let_in_once_its_back_off_ends() {
+        let local = LocalSet::new();
+        local
+            .run_until(async {
+                let (s, throttle) = start_throttled(&local, 4, 4).await;
+                let mut refused = TcpStream::connect(s.addr).await.unwrap();
+                assert_eq!(
+                    until_closed(&mut refused).await,
+                    0,
+                    "refused in its back-off"
+                );
+                let wait = throttle
+                    .lock()
+                    .unwrap()
+                    .delay(IpAddr::V4(Ipv4Addr::LOCALHOST));
+                tokio::time::advance(wait).await;
+                let mut next = TcpStream::connect(s.addr).await.unwrap();
+                assert!(confirmed(&mut next).await, "let in after the back-off");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn an_address_with_a_free_failure_left_is_let_in() {
+        let local = LocalSet::new();
+        local
+            .run_until(async {
+                let (s, _throttle) = start_throttled(&local, 4, 3).await;
+                let mut c = TcpStream::connect(s.addr).await.unwrap();
+                assert!(confirmed(&mut c).await, "the fourth try is checked");
             })
             .await;
     }
@@ -1332,6 +1433,7 @@ pub(crate) mod tests {
             .run_until(async {
                 let at_stop = Rc::new(Cell::new(None));
                 let config = RemoteDesktop {
+                    port: 0,
                     max_viewers: 4,
                     ..RemoteDesktop::default()
                 };

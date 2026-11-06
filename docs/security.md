@@ -177,25 +177,26 @@ clients that kept the old one warn.
 `reprise-rdp` throttles failed logins itself, and logs each one with the
 client's address:
 
-- **Per address.** The first three failures are free. After the fourth the
-  address waits 2 s before its next password is checked, doubling with each
-  further failure up to 60 s. A success clears the address, and so do 20
-  minutes without a failure from it.
+- **Per address.** The first three failures are free. The fourth starts a
+  2 s back-off, doubling with each further failure up to 60 s. During it the
+  address's new connections are closed before TLS, a login already under way
+  from it is rejected without a check, and the journal logs each refusal. A
+  success clears the address, and so do 20 minutes without a failure from it.
 - **Every address.** 10 failures within 10 minutes pause every login for 10
   minutes: no password is checked and the journal says so once. A success
   doesn't clear the failures before it.
 
 A login counts as a failure from the moment its password check starts until
 PAM accepts it, so a client that drops the connection mid-check still
-spends an attempt. A connection has 10 s to log in, plus any wait its
-address is serving; a check in flight when that time runs out is finished
-first.
+spends an attempt. A failed login is answered at once. A connection has 10 s
+to log in; a check in flight when that time runs out is finished first.
 
 Up to `max_viewers` connections are served at once, counting those still
 logging in. One more is closed at once, before TLS, and never touches the
 session in use. So that one address cannot hold every place through the
 login time, a third connection from an address that already has two still
-logging in is closed the same way. TCP keepalive ends a connection whose
+logging in is closed the same way, and so is every connection from an address
+in its back-off: a throttled address holds no place while it waits. TCP keepalive ends a connection whose
 client has gone silent within about 30 s.
 
 Nothing is captured while no client is logged in: the portal session that
