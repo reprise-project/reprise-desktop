@@ -254,9 +254,10 @@ impl RdpServerDisplay for Display {
         self.told.get()
     }
 
-    /// Lock mode's screens follow the client's layout; shared physical screens keep their size.
+    /// Lock mode's screens follow its first viewer's layout; a later viewer's layouts and shared
+    /// physical screens' sizes are not followed.
     async fn offers_display_control(&mut self) -> bool {
-        self.console.lock_mode()
+        self.console.would_own()
     }
 
     async fn monitor_count(&mut self) -> u32 {
@@ -265,8 +266,13 @@ impl RdpServerDisplay for Display {
 
     /// Called under the server's display lock, so it only passes the layout on.
     fn request_layout(&mut self, layout: DisplayControlMonitorLayout) {
-        let monitors = console::from_display_control(&layout, self.client.scale());
-        let _ = self.layouts.send(monitors);
+        let scale = self.client.scale();
+        match console::from_display_control(&layout, MAX_MONITORS, scale) {
+            Ok(monitors) => {
+                let _ = self.layouts.send(monitors);
+            }
+            Err(why) => log::warn!("Display Control layout ignored: {why}"),
+        }
     }
 
     async fn updates(

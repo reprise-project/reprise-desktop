@@ -376,7 +376,8 @@ fn of_client(client: &[Monitor]) -> Result<Option<ClientDesktop>, &'static str> 
     }
 }
 
-fn usable(client: &[Monitor]) -> Result<ClientDesktop, &'static str> {
+/// `client`'s desktop and its monitors moved to start at (0, 0), or why they cannot be used.
+pub fn usable(client: &[Monitor]) -> Result<ClientDesktop, &'static str> {
     if client.len() > MONITOR_COUNT_MAX {
         return Err("more than 16 monitors");
     }

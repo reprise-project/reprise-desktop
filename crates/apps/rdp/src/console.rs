@@ -2,7 +2,7 @@
 //! viewer publishes as `ConsoleLayout` for the portal to make the viewers' screens from.
 
 use crate::control::Status;
-use ironrdp_displaycontrol::pdu::DisplayControlMonitorLayout;
+use ironrdp_displaycontrol::pdu::{DisplayControlCapabilities, DisplayControlMonitorLayout};
 use repriseconf::remote::{LaptopScreen, RemoteDesktop};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -54,14 +54,10 @@ impl Console {
         }))
     }
 
-    /// Whether a viewer joining now runs in lock mode: as its run does, or as configured when
-    /// none runs.
-    pub fn lock_mode(&self) -> bool {
-        let run = self.0.run.lock().unwrap();
-        match run.viewers {
-            0 => self.configured_lock(),
-            _ => run.lock,
-        }
+    /// Whether a viewer joining now would start a lock-mode run, and so have its layouts
+    /// published.
+    pub fn would_own(&self) -> bool {
+        self.0.run.lock().unwrap().viewers == 0 && self.configured_lock()
     }
 
     fn configured_lock(&self) -> bool {
@@ -152,19 +148,34 @@ impl Drop for Joined {
     }
 }
 
-/// `layout`'s monitors, primary first, each at its own scale or `scale`.
-pub fn from_display_control(layout: &DisplayControlMonitorLayout, scale: u32) -> Vec<Monitor> {
-    let mut monitors: Vec<(bool, Monitor)> = (layout.monitors().iter())
-        .filter_map(|m| {
-            let (x, y) = m.position()?;
-            let (w, h) = m.dimensions();
-            let own = (m.desktop_scale_factor()).filter(|_| m.device_scale_factor().is_some());
-            let size = (i32::try_from(w).ok()?, i32::try_from(h).ok()?);
-            Some((m.is_primary(), (x, y, size.0, size.1, own.unwrap_or(scale))))
-        })
-        .collect();
+/// The area each offered monitor may have, as MS-RDPEDISP's MaxMonitorAreaFactorA and B, as
+/// the server advertises them.
+const MONITOR_AREA: (u32, u32) = (3840, 2400);
+
+/// `layout`'s monitors, primary first, each at its own scale or `scale`; why not when the layout
+/// breaks MS-RDPEDISP's rules or gives more than `offered` monitors.
+pub fn from_display_control(
+    layout: &DisplayControlMonitorLayout,
+    offered: u32,
+    scale: u32,
+) -> Result<Vec<Monitor>, String> {
+    let count = layout.monitors().len();
+    if count > usize::try_from(offered).unwrap_or(usize::MAX) {
+        return Err(format!("{count} monitors, {offered} offered"));
+    }
+    let capabilities = DisplayControlCapabilities::new(offered, MONITOR_AREA.0, MONITOR_AREA.1);
+    let fitted = (capabilities.map_err(|e| e.to_string()))
+        .and_then(|c| layout.fit_to_capabilities(&c).map_err(|e| e.to_string()))?;
+    let mut monitors = Vec::new();
+    for m in fitted.monitors() {
+        let (x, y) = m.position().ok_or("the primary monitor is not at 0,0")?;
+        let (w, h) = m.dimensions();
+        let own = (m.desktop_scale_factor()).filter(|_| m.device_scale_factor().is_some());
+        let monitor = (x, y, w.cast_signed(), h.cast_signed(), own.unwrap_or(scale));
+        monitors.push((m.is_primary(), monitor));
+    }
     monitors.sort_by_key(|(primary, _)| !primary);
-    monitors.into_iter().map(|(_, m)| m).collect()
+    Ok(monitors.into_iter().map(|(_, m)| m).collect())
 }
 
 /// Whether a grant shares screens, every one made for lock mode, named as in `mapping_ids`. In
@@ -219,6 +230,28 @@ pub(crate) mod tests {
             })
             .collect();
         DisplayControlMonitorLayout::new(&entries).unwrap()
+    }
+
+    /// A Display Control layout of `monitors` (primary, x, y, width, height) as a client may
+    /// send it, unchecked.
+    pub(crate) fn sent(monitors: &[(bool, i32, i32, u32, u32)]) -> DisplayControlMonitorLayout {
+        let mut bytes = Vec::new();
+        let mut put = |v: u32| bytes.extend_from_slice(&v.to_le_bytes());
+        put(40);
+        put(u32::try_from(monitors.len()).unwrap());
+        for &(primary, x, y, w, h) in monitors {
+            for v in [
+                u32::from(primary),
+                x.cast_unsigned(),
+                y.cast_unsigned(),
+                w,
+                h,
+            ] {
+                put(v);
+            }
+            (0..5).for_each(|_| put(0));
+        }
+        ironrdp_core::decode(&bytes).unwrap()
     }
 
     const FIRST: [Monitor; 2] = [(0, 0, 2560, 1440, 100), (2560, 0, 1920, 1080, 100)];
@@ -301,17 +334,42 @@ pub(crate) mod tests {
         assert!(published(&status).is_empty());
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn the_owner_leaving_mid_burst_publishes_nothing() {
+        let (console, _config, status) = configured(LaptopScreen::Lock, false);
+        let first = console.join(FIRST.to_vec());
+        let later = console.join(SECOND.to_vec());
+        let (layouts, rx) = mpsc::unbounded_channel();
+        first.follow(rx);
+        layouts.send(SECOND.to_vec()).unwrap();
+        drop(first);
+        tokio::time::sleep(SETTLE * 2).await;
+        assert_eq!(
+            published(&status),
+            FIRST,
+            "the layout stays while a viewer does"
+        );
+        drop(later);
+
+        let first = console.join(FIRST.to_vec());
+        let (layouts, rx) = mpsc::unbounded_channel();
+        first.follow(rx);
+        layouts.send(SECOND.to_vec()).unwrap();
+        drop(first);
+        tokio::time::sleep(SETTLE * 2).await;
+        assert!(published(&status).is_empty(), "the ended run stays empty");
+    }
+
     #[test]
     fn a_laptop_screen_change_applies_from_the_next_first_viewer() {
         let (console, config, status) = configured(LaptopScreen::Lock, false);
         let first = console.join(FIRST.to_vec());
         config.send_modify(|c| c.laptop_screen = LaptopScreen::Show);
-        assert!(console.lock_mode(), "the run keeps its mode");
         let later = console.join(SECOND.to_vec());
-        assert!(later.lock());
+        assert!(later.lock(), "the run keeps its mode");
         assert_eq!(published(&status), FIRST);
         drop((first, later));
-        assert!(!console.lock_mode(), "with no run, as configured");
+        assert!(!console.would_own(), "with no run, as configured");
         assert!(!console.join(SECOND.to_vec()).lock());
         assert!(published(&status).is_empty());
     }
@@ -328,7 +386,7 @@ pub(crate) mod tests {
         ];
         dc = DisplayControlMonitorLayout::new(&entries).unwrap();
         assert_eq!(
-            from_display_control(&dc, 125),
+            from_display_control(&dc, 16, 125).unwrap(),
             [(0, 0, 1920, 1080, 150), (-1280, 0, 1280, 1024, 125)]
         );
     }

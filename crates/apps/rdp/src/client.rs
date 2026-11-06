@@ -49,16 +49,21 @@ impl ClientLayout {
     }
 
     /// The client's monitors as `ConsoleLayout` gives them, primary first, each at its own scale
-    /// or [`Self::scale`]; one at `size` when it sent none.
+    /// or [`Self::scale`]; one at `size` when it sent none or they cannot be used.
     pub fn console_layout(&self, size: DesktopSize) -> Vec<console::Monitor> {
         let scale = self.scale();
         let client = self.0.lock().unwrap();
-        let (monitors, monitors_ex) = client.as_ref().map_or((&[][..], &[][..]), |c| {
+        let (mut monitors, monitors_ex) = client.as_ref().map_or((&[][..], &[][..]), |c| {
             (&c.monitors[..], &c.monitors_ex[..])
         });
+        if !monitors.is_empty()
+            && let Err(why) = layout::usable(monitors)
+        {
+            log::warn!("client monitors not published: {why}");
+            monitors = &[];
+        }
         let paired = monitors_ex.len() == monitors.len();
         let mut out: Vec<(bool, console::Monitor)> = (monitors.iter().enumerate())
-            .filter(|(_, m)| m.right >= m.left && m.bottom >= m.top)
             .map(|(i, m)| {
                 let own = paired.then(|| monitor_scale(&monitors_ex[i])).flatten();
                 let (w, h) = (m.right - m.left + 1, m.bottom - m.top + 1);
@@ -213,6 +218,37 @@ mod tests {
             [(0, 0, 1280, 800, 150)],
             "a client that sent no monitors is one at its desktop size"
         );
+    }
+
+    #[test]
+    fn out_of_range_client_monitors_publish_the_single_desktop() {
+        let size = DesktopSize {
+            width: 1280,
+            height: 800,
+        };
+        let monitor = |left, right, bottom, flags| Monitor {
+            left,
+            top: 0,
+            right,
+            bottom,
+            flags,
+        };
+        let primary = MonitorFlags::PRIMARY;
+        for monitors in [
+            vec![monitor(0, i32::MAX, 1079, primary)],
+            vec![monitor(0, 99, 99, primary)],
+            vec![
+                monitor(0, 1919, 1079, primary),
+                monitor(i32::MIN, -1, 1079, MonitorFlags::empty()),
+            ],
+            vec![monitor(10, 1929, 1079, primary)],
+        ] {
+            assert_eq!(
+                scaled(monitors.clone(), vec![], Some(150)).console_layout(size),
+                [(0, 0, 1280, 800, 150)],
+                "{monitors:?} give one monitor at the desktop size"
+            );
+        }
     }
 
     #[test]
