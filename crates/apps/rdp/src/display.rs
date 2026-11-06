@@ -280,7 +280,7 @@ impl RdpServerDisplay for Display {
         _: DisplayContext,
     ) -> ServerResult<Box<dyn RdpServerDisplayUpdates>> {
         if self.session.is_none() {
-            let lock = self.join();
+            self.join();
             let picture = probed(&mut self.picture).await;
             let mut grant =
                 (portal::open().await).map_err(|e| unshared("the screen is not shared", e))?;
@@ -294,9 +294,8 @@ impl RdpServerDisplay for Display {
                 );
             }
             let fds = remotes(&mut grant)?;
-            let mapping_ids = grant.screens.iter().map(|s| s.mapping_id.as_deref());
-            let took_over = lock && console::remote_screens(mapping_ids);
-            let gone = gone_with_all(self.ending.clone(), grant.screens.len(), took_over);
+            self.ending.granted(&grant.screens);
+            let gone = gone_with_all(self.ending.clone(), grant.screens.len());
             let mut streams = Vec::new();
             for (screen, fd) in grant.screens.iter().zip(fds) {
                 let (stream, frames, sizes) =

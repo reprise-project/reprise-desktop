@@ -201,8 +201,8 @@ impl<F: AsyncFn() -> bool> Leave for LockOnLeave<F> {
         }
         let turn = self.last_leaves.get() + 1;
         self.last_leaves.set(turn);
-        if why == End::ConsoleTookOver {
-            log::info!("the last client left as this computer was unlocked at its screen; no lock");
+        if why == End::LockMode {
+            log::info!("the last client left lock mode; no lock");
             if let Some(m) = &self.marker {
                 let _ = fs::remove_file(m);
             }
@@ -276,6 +276,8 @@ async fn close_wait() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::listen::Ending;
+    use crate::portal::Screen;
     use futures_util::FutureExt;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -485,18 +487,53 @@ mod tests {
         })
     }
 
+    /// The end of a connection granted screens cast from a virtual output or a monitor, as
+    /// `virtual_outputs` says, that went as `gone` says.
+    fn granted(virtual_outputs: &[bool], gone: bool) -> End {
+        let ending = Ending::default();
+        let screens: Vec<Screen> = (virtual_outputs.iter())
+            .map(|&virtual_output| Screen {
+                node: 0,
+                position: (0, 0),
+                size: (1920, 1080),
+                mapping_id: None,
+                virtual_output,
+            })
+            .collect();
+        ending.granted(&screens);
+        if gone {
+            ending.screen_gone();
+        }
+        ending.end()
+    }
+
     #[tokio::test]
-    async fn a_connection_the_console_took_over_ends_without_locking() {
+    async fn a_lock_mode_run_never_locks_on_leave() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("logged-in");
+        let locks = Rc::new(Cell::new(0));
+        let leave = LockOnLeave::with_lock(Some(marker.clone()), counted(&locks));
+        for gone in [false, true] {
+            leave.arrived();
+            assert!(marker.exists());
+            leave.left(granted(&[true, true], gone)).await;
+            assert_eq!(locks.get(), 0, "no lock, the screen gone: {gone}");
+            assert!(!marker.exists(), "the marker is cleared");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_run_that_fell_back_to_screens_locks_on_leave() {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("logged-in");
         let locks = Rc::new(Cell::new(0));
         let leave = LockOnLeave::with_lock(Some(marker.clone()), counted(&locks));
         leave.arrived();
-        leave.arrived();
-        leave.left(End::ConsoleTookOver).await;
-        leave.left(End::ConsoleTookOver).await;
-        assert_eq!(locks.get(), 0, "no lock");
-        assert!(!marker.exists(), "the marker is cleared");
+        let why = granted(&[true, false], false);
+        assert_eq!(why, End::Left, "a monitor among the screens is show mode");
+        leave.left(why).await;
+        assert_eq!(locks.get(), 1);
+        assert!(!marker.exists());
     }
 
     #[tokio::test(start_paused = true)]

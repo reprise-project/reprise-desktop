@@ -6,6 +6,7 @@ use crate::cert::Identity;
 use crate::client::{self, ClientLayout};
 use crate::control::{Client, Request, Status};
 use crate::intake::{Arrival, Intake};
+use crate::portal::Screen;
 use crate::viewers::{Kick, LOGGING_IN_PER_IP, Refused, ViewerId, Viewers};
 use ironrdp_pdu::rdp::server_error_info::ProtocolIndependentCode;
 use ironrdp_server::{
@@ -46,29 +47,34 @@ pub enum End {
     Left,
     /// The screen it showed went away; a client that reconnects is shown the screen now there.
     ScreenGone,
-    /// Lock mode ended with its screens: someone unlocked this computer at its own screen.
-    ConsoleTookOver,
+    /// It was shown lock mode's virtual screens, however it ended: this computer's screen is
+    /// locked for lock mode, so leaving never locks it.
+    LockMode,
 }
 
-/// Marked by a connection's display when the screen it shows goes, before the connection ends.
+/// Marked by a connection's display when it is granted lock mode's screens or the screen it shows
+/// goes, before the connection ends.
 #[derive(Clone, Default)]
 pub struct Ending(Arc<AtomicU8>);
 
 const SCREEN_GONE: u8 = 1;
-const CONSOLE_TOOK_OVER: u8 = 2;
+const LOCK_MODE: u8 = 2;
 
 impl Ending {
     pub fn screen_gone(&self) {
         self.0.fetch_max(SCREEN_GONE, Ordering::AcqRel);
     }
 
-    pub fn console_took_over(&self) {
-        self.0.fetch_max(CONSOLE_TOOK_OVER, Ordering::AcqRel);
+    /// Marks a grant of lock mode's screens: every stream cast from a virtual output.
+    pub fn granted(&self, screens: &[Screen]) {
+        if !screens.is_empty() && screens.iter().all(|s| s.virtual_output) {
+            self.0.fetch_max(LOCK_MODE, Ordering::AcqRel);
+        }
     }
 
     pub(crate) fn end(&self) -> End {
         match self.0.load(Ordering::Acquire) {
-            CONSOLE_TOOK_OVER => End::ConsoleTookOver,
+            LOCK_MODE => End::LockMode,
             SCREEN_GONE => End::ScreenGone,
             _ => End::Left,
         }
