@@ -454,11 +454,11 @@ pub(crate) fn in_lock_mode_with(
 }
 
 fn covered(h: &Harness) -> Vec<String> {
-    let l = h.state.lock.active.as_ref().expect("locked");
+    let l = h.state.lock.console.as_ref().expect("locked");
     l.outputs.iter().map(|lo| lo.output.name()).collect()
 }
 
-fn under_lock_layer(h: &Harness, node: reprisescene::NodeId) -> bool {
+pub(crate) fn under_lock_layer(h: &Harness, node: reprisescene::NodeId) -> bool {
     let lock = h.state.layers.lock;
     let mut at = h.state.scene.parent(node);
     while let Some(t) = at {
@@ -576,7 +576,7 @@ fn outside_lock_mode_every_check_is_as_before() {
         ("a: every output is covered", |h, _, _| {
             h.state
                 .lock
-                .active
+                .console
                 .as_ref()
                 .is_some_and(|l| l.outputs.len() == 1)
         }),
@@ -622,7 +622,7 @@ fn in_lock_mode_the_turn_off_dialog_opens_for_the_desktop_only() {
 pub(crate) fn lock_input(h: &Harness) -> String {
     h.state
         .lock
-        .active
+        .console
         .as_ref()
         .expect("locked")
         .state
@@ -632,8 +632,8 @@ pub(crate) fn lock_input(h: &Harness) -> String {
 
 /// Type into the lock dialog, then click its Cancel button, which clears what was typed.
 pub(crate) fn click_lock_cancel(h: &mut Harness) {
-    h.state.lock.active.as_mut().expect("locked").state.input = "secret".into();
-    let c = h.state.lock.active.as_ref().unwrap().outputs[0]
+    h.state.lock.console.as_mut().expect("locked").state.input = "secret".into();
+    let c = h.state.lock.console.as_ref().unwrap().outputs[0]
         .buttons
         .cancel;
     let (x, y) = (c.x + c.width / 2, c.y + c.height / 2);

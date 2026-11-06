@@ -361,7 +361,7 @@ fn report(state: &mut State, r: Report) {
         }
         Report::Lock => {
             log::info!("power: logind asks for the lock");
-            crate::lockview::lock(state);
+            crate::lockview::lock_all(state);
         }
         Report::Unlock => {
             log::info!("power: logind ends the lock");
@@ -393,7 +393,7 @@ fn sleeping(state: &mut State) {
     let (lock, wait) = sleep_plan(state.config.power.lock_on_sleep, has_delay);
     if lock {
         log::info!("power: sleeping, locking first");
-        crate::lockview::lock(state);
+        crate::lockview::lock_all(state);
     }
     if !wait {
         if has_delay {
@@ -540,7 +540,7 @@ pub fn run_action(state: &mut State, a: PowerAction, origin: Origin) {
     match a {
         PowerAction::Nothing => {}
         PowerAction::ScreenOff => crate::idle::screen_off_by(state, origin),
-        PowerAction::Lock => crate::lockview::lock(state),
+        PowerAction::Lock => crate::lockview::lock_for(state, origin),
         PowerAction::Standby => {
             let cmd = state.config.power.standby.clone();
             crate::sessionend::sleep(state, crate::sessionend::Act::StandBy, cmd);
@@ -811,6 +811,25 @@ mod tests {
         );
         assert_eq!(sleep_plan(false, true), (false, false));
         assert_eq!(sleep_plan(false, false), (false, false));
+    }
+
+    #[test]
+    fn a_logind_lock_locks_both_sides() {
+        let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
+        report(&mut h.state, Report::Lock);
+        assert!(h.state.console_locked());
+        assert!(h.state.desktop_locked(), "the remote side locks too");
+    }
+
+    #[test]
+    fn a_logind_unlock_unlocks_both_sides() {
+        let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
+        crate::lockview::lock_remote(&mut h.state);
+        assert!(h.state.desktop_locked());
+        report(&mut h.state, Report::Unlock);
+        assert!(!h.state.console_locked(), "the console unlocks");
+        assert!(!h.state.desktop_locked(), "the remote side unlocks");
+        assert!(!crate::crash::locked());
     }
 
     #[test]

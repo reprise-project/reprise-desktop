@@ -49,7 +49,7 @@ pub fn button(state: &mut State, button: u32, pressed: bool) {
     if pressed {
         let at = state.console.pointer;
         state.with_source(InputSource::Other, |s| {
-            crate::lockview::button(s, button, at)
+            crate::lockview::button(s, Side::Console, button, at)
         });
     }
 }

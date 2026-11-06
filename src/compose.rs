@@ -25,20 +25,18 @@ fn locale(var: impl Fn(&str) -> Option<String>) -> String {
 }
 
 impl Compose {
-    /// None when the locale has no Compose file (every press is then `Fed::Plain`).
-    pub fn from_locale() -> Option<Compose> {
+    /// The user's table; None when the locale has no Compose file (every press is then `Fed::Plain`).
+    pub fn table_from_locale() -> Option<compose::Table> {
         let locale = locale(|v| std::env::var(v).ok());
         if locale.contains('\0') {
             return None;
         }
         let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-        let table =
-            compose::Table::new_from_locale(&ctx, locale.as_ref(), compose::COMPILE_NO_FLAGS)
-                .ok()?;
-        Some(Compose::over(&table))
+        compose::Table::new_from_locale(&ctx, locale.as_ref(), compose::COMPILE_NO_FLAGS).ok()
     }
 
-    fn over(table: &compose::Table) -> Compose {
+    /// A state of its own over `table`, with no sequence begun.
+    pub fn over(table: &compose::Table) -> Compose {
         Compose {
             state: compose::State::new(table, compose::STATE_NO_FLAGS),
         }
@@ -70,10 +68,6 @@ impl Compose {
             }
             compose::Status::Composing => Fed::Swallowed,
         }
-    }
-
-    pub fn reset(&mut self) {
-        self.state.reset();
     }
 }
 
@@ -119,14 +113,6 @@ mod tests {
         c.feed(crate::keys::KEY_dead_acute);
         assert_eq!(fed(&mut c, crate::keys::KEY_x), "-");
         assert_eq!(fed(&mut c, crate::keys::KEY_x), "");
-    }
-
-    #[test]
-    fn reset_drops_a_sequence_in_progress() {
-        let mut c = table(ACUTE);
-        c.feed(crate::keys::KEY_dead_acute);
-        c.reset();
-        assert_eq!(fed(&mut c, crate::keys::KEY_e), "");
     }
 
     #[test]

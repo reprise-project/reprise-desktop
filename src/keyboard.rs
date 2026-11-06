@@ -753,7 +753,7 @@ impl State {
                     self.set_frameless(w, on);
                 }
             }
-            Action::Lock => crate::lockview::lock(self),
+            Action::Lock => crate::lockview::lock_desktop(self),
             Action::Run => {
                 let d = crate::dialog::Dialog::run(&self.dialogs.run_history);
                 self.open_dialog(d);
@@ -1443,11 +1443,12 @@ mod tests {
         h.state.config.keyboard.repeat_rate = 25;
         h.state.lock.helpers.finger = |_| None;
         crate::lockview::lock(&mut h.state);
-        let field =
-            |h: &crate::harness::Harness| h.state.lock.active.as_ref().unwrap().state.input.clone();
+        let field = |h: &crate::harness::Harness| {
+            h.state.lock.console.as_ref().unwrap().state.input.clone()
+        };
         h.state
             .lock
-            .active
+            .console
             .as_mut()
             .unwrap()
             .state

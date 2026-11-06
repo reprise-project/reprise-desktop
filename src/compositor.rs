@@ -424,9 +424,9 @@ pub struct State {
     pub attention_flash: crate::attention::Flash,
     pub peek: crate::peek::Peek,
     pub titles: crate::retitle::Flush,
-    /// Dead keys and the Compose key for the lock's password field; None
+    /// The Compose table each lock dialog's own compose state reads; None
     /// when the locale has no Compose file.
-    pub compose: Option<crate::compose::Compose>,
+    pub compose: Option<smithay::input::keyboard::xkb::compose::Table>,
     pub notify: crate::notifyview::NotifyView,
     pub tooltip: crate::tooltip::TooltipView,
     pub access: crate::access::Access,
@@ -775,7 +775,7 @@ impl State {
             attention_flash: Default::default(),
             peek: Default::default(),
             titles: Default::default(),
-            compose: crate::compose::Compose::from_locale(),
+            compose: crate::compose::Compose::table_from_locale(),
             notify: Default::default(),
             tooltip: Default::default(),
             access: crate::access::Access::new(&handle),
