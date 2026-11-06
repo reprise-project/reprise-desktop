@@ -57,7 +57,7 @@ impl ClientLayout {
             (&c.monitors[..], &c.monitors_ex[..])
         });
         if !monitors.is_empty()
-            && let Err(why) = layout::usable(monitors)
+            && let Err(why) = layout::usable(monitors).and(console::publishable(monitors))
         {
             log::warn!("client monitors not published: {why}");
             monitors = &[];
@@ -242,6 +242,14 @@ mod tests {
                 monitor(i32::MIN, -1, 1079, MonitorFlags::empty()),
             ],
             vec![monitor(10, 1929, 1079, primary)],
+            vec![
+                monitor(0, 1919, 1079, primary),
+                monitor(1920, 2019, 1079, MonitorFlags::empty()),
+            ],
+            vec![
+                monitor(0, 1919, 1079, primary),
+                monitor(1920, 3839, 149, MonitorFlags::empty()),
+            ],
         ] {
             assert_eq!(
                 scaled(monitors.clone(), vec![], Some(150)).console_layout(size),
