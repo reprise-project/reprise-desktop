@@ -163,6 +163,7 @@ pub fn stop(state: &mut State, reason: Reason) {
 fn leave(state: &mut State) {
     log::info!("lock mode: ends");
     state.console.leader = None;
+    crate::lockview::drop_remote(state);
     // What the remote side opened or focused would stay up under the cover.
     if state.console_locked() {
         crate::lockview::seal(state, |_| {});
@@ -308,5 +309,7 @@ pub mod pointer;
 
 #[cfg(test)]
 mod inputtests;
+#[cfg(test)]
+mod locktests;
 #[cfg(test)]
 pub(crate) mod tests;

@@ -150,7 +150,7 @@ pub fn start_locker(state: &mut State) -> bool {
     if !crate::spawn::spawn(&cmd, &state.env, None) {
         return false;
     }
-    if let Some(l) = state.lock.active.as_mut() {
+    if let Some(l) = state.lock.console.as_mut() {
         l.awaiting = true;
     }
     stop_timer(state, Which::Locker);
@@ -190,7 +190,7 @@ pub fn stop_timers(state: &mut State) {
 }
 
 fn locker_timed_out(state: &mut State) {
-    let Some(l) = state.lock.active.as_mut() else {
+    let Some(l) = state.lock.console.as_mut() else {
         return;
     };
     if !l.awaiting {
@@ -204,7 +204,7 @@ fn locker_timed_out(state: &mut State) {
 }
 
 fn client(state: &mut State) -> Option<&mut ClientLock> {
-    state.lock.active.as_mut()?.client.as_mut()
+    state.lock.console.as_mut()?.client.as_mut()
 }
 
 /// Whether a locker's lock was confirmed with `locked`.
@@ -216,7 +216,7 @@ pub fn confirmed(state: &mut State) -> bool {
 pub fn holds_input(state: &State) -> bool {
     state
         .lock
-        .active
+        .console
         .as_ref()
         .is_some_and(|l| l.client.is_some())
 }
@@ -224,7 +224,7 @@ pub fn holds_input(state: &State) -> bool {
 pub fn is_lock_surface(state: &State, surface: &WlSurface) -> bool {
     state
         .lock
-        .active
+        .console
         .as_ref()
         .and_then(|l| l.client.as_ref())
         .is_some_and(|c| c.surfaces.iter().any(|s| s.surface.wl_surface() == surface))
@@ -271,7 +271,7 @@ impl SessionLockHandler for State {
             surfaces: Vec::new(),
             wait: Some(CoverWait::new(outputs)),
         };
-        if let Some(l) = self.lock.active.as_mut() {
+        if let Some(l) = self.lock.console.as_mut() {
             // Whatever was typed into the dialog goes, a check in flight
             // ends with its child, and the reader is the locker's.
             l.pending = None;
@@ -303,7 +303,7 @@ impl SessionLockHandler for State {
     }
 
     fn unlock(&mut self) {
-        if let Some(c) = self.lock.active.as_mut().and_then(|l| l.client.take()) {
+        if let Some(c) = self.lock.console.as_mut().and_then(|l| l.client.take()) {
             release(self, c, false);
         }
         log::info!("session lock: the locker unlocked");
@@ -406,7 +406,7 @@ fn fit_all(state: &mut State, send: bool) {
         .map(|o| (o.clone(), state.layout_box(Some(o))))
         .collect();
     let State { lock, scene, .. } = state;
-    let Some(c) = lock.active.as_mut().and_then(|l| l.client.as_mut()) else {
+    let Some(c) = lock.console.as_mut().and_then(|l| l.client.as_mut()) else {
         return;
     };
     for s in &mut c.surfaces {
@@ -490,7 +490,7 @@ pub fn commit(state: &mut State, surface: &WlSurface) {
 
 fn forget_dead_surfaces(state: &mut State) {
     let State { lock, scene, .. } = state;
-    let Some(c) = lock.active.as_mut().and_then(|l| l.client.as_mut()) else {
+    let Some(c) = lock.console.as_mut().and_then(|l| l.client.as_mut()) else {
         return;
     };
     let mut uncovered = Vec::new();
@@ -511,14 +511,14 @@ fn forget_dead_surfaces(state: &mut State) {
 pub fn check_alive(state: &mut State) {
     let dead = state
         .lock
-        .active
+        .console
         .as_ref()
         .and_then(|l| l.client.as_ref())
         .is_some_and(|c| !c.lock.is_alive());
     if !dead {
         return;
     }
-    if let Some(c) = state.lock.active.as_mut().and_then(|l| l.client.take()) {
+    if let Some(c) = state.lock.console.as_mut().and_then(|l| l.client.take()) {
         release(state, c, false);
     }
     state.enter_keyboard(None);

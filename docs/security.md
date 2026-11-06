@@ -84,6 +84,13 @@ while a locker client holds the lock, lock mode is unavailable: the object
 ends at once and nothing is made. A locker client that takes the lock during
 lock mode ends it.
 
+The virtual screens lock on their own: after `lock_after` of remote
+idleness, from Start > Lock or the lock key on the remote side, and with
+logind's `Lock`, which locks both sides. Their Unlock dialog takes only remote
+input, and its password unlocks only the virtual screens; the computer's own
+screens stay locked. logind's `Unlock` unlocks both. The remote side's lock
+goes when lock mode ends, while the computer's stays.
+
 Reprise's remote desktop server starts its sessions without the permission
 dialog, since nobody may be at the screen to answer it. Turning Remote
 Desktop on in Settings is the consent. The portal skips the dialog only for

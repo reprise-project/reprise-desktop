@@ -1,6 +1,6 @@
-//! The lock screen on the scene: one opaque cover, the wallpaper over it with `[wallpaper] lock_screen`,
-//! one dialog per output in `layers.lock`, key and pointer routing while locked, and the password's and
-//! fingerprint's PAM conversation children. Pure state lives in `lock.rs` and `lockfinger.rs`.
+//! The lock screen on the scene: per output an opaque cover, the wallpaper with `[wallpaper] lock_screen`
+//! and a dialog in `layers.lock`, key and pointer routing while locked, and the PAM conversation children.
+//! In lock mode the remote side has a lock of its own. Pure state lives in `lock.rs` and `lockfinger.rs`.
 
 use std::os::fd::BorrowedFd;
 use std::process::Command;
@@ -23,7 +23,7 @@ use smithay::{
 
 use reprisescene::{BufferId, RectId, TreeId};
 
-use crate::compose::Fed;
+use crate::compose::{Compose, Fed};
 use crate::compositor::State;
 use crate::console::Side;
 use crate::editkeys::KeyText;
@@ -37,10 +37,13 @@ use crate::wallpaperview::LockWall;
 use crate::waterview::{Pane, Picture};
 use crate::window::WindowId;
 
-/// The lock's one `State` field (`lock`): the session-lock global and, while locked, the lock.
+/// The lock's one `State` field (`lock`): the session-lock global and, while locked, the locks.
 pub struct LockScreen {
     pub session: SessionLock,
-    pub active: Option<Lock>,
+    /// The lock on the computer's own outputs, the only one outside lock mode.
+    pub console: Option<Lock>,
+    /// Lock mode's lock on the Remote outputs: the remote side's own dialog and password check.
+    pub remote: Option<Lock>,
     pub helpers: Helpers,
 }
 
@@ -48,9 +51,34 @@ impl LockScreen {
     pub fn new(dh: &smithay::reexports::wayland_server::DisplayHandle) -> LockScreen {
         LockScreen {
             session: SessionLock::new(dh),
-            active: None,
+            console: None,
+            remote: None,
             helpers: Helpers::default(),
         }
+    }
+
+    pub fn on(&self, side: Side) -> Option<&Lock> {
+        match side {
+            Side::Console => self.console.as_ref(),
+            Side::Remote => self.remote.as_ref(),
+        }
+    }
+
+    pub fn on_mut(&mut self, side: Side) -> Option<&mut Lock> {
+        self.slot(side).as_mut()
+    }
+
+    fn slot(&mut self, side: Side) -> &mut Option<Lock> {
+        match side {
+            Side::Console => &mut self.console,
+            Side::Remote => &mut self.remote,
+        }
+    }
+
+    /// The lock whose cover is on `output`.
+    pub fn covering(&self, output: &Output) -> Option<&Lock> {
+        let l = self.on(crate::console::side_of(output))?;
+        l.outputs.iter().any(|lo| lo.output == *output).then_some(l)
     }
 }
 
@@ -121,6 +149,8 @@ pub struct Lock {
     pub client: Option<ClientLock>,
     /// `[power] locker` was started for this lock and has yet to take over or time out; the dialog is hidden and ignores input.
     pub awaiting: bool,
+    /// The dialog's dead key and Compose sequence, apart from the other side's.
+    pub compose: Option<Compose>,
 }
 
 impl Lock {
@@ -195,15 +225,15 @@ pub struct Pending {
 }
 
 /// The check took `verify_timeout`: kill its child and let the dialog take a password again.
-fn verify_timed_out(state: &mut State) -> TimeoutAction {
-    if let Some(p) = state.lock.active.as_mut().and_then(|l| l.pending.as_mut()) {
+fn verify_timed_out(state: &mut State, side: Side) -> TimeoutAction {
+    if let Some(p) = state.lock.on_mut(side).and_then(|l| l.pending.as_mut()) {
         if let Some(t) = p.timer.as_mut() {
             t.disarm();
         }
         p.helper.conversation.kill();
     }
     log::error!("lock: the password conversation did not answer in time; ended it");
-    abort_verification(state, lock::UNAVAILABLE);
+    abort_verification(state, side, lock::UNAVAILABLE);
     TimeoutAction::Drop
 }
 
@@ -211,7 +241,7 @@ fn verify_timed_out(state: &mut State) -> TimeoutAction {
 fn watch(
     state: &State,
     conversation: lockfinger::Conversation,
-    on_read: fn(&mut State) -> PostAction,
+    on_read: impl Fn(&mut State) -> PostAction + 'static,
 ) -> Option<Helper> {
     // SAFETY: the conversation's stdout is open for as long as the conversation, which outlives this borrow.
     let fd = unsafe { BorrowedFd::borrow_raw(conversation.fd()) }.try_clone_to_owned();
@@ -256,7 +286,7 @@ fn start_finger(state: &State, user: &str) -> Option<Helper> {
 /// drops it and starts it again later, unless PAM said there is no reader or finger to verify, or
 /// `FINGER_LOST_MAX` ends in a row came without a result.
 fn on_finger(state: &mut State) -> PostAction {
-    let Some(l) = state.lock.active.as_mut() else {
+    let Some(l) = state.lock.console.as_mut() else {
         return PostAction::Remove;
     };
     let Some(f) = l.finger.as_mut() else {
@@ -280,7 +310,7 @@ fn on_finger(state: &mut State) -> PostAction {
     }
     if accepted {
         log::info!("lock: fingerprint accepted");
-        unlock(state);
+        unlock_side(state, Side::Console);
         return PostAction::Remove;
     }
     if ended {
@@ -309,7 +339,7 @@ fn on_finger(state: &mut State) -> PostAction {
 /// Start the fingerprint conversation again after the lock's `finger_delay`, which then doubles up to
 /// `FINGER_RETRY_MAX`. The start is skipped while a locker holds the lock.
 fn arm_finger_retry(state: &mut State) {
-    let Some(l) = state.lock.active.as_mut() else {
+    let Some(l) = state.lock.console.as_mut() else {
         return;
     };
     let delay = l.finger_delay;
@@ -319,7 +349,7 @@ fn arm_finger_retry(state: &mut State) {
         .insert_source(Timer::from_duration(delay), |_, _, state| {
             if let Some(mut t) = state
                 .lock
-                .active
+                .console
                 .as_mut()
                 .and_then(|l| l.finger_retry.take())
             {
@@ -341,19 +371,19 @@ fn arm_finger_retry(state: &mut State) {
 }
 
 /// Never leave the dialog stuck on "Verifying...": end the check, show `message` and redraw.
-fn abort_verification(state: &mut State, message: &str) {
-    if let Some(l) = state.lock.active.as_mut() {
+fn abort_verification(state: &mut State, side: Side, message: &str) {
+    if let Some(l) = state.lock.on_mut(side) {
         l.pending = None;
         l.state.fail_with(message);
     }
     redraw(state);
 }
 
-/// What the password conversation said since the last wake: a further prompt relabels the field for
-/// its answer; its verdict unlocks or shows why not; an end without one reads as "could not be
-/// checked", never as accepted.
-fn on_result(state: &mut State) -> PostAction {
-    let Some(l) = state.lock.active.as_mut() else {
+/// What `side`'s password conversation said since the last wake: a further prompt relabels the field
+/// for its answer; its verdict unlocks that side or shows why not; an end without one reads as "could
+/// not be checked", never as accepted.
+fn on_result(state: &mut State, side: Side) -> PostAction {
+    let Some(l) = state.lock.on_mut(side) else {
         return PostAction::Remove;
     };
     let Some(p) = l.pending.as_mut() else {
@@ -387,12 +417,12 @@ fn on_result(state: &mut State) -> PostAction {
     match verdict {
         Some(Ok(())) => {
             l.state.verifying = false;
-            unlock(state);
+            unlock_side(state, side);
         }
-        Some(Err(notices)) => abort_verification(state, &lock::failure_text(&notices)),
+        Some(Err(notices)) => abort_verification(state, side, &lock::failure_text(&notices)),
         None => {
             log::error!("lock: the password conversation ended without a result");
-            abort_verification(state, lock::UNAVAILABLE);
+            abort_verification(state, side, lock::UNAVAILABLE);
         }
     }
     PostAction::Remove
@@ -409,10 +439,49 @@ pub fn lock(state: &mut State) {
     start_dialog_finger(state);
 }
 
+/// Lock the desktop: the remote side in lock mode, else the session.
+pub fn lock_desktop(state: &mut State) {
+    if crate::console::remote_side(state) {
+        lock_remote(state);
+    } else {
+        lock(state);
+    }
+}
+
+/// Lock what `origin` answers to (`State::locked_for`).
+pub fn lock_for(state: &mut State, origin: Origin) {
+    match origin {
+        Origin::Console => lock(state),
+        Origin::Desktop => lock_desktop(state),
+    }
+}
+
+/// Lock the session and, in lock mode, the remote side.
+pub fn lock_all(state: &mut State) {
+    lock(state);
+    lock_remote(state);
+}
+
+/// Lock mode's remote side locks: the desktop is sealed as for the session lock and the Remote
+/// outputs get covers and a dialog taking the remote's input. No-op outside lock mode or when
+/// already locked. No fingerprint conversation: the reader is the computer's.
+pub fn lock_remote(state: &mut State) {
+    if !crate::console::remote_side(state) || state.lock.remote.is_some() {
+        return;
+    }
+    crate::idle::end_dim(state);
+    seal(state, |s| raise(s, Side::Remote));
+    cover_side(state, Side::Remote);
+    state.set_cursor("default");
+    crate::idle::inhibition_changed(state);
+    state.redraw_all();
+    log::info!("lock mode: the remote side locked");
+}
+
 /// Start the fingerprint conversation if the built-in dialog shows and none runs. Never under a locker,
 /// which may claim the reader through its own pam_fprintd, and fprintd lets one claim it.
 pub fn start_dialog_finger(state: &mut State) {
-    let Some(l) = state.lock.active.as_ref() else {
+    let Some(l) = state.lock.console.as_ref() else {
         return;
     };
     if !l.dialog_shown() || l.finger.is_some() || l.user.is_empty() {
@@ -420,7 +489,7 @@ pub fn start_dialog_finger(state: &mut State) {
     }
     let user = l.user.clone();
     let finger = start_finger(state, &user);
-    if let Some(l) = state.lock.active.as_mut() {
+    if let Some(l) = state.lock.console.as_mut() {
         l.finger = finger;
     }
 }
@@ -435,11 +504,8 @@ pub fn engage(state: &mut State) {
     }
     crate::state::save_screen_locked(true);
     crate::idle::end_dim(state);
-    seal(state, raise);
-    let outputs: Vec<Output> = state.scene.outputs().to_vec();
-    for o in &outputs {
-        cover_output(state, o);
-    }
+    seal(state, |s| raise(s, Side::Console));
+    cover_side(state, Side::Console);
     state.set_cursor("default");
     crate::power::hint(state, crate::power::Hint::Locked(true));
     crate::idle::inhibition_changed(state);
@@ -451,9 +517,6 @@ pub fn engage(state: &mut State) {
 /// focus from clients. Lock mode ending under the console lock seals again with no `raise`.
 pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     state.close_menu();
-    if let Some(c) = state.compose.as_mut() {
-        c.reset();
-    }
     state.release_capture();
     state.switcher_cancel();
     state.close_overview();
@@ -491,8 +554,8 @@ pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     state.layers_shell.focused = None;
 }
 
-/// Put the lock up, remembering what had the keyboard for the unlock.
-fn raise(state: &mut State) {
+/// Put `side`'s lock up, remembering what had the keyboard for the unlock.
+fn raise(state: &mut State, side: Side) {
     let prev_focus = state.focused;
     let prev_focused_layer = crate::layer::holds_keyboard(state)
         .then(|| state.layers_shell.focused.clone())
@@ -510,9 +573,10 @@ fn raise(state: &mut State) {
         let uid = unsafe { libc::getuid() };
         log::error!("lock: no login name for uid {uid}; the password cannot be checked");
     }
-    state.lock.active = Some(Lock {
+    let compose = state.compose.as_ref().map(Compose::over);
+    *state.lock.slot(side) = Some(Lock {
         state: LockState {
-            caps_lock: caps_lock(state),
+            caps_lock: caps_lock(state, side),
             layout: layout(state),
             ..LockState::new()
         },
@@ -528,6 +592,7 @@ fn raise(state: &mut State) {
         prev_desktop,
         client: None,
         awaiting: false,
+        compose,
     });
 }
 
@@ -560,10 +625,12 @@ fn cancel_interaction(state: &mut State) {
     state.interaction = Interaction::Idle;
 }
 
-/// Take the lock's scene nodes, sources and child down without touching focus. Returns the window and
-/// layer surface that held focus when the lock engaged, if any, and whether the desktop held it.
-fn teardown(state: &mut State) -> Option<(Option<WindowId>, Option<WlSurface>, bool)> {
-    let mut l = state.lock.active.take()?;
+/// What had the keyboard when a lock engaged: the window, the layer surface, whether the desktop.
+type Refocus = (Option<WindowId>, Option<WlSurface>, bool);
+
+/// Take `side`'s lock's scene nodes, sources and child down without touching focus.
+fn teardown(state: &mut State, side: Side) -> Option<Refocus> {
+    let mut l = state.lock.slot(side).take()?;
     l.pending = None;
     // The fingerprint child is interrupted and frees the reader as it ends. A new lock's conversation
     // that finds the reader still claimed fails, which `on_finger` logs.
@@ -572,7 +639,9 @@ fn teardown(state: &mut State) -> Option<(Option<WindowId>, Option<WlSurface>, b
     if let Some(c) = l.client.take() {
         crate::sessionlock::release(state, c, true);
     }
-    crate::sessionlock::stop_timers(state);
+    if side == Side::Console {
+        crate::sessionlock::stop_timers(state);
+    }
     for lo in &l.outputs {
         state.scene.destroy(lo.tree);
         state.water.drop_pane(&lo.output.name(), Pane::Lock);
@@ -580,15 +649,48 @@ fn teardown(state: &mut State) -> Option<(Option<WindowId>, Option<WlSurface>, b
     Some((l.prev_focus, l.prev_focused_layer, l.prev_desktop))
 }
 
-/// Unlock, from a correct password or logind's `Unlock`, and hand focus back. A layer surface that
-/// claimed (or held) exclusive keyboard interactivity while locked outranks everything; otherwise the
-/// layer surface, window or desktop that had the keyboard when the lock engaged, else the top window.
+/// Unlock from logind's `Unlock` or a locker: the session and, in lock mode, the remote side.
 pub fn unlock(state: &mut State) {
-    let Some((prev, prev_layer, prev_desktop)) = teardown(state) else {
+    unlock_side(state, Side::Console);
+    unlock_side(state, Side::Remote);
+}
+
+/// Lock mode ended: the remote side's lock goes with its outputs, handing nothing focus.
+pub fn drop_remote(state: &mut State) {
+    if teardown(state, Side::Remote).is_some() {
+        crate::idle::inhibition_changed(state);
+        log::info!("lock mode: the remote side's lock ends with it");
+    }
+}
+
+/// Unlock `side`, from its correct password or a whole unlock, and hand focus back unless the
+/// desktop is still locked.
+fn unlock_side(state: &mut State, side: Side) {
+    let Some(prev) = teardown(state, side) else {
         return;
     };
-    crate::power::unlocked(state);
+    if side == Side::Console {
+        crate::power::unlocked(state);
+    }
     crate::idle::inhibition_changed(state);
+    if !state.desktop_locked() {
+        refocus(state, prev);
+    }
+    state.redraw_all();
+    match side {
+        Side::Console => {
+            crate::state::save_screen_locked(false);
+            crate::crash::set_locked(false);
+            log::info!("session unlocked");
+        }
+        Side::Remote => log::info!("lock mode: the remote side unlocked"),
+    }
+}
+
+/// A layer surface that claimed (or held) exclusive keyboard interactivity while locked outranks
+/// everything; otherwise the layer surface, window or desktop that had the keyboard when the lock
+/// engaged, else the top window.
+fn refocus(state: &mut State, (prev, prev_layer, prev_desktop): Refocus) {
     if crate::layer::holds_keyboard(state) {
         // Recorded, not entered, while locked (by `layer::focus_layer` or mapping with exclusive interactivity).
         if let Some(s) = state.layers_shell.focused.clone() {
@@ -609,22 +711,20 @@ pub fn unlock(state: &mut State) {
     crate::autohideview::poke(state);
     let p = state.pointer_location();
     state.repoint(p, InputTime::now());
-    state.redraw_all();
-    crate::state::save_screen_locked(false);
-    crate::crash::set_locked(false);
-    log::info!("session unlocked");
 }
 
 impl State {
     /// The lock is engaged: it covers the computer's own outputs and holds their input.
     pub fn console_locked(&self) -> bool {
-        self.lock.active.is_some()
+        self.lock.console.is_some()
     }
 
-    /// The desktop's lock: the console's outside lock mode; false in lock mode, which has no
-    /// remote-side lock yet.
+    /// The desktop's lock: the console's outside lock mode, the remote side's in it.
     pub fn desktop_locked(&self) -> bool {
-        !crate::console::remote_side(self) && self.console_locked()
+        match crate::console::remote_side(self) {
+            true => self.lock.remote.is_some(),
+            false => self.console_locked(),
+        }
     }
 
     /// The lock of `output`'s side.
@@ -663,15 +763,22 @@ pub enum Origin {
     Desktop,
 }
 
-/// Cover `output` (or refit its cover to its box, the theme's background and the wallpaper) with an
-/// opaque rect, the wallpaper and a centred dialog. A Remote output or one with no layout box loses
-/// its cover.
-fn cover_output(state: &mut State, output: &Output) {
-    if !state.console_locked() {
-        return;
+fn cover_side(state: &mut State, side: Side) {
+    let outputs: Vec<Output> = (state.scene.outputs().iter())
+        .filter(|o| crate::console::side_of(o) == side)
+        .cloned()
+        .collect();
+    for o in &outputs {
+        cover_output(state, o);
     }
-    if crate::console::side_of(output) == Side::Remote {
-        forget_output(state, output);
+}
+
+/// Cover `output` with its side's lock (or refit its cover to its box, the theme's background and
+/// the wallpaper): an opaque rect, the wallpaper and a centred dialog. An output with no layout box
+/// loses its cover.
+fn cover_output(state: &mut State, output: &Output) {
+    let side = crate::console::side_of(output);
+    if state.lock.on(side).is_none() {
         return;
     }
     #[cfg(test)]
@@ -680,14 +787,11 @@ fn cover_output(state: &mut State, output: &Output) {
     }
     let b = state.layout_box(Some(output));
     if b.width <= 0 {
-        forget_output(state, output);
+        forget_output(state, side, output);
         return;
     }
     let color = state.config.theme.colors.background.as_f32();
-    let existing = state
-        .lock
-        .active
-        .as_ref()
+    let existing = (state.lock.on(side))
         .and_then(|l| l.outputs.iter().find(|lo| lo.output == *output))
         .map(|lo| (lo.tree, lo.rect, lo.wall));
     match existing {
@@ -704,7 +808,7 @@ fn cover_output(state: &mut State, output: &Output) {
             let wall = state.scene.buffer_create(tree);
             paint_wall(state, output, tree, wall);
             let dialog = state.scene.buffer_create(tree);
-            if let Some(l) = state.lock.active.as_mut() {
+            if let Some(l) = state.lock.on_mut(side) {
                 l.outputs.push(LockOutput {
                     output: output.clone(),
                     tree,
@@ -718,7 +822,7 @@ fn cover_output(state: &mut State, output: &Output) {
             crate::sessionlock::raise(state);
         }
     }
-    redraw_output(state, output);
+    redraw_output(state, side, output);
 }
 
 /// Fill `wall` with the wallpaper as `output` shows it, or empty it without one or with `lock_screen`
@@ -789,18 +893,18 @@ fn paint_wall(state: &mut State, output: &Output, tree: TreeId, wall: BufferId) 
 
 /// A job's wallpaper picture for `output` landed: show it on its lock screen too.
 pub fn repaint_wall(state: &mut State, output: &Output) {
-    let Some((tree, wall)) = (state.lock.active.as_ref())
+    let Some((tree, wall)) = (state.lock.covering(output))
         .and_then(|l| l.outputs.iter().find(|lo| lo.output == *output))
         .map(|lo| (lo.tree, lo.wall))
     else {
         return;
     };
     paint_wall(state, output, tree, wall);
-    redraw_output(state, output);
+    redraw_output(state, crate::console::side_of(output), output);
 }
 
-fn forget_output(state: &mut State, output: &Output) {
-    let Some(l) = state.lock.active.as_mut() else {
+fn forget_output(state: &mut State, side: Side, output: &Output) {
+    let Some(l) = state.lock.on_mut(side) else {
         return;
     };
     let Some(i) = l.outputs.iter().position(|lo| lo.output == *output) else {
@@ -811,26 +915,24 @@ fn forget_output(state: &mut State, output: &Output) {
     state.scene.destroy(lo.tree);
 }
 
-/// Re-cover every Console output after a layout, theme or wallpaper change.
+/// Re-cover each locked side's outputs after a layout, theme or wallpaper change.
 pub fn refit(state: &mut State) {
-    if !state.console_locked() {
+    if state.lock.console.is_none() && state.lock.remote.is_none() {
         return;
     }
     let outputs: Vec<Output> = state.scene.outputs().to_vec();
-    let gone: Vec<Output> = state
-        .lock
-        .active
-        .as_ref()
-        .map(|l| {
-            l.outputs
-                .iter()
-                .map(|lo| lo.output.clone())
-                .filter(|o| !outputs.contains(o))
-                .collect()
-        })
-        .unwrap_or_default();
-    for o in &gone {
-        forget_output(state, o);
+    for side in [Side::Console, Side::Remote] {
+        let gone: Vec<Output> = (state.lock.on(side))
+            .map(|l| {
+                (l.outputs.iter())
+                    .map(|lo| lo.output.clone())
+                    .filter(|o| !outputs.contains(o))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for o in &gone {
+            forget_output(state, side, o);
+        }
     }
     for o in &outputs {
         cover_output(state, o);
@@ -839,9 +941,9 @@ pub fn refit(state: &mut State) {
     state.redraw_all();
 }
 
-/// Caps Lock of the keys the dialog reads: in lock mode the console's own.
-fn caps_lock(state: &State) -> bool {
-    if crate::console::remote_side(state) {
+/// Caps Lock of the keys `side`'s dialog reads: the console's own in lock mode, else the seat's.
+fn caps_lock(state: &State, side: Side) -> bool {
+    if side == Side::Console && crate::console::remote_side(state) {
         return state.console.keys.caps_lock;
     }
     state
@@ -858,33 +960,37 @@ fn layout(state: &State) -> Option<String> {
         .flatten()
 }
 
+/// Redraw both sides' dialogs with the Caps Lock and layout they read now.
 pub fn redraw(state: &mut State) {
-    let caps = caps_lock(state);
-    let layout = layout(state);
-    let outputs: Vec<Output> = match state.lock.active.as_mut() {
-        Some(l) => {
-            l.state.caps_lock = caps;
-            l.state.layout = layout;
-            l.outputs.iter().map(|lo| lo.output.clone()).collect()
+    if state.lock.console.is_none() && state.lock.remote.is_none() {
+        return;
+    }
+    for side in [Side::Console, Side::Remote] {
+        let caps = caps_lock(state, side);
+        let layout = layout(state);
+        let Some(l) = state.lock.on_mut(side) else {
+            continue;
+        };
+        l.state.caps_lock = caps;
+        l.state.layout = layout;
+        let outputs: Vec<Output> = l.outputs.iter().map(|lo| lo.output.clone()).collect();
+        for o in &outputs {
+            redraw_output(state, side, o);
         }
-        None => return,
-    };
-    for o in &outputs {
-        redraw_output(state, o);
     }
     state.redraw_all();
 }
 
 const LOCK_ICON: &str = "system-lock-screen";
 
-fn redraw_output(state: &mut State, output: &Output) {
+fn redraw_output(state: &mut State, side: Side, output: &Output) {
     let scale = state.draw_scale_at(Some(output));
     let px = state.config.theme.scaled(scale).icon_size();
     let icon = state.icons.get_shared(LOCK_ICON, px);
     let b = state.layout_box(Some(output));
     let logical = lock::dialog_layout(&state.config.theme.scaled(1));
     let theme = state.config.theme.scaled(scale);
-    let Some(l) = state.lock.active.as_ref() else {
+    let Some(l) = state.lock.on(side) else {
         return;
     };
     let Some(lo) = l.outputs.iter().find(|lo| lo.output == *output) else {
@@ -910,11 +1016,8 @@ fn redraw_output(state: &mut State, output: &Output) {
     crate::output::upload_scaled(&mut state.scene, dialog, &canvas, scale);
     state.scene.set_position(dialog, x - b.x, y - b.y);
     state.scene.set_enabled(dialog, shown);
-    if let Some(lo) = state
-        .lock
-        .active
-        .as_mut()
-        .and_then(|l| l.outputs.iter_mut().find(|lo| lo.output == *output))
+    if let Some(lo) =
+        (state.lock.on_mut(side)).and_then(|l| l.outputs.iter_mut().find(|lo| lo.output == *output))
     {
         lo.buttons = buttons;
         lo.dialog_rect = Rect::new(x, y, w, h);
@@ -952,13 +1055,13 @@ fn button_at<'a>(
     None
 }
 
-/// End the check before `verify_timeout`, or None when the loop refuses the timer.
-fn verify_timer(state: &State) -> Option<Source> {
+/// End `side`'s check before `verify_timeout`, or None when the loop refuses the timer.
+fn verify_timer(state: &State, side: Side) -> Option<Source> {
     state
         .handle
         .insert_source(
             Timer::from_duration(state.lock.helpers.verify_timeout),
-            |_, _, state| verify_timed_out(state),
+            move |_, _, state| verify_timed_out(state, side),
         )
         .map_err(|e| log::warn!("lock: cannot time the password check: {}", e.error))
         .ok()
@@ -968,10 +1071,11 @@ fn verify_timer(state: &State) -> Option<Source> {
         })
 }
 
-/// Hand the field to PAM: the password starts a conversation; under a further prompt the field is
-/// that prompt's answer to the waiting one.
-fn submit(state: &mut State) {
-    let Some(l) = state.lock.active.as_mut() else {
+/// Hand `side`'s field to PAM: the password starts a conversation; under a further prompt the field
+/// is that prompt's answer to the waiting one.
+fn submit(state: &mut State, side: Side) {
+    let password_command = state.lock.helpers.password;
+    let Some(l) = state.lock.on_mut(side) else {
         return;
     };
     l.state.verifying = true;
@@ -980,28 +1084,28 @@ fn submit(state: &mut State) {
     if let Some(p) = l.pending.as_mut() {
         if let Err(e) = p.helper.conversation.answer(password.as_bytes()) {
             log::error!("lock: cannot answer the password conversation's prompt: {e}");
-            abort_verification(state, lock::UNAVAILABLE);
+            abort_verification(state, side, lock::UNAVAILABLE);
             return;
         }
         drop(password);
-        let timer = verify_timer(state);
-        if let Some(p) = state.lock.active.as_mut().and_then(|l| l.pending.as_mut()) {
+        let timer = verify_timer(state, side);
+        if let Some(p) = state.lock.on_mut(side).and_then(|l| l.pending.as_mut()) {
             p.timer = timer;
         }
         redraw(state);
         return;
     }
-    let command = (state.lock.helpers.password)(&l.user);
+    let command = password_command(&l.user);
     let helper = match lockfinger::Conversation::start_password(command, password.as_bytes()) {
-        Ok(c) => watch(state, c, on_result),
+        Ok(c) => watch(state, c, move |s| on_result(s, side)),
         Err(e) => {
             log::error!("lock: cannot start the password conversation: {e}");
             None
         }
     };
     drop(password);
-    let timer = helper.as_ref().and_then(|_| verify_timer(state));
-    if let Some(l) = state.lock.active.as_mut() {
+    let timer = helper.as_ref().and_then(|_| verify_timer(state, side));
+    if let Some(l) = state.lock.on_mut(side) {
         match helper {
             Some(helper) => {
                 l.pending = Some(Pending {
@@ -1024,17 +1128,27 @@ fn end_abandoned_prompt(l: &mut Lock) {
     }
 }
 
-/// A key while locked, from the keyboard filter. Returns whether it goes on to the focused surface: a
-/// locker's, when one holds the lock. Otherwise the dialog takes presses and every key is consumed.
+/// The side whose lock the seat's input reaches: the remote side's in lock mode.
+fn desk_side(state: &State) -> Side {
+    match crate::console::remote_side(state) {
+        true => Side::Remote,
+        false => Side::Console,
+    }
+}
+
+/// A seat key while the desktop is locked, from the keyboard filter. Returns whether it goes on to the
+/// focused surface: a locker's, when one holds the lock. Otherwise the dialog takes presses and every
+/// key is consumed.
 pub fn key(state: &mut State, pressed: bool, handle: &KeysymHandle<'_>) -> bool {
-    if crate::sessionlock::holds_input(state) {
+    let side = desk_side(state);
+    if side == Side::Console && crate::sessionlock::holds_input(state) {
         crate::sessionlock::check_alive(state);
         if crate::sessionlock::holds_input(state) {
             return true;
         }
     }
-    redraw_on_caps(state);
-    if !pressed || !dialog_shows(state) {
+    redraw_on_caps(state, side);
+    if !pressed || !dialog_shows(state, side) {
         return false;
     }
     let typed = {
@@ -1042,32 +1156,33 @@ pub fn key(state: &mut State, pressed: bool, handle: &KeysymHandle<'_>) -> bool 
             return false;
         };
         // SAFETY: the state reference does not outlive the lock guard.
-        decode(state, unsafe { xkb.state() }, handle.raw_code())
+        decode(state, side, unsafe { xkb.state() }, handle.raw_code())
     };
     if let Some(t) = typed {
-        type_key(state, t);
+        type_key(state, side, t);
     }
     false
 }
 
-/// A key for the dialog decoded by `xkb`, the state after it: the console's own keys in lock mode
-/// (`console::keys`).
+/// A key for the console's dialog decoded by `xkb`, the state after it: the console's own keys in
+/// lock mode (`console::keys`).
 pub fn key_with(state: &mut State, pressed: bool, xkb: &xkb::State, code: Keycode) {
+    let side = Side::Console;
     if pressed
-        && dialog_shows(state)
-        && let Some(t) = decode(state, xkb, code)
+        && dialog_shows(state, side)
+        && let Some(t) = decode(state, side, xkb, code)
     {
-        type_key(state, t);
+        type_key(state, side, t);
     }
 }
 
-fn dialog_shows(state: &State) -> bool {
-    state.lock.active.as_ref().is_some_and(Lock::dialog_shown)
+fn dialog_shows(state: &State, side: Side) -> bool {
+    state.lock.on(side).is_some_and(Lock::dialog_shown)
 }
 
-fn redraw_on_caps(state: &mut State) {
-    if dialog_shows(state)
-        && (state.lock.active.as_ref()).is_some_and(|l| l.state.caps_lock != caps_lock(state))
+fn redraw_on_caps(state: &mut State, side: Side) {
+    if dialog_shows(state, side)
+        && (state.lock.on(side)).is_some_and(|l| l.state.caps_lock != caps_lock(state, side))
     {
         redraw(state);
     }
@@ -1081,10 +1196,10 @@ enum Typed {
     Text(KeyText),
 }
 
-/// The key `code` under `xkb`, through the compose sequence; None while it types nothing.
-fn decode(state: &mut State, xkb: &xkb::State, code: Keycode) -> Option<Typed> {
+/// The key `code` under `xkb`, through `side`'s compose sequence; None while it types nothing.
+fn decode(state: &mut State, side: Side, xkb: &xkb::State, code: Keycode) -> Option<Typed> {
     // Dead keys and the Compose key: a sequence types nothing until it ends, then its result.
-    let fed = match state.compose.as_mut() {
+    let fed = match state.lock.on_mut(side).and_then(|l| l.compose.as_mut()) {
         Some(c) => c.feed(xkb.key_get_one_sym(code).raw()),
         None => Fed::Plain,
     };
@@ -1110,32 +1225,37 @@ fn decode(state: &mut State, xkb: &xkb::State, code: Keycode) -> Option<Typed> {
     }
 }
 
-fn type_key(state: &mut State, t: Typed) {
+fn type_key(state: &mut State, side: Side, t: Typed) {
     let key = match &t {
         Typed::Enter => LockKey::Enter,
         Typed::Backspace => LockKey::Backspace,
         Typed::Escape => LockKey::Escape,
         Typed::Text(t) => LockKey::Text(t.as_str()),
     };
-    edit(state, key);
+    edit(state, side, key);
 }
 
-/// Text typed without a key: into the dialog's field, or to the locker holding the lock.
+/// Seat text typed without a key: into the desktop's dialog field, or to the locker holding the lock.
 pub fn type_text(state: &mut State, text: &str) {
     if text.chars().any(char::is_control) {
         return;
     }
-    crate::sessionlock::check_alive(state);
-    if crate::sessionlock::holds_input(state) {
-        state.type_text(text);
-    } else if state.lock.active.as_ref().is_some_and(Lock::dialog_shown) {
-        edit(state, LockKey::Text(text));
+    let side = desk_side(state);
+    if side == Side::Console {
+        crate::sessionlock::check_alive(state);
+        if crate::sessionlock::holds_input(state) {
+            state.type_text(text);
+            return;
+        }
+    }
+    if dialog_shows(state, side) {
+        edit(state, side, LockKey::Text(text));
     }
 }
 
-/// Apply `key` to the dialog's field: submit it, or redraw.
-fn edit(state: &mut State, key: LockKey<'_>) {
-    let should_submit = match state.lock.active.as_mut() {
+/// Apply `key` to `side`'s dialog field: submit it, or redraw.
+fn edit(state: &mut State, side: Side, key: LockKey<'_>) {
+    let should_submit = match state.lock.on_mut(side) {
         Some(l) => {
             let submit = l.state.key(key);
             end_abandoned_prompt(l);
@@ -1144,31 +1264,30 @@ fn edit(state: &mut State, key: LockKey<'_>) {
         None => return,
     };
     if should_submit {
-        submit(state);
+        submit(state, side);
     } else {
         redraw(state);
     }
 }
 
-/// A held Backspace repeats in the dialog's field; not under a locker.
+/// A held seat Backspace repeats in the desktop's dialog field; not under a locker.
 pub fn repeat_backspace(state: &mut State) {
-    if !crate::sessionlock::holds_input(state)
-        && state.lock.active.as_ref().is_some_and(Lock::dialog_shown)
-    {
-        edit(state, LockKey::Backspace);
+    let side = desk_side(state);
+    if !crate::sessionlock::holds_input(state) && dialog_shows(state, side) {
+        edit(state, side, LockKey::Backspace);
     }
 }
 
-/// A press while locked: a locker's surfaces take it through the seat; otherwise a left press on OK
-/// submits, on Cancel clears, and beside the dialog splashes the lock water.
-pub fn button(state: &mut State, button: u32, pos: Point<f64, Logical>) {
+/// A press on `side`'s lock: a locker's surfaces take it through the seat; otherwise a left press on
+/// OK submits, on Cancel clears, and beside the dialog splashes the lock water.
+pub fn button(state: &mut State, side: Side, button: u32, pos: Point<f64, Logical>) {
     crate::sessionlock::check_alive(state);
     if button != BTN_LEFT || crate::sessionlock::holds_input(state) {
         return;
     }
     state.water_lock_click(pos);
     let should_submit = {
-        let Some(l) = state.lock.active.as_mut() else {
+        let Some(l) = state.lock.on_mut(side) else {
             return;
         };
         let Some(b) = hit(l, pos.x, pos.y) else {
@@ -1179,10 +1298,15 @@ pub fn button(state: &mut State, button: u32, pos: Point<f64, Logical>) {
         submit
     };
     if should_submit {
-        submit(state);
+        submit(state, side);
     } else {
         redraw(state);
     }
+}
+
+/// A seat press while the desktop is locked.
+pub fn desk_button(state: &mut State, button: u32, pos: Point<f64, Logical>) {
+    self::button(state, desk_side(state), button, pos);
 }
 
 /// The pointer moved while locked: to the locker's surface under it, else to no client.
@@ -1254,18 +1378,18 @@ mod tests {
 
     /// Type `password`, submit it and turn the loop until the check ends (or 5 s pass).
     fn check(h: &mut crate::harness::Harness, password: &str) {
-        let l = h.state.lock.active.as_mut().expect("locked");
+        let l = h.state.lock.console.as_mut().expect("locked");
         l.state.input.push_str(password);
-        submit(&mut h.state);
+        submit(&mut h.state, Side::Console);
         let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while (h.state.lock.active.as_ref()).is_some_and(|l| l.state.verifying) {
+        while (h.state.lock.console.as_ref()).is_some_and(|l| l.state.verifying) {
             assert!(std::time::Instant::now() < end, "the check ends");
             h.run_for(5);
         }
     }
 
     fn message(h: &crate::harness::Harness) -> Option<String> {
-        h.state.lock.active.as_ref()?.state.message.clone()
+        h.state.lock.console.as_ref()?.state.message.clone()
     }
 
     #[test]
@@ -1283,7 +1407,7 @@ mod tests {
         let mut h = locked(|_| sh("read p; echo '= 7'"));
         type_text(&mut h.state, "pé");
         type_text(&mut h.state, "\r");
-        let l = h.state.lock.active.as_ref().expect("locked");
+        let l = h.state.lock.console.as_ref().expect("locked");
         assert_eq!(l.state.input, "pé", "control text is dropped");
     }
 
@@ -1306,7 +1430,7 @@ mod tests {
     /// Turn the loop until `done` holds (or 5 s pass).
     fn turn_until(h: &mut crate::harness::Harness, what: &str, done: impl Fn(&Lock) -> bool) {
         let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !h.state.lock.active.as_ref().is_some_and(&done) {
+        while !h.state.lock.console.as_ref().is_some_and(&done) {
             assert!(std::time::Instant::now() < end, "{what}");
             h.run_for(5);
         }
@@ -1319,11 +1443,11 @@ mod tests {
                 r#"read p; echo '?? Verification code:'; read c; [ "$p $c" = "hunter2 123456" ] && echo '= 0' || echo '= 7'"#,
             )
         });
-        let l = h.state.lock.active.as_mut().expect("locked");
+        let l = h.state.lock.console.as_mut().expect("locked");
         l.state.input.push_str("hunter2");
-        submit(&mut h.state);
+        submit(&mut h.state, Side::Console);
         turn_until(&mut h, "the prompt arrives", |l| l.state.prompt.is_some());
-        let l = h.state.lock.active.as_ref().unwrap();
+        let l = h.state.lock.console.as_ref().unwrap();
         assert_eq!(
             l.state.prompt,
             Some(lock::Prompt {
@@ -1345,11 +1469,11 @@ mod tests {
                 "read p; echo 'I Code sent to your phone'; echo '?? Verification code:'; exec sleep 60",
             )
         });
-        let l = h.state.lock.active.as_mut().expect("locked");
+        let l = h.state.lock.console.as_mut().expect("locked");
         l.state.input.push_str("hunter2");
-        submit(&mut h.state);
+        submit(&mut h.state, Side::Console);
         turn_until(&mut h, "the prompt arrives", |l| l.state.prompt.is_some());
-        let l = h.state.lock.active.as_ref().unwrap();
+        let l = h.state.lock.console.as_ref().unwrap();
         assert_eq!(l.state.message.as_deref(), Some("Code sent to your phone"));
         unlock(&mut h.state);
     }
@@ -1357,18 +1481,25 @@ mod tests {
     #[test]
     fn escape_under_a_second_prompt_ends_its_conversation() {
         let mut h = locked(|_| sh("read p; echo '? One-time code:'; exec sleep 60"));
-        let l = h.state.lock.active.as_mut().expect("locked");
+        let l = h.state.lock.console.as_mut().expect("locked");
         l.state.input.push_str("hunter2");
-        submit(&mut h.state);
+        submit(&mut h.state, Side::Console);
         turn_until(&mut h, "the prompt arrives", |l| l.state.prompt.is_some());
-        let l = h.state.lock.active.as_mut().unwrap();
+        let l = h.state.lock.console.as_mut().unwrap();
         l.state.key(LockKey::Escape);
         end_abandoned_prompt(l);
         assert!(l.pending.is_none());
         assert_eq!(l.state.prompt, None);
         check(&mut h, "hunter2");
         assert!(
-            h.state.lock.active.as_ref().unwrap().state.prompt.is_some(),
+            h.state
+                .lock
+                .console
+                .as_ref()
+                .unwrap()
+                .state
+                .prompt
+                .is_some(),
             "the next password starts a new conversation"
         );
     }
@@ -1378,7 +1509,7 @@ mod tests {
         const KEY_CAPSLOCK: u32 = 58;
         let mut h = locked(|_| sh("exit 0"));
         let caps =
-            |h: &crate::harness::Harness| h.state.lock.active.as_ref().unwrap().state.caps_lock;
+            |h: &crate::harness::Harness| h.state.lock.console.as_ref().unwrap().state.caps_lock;
         assert!(!caps(&h));
         h.key(KEY_CAPSLOCK, true);
         h.key(KEY_CAPSLOCK, false);
@@ -1392,7 +1523,7 @@ mod tests {
     fn a_layout_switch_while_locked_redraws_the_badge() {
         let mut h = locked(|_| sh("exit 0"));
         let badge = |h: &crate::harness::Harness| {
-            h.state.lock.active.as_ref().unwrap().state.layout.clone()
+            h.state.lock.console.as_ref().unwrap().state.layout.clone()
         };
         assert_eq!(badge(&h), None, "one layout shows no badge");
         h.state.config.keyboard.layout = "us,hu".into();
@@ -1413,7 +1544,7 @@ mod tests {
         let mut h = locked(|_| sh("exec sleep 60"));
         h.state.lock.helpers.verify_timeout = std::time::Duration::from_millis(100);
         check(&mut h, "hunter2");
-        let l = h.state.lock.active.as_ref().expect("still locked");
+        let l = h.state.lock.console.as_ref().expect("still locked");
         assert!(!l.state.verifying);
         assert!(l.pending.is_none());
         assert_eq!(l.state.message.as_deref(), Some(lock::UNAVAILABLE));
@@ -1424,12 +1555,12 @@ mod tests {
         let _reaping = crate::mutex::lock(&crate::lockfinger::tests::REAPING);
         let mut h = locked(|_| sh("exit 0"));
         h.state.lock.helpers.finger = |_| Some(sh("trap '' INT; echo 'I ready'; exec sleep 60"));
-        let user = h.state.lock.active.as_ref().unwrap().user.clone();
+        let user = h.state.lock.console.as_ref().unwrap().user.clone();
         let finger = start_finger(&h.state, &user).expect("a fingerprint conversation");
         let pid = finger.conversation.pid();
-        h.state.lock.active.as_mut().unwrap().finger = Some(finger);
+        h.state.lock.console.as_mut().unwrap().finger = Some(finger);
         let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while (h.state.lock.active.as_ref()).is_some_and(|l| l.state.finger.is_none()) {
+        while (h.state.lock.console.as_ref()).is_some_and(|l| l.state.finger.is_none()) {
             assert!(std::time::Instant::now() < end, "the child says ready");
             h.run_for(5);
         }
@@ -1452,7 +1583,7 @@ mod tests {
     fn only_the_dialog_runs_the_fingerprint_conversation() {
         let mut h = locked(|_| sh("exit 0"));
         let finger =
-            |h: &crate::harness::Harness| h.state.lock.active.as_ref().unwrap().finger.is_some();
+            |h: &crate::harness::Harness| h.state.lock.console.as_ref().unwrap().finger.is_some();
         assert!(!finger(&h));
         unlock(&mut h.state);
         h.state.lock.helpers.finger = |_| Some(sh("echo 'I ready'; exec sleep 60"));
@@ -1462,7 +1593,7 @@ mod tests {
         assert!(!finger(&h), "a locker's lock starts none");
         drop(c);
         h.run_for(50);
-        assert!(h.state.lock.active.as_ref().unwrap().dialog_shown());
+        assert!(h.state.lock.console.as_ref().unwrap().dialog_shown());
         assert!(
             finger(&h),
             "the dialog that replaces a gone locker starts one"
@@ -1484,14 +1615,14 @@ mod tests {
             STARTS.fetch_add(1, Ordering::SeqCst);
             Some(sh("echo 'E Failed to match fingerprint'; exit 1"))
         };
-        h.state.lock.active.as_mut().unwrap().finger_delay = Duration::from_millis(20);
+        h.state.lock.console.as_mut().unwrap().finger_delay = Duration::from_millis(20);
         start_dialog_finger(&mut h.state);
         let end = Instant::now() + Duration::from_secs(5);
         while STARTS.load(Ordering::SeqCst) < 3 {
             assert!(Instant::now() < end, "the conversation starts again");
             h.run_for(5);
         }
-        let l = h.state.lock.active.as_ref().unwrap();
+        let l = h.state.lock.console.as_ref().unwrap();
         assert_eq!(
             l.state.message.as_deref(),
             Some("Failed to match fingerprint")
@@ -1512,14 +1643,14 @@ mod tests {
             STARTS.fetch_add(1, Ordering::SeqCst);
             Some(sh("exit 1"))
         };
-        h.state.lock.active.as_mut().unwrap().finger_delay = Duration::from_millis(1);
+        h.state.lock.console.as_mut().unwrap().finger_delay = Duration::from_millis(1);
         start_dialog_finger(&mut h.state);
         turn_until(&mut h, "the retries give up", |l| {
             l.finger_lost >= FINGER_LOST_MAX
         });
         h.run_for(200);
         assert_eq!(STARTS.load(Ordering::SeqCst), FINGER_LOST_MAX);
-        let l = h.state.lock.active.as_ref().unwrap();
+        let l = h.state.lock.console.as_ref().unwrap();
         assert!(l.finger.is_none() && l.finger_retry.is_none());
     }
 
@@ -1529,7 +1660,15 @@ mod tests {
         h.state.lock.helpers.finger = |_| Some(sh("echo '= 9'"));
         start_dialog_finger(&mut h.state);
         turn_until(&mut h, "the conversation ends", |l| l.finger.is_none());
-        assert!(h.state.lock.active.as_ref().unwrap().finger_retry.is_none());
+        assert!(
+            h.state
+                .lock
+                .console
+                .as_ref()
+                .unwrap()
+                .finger_retry
+                .is_none()
+        );
     }
 
     #[test]
