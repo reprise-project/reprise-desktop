@@ -105,7 +105,12 @@ enum Cmd {
     DestroyKeys(u32),
     PickColor(u32, async_channel::Sender<Option<u32>>),
     DestroyPick(u32),
-    LockScreen(u32, Vec<u8>, async_channel::Sender<LockEvent>),
+    LockScreen(
+        u32,
+        Vec<u8>,
+        async_channel::Sender<LockEvent>,
+        Arc<AtomicBool>,
+    ),
     SetLayout(u32, Vec<u8>),
     DestroyLockScreen(u32),
 }
@@ -264,9 +269,15 @@ pub struct LockScreenHandle {
     link: Link,
     id: u32,
     events: async_channel::Receiver<LockEvent>,
+    ended: Arc<AtomicBool>,
 }
 
 impl LockScreenHandle {
+    /// Whether the compositor ended lock mode for it.
+    pub fn ended(&self) -> bool {
+        self.ended.load(Ordering::Acquire)
+    }
+
     pub fn set_layout(&self, layout: &[Monitor]) {
         self.link
             .send(Cmd::SetLayout(self.id, layout_bytes(layout)));
@@ -493,11 +504,13 @@ impl Link {
         }
         let id = self.alloc();
         let (tx, rx) = async_channel::unbounded();
-        self.send(Cmd::LockScreen(id, layout_bytes(layout), tx));
+        let ended = Arc::new(AtomicBool::new(false));
+        self.send(Cmd::LockScreen(id, layout_bytes(layout), tx, ended.clone()));
         Some(LockScreenHandle {
             link: self.clone(),
             id,
             events: rx,
+            ended,
         })
     }
 
@@ -691,13 +704,14 @@ impl State {
                     p.destroy();
                 }
             }
-            Cmd::LockScreen(id, layout, events) => {
+            Cmd::LockScreen(id, layout, events, ended) => {
                 let object = self.input.lock_screen(qh, id);
                 object.set_layout(layout);
                 let lock = LockScreen {
                     object,
                     screens: Vec::new(),
                     events,
+                    ended,
                 };
                 self.locks.insert(id, lock);
             }
@@ -719,6 +733,7 @@ struct LockScreen {
     object: RepriseLockScreenV1,
     screens: Vec<String>,
     events: async_channel::Sender<LockEvent>,
+    ended: Arc<AtomicBool>,
 }
 
 fn key_state(pressed: bool) -> KeyState {
@@ -980,6 +995,7 @@ impl Dispatch<RepriseLockScreenV1, u32> for State {
                 let _ = lock.events.try_send(LockEvent::Screens(screens));
             }
             reprise_lock_screen_v1::Event::Ended { reason } => {
+                lock.ended.store(true, Ordering::Release);
                 let _ = lock.events.try_send(LockEvent::Ended(reason));
                 if let Some(l) = state.locks.remove(id) {
                     l.object.destroy();
