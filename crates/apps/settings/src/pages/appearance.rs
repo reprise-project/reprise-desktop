@@ -83,56 +83,56 @@ pub fn fonts_and_icons(
     ));
     items.push(choice("font_smoothing", GX + 88, 198, cw, FONT_SMOOTHINGS));
 
-    items.push(group(a, "icons_group", 236, 48, "Icons"));
-    items.push(Item::label_at("theme_label", GX, 260, 56, "&Theme:"));
+    items.push(group(a, "icons_group", 234, 48, "Icons"));
+    items.push(Item::label_at("theme_label", GX, 258, 56, "&Theme:"));
     items.push(combo(
         "icon_theme",
         GX + 60,
-        256,
+        254,
         a.combo(Area::MIN.gw() - 60),
         icon_themes,
         icon_themes.len().clamp(1, 8),
     ));
 
-    items.push(group(a, "windows_group", 294, 66, "Window Frames"));
+    items.push(group(a, "windows_group", 290, 46, "Window Frames"));
     items.extend(spin(
         "frame_label",
         "frame_width",
         GX,
-        316,
-        110,
+        312,
+        76,
         "Frame &width:",
         (0, 32),
     ));
-    items.push(Item::label_at("frame_units", GX + 170, 316, 20, "px"));
+    items.push(Item::label_at("frame_units", GX + 136, 312, 20, "px"));
     items.extend(spin(
         "caption_label",
         "caption_height",
-        GX,
-        342,
-        110,
+        GX + 164,
+        312,
+        88,
         "Caption &height:",
         (12, 128),
     ));
-    items.push(Item::label_at("caption_units", GX + 170, 342, 20, "px"));
+    items.push(Item::label_at("caption_units", GX + 312, 312, 20, "px"));
 
     let mut gtk: Vec<String> = GTK_FIXED_ROWS
         .iter()
         .map(|(_, row)| row.to_string())
         .collect();
     gtk.extend(gtk_themes.iter().cloned());
-    items.push(group(a, "toolkits_group", 370, 86, "Programs"));
-    items.push(Item::label_at("gtk_label", GX, 394, 84, "GTK th&eme:"));
+    items.push(group(a, "toolkits_group", 344, 86, "Programs"));
+    items.push(Item::label_at("gtk_label", GX, 368, 84, "GTK th&eme:"));
     items.push(combo(
         "gtk_theme",
         GX + 88,
-        390,
+        364,
         cw,
         &gtk,
         gtk.len().clamp(1, 8),
     ));
-    items.push(Item::label_at("qt_label", GX, 420, 84, "&Qt style:"));
-    let mut qt = choice("qt_platform_theme", GX + 88, 416, cw, QT_PLATFORM_THEMES);
+    items.push(Item::label_at("qt_label", GX, 394, 84, "&Qt style:"));
+    let mut qt = choice("qt_platform_theme", GX + 88, 390, cw, QT_PLATFORM_THEMES);
     if let Control::Combo(c) = &mut qt.control
         && let Some(row) = c.items.iter_mut().find(|i| i.text == REPRISE_TOOLKIT_ROW)
     {
@@ -142,12 +142,12 @@ pub fn fonts_and_icons(
     items.push(Item::check(
         "gtk4_colors",
         GX,
-        442,
+        416,
         "GTK&4 and libadwaita in the look's colours",
     ));
     items.push(Item::new(
         "toolkits_note",
-        Rect::new(X, 460, a.w, LINE_H),
+        Rect::new(X, 434, a.w, LINE_H),
         Control::Lines(vec![
             "Qt and GTK4 programs take a new style when they next start.".into(),
         ]),
@@ -191,7 +191,7 @@ pub fn night_light(a: Area) -> Form {
         117,
         27,
         ("Warmer", "Cooler"),
-        GX + 46,
+        GX,
         TrackBar::new(0, KELVIN_STEPS),
     ));
     items.push(group(a, "nl_schedule_group", 156, 104, "Schedule"));

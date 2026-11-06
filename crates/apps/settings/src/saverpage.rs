@@ -1,5 +1,5 @@
-//! The Screen Saver & Lock page: the saver and its wait (`[idle] blank_after`),
-//! then the Lock group, the paired-device lock (`[lock]`) included.
+//! The Screen Saver & Lock page: the saver and its wait (`[idle] blank_after`) beside the
+//! monitor, then the Lock group, the paired-device lock (`[lock]`) included.
 
 use std::path::{Path, PathBuf};
 
@@ -23,9 +23,10 @@ pub const WAIT: &str = "saver_wait";
 pub const AWAY: &str = "away_device";
 pub const AWAY_AFTER: &str = "away_after_s";
 const AWAY_ROWS: usize = 8;
-pub fn monitor_rect(a: Area) -> Rect {
-    Rect::new(X + (a.w - 191) / 2, 44, 191, 168)
-}
+/// The monitor, at the page's left; the saver's controls stand in the column right of it.
+const MONITOR_RECT: Rect = Rect::new(X, 44, 191, 168);
+/// The right column, beside the monitor; 159 px wide at [`Area::MIN`].
+const RX: i32 = X + 199;
 pub const NONE_ROW: &str = "(None)";
 /// Seconds of wait a saver picked over "(None)" starts with.
 pub const WAIT_DEFAULT: i64 = 600;
@@ -34,20 +35,26 @@ pub fn page(a: Area) -> Form {
     let rows: Vec<&str> = std::iter::once(NONE_ROW)
         .chain(Kind::ALL.iter().map(|k| k.label()))
         .collect();
-    let bx = GX + 156;
+    let rw = Area::MIN.right() - RX;
     let mut items = vec![
-        Item::new(MONITOR, monitor_rect(a), Control::Monitor(Screen::Black)),
-        Item::group("saver_group", Rect::new(X, 222, a.w, 84), "Screen saver"),
-        Item::combo(SAVER, GX, 244, 150, &rows, rows.len()),
-        button(SETTINGS, bx, 243, "Se&ttings..."),
-        button(PREVIEW, bx + BUTTON_W + 6, 243, "Pre&view"),
+        Item::new(MONITOR, MONITOR_RECT, Control::Monitor(Screen::Black)),
+        Item::label_at("saver_label", RX, 44, rw, "S&creen saver:"),
+        Item::combo(SAVER, RX, 60, rw, &rows, rows.len()),
+        button(SETTINGS, RX, 89, "Se&ttings..."),
+        button(PREVIEW, RX + rw - BUTTON_W, 89, "Pre&view"),
     ];
-    items.extend(spin("wait_label", WAIT, GX, 282, 40, "&Wait:", (1, 1440)));
-    items.push(Item::label_at("wait_units", GX + 100, 282, 60, "minutes"));
+    items.extend(spin("wait_label", WAIT, RX, 126, 40, "&Wait:", (1, 1440)));
+    items.push(Item::label_at(
+        "wait_units",
+        RX + 100,
+        126,
+        rw - 100,
+        "minutes",
+    ));
 
     items.push(Item::group(
         "lock_group",
-        Rect::new(X, 314, a.w, 160),
+        Rect::new(X, 222, a.w, 160),
         "Lock",
     ));
     let gw = a.gw();
@@ -56,52 +63,52 @@ pub fn page(a: Area) -> Form {
         "lock_label",
         "lock_after",
         GX,
-        336,
+        244,
         114,
         "&Lock after:",
         (0, 99999),
     ));
-    items.push(seconds("lock_units", 336));
+    items.push(seconds("lock_units", 244));
     items.extend(spin(
         "fade_label",
         "lock_fade",
         GX,
-        360,
+        268,
         114,
         "&Fade before lock:",
         (0, 99999),
     ));
-    items.push(seconds("fade_units", 360));
+    items.push(seconds("fade_units", 268));
     items.push(Item::check(
         "lock_on_sleep",
         GX,
-        382,
+        290,
         "Lock the computer when it goes to &sleep",
     ));
     items.push(Item::check(
         "lock_wallpaper",
         GX,
-        404,
+        312,
         "Show the wallpaper on the lock scree&n",
     ));
     items.push(Item::label_at(
         "away_label",
         GX,
-        426,
+        334,
         gw,
         "Lock when this device &disconnects:",
     ));
-    items.push(Item::combo(AWAY, GX, 442, 150, &[NONE_ROW], AWAY_ROWS));
+    items.push(Item::combo(AWAY, GX, 350, 150, &[NONE_ROW], AWAY_ROWS));
     items.extend(spin(
         "away_after_label",
         AWAY_AFTER,
         GX + 160,
-        446,
+        354,
         40,
         "Aft&er:",
         (0, 3600),
     ));
-    items.push(Item::label_at("away_units", GX + 260, 446, 60, "seconds"));
+    items.push(Item::label_at("away_units", GX + 260, 354, 60, "seconds"));
     Form::new(items)
 }
 

@@ -605,6 +605,7 @@ mod tests {
             ),
             (Page::RemoteDesktop, "quality", "Picture quality"),
             (Page::Appearance, "glass_dark_to", "Dark until"),
+            (Page::StartMenu, crate::menupage::TREE, "Start menu"),
         ] {
             let (_, f) = &pages[p.index()];
             let named = control_labels(f).into_iter().find(|(i, _)| *i == id);

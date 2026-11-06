@@ -42,7 +42,7 @@ pub fn advanced(a: Area) -> Form {
     items.push(Item::check(
         "restart_notice",
         X,
-        112,
+        108,
         "Tell me when an &update needs a restart",
     ));
 
@@ -54,30 +54,30 @@ pub fn advanced(a: Area) -> Form {
         ]
     };
     let right = GX + half + 8;
-    items.push(group(a, "turnoff_group", 134, 74, "Turn Off Computer"));
-    items.extend(command("standby_label", "standby", GX, 156, "Stand &by:"));
+    items.push(group(a, "turnoff_group", 130, 74, "Turn Off Computer"));
+    items.extend(command("standby_label", "standby", GX, 152, "Stand &by:"));
     items.extend(command(
         "poweroff_label",
         "poweroff",
         right,
-        156,
+        152,
         "Tur&n off:",
     ));
-    items.extend(command("reboot_label", "reboot", GX, 182, "Rest&art:"));
+    items.extend(command("reboot_label", "reboot", GX, 178, "Rest&art:"));
     items.extend(command(
         "hibernate_label",
         "hibernate",
         right,
-        182,
+        178,
         "&Hibernate:",
     ));
 
-    items.push(group(a, "storage_group", 218, 66, "Low Disk Space"));
+    items.push(group(a, "storage_group", 212, 66, "Low Disk Space"));
     items.extend(spin(
         "low_space_label",
         "low_space_percent",
         GX,
-        240,
+        234,
         114,
         "Warn bel&ow:",
         (0, repriseconf::LOW_SPACE_MAX.into()),
@@ -85,61 +85,61 @@ pub fn advanced(a: Area) -> Form {
     items.push(Item::label_at(
         "low_space_units",
         GX + 174,
-        240,
+        234,
         gw - 174,
         "% free",
     ));
     items.push(Item::label_at(
         "low_space_note",
         GX,
-        260,
+        254,
         gw,
         "For the disks of your home folder and /. 0 turns it off.",
     ));
 
-    items.push(group(a, "thumbs_group", 294, 92, "Thumbnails"));
-    items.push(Item::check(THUMBS, GX, 316, "Keep &thumbnails of pictures"));
+    items.push(group(a, "thumbs_group", 286, 92, "Thumbnails"));
+    items.push(Item::check(THUMBS, GX, 308, "Keep &thumbnails of pictures"));
     let cleared_x = GX + 184;
     items.push(Item::value_at(
         THUMBS_CLEARED,
         cleared_x,
-        316,
+        308,
         a.gright() - cleared_x,
         "",
     ));
-    items.push(button(THUMBS_CLEAR, a.gright() - BUTTON_W, 334, "Clea&r"));
+    items.push(button(THUMBS_CLEAR, a.gright() - BUTTON_W, 326, "Clea&r"));
     let mb = ThumbnailCache::MAX_MB;
     items.extend(
         spin(
             THUMBS_SIZE[0],
             THUMBS_MB,
             GX,
-            340,
+            332,
             40,
             "Si&ze:",
             (*mb.start() as i32, *mb.end() as i32),
         )
         .map(Item::under_check),
     );
-    items.push(Item::label_at(THUMBS_SIZE[2], GX + 98, 340, 20, "MB").under_check());
+    items.push(Item::label_at(THUMBS_SIZE[2], GX + 98, 332, 20, "MB").under_check());
     items.push(Item::check(
         THUMBNAILERS,
         GX,
-        364,
+        356,
         "Ma&ke thumbnails of documents and videos",
     ));
 
     items.push(Item::check(
         DEBUG_OVERLAY,
         X,
-        396,
+        386,
         "Show a &debug overlay (frame rate, render times)",
     ));
     items.push(
         Item::check(
             DEBUG_IN_CAPTURES,
             X,
-            418,
+            404,
             "Show it in screenshots and screen &sharing",
         )
         .under_check(),
@@ -147,7 +147,7 @@ pub fn advanced(a: Area) -> Form {
 
     items.push(Item::new(
         "note",
-        Rect::new(X, 440, a.w - BUTTON_W - 8, 2 * LINE_H),
+        Rect::new(X, 422, a.w - BUTTON_W - 8, 2 * LINE_H),
         Control::Lines(vec![
             "Keys no page sets are edited in".into(),
             "config.toml itself.".into(),
@@ -156,7 +156,7 @@ pub fn advanced(a: Area) -> Form {
     items.push(button(
         EDIT_FILE,
         a.right() - BUTTON_W,
-        440,
+        422,
         "&Edit File...",
     ));
     Form::new(items)
@@ -451,7 +451,6 @@ const LOCK_GRACE_W: i32 = 96;
 /// The Remote Desktop page as `status` and `enabled` (the server's unit) leave it; the host
 /// follows the server with [`show_remote`].
 pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
-    let gw = a.gw();
     let mut items = vec![
         Item::check(
             REMOTE_ALLOW,
@@ -469,37 +468,37 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         .under_check(),
         Item::label_at(REMOTE_STATUS, X, 80, a.w - 18, "").under_check(),
         Item::label_at(ENCODER, X, 96, a.w - 18, "").under_check(),
-        group(a, "connection_group", 120, 229, "Connection"),
     ];
+    // Port shares the fingerprint label's row; the label goes last so it names the field under it.
     items.extend(spin(
         "port_label",
         REMOTE_PORT,
-        GX,
-        144,
-        114,
+        a.right() - 86,
+        120,
+        32,
         "&Port:",
         (1024, 65535),
     ));
     items.push(Item::label_at(
         "fingerprint_label",
-        GX,
-        170,
-        gw,
+        X,
+        120,
+        a.w - 90,
         "&Fingerprint (SHA-256):",
     ));
-    items.push(edit(REMOTE_FINGERPRINT, GX, 186, gw - NEW_CERTIFICATE_W - 6).read_only());
+    items.push(edit(REMOTE_FINGERPRINT, X, 142, a.w - NEW_CERTIFICATE_W - 6).read_only());
     items.push(Item::button_at(
         REMOTE_REGENERATE,
-        a.gright() - NEW_CERTIFICATE_W,
-        184,
+        a.right() - NEW_CERTIFICATE_W,
+        140,
         NEW_CERTIFICATE_W,
         "&New Certificate...",
         true,
     ));
     items.push(Item::label_at(
         "quality_label",
-        GX,
-        216,
+        X,
+        172,
         200,
         "Picture &quality:",
     ));
@@ -513,60 +512,60 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
             QUALITY_VALUE,
         ],
         "Picture quality",
-        243,
+        199,
         27,
         (left, right),
-        GX + 46,
+        X,
         TrackBar::new(1, REMOTE_QUALITIES.len()),
     ));
     items.push(Item::label_at(
         "frame_rate_label",
-        GX,
-        272,
+        X,
+        228,
         114,
         "Frame &rate:",
     ));
     let rates: Vec<&str> = FRAME_RATES.iter().map(|r| r.1).collect();
     items.push(Item::combo(
         REMOTE_FRAME_RATE,
-        GX + 118,
-        268,
+        X + 118,
+        224,
         160,
         &rates,
         rates.len(),
     ));
     items.push(Item::label_at(
         "video_encoder_label",
-        GX,
-        298,
+        X,
+        254,
         114,
         "Video &encoder:",
     ));
     let encoders: Vec<&str> = REMOTE_ENCODERS.iter().map(|e| e.1).collect();
     items.push(Item::combo(
         REMOTE_ENCODER,
-        GX + 118,
-        294,
+        X + 118,
+        250,
         160,
         &encoders,
         encoders.len(),
     ));
     items.push(Item::check(
         REMOTE_SOUND,
-        GX,
-        328,
+        X,
+        280,
         "Play &sound on the remote computer",
     ));
     items.push(Item::label_at(
         "clients_label",
         X,
-        355,
+        302,
         200,
         "Connected computers:",
     ));
     items.push(Item::new(
         CLIENTS,
-        Rect::new(X, 371, a.w - BUTTON_W - 6, 2 * listbox::ROW_H + 4),
+        Rect::new(X, 318, a.w - BUTTON_W - 6, 3 * listbox::ROW_H + 4),
         Control::ListBox {
             list: ListBox::new(Vec::new(), None),
             icons: Vec::new(),
@@ -575,13 +574,13 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(button(
         REMOTE_DISCONNECT,
         a.right() - BUTTON_W,
-        371,
+        318,
         "&Disconnect",
     ));
     items.push(Item::check(
         REMOTE_LOCK_ON_LEAVE,
         X,
-        415,
+        379,
         "&Lock this computer when the last one disconnects",
     ));
     let grace_x = a.right() - LOCK_GRACE_W;
@@ -589,7 +588,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         Item::label_at(
             "lock_grace_label",
             X,
-            436,
+            400,
             grace_x - 6 - X - 18,
             "&Wait before locking on a screen change:",
         )
@@ -599,7 +598,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::combo(
         REMOTE_LOCK_GRACE,
         grace_x,
-        432,
+        396,
         LOCK_GRACE_W,
         &graces,
         graces.len(),
@@ -607,7 +606,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::check(
         REMOTE_BORDER,
         X,
-        458,
+        422,
         "Show a red &border while a remote computer is connected",
     ));
     let mut page = Form::new(items);

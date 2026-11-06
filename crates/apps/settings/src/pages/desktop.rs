@@ -306,14 +306,14 @@ pub fn taskbar(a: Area) -> Form {
     items.push(Item::check(
         "preview_taskbar",
         X,
-        346,
+        344,
         "Show live window &pictures over taskbar buttons",
     ));
     let [fps_label, fps] = spin(
         "fps_label",
         "previews_fps",
         X,
-        366,
+        364,
         110,
         "Re&fresh rate:",
         (1, PREVIEW_FPS_MAX as i32),
@@ -322,30 +322,29 @@ pub fn taskbar(a: Area) -> Form {
     let fps_units = Item::label_at(
         "fps_units",
         X + 170,
-        366,
+        364,
         a.w - 188,
         "times a second, Alt+Tab too",
     );
     items.extend([fps_label, fps, fps_units].map(Item::under_check));
     items.extend([
-        group(a, "start_group", 386, 88, "Start Button"),
         Item::check(
             "start_icon",
-            GX,
-            408,
+            X,
+            386,
             "Show the icon theme's &logo on the Start button",
         ),
-        Item::label_at("orb_glow_label", GX, 434, 110, "Start butto&n glow:"),
+        Item::label_at("orb_glow_label", X, 410, 110, "Start butto&n glow:"),
         Item::new(
             "glass_orb_glow",
-            Rect::new(GX + 114, 428, a.track(150), trackbar::HEIGHT),
+            Rect::new(X + 114, 404, a.track(150), trackbar::HEIGHT),
             Control::TrackBar(TrackBar::new(100, 101).paged(10, 5)),
         ),
         Item::label_at(
             "orb_glow_note",
-            GX,
-            456,
-            a.gw(),
+            X,
+            434,
+            a.w,
             "The glow shows under Glass only.",
         ),
     ]);

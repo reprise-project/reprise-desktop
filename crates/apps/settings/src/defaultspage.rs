@@ -136,7 +136,7 @@ const LABEL_W: i32 = 96;
 const DROP_ROWS: usize = 12;
 
 pub fn list(a: Area) -> Rect {
-    Rect::new(X, 381, a.w, 59 + a.dh)
+    Rect::new(X, 365, a.w, 55 + a.dh)
 }
 pub const COLUMNS: [(&str, i32); 3] = [("Type", 90), ("Description", 140), ("Opens With", 108)];
 const RESTORE_W: i32 = 96;
@@ -233,7 +233,7 @@ pub fn page(a: Area) -> Form {
         y + ROW_STEP,
         "As&k before running a script the first time",
     ));
-    let y = list.y - 22;
+    let y = list.y - 20;
     items.push(Item::label_at("dp_types_label", X, y, 120, "File types:"));
     let fw = a.combo(150);
     items.push(Item::label_at(
@@ -1085,10 +1085,10 @@ pub(crate) mod tests {
         assert_eq!(at(SCRIPT_END_LABEL), Rect::new(20, 301, 140, 13));
         assert_eq!(at(SCRIPT_END), Rect::new(164, 297, 214, 21));
         assert_eq!(at(CONFIRM_SCRIPTS), Rect::new(20, 324, 13, 13));
-        assert_eq!(at("dp_types_label"), Rect::new(20, 359, 120, 13));
-        assert_eq!(at(FILTER), Rect::new(228, 355, 150, 20));
-        assert_eq!(at(CHANGE), Rect::new(201, 446, 75, 23));
-        assert_eq!(at(RESTORE), Rect::new(282, 446, 96, 23));
+        assert_eq!(at("dp_types_label"), Rect::new(20, 345, 120, 13));
+        assert_eq!(at(FILTER), Rect::new(228, 341, 150, 20));
+        assert_eq!(at(CHANGE), Rect::new(201, 426, 75, 23));
+        assert_eq!(at(RESTORE), Rect::new(282, 426, 96, 23));
         assert_eq!(
             at(RESTORE).right(),
             list(Area::MIN).right(),
@@ -1152,7 +1152,7 @@ pub(crate) mod tests {
     fn the_page_draws_the_list_under_a_dropped_combo() {
         let cs = reprisekit::theme::Theme::default().colors;
         let (c, list, terminal) = drawn(false);
-        assert_eq!((list.x, list.y), (166, 381));
+        assert_eq!((list.x, list.y), (166, 365));
         let header = (list.x + 80, list.y + 6);
         let row = |r: i32| list.y + 2 + 17 + 17 * r + 8;
         let lit = |c: &reprisekit::raster::Canvas, y| {
