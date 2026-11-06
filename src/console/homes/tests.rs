@@ -320,6 +320,34 @@ fn a_remote_screen_going_away_keeps_its_maximized_window_on_the_remote_side_and_
 }
 
 #[test]
+fn lock_mode_keeps_the_last_session_and_writes_no_open_here_rule() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    h.state.config.session.restore = true;
+    h.state.app_index = vec![
+        reprisefs::apps::parse_desktop(
+            "[Desktop Entry]\nType=Application\nName=app\nExec=app\n",
+            "app.desktop",
+        )
+        .expect("an entry"),
+    ];
+    let _s = begin(&mut h, &[(0, 0, 1920, 1080, 100)]);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "app", 400, 300);
+    crate::session::save(&mut h.state);
+    assert!(
+        h.state.session.apps.is_empty(),
+        "{:?}",
+        h.state.session.apps
+    );
+    h.state.toggle_open_here(t.id);
+    assert!(!crate::windowrules::has_open_here(
+        &h.state.config.window_rules,
+        "app"
+    ));
+}
+
+#[test]
 fn new_windows_in_lock_mode_open_on_a_remote_screen() {
     let mut h = Harness::new();
     h.output("eDP-1", 1920, 1080);
