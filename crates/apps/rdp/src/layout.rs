@@ -40,6 +40,15 @@ pub enum Kind {
     Scaled,
 }
 
+/// Which client monitor each screen of a Paired layout takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pairing {
+    /// Screens in position order take the monitors primary first, then top then left.
+    ByPlace,
+    /// Screen `i` takes the `i`-th monitor primary first, as lock mode makes its screens.
+    InOrder,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
     pub kind: Kind,
@@ -54,9 +63,14 @@ pub struct Layout {
 }
 
 impl Layout {
+    #[cfg(test)]
+    pub fn new(screens: &[ScreenRect], client: &[Monitor]) -> Layout {
+        Layout::paired(screens, client, Pairing::ByPlace)
+    }
+
     /// Whole without usable client monitors or with one, Paired when every screen gets a
     /// monitor, else Scaled; a Whole box past [`DESKTOP_SIDES`] is Scaled to fit.
-    pub fn new(screens: &[ScreenRect], client: &[Monitor]) -> Layout {
+    pub fn paired(screens: &[ScreenRect], client: &[Monitor], pairing: Pairing) -> Layout {
         let order = order(screens);
         let pixels = screens.iter().map(|s| s.pixels).collect();
         let whole = whole(screens, &order);
@@ -75,12 +89,20 @@ impl Layout {
         };
         let monitors = client.to_vec();
         if monitors.len() >= screens.len() {
-            let mut by_place: Vec<&Monitor> = moved.iter().collect();
-            by_place.sort_by_key(|m| (!m.flags.contains(MonitorFlags::PRIMARY), m.top, m.left));
-            let placed = order
-                .iter()
-                .zip(by_place)
-                .map(|(&i, m)| Placed {
+            let primary = |m: &Monitor| m.flags.contains(MonitorFlags::PRIMARY);
+            let mut sorted: Vec<&Monitor> = moved.iter().collect();
+            let placed = match pairing {
+                Pairing::ByPlace => {
+                    sorted.sort_by_key(|m| (!primary(m), m.top, m.left));
+                    order.iter().copied().zip(sorted).collect::<Vec<_>>()
+                }
+                Pairing::InOrder => {
+                    sorted.sort_by_key(|m| !primary(m));
+                    order.iter().map(|&i| (i, sorted[i])).collect()
+                }
+            };
+            let placed = (placed.into_iter())
+                .map(|(i, m)| Placed {
                     screen: i,
                     target: fit(screens[i].pixels, m),
                 })
@@ -306,6 +328,7 @@ pub struct Desk {
     screens: Vec<ScreenRect>,
     /// Empty when they cannot be used.
     client: Vec<Monitor>,
+    pairing: Pairing,
     /// The client is sent bitmaps: [`Layout::bitmaps`] from then on.
     bitmaps: bool,
     layout: Layout,
@@ -316,22 +339,22 @@ pub type SharedDesk = Arc<Mutex<Desk>>;
 
 impl Desk {
     /// Logs why when `client`'s monitors cannot be used.
-    pub fn new(screens: Vec<ScreenRect>, client: &[Monitor]) -> Desk {
-        let client = match of_client(client) {
-            Ok(Some(_)) => client.to_vec(),
-            Ok(None) => Vec::new(),
-            Err(why) => {
-                log::warn!("client monitors ignored: {why}");
-                Vec::new()
-            }
-        };
-        let layout = Layout::new(&screens, &client);
+    pub fn new(screens: Vec<ScreenRect>, client: &[Monitor], pairing: Pairing) -> Desk {
+        let client = kept(client);
+        let layout = Layout::paired(&screens, &client, pairing);
         Desk {
             screens,
             client,
+            pairing,
             bitmaps: false,
             layout,
         }
+    }
+
+    /// The client's monitors are `client` now; true if the layout changed.
+    pub fn set_client(&mut self, client: &[Monitor]) -> bool {
+        self.client = kept(client);
+        self.relayout()
     }
 
     pub fn layout(&self) -> &Layout {
@@ -357,11 +380,23 @@ impl Desk {
     fn relayout(&mut self) -> bool {
         let layout = match self.bitmaps {
             true => Layout::bitmaps(&self.screens),
-            false => Layout::new(&self.screens, &self.client),
+            false => Layout::paired(&self.screens, &self.client, self.pairing),
         };
         let changed = layout != self.layout;
         self.layout = layout;
         changed
+    }
+}
+
+/// `client`, or none when they cannot be used, logging why.
+fn kept(client: &[Monitor]) -> Vec<Monitor> {
+    match of_client(client) {
+        Ok(Some(_)) => client.to_vec(),
+        Ok(None) => Vec::new(),
+        Err(why) => {
+            log::warn!("client monitors ignored: {why}");
+            Vec::new()
+        }
     }
 }
 
@@ -638,7 +673,11 @@ mod tests {
             monitor(0, 0, 1919, 1079, true),
             monitor(1920, 0, 3839, 1079, true),
         ];
-        let mut desk = Desk::new(vec![screen(0, 0, 1920, 1080)], &two_primaries);
+        let mut desk = Desk::new(
+            vec![screen(0, 0, 1920, 1080)],
+            &two_primaries,
+            Pairing::ByPlace,
+        );
         assert!(desk.resized(0, (3840, 2160)));
         assert!(
             !desk.resized(0, (3840, 2160)),
@@ -662,6 +701,7 @@ mod tests {
                 monitor(0, 0, 2559, 1439, true),
                 monitor(2560, 0, 4479, 1079, false),
             ],
+            Pairing::ByPlace,
         );
         assert_eq!(desk.layout().kind, Kind::Paired);
         assert!(desk.resized(1, (3840, 2160)));
@@ -673,6 +713,56 @@ mod tests {
         assert!(!desk.whole(), "already whole");
         assert!(desk.resized(1, (1920, 1080)));
         assert_eq!(desk.layout().kind, Kind::Whole, "it stays whole");
+    }
+
+    #[test]
+    fn screens_in_order_pair_with_the_monitors_primary_first_whatever_their_place() {
+        let screens = [screen(2944, 0, 1280, 720), screen(1920, 0, 1024, 768)];
+        let client = [
+            monitor(0, 0, 1279, 719, true),
+            monitor(-1024, 0, -1, 767, false),
+        ];
+        let layout = Layout::paired(&screens, &client, Pairing::InOrder);
+        assert_eq!(layout.kind, Kind::Paired);
+        assert_eq!(layout.desktop, (2304, 768));
+        assert_eq!(
+            layout.target(0),
+            Some(rect(1024, 0, 1280, 720)),
+            "screen 0 fills the primary 1:1"
+        );
+        assert_eq!(
+            layout.target(1),
+            Some(rect(0, 0, 1024, 768)),
+            "screen 1 fills the monitor left of it 1:1"
+        );
+        assert_eq!(layout.to_screen((300, 600)), Some((1, (300, 600))));
+    }
+
+    #[test]
+    fn a_desk_given_new_client_monitors_spans_them() {
+        let mut desk = Desk::new(
+            vec![screen(0, 0, 1280, 720), screen(1280, 0, 1024, 768)],
+            &[
+                monitor(0, 0, 1279, 719, true),
+                monitor(1280, 0, 2303, 767, false),
+            ],
+            Pairing::InOrder,
+        );
+        assert_eq!(desk.layout().desktop, (2304, 768));
+        let resized = [
+            monitor(0, 0, 1279, 719, true),
+            monitor(1280, 0, 2879, 899, false),
+        ];
+        assert!(desk.set_client(&resized));
+        assert!(
+            !desk.set_client(&resized),
+            "the same monitors change nothing"
+        );
+        assert!(desk.resized(1, (1600, 900)));
+        let layout = desk.layout();
+        assert_eq!(layout.desktop, (2880, 900));
+        assert_eq!(layout.monitors, resized);
+        assert_eq!(layout.target(1), Some(rect(1280, 0, 1600, 900)));
     }
 
     #[test]
@@ -845,6 +935,7 @@ mod tests {
                 screen(7680, 0, 3840, 2160),
             ],
             &[],
+            Pairing::ByPlace,
         );
         assert_eq!(desk.layout().kind, Kind::Scaled);
         assert!(desk.whole());
