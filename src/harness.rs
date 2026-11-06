@@ -66,6 +66,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 use crate::{
     compositor::{ClientState, Host, State},
     config::Config,
+    inputproto::InputSource,
     window::WindowId,
 };
 
@@ -224,9 +225,11 @@ impl Harness {
         output
     }
 
-    /// Move the pointer to (`x`, `y`) and run the hover work its settle timer would.
+    /// Move the computer's pointer to (`x`, `y`) and run the hover work its settle timer would.
     pub fn pointer_to(&mut self, x: f64, y: f64) {
-        self.state.pointer_to(Point::from((x, y)), InputTime::now());
+        self.from(InputSource::Physical, |s| {
+            s.pointer_to(Point::from((x, y)), InputTime::now())
+        });
         self.state.settle_pointer();
         self.dispatch();
     }
@@ -237,8 +240,41 @@ impl Harness {
         } else {
             ButtonState::Released
         };
-        self.state.handle_button(button, s, InputTime::now());
+        self.from(InputSource::Physical, |st| {
+            st.handle_button(button, s, InputTime::now())
+        });
         self.dispatch();
+    }
+
+    /// Handle what `f` does as input from `source`, then turn the loop.
+    pub fn from<R>(&mut self, source: InputSource, f: impl FnOnce(&mut State) -> R) -> R {
+        let r = self.state.with_source(source, f);
+        self.dispatch();
+        r
+    }
+
+    /// Key `code` (an evdev code) down or up from the remote side.
+    pub fn remote_key(&mut self, code: u32, pressed: bool) {
+        self.from(InputSource::Remote, |s| {
+            s.handle_key((code + 8).into(), pressed, InputTime::now())
+        });
+    }
+
+    /// The remote side's pointer to (`x`, `y`), its hover work run.
+    pub fn remote_pointer_to(&mut self, x: f64, y: f64) {
+        self.from(InputSource::Remote, |s| {
+            s.pointer_to(Point::from((x, y)), InputTime::now());
+            s.settle_pointer();
+        });
+    }
+
+    pub fn remote_click(&mut self, x: f64, y: f64) {
+        self.remote_pointer_to(x, y);
+        for s in [ButtonState::Pressed, ButtonState::Released] {
+            self.from(InputSource::Remote, |st| {
+                st.handle_button(LEFT, s, InputTime::now())
+            });
+        }
     }
 
     pub fn click(&mut self, x: f64, y: f64) {
@@ -249,9 +285,9 @@ impl Harness {
 
     /// Key `code` (an evdev code) down or up on the seat's keyboard.
     pub fn key(&mut self, code: u32, pressed: bool) {
-        self.state
-            .handle_key((code + 8).into(), pressed, InputTime::now());
-        self.dispatch();
+        self.from(InputSource::Physical, |s| {
+            s.handle_key((code + 8).into(), pressed, InputTime::now())
+        });
     }
 
     /// A client on one end of a socket pair, its registry read.
@@ -1140,6 +1176,8 @@ pub struct ClientSide {
     /// The surface the keyboard last entered and has not left.
     pub keyboard_focus: Option<WlSurface>,
     enter_serial: u32,
+    /// The keys array of the last `wl_keyboard.enter`.
+    pub enter_keys: Vec<u8>,
     /// The seat's keymap as the keyboard got it: the file and its size.
     keymap: Option<(std::os::fd::OwnedFd, u32)>,
     im_manager: Option<ZwpInputMethodManagerV2>,
@@ -1348,8 +1386,11 @@ impl wc::Dispatch<wl_keyboard::WlKeyboard, ()> for ClientSide {
                 st.key_log.push(KeyHeard::Key(key, down));
             }
             wl_keyboard::Event::Enter {
-                serial, surface, ..
+                serial,
+                surface,
+                keys,
             } => {
+                st.enter_keys = keys;
                 st.enter_serial = serial;
                 st.keyboard_focus = Some(surface);
             }

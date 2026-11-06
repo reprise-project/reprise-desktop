@@ -119,7 +119,8 @@ pub(super) fn render(state: &mut State, head: Head) {
     advance(state, &output);
     let border = crate::captureborder::elements(state, &output);
     let (fade, fade_next) = crate::sessionfade::element(state, &output);
-    let pointer = state.pointer_location();
+    let (pointer, own) =
+        crate::console::pointer::drawn_on(state, &output, state.pointer_location());
     let focus = state.magnifier_focus(&output);
     let State {
         backend,
@@ -134,7 +135,7 @@ pub(super) fn render(state: &mut State, head: Head) {
         magnifier,
         ..
     } = state;
-    let cursor = crate::saverview::cursor(saver, cursor);
+    let cursor = crate::saverview::cursor(saver, own_cursor(own, cursor));
     let Some(b) = backend.as_mut() else {
         return;
     };
@@ -317,6 +318,18 @@ fn release_timed(state: &mut State, head: Head, output: &Output) {
 
 /// A frame asked for by pointer motion alone (`Ask::Pointer`): when the last
 /// frame put the pointer on its own plane, move the plane and queue that.
+/// The cursor an output draws: the computer's own on a Console output in lock mode.
+fn own_cursor(
+    own: bool,
+    seat: &smithay::input::pointer::CursorImageStatus,
+) -> &smithay::input::pointer::CursorImageStatus {
+    if own {
+        &crate::console::pointer::CURSOR
+    } else {
+        seat
+    }
+}
+
 /// Some(whether a frame was queued); None when the frame must be drawn normally.
 pub(super) fn pointer_frame(
     state: &mut State,
@@ -324,7 +337,7 @@ pub(super) fn pointer_frame(
     output: &Output,
     started: std::time::Instant,
 ) -> Option<bool> {
-    let pointer = state.pointer_location();
+    let (pointer, own) = crate::console::pointer::drawn_on(state, output, state.pointer_location());
     let State {
         backend,
         scene,
@@ -334,7 +347,7 @@ pub(super) fn pointer_frame(
         magnifier,
         ..
     } = state;
-    let cursor = crate::saverview::cursor(saver, cursor);
+    let cursor = crate::saverview::cursor(saver, own_cursor(own, cursor));
     let b = backend.as_mut()?;
     let s = b.surfaces.get_mut(&head)?;
     if magnifier.zooms(output) || s.callback_timer.is_some() || s.scene_seen != scene.changes() {

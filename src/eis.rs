@@ -19,11 +19,12 @@ use smithay::{
         generic::Generic,
         timer::{TimeoutAction, Timer},
     },
-    utils::{Logical, Point},
+    utils::{Logical, Point, Rectangle},
 };
 
 use crate::compositor::State;
 use crate::inputcapture::CaptureId;
+use crate::inputproto::InputSource;
 use crate::keyroute::KeyRoute;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -405,14 +406,14 @@ impl State {
         let buttons = std::mem::take(&mut c.pressed_buttons);
         let keys = std::mem::take(&mut c.pressed_keys);
         let time = InputTime::now();
-        let was = std::mem::replace(&mut self.inputproto.injecting, true);
-        for b in buttons {
-            self.handle_button(b, ButtonState::Released, time);
-        }
-        for k in keys {
-            self.handle_key(evdev_key(k), false, time);
-        }
-        self.inputproto.injecting = was;
+        self.with_source(InputSource::Remote, |s| {
+            for b in buttons {
+                s.handle_button(b, ButtonState::Released, time);
+            }
+            for k in keys {
+                s.handle_key(evdev_key(k), false, time);
+            }
+        });
     }
 
     fn eis_service(&mut self, id: EisId) {
@@ -568,8 +569,8 @@ impl State {
         }
     }
 
-    /// `injecting` is set throughout: a RemoteDesktop sender drives this desktop,
-    /// so it reaches local clients even while an InputCapture holds the devices.
+    /// The source is Remote throughout: a RemoteDesktop sender drives this desktop, so it
+    /// reaches local clients even while an InputCapture holds the devices.
     fn eis_inject(&mut self, id: EisId, r: EisRequest) {
         let Some(c) = self.inputproto.eis.get(id) else {
             return;
@@ -578,10 +579,10 @@ impl State {
             log::debug!("eis: receiver sent {r:?}");
             return;
         }
-        crate::idle::notify_activity(self);
-        let was = std::mem::replace(&mut self.inputproto.injecting, true);
-        self.eis_inject_inner(id, r);
-        self.inputproto.injecting = was;
+        self.with_source(InputSource::Remote, |s| {
+            crate::idle::notify_activity(s);
+            s.eis_inject_inner(id, r);
+        });
     }
 
     fn eis_inject_inner(&mut self, id: EisId, r: EisRequest) {
@@ -767,33 +768,7 @@ impl State {
             )
         });
         let pointer_abs = plan.pointer_abs.map(|abs| {
-            let outputs: Vec<(
-                String,
-                smithay::utils::Rectangle<i32, smithay::utils::Logical>,
-                f32,
-            )> = self
-                .scene
-                .outputs()
-                .iter()
-                .filter_map(|o| {
-                    let r = reprisescene::output_rect(o)?;
-                    let scale = o.current_scale().fractional_scale() as f32;
-                    Some((o.name(), r, scale))
-                })
-                .filter(|(name, r, _)| {
-                    // libei regions are unsigned, and ScreenCast streams share these
-                    // mapping ids: an output at a negative coordinate gets no region.
-                    if r.loc.x < 0 || r.loc.y < 0 {
-                        log::warn!(
-                            "eis: output {name} at ({}, {}) has no region",
-                            r.loc.x,
-                            r.loc.y
-                        );
-                        return false;
-                    }
-                    r.size.w > 0 && r.size.h > 0
-                })
-                .collect();
+            let outputs = self.eis_regions();
             seat.add_device(
                 Some("Reprise absolute pointer"),
                 eis::device::DeviceType::Virtual,
@@ -853,6 +828,34 @@ impl State {
         bytes.push(0);
         let fd = sealed_memfd(&bytes)?;
         Some((fd, bytes.len() as u32))
+    }
+
+    /// The outputs an absolute pointer maps to, with their boxes and scales: the desktop side's
+    /// (`console::on_desk`).
+    pub(crate) fn eis_regions(&self) -> Vec<(String, Rectangle<i32, Logical>, f32)> {
+        self.scene
+            .outputs()
+            .iter()
+            .filter(|o| crate::console::on_desk(self, o))
+            .filter_map(|o| {
+                let r = reprisescene::output_rect(o)?;
+                let scale = o.current_scale().fractional_scale() as f32;
+                Some((o.name(), r, scale))
+            })
+            .filter(|(name, r, _)| {
+                // libei regions are unsigned, and ScreenCast streams share these
+                // mapping ids: an output at a negative coordinate gets no region.
+                if r.loc.x < 0 || r.loc.y < 0 {
+                    log::warn!(
+                        "eis: output {name} at ({}, {}) has no region",
+                        r.loc.x,
+                        r.loc.y
+                    );
+                    return false;
+                }
+                r.size.w > 0 && r.size.h > 0
+            })
+            .collect()
     }
 
     /// libei sends a keymap and regions once, at device creation, so a keymap or

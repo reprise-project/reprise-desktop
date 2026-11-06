@@ -6,6 +6,7 @@ use smithay::input::keyboard::{Keycode, xkb};
 
 use crate::compositor::State;
 use crate::eis::{KEYS, evdev_key, track};
+use crate::inputproto::InputSource;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeysId(u64);
@@ -95,10 +96,10 @@ impl State {
     /// One key through the physical keyboard's path, past an InputCapture
     /// as a libei sender's keys go.
     fn keys_inject(&mut self, code: u32, pressed: bool) {
-        crate::idle::notify_activity(self);
-        let was = std::mem::replace(&mut self.inputproto.injecting, true);
-        self.handle_key(evdev_key(code), pressed, InputTime::now());
-        self.inputproto.injecting = was;
+        self.with_source(InputSource::Remote, |s| {
+            crate::idle::notify_activity(s);
+            s.handle_key(evdev_key(code), pressed, InputTime::now());
+        });
     }
 
     fn keycode_for_sym(&mut self, sym: u32) -> Option<u32> {

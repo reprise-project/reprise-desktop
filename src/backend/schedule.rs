@@ -211,6 +211,7 @@ fn arm_frame(state: &mut State, head: Head, output: &Output, fires: std::time::I
 pub fn schedule_pointer(state: &mut State, pointer: Point<f64, Logical>) {
     let outputs: Vec<Output> = state.scene.outputs().to_vec();
     for o in &outputs {
+        let (pointer, _) = crate::console::pointer::drawn_on(state, o, pointer);
         let shown = match screen_of(o) {
             Some(Screen::Monitor(head)) => (state.backend.as_ref())
                 .and_then(|b| b.surfaces.get(&head))

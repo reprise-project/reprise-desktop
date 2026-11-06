@@ -23,6 +23,7 @@ use smithay::{
 use crate::{
     compositor::{DeskScene, State},
     config::OutputMode,
+    console::Side,
     raster::{Canvas, Rect},
     window::WindowId,
 };
@@ -786,6 +787,15 @@ impl State {
             .any(|o| self.layout_box(Some(o)).contains(x, y))
     }
 
+    /// The box of the desktop's outputs (`console::on_desk`).
+    pub fn desk_box(&self) -> Rect {
+        (self.scene.outputs().iter())
+            .filter(|o| crate::console::on_desk(self, o))
+            .map(|o| self.layout_box(Some(o)))
+            .reduce(|a, b| a.union(&b))
+            .unwrap_or_default()
+    }
+
     /// Box of one output in layout coordinates, or of the whole layout for None.
     pub fn layout_box(&self, output: Option<&Output>) -> Rect {
         let rect = match output {
@@ -802,13 +812,24 @@ impl State {
         })
     }
 
-    /// The pointer's position held on the outputs: itself on one, else the
-    /// nearest point of any (a 1x1 box at 0,0 with none).
+    /// The seat pointer's position held on the desktop's outputs (`console::on_desk`): itself on
+    /// one, else the nearest point of any (a 1x1 box at 0,0 with none).
     pub fn clamp_to_layout(&self, pos: Point<f64, Logical>) -> Point<f64, Logical> {
-        let rects: Vec<Rect> = self
-            .scene
-            .outputs()
-            .iter()
+        self.clamp_to_outputs(pos, |o| crate::console::on_desk(self, o))
+    }
+
+    /// [`State::clamp_to_layout`] on `side`'s outputs.
+    pub fn clamp_to_side(&self, pos: Point<f64, Logical>, side: Side) -> Point<f64, Logical> {
+        self.clamp_to_outputs(pos, |o| crate::console::side_of(o) == side)
+    }
+
+    fn clamp_to_outputs(
+        &self,
+        pos: Point<f64, Logical>,
+        take: impl Fn(&Output) -> bool,
+    ) -> Point<f64, Logical> {
+        let rects: Vec<Rect> = (self.scene.outputs().iter())
+            .filter(|o| take(o))
             .map(|o| self.layout_box(Some(o)))
             .collect();
         closest_point(&rects, (pos.x, pos.y)).map_or_else(
