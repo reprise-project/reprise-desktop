@@ -10,7 +10,7 @@ use smithay::{
             RegistrationToken,
             timer::{TimeoutAction, Timer},
         },
-        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback::Kind,
+        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback::Kind as Feedback,
         wayland_server::backend::GlobalId,
     },
     utils::{Monotonic, Transform},
@@ -33,14 +33,24 @@ pub struct Spec {
     pub position: (i32, i32),
 }
 
+/// What a virtual screen is for: the standby holding the desktop with no monitor, or one of the
+/// screens a remote client works on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Standby,
+    Remote,
+}
+
 #[derive(Default)]
 pub struct VirtualOutputs {
     screens: Vec<Screen>,
-    made: u32,
+    standbys_made: u32,
+    remotes_made: u32,
 }
 
 struct Screen {
     output: Output,
+    kind: Kind,
     global: GlobalId,
     wants: Option<Wants>,
     /// The clock's deadline, armed while something waits for a frame.
@@ -82,8 +92,8 @@ pub fn next_tick(last: Option<Instant>, interval: Duration, now: Instant) -> Ins
 }
 
 /// A new virtual screen named `name` at `spec`, its global made and put in the scene; the caller
-/// lays out.
-pub fn create(state: &mut State, name: &str, spec: Spec) -> Output {
+/// lays out. A Remote screen's position is its place in the remote block (`output::place_block`).
+pub fn create(state: &mut State, name: &str, spec: Spec, kind: Kind) -> Output {
     let output = Output::new(
         name.into(),
         PhysicalProperties {
@@ -106,11 +116,17 @@ pub fn create(state: &mut State, name: &str, spec: Spec) -> Output {
         Some(spec.position.into()),
     );
     crate::backend::mark_virtual(&output);
+    output.user_data().insert_if_missing(|| kind);
     crate::output::set_placement(&output, Some(spec.position.into()));
     let global = output.create_global::<State>(&state.dh);
-    state.virtual_outputs.made += 1;
-    state.virtual_outputs.screens.push(Screen {
+    let v = &mut state.virtual_outputs;
+    match kind {
+        Kind::Standby => v.standbys_made += 1,
+        Kind::Remote => v.remotes_made += 1,
+    }
+    v.screens.push(Screen {
         output: output.clone(),
+        kind,
         global,
         wants: Some(Wants::Frame),
         timer: None,
@@ -119,7 +135,7 @@ pub fn create(state: &mut State, name: &str, spec: Spec) -> Output {
     });
     state.scene.add_output(&output);
     log::info!(
-        "output {name}: virtual, {}x{}@{:.3} scale {} at {:?}",
+        "output {name}: virtual {kind:?}, {}x{}@{:.3} scale {} at {:?}",
         spec.size.0,
         spec.size.1,
         f64::from(spec.refresh) / 1000.0,
@@ -130,9 +146,70 @@ pub fn create(state: &mut State, name: &str, spec: Spec) -> Output {
     output
 }
 
-/// A name no virtual screen made this session had: `HEADLESS-1`, `HEADLESS-2`, ...
-pub fn next_name(state: &State) -> String {
-    format!("HEADLESS-{}", state.virtual_outputs.made + 1)
+/// A name no virtual screen of `kind` made this session had: `HEADLESS-1`, `HEADLESS-2`, ... for
+/// the standby, `REMOTE-1`, ... for remote screens.
+pub fn next_name(state: &State, kind: Kind) -> String {
+    let v = &state.virtual_outputs;
+    match kind {
+        Kind::Standby => format!("HEADLESS-{}", v.standbys_made + 1),
+        Kind::Remote => format!("REMOTE-{}", v.remotes_made + 1),
+    }
+}
+
+/// Run virtual `output` at `size` and `scale`, as a monitor's mode change does; the caller lays
+/// out once for a batch.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "lock mode resizes the remote screens to follow its client"
+    )
+)]
+pub fn resize(state: &mut State, output: &Output, size: (i32, i32), scale: f64) {
+    if screen_mut(state, output).is_none() {
+        return;
+    }
+    let old = output.current_mode();
+    let mode = Mode {
+        size: size.into(),
+        refresh: old.map_or(60_000, |m| m.refresh),
+    };
+    if let Some(old) = old.filter(|&m| m != mode) {
+        output.delete_mode(old);
+    }
+    output.set_preferred(mode);
+    output.change_current_state(Some(mode), None, Some(Scale::Fractional(scale)), None);
+    log::info!(
+        "output {}: virtual, now {}x{} scale {scale}",
+        output.name(),
+        size.0,
+        size.1
+    );
+    crate::capture::constraints_changed(state, output);
+    want_tick(state, output, Wants::Frame);
+}
+
+/// The remote screens, in the order they were made.
+pub fn remote_outputs(state: &State) -> Vec<Output> {
+    (state.virtual_outputs.screens.iter())
+        .filter(|s| s.kind == Kind::Remote)
+        .map(|s| s.output.clone())
+        .collect()
+}
+
+/// Where the remote block starts: the rightmost right edge of the other outputs, at y 0.
+pub fn remote_origin(state: &State) -> (i32, i32) {
+    let right = (state.scene.outputs().iter())
+        .filter(|o| !is_remote(o))
+        .filter_map(reprisescene::output_rect)
+        .map(|r| r.loc.x + r.size.w)
+        .max();
+    (right.unwrap_or(0), 0)
+}
+
+/// Whether `output` is a remote screen.
+pub fn is_remote(output: &Output) -> bool {
+    output.user_data().get::<Kind>() == Some(&Kind::Remote)
 }
 
 /// Take `output` out of the scene, stop its clock and captures and retire its global; the caller
@@ -256,7 +333,7 @@ fn frame(state: &mut State, output: &Output) {
     (state.scene).update_surfaces(&pass, &states);
     let mut feedback = state.scene.take_presentation_feedback(&pass, &states);
     let refresh = interval(captured, state.config.remote_desktop.frame_rate);
-    feedback.presented::<_, Monotonic>(shows_at, Refresh::fixed(refresh), 0, Kind::empty());
+    feedback.presented::<_, Monotonic>(shows_at, Refresh::fixed(refresh), 0, Feedback::empty());
     crate::sessionlock::rendered(state, output, true, false);
     crate::sessionlock::presented(state, output);
     crate::power::rendered(state, output, true, false);
@@ -273,6 +350,84 @@ fn frame(state: &mut State, output: &Output) {
 mod tests {
     use super::*;
     use crate::harness::{Harness, Presented};
+
+    fn remote(h: &mut Harness, size: (i32, i32), scale: f64, at: (i32, i32)) -> Output {
+        let spec = Spec {
+            size,
+            refresh: 60_000,
+            scale,
+            transform: Transform::Normal,
+            position: at,
+        };
+        let name = next_name(&h.state, Kind::Remote);
+        let o = create(&mut h.state, &name, spec, Kind::Remote);
+        h.state.update_layout();
+        h.dispatch();
+        o
+    }
+
+    fn names(h: &Harness) -> Vec<String> {
+        h.state.scene.outputs().iter().map(|o| o.name()).collect()
+    }
+
+    #[test]
+    fn a_remote_output_resizes_and_tells_its_captures() {
+        let mut h = Harness::new();
+        let o = remote(&mut h, (1920, 1080), 1.0, (0, 0));
+        let mut client = h.connect_capture((1920, 1080));
+        let _session = client.ext_session(&mut h);
+        assert_eq!(client.buffer_sizes(), [(1920, 1080)]);
+        resize(&mut h.state, &o, (2560, 1440), 1.5);
+        h.state.update_layout();
+        client.roundtrip(&mut h);
+        assert_eq!(o.current_mode().map(|m| m.size), Some((2560, 1440).into()));
+        assert_eq!(o.current_scale().fractional_scale(), 1.5);
+        assert_eq!(o.modes().len(), 1, "a resized screen lists its one mode");
+        assert_eq!(
+            client.buffer_sizes().last(),
+            Some(&(2560, 1440)),
+            "the capture gets a 2560x1440 buffer"
+        );
+    }
+
+    #[test]
+    fn remote_outputs_are_named_apart_from_the_standby() {
+        let mut h = Harness::new();
+        crate::standby::rdp_changed(&mut h.state, true);
+        h.dispatch();
+        remote(&mut h, (1920, 1080), 1.0, (0, 0));
+        remote(&mut h, (1920, 1080), 1.0, (1920, 0));
+        assert_eq!(names(&h), ["HEADLESS-1", "REMOTE-1", "REMOTE-2"]);
+        assert_eq!(next_name(&h.state, Kind::Standby), "HEADLESS-2");
+        let remotes = remote_outputs(&h.state);
+        assert_eq!(remotes.len(), 2);
+        assert!(remotes.iter().all(is_remote));
+        assert!(!is_remote(&h.state.scene.outputs()[0]), "the standby");
+    }
+
+    #[test]
+    fn no_standby_while_remote_outputs_hold_the_desktop() {
+        let mut h = Harness::new();
+        let dp = h.output("DP-1", 1920, 1080);
+        crate::standby::rdp_changed(&mut h.state, true);
+        h.dispatch();
+        remote(&mut h, (1920, 1080), 1.0, (0, 0));
+        h.state.scene.remove_output(&dp);
+        h.state.output_removed(&dp);
+        h.dispatch();
+        assert_eq!(names(&h), ["REMOTE-1"]);
+    }
+
+    #[test]
+    fn remote_outputs_sit_right_of_the_physical_layout() {
+        let mut h = Harness::new();
+        let dp = h.output("DP-1", 1920, 1080);
+        let left = remote(&mut h, (1280, 1024), 1.0, (-1280, 0));
+        let right = remote(&mut h, (1280, 1024), 1.0, (0, 0));
+        assert_eq!(dp.current_location(), (0, 0).into(), "DP-1 stays put");
+        assert_eq!(left.current_location(), (1920, 0).into());
+        assert_eq!(right.current_location(), (3200, 0).into());
+    }
 
     #[test]
     fn a_standby_frame_presents_the_commit_at_its_interval() {
