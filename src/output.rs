@@ -410,6 +410,7 @@ impl State {
             || output.current_scale().fractional_scale() != scale.fractional_scale()
         {
             output.change_current_state(None, Some(req.transform), Some(scale), None);
+            crate::capture::constraints_changed(self, output);
         }
         let at = req.position.or_else(|| self.back_place(output));
         set_placement(output, at.map(Point::from));
@@ -504,6 +505,7 @@ impl State {
                 let t = transform(self.config.transform_for_output_name(&name));
                 if t != output.current_transform() {
                     output.change_current_state(None, Some(t), None, None);
+                    crate::capture::constraints_changed(self, &output);
                     geometry_changed = true;
                 }
             }

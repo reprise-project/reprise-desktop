@@ -16,7 +16,7 @@ use wayland_protocols::ext::{
     image_copy_capture::v1::client::{
         ext_image_copy_capture_frame_v1::ExtImageCopyCaptureFrameV1,
         ext_image_copy_capture_manager_v1::{ExtImageCopyCaptureManagerV1, Options},
-        ext_image_copy_capture_session_v1::ExtImageCopyCaptureSessionV1,
+        ext_image_copy_capture_session_v1::{self, ExtImageCopyCaptureSessionV1},
     },
 };
 use wayland_protocols_wlr::screencopy::v1::client::{
@@ -31,6 +31,8 @@ use crate::compositor::ClientState;
 #[derive(Default)]
 struct Side {
     globals: Vec<(u32, String, u32)>,
+    /// Every ext session `buffer_size`, oldest first.
+    buffer_sizes: Vec<(u32, u32)>,
 }
 
 pub struct CaptureClient {
@@ -187,6 +189,11 @@ impl CaptureClient {
         self.roundtrip(h);
     }
 
+    /// The buffer sizes the ext sessions were told, oldest first.
+    pub fn buffer_sizes(&self) -> &[(u32, u32)] {
+        &self.side.buffer_sizes
+    }
+
     pub fn ext_end(&mut self, h: &mut Harness, mut s: ExtSession) {
         if let Some(f) = s.frame.take() {
             f.destroy();
@@ -226,5 +233,19 @@ wc::delegate_noop!(Side: ignore ZwlrScreencopyFrameV1);
 wc::delegate_noop!(Side: ignore ExtOutputImageCaptureSourceManagerV1);
 wc::delegate_noop!(Side: ignore ExtImageCaptureSourceV1);
 wc::delegate_noop!(Side: ignore ExtImageCopyCaptureManagerV1);
-wc::delegate_noop!(Side: ignore ExtImageCopyCaptureSessionV1);
 wc::delegate_noop!(Side: ignore ExtImageCopyCaptureFrameV1);
+
+impl wc::Dispatch<ExtImageCopyCaptureSessionV1, ()> for Side {
+    fn event(
+        st: &mut Self,
+        _: &ExtImageCopyCaptureSessionV1,
+        ev: ext_image_copy_capture_session_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &wc::QueueHandle<Self>,
+    ) {
+        if let ext_image_copy_capture_session_v1::Event::BufferSize { width, height } = ev {
+            st.buffer_sizes.push((width, height));
+        }
+    }
+}
