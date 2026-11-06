@@ -1041,6 +1041,52 @@ fn a_maximized_window_hidden_while_its_output_shrinks_restores_to_a_frame_that_f
 }
 
 #[test]
+fn undocking_rescues_a_window_whose_centre_was_on_the_gone_screen() {
+    let mut h = crate::harness::Harness::new();
+    let a = h.output("A-1", 1920, 1080);
+    let b = h.output("B-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 1000, 400);
+    h.state.move_to(t.id, 1910, 300);
+    h.roundtrip(&mut c);
+    h.state.scene.remove_output(&b);
+    h.state.output_removed(&b);
+    h.roundtrip(&mut c);
+    let r = h.state.win(t.id).unwrap().frame_rect();
+    let area = h.state.layout_box(Some(&a));
+    assert!(
+        area.contains(r.x + r.width / 2, r.y + r.height / 2),
+        "the frame {r:?} is centred on A-1's {area:?}"
+    );
+}
+
+#[test]
+fn a_maximized_window_on_a_shrunk_rightmost_screen_stays_on_it() {
+    use smithay::output::Mode;
+    let mut h = crate::harness::Harness::new();
+    h.output("A-1", 1920, 1080);
+    let b = h.output("B-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let bb = h.state.layout_box(Some(&b));
+    h.state.move_to(t.id, bb.x + 100, bb.y + 100);
+    h.state.set_maximized(t.id, true);
+    h.roundtrip(&mut c);
+    let mode = Mode {
+        size: (960, 1080).into(),
+        refresh: 60_000,
+    };
+    b.change_current_state(Some(mode), None, None, None);
+    h.state.update_layout();
+    h.roundtrip(&mut c);
+    assert_eq!(
+        h.state.win(t.id).unwrap().frame_rect(),
+        h.state.usable_area(Some(&b)),
+        "the window fills B-1's work area"
+    );
+}
+
+#[test]
 fn a_maximized_window_that_hides_and_shows_again_comes_back_maximized() {
     let mut h = forgetful();
     let mut c = h.connect();
