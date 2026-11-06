@@ -241,9 +241,9 @@ impl RdpServerDisplay for Display {
                     screen.size.1
                 );
             }
+            let fds = remotes(&mut grant)?;
             let gone = gone_with_all(self.ending.clone(), grant.screens.len());
             let mut streams = Vec::new();
-            let fds = grant.take_pipewire_fds();
             for (screen, fd) in grant.screens.iter().zip(fds) {
                 let (stream, frames, sizes) =
                     stream::spawn(fd, screen.node, &[DRM_FORMAT_MOD_LINEAR], gone.clone())
@@ -313,6 +313,16 @@ impl RdpServerDisplay for Display {
             slot: self.live.clone(),
         }))
     }
+}
+
+/// Each of `grant`'s screens' PipeWire remote, one per screen.
+fn remotes(grant: &mut Grant) -> ServerResult<Vec<std::os::fd::OwnedFd>> {
+    let fds = grant.take_pipewire_fds();
+    if fds.len() != grant.screens.len() {
+        let counts = format!("{} remotes for {} screens", fds.len(), grant.screens.len());
+        return Err(unshared("the screen streams did not start", counts));
+    }
+    Ok(fds)
 }
 
 /// The error a display that cannot share the screen ends with: the client is told the display
