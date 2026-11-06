@@ -2,6 +2,7 @@
 //! monitor, or all scaled into the client's monitors together.
 
 use ironrdp_pdu::gcc::{MONITOR_COUNT_MAX, Monitor, MonitorFlags};
+use std::sync::{Arc, Mutex};
 
 /// The smallest and largest desktop side a client is offered: the acceptor's own bounds, inside
 /// ResetGraphics' 32766.
@@ -43,7 +44,8 @@ pub enum Kind {
 pub struct Layout {
     pub kind: Kind,
     pub desktop: (u16, u16),
-    /// The monitors ResetGraphics lists.
+    /// The monitors ResetGraphics lists, relative to the primary's top left as the client sent
+    /// them (MS-RDPBCGR 2.2.1.3.6.1); `placed` targets are relative to the desktop's.
     pub monitors: Vec<Monitor>,
     /// In screen order: by logical position, top then left.
     pub placed: Vec<Placed>,
@@ -59,11 +61,7 @@ impl Layout {
         order.sort_by_key(|&i| (screens[i].position.1, screens[i].position.0));
         let pixels = screens.iter().map(|s| s.pixels).collect();
         let whole = whole(screens, &order);
-        let client = of_client(client)
-            .inspect_err(|why| log::warn!("client monitors ignored: {why}"))
-            .ok()
-            .flatten();
-        let Some((desktop, monitors)) = client else {
+        let Some((desktop, moved)) = of_client(client).ok().flatten() else {
             return Layout {
                 kind: Kind::Whole,
                 desktop: clamp16(whole.size),
@@ -72,8 +70,9 @@ impl Layout {
                 pixels,
             };
         };
+        let monitors = client.to_vec();
         if monitors.len() >= screens.len() {
-            let mut by_place: Vec<&Monitor> = monitors.iter().collect();
+            let mut by_place: Vec<&Monitor> = moved.iter().collect();
             by_place.sort_by_key(|m| (!m.flags.contains(MonitorFlags::PRIMARY), m.top, m.left));
             let placed = order
                 .iter()
@@ -125,13 +124,20 @@ impl Layout {
         ))
     }
 
+    /// The stream size of `screen`.
+    pub fn pixels(&self, screen: usize) -> Option<(u32, u32)> {
+        self.pixels.get(screen).copied()
+    }
+
+    /// Where `screen` is drawn on the client desktop.
+    pub fn target(&self, screen: usize) -> Option<Rect16> {
+        let placed = self.placed.iter().find(|p| p.screen == screen)?;
+        Some(placed.target)
+    }
+
     /// The client point showing stream pixel `p` of `screen`.
     pub fn to_client(&self, screen: usize, p: (u32, u32)) -> Option<(u16, u16)> {
-        let t = self
-            .placed
-            .iter()
-            .find(|placed| placed.screen == screen)?
-            .target;
+        let t = self.target(screen)?;
         let pixels = self.pixels[screen];
         if p.0 >= pixels.0 || p.1 >= pixels.1 {
             return None;
@@ -252,6 +258,64 @@ fn whole(screens: &[ScreenRect], order: &[usize]) -> Whole {
 /// The desktop `client`'s monitors span when they give Paired or Scaled, whatever the screens.
 pub fn client_desktop(client: &[Monitor]) -> Option<(u16, u16)> {
     of_client(client).ok().flatten().map(|(desktop, _)| desktop)
+}
+
+/// A connection's shared screens and its client's monitors, and the layout they give now.
+#[derive(Debug)]
+pub struct Desk {
+    screens: Vec<ScreenRect>,
+    /// Empty when they cannot be used or the connection went [`Kind::Whole`].
+    client: Vec<Monitor>,
+    layout: Layout,
+}
+
+/// The [`Desk`] a connection's screens and its input share.
+pub type SharedDesk = Arc<Mutex<Desk>>;
+
+impl Desk {
+    /// Logs why when `client`'s monitors cannot be used.
+    pub fn new(screens: Vec<ScreenRect>, client: &[Monitor]) -> Desk {
+        let client = match of_client(client) {
+            Ok(Some(_)) => client.to_vec(),
+            Ok(None) => Vec::new(),
+            Err(why) => {
+                log::warn!("client monitors ignored: {why}");
+                Vec::new()
+            }
+        };
+        let layout = Layout::new(&screens, &client);
+        Desk {
+            screens,
+            client,
+            layout,
+        }
+    }
+
+    pub fn layout(&self) -> &Layout {
+        &self.layout
+    }
+
+    /// `screen` streams `pixels` now; true if the layout changed.
+    pub fn resized(&mut self, screen: usize, pixels: (u32, u32)) -> bool {
+        match self.screens.get_mut(screen) {
+            Some(s) if s.pixels != pixels => s.pixels = pixels,
+            _ => return false,
+        }
+        self.relayout()
+    }
+
+    /// Every screen at its offset, unscaled, from now on; true if the layout changed.
+    pub fn whole(&mut self) -> bool {
+        self.client.clear();
+        self.relayout()
+    }
+
+    fn relayout(&mut self) -> bool {
+        let layout = Layout::new(&self.screens, &self.client);
+        let changed = layout != self.layout;
+        self.layout = layout;
+        changed
+    }
 }
 
 /// A client's desktop size and its monitors moved so their box starts at (0, 0).
@@ -486,9 +550,10 @@ mod tests {
         assert_eq!(
             layout.monitors,
             vec![
-                monitor(0, 0, 1919, 1079, false),
-                monitor(1920, 0, 3839, 1079, true),
-            ]
+                monitor(-1920, 0, -1, 1079, false),
+                monitor(0, 0, 1919, 1079, true),
+            ],
+            "the reset lists the monitors relative to the primary"
         );
         assert_eq!(targets(&layout), vec![(0, rect(1920, 0, 1920, 1080))]);
     }
@@ -509,6 +574,50 @@ mod tests {
             assert_eq!(client_desktop(client), None);
         }
         assert_eq!(client_desktop(&widest), Some((8192, 1152)));
+    }
+
+    #[test]
+    fn unusable_client_monitors_are_logged_once_per_desk() {
+        crate::listen::tests::capture_log();
+        let two_primaries = [
+            monitor(0, 0, 1919, 1079, true),
+            monitor(1920, 0, 3839, 1079, true),
+        ];
+        let mut desk = Desk::new(vec![screen(0, 0, 1920, 1080)], &two_primaries);
+        assert!(desk.resized(0, (3840, 2160)));
+        assert!(
+            !desk.resized(0, (3840, 2160)),
+            "the same size changes nothing"
+        );
+        assert!(desk.resized(0, (1920, 1080)));
+        assert_eq!(desk.layout().kind, Kind::Whole);
+        assert_eq!(
+            crate::listen::tests::times_logged(
+                "client monitors ignored: not exactly one primary monitor"
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn a_desk_follows_its_screens_and_goes_whole() {
+        let mut desk = Desk::new(
+            vec![screen(0, 0, 1920, 1200), screen(1920, 0, 1920, 1080)],
+            &[
+                monitor(0, 0, 2559, 1439, true),
+                monitor(2560, 0, 4479, 1079, false),
+            ],
+        );
+        assert_eq!(desk.layout().kind, Kind::Paired);
+        assert!(desk.resized(1, (3840, 2160)));
+        assert_eq!(desk.layout().target(1), Some(rect(2560, 0, 1920, 1080)));
+        assert_eq!(desk.layout().pixels(1), Some((3840, 2160)));
+        assert!(desk.whole());
+        assert_eq!(desk.layout().kind, Kind::Whole);
+        assert_eq!(desk.layout().desktop, (7680, 2160));
+        assert!(!desk.whole(), "already whole");
+        assert!(desk.resized(1, (1920, 1080)));
+        assert_eq!(desk.layout().kind, Kind::Whole, "it stays whole");
     }
 
     #[test]

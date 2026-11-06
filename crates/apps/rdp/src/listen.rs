@@ -57,7 +57,7 @@ impl Ending {
         self.0.store(true, Ordering::Release);
     }
 
-    fn end(&self) -> End {
+    pub(crate) fn end(&self) -> End {
         if self.0.load(Ordering::Acquire) {
             End::ScreenGone
         } else {

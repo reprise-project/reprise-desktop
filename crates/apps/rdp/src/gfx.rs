@@ -1,10 +1,10 @@
 //! One connection's graphics pipeline channel (MS-RDPEGFX), which carries the H.264 frames: one
-//! surface the size of the picture, mapped at the origin.
+//! surface per shared screen, the size of its target and mapped at it.
 
+use crate::layout::{Layout, Rect16};
 use crate::stream::Rect;
 use ironrdp_egfx::pdu::{Avc420Region, CapabilitiesAdvertisePdu, CapabilitySet};
 use ironrdp_egfx::server::{GraphicsPipelineHandler, GraphicsPipelineServer};
-use ironrdp_pdu::gcc::{Monitor, MonitorFlags};
 use ironrdp_server::{
     EgfxServerMessage, GfxContext, GfxDvcBridge, GfxServerFactory, GfxServerHandle, ServerEvent,
     ServerEventSender,
@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 use tokio::sync::mpsc::UnboundedSender;
 
-/// Frames sent and not yet acknowledged before the display waits.
+/// Frames per surface sent and not yet acknowledged before the display waits.
 const MAX_IN_FLIGHT: u32 = 3;
 /// How long after the channel is offered a resize waits for the client to open it: the
 /// reactivation drops the client's channel replies, which leaves the connection on bitmaps.
@@ -30,19 +30,19 @@ pub struct Gfx {
 }
 
 pub enum Prepared {
-    /// The surface takes the frame; a `new` one needs a whole picture. `avc444` when the
-    /// client takes AVC444 too.
+    /// The screen's surface takes the frame; a `new` one needs a whole picture. `avc444` when
+    /// the client takes AVC444 too.
     Ready { new: bool, avc444: bool },
     /// The client is frames behind; try again later.
     Behind,
-    /// The client takes no AVC420 (yet).
+    /// The client takes no AVC420 (yet), or the screen has no place in the layout.
     Unavailable,
 }
 
 struct Link {
     server: Option<GfxServerHandle>,
     events: Option<UnboundedSender<ServerEvent>>,
-    surface: Option<(u16, (u32, u32))>,
+    surfaces: Option<Surfaces>,
     start: Instant,
     /// When the channel was offered to the client.
     offered: Option<tokio::time::Instant>,
@@ -53,7 +53,7 @@ impl Default for Link {
         Link {
             server: None,
             events: None,
-            surface: None,
+            surfaces: None,
             start: Instant::now(),
             offered: None,
         }
@@ -74,7 +74,7 @@ impl Gfx {
         let server = Arc::new(Mutex::new(server));
         let mut link = self.link.lock().unwrap();
         link.server = Some(server.clone());
-        link.surface = None;
+        link.surfaces = None;
         link.offered = Some(tokio::time::Instant::now());
         (GfxDvcBridge::new(server.clone()), server)
     }
@@ -98,8 +98,9 @@ impl Gfx {
         let _ = tokio::time::timeout_at(at + NEGOTIATION, self.ready.notified()).await;
     }
 
-    /// Ready the surface for an H.264 frame of `size`.
-    pub fn prepare(&self, size: (u32, u32)) -> Prepared {
+    /// Ready `screen`'s surface for an H.264 frame at its target in `layout`. A desktop or
+    /// monitors other than the surfaces' reset the client's graphics first.
+    pub fn prepare(&self, layout: &Layout, screen: usize) -> Prepared {
         let mut link = self.link.lock().unwrap();
         let Some(server) = link.server.clone() else {
             return Prepared::Unavailable;
@@ -108,37 +109,59 @@ impl Gfx {
         if !s.is_ready() || !s.supports_avc420() {
             return Prepared::Unavailable;
         }
-        if link.surface.is_some_and(|(_, at)| at == size) {
-            return match s.should_backpressure() {
-                true => Prepared::Behind,
-                false => Prepared::Ready {
-                    new: false,
-                    avc444: s.supports_avc444(),
-                },
-            };
+        let Some(target) = layout.target(screen).filter(|t| t.w > 0 && t.h > 0) else {
+            return Prepared::Unavailable;
+        };
+        let reset = (link.surfaces.as_ref())
+            .is_none_or(|u| (u.desktop, &u.monitors) != (layout.desktop, &layout.monitors));
+        if reset {
+            let (w, h) = layout.desktop;
+            s.resize_with_monitors(w, h, layout.monitors.clone());
+            let surfaces = layout.placed.len().max(1) as u32;
+            s.set_max_frames_in_flight(MAX_IN_FLIGHT * surfaces);
+            link.surfaces = Some(Surfaces {
+                desktop: layout.desktop,
+                monitors: layout.monitors.clone(),
+                made: Vec::new(),
+            });
         }
-        let (Ok(w), Ok(h)) = (u16::try_from(size.0), u16::try_from(size.1)) else {
-            return Prepared::Unavailable;
+        let made = &mut link.surfaces.as_mut().expect("set above").made;
+        let at = match made.iter().position(|m| m.screen == screen) {
+            Some(at) => at,
+            None => {
+                made.push(Surface { screen, made: None });
+                made.len() - 1
+            }
         };
-        link.surface = None;
-        s.resize_with_monitors(w, h, monitors(w, h));
-        let Some(id) = s.create_surface(w, h) else {
-            return Prepared::Unavailable;
+        let new = match made[at].made {
+            Some((_, was)) if was == target => false,
+            old => {
+                if let Some((id, _)) = old {
+                    s.delete_surface(id);
+                }
+                made[at].made = s.create_surface(target.w, target.h).map(|id| (id, target));
+                let Some((id, _)) = made[at].made else {
+                    flush(&link, &mut s);
+                    return Prepared::Unavailable;
+                };
+                s.map_surface_to_output(id, target.x.into(), target.y.into());
+                true
+            }
         };
-        s.map_surface_to_output(id, 0, 0);
-        link.surface = Some((id, size));
         flush(&link, &mut s);
-        Prepared::Ready {
-            new: true,
-            avc444: s.supports_avc444(),
+        let avc444 = s.supports_avc444();
+        match new {
+            true => Prepared::Ready { new, avc444 },
+            false if s.should_backpressure() => Prepared::Behind,
+            false => Prepared::Ready { new, avc444 },
         }
     }
 
-    /// Send coded `video` that changes `regions` of the surface; false if the channel would not
-    /// take it.
-    pub fn send(&self, video: Video<'_>, regions: &[Rect], qp: u8) -> bool {
+    /// Send coded `video` that changes `regions` of `screen`'s surface; false if the channel
+    /// would not take it.
+    pub fn send(&self, screen: usize, video: Video<'_>, regions: &[Rect], qp: u8) -> bool {
         let link = self.link.lock().unwrap();
-        let (Some(server), Some((surface_id, _))) = (link.server.clone(), link.surface) else {
+        let (Some(server), Some(surface_id)) = (link.server.clone(), link.surface(screen)) else {
             return false;
         };
         let mut s = server.lock().unwrap();
@@ -157,15 +180,40 @@ impl Gfx {
         queued.is_ok() && flush(&link, &mut s)
     }
 
-    /// Delete the surface, so the bitmap updates show again.
-    pub fn close(&self) {
+    /// Delete `screen`'s surface, so the bitmap updates show there again.
+    pub fn close(&self, screen: usize) {
         let mut link = self.link.lock().unwrap();
-        let (Some(server), Some((id, _))) = (link.server.clone(), link.surface.take()) else {
+        let server = link.server.clone();
+        let surface = (link.surfaces.as_mut())
+            .and_then(|u| u.made.iter_mut().find(|m| m.screen == screen))
+            .and_then(|m| m.made.take());
+        let (Some(server), Some((id, _))) = (server, surface) else {
             return;
         };
         let mut s = server.lock().unwrap();
         s.delete_surface(id);
         flush(&link, &mut s);
+    }
+}
+
+/// The client's graphics as last reset, and the surfaces made since.
+struct Surfaces {
+    desktop: (u16, u16),
+    monitors: Vec<ironrdp_pdu::gcc::Monitor>,
+    made: Vec<Surface>,
+}
+
+/// `screen`'s surface id and the target it was made for; None until made, and once closed.
+struct Surface {
+    screen: usize,
+    made: Option<(u16, Rect16)>,
+}
+
+impl Link {
+    fn surface(&self, screen: usize) -> Option<u16> {
+        let surfaces = self.surfaces.as_ref()?;
+        let surface = surfaces.made.iter().find(|m| m.screen == screen)?;
+        surface.made.map(|(id, _)| id)
     }
 }
 
@@ -219,18 +267,6 @@ fn flush(link: &Link, server: &mut GraphicsPipelineServer) -> bool {
     }
 }
 
-/// The one monitor ResetGraphics lists: the whole picture, primary. Clients refuse a reset
-/// without monitors.
-fn monitors(w: u16, h: u16) -> Vec<Monitor> {
-    vec![Monitor {
-        left: 0,
-        top: 0,
-        right: i32::from(w) - 1,
-        bottom: i32::from(h) - 1,
-        flags: MonitorFlags::PRIMARY,
-    }]
-}
-
 struct Factory(Gfx);
 
 impl ServerEventSender for Factory {
@@ -262,17 +298,30 @@ impl GraphicsPipelineHandler for Handler {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use ironrdp_dvc::DvcProcessor;
     use ironrdp_egfx::pdu::{
         CapabilitiesV81Flags, Codec1Type, FrameAcknowledgePdu, GfxPdu, QueueDepth,
         WireToSurface1Pdu, encode_avc420_bitmap_stream,
     };
+    use ironrdp_pdu::gcc::{Monitor, MonitorFlags};
     use ironrdp_pdu::geometry::ExclusiveRectangle;
     use tokio::sync::mpsc::UnboundedReceiver;
 
     const AU: &[u8] = &[0, 0, 0, 1, 0x65];
+
+    /// The layout of one `size` screen and no client monitors.
+    fn one(size: (u32, u32)) -> Layout {
+        Layout::new(
+            &[crate::layout::ScreenRect {
+                position: (0, 0),
+                logical: size,
+                pixels: size,
+            }],
+            &[],
+        )
+    }
 
     /// A pipeline the client opened with `caps`, and the events its PDUs go out on.
     fn opened_with(caps: CapabilitySet) -> (Gfx, GfxServerHandle, UnboundedReceiver<ServerEvent>) {
@@ -311,7 +360,7 @@ mod tests {
     }
 
     /// The graphics PDUs the connection was handed so far.
-    fn sent(events: &mut UnboundedReceiver<ServerEvent>) -> Vec<GfxPdu> {
+    pub(crate) fn sent(events: &mut UnboundedReceiver<ServerEvent>) -> Vec<GfxPdu> {
         use ironrdp_dvc::pdu::{DrdynvcDataPdu, DrdynvcServerPdu};
         let mut zgfx = ironrdp_graphics::zgfx::Decompressor::new();
         let mut pdus = Vec::new();
@@ -347,27 +396,36 @@ mod tests {
     fn three_frames_the_client_has_not_acknowledged_hold_the_next() {
         let (gfx, server, mut events) = opened();
         assert!(matches!(
-            gfx.prepare((64, 64)),
+            gfx.prepare(&one((64, 64)), 0),
             Prepared::Ready { new: true, .. }
         ));
         let whole = [Rect::full((64, 64))];
         for _ in 0..3 {
-            assert!(gfx.send(Video::Avc420(AU), &whole, 22));
+            assert!(gfx.send(0, Video::Avc420(AU), &whole, 22));
         }
-        assert!(matches!(gfx.prepare((64, 64)), Prepared::Behind));
+        assert!(matches!(gfx.prepare(&one((64, 64)), 0), Prepared::Behind));
         let ids = frame_ids(&sent(&mut events));
         assert_eq!(ids.len(), 3);
         acknowledge(&server, ids[0], 1);
         assert!(
-            matches!(gfx.prepare((64, 64)), Prepared::Ready { new: false, .. }),
+            matches!(
+                gfx.prepare(&one((64, 64)), 0),
+                Prepared::Ready { new: false, .. }
+            ),
             "an acknowledgement frees a place"
         );
     }
 
     #[test]
     fn the_reset_lists_the_picture_as_one_primary_monitor() {
+        let (gfx, _server, mut events) = opened();
+        gfx.prepare(&one((1920, 1080)), 0);
+        let [GfxPdu::ResetGraphics(reset), ..] = &sent(&mut events)[..] else {
+            panic!("the first PDU is a reset");
+        };
+        assert_eq!((reset.width, reset.height), (1920, 1080));
         assert_eq!(
-            monitors(1920, 1080),
+            reset.monitors,
             vec![Monitor {
                 left: 0,
                 top: 0,
@@ -375,6 +433,151 @@ mod tests {
                 bottom: 1079,
                 flags: MonitorFlags::PRIMARY,
             }]
+        );
+    }
+
+    fn screen(x: i32, y: i32, w: u32, h: u32) -> crate::layout::ScreenRect {
+        crate::layout::ScreenRect {
+            position: (x, y),
+            logical: (w, h),
+            pixels: (w, h),
+        }
+    }
+
+    fn monitor(left: i32, right: i32, bottom: i32, primary: bool) -> Monitor {
+        let flags = match primary {
+            true => MonitorFlags::PRIMARY,
+            false => MonitorFlags::empty(),
+        };
+        Monitor {
+            left,
+            top: 0,
+            right,
+            bottom,
+            flags,
+        }
+    }
+
+    /// The reset, then each surface made as (id, width, height) with where it is mapped.
+    type Made = (u32, u32, Vec<Monitor>, Vec<((u16, u16, u16), (u32, u32))>);
+
+    fn made(pdus: &[GfxPdu]) -> Made {
+        let mut resets = pdus.iter().filter_map(|pdu| match pdu {
+            GfxPdu::ResetGraphics(r) => Some(r),
+            _ => None,
+        });
+        let reset = resets.next().expect("a reset");
+        assert!(resets.next().is_none(), "one reset");
+        let mut surfaces = Vec::new();
+        for pair in pdus.windows(2) {
+            if let [GfxPdu::CreateSurface(c), GfxPdu::MapSurfaceToOutput(m)] = pair {
+                assert_eq!(c.surface_id, m.surface_id);
+                surfaces.push((
+                    (c.surface_id, c.width, c.height),
+                    (m.output_origin_x, m.output_origin_y),
+                ));
+            }
+        }
+        (reset.width, reset.height, reset.monitors.clone(), surfaces)
+    }
+
+    #[test]
+    fn two_screens_open_two_surfaces_mapped_at_their_targets() {
+        let (gfx, _server, mut events) = opened();
+        let client = [
+            monitor(0, 2559, 1439, true),
+            monitor(2560, 4479, 1079, false),
+        ];
+        let layout = Layout::new(
+            &[screen(0, 0, 1920, 1200), screen(1920, 0, 1920, 1080)],
+            &client,
+        );
+        for screen in [0, 1] {
+            assert!(
+                matches!(
+                    gfx.prepare(&layout, screen),
+                    Prepared::Ready { new: true, .. }
+                ),
+                "screen {screen} gets a new surface"
+            );
+        }
+        assert!(matches!(
+            gfx.prepare(&layout, 0),
+            Prepared::Ready { new: false, .. }
+        ));
+        assert_eq!(
+            made(&sent(&mut events)),
+            (
+                4480,
+                1440,
+                client.to_vec(),
+                vec![((0, 2304, 1440), (128, 0)), ((1, 1920, 1080), (2560, 0))]
+            )
+        );
+        let whole = [Rect::full((1920, 1080))];
+        assert!(gfx.send(1, Video::Avc420(AU), &whole, 22));
+        assert_eq!(last_frame(&sent(&mut events)).surface_id, 1);
+    }
+
+    #[test]
+    fn a_secondary_at_negative_x_is_reset_where_the_client_has_it_and_mapped_in_the_desktop() {
+        let (gfx, _server, mut events) = opened();
+        let client = [
+            monitor(-1920, -1, 1079, false),
+            monitor(0, 2559, 1439, true),
+        ];
+        let layout = Layout::new(
+            &[screen(0, 0, 1920, 1200), screen(1920, 0, 1920, 1080)],
+            &client,
+        );
+        gfx.prepare(&layout, 0);
+        gfx.prepare(&layout, 1);
+        assert_eq!(
+            made(&sent(&mut events)),
+            (
+                4480,
+                1440,
+                client.to_vec(),
+                vec![((0, 2304, 1440), (2048, 0)), ((1, 1920, 1080), (0, 0))]
+            ),
+            "the monitors as the client sent them, the surfaces from the desktop's top left"
+        );
+    }
+
+    #[test]
+    fn a_moved_target_makes_only_its_own_surface_again() {
+        let (gfx, _server, mut events) = opened();
+        let client = [
+            monitor(0, 1919, 1079, true),
+            monitor(1920, 3839, 1079, false),
+        ];
+        let screens = [screen(0, 0, 1920, 1080), screen(1920, 0, 1920, 1080)];
+        let before = Layout::new(&screens, &client);
+        gfx.prepare(&before, 0);
+        gfx.prepare(&before, 1);
+        sent(&mut events);
+        let after = Layout::new(&[screens[0], screen(1920, 0, 1920, 1200)], &client);
+        assert!(matches!(
+            gfx.prepare(&after, 0),
+            Prepared::Ready { new: false, .. }
+        ));
+        assert!(matches!(
+            gfx.prepare(&after, 1),
+            Prepared::Ready { new: true, .. }
+        ));
+        let pdus = sent(&mut events);
+        assert!(
+            matches!(
+                &pdus[..],
+                [
+                    GfxPdu::DeleteSurface(d),
+                    GfxPdu::CreateSurface(c),
+                    GfxPdu::MapSurfaceToOutput(m),
+                ] if d.surface_id == 1
+                    && (c.surface_id, c.width, c.height) == (2, 1728, 1080)
+                    && (m.output_origin_x, m.output_origin_y) == (1920 + 96, 0)
+            ),
+            "{pdus:?}"
         );
     }
 
@@ -396,14 +599,14 @@ mod tests {
     #[test]
     fn a_one_pixel_column_has_exclusive_edges() {
         let (gfx, _server, mut events) = opened();
-        gfx.prepare((1920, 1080));
+        gfx.prepare(&one((1920, 1080)), 0);
         let column = Rect {
             x: 1047,
             y: 10,
             width: 1,
             height: 5,
         };
-        assert!(gfx.send(Video::Avc420(AU), &[column], 22));
+        assert!(gfx.send(0, Video::Avc420(AU), &[column], 22));
         let pdus = sent(&mut events);
         let w = last_frame(&pdus);
         assert_eq!(w.codec_id, Codec1Type::Avc420);
@@ -423,7 +626,7 @@ mod tests {
     #[test]
     fn overlapping_damage_goes_as_its_bounds_up_to_the_pictures_edge() {
         let (gfx, _server, mut events) = opened();
-        gfx.prepare((1920, 1080));
+        gfx.prepare(&one((1920, 1080)), 0);
         let column = Rect {
             x: 1047,
             y: 10,
@@ -436,7 +639,7 @@ mod tests {
             width: 20,
             height: 10,
         };
-        assert!(gfx.send(Video::Avc420(AU), &[column, edge, column], 22));
+        assert!(gfx.send(0, Video::Avc420(AU), &[column, edge, column], 22));
         let pdus = sent(&mut events);
         let w = last_frame(&pdus);
         let bounds = ExclusiveRectangle {
@@ -461,7 +664,7 @@ mod tests {
             flags: CapabilitiesV107Flags::empty(),
         });
         assert!(matches!(
-            gfx.prepare((64, 64)),
+            gfx.prepare(&one((64, 64)), 0),
             Prepared::Ready { avc444: true, .. }
         ));
         let block = Rect {
@@ -478,7 +681,7 @@ mod tests {
                 main: &main,
                 aux: views,
             };
-            assert!(gfx.send(video, &[block], 22));
+            assert!(gfx.send(0, video, &[block], 22));
             let pdus = sent(&mut events);
             let w = last_frame(&pdus);
             assert_eq!(w.codec_id, Codec1Type::Avc444);
@@ -513,16 +716,19 @@ mod tests {
         let payload = ironrdp_core::encode_vec(&advertise).unwrap();
         server.lock().unwrap().process(0, &payload).unwrap();
         assert!(matches!(
-            gfx.prepare((64, 64)),
+            gfx.prepare(&one((64, 64)), 0),
             Prepared::Ready { new: true, .. }
         ));
         let whole = [Rect::full((64, 64))];
         for _ in 0..MAX_IN_FLIGHT {
             let au = Video::Avc420(&[0, 0, 0, 1, 0x65]);
-            assert!(!gfx.send(au, &whole, 22), "the channel is not started");
+            assert!(!gfx.send(0, au, &whole, 22), "the channel is not started");
         }
         assert!(
-            matches!(gfx.prepare((64, 64)), Prepared::Ready { new: false, .. }),
+            matches!(
+                gfx.prepare(&one((64, 64)), 0),
+                Prepared::Ready { new: false, .. }
+            ),
             "not behind"
         );
     }
@@ -531,10 +737,15 @@ mod tests {
     fn frames_flow_again_when_acknowledgements_resume_after_a_suspension() {
         const SUSPEND: u32 = 0xFFFF_FFFF;
         let (gfx, server, mut events) = opened();
-        gfx.prepare((64, 64));
+        gfx.prepare(&one((64, 64)), 0);
         let whole = [Rect::full((64, 64))];
-        let send = || assert!(gfx.send(Video::Avc420(AU), &whole, 22));
-        let ready = || matches!(gfx.prepare((64, 64)), Prepared::Ready { new: false, .. });
+        let send = || assert!(gfx.send(0, Video::Avc420(AU), &whole, 22));
+        let ready = || {
+            matches!(
+                gfx.prepare(&one((64, 64)), 0),
+                Prepared::Ready { new: false, .. }
+            )
+        };
         (0..3).for_each(|_| send());
         let first = frame_ids(&sent(&mut events))[0];
         acknowledge(&server, first, SUSPEND);
@@ -553,20 +764,23 @@ mod tests {
     fn a_suspension_outlasts_closing_and_reopening_the_surface() {
         const SUSPEND: u32 = 0xFFFF_FFFF;
         let (gfx, server, mut events) = opened();
-        gfx.prepare((64, 64));
-        assert!(gfx.send(Video::Avc420(AU), &[Rect::full((64, 64))], 22));
+        gfx.prepare(&one((64, 64)), 0);
+        assert!(gfx.send(0, Video::Avc420(AU), &[Rect::full((64, 64))], 22));
         let first = frame_ids(&sent(&mut events))[0];
         acknowledge(&server, first, SUSPEND);
         for size in [(64, 64), (128, 96)] {
-            gfx.close();
+            gfx.close(0);
             assert!(matches!(
-                gfx.prepare(size),
+                gfx.prepare(&one(size), 0),
                 Prepared::Ready { new: true, .. }
             ));
             for _ in 0..4 {
-                assert!(gfx.send(Video::Avc420(AU), &[Rect::full(size)], 22));
+                assert!(gfx.send(0, Video::Avc420(AU), &[Rect::full(size)], 22));
                 assert!(
-                    matches!(gfx.prepare(size), Prepared::Ready { new: false, .. }),
+                    matches!(
+                        gfx.prepare(&one(size), 0),
+                        Prepared::Ready { new: false, .. }
+                    ),
                     "no acknowledgement is awaited at {size:?}"
                 );
             }

@@ -15,7 +15,6 @@ mod gfx;
 mod input;
 mod intake;
 mod keymap;
-#[cfg_attr(not(test), expect(dead_code))]
 mod layout;
 mod listen;
 mod lock;
@@ -120,15 +119,18 @@ fn main() -> ExitCode {
             let gfx = h264.then(gfx::Gfx::default);
             let factory = gfx.as_ref().map(gfx::Gfx::factory);
             let layout = client::ClientLayout::default();
+            let connection = display::Connection {
+                shown,
+                ending,
+                client: layout.clone(),
+            };
             let display = display::Display::new(
                 last_told.clone(),
                 feed,
                 probed.clone(),
                 gfx,
                 links.clone(),
-                shown,
-                ending,
-                layout.clone(),
+                connection,
             );
             let clipboard: Box<dyn ironrdp_server::CliprdrServerFactory> =
                 Box::new(clipboard::Factory::new(on_shown));
