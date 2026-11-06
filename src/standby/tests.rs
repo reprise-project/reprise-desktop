@@ -165,3 +165,39 @@ fn a_lock_on_the_standby_is_confirmed_once_its_clock_shows_the_cover() {
         "the standby's frame counts as the cover shown"
     );
 }
+
+fn reports(changes: usize, owned: bool, delivered: usize) -> (Vec<bool>, bool) {
+    let mut seen = Vec::new();
+    let ended = zbus::block_on(report_owner(
+        futures_util::stream::iter(vec![(); changes]),
+        || std::future::ready(owned),
+        |on| {
+            seen.push(on);
+            seen.len() <= delivered
+        },
+    ));
+    (seen, ended)
+}
+
+#[test]
+fn the_bus_watcher_turns_remote_desktop_off_when_it_stops_following() {
+    assert_eq!(
+        reports(1, true, usize::MAX),
+        (vec![true, true, false], true)
+    );
+    assert_eq!(
+        reports(0, true, usize::MAX),
+        (vec![true, false], true),
+        "an empty stream (no match rule) still ends in off"
+    );
+    assert_eq!(
+        reports(1, false, usize::MAX),
+        (vec![false, false], true),
+        "off stays off without a second report"
+    );
+    assert_eq!(
+        reports(3, true, 1),
+        (vec![true, true], false),
+        "a gone compositor hears nothing more"
+    );
+}
