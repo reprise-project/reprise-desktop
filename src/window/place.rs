@@ -175,6 +175,7 @@ pub fn centre_on(parent: Rect, size: (i32, i32), area: Rect) -> (i32, i32) {
 impl State {
     /// The output `w` fits to: the one under its frame's centre, but for a maximized or full
     /// screen frame at an output's origin that output, as its size lags until the client commits.
+    /// Lock mode counts Remote outputs only, the remote primary when neither is on one.
     fn fit_output(&self, w: WindowId) -> Option<smithay::output::Output> {
         let win = self.win(w)?;
         let r = win.frame_rect();
@@ -185,7 +186,14 @@ impl State {
         let fitted = (win.maximized || win.fullscreen)
             .then(|| self.scene.outputs().iter().find(at_origin).cloned())
             .flatten();
-        fitted.or_else(|| self.output_at((r.x + r.width / 2) as f64, (r.y + r.height / 2) as f64))
+        let (cx, cy) = (r.x + r.width / 2, r.y + r.height / 2);
+        if !crate::console::remote_side(self) {
+            return fitted.or_else(|| self.output_at(f64::from(cx), f64::from(cy)));
+        }
+        let remotes = crate::virtualout::remote_outputs(self);
+        (fitted.filter(crate::virtualout::is_remote))
+            .or_else(|| (remotes.into_iter()).find(|o| self.layout_box(Some(o)).contains(cx, cy)))
+            .or_else(|| self.first_output())
     }
 
     pub fn output_box_for_window(&self, w: WindowId) -> Rect {
