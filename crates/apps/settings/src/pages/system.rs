@@ -419,9 +419,9 @@ const LOCK_GRACE_CONTROLS: [&str; 2] = ["lock_grace_label", REMOTE_LOCK_GRACE];
 pub(super) const REMOTE_BORDER: &str = "remote_border";
 pub(super) const REMOTE_SCREEN_SHOW: &str = "remote_screen_show";
 pub(super) const REMOTE_SCREEN_LOCK: &str = "remote_screen_lock";
-/// Says why the Lock radio is greyed; empty while no other locker is set.
+/// Says why the Lock radio is greyed; empty while no external locker is set.
 pub(super) const REMOTE_SCREEN_NOTE: &str = "remote_screen_note";
-pub(super) const LOCKER_NOTE: &str = "Lock mode is off while another locker is set in Power.";
+pub(super) const LOCKER_NOTE: &str = "Lock mode is off while an external screen locker is set.";
 /// The certificate's fingerprint: a read-only edit, so it can be selected and copied.
 const REMOTE_FINGERPRINT: &str = "fingerprint";
 pub const REMOTE_REGENERATE: &str = "regenerate";
@@ -683,8 +683,8 @@ pub(super) fn follow_lock(page: &mut Form) {
     }
 }
 
-/// Grey the Lock radio while the Stays on radio is greyed or [`REMOTE_SCREEN_NOTE`] names
-/// another locker.
+/// Grey the Lock radio while the Stays on radio is greyed or [`REMOTE_SCREEN_NOTE`] shows
+/// [`LOCKER_NOTE`].
 pub(super) fn follow_screen(page: &mut Form) {
     let lit = matches!(
         page.item(REMOTE_SCREEN_SHOW).map(|i| &i.control),
@@ -692,7 +692,7 @@ pub(super) fn follow_screen(page: &mut Form) {
     );
     let held = matches!(
         page.item(REMOTE_SCREEN_NOTE).map(|i| &i.control),
-        Some(Control::Label { text, .. }) if !text.is_empty()
+        Some(Control::Label { text, .. }) if text == LOCKER_NOTE
     );
     page.set_enabled(REMOTE_SCREEN_LOCK, lit && !held);
 }
