@@ -4,6 +4,8 @@ use repriseapp::{BTN_LEFT, BTN_RIGHT, Extended, KeyInput, Mods, PointerInput};
 use repriseconf::pages::Hit;
 use reprisekit::classic::widgets::BarHit;
 use reprisekit::controls::{form, listview, pagelist, propsheet};
+use reprisekit::frame::{Chrome, FrameGeometry};
+use reprisekit::interface::Interface;
 use reprisekit::textedit::keysym;
 use reprisekit::theme::FontConfig;
 use std::sync::atomic::Ordering;
@@ -1284,40 +1286,60 @@ fn the_opening_size_follows_the_text_size() {
     assert_eq!(app.initial_size(), winstate::DEFAULT);
 }
 
-/// At 200% on a 1080-line screen the work area is shorter than the smallest sheet: the
-/// sheet keeps the pages it was built with and its buttons sit inside the window. Every page's
-/// controls end above the window's bottom, so no page scrolls.
+/// The client a resizable window gets at 200% on a 1920x1080 output under `i`, its taskbar
+/// along the bottom at the interface's height: the work area less the frame and caption.
+fn client_at_200(i: Interface) -> (i32, i32) {
+    let m = reprisekit::interfaces::theme_for(i)
+        .with_text_size(200)
+        .metrics;
+    FrameGeometry::client_size_for_total(&m, 1920, 1080 - m.taskbar_height, false, Chrome::WINDOW)
+}
+
+/// At 200% on a 1080-line screen the work area is shorter than the smallest sheet under every
+/// interface, and every page still ends above the window's bottom with its buttons inside it.
 #[test]
 fn at_200_percent_a_window_shorter_than_the_sheet_keeps_its_buttons_in_it() {
-    let mut app = app("resize-200");
-    let mut ctx = test_ctx();
-    ctx.text_size = 200;
-    let u = ctx.forms().text;
-    let min = app.min_size(MAIN).unwrap();
-    assert!(
-        u.len(528) > 1026,
-        "the smallest sheet is taller than the work area"
-    );
-    ctx.size = (1914, 1026);
-    app.event(MAIN, Event::Resized, &mut ctx);
-    assert_eq!(app.min_size(MAIN), Some(u.size((544, 528))), "{min:?}");
+    let all = [Interface::Classic, Interface::Blue, Interface::Glass];
     assert_eq!(
-        app.sheet.size.1, 528,
-        "the pages keep their smallest height"
+        all.map(|i| client_at_200(i).1),
+        [1000, 990, 976],
+        "Classic, Blue, Glass"
     );
-    let client = app.sheet.client();
-    assert!(client.1 <= 1026, "{client:?} fits the window");
-    let mut c = Canvas::new(1914, 1026);
-    app.draw(MAIN, &mut c, &ctx);
-    for id in [propsheet::OK, propsheet::CANCEL, propsheet::APPLY] {
-        let b = app.sheet.open().rect(id).unwrap();
-        assert!(b.bottom() <= 1026, "{id} at {b:?} shows");
-    }
-    for pg in Page::all() {
-        app.sheet.tabs.open = pg.index();
-        app.draw(MAIN, &mut c, &ctx);
-        let l = app.sheet.layout(&ctx.text, ctx.forms().fonts.size_px);
-        assert_eq!(l.bar, None, "{pg:?} ends above the window's bottom");
+    for i in all {
+        let dir = tmp(&format!("resize-200-{}", i.as_str()));
+        let path = dir.join("config.toml");
+        let config = format!("[appearance]\ninterface = \"{}\"\n", i.as_str());
+        std::fs::write(&path, config).unwrap();
+        let mut app = SettingsApp::open(path, "us".into());
+        let mut ctx = test_ctx();
+        ctx.theme = reprisekit::interfaces::theme_for(i);
+        ctx.text_size = 200;
+        let u = ctx.forms().text;
+        let (w, h) = client_at_200(i);
+        assert!(
+            u.len(528) > h,
+            "the smallest sheet is taller than the work area"
+        );
+        ctx.size = (w, h);
+        app.event(MAIN, Event::Resized, &mut ctx);
+        assert_eq!(app.min_size(MAIN), Some(u.size((544, 528))));
+        assert_eq!(
+            app.sheet.size.1, 528,
+            "the pages keep their smallest height"
+        );
+        let client = app.sheet.client();
+        assert!(client.1 <= h, "{i:?}: {client:?} fits the window");
+        let mut c = Canvas::new(w as u32, h as u32);
+        for pg in Page::all() {
+            app.sheet.tabs.open = pg.index();
+            app.draw(MAIN, &mut c, &ctx);
+            let l = app.sheet.layout(&ctx.text, ctx.forms().fonts.size_px);
+            assert_eq!(l.bar, None, "{i:?}: {pg:?} ends above the window's bottom");
+            for id in [propsheet::OK, propsheet::CANCEL, propsheet::APPLY] {
+                let b = app.sheet.open().rect(id).unwrap();
+                assert!(b.bottom() <= h, "{i:?}: {id} at {b:?} shows");
+            }
+        }
     }
 }
 

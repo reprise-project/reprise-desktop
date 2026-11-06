@@ -308,12 +308,12 @@ fn advanced_groups_what_has_no_other_page() {
     let p = Page::Advanced;
     assert_eq!(rect(&s, p, "task_manager"), Rect::new(20, 60, 358, 20));
     assert_eq!(rect(&s, p, "screenshot_save"), Rect::new(20, 90, 13, 13));
-    assert_eq!(rect(&s, p, "restart_notice"), Rect::new(20, 112, 13, 13));
-    assert_eq!(rect(&s, p, "turnoff_group"), Rect::new(20, 134, 358, 74));
-    assert_eq!(rect(&s, p, "standby"), Rect::new(94, 152, 101, 20));
-    assert_eq!(rect(&s, p, "poweroff"), Rect::new(265, 152, 101, 20));
-    assert_eq!(rect(&s, p, "reboot"), Rect::new(94, 178, 101, 20));
-    assert_eq!(rect(&s, p, "hibernate"), Rect::new(265, 178, 101, 20));
+    assert_eq!(rect(&s, p, "restart_notice"), Rect::new(20, 108, 13, 13));
+    assert_eq!(rect(&s, p, "turnoff_group"), Rect::new(20, 130, 358, 74));
+    assert_eq!(rect(&s, p, "standby"), Rect::new(94, 148, 101, 20));
+    assert_eq!(rect(&s, p, "poweroff"), Rect::new(265, 148, 101, 20));
+    assert_eq!(rect(&s, p, "reboot"), Rect::new(94, 174, 101, 20));
+    assert_eq!(rect(&s, p, "hibernate"), Rect::new(265, 174, 101, 20));
     let d = Settings::default();
     use reprisekit::interface::Interface;
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
@@ -341,25 +341,25 @@ fn advanced_groups_what_has_no_other_page() {
             );
         }
     }
-    assert_eq!(rect(&s, p, "storage_group"), Rect::new(20, 218, 358, 66));
+    assert_eq!(rect(&s, p, "storage_group"), Rect::new(20, 212, 358, 66));
     assert_eq!(
         rect(&s, p, "low_space_percent"),
-        Rect::new(150, 236, 50, 20)
+        Rect::new(150, 230, 50, 20)
     );
-    assert_eq!(rect(&s, p, "low_space_note").y, 260);
-    assert_eq!(rect(&s, p, "thumbs_group"), Rect::new(20, 294, 358, 92));
-    assert_eq!(rect(&s, p, THUMBS), Rect::new(GX, 316, 13, 13));
-    assert_eq!(rect(&s, p, THUMBS_CLEARED).y, 316);
-    assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(291, 334, 75, 23));
+    assert_eq!(rect(&s, p, "low_space_note").y, 254);
+    assert_eq!(rect(&s, p, "thumbs_group"), Rect::new(20, 286, 358, 92));
+    assert_eq!(rect(&s, p, THUMBS), Rect::new(GX, 308, 13, 13));
+    assert_eq!(rect(&s, p, THUMBS_CLEARED).y, 308);
+    assert_eq!(rect(&s, p, THUMBS_CLEAR), Rect::new(291, 326, 75, 23));
     let mb = rect(&s, p, THUMBS_MB);
-    assert_eq!(mb.y, 336);
+    assert_eq!(mb.y, 328);
     let units = rect(&s, p, THUMBS_SIZE[2]);
-    assert_eq!((units.x, units.y), (mb.right() + 4, 340));
-    assert_eq!(rect(&s, p, THUMBNAILERS), Rect::new(GX, 364, 13, 13));
-    assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 396, 13, 13));
-    assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 418, 13, 13));
-    assert_eq!(rect(&s, p, "note"), Rect::new(20, 440, 275, 26));
-    assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 440, 75, 23));
+    assert_eq!((units.x, units.y), (mb.right() + 4, 332));
+    assert_eq!(rect(&s, p, THUMBNAILERS), Rect::new(GX, 356, 13, 13));
+    assert_eq!(rect(&s, p, DEBUG_OVERLAY), Rect::new(20, 386, 13, 13));
+    assert_eq!(rect(&s, p, DEBUG_IN_CAPTURES), Rect::new(38, 404, 13, 13));
+    assert_eq!(rect(&s, p, "note"), Rect::new(20, 422, 275, 26));
+    assert_eq!(rect(&s, p, EDIT_FILE), Rect::new(303, 422, 75, 23));
     inside_page(&s, p);
 }
 
@@ -703,20 +703,41 @@ fn a_startup_list_that_scrolls_draws_only_the_vertical_bar() {
 }
 
 #[test]
-fn the_lock_group_sits_under_the_screen_saver() {
+fn the_saver_stands_beside_the_monitor_and_the_lock_group_under_them() {
     let s = built();
     let p = Page::ScreenSaverLock;
-    assert_eq!(rect(&s, p, "saver_group"), Rect::new(20, 222, 358, 84));
-    assert_eq!(rect(&s, p, "lock_group"), Rect::new(20, 314, 358, 160));
-    assert_eq!(rect(&s, p, "lock_after"), Rect::new(150, 332, 50, 20));
-    assert_eq!(rect(&s, p, "lock_units"), Rect::new(206, 336, 160, 13));
-    assert_eq!(rect(&s, p, "lock_fade"), Rect::new(150, 356, 50, 20));
-    assert_eq!(rect(&s, p, "lock_on_sleep"), Rect::new(32, 382, 13, 13));
-    assert_eq!(rect(&s, p, "lock_wallpaper"), Rect::new(32, 404, 13, 13));
-    assert_eq!(rect(&s, p, "away_label"), Rect::new(32, 426, 334, 13));
-    assert_eq!(rect(&s, p, "away_device"), Rect::new(32, 442, 150, 21));
-    assert_eq!(rect(&s, p, "away_after_s"), Rect::new(236, 442, 50, 20));
-    assert_eq!(rect(&s, p, "away_units"), Rect::new(292, 446, 60, 13));
+    assert_eq!(
+        rect(&s, p, crate::saverpage::MONITOR),
+        Rect::new(20, 44, 191, 168)
+    );
+    assert_eq!(rect(&s, p, "saver_label"), Rect::new(219, 44, 159, 13));
+    assert_eq!(
+        rect(&s, p, crate::saverpage::SAVER),
+        Rect::new(219, 60, 159, 21)
+    );
+    assert_eq!(
+        rect(&s, p, crate::saverpage::SETTINGS),
+        Rect::new(219, 89, 75, 23)
+    );
+    assert_eq!(
+        rect(&s, p, crate::saverpage::PREVIEW),
+        Rect::new(303, 89, 75, 23)
+    );
+    assert_eq!(
+        rect(&s, p, crate::saverpage::WAIT),
+        Rect::new(263, 122, 50, 20)
+    );
+    assert_eq!(rect(&s, p, "wait_units"), Rect::new(319, 126, 59, 13));
+    assert_eq!(rect(&s, p, "lock_group"), Rect::new(20, 222, 358, 160));
+    assert_eq!(rect(&s, p, "lock_after"), Rect::new(150, 240, 50, 20));
+    assert_eq!(rect(&s, p, "lock_units"), Rect::new(206, 244, 160, 13));
+    assert_eq!(rect(&s, p, "lock_fade"), Rect::new(150, 264, 50, 20));
+    assert_eq!(rect(&s, p, "lock_on_sleep"), Rect::new(32, 290, 13, 13));
+    assert_eq!(rect(&s, p, "lock_wallpaper"), Rect::new(32, 312, 13, 13));
+    assert_eq!(rect(&s, p, "away_label"), Rect::new(32, 334, 334, 13));
+    assert_eq!(rect(&s, p, "away_device"), Rect::new(32, 350, 150, 21));
+    assert_eq!(rect(&s, p, "away_after_s"), Rect::new(236, 350, 50, 20));
+    assert_eq!(rect(&s, p, "away_units"), Rect::new(292, 354, 60, 13));
     inside_page(&s, p);
 }
 
@@ -809,50 +830,46 @@ fn the_remote_desktop_page_geometry() {
     assert_eq!(rect(&s, p, "status"), Rect::new(38, 80, 340, 13));
     assert_eq!(rect(&s, p, "encoder"), Rect::new(38, 96, 340, 13));
     assert_eq!(
-        rect(&s, p, "connection_group"),
-        Rect::new(20, 120, 358, 229)
-    );
-    assert_eq!(rect(&s, p, "port_label"), Rect::new(GX, 144, 114, 13));
-    assert_eq!(rect(&s, p, "port"), Rect::new(150, 140, 50, 20));
-    assert_eq!(
         rect(&s, p, "fingerprint_label"),
-        Rect::new(GX, 170, 334, 13)
+        Rect::new(20, 120, 268, 13)
     );
-    assert_eq!(rect(&s, p, "fingerprint"), Rect::new(GX, 186, 218, 20));
-    assert_eq!(rect(&s, p, "regenerate"), Rect::new(256, 184, 110, 23));
-    assert_eq!(rect(&s, p, "quality_label"), Rect::new(GX, 216, 200, 13));
-    assert_eq!(rect(&s, p, "quality_speed"), Rect::new(GX, 243, 44, 13));
-    assert_eq!(rect(&s, p, "quality"), Rect::new(78, 237, 238, 26));
-    assert_eq!(rect(&s, p, "quality_sharp"), Rect::new(322, 243, 44, 13));
-    assert_eq!(rect(&s, p, "quality_value"), Rect::new(286, 216, 80, 13));
-    assert_eq!(rect(&s, p, "frame_rate_label"), Rect::new(GX, 272, 114, 13));
+    assert_eq!(rect(&s, p, "port_label"), Rect::new(292, 120, 32, 13));
+    assert_eq!(rect(&s, p, "port"), Rect::new(328, 116, 50, 20));
+    assert_eq!(rect(&s, p, "fingerprint"), Rect::new(20, 142, 242, 20));
+    assert_eq!(rect(&s, p, "regenerate"), Rect::new(268, 140, 110, 23));
+    assert_eq!(rect(&s, p, "quality_label"), Rect::new(20, 172, 200, 13));
+    assert_eq!(rect(&s, p, "quality_speed"), Rect::new(20, 199, 44, 13));
+    assert_eq!(rect(&s, p, "quality"), Rect::new(66, 193, 262, 26));
+    assert_eq!(rect(&s, p, "quality_sharp"), Rect::new(334, 199, 44, 13));
+    assert_eq!(rect(&s, p, "quality_value"), Rect::new(298, 172, 80, 13));
+    assert_eq!(rect(&s, p, "frame_rate_label"), Rect::new(20, 228, 114, 13));
     assert_eq!(
         rect(&s, p, "frame_rate"),
-        Rect::new(150, 268, 160, combo::COMBO_H)
+        Rect::new(138, 224, 160, combo::COMBO_H)
     );
     assert_eq!(
         rect(&s, p, "video_encoder_label"),
-        Rect::new(GX, 298, 114, 13)
+        Rect::new(20, 254, 114, 13)
     );
     assert_eq!(
         rect(&s, p, "video_encoder"),
-        Rect::new(150, 294, 160, combo::COMBO_H)
+        Rect::new(138, 250, 160, combo::COMBO_H)
     );
-    assert_eq!(rect(&s, p, "remote_sound"), Rect::new(GX, 328, 13, 13));
-    assert_eq!(rect(&s, p, "clients_label"), Rect::new(20, 355, 200, 13));
+    assert_eq!(rect(&s, p, "remote_sound"), Rect::new(20, 280, 13, 13));
+    assert_eq!(rect(&s, p, "clients_label"), Rect::new(20, 302, 200, 13));
     assert_eq!(
         rect(&s, p, "clients"),
-        Rect::new(20, 371, 277, 38),
-        "two rows"
+        Rect::new(20, 318, 277, 55),
+        "three rows"
     );
-    assert_eq!(rect(&s, p, "disconnect"), Rect::new(303, 371, 75, 23));
-    assert_eq!(rect(&s, p, "remote_lock"), Rect::new(20, 415, 13, 13));
-    assert_eq!(rect(&s, p, "lock_grace_label"), Rect::new(38, 436, 238, 13));
+    assert_eq!(rect(&s, p, "disconnect"), Rect::new(303, 318, 75, 23));
+    assert_eq!(rect(&s, p, "remote_lock"), Rect::new(20, 379, 13, 13));
+    assert_eq!(rect(&s, p, "lock_grace_label"), Rect::new(38, 400, 238, 13));
     assert_eq!(
         rect(&s, p, "lock_grace"),
-        Rect::new(282, 432, 96, combo::COMBO_H)
+        Rect::new(282, 396, 96, combo::COMBO_H)
     );
-    assert_eq!(rect(&s, p, "remote_border"), Rect::new(20, 458, 13, 13));
+    assert_eq!(rect(&s, p, "remote_border"), Rect::new(20, 422, 13, 13));
     inside_page(&s, p);
     let page = &s.pages[p.index()];
     assert_eq!(
@@ -1402,7 +1419,7 @@ fn the_remote_desktop_page_pixels() {
             (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
         });
     assert_eq!(
-        h, 7_861_235_990_656_338_656,
+        h, 17_191_473_404_203_451_712,
         "the page with its client selected"
     );
 }

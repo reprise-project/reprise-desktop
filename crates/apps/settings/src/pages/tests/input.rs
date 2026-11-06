@@ -5,38 +5,36 @@ fn the_text_and_keys_page_geometry() {
     let s = built();
     let p = Page::TextKeys;
     assert_eq!(rect(&s, p, "text_size"), Rect::new(94, 44, 80, 21));
-    assert_eq!(rect(&s, p, "sticky_group"), Rect::new(20, 70, 358, 108));
+    assert_eq!(rect(&s, p, "sticky_group"), Rect::new(20, 70, 358, 103));
     assert_eq!(rect(&s, p, "sticky_keys"), Rect::new(32, 109, 13, 13));
     assert_eq!(rect(&s, p, "sticky_lock"), Rect::new(32, 131, 13, 13));
     assert_eq!(
         rect(&s, p, "sticky_two_keys_off"),
         Rect::new(32, 153, 13, 13)
     );
-    assert_eq!(rect(&s, p, "slow_group"), Rect::new(20, 184, 358, 117));
-    assert_eq!(rect(&s, p, "slow_keys"), Rect::new(32, 223, 13, 13));
-    assert_eq!(rect(&s, p, "slow_delay_value"), Rect::new(286, 247, 80, 13));
+    assert_eq!(rect(&s, p, "slow_group"), Rect::new(20, 179, 358, 115));
+    assert_eq!(rect(&s, p, "slow_keys"), Rect::new(32, 218, 13, 13));
+    assert_eq!(rect(&s, p, "slow_delay_value"), Rect::new(286, 240, 80, 13));
     assert_eq!(
         rect(&s, p, "slow_keys_delay"),
-        Rect::new(78, 268, 238, trackbar::HEIGHT)
+        Rect::new(78, 261, 238, trackbar::HEIGHT)
     );
-    assert_eq!(
-        rect(&s, p, "mouse_keys_group"),
-        Rect::new(20, 307, 358, 100)
-    );
-    assert_eq!(rect(&s, p, "mouse_keys"), Rect::new(32, 325, 13, 13));
+    assert_eq!(rect(&s, p, "mouse_keys_group"), Rect::new(20, 300, 358, 98));
+    assert_eq!(rect(&s, p, "mouse_keys"), Rect::new(32, 318, 13, 13));
     assert_eq!(
         rect(&s, p, "mouse_keys_num_lock"),
-        Rect::new(199, 325, 13, 13)
+        Rect::new(199, 318, 13, 13)
     );
     assert_eq!(
         rect(&s, p, "mouse_keys_speed"),
-        Rect::new(148, 347, 184, trackbar::HEIGHT)
+        Rect::new(148, 338, 184, trackbar::HEIGHT)
     );
     assert_eq!(
         rect(&s, p, "mouse_keys_acceleration"),
-        Rect::new(148, 375, 184, trackbar::HEIGHT)
+        Rect::new(148, 366, 184, trackbar::HEIGHT)
     );
-    assert_eq!(rect(&s, p, "key_shortcuts"), Rect::new(20, 415, 13, 13));
+    assert_eq!(rect(&s, p, "key_shortcuts"), Rect::new(20, 404, 13, 13));
+    assert_eq!(rect(&s, p, "shortcuts_note"), Rect::new(38, 422, 340, 26));
     inside_page(&s, p);
 }
 
@@ -302,7 +300,7 @@ fn the_keyboard_page_geometry() {
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "osd_group"),
-        Rect::new(20, 408, 358, 62)
+        Rect::new(20, 408, 358, 40)
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "osd_caps_lock"),
@@ -310,7 +308,7 @@ fn the_keyboard_page_geometry() {
     );
     assert_eq!(
         rect(&s, Page::Keyboard, "osd_num_lock"),
-        Rect::new(32, 446, 13, 13)
+        Rect::new(199, 426, 13, 13)
     );
     inside_page(&s, Page::Keyboard);
 

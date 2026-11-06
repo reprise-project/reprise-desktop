@@ -129,18 +129,13 @@ pub fn keyboard(a: Area) -> Form {
     ));
     items.push(button(SC_REMOVE, r - BUTTON_W, y, "&Delete"));
     let y = 408 + a.dh;
-    items.push(group(a, "osd_group", y, 62, "On-screen display"));
-    items.push(Item::check(
-        "osd_caps_lock",
-        GX,
-        y + 18,
-        "Show &Caps Lock on screen",
-    ));
+    items.push(group(a, "osd_group", y, 40, "On-screen display"));
+    items.push(Item::check("osd_caps_lock", GX, y + 18, "Show &Caps Lock"));
     items.push(Item::check(
         "osd_num_lock",
-        GX,
-        y + 38,
-        "Show &Num Lock on screen",
+        GX + a.gw() / 2,
+        y + 18,
+        "Show &Num Lock",
     ));
     Form::new(items)
 }
@@ -193,7 +188,7 @@ pub fn mouse_touchpad(a: Area) -> Form {
         95,
         27,
         ("Slow", "Fast"),
-        GX + 46,
+        GX,
         TrackBar::new(0, DOUBLE_CLICK.count),
     ));
     items.extend(motion(
@@ -331,7 +326,7 @@ pub fn text_and_keys(a: Area) -> Form {
         Item::label_at("text_size_label", X, 48, 70, "&Text size:"),
         Item::combo("text_size", X + 74, 44, 80, &sizes, sizes.len()),
     ];
-    items.push(group(a, "sticky_group", 70, 108, "StickyKeys"));
+    items.push(group(a, "sticky_group", 70, 103, "StickyKeys"));
     items.push(note(
         "sticky_note",
         88,
@@ -350,17 +345,17 @@ pub fn text_and_keys(a: Area) -> Form {
         153,
         "Turn StickyKeys off when two keys are pressed at &once",
     ));
-    items.push(group(a, "slow_group", 184, 117, "SlowKeys"));
+    items.push(group(a, "slow_group", 179, 115, "SlowKeys"));
     items.push(note(
         "slow_note",
-        202,
+        197,
         "A key counts only once it has been held down for the delay.",
     ));
-    items.push(Item::check("slow_keys", GX, 223, "U&se SlowKeys"));
+    items.push(Item::check("slow_keys", GX, 218, "U&se SlowKeys"));
     items.push(Item::label_at(
         "slow_delay_label",
         GX,
-        247,
+        240,
         200,
         "&Keys must be held down for:",
     ));
@@ -373,26 +368,26 @@ pub fn text_and_keys(a: Area) -> Form {
             "slow_delay_value",
         ],
         "SlowKeys delay",
-        274,
+        267,
         27,
         ("Shorter", "Longer"),
-        GX + 46,
+        GX,
         TrackBar::new(0, DELAY_STEPS),
     ));
     // The keypad moves the pointer: the switch and Num Lock's share a row, and the
     // speed and acceleration each take a row, Slow and Fast around the trackbar.
     let half = gw / 2;
-    items.push(group(a, "mouse_keys_group", 307, 100, "MouseKeys"));
-    items.push(Item::check("mouse_keys", GX, 325, "Use &MouseKeys"));
+    items.push(group(a, "mouse_keys_group", 300, 98, "MouseKeys"));
+    items.push(Item::check("mouse_keys", GX, 318, "Use &MouseKeys"));
     items.push(Item::check(
         "mouse_keys_num_lock",
         GX + half,
-        325,
+        318,
         "Only while &Num Lock is on",
     ));
     items.extend(mouse_keys_track(
         a,
-        353,
+        344,
         [
             "mk_speed_label",
             "mk_speed_slow",
@@ -405,7 +400,7 @@ pub fn text_and_keys(a: Area) -> Form {
     ));
     items.extend(mouse_keys_track(
         a,
-        381,
+        372,
         [
             "mk_accel_label",
             "mk_accel_slow",
@@ -419,16 +414,16 @@ pub fn text_and_keys(a: Area) -> Form {
     items.push(Item::check(
         "key_shortcuts",
         X,
-        415,
+        404,
         "Use the keyboard s&hortcuts",
     ));
     items.push(
         Item::new(
             "shortcuts_note",
-            Rect::new(X, 433, a.w - 18, 3 * LINE_H),
+            Rect::new(X, 422, a.w - 18, 2 * LINE_H),
             Control::Lines(vec![
-                "Shift five times turns StickyKeys on or off, right Shift held".into(),
-                "eight seconds SlowKeys, left Alt+left Shift+Num Lock MouseKeys.".into(),
+                "Shift 5 times toggles StickyKeys, right Shift held 8 seconds".into(),
+                "SlowKeys, and left Alt+left Shift+Num Lock MouseKeys.".into(),
             ]),
         )
         .under_check(),
