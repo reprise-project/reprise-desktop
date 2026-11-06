@@ -150,6 +150,71 @@ async fn display_control_is_offered_in_lock_mode_only() {
 }
 
 #[tokio::test]
+async fn display_control_is_offered_to_the_first_viewer_of_a_run_only() {
+    let console = console::tests::configured(LaptopScreen::Lock, false).0;
+    let mut first = on_console(ClientLayout::default(), console.clone());
+    assert!(first.offers_display_control().await);
+    first.join();
+    let mut later = on_console(ClientLayout::default(), console);
+    assert!(
+        !later.offers_display_control().await,
+        "a later viewer's layouts would be ignored"
+    );
+}
+
+/// The layouts `display` passed on to its run.
+fn passed(display: &mut Display) -> Vec<Vec<console::Monitor>> {
+    let rx = display.layouts_rx.as_mut().unwrap();
+    std::iter::from_fn(|| rx.try_recv().ok()).collect()
+}
+
+#[tokio::test]
+async fn an_empty_or_invalid_display_control_layout_is_ignored() {
+    let console = console::tests::configured(LaptopScreen::Lock, false).0;
+    let mut display = on_console(ClientLayout::default(), console);
+    let second = |x, y| (false, x, y, 1920, 1080);
+    for (monitors, what) in [
+        (vec![], "no monitors"),
+        (vec![second(0, 0)], "no primary"),
+        (
+            vec![(true, 0, 0, 1920, 1080), (true, 1920, 0, 1920, 1080)],
+            "two primaries",
+        ),
+        (vec![(true, 100, 0, 1920, 1080)], "a primary off 0,0"),
+        (
+            vec![(true, 0, 0, 1920, 1080), second(1000, 0)],
+            "an overlap",
+        ),
+        (
+            vec![(true, 0, 0, 1920, 1080), second(i32::MAX - 1000, 0)],
+            "a monitor apart",
+        ),
+    ] {
+        display.request_layout(console::tests::sent(&monitors));
+        assert_eq!(
+            passed(&mut display),
+            Vec::<Vec<_>>::new(),
+            "{what} is ignored"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_layout_with_more_monitors_than_offered_is_ignored() {
+    let console = console::tests::configured(LaptopScreen::Lock, false).0;
+    let mut display = on_console(ClientLayout::default(), console);
+    let row = |n: i32| -> Vec<_> { (0..n).map(|i| (i == 0, i * 200, 0, 200, 200)).collect() };
+    display.request_layout(console::tests::sent(&row(17)));
+    assert_eq!(
+        passed(&mut display),
+        Vec::<Vec<_>>::new(),
+        "17 of 16 offered"
+    );
+    display.request_layout(console::tests::sent(&row(16)));
+    assert_eq!(passed(&mut display).len(), 1, "16 are passed on");
+}
+
+#[tokio::test]
 async fn request_layout_returns_without_waiting() {
     let client = crate::client::scaled(crate::client::two_monitors(), vec![], Some(150));
     let console = console::tests::configured(LaptopScreen::Lock, false).0;
