@@ -160,18 +160,25 @@ pub fn stop(state: &mut State, reason: Reason) {
     leave(state);
 }
 
+/// The console's lock unlocked in lock mode: lock mode ends with `ended(console_unlocked)`,
+/// and the caller hands the keyboard back.
+pub fn console_unlocked(state: &mut State) {
+    log::info!("lock mode: the console unlocked");
+    stop(state, Reason::ConsoleUnlocked);
+}
+
 fn leave(state: &mut State) {
     log::info!("lock mode: ends");
     state.console.leader = None;
+    // Before the seal, so the window holding the remote's keys hears them released.
+    keys::end(state);
     crate::lockview::drop_remote(state);
-    // What the remote side opened or focused would stay up under the cover.
-    if state.console_locked() {
-        crate::lockview::seal(state, |_| {});
-    }
+    // What the remote side opened, dragged or focused would stay up under the cover, or carry
+    // over to the console after an unlock.
+    crate::lockview::seal(state, |_| {});
     crate::idle::lock_mode_ends(state);
     on_end(state);
     apply(state, Vec::new());
-    keys::end(state);
     pointer::end(state);
 }
 
@@ -313,3 +320,5 @@ mod inputtests;
 mod locktests;
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+mod unlocktests;

@@ -351,7 +351,7 @@ impl State {
     /// while Reprise has the pointer (a move, a size, one of its popups,
     /// the region overlay, a popup grab, a held button's grab).
     pub fn clients_may_have_touch(&self) -> bool {
-        !self.console_locked()
+        !self.console_holds_input()
             && self.interaction == Interaction::Idle
             && Popup::open(self).next().is_none()
             && !self.panels.takes_pointer()

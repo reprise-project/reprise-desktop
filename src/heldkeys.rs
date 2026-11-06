@@ -63,6 +63,12 @@ impl HeldKeys {
         }
     }
 
+    /// The seat let go of every key: what Reprise's route or the pointer held back is up.
+    pub fn forget_held_back(&mut self) {
+        self.0
+            .retain(|_, o| !matches!(o, Owner::Taken | Owner::Drag));
+    }
+
     /// `code` is down and its press went to Reprise's own route.
     pub fn is_taken(&self, code: u32) -> bool {
         self.0.get(&code) == Some(&Owner::Taken)

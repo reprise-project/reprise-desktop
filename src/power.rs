@@ -822,13 +822,14 @@ mod tests {
     }
 
     #[test]
-    fn a_logind_unlock_unlocks_both_sides() {
+    fn a_logind_unlock_unlocks_both_sides_and_ends_lock_mode() {
         let (mut h, _portal, _lock) = crate::console::tests::in_lock_mode();
         crate::lockview::lock_remote(&mut h.state);
         assert!(h.state.desktop_locked());
         report(&mut h.state, Report::Unlock);
         assert!(!h.state.console_locked(), "the console unlocks");
         assert!(!h.state.desktop_locked(), "the remote side unlocks");
+        assert!(!crate::console::remote_side(&h.state), "lock mode ends");
         assert!(!crate::crash::locked());
     }
 
