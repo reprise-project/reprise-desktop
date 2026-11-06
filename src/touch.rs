@@ -340,7 +340,7 @@ impl State {
         let (transform, area) = target_output(configured, tagged, &names)
             .and_then(|t| outputs.iter().find(|(n, ..)| n == t))
             .map_or_else(
-                || (Transform::Normal, self.output_area()),
+                || (Transform::Normal, self.absolute_area()),
                 |(_, t, r)| (*t, *r),
             );
         let norm = ev.position_transformed((1, 1).into());

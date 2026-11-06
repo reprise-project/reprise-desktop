@@ -348,3 +348,14 @@ fn in_lock_mode_a_wlr_virtual_pointer_moves_the_remote_pointer_not_the_console()
         "the computer's pointer stays"
     );
 }
+
+#[test]
+fn in_lock_mode_the_physical_power_key_turns_off_only_the_computers_screens() {
+    let mut config = Config::default();
+    config.power.power_button = PowerAction::ScreenOff;
+    let (mut h, _portal, _lock) = in_lock_mode_with(config);
+    h.key(POWER, true);
+    h.key(POWER, false);
+    assert!(crate::idle::console_dark(&h.state), "the panel goes off");
+    assert!(!h.state.idle.steps.screen_off, "the remote screens stay on");
+}
