@@ -31,6 +31,7 @@ use wayland_protocols::{
     },
     wp::commit_timing::v1::client::{wp_commit_timer_v1, wp_commit_timing_manager_v1},
     wp::fifo::v1::client::{wp_fifo_manager_v1, wp_fifo_v1},
+    wp::presentation_time::client::{wp_presentation, wp_presentation_feedback},
     wp::text_input::zv3::client::{
         zwp_text_input_manager_v3::ZwpTextInputManagerV3, zwp_text_input_v3::ZwpTextInputV3,
     },
@@ -727,6 +728,15 @@ impl TestClient {
         (self.side.registry.as_ref())
             .expect("wl_registry")
             .bind(name, version, &self.qh(), ())
+    }
+
+    /// Ask for the presentation feedback of `surface`'s next commit; the cell holds its outcome
+    /// once heard.
+    pub fn presentation_feedback(&self, surface: &WlSurface) -> Feedback {
+        let presentation: wp_presentation::WpPresentation = self.bind("wp_presentation", 1);
+        let heard = Feedback::default();
+        presentation.feedback(surface, &self.qh(), heard.clone());
+        heard
     }
 
     /// Bind the wlr foreign-toplevel manager, as a bar or dock does.
@@ -1519,6 +1529,41 @@ wc::delegate_noop!(ClientSide: ignore wp_fifo_v1::WpFifoV1);
 wc::delegate_noop!(ClientSide: ignore wp_commit_timing_manager_v1::WpCommitTimingManagerV1);
 wc::delegate_noop!(ClientSide: ignore wp_commit_timer_v1::WpCommitTimerV1);
 wc::delegate_noop!(ClientSide: ignore wl_data_device_manager::WlDataDeviceManager);
+wc::delegate_noop!(ClientSide: ignore wp_presentation::WpPresentation);
+
+/// How a `wp_presentation_feedback` ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Presented {
+    /// Shown, with the refresh it gave in nanoseconds.
+    Shown {
+        refresh_ns: u32,
+    },
+    Discarded,
+}
+
+pub type Feedback = Arc<std::sync::Mutex<Option<Presented>>>;
+
+impl wc::Dispatch<wp_presentation_feedback::WpPresentationFeedback, Feedback> for ClientSide {
+    fn event(
+        _: &mut Self,
+        _: &wp_presentation_feedback::WpPresentationFeedback,
+        ev: wp_presentation_feedback::Event,
+        heard: &Feedback,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let outcome = match ev {
+            wp_presentation_feedback::Event::Presented { refresh, .. } => Presented::Shown {
+                refresh_ns: refresh,
+            },
+            wp_presentation_feedback::Event::Discarded => Presented::Discarded,
+            _ => return,
+        };
+        *heard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome);
+    }
+}
 impl wc::Dispatch<wl_data_offer::WlDataOffer, ()> for ClientSide {
     fn event(
         st: &mut Self,
