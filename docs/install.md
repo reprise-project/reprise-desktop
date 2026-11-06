@@ -58,7 +58,7 @@ its prompt only for that unit running `/usr/bin/reprise-rdp` or
 
 The PAM files are `reprise` (the lock screen's password),
 `reprise-fingerprint` (its fingerprint) and `reprise-rdp` (Remote Desktop
-logins). `reprise-rdp` runs `pam_unix` alone, without `system-auth`, so wrong
+logins and lock mode's remote Unlock dialog). `reprise-rdp` runs `pam_unix` alone, without `system-auth`, so wrong
 Remote Desktop passwords never reach pam_faillock and never lock the account
 locally. The Remote Desktop server throttles them instead: a growing back-off
 per address after three failures, during which its connections are refused, and a 10 minute pause of every login after 10

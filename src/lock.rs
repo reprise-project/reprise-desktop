@@ -17,6 +17,7 @@ use reprisekit::pointer::Interaction;
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::Path;
+use std::time::{Duration, Instant};
 use zeroize::{Zeroize, Zeroizing};
 
 /// Shown after PAM rejects the password without saying why.
@@ -229,6 +230,56 @@ pub fn failure_text(notices: &[String]) -> String {
     } else {
         notices.join("\n")
     }
+}
+
+/// Failed checks before the back-off starts, its longest wait, and how long after its last
+/// failure it is forgotten.
+const FREE_FAILURES: u32 = 3;
+const MAX_WAIT: Duration = Duration::from_secs(60);
+const FORGET: Duration = Duration::from_secs(1200);
+
+/// Failed Unlock checks: after the fourth each next check waits, from 2 s doubling up to `MAX_WAIT`,
+/// until a success or `FORGET` without a failure. A check counts as failed from its start.
+#[derive(Debug, Default)]
+pub struct Backoff {
+    failures: u32,
+    last: Option<Instant>,
+}
+
+impl Backoff {
+    /// How long the next check still waits at `now`.
+    pub fn wait(&self, now: Instant) -> Duration {
+        let Some(last) = self.last.filter(|&l| now.duration_since(l) < FORGET) else {
+            return Duration::ZERO;
+        };
+        (last + wait_after(self.failures)).saturating_duration_since(now)
+    }
+
+    pub fn failed(&mut self, now: Instant) {
+        if self.last.is_none_or(|l| now.duration_since(l) >= FORGET) {
+            self.failures = 0;
+        }
+        self.failures += 1;
+        self.last = Some(now);
+    }
+
+    pub fn succeeded(&mut self) {
+        *self = Backoff::default();
+    }
+}
+
+fn wait_after(failures: u32) -> Duration {
+    match failures.checked_sub(FREE_FAILURES) {
+        None | Some(0) => Duration::ZERO,
+        Some(n) => Duration::from_secs(1u64 << n.min(6)).min(MAX_WAIT),
+    }
+}
+
+/// Shown when a check is refused for `wait`, rounded up to whole seconds.
+pub fn backoff_text(wait: Duration) -> String {
+    let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
+    let unit = if secs == 1 { "second" } else { "seconds" };
+    format!("Too many incorrect passwords. Wait {secs} {unit} and retry.")
 }
 
 /// Add one PAM message to `notices`: a line per non-blank line of `raw`,
@@ -923,6 +974,35 @@ fn message_lines(text: &TextRenderer, msg: &str, width: i32, px: u32, room: usiz
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_backoff_doubles_from_the_fourth_failure_to_a_minute_and_forgets_after_twenty_minutes() {
+        let t0 = Instant::now();
+        let mut b = Backoff::default();
+        let waits: Vec<u64> = (0..10)
+            .map(|_| {
+                b.failed(t0);
+                b.wait(t0).as_secs()
+            })
+            .collect();
+        assert_eq!(waits, [0, 0, 0, 2, 4, 8, 16, 32, 60, 60]);
+        assert_eq!(b.wait(t0 + Duration::from_secs(59)).as_secs(), 1);
+        let later = t0 + Duration::from_secs(1200);
+        assert_eq!(b.wait(later), Duration::ZERO);
+        b.failed(later);
+        assert_eq!(b.wait(later), Duration::ZERO, "the count starts over");
+        b.succeeded();
+        assert_eq!(b.failures, 0);
+    }
+
+    #[test]
+    fn the_backoff_text_rounds_up_to_whole_seconds() {
+        assert_eq!(
+            backoff_text(Duration::from_millis(1500)),
+            "Too many incorrect passwords. Wait 2 seconds and retry."
+        );
+        assert!(backoff_text(Duration::from_millis(200)).contains("Wait 1 second and"));
+    }
+
     #[test]
     fn debug_redacts_the_password() {
         let mut st = super::LockState::new();
