@@ -1,9 +1,10 @@
 //! `reprise_input_v1`: the private global reprise-portal binds to hand in EIS
 //! sockets, drive pointer barriers, receive global shortcuts, press
 //! RemoteDesktop keys without libei, hear which sandboxed apps have a
-//! window, open the colour picker and mark the remote desktop server's capture
-//! connection. Glue only: each request calls into `eis`, `inputcapture`,
-//! `globalshortcuts`, `remotekeys`, `toplevels` or `colorpickview`, or sets `ClientState`.
+//! window, open the colour picker, mark the remote desktop server's capture
+//! connection and hold lock mode. Glue only: each request calls into `eis`, `inputcapture`,
+//! `globalshortcuts`, `remotekeys`, `toplevels`, `colorpickview` or `console`, or sets
+//! `ClientState`.
 //!
 //! Protocol objects carry ids, not the objects themselves: a resource whose
 //! object the compositor already dropped finds nothing behind its id.
@@ -24,6 +25,7 @@ use proto::reprise_eis_client_v1::{self, RepriseEisClientV1};
 use proto::reprise_input_capture_v1::{self, RepriseInputCaptureV1};
 use proto::reprise_input_v1::{self, RepriseInputV1};
 use proto::reprise_keys_v1::{self, RepriseKeysV1};
+use proto::reprise_lock_screen_v1::{self, RepriseLockScreenV1};
 use proto::reprise_sandboxed_v1::{self, RepriseSandboxedV1};
 use proto::reprise_shortcuts_v1::{self, RepriseShortcutsV1};
 
@@ -52,7 +54,7 @@ pub mod proto {
     wayland_scanner::generate_server_code!("protocols/reprise-input-v1.xml");
 }
 
-const VERSION: u32 = 8;
+const VERSION: u32 = 9;
 
 pub const DEVICE_KEYBOARD: u32 = 1;
 pub const DEVICE_POINTER: u32 = 2;
@@ -242,8 +244,54 @@ impl Dispatch2<RepriseInputV1, State> for InputData {
                         .store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }
+            Request::LockScreen { id } => {
+                let available = state.config.power.locker.trim().is_empty();
+                let r = data_init.init(id, LockScreenData { available });
+                if !available {
+                    log::info!("lock mode: unavailable while [power] locker is set");
+                    r.ended(reprise_lock_screen_v1::Reason::Unavailable);
+                }
+            }
             Request::Destroy => {}
         }
+    }
+}
+
+pub struct LockScreenData {
+    /// False once `ended(unavailable)` went: the object does nothing.
+    available: bool,
+}
+
+impl Dispatch2<RepriseLockScreenV1, State> for LockScreenData {
+    fn request(
+        &self,
+        state: &mut State,
+        _client: &Client,
+        resource: &RepriseLockScreenV1,
+        request: reprise_lock_screen_v1::Request,
+        _dh: &DisplayHandle,
+        _data_init: &mut DataInit<'_, State>,
+    ) {
+        use reprise_lock_screen_v1::Request;
+        let Request::SetLayout { monitors } = request else {
+            return;
+        };
+        if !self.available {
+            return;
+        }
+        let Some(layout) = crate::console::parse_layout(&monitors) else {
+            log::warn!("lock mode: a layout of {} bytes ignored", monitors.len());
+            return;
+        };
+        if crate::console::holds(state, &resource.id()) {
+            crate::console::relayout(state, resource.id(), layout);
+        } else {
+            crate::console::begin(state, resource.id(), layout);
+        }
+    }
+
+    fn destroyed(&self, state: &mut State, _client: ClientId, resource: &RepriseLockScreenV1) {
+        crate::console::end(state, resource.id());
     }
 }
 

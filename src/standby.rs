@@ -98,7 +98,8 @@ fn add(state: &mut State) -> Output {
     output
 }
 
-/// Remote Desktop came on or went off: the standby comes or goes with it.
+/// Remote Desktop came on or went off: the standby exists while it is on, no monitor is in the
+/// layout and no Remote output holds the desktop.
 pub fn rdp_changed(state: &mut State, on: bool) {
     if state.standby.rdp_on == on {
         return;
@@ -121,6 +122,27 @@ pub fn rdp_changed(state: &mut State, on: bool) {
     }
 }
 
+/// Remote outputs came or went: the standby goes while they hold the desktop and comes back when
+/// the last goes with Remote Desktop on and no monitor. True when it went; the caller lays out.
+pub fn remotes_changed(state: &mut State) -> bool {
+    let exists = state.standby.output.is_some();
+    match change(exists, wanted_now(state)) {
+        Change::Add => {
+            add(state);
+            false
+        }
+        Change::Remove => {
+            let Some(output) = state.standby.output.take() else {
+                return false;
+            };
+            crate::virtualout::remove(state, &output);
+            state.forget_output(&output);
+            true
+        }
+        Change::Keep => false,
+    }
+}
+
 /// `output` came into the layout: a monitor takes over the standby's box, keeping its windows in
 /// place, and the standby it replaced is returned for the caller's one layout pass.
 pub fn monitor_added(state: &mut State, output: &Output) -> Option<Output> {
@@ -139,8 +161,9 @@ pub fn monitor_added(state: &mut State, output: &Output) -> Option<Output> {
     Some(standby)
 }
 
-/// `output` left the layout. When it was the last monitor and Remote Desktop is on, the standby
-/// takes its mode, scale and place, and the windows stay put; the caller then lays out once.
+/// `output` left the layout. When it was the last monitor, Remote Desktop is on and no Remote
+/// output holds the desktop, the standby takes its mode, scale and place, and the windows stay
+/// put; the caller then lays out once.
 pub fn monitor_removed(state: &mut State, output: &Output) {
     if crate::backend::is_virtual(output) {
         return;
