@@ -153,6 +153,10 @@ pub fn stop(state: &mut State, reason: Reason) {
 fn leave(state: &mut State) {
     log::info!("lock mode: ends");
     state.console.leader = None;
+    // What the remote side opened or focused would stay up under the cover.
+    if state.console_locked() {
+        crate::lockview::seal(state, |_| {});
+    }
     on_end(state);
     apply(state, Vec::new());
 }
@@ -273,4 +277,4 @@ fn wide((a, b, c, d): (i32, i32, i32, i32)) -> (i64, i64, i64, i64) {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

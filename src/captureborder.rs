@@ -234,8 +234,11 @@ fn current_edges(state: &State) -> Vec<Edge> {
     })
 }
 
-/// The border's elements on `output`, for the screen only.
+/// The border's elements on `output`, for the screen only; none on a locked output.
 pub fn elements(state: &mut State, output: &Output) -> Vec<SolidColorRenderElement> {
+    if state.locked_on(output) {
+        return Vec::new();
+    }
     let edges = current_edges(state);
     if edges.is_empty() {
         return Vec::new();

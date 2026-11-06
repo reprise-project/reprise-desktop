@@ -123,10 +123,10 @@ fn pick_access(pick: &Pick) -> Option<reprisekit::access::Tree> {
 
 impl State {
     /// The bind, or a portal's PickColor: open the picker. One already open,
-    /// the region overlay or the lock turn the asker away.
+    /// the region overlay or the console lock turn the asker away.
     pub fn open_color_pick(&mut self, asker: Asker) {
         let open = self.panels.colorpick.is_some() || self.panels.region.is_some();
-        if open || self.desktop_locked() {
+        if open || self.console_locked() {
             return asker.cancel();
         }
         let outputs = self.scene.outputs().to_vec();
@@ -359,6 +359,23 @@ mod tests {
         assert_eq!(v.point(), Some((99, 100)));
         assert_eq!(v.key(keysym::RETURN), Event::Pick((99, 100)));
         assert_eq!(v.key(keysym::ESCAPE), Event::Cancel);
+    }
+
+    #[test]
+    fn in_lock_mode_a_click_with_the_color_picker_open_goes_to_the_lock() {
+        use crate::console::tests::{click_lock_cancel, in_lock_mode, lock_input};
+        let (mut h, _portal, _lock) = in_lock_mode();
+        let s = &mut h.state;
+        let tree = s.scene.tree_create(s.layers.overlay);
+        let loupe = s.scene.buffer_create(tree);
+        s.panels.colorpick = Some(ColorPickView {
+            pick: view((0, 0)),
+            tree,
+            loupe,
+            asker: Asker::Bind,
+        });
+        click_lock_cancel(&mut h);
+        assert_eq!(lock_input(&h), "", "Cancel cleared the field");
     }
 
     #[test]
