@@ -207,6 +207,12 @@ fn client(state: &mut State) -> Option<&mut ClientLock> {
     state.lock.active.as_mut()?.client.as_mut()
 }
 
+/// Whether a locker's lock was confirmed with `locked`.
+#[cfg(test)]
+pub fn confirmed(state: &mut State) -> bool {
+    client(state).is_some_and(|c| c.wait.is_none())
+}
+
 pub fn holds_input(state: &State) -> bool {
     state
         .lock

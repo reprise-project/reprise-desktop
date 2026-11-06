@@ -30,8 +30,8 @@ use super::outputs::power_off;
 use super::schedule::queue_render;
 use super::steps::{on_quiet, watch};
 use super::{
-    Flip, Head, InFlight, Out, Surface, Work, commit, head_of, lock, schedule, schedule_step,
-    surface_mut,
+    Flip, Head, InFlight, Out, Screen, Surface, Work, commit, lock, schedule, schedule_step,
+    screen_of, surface_mut,
 };
 
 fn flip_time(
@@ -116,14 +116,7 @@ pub(super) fn render(state: &mut State, head: Head) {
             return;
         }
     }
-    state.window_anims_frame(&output);
-    state.switch_anim_frame(&output);
-    state.overview_fade_frame();
-    state.flip_frame(&output);
-    state.water_frame(&output);
-    crate::dim::frame(state);
-    crate::autohideview::frame(state, &output);
-    crate::snapbarview::frame(state, &output);
+    advance(state, &output);
     let border = crate::captureborder::elements(state, &output);
     let (fade, fade_next) = crate::sessionfade::element(state, &output);
     let pointer = state.pointer_location();
@@ -296,6 +289,18 @@ pub(super) fn render(state: &mut State, head: Head) {
         state.glass.output_stopped(&output);
     }
     watch(state);
+}
+
+/// Step what animates on `output` to the frame about to be drawn.
+pub(crate) fn advance(state: &mut State, output: &Output) {
+    state.window_anims_frame(output);
+    state.switch_anim_frame(output);
+    state.overview_fade_frame();
+    state.flip_frame(output);
+    state.water_frame(output);
+    crate::dim::frame(state);
+    crate::autohideview::frame(state, output);
+    crate::snapbarview::frame(state, output);
 }
 
 /// Apply the commits timed to show by the refresh this frame lands on.
@@ -673,7 +678,10 @@ fn count_damage(
 }
 
 pub fn take_stats(state: &mut State, output: &Output) -> Option<crate::debugview::FrameStats> {
-    let head = head_of(output)?;
+    let head = match screen_of(output)? {
+        Screen::Monitor(head) => head,
+        Screen::Virtual => return None,
+    };
     let s = surface_mut(state, head)?;
     Some(s.stats.take())
 }
@@ -735,6 +743,7 @@ pub(super) fn waits_for_frame(asked: bool, off: bool, held: bool, active: bool) 
 }
 
 pub fn answer_frames(state: &mut State) {
+    crate::virtualout::answer_frames(state);
     let Some(b) = state.backend.as_ref() else {
         return;
     };
@@ -758,7 +767,7 @@ fn callbacks_done(state: &mut State, head: Head) {
     send_frame_callbacks(state, &output);
 }
 
-fn send_frame_callbacks(state: &mut State, output: &Output) {
+pub(crate) fn send_frame_callbacks(state: &mut State, output: &Output) {
     let now = state.now();
     let pass = state.scene.surface_pass(output);
     (state.scene).send_frames(&pass, now, Some(Duration::from_secs(1)));
