@@ -83,7 +83,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use repriseapp::{App, Child, Ctx, DropForm, Event, FileDrop, Reply, Waker, WinId};
+use repriseapp::{App, Child, Ctx, DropForm, Event, FileDrop, PointerInput, Reply, Waker, WinId};
 
 /// The file dialog: Startup Add... and Background Browse....
 const ADD_WIN: WinId = WinId::named("add");
@@ -471,6 +471,9 @@ struct SettingsApp {
     units: TextUnits,
     /// `[accessibility] text_size` now, kept beside the window size.
     text_size: u32,
+    /// The control a page request named, and its page, until [`SettingsApp::take_pending_focus`]
+    /// gives it the keyboard; a key, a button press or another page drops it.
+    pending_focus: Option<(Page, String)>,
 }
 
 impl SettingsApp {
@@ -719,6 +722,7 @@ impl SettingsApp {
             window_dirty: false,
             units: TextUnits::ONE,
             text_size: 100,
+            pending_focus: None,
         };
         app.display
             .model
@@ -909,10 +913,12 @@ impl App for SettingsApp {
                 self.window_dirty = true;
             }
             Event::Focus(false) if main => self.save_window(),
+            Event::Key(_) | Event::Pointer(PointerInput::Press { .. }) => self.pending_focus = None,
             _ => {}
         }
+        let focused = main && self.take_pending_focus();
         let mut reply = self.route(win, ev, ctx);
-        reply.redraw |= moved;
+        reply.redraw |= moved || focused;
         if let Some(press) = self.display.pending.take() {
             let r = self.start_display(press, &mut ctx.heads);
             reply.quit |= r.quit;
@@ -943,6 +949,7 @@ impl App for SettingsApp {
         self.follow_text(ctx);
         if win == repriseapp::MAIN {
             self.fit_window(ctx.size);
+            self.take_pending_focus();
         }
         self.paint(win, c, ctx);
     }

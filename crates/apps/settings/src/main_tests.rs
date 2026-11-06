@@ -1321,6 +1321,100 @@ fn at_200_percent_a_window_shorter_than_the_sheet_keeps_its_buttons_in_it() {
     }
 }
 
+/// `--focus` names a control before the window has a size: once the window comes up shorter
+/// than the sheet at 200%, the page scrolls to show the control.
+#[test]
+fn a_named_control_shows_once_a_short_window_cuts_its_page() {
+    let mut app = app("focus-short");
+    app.open_page(Page::Advanced, Some(pages::EDIT_FILE));
+    let mut ctx = test_ctx();
+    ctx.text_size = 200;
+    ctx.size = (1914, 700);
+    app.event(MAIN, Event::Resized, &mut ctx);
+    let mut c = Canvas::new(1914, 700);
+    app.draw(MAIN, &mut c, &ctx);
+    let l = app.sheet.layout(&ctx.text, ctx.forms().fonts.size_px);
+    assert!(l.bar.is_some(), "the page scrolls");
+    assert_eq!(focused_id(&app), Some(pages::EDIT_FILE));
+    let r = app.sheet.open().rect(pages::EDIT_FILE).unwrap();
+    assert!(
+        r.y >= l.page.y && r.bottom() <= l.page.bottom(),
+        "{r:?} shows inside {:?}",
+        l.page
+    );
+}
+
+/// The server's state, read: Remote Desktop on, which lights the page's controls.
+fn remote_on(a: &mut SettingsApp) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let remote = remotehost::Remote {
+        enabled: true,
+        ..remotehost::Remote::default()
+    };
+    tx.send(remotehost::Reading {
+        remote,
+        failed: None,
+    })
+    .unwrap();
+    a.remote_job = Some(rx);
+    assert!(a.wake().redraw);
+}
+
+/// Whether control `id` shows whole inside the open page, which scrolls in `ctx`'s window.
+fn shows_at_200(a: &mut SettingsApp, ctx: &Ctx, id: &str) -> bool {
+    let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
+    a.draw(MAIN, &mut c, ctx);
+    let l = a.sheet.layout(&ctx.text, ctx.forms().fonts.size_px);
+    let r = a.sheet.open().rect(id).unwrap();
+    l.bar.is_some() && r.y >= l.page.y && r.bottom() <= l.page.bottom()
+}
+
+/// The Remote Desktop page's controls are greyed until the server is read, which may land before
+/// or after the window has its size.
+#[test]
+fn a_named_control_greyed_until_its_page_is_read_takes_the_keyboard_once_lit() {
+    let border = "remote_border";
+    let mut ctx = test_ctx();
+    ctx.text_size = 200;
+    ctx.size = (1914, 700);
+
+    let mut a = app("focus-remote");
+    a.open_page(Page::RemoteDesktop, Some(border));
+    assert_ne!(focused_id(&a), Some(border), "greyed, it waits");
+    a.event(MAIN, Event::Resized, &mut ctx);
+    assert_ne!(focused_id(&a), Some(border), "still greyed");
+    remote_on(&mut a);
+    assert!(shows_at_200(&mut a, &ctx, border));
+    assert_eq!(focused_id(&a), Some(border));
+
+    let mut b = app("focus-remote-early");
+    b.open_page(Page::RemoteDesktop, Some(border));
+    remote_on(&mut b);
+    b.event(MAIN, Event::Resized, &mut ctx);
+    assert_eq!(
+        focused_id(&b),
+        Some(border),
+        "read before the window had its size"
+    );
+    assert!(shows_at_200(&mut b, &ctx, border));
+}
+
+#[test]
+fn a_key_before_the_read_drops_the_named_control() {
+    let mut a = app("focus-remote-key");
+    let mut ctx = test_ctx();
+    a.open_page(Page::RemoteDesktop, Some("remote_border"));
+    a.event(MAIN, Event::Resized, &mut ctx);
+    let tab = key_input(keysym::TAB, Mods::default(), None);
+    a.event(MAIN, Event::Key(tab), &mut ctx);
+    let after_key = focused_id(&a);
+    assert_ne!(after_key, Some("remote_border"));
+    remote_on(&mut a);
+    let mut c = Canvas::new(10, 10);
+    a.draw(MAIN, &mut c, &ctx);
+    assert_eq!(focused_id(&a), after_key);
+}
+
 /// At 200% on a screen 1000 px wide the smallest sheet is wider than the window: the
 /// buttons keep to the window's corner, and the page scrolls sideways to its right column.
 #[test]
