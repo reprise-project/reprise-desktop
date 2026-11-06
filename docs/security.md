@@ -70,11 +70,17 @@ contexts are matched. A listed app can read everything you copy. See
 [flatpak-clipboard.md](flatpak-clipboard.md).
 
 One more global, `reprise_input_v1`, carries remote control, input capture,
-global shortcuts, the list of sandboxed apps with a window and the colour
-picker between the compositor and the portal. Reprise offers it only to a client whose process
+global shortcuts, the list of sandboxed apps with a window, the colour
+picker and lock mode between the compositor and the portal. Reprise offers it only to a client whose process
 runs `reprise-portal` from `/usr/bin` or `/usr/local/bin`. That keeps other
 clients from binding it directly; it is no boundary against code running as
 you.
+
+Lock mode (`lock_screen`, version 9) is how the portal hands the remote
+desktop server screens of its own: the compositor makes one virtual screen
+per monitor of the client's layout and locks the session if it isn't
+locked. The lock stays when lock mode ends. With `[power] locker` set, lock
+mode is unavailable: the object ends at once and nothing is made.
 
 Reprise's remote desktop server starts its sessions without the permission
 dialog, since nobody may be at the screen to answer it. Turning Remote

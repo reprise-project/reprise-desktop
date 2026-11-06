@@ -156,20 +156,17 @@ pub fn next_name(state: &State, kind: Kind) -> String {
     }
 }
 
-/// Run virtual `output` at `size` and `scale`, as a monitor's mode change does; the caller lays
-/// out once for a batch.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "lock mode resizes the remote screens to follow its client"
-    )
-)]
+/// Run virtual `output` at `size` and `scale`, as a monitor's mode change does, unless it already
+/// does; the caller lays out once for a batch.
 pub fn resize(state: &mut State, output: &Output, size: (i32, i32), scale: f64) {
     if screen_mut(state, output).is_none() {
         return;
     }
     let old = output.current_mode();
+    let same_scale = output.current_scale().fractional_scale() == scale;
+    if same_scale && old.is_some_and(|m| m.size == size.into()) {
+        return;
+    }
     let mode = Mode {
         size: size.into(),
         refresh: old.map_or(60_000, |m| m.refresh),
@@ -387,6 +384,22 @@ mod tests {
             client.buffer_sizes().last(),
             Some(&(2560, 1440)),
             "the capture gets a 2560x1440 buffer"
+        );
+    }
+
+    #[test]
+    fn resizing_to_the_mode_it_runs_leaves_its_captures_alone() {
+        let mut h = Harness::new();
+        let o = remote(&mut h, (1920, 1080), 1.0, (0, 0));
+        let mut client = h.connect_capture((1920, 1080));
+        let _session = client.ext_session(&mut h);
+        resize(&mut h.state, &o, (1920, 1080), 1.0);
+        h.state.update_layout();
+        client.roundtrip(&mut h);
+        assert_eq!(
+            client.buffer_sizes(),
+            [(1920, 1080)],
+            "one buffer size, sent once"
         );
     }
 

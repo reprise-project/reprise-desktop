@@ -90,6 +90,12 @@ confinement holds, every motion goes through as it comes.
   `ext_output_image_capture_source_manager_v1`,
   `ext_foreign_toplevel_image_capture_source_manager_v1`
 - **Security:** `wp_security_context_manager_v1`
+- **Reprise's own:** `reprise_input_v1`, for the installed reprise-portal
+  only ([security.md](security.md)): libei sockets, input capture barriers,
+  global shortcuts, RemoteDesktop keys, the sandboxed apps with a window, the
+  colour picker, the remote desktop server's capture connection, and since
+  version 9 lock mode (`lock_screen`: virtual screens laid out as the remote
+  client's monitors while the session stays locked on the computer's own)
 
 ## Portals
 
