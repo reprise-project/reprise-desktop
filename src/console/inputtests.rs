@@ -328,3 +328,23 @@ fn a_button_held_under_the_console_lock_is_released_when_lock_mode_starts() {
     h.roundtrip(&mut c);
     assert_eq!(c.side.buttons, [(BTN_LEFT, true), (BTN_LEFT, false)]);
 }
+
+#[test]
+fn in_lock_mode_a_wlr_virtual_pointer_moves_the_remote_pointer_not_the_console() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    let mut c = h.connect();
+    let vp = c.virtual_pointer();
+    let seat = h.state.pointer_location();
+    let console = h.state.console.pointer;
+    vp.motion(0, 50.0, 20.0);
+    vp.frame();
+    h.roundtrip(&mut c);
+    assert_eq!(
+        h.state.pointer_location(),
+        (seat.x + 50.0, seat.y + 20.0).into()
+    );
+    assert_eq!(
+        h.state.console.pointer, console,
+        "the computer's pointer stays"
+    );
+}

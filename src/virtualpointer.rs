@@ -1,5 +1,6 @@
 //! wlr-virtual-pointer-unstable-v1: pointers a client drives (wlrctl, remote
-//! desktop servers). Events go through `State::process_input` like a real mouse.
+//! desktop servers). Events go through `State::process_input_from` like a real mouse's, as
+//! the desktop side's input (`InputSource::Other`).
 //!
 //! Follows niri's `src/protocols/virtual_pointer.rs` (GPL-3.0-or-later), with
 //! the handler folded into `State`, a scroll source sent before the first axis
@@ -28,7 +29,7 @@ use smithay::{
     wayland::{Dispatch2, GlobalDispatch2},
 };
 
-use crate::{compositor::State, raster::Rect};
+use crate::{compositor::State, inputproto::InputSource, raster::Rect};
 
 const VERSION: u32 = 2;
 
@@ -73,7 +74,7 @@ impl PendingAxis {
 }
 
 /// Where absolute position (`x` of `x_extent`, `y` of `y_extent`) on `target`
-/// lies as a fraction of the layout box `layout`, since `process_input` maps
+/// lies as a fraction of the layout box `layout`, since `process_input_from` maps
 /// absolute events over the whole layout. None for an empty extent or layout.
 pub fn layout_fraction(
     (x, y): (u32, u32),
@@ -168,7 +169,10 @@ impl Dispatch2<ZwlrVirtualPointerV1, State> for PointerData {
                     dx,
                     dy,
                 };
-                state.process_input(InputEvent::<VirtualPointerBackend>::PointerMotion { event });
+                state.process_input_from(
+                    InputSource::Other,
+                    InputEvent::<VirtualPointerBackend>::PointerMotion { event },
+                );
             }
             zwlr_virtual_pointer_v1::Request::MotionAbsolute {
                 time,
@@ -194,9 +198,10 @@ impl Dispatch2<ZwlrVirtualPointerV1, State> for PointerData {
                     x,
                     y,
                 };
-                state.process_input(InputEvent::<VirtualPointerBackend>::PointerMotionAbsolute {
-                    event,
-                });
+                state.process_input_from(
+                    InputSource::Other,
+                    InputEvent::<VirtualPointerBackend>::PointerMotionAbsolute { event },
+                );
             }
             zwlr_virtual_pointer_v1::Request::Button {
                 time,
@@ -215,7 +220,10 @@ impl Dispatch2<ZwlrVirtualPointerV1, State> for PointerData {
                     button,
                     state: pressed,
                 };
-                state.process_input(InputEvent::<VirtualPointerBackend>::PointerButton { event });
+                state.process_input_from(
+                    InputSource::Other,
+                    InputEvent::<VirtualPointerBackend>::PointerButton { event },
+                );
             }
             zwlr_virtual_pointer_v1::Request::Axis { time, axis, value } => {
                 if let Some(axis) = axis_of(resource, axis) {
@@ -263,7 +271,10 @@ impl Dispatch2<ZwlrVirtualPointerV1, State> for PointerData {
                 let frame = self.pending.lock().unwrap().finish();
                 if let Some(frame) = frame {
                     let event = AxisEvent { pointer, frame };
-                    state.process_input(InputEvent::<VirtualPointerBackend>::PointerAxis { event });
+                    state.process_input_from(
+                        InputSource::Other,
+                        InputEvent::<VirtualPointerBackend>::PointerAxis { event },
+                    );
                 }
             }
             zwlr_virtual_pointer_v1::Request::Destroy => {}
