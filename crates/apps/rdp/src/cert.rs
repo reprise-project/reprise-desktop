@@ -21,7 +21,8 @@ pub struct Identity {
     pub fingerprint: String,
 }
 
-/// The certificate in `dir`, or a new one when it is missing or unreadable.
+/// The certificate in `dir`, or a new one when it is missing or invalid; any other error (a
+/// read that may pass next time) is returned, so clients never see the fingerprint change for it.
 pub fn load_or_create(dir: &Path) -> io::Result<Identity> {
     if let Err(e) = owner_only(dir) {
         log::warn!("{}: {e}", dir.display());
@@ -29,10 +30,11 @@ pub fn load_or_create(dir: &Path) -> io::Result<Identity> {
     match load(dir) {
         Ok(identity) => Ok(identity),
         Err(e) if e.kind() == io::ErrorKind::NotFound => regenerate(dir),
-        Err(e) => {
+        Err(e) if e.kind() == io::ErrorKind::InvalidData => {
             log::warn!("{}: {e}; making a new certificate", dir.display());
             regenerate(dir)
         }
+        Err(e) => Err(e),
     }
 }
 
@@ -201,13 +203,31 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_key_is_replaced() {
+    fn an_invalid_key_is_replaced() {
         let dir = tempfile::tempdir().unwrap();
         let first = load_or_create(dir.path()).unwrap();
         fs::write(dir.path().join(KEY), "not a key").unwrap();
         assert_ne!(
             load_or_create(dir.path()).unwrap().fingerprint,
             first.fingerprint
+        );
+    }
+
+    #[test]
+    fn a_read_error_is_returned_and_keeps_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        load_or_create(dir.path()).unwrap();
+        let key = fs::read(dir.path().join(KEY)).unwrap();
+        fs::remove_file(dir.path().join(CERT)).unwrap();
+        fs::create_dir(dir.path().join(CERT)).unwrap();
+        let e = load_or_create(dir.path())
+            .err()
+            .expect("a certificate that cannot be read is an error");
+        assert_eq!(e.kind(), io::ErrorKind::IsADirectory);
+        assert_eq!(
+            fs::read(dir.path().join(KEY)).unwrap(),
+            key,
+            "the key is kept"
         );
     }
 }
