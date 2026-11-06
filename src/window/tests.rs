@@ -1047,6 +1047,11 @@ fn undocking_rescues_a_window_whose_centre_was_on_the_gone_screen() {
     let b = h.output("B-1", 1920, 1080);
     let mut c = h.connect();
     let t = h.map_toplevel(&mut c, "test.app", 1000, 400);
+    h.state.set_maximized(t.id, true);
+    h.roundtrip(&mut c);
+    h.state.set_maximized(t.id, false);
+    h.roundtrip(&mut c);
+    assert!(h.state.win(t.id).unwrap().size_serial.is_some());
     h.state.move_to(t.id, 1910, 300);
     h.roundtrip(&mut c);
     h.state.scene.remove_output(&b);
