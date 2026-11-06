@@ -107,7 +107,7 @@ fn main() -> ExitCode {
             leave: lock::LockOnLeave::new(marker.clone(), config_rx.clone()),
         };
         let sync_owner = input::SyncOwner::default();
-        let serving = listen::serve(server, intake, logins, |shown| {
+        let serving = listen::serve(server, intake, logins, |shown, ending| {
             let (input, feed) = input::Input::new(sync_owner.clone());
             let h264 = probed
                 .borrow()
@@ -122,6 +122,7 @@ fn main() -> ExitCode {
                 gfx,
                 links.clone(),
                 shown,
+                ending,
             );
             let clipboard: Box<dyn ironrdp_server::CliprdrServerFactory> =
                 Box::new(clipboard::Factory::default());

@@ -7,7 +7,8 @@ use super::{
     ends_track, field, group, list, locations, spin, time,
 };
 use crate::model::{
-    FRAME_RATES, GLASS_NOTIFY_STYLES, REMOTE_ENCODERS, REMOTE_QUALITIES, Shortcut, keys_for,
+    FRAME_RATES, GLASS_NOTIFY_STYLES, LOCK_GRACES, REMOTE_ENCODERS, REMOTE_QUALITIES, Shortcut,
+    keys_for,
 };
 use crate::notifypage;
 use reprisebus::remote::{Client, Status};
@@ -412,6 +413,9 @@ pub(super) const REMOTE_FRAME_RATE: &str = "frame_rate";
 pub(super) const REMOTE_ENCODER: &str = "video_encoder";
 pub(super) const REMOTE_SOUND: &str = "remote_sound";
 pub(super) const REMOTE_LOCK_ON_LEAVE: &str = "remote_lock";
+pub(super) const REMOTE_LOCK_GRACE: &str = "lock_grace";
+/// What greys with the lock check box off.
+const LOCK_GRACE_CONTROLS: [&str; 2] = ["lock_grace_label", REMOTE_LOCK_GRACE];
 pub(super) const REMOTE_BORDER: &str = "remote_border";
 /// The certificate's fingerprint: a read-only edit, so it can be selected and copied.
 const REMOTE_FINGERPRINT: &str = "fingerprint";
@@ -442,6 +446,7 @@ const REMOTE_CONTROLS: [&str; 18] = [
 ];
 
 const NEW_CERTIFICATE_W: i32 = 110;
+const LOCK_GRACE_W: i32 = 96;
 
 /// The Remote Desktop page as `status` and `enabled` (the server's unit) leave it; the host
 /// follows the server with [`show_remote`].
@@ -555,13 +560,13 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(Item::label_at(
         "clients_label",
         X,
-        359,
+        355,
         200,
         "Connected computers:",
     ));
     items.push(Item::new(
         CLIENTS,
-        Rect::new(X, 375, a.w - BUTTON_W - 6, 3 * listbox::ROW_H + 4),
+        Rect::new(X, 371, a.w - BUTTON_W - 6, 2 * listbox::ROW_H + 4),
         Control::ListBox {
             list: ListBox::new(Vec::new(), None),
             icons: Vec::new(),
@@ -570,19 +575,39 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
     items.push(button(
         REMOTE_DISCONNECT,
         a.right() - BUTTON_W,
-        375,
+        371,
         "&Disconnect",
     ));
     items.push(Item::check(
         REMOTE_LOCK_ON_LEAVE,
         X,
-        438,
+        415,
         "&Lock this computer when the last one disconnects",
+    ));
+    let grace_x = a.right() - LOCK_GRACE_W;
+    items.push(
+        Item::label_at(
+            "lock_grace_label",
+            X,
+            436,
+            grace_x - 6 - X - 18,
+            "&Wait before locking on a screen change:",
+        )
+        .under_check(),
+    );
+    let graces: Vec<&str> = LOCK_GRACES.iter().map(|g| g.1).collect();
+    items.push(Item::combo(
+        REMOTE_LOCK_GRACE,
+        grace_x,
+        432,
+        LOCK_GRACE_W,
+        &graces,
+        graces.len(),
     ));
     items.push(Item::check(
         REMOTE_BORDER,
         X,
-        460,
+        458,
         "Show a red &border while a remote computer is connected",
     ));
     let mut page = Form::new(items);
@@ -647,6 +672,22 @@ pub fn show_remote(
     }
     page.set_enabled(REMOTE_REGENERATE, shown.is_some());
     page.set_enabled(REMOTE_DISCONNECT, picked);
+    follow_lock(page);
+}
+
+/// Grey the lock's wait unless the lock check box is ticked and lit.
+pub(super) fn follow_lock(page: &mut Form) {
+    let lit = matches!(
+        page.item(REMOTE_LOCK_ON_LEAVE).map(|i| &i.control),
+        Some(Control::Check {
+            checked: true,
+            enabled: true,
+            ..
+        })
+    );
+    for id in LOCK_GRACE_CONTROLS {
+        page.set_enabled(id, lit);
+    }
 }
 
 /// The address of the client selected on the page, as `status` lists it.

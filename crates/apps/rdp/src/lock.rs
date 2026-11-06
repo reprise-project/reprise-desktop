@@ -1,6 +1,6 @@
 //! Locking the session once the last logged-in client has left, so the computer is not left open.
 
-use crate::listen::Leave;
+use crate::listen::{End, Leave};
 use repriseconf::remote::RemoteDesktop;
 use std::cell::Cell;
 use std::convert::Infallible;
@@ -148,12 +148,15 @@ async fn on_thread(
 
 /// Locks once the last client shown the session ([`Leave`]) has left and the portal sessions are
 /// closed, which is after its held input was released, unless `lock_on_leave` is off as it leaves.
+/// A last leave because the screen went waits `lock_grace_s` first, for the client to reconnect.
 /// Its marker is kept from the first shown client with `lock_on_leave` on until then.
 pub struct LockOnLeave<F> {
     marker: Option<PathBuf>,
     present: Cell<usize>,
     /// Wakes a last leaver's close wait: a login there means no lock.
     arrival: Notify,
+    /// Counts the last leaves; a grace that ends after a later one leaves the lock to it.
+    last_leaves: Cell<u64>,
     config: watch::Receiver<RemoteDesktop>,
     lock: F,
 }
@@ -176,6 +179,7 @@ impl<F: AsyncFn() -> bool> LockOnLeave<F> {
             marker,
             present: Cell::new(0),
             arrival: Notify::new(),
+            last_leaves: Cell::new(0),
             config: watch::channel(RemoteDesktop::default()).1,
             lock,
         }
@@ -193,7 +197,7 @@ impl<F: AsyncFn() -> bool> Leave for LockOnLeave<F> {
         }
     }
 
-    async fn left(&self) {
+    async fn left(&self, why: End) {
         let present = self.present.get().checked_sub(1).unwrap_or_else(|| {
             log::error!("a client left with none logged in; locking");
             0
@@ -201,6 +205,26 @@ impl<F: AsyncFn() -> bool> Leave for LockOnLeave<F> {
         self.present.set(present);
         if present > 0 {
             return;
+        }
+        let turn = self.last_leaves.get() + 1;
+        self.last_leaves.set(turn);
+        let RemoteDesktop {
+            lock_on_leave,
+            lock_grace_s,
+            ..
+        } = *self.config.borrow();
+        if lock_on_leave && why == End::ScreenGone && lock_grace_s > 0 {
+            log::info!(
+                "the last client's screen went; locking in {lock_grace_s} s unless a client is shown the session"
+            );
+            tokio::time::sleep(Duration::from_secs(lock_grace_s.into())).await;
+            if self.last_leaves.get() != turn {
+                return;
+            }
+            if self.present.get() > 0 {
+                log::info!("a client was shown the session in the grace; no lock");
+                return;
+            }
         }
         if !self.config.borrow().lock_on_leave {
             log::info!("the last client left; lock_on_leave is off");
@@ -250,6 +274,7 @@ mod tests {
     use futures_util::FutureExt;
     use std::cell::RefCell;
     use std::rc::Rc;
+    use tokio::task::LocalSet;
 
     #[tokio::test]
     async fn a_start_after_a_login_left_unlocked_locks_and_clears_the_marker() {
@@ -357,7 +382,7 @@ mod tests {
         let leave = LockOnLeave::with_lock(Some(marker.clone()), counted(&locks));
         leave.arrived();
         leave.arrived();
-        leave.left().await;
+        leave.left(End::Left).await;
         assert_eq!(locks.get(), 0, "one viewer is still logged in");
         assert!(
             marker.exists(),
@@ -373,8 +398,8 @@ mod tests {
         let leave = LockOnLeave::with_lock(Some(marker.clone()), counted(&locks));
         leave.arrived();
         leave.arrived();
-        leave.left().await;
-        leave.left().await;
+        leave.left(End::Left).await;
+        leave.left(End::Left).await;
         assert_eq!(locks.get(), 1, "the last leaver locks once");
         assert!(!marker.exists(), "the lock clears the marker");
     }
@@ -391,7 +416,7 @@ mod tests {
         };
         leave.arrived();
         config.send_modify(|c| c.lock_on_leave = false);
-        leave.left().await;
+        leave.left(End::Left).await;
         assert_eq!(locks.get(), 0, "no lock with lock_on_leave off");
         assert!(!marker.exists(), "the leave clears the login's marker");
         leave.arrived();
@@ -400,7 +425,7 @@ mod tests {
             "a login with lock_on_leave off leaves no marker"
         );
         config.send_modify(|c| c.lock_on_leave = true);
-        leave.left().await;
+        leave.left(End::Left).await;
         assert_eq!(locks.get(), 1, "the next leave reads lock_on_leave again");
     }
 
@@ -408,10 +433,10 @@ mod tests {
     async fn a_leave_without_an_arrival_still_locks() {
         let locks = Rc::new(Cell::new(0));
         let leave = LockOnLeave::with_lock(None, counted(&locks));
-        leave.left().await;
+        leave.left(End::Left).await;
         assert_eq!(locks.get(), 1, "an unpaired leave locks");
         leave.arrived();
-        leave.left().await;
+        leave.left(End::Left).await;
         assert_eq!(locks.get(), 2, "the next viewer's leave still locks");
     }
 
@@ -431,7 +456,7 @@ mod tests {
         };
         let leave = LockOnLeave::with_lock(Some(marker.clone()), lock);
         leave.arrived();
-        let mut left = std::pin::pin!(leave.left());
+        let mut left = std::pin::pin!(leave.left(End::Left));
         tokio::select! {
             biased;
             () = &mut left => panic!("the lock call is held"),
@@ -457,7 +482,7 @@ mod tests {
         let leave = LockOnLeave::with_lock(Some(marker.clone()), counted(&locks));
         let held = crate::portal::tests::grant();
         leave.arrived();
-        let mut left = std::pin::pin!(leave.left());
+        let mut left = std::pin::pin!(leave.left(End::Left));
         assert!(
             (&mut left).now_or_never().is_none(),
             "the leave waits for the portal session to close"
@@ -476,6 +501,217 @@ mod tests {
             !crate::listen::tests::logged(timed_out),
             "no timeout is logged"
         );
+    }
+
+    /// `leave.left(why)` on a task of its own, in the LocalSet the test runs in.
+    fn leaving<F: AsyncFn() -> bool + 'static>(
+        leave: &Rc<LockOnLeave<F>>,
+        why: End,
+    ) -> tokio::task::JoinHandle<()> {
+        let leave = leave.clone();
+        tokio::task::spawn_local(async move { leave.left(why).await })
+    }
+
+    /// A [`LockOnLeave`] with a counted lock and `[remote_desktop]` from `config`.
+    fn configured(
+        marker: &Path,
+        locks: &Rc<Cell<usize>>,
+        config: watch::Receiver<RemoteDesktop>,
+    ) -> Rc<LockOnLeave<impl AsyncFn() -> bool + use<>>> {
+        Rc::new(LockOnLeave {
+            config,
+            ..LockOnLeave::with_lock(Some(marker.to_path_buf()), counted(locks))
+        })
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_last_leave_because_the_screen_went_locks_after_the_grace() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("logged-in");
+        let locks = Rc::new(Cell::new(0));
+        let leave = LockOnLeave::with_lock(Some(marker.clone()), counted(&locks));
+        leave.arrived();
+        let mut left = std::pin::pin!(leave.left(End::ScreenGone));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(4900), &mut left)
+                .await
+                .is_err(),
+            "the lock waits the 5 s grace"
+        );
+        assert_eq!(locks.get(), 0, "no lock in the grace");
+        assert!(marker.exists(), "the marker stays through the grace");
+        tokio::time::timeout(Duration::from_secs(60), left)
+            .await
+            .expect("the grace ends");
+        assert_eq!(
+            locks.get(),
+            1,
+            "no client was shown the session in the grace"
+        );
+        assert!(!marker.exists(), "the lock clears the marker");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_client_shown_the_session_in_the_grace_keeps_it_unlocked() {
+        LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let marker = dir.path().join("logged-in");
+                let locks = Rc::new(Cell::new(0));
+                let leave = configured(&marker, &locks, watch::channel(RemoteDesktop::default()).1);
+                leave.arrived();
+                let gone = leaving(&leave, End::ScreenGone);
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                leave.arrived();
+                tokio::time::timeout(Duration::from_secs(60), gone)
+                    .await
+                    .expect("the grace ends")
+                    .unwrap();
+                assert_eq!(locks.get(), 0, "the client reconnected in the grace");
+                assert!(marker.exists(), "the reconnected client keeps the marker");
+                leave.left(End::Left).await;
+                assert_eq!(locks.get(), 1, "its own leave locks");
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_leave_that_is_not_the_screen_going_locks_without_the_grace() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("logged-in");
+        let locks = Rc::new(Cell::new(0));
+        let (config, rx) = watch::channel(RemoteDesktop::default());
+        config.send_modify(|c| c.lock_grace_s = 60);
+        let leave = LockOnLeave {
+            config: rx,
+            ..LockOnLeave::with_lock(Some(marker.clone()), counted(&locks))
+        };
+        leave.arrived();
+        tokio::time::timeout(Duration::from_secs(10), leave.left(End::Left))
+            .await
+            .expect("a client that closed its connection locks without the 60 s grace");
+        assert_eq!(locks.get(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_grace_of_0_locks_when_the_screen_goes() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("logged-in");
+        let locks = Rc::new(Cell::new(0));
+        let (config, rx) = watch::channel(RemoteDesktop::default());
+        config.send_modify(|c| c.lock_grace_s = 0);
+        let leave = LockOnLeave {
+            config: rx,
+            ..LockOnLeave::with_lock(Some(marker.clone()), counted(&locks))
+        };
+        leave.arrived();
+        tokio::time::timeout(Duration::from_secs(10), leave.left(End::ScreenGone))
+            .await
+            .expect("no grace to wait");
+        assert_eq!(locks.get(), 1);
+        assert!(!marker.exists());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_second_screen_going_in_the_grace_starts_a_grace_of_its_own() {
+        LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let marker = dir.path().join("logged-in");
+                let locks = Rc::new(Cell::new(0));
+                let leave = configured(&marker, &locks, watch::channel(RemoteDesktop::default()).1);
+                leave.arrived();
+                let first = leaving(&leave, End::ScreenGone);
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                leave.arrived();
+                let second = leaving(&leave, End::ScreenGone);
+                tokio::time::sleep(Duration::from_millis(2500)).await;
+                assert!(first.is_finished(), "the first grace ran out at 5 s");
+                assert_eq!(locks.get(), 0, "the second leave decides the lock");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                assert_eq!(locks.get(), 0, "the second grace runs to 8 s");
+                assert!(marker.exists());
+                second.await.unwrap();
+                assert_eq!(locks.get(), 1, "the second grace locks once it runs out");
+                assert!(!marker.exists());
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_client_that_leaves_in_the_grace_locks_once() {
+        LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let marker = dir.path().join("logged-in");
+                let locks = Rc::new(Cell::new(0));
+                let leave = configured(&marker, &locks, watch::channel(RemoteDesktop::default()).1);
+                leave.arrived();
+                let gone = leaving(&leave, End::ScreenGone);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                leave.arrived();
+                leave.left(End::Left).await;
+                assert_eq!(locks.get(), 1, "the other client's leave locks at once");
+                tokio::time::sleep(Duration::from_secs(20)).await;
+                assert!(gone.is_finished());
+                assert_eq!(
+                    locks.get(),
+                    1,
+                    "the grace leaves the lock to the later leave"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stop_in_the_grace_locks_at_once() {
+        LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let marker = dir.path().join("logged-in");
+                let locks = Rc::new(Cell::new(0));
+                let leave = configured(&marker, &locks, watch::channel(RemoteDesktop::default()).1);
+                leave.arrived();
+                let _gone = leaving(&leave, End::ScreenGone);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let started = tokio::time::Instant::now();
+                let stopped = Rc::new(Cell::new(0));
+                until_stopped(
+                    std::future::pending(),
+                    async {},
+                    Some(&marker),
+                    counted(&stopped)(),
+                )
+                .await;
+                assert_eq!(stopped.get(), 1, "the stop locks");
+                assert_eq!(
+                    started.elapsed(),
+                    Duration::ZERO,
+                    "without waiting the grace out"
+                );
+                assert!(!marker.exists());
+                assert_eq!(locks.get(), 0);
+            })
+            .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn with_lock_on_leave_off_the_screen_going_neither_waits_nor_locks() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("logged-in");
+        let locks = Rc::new(Cell::new(0));
+        let (config, rx) = watch::channel(RemoteDesktop::default());
+        config.send_modify(|c| c.lock_on_leave = false);
+        let leave = LockOnLeave {
+            config: rx,
+            ..LockOnLeave::with_lock(Some(marker.clone()), counted(&locks))
+        };
+        leave.arrived();
+        let started = tokio::time::Instant::now();
+        leave.left(End::ScreenGone).await;
+        assert_eq!(started.elapsed(), Duration::ZERO);
+        assert_eq!(locks.get(), 0);
+        assert!(!marker.exists());
     }
 
     #[tokio::test(start_paused = true)]

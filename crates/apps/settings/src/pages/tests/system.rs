@@ -839,15 +839,20 @@ fn the_remote_desktop_page_geometry() {
         Rect::new(150, 294, 160, combo::COMBO_H)
     );
     assert_eq!(rect(&s, p, "remote_sound"), Rect::new(GX, 328, 13, 13));
-    assert_eq!(rect(&s, p, "clients_label"), Rect::new(20, 359, 200, 13));
+    assert_eq!(rect(&s, p, "clients_label"), Rect::new(20, 355, 200, 13));
     assert_eq!(
         rect(&s, p, "clients"),
-        Rect::new(20, 375, 277, 55),
-        "three rows"
+        Rect::new(20, 371, 277, 38),
+        "two rows"
     );
-    assert_eq!(rect(&s, p, "disconnect"), Rect::new(303, 375, 75, 23));
-    assert_eq!(rect(&s, p, "remote_lock"), Rect::new(20, 438, 13, 13));
-    assert_eq!(rect(&s, p, "remote_border"), Rect::new(20, 460, 13, 13));
+    assert_eq!(rect(&s, p, "disconnect"), Rect::new(303, 371, 75, 23));
+    assert_eq!(rect(&s, p, "remote_lock"), Rect::new(20, 415, 13, 13));
+    assert_eq!(rect(&s, p, "lock_grace_label"), Rect::new(38, 436, 238, 13));
+    assert_eq!(
+        rect(&s, p, "lock_grace"),
+        Rect::new(282, 432, 96, combo::COMBO_H)
+    );
+    assert_eq!(rect(&s, p, "remote_border"), Rect::new(20, 458, 13, 13));
     inside_page(&s, p);
     let page = &s.pages[p.index()];
     assert_eq!(
@@ -878,6 +883,19 @@ fn the_remote_desktop_page_geometry() {
             0
         ),
         "automatic unless set"
+    );
+    assert_eq!(
+        rows(&s, p, "lock_grace"),
+        (
+            vec![
+                "Don't wait".into(),
+                "5 seconds".into(),
+                "10 seconds".into(),
+                "30 seconds".into(),
+            ],
+            1
+        ),
+        "5 seconds unless set"
     );
 }
 
@@ -1263,6 +1281,71 @@ fn locking_when_the_last_remote_computer_leaves_round_trips_through_apply() {
 }
 
 #[test]
+fn the_wait_before_locking_round_trips_through_apply() {
+    let mut got = crate::model::load("");
+    let base = got.clone();
+    let mut s = with(&got);
+    let p = Page::RemoteDesktop;
+    s.pages[p.index()].set_combo("lock_grace", 0);
+    read_one(&s, "lock_grace", &mut got);
+    let out = crate::model::save("", &got, &base).expect("parses");
+    let doc: toml_edit::DocumentMut = out.parse().unwrap();
+    let table = doc["remote_desktop"].as_table().expect("the section");
+    let rd = repriseconf::remote::from_table(&table.to_string().parse().unwrap());
+    assert_eq!(rd.lock_grace_s, 0, "Don't wait writes lock_grace_s = 0");
+    let back = with(&crate::model::load(&out));
+    assert_eq!(back.pages[p.index()].combo_selected("lock_grace"), Some(0));
+    let other = with(&crate::model::load("[remote_desktop]\nlock_grace_s = 15\n"));
+    assert_eq!(
+        rows(&other, p, "lock_grace"),
+        (
+            vec![
+                "Don't wait".into(),
+                "5 seconds".into(),
+                "10 seconds".into(),
+                "30 seconds".into(),
+                "15".into(),
+            ],
+            4
+        ),
+        "a value the list lacks shows after it"
+    );
+}
+
+#[test]
+fn the_wait_before_locking_greys_with_the_lock_check_box_off() {
+    let mut s = with(&crate::model::load(""));
+    let p = Page::RemoteDesktop;
+    let mut want = crate::model::load("");
+    let status = serving(Vec::new());
+    show_remote(&mut s.pages[p.index()], Some(&status), true, None, None);
+    for id in ["lock_grace_label", "lock_grace"] {
+        assert!(enabled_on(&s, p, id), "{id} is lit with the lock on");
+    }
+    s.pages[p.index()].set_check("remote_lock", false);
+    read_one(&s, "remote_lock", &mut want);
+    crate::pages::follow(&mut s, &want);
+    for id in ["lock_grace_label", "lock_grace"] {
+        assert!(!enabled_on(&s, p, id), "{id} greys with the lock off");
+    }
+    show_remote(&mut s.pages[p.index()], Some(&status), true, None, None);
+    for id in ["lock_grace_label", "lock_grace"] {
+        assert!(
+            !enabled_on(&s, p, id),
+            "{id} stays grey as the server's state is shown"
+        );
+    }
+    s.pages[p.index()].set_check("remote_lock", true);
+    show_remote(&mut s.pages[p.index()], None, false, None, None);
+    for id in ["lock_grace_label", "lock_grace"] {
+        assert!(
+            !enabled_on(&s, p, id),
+            "{id} greys with remote connections off"
+        );
+    }
+}
+
+#[test]
 fn the_remote_desktop_border_round_trips_through_apply() {
     let mut got = crate::model::load("");
     let base = got.clone();
@@ -1319,7 +1402,7 @@ fn the_remote_desktop_page_pixels() {
             (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
         });
     assert_eq!(
-        h, 982_033_152_719_353_713,
+        h, 7_861_235_990_656_338_656,
         "the page with its client selected"
     );
 }

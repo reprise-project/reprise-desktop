@@ -150,6 +150,10 @@ pub(super) fn fields() -> Vec<Field> {
             k("remote_desktop", "lock_on_leave"),
             lens!(remote_lock_on_leave),
         ),
+        Field::Int(
+            k("remote_desktop", "lock_grace_s"),
+            lens!(remote_lock_grace_s),
+        ),
         Field::Flag(
             k("remote_desktop", "capture_border"),
             lens!(remote_capture_border),

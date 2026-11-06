@@ -1,6 +1,6 @@
 //! `[remote_desktop]`: reprise-rdp's port, picture quality, frame rate, video encoder, sound, how
-//! many viewers it takes, whether the last to leave locks the session and whether the compositor
-//! borders the screen it shares.
+//! many viewers it takes, whether and when the last to leave locks the session and whether the
+//! compositor borders the screen it shares.
 //! Each key that is missing or out of range keeps its default alone.
 
 use serde::Deserialize;
@@ -82,6 +82,9 @@ pub struct RemoteDesktop {
     /// 1 to 16 connected at once.
     pub max_viewers: usize,
     pub lock_on_leave: bool,
+    /// Seconds, 0 to 60, the lock waits when the last viewer left because the screen it showed
+    /// went; 0 locks at once.
+    pub lock_grace_s: u32,
     /// Whether the compositor borders what the server captures; `[privacy] capture_border` off
     /// turns it off as well.
     pub capture_border: bool,
@@ -97,6 +100,7 @@ impl Default for RemoteDesktop {
             sound: true,
             max_viewers: 4,
             lock_on_leave: true,
+            lock_grace_s: 5,
             capture_border: false,
         }
     }
@@ -167,6 +171,11 @@ fn read(t: &toml::Table) -> (RemoteDesktop, Vec<&'static str>) {
             d.lock_on_leave,
             toml::Value::as_bool,
         ),
+        lock_grace_s: key(t, "lock_grace_s", &mut bad, d.lock_grace_s, |v| {
+            v.as_integer()
+                .filter(|s| (0..=60).contains(s))
+                .map(|s| s as u32)
+        }),
         capture_border: key(
             t,
             "capture_border",
@@ -212,6 +221,7 @@ mod tests {
                 d.sound,
                 d.max_viewers,
                 d.lock_on_leave,
+                d.lock_grace_s,
                 d.capture_border
             ),
             (
@@ -222,6 +232,7 @@ mod tests {
                 true,
                 4,
                 true,
+                5,
                 false
             )
         );
@@ -268,6 +279,26 @@ quality = \"sharp\"",
                 bad.contains(&"lock_on_leave"),
                 invalid,
                 "lock_on_leave = {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn lock_grace_s_is_0_to_60() {
+        for (text, want, invalid) in [
+            ("0", 0, false),
+            ("60", 60, false),
+            ("61", 5, true),
+            ("-1", 5, true),
+            ("\"10\"", 5, true),
+        ] {
+            let t: toml::Table = toml::from_str(&format!("lock_grace_s = {text}")).unwrap();
+            let (rd, bad) = read(&t);
+            assert_eq!(rd.lock_grace_s, want, "lock_grace_s = {text}");
+            assert_eq!(
+                bad.contains(&"lock_grace_s"),
+                invalid,
+                "lock_grace_s = {text}"
             );
         }
     }

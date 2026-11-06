@@ -18,6 +18,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime};
@@ -30,7 +31,34 @@ use tokio::sync::{mpsc, oneshot, watch};
 /// A connection that logs in but never gets its portal session never had the session.
 pub trait Leave {
     fn arrived(&self) {}
-    fn left(&self) -> impl Future<Output = ()>;
+    fn left(&self, why: End) -> impl Future<Output = ()>;
+}
+
+/// Why a connection shown the session ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum End {
+    /// The client closed it, was disconnected or kicked, or the network dropped.
+    Left,
+    /// The screen it showed went away; a client that reconnects is shown the screen now there.
+    ScreenGone,
+}
+
+/// Marked by a connection's display when the screen it shows goes, before the connection ends.
+#[derive(Clone, Default)]
+pub struct Ending(Arc<AtomicBool>);
+
+impl Ending {
+    pub fn screen_gone(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    fn end(&self) -> End {
+        if self.0.load(Ordering::Acquire) {
+            End::ScreenGone
+        } else {
+            End::Left
+        }
+    }
 }
 
 /// The accept loop's settings and its links to the bus.
@@ -60,13 +88,13 @@ pub type Handlers<D, I> = (
 );
 
 /// Serve clients from `intake` for `server.user`, each checked by `logins` and served by
-/// `handlers`, which reports through its [`Shown`]. A client arriving with `max_viewers`
-/// connected is closed at once.
+/// `handlers`, which reports through its [`Shown`] and [`Ending`]. A client arriving with
+/// `max_viewers` connected is closed at once.
 pub async fn serve<D, I, L>(
     mut server: Server<L>,
     mut intake: impl Intake,
     logins: impl Logins,
-    mut handlers: impl FnMut(Shown) -> Handlers<D, I>,
+    mut handlers: impl FnMut(Shown, Ending) -> Handlers<D, I>,
 ) -> Infallible
 where
     D: RdpServerDisplay + 'static,
@@ -111,7 +139,8 @@ where
                 };
                 let (check, budget) = logins.check(peer);
                 let (shown, on_shown) = oneshot::channel();
-                let (display, input, gfx, clipboard, sound) = handlers(shown);
+                let ending = Ending::default();
+                let (display, input, gfx, clipboard, sound) = handlers(shown, ending.clone());
                 let local = stream
                     .local_addr()
                     .unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
@@ -125,7 +154,7 @@ where
                     .with_cliprdr_factory(clipboard)
                     .with_sound_factory(sound)
                     .build();
-                let viewer = Viewer { id, peer, kicked };
+                let viewer = Viewer { id, peer, kicked, ending };
                 let shared = shared.clone();
                 tokio::task::spawn_local(run(rdp, stream, viewer, check, budget, on_shown, shared));
             }
@@ -162,6 +191,7 @@ struct Viewer {
     id: ViewerId,
     peer: SocketAddr,
     kicked: oneshot::Receiver<Kick>,
+    ending: Ending,
 }
 
 async fn run<L: Leave + 'static, C: Login>(
@@ -173,7 +203,12 @@ async fn run<L: Leave + 'static, C: Login>(
     on_shown: oneshot::Receiver<()>,
     shared: Rc<Shared<L>>,
 ) {
-    let Viewer { id, peer, kicked } = viewer;
+    let Viewer {
+        id,
+        peer,
+        kicked,
+        ending,
+    } = viewer;
     log::info!("{peer}: connected");
     let arrived = Rc::new(Cell::new(false));
     let _unwound = Unwound {
@@ -244,7 +279,7 @@ async fn run<L: Leave + 'static, C: Login>(
     }
     if arrived.replace(false) {
         drop(server);
-        shared.leave.left().await;
+        shared.leave.left(ending.end()).await;
     } else if check.accepted() {
         log::info!("{peer}: left without being shown the session; it stays as it was");
     }
@@ -264,7 +299,7 @@ impl<L: Leave + 'static> Drop for Unwound<L> {
         self.shared.forget(self.id, self.peer);
         if std::thread::panicking() && self.arrived.replace(false) {
             let shared = self.shared.clone();
-            tokio::task::spawn_local(async move { shared.leave.left().await });
+            tokio::task::spawn_local(async move { shared.leave.left(End::Left).await });
         }
     }
 }
@@ -431,7 +466,7 @@ pub(crate) mod tests {
     }
 
     impl Leave for () {
-        async fn left(&self) {}
+        async fn left(&self, _: End) {}
     }
 
     /// A running [`serve`] on 127.0.0.1 and its links.
@@ -518,7 +553,7 @@ pub(crate) mod tests {
             disconnect: disconnect_rx,
             leave: (),
         };
-        local.spawn_local(serve(server, intake, logins, |_| {
+        local.spawn_local(serve(server, intake, logins, |_, _| {
             (
                 crate::Grey,
                 crate::input::Input::new(Default::default()).0,
@@ -1026,8 +1061,13 @@ pub(crate) mod tests {
             self.steps.borrow_mut().push("arrived");
         }
 
-        async fn left(&self) {
-            let lock = async { self.steps.borrow_mut().push("lock") };
+        async fn left(&self, why: End) {
+            let lock = async {
+                if why == End::ScreenGone {
+                    self.steps.borrow_mut().push("screen gone");
+                }
+                self.steps.borrow_mut().push("lock");
+            };
             match &self.open {
                 Some(open) => {
                     let _ = open.clone().wait_for(|open| !open).await;
@@ -1039,9 +1079,11 @@ pub(crate) mod tests {
     }
 
     /// How a logged-in or anonymous connection was ended.
-    enum End {
+    enum Ended {
         ClientLeft,
         Asked,
+        /// Its display marked the screen gone, then the client's connection closed.
+        ScreenGone,
     }
 
     /// Run one connection to its end and return the steps after it and the clients reported
@@ -1049,7 +1091,7 @@ pub(crate) mod tests {
     async fn session(
         log_in: bool,
         shown: bool,
-        end: End,
+        end: Ended,
         portal: Portal,
     ) -> (Vec<&'static str>, Vec<Client>) {
         let dir = tempfile::tempdir().unwrap();
@@ -1109,13 +1151,19 @@ pub(crate) mod tests {
             viewers: RefCell::default(),
         });
         let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
-        let ending = async {
+        let ending = Ending::default();
+        let ended_by = async {
             match end {
-                End::ClientLeft => {
+                Ended::ClientLeft => {
                     drop(client);
                     Vec::new()
                 }
-                End::Asked => {
+                Ended::ScreenGone => {
+                    ending.screen_gone();
+                    drop(client);
+                    Vec::new()
+                }
+                Ended::Asked => {
                     let listed = status_rx.wait_for(|s| !s.clients.is_empty()).await;
                     let clients = listed.unwrap().clients.clone();
                     let address = peer.to_string();
@@ -1129,13 +1177,18 @@ pub(crate) mod tests {
                 run(
                     rdp,
                     stream,
-                    Viewer { id, peer, kicked },
+                    Viewer {
+                        id,
+                        peer,
+                        kicked,
+                        ending: ending.clone(),
+                    },
                     check.clone(),
                     HANDSHAKE,
                     on_shown,
                     shared.clone()
                 ),
-                ending
+                ended_by
             );
             input_task.await.unwrap();
             listed
@@ -1155,8 +1208,21 @@ pub(crate) mod tests {
     async fn disconnect_ends_with_release_then_close_then_lock() {
         LocalSet::new()
             .run_until(async {
-                let (steps, _) = session(true, true, End::ClientLeft, Portal::Flag).await;
+                let (steps, _) = session(true, true, Ended::ClientLeft, Portal::Flag).await;
                 assert_eq!(steps, ["arrived", "release", "close", "lock"]);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_connection_whose_screen_went_leaves_as_screen_gone() {
+        LocalSet::new()
+            .run_until(async {
+                let (steps, _) = session(true, true, Ended::ScreenGone, Portal::Flag).await;
+                assert_eq!(
+                    steps,
+                    ["arrived", "release", "close", "screen gone", "lock"]
+                );
             })
             .await;
     }
@@ -1166,7 +1232,7 @@ pub(crate) mod tests {
         LocalSet::new()
             .run_until(async {
                 let started = std::time::Instant::now();
-                let (steps, _) = session(true, true, End::ClientLeft, Portal::Grant).await;
+                let (steps, _) = session(true, true, Ended::ClientLeft, Portal::Grant).await;
                 assert_eq!(steps, ["arrived", "release", "close", "lock"]);
                 assert!(
                     started.elapsed() < Duration::from_secs(4),
@@ -1212,7 +1278,7 @@ pub(crate) mod tests {
     async fn a_logged_in_connection_never_shown_the_session_does_not_lock() {
         LocalSet::new()
             .run_until(async {
-                let (steps, _) = session(true, false, End::ClientLeft, Portal::Flag).await;
+                let (steps, _) = session(true, false, Ended::ClientLeft, Portal::Flag).await;
                 assert_eq!(steps, ["release", "close"]);
             })
             .await;
@@ -1222,7 +1288,7 @@ pub(crate) mod tests {
     async fn an_unauthenticated_drop_does_not_lock() {
         LocalSet::new()
             .run_until(async {
-                let (steps, _) = session(false, false, End::ClientLeft, Portal::Flag).await;
+                let (steps, _) = session(false, false, Ended::ClientLeft, Portal::Flag).await;
                 assert_eq!(steps, ["release", "close"]);
             })
             .await;
@@ -1232,7 +1298,7 @@ pub(crate) mod tests {
     async fn a_disconnect_request_ends_a_listed_client_and_locks() {
         LocalSet::new()
             .run_until(async {
-                let (steps, listed) = session(true, true, End::Asked, Portal::Flag).await;
+                let (steps, listed) = session(true, true, Ended::Asked, Portal::Flag).await;
                 assert_eq!(listed.len(), 1);
                 assert_eq!(listed[0].user, "alice");
                 assert!(listed[0].address.starts_with("127.0.0.1:"), "{listed:?}");
@@ -1302,7 +1368,12 @@ pub(crate) mod tests {
                     viewers: RefCell::default(),
                 });
                 let (id, kicked) = shared.viewers.borrow_mut().join(peer, 1).unwrap();
-                let viewer = Viewer { id, peer, kicked };
+                let viewer = Viewer {
+                    id,
+                    peer,
+                    kicked,
+                    ending: Ending::default(),
+                };
                 let ran = run(
                     rdp,
                     stream,

@@ -8,7 +8,7 @@ use crate::encode::probe::Backend;
 use crate::encode::{Done, Encoded, Encoder, Job, Switch, Worker};
 use crate::gfx::{Gfx, Prepared, Video};
 use crate::input::{self, Feed, SharedMoves};
-use crate::listen::Shown;
+use crate::listen::{Ending, Shown};
 use crate::portal::{self, Grant};
 use crate::stream::{
     self, CursorImage, DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer, Offer, SizeChange,
@@ -144,6 +144,7 @@ pub struct Display {
     links: Links,
     /// Until the portal session is granted.
     shown: Option<Shown>,
+    ending: Ending,
 }
 
 impl Display {
@@ -155,6 +156,7 @@ impl Display {
         gfx: Option<Gfx>,
         links: Links,
         shown: Shown,
+        ending: Ending,
     ) -> Display {
         Display {
             told: Told::new(last),
@@ -166,6 +168,7 @@ impl Display {
             moves: input.moves.clone(),
             input: Some(input),
             shown: Some(shown),
+            ending,
         }
     }
 }
@@ -197,8 +200,12 @@ impl RdpServerDisplay for Display {
                 grant.size.0,
                 grant.size.1
             );
+            let ending = self.ending.clone();
             let (stream, frames, sizes) =
-                stream::spawn(&grant, &[DRM_FORMAT_MOD_LINEAR]).map_err(|e| {
+                stream::spawn(&grant, &[DRM_FORMAT_MOD_LINEAR], move || {
+                    ending.screen_gone()
+                })
+                .map_err(|e| {
                     ServerError::reason("the screen stream did not start", e.to_string())
                 })?;
             let grant = Arc::new(grant);
