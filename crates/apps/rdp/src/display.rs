@@ -302,7 +302,8 @@ impl RdpServerDisplay for Display {
                 );
             }
             let fds = remotes(&mut grant)?;
-            let pairing = match self.ending.granted(lock, &grant.screens) {
+            let lock_mode = self.ending.granted(lock, &grant.screens);
+            let pairing = match lock_mode {
                 true => Pairing::InOrder,
                 false => Pairing::ByPlace,
             };
@@ -368,7 +369,8 @@ impl RdpServerDisplay for Display {
                 _grant: grant,
                 _streams: kept,
             });
-            *self.live.lock().unwrap() = Some(Lives::new(lives));
+            let held = lock_mode.then(|| self.ending.clone());
+            *self.live.lock().unwrap() = Some(Lives::new(lives, held));
         }
         let mut live = (self.live.lock().unwrap().take())
             .ok_or_else(|| ServerError::reason("display", "the picture is already being sent"))?;
