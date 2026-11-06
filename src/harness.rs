@@ -212,6 +212,14 @@ impl Harness {
         output
     }
 
+    /// [`Harness::output`] on a connector `backend::heads` lists, which `backend::disable` parks
+    /// and `backend::enable` drives again.
+    pub fn head(&mut self, name: &str, w: i32, h: i32) -> Output {
+        let output = self.output(name, w, h);
+        self.state.test_heads.push(output.clone());
+        output
+    }
+
     /// Move the pointer to (`x`, `y`) and run the hover work its settle timer would.
     pub fn pointer_to(&mut self, x: f64, y: f64) {
         self.state.pointer_to(Point::from((x, y)), InputTime::now());

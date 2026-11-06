@@ -580,12 +580,13 @@ pub fn internal_wanted(lid_closed: bool, external_in_layout: bool) -> bool {
     !lid_closed || !external_in_layout
 }
 
+/// Whether a monitor besides the built-in panels shows the desktop; the standby screen is none.
 fn external_in_layout(state: &State) -> bool {
-    state
-        .scene
-        .outputs()
-        .iter()
-        .any(|o| !is_internal_output(&o.name()) && state.layout_box(Some(o)).width > 0)
+    state.scene.outputs().iter().any(|o| {
+        !is_internal_output(&o.name())
+            && !crate::backend::is_virtual(o)
+            && state.layout_box(Some(o)).width > 0
+    })
 }
 
 /// Clamshell mode: take the built-in panels out of the layout while the lid
@@ -744,8 +745,8 @@ pub fn switch_toggled(state: &mut State, switch: Option<Switch>, st: SwitchState
                 follow_lid(state);
                 return;
             }
-            if state.scene.outputs().is_empty() {
-                log::info!("power: lid closed before any output");
+            if !(state.scene.outputs().iter()).any(|o| !crate::backend::is_virtual(o)) {
+                log::info!("power: lid closed before any monitor");
                 arm_lid_check(state);
                 return;
             }
@@ -924,6 +925,39 @@ mod tests {
             assert!(!h.state.remote_controlled());
             assert_eq!(panel_sets(&jobs), [60], "the panel comes back at 60%");
             assert!(!h.state.is_locked(), "the lid action waits out the grace");
+            assert!(h.state.power.lid_timer.is_some(), "the lid check is armed");
+            lid_grace_over(&mut h.state);
+            assert!(h.state.is_locked(), "lid_close ran");
+        }
+
+        #[test]
+        fn unplugging_the_monitor_under_a_shut_lid_with_remote_desktop_on_brings_the_panel_back() {
+            let mut config = Config::default();
+            config.power.lid_close = PowerAction::Lock;
+            let mut h = Harness::with_config(config);
+            h.head("eDP-1", 800, 600);
+            let dp = h.head("DP-1", 1920, 1080);
+            let names = |h: &Harness| -> Vec<String> {
+                h.state.scene.outputs().iter().map(|o| o.name()).collect()
+            };
+            switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
+            h.dispatch();
+            assert_eq!(
+                names(&h),
+                ["DP-1"],
+                "docked, the shut panel leaves the layout"
+            );
+            crate::standby::rdp_changed(&mut h.state, true);
+            h.dispatch();
+            h.state.test_heads.retain(|o| *o != dp);
+            h.state.scene.remove_output(&dp);
+            h.state.output_removed(&dp);
+            h.dispatch();
+            assert_eq!(
+                names(&h),
+                ["eDP-1"],
+                "the panel comes back and no standby stays"
+            );
             assert!(h.state.power.lid_timer.is_some(), "the lid check is armed");
             lid_grace_over(&mut h.state);
             assert!(h.state.is_locked(), "lid_close ran");
