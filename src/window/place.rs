@@ -28,13 +28,17 @@ pub fn anchored_position(a: &ResizeAnchor, total: (i32, i32), current: (i32, i32
     (x, y)
 }
 
-/// Whether the anchor is done after the drag: the client committed the last configure sent (`acked`
-/// vs `sent`); with none sent (X11), any resize commit is the last.
+/// Whether the last configure sent (`sent`) is not yet acked by the client (`acked`).
+pub fn size_unacked(sent: Option<Serial>, acked: Option<Serial>) -> bool {
+    sent.is_some_and(|s| acked.is_none_or(|a| a < s))
+}
+
+/// Whether the anchor is done after the drag: the client committed the last configure sent; with
+/// none sent (X11), any resize commit is the last.
 pub fn anchor_done(sent: Option<Serial>, acked: Option<Serial>, resized: bool) -> bool {
-    match (sent, acked) {
-        (Some(s), Some(a)) => a >= s,
-        (Some(_), None) => false,
-        (None, _) => resized,
+    match sent {
+        Some(_) => !size_unacked(sent, acked),
+        None => resized,
     }
 }
 

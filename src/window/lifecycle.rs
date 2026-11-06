@@ -237,15 +237,11 @@ impl State {
             && win.resize_anchor.is_some()
             && !self.interaction.is_resize_of(w)
             && !self.wm.snap.follows_drag(w)
+            && anchor_done(win.size_serial, win.acked_serial(), resized)
+            && let Some(win) = self.win_mut(w)
         {
-            let acked = (win.xdg())
-                .and_then(|t| t.with_cached_state(|s| s.last_acked.as_ref().map(|c| c.serial)));
-            if anchor_done(win.size_serial, acked, resized)
-                && let Some(win) = self.win_mut(w)
-            {
-                win.resize_anchor = None;
-                self.remember_file_dialog(w);
-            }
+            win.resize_anchor = None;
+            self.remember_file_dialog(w);
         }
         self.refit_scale(w);
     }

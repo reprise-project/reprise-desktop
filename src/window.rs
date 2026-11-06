@@ -296,6 +296,16 @@ impl Window {
         }
     }
 
+    /// The serial of the last configure the client acked; None for X11.
+    pub fn acked_serial(&self) -> Option<Serial> {
+        (self.xdg()).and_then(|t| t.with_cached_state(|s| s.last_acked.as_ref().map(|c| c.serial)))
+    }
+
+    /// Whether a size the compositor asked for still waits for the client's ack.
+    pub fn size_pending(&self) -> bool {
+        place::size_unacked(self.size_serial, self.acked_serial())
+    }
+
     pub fn x11(&self) -> Option<&X11Surface> {
         match &self.kind {
             Kind::X11(x) => Some(x.as_ref()),
