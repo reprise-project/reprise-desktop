@@ -442,7 +442,7 @@ impl State {
         let editor = self.editor();
         let want = field_want(
             im.is_some(),
-            self.is_locked(),
+            self.desktop_locked(),
             client_focus,
             editor,
             self.ime.drawn.as_ref(),

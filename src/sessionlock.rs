@@ -144,7 +144,7 @@ impl<K: PartialEq> CoverWait<K> {
 /// the dialog back while it starts. Returns whether it started.
 pub fn start_locker(state: &mut State) -> bool {
     let cmd = state.config.power.locker.trim().to_string();
-    if cmd.is_empty() || !state.is_locked() {
+    if cmd.is_empty() || !state.console_locked() {
         return false;
     }
     if !crate::spawn::spawn(&cmd, &state.env, None) {
@@ -230,6 +230,16 @@ pub fn is_lock_surface(state: &State, surface: &WlSurface) -> bool {
         .is_some_and(|c| c.surfaces.iter().any(|s| s.surface.wl_surface() == surface))
 }
 
+/// The outputs a locker's `locked` waits on: the Console ones in the layout whose frames are not
+/// held back.
+pub(crate) fn cover_outputs(state: &State) -> Vec<Output> {
+    (state.scene.outputs().iter())
+        .filter(|o| crate::console::side_of(o) == crate::console::Side::Console)
+        .filter(|o| state.layout_box(Some(o)).width > 0 && !crate::backend::stalled(state, o))
+        .cloned()
+        .collect()
+}
+
 impl SessionLockHandler for State {
     fn lock_state(&mut self) -> &mut SessionLockManagerState {
         &mut self.lock.session.manager
@@ -245,22 +255,15 @@ impl SessionLockHandler for State {
             return;
         }
         crate::lockview::engage(self);
-        if !self.is_locked() {
+        if !self.console_locked() {
             return;
         }
-        // Before the outputs are listed, so the cover wait counts no Remote one.
         crate::console::stop(
             self,
             crate::inputproto::proto::reprise_lock_screen_v1::Reason::Replaced,
         );
         let tree = self.scene.tree_create(self.layers.lock);
-        let outputs: Vec<Output> = self
-            .scene
-            .outputs()
-            .iter()
-            .filter(|o| self.layout_box(Some(o)).width > 0 && !crate::backend::stalled(self, o))
-            .cloned()
-            .collect();
+        let outputs = cover_outputs(self);
         let c = ClientLock {
             lock: confirmation.ext_session_lock().clone(),
             locker: Some(confirmation),

@@ -236,20 +236,20 @@ fn shows(state: &State, s: &WlSurface) -> bool {
 
 /// Whether anything holds the idle timer off: an
 /// `org.freedesktop.ScreenSaver` cookie, or a live idle-inhibit-v1
-/// inhibitor whose surface shows. Nothing does while the session is
+/// inhibitor whose surface shows. Nothing does while the desktop is
 /// locked: the lock covers every surface, and a client cannot hold the
 /// lock or the screen-off step off with something nobody can see.
 fn inhibited(state: &State) -> bool {
-    if state.is_locked() {
+    if state.desktop_locked() {
         return false;
     }
     state.idle.bus_inhibited || state.idle.inhibitors.iter().any(|(s, _)| shows(state, s))
 }
 
 /// Whether a fullscreen window shows, which holds the saver off. A video
-/// player without an idle inhibitor counts; the lock covers it.
+/// player without an idle inhibitor counts; the desktop's lock covers it.
 fn saver_held(state: &State) -> bool {
-    !state.is_locked()
+    !state.desktop_locked()
         && state
             .windows
             .iter()
@@ -452,7 +452,7 @@ fn fired(state: &mut State) {
     let dim_after = dim_after_ms(&cfg);
     if dim_after > 0 && !state.idle.steps.dimming && elapsed >= dim_after {
         state.idle.steps.dimming = true;
-        if !state.is_locked() {
+        if !state.console_locked() {
             log::info!("idle for {}s: dimming", dim_after / 1000);
             start_dim(state);
         }
@@ -460,7 +460,7 @@ fn fired(state: &mut State) {
     if due(cfg.lock_after) && !state.idle.steps.locked_fired {
         state.idle.steps.locked_fired = true;
         end_dim(state);
-        if !state.is_locked() {
+        if !state.console_locked() {
             log::info!("idle for {}s: locking", cfg.lock_after);
             crate::lockview::lock(state);
         }
@@ -472,7 +472,11 @@ fn fired(state: &mut State) {
     if due(cfg.suspend_after) && !state.idle.steps.suspended {
         state.idle.steps.suspended = true;
         log::info!("idle for {}s: standby", cfg.suspend_after);
-        crate::power::run_action(state, crate::config::PowerAction::Standby);
+        crate::power::run_action(
+            state,
+            crate::config::PowerAction::Standby,
+            crate::lockview::Origin::Console,
+        );
     }
     let idle = state.idle.steps.is_idle();
     crate::power::hint(state, crate::power::Hint::Idle(idle));
@@ -1006,7 +1010,7 @@ mod tests {
             let _peer = h.ei_remote_session();
             crate::idle::setup(&mut h.state);
             h.run_for(3000);
-            assert!(h.state.is_locked());
+            assert!(h.state.console_locked());
         }
     }
 }

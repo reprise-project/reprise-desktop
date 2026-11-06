@@ -199,7 +199,7 @@ pub fn poke(state: &mut State) {
 /// slide changed and arm the timer for the next change. Nothing moves while
 /// the session is locked.
 pub fn refresh(state: &mut State) {
-    if !state.config.taskbar.auto_hide || state.is_locked() {
+    if !state.config.taskbar.auto_hide || state.desktop_locked() {
         return;
     }
     let now = Instant::now();
@@ -282,7 +282,7 @@ fn arm(state: &mut State, now: Instant) {
 /// `output` is about to render a frame: put its bar where its slide is now
 /// and ask for the next frame while it still slides.
 pub fn frame(state: &mut State, output: &Output) {
-    if state.is_locked() {
+    if state.locked_on(output) {
         return;
     }
     let Some(e) = state.bar_hide.entry_mut(output) else {
@@ -309,7 +309,7 @@ pub fn frame(state: &mut State, output: &Output) {
 /// `reveal_on_keys` its bar heads out first, so the menu docks on the shown
 /// bar. Over a fullscreen window only the Start key does.
 pub fn keys(state: &mut State, output: &Output, start: bool) {
-    if !state.config.taskbar.auto_hide || state.is_locked() {
+    if !state.config.taskbar.auto_hide || state.desktop_locked() {
         return;
     }
     let Some(fullscreen) = (state.bars.iter())
@@ -349,7 +349,7 @@ pub fn land(state: &mut State, tree: TreeId) {
 /// it as a press on its reveal line (`reveal_on_edge`). Returns whether the
 /// bar took the press.
 pub fn line_pressed(state: &mut State, tree: TreeId) -> bool {
-    if state.is_locked() {
+    if state.desktop_locked() {
         return false;
     }
     let Some(bar) = state.bar(tree) else {

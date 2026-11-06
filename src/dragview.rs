@@ -797,7 +797,7 @@ impl State {
     /// chosen cell is recorded when its name comes back. The first failure stops the batch. On a desktop
     /// cell the grabbed icon lands there and the others keep their grid offsets, falling to the next free cell if taken.
     pub fn perform_all(&mut self, sources: &[DragSource], target: &DropTarget, op: DropOp) {
-        if self.is_locked() {
+        if self.desktop_locked() {
             log::info!("desktop: a drop under the lock is refused");
             return;
         }
@@ -832,7 +832,7 @@ impl State {
         op: DropOp,
         here: &HashSet<PathBuf>,
     ) {
-        if self.is_locked() {
+        if self.desktop_locked() {
             log::info!("desktop: a drop under the lock is refused");
             return;
         }

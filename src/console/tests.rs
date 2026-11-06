@@ -1,5 +1,9 @@
 use super::*;
+use crate::config::PowerAction;
 use crate::harness::{Harness, Heard, TestClient};
+use crate::lockview::Origin;
+use crate::window::WindowId;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
 fn remote_names(h: &Harness) -> Vec<String> {
     (crate::virtualout::remote_outputs(&h.state).iter())
@@ -35,7 +39,7 @@ fn the_first_lock_screen_object_creates_its_screens_and_locks_the_console() {
     h.roundtrip(&mut portal);
     assert_eq!(lock.take_screens(), ["REMOTE-1", "REMOTE-2"]);
     assert_eq!(remote_names(&h), ["REMOTE-1", "REMOTE-2"]);
-    assert!(h.state.is_locked(), "the console is locked");
+    assert!(h.state.console_locked(), "the console is locked");
     assert!(remote_side(&h.state), "the remote side holds the desktop");
     let remotes = crate::virtualout::remote_outputs(&h.state);
     assert_eq!(size_and_scale(&remotes[0]), ((2560, 1440), 1.0));
@@ -64,7 +68,7 @@ fn lock_mode_lasts_until_the_last_object_goes() {
     assert!(!remote_side(&h.state));
     assert!(remote_names(&h).is_empty(), "the remote screens go");
     assert_eq!(output_names(&h), ["eDP-1"]);
-    assert!(h.state.is_locked(), "the console lock stays");
+    assert!(h.state.console_locked(), "the console lock stays");
 }
 
 #[test]
@@ -168,7 +172,7 @@ fn lock_mode_is_unavailable_while_a_locker_is_set() {
     h.roundtrip(&mut portal);
     assert_eq!(lock.heard(), [Heard::Ended(2)]);
     assert!(remote_names(&h).is_empty());
-    assert!(!h.state.is_locked());
+    assert!(!h.state.console_locked());
     assert!(!remote_side(&h.state));
 }
 
@@ -428,5 +432,178 @@ fn dropping_the_portal_connection_ends_lock_mode_and_keeps_the_lock() {
     h.run_for(50);
     assert!(!remote_side(&h.state), "lock mode ends");
     assert_eq!(output_names(&h), ["eDP-1"], "the remote screens go");
-    assert!(h.state.is_locked(), "the console lock stays");
+    assert!(h.state.console_locked(), "the console lock stays");
+}
+
+/// eDP-1 at 1920x1080 and, in lock mode, one 1280x720 Remote output at x 1920.
+fn in_lock_mode() -> (Harness, TestClient, crate::harness::LockScreen) {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut portal = h.connect_portal();
+    let lock = portal.lock_screen();
+    lock.set_layout(&[(0, 0, 1280, 720, 100)]);
+    h.roundtrip(&mut portal);
+    assert!(remote_side(&h.state));
+    (h, portal, lock)
+}
+
+fn covered(h: &Harness) -> Vec<String> {
+    let l = h.state.lock.active.as_ref().expect("locked");
+    l.outputs.iter().map(|lo| lo.output.name()).collect()
+}
+
+fn under_lock_layer(h: &Harness, node: reprisescene::NodeId) -> bool {
+    let lock = h.state.layers.lock;
+    let mut at = h.state.scene.parent(node);
+    while let Some(t) = at {
+        if t == lock {
+            return true;
+        }
+        at = h.state.scene.parent(t);
+    }
+    false
+}
+
+fn keyboard_focus(h: &Harness) -> Option<WlSurface> {
+    h.state.seat.get_keyboard()?.current_focus()
+}
+
+#[test]
+fn in_lock_mode_the_covers_are_on_the_physical_outputs_only() {
+    let (mut h, mut portal, lock) = in_lock_mode();
+    assert_eq!(covered(&h), ["eDP-1"]);
+    lock.set_layout(&[(0, 0, 1280, 720, 100), (1280, 0, 1280, 720, 100)]);
+    h.roundtrip(&mut portal);
+    assert_eq!(covered(&h), ["eDP-1"], "a relayout covers no Remote output");
+    h.output("HDMI-A-1", 1280, 1024);
+    assert_eq!(
+        covered(&h),
+        ["eDP-1", "HDMI-A-1"],
+        "a new monitor is covered"
+    );
+}
+
+#[test]
+fn a_lock_from_before_lock_mode_covers_no_remote_output() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    crate::lockview::lock(&mut h.state);
+    let mut portal = h.connect_portal();
+    let lock = portal.lock_screen();
+    lock.set_layout(&[(0, 0, 1280, 720, 100)]);
+    h.roundtrip(&mut portal);
+    assert!(remote_side(&h.state));
+    assert_eq!(covered(&h), ["eDP-1"]);
+}
+
+#[test]
+fn in_lock_mode_a_capture_of_a_remote_output_shows_the_desktop() {
+    let (h, _portal, _lock) = in_lock_mode();
+    let remote = &crate::virtualout::remote_outputs(&h.state)[0];
+    let area = reprisescene::output_rect(remote).expect("in the layout");
+    let leaves = h.state.scene.leaves_in(area);
+    assert!(
+        !leaves.iter().any(|&n| under_lock_layer(&h, n)),
+        "no cover node meets {area:?}"
+    );
+    let console = reprisescene::output_rect(&h.state.scene.outputs()[0]).unwrap();
+    let leaves = h.state.scene.leaves_in(console);
+    assert!(
+        leaves.iter().any(|&n| under_lock_layer(&h, n)),
+        "eDP-1 shows the cover"
+    );
+}
+
+#[test]
+fn in_lock_mode_a_window_capture_is_not_blank() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 400, 300);
+    h.state.move_to(t.id, 2100, 200);
+    h.dispatch();
+    assert!(
+        !h.state.window_locked(t.id),
+        "a window on REMOTE-1 is shown"
+    );
+    h.state.move_to(t.id, 100, 100);
+    h.dispatch();
+    assert!(h.state.window_locked(t.id), "a window on eDP-1 is blank");
+}
+
+#[test]
+fn in_lock_mode_the_remote_focus_moves_while_the_console_stays_locked() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 400, 300);
+    h.state.move_to(t.id, 2100, 200);
+    let s = h.state.win(t.id).unwrap().wl_surface().clone();
+    h.state.enter_keyboard(Some(s.clone()));
+    assert_eq!(keyboard_focus(&h), Some(s));
+    assert!(h.state.console_locked());
+    assert_eq!(covered(&h), ["eDP-1"], "the cover stays up");
+    assert!(h.state.key_modes().locked, "keys still go to the lock");
+}
+
+#[test]
+fn the_lock_confirmation_waits_for_physical_outputs_only() {
+    let (h, _portal, _lock) = in_lock_mode();
+    let names: Vec<String> = (crate::sessionlock::cover_outputs(&h.state).iter())
+        .map(|o| o.name())
+        .collect();
+    assert_eq!(names, ["eDP-1"]);
+}
+
+#[test]
+fn outside_lock_mode_every_check_is_as_before() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut c = h.connect();
+    let t = h.map_toplevel(&mut c, "test.app", 400, 300);
+    let s = h.state.win(t.id).unwrap().wl_surface().clone();
+    type Probe = fn(&mut Harness, WindowId, &WlSurface) -> bool;
+    let rows: [(&str, Probe); 6] = [
+        ("a: every output is covered", |h, _, _| {
+            h.state
+                .lock
+                .active
+                .as_ref()
+                .is_some_and(|l| l.outputs.len() == 1)
+        }),
+        ("b: no finger goes to a client", |h, _, _| {
+            !h.state.clients_may_have_touch()
+        }),
+        ("b/c: keys go to the lock", |h, _, _| {
+            h.state.key_modes().locked
+        }),
+        ("c: a window capture is blank", |h, w, _| {
+            h.state.window_locked(w)
+        }),
+        ("d-desk: no window takes the keyboard", |h, _, s| {
+            h.state.enter_keyboard(None);
+            h.state.enter_keyboard(Some(s.clone()));
+            keyboard_focus(h).is_none()
+        }),
+        ("d: no OSD shows", |h, _, _| {
+            h.state.hide_osd();
+            h.state.show_display_osd(crate::media::Value::Brightness);
+            h.state.osd.showing.is_none()
+        }),
+    ];
+    for (row, probe) in &rows {
+        assert!(!probe(&mut h, t.id, &s), "unlocked, {row} does not hold");
+    }
+    crate::lockview::lock(&mut h.state);
+    assert!(h.state.desktop_locked(), "the desktop is locked");
+    for (row, probe) in &rows {
+        assert!(probe(&mut h, t.id, &s), "locked, {row}");
+    }
+}
+
+#[test]
+fn in_lock_mode_the_turn_off_dialog_opens_for_the_desktop_only() {
+    let (mut h, _portal, _lock) = in_lock_mode();
+    crate::power::run_action(&mut h.state, PowerAction::Ask, Origin::Console);
+    assert!(h.state.dialogs.views.is_empty(), "a power key asks nothing");
+    crate::power::run_action(&mut h.state, PowerAction::Ask, Origin::Desktop);
+    assert_eq!(h.state.dialogs.views.len(), 1, "the desktop's ask opens it");
 }

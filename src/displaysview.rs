@@ -76,7 +76,7 @@ fn rows(state: &State) -> (Vec<Row>, Vec<String>) {
 }
 
 fn open(state: &mut State, output: &Output, cell: Rect) {
-    if state.is_locked() {
+    if state.desktop_locked() {
         return;
     }
     crate::notifycenter::close(state);

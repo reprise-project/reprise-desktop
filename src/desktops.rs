@@ -181,7 +181,7 @@ impl State {
     }
 
     pub fn switch_desktop_as(&mut self, n: usize, animate: bool) {
-        if self.is_locked() || !self.show_desktop_as(n, animate) {
+        if self.desktop_locked() || !self.show_desktop_as(n, animate) {
             return;
         }
         self.focus_top();

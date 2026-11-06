@@ -171,7 +171,7 @@ impl State {
                 });
             }
             Dc::Cut | Dc::Copy => {
-                if self.is_locked() {
+                if self.desktop_locked() {
                     return;
                 }
                 let clip = crate::clipboard::FileClip {

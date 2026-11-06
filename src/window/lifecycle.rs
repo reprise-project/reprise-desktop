@@ -439,7 +439,7 @@ impl State {
         crate::idle::inhibition_changed(self);
         self.restack();
         let mut activated = self.win(w).is_some_and(|x| x.activate_on_map);
-        let locked = self.is_locked();
+        let locked = self.desktop_locked();
         let bar_keys = self.bar_shared.keys.is_some();
         let on_map =
             crate::mapfocus::on_map(locked, here, bar_keys, &mut activated, |a| match flicker {

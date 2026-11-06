@@ -191,7 +191,7 @@ impl State {
     pub fn super_hold_pressed(&mut self) {
         self.stop_key_sheet_timer();
         let cfg = &self.config.shortcut_overlay;
-        let wanted = cfg.enabled && !self.is_locked();
+        let wanted = cfg.enabled && !self.desktop_locked();
         let delay = Duration::from_millis(cfg.delay_ms as u64);
         if !self.key_sheet.hold.pressed(wanted) {
             return;
@@ -200,7 +200,10 @@ impl State {
             .handle
             .insert_source(Timer::from_duration(delay), |_, _, st| {
                 st.key_sheet.timer = None;
-                if st.key_input.super_tap_armed && !st.is_locked() && st.key_sheet.hold.elapsed() {
+                if st.key_input.super_tap_armed
+                    && !st.desktop_locked()
+                    && st.key_sheet.hold.elapsed()
+                {
                     st.show_key_sheet();
                 }
                 TimeoutAction::Drop

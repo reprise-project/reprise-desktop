@@ -221,7 +221,7 @@ impl State {
     /// Open the overview, the most recently focused window selected. No-op
     /// while locked, while a switcher is up or already open.
     pub fn open_overview(&mut self) {
-        if self.overview.view.is_some() || self.is_locked() || self.switcher.is_open() {
+        if self.overview.view.is_some() || self.desktop_locked() || self.switcher.is_open() {
             return;
         }
         let outputs = self.overview_outputs();
@@ -255,7 +255,7 @@ impl State {
     /// picker: offers the desktop's other snappable windows outside
     /// `snapped`'s group for the first of `zones`.
     pub fn open_snap_assist(&mut self, snapped: WindowId, zones: Vec<(usize, Rect)>) {
-        if self.overview.view.is_some() || self.is_locked() || self.switcher.is_open() {
+        if self.overview.view.is_some() || self.desktop_locked() || self.switcher.is_open() {
             return;
         }
         self.snap_assist_at(snapped, zones);

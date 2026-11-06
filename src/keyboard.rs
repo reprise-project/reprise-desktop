@@ -352,11 +352,11 @@ impl State {
         match routed.route {
             KeyRoute::PowerKey => {
                 let a = self.config.power.power_button;
-                crate::power::run_action(self, a);
+                crate::power::run_action(self, a, crate::lockview::Origin::Console);
             }
             KeyRoute::SleepKey => {
                 let a = self.config.power.sleep_button;
-                crate::power::run_action(self, a);
+                crate::power::run_action(self, a, crate::lockview::Origin::Console);
             }
             KeyRoute::Media(a) => self.media_key_down(&a, keycode),
             KeyRoute::VtSwitch(n) => {
@@ -559,7 +559,7 @@ impl State {
         let desktop = self.desktop.as_ref();
         Modes {
             can_switch_vt: self.backend.is_some(),
-            locked: self.is_locked(),
+            locked: self.console_locked(),
             captured: self.inputproto.gated(),
             saver_preview: crate::saverview::holds_keys(self),
             keyboard_interaction: self.interaction.is_keyboard(),
@@ -653,9 +653,12 @@ impl State {
                 let cmd = self.config.terminal.clone();
                 self.spawn_command_activated(&cmd);
             }
-            Action::Exit => {
-                crate::sessionend::begin(self, reprisekit::controls::endsession::Goal::LogOff, None)
-            }
+            Action::Exit => crate::sessionend::begin(
+                self,
+                reprisekit::controls::endsession::Goal::LogOff,
+                None,
+                crate::lockview::Origin::Desktop,
+            ),
             Action::Close => {
                 if let Some(w) = self.focused {
                     self.close(w);
@@ -1437,7 +1440,7 @@ mod tests {
             .input
             .push_str("secret");
         hold(&mut h, KEY_BACKSPACE, |h| field(h).is_empty());
-        assert!(h.state.is_locked());
+        assert!(h.state.console_locked());
         h.key(KEY_A, true);
         assert!(
             h.state.key_input.field_repeat.is_none(),

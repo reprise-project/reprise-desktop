@@ -237,7 +237,7 @@ impl State {
     /// fullscreen window over it.
     fn desktop_covered(&self, output: &Output) -> bool {
         let b = self.layout_box(Some(output));
-        self.is_locked() || crate::saverview::running(self) || self.fullscreen_on(b)
+        self.locked_on(output) || crate::saverview::running(self) || self.fullscreen_on(b)
     }
 
     /// Bring the widgets in line with `desktop_widgets`, the outputs and the store, and redraw what

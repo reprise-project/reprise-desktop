@@ -124,7 +124,7 @@ impl State {
     }
 
     fn field_under(&mut self, source: &SeatSource, pos: Point<f64, Logical>) -> Option<FieldOver> {
-        if self.is_locked() {
+        if self.desktop_locked() {
             return None;
         }
         let meta = source.metadata()?;
@@ -272,7 +272,7 @@ impl State {
             self.field_let_go(over);
             return;
         }
-        if self.is_locked() || !self.field_alive(over.field) {
+        if self.desktop_locked() || !self.field_alive(over.field) {
             source.refuse();
             self.field_let_go(over);
             return;

@@ -48,7 +48,7 @@ pub fn toggle(state: &mut State, output: &Output, cell: Rect) {
 }
 
 fn open(state: &mut State, output: &Output, cell: Rect) {
-    if state.is_locked() {
+    if state.desktop_locked() {
         return;
     }
     let usable = state.usable_area(Some(output));

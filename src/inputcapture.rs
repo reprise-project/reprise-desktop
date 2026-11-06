@@ -277,7 +277,7 @@ impl State {
             return true;
         }
         // The lock owns the pointer: a crossing under it must not start a capture, or the lock dialog would never see a click again.
-        if self.is_locked() {
+        if self.console_locked() {
             return false;
         }
         let from = self.pointer_location();

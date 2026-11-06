@@ -5,6 +5,7 @@ use reprisekit::taskbar::Edge;
 
 use crate::compositor::State;
 use crate::config::{Action, PowerAction};
+use crate::lockview::Origin;
 use crate::menuview::{MenuKind, Skin};
 use crate::raster::Rect;
 use crate::startmenu::{MenuItem, StartRow, place_popup};
@@ -280,15 +281,16 @@ impl State {
                     self,
                     reprisekit::controls::endsession::Goal::Restart,
                     Some(cmd),
+                    Origin::Desktop,
                 );
             }
             StartRow::Sleep => {
                 self.close_start_panel();
-                crate::power::run_action(self, PowerAction::Standby);
+                crate::power::run_action(self, PowerAction::Standby, Origin::Desktop);
             }
             StartRow::Hibernate => {
                 self.close_start_panel();
-                crate::power::run_action(self, PowerAction::Hibernate);
+                crate::power::run_action(self, PowerAction::Hibernate, Origin::Desktop);
             }
         }
     }

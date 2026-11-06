@@ -351,7 +351,7 @@ impl State {
     /// while Reprise has the pointer (a move, a size, one of its popups,
     /// the region overlay, a popup grab, a held button's grab).
     pub fn clients_may_have_touch(&self) -> bool {
-        !self.is_locked()
+        !self.console_locked()
             && self.interaction == Interaction::Idle
             && Popup::open(self).next().is_none()
             && !self.panels.takes_pointer()
@@ -382,7 +382,7 @@ impl State {
         };
         let theirs =
             (start.focus.as_ref()).is_some_and(|(f, _)| f.id().same_client_as(&surface.id()));
-        if !theirs || self.is_locked() || self.inputproto.gated() {
+        if !theirs || self.console_locked() || self.inputproto.gated() {
             return false;
         }
         let Some(at) = hand_to_pointer(&mut self.devices.touch.points, start.slot) else {
@@ -475,7 +475,7 @@ impl State {
                 }
             }
             _ => {
-                let fluid = !self.is_locked() && self.stir_takes(pos);
+                let fluid = !self.console_locked() && self.stir_takes(pos);
                 match desktop_route(fluid, &hit, first && !self.inputproto.gated()) {
                     Landing::Stir => {
                         self.stir_down(finger(slot), pos);
@@ -497,7 +497,7 @@ impl State {
         let slot = ev.slot();
         match self.route(slot) {
             Some(Route::Client { .. }) => {
-                if self.is_locked() || self.inputproto.gated() {
+                if self.console_locked() || self.inputproto.gated() {
                     return;
                 }
                 let pos = self.touch_point(ev);
