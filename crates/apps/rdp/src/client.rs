@@ -16,6 +16,10 @@ impl ClientLayout {
         let monitors = self.0.lock().unwrap();
         monitors.as_deref().and_then(layout::client_desktop)
     }
+
+    pub fn monitors(&self) -> Vec<Monitor> {
+        self.0.lock().unwrap().clone().unwrap_or_default()
+    }
 }
 
 /// Offers a client the desktop its monitors span and keeps them in its [`ClientLayout`].
