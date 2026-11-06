@@ -751,7 +751,10 @@ no port forwarding; allow the port in your firewall if you run one.
   set), else 1920x1080 at scale 1, and windows stay where they were. It is
   drawn only for the viewers, at `frame_rate`, and once a second while none
   watches. Settings > Displays and output management tools don't list it.
-  A monitor coming back takes its place; viewers reconnect once then.
+  A monitor coming back takes its place; viewers reconnect once then. The
+  standby takes the last monitor's place even away from the layout's
+  origin, and the server shares the screen at the origin, else the topmost,
+  leftmost one.
 - **Encoders.** At start the server tries each H.264 encoder on a test
   frame: VA-API (Intel and AMD), NVENC (NVIDIA; tried on a GeForce RTX
   4080 SUPER with driver 615.78), Vulkan and x264 on the CPU. Automatic
