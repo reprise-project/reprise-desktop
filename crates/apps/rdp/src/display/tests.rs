@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::stream::Rect;
-use tokio::sync::mpsc::unbounded_channel;
+use repriseconf::remote::LaptopScreen;
 
 #[test]
 fn a_screen_that_cannot_be_shared_tells_the_client_its_display_failed_to_start() {
@@ -105,6 +105,14 @@ pub(super) const SMALL: Rect = Rect {
 
 /// A connection's display, started at [`UNSHARED`], whose client connected as `client`.
 fn display(client: ClientLayout) -> Display {
+    on_console(
+        client,
+        console::tests::configured(LaptopScreen::Show, false).0,
+    )
+}
+
+/// [`display`] on `console`.
+fn on_console(client: ClientLayout, console: Console) -> Display {
     let (_, feed) = input::Input::new(Default::default());
     Display::new(
         Arc::new(Mutex::new(UNSHARED)),
@@ -116,17 +124,61 @@ fn display(client: ClientLayout) -> Display {
             shown: Shown::default(),
             ending: Ending::default(),
             client,
+            console,
         },
     )
 }
 
 #[tokio::test]
-async fn display_control_is_not_offered() {
-    assert!(
-        !display(ClientLayout::default())
-            .offers_display_control()
-            .await
+async fn display_control_is_offered_in_lock_mode_only() {
+    for (laptop_screen, locker, offered) in [
+        (LaptopScreen::Lock, false, true),
+        (LaptopScreen::Show, false, false),
+        (LaptopScreen::Lock, true, false),
+    ] {
+        let console = console::tests::configured(laptop_screen, locker).0;
+        let mut display = on_console(ClientLayout::default(), console);
+        assert_eq!(
+            display.offers_display_control().await,
+            offered,
+            "{laptop_screen:?} with a locker set: {locker}"
+        );
+    }
+    let console = console::tests::configured(LaptopScreen::Lock, false).0;
+    let mut display = on_console(ClientLayout::default(), console);
+    assert_eq!(display.monitor_count().await, 16);
+}
+
+#[tokio::test]
+async fn request_layout_returns_without_waiting() {
+    let client = crate::client::scaled(crate::client::two_monitors(), vec![], Some(150));
+    let console = console::tests::configured(LaptopScreen::Lock, false).0;
+    let mut display = on_console(client, console);
+    let layout = console::tests::layout(&[(0, 0, 1920, 1080)]);
+    display.request_layout(layout);
+    let sent = display.layouts_rx.as_mut().unwrap().try_recv();
+    assert_eq!(
+        sent.expect("the layout waits in the channel, read by nothing yet"),
+        [(0, 0, 1920, 1080, 150)]
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_first_lock_mode_viewers_display_publishes_its_client_and_follows_its_layouts() {
+    let client = crate::client::connected(crate::client::two_monitors());
+    let (console, _config, status) = console::tests::configured(LaptopScreen::Lock, false);
+    let mut display = on_console(client, console);
+    assert!(display.join(), "it locks the console");
+    let published = || status.borrow().console_layout.clone();
+    assert_eq!(
+        published(),
+        [(0, 0, 2560, 1440, 100), (2560, 0, 1920, 1080, 100)]
+    );
+    display.request_layout(console::tests::layout(&[(0, 0, 1920, 1080)]));
+    tokio::time::sleep(console::SETTLE * 2).await;
+    assert_eq!(published(), [(0, 0, 1920, 1080, 100)]);
+    drop(display);
+    assert!(published().is_empty(), "the run ends with its last display");
 }
 
 #[tokio::test]

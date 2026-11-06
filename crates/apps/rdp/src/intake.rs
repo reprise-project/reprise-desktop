@@ -21,9 +21,20 @@ pub const ALL: IpAddr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
 /// What an [`Intake`] yields.
 pub enum Arrival {
     /// A new connection and its peer, with an IPv4-mapped address given as IPv4.
-    Connection(TcpStream, SocketAddr),
+    Connection {
+        stream: TcpStream,
+        peer: SocketAddr,
+        admission: Admission,
+    },
     /// The listening address changed; every connection is ended.
     Moved,
+}
+
+/// What a connection must do to be let in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Admission {
+    /// Log in with the session user's password.
+    Password,
 }
 
 /// A source of connections.
@@ -86,7 +97,8 @@ impl Intake for TcpIntake {
                         if let Err(e) = tune(&stream) {
                             log::warn!("{peer}: TCP options: {e}");
                         }
-                        return Arrival::Connection(stream, peer);
+                        let admission = Admission::Password;
+                        return Arrival::Connection { stream, peer, admission };
                     }
                     Err(e) => {
                         log::warn!("accept: {e}");

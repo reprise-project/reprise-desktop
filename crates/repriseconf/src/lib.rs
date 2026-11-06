@@ -208,6 +208,20 @@ fn drives_on_insert_in(text: &str) -> String {
 /// `[drives] on_insert`'s default.
 pub const DRIVES_ON_INSERT: &str = "ask";
 
+/// Whether `[power] locker` names a locker of its own, read now; Remote Desktop's lock mode is off
+/// while it does.
+pub fn locker_set() -> bool {
+    let text = std::fs::read_to_string(config_path()).unwrap_or_default();
+    locker_set_in(&text)
+}
+
+fn locker_set_in(text: &str) -> bool {
+    parsed(text)
+        .as_deref()
+        .and_then(|d| get(d, &key("power", "locker"))?.as_str())
+        .is_some_and(|cmd| !cmd.trim().is_empty())
+}
+
 /// The top-level `terminal`, read now: the command a program in a terminal runs under.
 pub fn terminal() -> String {
     let text = std::fs::read_to_string(config_path()).unwrap_or_default();
@@ -888,6 +902,14 @@ mod tests {
             "open"
         );
         assert_eq!(drives_on_insert_in("[drives]\non_insert = true\n"), "ask");
+    }
+
+    #[test]
+    fn a_locker_is_set_by_a_command_that_is_not_blank() {
+        assert!(!locker_set_in(""));
+        assert!(!locker_set_in("[power]\nlocker = \"  \"\n"));
+        assert!(locker_set_in("[power]\nlocker = \"swaylock -f\"\n"));
+        assert!(!locker_set_in("[power]\nlocker = 1\n"));
     }
 
     #[test]

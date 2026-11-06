@@ -7,6 +7,7 @@ mod auth;
 mod cert;
 mod client;
 mod clipboard;
+mod console;
 mod control;
 mod display;
 mod encode;
@@ -98,6 +99,8 @@ fn main() -> ExitCode {
             status: status.clone(),
             lives: Arc::default(),
         };
+        let console =
+            console::Console::new(status.clone(), config_rx.clone(), repriseconf::locker_set);
         let intake = intake::TcpIntake::new(intake::ALL, config_rx.clone(), status.clone());
         let logins = auth::PasswordLogins::new(user.clone());
         let server = listen::Server {
@@ -123,6 +126,7 @@ fn main() -> ExitCode {
                 shown,
                 ending,
                 client: layout.clone(),
+                console: console.clone(),
             };
             let display = display::Display::new(
                 last_told.clone(),

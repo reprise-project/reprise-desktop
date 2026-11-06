@@ -201,6 +201,13 @@ impl<F: AsyncFn() -> bool> Leave for LockOnLeave<F> {
         }
         let turn = self.last_leaves.get() + 1;
         self.last_leaves.set(turn);
+        if why == End::ConsoleTookOver {
+            log::info!("the last client left as this computer was unlocked at its screen; no lock");
+            if let Some(m) = &self.marker {
+                let _ = fs::remove_file(m);
+            }
+            return;
+        }
         let RemoteDesktop {
             lock_on_leave,
             lock_grace_s,
@@ -476,6 +483,20 @@ mod tests {
             config,
             ..LockOnLeave::with_lock(Some(marker.to_path_buf()), counted(locks))
         })
+    }
+
+    #[tokio::test]
+    async fn a_connection_the_console_took_over_ends_without_locking() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("logged-in");
+        let locks = Rc::new(Cell::new(0));
+        let leave = LockOnLeave::with_lock(Some(marker.clone()), counted(&locks));
+        leave.arrived();
+        leave.arrived();
+        leave.left(End::ConsoleTookOver).await;
+        leave.left(End::ConsoleTookOver).await;
+        assert_eq!(locks.get(), 0, "no lock");
+        assert!(!marker.exists(), "the marker is cleared");
     }
 
     #[tokio::test(start_paused = true)]
