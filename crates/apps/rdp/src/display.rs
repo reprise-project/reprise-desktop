@@ -14,9 +14,10 @@ use crate::stream::{
     self, CursorImage, DRM_FORMAT_MOD_LINEAR, Frame, FrameBuffer, Offer, SizeChange,
 };
 use ironrdp_pdu::pointer::PointerPositionAttribute;
+use ironrdp_pdu::rdp::server_error_info::ProtocolIndependentCode;
 use ironrdp_server::{
-    DesktopSize, DisplayContext, DisplayUpdate, RGBAPointer, RdpServerDisplay,
-    RdpServerDisplayUpdates, ServerError, ServerErrorExt, ServerResult,
+    DesktopSize, DisplayContext, DisplayUpdate, ErrorInfo, RGBAPointer, RdpServerDisplay,
+    RdpServerDisplayUpdates, ServerError, ServerErrorExt, ServerErrorKind, ServerResult,
 };
 use repriseconf::remote::{EncoderChoice, Quality, RemoteDesktop};
 use std::collections::VecDeque;
@@ -190,9 +191,8 @@ impl RdpServerDisplay for Display {
     ) -> ServerResult<Box<dyn RdpServerDisplayUpdates>> {
         if self.session.is_none() {
             let picture = probed(&mut self.picture).await;
-            let grant = portal::open()
-                .await
-                .map_err(|e| ServerError::reason("the screen is not shared", e.to_string()))?;
+            let grant =
+                (portal::open().await).map_err(|e| unshared("the screen is not shared", e))?;
             log::info!(
                 "sharing {} at {:?}, {}x{} logical",
                 grant.mapping_id.as_deref().unwrap_or("the screen"),
@@ -205,9 +205,7 @@ impl RdpServerDisplay for Display {
                 stream::spawn(&grant, &[DRM_FORMAT_MOD_LINEAR], move || {
                     ending.screen_gone()
                 })
-                .map_err(|e| {
-                    ServerError::reason("the screen stream did not start", e.to_string())
-                })?;
+                .map_err(|e| unshared("the screen stream did not start", e))?;
             let grant = Arc::new(grant);
             if let Some(feed) = self.input.take() {
                 tokio::task::spawn_local(input::serve(
@@ -257,6 +255,17 @@ impl RdpServerDisplay for Display {
             slot: self.live.clone(),
         }))
     }
+}
+
+/// The error a display that cannot share the screen ends with: the client is told the display
+/// failed to start, so it does not reconnect at once to the same failure.
+fn unshared(what: &str, e: impl std::fmt::Display) -> ServerError {
+    log::warn!("{what}: {e}");
+    let failed = ProtocolIndependentCode::CloseStackOnDriverFailure;
+    ServerError::new(
+        "display",
+        ServerErrorKind::ErrorInfo(ErrorInfo::ProtocolIndependentCode(failed)),
+    )
 }
 
 /// Sends from a [`Live`] and puts it back when the activation ends.
@@ -947,6 +956,15 @@ mod tests {
     use super::*;
     use crate::stream::Rect;
     use tokio::sync::mpsc::unbounded_channel;
+
+    #[test]
+    fn a_screen_that_cannot_be_shared_tells_the_client_its_display_failed_to_start() {
+        let e = unshared("the screen is not shared", "no portal");
+        let ServerErrorKind::ErrorInfo(ErrorInfo::ProtocolIndependentCode(code)) = *e.kind() else {
+            panic!("an error the client is told: {e:?}");
+        };
+        assert_eq!(code, ProtocolIndependentCode::CloseStackOnDriverFailure);
+    }
 
     fn live(told: DesktopSize) -> (Live, ToldSize, Frames, Sizes) {
         live_on(&Arc::new(Mutex::new(told)))
