@@ -14,7 +14,7 @@ use crate::inputproto::InputSource;
 pub static CURSOR: CursorImageStatus = CursorImageStatus::Named(CursorIcon::Default);
 
 /// Lock mode begins: the computer's pointer stays where it was, on its own outputs; the seat lets
-/// go of its buttons, fingers and pens and its pointer goes to the Remote outputs.
+/// go of its buttons, fingers, pens and gesture, and its pointer goes to the Remote outputs.
 pub fn begin(state: &mut State) {
     let at = state.pointer_location();
     state.console.pointer = state.clamp_to_side(at, Side::Console);
@@ -23,6 +23,7 @@ pub fn begin(state: &mut State) {
         s.release_all_buttons(now);
         s.cancel_client_touch(now);
         s.tools_leave(now);
+        s.cancel_client_gesture();
         s.pointer_to(at, now);
     });
     redraw(state);

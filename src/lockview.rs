@@ -517,7 +517,7 @@ pub fn engage(state: &mut State) {
 }
 
 /// Close what the desktop has open and end its gestures, run `raise`, then take every grab and
-/// focus from clients. Lock mode ending under the console lock seals again with no `raise`.
+/// focus from clients. Lock mode's end seals again with no `raise`.
 pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     state.close_menu();
     state.release_capture();
@@ -541,6 +541,7 @@ pub fn seal(state: &mut State, raise: impl FnOnce(&mut State)) {
     state.cancel_drag();
     cancel_interaction(state);
     state.release_all_buttons(InputTime::now());
+    state.cancel_client_gesture();
     state.caption_clicks.reset();
     raise(state);
     // A client's popup grab keeps the keyboard on its popup, refuses the focus changes below and would
@@ -667,14 +668,26 @@ pub fn drop_remote(state: &mut State) {
 }
 
 /// Unlock `side`, from its correct password or a whole unlock, and hand focus back unless the
-/// desktop is still locked.
+/// desktop is still locked. The console's unlock ends lock mode and keeps the remote's window.
 fn unlock_side(state: &mut State, side: Side) {
-    let Some(prev) = teardown(state, side) else {
+    let Some(mut prev) = teardown(state, side) else {
         return;
     };
     if side == Side::Console {
         crate::power::unlocked(state);
+        if crate::console::remote_side(state) {
+            let remote = remote_focus(state);
+            crate::console::console_unlocked(state);
+            let shown = |w: WindowId| state.win(w).is_some_and(|x| x.mapped && !x.hidden());
+            if let Some(w) = remote.filter(|&w| shown(w) && state.window_output(w).is_some()) {
+                prev = (Some(w), None, false);
+            }
+        }
     }
+    debug_assert!(
+        state.console_locked() || !crate::console::remote_side(state),
+        "lock mode outlived the console's lock"
+    );
     crate::idle::inhibition_changed(state);
     if !state.desktop_locked() {
         refocus(state, prev);
@@ -688,6 +701,16 @@ fn unlock_side(state: &mut State, side: Side) {
         }
         Side::Remote => log::info!("lock mode: the remote side unlocked"),
     }
+}
+
+/// The window the remote side types into: the one its lock took the keyboard from, else the one
+/// with the keyboard.
+fn remote_focus(state: &State) -> Option<WindowId> {
+    if let Some(l) = state.lock.remote.as_ref() {
+        return l.prev_focus;
+    }
+    let s = state.seat.get_keyboard()?.current_focus()?;
+    state.window_for_surface(&s)
 }
 
 /// Focus a layer surface that claimed exclusive keyboard interactivity while locked, else what held
@@ -721,6 +744,12 @@ impl State {
         self.lock.console.is_some()
     }
 
+    /// The console's lock holds the input being handled: the console is locked, or lock mode
+    /// keeps the computer's own input for the console's lock (`console::physical`).
+    pub fn console_holds_input(&self) -> bool {
+        self.console_locked() || crate::console::physical(self)
+    }
+
     /// The desktop's lock: the console's outside lock mode, the remote side's in it.
     pub fn desktop_locked(&self) -> bool {
         match crate::console::remote_side(self) {
@@ -739,13 +768,15 @@ impl State {
 
     /// The lock of the side whose output holds `w`'s frame centre; the console's off every output.
     pub fn window_locked(&self, w: WindowId) -> bool {
-        let Some(r) = self.win(w).map(crate::window::Window::frame_rect) else {
-            return self.console_locked();
-        };
+        (self.window_output(w)).map_or(self.console_locked(), |o| self.locked_on(o))
+    }
+
+    /// The output holding `w`'s frame centre.
+    pub fn window_output(&self, w: WindowId) -> Option<&Output> {
+        let r = self.win(w)?.frame_rect();
         let centre = (f64::from(r.x + r.width / 2), f64::from(r.y + r.height / 2));
         (self.scene.outputs().iter())
             .find(|o| reprisescene::output_rect(o).is_some_and(|b| b.to_f64().contains(centre)))
-            .map_or(self.console_locked(), |o| self.locked_on(o))
     }
 
     /// The lock that `origin`'s request answers to.

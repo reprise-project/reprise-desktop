@@ -40,6 +40,8 @@ pub struct Pointers {
     pub owed: Option<smithay::backend::input::InputTime>,
     pub settle_timer: Option<RegistrationToken>,
     pub swipe: Option<KeptSwipe>,
+    /// The gesture a client heard begin and not end.
+    pub client_gesture: Option<Gesture>,
     /// Client motion held for the next delivery (`coalesce`) and its timer.
     pub motions: crate::coalesce::Motions<WlSurface>,
     pub motion_timer: Option<RegistrationToken>,
@@ -47,6 +49,13 @@ pub struct Pointers {
     pub drag_actions: Vec<smithay::input::dnd::DndAction>,
     pub absolute: crate::constraint::AbsoluteTrail,
     _globals: Globals,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gesture {
+    Swipe,
+    Pinch,
+    Hold,
 }
 
 struct Globals {
@@ -67,6 +76,7 @@ impl Pointers {
             owed: None,
             settle_timer: None,
             swipe: None,
+            client_gesture: None,
             motions: Default::default(),
             motion_timer: None,
             drag_actions: Vec::new(),
@@ -245,7 +255,7 @@ impl State {
             return;
         }
         if self.inputproto.gated()
-            || self.console_locked()
+            || self.console_holds_input()
             || self.switcher.is_open()
             || self.panels.takes_pointer()
         {
@@ -254,6 +264,27 @@ impl State {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
+        let (kind, begins, ends) = match &event {
+            InputEvent::GestureSwipeBegin { .. } => (Gesture::Swipe, true, false),
+            InputEvent::GestureSwipeUpdate { .. } => (Gesture::Swipe, false, false),
+            InputEvent::GestureSwipeEnd { .. } => (Gesture::Swipe, false, true),
+            InputEvent::GesturePinchBegin { .. } => (Gesture::Pinch, true, false),
+            InputEvent::GesturePinchUpdate { .. } => (Gesture::Pinch, false, false),
+            InputEvent::GesturePinchEnd { .. } => (Gesture::Pinch, false, true),
+            InputEvent::GestureHoldBegin { .. } => (Gesture::Hold, true, false),
+            InputEvent::GestureHoldEnd { .. } => (Gesture::Hold, false, true),
+            _ => return,
+        };
+        // The rest of a gesture whose begin the client never heard, or that ended cancelled.
+        if !begins && self.pointers.client_gesture != Some(kind) {
+            return;
+        }
+        if begins {
+            self.cancel_client_gesture();
+            self.pointers.client_gesture = Some(kind);
+        } else if ends {
+            self.pointers.client_gesture = None;
+        }
         let serial = SERIAL_COUNTER.next_serial();
         match event {
             InputEvent::GestureSwipeBegin { event } => pointer.gesture_swipe_begin(
@@ -324,6 +355,45 @@ impl State {
         }
     }
 
+    /// End the gesture a client is in, as cancelled.
+    pub fn cancel_client_gesture(&mut self) {
+        let Some(kind) = self.pointers.client_gesture.take() else {
+            return;
+        };
+        let Some(pointer) = self.seat.get_pointer() else {
+            return;
+        };
+        let serial = SERIAL_COUNTER.next_serial();
+        let time = smithay::backend::input::InputTime::now();
+        let cancelled = true;
+        match kind {
+            Gesture::Swipe => pointer.gesture_swipe_end(
+                self,
+                &GestureSwipeEndEvent {
+                    serial,
+                    time,
+                    cancelled,
+                },
+            ),
+            Gesture::Pinch => pointer.gesture_pinch_end(
+                self,
+                &GesturePinchEndEvent {
+                    serial,
+                    time,
+                    cancelled,
+                },
+            ),
+            Gesture::Hold => pointer.gesture_hold_end(
+                self,
+                &GestureHoldEndEvent {
+                    serial,
+                    time,
+                    cancelled,
+                },
+            ),
+        }
+    }
+
     /// Take `event` when it belongs to a swipe the compositor keeps (begun with
     /// `[gestures] fingers`, nothing holding the input); false for events that go to the client.
     fn keep_swipe<B: InputBackend>(&mut self, event: &InputEvent<B>) -> bool {
@@ -331,7 +401,7 @@ impl State {
             InputEvent::GestureSwipeBegin { event } => {
                 let g = self.config.gestures;
                 let free = !self.inputproto.gated()
-                    && !self.console_locked()
+                    && !self.console_holds_input()
                     && self.switcher.panel.is_none()
                     && !self.panels.takes_pointer();
                 if g.enabled && free && event.fingers() == g.fingers {
@@ -375,7 +445,7 @@ impl State {
 
     fn swipe_moved(&mut self, axis: crate::gestures::Axis, p: f64, was_open: bool) {
         use crate::gestures::Axis;
-        if self.console_locked() {
+        if self.console_holds_input() {
             return;
         }
         match axis {
@@ -401,7 +471,7 @@ impl State {
     ) {
         use crate::desktops::Step;
         use crate::gestures::Axis;
-        if self.console_locked() {
+        if self.console_holds_input() {
             return;
         }
         match axis {

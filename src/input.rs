@@ -430,6 +430,8 @@ impl State {
                 self.handle_button(event.button_code(), event.state(), time);
                 crate::access::touch(self);
             }
+            // Before `capture_axis`: in lock mode no input capture hears the computer's wheel either.
+            InputEvent::PointerAxis { .. } if crate::console::physical(self) => {}
             InputEvent::PointerAxis { event } => {
                 let source = event.source();
                 let mut frame = AxisFrame::new(Event::time(&event)).source(source);
