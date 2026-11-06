@@ -228,7 +228,7 @@ impl RdpServerDisplay for Display {
     ) -> ServerResult<Box<dyn RdpServerDisplayUpdates>> {
         if self.session.is_none() {
             let picture = probed(&mut self.picture).await;
-            let grant =
+            let mut grant =
                 (portal::open().await).map_err(|e| unshared("the screen is not shared", e))?;
             for screen in &grant.screens {
                 log::info!(
@@ -241,9 +241,8 @@ impl RdpServerDisplay for Display {
             }
             let gone = gone_with_all(self.ending.clone(), grant.screens.len());
             let mut streams = Vec::new();
-            for screen in &grant.screens {
-                let fd = (grant.pipewire_fd())
-                    .map_err(|e| unshared("the screen stream did not start", e))?;
+            let fds = grant.take_pipewire_fds();
+            for (screen, fd) in grant.screens.iter().zip(fds) {
                 let (stream, frames, sizes) =
                     stream::spawn(fd, screen.node, &[DRM_FORMAT_MOD_LINEAR], gone.clone())
                         .map_err(|e| unshared("the screen stream did not start", e))?;

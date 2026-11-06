@@ -167,7 +167,7 @@ impl RemoteDesktop {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use futures_util::StreamExt;
     use std::collections::HashMap;
@@ -177,7 +177,7 @@ mod tests {
     use zbus::fdo::PropertiesProxy;
     use zbus::names::InterfaceName;
 
-    struct Bus(Child, String);
+    pub(crate) struct Bus(Child, pub(crate) String);
 
     impl Drop for Bus {
         fn drop(&mut self) {
@@ -187,7 +187,7 @@ mod tests {
     }
 
     /// A private session bus.
-    fn bus() -> Option<Bus> {
+    pub(crate) fn bus() -> Option<Bus> {
         let mut child = Command::new("dbus-daemon")
             .args(["--session", "--nofork", "--print-address"])
             .stdout(Stdio::piped())
