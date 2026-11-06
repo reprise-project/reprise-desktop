@@ -12,6 +12,7 @@ const A: u32 = 30;
 const ENTER: u32 = 28;
 const POWER: u32 = 116;
 const BTN_LEFT: u32 = 0x110;
+const KP6: u32 = 77;
 
 /// A window on REMOTE-1 with the keyboard, its client's key log cleared.
 fn remote_window(h: &mut Harness) -> (TestClient, WindowId) {
@@ -271,4 +272,59 @@ fn in_lock_mode_a_tablet_pad_chord_types_into_the_console_and_the_client_hears_n
     h.roundtrip(&mut c);
     assert_eq!(lock_input(&h), "a");
     assert!(c.side.key_log.is_empty(), "heard {:?}", c.side.key_log);
+}
+
+#[test]
+fn a_mouse_keys_direction_held_at_lock_mode_start_stops_moving_the_remote_pointer() {
+    let mut config = Config::default();
+    config.accessibility.mouse_keys = true;
+    config.accessibility.mouse_keys_num_lock = false;
+    let mut h = Harness::with_config(config);
+    h.output("eDP-1", 1920, 1080);
+    h.state.mousekeys_configured();
+    h.pointer_to(960.0, 540.0);
+    h.key(KP6, true);
+    let (_portal, _lock) = lock_mode(&mut h);
+    let at = h.state.pointer_location();
+    h.run_for(600);
+    assert_eq!(h.state.pointer_location(), at, "the remote pointer stays");
+}
+
+#[test]
+fn a_sticky_modifier_latched_at_lock_mode_start_never_reaches_the_remote() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    h.state.config.accessibility.sticky_keys = true;
+    h.state.aids_configured();
+    h.key(SHIFT, true);
+    h.key(SHIFT, false);
+    assert_ne!(h.state.xkb_mask().unwrap().0.latched, 0, "Shift latched");
+    let (_portal, _lock) = lock_mode(&mut h);
+    let seat = h.state.seat.get_keyboard().unwrap();
+    assert!(!seat.modifier_state().shift, "the seat holds no Shift");
+    let (mut c, _) = remote_window(&mut h);
+    h.remote_key(A, true);
+    h.remote_key(A, false);
+    h.roundtrip(&mut c);
+    assert_eq!(keys_heard(&c), [(A, true), (A, false)]);
+    assert!(
+        !(c.side.key_log.iter()).any(|k| matches!(k, KeyHeard::Mods(m) if m & 1 != 0)),
+        "no Shift reaches the window: {:?}",
+        c.side.key_log
+    );
+}
+
+#[test]
+fn a_button_held_under_the_console_lock_is_released_when_lock_mode_starts() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    crate::lockview::lock(&mut h.state);
+    h.pointer_to(100.0, 100.0);
+    h.button(BTN_LEFT, true);
+    let (_portal, _lock) = lock_mode(&mut h);
+    h.button(BTN_LEFT, false);
+    let (mut c, _) = remote_window(&mut h);
+    h.remote_click(2200.0, 300.0);
+    h.roundtrip(&mut c);
+    assert_eq!(c.side.buttons, [(BTN_LEFT, true), (BTN_LEFT, false)]);
 }

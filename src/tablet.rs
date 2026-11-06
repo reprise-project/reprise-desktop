@@ -327,6 +327,19 @@ impl State {
         self.set_cursor("default");
     }
 
+    /// Every tool on a client's surface leaves it.
+    pub(crate) fn tools_leave(&mut self, time: InputTime) {
+        let pos = self.pointer_location();
+        let on: Vec<TabletToolDescriptor> = (self.devices.tablet.tools.iter())
+            .filter(|t| t.focused.is_some())
+            .map(|t| t.handle.descriptor().clone())
+            .collect();
+        for desc in on {
+            self.tool_leave(&desc, pos, time);
+            self.tool_handle(&desc).frame(self, time);
+        }
+    }
+
     pub fn tool_proximity<B: InputBackend>(&mut self, ev: &B::TabletToolProximityEvent) {
         let desc = ev.tool();
         let time = Event::time(ev);
