@@ -83,13 +83,16 @@ pub(crate) type Results = HashMap<String, OwnedVariant>;
 /// only, never across an await.
 static CAST_TURN: Mutex<()> = Mutex::new(());
 
-/// Stop a `Cast` off the executor: `Cast::stop` joins the capture
+/// Stop casts off the executor: `Cast::stop` joins the capture
 /// thread, which can wait a frame and PipeWire's teardown. Every path
 /// that ends a cast comes through here so none of them stalls zbus.
-async fn stop_cast(c: Cast) {
+async fn stop_casts(casts: Vec<Cast>) {
+    if casts.is_empty() {
+        return;
+    }
     blocking::unblock(move || {
         let _turn = lock(&CAST_TURN);
-        c.stop()
+        casts.into_iter().for_each(Cast::stop)
     })
     .await;
 }
@@ -182,9 +185,7 @@ async fn end_session(conn: &zbus::Connection, key: &str, data: Option<SessionDat
         if let Some(c) = s.picking.take() {
             c.store(true, Ordering::SeqCst);
         }
-        if let Some(c) = s.take_cast() {
-            stop_cast(c).await;
-        }
+        stop_casts(s.take_casts()).await;
     }
     if let Ok(emitter) = SignalEmitter::new(conn, key) {
         let _ = Session::closed(&emitter).await;
@@ -270,8 +271,8 @@ pub(crate) async fn export_request(
 
 async fn replace_session(sessions: &Sessions, key: String, data: SessionData) {
     let old = sessions.lock().unwrap().insert(key, data);
-    if let Some(c) = old.and_then(|mut s| s.take_cast()) {
-        stop_cast(c).await;
+    if let Some(mut s) = old {
+        stop_casts(s.take_casts()).await;
     }
 }
 
@@ -316,7 +317,7 @@ struct SessionData {
 }
 
 /// The ScreenCast side of a session: what SelectSources chose and the
-/// cast Start made from it. On a RemoteDesktop session `types` stays 0
+/// casts Start made from it, one per stream. On a RemoteDesktop session `types` stays 0
 /// until ScreenCast.SelectSources runs on it.
 #[derive(Default)]
 struct CastState {
@@ -324,7 +325,7 @@ struct CastState {
     cursor_mode: u32,
     persist_mode: u32,
     restore: Option<Target>,
-    cast: Option<Cast>,
+    casts: Vec<Cast>,
 }
 
 enum SessionKind {
@@ -380,8 +381,8 @@ impl SessionData {
         }
     }
 
-    fn take_cast(&mut self) -> Option<Cast> {
-        self.screencast_mut()?.cast.take()
+    fn take_casts(&mut self) -> Vec<Cast> {
+        (self.screencast_mut()).map_or_else(Vec::new, |s| std::mem::take(&mut s.casts))
     }
 }
 
@@ -512,7 +513,7 @@ impl ScreenCast {
             Ok(st) => Ok((
                 RESPONSE_OK,
                 StartResults {
-                    streams: vec![st.stream],
+                    streams: st.streams,
                     persist_mode: st.persist_mode,
                     restore_data: st.restore_data,
                 },
@@ -529,8 +530,9 @@ pub(crate) fn granted_persist(requested: u32, remember: bool) -> u32 {
 }
 
 pub(crate) struct Started {
-    pub(crate) stream: (u32, StreamProps),
-    pub(crate) target: Target,
+    pub(crate) streams: Vec<(u32, StreamProps)>,
+    /// The target the restore token names; None unless persisted.
+    pub(crate) remembered: Option<Target>,
     pub(crate) persist_mode: u32,
     pub(crate) restore_data: Option<(String, u32, OwnedVariant)>,
 }
@@ -538,11 +540,11 @@ pub(crate) struct Started {
 /// How Start picks what to capture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Pick {
-    /// A remembered target, else the share dialog.
+    /// A remembered target, else the share dialog: one stream.
     Ask,
-    /// The remote desktop server's pick, with no dialog and not remembered: [`origin_output`]. The
-    /// compositor tells its capture apart (`Wayland::connect_remote_capture`).
-    Origin,
+    /// The remote desktop server's pick, with no dialog and not remembered: [`every_screen`], a
+    /// stream each. The compositor tells its capture apart (`Wayland::connect_remote_capture`).
+    All,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -581,19 +583,23 @@ pub(crate) async fn pick_and_cast(
     if let Some(s) = sessions.lock().unwrap().get_mut(key) {
         s.picking = None;
     }
-    let (target, output_info, remember) = match chosen {
-        Ok(Some(t)) => t,
+    let chosen = match chosen {
+        Ok(Some(c)) => c,
         Ok(None) => return Err(RESPONSE_CANCELLED),
         Err(e) => {
             log::warn!("Start: {e}");
             return Err(RESPONSE_OTHER);
         }
     };
-    let mode = cursor_mode_for(cursor_mode, &target);
-    let t2 = target.clone();
-    let cast = match blocking::unblock(move || {
+    let targets: Vec<_> = chosen.targets.iter().map(|(t, _)| t.clone()).collect();
+    let remote = pick == Pick::All;
+    let mut casts = match blocking::unblock(move || {
         let _turn = lock(&CAST_TURN);
-        Cast::start(t2, mode, pick == Pick::Origin)
+        start_each(
+            &targets,
+            |t| Cast::start(t.clone(), cursor_mode_for(cursor_mode, t), remote),
+            Cast::stop,
+        )
     })
     .await
     {
@@ -603,44 +609,20 @@ pub(crate) async fn pick_and_cast(
             return Err(RESPONSE_OTHER);
         }
     };
-    let (source_type, position, mapping_id, size) = match (&target, output_info) {
-        (Target::Output(name), Some(o)) => (
-            SOURCE_MONITOR,
-            Some((o.x, o.y)),
-            Some(name.clone()),
-            (o.width, o.height),
-        ),
-        (Target::Output(name), None) => (
-            SOURCE_MONITOR,
-            None,
-            Some(name.clone()),
-            (cast.width as i32, cast.height as i32),
-        ),
-        (Target::Toplevel(_), _) => (
-            SOURCE_WINDOW,
-            None,
-            None,
-            (cast.width as i32, cast.height as i32),
-        ),
-    };
-    let stream = (
-        cast.node_id,
-        StreamProps {
-            position,
-            size,
-            source_type,
-            mapping_id,
-            pipewire_serial: cast.serial,
-        },
-    );
-    log::info!("Start: node {} for {:?}", cast.node_id, target);
-    let persist_mode = granted_persist(persist_mode, remember);
-    let restore_data = (persist_mode > 0).then(|| restore_data(app_id, &lastpick::encode(&target)));
-    let mut cast = cast;
-    let ended = cast.take_ended();
-    let node_id = cast.node_id;
-    // A second Start hands back the session's earlier cast, and a Close
-    // during this one leaves the new cast unkept. Either stops off the
+    let streams = (casts.iter().zip(&chosen.targets))
+        .map(|(c, (t, info))| {
+            log::info!("Start: node {} for {t:?}", c.node_id);
+            stream_for(c.node_id, c.serial, t, info.as_ref(), (c.width, c.height))
+        })
+        .collect();
+    let persist_mode = granted_persist(persist_mode, chosen.remembered.is_some());
+    let remembered = chosen.remembered.filter(|_| persist_mode > 0);
+    let restore_data = (remembered.as_ref()).map(|t| restore_data(app_id, &lastpick::encode(t)));
+    let ended: Vec<_> = (casts.iter_mut())
+        .filter_map(|c| Some((c.node_id, c.take_ended()?)))
+        .collect();
+    // A second Start hands back the session's earlier casts, and a Close
+    // during this one leaves the new casts unkept. Either stops off the
     // lock, since `Cast::stop` joins its thread.
     let (replaced, unkept) = match sessions
         .lock()
@@ -648,19 +630,17 @@ pub(crate) async fn pick_and_cast(
         .get_mut(key)
         .and_then(SessionData::screencast_mut)
     {
-        Some(s) => (s.cast.replace(cast), None),
-        None => (None, Some(cast)),
+        Some(s) => (std::mem::replace(&mut s.casts, casts), None),
+        None => (Vec::new(), Some(casts)),
     };
-    if let Some(old) = replaced {
-        stop_cast(old).await;
-    }
-    if let Some(cast) = unkept {
-        stop_cast(cast).await;
+    stop_casts(replaced).await;
+    if let Some(casts) = unkept {
+        stop_casts(casts).await;
         return Err(RESPONSE_CANCELLED);
     }
-    // The compositor can end the cast on its own (the window closed,
+    // The compositor can end a cast on its own (the window closed,
     // the output went); the frontend hears of it as a Closed session.
-    if let Some(ended) = ended {
+    for (node_id, ended) in ended {
         zruntime::spawn(cast_ended(
             conn.clone(),
             sessions.clone(),
@@ -671,14 +651,65 @@ pub(crate) async fn pick_and_cast(
         .detach();
     }
     Ok(Started {
-        stream,
-        target,
+        streams,
+        remembered,
         persist_mode,
         restore_data,
     })
 }
 
-/// Wait for the cast under `key` to end and, if the session still holds
+/// Start a cast for each target in turn, or none: when one fails, the ones started before it stop.
+fn start_each<C>(
+    targets: &[Target],
+    mut start: impl FnMut(&Target) -> Result<C, String>,
+    stop: impl FnMut(C),
+) -> Result<Vec<C>, String> {
+    let mut started = Vec::with_capacity(targets.len());
+    for t in targets {
+        match start(t) {
+            Ok(c) => started.push(c),
+            Err(e) => {
+                started.into_iter().for_each(stop);
+                return Err(e);
+            }
+        }
+    }
+    Ok(started)
+}
+
+/// The Start result for cast `node` of `target`: an output's logical position and size, else the
+/// cast's own size in pixels.
+fn stream_for(
+    node: u32,
+    serial: u64,
+    target: &Target,
+    output: Option<&wayland::OutputInfo>,
+    cast_size: (u32, u32),
+) -> (u32, StreamProps) {
+    let pixels = (cast_size.0 as i32, cast_size.1 as i32);
+    let (source_type, position, mapping_id, size) = match (target, output) {
+        (Target::Output(name), Some(o)) => (
+            SOURCE_MONITOR,
+            Some((o.x, o.y)),
+            Some(name.clone()),
+            (o.width, o.height),
+        ),
+        (Target::Output(name), None) => (SOURCE_MONITOR, None, Some(name.clone()), pixels),
+        (Target::Toplevel(_), _) => (SOURCE_WINDOW, None, None, pixels),
+    };
+    (
+        node,
+        StreamProps {
+            position,
+            size,
+            source_type,
+            mapping_id,
+            pipewire_serial: serial,
+        },
+    )
+}
+
+/// Wait for cast `node_id` under `key` to end and, if the session still holds
 /// it (the compositor stopped it, not a Close from the frontend),
 /// close the session the way `Session::close` would: signal `Closed`
 /// and take the object off the bus. A Close from the frontend removes
@@ -696,10 +727,8 @@ async fn cast_ended(
     .await;
     let gone = {
         let mut map = sessions.lock().unwrap();
-        let ours = map
-            .get(&key)
-            .and_then(|s| s.screencast()?.cast.as_ref())
-            .is_some_and(|c| c.node_id == node_id);
+        let ours = (map.get(&key).and_then(SessionData::screencast))
+            .is_some_and(|s| s.casts.iter().any(|c| c.node_id == node_id));
         ours.then(|| map.remove(&key)).flatten()
     };
     let Some(data) = gone else {
@@ -770,10 +799,15 @@ fn as_str<'a>(v: &'a Variant<'a>) -> Option<&'a str> {
     }
 }
 
-/// Pick what to capture and whether to remember it: for [`Pick::Ask`] a
-/// remembered target that still exists (remembered again), else the share
-/// dialog, modal on `parent`, which offers Remember when `offer_remember`.
-/// Blocking; runs off the bus thread.
+/// What Start captures: the targets in stream order with each output's info, and the target
+/// Remember was ticked for.
+struct Chosen {
+    targets: Vec<(Target, Option<wayland::OutputInfo>)>,
+    remembered: Option<Target>,
+}
+
+/// Pick what to capture ([`choose_from`]); the share dialog is modal on `parent` and offers
+/// Remember when `offer_remember`. Blocking; runs off the bus thread.
 fn choose(
     types: u32,
     restore: Option<Target>,
@@ -782,18 +816,51 @@ fn choose(
     parent: Option<String>,
     cancel: Arc<AtomicBool>,
     pick: Pick,
-) -> Result<Option<(Target, Option<wayland::OutputInfo>, bool)>, String> {
+) -> Result<Option<Chosen>, String> {
     let wl = Wayland::connect()?;
     let outputs = wl.outputs();
     let toplevels = wl.toplevels();
     drop(wl);
-    if pick == Pick::Origin {
-        let o = origin_output(&outputs).ok_or("no output to share")?;
-        return Ok(Some((
-            Target::Output(o.name.clone()),
-            Some(o.clone()),
-            false,
-        )));
+    choose_from(pick, types, &outputs, &toplevels, restore, |entries| {
+        let last = lastpick::load(app_id);
+        let preselect = last.and_then(|t| entries.iter().position(|e| e.target == t));
+        let (t, remember) = picker::pick(
+            picker::Purpose::Share,
+            &crate::remotedesktop::display_name(app_id),
+            entries,
+            preselect,
+            offer_remember,
+            parent,
+            cancel,
+        )?;
+        lastpick::save(app_id, &t);
+        Some((t, remember))
+    })
+}
+
+/// For [`Pick::All`] [`every_screen`]; for [`Pick::Ask`] a remembered target that still exists
+/// (remembered again), else what `dialog` picks from the share dialog's rows. None when the
+/// dialog is cancelled.
+fn choose_from(
+    pick: Pick,
+    types: u32,
+    outputs: &[wayland::OutputInfo],
+    toplevels: &[wayland::ToplevelInfo],
+    restore: Option<Target>,
+    dialog: impl FnOnce(Vec<picker::Entry>) -> Option<(Target, bool)>,
+) -> Result<Option<Chosen>, String> {
+    if pick == Pick::All {
+        let screens = every_screen(outputs);
+        if screens.is_empty() {
+            return Err("no output to share".into());
+        }
+        let targets = (screens.into_iter())
+            .map(|o| (Target::Output(o.name.clone()), Some(o)))
+            .collect();
+        return Ok(Some(Chosen {
+            targets,
+            remembered: None,
+        }));
     }
     let info_for = |t: &Target| match t {
         Target::Output(n) => outputs.iter().find(|o| &o.name == n).cloned(),
@@ -805,30 +872,41 @@ fn choose(
             Target::Toplevel(i) => toplevels.iter().any(|w| &w.identifier == i),
         };
         if exists {
-            let info = info_for(&t);
-            return Ok(Some((t, info, true)));
+            return Ok(Some(Chosen {
+                targets: vec![(t.clone(), info_for(&t))],
+                remembered: Some(t),
+            }));
         }
     }
-    let entries = share_entries(types, &outputs, &toplevels);
+    let entries = share_entries(types, outputs, toplevels);
     if entries.is_empty() {
         return Err("nothing to share".into());
     }
-    let last = lastpick::load(app_id);
-    let preselect = last.and_then(|t| entries.iter().position(|e| e.target == t));
-    let Some((t, remember)) = picker::pick(
-        picker::Purpose::Share,
-        &crate::remotedesktop::display_name(app_id),
-        entries,
-        preselect,
-        offer_remember,
-        parent,
-        cancel,
-    ) else {
+    let Some((t, remember)) = dialog(entries) else {
         return Ok(None);
     };
-    lastpick::save(app_id, &t);
-    let info = info_for(&t);
-    Ok(Some((t, info, remember)))
+    Ok(Some(Chosen {
+        targets: vec![(t.clone(), info_for(&t))],
+        remembered: remember.then_some(t),
+    }))
+}
+
+/// The outputs a trusted session shares, in screen order: the primary ([`origin_output`]) first,
+/// then top to bottom and left to right. An output at a negative position is left out, since the
+/// compositor's EIS gives it no region, unless that leaves none.
+fn every_screen(outputs: &[wayland::OutputInfo]) -> Vec<wayland::OutputInfo> {
+    let placed: Vec<_> = (outputs.iter())
+        .filter(|o| o.x >= 0 && o.y >= 0)
+        .cloned()
+        .collect();
+    let mut shared = if placed.is_empty() {
+        outputs.to_vec()
+    } else {
+        placed
+    };
+    let primary = origin_output(&shared).map(|o| o.name.clone());
+    shared.sort_by_key(|o| (Some(&o.name) != primary.as_ref(), o.y, o.x));
+    shared
 }
 
 /// The output whose top-left is the layout origin, else the top-left-most: the topmost, and of
@@ -1223,16 +1301,138 @@ fn main() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_remote_desktop_shares_the_origin_output_else_the_top_left_most() {
-        let at = |name: &str, x, y| wayland::OutputInfo {
+    fn at(name: &str, x: i32, y: i32) -> wayland::OutputInfo {
+        wayland::OutputInfo {
             name: name.into(),
             x,
             y,
             width: 1920,
             height: 1080,
             ..Default::default()
-        };
+        }
+    }
+
+    fn no_dialog(_: Vec<picker::Entry>) -> Option<(Target, bool)> {
+        panic!("a trusted start shows no dialog")
+    }
+
+    fn shared(outputs: &[wayland::OutputInfo]) -> Vec<String> {
+        let chosen = choose_from(Pick::All, SOURCE_MONITOR, outputs, &[], None, no_dialog)
+            .expect("an output to share")
+            .expect("not cancelled");
+        let names = chosen.targets.iter().map(|(t, _)| match t {
+            Target::Output(n) => n.clone(),
+            Target::Toplevel(i) => panic!("a trusted start shares no window, got {i}"),
+        });
+        names.collect()
+    }
+
+    #[test]
+    fn a_trusted_start_shares_every_output_in_screen_order() {
+        let outputs = [at("DP-2", 1920, 0), at("DP-1", 0, 0)];
+        let chosen = choose_from(Pick::All, SOURCE_MONITOR, &outputs, &[], None, no_dialog)
+            .unwrap()
+            .unwrap();
+        assert_eq!(chosen.remembered, None, "a trusted start remembers nothing");
+        let streams: Vec<_> = (chosen.targets.iter().zip(1..))
+            .map(|((t, info), node)| stream_for(node, u64::from(node), t, info.as_ref(), (2, 2)))
+            .collect();
+        let nodes: Vec<_> = streams.iter().map(|s| s.0).collect();
+        assert_eq!(nodes, [1, 2]);
+        let positions: Vec<_> = streams.iter().map(|s| s.1.position).collect();
+        assert_eq!(positions, [Some((0, 0)), Some((1920, 0))]);
+        let ids: Vec<_> = streams.iter().map(|s| s.1.mapping_id.clone()).collect();
+        assert_eq!(ids, [Some("DP-1".into()), Some("DP-2".into())]);
+        for (_, s) in &streams {
+            assert_eq!(s.size, (1920, 1080), "the logical size");
+            assert_eq!(s.source_type, SOURCE_MONITOR);
+        }
+        let staggered = [at("DP-3", 0, 1080), at("DP-2", 1920, 0), at("DP-1", 0, 0)];
+        assert_eq!(
+            shared(&staggered),
+            ["DP-1", "DP-2", "DP-3"],
+            "top, then left"
+        );
+    }
+
+    #[test]
+    fn an_untrusted_start_still_shares_one_stream() {
+        let outputs = [at("DP-1", 0, 0), at("DP-2", 1920, 0)];
+        let mut offered = Vec::new();
+        let chosen = choose_from(Pick::Ask, SOURCE_MONITOR, &outputs, &[], None, |entries| {
+            offered = entries.into_iter().map(|e| e.target).collect();
+            Some((Target::Output("DP-2".into()), false))
+        })
+        .unwrap()
+        .unwrap();
+        let both = [Target::Output("DP-1".into()), Target::Output("DP-2".into())];
+        assert_eq!(offered, both, "the dialog offers every screen");
+        assert_eq!(chosen.targets.len(), 1);
+        assert_eq!(chosen.targets[0].0, Target::Output("DP-2".into()));
+        assert_eq!(
+            chosen.targets[0].1.as_ref().map(|o| (o.x, o.y)),
+            Some((1920, 0))
+        );
+        assert_eq!(chosen.remembered, None, "Remember was not ticked");
+
+        let restore = Some(Target::Output("DP-1".into()));
+        let chosen = choose_from(Pick::Ask, SOURCE_MONITOR, &outputs, &[], restore, no_dialog)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            chosen.targets.len(),
+            1,
+            "a restored grant is one stream too"
+        );
+        assert_eq!(chosen.remembered, Some(Target::Output("DP-1".into())));
+    }
+
+    #[test]
+    fn outputs_at_negative_positions_are_left_out() {
+        let outputs = [
+            at("DP-3", -1920, 0),
+            at("DP-2", 1920, 0),
+            at("DP-4", 0, -1080),
+            at("DP-1", 0, 0),
+        ];
+        assert_eq!(shared(&outputs), ["DP-1", "DP-2"]);
+    }
+
+    #[test]
+    fn every_output_is_shared_when_none_lies_at_a_non_negative_position() {
+        let outputs = [at("DP-1", -1920, 0), at("DP-2", -3840, 0)];
+        assert_eq!(shared(&outputs), ["DP-2", "DP-1"]);
+        let none = choose_from(Pick::All, SOURCE_MONITOR, &[], &[], None, no_dialog);
+        assert!(none.is_err(), "no output is an error, not an empty grant");
+    }
+
+    #[test]
+    fn a_cast_that_fails_to_start_stops_the_ones_started_before_it() {
+        let targets: Vec<_> = ["DP-1", "DP-2", "DP-3"]
+            .map(|n| Target::Output(n.into()))
+            .into();
+        let mut started = Vec::new();
+        let mut stopped = Vec::new();
+        let result = start_each(
+            &targets,
+            |t| {
+                started.push(t.clone());
+                match t {
+                    Target::Output(n) if n == "DP-2" => Err("no capture".to_string()),
+                    t => Ok(t.clone()),
+                }
+            },
+            |c| stopped.push(c),
+        );
+        assert_eq!(result, Err("no capture".to_string()));
+        assert_eq!(started, targets[..2], "DP-3 never starts");
+        assert_eq!(stopped, targets[..1], "DP-1 stops again");
+        let all = start_each(&targets, |t| Ok::<_, String>(t.clone()), |_| {});
+        assert_eq!(all.as_deref(), Ok(&targets[..]));
+    }
+
+    #[test]
+    fn the_primary_screen_is_the_origin_output_else_the_top_left_most() {
         let name = |outputs: &[wayland::OutputInfo]| origin_output(outputs).map(|o| o.name.clone());
         let beside = [at("DP-2", 1920, 0), at("DP-1", 0, 0)];
         assert_eq!(name(&beside).as_deref(), Some("DP-1"), "the origin output");
