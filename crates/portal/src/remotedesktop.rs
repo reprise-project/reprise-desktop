@@ -28,6 +28,8 @@ pub(crate) struct RemoteSession {
     eis: Option<crate::inputlink::EisHandle>,
     keys: Option<crate::inputlink::KeysHandle>,
     pub(crate) screencast: CastState,
+    /// Held while the session casts lock mode's screens (`crate::lockmode`).
+    pub(crate) lock: Option<Arc<crate::inputlink::LockScreenHandle>>,
 }
 
 pub struct RemoteDesktop {
@@ -162,10 +164,15 @@ impl RemoteDesktop {
         }
         let key = session_handle.to_string();
         let parent = crate::dialog::parent_handle(&parent_window);
-        let trusted = app_id == crate::trusted::APP_ID
+        let caller = if app_id == crate::trusted::APP_ID {
+            crate::trusted::session_caller(conn, session_handle.as_str()).await
+        } else {
+            None
+        };
+        let trusted = caller.is_some()
             && crate::trusted::trusted(
                 &app_id,
-                crate::trusted::session_caller(conn, session_handle.as_str()).await,
+                caller,
                 crate::trusted::unit_facts(conn).await.as_ref(),
             );
         let (devices, restored, mut requested) = {
@@ -230,10 +237,19 @@ impl RemoteDesktop {
             .map(|s| s.screencast.types);
         let mut streams = Vec::new();
         let mut kept = None;
+        let mut locked = None;
         match types {
             None => return Ok((RESPONSE_CANCELLED, empty())),
             Some(0) => {}
             Some(_) => {
+                if trusted {
+                    locked = crate::lockmode::begin(conn, caller, live(&self.link)).await;
+                }
+                let pick = if trusted {
+                    crate::lockmode::pick(locked.as_ref())
+                } else {
+                    crate::Pick::Ask
+                };
                 match crate::pick_and_cast(
                     &self.sessions,
                     &self.frontend,
@@ -243,11 +259,7 @@ impl RemoteDesktop {
                     &key,
                     &app_id,
                     parent,
-                    if trusted {
-                        crate::Pick::All
-                    } else {
-                        crate::Pick::Ask
-                    },
+                    pick,
                 )
                 .await
                 {
@@ -263,11 +275,16 @@ impl RemoteDesktop {
             "RemoteDesktop.Start for {app_id:?}: devices {devices}, persist {persist}, streams {}",
             streams.len()
         );
+        let follow = locked.map(|l| l.hold(conn.clone(), self.sessions.clone(), key.clone()));
         match (self.sessions.lock().unwrap().get_mut(&key)).and_then(SessionData::remote_mut) {
             Some(s) => {
                 s.granted = true;
                 if devices & DEVICE_KEYBOARD != 0 {
                     s.keys = live(&self.link).and_then(|l| l.create_keys());
+                }
+                if let Some((lock, follow)) = follow {
+                    s.lock = Some(lock);
+                    zruntime::spawn(follow).detach();
                 }
             }
             None => return Ok((RESPONSE_CANCELLED, empty())),
