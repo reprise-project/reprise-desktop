@@ -208,7 +208,7 @@ const JOURNAL_IDENTIFIER: &str = "reprise-session";
 const STOP_POLL: Duration = Duration::from_millis(200);
 /// The one text the daemon gets for any `pam_authenticate` failure, so an unknown user and
 /// a wrong password look the same.
-const AUTH_FAILED: &str = "The user name or password is incorrect.";
+pub const AUTH_FAILED: &str = "The user name or password is incorrect.";
 
 /// The session's whole environment: the account's variables, then the PAM environment, whose
 /// value wins on a clash. Nothing comes from the worker's own environment.
