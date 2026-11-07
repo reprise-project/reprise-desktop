@@ -144,6 +144,7 @@ fn apply(state: &mut State, step: Step) {
             ErrorKind::Refused => logon::text::power_refused(),
             ErrorKind::Failed => text,
         }),
+        Step::PowerFailed => g.model.fail(logon::text::power_failed()),
         Step::Idle => g.model.set_busy(false),
         Step::Started => {
             g.started = true;
