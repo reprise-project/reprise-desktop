@@ -434,6 +434,7 @@ struct Pen<'a> {
     u: TextUnits,
     o: Rect,
     text: &'a TextRenderer,
+    title: &'a TextRenderer,
     px: u32,
     name_px: u32,
     ink: Color,
@@ -482,6 +483,19 @@ pub fn draw(
     text: &TextRenderer,
     s: i32,
 ) {
+    draw_titled(c, m, l, theme, text, &powerpanel::title_renderer(), s);
+}
+
+/// [`draw`] with the wordmark in `title`, an unscaled renderer.
+fn draw_titled(
+    c: &mut Canvas,
+    m: &Logon,
+    l: &LogonLayout,
+    theme: &Theme,
+    text: &TextRenderer,
+    title: &TextRenderer,
+    s: i32,
+) {
     let sc = Variant::of(&theme.look).scheme();
     let o = l.output;
     let f = frame(o);
@@ -492,6 +506,7 @@ pub fn draw(
         u: theme.text,
         o,
         text,
+        title,
         px,
         name_px: theme.text.px(NAME_PX) * s as u32,
         ink: sc.welcome_text,
@@ -542,8 +557,7 @@ fn draw_mark(c: &mut Canvas, m: &Logon, f: &Frame, k: Lines, pen: &Pen) {
     let block = LOGO + BEGIN_GAP + k.line;
     let top = f.middle.y + (f.middle.height - block) / 2;
     let spec = title_text();
-    let t = powerpanel::title_renderer();
-    let t = t.for_output(s);
+    let t = pen.title.for_output(s);
     let size = spec.size_in(t) * MARK_SIZE.0 / MARK_SIZE.1;
     let mark_px = pen.u.px(size) * s as u32;
     let word_w = t.measure(MARK, spec.bold, mark_px);
