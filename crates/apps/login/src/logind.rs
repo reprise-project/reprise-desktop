@@ -163,30 +163,24 @@ impl Logind {
     /// whose properties can't be read.
     pub async fn sessions(&self) -> zbus::Result<Vec<LogindSession>> {
         let listed = self.listed().await?;
-        Ok(listed
-            .into_iter()
-            .filter(|(_, c)| !c)
-            .map(|(s, _)| s)
-            .collect())
+        Ok(listed.into_iter().filter(|s| !s.closing).collect())
     }
 
-    /// logind's sessions whose properties can be read, each with whether it is closing.
-    pub async fn listed(&self) -> zbus::Result<Vec<(LogindSession, bool)>> {
+    /// logind's sessions whose properties can be read, closing ones included.
+    pub async fn listed(&self) -> zbus::Result<Vec<LogindSession>> {
         let mut found = Vec::new();
         for (id, uid, user, seat, path) in self.manager.list_sessions().await? {
             match self.describe(path).await {
-                Ok((vt, class, service, closing)) => found.push((
-                    LogindSession {
-                        id,
-                        user,
-                        uid,
-                        vt,
-                        seat,
-                        class,
-                        service,
-                    },
+                Ok((vt, class, service, closing)) => found.push(LogindSession {
+                    id,
+                    user,
+                    uid,
+                    vt,
+                    seat,
+                    class,
+                    service,
                     closing,
-                )),
+                }),
                 Err(e) if session_gone(&e) => log::debug!("logind session {id}: {e}"),
                 Err(e) => log::warn!("logind session {id}: {e}"),
             }
