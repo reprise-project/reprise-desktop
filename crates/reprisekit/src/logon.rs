@@ -59,6 +59,9 @@ pub mod text {
     pub fn power_failed() -> String {
         tr!("logon-power-failed")
     }
+    pub fn failed() -> String {
+        tr!("logon-failed")
+    }
     pub fn session_ended_early() -> String {
         tr!("logon-session-ended-early")
     }

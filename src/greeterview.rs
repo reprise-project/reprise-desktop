@@ -141,8 +141,9 @@ fn apply(state: &mut State, step: Step) {
         Step::Note(text) => g.model.info(text),
         Step::Fail(f) => g.model.fail(match f {
             Failure::Incorrect => logon::text::incorrect(),
-            Failure::Pam(text) | Failure::Failed(text) => text,
-            Failure::Refused => logon::text::power_refused(),
+            Failure::Pam(text) => text,
+            Failure::Failed => logon::text::failed(),
+            Failure::PowerRefused => logon::text::power_refused(),
             Failure::PowerFailed => logon::text::power_failed(),
         }),
         Step::Idle => g.model.set_busy(false),

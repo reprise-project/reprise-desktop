@@ -22,7 +22,7 @@ use reprise_login::worker::{FromWorker, LOG_FD, Mode, ToWorker, worker_main};
 use reprise_login::{pidfd, users};
 use repriselogin::GREETER_USER;
 use repriselogin::frame::{self, FrameError};
-use repriselogin::greeter::GreeterRequest;
+use repriselogin::greeter::{ErrorKind, GreeterReply, GreeterRequest};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 use zeroize::Zeroizing;
@@ -421,6 +421,21 @@ impl Runtime {
     fn run(&mut self, effect: Effect) {
         match effect {
             Effect::Reply(reply) => {
+                match &reply {
+                    GreeterReply::Error {
+                        kind: ErrorKind::Failed,
+                        text,
+                    } => {
+                        log::warn!("login screen told: {text}");
+                    }
+                    GreeterReply::Error {
+                        kind: ErrorKind::Refused,
+                        text,
+                    } => {
+                        log::info!("login screen told: {text}");
+                    }
+                    _ => {}
+                }
                 if let Some(greeter) = self.gate.borrow_mut().reply(&reply) {
                     let _ = (self.events).send(Event::Input(Input::GreeterGone(greeter)));
                 }

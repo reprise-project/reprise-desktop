@@ -128,6 +128,7 @@ logon-incorrect = The user name or password is incorrect.
 logon-caps-lock = Caps Lock is on.
 logon-power-refused = Other people are logged on to this computer. Shut it down from your own session.
 logon-power-failed = The computer could not be shut down or restarted.
+logon-failed = Reprise could not log you on. The reason is in the system journal.
 logon-session-ended-early = The session ended as soon as it started. Its log is in the user journal.
 logon-power-off = Shut down
 logon-verifying = Verifying...
