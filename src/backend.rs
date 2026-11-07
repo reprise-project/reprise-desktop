@@ -25,7 +25,7 @@ mod steps;
 mod tests;
 
 #[cfg(test)]
-pub(crate) use session::pause as pause_session;
+pub(crate) use session::{activate as activate_session, pause as pause_session};
 
 use std::{
     collections::HashMap,

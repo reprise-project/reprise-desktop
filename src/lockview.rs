@@ -46,6 +46,8 @@ pub struct LockScreen {
     /// The remote side's failed checks; it outlives each remote lock.
     pub remote_backoff: lock::Backoff,
     pub helpers: Helpers,
+    /// The session is paused (another VT or user has the seat); the fingerprint reader is not its.
+    pub seat_away: bool,
 }
 
 impl LockScreen {
@@ -56,6 +58,7 @@ impl LockScreen {
             remote: None,
             remote_backoff: lock::Backoff::default(),
             helpers: Helpers::default(),
+            seat_away: false,
         }
     }
 
@@ -448,6 +451,22 @@ pub fn lock(state: &mut State) {
     start_dialog_finger(state);
 }
 
+/// The session left the seat or came back. Away, the fingerprint conversation and its retry end so
+/// the reader is free for whoever has the seat; back, the dialog starts one again.
+pub fn seat_away(state: &mut State, away: bool) {
+    state.lock.seat_away = away;
+    if !away {
+        start_dialog_finger(state);
+        return;
+    }
+    if let Some(l) = state.lock.console.as_mut() {
+        l.finger = None;
+        l.finger_retry = None;
+        l.state.finger = None;
+    }
+    redraw(state);
+}
+
 /// Lock the desktop: the remote side in lock mode, else the session.
 pub fn lock_desktop(state: &mut State) {
     if crate::console::remote_side(state) {
@@ -487,8 +506,11 @@ pub fn lock_remote(state: &mut State) {
 }
 
 /// Start the fingerprint conversation if the built-in dialog shows and none runs. Never under a locker,
-/// which may claim the reader through its own pam_fprintd, and fprintd lets one claim it.
+/// which may claim the reader through its own pam_fprintd, and fprintd lets one claim it; nor off the seat.
 pub fn start_dialog_finger(state: &mut State) {
+    if state.lock.seat_away {
+        return;
+    }
     let Some(l) = state.lock.console.as_ref() else {
         return;
     };
@@ -1373,7 +1395,9 @@ pub fn button(state: &mut State, side: Side, button: u32, pos: Point<f64, Logica
             return;
         };
         if b == LockButton::SwitchUser {
-            crate::loginlink::switch_user(state);
+            if side == Side::Console {
+                crate::loginlink::switch_user(state);
+            }
             return;
         }
         let submit = l.state.button(b);
