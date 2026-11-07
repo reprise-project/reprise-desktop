@@ -127,6 +127,12 @@ fn the_handover_service_starts_without_waiting_for_the_compositor() {
 }
 
 #[test]
+fn the_handover_service_is_not_restarted_after_it_refuses_its_hand_overs() {
+    let service = data("systemd/reprise-rdp-handover.service");
+    assert_has(&service, "Service", &["RestartPreventExitStatus=75"]);
+}
+
+#[test]
 fn the_chvt_rule_refuses_only_inactive_subjects() {
     let rule = data("polkit-1/rules.d/50-reprise-login.rules");
     assert!(rule.contains(r#"action.id == "org.freedesktop.login1.chvt""#));
