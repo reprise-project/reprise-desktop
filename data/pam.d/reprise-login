@@ -1,5 +1,8 @@
 #%PAM-1.0
-# Logins typed at the login screen.
+# Logins typed at the login screen. Root is refused before a password is checked, and every
+# failure, an unknown user's included, gets the same 2 s fail delay.
+auth      optional  pam_faildelay.so delay=2000000
+auth      [success=ok user_unknown=ignore default=die] pam_succeed_if.so quiet_success uid ne 0
 auth      include   system-login
 -auth     optional  pam_gnome_keyring.so
 account   include   system-login

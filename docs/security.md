@@ -185,9 +185,12 @@ The sockets live in `/run/reprise-login` (0755, root):
   time. A frame that doesn't decode closes the connection. Over it the
   login screen can start a login for a user name, answer PAM's prompts,
   start the session PAM let in, cancel, and ask to shut down or restart.
-  Without the password PAM wants it can start no session. An account that
-  PAM resolves to uid 0 is refused with a wrong password's message, and a
-  login with no request from the login screen for 5 minutes is cancelled.
+  Without the password PAM wants it can start no session. The
+  `reprise-login` PAM service refuses root before it checks a password, so
+  the login screen can't test root's password, and every failed login
+  waits the same 2 s fail delay. An account that PAM resolves to uid 0 is
+  still refused by the daemon with a wrong password's message, and a login
+  with no request from the login screen for 5 minutes is cancelled.
 - `session.sock` is 0666. A connection is accepted only when the peer's
   logind session is one the daemon started or found at start, and its uid
   is that session's user. A session can say which interface it runs and ask
