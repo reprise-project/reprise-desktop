@@ -17,9 +17,9 @@ use reprise_login::daemon::{
 use reprise_login::ipc::{self, Gate, Paths, Server};
 use reprise_login::logind::{Logind, SessionRemovedStream};
 use reprise_login::remembered::{Remembered, STATE_PATH};
-use reprise_login::users;
 use reprise_login::vt::{self, GREETER_VT};
 use reprise_login::worker::{FromWorker, Mode, ToWorker, worker_main};
+use reprise_login::{pidfd, users};
 use repriselogin::GREETER_USER;
 use repriselogin::frame::{self, FrameError};
 use repriselogin::greeter::GreeterRequest;
@@ -37,6 +37,12 @@ Reprise's login manager. It runs as root from reprise-login.service.
 const WORKER_FD: i32 = 3;
 /// How long a worker's socket may stay open after the worker exited, held by a child of it.
 const EOF_GRACE: Duration = Duration::from_secs(1);
+/// How long remembered state waits before it is written, so a burst of changes is one write.
+const REMEMBER_DELAY: Duration = Duration::from_millis(500);
+/// How often, and how many times, a recovered session whose leader exited is checked for
+/// logind marking it closing.
+const LEADER_POLL: Duration = Duration::from_millis(500);
+const LEADER_POLLS: u32 = 10;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -109,7 +115,13 @@ enum Event {
     Reap,
     /// The worker exited `EOF_GRACE` ago and its socket is still open.
     EofLate(WorkerId),
+    /// A worker that never ran.
+    Exited(Exited),
+    /// `REMEMBER_DELAY` passed since remembered state changed.
+    Save,
     Stop,
+    /// The daemon can no longer follow logind; it exits so systemd restarts it.
+    Lost(String),
 }
 
 type Events = mpsc::UnboundedSender<Event>;
@@ -136,16 +148,18 @@ async fn run() -> Result<(), String> {
         logind: logind.clone(),
         gate: gate.clone(),
         workers: Workers::new(PathBuf::from("/proc/self/exe"), events.clone()),
+        saver: Saver::new(PathBuf::from(STATE_PATH), events.clone()),
         events: events.clone(),
         world: None,
     };
     let world = rt.read_world().await;
     let effects = boot(&mut rt.daemon, found, &world);
+    let recovered: Vec<String> = rt.daemon.session_uids().into_keys().collect();
     rt.world = Some(world);
 
     let (greeter_l, session_l) = (ipc::bind(&Paths::default(), greeter.gid))
         .map_err(|e| format!("binding the sockets: {e}"))?;
-    let lookup = logind.clone();
+    let (lookup, seat) = (logind.clone(), logind.clone());
     let input = events.clone();
     let server = Server {
         gate,
@@ -153,11 +167,18 @@ async fn run() -> Result<(), String> {
             let l = lookup.clone();
             Box::pin(async move { l.session_of(pid).await })
         }),
+        seat_active: Rc::new(move || {
+            let l = seat.clone();
+            Box::pin(async move { l.seat_active().await })
+        }),
         input: Rc::new(move |i| {
             let _ = input.send(Event::Input(i));
         }),
     };
     ipc::serve(greeter_l, session_l, server).map_err(|e| format!("the sockets: {e}"))?;
+    for id in recovered {
+        tokio::task::spawn_local(follow_leader(id, logind.clone(), events.clone()));
+    }
     tokio::task::spawn_local(follow_removals(removed, logind, events));
     rt.run_effects(effects);
     rt.sync_gate();
@@ -180,10 +201,18 @@ async fn run() -> Result<(), String> {
                     rt.exited(exit).await;
                 }
             }
+            Event::Exited(exit) => rt.exited(exit).await,
+            Event::Save => rt.saver.save(),
             Event::Stop => {
                 log::info!("stopping; user sessions keep running");
                 rt.workers.kill_greeters();
+                rt.saver.save();
                 return Ok(());
+            }
+            Event::Lost(why) => {
+                rt.workers.kill_greeters();
+                rt.saver.save();
+                return Err(why);
             }
         }
     }
@@ -206,7 +235,34 @@ async fn follow_removals(mut removed: SessionRemovedStream, logind: Logind, even
         let seat_active = logind.seat_active().await;
         let _ = events.send(Event::Input(Input::SessionRemoved { id, seat_active }));
     }
-    log::error!("logind's SessionRemoved signal stream ended");
+    let _ = events.send(Event::Lost(
+        "logind's SessionRemoved signal stream ended".into(),
+    ));
+}
+
+/// Ends recovered session `id` once its leader exits: logind then keeps it closing, with no
+/// `SessionRemoved`, while any process of it runs.
+async fn follow_leader(id: String, logind: Logind, events: Events) {
+    let Some(pid) = logind.leader(&id).await else {
+        return;
+    };
+    match pidfd::open(pid) {
+        Ok(fd) => {
+            if let Err(e) = pidfd::exited(fd).await {
+                return log::warn!("session {id}: watching its leader {pid}: {e}");
+            }
+        }
+        Err(e) if e.raw_os_error() == Some(libc::ESRCH) => {}
+        Err(e) => return log::warn!("session {id}: watching its leader {pid}: {e}"),
+    }
+    for _ in 0..LEADER_POLLS {
+        if logind.ended(&id).await {
+            let seat_active = logind.seat_active().await;
+            let _ = events.send(Event::Input(Input::SessionRemoved { id, seat_active }));
+            return;
+        }
+        tokio::time::sleep(LEADER_POLL).await;
+    }
 }
 
 /// SIGCHLD reaps workers; SIGTERM and SIGINT stop the daemon.
@@ -234,6 +290,7 @@ struct Runtime {
     logind: Logind,
     gate: Rc<RefCell<Gate>>,
     workers: Workers,
+    saver: Saver,
     events: Events,
     /// The last world read; `None` before the first.
     world: Option<World>,
@@ -243,10 +300,7 @@ impl Runtime {
     async fn input(&mut self, input: Input) {
         if let Input::Worker(w, FromWorker::Started { session_id, .. }) = &input {
             self.workers.started(*w, session_id);
-            let mut gate = self.gate.borrow_mut();
-            if let Some(g) = gate.greeter.as_mut().filter(|g| g.0 == *w) {
-                g.1 = Some(session_id.clone());
-            }
+            self.gate.borrow_mut().greeter_started(*w, session_id);
         }
         let fresh = matches!(
             input,
@@ -266,12 +320,7 @@ impl Runtime {
     /// Hands the state machine a worker's exit. The console leaves a timed-out worker's VT,
     /// and a session worker whose logind session is closing or gone ends that session.
     async fn exited(&mut self, exit: Exited) {
-        {
-            let mut gate = self.gate.borrow_mut();
-            if gate.greeter.as_ref().is_some_and(|g| g.0 == exit.id) {
-                gate.greeter = None;
-            }
-        }
+        self.gate.borrow_mut().greeter_exited(exit.id);
         let stalled = self.daemon.stalled_vt(exit.id);
         self.input(Input::WorkerExited(exit.id)).await;
         if stalled.is_some_and(|v| on_dead_vt(v, vt::active())) {
@@ -287,7 +336,9 @@ impl Runtime {
     }
 
     fn sync_gate(&self) {
-        self.gate.borrow_mut().sessions = self.daemon.session_uids();
+        self.gate
+            .borrow_mut()
+            .set_sessions(self.daemon.session_uids());
     }
 
     async fn read_world(&self) -> World {
@@ -363,13 +414,9 @@ impl Runtime {
                     let _ = events.send(Event::Input(Input::Timer(timer)));
                 });
             }
-            Effect::Remember(remembered) => {
-                if let Err(e) = remembered.save(Path::new(STATE_PATH)) {
-                    log::warn!("{STATE_PATH}: {e}");
-                }
-            }
+            Effect::Remember(remembered) => self.saver.remember(remembered),
             Effect::Disallocate(vt) => vt::disallocate(vt),
-            Effect::Log(text) => log::warn!("{text}"),
+            Effect::Log(level, text) => log::log!(level, "{text}"),
         }
     }
 
@@ -387,6 +434,47 @@ impl Runtime {
 /// screen's own VT never counts.
 fn on_dead_vt(stalled_vt: u16, active: io::Result<u16>) -> bool {
     stalled_vt != GREETER_VT && active.is_ok_and(|a| a == stalled_vt)
+}
+
+/// Writes remembered state `REMEMBER_DELAY` after it changes, the latest value winning.
+struct Saver {
+    path: PathBuf,
+    events: Events,
+    pending: Option<Remembered>,
+    armed: bool,
+}
+
+impl Saver {
+    fn new(path: PathBuf, events: Events) -> Saver {
+        Saver {
+            path,
+            events,
+            pending: None,
+            armed: false,
+        }
+    }
+
+    fn remember(&mut self, remembered: Remembered) {
+        self.pending = Some(remembered);
+        if !std::mem::replace(&mut self.armed, true) {
+            let events = self.events.clone();
+            tokio::task::spawn_local(async move {
+                tokio::time::sleep(REMEMBER_DELAY).await;
+                let _ = events.send(Event::Save);
+            });
+        }
+    }
+
+    /// Writes what is pending, if anything.
+    fn save(&mut self) {
+        self.armed = false;
+        let Some(remembered) = self.pending.take() else {
+            return;
+        };
+        if let Err(e) = remembered.save(&self.path) {
+            log::warn!("{}: {e}", self.path.display());
+        }
+    }
 }
 
 /// A worker process and the daemon's end of its socket.
@@ -435,7 +523,12 @@ impl Workers {
             Ok(started) => started,
             Err(e) => {
                 log::error!("a {} worker did not start: {e}", job.mode.as_arg());
-                let _ = self.events.send(Event::Input(Input::WorkerExited(id)));
+                let exit = Exited {
+                    id,
+                    mode: job.mode,
+                    session: None,
+                };
+                let _ = self.events.send(Event::Exited(exit));
                 return;
             }
         };
@@ -587,13 +680,16 @@ fn start(program: &Path, job: &Job) -> io::Result<(Child, UnixStream)> {
     Ok((child, ours))
 }
 
-async fn read_worker(id: WorkerId, mut rd: tokio::net::unix::OwnedReadHalf, events: Events) {
-    let why = ipc::read_frames(&mut rd, |body| {
-        let msg = frame::decode::<FromWorker>(&body)?;
-        let _ = events.send(Event::Input(Input::Worker(id, msg)));
-        Ok(())
-    })
-    .await;
+async fn read_worker(id: WorkerId, rd: tokio::net::unix::OwnedReadHalf, events: Events) {
+    let mut frames = ipc::Frames::new(rd);
+    let why = loop {
+        match frames.next().await.and_then(|body| frame::decode(&body)) {
+            Ok(msg) => {
+                let _ = events.send(Event::Input(Input::Worker(id, msg)));
+            }
+            Err(e) => break e,
+        }
+    };
     if why != FrameError::Closed {
         log::warn!("worker {}: its socket: {}", id.0, ipc::error_kind(&why));
     }
@@ -741,9 +837,43 @@ mod tests {
                 w.spawn(WorkerId(5), &login("anna"));
                 assert!(matches!(
                     rx.recv().await,
-                    Some(Event::Input(Input::WorkerExited(WorkerId(5))))
+                    Some(Event::Exited(Exited {
+                        id: WorkerId(5),
+                        mode: Mode::Login,
+                        session: None,
+                    }))
                 ));
                 assert!(w.running.is_empty());
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn remembered_state_is_written_once_per_burst_with_the_latest_value() {
+        use repriselogin::Interface;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.toml");
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut saver = Saver::new(path.clone(), tx);
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                for interface in [Interface::Classic, Interface::Glass] {
+                    saver.remember(Remembered {
+                        last_user: None,
+                        last_interface: Some(interface),
+                    });
+                }
+                assert!(!path.exists(), "nothing is written at once");
+                let due = tokio::time::timeout(REMEMBER_DELAY * 4, rx.recv()).await;
+                assert!(matches!(due, Ok(Some(Event::Save))));
+                saver.save();
+                assert_eq!(
+                    Remembered::load(&path).last_interface,
+                    Some(Interface::Glass)
+                );
+                let again = tokio::time::timeout(REMEMBER_DELAY * 2, rx.recv()).await;
+                assert!(again.is_err(), "one write for the burst");
             })
             .await;
     }

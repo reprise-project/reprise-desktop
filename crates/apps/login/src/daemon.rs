@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use log::Level;
 use repriselogin::greeter::{
     ErrorKind, GreeterReply, GreeterRequest, Greeting, Keyboard, Notice, PowerAction, UserEntry,
 };
@@ -54,9 +55,12 @@ pub enum Input {
     /// The worker process exited, whatever its status: a greeter that was not told to leave
     /// counts as failed either way.
     WorkerExited(WorkerId),
+    /// A request on session `id`'s link; `seat_active` is seat0's active session when a
+    /// `SwitchUser` came, `None` with a `Hello`.
     Session {
         id: String,
         request: SessionRequest,
+        seat_active: Option<String>,
     },
     /// logind removed session `id`; `seat_active` is seat0's active session after that.
     SessionRemoved {
@@ -96,7 +100,7 @@ pub enum Effect {
     },
     Remember(Remembered),
     Disallocate(u16),
-    Log(String),
+    Log(log::Level, String),
 }
 
 /// A session as logind's `ListSessions` and session properties describe it.
@@ -306,11 +310,17 @@ impl Daemon {
                     self.autologin = Some(Autologin { worker, user, vt });
                     return out;
                 }
-                (true, None) => out.push(Effect::Log(format!("autologin of {user}: {NO_VT}"))),
-                (false, _) => out.push(Effect::Log(format!(
-                    "autologin_user {user:?} is not an account the login screen lists; \
+                (true, None) => out.push(Effect::Log(
+                    Level::Warn,
+                    format!("autologin of {user}: {NO_VT}"),
+                )),
+                (false, _) => out.push(Effect::Log(
+                    Level::Info,
+                    format!(
+                        "autologin_user {user:?} is not an account the login screen lists; \
                      showing the login screen"
-                ))),
+                    ),
+                )),
             }
         }
         self.spawn_greeter(&mut out);
@@ -324,7 +334,11 @@ impl Daemon {
             Input::GreeterGone => self.greeter_gone(&mut out),
             Input::Worker(worker, msg) => self.worker_message(now, worker, msg, &mut out),
             Input::WorkerExited(worker) => self.worker_exited(worker, &mut out),
-            Input::Session { id, request } => self.session_request(&id, request, &mut out),
+            Input::Session {
+                id,
+                request,
+                seat_active,
+            } => self.session_request(&id, request, seat_active, &mut out),
             Input::SessionRemoved { id, seat_active } => {
                 self.session_removed(now, &id, seat_active, &mut out)
             }
@@ -499,9 +513,10 @@ impl Daemon {
         if let Some(s) = self.stalled.iter().find(|s| s.worker == worker) {
             if let FromWorker::Started { session_id, .. } = msg {
                 let vt = s.vt;
-                out.push(Effect::Log(format!(
-                    "session {session_id} opened after its start timed out; ending it"
-                )));
+                out.push(Effect::Log(
+                    Level::Warn,
+                    format!("session {session_id} opened after its start timed out; ending it"),
+                ));
                 out.push(Effect::TerminateSession(session_id));
                 // Its worker activated `vt` before opening the session.
                 if vt != GREETER_VT {
@@ -538,12 +553,14 @@ impl Daemon {
             FromWorker::Started { .. } if is_greeter => {
                 self.greeter.as_mut().expect("greeter").started = true;
             }
-            FromWorker::Failed { text, .. } if is_greeter => out.push(Effect::Log(format!(
-                "the login screen did not start: {text}"
-            ))),
-            FromWorker::Failed { text, .. } if autologin => {
-                out.push(Effect::Log(format!("autologin did not start: {text}")))
-            }
+            FromWorker::Failed { text, .. } if is_greeter => out.push(Effect::Log(
+                Level::Warn,
+                format!("the login screen did not start: {text}"),
+            )),
+            FromWorker::Failed { text, .. } if autologin => out.push(Effect::Log(
+                Level::Warn,
+                format!("autologin did not start: {text}"),
+            )),
             _ => {}
         }
     }
@@ -574,10 +591,13 @@ impl Daemon {
             }
             FromWorker::Started { session_id, uid } => {
                 let Phase::Starting { vt } = c.phase else {
-                    out.push(Effect::Log(format!(
-                        "a login worker reported session {session_id} before its start; \
+                    out.push(Effect::Log(
+                        Level::Warn,
+                        format!(
+                            "a login worker reported session {session_id} before its start; \
                          ending it"
-                    )));
+                        ),
+                    ));
                     out.push(Effect::TerminateSession(session_id));
                     return self.fail_conversation(ErrorKind::Failed, STARTED_EARLY.into(), out);
                 };
@@ -760,12 +780,18 @@ impl Daemon {
         } else if self.autologin.as_ref().is_some_and(|a| a.worker == worker) {
             let a = self.autologin.take().expect("autologin worker");
             out.push(Effect::Kill(worker));
-            out.push(Effect::Log(format!("autologin of {}: {text}", a.user)));
+            out.push(Effect::Log(
+                Level::Warn,
+                format!("autologin of {}: {text}", a.user),
+            ));
             self.stalled.push(Stalled { worker, vt: a.vt });
             self.bring_greeter(out);
         } else if (self.greeter.as_ref()).is_some_and(|g| g.worker == worker && !g.started) {
             out.push(Effect::Kill(worker));
-            out.push(Effect::Log(format!("the login screen: {text}")));
+            out.push(Effect::Log(
+                Level::Warn,
+                format!("the login screen: {text}"),
+            ));
             self.stalled.push(Stalled {
                 worker,
                 vt: GREETER_VT,
@@ -807,10 +833,10 @@ impl Daemon {
         }
         if self.autologin.as_ref().is_some_and(|a| a.worker == worker) {
             let a = self.autologin.take().expect("autologin worker");
-            out.push(Effect::Log(format!(
-                "autologin of {}: {WORKER_ENDED}",
-                a.user
-            )));
+            out.push(Effect::Log(
+                Level::Warn,
+                format!("autologin of {}: {WORKER_ENDED}", a.user),
+            ));
             return self.bring_greeter(out);
         }
         if let Some(at) = self.session_workers.iter().position(|s| s.worker == worker) {
@@ -831,17 +857,26 @@ impl Daemon {
         match self.runs.ended(false) {
             AfterGreeter::TextLogin => {
                 out.push(Effect::SwitchTo(TEXT_LOGIN_VT));
-                out.push(Effect::Log(format!(
-                    "the login screen failed {MAX_FAILURES} times in a row; \
+                out.push(Effect::Log(
+                    Level::Warn,
+                    format!(
+                        "the login screen failed {MAX_FAILURES} times in a row; \
                      the text login on VT {TEXT_LOGIN_VT} takes over"
-                )));
+                    ),
+                ));
             }
             AfterGreeter::Again if self.conversation.is_some() => {}
             AfterGreeter::Again => self.spawn_greeter(out),
         }
     }
 
-    fn session_request(&mut self, id: &str, request: SessionRequest, out: &mut Vec<Effect>) {
+    fn session_request(
+        &mut self,
+        id: &str,
+        request: SessionRequest,
+        seat_active: Option<String>,
+        out: &mut Vec<Effect>,
+    ) {
         if self.sessions.by_id(id).is_none() {
             return;
         }
@@ -852,7 +887,11 @@ impl Daemon {
                     out.push(Effect::Remember(self.remembered.clone()));
                 }
             }
-            SessionRequest::SwitchUser => self.bring_greeter(out),
+            // Only the session on screen may hand the console to the login screen.
+            SessionRequest::SwitchUser if seat_active.as_deref() == Some(id) => {
+                self.bring_greeter(out)
+            }
+            SessionRequest::SwitchUser => {}
         }
     }
 
@@ -863,6 +902,8 @@ impl Daemon {
         seat_active: Option<String>,
         out: &mut Vec<Effect>,
     ) {
+        // A closing session can still be seat0's active one; nothing else is on screen then.
+        let seat_active = seat_active.filter(|a| a != id);
         if let Some(at) = self.orphans.iter().position(|o| o == id) {
             self.orphans.remove(at);
             if !self.orphans.is_empty() {
@@ -935,9 +976,12 @@ impl Daemon {
             return;
         };
         if timed_out {
-            out.push(Effect::Log(format!(
-                "session {id} did not unlock within {UNLOCK_WAIT:?}; switching to it anyway"
-            )));
+            out.push(Effect::Log(
+                Level::Info,
+                format!(
+                    "session {id} did not unlock within {UNLOCK_WAIT:?}; switching to it anyway"
+                ),
+            ));
         }
         out.push(Effect::SwitchTo(vt));
         if self.greeter_runs(greeter) {

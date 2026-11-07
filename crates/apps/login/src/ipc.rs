@@ -1,10 +1,11 @@
 //! The greeter's and the sessions' sockets: binding, peer checks and one reader per connection.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fs::Permissions;
 use std::future::Future;
 use std::io;
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener as StdListener;
 use std::path::{Path, PathBuf};
@@ -13,15 +14,17 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use repriselogin::frame::{self, FrameError, FrameReader};
-use repriselogin::greeter::{GreeterReply, GreeterRequest};
+use repriselogin::greeter::GreeterReply;
 use repriselogin::session::SessionRequest;
 use repriselogin::{GREETER_SOCKET, SESSION_SOCKET};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
+use tokio::task::AbortHandle;
 use zeroize::Zeroizing;
 
 use crate::daemon::{Input, WorkerId};
+use crate::pidfd;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Listener {
@@ -85,21 +88,61 @@ fn bind_one(path: &Path) -> io::Result<StdListener> {
     Ok(l)
 }
 
+/// Most connections a listener checks at once; past it, new ones are closed unchecked.
+const MAX_PENDING: usize = 16;
+/// How long a greeter connection waits for its worker's `Started` to reach the loop.
+pub const GREETER_WAIT: Duration = Duration::from_secs(3);
+
+/// A run of failures, so each run is logged once.
+#[derive(Default)]
+struct Spell(Cell<bool>);
+
+impl Spell {
+    /// Marks a failure; true for the first of a run.
+    fn fail(&self) -> bool {
+        !self.0.replace(true)
+    }
+
+    fn pass(&self) {
+        self.0.set(false);
+    }
+}
+
 /// What the listeners check peers against; the daemon's loop keeps it current.
 pub struct Gate {
     pub greeter_uid: u32,
     /// The running greeter worker, and its logind session once it reported `Started`.
-    pub greeter: Option<(WorkerId, Option<String>)>,
+    greeter: Option<(WorkerId, Option<String>)>,
     /// The session table: logind session id to uid.
-    pub sessions: HashMap<String, u32>,
+    sessions: HashMap<String, u32>,
     link: Option<Link>,
-    links: u64,
+    /// One link per table session, with its serial.
+    session_links: HashMap<String, (u64, Reader)>,
+    serials: u64,
+    /// Woken when the greeter changes, for a greeter connection waiting on it.
+    changed: Rc<Notify>,
 }
 
-/// The connected greeter's outbound queue.
+/// The connected greeter's outbound queue and reader.
 struct Link {
     serial: u64,
     tx: mpsc::UnboundedSender<Zeroizing<Vec<u8>>>,
+    _reader: Reader,
+}
+
+/// A connection's reader task, stopped when this is dropped.
+struct Reader(AbortHandle);
+
+impl Reader {
+    fn spawn(f: impl Future<Output = ()> + 'static) -> Reader {
+        Reader(tokio::task::spawn_local(f).abort_handle())
+    }
+}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 impl Gate {
@@ -109,14 +152,37 @@ impl Gate {
             greeter: None,
             sessions: HashMap::new(),
             link: None,
-            links: 0,
+            session_links: HashMap::new(),
+            serials: 0,
+            changed: Rc::new(Notify::new()),
         }
     }
 
-    /// A new greeter worker runs; the previous greeter's connection is dropped.
+    /// A new greeter worker runs; the previous greeter's connection is closed.
     pub fn greeter_spawned(&mut self, worker: WorkerId) {
         self.greeter = Some((worker, None));
         self.link = None;
+        self.changed.notify_waiters();
+    }
+
+    /// The greeter `worker` opened logind session `session`.
+    pub fn greeter_started(&mut self, worker: WorkerId, session: &str) {
+        if let Some(g) = self.greeter.as_mut().filter(|g| g.0 == worker) {
+            g.1 = Some(session.into());
+            self.changed.notify_waiters();
+        }
+    }
+
+    pub fn greeter_exited(&mut self, worker: WorkerId) {
+        if self.greeter.as_ref().is_some_and(|g| g.0 == worker) {
+            self.greeter = None;
+        }
+    }
+
+    /// Replaces the session table; a session that left it loses its link.
+    pub fn set_sessions(&mut self, sessions: HashMap<String, u32>) {
+        (self.session_links).retain(|id, _| sessions.contains_key(id));
+        self.sessions = sessions;
     }
 
     /// Queues `reply` for the connected greeter; with none connected it is dropped.
@@ -132,14 +198,31 @@ impl Gate {
             Err(e) => log::warn!("greeter socket: a reply was not sent: {}", error_kind(&e)),
         }
     }
+
+    /// Whether a peer of `uid` could pass on `kind` at all, before its session is looked up.
+    fn may_try(&self, kind: Listener, uid: u32) -> bool {
+        match kind {
+            Listener::Greeter => uid == self.greeter_uid,
+            Listener::Session => self.sessions.values().any(|&u| u == uid),
+        }
+    }
+
+    fn serial(&mut self) -> u64 {
+        self.serials += 1;
+        self.serials
+    }
 }
 
 /// Looks up the logind session of a process id; logind in the daemon, a fake in tests.
 pub type SessionOf = Rc<dyn Fn(u32) -> Pin<Box<dyn Future<Output = Option<String>>>>>;
 
+/// Reads seat0's active session.
+pub type SeatActive = Rc<dyn Fn() -> Pin<Box<dyn Future<Output = Option<String>>>>>;
+
 pub struct Server {
     pub gate: Rc<RefCell<Gate>>,
     pub session_of: SessionOf,
+    pub seat_active: SeatActive,
     pub input: Rc<dyn Fn(Input)>,
 }
 
@@ -153,91 +236,173 @@ pub fn serve(greeter: StdListener, session: StdListener, server: Server) -> io::
     Ok(())
 }
 
+/// Decrements a listener's count of checks in flight when the check ends.
+struct InFlight(Rc<Cell<usize>>);
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - 1);
+    }
+}
+
 async fn accept(l: UnixListener, kind: Listener, s: Rc<Server>) {
+    let pending = Rc::new(Cell::new(0));
+    let failing = Spell::default();
+    let refused = Rc::new(Spell::default());
     loop {
-        match l.accept().await {
-            Ok((stream, _)) => {
-                tokio::task::spawn_local(admit(stream, kind, s.clone()));
-            }
+        let stream = match l.accept().await {
+            Ok((stream, _)) => stream,
             Err(e) => {
-                log::warn!("{kind:?} socket: accept: {e}");
+                if failing.fail() {
+                    log::warn!("{kind:?} socket: accept: {e}");
+                }
                 tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
             }
+        };
+        failing.pass();
+        let Ok(uid) = stream.peer_cred().map(|c| c.uid()) else {
+            continue;
+        };
+        if !s.gate.borrow().may_try(kind, uid) {
+            if refused.fail() {
+                log::warn!("{kind:?} socket: refused uid {uid}");
+            }
+            continue;
         }
+        if pending.get() >= MAX_PENDING {
+            if refused.fail() {
+                log::warn!("{kind:?} socket: {MAX_PENDING} connections are being checked");
+            }
+            continue;
+        }
+        pending.set(pending.get() + 1);
+        let in_flight = InFlight(pending.clone());
+        let (s, refused) = (s.clone(), refused.clone());
+        tokio::task::spawn_local(async move {
+            let _in_flight = in_flight;
+            match admit(stream, uid, kind, &s).await {
+                true => refused.pass(),
+                false if refused.fail() => log::warn!("{kind:?} socket: refused uid {uid}"),
+                false => {}
+            }
+        });
+    }
+}
+
+/// The pid to look up for `stream`'s peer, with its pidfd when the kernel gives one.
+fn peer_process(stream: &UnixStream) -> Option<(u32, Option<OwnedFd>)> {
+    match pidfd::peer(stream) {
+        Ok(fd) => Some((pidfd::pid_of(&fd).ok()??, Some(fd))),
+        Err(e) if e.raw_os_error() == Some(libc::ENOPROTOOPT) => {
+            let pid = stream.peer_cred().ok()?.pid()?;
+            Some((u32::try_from(pid).ok()?, None))
+        }
+        Err(_) => None,
     }
 }
 
 /// Checks the peer and starts its reader; a refused peer's stream is dropped, closing it.
-async fn admit(stream: UnixStream, kind: Listener, s: Rc<Server>) {
-    let Ok(cred) = stream.peer_cred() else {
-        return;
-    };
-    let Some(pid) = cred.pid().and_then(|p| u32::try_from(p).ok()) else {
-        return;
+async fn admit(stream: UnixStream, uid: u32, kind: Listener, s: &Rc<Server>) -> bool {
+    let Some((pid, fd)) = peer_process(&stream) else {
+        return false;
     };
     let session = (s.session_of)(pid).await;
-    let mut gate = s.gate.borrow_mut();
+    // A peer that exited during the lookup may have left its pid to another process.
+    let session = session.filter(|_| fd.as_ref().is_none_or(pidfd::alive));
     match kind {
-        Listener::Greeter => {
-            let greeter_session = gate.greeter.as_ref().and_then(|g| g.1.as_deref());
-            let allowed = gate.link.is_none()
-                && peer_allowed(
-                    kind,
-                    cred.uid(),
-                    session.as_deref(),
-                    gate.greeter_uid,
-                    greeter_session,
-                    None,
-                );
-            let Some((worker, _)) = gate.greeter.as_ref().filter(|_| allowed) else {
-                log::warn!("greeter socket: refused uid {}", cred.uid());
-                return;
-            };
-            let worker = *worker;
-            gate.links += 1;
-            let serial = gate.links;
-            let (rd, wr) = stream.into_split();
-            let (tx, rx) = mpsc::unbounded_channel();
-            gate.link = Some(Link { serial, tx });
-            drop(gate);
-            tokio::task::spawn_local(write_frames(wr, rx));
-            tokio::task::spawn_local(read_greeter(rd, serial, worker, s));
-        }
-        Listener::Session => {
-            let uid = session
-                .as_ref()
-                .and_then(|id| gate.sessions.get(id).copied());
-            let allowed = peer_allowed(
-                kind,
-                cred.uid(),
-                session.as_deref(),
-                gate.greeter_uid,
-                None,
-                uid,
-            );
-            drop(gate);
-            match session.filter(|_| allowed) {
-                Some(id) => {
-                    tokio::task::spawn_local(read_session(stream, id, s));
-                }
-                None => log::warn!("session socket: refused uid {}", cred.uid()),
-            }
-        }
+        Listener::Greeter => admit_greeter(stream, uid, session, s).await,
+        Listener::Session => admit_session(stream, uid, session, s),
     }
 }
 
+/// Links the greeter once its session is the running greeter's, waiting up to
+/// `GREETER_WAIT` for that greeter's `Started` to be handled.
+async fn admit_greeter(
+    stream: UnixStream,
+    uid: u32,
+    session: Option<String>,
+    s: &Rc<Server>,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + GREETER_WAIT;
+    let worker = loop {
+        let changed = s.gate.borrow().changed.clone();
+        let notified = changed.notified();
+        {
+            let gate = s.gate.borrow();
+            if gate.link.is_some() {
+                return false;
+            }
+            if let Some((worker, greeter_session)) = &gate.greeter
+                && peer_allowed(
+                    Listener::Greeter,
+                    uid,
+                    session.as_deref(),
+                    gate.greeter_uid,
+                    greeter_session.as_deref(),
+                    None,
+                )
+            {
+                break *worker;
+            }
+        }
+        if tokio::time::timeout_at(deadline, notified).await.is_err() {
+            return false;
+        }
+    };
+    let mut gate = s.gate.borrow_mut();
+    let serial = gate.serial();
+    let (rd, wr) = stream.into_split();
+    let (tx, rx) = mpsc::unbounded_channel();
+    tokio::task::spawn_local(write_frames(wr, rx));
+    let reader = Reader::spawn(read_greeter(rd, serial, worker, s.clone()));
+    gate.link = Some(Link {
+        serial,
+        tx,
+        _reader: reader,
+    });
+    true
+}
+
+/// Links a table session; its earlier link, if any, is closed.
+fn admit_session(stream: UnixStream, uid: u32, session: Option<String>, s: &Rc<Server>) -> bool {
+    let allowed = {
+        let gate = s.gate.borrow();
+        let table_uid = session
+            .as_ref()
+            .and_then(|id| gate.sessions.get(id).copied());
+        peer_allowed(
+            Listener::Session,
+            uid,
+            session.as_deref(),
+            gate.greeter_uid,
+            None,
+            table_uid,
+        )
+    };
+    let Some(id) = session.filter(|_| allowed) else {
+        return false;
+    };
+    let mut gate = s.gate.borrow_mut();
+    let serial = gate.serial();
+    let reader = Reader::spawn(read_session(stream, id.clone(), serial, s.clone()));
+    gate.session_links.insert(id, (serial, reader));
+    true
+}
+
 async fn read_greeter(
-    mut rd: tokio::net::unix::OwnedReadHalf,
+    rd: tokio::net::unix::OwnedReadHalf,
     serial: u64,
     worker: WorkerId,
     s: Rc<Server>,
 ) {
-    let why = read_frames(&mut rd, |body| {
-        let request = frame::decode::<GreeterRequest>(&body)?;
-        (s.input)(Input::GreeterRequest(request));
-        Ok(())
-    })
-    .await;
+    let mut frames = Frames::new(rd);
+    let why = loop {
+        match frames.next().await.and_then(|body| frame::decode(&body)) {
+            Ok(request) => (s.input)(Input::GreeterRequest(request)),
+            Err(e) => break e,
+        }
+    };
     if why != FrameError::Closed {
         log::warn!("greeter socket: dropping the greeter: {}", error_kind(&why));
     }
@@ -253,45 +418,81 @@ async fn read_greeter(
     }
 }
 
-async fn read_session(mut stream: UnixStream, id: String, s: Rc<Server>) {
-    let why = read_frames(&mut stream, |body| {
-        match frame::decode::<SessionRequest>(&body) {
-            Ok(request) => (s.input)(Input::Session {
-                id: id.clone(),
-                request,
-            }),
-            Err(e) => log::warn!("session {id}: skipped {}", error_kind(&e)),
-        }
-        Ok(())
-    })
-    .await;
+async fn read_session(stream: UnixStream, id: String, serial: u64, s: Rc<Server>) {
+    let mut frames = Frames::new(stream);
+    let bad = Spell::default();
+    let why = loop {
+        let body = match frames.next().await {
+            Ok(body) => body,
+            Err(e) => break e,
+        };
+        let request = match frame::decode::<SessionRequest>(&body) {
+            Ok(request) => request,
+            Err(e) => {
+                if bad.fail() {
+                    log::warn!("session {id}: skipped {}", error_kind(&e));
+                }
+                continue;
+            }
+        };
+        bad.pass();
+        // Read before the next frame, so a flood of requests waits on the bus, not the loop.
+        let seat_active = match request {
+            SessionRequest::SwitchUser => (s.seat_active)().await,
+            SessionRequest::Hello { .. } => None,
+        };
+        (s.input)(Input::Session {
+            id: id.clone(),
+            request,
+            seat_active,
+        });
+    };
     if why != FrameError::Closed {
         log::warn!("session {id}: dropping its link: {}", error_kind(&why));
     }
+    let mut gate = s.gate.borrow_mut();
+    if gate.session_links.get(&id).is_some_and(|l| l.0 == serial) {
+        gate.session_links.remove(&id);
+    }
 }
 
-/// Feeds what `rd` reads through a `FrameReader`, handing each frame to `on`, until the peer
-/// closes, a read fails or `on` refuses a frame; returns why it stopped.
-pub async fn read_frames<R: AsyncRead + Unpin>(
-    rd: &mut R,
-    mut on: impl FnMut(Zeroizing<Vec<u8>>) -> Result<(), FrameError>,
-) -> FrameError {
-    let mut reader = FrameReader::new();
-    let mut buf = Zeroizing::new(vec![0u8; 4096]);
-    loop {
-        let n = match rd.read(&mut buf).await {
-            Ok(0) => return FrameError::Closed,
-            Ok(n) => n,
-            Err(e) => return e.into(),
-        };
-        let pushed = reader.push(&buf[..n]);
-        while let Some(body) = reader.next_frame() {
-            if let Err(e) = on(body) {
-                return e;
-            }
+/// The frames a socket's peer sends, read through a `FrameReader`.
+pub struct Frames<R> {
+    rd: R,
+    reader: FrameReader,
+    buf: Zeroizing<Vec<u8>>,
+    /// A push that failed, reported once the frames before it are handed out.
+    failed: Option<FrameError>,
+}
+
+impl<R: AsyncRead + Unpin> Frames<R> {
+    pub fn new(rd: R) -> Frames<R> {
+        Frames {
+            rd,
+            reader: FrameReader::new(),
+            buf: Zeroizing::new(vec![0u8; 4096]),
+            failed: None,
         }
-        if let Err(e) = pushed {
-            return e;
+    }
+
+    /// The next frame's body, or why there is none: the peer closed, a read failed or the
+    /// stream broke framing.
+    pub async fn next(&mut self) -> Result<Zeroizing<Vec<u8>>, FrameError> {
+        loop {
+            if let Some(body) = self.reader.next_frame() {
+                return Ok(body);
+            }
+            if let Some(e) = self.failed.take() {
+                return Err(e);
+            }
+            let n = match self.rd.read(&mut self.buf).await {
+                Ok(0) => return Err(FrameError::Closed),
+                Ok(n) => n,
+                Err(e) => return Err(e.into()),
+            };
+            if let Err(e) = self.reader.push(&self.buf[..n]) {
+                self.failed = Some(e);
+            }
         }
     }
 }
@@ -324,6 +525,7 @@ mod tests {
     use std::os::unix::fs::MetadataExt;
 
     use repriselogin::frame::encode;
+    use repriselogin::greeter::GreeterRequest;
     use tokio::sync::mpsc::UnboundedReceiver;
 
     use super::*;
@@ -376,27 +578,52 @@ mod tests {
     }
 
     /// Serves sockets in `dir` for a greeter `GREETER` in logind session "c1" and a table
-    /// session "3"; every peer is in `peer_session`.
+    /// session "3" of this uid; every peer is in `peer_session`.
     fn serve_in(
         dir: &Path,
         greeter_uid: u32,
         peer_session: &'static str,
     ) -> (Rc<RefCell<Gate>>, UnboundedReceiver<Input>) {
+        let (gate, rx, _) = serve_with(dir, greeter_uid, move || {
+            Box::pin(async move { Some(peer_session.into()) })
+        });
+        (gate, rx)
+    }
+
+    /// Like `serve_in`, with `lookup` answering each session lookup; also returns how many
+    /// lookups ran.
+    fn serve_with(
+        dir: &Path,
+        greeter_uid: u32,
+        lookup: impl Fn() -> Pin<Box<dyn Future<Output = Option<String>>>> + 'static,
+    ) -> (Rc<RefCell<Gate>>, UnboundedReceiver<Input>, Rc<Cell<u32>>) {
         let (greeter, session) = bind(&paths(dir), ids().1).unwrap();
         let mut gate = Gate::new(greeter_uid);
         gate.greeter = Some((GREETER, Some("c1".into())));
         gate.sessions.insert("3".into(), ids().0);
         let gate = Rc::new(RefCell::new(gate));
         let (tx, rx) = mpsc::unbounded_channel();
+        let lookups = Rc::new(Cell::new(0));
+        let counted = lookups.clone();
         let server = Server {
             gate: gate.clone(),
-            session_of: Rc::new(move |_| Box::pin(async move { Some(peer_session.into()) })),
+            session_of: Rc::new(move |_| {
+                counted.set(counted.get() + 1);
+                lookup()
+            }),
+            seat_active: Rc::new(|| Box::pin(async { Some("3".into()) })),
             input: Rc::new(move |i| {
                 let _ = tx.send(i);
             }),
         };
         serve(greeter, session, server).unwrap();
-        (gate, rx)
+        (gate, rx, lookups)
+    }
+
+    fn hello() -> SessionRequest {
+        SessionRequest::Hello {
+            interface: repriselogin::Interface::Blue,
+        }
     }
 
     async fn eof_within(stream: &mut UnixStream, wait: Duration) -> Option<bool> {
@@ -497,7 +724,8 @@ mod tests {
                     next(&mut rx).await,
                     Input::Session {
                         id: "3".into(),
-                        request: SessionRequest::SwitchUser
+                        request: SessionRequest::SwitchUser,
+                        seat_active: Some("3".into()),
                     }
                 );
             })
@@ -517,5 +745,173 @@ mod tests {
                 assert_eq!(eof_within(&mut c, Duration::from_secs(5)).await, Some(true));
             })
             .await;
+    }
+
+    #[tokio::test]
+    async fn a_peer_with_no_reason_to_connect_is_closed_before_any_lookup() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (gate, _rx, lookups) = serve_with(dir.path(), ids().0 + 1, || {
+                    Box::pin(async { Some("3".into()) })
+                });
+                gate.borrow_mut().sessions = HashMap::from([("3".into(), ids().0 + 1)]);
+                for sock in ["greeter.sock", "session.sock"] {
+                    let mut c = UnixStream::connect(dir.path().join(sock)).await.unwrap();
+                    assert_eq!(eof_within(&mut c, Duration::from_secs(5)).await, Some(true));
+                }
+                assert_eq!(lookups.get(), 0);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn connections_past_the_checks_in_flight_are_closed_at_once() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (_gate, _rx, lookups) =
+                    serve_with(dir.path(), ids().0, || Box::pin(std::future::pending()));
+                let path = dir.path().join("session.sock");
+                let mut waiting = Vec::new();
+                for _ in 0..MAX_PENDING {
+                    waiting.push(UnixStream::connect(&path).await.unwrap());
+                }
+                let mut over = UnixStream::connect(&path).await.unwrap();
+                assert_eq!(
+                    eof_within(&mut over, Duration::from_secs(5)).await,
+                    Some(true)
+                );
+                assert_eq!(lookups.get(), MAX_PENDING as u32);
+                assert_eq!(
+                    eof_within(&mut waiting[0], Duration::from_millis(100)).await,
+                    None,
+                    "a connection in its check stays open"
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_new_link_from_a_session_replaces_its_old_one() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (_gate, mut rx) = serve_in(dir.path(), ids().0, "3");
+                let path = dir.path().join("session.sock");
+                let mut old = UnixStream::connect(&path).await.unwrap();
+                send(&mut old, &hello()).await;
+                assert!(matches!(next(&mut rx).await, Input::Session { .. }));
+                let mut new = UnixStream::connect(&path).await.unwrap();
+                send(&mut new, &SessionRequest::SwitchUser).await;
+                assert!(matches!(
+                    next(&mut rx).await,
+                    Input::Session {
+                        request: SessionRequest::SwitchUser,
+                        ..
+                    }
+                ));
+                assert_eq!(
+                    eof_within(&mut old, Duration::from_secs(5)).await,
+                    Some(true)
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_session_that_leaves_the_table_loses_its_link() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (gate, mut rx) = serve_in(dir.path(), ids().0, "3");
+                let mut c = UnixStream::connect(dir.path().join("session.sock"))
+                    .await
+                    .unwrap();
+                send(&mut c, &hello()).await;
+                assert!(matches!(next(&mut rx).await, Input::Session { .. }));
+                gate.borrow_mut().set_sessions(HashMap::new());
+                assert_eq!(eof_within(&mut c, Duration::from_secs(5)).await, Some(true));
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_replaced_greeters_link_feeds_nothing_more() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (gate, mut rx) = serve_in(dir.path(), ids().0, "c1");
+                let mut c = UnixStream::connect(dir.path().join("greeter.sock"))
+                    .await
+                    .unwrap();
+                send(&mut c, &GreeterRequest::Hello).await;
+                assert_eq!(
+                    next(&mut rx).await,
+                    Input::GreeterRequest(GreeterRequest::Hello)
+                );
+                gate.borrow_mut().greeter_spawned(WorkerId(2));
+                let _ = c.write_all(&encode(&GreeterRequest::Hello).unwrap()).await;
+                let late = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await;
+                assert!(late.is_err(), "{late:?}");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_greeter_connecting_before_its_start_is_handled_waits_for_it() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (gate, mut rx) = serve_in(dir.path(), ids().0, "c1");
+                gate.borrow_mut().greeter_spawned(GREETER);
+                let mut c = UnixStream::connect(dir.path().join("greeter.sock"))
+                    .await
+                    .unwrap();
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                gate.borrow_mut().greeter_started(GREETER, "c1");
+                send(&mut c, &GreeterRequest::Hello).await;
+                assert_eq!(
+                    next(&mut rx).await,
+                    Input::GreeterRequest(GreeterRequest::Hello)
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_greeter_whose_start_never_comes_is_closed_after_the_wait() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (gate, _rx) = serve_in(dir.path(), ids().0, "c1");
+                gate.borrow_mut().greeter_spawned(GREETER);
+                let started = std::time::Instant::now();
+                let mut c = UnixStream::connect(dir.path().join("greeter.sock"))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    eof_within(&mut c, Duration::from_secs(10)).await,
+                    Some(true)
+                );
+                assert!(started.elapsed() >= GREETER_WAIT, "{:?}", started.elapsed());
+            })
+            .await;
+    }
+
+    #[test]
+    fn a_spell_of_failures_is_reported_once() {
+        let spell = Spell::default();
+        assert!(spell.fail());
+        assert!(!spell.fail());
+        spell.pass();
+        assert!(spell.fail());
     }
 }

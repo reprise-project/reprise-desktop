@@ -69,6 +69,8 @@ pub trait Session {
     #[zbus(property)]
     fn state(&self) -> zbus::Result<String>;
     #[zbus(property)]
+    fn leader(&self) -> zbus::Result<u32>;
+    #[zbus(property)]
     fn locked_hint(&self) -> zbus::Result<bool>;
 }
 
@@ -133,25 +135,42 @@ impl Logind {
             .await
     }
 
-    /// logind's sessions, leaving out those closing: their user has left them.
+    /// logind's sessions, leaving out those closing (their user has left them) and those
+    /// whose properties can't be read.
     pub async fn sessions(&self) -> zbus::Result<Vec<LogindSession>> {
         let mut found = Vec::new();
         for (id, uid, user, seat, path) in self.manager.list_sessions().await? {
-            let s = self.session(path).await?;
-            if s.state().await? == CLOSING {
-                continue;
+            match self.describe(path).await {
+                Ok(Some((vt, class, service))) => found.push(LogindSession {
+                    id,
+                    user,
+                    uid,
+                    vt,
+                    seat,
+                    class,
+                    service,
+                }),
+                Ok(None) => {}
+                Err(e) => log::warn!("logind session {id}: {e}"),
             }
-            found.push(LogindSession {
-                id,
-                user,
-                uid,
-                vt: u16::try_from(s.vtnr().await?).unwrap_or(0),
-                seat,
-                class: s.class().await?,
-                service: s.service().await?,
-            });
         }
         Ok(found)
+    }
+
+    /// The VT, class and service of the session at `path`; `None` when it is closing.
+    async fn describe(&self, path: OwnedObjectPath) -> zbus::Result<Option<(u16, String, String)>> {
+        let s = self.session(path).await?;
+        if s.state().await? == CLOSING {
+            return Ok(None);
+        }
+        let vt = u16::try_from(s.vtnr().await?).unwrap_or(0);
+        Ok(Some((vt, s.class().await?, s.service().await?)))
+    }
+
+    /// The pid of session `id`'s leader.
+    pub async fn leader(&self, id: &str) -> Option<u32> {
+        let path = self.manager.get_session(id).await.ok()?;
+        self.session(path).await.ok()?.leader().await.ok()
     }
 
     /// The open logind session of process `pid`.

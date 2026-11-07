@@ -183,10 +183,12 @@ impl Run {
         self.on(Input::WorkerExited(WorkerId(w)))
     }
 
+    /// A request from session `id` while it is on screen.
     fn session(&mut self, id: &str, request: SessionRequest) -> Vec<Effect> {
         self.on(Input::Session {
             id: id.into(),
             request,
+            seat_active: Some(id.into()),
         })
     }
 
@@ -272,7 +274,7 @@ fn autologin_of_an_account_the_screen_would_not_list_shows_the_greeter() {
     let mut run = Run::new(config, Remembered::default());
     let effects = run.start();
     assert!(
-        matches!(&effects[0], Effect::Log(text) if text.contains("root")),
+        matches!(&effects[0], Effect::Log(log::Level::Info, text) if text.contains("root")),
         "{effects:?}"
     );
     assert_eq!(effects[1..], greeter_spawn(1)[..]);
@@ -533,7 +535,7 @@ fn a_login_for_a_user_with_a_session_unlocks_and_switches_to_it() {
         matches!(
             effects.as_slice(),
             [
-                Effect::Log(_),
+                Effect::Log(..),
                 Effect::SwitchTo(7),
                 Effect::Reply(GreeterReply::Success)
             ]
@@ -632,7 +634,7 @@ fn three_greeter_exits_in_a_row_switch_to_the_text_login_vt() {
     assert_eq!(run.exited(2), greeter_spawn(3));
     let effects = run.exited(3);
     assert!(
-        matches!(effects.as_slice(), [Effect::SwitchTo(2), Effect::Log(_)]),
+        matches!(effects.as_slice(), [Effect::SwitchTo(2), Effect::Log(..)]),
         "{effects:?}"
     );
 }
@@ -705,6 +707,38 @@ fn switch_user_from_a_session_starts_the_greeter() {
         run.session("c1", SessionRequest::SwitchUser),
         vec![Effect::SwitchTo(1)]
     );
+}
+
+#[test]
+fn switch_user_from_a_session_off_screen_is_ignored() {
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    run.recover(vec![
+        anna_on_7(),
+        logind("c2", "bert", 1001, 8, "user", "reprise-login"),
+    ]);
+    assert_eq!(run.start(), vec![]);
+    for seat_active in [Some("c2".to_string()), None] {
+        let effects = run.on(Input::Session {
+            id: "c1".into(),
+            request: SessionRequest::SwitchUser,
+            seat_active,
+        });
+        assert_eq!(effects, vec![]);
+    }
+    assert_eq!(
+        run.session("c2", SessionRequest::SwitchUser),
+        greeter_spawn(1)
+    );
+}
+
+#[test]
+fn a_removal_that_still_names_the_removed_session_active_brings_the_greeter() {
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    run.recover(vec![anna_on_7()]);
+    assert_eq!(run.start(), vec![]);
+    let effects = run.removed("c1", Some("c1"));
+    assert_eq!(effects[0], Effect::Disallocate(7));
+    assert_eq!(effects[1..], greeter_spawn(1)[..]);
 }
 
 #[test]
@@ -992,7 +1026,7 @@ fn a_started_before_start_ends_that_session() {
         matches!(
             effects.as_slice(),
             [
-                Effect::Log(_),
+                Effect::Log(..),
                 Effect::TerminateSession(id),
                 Effect::Kill(WorkerId(2)),
                 Effect::Reply(GreeterReply::Error {
@@ -1072,7 +1106,7 @@ fn an_autologin_that_never_starts_times_out_to_the_login_screen() {
     assert!(
         matches!(
             effects.as_slice(),
-            [Effect::Kill(WorkerId(1)), Effect::Log(_), ..]
+            [Effect::Kill(WorkerId(1)), Effect::Log(..), ..]
         ),
         "{effects:?}"
     );
@@ -1155,7 +1189,7 @@ fn a_timed_out_start_whose_session_comes_up_late_returns_to_the_login_screen() {
     assert!(
         matches!(
             effects.as_slice(),
-            [Effect::Log(_), Effect::TerminateSession(id), Effect::SwitchTo(1)] if id == "c2"
+            [Effect::Log(..), Effect::TerminateSession(id), Effect::SwitchTo(1)] if id == "c2"
         ),
         "{effects:?}"
     );
@@ -1189,7 +1223,7 @@ fn a_greeter_that_never_starts_times_out_and_counts_as_failed() {
     assert!(
         matches!(
             effects.as_slice(),
-            [Effect::Kill(GREETER), Effect::Log(_), ..]
+            [Effect::Kill(GREETER), Effect::Log(..), ..]
         ),
         "{effects:?}"
     );
@@ -1197,7 +1231,10 @@ fn a_greeter_that_never_starts_times_out_and_counts_as_failed() {
     assert_eq!(
         run.worker(1, started("c1", 960)),
         vec![
-            Effect::Log("session c1 opened after its start timed out; ending it".into()),
+            Effect::Log(
+                log::Level::Warn,
+                "session c1 opened after its start timed out; ending it".into()
+            ),
             Effect::TerminateSession("c1".into()),
         ]
     );
@@ -1209,9 +1246,9 @@ fn a_greeter_that_never_starts_times_out_and_counts_as_failed() {
             effects.as_slice(),
             [
                 Effect::Kill(WorkerId(3)),
-                Effect::Log(_),
+                Effect::Log(..),
                 Effect::SwitchTo(2),
-                Effect::Log(_)
+                Effect::Log(..)
             ]
         ),
         "{effects:?}"
