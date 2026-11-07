@@ -250,6 +250,14 @@ fn on_linked(state: &mut State) {
     }
 }
 
+/// `[appearance] interface` changed: the daemon's login screen follows the session's.
+pub fn interface_changed(state: &mut State) {
+    if connected(state) {
+        let interface = crate::greeter::wire_interface(state.config.interface);
+        send(state, &SessionRequest::Hello { interface });
+    }
+}
+
 /// Notes a `Refused` among `bytes`; anything else the daemon sends is skipped.
 fn heard(state: &mut State, frames: &mut FrameReader, bytes: &[u8]) {
     if frames.push(bytes).is_err() {
@@ -433,6 +441,14 @@ mod tests {
         assert!(h.state.dialogs.views.is_empty(), "the panel closes");
         assert!(h.state.console_locked());
         assert_eq!(heard(&mut theirs), SessionRequest::SwitchUser);
+    }
+
+    #[test]
+    fn a_reloaded_interface_says_hello_again() {
+        let (mut h, mut theirs) = linked();
+        let glass = Config::parse("[appearance]\ninterface = \"glass\"\n").unwrap();
+        crate::configwatch::reload(&mut h.state, glass);
+        assert_eq!(heard(&mut theirs), hello(Interface::Glass));
     }
 
     #[test]

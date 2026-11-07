@@ -426,6 +426,9 @@ pub fn reload(state: &mut State, cfg: Config) {
     let global = state.tabs_global.take();
     state.tabs_global = crate::tabsproto::advertise(&state.dh, state.config.window_tabs, global);
     crate::nightlight::update(state);
+    if old.interface != state.config.interface {
+        crate::loginlink::interface_changed(state);
+    }
     // Peek turned off, or its only trigger (the Show desktop strip) gone:
     // end a peek in progress and disarm a pending timer, so reload never
     // leaves windows as outlines with nothing to bring them back.
