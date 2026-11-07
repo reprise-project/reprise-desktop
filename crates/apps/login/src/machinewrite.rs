@@ -129,7 +129,9 @@ mod tests {
     #[test]
     #[ignore = "run by apply_sets_the_modes_whatever_the_umask"]
     fn apply_in_a_child() {
-        let dir = std::env::var_os(CHILD_DIR).unwrap();
+        let Some(dir) = std::env::var_os(CHILD_DIR) else {
+            return;
+        };
         apply(
             "[login]\nshow_users = false\n",
             &Path::new(&dir).join("login.toml"),
