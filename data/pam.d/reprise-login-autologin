@@ -1,6 +1,8 @@
 #%PAM-1.0
 # [login] autologin_user: no password is asked, but /run/nologin, a shell missing from
 # /etc/shells and a pam_faillock lockout still refuse the login.
+# Only an account with a uid of 1000 or more passes, whichever program runs this stack.
+auth      requisite pam_succeed_if.so uid >= 1000 quiet_success
 auth      required  pam_env.so
 auth      required  pam_faillock.so preauth
 auth      required  pam_shells.so
