@@ -21,8 +21,10 @@ use crate::vt::{self, GREETER_VT, TEXT_LOGIN_VT};
 use crate::worker::{AUTH_FAILED, FromWorker, Mode, ToWorker};
 
 mod account;
+mod power;
 mod remote;
 
+pub use power::ADMIN_GROUP;
 pub use remote::{
     FrontUnit, HANDOVER_DEADLINE, Inhibit, LookUpKey, MAX_REMOTE_CHECKS, REFUSE_DELAY,
     StoredPassword,
@@ -272,7 +274,6 @@ const BUSY: &str = "another login is in progress";
 const NOT_ASKED: &str = "no question is waiting for an answer";
 const NOT_AUTHENTICATED: &str = "the login is not authenticated";
 const STARTING: &str = "the session is already starting";
-const OTHERS_LOGGED_ON: &str = "other users are logged on";
 const NO_VT: &str = "no free VT for a session";
 const NO_SESSION: &str = "the account has no session to resume";
 const WORKER_ENDED: &str = "the login ended unexpectedly";
@@ -304,6 +305,16 @@ enum Phase {
     Starting { vt: u16 },
     /// `UnlockSession` went out; `generation` names its `Timer::UnlockAck`.
     Unlocking { generation: u32 },
+    /// Check worker `worker` passed PAM's `uid`; `LookUp` asks if it is an administrator.
+    Admin { worker: WorkerId, uid: u32 },
+}
+
+/// What a greeter conversation authenticates for.
+#[derive(Clone, Copy, PartialEq)]
+enum Purpose {
+    Login,
+    /// An administrator's password lets `.0` run while others are logged on.
+    Power(PowerAction),
 }
 
 struct Conversation {
@@ -317,6 +328,7 @@ struct Conversation {
     phase: Phase,
     /// When the greeter last asked for or answered the conversation.
     heard: Instant,
+    purpose: Purpose,
 }
 
 struct Autologin {
@@ -620,7 +632,11 @@ impl Daemon {
                 uid,
                 member,
             } => self.account_member(link, uid, member, &mut out),
-            Input::Member { .. } => {}
+            Input::Member {
+                key: LookUpKey::Admin(worker),
+                uid,
+                member,
+            } => self.admin_member(worker, uid, member, &mut out),
             Input::IntakeOpen { uid } => self.intake_open(uid, &mut out),
             Input::IntakeLost { uid } => self.intake_lost(uid, &mut out),
             Input::Viewers { uid, count } => self.set_viewers(uid, count, &mut out),
@@ -691,23 +707,7 @@ impl Daemon {
                     Route::Start => Mode::Login,
                     Route::Resume { .. } => Mode::Reauth,
                 };
-                let worker = self.next_worker();
-                out.push(Effect::Spawn {
-                    worker,
-                    job: self.job(mode, &user),
-                });
-                out.push(Effect::Arm {
-                    timer: Timer::Auth(worker),
-                    after: AUTH_WAIT,
-                });
-                self.conversation = Some(Conversation {
-                    worker: Some(worker),
-                    greeter: self.greeter.as_ref().map(|g| g.worker),
-                    user,
-                    route,
-                    phase: Phase::Authenticating { asked: false },
-                    heard: now,
-                });
+                self.converse(now, mode, user, route, Purpose::Login, out);
             }
             GreeterRequest::PostAuthResponse { response } => match &mut self.conversation {
                 Some(Conversation {
@@ -739,11 +739,41 @@ impl Daemon {
                 if self.sessions.is_empty() && world.user_sessions == 0 {
                     out.push(Effect::Power(action));
                 } else {
-                    out.push(refused(OTHERS_LOGGED_ON));
+                    out.push(Effect::Reply(GreeterReply::AdminNeeded { action }));
                 }
             }
-            GreeterRequest::PowerAs { .. } => out.push(refused(OTHERS_LOGGED_ON)),
+            GreeterRequest::PowerAs { action, user } => self.power_as(now, action, user, out),
         }
+    }
+
+    /// Spawns `mode`'s worker for `user` and opens the greeter's conversation with it.
+    fn converse(
+        &mut self,
+        now: Instant,
+        mode: Mode,
+        user: String,
+        route: Route,
+        purpose: Purpose,
+        out: &mut Vec<Effect>,
+    ) {
+        let worker = self.next_worker();
+        out.push(Effect::Spawn {
+            worker,
+            job: self.job(mode, &user),
+        });
+        out.push(Effect::Arm {
+            timer: Timer::Auth(worker),
+            after: AUTH_WAIT,
+        });
+        self.conversation = Some(Conversation {
+            worker: Some(worker),
+            greeter: self.greeter.as_ref().map(|g| g.worker),
+            user,
+            route,
+            phase: Phase::Authenticating { asked: false },
+            heard: now,
+            purpose,
+        });
     }
 
     /// The configured interface, else the last one used; users capped to fit one frame.
@@ -779,7 +809,9 @@ impl Daemon {
         };
         match (c.phase, &c.route) {
             (Phase::Starting { .. } | Phase::Unlocking { .. }, _) => out.push(refused(STARTING)),
-            (Phase::Authenticating { .. }, _) => out.push(refused(NOT_AUTHENTICATED)),
+            (Phase::Authenticating { .. } | Phase::Admin { .. }, _) => {
+                out.push(refused(NOT_AUTHENTICATED))
+            }
             (Phase::Authenticated { .. }, Route::Resume { id, .. }) => {
                 let id = id.clone();
                 let phase = self.unlock(id, out);
@@ -987,6 +1019,13 @@ impl Daemon {
     /// Routes the login by PAM's account: a uid with a session resumes it, any other starts one.
     /// Root never logs in here, and is told so in a wrong password's words.
     fn authenticated(&mut self, worker: WorkerId, user: String, uid: u32, out: &mut Vec<Effect>) {
+        if let Some(Conversation {
+            purpose: Purpose::Power(_),
+            ..
+        }) = self.conversation
+        {
+            return self.admin_authenticated(worker, user, uid, out);
+        }
         if uid == 0 {
             out.push(Effect::Log(
                 Level::Warn,
@@ -1079,6 +1118,7 @@ impl Daemon {
                 route,
                 phase,
                 heard: now,
+                purpose: Purpose::Login,
             });
             return;
         }
@@ -1233,7 +1273,8 @@ impl Daemon {
                     c.phase,
                     Phase::Authenticated { .. } | Phase::Unlocking { .. }
                 );
-            if !reauthed {
+            let checked = matches!(c.phase, Phase::Admin { .. });
+            if !reauthed && !checked {
                 self.fail_conversation(ErrorKind::Failed, WORKER_ENDED.into(), out);
             }
             return;
@@ -1572,6 +1613,8 @@ fn send_start(worker: WorkerId, vt: u16, out: &mut Vec<Effect>) {
 
 #[cfg(test)]
 mod account_tests;
+#[cfg(test)]
+mod power_tests;
 #[cfg(test)]
 mod remote_tests;
 #[cfg(test)]
