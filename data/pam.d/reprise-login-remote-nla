@@ -1,0 +1,11 @@
+#%PAM-1.0
+# Remote Desktop logins reprise-login has already checked against the account's Remote Desktop
+# password. Only an account with a uid of 1000 or more passes, whichever program runs this stack.
+auth      requisite pam_succeed_if.so uid >= 1000 quiet_success
+auth      required  pam_env.so
+auth      required  pam_shells.so
+auth      required  pam_nologin.so
+auth      required  pam_permit.so
+account   include   system-login
+session   optional  pam_keyinit.so force revoke
+session   include   system-login

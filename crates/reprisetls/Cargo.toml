@@ -1,0 +1,24 @@
+[package]
+name = "reprisetls"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "TLS and TCP pieces reprise-rdp and reprise-login's Remote Desktop front share: the self-signed certificate, the listening socket and the options of an accepted link"
+
+[lints]
+workspace = true
+
+[dependencies]
+log.workspace = true
+rcgen.workspace = true
+sha2 = "0.11"
+socket2 = { version = "0.6", features = ["all"] }
+tokio = { workspace = true, features = ["net"] }
+tokio-rustls.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

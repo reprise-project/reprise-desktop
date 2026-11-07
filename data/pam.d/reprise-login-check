@@ -1,0 +1,5 @@
+#%PAM-1.0
+# Checks a password and opens nothing: Remote Desktop password changes and the login screen's
+# administrator prompt. system-auth, so pam_nologin never refuses it.
+auth      include   system-auth
+account   include   system-auth

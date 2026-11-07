@@ -1,0 +1,10 @@
+[Unit]
+Description=Reprise Remote Desktop connections the login manager hands over
+
+[Socket]
+ListenStream=%t/reprise-rdp/handover.sock
+SocketMode=0600
+DirectoryMode=0700
+
+[Install]
+WantedBy=sockets.target

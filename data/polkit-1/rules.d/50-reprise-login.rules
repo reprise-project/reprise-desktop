@@ -1,0 +1,6 @@
+// A session in the background cannot take the monitor; reprise-login (root) switches.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.login1.chvt" && !subject.active) {
+        return polkit.Result.NO;
+    }
+});
