@@ -7,6 +7,7 @@ pub mod handover;
 pub mod machine;
 pub mod session;
 pub mod throttle;
+pub mod users;
 
 use serde::{Deserialize, Serialize};
 
