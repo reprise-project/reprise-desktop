@@ -24,6 +24,8 @@ pub const EARLY_END: Duration = Duration::from_secs(10);
 pub const UNLOCK_WAIT: Duration = Duration::from_secs(1);
 /// How long a worker gets from `Start` to `Started` before its login fails.
 pub const START_WAIT: Duration = Duration::from_secs(30);
+/// How long a login waits for the greeter's next request before it is cancelled.
+pub const AUTH_WAIT: Duration = Duration::from_secs(5 * 60);
 /// Most users one `Greeting` lists; fewer when their entries would not fit one frame.
 pub const MAX_USERS: usize = 100;
 
@@ -48,6 +50,8 @@ pub enum Timer {
     UnlockAck(u32),
     /// The wait for a worker's `Started` after its `Start`.
     Start(WorkerId),
+    /// The `AUTH_WAIT` of the conversation of login worker `.0`.
+    Auth(WorkerId),
 }
 
 #[derive(Debug, PartialEq)]
@@ -142,6 +146,7 @@ const NO_SESSION: &str = "the account has no session to resume";
 const WORKER_ENDED: &str = "the login ended unexpectedly";
 const SESSION_ENDED: &str = "the session ended";
 const STARTED_EARLY: &str = "the session started before it was asked to";
+const AUTH_TIMED_OUT: &str = "the login waited too long and was cancelled";
 
 struct Greeter {
     worker: WorkerId,
@@ -179,6 +184,8 @@ struct Conversation {
     user: String,
     route: Route,
     phase: Phase,
+    /// When the greeter last asked for or answered the conversation.
+    heard: Instant,
 }
 
 struct Autologin {
@@ -339,7 +346,7 @@ impl Daemon {
         let mut out = Vec::new();
         match input {
             Input::GreeterRequest(w, request) if self.is_greeter(w) => {
-                self.greeter_request(world, request, &mut out)
+                self.greeter_request(now, world, request, &mut out)
             }
             Input::GreeterGone(w) if self.is_greeter(w) => self.greeter_gone(&mut out),
             Input::GreeterRequest(..) | Input::GreeterGone(_) => {}
@@ -373,6 +380,7 @@ impl Daemon {
                 }
             }
             Input::Timer(Timer::Start(worker)) => self.start_timed_out(worker, &mut out),
+            Input::Timer(Timer::Auth(worker)) => self.auth_wait(now, worker, &mut out),
             Input::PowerDone(Ok(())) => out.push(Effect::Reply(GreeterReply::Success)),
             Input::PowerDone(Err(text)) => {
                 out.push(Effect::Log(
@@ -412,7 +420,13 @@ impl Daemon {
         self.greeter.as_ref().is_some_and(|g| g.worker == worker)
     }
 
-    fn greeter_request(&mut self, world: &World, request: GreeterRequest, out: &mut Vec<Effect>) {
+    fn greeter_request(
+        &mut self,
+        now: Instant,
+        world: &World,
+        request: GreeterRequest,
+        out: &mut Vec<Effect>,
+    ) {
         match request {
             GreeterRequest::Hello => {
                 let greeting = self.greeting(world);
@@ -432,21 +446,28 @@ impl Daemon {
                     worker,
                     job: self.job(mode, &user),
                 });
+                out.push(Effect::Arm {
+                    timer: Timer::Auth(worker),
+                    after: AUTH_WAIT,
+                });
                 self.conversation = Some(Conversation {
                     worker: Some(worker),
                     greeter: self.greeter.as_ref().map(|g| g.worker),
                     user,
                     route,
                     phase: Phase::Authenticating { asked: false },
+                    heard: now,
                 });
             }
             GreeterRequest::PostAuthResponse { response } => match &mut self.conversation {
                 Some(Conversation {
                     worker: Some(worker),
                     phase: phase @ Phase::Authenticating { asked: true },
+                    heard,
                     ..
                 }) => {
                     *phase = Phase::Authenticating { asked: false };
+                    *heard = now;
                     out.push(Effect::ToWorker {
                         worker: *worker,
                         msg: ToWorker::Answer(response),
@@ -578,7 +599,7 @@ impl Daemon {
                     vt: a.vt,
                     started: Some(now),
                 };
-                self.session_started(worker, entry, None, out);
+                self.session_started(now, worker, entry, None, out);
             }
             FromWorker::Started { .. } if is_greeter => {
                 self.greeter.as_mut().expect("greeter").started = true;
@@ -639,7 +660,7 @@ impl Daemon {
                     vt,
                     started: Some(now),
                 };
-                self.session_started(worker, entry, c.greeter, out);
+                self.session_started(now, worker, entry, c.greeter, out);
             }
             FromWorker::Failed { kind, text } => {
                 c.worker = None;
@@ -691,6 +712,7 @@ impl Daemon {
     /// session, `None` for autologin.
     fn session_started(
         &mut self,
+        now: Instant,
         worker: WorkerId,
         entry: SessionEntry,
         greeter: Option<WorkerId>,
@@ -744,6 +766,7 @@ impl Daemon {
                 user: entry.user,
                 route,
                 phase,
+                heard: now,
             });
             return;
         }
@@ -847,6 +870,31 @@ impl Daemon {
             });
             self.greeter_exited(out);
         }
+    }
+
+    /// Cancels worker `worker`'s login once `AUTH_WAIT` has passed with no request from the
+    /// greeter, which a PAM module that blocks without asking would leave on "Verifying".
+    fn auth_wait(&mut self, now: Instant, worker: WorkerId, out: &mut Vec<Effect>) {
+        let Some(Conversation {
+            worker: Some(w),
+            phase: Phase::Authenticating { .. },
+            heard,
+            ..
+        }) = &self.conversation
+        else {
+            return;
+        };
+        if *w != worker {
+            return;
+        }
+        let waited = now.saturating_duration_since(*heard);
+        if waited < AUTH_WAIT {
+            return out.push(Effect::Arm {
+                timer: Timer::Auth(worker),
+                after: AUTH_WAIT - waited,
+            });
+        }
+        self.fail_conversation(ErrorKind::Failed, AUTH_TIMED_OUT.into(), out);
     }
 
     fn greeter_gone(&mut self, out: &mut Vec<Effect>) {

@@ -50,8 +50,9 @@ fn greeter_spawn(w: u32) -> Vec<Effect> {
     effects
 }
 
+/// Worker `w`'s spawn; a login's comes with its `AUTH_WAIT`.
 fn spawn(w: u32, mode: Mode, user: &str) -> Vec<Effect> {
-    vec![Effect::Spawn {
+    let mut effects = vec![Effect::Spawn {
         worker: WorkerId(w),
         job: Job {
             mode,
@@ -59,7 +60,14 @@ fn spawn(w: u32, mode: Mode, user: &str) -> Vec<Effect> {
             autologin_user: None,
             greeter_socket: false,
         },
-    }]
+    }];
+    if let Mode::Login | Mode::Reauth = mode {
+        effects.push(Effect::Arm {
+            timer: Timer::Auth(WorkerId(w)),
+            after: AUTH_WAIT,
+        });
+    }
+    effects
 }
 
 fn reply(r: GreeterReply) -> Vec<Effect> {
@@ -1431,4 +1439,40 @@ fn autologin_never_unlocks_a_session_its_user_already_has() {
     assert_eq!(effects[0], Effect::TerminateSession("c2".into()));
     assert_eq!(effects[2..], greeter_spawn(2)[..], "{effects:?}");
     assert!(run.d.conversation.is_none());
+}
+
+#[test]
+fn a_login_the_greeter_leaves_unanswered_for_auth_wait_is_cancelled() {
+    let mut run = Run::booted();
+    run.greeter(create("anna"));
+    run.worker(2, secret("Password:"));
+    run.now += AUTH_WAIT / 2;
+    run.greeter(answer("hunter2"));
+    run.now += AUTH_WAIT / 2;
+    assert_eq!(
+        run.on(Input::Timer(Timer::Auth(WorkerId(2)))),
+        vec![Effect::Arm {
+            timer: Timer::Auth(WorkerId(2)),
+            after: AUTH_WAIT / 2,
+        }],
+        "an answer restarts the wait"
+    );
+    run.now += AUTH_WAIT / 2;
+    assert_eq!(
+        run.on(Input::Timer(Timer::Auth(WorkerId(2)))),
+        vec![
+            Effect::Kill(WorkerId(2)),
+            Effect::Reply(error(ErrorKind::Failed, AUTH_TIMED_OUT)),
+        ]
+    );
+    assert_eq!(run.greeter(create("bert")), spawn(3, Mode::Login, "bert"));
+}
+
+#[test]
+fn the_auth_wait_ends_with_authentication() {
+    let mut run = Run::booted();
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    run.now += AUTH_WAIT * 2;
+    assert_eq!(run.on(Input::Timer(Timer::Auth(WorkerId(2)))), vec![]);
 }
