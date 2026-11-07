@@ -795,6 +795,23 @@ fn a_lost_front_kills_unstarted_checks_and_forgets_its_conns() {
 }
 
 #[test]
+fn a_lost_front_drops_the_hand_overs_in_flight() {
+    let mut run = remote_run(enabled());
+    run.anna_in_background(7, 2);
+    run.on(Input::IntakeOpen { uid: ANNA });
+    assert_eq!(
+        run.on(ready(7, "anna")),
+        [Effect::Forward { conn: 7, uid: ANNA }]
+    );
+    assert_eq!(run.on(Input::FrontLost), [Effect::DropConn { conn: 7 }]);
+    assert_eq!(
+        run.on(Input::Forwarded { conn: 7, ok: true }),
+        [],
+        "a late result is forgotten"
+    );
+}
+
+#[test]
 fn a_gone_conn_kills_its_worker() {
     let mut run = remote_run(enabled());
     run.on(tls(7, "anna", "pw"));
