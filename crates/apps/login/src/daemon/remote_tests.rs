@@ -1010,6 +1010,26 @@ fn greeting_notes_a_session_with_remote_viewers_as_remote() {
 }
 
 #[test]
+fn the_login_screen_hears_each_change_of_its_notes() {
+    let mut run = remote_run(enabled());
+    run.anna_in_background(7, 2);
+    assert_eq!(run.greeting().users[0].note, Some(Note::LoggedOn));
+    let greeted = |effects: Vec<Effect>| {
+        effects.into_iter().find_map(|e| match e {
+            Effect::Reply(GreeterReply::Greeting(g)) => Some(g.users[0].note),
+            _ => None,
+        })
+    };
+    assert_eq!(greeted(run.viewers(ANNA, 1)), Some(Some(Note::Remote)));
+    assert_eq!(
+        greeted(run.viewers(ANNA, 2)),
+        None,
+        "the notes stay the same"
+    );
+    assert_eq!(greeted(run.viewers(ANNA, 0)), Some(Some(Note::LoggedOn)));
+}
+
+#[test]
 fn recovery_marks_sessions_off_the_seat_background_and_opens_their_intakes() {
     let mut run = Run::machine(config(enabled()));
     let found = vec![

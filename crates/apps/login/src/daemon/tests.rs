@@ -999,10 +999,15 @@ fn recovery_rebuilds_the_table_and_terminates_an_orphaned_greeter() {
     let notes: Vec<_> = run.greeting().users.iter().map(|u| u.note).collect();
     assert_eq!(notes, [Some(Note::LoggedOn), Some(Note::LoggedOn), None]);
     assert_eq!(run.greeter(create("anna")), spawn(2, Mode::Reauth, "anna"));
+    let effects = run.removed("c3", Some("c5"));
     assert_eq!(
-        run.removed("c3", Some("c5")),
-        vec![Effect::Disallocate(8)],
+        effects[0],
+        Effect::Disallocate(8),
         "no worker of this daemon holds a recovered session's VT"
+    );
+    assert!(
+        matches!(&effects[1..], [Effect::Reply(GreeterReply::Greeting(g))] if g.users[1].note.is_none()),
+        "the login screen drops bert's note: {effects:?}"
     );
 
     let mut run = Run::new(LoginConfig::default(), Remembered::default());
