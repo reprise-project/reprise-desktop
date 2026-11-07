@@ -97,6 +97,9 @@ struct Login {
     deadline: Instant,
     /// The failure counted from the start of the check, taken back once verified.
     attempt: Option<Attempt>,
+    /// `Denied`'s back-off as the address stood after this `Authenticate`, so it is the
+    /// same whatever refuses the login and whenever.
+    backoff_s: u32,
     step: Step,
 }
 
@@ -122,9 +125,7 @@ enum Step {
     },
     Forwarding,
     /// `Denied` goes out once `REFUSE_DELAY` has passed.
-    Refused {
-        backoff_s: u32,
-    },
+    Refused,
 }
 
 struct Starting {
@@ -254,15 +255,21 @@ impl Daemon {
                 at: now,
                 deadline: now + left,
                 attempt: None,
+                backoff_s: 0,
                 step: Step::LookingUp,
             },
         );
-        if let Some(why) = self.gate(now, peer, checks, out) {
-            return self.refuse(now, conn, why, out);
-        }
-        let attempt = self.remote.throttle.failed(peer, now);
+        let gate = self.gate(now, peer, checks, out);
+        let attempt = gate
+            .is_none()
+            .then(|| self.remote.throttle.failed(peer, now));
+        let backoff = self.remote.throttle.delay(peer, now);
         if let Some(l) = self.remote.logins.get_mut(&conn) {
-            l.attempt = Some(attempt);
+            l.attempt = attempt;
+            l.backoff_s = u32::try_from(backoff.as_millis().div_ceil(1000)).unwrap_or(u32::MAX);
+        }
+        if let Some(why) = gate {
+            return self.refuse(now, conn, why, out);
         }
         if !valid_user_name(&user) {
             return self.refuse(now, conn, "the name is no account name", out);
@@ -453,6 +460,7 @@ impl Daemon {
         out.push(Effect::ToFront(FrontEvent::Verified { conn }));
         if let Some(attempt) = l.attempt.take() {
             self.remote.throttle.succeeded(l.peer, attempt, now);
+            l.backoff_s = 0;
         }
         let cancel = Effect::ToWorker {
             worker,
@@ -635,9 +643,7 @@ impl Daemon {
         let Some(l) = self.remote.logins.get_mut(&conn) else {
             return;
         };
-        let backoff = self.remote.throttle.delay(l.peer, now);
-        let backoff_s = u32::try_from(backoff.as_millis().div_ceil(1000)).unwrap_or(u32::MAX);
-        l.step = Step::Refused { backoff_s };
+        l.step = Step::Refused;
         l.secret = None;
         out.push(Effect::Log(
             Level::Info,
@@ -659,7 +665,8 @@ impl Daemon {
 
     fn deny(&mut self, conn: u64, out: &mut Vec<Effect>) {
         if let Some(Login {
-            step: Step::Refused { backoff_s },
+            step: Step::Refused,
+            backoff_s,
             ..
         }) = self.remote.logins.remove(&conn)
         {
@@ -672,7 +679,7 @@ impl Daemon {
         let Some(l) = self.remote.logins.get(&conn) else {
             return;
         };
-        if !matches!(l.step, Step::Refused { .. }) {
+        if l.step != Step::Refused {
             return;
         }
         let left = REFUSE_DELAY.saturating_sub(now.saturating_duration_since(l.at));
@@ -708,10 +715,7 @@ impl Daemon {
                 l.peer
             ),
         ));
-        let backoff_s = match l.step {
-            Step::Refused { backoff_s } => backoff_s,
-            _ => 0,
-        };
+        let backoff_s = l.backoff_s;
         self.forget(conn, out);
         out.push(Effect::ToFront(FrontEvent::Denied { conn, backoff_s }));
         out.push(Effect::DropConn { conn });
