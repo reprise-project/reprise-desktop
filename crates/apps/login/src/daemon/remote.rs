@@ -15,6 +15,7 @@ use repriselogin::machine::MachineConfig;
 use repriselogin::throttle::{Attempt, Pause, Throttle};
 use zeroize::Zeroizing;
 
+use super::account::Accounts;
 use super::{
     Conversation, Daemon, Effect, Job, NO_VT, Phase, SESSION_ENDED, START_WAIT, SessionWorker,
     Timer, WORKER_ENDED, WorkerId, World,
@@ -32,8 +33,8 @@ pub const MAX_REMOTE_CHECKS: usize = 4;
 const MAX_USER_NAME: usize = 32;
 
 const MOST_SESSIONS: &str = "the computer runs its most sessions";
-const ASKED_MORE: &str = "PAM asked for more than the password";
-const NEVER_ASKED: &str = "PAM passed the login without asking for its password";
+pub(super) const ASKED_MORE: &str = "PAM asked for more than the password";
+pub(super) const NEVER_ASKED: &str = "PAM passed the login without asking for its password";
 
 /// A user's Remote Desktop password as the store keeps it: 32 uppercase hex characters.
 #[derive(Clone, PartialEq, Eq)]
@@ -81,7 +82,8 @@ pub enum FrontUnit {
 #[derive(Default)]
 pub(super) struct Remote {
     pub(super) front: bool,
-    passwords: Vec<StoredPassword>,
+    pub(super) passwords: Vec<StoredPassword>,
+    pub(super) accounts: Accounts,
     throttle: Throttle,
     logins: BTreeMap<u64, Login>,
     /// Background session starts in flight, by uid.
@@ -965,7 +967,7 @@ fn valid_user_name(name: &str) -> bool {
 }
 
 /// Compares two hashes in a time that depends on their length only.
-fn same_hash(a: &str, b: &str) -> bool {
+pub(super) fn same_hash(a: &str, b: &str) -> bool {
     let (a, b) = (black_box(a.as_bytes()), black_box(b.as_bytes()));
     a.len() == b.len() && black_box(a.iter().zip(b).fold(0, |d, (x, y)| d | (x ^ y))) == 0
 }

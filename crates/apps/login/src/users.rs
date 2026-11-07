@@ -163,21 +163,28 @@ pub fn lookup(name: &str) -> io::Result<Option<PasswdEntry>> {
     let Ok(cname) = CString::new(name) else {
         return Ok(None);
     };
+    // SAFETY: getpwnam_r writes only through the pointers passed, which point at live locals.
+    passwd(|pwd, buf, len, result| unsafe {
+        libc::getpwnam_r(cname.as_ptr(), pwd, buf, len, result)
+    })
+}
+
+/// The passwd entry for `uid` through NSS, or `None` when there is none.
+pub fn by_uid(uid: u32) -> io::Result<Option<PasswdEntry>> {
+    // SAFETY: getpwuid_r writes only through the pointers passed, which point at live locals.
+    passwd(|pwd, buf, len, result| unsafe { libc::getpwuid_r(uid, pwd, buf, len, result) })
+}
+
+/// Runs a `getpw*_r` call, growing its buffer while it reports `ERANGE`.
+fn passwd(
+    call: impl Fn(*mut libc::passwd, *mut libc::c_char, usize, *mut *mut libc::passwd) -> i32,
+) -> io::Result<Option<PasswdEntry>> {
     let mut buf = vec![0u8; 1024];
     loop {
         // SAFETY: `libc::passwd` is a plain C struct; all zeroes is a valid value.
         let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
         let mut result: *mut libc::passwd = std::ptr::null_mut();
-        // SAFETY: getpwnam_r writes only through the pointers passed, which point at live locals.
-        let rc = unsafe {
-            libc::getpwnam_r(
-                cname.as_ptr(),
-                &mut pwd,
-                buf.as_mut_ptr().cast(),
-                buf.len(),
-                &mut result,
-            )
-        };
+        let rc = call(&mut pwd, buf.as_mut_ptr().cast(), buf.len(), &mut result);
         if rc == libc::ERANGE && buf.len() < 1 << 20 {
             buf.resize(buf.len() * 2, 0);
             continue;
@@ -188,7 +195,7 @@ pub fn lookup(name: &str) -> io::Result<Option<PasswdEntry>> {
         if result.is_null() {
             return Ok(None);
         }
-        // SAFETY: getpwnam_r filled `pwd` with strings in `buf`, which is still live.
+        // SAFETY: the call filled `pwd` with strings in `buf`, which is still live.
         return Ok(Some(unsafe { entry_of(&pwd) }));
     }
 }
@@ -383,5 +390,11 @@ mod tests {
             Some((0, false))
         );
         assert_eq!(member_of("no-such-user-for-reprise", "root").unwrap(), None);
+    }
+
+    #[test]
+    fn by_uid_reads_the_account_of_a_uid() {
+        assert_eq!(by_uid(0).unwrap().map(|e| e.name), Some("root".into()));
+        assert_eq!(by_uid(4_000_000_123).unwrap(), None);
     }
 }

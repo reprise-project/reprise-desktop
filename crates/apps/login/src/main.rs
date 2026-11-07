@@ -10,6 +10,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
+use reprise_login::accountipc::{self, Replies};
 use reprise_login::config;
 use reprise_login::daemon::{
     Daemon, Effect, HANDOVER_DEADLINE, Input, Job, LogindSession, LookUpKey, UNLOCK_WAIT, WorkerId,
@@ -20,10 +21,12 @@ use reprise_login::intake::{self, Links};
 use reprise_login::ipc::{self, Gate, Paths, Server};
 use reprise_login::logind::{self, Inhibitor, Logind, SessionRemovedStream};
 use reprise_login::remembered::{Remembered, STATE_PATH};
+use reprise_login::remotepw::{self, STORE};
 use reprise_login::vt::{self, GREETER_VT};
 use reprise_login::worker::{FromWorker, LOG_FD, Mode, ToWorker, worker_main};
 use reprise_login::{pidfd, users};
 use repriselogin::GREETER_USER;
+use repriselogin::account::ACCOUNT_SOCKET;
 use repriselogin::frame::{self, FrameError};
 use repriselogin::front::{FRONT_SOCKET, FRONT_USER};
 use repriselogin::greeter::{ErrorKind, GreeterReply, GreeterRequest};
@@ -175,8 +178,14 @@ async fn run() -> Result<(), String> {
     let front = Rc::new(RefCell::new(Front::default()));
     let opener: intake::Opener = Rc::new(|uid| Box::pin(intake::open(uid)));
     let taker = logind.clone();
+    let mut daemon = Daemon::new(config, remembered);
+    let passwords = remotepw::current(remotepw::load(Path::new(STORE)), |user| {
+        users::lookup(user).map(|e| e.map(|e| e.uid))
+    });
+    // No front is linked yet, so this emits nothing.
+    let _ = daemon.set_remote_passwords(passwords);
     let mut rt = Runtime {
-        daemon: Daemon::new(config, remembered),
+        daemon,
         logind: logind.clone(),
         gate: gate.clone(),
         workers: Workers::new(PathBuf::from("/proc/self/exe"), events.clone()),
@@ -184,6 +193,7 @@ async fn run() -> Result<(), String> {
         events: events.clone(),
         world: WorldCache::default(),
         front: front.clone(),
+        accounts: serve_account(input.clone()),
         links: Links::new(input.clone(), opener, HANDOVER_DEADLINE),
         inhibitor: Inhibitor::new(Rc::new(move |what, why| {
             let l = taker.clone();
@@ -277,6 +287,17 @@ fn serve_front(input: mpsc::Sender<Input>, front: Rc<RefCell<Front>>) {
     if let Err(e) = served {
         log::warn!("{FRONT_SOCKET}: {e}; no remote logins");
     }
+}
+
+/// Binds `ACCOUNT_SOCKET` for every local user and serves it; without it nobody can change
+/// their Remote Desktop password.
+fn serve_account(input: mpsc::Sender<Input>) -> Replies {
+    let served =
+        ipc::bind_open(Path::new(ACCOUNT_SOCKET)).and_then(|l| accountipc::serve(l, input));
+    served.unwrap_or_else(|e| {
+        log::warn!("{ACCOUNT_SOCKET}: {e}; Remote Desktop passwords cannot be changed");
+        Replies::default()
+    })
 }
 
 /// Rebuilds the table from logind's sessions and starts the login screen or autologin, with
@@ -386,6 +407,7 @@ struct Runtime {
     events: Events,
     world: WorldCache,
     front: Rc<RefCell<Front>>,
+    accounts: Replies,
     links: Links,
     inhibitor: Inhibitor,
 }
@@ -593,6 +615,20 @@ impl Runtime {
                 });
             }
             Effect::CloseIntakes => self.links.close_all(),
+            Effect::AccountReply { link, reply } => self.accounts.send(link, reply),
+            Effect::StorePasswords(all) => {
+                let events = self.events.clone();
+                tokio::task::spawn_local(async move {
+                    let save = move || remotepw::save(Path::new(STORE), &all);
+                    let saved = (tokio::task::spawn_blocking(save).await)
+                        .unwrap_or_else(|e| Err(io::Error::other(e)));
+                    if let Err(e) = &saved {
+                        log::warn!("{STORE}: {e}");
+                    }
+                    let ok = saved.is_ok();
+                    let _ = events.send(Event::Input(Input::Stored { ok }));
+                });
+            }
         }
     }
 
