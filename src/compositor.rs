@@ -401,6 +401,10 @@ pub struct State {
     pub layers_shell: crate::layer::LayerShell,
     /// The lock screen and ext-session-lock (`lockview`, `sessionlock`).
     pub lock: crate::lockview::LockScreen,
+    pub(crate) host: Host,
+    pub greeter: crate::greeterview::GreeterView,
+    /// The write half of reprise-login's link, under `Host::Greeter`.
+    pub greeter_link: Option<crate::greeterlink::GreeterLinkTx>,
     pub launcher: Option<crate::launcherview::LauncherView>,
     pub start_panel: Option<crate::startpanelview::StartPanelView>,
     /// The Start panel's frame, kept between opens so an open skips drawing it again.
@@ -459,6 +463,7 @@ impl State {
         config_path: PathBuf,
         handle: LoopHandle<'static, State>,
         signal: LoopSignal,
+        host: Host,
     ) -> Result<State, Box<dyn std::error::Error>> {
         let listening = listen()?;
         let socket = listening.socket_name().to_string_lossy().into_owned();
@@ -468,7 +473,7 @@ impl State {
                 log::warn!("client refused: {e}");
             }
         })?;
-        State::on_display(config, config_path, handle, signal, socket, Host::Session)
+        State::on_display(config, config_path, handle, signal, socket, host)
     }
 
     /// Everything [`State::new`] builds but the listening socket: clients reach the display only
@@ -553,7 +558,7 @@ impl State {
         let caption_text = caption_text(&config.theme);
         let start_text = start_text(&config.theme);
         let start_panel_text = reprisekit::interfaces::start_panel_text(&config.theme);
-        let roots = if session {
+        let roots = if matches!(host, Host::Session | Host::Greeter) {
             IconTheme::default_roots()
         } else {
             Vec::new()
@@ -755,6 +760,9 @@ impl State {
             dark_mode: Default::default(),
             layers_shell: crate::layer::LayerShell::new(&dh),
             lock: crate::lockview::LockScreen::new(&dh),
+            host,
+            greeter: Default::default(),
+            greeter_link: None,
             launcher: None,
             start_panel: None,
             start_backing: Default::default(),
@@ -1020,6 +1028,9 @@ pub(crate) enum Host {
     /// The user's saved state, programs and Quick Launch folder, and the session's watcher
     /// threads (privacy, location, launcher entries).
     Session,
+    /// reprise-login's login screen: the system's icon themes, none of the session's state,
+    /// programs or watchers, and every key and press for `greeterview`.
+    Greeter,
     /// None of it: a test's state starts empty and talks to no bus.
     #[cfg(test)]
     Bare,
