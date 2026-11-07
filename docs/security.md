@@ -189,7 +189,8 @@ The sockets live in `/run/reprise-login` (0755, root):
 - `session.sock` is 0666. A connection is accepted only when the peer's
   logind session is one the daemon started or found at start, and its uid
   is that session's user. A session can say which interface it runs and ask
-  for Switch User; it can't start a login or reach another session.
+  for Switch User; it can't start a login or reach another session. A frame
+  that doesn't decode is skipped, and the connection stays open.
 
 Frames are length-prefixed JSON of at most 64 KiB. A password typed at the
 login screen travels in zeroed buffers from the login screen through the
