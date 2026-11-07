@@ -31,6 +31,7 @@ mod wlclip;
 
 use encode::choice;
 use listen::{End, Leave};
+use reprisebus::journal;
 use repriseconf::ConfigWatch;
 use repriseconf::remote::{EncoderChoice, RemoteDesktop};
 use reprisetls::{cert, tcp};
@@ -44,8 +45,18 @@ use tokio::sync::{Notify, mpsc, oneshot, watch};
 #[cfg(test)]
 use display::Grey;
 
+/// The logger, with `default_filter` unless RUST_LOG is set. ironrdp and sspi stay at info even
+/// under RUST_LOG=debug: ironrdp's debug records carry the mstshash cookie, a typed user name.
+fn logger(default_filter: &str, prefixed: bool) -> journal::Builder {
+    let mut logger = journal::builder(default_filter, prefixed);
+    for target in ["ironrdp", "sspi"] {
+        logger.filter_module(target, log::LevelFilter::Info);
+    }
+    logger
+}
+
 fn main() -> ExitCode {
-    reprisebus::journal::init_logger("info,rustls=error");
+    logger("info,rustls=error", journal::on_stream()).init();
     ffmpeg::util::log::set_level(ffmpeg::util::log::Level::Error);
     let Some(user) = std::env::var("USER").ok().filter(|u| !u.is_empty()) else {
         log::error!("USER is not set");
@@ -466,4 +477,20 @@ fn cert_dir() -> PathBuf {
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
         .unwrap_or_default()
         .join("reprise/rdp")
+}
+
+#[cfg(test)]
+mod tests {
+    use log::Log as _;
+
+    #[test]
+    fn ironrdp_and_sspi_debug_records_stay_out_of_the_log() {
+        let logger = super::logger("debug", false).build();
+        let enabled = |target, level| {
+            logger.enabled(&log::Metadata::builder().target(target).level(level).build())
+        };
+        assert!(!enabled("ironrdp_acceptor::connection", log::Level::Debug));
+        assert!(!enabled("sspi::ntlm", log::Level::Debug));
+        assert!(enabled("ironrdp_server::server", log::Level::Info));
+    }
 }
