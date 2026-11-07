@@ -1,5 +1,6 @@
 use repriselogin::frame::{MAX_FRAME, encode};
 use repriselogin::greeter::{AuthKind, ErrorKind, Greeting, Note};
+use repriselogin::machine::{LoginConfig, MachineConfig};
 use repriselogin::{GREETER_USER, Interface};
 use zeroize::Zeroizing;
 
@@ -29,7 +30,14 @@ fn world() -> World {
     }
 }
 
-fn logind(id: &str, user: &str, uid: u32, vt: u16, class: &str, service: &str) -> LogindSession {
+pub(super) fn logind(
+    id: &str,
+    user: &str,
+    uid: u32,
+    vt: u16,
+    class: &str,
+    service: &str,
+) -> LogindSession {
     LogindSession {
         id: id.into(),
         user: user.into(),
@@ -50,14 +58,14 @@ fn anna_on_7() -> LogindSession {
     logind("c1", "anna", 1000, 7, "user", "reprise-login")
 }
 
-fn greeter_spawn(w: u32) -> Vec<Effect> {
+pub(super) fn greeter_spawn(w: u32) -> Vec<Effect> {
     let mut effects = spawn(w, Mode::Greeter, GREETER_USER);
     effects.extend(start_on(w, 1));
     effects
 }
 
 /// Worker `w`'s spawn; a login's comes with its `AUTH_WAIT`.
-fn spawn(w: u32, mode: Mode, user: &str) -> Vec<Effect> {
+pub(super) fn spawn(w: u32, mode: Mode, user: &str) -> Vec<Effect> {
     let mut effects = vec![Effect::Spawn {
         worker: WorkerId(w),
         job: Job {
@@ -65,6 +73,7 @@ fn spawn(w: u32, mode: Mode, user: &str) -> Vec<Effect> {
             user: user.into(),
             autologin_user: None,
             greeter_socket: false,
+            rhost: None,
         },
     }];
     if let Mode::Login | Mode::Reauth = mode {
@@ -76,7 +85,7 @@ fn spawn(w: u32, mode: Mode, user: &str) -> Vec<Effect> {
     effects
 }
 
-fn reply(r: GreeterReply) -> Vec<Effect> {
+pub(super) fn reply(r: GreeterReply) -> Vec<Effect> {
     vec![Effect::Reply(r)]
 }
 
@@ -87,24 +96,24 @@ fn error(kind: ErrorKind, text: &str) -> GreeterReply {
     }
 }
 
-fn secret(text: &str) -> FromWorker {
+pub(super) fn secret(text: &str) -> FromWorker {
     FromWorker::Prompt {
         kind: AuthKind::Secret,
         text: text.into(),
     }
 }
 
-fn answer(text: &str) -> GreeterRequest {
+pub(super) fn answer(text: &str) -> GreeterRequest {
     GreeterRequest::PostAuthResponse {
         response: Some(Zeroizing::new(text.into())),
     }
 }
 
-fn create(user: &str) -> GreeterRequest {
+pub(super) fn create(user: &str) -> GreeterRequest {
     GreeterRequest::CreateSession { user: user.into() }
 }
 
-fn authed(user: &str, uid: u32) -> FromWorker {
+pub(super) fn authed(user: &str, uid: u32) -> FromWorker {
     FromWorker::Authenticated {
         user: user.into(),
         uid,
@@ -115,7 +124,10 @@ fn start_on(w: u32, vt: u16) -> Vec<Effect> {
     vec![
         Effect::ToWorker {
             worker: WorkerId(w),
-            msg: ToWorker::Start { vt },
+            msg: ToWorker::Start {
+                vt,
+                background: false,
+            },
         },
         Effect::Arm {
             timer: Timer::Start(WorkerId(w)),
@@ -124,7 +136,7 @@ fn start_on(w: u32, vt: u16) -> Vec<Effect> {
     ]
 }
 
-fn unlock(id: &str, generation: u32) -> Vec<Effect> {
+pub(super) fn unlock(id: &str, generation: u32) -> Vec<Effect> {
     vec![
         Effect::UnlockSession(id.into()),
         Effect::Arm {
@@ -134,7 +146,7 @@ fn unlock(id: &str, generation: u32) -> Vec<Effect> {
     ]
 }
 
-fn started(id: &str, uid: u32) -> FromWorker {
+pub(super) fn started(id: &str, uid: u32) -> FromWorker {
     FromWorker::Started {
         session_id: id.into(),
         uid,
@@ -174,19 +186,32 @@ fn is_refused(effects: &[Effect]) -> bool {
 }
 
 /// A daemon driven by hand, with a clock the test moves.
-struct Run {
-    d: Daemon,
-    now: Instant,
-    world: World,
+pub(super) struct Run {
+    pub(super) d: Daemon,
+    pub(super) now: Instant,
+    pub(super) world: World,
 }
 
 impl Run {
     fn new(config: LoginConfig, remembered: Remembered) -> Run {
+        Run::machine(MachineConfig {
+            login: config,
+            ..MachineConfig::default()
+        })
+        .remembering(remembered)
+    }
+
+    pub(super) fn machine(config: MachineConfig) -> Run {
         Run {
-            d: Daemon::new(config, remembered),
+            d: Daemon::new(config, Remembered::default()),
             now: Instant::now(),
             world: world(),
         }
+    }
+
+    fn remembering(mut self, remembered: Remembered) -> Run {
+        self.d.remembered = remembered;
+        self
     }
 
     /// Recovers nothing and starts, which brings up the greeter as worker 1.
@@ -216,20 +241,20 @@ impl Run {
     }
 
     /// Recovers `found` with c1 on screen.
-    fn recover(&mut self, found: Vec<LogindSession>) -> Vec<Effect> {
+    pub(super) fn recover(&mut self, found: Vec<LogindSession>) -> Vec<Effect> {
         self.d.recover(self.now, found, Some("c1"))
     }
 
-    fn start(&mut self) -> Vec<Effect> {
+    pub(super) fn start(&mut self) -> Vec<Effect> {
         self.d.start(self.now, &self.world)
     }
 
-    fn on(&mut self, input: Input) -> Vec<Effect> {
+    pub(super) fn on(&mut self, input: Input) -> Vec<Effect> {
         self.d.handle(self.now, &self.world, input)
     }
 
     /// A request from the running greeter, or from worker 1 with none running.
-    fn greeter(&mut self, request: GreeterRequest) -> Vec<Effect> {
+    pub(super) fn greeter(&mut self, request: GreeterRequest) -> Vec<Effect> {
         self.on(Input::GreeterRequest(self.greeter_worker(), request))
     }
 
@@ -241,11 +266,11 @@ impl Run {
         self.d.greeter.as_ref().map_or(GREETER, |g| g.worker)
     }
 
-    fn worker(&mut self, w: u32, msg: FromWorker) -> Vec<Effect> {
+    pub(super) fn worker(&mut self, w: u32, msg: FromWorker) -> Vec<Effect> {
         self.on(Input::Worker(WorkerId(w), msg))
     }
 
-    fn exited(&mut self, w: u32) -> Vec<Effect> {
+    pub(super) fn exited(&mut self, w: u32) -> Vec<Effect> {
         self.on(Input::WorkerExited(WorkerId(w)))
     }
 
@@ -258,14 +283,14 @@ impl Run {
         })
     }
 
-    fn removed(&mut self, id: &str, seat_active: Option<&str>) -> Vec<Effect> {
+    pub(super) fn removed(&mut self, id: &str, seat_active: Option<&str>) -> Vec<Effect> {
         self.on(Input::SessionRemoved {
             id: id.into(),
             seat_active: seat_active.map(Into::into),
         })
     }
 
-    fn greeting(&mut self) -> Greeting {
+    pub(super) fn greeting(&mut self) -> Greeting {
         match self.greeter(GreeterRequest::Hello).as_slice() {
             [Effect::Reply(GreeterReply::Greeting(g))] => g.clone(),
             other => panic!("Hello is answered with one Greeting, got {other:?}"),
@@ -336,11 +361,15 @@ fn boot_with_autologin_starts_that_user_on_vt_7_without_a_greeter() {
                     user: "anna".into(),
                     autologin_user: Some("anna".into()),
                     greeter_socket: false,
+                    rhost: None,
                 },
             },
             Effect::ToWorker {
                 worker: WorkerId(1),
-                msg: ToWorker::Start { vt: 7 },
+                msg: ToWorker::Start {
+                    vt: 7,
+                    background: false,
+                },
             },
             Effect::Arm {
                 timer: Timer::Start(WorkerId(1)),
@@ -965,7 +994,8 @@ fn recovery_rebuilds_the_table_and_terminates_an_orphaned_greeter() {
         run.recover(found),
         vec![
             Effect::LockSession("c3".into()),
-            Effect::TerminateSession("c5".into())
+            Effect::TerminateSession("c5".into()),
+            Effect::Inhibit(Inhibit::Idle)
         ],
         "bert's session is off screen; carl's text login is not reprise-login's"
     );
@@ -980,7 +1010,7 @@ fn recovery_rebuilds_the_table_and_terminates_an_orphaned_greeter() {
     assert_eq!(run.greeter(create("anna")), spawn(2, Mode::Reauth, "anna"));
     assert_eq!(
         run.removed("c3", Some("c5")),
-        vec![Effect::Disallocate(8)],
+        vec![Effect::Disallocate(8), Effect::Inhibit(Inhibit::Nothing)],
         "no worker of this daemon holds a recovered session's VT"
     );
 
@@ -1354,7 +1384,10 @@ fn a_restart_with_sessions_and_no_session_on_screen_brings_the_login_screen() {
     let mut run = Run::new(LoginConfig::default(), Remembered::default());
     assert_eq!(
         run.d.recover(run.now, vec![anna_on_7()], None),
-        vec![Effect::LockSession("c1".into())]
+        vec![
+            Effect::LockSession("c1".into()),
+            Effect::Inhibit(Inhibit::Idle)
+        ]
     );
     assert_eq!(run.start(), greeter_spawn(1));
 }
@@ -1564,6 +1597,7 @@ fn autologin_never_unlocks_a_session_its_user_already_has() {
         uid: 1000,
         vt: 8,
         started: None,
+        background: false,
     });
     let effects = run.worker(1, started("c2", 1000));
     assert!(
@@ -1692,14 +1726,18 @@ fn recovery_locks_every_session_that_is_not_on_screen() {
     let mut run = Run::new(LoginConfig::default(), Remembered::default());
     assert_eq!(
         run.d.recover(run.now, found(), Some("c1")),
-        vec![Effect::LockSession("c2".into())]
+        vec![
+            Effect::LockSession("c2".into()),
+            Effect::Inhibit(Inhibit::Idle)
+        ]
     );
     let mut run = Run::new(LoginConfig::default(), Remembered::default());
     assert_eq!(
         run.d.recover(run.now, found(), None),
         vec![
             Effect::LockSession("c1".into()),
-            Effect::LockSession("c2".into())
+            Effect::LockSession("c2".into()),
+            Effect::Inhibit(Inhibit::Idle)
         ]
     );
 }

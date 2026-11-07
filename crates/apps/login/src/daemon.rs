@@ -5,10 +5,11 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use log::Level;
+use repriselogin::front::{FrontEvent, FrontRequest};
 use repriselogin::greeter::{
     ErrorKind, GreeterReply, GreeterRequest, Greeting, Keyboard, Notice, PowerAction, UserEntry,
 };
-use repriselogin::machine::LoginConfig;
+use repriselogin::machine::MachineConfig;
 use repriselogin::session::SessionRequest;
 use repriselogin::{GREETER_USER, Interface, frame};
 
@@ -17,6 +18,12 @@ use crate::remembered::Remembered;
 use crate::table::{Route, SessionEntry, Sessions};
 use crate::vt::{self, GREETER_VT, TEXT_LOGIN_VT};
 use crate::worker::{AUTH_FAILED, FromWorker, Mode, ToWorker};
+
+mod remote;
+
+pub use remote::{
+    HANDOVER_DEADLINE, Inhibit, LookUpKey, MAX_REMOTE_CHECKS, REFUSE_DELAY, StoredPassword,
+};
 
 /// A session that ends sooner than this after its start brings the greeter back with a notice.
 pub const EARLY_END: Duration = Duration::from_secs(10);
@@ -48,6 +55,8 @@ pub struct Job {
     pub autologin_user: Option<String>,
     /// `[login] greeter_socket`, for a `Greeter` job only.
     pub greeter_socket: bool,
+    /// The client's address, for a remote job only.
+    pub rhost: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,6 +72,12 @@ pub enum Timer {
     Terminate(String),
     /// `KILL_WAIT` after greeter worker `.0` was told to end.
     GreeterKill(WorkerId),
+    /// `REFUSE_DELAY` after front conn `.0`'s `Authenticate`.
+    Refuse(u64),
+    /// `HANDOVER_DEADLINE` after front conn `.0`'s TCP accept.
+    Handover(u64),
+    /// `end_disconnected_after` since background session `id` lost its last viewer.
+    Disconnected { id: String, generation: u32 },
 }
 
 #[derive(Debug, PartialEq)]
@@ -104,6 +119,38 @@ pub enum Input {
     ConsoleOnGreeterVt,
     PowerDone(Result<(), String>),
     Timer(Timer),
+    FrontLinked,
+    FrontLost,
+    /// A request on the front link; its `Ready` arrives as `FrontReady`.
+    Front(FrontRequest),
+    /// The front's `Ready` for `conn`, its socket held by the backend; `user` is the hand-over's.
+    FrontReady {
+        conn: u64,
+        user: String,
+    },
+    /// The answer to `Effect::LookUp`: the account's uid, and whether it is in the group.
+    Member {
+        key: LookUpKey,
+        uid: Option<u32>,
+        member: bool,
+    },
+    /// The link to `uid`'s hand-over socket is up.
+    IntakeOpen {
+        uid: u32,
+    },
+    IntakeLost {
+        uid: u32,
+    },
+    /// The clients connected to `uid`'s session, as its reprise-rdp reports them.
+    Viewers {
+        uid: u32,
+        count: u32,
+    },
+    /// The backend passed conn's socket on (`ok`), or failed to.
+    Forwarded {
+        conn: u64,
+        ok: bool,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -138,6 +185,28 @@ pub enum Effect {
     Remember(Remembered),
     Disallocate(u16),
     Log(log::Level, String),
+    ToFront(FrontEvent),
+    /// Looks up `user`'s uid and whether it is a member of `group`, answered by `Input::Member`.
+    LookUp {
+        key: LookUpKey,
+        user: String,
+        group: String,
+    },
+    /// Opens the link to `uid`'s hand-over socket, answered by `IntakeOpen` or `IntakeLost`.
+    OpenIntake {
+        uid: u32,
+    },
+    /// Passes conn's socket and hand-over to `uid`'s session, answered by `Forwarded`.
+    Forward {
+        conn: u64,
+        uid: u32,
+    },
+    /// Closes conn's socket if the backend holds it.
+    DropConn {
+        conn: u64,
+    },
+    /// The logind block inhibitor reprise-login holds from now on.
+    Inhibit(Inhibit),
 }
 
 /// A session as logind's `ListSessions` and session properties describe it.
@@ -256,7 +325,7 @@ enum AfterOrphans {
 }
 
 pub struct Daemon {
-    config: LoginConfig,
+    config: MachineConfig,
     remembered: Remembered,
     sessions: Sessions,
     runs: GreeterRuns,
@@ -278,10 +347,11 @@ pub struct Daemon {
     regreet: bool,
     next_worker: u32,
     unlocks: u32,
+    remote: remote::Remote,
 }
 
 impl Daemon {
-    pub fn new(config: LoginConfig, remembered: Remembered) -> Daemon {
+    pub fn new(config: MachineConfig, remembered: Remembered) -> Daemon {
         Daemon {
             config,
             remembered,
@@ -300,6 +370,7 @@ impl Daemon {
             regreet: false,
             next_worker: 1,
             unlocks: 0,
+            remote: remote::Remote::default(),
         }
     }
 
@@ -318,7 +389,8 @@ impl Daemon {
     }
 
     /// Rebuilds the table from logind after a start, ends orphaned greeters and locks every
-    /// session but `seat_active`: an earlier daemon may have unlocked one and died.
+    /// session but `seat_active`: an earlier daemon may have unlocked one and died. Every
+    /// session but `seat_active` counts as a background one.
     pub fn recover(
         &mut self,
         _now: Instant,
@@ -329,7 +401,8 @@ impl Daemon {
         self.seat_empty = seat_active.is_none();
         for s in found {
             if s.seat == "seat0" && s.class == "user" && user_service(&s.service) {
-                if seat_active != Some(&s.id) {
+                let background = seat_active != Some(&s.id);
+                if background {
                     out.push(Effect::LockSession(s.id.clone()));
                 }
                 self.sessions.insert(SessionEntry {
@@ -338,6 +411,7 @@ impl Daemon {
                     uid: s.uid,
                     vt: s.vt,
                     started: None,
+                    background,
                 });
             } else if s.class == "greeter" && s.service == Mode::Greeter.service() {
                 self.orphans.push(Orphan {
@@ -347,6 +421,8 @@ impl Daemon {
                 out.push(Effect::TerminateSession(s.id));
             }
         }
+        self.open_intakes(&mut out);
+        self.update_inhibit(&mut out);
         out
     }
 
@@ -372,9 +448,9 @@ impl Daemon {
     /// With no session running: the autologin session if one is configured and can start,
     /// else the greeter.
     fn autologin_or_greeter(&mut self, world: &World, out: &mut Vec<Effect>) {
-        if let Some(user) = self.config.autologin_user.clone() {
+        if let Some(user) = self.config.login.autologin_user.clone() {
             let listed = world.users.iter().any(|u| u.name == user);
-            let vt = vt::pick(&self.sessions.taken_vts(), world.kernel_open);
+            let vt = vt::pick(&self.taken_vts(), world.kernel_open);
             match (listed, vt) {
                 (true, Some(vt)) => {
                     let mut ends = Vec::new();
@@ -418,7 +494,13 @@ impl Daemon {
             }
             Input::GreeterGone(w) if self.is_greeter(w) => self.greeter_gone(&mut out),
             Input::GreeterRequest(..) | Input::GreeterGone(_) => {}
+            Input::Worker(worker, msg) if self.is_remote_worker(worker) => {
+                self.remote_worker_message(now, world, worker, msg, &mut out)
+            }
             Input::Worker(worker, msg) => self.worker_message(now, worker, msg, &mut out),
+            Input::WorkerExited(worker) if self.is_remote_worker(worker) => {
+                self.remote_worker_exited(now, worker, &mut out)
+            }
             Input::WorkerExited(worker) => self.worker_exited(worker, &mut out),
             Input::Session {
                 id,
@@ -449,6 +531,9 @@ impl Daemon {
                     self.finish_resume(true, &mut out);
                 }
             }
+            Input::Timer(Timer::Start(worker)) if self.is_remote_worker(worker) => {
+                self.remote_start_timed_out(now, worker, &mut out)
+            }
             Input::Timer(Timer::Start(worker)) => self.start_timed_out(worker, &mut out),
             Input::Timer(Timer::Auth(worker)) => self.auth_wait(now, worker, &mut out),
             Input::TerminateFailed { id, seat_active } => {
@@ -470,7 +555,27 @@ impl Daemon {
                 ));
                 out.push(Effect::Reply(error(ErrorKind::Failed, POWER_FAILED.into())));
             }
+            Input::Timer(Timer::Refuse(conn)) => self.refuse_delay_over(now, conn, &mut out),
+            Input::Timer(Timer::Handover(conn)) => self.handover_deadline(now, conn, &mut out),
+            Input::Timer(Timer::Disconnected { id, generation }) => {
+                self.disconnected(&id, generation, &mut out)
+            }
+            Input::FrontLinked => self.remote.front = true,
+            Input::FrontLost => self.front_lost(&mut out),
+            Input::Front(request) => self.front_request(now, request, &mut out),
+            Input::FrontReady { conn, user } => self.front_ready(conn, &user, &mut out),
+            Input::Member {
+                key: LookUpKey::Conn(conn),
+                uid,
+                member,
+            } => self.member(now, conn, uid, member, &mut out),
+            Input::Member { .. } => {}
+            Input::IntakeOpen { uid } => self.intake_open(uid, &mut out),
+            Input::IntakeLost { uid } => self.intake_lost(uid, &mut out),
+            Input::Viewers { uid, count } => self.set_viewers(uid, count, &mut out),
+            Input::Forwarded { conn, ok } => self.forwarded(conn, ok, &mut out),
         }
+        self.update_inhibit(&mut out);
         if !self.start_in_flight() {
             self.removed_early.clear();
         }
@@ -488,9 +593,10 @@ impl Daemon {
             mode,
             user: user.into(),
             autologin_user: (mode == Mode::Autologin)
-                .then(|| self.config.autologin_user.clone())
+                .then(|| self.config.login.autologin_user.clone())
                 .flatten(),
-            greeter_socket: mode == Mode::Greeter && self.config.greeter_socket,
+            greeter_socket: mode == Mode::Greeter && self.config.login.greeter_socket,
+            rhost: None,
         }
     }
 
@@ -583,12 +689,12 @@ impl Daemon {
 
     /// The configured interface, else the last one used; users capped to fit one frame.
     fn greeting(&mut self, world: &World) -> Greeting {
-        let notes = self.sessions.notes();
+        let notes = self.notes();
         let mut greeting = Greeting {
-            interface: (self.config.interface)
+            interface: (self.config.login.interface)
                 .or(self.remembered.last_interface)
                 .unwrap_or(Interface::Classic),
-            show_users: self.config.show_users,
+            show_users: self.config.login.show_users,
             users: (world.users.iter().take(MAX_USERS))
                 .map(|u| UserEntry {
                     note: notes.get(&u.name).copied(),
@@ -634,7 +740,7 @@ impl Daemon {
                     c.phase = phase;
                     return;
                 }
-                let Some(vt) = vt::pick(&self.sessions.taken_vts(), world.kernel_open) else {
+                let Some(vt) = vt::pick(&self.taken_vts(), world.kernel_open) else {
                     return self.fail_conversation(ErrorKind::Failed, NO_VT.into(), out);
                 };
                 self.conversation.as_mut().expect("conversation").phase = Phase::Starting { vt };
@@ -686,6 +792,7 @@ impl Daemon {
             uid: s.uid,
             vt: s.vt,
             started: None,
+            background: false,
         });
         Some((s.id, s.vt))
     }
@@ -742,6 +849,7 @@ impl Daemon {
                     uid,
                     vt: a.vt,
                     started: Some(now),
+                    background: false,
                 };
                 self.session_started(now, worker, entry, None, out);
             }
@@ -805,6 +913,7 @@ impl Daemon {
                     uid,
                     vt,
                     started: Some(now),
+                    background: false,
                 };
                 self.session_started(now, worker, entry, c.greeter, out);
             }
@@ -1161,11 +1270,12 @@ impl Daemon {
         if resuming {
             self.fail_conversation(ErrorKind::Failed, SESSION_ENDED.into(), out);
         }
+        self.remote_session_gone(&entry);
         // A recovered session has no worker of this daemon to free its VT on exit.
         if entry.started.is_none() {
             out.push(Effect::Disallocate(entry.vt));
         }
-        if seat_active.is_none() {
+        if seat_active.is_none() && !entry.background {
             if entry
                 .started
                 .is_some_and(|t| now.duration_since(t) < EARLY_END)
@@ -1259,6 +1369,7 @@ impl Daemon {
             ));
         }
         out.push(Effect::SwitchTo(vt));
+        self.sessions.set_background(&id, false);
         if self.greeter_runs(greeter) {
             out.push(Effect::Reply(GreeterReply::Success));
             self.greeter_leaves();
@@ -1369,13 +1480,18 @@ fn refused(text: &str) -> Effect {
 
 /// Whether `service` is the PAM service of a user session reprise-login starts.
 fn user_service(service: &str) -> bool {
-    [Mode::Login.service(), Mode::Autologin.service()].contains(&service)
+    [Mode::Login, Mode::Autologin, Mode::Remote, Mode::RemoteNla]
+        .iter()
+        .any(|m| m.service() == service)
 }
 
 fn send_start(worker: WorkerId, vt: u16, out: &mut Vec<Effect>) {
     out.push(Effect::ToWorker {
         worker,
-        msg: ToWorker::Start { vt },
+        msg: ToWorker::Start {
+            vt,
+            background: false,
+        },
     });
     out.push(Effect::Arm {
         timer: Timer::Start(worker),
@@ -1383,5 +1499,7 @@ fn send_start(worker: WorkerId, vt: u16, out: &mut Vec<Effect>) {
     });
 }
 
+#[cfg(test)]
+mod remote_tests;
 #[cfg(test)]
 mod tests;
