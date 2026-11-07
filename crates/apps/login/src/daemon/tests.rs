@@ -187,8 +187,9 @@ impl Run {
         run
     }
 
+    /// Recovers `found` with c1 on screen.
     fn recover(&mut self, found: Vec<LogindSession>) -> Vec<Effect> {
-        self.d.recover(self.now, found)
+        self.d.recover(self.now, found, Some("c1"))
     }
 
     fn start(&mut self) -> Vec<Effect> {
@@ -896,7 +897,11 @@ fn recovery_rebuilds_the_table_and_terminates_an_orphaned_greeter() {
     ];
     assert_eq!(
         run.recover(found),
-        vec![Effect::TerminateSession("c5".into())]
+        vec![
+            Effect::LockSession("c3".into()),
+            Effect::TerminateSession("c5".into())
+        ],
+        "bert's session is off screen; carl's text login is not reprise-login's"
     );
     assert_eq!(
         run.start(),
@@ -1518,4 +1523,50 @@ fn an_orphan_that_does_not_end_is_retried_then_given_up_on() {
     assert_eq!(effects[1..], greeter_spawn(1)[..]);
     assert_eq!(run.removed("c5", None), vec![], "its late removal");
     assert_eq!(run.on(Input::Timer(Timer::Terminate("c5".into()))), vec![]);
+}
+
+#[test]
+fn a_resume_whose_switch_fails_locks_the_session_again_and_keeps_the_login_screen() {
+    let mut run = Run::anna_switched(Remembered::default());
+    assert_eq!(run.greeter(create("anna")), spawn(2, Mode::Reauth, "anna"));
+    run.worker(2, authed("anna", 1000));
+    assert_eq!(run.greeter(GreeterRequest::StartSession), unlock("c1", 1));
+    assert_eq!(
+        run.on(Input::Unlocked { id: "c1".into() }),
+        vec![Effect::SwitchTo(7), Effect::Reply(GreeterReply::Success)]
+    );
+    assert_eq!(
+        run.on(Input::SwitchFailed { vt: 7 }),
+        vec![Effect::LockSession("c1".into()), Effect::Kill(WorkerId(1)),],
+        "the leaving greeter is replaced"
+    );
+    assert_eq!(run.exited(1), greeter_spawn(3));
+    assert_eq!(
+        run.on(Input::SwitchFailed { vt: 9 }),
+        vec![],
+        "no session on VT 9"
+    );
+}
+
+#[test]
+fn recovery_locks_every_session_that_is_not_on_screen() {
+    let found = || {
+        vec![
+            anna_on_7(),
+            logind("c2", "bert", 1001, 8, "user", "reprise-login"),
+        ]
+    };
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    assert_eq!(
+        run.d.recover(run.now, found(), Some("c1")),
+        vec![Effect::LockSession("c2".into())]
+    );
+    let mut run = Run::new(LoginConfig::default(), Remembered::default());
+    assert_eq!(
+        run.d.recover(run.now, found(), None),
+        vec![
+            Effect::LockSession("c1".into()),
+            Effect::LockSession("c2".into())
+        ]
+    );
 }
