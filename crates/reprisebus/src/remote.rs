@@ -94,6 +94,16 @@ pub fn status() -> Option<Status> {
     crate::wait(read(&conn))
 }
 
+/// End every client's session.
+pub fn disconnect_all() -> Result<(), String> {
+    call("Disconnect")
+}
+
+/// End every client's session, telling each that this session is logging off.
+pub fn session_ending() -> Result<(), String> {
+    call("SessionEnding")
+}
+
 /// End the session of the client at `address`, as [`Client::address`] gives it.
 pub fn disconnect_client(address: &str) -> Result<(), String> {
     let conn = session()?;
@@ -111,17 +121,13 @@ pub fn disconnect_client(address: &str) -> Result<(), String> {
 
 /// Replace the server's certificate with a new one.
 pub fn regenerate() -> Result<(), String> {
+    call("RegenerateCertificate")
+}
+
+fn call(method: &str) -> Result<(), String> {
     let conn = session()?;
-    told(
-        "RegenerateCertificate",
-        crate::wait(conn.call_method(
-            Some(NAME),
-            PATH,
-            Some(INTERFACE),
-            "RegenerateCertificate",
-            &(),
-        )),
-    )
+    let reply = conn.call_method(Some(NAME), PATH, Some(INTERFACE), method, &());
+    told(method, crate::wait(reply))
 }
 
 /// Whether [`UNIT`] is enabled; false when the user manager does not answer.

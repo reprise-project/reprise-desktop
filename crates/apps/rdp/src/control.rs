@@ -1,6 +1,6 @@
 //! `org.reprise.RemoteDesktop` on the session bus: the server's status for Settings, and
-//! Disconnect, DisconnectClient and RegenerateCertificate. The bus connection lives on a thread
-//! of its own.
+//! Disconnect, SessionEnding, DisconnectClient and RegenerateCertificate. The bus connection
+//! lives on a thread of its own.
 
 use tokio::sync::{mpsc, oneshot, watch};
 use zbus::connection::Builder;
@@ -30,9 +30,11 @@ pub struct Client {
     pub since: u64,
 }
 
-/// Which viewers a disconnect ends.
+/// Which viewers a disconnect ends, and what each is told.
 pub enum Request {
     All,
+    /// Every viewer, each told the session logged off.
+    SessionEnding,
     /// The viewer at this address; the reply says whether there was one.
     Client(String, oneshot::Sender<bool>),
 }
@@ -190,6 +192,11 @@ impl RemoteDesktop {
     /// Ends every connected client's session.
     fn disconnect(&self) {
         let _ = self.disconnect.send(Request::All);
+    }
+
+    /// Ends every client, telling each the session logged off.
+    fn session_ending(&self) {
+        let _ = self.disconnect.send(Request::SessionEnding);
     }
 
     /// Ends the session of the client at `address`, as listed in `Clients`.
@@ -415,6 +422,30 @@ pub(crate) mod tests {
             drop(status);
         });
         server.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn session_ending_asks_to_end_every_client() {
+        let Some(bus) = bus() else {
+            eprintln!("no dbus-daemon; skipped");
+            return;
+        };
+        let (status, rx) = watch::channel(Status::default());
+        let (disconnect, mut disconnected) = mpsc::unbounded_channel();
+        let builder = Builder::address(bus.1.as_str());
+        let claim = spawn_on(builder, rx, disconnect, Server::HandOver);
+        claim.recv().expect("the claim is told").unwrap();
+        zbus::block_on(async {
+            let conn = Builder::address(bus.1.as_str()).build().await.unwrap();
+            conn.call_method(Some(NAME), PATH, Some(NAME), "SessionEnding", &())
+                .await
+                .unwrap();
+        });
+        assert!(matches!(
+            disconnected.blocking_recv(),
+            Some(Request::SessionEnding)
+        ));
+        drop(status);
     }
 
     fn spawned(bus: &Bus, server: Server) -> (watch::Sender<Status>, zbus::Result<()>) {
