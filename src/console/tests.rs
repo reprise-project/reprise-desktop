@@ -385,6 +385,26 @@ fn lock_mode_is_refused_while_a_locker_client_holds_the_lock() {
 }
 
 #[test]
+fn a_locker_that_died_holding_the_lock_does_not_refuse_lock_mode() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut locker = h.connect();
+    let _lock = h.take_lock(&mut locker);
+    assert!(crate::sessionlock::holds_input(&h.state));
+    drop(locker);
+    h.dispatch();
+    let mut portal = h.connect_portal();
+    let lock = portal.lock_screen();
+    lock.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut portal);
+    assert!(remote_side(&h.state), "lock mode begins");
+    assert!(
+        !lock.heard().contains(&Heard::Ended(3)),
+        "not refused as replaced"
+    );
+}
+
+#[test]
 fn a_locker_client_taking_the_lock_ends_lock_mode() {
     let mut h = Harness::new();
     h.output("eDP-1", 1920, 1080);
