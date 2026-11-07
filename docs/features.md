@@ -956,7 +956,7 @@ them.
   off.
 - **Power.** While a client is connected to any session, the computer
   doesn't sleep, and a shut lid darkens the panel instead of
-  running its action. A session in the background never suspends the
+  running its action, at the login screen too. A session in the background never suspends the
   computer on idle.
 - **Refusals.** A refused login is answered 3 s after the client sent its
   password, whatever refused it, and the journal of `reprise-login` says

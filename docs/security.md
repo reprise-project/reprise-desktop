@@ -601,7 +601,10 @@ inhibitor; while a client is connected to any session, `sleep:idle`, so the
 computer doesn't sleep under a client. Each session's compositor reads that
 `sleep` inhibitor, held by root as "Reprise login manager", as a client
 connected elsewhere: idle suspend waits, and a shut lid darkens the
-internal panels instead of running `[power] lid_close`.
+internal panels instead of running `[power] lid_close`. The login screen
+reads it the same way: while it is held, the screen takes logind's
+`handle-lid-switch` and a shut lid darkens the panels; otherwise logind
+acts on the lid.
 
 A background session whose last client left ends `[remote_desktop]
 end_disconnected_after` minutes later, unless a client comes back first;
