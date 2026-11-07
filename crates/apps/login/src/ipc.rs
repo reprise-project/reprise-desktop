@@ -14,7 +14,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use repriselogin::frame::{self, FrameError, FrameReader};
-use repriselogin::greeter::GreeterReply;
+use repriselogin::greeter::{GreeterReply, GreeterRequest};
 use repriselogin::session::SessionRequest;
 use repriselogin::{GREETER_SOCKET, SESSION_SOCKET};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -94,6 +94,10 @@ const MAX_PENDING: usize = 16;
 const MAX_PENDING_PER_UID: usize = 4;
 /// How many socket requests wait for the daemon's loop; past it, a reader stops reading.
 pub const QUEUE: usize = 16;
+/// How many replies wait for the greeter to read them; past it, the greeter is dropped.
+const LINK_QUEUE: usize = 16;
+/// Most uids a listener records a refusal of; refusals of further uids are not logged.
+const MAX_REFUSALS: usize = 256;
 /// How long a greeter connection waits for its worker's `Started` to reach the loop.
 pub const GREETER_WAIT: Duration = Duration::from_secs(3);
 
@@ -127,10 +131,12 @@ pub struct Gate {
     changed: Rc<Notify>,
 }
 
-/// The connected greeter's outbound queue and reader.
+/// The connected greeter's outbound queue, writer and reader.
 struct Link {
     serial: u64,
-    tx: mpsc::UnboundedSender<Zeroizing<Vec<u8>>>,
+    worker: WorkerId,
+    tx: mpsc::Sender<Zeroizing<Vec<u8>>>,
+    _writer: Reader,
     _reader: Reader,
 }
 
@@ -191,17 +197,26 @@ impl Gate {
         self.sessions = sessions;
     }
 
-    /// Queues `reply` for the connected greeter; with none connected it is dropped.
-    pub fn reply(&self, reply: &GreeterReply) {
+    /// Queues `reply` for the connected greeter; with none connected it is dropped. A greeter
+    /// whose queue is full is disconnected, and its worker returned.
+    pub fn reply(&mut self, reply: &GreeterReply) -> Option<WorkerId> {
         let Some(link) = &self.link else {
             log::debug!("no greeter is connected; a reply is dropped");
-            return;
+            return None;
         };
-        match frame::encode(reply) {
-            Ok(f) => {
-                let _ = link.tx.send(f);
+        let f = match frame::encode(reply) {
+            Ok(f) => f,
+            Err(e) => {
+                log::warn!("greeter socket: a reply was not sent: {}", error_kind(&e));
+                return None;
             }
-            Err(e) => log::warn!("greeter socket: a reply was not sent: {}", error_kind(&e)),
+        };
+        match link.tx.try_send(f) {
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                log::warn!("greeter socket: dropping the greeter: it reads no replies");
+                self.link.take().map(|l| l.worker)
+            }
+            _ => None,
         }
     }
 
@@ -287,20 +302,38 @@ impl Drop for InFlight {
 }
 
 /// The uids a listener logged a refusal of: each is logged once, whatever passes after.
-#[derive(Default)]
-struct Refusals(RefCell<HashSet<u32>>);
+struct Refusals {
+    kind: Listener,
+    uids: RefCell<HashSet<u32>>,
+    full: Spell,
+}
 
 impl Refusals {
-    /// Whether this is `uid`'s first refusal.
+    fn new(kind: Listener) -> Refusals {
+        Refusals {
+            kind,
+            uids: RefCell::default(),
+            full: Spell::default(),
+        }
+    }
+
+    /// Whether to log this refusal: `uid`'s first, while under [`MAX_REFUSALS`] uids.
     fn first(&self, uid: u32) -> bool {
-        self.0.borrow_mut().insert(uid)
+        let mut uids = self.uids.borrow_mut();
+        if uids.len() >= MAX_REFUSALS && !uids.contains(&uid) {
+            if self.full.fail() {
+                log::warn!("{:?} socket: further refusals not logged", self.kind);
+            }
+            return false;
+        }
+        uids.insert(uid)
     }
 }
 
 async fn accept(l: UnixListener, kind: Listener, s: Rc<Server>) {
     let checks = Rc::new(RefCell::new(Checks::default()));
     let failing = Spell::default();
-    let refused = Rc::new(Refusals::default());
+    let refused = Rc::new(Refusals::new(kind));
     loop {
         let stream = match l.accept().await {
             Ok((stream, _)) => stream,
@@ -401,12 +434,14 @@ async fn admit_greeter(
     let mut gate = s.gate.borrow_mut();
     let serial = gate.serial();
     let (rd, wr) = stream.into_split();
-    let (tx, rx) = mpsc::unbounded_channel();
-    tokio::task::spawn_local(write_frames(wr, rx));
+    let (tx, mut rx) = mpsc::channel(LINK_QUEUE);
+    let writer = Reader::spawn(write_frames(wr, async move || rx.recv().await));
     let reader = Reader::spawn(read_greeter(rd, serial, worker, s.clone()));
     gate.link = Some(Link {
         serial,
+        worker,
         tx,
+        _writer: writer,
         _reader: reader,
     });
     true
@@ -438,6 +473,8 @@ fn admit_session(stream: UnixStream, uid: u32, session: Option<String>, s: &Rc<S
     true
 }
 
+/// Forwards the greeter's requests. Each Hello gets a whole Greeting, so one waits at a time
+/// and later ones fold into it; any other request stops the reading until it is queued.
 async fn read_greeter(
     rd: tokio::net::unix::OwnedReadHalf,
     serial: u64,
@@ -445,24 +482,37 @@ async fn read_greeter(
     s: Rc<Server>,
 ) {
     let mut frames = Frames::new(rd);
+    let mut hello = false;
+    let input = |request| Input::GreeterRequest(worker, request);
     let why = loop {
-        match frames.next().await.and_then(|body| frame::decode(&body)) {
-            Ok(request) => {
-                if s.input.send(Input::GreeterRequest(request)).await.is_err() {
-                    return;
-                }
+        let next = tokio::select! {
+            permit = s.input.reserve(), if hello => {
+                let Ok(permit) = permit else { return };
+                permit.send(input(GreeterRequest::Hello));
+                hello = false;
+                continue;
             }
+            next = frames.next() => next,
+        };
+        let request = match next.and_then(|body| frame::decode(&body)) {
+            Ok(GreeterRequest::Hello) => {
+                hello = true;
+                continue;
+            }
+            Ok(request) => request,
             Err(e) => break e,
+        };
+        if std::mem::take(&mut hello) && s.input.send(input(GreeterRequest::Hello)).await.is_err() {
+            return;
+        }
+        if s.input.send(input(request)).await.is_err() {
+            return;
         }
     };
     if why != FrameError::Closed {
         log::warn!("greeter socket: dropping the greeter: {}", error_kind(&why));
     }
-    // A greeter that is no longer the running one ended already.
-    let running = (s.gate.borrow().greeter.as_ref()).is_some_and(|g| g.0 == worker);
-    if running {
-        let _ = s.input.send(Input::GreeterGone).await;
-    }
+    let _ = s.input.send(Input::GreeterGone(worker)).await;
     // Last: dropping the link aborts this task.
     let mut gate = s.gate.borrow_mut();
     if gate.link.as_ref().is_some_and(|l| l.serial == serial) {
@@ -574,12 +624,12 @@ impl<R: AsyncRead + Unpin> Frames<R> {
     }
 }
 
-/// Writes each queued frame to `wr` until the queue closes or a write fails.
+/// Writes each frame `next` hands out to `wr` until it returns `None` or a write fails.
 pub async fn write_frames<W: AsyncWrite + Unpin>(
     mut wr: W,
-    mut rx: mpsc::UnboundedReceiver<Zeroizing<Vec<u8>>>,
+    mut next: impl AsyncFnMut() -> Option<Zeroizing<Vec<u8>>>,
 ) {
-    while let Some(f) = rx.recv().await {
+    while let Some(f) = next().await {
         if let Err(e) = wr.write_all(&f).await {
             log::warn!("socket write: {}", e.kind());
             return;
@@ -748,14 +798,14 @@ mod tests {
                 send(&mut first, &GreeterRequest::Hello).await;
                 assert_eq!(
                     next(&mut rx).await,
-                    Input::GreeterRequest(GreeterRequest::Hello)
+                    Input::GreeterRequest(GREETER, GreeterRequest::Hello)
                 );
                 let mut second = UnixStream::connect(&path).await.unwrap();
                 assert_eq!(
                     eof_within(&mut second, Duration::from_secs(5)).await,
                     Some(true)
                 );
-                gate.borrow().reply(&GreeterReply::Success);
+                gate.borrow_mut().reply(&GreeterReply::Success);
                 let mut b = vec![0u8; encode(&GreeterReply::Success).unwrap().len()];
                 first.read_exact(&mut b).await.unwrap();
                 assert_eq!(
@@ -777,7 +827,7 @@ mod tests {
                     .await
                     .unwrap();
                 send(&mut c, &SessionRequest::SwitchUser).await;
-                assert_eq!(next(&mut rx).await, Input::GreeterGone);
+                assert_eq!(next(&mut rx).await, Input::GreeterGone(GREETER));
                 assert_eq!(eof_within(&mut c, Duration::from_secs(5)).await, Some(true));
             })
             .await;
@@ -928,7 +978,7 @@ mod tests {
                 send(&mut c, &GreeterRequest::Hello).await;
                 assert_eq!(
                     next(&mut rx).await,
-                    Input::GreeterRequest(GreeterRequest::Hello)
+                    Input::GreeterRequest(GREETER, GreeterRequest::Hello)
                 );
                 gate.borrow_mut().greeter_spawned(WorkerId(2));
                 let _ = c.write_all(&encode(&GreeterRequest::Hello).unwrap()).await;
@@ -954,7 +1004,7 @@ mod tests {
                 send(&mut c, &GreeterRequest::Hello).await;
                 assert_eq!(
                     next(&mut rx).await,
-                    Input::GreeterRequest(GreeterRequest::Hello)
+                    Input::GreeterRequest(GREETER, GreeterRequest::Hello)
                 );
             })
             .await;
@@ -1008,7 +1058,7 @@ mod tests {
 
     #[test]
     fn a_uids_refusal_is_logged_once() {
-        let refusals = Refusals::default();
+        let refusals = Refusals::new(Listener::Session);
         assert!(refusals.first(1000));
         assert!(!refusals.first(1000));
         assert!(refusals.first(1001));
@@ -1028,7 +1078,7 @@ mod tests {
                 send(&mut c, &GreeterRequest::Hello).await;
                 assert_eq!(
                     next(&mut rx).await,
-                    Input::GreeterRequest(GreeterRequest::Hello)
+                    Input::GreeterRequest(GREETER, GreeterRequest::Hello)
                 );
                 gate.borrow_mut().greeter_exited(GREETER);
                 assert_eq!(eof_within(&mut c, Duration::from_secs(2)).await, Some(true));
@@ -1115,6 +1165,97 @@ mod tests {
                     ),
                     "{second:?}"
                 );
+            })
+            .await;
+    }
+
+    #[test]
+    fn refusals_past_the_cap_are_not_recorded() {
+        let refusals = Refusals::new(Listener::Session);
+        for uid in 0..MAX_REFUSALS as u32 {
+            assert!(refusals.first(uid));
+        }
+        assert!(!refusals.first(5000), "a uid past the cap");
+        assert!(!refusals.first(5001));
+        assert!(!refusals.first(0));
+        assert_eq!(refusals.uids.borrow().len(), MAX_REFUSALS);
+    }
+
+    #[tokio::test]
+    async fn a_greeter_hello_flood_is_read_through_and_folded() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (_gate, mut rx) = serve_in(dir.path(), ids().0, "c1");
+                let mut c = UnixStream::connect(dir.path().join("greeter.sock"))
+                    .await
+                    .unwrap();
+                let flood = tokio::task::spawn_local(async move {
+                    for _ in 0..5000 {
+                        send(&mut c, &GreeterRequest::Hello).await;
+                    }
+                    send(&mut c, &GreeterRequest::CancelSession).await;
+                    c
+                });
+                let _c = tokio::time::timeout(Duration::from_secs(5), flood)
+                    .await
+                    .expect("the reader keeps reading while the queue is full")
+                    .unwrap();
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let mut heard = Vec::new();
+                while let Ok(Some(i)) =
+                    tokio::time::timeout(Duration::from_millis(200), rx.recv()).await
+                {
+                    heard.push(i);
+                }
+                assert!(heard.len() <= QUEUE + 2, "{} heard", heard.len());
+                assert_eq!(
+                    heard[heard.len() - 2..],
+                    [
+                        Input::GreeterRequest(GREETER, GreeterRequest::Hello),
+                        Input::GreeterRequest(GREETER, GreeterRequest::CancelSession),
+                    ]
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_hello_flooding_greeter_that_reads_nothing_is_dropped_once_its_queue_fills() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (gate, mut rx) = serve_in(dir.path(), ids().0, "c1");
+                let mut c = UnixStream::connect(dir.path().join("greeter.sock"))
+                    .await
+                    .unwrap();
+                let flood = tokio::task::spawn_local(async move {
+                    let hello = encode(&GreeterRequest::Hello).unwrap();
+                    while c.write_all(&hello).await.is_ok() {}
+                });
+                let big = GreeterReply::Error {
+                    kind: repriselogin::greeter::ErrorKind::Failed,
+                    text: "x".repeat(60_000),
+                };
+                let mut dropped = None;
+                for _ in 0..1000 {
+                    assert_eq!(
+                        next(&mut rx).await,
+                        Input::GreeterRequest(GREETER, GreeterRequest::Hello)
+                    );
+                    dropped = gate.borrow_mut().reply(&big);
+                    if dropped.is_some() {
+                        break;
+                    }
+                }
+                assert_eq!(dropped, Some(GREETER), "the greeter is dropped");
+                assert!(gate.borrow().link.is_none());
+                tokio::time::timeout(Duration::from_secs(5), flood)
+                    .await
+                    .expect("the dropped greeter's writes fail")
+                    .unwrap();
             })
             .await;
     }

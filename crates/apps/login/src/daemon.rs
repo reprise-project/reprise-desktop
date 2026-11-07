@@ -30,11 +30,13 @@ pub const MAX_USERS: usize = 100;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WorkerId(pub u32);
 
-/// What a worker is spawned for: `reprise-login --worker <mode> <user>`.
+/// What a worker is spawned for: `reprise-login --worker <mode> <user> [<autologin_user>]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Job {
     pub mode: Mode,
     pub user: String,
+    /// The configured autologin user, for an `Autologin` job only.
+    pub autologin_user: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,8 +50,9 @@ pub enum Timer {
 
 #[derive(Debug, PartialEq)]
 pub enum Input {
-    GreeterRequest(GreeterRequest),
-    GreeterGone,
+    /// A request from greeter worker `.0`'s connection; another greeter's is ignored.
+    GreeterRequest(WorkerId, GreeterRequest),
+    GreeterGone(WorkerId),
     /// Every message a worker sent before it exited arrives before its `WorkerExited`.
     Worker(WorkerId, FromWorker),
     /// The worker process exited, whatever its status: a greeter that was not told to leave
@@ -301,10 +304,7 @@ impl Daemon {
                     let worker = self.next_worker();
                     out.push(Effect::Spawn {
                         worker,
-                        job: Job {
-                            mode: Mode::Autologin,
-                            user: user.clone(),
-                        },
+                        job: self.job(Mode::Autologin, &user),
                     });
                     send_start(worker, vt, &mut out);
                     self.autologin = Some(Autologin { worker, user, vt });
@@ -330,8 +330,11 @@ impl Daemon {
     pub fn handle(&mut self, now: Instant, world: &World, input: Input) -> Vec<Effect> {
         let mut out = Vec::new();
         match input {
-            Input::GreeterRequest(request) => self.greeter_request(world, request, &mut out),
-            Input::GreeterGone => self.greeter_gone(&mut out),
+            Input::GreeterRequest(w, request) if self.is_greeter(w) => {
+                self.greeter_request(world, request, &mut out)
+            }
+            Input::GreeterGone(w) if self.is_greeter(w) => self.greeter_gone(&mut out),
+            Input::GreeterRequest(..) | Input::GreeterGone(_) => {}
             Input::Worker(worker, msg) => self.worker_message(now, worker, msg, &mut out),
             Input::WorkerExited(worker) => self.worker_exited(worker, &mut out),
             Input::Session {
@@ -373,17 +376,30 @@ impl Daemon {
         out
     }
 
+    /// A job for `mode` and `user`; an autologin job names the configured user apart from
+    /// `user`, for the worker to check.
+    fn job(&self, mode: Mode, user: &str) -> Job {
+        Job {
+            mode,
+            user: user.into(),
+            autologin_user: (mode == Mode::Autologin)
+                .then(|| self.config.autologin_user.clone())
+                .flatten(),
+        }
+    }
+
     fn next_worker(&mut self) -> WorkerId {
         let id = WorkerId(self.next_worker);
         self.next_worker += 1;
         id
     }
 
-    /// With no greeter of this daemon running, a request has nobody to answer and is ignored.
+    /// Whether `worker` is the running greeter's; nobody answers another greeter's input.
+    fn is_greeter(&self, worker: WorkerId) -> bool {
+        self.greeter.as_ref().is_some_and(|g| g.worker == worker)
+    }
+
     fn greeter_request(&mut self, world: &World, request: GreeterRequest, out: &mut Vec<Effect>) {
-        if self.greeter.is_none() {
-            return;
-        }
         match request {
             GreeterRequest::Hello => {
                 let greeting = self.greeting(world);
@@ -401,10 +417,7 @@ impl Daemon {
                 let worker = self.next_worker();
                 out.push(Effect::Spawn {
                     worker,
-                    job: Job {
-                        mode,
-                        user: user.clone(),
-                    },
+                    job: self.job(mode, &user),
                 });
                 self.conversation = Some(Conversation {
                     worker: Some(worker),
@@ -1022,10 +1035,7 @@ impl Daemon {
         let worker = self.next_worker();
         out.push(Effect::Spawn {
             worker,
-            job: Job {
-                mode: Mode::Greeter,
-                user: GREETER_USER.into(),
-            },
+            job: self.job(Mode::Greeter, GREETER_USER),
         });
         send_start(worker, GREETER_VT, out);
         self.greeter = Some(Greeter {
