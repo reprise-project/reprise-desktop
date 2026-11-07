@@ -448,6 +448,25 @@ fn going_down_keeps_the_form_busy_and_says_so() {
 }
 
 #[test]
+fn a_failure_after_going_down_gives_the_form_back() {
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let mut m = Logon::new(i, users(2), true, None);
+        m.admin(PowerAction::PowerOff);
+        typed(&mut m, "anna");
+        m.going_down();
+        m.fail(text::power_failed());
+        assert!(!m.busy, "{i:?}");
+        assert_eq!(m.message, Some(text::power_failed()), "{i:?}");
+        m.set_busy(true);
+        assert_eq!(
+            m.busy_text(),
+            text::verifying(),
+            "{i:?}: the next try verifies"
+        );
+    }
+}
+
+#[test]
 fn a_remote_note_reads_connected_remotely() {
     assert_eq!(UserNote::Remote.text(), "Connected remotely");
     assert_eq!(UserNote::LoggedOn.text(), "Logged on");
