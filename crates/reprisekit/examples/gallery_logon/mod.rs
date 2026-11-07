@@ -1,5 +1,4 @@
-//! The login screen: Classic's dialog empty, filled in, with a message, busy, with Caps Lock on
-//! and with the layout badge, then each interface's starting screen, at an 800x600 output,
+//! The login screen at 800x600: Classic's dialog states, then each interface's starting screen,
 //! written to `target/reprisekit-gallery-logon@<scale>.png`.
 
 use reprisekit::art::userpic;
