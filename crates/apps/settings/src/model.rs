@@ -206,7 +206,8 @@ pub struct Settings {
     pub low_space_percent: i64,
     /// `[remote_desktop] port`, `quality` (one of [`REMOTE_QUALITIES`]' values), `frame_rate`
     /// (30, 60, 120 or 144), `encoder` (one of [`REMOTE_ENCODERS`]' values), `sound`,
-    /// `lock_on_leave`, `lock_grace_s` (0 to 60), `capture_border` and `laptop_screen`.
+    /// `lock_on_leave`, `lock_grace_s` (0 to 60), `capture_border`, `laptop_screen` and
+    /// `second_client`.
     pub remote_port: i64,
     pub remote_quality: String,
     pub remote_frame_rate: i64,
@@ -216,6 +217,7 @@ pub struct Settings {
     pub remote_lock_grace_s: i64,
     pub remote_capture_border: bool,
     pub remote_laptop_screen: String,
+    pub remote_second_client: String,
 
     /// `[workspaces] count`, 1 to [`DESKTOPS_MAX`]; 1 turns virtual
     /// desktops off.
@@ -547,6 +549,7 @@ impl Settings {
             remote_lock_grace_s: remote.lock_grace_s.into(),
             remote_capture_border: remote.capture_border,
             remote_laptop_screen: remote.laptop_screen.name().into(),
+            remote_second_client: remote.second_client.name().into(),
 
             desktops: c.workspaces as i64,
             desktop_animation: c.workspace_animation.style.name().into(),

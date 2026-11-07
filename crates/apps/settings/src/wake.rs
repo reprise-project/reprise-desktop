@@ -114,6 +114,11 @@ impl SettingsApp {
             }
         }
         changed |= self.remote_done();
+        let mut quit = false;
+        if let Some(close) = self.login_done() {
+            changed = true;
+            quit = close;
+        }
         let cleared = match &self.clearing {
             Some(rx) => match take(rx) {
                 Ok(c) => c.map(pages::Clearing::Done),
@@ -164,6 +169,7 @@ impl SettingsApp {
             Reply::none()
         };
         reply.activate = activate;
+        reply.quit = quit;
         reply
     }
 
@@ -184,6 +190,10 @@ impl SettingsApp {
     /// Open `page` with the keyboard on control `focus` when named and live, else as a page opens,
     /// `focus` kept pending; a query hiding the page is cleared. True when anything moved.
     pub(crate) fn open_page(&mut self, page: Page, focus: Option<&str>) -> bool {
+        if self.absent.contains(&page) {
+            log::warn!("{} is not installed", page.label());
+            return false;
+        }
         self.pending_focus = None;
         let hidden = self
             .search_hits

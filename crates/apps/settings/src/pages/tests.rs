@@ -424,7 +424,12 @@ fn lines(s: &PropSheet, page: Page, id: &str) -> Vec<String> {
 #[test]
 fn every_spin_shows_its_unit() {
     use reprisekit::interface::Interface;
-    const COUNTS: [&str; 2] = ["desktops", super::system::REMOTE_PORT];
+    const COUNTS: [&str; 4] = [
+        "desktops",
+        super::system::REMOTE_PORT,
+        super::login::LOGIN_PORT,
+        super::login::LOGIN_SESSIONS,
+    ];
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
         let cm = reprisekit::interfaces::theme_for(i).look.controls();
         let s = under(i.as_str());

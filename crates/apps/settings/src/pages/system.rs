@@ -421,6 +421,10 @@ pub(super) const REMOTE_SCREEN_SHOW: &str = "remote_screen_show";
 pub(super) const REMOTE_SCREEN_LOCK: &str = "remote_screen_lock";
 /// Says why the Lock radio is greyed; empty while no external locker is set.
 pub(super) const REMOTE_SCREEN_NOTE: &str = "remote_screen_note";
+pub(super) const REMOTE_SECOND_JOIN: &str = "second_client_join";
+pub(super) const REMOTE_SECOND_REPLACE: &str = "second_client_replace";
+/// Stands in for [`REMOTE_ALLOW`] while the login manager runs remote logins.
+const MANAGED_NOTE: &str = "managed_note";
 pub(super) const LOCKER_NOTE: &str = "Lock mode is off while an external screen locker is set.";
 /// The certificate's fingerprint: a read-only edit, so it can be selected and copied.
 const REMOTE_FINGERPRINT: &str = "fingerprint";
@@ -429,7 +433,7 @@ const CLIENTS: &str = "clients";
 pub const REMOTE_DISCONNECT: &str = "disconnect";
 
 /// What greys with the switch off; New Certificate and Disconnect also need the server answering.
-const REMOTE_CONTROLS: [&str; 21] = [
+const REMOTE_CONTROLS: [&str; 24] = [
     REMOTE_STATUS,
     ENCODER,
     "port_label",
@@ -451,42 +455,82 @@ const REMOTE_CONTROLS: [&str; 21] = [
     REMOTE_SCREEN_LOCK,
     "fingerprint_label",
     REMOTE_FINGERPRINT,
+    "second_client_label",
+    REMOTE_SECOND_JOIN,
+    REMOTE_SECOND_REPLACE,
 ];
 
+/// What greys while the login manager's port is used.
+const PORT_CONTROLS: [&str; 2] = ["port_label", REMOTE_PORT];
+
 const NEW_CERTIFICATE_W: i32 = 110;
+/// Where the second client's radios start, right of their label.
+const SECOND_CLIENT_X: i32 = X + 182;
 const LOCK_GRACE_W: i32 = 96;
 /// Where the encoder's column starts, right of the frame rate's and the sound check box's.
 const ENCODER_X: i32 = X + 224;
 const ENCODER_W: i32 = Area::MIN.w - (ENCODER_X - X);
 
-/// The Remote Desktop page as `status` and `enabled` (the server's unit) leave it; the host
-/// follows the server with [`show_remote`].
-pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
-    let mut items = vec![Item::check(
-        REMOTE_ALLOW,
-        X,
-        44,
-        "Allow remote &connections to this computer",
-    )];
-    items.extend(spin(
-        "port_label",
-        REMOTE_PORT,
-        a.right() - 86,
-        44,
-        32,
-        "&Port:",
-        (1024, 65535),
-    ));
-    items.extend([
-        Item::label_at(
-            REMOTE_NOTE,
-            X,
-            64,
-            a.w - 18,
-            "Turning this on or off takes effect at once.",
+/// The Remote Desktop page as `status` and `enabled` (the server's unit) leave it, laid out for
+/// the login manager when `machine` is given; the host follows the server with [`show_remote`].
+pub fn remote_desktop(
+    a: Area,
+    status: Option<&Status>,
+    enabled: bool,
+    machine: Option<&str>,
+) -> Form {
+    let port = |y| {
+        spin(
+            "port_label",
+            REMOTE_PORT,
+            a.right() - 86,
+            y,
+            32,
+            "&Port:",
+            (1024, 65535),
         )
-        .under_check(),
-        Item::label_at(REMOTE_STATUS, X, 80, a.w - 18, "").under_check(),
+    };
+    let mut items = Vec::new();
+    if machine.is_some() {
+        items.push(Item::label_at(
+            MANAGED_NOTE,
+            X,
+            44,
+            a.w,
+            "Remote logins to this computer are set on the Login Manager page.",
+        ));
+        items.extend(port(64));
+        items.extend([
+            Item::label_at(
+                REMOTE_NOTE,
+                X,
+                64,
+                a.w - 100,
+                "The login manager's port is used.",
+            ),
+            Item::label_at(REMOTE_STATUS, X, 80, a.w, ""),
+        ]);
+    } else {
+        items.push(Item::check(
+            REMOTE_ALLOW,
+            X,
+            44,
+            "Allow remote &connections to this computer",
+        ));
+        items.extend(port(44));
+        items.extend([
+            Item::label_at(
+                REMOTE_NOTE,
+                X,
+                64,
+                a.w - 18,
+                "Turning this on or off takes effect at once.",
+            )
+            .under_check(),
+            Item::label_at(REMOTE_STATUS, X, 80, a.w - 18, "").under_check(),
+        ]);
+    }
+    items.extend([
         Item::label_at("fingerprint_label", X, 104, 126, "&Fingerprint (SHA-256):"),
         edit(
             REMOTE_FINGERPRINT,
@@ -546,7 +590,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         Item::label_at("clients_label", X, 252, 200, "Connected computers:"),
         Item::new(
             CLIENTS,
-            Rect::new(X, 268, a.w - BUTTON_W - 6, 3 * listbox::ROW_H + 4),
+            Rect::new(X, 268, a.w - BUTTON_W - 6, 2 * listbox::ROW_H + 4),
             Control::ListBox {
                 list: ListBox::new(Vec::new(), None),
                 icons: Vec::new(),
@@ -556,7 +600,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         Item::check(
             REMOTE_LOCK_ON_LEAVE,
             X,
-            329,
+            312,
             "&Lock this computer when the last one disconnects",
         ),
     ]);
@@ -566,7 +610,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         Item::label_at(
             "lock_grace_label",
             X,
-            350,
+            333,
             grace_x - 6 - X - 18,
             "&Wait before locking on a screen change:",
         )
@@ -574,7 +618,7 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         Item::combo(
             REMOTE_LOCK_GRACE,
             grace_x,
-            346,
+            329,
             LOCK_GRACE_W,
             &graces,
             graces.len(),
@@ -582,47 +626,82 @@ pub fn remote_desktop(a: Area, status: Option<&Status>, enabled: bool) -> Form {
         Item::check(
             REMOTE_BORDER,
             X,
-            372,
+            355,
             "Show a red &border while a remote computer is connected",
         ),
         Item::label_at(
             "remote_screen_label",
             X,
-            394,
+            377,
             a.w,
             "While connected, this computer's screen:",
         ),
-        radio(REMOTE_SCREEN_SHOW, "remote_screen", X, 412, "Stays &on"),
+        radio(REMOTE_SCREEN_SHOW, "remote_screen", X, 395, "Stays &on"),
         radio(
             REMOTE_SCREEN_LOCK,
             "remote_screen",
             X + 80,
-            412,
+            395,
             "Loc&ks and fits the remote window",
         ),
-        Item::label_at(REMOTE_SCREEN_NOTE, X + 18, 430, a.w - 18, ""),
+        Item::label_at(REMOTE_SCREEN_NOTE, X + 18, 413, a.w - 18, ""),
+        Item::label_at(
+            "second_client_label",
+            X,
+            431,
+            SECOND_CLIENT_X - X - 6,
+            "When another client connects:",
+        ),
+        radio(
+            REMOTE_SECOND_JOIN,
+            "second_client",
+            SECOND_CLIENT_X,
+            431,
+            "&Join it",
+        ),
+        radio(
+            REMOTE_SECOND_REPLACE,
+            "second_client",
+            SECOND_CLIENT_X + 70,
+            431,
+            "Replace &it",
+        ),
     ]);
     let mut page = Form::new(items);
-    show_remote(&mut page, status, enabled, None, None);
+    show_remote(&mut page, status, enabled, None, None, machine);
     page
 }
 
+/// Whether `page` was built for the login manager's remote logins.
+pub fn managed(page: &Form) -> bool {
+    page.item(MANAGED_NOTE).is_some()
+}
+
 /// Put the server's state on the page in place, so an open drop-down survives an unchanged poll;
-/// encoders the server lacks grey. Changed clients keep `keep` selected, else the first.
+/// `machine` (on a [`managed`] page) lights it whatever the unit says. Clients keep `keep` picked.
 pub fn show_remote(
     page: &mut Form,
     status: Option<&Status>,
     enabled: bool,
     address: Option<&str>,
     keep: Option<&str>,
+    machine: Option<&str>,
 ) {
+    let on = enabled || machine.is_some();
     page.set_check(REMOTE_ALLOW, enabled);
     page.set_enabled(REMOTE_ALLOW, true);
     for id in REMOTE_CONTROLS {
-        page.set_enabled(id, enabled);
+        page.set_enabled(id, on);
     }
-    page.set_text(REMOTE_STATUS, &remote_status(status, enabled, address));
-    let shown = status.filter(|_| enabled);
+    for id in PORT_CONTROLS {
+        page.set_enabled(id, enabled && machine.is_none());
+    }
+    let line = match machine {
+        Some(_) => String::new(),
+        None => remote_status(status, enabled, address),
+    };
+    page.set_text(REMOTE_STATUS, &line);
+    let shown = status.filter(|_| on);
     let encoder = shown.map_or(String::new(), |s| format!("Video: {}", s.encoder));
     page.set_text(ENCODER, &encoder);
     let offered = shown.map_or(&[][..], |s| s.encoders.as_slice());
@@ -631,7 +710,7 @@ pub fn show_remote(
             item.greyed = *value != "auto" && !offered.iter().any(|o| o == value);
         }
     }
-    let fingerprint = shown.map_or("", |s| s.fingerprint.as_str());
+    let fingerprint = machine.unwrap_or(shown.map_or("", |s| s.fingerprint.as_str()));
     if let Some(Control::Edit { edit, first, .. }) =
         page.item_mut(REMOTE_FINGERPRINT).map(|i| &mut i.control)
         && edit.text != fingerprint
@@ -662,7 +741,7 @@ pub fn show_remote(
         }
         picked = list.selected.is_some();
     }
-    page.set_enabled(REMOTE_REGENERATE, shown.is_some());
+    page.set_enabled(REMOTE_REGENERATE, shown.is_some() && machine.is_none());
     page.set_enabled(REMOTE_DISCONNECT, picked);
     follow_lock(page);
     follow_screen(page);
