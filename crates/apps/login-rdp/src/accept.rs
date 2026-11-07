@@ -3,7 +3,6 @@
 
 use std::cell::RefCell;
 use std::fmt;
-use std::hint::black_box;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -25,7 +24,7 @@ use ironrdp_pdu::rdp::ClientInfoPdu;
 use ironrdp_pdu::x224::X224;
 use ironrdp_tokio::bytes::{Bytes, BytesMut};
 use ironrdp_tokio::{FramedWrite, NetworkClient, TokioFramed};
-use repriselogin::account::nt_hash;
+use repriselogin::account::{nt_hash, same_hash};
 use repriselogin::front::{FrontEvent, FrontRequest, NlaUser, Secret};
 use repriselogin::handover::Step;
 use reprisetls::cert::Identity;
@@ -613,12 +612,6 @@ fn credssp_users(users: &[NlaUser], host: &str) -> Vec<CredsspAuthIdentity> {
         }
     }
     list
-}
-
-/// Compares two NT hashes in a time that depends on their length only.
-fn same_hash(a: &str, b: &str) -> bool {
-    let (a, b) = (black_box(a.as_bytes()), black_box(b.as_bytes()));
-    a.len() == b.len() && black_box(a.iter().zip(b).fold(0, |d, (x, y)| d | (x ^ y))) == 0
 }
 
 /// The recording travels to the session in one frame, so a large one is refused here.
