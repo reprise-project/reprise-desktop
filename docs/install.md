@@ -113,9 +113,10 @@ The logs:
     journalctl -b _UID=$(id -u reprise-greeter)
 
 The first holds reprise-login and its PAM workers, the second the login
-screen itself. A session reprise-login starts writes its output, the
-compositor's log included, under `reprise-session`:
-`journalctl --user -b -t reprise-session`.
+screen itself. In a session reprise-login starts, the compositor logs
+under `reprise` as it does under any login manager (`journalctl --user -b
+-t reprise`); output written before its log opens goes under
+`reprise-session`.
 
 A build installed by hand needs `/usr/bin/reprise-login` (the unit's
 `ExecStart`), the unit in `/usr/lib/systemd/system/`, the three PAM files
