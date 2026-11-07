@@ -216,7 +216,7 @@ impl Run {
     }
 
     /// Recovers nothing and starts, which brings up the greeter as worker 1.
-    fn booted() -> Run {
+    pub(super) fn booted() -> Run {
         Run::up(LoginConfig::default(), Remembered::default())
     }
 
@@ -230,7 +230,7 @@ impl Run {
 
     /// Recovers anna's session on VT 7 and starts; her Switch User brings up the greeter as
     /// worker 1.
-    fn anna_switched(remembered: Remembered) -> Run {
+    pub(super) fn anna_switched(remembered: Remembered) -> Run {
         let mut run = Run::new(LoginConfig::default(), remembered);
         run.recover(vec![anna_on_7()]);
         assert_eq!(run.start(), vec![]);
@@ -899,15 +899,6 @@ fn a_removal_that_still_names_the_removed_session_active_brings_the_greeter() {
 }
 
 #[test]
-fn power_with_another_session_running_is_refused() {
-    let mut run = Run::anna_switched(Remembered::default());
-    let effects = run.greeter(GreeterRequest::Power {
-        action: PowerAction::PowerOff,
-    });
-    assert!(is_refused(&effects), "{effects:?}");
-}
-
-#[test]
 fn power_with_no_session_powers_off_and_a_failure_is_logged() {
     let mut run = Run::booted();
     assert_eq!(
@@ -1314,16 +1305,6 @@ fn an_autologin_that_never_starts_times_out_to_the_login_screen() {
     );
     assert_eq!(run.exited(1), vec![Effect::Disallocate(7)]);
     assert_eq!(run.exited(2), greeter_spawn(3));
-}
-
-#[test]
-fn power_with_a_text_or_ssh_login_running_is_refused() {
-    let mut run = Run::booted();
-    run.world.user_sessions = 1;
-    let effects = run.greeter(GreeterRequest::Power {
-        action: PowerAction::Reboot,
-    });
-    assert!(is_refused(&effects), "{effects:?}");
 }
 
 #[test]
