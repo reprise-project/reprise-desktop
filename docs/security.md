@@ -188,7 +188,9 @@ The sockets live in `/run/reprise-login` (0755, root):
   Without the password PAM wants it can start no session. The
   `reprise-login` PAM service refuses root before it checks a password, so
   the login screen can't test root's password, and every failed login
-  waits the same 2 s fail delay. An account that PAM resolves to uid 0 is
+  waits the same 2 s fail delay. A failed password gets one fixed message
+  unless PAM sent notes of its own; PAM's refusal of an account comes in
+  its words only after the password was right. An account that PAM resolves to uid 0 is
   still refused by the daemon with a wrong password's message, and a login
   with no request from the login screen for 5 minutes is cancelled.
 - `session.sock` is 0666. A connection is accepted only when the peer's
