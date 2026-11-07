@@ -1,7 +1,7 @@
 use super::*;
 use crate::art::userpic;
 use crate::interface::Interface;
-use crate::logon::{LogonKey, LogonUser, Part, UserNote, hit, text as strings};
+use crate::logon::{LogonKey, LogonUser, Part, PowerAction, UserNote, hit, text as strings};
 use crate::pointer::Interaction;
 use crate::textedit::Preedit;
 
@@ -67,7 +67,37 @@ fn states() -> Vec<(&'static str, Logon)> {
         ("message", message),
         ("busy", busy),
         ("power hot", power_hot),
+        ("admin shut down", admin(PowerAction::PowerOff, "")),
+        ("admin restart filled", admin(PowerAction::Reboot, "anna")),
+        ("shutting down", going_down()),
+        ("remote note", remote()),
     ]
+}
+
+/// The administrator's form for `action`, with `name` typed and a password.
+fn admin(action: PowerAction, name: &str) -> Logon {
+    let mut m = tile();
+    m.admin(action);
+    if !name.is_empty() {
+        m.key(LogonKey::Text(name));
+        m.key(LogonKey::Enter);
+        m.key(LogonKey::Text("hunter2"));
+    }
+    m
+}
+
+fn going_down() -> Logon {
+    let mut m = admin(PowerAction::PowerOff, "anna");
+    m.going_down();
+    m
+}
+
+/// The tiles with the first user connected remotely and the second logged on here.
+fn remote() -> Logon {
+    let mut m = tile();
+    m.users[0].note = Some(UserNote::Remote);
+    m.click(Part::SwitchUser);
+    m
 }
 
 /// The tile after a wrong password and the error screen's OK.

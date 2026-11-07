@@ -365,3 +365,127 @@ fn the_power_menu_arrow_is_named_for_its_options() {
         .and_then(|(_, n)| n.label().map(str::to_owned));
     assert_eq!(label.as_deref(), Some("Shut down options"));
 }
+
+#[test]
+fn the_admin_heading_differs_from_the_login_heading() {
+    use crate::interfaces::logon::{draw_logon, logon_layout};
+    let output = Rect::new(0, 0, 1024, 768);
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let theme = crate::interfaces::theme_for(i);
+        let text = TextRenderer::load(&theme.fonts);
+        let drawn = |m: &Logon| {
+            let l = logon_layout(m, &theme, &text, output);
+            let mut c = Canvas::new(output.width as u32, output.height as u32);
+            draw_logon(&mut c, m, &l, &theme, text.for_output(1), 1);
+            (l, c.pixels)
+        };
+        let login = Logon::new(i, Vec::new(), false, None);
+        let mut off = login.clone();
+        off.admin(PowerAction::PowerOff);
+        let mut reboot = login.clone();
+        reboot.admin(PowerAction::Reboot);
+        let ((l0, c0), (l1, c1), (l2, c2)) = (drawn(&login), drawn(&off), drawn(&reboot));
+        assert_eq!(l0, l1, "{i:?}: the form keeps the login form's parts");
+        assert_eq!(l1, l2, "{i:?}: either action, the same parts");
+        assert_ne!(c0, c1, "{i:?}: the administrator's heading is drawn");
+        assert_ne!(
+            c1, c2,
+            "{i:?}: shutting down and restarting read differently"
+        );
+    }
+}
+
+#[test]
+fn the_admin_form_starts_empty_and_escape_leaves_it() {
+    for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
+        let mut m = Logon::new(i, users(2), true, Some("user1"));
+        m.fail(text::incorrect());
+        m.admin(PowerAction::PowerOff);
+        assert_eq!(m.purpose, Purpose::Admin(PowerAction::PowerOff), "{i:?}");
+        assert_eq!(
+            (
+                m.screen,
+                m.name.text.as_str(),
+                m.focus,
+                m.message.as_deref()
+            ),
+            (Screen::Typed, "", Part::Name, None),
+            "{i:?}: the typed form, empty, with no old message"
+        );
+        assert_eq!(m.heading(), Some(text::admin_shut_down()), "{i:?}");
+        typed(&mut m, "anna");
+        assert_eq!(m.key(LogonKey::Escape), Some(LogonAction::Cancel), "{i:?}");
+        assert_eq!((m.purpose, m.heading()), (Purpose::Login, None), "{i:?}");
+        let start = match i {
+            Interface::Classic => Screen::Typed,
+            _ => Screen::Tiles,
+        };
+        assert_eq!(m.screen, start, "{i:?}");
+        assert_eq!(m.name.text, "", "{i:?}: the administrator's name is gone");
+    }
+    let mut g = Logon::new(Interface::Glass, users(2), true, None);
+    g.admin(PowerAction::Reboot);
+    assert_eq!(g.click(Part::SwitchUser), Some(LogonAction::Cancel));
+    assert_eq!((g.purpose, g.screen), (Purpose::Login, Screen::Tiles));
+    let mut c = Logon::new(Interface::Classic, Vec::new(), false, None);
+    c.admin(PowerAction::Reboot);
+    assert_eq!(c.click(Part::Cancel), Some(LogonAction::Cancel));
+    assert_eq!(c.purpose, Purpose::Login);
+}
+
+#[test]
+fn going_down_keeps_the_form_busy_and_says_so() {
+    let mut m = Logon::new(Interface::Classic, Vec::new(), false, None);
+    assert_eq!(m.busy_text(), text::verifying());
+    m.admin(PowerAction::Reboot);
+    m.going_down();
+    assert!(m.busy);
+    assert_eq!(m.busy_text(), text::restarting());
+    assert_eq!(m.key(LogonKey::Escape), None, "nothing leaves it");
+    m.admin(PowerAction::PowerOff);
+    m.going_down();
+    assert_eq!(m.busy_text(), text::shutting_down());
+}
+
+#[test]
+fn a_remote_note_reads_connected_remotely() {
+    assert_eq!(UserNote::Remote.text(), "Connected remotely");
+    assert_eq!(UserNote::LoggedOn.text(), "Logged on");
+    let mut us = users(2);
+    us[0].note = Some(UserNote::LoggedOn);
+    us[1].note = Some(UserNote::Remote);
+    let m = Logon::new(Interface::Glass, us, true, None);
+    let l = LogonLayout {
+        output: Rect::new(0, 0, 1024, 768),
+        parts: vec![
+            (Part::Tile(0), Rect::new(100, 100, 100, 100)),
+            (Part::Tile(1), Rect::new(300, 100, 100, 100)),
+        ],
+        dialog: None,
+    };
+    let mut tree = Tree::new(ax::node(Role::Window, l.output));
+    access(&m, &l, &mut tree);
+    let notes: Vec<Option<String>> = tree
+        .nodes()
+        .filter(|(_, n)| n.role() == Role::ListItem)
+        .map(|(_, n)| n.description().map(str::to_owned))
+        .collect();
+    assert_eq!(
+        notes,
+        [Some("Logged on".into()), Some("Connected remotely".into())]
+    );
+}
+
+#[test]
+fn the_admin_heading_is_read_out_with_the_form() {
+    let mut m = Logon::new(Interface::Classic, Vec::new(), false, None);
+    m.admin(PowerAction::PowerOff);
+    let l = classic_layout(&m);
+    let mut tree = Tree::new(ax::node(Role::Window, l.output));
+    access(&m, &l, &mut tree);
+    let said = tree
+        .nodes()
+        .find(|(_, n)| n.role() == Role::Label)
+        .and_then(|(_, n)| n.value().map(str::to_owned));
+    assert_eq!(said, Some(text::admin_shut_down()));
+}

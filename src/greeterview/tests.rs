@@ -4,6 +4,7 @@ use crate::config::{Action, Keybind};
 use crate::harness::Harness;
 use crate::keys::{KEY_Delete, KEY_r, MOD_ALT, MOD_CTRL};
 use repriselogin::greeter::ErrorKind;
+use zeroize::Zeroizing;
 
 const RIGHT: u32 = 0x111;
 const LEFTMETA: u32 = 125;

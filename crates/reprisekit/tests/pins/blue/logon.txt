@@ -10,6 +10,14 @@ Blue busy @1 2a7966dbf67beaf8
 Blue busy @2 078049634b53d483
 Blue typed @1 06c620a347c75592
 Blue typed @2 e934265d62e00a9b
+Blue admin shut down @1 93fa52138fe46c96
+Blue admin shut down @2 5d60ba4ccaacf356
+Blue admin restart filled @1 ac4111d921deda77
+Blue admin restart filled @2 779afa83258749f0
+Blue shutting down @1 8fabc4c204e8d810
+Blue shutting down @2 8ff28da33e1ed9d2
+Blue remote note @1 51e873e9e613f75b
+Blue remote note @2 983fdcde3248286c
 Olive tiles at rest @1 a2bf134a9680b13f
 Olive tiles at rest @2 4c2cfab3b9575e19
 Olive tile hot @1 ccef92cf03c14145
@@ -22,6 +30,14 @@ Olive busy @1 296dfc67bb350054
 Olive busy @2 deb3f496e7c01239
 Olive typed @1 f8d9abff90beabdb
 Olive typed @2 77f466c709055e4d
+Olive admin shut down @1 66d889b067c4f478
+Olive admin shut down @2 c87e926b27cb3a1e
+Olive admin restart filled @1 4ee65fbe8ac6c321
+Olive admin restart filled @2 1c4e72bd4235a529
+Olive shutting down @1 cb681026e3258e62
+Olive shutting down @2 4daddebc8ef4161e
+Olive remote note @1 2b012377b92f6f1d
+Olive remote note @2 a7120a5646d5628b
 Silver tiles at rest @1 b40ad42a3dca8a8b
 Silver tiles at rest @2 058ea8054cda2073
 Silver tile hot @1 1139b559a82c2d53
@@ -34,6 +50,14 @@ Silver busy @1 86e3d4bf5b0e28b4
 Silver busy @2 ec89b089e082fd2c
 Silver typed @1 e1e939ea2ae26f3d
 Silver typed @2 18fcf02b40d2c8ea
+Silver admin shut down @1 bef47c309fcd6f0f
+Silver admin shut down @2 365d96827325db66
+Silver admin restart filled @1 f1c9821a85427acc
+Silver admin restart filled @2 94fa42379366c0c0
+Silver shutting down @1 593d7eccc6c8b16c
+Silver shutting down @2 1ada8000259a6a65
+Silver remote note @1 4b222bf94a848f56
+Silver remote note @2 49fa47aefb5158a7
 Slate tiles at rest @1 ef402b80e3dcb1ef
 Slate tiles at rest @2 7cfc71afb8d8bc35
 Slate tile hot @1 333a8bb625eb3e67
@@ -46,6 +70,14 @@ Slate busy @1 51d6c92d99e94ae7
 Slate busy @2 8a211d12c98f813a
 Slate typed @1 68dd8261d0501aaa
 Slate typed @2 78006698b3c95a0b
+Slate admin shut down @1 4723b19a5f8dda6b
+Slate admin shut down @2 a329367b1813dd93
+Slate admin restart filled @1 b2fb338d866dfaa3
+Slate admin restart filled @2 4a48c2a8bcf8f90a
+Slate shutting down @1 d8f434bf7134f21a
+Slate shutting down @2 d6aa2a7dc18fcd52
+Slate remote note @1 8e272005611dad66
+Slate remote note @2 aae2a34f512d1a64
 Sapphire tiles at rest @1 ce2435f4aef2589a
 Sapphire tiles at rest @2 72fb38697eba3ab5
 Sapphire tile hot @1 f9066bea0d8fcf11
@@ -58,6 +90,14 @@ Sapphire busy @1 53c4046e9352a4cb
 Sapphire busy @2 c7933f82018bd48b
 Sapphire typed @1 2f9d82a4a19c55c8
 Sapphire typed @2 1381c12dd7c94219
+Sapphire admin shut down @1 b342c2375a2cad83
+Sapphire admin shut down @2 c253e76915748e91
+Sapphire admin restart filled @1 6c71d0c2b8c31d9c
+Sapphire admin restart filled @2 745767898ca637b1
+Sapphire shutting down @1 bb65de28a7a6a5ec
+Sapphire shutting down @2 3717ada5eb308678
+Sapphire remote note @1 4aff5d08862136fa
+Sapphire remote note @2 dec1b80f77420efe
 Obsidian tiles at rest @1 135ec7815b0a1ec2
 Obsidian tiles at rest @2 0d233aaa3ea21f5c
 Obsidian tile hot @1 d60f91d2ab2bf6a6
@@ -70,6 +110,14 @@ Obsidian busy @1 b8e40d7e3450b631
 Obsidian busy @2 2544eaf0f10ddc8a
 Obsidian typed @1 32a0dae49bcd7424
 Obsidian typed @2 f2d77b4937ee7641
+Obsidian admin shut down @1 1366a4979e57e392
+Obsidian admin shut down @2 3cf17aafadc6ad6f
+Obsidian admin restart filled @1 b93187f3735a6954
+Obsidian admin restart filled @2 b2bf21b6afeeb83c
+Obsidian shutting down @1 760af97bc420c5fc
+Obsidian shutting down @2 4e1deca57b0b7fbb
+Obsidian remote note @1 55056935c462ac0c
+Obsidian remote note @2 0b6e3e4d642463bd
 Ember tiles at rest @1 7054d3cd52741dba
 Ember tiles at rest @2 f30ef269dcb3972d
 Ember tile hot @1 58913011e570e8ea
@@ -82,6 +130,14 @@ Ember busy @1 2bfe3a1f46d82010
 Ember busy @2 ef227450cec7a8c9
 Ember typed @1 7826db54a8520451
 Ember typed @2 ddddddf2fc364530
+Ember admin shut down @1 676f0393eb74441e
+Ember admin shut down @2 7933e4ed3978e419
+Ember admin restart filled @1 aa5f84ad39704bd5
+Ember admin restart filled @2 b60c497d41f6db4d
+Ember shutting down @1 de63a932c9a1a988
+Ember shutting down @2 6e1a66c42c586387
+Ember remote note @1 6b173e3a25a498da
+Ember remote note @2 f230b4736369a006
 Cobalt tiles at rest @1 c5d7c320f81fcbaf
 Cobalt tiles at rest @2 d32188b682f48e13
 Cobalt tile hot @1 065cb78e454728e5
@@ -94,6 +150,14 @@ Cobalt busy @1 595958dadf349ca2
 Cobalt busy @2 f8866e129379c18c
 Cobalt typed @1 81a7bb8f54ab8b26
 Cobalt typed @2 e4a0cc4c11009cb8
+Cobalt admin shut down @1 c2cec61121b48100
+Cobalt admin shut down @2 637ec3e0276a4362
+Cobalt admin restart filled @1 8d2c94e1e48d65ee
+Cobalt admin restart filled @2 426ab7f511e4b0f0
+Cobalt shutting down @1 d487cc0e2f309ca2
+Cobalt shutting down @2 e546d132f76b367a
+Cobalt remote note @1 d33fd25204de2faa
+Cobalt remote note @2 e01ff773b7231b8a
 Carbon tiles at rest @1 bcc65175fe56636a
 Carbon tiles at rest @2 95420ded3adf4ca0
 Carbon tile hot @1 a862faf33d3f2079
@@ -106,6 +170,14 @@ Carbon busy @1 21c129e0ebb08886
 Carbon busy @2 6751391388b762f7
 Carbon typed @1 833b10f341a4b593
 Carbon typed @2 4918e0467e3f24e3
+Carbon admin shut down @1 c9a3a5c829db58c7
+Carbon admin shut down @2 80b0a13075b7204c
+Carbon admin restart filled @1 c56db273a30d0dc5
+Carbon admin restart filled @2 a50bd85621277c7c
+Carbon shutting down @1 a8ece879bb1d7bb8
+Carbon shutting down @2 5264e5dc407b80bc
+Carbon remote note @1 1899a8443330e3c4
+Carbon remote note @2 787c7bf8119000cd
 Steel tiles at rest @1 5c0e3ec110b61b65
 Steel tiles at rest @2 724d378ec086619d
 Steel tile hot @1 0be1864efb293e21
@@ -118,3 +190,11 @@ Steel busy @1 2e74619380bd4d7f
 Steel busy @2 536834dd9d2d1524
 Steel typed @1 fdd2b78934eace65
 Steel typed @2 ad9a5ebce890eca5
+Steel admin shut down @1 d29abd4032a8f8b6
+Steel admin shut down @2 0909d59358298156
+Steel admin restart filled @1 0b64991e13552a27
+Steel admin restart filled @2 1d394270498e9531
+Steel shutting down @1 4ecf80c1d57e71d3
+Steel shutting down @2 d6b93753ef05ae6d
+Steel remote note @1 39615b8d4c26c18f
+Steel remote note @2 1128b84754e03bbd

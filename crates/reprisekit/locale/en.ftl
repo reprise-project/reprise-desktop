@@ -134,6 +134,11 @@ logon-power-off = Shut down
 logon-verifying = Verifying...
 logon-power-options = Shut down options
 logon-user-name-cue = User name
+logon-admin-shut-down = Other people are logged on to this computer. Type an administrator's user name and password to shut it down.
+logon-admin-restart = Other people are logged on to this computer. Type an administrator's user name and password to restart it.
+logon-shutting-down = Shutting down...
+logon-restarting = Restarting...
+logon-remote = Connected remotely
 
 ## Calculator
 calc-degrees = &Degrees

@@ -10,3 +10,9 @@ caps lock @1 b7413fad854dc187
 caps lock @2 d0d78ad76a643ad3
 layout badge @1 474ecb23539233c2
 layout badge @2 36137cb4012c88be
+admin shut down @1 827524af603cb5e3
+admin shut down @2 edd09b2878194598
+admin restart filled @1 3bf6bd56acae3cab
+admin restart filled @2 0e1c0402280ba25b
+shutting down @1 55e32604c837274a
+shutting down @2 54bacdf473c91800
