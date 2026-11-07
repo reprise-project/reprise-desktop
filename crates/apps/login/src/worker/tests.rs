@@ -612,21 +612,38 @@ impl LoginPam for FakePam {
     fn open_session(&mut self) -> Result<(), PamError> {
         self.call("open_session")
     }
+
+    fn close_session(&mut self) -> Result<(), PamError> {
+        self.call("close_session")
+    }
 }
 
+/// The VTs' calls; `own` goes into PAM's log, so its place among PAM's calls shows.
 #[derive(Default)]
-struct FakeVts(Vec<String>);
+struct FakeVts {
+    vts: Vec<String>,
+    calls: Calls,
+    own_fails: bool,
+}
 
 impl Vts for FakeVts {
     type Held = ();
 
     fn hold(&mut self, vt: u16) -> std::io::Result<()> {
-        self.0.push(format!("hold({vt})"));
+        self.vts.push(format!("hold({vt})"));
         Ok(())
     }
 
+    fn own(&mut self, _: &()) -> std::io::Result<()> {
+        self.calls.borrow_mut().push("own".into());
+        match self.own_fails {
+            true => Err(std::io::ErrorKind::PermissionDenied.into()),
+            false => Ok(()),
+        }
+    }
+
     fn activate_and_wait(&mut self, vt: u16, _: &dyn Fn() -> bool) -> std::io::Result<()> {
-        self.0.push(format!("activate_and_wait({vt})"));
+        self.vts.push(format!("activate_and_wait({vt})"));
         Ok(())
     }
 }
@@ -644,6 +661,16 @@ struct Ran {
 /// Runs `login` in `mode` against the fakes, with `queued` waiting for the worker and the
 /// daemon's side closed after them.
 fn run_login(mode: Mode, queued: Vec<ToWorker>, prompt: Option<(AuthKind, &'static str)>) -> Ran {
+    run_login_with(mode, queued, prompt, false)
+}
+
+/// `run_login` with `vt::own` failing when `own_fails`.
+fn run_login_with(
+    mode: Mode,
+    queued: Vec<ToWorker>,
+    prompt: Option<(AuthKind, &'static str)>,
+    own_fails: bool,
+) -> Ran {
     let (mut worker, mut daemon) = UnixStream::pair().unwrap();
     for m in &queued {
         write_msg(&mut daemon, m).unwrap();
@@ -659,7 +686,11 @@ fn run_login(mode: Mode, queued: Vec<ToWorker>, prompt: Option<(AuthKind, &'stat
             groups: Vec::new(),
         })
     };
-    let mut vts = FakeVts::default();
+    let mut vts = FakeVts {
+        calls: calls.clone(),
+        own_fails,
+        ..FakeVts::default()
+    };
     let lookup = |_: &str| Ok(Some(anna()));
     let (status, env) = match login(mode, &mut worker, &NEVER, start, lookup, &mut vts) {
         Login::Done(status) => (Some(status), Vec::new()),
@@ -674,7 +705,7 @@ fn run_login(mode: Mode, queued: Vec<ToWorker>, prompt: Option<(AuthKind, &'stat
     Ran {
         status,
         pam,
-        vts: vts.0,
+        vts: vts.vts,
         env,
         sent,
     }
@@ -712,7 +743,8 @@ fn rhost_is_set_for_authentication_and_cleared_before_the_session_opens() {
             "acct_mgmt",
             "set_item_rhost(None)",
             "setcred",
-            "open_session"
+            "open_session",
+            "own"
         ]
     );
     assert_eq!(
@@ -759,6 +791,57 @@ fn a_background_start_never_activates_the_vt() {
             "{want:?}"
         );
     }
+}
+
+#[test]
+fn the_worker_owns_the_vt_once_the_session_opened() {
+    let start = ToWorker::Start {
+        vt: 7,
+        background: false,
+    };
+    let ran = run_login(
+        Mode::Login,
+        vec![begin(None), answer("pw"), start],
+        PASSWORD,
+    );
+    assert_eq!(ran.status, None, "the session opened: {:?}", ran.sent);
+    assert_eq!(
+        ran.pam,
+        [
+            "authenticate",
+            "acct_mgmt",
+            "setcred",
+            "open_session",
+            "own"
+        ],
+        "no process a session module forks gets the VT as its terminal"
+    );
+}
+
+#[test]
+fn a_vt_the_worker_cannot_own_closes_the_session() {
+    let start = ToWorker::Start {
+        vt: 7,
+        background: true,
+    };
+    let queued = vec![begin(Some("192.0.2.7")), answer("pw"), start];
+    let ran = run_login_with(Mode::Remote, queued, PASSWORD, true);
+    assert_eq!(ran.status, Some(1));
+    assert_eq!(
+        ran.pam[ran.pam.len() - 4..],
+        ["open_session", "own", "close_session", "delete_cred"]
+    );
+    assert!(
+        matches!(
+            ran.sent.last(),
+            Some(FromWorker::Failed {
+                kind: ErrorKind::Failed,
+                ..
+            })
+        ),
+        "{:?}",
+        ran.sent
+    );
 }
 
 #[test]
@@ -883,8 +966,19 @@ fn in_child(body: impl FnOnce() -> c_int) -> c_int {
 }
 
 #[test]
-fn the_worker_leads_a_session_deaf_to_its_terminals_signals() {
+fn only_owning_the_vt_makes_the_worker_deaf_to_its_signals() {
+    let (_master, slave) = pty_slave();
+    let ignored = || {
+        TERMINAL_SIGNALS
+            .iter()
+            .all(|&sig| disposition(sig) == libc::SIG_IGN)
+    };
     let code = in_child(|| {
+        // A shell's background job starts with SIGINT and SIGQUIT ignored; start from defaults.
+        for sig in TERMINAL_SIGNALS {
+            // SAFETY: signal sets a disposition, not a handler.
+            unsafe { libc::signal(sig, libc::SIG_DFL) };
+        }
         if lead_session().is_err() {
             return 2;
         }
@@ -892,17 +986,32 @@ fn the_worker_leads_a_session_deaf_to_its_terminals_signals() {
         if unsafe { libc::getsid(0) != libc::getpid() } {
             return 3;
         }
-        match TERMINAL_SIGNALS
+        // PAM's session modules run here, and their helpers inherit the dispositions.
+        if TERMINAL_SIGNALS
             .iter()
-            .all(|&sig| disposition(sig) == libc::SIG_IGN)
+            .any(|&sig| disposition(sig) == libc::SIG_IGN)
         {
+            return 4;
+        }
+        // SAFETY: open takes `slave`, made before the fork; the fd is new and owned by `held`.
+        let held = unsafe {
+            let fd = libc::open(slave.as_ptr(), libc::O_RDWR | libc::O_NOCTTY);
+            if fd < 0 {
+                return 5;
+            }
+            <File as std::os::fd::FromRawFd>::from_raw_fd(fd)
+        };
+        if Console.own(&held).is_err() {
+            return 6;
+        }
+        match ignored() {
             true => 0,
             false => 1,
         }
     });
     assert_eq!(
         code, 0,
-        "0: a session leader ignoring SIGHUP, SIGINT, SIGQUIT and SIGTSTP; 1: a signal not ignored; 2: setsid failed; 3: not a session leader"
+        "0: SIGHUP, SIGINT, SIGQUIT and SIGTSTP ignored once the VT is owned; 1: a signal not ignored; 2: setsid failed; 3: not a session leader; 4: ignored before the VT is owned; 5: no pty; 6: the VT not owned"
     );
 }
 
@@ -911,15 +1020,15 @@ fn no_process_outside_the_worker_can_claim_its_vt() {
     let (_master, slave) = pty_slave();
     let code = in_child(|| {
         // SAFETY: open, fork, waitpid and _exit are async-signal-safe, and `slave` was made before
-        // the fork; `held` stays open for the borrow.
+        // the fork; `held` owns the fd open made.
         unsafe {
             // The VT as `vt::hold` opens it.
             let held = libc::open(slave.as_ptr(), libc::O_RDWR | libc::O_NOCTTY);
             if held < 0 {
                 return 5;
             }
-            let held = std::os::fd::BorrowedFd::borrow_raw(held);
-            if lead_session().is_err() || vt::own(held).is_err() {
+            let held = <File as std::os::fd::FromRawFd>::from_raw_fd(held);
+            if lead_session().is_err() || Console.own(&held).is_err() {
                 return 6;
             }
             // A process of the session, which may open the VT by path once logind gives its
