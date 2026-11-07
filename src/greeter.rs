@@ -16,9 +16,12 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn main() -> i32 {
     let path = Path::new(repriselogin::GREETER_SOCKET);
-    let Ok(mut link) = GreeterLink::connect(path) else {
-        log::error!("greeter: no login manager at {}", path.display());
-        return 1;
+    let mut link = match GreeterLink::connect(path) {
+        Ok(link) => link,
+        Err(e) => {
+            log::error!("greeter: no login manager at {}: {e}", path.display());
+            return 1;
+        }
     };
     let greeting = match link.hello(HELLO_TIMEOUT) {
         Ok(g) => g,
@@ -79,7 +82,8 @@ fn run(link: GreeterLink, greeting: Greeting) -> Result<bool, Box<dyn Error>> {
     Ok(state.greeter.lost)
 }
 
-/// The defaults, in the greeting's interface and keyboard layout.
+/// The defaults, in the greeting's interface and keyboard layout, with no idle lock: the login
+/// screen is what a lock would cover.
 pub fn config_from(g: &Greeting) -> Config {
     let interface = interface(g.interface);
     let base = repriseconf::config::Config {
@@ -89,6 +93,11 @@ pub fn config_from(g: &Greeting) -> Config {
             layout: g.keyboard.layout.clone(),
             variant: g.keyboard.variant.clone(),
             options: g.keyboard.options.clone(),
+            ..Default::default()
+        },
+        idle: crate::config::IdleConfig {
+            lock_after: 0,
+            lock_fade: 0,
             ..Default::default()
         },
         ..Default::default()
@@ -111,11 +120,11 @@ pub fn interface(i: repriselogin::Interface) -> reprisekit::interface::Interface
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::Harness;
     use repriselogin::greeter::Keyboard;
 
-    #[test]
-    fn the_greeting_sets_interface_and_keyboard() {
-        let g = Greeting {
+    fn greeting() -> Greeting {
+        Greeting {
             interface: repriselogin::Interface::Glass,
             show_users: true,
             users: Vec::new(),
@@ -126,8 +135,12 @@ mod tests {
                 options: "caps:escape".into(),
             },
             notice: None,
-        };
-        let config = config_from(&g);
+        }
+    }
+
+    #[test]
+    fn the_greeting_sets_interface_and_keyboard() {
+        let config = config_from(&greeting());
         assert_eq!(config.interface, reprisekit::interface::Interface::Glass);
         assert_eq!(
             config.theme,
@@ -136,5 +149,30 @@ mod tests {
         assert_eq!(config.keyboard.layout, "de");
         assert_eq!(config.keyboard.variant, "nodeadkeys");
         assert_eq!(config.keyboard.options, "caps:escape");
+    }
+
+    #[test]
+    fn the_greeter_never_locks_itself() {
+        let idle = config_from(&greeting()).idle_for(false);
+        assert_eq!((idle.lock_after, idle.lock_fade), (0, 0), "no idle lock");
+        assert_eq!(idle.screen_off_after, 900, "the screen still powers off");
+
+        let mut h = Harness::new();
+        assert_eq!(h.state.config.idle.lock_after, 600);
+        h.state.host = Host::Greeter;
+        h.output("TEST-1", 1024, 768);
+        let queued = crate::state::QUEUED.with(|n| n.get());
+        crate::idle::idle_for(&mut h.state, Duration::from_secs(601));
+        crate::lockview::lock(&mut h.state);
+        crate::lockview::engage(&mut h.state);
+        assert!(
+            !h.state.console_locked(),
+            "no lock cover, so no locker or fingerprint conversation"
+        );
+        assert_eq!(
+            crate::state::QUEUED.with(|n| n.get()),
+            queued,
+            "no saved-state write"
+        );
     }
 }
