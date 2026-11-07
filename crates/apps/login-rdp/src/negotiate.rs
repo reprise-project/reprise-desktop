@@ -14,16 +14,12 @@ pub fn peek_request(bytes: &[u8]) -> Option<(SecurityProtocol, Option<String>)> 
         .ok()?
         .0;
     let user = match request.nego_data {
-        Some(NegoRequestData::Cookie(cookie)) => Some(strip_domain(&cookie.0).to_owned()),
+        Some(NegoRequestData::Cookie(cookie)) => {
+            Some(repriselogin::account_name(&cookie.0).to_owned())
+        }
         _ => None,
     };
     Some((request.protocol, user))
-}
-
-/// `DOM\anna` and `anna@dom` are `anna`.
-pub fn strip_domain(user: &str) -> &str {
-    let user = user.rsplit('\\').next().unwrap_or(user);
-    user.split('@').next().unwrap_or(user)
 }
 
 /// NLA when the client offers it and its cookie names a user with a Remote Desktop password

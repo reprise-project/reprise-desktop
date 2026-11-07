@@ -236,7 +236,7 @@ impl PasswordCheck {
     async fn check(&self, credentials: &Credentials) -> io::Result<bool> {
         let peer = self.peer;
         // The typed name stays out of the log: it may be a password typed into the name field.
-        if account(&credentials.username) != self.user {
+        if repriselogin::account_name(&credentials.username) != self.user {
             log::warn!(
                 "{peer}: refused a login as another user; only {} can log in",
                 self.user
@@ -291,13 +291,6 @@ impl Login for PasswordCheck {
             .await
             .is_ok_and(|l| *l == Stage::Accepted)
     }
-}
-
-/// `username` without a `DOMAIN\` prefix.
-fn account(username: &str) -> &str {
-    username
-        .rsplit_once('\\')
-        .map_or(username, |(_, name)| name)
 }
 
 /// Run the helper with `line` (the password and a newline) on its stdin. A further prompt gets
@@ -477,10 +470,8 @@ impl CredentialValidator for HandedOverCheck {
         &self,
         credentials: &Credentials,
     ) -> Result<CredentialDecision, CredentialValidationError> {
-        let name = account(&credentials.username);
-        let upn_user = name.split_once('@').filter(|(_, host)| !host.is_empty());
         let ok = self.admitted
-            && upn_user.map_or(name, |(user, _)| user) == self.user
+            && repriselogin::account_name(&credentials.username) == self.user
             && credentials.password.is_empty();
         if !ok {
             return Ok(CredentialDecision::Reject);
@@ -914,17 +905,20 @@ pub(crate) mod tests {
             user: "anna".into(),
         };
         let (check, _) = logins.check(B, admission);
-        for other in ["bert@host", "anna@", "@host", "annabel@host"] {
+        for other in ["bert@host", "@host", "annabel@host"] {
             assert_eq!(
                 decide(&check, other, "").await,
                 CredentialDecision::Reject,
                 "{other}"
             );
         }
-        assert_eq!(
-            decide(&check, "anna@host", "").await,
-            CredentialDecision::Accept
-        );
+        for upn in ["anna@host", "anna@"] {
+            assert_eq!(
+                decide(&check, upn, "").await,
+                CredentialDecision::Accept,
+                "{upn}: the front logs it on as anna"
+            );
+        }
     }
 
     #[tokio::test]
