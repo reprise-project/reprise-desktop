@@ -24,7 +24,7 @@ fn app(tag: &str) -> SettingsApp {
     SettingsApp::open(tmp(tag).join("config.toml"), "us".into())
 }
 
-fn test_ctx() -> Ctx {
+pub(super) fn test_ctx() -> Ctx {
     Ctx {
         theme: Theme::default(),
         text: TextRenderer::load(&FontConfig::default()).into(),

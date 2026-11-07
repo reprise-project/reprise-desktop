@@ -407,15 +407,13 @@ struct SettingsApp {
     remote_acting: bool,
 
     /// The Login Manager page's machine settings, read when it first opens with the accounts
-    /// `login_source` gives; `login_job` holds a save through `login_run` under way, and
-    /// `login_quit` an OK or a close waiting on it.
+    /// `login_source` gives; `login_job` holds a save through `login_run` under way.
     login: Option<loginhost::Login>,
     login_files: loginhost::Files,
     login_source: fn() -> repriselogin::users::Source,
     login_run: fn(&str) -> std::io::Result<std::process::Output>,
     login_users: Option<Receiver<Vec<String>>>,
-    login_job: Option<Receiver<Result<repriselogin::machine::MachineConfig, String>>>,
-    login_quit: bool,
+    login_job: Option<loginhost::Saving>,
     /// The pages this machine lacks the program for, kept out of the list ([`Page::installed`]).
     absent: Vec<Page>,
 
@@ -676,7 +674,6 @@ impl SettingsApp {
             login_run: loginhost::pkexec,
             login_users: None,
             login_job: None,
-            login_quit: false,
             absent: absent_pages(),
             types: defaultspage::new_list(),
             types_focus: false,
@@ -965,9 +962,11 @@ impl App for SettingsApp {
         reply.redraw |= self.ensure_notify_programs();
         reply.redraw |= self.ensure_away_devices();
         self.prime_icons(ctx);
-        if reply.quit && self.login_job.is_some() {
+        if reply.quit
+            && let Some(s) = &mut self.login_job
+        {
             reply.quit = false;
-            self.login_quit = true;
+            s.quit = true;
         }
         if reply.quit {
             self.save_window();
