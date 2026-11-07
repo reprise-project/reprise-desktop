@@ -342,8 +342,13 @@ impl State {
             .collect()
     }
 
+    /// One taskbar per output; the login screen has none.
     pub fn sync_bars(&mut self) {
-        let outputs = self.scene.outputs().to_vec();
+        let outputs = if self.host == crate::compositor::Host::Greeter {
+            Vec::new()
+        } else {
+            self.scene.outputs().to_vec()
+        };
         let (kept, gone): (Vec<Bar>, Vec<Bar>) = std::mem::take(&mut self.bars)
             .into_iter()
             .partition(|b| outputs.contains(&b.output));

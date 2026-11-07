@@ -850,15 +850,16 @@ impl State {
     }
 
     /// What is left of an output for ordinary windows: what `layer::arrange`
-    /// last recorded, else its box without the taskbar's strip. An empty
-    /// result is a real answer, so a full-height exclusive zone is honoured.
+    /// last recorded, else its box without the taskbar's strip (the whole box
+    /// on the login screen, which has no taskbar). An empty result is a real
+    /// answer, so a full-height exclusive zone is honoured.
     pub fn usable_area(&self, output: Option<&Output>) -> Rect {
         self.usable_area_at(output, self.layout_box(output))
     }
 
     /// [`State::usable_area`] for `output` laid out at `b`, its box before or after a relayout.
     pub fn usable_area_at(&self, output: Option<&Output>, b: Rect) -> Rect {
-        if b.width <= 0 {
+        if b.width <= 0 || self.host == crate::compositor::Host::Greeter {
             return b;
         }
         output

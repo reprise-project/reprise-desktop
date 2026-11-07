@@ -461,6 +461,16 @@ fn every_output_is_covered_and_only_the_first_has_the_screen() {
     );
 }
 
+#[test]
+fn the_login_screen_has_no_taskbar_and_the_whole_output_to_itself() {
+    let (mut h, _d) = login(repriselogin::Interface::Classic);
+    h.output("TEST-2", 800, 600);
+    assert!(h.state.bars.is_empty(), "no taskbar on any output");
+    for o in h.state.scene.outputs().to_vec() {
+        assert_eq!(h.state.usable_area(Some(&o)), h.state.layout_box(Some(&o)));
+    }
+}
+
 /// `interface`'s greeter on one `w` x `h` output at `scale`, three users with pictures.
 fn shown_at(interface: repriselogin::Interface, w: i32, h: i32, scale: f64) -> (Harness, Daemon) {
     use reprisekit::art::userpic;
