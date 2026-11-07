@@ -17,6 +17,8 @@ pub struct Cork<S> {
     header: [u8; HEADER],
     header_len: usize,
     body_left: usize,
+    /// The length of an over-long record, which every later read reports again.
+    too_long: Option<usize>,
 }
 
 impl<S> Cork<S> {
@@ -26,6 +28,7 @@ impl<S> Cork<S> {
             header: [0; HEADER],
             header_len: 0,
             body_left: 0,
+            too_long: None,
         }
     }
 
@@ -47,6 +50,9 @@ impl<S: AsyncRead + Unpin> AsyncRead for Cork<S> {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
+        if let Some(len) = this.too_long {
+            return Poll::Ready(Err(too_long(len)));
+        }
         let in_header = this.body_left == 0;
         let want = if in_header {
             HEADER - this.header_len
@@ -63,13 +69,11 @@ impl<S: AsyncRead + Unpin> AsyncRead for Cork<S> {
             this.header_len = end;
             if end == HEADER {
                 let len = usize::from(u16::from_be_bytes([this.header[3], this.header[4]]));
-                if len > MAX_RECORD {
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("a TLS record of {len} bytes, over the {MAX_RECORD} allowed"),
-                    )));
-                }
                 this.header_len = 0;
+                if len > MAX_RECORD {
+                    this.too_long = Some(len);
+                    return Poll::Ready(Err(too_long(len)));
+                }
                 this.body_left = len;
             }
         } else {
@@ -78,6 +82,13 @@ impl<S: AsyncRead + Unpin> AsyncRead for Cork<S> {
         buf.advance(got);
         Poll::Ready(Ok(()))
     }
+}
+
+fn too_long(len: usize) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("a TLS record of {len} bytes, over the {MAX_RECORD} allowed"),
+    )
 }
 
 impl<S: AsyncWrite + Unpin> AsyncWrite for Cork<S> {
@@ -102,6 +113,36 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Cork<S> {
 mod tests {
     use super::*;
     use tokio::io::AsyncReadExt;
+
+    /// Hands out one byte per read and, like a socket with nothing to read, stays pending once
+    /// it runs out.
+    struct Trickle<'a>(&'a [u8]);
+
+    impl AsyncRead for Trickle<'_> {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            let Some((&b, rest)) = self.0.split_first() else {
+                return Poll::Pending;
+            };
+            if buf.remaining() > 0 {
+                buf.put_slice(&[b]);
+                self.0 = rest;
+            }
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn poll_once<S: AsyncRead + Unpin>(cork: &mut Cork<S>) -> Poll<io::Result<usize>> {
+        let mut buf = [0; 64];
+        let mut buf = ReadBuf::new(&mut buf);
+        let cx = &mut Context::from_waker(std::task::Waker::noop());
+        Pin::new(cork)
+            .poll_read(cx, &mut buf)
+            .map_ok(|()| buf.filled().len())
+    }
 
     fn record(len: u16) -> Vec<u8> {
         let mut r = vec![23, 3, 3];
@@ -143,5 +184,48 @@ mod tests {
         let mut cork = Cork::new(&sent[..]);
         let err = cork.read(&mut [0; 4096]).await.unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn cork_keeps_failing_after_an_over_long_record() {
+        let mut cork = Cork::new(Trickle(&[23, 3, 3, 0x48, 0x01]));
+        for _ in 0..4 {
+            assert!(matches!(poll_once(&mut cork), Poll::Ready(Ok(1))));
+        }
+        for read in ["the header's last byte", "the next read"] {
+            match poll_once(&mut cork) {
+                Poll::Ready(Err(e)) => assert_eq!(e.kind(), io::ErrorKind::InvalidData, "{read}"),
+                other => panic!("{read}: {other:?}, not InvalidData"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cork_takes_a_record_of_the_longest_length_tls_allows() {
+        let mut sent = vec![23, 3, 3];
+        sent.extend(18432u16.to_be_bytes());
+        sent.resize(5 + 18432, 0);
+        let mut cork = Cork::new(&sent[..]);
+        let mut read = Vec::new();
+        cork.read_to_end(&mut read).await.unwrap();
+        assert_eq!(read.len(), sent.len());
+        assert!(cork.at_boundary());
+    }
+
+    #[tokio::test]
+    async fn cork_joins_a_header_split_across_reads() {
+        let sent: Vec<u8> = [4, 2].iter().flat_map(|&len| record(len)).collect();
+        let mut cork = Cork::new(Trickle(&sent));
+        let mut buf = [0; 4096];
+        let mut read = Vec::new();
+        for len in [4, 2] {
+            for got in 1..=5 + len {
+                let n = cork.read(&mut buf).await.unwrap();
+                assert_eq!(n, 1);
+                read.push(buf[0]);
+                assert_eq!(cork.at_boundary(), got == 5 + len, "after {got} bytes");
+            }
+        }
+        assert_eq!(read, sent);
     }
 }
