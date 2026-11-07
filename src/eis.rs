@@ -711,7 +711,7 @@ impl State {
     }
 
     /// Text goes where a key typing it would: the focused client, Reprise's field with the
-    /// keyboard, or the lock dialog's field. Anywhere else it is dropped.
+    /// keyboard, the lock dialog's field or the login screen's. Anywhere else it is dropped.
     fn eis_type_text(&mut self, text: &str) {
         let Some(first) = text.chars().next() else {
             return;
@@ -725,6 +725,7 @@ impl State {
         match route.route {
             KeyRoute::Client => self.type_text(text),
             KeyRoute::Lock => crate::lockview::type_text(self, text),
+            KeyRoute::Greeter => crate::greeterview::type_text(self, text),
             route => match crate::imefield::field_editor(&route) {
                 Some(editor) => self.field_edits(editor, vec![EditKey::Insert(text.into())]),
                 None => log::debug!("eis: text dropped on {route:?}"),

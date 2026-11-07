@@ -61,6 +61,10 @@ impl State {
                 self.close_dialog();
                 self.empty_bin();
             }
+            Outcome::GreeterPower(a) => {
+                self.close_dialog();
+                crate::greeterview::power(self, a);
+            }
             Outcome::SwitchUser => {
                 self.close_dialog();
                 if crate::loginlink::desk_offers(self) {

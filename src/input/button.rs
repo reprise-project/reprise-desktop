@@ -152,7 +152,9 @@ impl State {
     }
 
     pub(crate) fn press(&mut self, button: u32, pos: Point<f64, Logical>, time: InputTime) {
-        if self.host == Host::Greeter && !matches!(self.scene_hit(pos), Hit::Dialog { .. }) {
+        if self.host == Host::Greeter
+            && !matches!(self.scene_hit(pos), Hit::Dialog { .. } | Hit::Menu { .. })
+        {
             crate::greeterview::button(self, button, pos);
             return;
         }

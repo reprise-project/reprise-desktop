@@ -1029,6 +1029,7 @@ impl Dialog {
             },
             DialogAction::EmptyBin => Outcome::EmptyBin,
             DialogAction::SwitchUser => Outcome::SwitchUser,
+            DialogAction::GreeterPower(a) => Outcome::GreeterPower(*a),
             DialogAction::BrowseRun => Outcome::BrowseRun,
             DialogAction::Act(a) => Outcome::Act(a.clone()),
             DialogAction::HideSystemIcon(name) => Outcome::HideSystemIcon(name.clone()),

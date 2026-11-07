@@ -78,6 +78,7 @@ impl State {
         self.key_input.layouts.current = self.active_layout();
         self.redraw_taskbars();
         crate::lockview::redraw(self);
+        crate::greeterview::redraw(self);
     }
 
     pub fn active_layout(&mut self) -> u32 {
@@ -105,7 +106,17 @@ impl State {
         if layouts.switchable() {
             self.redraw_taskbars();
             crate::lockview::redraw(self);
+            crate::greeterview::redraw(self);
         }
+    }
+
+    /// The login screen's layout badge: the active layout's short name, None while nothing
+    /// switches (the taskbar cell's rule).
+    pub fn layout_badge(&self) -> Option<String> {
+        let layouts = &self.key_input.layouts;
+        (layouts.switchable())
+            .then(|| layouts.active().map(|d| d.short.clone()))
+            .flatten()
     }
 
     /// Lock layout `idx`; the focused client hears it in its modifiers.

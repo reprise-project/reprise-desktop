@@ -248,12 +248,13 @@ pub fn route(modes: &Modes, k: &KeyPress, binds: &[Keybind], globals: &[GlobalBi
         arm_super: None,
         fire_super: false,
     };
-    // The login screen runs no binds and no machine keys: logind keeps the power
-    // and sleep buttons. Only a VT switch and an open dialog take keys from it.
+    // The login screen runs no binds and no machine keys; the power key goes to it like any
+    // other. Only a VT switch, an open dialog and its power menu take keys from it.
     if modes.greeter {
         return plain(match vt_switch(modes, k) {
             Some(n) => KeyRoute::VtSwitch(n),
             None if modes.dialog_has_keyboard && k.pressed => KeyRoute::Dialog,
+            None if modes.menus_open && k.pressed => menu_key(k),
             None => KeyRoute::Greeter,
         });
     }

@@ -917,6 +917,26 @@ impl Dialog {
         })
     }
 
+    /// The login screen's Turn off computer panel: Stand By and Hibernate greyed, Turn Off and
+    /// Restart asked of reprise-login.
+    pub fn greeter_turn_off() -> Dialog {
+        use repriselogin::greeter::PowerAction;
+        Dialog::welcome(Welcome {
+            panel: Panel::turn_off(false, false),
+            actions: vec![
+                (
+                    Choice::TurnOff,
+                    DialogAction::GreeterPower(PowerAction::PowerOff),
+                ),
+                (
+                    Choice::Restart,
+                    DialogAction::GreeterPower(PowerAction::Reboot),
+                ),
+            ],
+            always_blue: false,
+        })
+    }
+
     fn welcome(w: Welcome) -> Dialog {
         let title = w.panel.title.clone();
         let mut d = Dialog::new(title, Style::Welcome(Box::new(w)), Placement::UpperThird);
