@@ -661,6 +661,7 @@ pub fn error_kind(e: &FrameError) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::os::fd::AsRawFd;
     use std::os::unix::fs::MetadataExt;
 
     use repriselogin::frame::encode;
@@ -670,6 +671,10 @@ mod tests {
     use super::*;
 
     const GREETER: WorkerId = WorkerId(1);
+
+    /// Hellos in a flood test, one write each: far past what the socket buffers, so a reader
+    /// that stops reading stalls the writer.
+    const FLOOD: usize = 5000;
 
     #[test]
     fn peer_allowed_accepts_only_the_running_greeter() {
@@ -781,6 +786,25 @@ mod tests {
             .await
             .expect("an input arrives")
             .unwrap()
+    }
+
+    /// Waits until the peer of `stream` has read every byte written to it, so its reader
+    /// queues nothing more.
+    async fn read_through(stream: &UnixStream) {
+        let unread = || {
+            let mut n: libc::c_int = 0;
+            // SAFETY: TIOCOUTQ writes one c_int through the pointer; the fd is open.
+            let r = unsafe { libc::ioctl(stream.as_raw_fd(), libc::TIOCOUTQ, &mut n) };
+            assert_eq!(r, 0, "TIOCOUTQ: {}", io::Error::last_os_error());
+            n
+        };
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while unread() > 0 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the reader reads the whole flood");
     }
 
     #[tokio::test]
@@ -1125,28 +1149,25 @@ mod tests {
                 let mut c = UnixStream::connect(dir.path().join("session.sock"))
                     .await
                     .unwrap();
+                let hellos = [Interface::Classic, Interface::Blue]
+                    .map(|interface| encode(&SessionRequest::Hello { interface }).unwrap());
+                let last = encode(&SessionRequest::Hello {
+                    interface: Interface::Glass,
+                })
+                .unwrap();
                 let flood = tokio::task::spawn_local(async move {
-                    for i in 0..5000 {
-                        let interface = [Interface::Classic, Interface::Blue][i % 2];
-                        send(&mut c, &SessionRequest::Hello { interface }).await;
+                    for i in 0..FLOOD {
+                        c.write_all(&hellos[i % 2]).await.unwrap();
                     }
-                    let interface = Interface::Glass;
-                    send(&mut c, &SessionRequest::Hello { interface }).await;
+                    c.write_all(&last).await.unwrap();
                     c
                 });
-                let _c = tokio::time::timeout(Duration::from_secs(5), flood)
+                let c = tokio::time::timeout(Duration::from_secs(5), flood)
                     .await
                     .expect("the reader keeps reading while the queue is full")
                     .unwrap();
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                read_through(&c).await;
                 assert!(rx.len() <= QUEUE, "{} queued", rx.len());
-                let mut heard = Vec::new();
-                while let Ok(Some(i)) =
-                    tokio::time::timeout(Duration::from_millis(200), rx.recv()).await
-                {
-                    heard.push(i);
-                }
-                assert!(heard.len() <= QUEUE + 1, "{} heard", heard.len());
                 let glass = Input::Session {
                     id: "3".into(),
                     request: SessionRequest::Hello {
@@ -1154,7 +1175,12 @@ mod tests {
                     },
                     seat_active: None,
                 };
-                assert_eq!(heard.last(), Some(&glass));
+                let mut heard = vec![next(&mut rx).await];
+                while heard.last() != Some(&glass) {
+                    heard.push(next(&mut rx).await);
+                }
+                assert!(heard.len() <= QUEUE + 1, "{} heard", heard.len());
+                assert!(rx.try_recv().is_err(), "nothing follows the last Hello");
             })
             .await;
     }
@@ -1219,25 +1245,26 @@ mod tests {
                 let mut c = UnixStream::connect(dir.path().join("greeter.sock"))
                     .await
                     .unwrap();
+                let hello = encode(&GreeterRequest::Hello).unwrap();
                 let flood = tokio::task::spawn_local(async move {
-                    for _ in 0..5000 {
-                        send(&mut c, &GreeterRequest::Hello).await;
+                    for _ in 0..FLOOD {
+                        c.write_all(&hello).await.unwrap();
                     }
                     send(&mut c, &GreeterRequest::CancelSession).await;
                     c
                 });
-                let _c = tokio::time::timeout(Duration::from_secs(5), flood)
+                let c = tokio::time::timeout(Duration::from_secs(5), flood)
                     .await
                     .expect("the reader keeps reading while the queue is full")
                     .unwrap();
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                let mut heard = Vec::new();
-                while let Ok(Some(i)) =
-                    tokio::time::timeout(Duration::from_millis(200), rx.recv()).await
-                {
-                    heard.push(i);
+                read_through(&c).await;
+                let cancel = Input::GreeterRequest(GREETER, GreeterRequest::CancelSession);
+                let mut heard = vec![next(&mut rx).await];
+                while heard.last() != Some(&cancel) {
+                    heard.push(next(&mut rx).await);
                 }
                 assert!(heard.len() <= QUEUE + 2, "{} heard", heard.len());
+                assert!(rx.try_recv().is_err(), "nothing follows the CancelSession");
                 assert_eq!(
                     heard[heard.len() - 2..],
                     [
