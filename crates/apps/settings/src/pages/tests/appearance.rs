@@ -116,14 +116,19 @@ fn the_dark_hours_row_pins_its_pixels_in_every_look() {
     };
     let mut f = appearancepage::page(&s, Area::MIN);
     write_form(&mut f, &s);
+    // The sample's Glass captions take a test font, as their own face is the machine's.
+    if let Some(Control::Sample { theme, .. }) =
+        f.item_mut(appearancepage::SAMPLE).map(|i| &mut i.control)
+        && let reprisekit::look::Look::Styled(style) = &mut theme.look
+    {
+        std::sync::Arc::make_mut(style).caption_text.family = vec!["Tahoma".into()];
+    }
     let row = Rect::new(232, 406, 146, 36);
-    let Some(on) = row_pins(&f, row) else {
-        return;
-    };
+    let on = row_pins(&f, row);
     for id in appearancepage::DARK_HOURS {
         f.set_enabled(id, false);
     }
-    let greyed = row_pins(&f, row).unwrap();
+    let greyed = row_pins(&f, row);
     assert_eq!(
         [on, greyed],
         [

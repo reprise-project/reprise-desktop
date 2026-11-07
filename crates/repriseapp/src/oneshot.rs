@@ -352,12 +352,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_short_box_widens_for_its_title_up_to_the_output() {
-        use reprisekit::interface::Interface;
-        let text = TextRenderer::load(&FontConfig::default());
-        let px = 11;
-        let short = || Fields {
+    fn short() -> Fields {
+        Fields {
             text: "Access denied.".into(),
             icon: None,
             buttons: vec!["OK".into()],
@@ -365,12 +361,23 @@ mod tests {
             min_text_h: None,
             min_w: 0,
             max_w: 0,
-        };
+        }
+    }
+
+    #[test]
+    fn a_short_boxs_text_is_162_px_wide() {
+        reprisekit::pins::fonts();
+        let text = TextRenderer::load(&FontConfig::default());
+        assert_eq!(msgbox::client(&short(), &text, 11, TextUnits::ONE).0, 162);
+    }
+
+    #[test]
+    fn a_short_box_widens_for_its_title_up_to_the_output() {
+        use reprisekit::interface::Interface;
+        let text = TextRenderer::load(&FontConfig::default());
+        let px = 11;
         // Widths per look are pinned by look::caption_fit's own test.
         let plain = msgbox::client(&short(), &text, px, TextUnits::ONE).0;
-        if reprisekit::text::test_tahoma() {
-            assert_eq!(plain, 162);
-        }
         let mut glass = 0;
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let theme = reprisekit::interfaces::theme_for(i);

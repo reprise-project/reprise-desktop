@@ -246,9 +246,7 @@ mod tests {
 
     #[test]
     fn the_classic_prompt_draws_its_buttons_and_tick() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let (text, px) = rend();
         let theme = Theme::default();
         let cs = &theme.colors;

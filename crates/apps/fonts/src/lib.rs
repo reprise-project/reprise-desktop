@@ -273,10 +273,7 @@ mod tests {
 
     #[test]
     fn a_landed_install_relabels_the_button_and_keeps_the_focus_off_it() {
-        let Some(dir) = std::env::var_os("REPRISE_TEST_FONTS") else {
-            return;
-        };
-        let mut v = Viewer::new(PathBuf::from(dir).join("tahoma.ttf"));
+        let mut v = Viewer::new(reprisekit::pins::fonts().join("tahoma.ttf"));
         v.install = Install::No;
         v.rebuild();
         v.form.as_mut().unwrap().focus_id(fontview::INSTALL);

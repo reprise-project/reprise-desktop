@@ -372,9 +372,7 @@ mod tests {
 
     #[test]
     fn open_title_is_sunken_with_its_text_shifted() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let text = TextRenderer::load(&FontConfig::default());
         let theme = Theme::default();
         let cs = &theme.colors;
@@ -445,9 +443,7 @@ mod tests {
 
     #[test]
     fn a_flat_bar_lights_its_hot_and_open_titles_in_hilight() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let text = TextRenderer::load(&FontConfig::default());
         for v in crate::blue::Variant::ALL {
             let theme = crate::interfaces::blue_theme(v);
@@ -586,9 +582,7 @@ mod tests {
 
     #[test]
     fn blues_title_text_sits_lower_in_a_band() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let text = TextRenderer::load(&FontConfig::default());
         let theme = crate::interfaces::blue_theme(crate::blue::Variant::Blue);
         let (cs, px) = (&theme.colors, theme.fonts.size_px);

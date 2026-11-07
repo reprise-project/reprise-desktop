@@ -927,9 +927,8 @@ mod tests {
     #[test]
     fn the_logo_preview_frame_and_its_bounce() {
         let (s, c) = run(Kind::Logo, &Options::default(), 30);
-        if crate::text::test_tahoma() {
-            assert_eq!(digest(&c), 3579411078834488872, "logo frame 30, seed 7");
-        }
+        crate::pins::fonts();
+        assert_eq!(digest(&c), 3579411078834488872, "logo frame 30, seed 7");
         let (word, (x, y)) = (s.logo().unwrap(), s.logo_at().unwrap());
         assert!(x >= 0 && y >= 0);
         assert!(x + word.width as i32 <= 152 && y + word.height as i32 <= 112);
@@ -982,14 +981,13 @@ mod tests {
         let two = one.clone().at_scale(&text(), 2);
         let (w1, w2) = (one.logo().unwrap(), two.logo().unwrap());
         assert_eq!((w2.width, w2.height), (w1.width * 2, w1.height * 2));
-        if crate::text::test_tahoma() {
-            assert_eq!(digest(&w1), 5770883215788226389, "word at scale 1");
-            assert_eq!(digest(&w2), 15604862939813622337, "word at scale 2");
-            assert!(
-                !doubled(&w2, &last_letter(&w2)),
-                "monochrome, still redrawn"
-            );
-        }
+        crate::pins::fonts();
+        assert_eq!(digest(&w1), 5770883215788226389, "word at scale 1");
+        assert_eq!(digest(&w2), 15604862939813622337, "word at scale 2");
+        assert!(
+            !doubled(&w2, &last_letter(&w2)),
+            "monochrome, still redrawn"
+        );
         let (mut one, mut two) = (one, two);
         for _ in 0..400 {
             one.step();

@@ -296,9 +296,7 @@ mod tests {
 
     #[test]
     fn rename_dialog_pins_at_scale_1_and_2() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let mut replace = form(&sample());
         set_preview(&mut replace, &rows(), false);
         let mut number = form(&Fields {

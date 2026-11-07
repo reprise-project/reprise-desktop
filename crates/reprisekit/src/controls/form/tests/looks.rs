@@ -79,9 +79,7 @@ fn a_greyed_blue_edit_shows_the_page_or_the_face_behind_it() {
 #[test]
 fn a_blue_check_box_and_radio_share_a_column() {
     let text = TextRenderer::load(&FontConfig::default());
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let theme = crate::interfaces::theme_for(crate::interface::Interface::Blue);
     let cs = &theme.colors;
     let px = theme.fonts.size_px;
@@ -109,9 +107,7 @@ fn a_blue_check_box_and_radio_share_a_column() {
 #[test]
 fn a_glass_check_box_and_radio_share_a_column() {
     let text = TextRenderer::load(&FontConfig::default());
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let theme = crate::interfaces::theme_for(crate::interface::Interface::Glass);
     let cs = &theme.colors;
     let px = theme.fonts.size_px;
@@ -139,9 +135,7 @@ fn a_glass_check_box_and_radio_share_a_column() {
 #[test]
 fn a_greyed_blue_static_label_is_etched() {
     let text = TextRenderer::load(&FontConfig::default());
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let form = Form::new(vec![
         Item::label_at("wait", 10, 10, 70, "Wait:").enabled(false),
     ]);
@@ -165,9 +159,7 @@ fn a_greyed_blue_static_label_is_etched() {
 #[test]
 fn a_greyed_blue_check_box_label_is_flat() {
     let text = TextRenderer::load(&FontConfig::default());
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let form = Form::new(vec![Item::check("ro", 10, 10, "&Read-only").enabled(false)]);
     let label = Rect::new(24, 8, 70, 18);
     let count = |c: &Canvas, ink: u32| {
@@ -198,9 +190,7 @@ fn a_greyed_blue_check_box_label_is_flat() {
 #[test]
 fn a_greyed_blue_radio_label_is_flat() {
     let text = TextRenderer::load(&FontConfig::default());
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let form = Form::new(vec![Item::radio("up", 10, 10, "&Up", "dir").enabled(false)]);
     let label = Rect::new(26, 8, 70, 18);
     let count = |c: &Canvas, ink: u32| {
@@ -223,9 +213,7 @@ fn a_greyed_blue_radio_label_is_flat() {
 #[test]
 fn greyed_glass_check_box_and_radio_labels_are_flat_6b6b6b() {
     let text = TextRenderer::load(&FontConfig::default());
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let form = Form::new(vec![
         Item::check("ro", 10, 10, "&Read-only").enabled(false),
         Item::radio("up", 10, 40, "&Up", "dir").enabled(false),
@@ -278,9 +266,7 @@ fn a_greyed_mixed_blue_check_box_shows_its_square() {
 #[test]
 fn a_blue_radio_label_sits_on_the_check_box_labels_row() {
     let text = tr();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
     let cs = &blue.colors;
     let form = Form::new(vec![

@@ -3073,9 +3073,7 @@ mod context_menu {
 
     #[test]
     fn the_menus_and_the_rename_box_are_drawn_as_pinned() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let text = text();
         let mut got = Vec::new();
         for s in [1, 2] {
@@ -3114,9 +3112,7 @@ mod context_menu {
         use crate::controls::dlgtemplate::{self, Template};
         use crate::controls::msgbox;
         use crate::theme::TextUnits;
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let text = text();
         let yes_no = [dlgtemplate::YES.to_string(), dlgtemplate::NO.to_string()];
         let mut icon = Canvas::new(32, 32);
@@ -3302,9 +3298,7 @@ mod marquee {
 
     #[test]
     fn the_band_in_the_list_is_drawn_as_pinned() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let text = text();
         let mut got = Vec::new();
         for s in [1, 2] {

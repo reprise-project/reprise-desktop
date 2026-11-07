@@ -318,9 +318,7 @@ fn a_sets_boxes_have_three_states_only_where_its_items_differ() {
 #[test]
 fn a_sets_page_inks_on_its_grid() {
     let t = text();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let theme = Theme::default();
     let cs = &theme.colors;
     let (page, height) = set_page(true);
@@ -782,9 +780,7 @@ fn the_web_page_draws_on_its_grid() {
     assert_eq!(at(150, 120), cs.button_hilight.argb(), "URL's frame bottom");
     assert_eq!(at(340, 110), cs.button_hilight.argb(), "URL's frame right");
     assert_eq!(at(260, 194), cs.button_hilight.argb(), "Change Icon's top");
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let ink = cs.button_text.argb();
     let first = |x0: i32, x1: i32, y0: i32, y1: i32| {
         let top = (y0..y1).find(|&y| (x0..x1).any(|x| at(x, y) == ink));
@@ -918,9 +914,7 @@ fn the_shortcut_page_draws_on_its_grid() {
         cs.button_hilight.argb(),
         "Find Target's top edge"
     );
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     assert_eq!(target, Rect::new(100, 142, 240, 23), "Target's field");
     let ink_top = |x0: i32, x1: i32, y0: i32| {
         (y0..y0 + 13)
@@ -1077,9 +1071,7 @@ fn the_compatibility_page_lands_on_its_grid() {
 
 fn lines_fit(p: &Form) {
     let t = text();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     for it in &p.items {
         let lines = match &it.control {
             Control::Label { text: s, .. } => std::slice::from_ref(s),
@@ -1221,9 +1213,7 @@ fn fnv_in(c: &Canvas, r: Rect) -> u64 {
 fn the_executable_box_draws_in_each_look() {
     use crate::interface::Interface;
     let t = text();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let mut got = Vec::new();
     for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
         let theme = crate::theme::Theme {
@@ -1324,9 +1314,7 @@ fn advanced_attributes_land_on_their_grid() {
 #[test]
 fn an_advanced_group_title_breaks_its_top_line() {
     let t = text();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let theme = Theme::default();
     let cs = &theme.colors;
     let f = advanced_form(Subject::File, None, None, &t, px(), TextUnits::ONE);
@@ -1415,9 +1403,7 @@ fn a_bin_item_without_a_date_drops_the_row() {
 #[test]
 fn a_bin_items_page_inks_on_its_grid() {
     let t = text();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let theme = Theme::default();
     let cs = &theme.colors;
     let page = bin_page(&bin_facts(), "New Rich Text Document", None);
@@ -1531,9 +1517,7 @@ fn render_bin_item_sheet() {
 #[test]
 fn a_blue_advanced_group_title_inks_like_a_group_box() {
     let t = text();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let blue = crate::interfaces::theme_for(crate::interface::Interface::Blue);
     let cs = &blue.colors;
     let f = advanced_form(Subject::File, None, None, &t, px(), TextUnits::ONE);
@@ -1613,9 +1597,7 @@ fn the_checksums_page_greys_copy_until_done_and_calculate_while_working() {
 #[test]
 fn the_checksums_values_fit_the_page() {
     let t = text();
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let mut page = checksums_page();
     show_sums(&mut page, &sums_done());
     show_verdict(&mut page, "Not a SHA-256 or MD5 hash");
@@ -1626,9 +1608,7 @@ fn the_checksums_values_fit_the_page() {
 #[test]
 fn the_checksums_page_pins_in_each_look_at_scale_1_and_2() {
     use crate::interface::Interface;
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let mut done = checksums_page();
     show_sums(&mut done, &sums_done());
     show_verdict(&mut done, "Matches SHA-256");

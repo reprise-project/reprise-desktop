@@ -768,26 +768,18 @@ pub(crate) fn fnv(c: &Canvas) -> u64 {
     h
 }
 
-/// Compares `got` with `tests/pins/<name>.txt`, or rewrites it under `REPRISE_BLESS`.
+/// [`reprisekit::pins::check_file`] on `tests/pins/<name>.txt`.
+#[track_caller]
 pub(crate) fn pins(name: &str, got: &[(String, u64)]) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/pins")
         .join(format!("{name}.txt"));
-    let text: String = got.iter().map(|(k, h)| format!("{k} {h:016x}\n")).collect();
-    if std::env::var_os("REPRISE_BLESS").is_some_and(|v| v != "0") {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, text).unwrap();
-        return;
-    }
-    let pinned = std::fs::read_to_string(&path).unwrap_or_default();
-    assert_eq!(text, pinned, "{name}: drawn hashes differ from {path:?}");
+    reprisekit::pins::check_file(&path, got);
 }
 
 #[test]
 fn the_pages_are_pinned_in_every_interface_at_1_and_2() {
-    if !reprisekit::text::test_tahoma() {
-        return;
-    }
+    reprisekit::pins::fonts();
     let mut got = Vec::new();
     for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
         let mut ctx = themed_ctx(reprisekit::interfaces::theme_for(i));

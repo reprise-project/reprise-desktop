@@ -271,9 +271,7 @@ mod tests {
 
     #[test]
     fn the_box_lays_out_on_its_grid() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         const EXPECTED_ICON: (i32, i32) = (11, 15);
         const EXPECTED_OK: (i32, i32, i32, i32) = (44, 64, 75, 23);
         let (text, px) = rend();

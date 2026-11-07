@@ -354,9 +354,7 @@ fn fnv(c: &Canvas) -> u64 {
 
 #[test]
 fn the_list_pins_in_each_interface_at_scale_1_and_2() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let pc = pc_for_draw();
     let text = TextRenderer::load(&FontConfig::default());
     let mut got = Vec::new();

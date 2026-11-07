@@ -277,9 +277,7 @@ fn each_pane_fits_its_graphs_and_figures_inside_the_page_at_either_size() {
 
 #[test]
 fn the_panes_are_pinned_in_every_interface_at_1_and_2() {
-    if !reprisekit::text::test_tahoma() {
-        return;
-    }
+    reprisekit::pins::fonts();
     let keys = [
         Key::Cpu,
         Key::Memory,

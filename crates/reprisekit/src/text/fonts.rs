@@ -3,7 +3,7 @@ use crate::mutex::lock;
 use crate::theme::FontConfig;
 use fontdb::{Database, Family, Query, Weight};
 use freetype::{Face, Library};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 fn find_face(
@@ -55,6 +55,7 @@ fn load_face(
             );
             Some(LoadedFace {
                 face,
+                stray: stray_note(&path, &family, || format!("{families:?}")),
                 family,
                 italic: matched_style != fontdb::Style::Normal,
             })
@@ -161,26 +162,40 @@ pub(super) fn needs_scan(db: &Database, families: &[String]) -> bool {
     })
 }
 
-/// Whether the default UI face is the Tahoma `REPRISE_TEST_FONTS` supplies, which the pixel tests
-/// are pinned to; they skip without it, which fails under `REPRISE_TEST_STRICT`. Cached.
-#[track_caller]
-pub fn test_tahoma() -> bool {
-    static FOUND: OnceLock<bool> = OnceLock::new();
-    let found = *FOUND.get_or_init(|| {
-        let Some(dir) = test_fonts_dir() else {
-            return false;
-        };
-        let families = FontConfig::default().family;
-        let db = system_fonts(&families);
-        let dir = dir.canonicalize().unwrap_or(dir);
-        families.first().is_some_and(|f| f == "Tahoma")
-            && find_face(&db, &families, false, Weight::NORMAL, fontdb::Style::Normal)
-                .is_some_and(|(path, _, family, _)| family == "Tahoma" && path.starts_with(&dir))
-    });
-    if !found {
-        crate::pins::skipped("REPRISE_TEST_FONTS holds no Tahoma");
+/// The `REPRISE_TEST_FONTS` directory when the default UI face is its Tahoma, which the pixel
+/// pins are drawn with ([`crate::pins::fonts`]); else `Err` with the directory set, if any. Cached.
+pub(crate) fn test_fonts() -> Result<PathBuf, Option<PathBuf>> {
+    static FOUND: OnceLock<Result<PathBuf, Option<PathBuf>>> = OnceLock::new();
+    FOUND
+        .get_or_init(|| {
+            let dir = test_fonts_dir().ok_or(None)?;
+            let families = FontConfig::default().family;
+            let db = system_fonts(&families);
+            let tahoma = families.first().is_some_and(|f| f == "Tahoma")
+                && find_face(&db, &families, false, Weight::NORMAL, fontdb::Style::Normal)
+                    .is_some_and(|(path, _, family, _)| family == "Tahoma" && in_dir(&path, &dir));
+            if tahoma { Ok(dir) } else { Err(Some(dir)) }
+        })
+        .clone()
+}
+
+fn in_dir(path: &Path, dir: &Path) -> bool {
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    path.starts_with(dir) || canon(path).starts_with(canon(dir))
+}
+
+/// Under `REPRISE_TEST_FONTS`, a note naming `family` at `path` and what asked for it when the
+/// face is outside the test set: that directory and DejaVu, CI's one system font.
+pub(super) fn stray_note(
+    path: &Path,
+    family: &str,
+    requested: impl FnOnce() -> String,
+) -> Option<Box<str>> {
+    let dir = test_fonts_dir()?;
+    if family.starts_with("DejaVu") || in_dir(path, &dir) {
+        return None;
     }
-    found
+    Some(format!("{family} ({}) for {}", path.display(), requested()).into())
 }
 
 /// The second dialog font `spec` names, a family (exact match) or an absolute font file path;
@@ -198,6 +213,7 @@ pub(super) fn load_shell_dlg(spec: &str, cfg: &FontConfig) -> Option<TextRendere
                 let loaded = |face: Face| LoadedFace {
                     family: face.family_name().unwrap_or_default(),
                     italic: false,
+                    stray: None,
                     face,
                 };
                 (Some(loaded(face.clone())), Some(loaded(face)))

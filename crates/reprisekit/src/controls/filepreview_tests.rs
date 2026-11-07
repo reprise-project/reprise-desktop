@@ -200,9 +200,7 @@ fn text_scrolls_by_wheel_page_and_end_but_a_picture_does_not() {
 /// The picture, the text box and the card in each interface at 1 and 2.
 #[test]
 fn the_preview_is_pinned_per_interface_body_and_scale() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let text = TextRenderer::load(&FontConfig::default());
     let doc = "fn main() {\n    println!(\"Reprise\");\n}\n\n// a second paragraph\tand a tab";
     let mut got = Vec::new();

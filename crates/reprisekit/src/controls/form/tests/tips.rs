@@ -175,9 +175,7 @@ fn a_grown_box_sized_check_or_radio_keeps_its_whole_label() {
 
 #[test]
 fn a_long_label_ends_in_an_ellipsis_at_scale_1_and_2() {
-    if !crate::text::test_tahoma() {
-        return;
-    }
+    crate::pins::fonts();
     let text = tr();
     let theme = Theme::default();
     let cs = &theme.colors;

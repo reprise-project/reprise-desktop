@@ -284,10 +284,7 @@ mod tests {
 
     #[test]
     fn font_viewer_pins_at_scale_1_and_2() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
-        let dir = std::path::PathBuf::from(std::env::var_os("REPRISE_TEST_FONTS").unwrap());
+        let dir = crate::pins::fonts();
         let sample = TextRenderer::from_file(&dir.join("tahoma.ttf"), 0).expect("Tahoma");
         let all = faces();
         let states = [

@@ -475,9 +475,7 @@ mod tests {
     #[test]
     fn lock_key_panels_pin_in_every_interface_at_scale_1_and_2() {
         use crate::interface::Interface;
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let mut got = Vec::new();
         for look in [Interface::Classic, Interface::Blue, Interface::Glass] {
             for scale in [1, 2] {

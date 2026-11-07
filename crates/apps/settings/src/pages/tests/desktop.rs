@@ -279,16 +279,14 @@ fn the_desktop_names_rows_pin_their_pixels_in_every_look() {
         {
             *edit = reprisekit::textedit::TextEdit::new(names.join(", "), false);
         }
-        let Some(h) = row_pins(&f, row) else {
-            return;
-        };
+        let h = row_pins(&f, row);
         pins.push(h);
     }
     let mut f = virtual_desktops(Area::MIN);
     for id in ["desktop_names_label", DESKTOP_NAMES, "desktop_names_note"] {
         f.set_enabled(id, false);
     }
-    pins.push(row_pins(&f, row).unwrap());
+    pins.push(row_pins(&f, row));
     assert_eq!(
         pins,
         [
@@ -304,17 +302,15 @@ fn the_desktop_names_rows_pin_their_pixels_in_every_look() {
 fn the_wheel_on_desktop_row_pins_its_pixels_in_every_look() {
     let mut f = virtual_desktops(Area::MIN);
     let row = Rect::new(50, 212, 328, 17);
-    let Some(off) = row_pins(&f, row) else {
-        return;
-    };
+    let off = row_pins(&f, row);
     if let Some(Control::Check { checked, .. }) =
         f.item_mut("wheel_on_desktop").map(|i| &mut i.control)
     {
         *checked = true;
     }
-    let on = row_pins(&f, row).unwrap();
+    let on = row_pins(&f, row);
     f.set_enabled("wheel_on_desktop", false);
-    let greyed = row_pins(&f, row).unwrap();
+    let greyed = row_pins(&f, row);
     assert_eq!(
         [off, on, greyed],
         [

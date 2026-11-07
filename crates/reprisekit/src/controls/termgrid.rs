@@ -580,9 +580,7 @@ mod tests {
 
     #[test]
     fn metrics_whole_device_pixels() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let t = tahoma();
         for px in [11, 13] {
             let m = metrics(&t, px, 2);
@@ -885,9 +883,7 @@ mod tests {
 
     #[test]
     fn termgrid_pins_at_scale_1_and_2() {
-        if !crate::text::test_tahoma() {
-            return;
-        }
+        crate::pins::fonts();
         let t = tahoma();
         let attrs = [
             ("plain", Flags::default()),
