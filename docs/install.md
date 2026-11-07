@@ -168,6 +168,9 @@ and `data/tmpfiles.d/` applied once with `systemd-sysusers` and
   and `reprise-login-autologin` (`[login] autologin_user`), and the system
   user `reprise-greeter` with its home `/var/lib/reprise-greeter`, which the
   package's sysusers and tmpfiles files create
+- For remote logins at the login manager, the kernel's `tls` module
+  (`CONFIG_TLS`): each connection reaches the user's `reprise-rdp` in kernel
+  TLS
 - libudev, libinput 1.26 or later, libdrm, Mesa (GBM and the EGL and OpenGL ES
   drivers), libglvnd and libdisplay-info
 - libxkbcommon and xkeyboard-config, whose registry names the keyboard
