@@ -14,6 +14,8 @@ use reprisekit::frame::{ButtonSet, Chrome, FrameGeometry, FrameState};
 use reprisekit::look::Look;
 use reprisekit::look::widgets::{draw_button, draw_edit_field};
 use reprisekit::pointer::Interaction;
+use repriselogin::{PROMPT_LINES, add_prompt_lines};
+use reprisepam::ffi;
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::Path;
@@ -29,11 +31,6 @@ pub const CAPS_LOCK: &str = "Caps Lock is on.";
 /// Shown when the fingerprint conversation ended with PAM_MAXTRIES: too
 /// many fingers did not match.
 pub const FINGER_TOO_MANY: &str = "Too many fingerprint attempts. Type your password to unlock.";
-
-/// Lines the message area holds. PAM text past them is not kept.
-const MESSAGE_LINES: usize = 2;
-/// Characters kept of one PAM text line.
-const NOTICE_CHARS: usize = 200;
 
 /// Password field reservation in bytes, see `LockState::new`. Typing past
 /// it is refused. 512 is libpam's `PAM_MAX_RESP_SIZE`.
@@ -216,7 +213,7 @@ impl LockState {
 
 /// A verifier's answer: `Ok` to unlock, or `Err` with the text PAM sent
 /// along with the rejection (empty for a plain wrong password), already
-/// cleaned by `add_notice`.
+/// cleaned by `repriselogin::add_prompt_lines`.
 pub type Verdict = Result<(), Vec<String>>;
 
 /// Answers a PAM prompt after the password: its text and whether it
@@ -283,99 +280,6 @@ pub fn backoff_text(wait: Duration) -> String {
     let secs = wait.as_secs() + u64::from(wait.subsec_nanos() > 0);
     let unit = if secs == 1 { "second" } else { "seconds" };
     format!("Too many incorrect passwords. Wait {secs} {unit} and retry.")
-}
-
-/// Add one PAM message to `notices`: a line per non-blank line of `raw`,
-/// control characters turned to spaces, each cut to `NOTICE_CHARS`, and
-/// at most `MESSAGE_LINES` lines in all.
-pub fn add_notice(notices: &mut Vec<String>, raw: &str) {
-    for line in raw.lines() {
-        if notices.len() >= MESSAGE_LINES {
-            return;
-        }
-        let line: String = line
-            .chars()
-            .map(|c| if c.is_control() { ' ' } else { c })
-            .collect();
-        let line = line.trim();
-        if !line.is_empty() {
-            notices.push(line.chars().take(NOTICE_CHARS).collect());
-        }
-    }
-}
-
-pub fn clean_notice(raw: &str) -> Vec<String> {
-    let mut v = Vec::new();
-    add_notice(&mut v, raw);
-    v
-}
-
-#[allow(non_camel_case_types)]
-pub(crate) mod ffi {
-    use std::ffi::{c_char, c_int, c_void};
-
-    pub const PAM_SUCCESS: c_int = 0;
-    pub const PAM_BUF_ERR: c_int = 5;
-    pub const PAM_AUTH_ERR: c_int = 7;
-    pub const PAM_AUTHINFO_UNAVAIL: c_int = 9;
-    pub const PAM_MAXTRIES: c_int = 11;
-    pub const PAM_CONV_ERR: c_int = 19;
-
-    pub const PAM_PROMPT_ECHO_OFF: c_int = 1;
-    pub const PAM_PROMPT_ECHO_ON: c_int = 2;
-    pub const PAM_ERROR_MSG: c_int = 3;
-    pub const PAM_TEXT_INFO: c_int = 4;
-
-    pub const PAM_FAIL_DELAY: c_int = 10;
-
-    #[repr(C)]
-    pub struct pam_handle_t {
-        _opaque: [u8; 0],
-    }
-
-    #[repr(C)]
-    pub struct pam_message {
-        pub msg_style: c_int,
-        pub msg: *const c_char,
-    }
-
-    #[repr(C)]
-    pub struct pam_response {
-        pub resp: *mut c_char,
-        pub resp_retcode: c_int,
-    }
-
-    pub type ConvFn = unsafe extern "C" fn(
-        c_int,
-        *mut *const pam_message,
-        *mut *mut pam_response,
-        *mut c_void,
-    ) -> c_int;
-
-    #[repr(C)]
-    pub struct pam_conv {
-        pub conv: Option<ConvFn>,
-        pub appdata_ptr: *mut c_void,
-    }
-
-    #[link(name = "pam")]
-    unsafe extern "C" {
-        pub fn pam_start(
-            service_name: *const c_char,
-            user: *const c_char,
-            pam_conversation: *const pam_conv,
-            pamh: *mut *mut pam_handle_t,
-        ) -> c_int;
-        pub fn pam_authenticate(pamh: *mut pam_handle_t, flags: c_int) -> c_int;
-        pub fn pam_acct_mgmt(pamh: *mut pam_handle_t, flags: c_int) -> c_int;
-        pub fn pam_end(pamh: *mut pam_handle_t, pam_status: c_int) -> c_int;
-        pub fn pam_strerror(pamh: *mut pam_handle_t, errnum: c_int) -> *const c_char;
-        pub fn pam_set_item(
-            pamh: *mut pam_handle_t,
-            item_type: c_int,
-            item: *const c_void,
-        ) -> c_int;
-    }
 }
 
 /// PAM through libpam with `service`; with `account`, its account stack too.
@@ -562,7 +466,7 @@ unsafe extern "C" fn converse(
             ffi::PAM_ERROR_MSG | ffi::PAM_TEXT_INFO if !m.msg.is_null() => {
                 // SAFETY: libpam's message text is a NUL-terminated string.
                 let text = unsafe { CStr::from_ptr(m.msg) }.to_string_lossy();
-                add_notice(&mut creds.notices.borrow_mut(), &text);
+                add_prompt_lines(&mut creds.notices.borrow_mut(), &text);
                 None
             }
             _ => None,
@@ -741,7 +645,7 @@ pub fn dialog_layout(theme: &Theme, switch_user: bool) -> DialogLayout {
         client.x + at(PAD),
         client.y + at(PAD + 80),
         client.width - 2 * at(PAD),
-        at(MESSAGE_LINES as i32 * LINE_H),
+        at(PROMPT_LINES as i32 * LINE_H),
     );
     let (bw, bh) = (at(BUTTON_W), at(BUTTON_H));
     let by = client.bottom() - at(PAD) - bh;
@@ -931,7 +835,7 @@ fn draw_body(
         lines.push(text.ellipsize(CAPS_LOCK, width, false, px).into_owned());
     }
     if let Some(msg) = msg {
-        let room = MESSAGE_LINES - lines.len();
+        let room = PROMPT_LINES - lines.len();
         lines.extend(message_lines(text, msg, width, px, room));
     }
     for (i, line) in lines.iter().enumerate() {
@@ -1339,17 +1243,6 @@ mod tests {
     }
 
     #[test]
-    fn pam_text_is_cleaned_and_cut_to_the_message_lines() {
-        let mut n = Vec::new();
-        add_notice(&mut n, "  \n\tThe account\x1b[31m is locked.\r\n");
-        assert_eq!(n, ["The account [31m is locked."]);
-        add_notice(&mut n, &"x".repeat(1000));
-        assert_eq!(n[1], "x".repeat(NOTICE_CHARS));
-        add_notice(&mut n, "past the message area");
-        assert_eq!(n.len(), MESSAGE_LINES);
-    }
-
-    #[test]
     fn a_rejection_shows_what_pam_sent_else_the_incorrect_text() {
         assert_eq!(failure_text(&[]), INCORRECT);
         let locked = ["Account locked.".to_string(), "(10 minutes left)".into()];
@@ -1513,11 +1406,15 @@ mod tests {
     fn a_long_message_is_cut_to_two_lines_that_fit_the_area() {
         let text = TextRenderer::load(&FontConfig::default());
         let w = dialog_layout(&Theme::default(), false).message.width;
-        let one = message_lines(&text, INCORRECT, w, 11, MESSAGE_LINES);
+        let one = message_lines(&text, INCORRECT, w, 11, PROMPT_LINES);
         assert_eq!(one, [INCORRECT]);
-        let long = format!("{}\n{}", "word ".repeat(40), "y".repeat(NOTICE_CHARS));
-        let lines = message_lines(&text, &long, w, 11, MESSAGE_LINES);
-        assert_eq!(lines.len(), MESSAGE_LINES);
+        let long = format!(
+            "{}\n{}",
+            "word ".repeat(40),
+            "y".repeat(repriselogin::PROMPT_CHARS)
+        );
+        let lines = message_lines(&text, &long, w, 11, PROMPT_LINES);
+        assert_eq!(lines.len(), PROMPT_LINES);
         assert!(lines[1].ends_with("..."), "{lines:?}");
         assert!(
             lines.iter().all(|l| text.measure(l, false, 11) <= w),

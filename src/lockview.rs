@@ -330,7 +330,7 @@ fn on_finger(state: &mut State) -> PostAction {
             log::warn!(
                 "lock: the fingerprint conversation keeps ending without a result; not starting it again"
             );
-        } else if result != Some(lock::ffi::PAM_AUTHINFO_UNAVAIL) {
+        } else if result != Some(reprisepam::ffi::PAM_AUTHINFO_UNAVAIL) {
             arm_finger_retry(state);
         }
     }

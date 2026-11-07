@@ -4283,6 +4283,7 @@ dependencies = [
  "reprisefx",
  "reprisekit",
  "repriselogin",
+ "reprisepam",
  "reprisescene",
  "rustix 1.1.6",
  "serde",
@@ -4486,6 +4487,7 @@ dependencies = [
  "log",
  "reprisebus",
  "repriselogin",
+ "reprisepam",
  "serde",
  "tempfile",
  "tokio",
@@ -5005,6 +5007,10 @@ dependencies = [
  "toml",
  "zeroize",
 ]
+
+[[package]]
+name = "reprisepam"
+version = "0.1.0"
 
 [[package]]
 name = "reprisescene"
