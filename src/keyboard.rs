@@ -305,6 +305,12 @@ impl State {
                 let forward = match route {
                     _ if to_ime => true,
                     KeyRoute::Lock => crate::lockview::key(st, pressed, &h),
+                    KeyRoute::Greeter => {
+                        if pressed {
+                            field_key = Some(crate::dialogview::DialogKey::of(mods, &h));
+                        }
+                        false
+                    }
                     KeyRoute::Dialog
                     | KeyRoute::Launcher
                     | KeyRoute::Overview
@@ -381,6 +387,11 @@ impl State {
                 }
             }
             KeyRoute::Lock => {}
+            KeyRoute::Greeter => {
+                if let Some(k) = field_key {
+                    crate::greeterview::key(self, &k);
+                }
+            }
             KeyRoute::CaptureEscape => self.release_capture(),
             KeyRoute::Captured => self.capture_key(keycode - 8, pressed),
             KeyRoute::InhibitEscape => self.suspend_inhibitors(),
@@ -573,6 +584,7 @@ impl State {
         Modes {
             // In lock mode only the computer's own keys switch VTs (`console::keys`).
             can_switch_vt: self.backend.is_some() && !crate::console::remote_side(self),
+            greeter: self.host == crate::compositor::Host::Greeter,
             locked: self.desktop_locked(),
             captured: self.inputproto.gated(),
             saver_preview: crate::saverview::holds_keys(self),

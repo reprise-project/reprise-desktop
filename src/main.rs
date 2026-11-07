@@ -48,6 +48,9 @@ mod gammacontrol;
 mod glass;
 mod globalshortcuts;
 mod gpufence;
+mod greeter;
+mod greeterlink;
+mod greeterview;
 mod handlers;
 #[cfg(test)]
 mod harness;
@@ -251,6 +254,9 @@ struct Cli {
     /// With `--after-crash`: the crashed session was locked (the restart passes it; see `crash`)
     #[arg(long, hide = true)]
     locked: bool,
+    /// Show the login screen for reprise-login and nothing else (reprise-login starts it)
+    #[arg(long, hide = true)]
+    greeter: bool,
 }
 
 fn main() {
@@ -262,6 +268,10 @@ fn main() {
     journal::log_panics();
     logbridge::install();
     let cli = Cli::parse();
+    // Before the crash restart: a greeter that dies is reprise-login's to count.
+    if cli.greeter {
+        std::process::exit(greeter::main());
+    }
     if let Some(user) = cli.fingerprint_conversation.as_deref() {
         std::process::exit(lockfinger::child_main(user));
     }
@@ -333,6 +343,7 @@ fn run(
         config_path,
         event_loop.handle(),
         event_loop.get_signal(),
+        compositor::Host::Session,
     )?;
     sandbox::set_trusted(&state.config.clipboard.trusted_apps);
     let another_session = spawn::another_session_on_bus();
