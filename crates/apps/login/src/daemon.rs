@@ -407,13 +407,16 @@ impl Daemon {
                 }
                 let background = off_seat && remote_service(&s.service);
                 self.sessions.insert(SessionEntry {
-                    id: s.id,
+                    id: s.id.clone(),
                     user: s.user,
                     uid: s.uid,
                     vt: s.vt,
                     started: None,
                     background,
                 });
+                if background {
+                    self.arm_disconnected(s.id, &mut out);
+                }
             } else if s.class == "greeter" && s.service == Mode::Greeter.service() {
                 self.orphans.push(Orphan {
                     id: s.id.clone(),
