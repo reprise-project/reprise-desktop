@@ -835,6 +835,19 @@ impl Daemon {
         out.push(Effect::TerminateSession(id.into()));
     }
 
+    /// A background session someone switched to on the console is the console's from now on.
+    pub(super) fn console_on_vt(&mut self, vt: u16, out: &mut Vec<Effect>) {
+        let Some(e) = self.sessions.iter().find(|e| e.vt == vt && e.background) else {
+            return;
+        };
+        out.push(Effect::Log(
+            Level::Info,
+            format!("{}'s background session {} is on the console", e.user, e.id),
+        ));
+        let id = e.id.clone();
+        self.sessions.set_background(&id, false);
+    }
+
     pub(super) fn remote_session_gone(&mut self, entry: &SessionEntry) {
         self.remote.viewers.remove(&entry.uid);
         self.remote.linked.remove(&entry.uid);

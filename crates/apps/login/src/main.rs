@@ -290,14 +290,18 @@ async fn follow_leader(id: String, logind: Logind, events: Events) {
     }
 }
 
-/// Feeds `ConsoleOnGreeterVt` each time the console moves to VT 1, from a thread: the
-/// kernel wakes a `poll` on a sysfs attribute, which tokio's reactor does not wait on.
+/// Feeds `ConsoleOnGreeterVt` or `ConsoleOnVt` each time the console moves, from a thread:
+/// the kernel wakes a `poll` on a sysfs attribute, which tokio's reactor does not wait on.
 fn follow_console(events: Events) {
     let spawned = std::thread::Builder::new()
         .name("console".into())
         .spawn(move || {
             let followed = vt::follow_active(|vt| {
-                vt != GREETER_VT || events.send(Event::Input(Input::ConsoleOnGreeterVt)).is_ok()
+                let input = match vt {
+                    GREETER_VT => Input::ConsoleOnGreeterVt,
+                    vt => Input::ConsoleOnVt(vt),
+                };
+                events.send(Event::Input(input)).is_ok()
             });
             if let Err(e) = followed {
                 log::warn!("following the console's VT: {e}");
