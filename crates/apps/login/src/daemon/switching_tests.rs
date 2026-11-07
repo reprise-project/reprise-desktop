@@ -237,3 +237,34 @@ fn a_session_switched_away_with_no_remote_client_is_not_ended() {
     assert_eq!(effects, []);
     assert!(run.d.sessions.by_id("c2").is_some());
 }
+
+fn orphaned(run: &mut Run, id: &str, uid: u32) -> Vec<Effect> {
+    run.on(Input::SessionOrphaned { id: id.into(), uid })
+}
+
+#[test]
+fn a_session_whose_worker_died_while_it_runs_is_terminated() {
+    let mut run = anna_and_bert();
+    assert_eq!(
+        orphaned(&mut run, "c1", 1000),
+        [
+            Effect::Log(
+                Level::Warn,
+                "anna's session c1 lost its login worker; ending it".into()
+            ),
+            Effect::TerminateSession("c1".into()),
+        ]
+    );
+}
+
+#[test]
+fn an_orphan_report_with_another_uid_terminates_nothing() {
+    let mut run = anna_and_bert();
+    assert_eq!(orphaned(&mut run, "c1", 1001), []);
+}
+
+#[test]
+fn an_orphan_report_for_an_unknown_session_terminates_nothing() {
+    let mut run = anna_and_bert();
+    assert_eq!(orphaned(&mut run, "c9", 1000), []);
+}
