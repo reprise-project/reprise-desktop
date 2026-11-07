@@ -1,5 +1,6 @@
 //! The session's link to reprise-login over `REPRISE_LOGIN_SOCKET`: it says hello with the
-//! interface and asks for Switch User. While the daemon is away it calls again every 2 s.
+//! interface and asks for Switch User. While the daemon is away it calls again every 2 s;
+//! each loss asks logind whether the session is closing, which ends the compositor.
 
 use std::io::{self, Read};
 use std::os::unix::net::UnixStream;
@@ -98,6 +99,16 @@ pub fn switch_user(state: &mut State) {
     crate::lockview::lock(state);
     send(state, &SessionRequest::SwitchUser);
     log::info!("reprise-login: Switch User");
+}
+
+/// logind reports the session `closing`: under reprise-login, its worker is gone and nothing
+/// will end the session's scope, so the compositor ends itself.
+pub fn session_closing(state: &mut State) {
+    if state.login_link.is_none() || crate::crash::is_ending() {
+        return;
+    }
+    log::info!("reprise-login: the logind session is closing; ending the session");
+    crate::sessionend::quit(state);
 }
 
 /// The daemon's socket at `path`, refused unless the server runs as `server_uid`.
@@ -231,7 +242,8 @@ fn send(state: &mut State, msg: &SessionRequest) -> bool {
     }
 }
 
-/// The daemon went: forget the stream, take Switch User away and call again.
+/// The daemon went or dropped the session: forget the stream, take Switch User away, ask
+/// logind whether the session is closing and call again.
 fn lost(state: &mut State) {
     let Some(link) = state.login_link.as_mut() else {
         return;
@@ -241,6 +253,7 @@ fn lost(state: &mut State) {
         state.handle.remove(t);
     }
     crate::lockview::redraw(state);
+    crate::power::check_closing(state);
     retry(state);
 }
 
@@ -461,6 +474,28 @@ mod tests {
         assert!(!offers(&mut h), "Switch User is greyed without a link");
         let (mut h, _theirs) = linked();
         assert!(offers(&mut h));
+    }
+
+    #[test]
+    fn losing_the_link_asks_logind_whether_the_session_is_closing() {
+        let (mut h, theirs) = linked();
+        let calls = crate::power::capture_calls(&mut h.state);
+        drop(theirs);
+        h.dispatch();
+        assert!(!connected(&h.state));
+        assert_eq!(calls.try_recv(), Ok(crate::power::Call::State));
+    }
+
+    #[test]
+    fn a_closing_logind_session_ends_the_compositor_only_under_reprise_login() {
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        session_closing(&mut h.state);
+        assert!(!crate::crash::is_ending(), "a plain session stays");
+
+        let (mut h, _theirs) = linked();
+        session_closing(&mut h.state);
+        assert!(crate::crash::is_ending(), "the session ends");
     }
 
     #[test]
