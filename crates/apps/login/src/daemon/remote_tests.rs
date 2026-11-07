@@ -791,15 +791,55 @@ fn a_background_session_ending_leaves_the_console_alone() {
     let mut run = remote_run(enabled());
     run.anna_in_background(7, 2);
     assert_eq!(
-        run.removed("c2", None),
+        run.removed("c2", Some("g1")),
         [Effect::Inhibit(Inhibit::Nothing)],
         "no greeter, switch or notice"
     );
     assert_eq!(run.exited(2), [Effect::Disallocate(7)]);
     let mut run = anna_recovered(enabled(), "g1", Mode::Remote.service());
     assert_eq!(
-        run.removed("c1", None),
+        run.removed("c1", Some("g1")),
         [Effect::Disallocate(7), Effect::Inhibit(Inhibit::Nothing)]
+    );
+}
+
+#[test]
+fn a_background_session_switched_to_on_the_console_becomes_the_consoles() {
+    let remote = MachineRemote {
+        end_disconnected_after_min: Some(30),
+        ..enabled()
+    };
+    let mut run = remote_run(remote);
+    run.anna_in_background(7, 2);
+    assert_eq!(
+        quiet(run.on(Input::ConsoleOnVt(7))),
+        [Effect::Inhibit(Inhibit::Nothing)]
+    );
+    assert_eq!(
+        run.d.sessions.by_id("c2").map(|e| e.background),
+        Some(false)
+    );
+    let disconnected = Timer::Disconnected {
+        id: "c2".into(),
+        generation: 1,
+    };
+    assert_eq!(run.fire(disconnected), [], "someone uses it at the console");
+    run.viewers(ANNA, 1);
+    assert_eq!(
+        run.viewers(ANNA, 0),
+        [Effect::Inhibit(Inhibit::Nothing)],
+        "no Disconnected timer"
+    );
+    let effects = run.removed("c2", None);
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [
+                Effect::SwitchTo(GREETER_VT),
+                Effect::Reply(GreeterReply::Greeting(_))
+            ]
+        ),
+        "the login screen comes back to the console: {effects:?}"
     );
 }
 
