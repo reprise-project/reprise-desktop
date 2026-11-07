@@ -18,12 +18,11 @@ use smithay::input::keyboard::KeysymHandle;
 use smithay::input::pointer::AxisFrame;
 use smithay::output::Output;
 use smithay::utils::{Logical, Point};
-use zeroize::Zeroizing;
 
 use crate::compose::{Compose, Fed};
 use crate::compositor::State;
 use crate::editkeys::KeyText;
-use crate::greeterconv::{Conversation, Failure, Step};
+use crate::greeterconv::{Conversation, Step};
 use crate::input::BTN_LEFT;
 use crate::keys;
 use crate::menuview::{MenuFrom, MenuKind};
@@ -86,7 +85,8 @@ pub enum Typed {
 
 fn user_note(note: Note) -> UserNote {
     match note {
-        Note::LoggedOn | Note::Remote => UserNote::LoggedOn,
+        Note::LoggedOn => UserNote::LoggedOn,
+        Note::Remote => UserNote::Remote,
     }
 }
 
@@ -161,23 +161,12 @@ fn apply(state: &mut State, step: Step) {
     let Some(g) = state.greeter.login.as_mut() else {
         return;
     };
-    match step {
-        Step::Send(_) => {}
-        Step::Ask(prompt) => g.model.ask(prompt),
-        Step::Note(text) => g.model.info(text),
-        Step::Fail(f) => g.model.fail(match f {
-            Failure::Incorrect => logon::text::incorrect(),
-            Failure::Pam(text) => text,
-            Failure::Failed => logon::text::failed(),
-            Failure::PowerRefused => logon::text::power_refused(),
-            Failure::PowerFailed => logon::text::power_failed(),
-        }),
-        Step::Idle => g.model.set_busy(false),
-        Step::Started => {
-            g.started = true;
-            state.signal.stop();
-        }
+    if step == Step::Started {
+        g.started = true;
+        state.signal.stop();
+        return;
     }
+    crate::greeterconv::show(&mut g.model, step);
 }
 
 /// The link to reprise-login closed or broke: nothing can log in through this greeter.
@@ -374,20 +363,9 @@ fn act(state: &mut State, action: Option<LogonAction>) {
     };
     match action {
         LogonAction::Submit { user } => {
-            let text = Zeroizing::new(g.model.password.text.clone());
-            let req = if g.model.prompt.is_some() {
-                g.conv.answer(text)
-            } else if g.conv.idle() {
-                Some(g.conv.submit(user, text))
-            } else {
-                None
-            };
-            let Some(req) = req else {
-                return;
-            };
-            g.model.password.wipe();
-            g.model.set_busy(true);
-            crate::greeterlink::send(state, &req);
+            if let Some(req) = g.conv.on_submit(&mut g.model, user) {
+                crate::greeterlink::send(state, &req);
+            }
         }
         LogonAction::Cancel => {
             if let Some(req) = g.conv.cancel() {

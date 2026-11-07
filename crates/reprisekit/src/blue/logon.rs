@@ -105,7 +105,7 @@ fn lines(u: TextUnits) -> Lines {
 }
 
 fn noted(m: &Logon, i: usize) -> bool {
-    m.users.get(i).and_then(|u| u.note) == Some(UserNote::LoggedOn)
+    m.users.get(i).and_then(|u| u.note).is_some()
 }
 
 /// How tall a tile stands open: its name and note, the cue, the field and the message.
@@ -610,7 +610,7 @@ fn draw_tile(c: &mut Canvas, m: &Logon, sc: &Scheme, i: usize, r: Rect, k: Lines
     c.blit_over(f.x, f.y, &framed(picture, sc.welcome_tile_frame, s));
     let tx = fx + FRAMED + TEXT_GAP;
     let tw = r.right() - tx - TILE_PAD;
-    let note = noted(m, i).then(strings::logged_on);
+    let note = user.note.map(UserNote::text);
     let open = m.screen == Screen::Tile(i);
     let text_h = k.name + if note.is_some() { k.line } else { 0 };
     let mut y = if open {
@@ -697,12 +697,7 @@ fn draw_password_row(
     if m.caps_lock {
         lines.extend(pen.wrapped(&strings::caps_lock(), w, 1));
     }
-    let msg = if m.busy {
-        Some(strings::verifying())
-    } else {
-        m.message.clone()
-    };
-    if let Some(msg) = msg {
+    if let Some(msg) = m.said() {
         lines.extend(pen.wrapped(&msg, w, MESSAGE_LINES - lines.len()));
     }
     pen.lines(

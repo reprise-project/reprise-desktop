@@ -228,12 +228,7 @@ pub fn draw(
                 .into_owned(),
         );
     }
-    let msg = if m.busy {
-        Some(strings::verifying())
-    } else {
-        m.message.clone()
-    };
-    if let Some(msg) = msg {
+    if let Some(msg) = m.said() {
         let room = MESSAGE_LINES - lines.len();
         lines.extend(message_lines(text, &msg, width, px, room));
     }

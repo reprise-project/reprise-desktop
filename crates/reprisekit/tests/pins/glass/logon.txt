@@ -14,5 +14,13 @@ busy @1 973a83f576fc2b9f
 busy @2 651880d082fdb1ae
 power hot @1 bc1b58aa8bf674d6
 power hot @2 2e080922ab62f92d
+admin shut down @1 2036edc47158fe89
+admin shut down @2 0108fbbeb653eedf
+admin restart filled @1 87dfa703d8201d25
+admin restart filled @2 d424156e9712414d
+shutting down @1 80071316c97760c5
+shutting down @2 6f9bb891b2e17613
+remote note @1 f1004dd1bbb9fac4
+remote note @2 ed9d01bb391a4c68
 tile after ok @1 13eadb7831b3b005
 tile after ok @2 dca595efd71f5d16
