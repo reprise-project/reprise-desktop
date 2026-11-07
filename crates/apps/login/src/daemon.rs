@@ -171,6 +171,8 @@ const WORKER_ENDED: &str = "the login ended unexpectedly";
 const SESSION_ENDED: &str = "the session ended";
 const STARTED_EARLY: &str = "the session started before it was asked to";
 const AUTH_TIMED_OUT: &str = "the login waited too long and was cancelled";
+/// What the greeter hears of a failed power call; logind's own error is only logged.
+const POWER_FAILED: &str = "the computer could not be turned off or restarted";
 
 struct Greeter {
     worker: WorkerId,
@@ -441,7 +443,7 @@ impl Daemon {
                     Level::Warn,
                     format!("turning off or restarting: {text}"),
                 ));
-                out.push(Effect::Reply(error(ErrorKind::Failed, text)));
+                out.push(Effect::Reply(error(ErrorKind::Failed, POWER_FAILED.into())));
             }
         }
         if !self.start_in_flight() {

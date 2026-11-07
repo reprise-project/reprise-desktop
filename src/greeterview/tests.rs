@@ -325,6 +325,22 @@ fn a_refused_power_shows_why() {
 }
 
 #[test]
+fn a_failed_power_shows_a_fixed_message_and_not_loginds_text() {
+    let (mut h, mut d) = turned_off();
+    d.says(
+        &mut h,
+        GreeterReply::Error {
+            kind: ErrorKind::Failed,
+            text: "org.freedesktop.DBus.Error.AccessDenied: Permission denied".into(),
+        },
+    );
+    assert_eq!(
+        model(&h).message.as_deref(),
+        Some(logon::text::power_failed().as_str())
+    );
+}
+
+#[test]
 fn presses_beside_the_turn_off_dialog_do_nothing() {
     let (mut h, _d) = login(repriselogin::Interface::Classic);
     click_part(&mut h, Part::Power);

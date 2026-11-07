@@ -825,7 +825,7 @@ fn power_with_no_session_powers_off_and_a_failure_is_logged() {
         run.on(Input::PowerDone(Err("masked".into()))),
         vec![
             Effect::Log(Level::Warn, "turning off or restarting: masked".into()),
-            Effect::Reply(error(ErrorKind::Failed, "masked")),
+            Effect::Reply(error(ErrorKind::Failed, POWER_FAILED)),
         ]
     );
 }
