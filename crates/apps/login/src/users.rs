@@ -1,8 +1,16 @@
+use std::collections::HashSet;
 use std::ffi::{CStr, CString, OsStr};
 use std::io;
 use std::ops::RangeInclusive;
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use repriselogin::greeter::UserEntry;
+
+pub const SHELLS: &str = "/etc/shells";
+pub const LOGIN_DEFS: &str = "/etc/login.defs";
+/// Holds each account's picture as a file named after the account.
+pub const PICTURES: &str = "/var/lib/AccountsService/icons";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PasswdEntry {
@@ -51,6 +59,99 @@ pub fn listed(
     listed
 }
 
+/// The login shells in `/etc/shells` text: every line but blank and `#` lines, kept exactly.
+pub fn shells(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Passwd entries as the login screen reads them: an empty shell is `/bin/sh`, NIS `+`/`-`
+/// lines go, and only the first entry of a name stays.
+pub fn normalize(entries: Vec<PasswdEntry>) -> Vec<PasswdEntry> {
+    let mut seen = HashSet::new();
+    entries
+        .into_iter()
+        .filter(|e| !e.name.is_empty() && !e.name.starts_with(['+', '-']))
+        .filter(|e| seen.insert(e.name.clone()))
+        .map(|mut e| {
+            if e.shell.is_empty() {
+                e.shell = "/bin/sh".into();
+            }
+            e
+        })
+        .collect()
+}
+
+/// The login screen's entries for `listed`, each with its picture when `pictures` holds one.
+pub fn screen_entries(listed: Vec<PasswdEntry>, pictures: &Path) -> Vec<UserEntry> {
+    listed
+        .into_iter()
+        .map(|e| {
+            let picture =
+                Some(pictures.join(&e.name)).filter(|p| !e.name.contains('/') && p.is_file());
+            UserEntry {
+                real_name: real_name(&e),
+                name: e.name,
+                picture,
+                note: None,
+            }
+        })
+        .collect()
+}
+
+/// The accounts the login screen lists, read now from NSS, `SHELLS`, `LOGIN_DEFS` and `PICTURES`.
+pub fn read_listed() -> Vec<UserEntry> {
+    let text = |path: &str| std::fs::read_to_string(path).unwrap_or_default();
+    let shells = shells(&text(SHELLS));
+    let range = uid_range(&text(LOGIN_DEFS));
+    screen_entries(
+        listed(normalize(all()), &shells, range),
+        Path::new(PICTURES),
+    )
+}
+
+/// Every passwd entry NSS lists. getpwent's position is process-wide, so one thread reads it.
+pub fn all() -> Vec<PasswdEntry> {
+    let mut entries = Vec::new();
+    // SAFETY: only the daemon's one thread walks the database, and each entry is copied out
+    // before the next getpwent call reuses its storage.
+    unsafe {
+        libc::setpwent();
+        loop {
+            let pwd = libc::getpwent();
+            if pwd.is_null() {
+                break;
+            }
+            entries.push(entry_of(&*pwd));
+        }
+        libc::endpwent();
+    }
+    entries
+}
+
+/// Copies a C passwd entry out.
+///
+/// # Safety
+/// Each non-null field of `pwd` is a live NUL-terminated string.
+unsafe fn entry_of(pwd: &libc::passwd) -> PasswdEntry {
+    let field = |p: *const libc::c_char| match p.is_null() {
+        true => &[][..],
+        // SAFETY: the caller promises a non-null field is a NUL-terminated string.
+        false => unsafe { CStr::from_ptr(p) }.to_bytes(),
+    };
+    let text = |p| String::from_utf8_lossy(field(p)).into_owned();
+    PasswdEntry {
+        name: text(pwd.pw_name),
+        uid: pwd.pw_uid,
+        gid: pwd.pw_gid,
+        gecos: text(pwd.pw_gecos),
+        home: PathBuf::from(OsStr::from_bytes(field(pwd.pw_dir))),
+        shell: text(pwd.pw_shell),
+    }
+}
+
 /// The first comma field of the GECOS field, or the account name when that is empty.
 pub fn real_name(e: &PasswdEntry) -> String {
     let full = e.gecos.split(',').next().unwrap_or("").trim();
@@ -87,20 +188,8 @@ pub fn lookup(name: &str) -> io::Result<Option<PasswdEntry>> {
         if result.is_null() {
             return Ok(None);
         }
-        let field = |p: *const libc::c_char| match p.is_null() {
-            true => &[][..],
-            // SAFETY: a non-null passwd field is a NUL-terminated string in `buf`.
-            false => unsafe { CStr::from_ptr(p) }.to_bytes(),
-        };
-        let text = |p| String::from_utf8_lossy(field(p)).into_owned();
-        return Ok(Some(PasswdEntry {
-            name: text(pwd.pw_name),
-            uid: pwd.pw_uid,
-            gid: pwd.pw_gid,
-            gecos: text(pwd.pw_gecos),
-            home: PathBuf::from(OsStr::from_bytes(field(pwd.pw_dir))),
-            shell: text(pwd.pw_shell),
-        }));
+        // SAFETY: getpwnam_r filled `pwd` with strings in `buf`, which is still live.
+        return Ok(Some(unsafe { entry_of(&pwd) }));
     }
 }
 
@@ -146,6 +235,53 @@ mod tests {
             .map(|e| e.name)
             .collect();
         assert_eq!(names, ["anna", "zoe"]);
+    }
+
+    #[test]
+    fn shells_skip_blank_and_comment_lines_and_keep_the_rest_exactly() {
+        let text = "# /etc/shells\n/bin/sh\n\n   \n/usr/bin/zsh \n#/bin/csh\n/bin/bash\n";
+        assert_eq!(shells(text), ["/bin/sh", "/usr/bin/zsh ", "/bin/bash"]);
+    }
+
+    #[test]
+    fn passwd_entries_get_sh_for_an_empty_shell_drop_nis_lines_and_repeats() {
+        let entries = vec![
+            entry("anna", 1000, "Anna", ""),
+            entry("+", 0, "", ""),
+            entry("+bert", 0, "", ""),
+            entry("-carl", 0, "", ""),
+            entry("anna", 1005, "Other", "/bin/zsh"),
+            entry("dora", 1001, "", "/bin/bash"),
+        ];
+        let got = normalize(entries);
+        let names: Vec<_> = got.iter().map(|e| (e.name.as_str(), e.uid)).collect();
+        assert_eq!(names, [("anna", 1000), ("dora", 1001)]);
+        assert_eq!(got[0].shell, "/bin/sh");
+        assert_eq!(got[1].shell, "/bin/bash");
+    }
+
+    #[test]
+    fn a_picture_is_offered_only_when_it_is_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("anna"), "png").unwrap();
+        std::fs::create_dir(dir.path().join("bert")).unwrap();
+        let got = screen_entries(
+            vec![
+                entry("anna", 1000, "Anna Berg,,", "/bin/bash"),
+                entry("bert", 1001, "", "/bin/bash"),
+                entry("carl", 1002, "", "/bin/bash"),
+            ],
+            dir.path(),
+        );
+        let pictures: Vec<_> = got.iter().map(|u| u.picture.clone()).collect();
+        assert_eq!(pictures, [Some(dir.path().join("anna")), None, None]);
+        assert_eq!(got[0].real_name, "Anna Berg");
+        assert_eq!(got[1].real_name, "bert");
+    }
+
+    #[test]
+    fn all_lists_root() {
+        assert!(all().iter().any(|e| e.name == "root" && e.uid == 0));
     }
 
     #[test]

@@ -51,7 +51,7 @@ pub fn encode<T: Serialize>(msg: &T) -> Result<Zeroizing<Vec<u8>>, FrameError> {
     };
     if let Err(e) = serde_json::to_writer(&mut w, msg) {
         return Err(match w.over {
-            0 => FrameError::Json(e.to_string()),
+            0 => json_error(&e),
             over => FrameError::TooLong(over),
         });
     }
@@ -61,7 +61,17 @@ pub fn encode<T: Serialize>(msg: &T) -> Result<Zeroizing<Vec<u8>>, FrameError> {
 }
 
 pub fn decode<T: DeserializeOwned>(body: &[u8]) -> Result<T, FrameError> {
-    serde_json::from_slice(body).map_err(|e| FrameError::Json(e.to_string()))
+    serde_json::from_slice(body).map_err(|e| json_error(&e))
+}
+
+/// The error's category and place only: serde_json's text can quote the message, a secret too.
+fn json_error(e: &serde_json::Error) -> FrameError {
+    FrameError::Json(format!(
+        "{:?} error at line {} column {}",
+        e.classify(),
+        e.line(),
+        e.column()
+    ))
 }
 
 /// Refuses a write past `MAX_FRAME` instead of reallocating; `over` is then
@@ -266,6 +276,43 @@ mod tests {
             encode(&GreeterRequest::CreateSession { user }),
             Err(FrameError::TooLong(_))
         ));
+    }
+
+    #[test]
+    fn a_message_of_exactly_max_frame_is_encoded() {
+        let overhead = encode(&GreeterRequest::CreateSession {
+            user: String::new(),
+        })
+        .unwrap()
+        .len()
+            - PREFIX;
+        let user = "a".repeat(MAX_FRAME - overhead);
+        let frame = encode(&GreeterRequest::CreateSession { user: user.clone() }).unwrap();
+        assert_eq!(frame.len(), PREFIX + MAX_FRAME);
+        let over = encode(&GreeterRequest::CreateSession { user: user + "a" });
+        assert_eq!(over, Err(FrameError::TooLong(MAX_FRAME + 1)));
+    }
+
+    #[test]
+    fn read_msg_refuses_a_prefix_past_max_frame() {
+        let prefix = ((MAX_FRAME + 1) as u32).to_le_bytes();
+        assert_eq!(
+            read_msg::<SessionRequest>(&mut &prefix[..]),
+            Err(FrameError::TooLong(MAX_FRAME + 1))
+        );
+        let mut at_limit = (MAX_FRAME as u32).to_le_bytes().to_vec();
+        at_limit.resize(PREFIX + MAX_FRAME, b' ');
+        assert!(matches!(
+            read_msg::<SessionRequest>(&mut &at_limit[..]),
+            Err(FrameError::Json(_))
+        ));
+    }
+
+    #[test]
+    fn a_json_error_carries_no_text_of_the_message() {
+        let e = decode::<SessionRequest>(br#"{"type":"hello","interface":"hunter2"}"#).unwrap_err();
+        assert!(matches!(e, FrameError::Json(_)), "{e:?}");
+        assert!(!format!("{e} {e:?}").contains("hunter2"), "{e:?}");
     }
 
     #[test]

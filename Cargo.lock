@@ -4479,12 +4479,16 @@ dependencies = [
 name = "reprise-login"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "libc",
  "log",
+ "reprisebus",
  "repriselogin",
  "serde",
  "tempfile",
+ "tokio",
  "toml",
+ "zbus 6.2.1",
  "zeroize",
 ]
 

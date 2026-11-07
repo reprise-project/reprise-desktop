@@ -1,6 +1,7 @@
 //! The login manager's state machine: inputs from the greeter, the workers, the sessions and
 //! logind go in, effects for the backends come out. It does no I/O and reads no clock.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use repriselogin::greeter::{
@@ -240,6 +241,20 @@ impl Daemon {
             next_worker: 1,
             unlocks: 0,
         }
+    }
+
+    /// The session table's logind ids, each with its uid.
+    pub fn session_uids(&self) -> HashMap<String, u32> {
+        (self.sessions.iter())
+            .map(|e| (e.id.clone(), e.uid))
+            .collect()
+    }
+
+    /// The VT of `worker` when its start timed out and it has not exited yet.
+    pub fn stalled_vt(&self, worker: WorkerId) -> Option<u16> {
+        (self.stalled.iter())
+            .find(|s| s.worker == worker)
+            .map(|s| s.vt)
     }
 
     /// Rebuilds the session table from logind after a daemon start and ends orphaned greeters.

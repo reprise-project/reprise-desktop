@@ -111,7 +111,7 @@ pub enum FromWorker {
 
 /// The conversation over the worker socket: each message goes out as `Prompt` and waits for
 /// an `Answer`. `Cancel`, a closed socket or a bad frame ends it, and later prompts get `None`.
-/// A stop of the worker (SIGTERM, SIGINT) ends it as well.
+/// A stop signal ends it as well.
 pub struct SocketConverse {
     sock: UnixStream,
     ended: Rc<Cell<bool>>,
@@ -261,9 +261,15 @@ pub fn find_program(name: &str, path: &str) -> Option<PathBuf> {
 /// Runs one login for `user` and returns the worker's exit status.
 pub fn worker_main(mode: Mode, user: &str, mut sock: UnixStream) -> i32 {
     // SAFETY: plain signal disposition change; an inherited SIG_IGN would reap the session itself.
-    unsafe { libc::signal(libc::SIGCHLD, libc::SIG_DFL) };
-    install_stop_handler();
-    if let Err(e) = sock.set_read_timeout(Some(STOP_POLL)) {
+    if unsafe { libc::signal(libc::SIGCHLD, libc::SIG_DFL) } == libc::SIG_ERR {
+        log::error!("worker: SIGCHLD: {}", io::Error::last_os_error());
+        return 1;
+    }
+    if let Err(e) = install_stop_handler() {
+        log::error!("worker: signal handlers: {e}");
+        return 1;
+    }
+    if let Err(e) = prepare_socket(&sock) {
         log::error!("worker: socket timeout: {e}");
         return 1;
     }
@@ -336,6 +342,12 @@ pub fn worker_main(mode: Mode, user: &str, mut sock: UnixStream) -> i32 {
         Err(_) if stopped() => 1,
         Err(text) => fail(&mut sock, ErrorKind::Failed, &text),
     }
+}
+
+/// Bounds the worker's reads, so a stop is seen, and its writes, so a stuck daemon ends it.
+fn prepare_socket(sock: &UnixStream) -> io::Result<()> {
+    sock.set_read_timeout(Some(STOP_POLL))?;
+    sock.set_write_timeout(Some(WRITE_WAIT))
 }
 
 /// Tells the daemon why the login failed and gives the exit status for it.
@@ -465,6 +477,7 @@ trait Creds {
     fn set_groups(&mut self, groups: &[libc::gid_t]) -> io::Result<()>;
     fn establish_cred(&mut self) -> Result<(), PamError>;
     fn groups(&self) -> io::Result<Vec<libc::gid_t>>;
+    fn delete_cred(&mut self) -> Result<(), PamError>;
 }
 
 /// Puts the account's groups on the worker, runs `pam_setcred`, and returns the worker's
@@ -476,7 +489,12 @@ fn establish_creds(
     c.set_groups(account)
         .map_err(|e| format!("setgroups: {e}"))?;
     c.establish_cred().map_err(|e| e.to_string())?;
-    c.groups().map_err(|e| format!("getgroups: {e}"))
+    c.groups().map_err(|e| {
+        if let Err(d) = c.delete_cred() {
+            log::warn!("worker: deleting the credentials: {d}");
+        }
+        format!("getgroups: {e}")
+    })
 }
 
 struct WorkerCreds<'a>(&'a mut Pam);
@@ -492,6 +510,10 @@ impl Creds for WorkerCreds<'_> {
 
     fn establish_cred(&mut self) -> Result<(), PamError> {
         self.0.establish_cred()
+    }
+
+    fn delete_cred(&mut self) -> Result<(), PamError> {
+        self.0.delete_cred()
     }
 
     fn groups(&self) -> io::Result<Vec<libc::gid_t>> {
@@ -512,7 +534,12 @@ impl Creds for WorkerCreds<'_> {
     }
 }
 
-/// Set by SIGTERM and SIGINT, which the worker unwinds on through `pam_end`.
+/// The signals the worker unwinds on through `pam_end`, and passes on to a running session.
+const STOP_SIGNALS: [c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
+/// The longest a write to the daemon may block.
+const WRITE_WAIT: Duration = Duration::from_secs(5);
+
+/// Set by a stop signal.
 static STOP: AtomicBool = AtomicBool::new(false);
 
 fn stopped() -> bool {
@@ -523,18 +550,21 @@ extern "C" fn on_stop(_: c_int) {
     STOP.store(true, Ordering::Relaxed);
 }
 
-/// Points SIGTERM and SIGINT at `on_stop`. Without `SA_RESTART`, the blocking call a stop
+/// Points the stop signals at `on_stop`. Without `SA_RESTART`, the blocking call a stop
 /// lands in returns `EINTR`. A handler, unlike a blocked mask, does not reach PAM's helpers.
-fn install_stop_handler() {
+fn install_stop_handler() -> io::Result<()> {
     // SAFETY: `on_stop` only stores to an atomic, which is async-signal-safe.
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = on_stop as extern "C" fn(c_int) as libc::sighandler_t;
         libc::sigemptyset(&mut action.sa_mask);
-        for sig in [libc::SIGTERM, libc::SIGINT] {
-            libc::sigaction(sig, &action, std::ptr::null_mut());
+        for sig in STOP_SIGNALS {
+            if libc::sigaction(sig, &action, std::ptr::null_mut()) != 0 {
+                return Err(io::Error::last_os_error());
+            }
         }
     }
+    Ok(())
 }
 
 /// One frame from `sock`, or an error once `stop` is set. A stop that lands just before a
@@ -590,7 +620,7 @@ fn unblock(set: &libc::sigset_t) {
     unsafe { libc::sigprocmask(libc::SIG_UNBLOCK, set, std::ptr::null_mut()) };
 }
 
-/// Waits for `child`, passing SIGTERM and SIGINT on as SIGTERM. `None` when it can't be reaped.
+/// Waits for `child`, passing each stop signal on as SIGTERM. `None` when it can't be reaped.
 fn wait_for(child: libc::pid_t, set: &libc::sigset_t) -> Option<c_int> {
     loop {
         let mut status = 0;
@@ -605,7 +635,7 @@ fn wait_for(child: libc::pid_t, set: &libc::sigset_t) -> Option<c_int> {
         }
         // SAFETY: `set` holds only blocked signals; no siginfo is asked for.
         let sig = unsafe { libc::sigwaitinfo(set, std::ptr::null_mut()) };
-        if sig == libc::SIGTERM || sig == libc::SIGINT {
+        if STOP_SIGNALS.contains(&sig) {
             // SAFETY: `child` is our unreaped child, so the pid is still its.
             unsafe { libc::kill(child, libc::SIGTERM) };
         }
@@ -1122,7 +1152,7 @@ mod tests {
     #[test]
     fn sigterm_ends_a_blocked_socket_read() {
         use std::os::unix::thread::JoinHandleExt;
-        install_stop_handler();
+        install_stop_handler().unwrap();
         let (worker, daemon) = UnixStream::pair().unwrap();
         worker
             .set_read_timeout(Some(Duration::from_millis(100)))
@@ -1138,9 +1168,12 @@ mod tests {
     }
 
     /// The worker's groups as `setgroups` leaves them; `pam_setcred` adds `added`.
+    #[derive(Default)]
     struct FakeCreds {
         groups: Vec<libc::gid_t>,
         added: libc::gid_t,
+        groups_fail: bool,
+        deleted: bool,
     }
 
     impl Creds for FakeCreds {
@@ -1155,7 +1188,15 @@ mod tests {
         }
 
         fn groups(&self) -> std::io::Result<Vec<libc::gid_t>> {
-            Ok(self.groups.clone())
+            match self.groups_fail {
+                true => Err(std::io::ErrorKind::OutOfMemory.into()),
+                false => Ok(self.groups.clone()),
+            }
+        }
+
+        fn delete_cred(&mut self) -> Result<(), PamError> {
+            self.deleted = true;
+            Ok(())
         }
     }
 
@@ -1164,10 +1205,48 @@ mod tests {
         let mut creds = FakeCreds {
             groups: vec![0],
             added: 990,
+            ..FakeCreds::default()
         };
         assert_eq!(
             establish_creds(&mut creds, &[1000, 998]),
             Ok(vec![1000, 998, 990])
         );
+        assert!(!creds.deleted);
+    }
+
+    #[test]
+    fn a_getgroups_failure_after_setcred_deletes_the_credentials() {
+        let mut creds = FakeCreds {
+            groups_fail: true,
+            ..FakeCreds::default()
+        };
+        assert!(establish_creds(&mut creds, &[1000]).is_err());
+        assert!(creds.deleted, "pam_setcred's credentials are deleted again");
+    }
+
+    #[test]
+    fn sighup_stops_the_worker_like_sigterm() {
+        install_stop_handler().unwrap();
+        for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+            // SAFETY: a query of the disposition into a zeroed local.
+            let handler = unsafe {
+                let mut old: libc::sigaction = std::mem::zeroed();
+                assert_eq!(libc::sigaction(sig, std::ptr::null(), &mut old), 0);
+                old.sa_sigaction
+            };
+            assert_eq!(
+                handler, on_stop as extern "C" fn(c_int) as libc::sighandler_t,
+                "signal {sig}"
+            );
+        }
+        assert!(STOP_SIGNALS.contains(&libc::SIGHUP));
+    }
+
+    #[test]
+    fn the_worker_socket_times_out_reads_and_writes() {
+        let (worker, _daemon) = UnixStream::pair().unwrap();
+        prepare_socket(&worker).unwrap();
+        assert_eq!(worker.read_timeout().unwrap(), Some(STOP_POLL));
+        assert_eq!(worker.write_timeout().unwrap(), Some(WRITE_WAIT));
     }
 }
