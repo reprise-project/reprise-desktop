@@ -1,6 +1,7 @@
 //! reprise-login-rdp: the Remote Desktop front of reprise-login.
 
 mod accept;
+mod handoff;
 mod limits;
 mod link;
 mod negotiate;
@@ -17,7 +18,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use reprisebus::journal;
-use repriselogin::front::{FrontEvent, FrontRequest, Secret};
+use repriselogin::front::{FRONT_SOCKET, FrontEvent, FrontRequest, Secret};
 use repriselogin::machine::{MACHINE_CONFIG, MachineConfig};
 use reprisetls::{cert, tcp};
 use tokio::net::TcpStream;
@@ -25,7 +26,7 @@ use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
-use accept::{Ctx, Refused};
+use accept::{Ctx, Pending, Refused};
 use limits::{Limits, MAX_PREAUTH, PREAUTH_PER_IP, Permit, VERDICT_WAIT};
 
 const RECONNECT: Duration = Duration::from_secs(1);
@@ -149,7 +150,8 @@ async fn serve(port: u16, ctx: Rc<Ctx>) -> ExitCode {
     log::info!("listening on port {port}");
     let conns = Conns::default();
     let limits = Rc::new(RefCell::new(Limits::new(MAX_PREAUTH, PREAUTH_PER_IP)));
-    tokio::task::spawn_local(follow_link(ctx.clone(), conns.clone()));
+    let front = PathBuf::from(FRONT_SOCKET);
+    tokio::task::spawn_local(follow_link(ctx.clone(), conns.clone(), front));
     let mut next_conn = 0;
     loop {
         let (tcp, peer) = match listener.accept().await {
@@ -247,6 +249,7 @@ async fn connection(arrival: Arrival, ctx: Rc<Ctx>, conns: Conns, limits: Rc<Ref
             return;
         }
     }
+    // Under NLA the verdict can come before Client Info; it waits in `heard`.
     let Ok(verdict) = tokio::time::timeout(VERDICT_WAIT, verdict(&mut heard)).await else {
         log::warn!("{peer}: reprise-login gave no verdict");
         if let Some(link) = &*ctx.link.borrow() {
@@ -260,8 +263,29 @@ async fn connection(arrival: Arrival, ctx: Rc<Ctx>, conns: Conns, limits: Rc<Ref
             back_off(&limits, peer, backoff_s);
             accept::deny(pending).await;
         }
-        Some(FrontEvent::Accepted { .. }) => log::info!("{peer}: logged on"),
+        Some(FrontEvent::Accepted { .. }) => hand_off(&ctx, peer, pending),
         Some(_) | None => {}
+    }
+}
+
+/// Hands the logged-on connection to reprise-login; when that fails it hears the connection is
+/// gone, and the connection is closed.
+fn hand_off(ctx: &Ctx, peer: SocketAddr, pending: Pending) {
+    let link = ctx.link.borrow();
+    let Some(link) = &*link else {
+        return;
+    };
+    let conn = pending.conn;
+    let sent = match handoff::prepare(pending) {
+        Ok((tcp, handover)) => handoff::send(link, tcp, handover).map_err(|e| e.to_string()),
+        Err(e) => {
+            let _ = link.send(&FrontRequest::Gone { conn }, None);
+            Err(e.to_string())
+        }
+    };
+    match sent {
+        Ok(()) => log::info!("{peer}: logged on"),
+        Err(e) => log::warn!("{peer}: logged on, but the hand-over failed: {e}"),
     }
 }
 
@@ -284,10 +308,10 @@ fn back_off(limits: &RefCell<Limits>, peer: SocketAddr, backoff_s: u32) {
 
 /// Keeps the link to reprise-login up: the latest Remote Desktop users, each verdict to its
 /// connection, and every connection still logging in closed when the link is lost.
-async fn follow_link(ctx: Rc<Ctx>, conns: Conns) {
+async fn follow_link(ctx: Rc<Ctx>, conns: Conns, path: PathBuf) {
     let mut told = false;
     loop {
-        match link::connect().await {
+        match link::connect_to(&path).await {
             Ok((sender, mut events)) => {
                 log::info!("connected to reprise-login");
                 told = false;
@@ -330,6 +354,56 @@ mod tests {
     use limits::Refusal;
     use repriselogin::fdpass::FdFrameReader;
     use tokio::net::{TcpListener, UnixListener};
+
+    #[test]
+    fn the_fingerprint_is_readable_by_all_under_a_private_umask() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fingerprint");
+        // SAFETY: umask only swaps the process's file mode mask.
+        let old = unsafe { libc::umask(0o077) };
+        let written = write_public(&path, "AB:CD\n");
+        // SAFETY: as above.
+        unsafe { libc::umask(old) };
+        written.unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "AB:CD\n");
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644, "{mode:o}");
+    }
+
+    #[test]
+    fn the_fingerprint_replaces_symlinks_without_following_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        fs::write(&target, "kept").unwrap();
+        let path = dir.path().join("fingerprint");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        std::os::unix::fs::symlink(&target, path.with_extension("tmp")).unwrap();
+        write_public(&path, "AB:CD\n").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "kept");
+        assert!(fs::symlink_metadata(&path).unwrap().file_type().is_file());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "AB:CD\n");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_link_refused_as_a_second_one_is_tried_again() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("front.sock");
+                let listener = UnixListener::bind(&path).unwrap();
+                let ctx = Rc::new(accept::tests::ctx());
+                tokio::task::spawn_local(follow_link(ctx.clone(), Conns::default(), path));
+                let (refused, _) = listener.accept().await.unwrap();
+                drop(refused);
+                let retried = tokio::time::timeout(RECONNECT * 10, listener.accept());
+                let (daemon, _) = retried.await.expect("the front connects again").unwrap();
+                let mut reader = FdFrameReader::new();
+                assert_eq!(request(&daemon, &mut reader).await, FrontRequest::Hello);
+                assert!(ctx.link.borrow().is_some(), "the front holds the new link");
+            })
+            .await;
+    }
 
     #[tokio::test]
     async fn a_logon_with_no_verdict_is_gone_after_the_verdict_wait() {

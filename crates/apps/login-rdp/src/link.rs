@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use repriselogin::fdpass::{self, FdFrameReader};
 use repriselogin::frame;
-use repriselogin::front::{FRONT_SOCKET, FrontEvent, FrontRequest};
+use repriselogin::front::{FrontEvent, FrontRequest};
 use tokio::io::Interest;
 use tokio::net::UnixStream;
 
@@ -26,11 +26,7 @@ pub struct Events {
     reader: FdFrameReader,
 }
 
-/// Connects to reprise-login and says `Hello`.
-pub async fn connect() -> io::Result<(LinkSender, Events)> {
-    connect_to(Path::new(FRONT_SOCKET)).await
-}
-
+/// Connects to reprise-login at `path` and says `Hello`.
 pub async fn connect_to(path: &Path) -> io::Result<(LinkSender, Events)> {
     let sock = Rc::new(UnixStream::connect(path).await?);
     let sender = LinkSender { sock: sock.clone() };
