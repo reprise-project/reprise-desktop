@@ -5014,6 +5014,7 @@ dependencies = [
 name = "reprisetls"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "libc",
  "log",
  "rcgen",

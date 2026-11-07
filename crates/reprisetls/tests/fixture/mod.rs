@@ -1,14 +1,16 @@
-//! A self-signed server with secret extraction and a client that offers one suite and accepts
-//! any certificate.
+//! A self-signed server with secret extraction and a key log, and a client that offers one suite,
+//! accepts any certificate and can extract its secrets.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::aws_lc_rs as provider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::{
-    ClientConfig, DigitallySignedStruct, ServerConfig, SignatureScheme, SupportedCipherSuite,
+    ClientConfig, DigitallySignedStruct, KeyLog, ServerConfig, SignatureScheme,
+    SupportedCipherSuite,
 };
+use zeroize::Zeroizing;
 
 #[derive(Debug)]
 struct AnyCert;
@@ -50,7 +52,30 @@ impl ServerCertVerifier for AnyCert {
     }
 }
 
-pub fn server_config() -> Arc<ServerConfig> {
+/// Every secret one connection's key log gives, by label.
+#[derive(Debug, Default)]
+pub struct Secrets(Mutex<Vec<(String, Vec<u8>)>>);
+
+impl KeyLog for Secrets {
+    fn log(&self, label: &str, _: &[u8], secret: &[u8]) {
+        self.0.lock().unwrap().push((label.into(), secret.to_vec()));
+    }
+
+    fn will_log(&self, _: &str) -> bool {
+        true
+    }
+}
+
+impl Secrets {
+    pub fn get(&self, label: &str) -> Option<Zeroizing<Vec<u8>>> {
+        let logged = self.0.lock().unwrap();
+        let (_, secret) = logged.iter().find(|(l, _)| l == label)?;
+        Some(Zeroizing::new(secret.clone()))
+    }
+}
+
+/// A server config for one connection, with the key log that connection writes to.
+pub fn logged_server_config() -> (Arc<ServerConfig>, Arc<Secrets>) {
     let key = rcgen::KeyPair::generate().unwrap();
     let cert = rcgen::CertificateParams::new(vec!["reprise".into()])
         .unwrap()
@@ -66,17 +91,20 @@ pub fn server_config() -> Arc<ServerConfig> {
         )
         .unwrap();
     config.enable_secret_extraction = true;
-    Arc::new(config)
+    let secrets = Arc::new(Secrets::default());
+    config.key_log = secrets.clone();
+    (Arc::new(config), secrets)
 }
 
 pub fn client_config(suite: SupportedCipherSuite) -> Arc<ClientConfig> {
     let mut provider = provider::default_provider();
     provider.cipher_suites = vec![suite];
-    let config = ClientConfig::builder_with_provider(Arc::new(provider))
+    let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
         .with_protocol_versions(&[suite.version()])
         .unwrap()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(AnyCert))
         .with_no_client_auth();
+    config.enable_secret_extraction = true;
     Arc::new(config)
 }
