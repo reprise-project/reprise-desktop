@@ -108,6 +108,12 @@ pub fn desk_offers(state: &State) -> bool {
     connected(state) && !crate::console::remote_side(state)
 }
 
+/// Whether a logind Unlock is refused: off the seat it comes from the daemon resuming the
+/// session, and without a link no daemon is resuming it.
+pub fn refuses_unlock(state: &State) -> bool {
+    state.login_link.is_some() && !connected(state) && state.lock.seat_away
+}
+
 /// A session reprise-login started on a VT nobody shows comes up locked: Ctrl+Alt+Fn at the
 /// computer must not show its desktop. `active` is the seat's state at start.
 pub fn born(state: &mut State, active: bool) {
@@ -745,6 +751,25 @@ mod tests {
         h.dispatch();
         assert!(!connected(&h.state), "the daemon went");
         assert!(!h.state.console_locked());
+    }
+
+    #[test]
+    fn a_logind_unlock_off_the_seat_waits_for_the_link() {
+        let (mut h, theirs) = linked();
+        crate::backend::pause_session(&mut h.state);
+        drop(theirs);
+        h.dispatch();
+        assert!(!connected(&h.state), "the daemon went");
+        crate::power::report(&mut h.state, crate::power::Report::Unlock);
+        assert!(
+            h.state.console_locked(),
+            "no daemon is resuming the session"
+        );
+
+        let (mut h, _theirs) = linked();
+        crate::backend::pause_session(&mut h.state);
+        crate::power::report(&mut h.state, crate::power::Report::Unlock);
+        assert!(!h.state.console_locked(), "the daemon resumes the session");
     }
 
     #[test]
