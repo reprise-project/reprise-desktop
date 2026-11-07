@@ -2,7 +2,7 @@
 //! peer must run as that user: hand-overs go out with their sockets, viewer counts come back.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::ffi::CString;
 use std::future::Future;
 use std::io;
@@ -33,6 +33,18 @@ const SOCKET: &str = "handover.sock";
 pub const MAX_FORWARDS: usize = 4;
 /// The wait before a link that did not open is tried again.
 pub const RETRY: Duration = Duration::from_millis(50);
+/// How a lost link is opened again: every second for half a minute.
+pub const REOPEN: Retry = Retry {
+    every: Duration::from_secs(1),
+    within: Duration::from_secs(30),
+};
+
+/// Tries every `every` until one opens or `within` has passed.
+#[derive(Clone, Copy, Debug)]
+pub struct Retry {
+    pub every: Duration,
+    pub within: Duration,
+}
 
 /// Connects to `uid`'s hand-over socket.
 pub async fn open(uid: u32) -> io::Result<UnixStream> {
@@ -138,6 +150,7 @@ pub struct Links {
     input: mpsc::Sender<Input>,
     open: Opener,
     deadline: Duration,
+    reopen: Retry,
 }
 
 #[derive(Default)]
@@ -188,12 +201,31 @@ impl Links {
             input,
             open,
             deadline,
+            reopen: REOPEN,
         }
+    }
+
+    /// Links that reopen a lost link on `reopen` instead of [`REOPEN`].
+    pub fn reopening(self, reopen: Retry) -> Links {
+        Links { reopen, ..self }
     }
 
     /// Opens `uid`'s link, answered by `IntakeOpen` or `IntakeLost`. A link that is opening
     /// already answers once; one that is up answers `IntakeOpen` again.
     pub fn open(&self, uid: u32) {
+        let retry = Retry {
+            every: RETRY,
+            within: self.deadline,
+        };
+        self.open_with(uid, retry);
+    }
+
+    /// Opens `uid`'s lost link again, answered like [`Links::open`].
+    pub fn reopen(&self, uid: u32) {
+        self.open_with(uid, self.reopen);
+    }
+
+    fn open_with(&self, uid: u32, retry: Retry) {
         let mut st = self.state.borrow_mut();
         match st.links.get(&uid) {
             Some(Link { queue: Some(_), .. }) => {
@@ -212,7 +244,7 @@ impl Links {
             uid,
             serial,
             self.open.clone(),
-            self.deadline,
+            retry,
             self.input.clone(),
             self.state.clone(),
         );
@@ -266,11 +298,16 @@ impl Links {
         }
     }
 
-    /// Closes every link; none reports itself lost.
-    pub fn close_all(&self) {
-        for (_, link) in self.state.borrow_mut().links.drain() {
-            link.task.abort();
-        }
+    /// Closes every link but those of `keep`; none reports itself lost.
+    pub fn close_all_but(&self, keep: &BTreeSet<u32>) {
+        let mut st = self.state.borrow_mut();
+        st.links.retain(|uid, link| {
+            let kept = keep.contains(uid);
+            if !kept {
+                link.task.abort();
+            }
+            kept
+        });
     }
 }
 
@@ -280,12 +317,12 @@ async fn run(
     uid: u32,
     serial: u64,
     open: Opener,
-    deadline: Duration,
+    retry: Retry,
     input: mpsc::Sender<Input>,
     state: Rc<RefCell<State>>,
 ) {
     let queue = Rc::new(Queue::default());
-    match open_until(uid, &open, deadline).await {
+    match open_until(uid, &open, retry).await {
         Ok(stream) => {
             match state.borrow_mut().current(uid, serial) {
                 Some(link) => link.queue = Some(queue.clone()),
@@ -316,15 +353,15 @@ async fn run(
     let _ = input.send(Input::IntakeLost { uid }).await;
 }
 
-/// Tries `open` every `RETRY` until it connects or `deadline` passes.
-async fn open_until(uid: u32, open: &Opener, deadline: Duration) -> io::Result<UnixStream> {
-    let give_up = Instant::now() + deadline;
+/// Tries `open` on `retry` until it connects or gives up.
+async fn open_until(uid: u32, open: &Opener, retry: Retry) -> io::Result<UnixStream> {
+    let give_up = Instant::now() + retry.within;
     loop {
         let left = give_up.saturating_duration_since(Instant::now());
         match tokio::time::timeout(left, open(uid)).await {
             Ok(Ok(stream)) => return Ok(stream),
-            Ok(Err(e)) if Instant::now() + RETRY >= give_up => return Err(e),
-            Ok(Err(_)) => tokio::time::sleep(RETRY).await,
+            Ok(Err(e)) if Instant::now() + retry.every >= give_up => return Err(e),
+            Ok(Err(_)) => tokio::time::sleep(retry.every).await,
             Err(_) => return Err(io::ErrorKind::TimedOut.into()),
         }
     }
@@ -722,6 +759,89 @@ pub(crate) mod tests {
                 assert_eq!(next(&mut rx).await, Input::IntakeLost { uid });
                 assert_closed(&mut ends[0]);
                 assert_closed(&mut ends[2]);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_reopen_tries_every_reopen_retry_until_reopen_for_then_is_lost() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (tx, mut rx) = mpsc::channel(ipc::QUEUE);
+                let tries = Rc::new(std::cell::Cell::new(0));
+                let open: Opener = {
+                    let tries = tries.clone();
+                    Rc::new(move |_uid| {
+                        tries.set(tries.get() + 1);
+                        Box::pin(async { Err(io::ErrorKind::NotFound.into()) })
+                    })
+                };
+                let retry = Retry {
+                    every: Duration::from_millis(100),
+                    within: Duration::from_millis(450),
+                };
+                let links = Links::new(tx, open, WAIT).reopening(retry);
+                let uid = own_uid();
+                let asked = Instant::now();
+                links.reopen(uid);
+                assert_eq!(next(&mut rx).await, Input::IntakeLost { uid });
+                assert!(asked.elapsed() >= Duration::from_millis(350));
+                let tries = tries.get();
+                assert!((3..=5).contains(&tries), "one try every 100 ms: {tries}");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_reopen_links_once_the_socket_comes_back() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (tx, mut rx) = mpsc::channel(ipc::QUEUE);
+                let at = dir.path().to_path_buf();
+                let open: Opener = Rc::new(move |uid| {
+                    let at = at.clone();
+                    Box::pin(async move { open_at(&at, uid).await })
+                });
+                let retry = Retry {
+                    every: Duration::from_millis(100),
+                    within: WAIT,
+                };
+                let links = Links::new(tx, open, Duration::from_millis(100)).reopening(retry);
+                let uid = own_uid();
+                links.reopen(uid);
+                nothing_within(&mut rx, Duration::from_millis(300)).await;
+                let rdp = dir.path().join(DIR);
+                std::fs::create_dir(&rdp).unwrap();
+                mode(&rdp, 0o700);
+                let _listener = UnixListener::bind(rdp.join(SOCKET)).unwrap();
+                assert_eq!(next(&mut rx).await, Input::IntakeOpen { uid });
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn closing_links_keeps_those_named() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (links, mut rx, peers) = stalled_links();
+                let uid = own_uid();
+                links.open(uid);
+                links.open(uid + 1);
+                assert_eq!(next(&mut rx).await, Input::IntakeOpen { uid });
+                assert_eq!(next(&mut rx).await, Input::IntakeOpen { uid: uid + 1 });
+                links.close_all_but(&BTreeSet::from([uid]));
+                let (pipe, mut w) = watched_pipe();
+                assert!(links.forward(uid, 1, pipe, Box::new(hand_over(1))));
+                let (pipe, mut gone) = watched_pipe();
+                assert!(!links.forward(uid + 1, 2, pipe, Box::new(hand_over(2))));
+                assert_closed(&mut gone);
+                assert!(is_open(&mut w));
+                nothing_within(&mut rx, Duration::from_millis(100)).await;
+                drop(peers);
             })
             .await;
     }
