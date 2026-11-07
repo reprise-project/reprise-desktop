@@ -28,6 +28,8 @@ pub struct LoginLink {
     stream: Option<UnixStream>,
     watch: Option<RegistrationToken>,
     retry: Option<RegistrationToken>,
+    /// A refused server was logged at warn since the last link; later refusals log at debug.
+    refusal_warned: bool,
 }
 
 impl LoginLink {
@@ -38,6 +40,7 @@ impl LoginLink {
             stream: None,
             watch: None,
             retry: None,
+            refusal_warned: false,
         }
     }
 
@@ -121,7 +124,8 @@ fn call(state: &mut State) {
             link.stream = Some(stream);
             on_linked(state);
         }
-        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied && !link.refusal_warned => {
+            link.refusal_warned = true;
             log::warn!("reprise-login: {}: {e}", path.display());
             retry(state);
         }
@@ -156,7 +160,11 @@ fn retry(state: &mut State) {
 
 /// Watch the new stream for the daemon going, say hello, and offer Switch User.
 fn on_linked(state: &mut State) {
-    let Some(stream) = state.login_link.as_ref().and_then(|l| l.stream.as_ref()) else {
+    let Some(link) = state.login_link.as_mut() else {
+        return;
+    };
+    link.refusal_warned = false;
+    let Some(stream) = link.stream.as_ref() else {
         return;
     };
     let watched = stream
@@ -293,7 +301,12 @@ mod tests {
     }
 
     fn log_off_offers(h: &mut Harness) -> bool {
-        h.state.run_action(&Action::LogOff, 0);
+        offers_on(h, |s| s.run_action(&Action::LogOff, 0))
+    }
+
+    /// Whether the Log Off panel `open` opens offers Switch User.
+    fn offers_on(h: &mut Harness, open: fn(&mut State)) -> bool {
+        open(&mut h.state);
         let d = &h
             .state
             .dialogs
@@ -425,6 +438,38 @@ mod tests {
             h.state.console_locked(),
             "under reprise-login the session locks"
         );
+    }
+
+    #[test]
+    fn the_lock_leaves_the_reader_alone_while_the_session_is_off_the_seat() {
+        let (mut h, _theirs) = linked();
+        h.state.lock.helpers.finger = |_| {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c").arg("echo 'I ready'; exec sleep 60");
+            Some(c)
+        };
+        let finger =
+            |h: &Harness| (h.state.lock.console.as_ref()).is_some_and(|l| l.finger.is_some());
+        crate::backend::pause_session(&mut h.state);
+        assert!(h.state.console_locked());
+        assert!(!finger(&h), "a paused session starts no conversation");
+        crate::backend::activate_session(&mut h.state);
+        assert!(finger(&h), "the session back on the seat starts one");
+        crate::backend::pause_session(&mut h.state);
+        assert!(!finger(&h), "a pause ends the running one");
+        crate::backend::activate_session(&mut h.state);
+        assert!(finger(&h));
+        crate::lockview::unlock(&mut h.state);
+    }
+
+    #[test]
+    fn the_blue_log_off_offers_switch_user_only_under_reprise_login() {
+        let offers = |h: &mut Harness| offers_on(h, State::blue_log_off);
+        let mut h = Harness::new();
+        h.output("TEST-1", 1024, 768);
+        assert!(!offers(&mut h), "Switch User is greyed without a link");
+        let (mut h, _theirs) = linked();
+        assert!(offers(&mut h));
     }
 
     #[test]
