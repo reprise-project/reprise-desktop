@@ -352,12 +352,11 @@ pub fn is_virtual(output: &Output) -> bool {
     screen_of(output) == Some(Screen::Virtual)
 }
 
-/// Whether the session has the seat. Without a DRM backend: as `pause` and `activate` last left
-/// it in tests, else always.
+/// Whether the session has the seat. Without a DRM backend: as `pause` and `activate` last left it.
 pub fn session_active(state: &State) -> bool {
     match state.backend.as_ref() {
         Some(b) => b.session.is_active(),
-        None => cfg!(not(test)) || !state.lock.seat_away,
+        None => !state.lock.seat_away,
     }
 }
 
