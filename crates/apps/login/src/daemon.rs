@@ -16,7 +16,7 @@ use crate::greeterruns::{AfterGreeter, GreeterRuns, MAX_FAILURES};
 use crate::remembered::Remembered;
 use crate::table::{Route, SessionEntry, Sessions};
 use crate::vt::{self, GREETER_VT, TEXT_LOGIN_VT};
-use crate::worker::{FromWorker, Mode, ToWorker};
+use crate::worker::{AUTH_FAILED, FromWorker, Mode, ToWorker};
 
 /// A session that ends sooner than this after its start brings the greeter back with a notice.
 pub const EARLY_END: Duration = Duration::from_secs(10);
@@ -649,8 +649,16 @@ impl Daemon {
     }
 
     /// Routes the login by the account PAM resolved: a uid with a session resumes it, so no
-    /// second session opens, and any other account starts one.
+    /// second session opens, and any other account starts one. Root never logs in here, and is
+    /// told so in a wrong password's words.
     fn authenticated(&mut self, worker: WorkerId, user: String, uid: u32, out: &mut Vec<Effect>) {
+        if uid == 0 {
+            out.push(Effect::Log(
+                Level::Warn,
+                "a login as root was refused".into(),
+            ));
+            return self.fail_conversation(ErrorKind::Auth, AUTH_FAILED.into(), out);
+        }
         let route = match self.sessions.by_uid(uid) {
             Some(e) => Route::Resume {
                 id: e.id.clone(),
