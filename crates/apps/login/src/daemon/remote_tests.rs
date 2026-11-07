@@ -305,6 +305,26 @@ fn a_tls_login_checks_the_group_then_pam_then_starts_a_background_session() {
 }
 
 #[test]
+fn only_a_remote_start_runs_its_session_in_the_background() {
+    let background = |effects: &[Effect]| {
+        effects.iter().find_map(|e| match e {
+            Effect::ToWorker {
+                msg: ToWorker::Start { background, .. },
+                ..
+            } => Some(*background),
+            _ => None,
+        })
+    };
+    let mut run = remote_run(enabled());
+    assert_eq!(run.greeter(create("bert")), spawn(2, Mode::Login, "bert"));
+    run.worker(2, authed("bert", BERT));
+    let console = run.greeter(GreeterRequest::StartSession);
+    assert_eq!(background(&console), Some(false), "{console:?}");
+    let remote = run.verify(7, 3, "anna", ANNA);
+    assert_eq!(background(&remote), Some(true), "{remote:?}");
+}
+
+#[test]
 fn a_background_start_never_picks_the_vt_on_screen() {
     let mut run = remote_run(enabled());
     run.world.active_vt = 7;
