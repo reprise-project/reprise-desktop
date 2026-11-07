@@ -141,6 +141,9 @@ pub struct PowerState {
     hints: SessionHints,
     calls: Option<async_channel::Sender<Call>>,
     pub lid_closed: bool,
+    /// The lid at the login screen, which keeps it apart from `lid_closed`: it only darkens
+    /// the panels under a remote client elsewhere.
+    greeter_lid_closed: bool,
     /// Runs the lid action `LID_GRACE` after arming if the lid is still closed with no external output.
     lid_timer: Option<RegistrationToken>,
     /// The internal panels a shut lid darkened under remote control, with the brightness each had.
@@ -824,8 +827,11 @@ fn external_in_layout(state: &State) -> bool {
 /// Clamshell mode: take the built-in panels out of the layout while the lid
 /// is closed and an external output shows the desktop, and put them back when
 /// the lid opens or the last external output goes. A panel returning under a
-/// closed lid arms the lid check. Runs on every lid toggle and layout change.
+/// closed lid arms the lid check. Runs on every lid toggle and layout change of a session.
 pub fn follow_lid(state: &mut State) {
+    if state.host == crate::compositor::Host::Greeter {
+        return;
+    }
     let want = internal_wanted(state.power.lid_closed, external_in_layout(state));
     let panels: Vec<(smithay::output::Output, bool)> = crate::backend::heads(state)
         .into_iter()
@@ -1025,7 +1031,7 @@ pub fn remote_control_changed(state: &mut State) {
 /// The login screen runs no lid action: a shut lid darkens the panels while a remote client
 /// works elsewhere, and logind acts on it otherwise.
 fn greeter_lid(state: &mut State, closed: bool) {
-    state.power.lid_closed = closed;
+    state.power.greeter_lid_closed = closed;
     match closed {
         true => remote_lid(state),
         false => restore_panels(state),
@@ -1035,9 +1041,11 @@ fn greeter_lid(state: &mut State, closed: bool) {
 /// A remote client came or went (`remote_held`): a shut lid's panels go dark as the first comes
 /// and come back, with a lid check in a session, as the last goes. Off the seat, nothing.
 fn remote_lid(state: &mut State) {
-    let shut = state.power.lid_closed
-        && !external_in_layout(state)
-        && crate::backend::session_active(state);
+    let closed = match state.host {
+        crate::compositor::Host::Greeter => state.power.greeter_lid_closed,
+        _ => state.power.lid_closed,
+    };
+    let shut = closed && !external_in_layout(state) && crate::backend::session_active(state);
     if remote_held(state) {
         if shut {
             darken_panels(state);
@@ -1355,6 +1363,30 @@ mod tests {
                 "the login screen runs no lid action"
             );
             assert!(!h.state.console_locked());
+        }
+
+        #[test]
+        fn a_shut_lid_at_the_login_screen_leaves_the_layout_and_arms_no_lid_check() {
+            let mut h = Harness::with_config(Config::default());
+            h.state.host = crate::compositor::Host::Greeter;
+            h.head("eDP-1", 800, 600);
+            let dp = h.head("DP-1", 1920, 1080);
+            let names = |h: &Harness| -> Vec<String> {
+                h.state.scene.outputs().iter().map(|o| o.name()).collect()
+            };
+            switch_toggled(&mut h.state, Some(Switch::Lid), SwitchState::On);
+            crate::power::outputs_changed(&mut h.state);
+            h.dispatch();
+            assert_eq!(names(&h), ["eDP-1", "DP-1"], "docked, the panel stays");
+            h.state.test_heads.retain(|o| *o != dp);
+            h.state.scene.remove_output(&dp);
+            h.state.output_removed(&dp);
+            h.dispatch();
+            assert_eq!(names(&h), ["eDP-1"]);
+            assert!(
+                h.state.power.lid_timer.is_none(),
+                "no lid check after undocking"
+            );
         }
 
         #[test]
