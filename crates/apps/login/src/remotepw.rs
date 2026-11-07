@@ -50,7 +50,12 @@ fn parse(line: &str) -> Option<StoredPassword> {
 
 /// Replaces `path` with `all`, the file 0600 in a 0700 directory.
 pub fn save(path: &Path, all: &[StoredPassword]) -> io::Result<()> {
-    let mut text = Zeroizing::new(String::new());
+    // Sized for a 10-digit uid up front: a reallocation would free an unzeroed copy of the hashes.
+    let len = all
+        .iter()
+        .map(|p| p.user.len() + 2 + 10 + p.nt_hash.len() + 1)
+        .sum();
+    let mut text = Zeroizing::new(String::with_capacity(len));
     for p in all {
         text.push_str(&format!("{} {} ", p.user, p.uid));
         text.push_str(&p.nt_hash);

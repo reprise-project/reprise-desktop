@@ -6,7 +6,7 @@ use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt 
 use std::path::Path;
 
 /// Writes `bytes` to `path.tmp` in `file_mode`, syncs it and renames it over `path`, then syncs
-/// the directory, made in `dir_mode` when missing. A failure after the tmp opened removes it.
+/// the directory, made in `dir_mode` when missing. A failure before the rename removes the tmp.
 pub fn replace(path: &Path, bytes: &[u8], dir_mode: u32, file_mode: u32) -> io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     if !dir.exists() {
@@ -40,5 +40,13 @@ pub fn replace(path: &Path, bytes: &[u8], dir_mode: u32, file_mode: u32) -> io::
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
-    File::open(dir)?.sync_all()
+    // Once renamed the file is in place, so the caller must not treat it as unwritten.
+    if let Err(e) = File::open(dir).and_then(|d| d.sync_all()) {
+        log::warn!(
+            "syncing {} after replacing {}: {e}",
+            dir.display(),
+            path.display()
+        );
+    }
+    Ok(())
 }
