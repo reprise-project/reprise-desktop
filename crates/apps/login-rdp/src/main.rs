@@ -25,7 +25,7 @@ use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
 use accept::Ctx;
-use limits::{Limits, MAX_PREAUTH, PREAUTH_PER_IP, Permit};
+use limits::{Limits, MAX_PREAUTH, PREAUTH_PER_IP, Permit, VERDICT_WAIT};
 
 const RECONNECT: Duration = Duration::from_secs(1);
 /// A failing accept (out of fds) is retried after this, not at once.
@@ -236,7 +236,14 @@ async fn connection(arrival: Arrival, ctx: Rc<Ctx>, conns: Conns, limits: Rc<Ref
         log::warn!("{peer}: reprise-login: {e}");
         return;
     }
-    match verdict.await {
+    let Ok(verdict) = tokio::time::timeout(VERDICT_WAIT, verdict).await else {
+        log::warn!("{peer}: reprise-login gave no verdict");
+        if let Some(link) = &*ctx.link.borrow() {
+            let _ = link.send(&FrontRequest::Gone { conn }, None);
+        }
+        return;
+    };
+    match verdict {
         Ok(FrontEvent::Denied { backoff_s, .. }) => {
             log::info!("{peer}: the logon was refused");
             limits.borrow_mut().back_off(
@@ -293,5 +300,108 @@ async fn follow_link(ctx: Rc<Ctx>, conns: Conns) {
             Err(_) => {}
         }
         tokio::time::sleep(RECONNECT).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use limits::Refusal;
+    use repriselogin::fdpass::FdFrameReader;
+    use repriselogin::frame;
+    use std::os::fd::AsFd;
+    use tokio::io::Interest;
+    use tokio::net::{TcpListener, UnixListener, UnixStream};
+
+    /// The next request the front sent over `daemon`.
+    async fn request(daemon: &UnixStream, reader: &mut FdFrameReader) -> FrontRequest {
+        loop {
+            if let Some((body, _)) = reader.next().unwrap() {
+                return frame::decode(&body).unwrap();
+            }
+            daemon.readable().await.unwrap();
+            match daemon.try_io(Interest::READABLE, || reader.read_from(daemon.as_fd())) {
+                Ok(n) => assert_ne!(n, 0, "the front keeps the link"),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                Err(e) => panic!("{e}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_logon_with_no_verdict_is_gone_after_the_verdict_wait() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("front.sock");
+                let listener = UnixListener::bind(&path).unwrap();
+                let ctx = Rc::new(accept::tests::ctx());
+                let (sender, _events) = link::connect_to(&path).await.unwrap();
+                *ctx.link.borrow_mut() = Some(sender);
+                let (daemon, _) = listener.accept().await.unwrap();
+                let mut reader = FdFrameReader::new();
+                assert_eq!(request(&daemon, &mut reader).await, FrontRequest::Hello);
+
+                let rdp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let client = tokio::spawn(accept::tests::client(
+                    rdp.local_addr().unwrap(),
+                    "anna".into(),
+                    "secret".into(),
+                ));
+                let (tcp, peer) = rdp.accept().await.unwrap();
+                let limits = Rc::new(RefCell::new(Limits::new(1, 1)));
+                let start = Instant::now();
+                let permit = limits.borrow_mut().admit(peer.ip(), start).unwrap();
+                let conns = Conns::default();
+                let arrival = Arrival {
+                    tcp,
+                    peer,
+                    conn: 5,
+                    accepted: start,
+                    _permit: permit,
+                };
+                let task = tokio::task::spawn_local(connection(
+                    arrival,
+                    ctx.clone(),
+                    conns.clone(),
+                    limits.clone(),
+                ));
+                conns.borrow_mut().insert(
+                    5,
+                    Conn {
+                        abort: task.abort_handle(),
+                        verdict: None,
+                    },
+                );
+                let authenticate = request(&daemon, &mut reader).await;
+                assert!(
+                    matches!(authenticate, FrontRequest::Authenticate { conn: 5, .. }),
+                    "{authenticate:?}"
+                );
+                // The handshake runs on the real clock; the wait is stepped through paused.
+                tokio::time::pause();
+                let other: std::net::IpAddr = "192.0.2.9".parse().unwrap();
+                tokio::time::sleep_until(start + VERDICT_WAIT - Duration::from_millis(1)).await;
+                assert_eq!(
+                    limits.borrow_mut().admit(other, Instant::now()).err(),
+                    Some(Refusal::Full),
+                    "the slot is held while the verdict is due"
+                );
+
+                let gone =
+                    tokio::time::timeout(Duration::from_secs(1), request(&daemon, &mut reader))
+                        .await
+                        .expect("Gone is sent once the verdict wait ends");
+                assert_eq!(gone, FrontRequest::Gone { conn: 5 });
+                assert!(start.elapsed() >= VERDICT_WAIT, "{:?}", start.elapsed());
+                limits
+                    .borrow_mut()
+                    .admit(other, Instant::now())
+                    .expect("the slot is free once the logon is given up");
+                assert!(conns.borrow().is_empty(), "the connection is forgotten");
+                client.abort();
+            })
+            .await;
     }
 }
