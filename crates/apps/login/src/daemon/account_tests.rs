@@ -274,6 +274,21 @@ fn only_a_remote_user_other_than_root_gets_a_remote_password() {
 }
 
 #[test]
+fn root_is_refused_a_clear_in_the_group_or_out_of_it() {
+    let mut run = run();
+    for (link, member_of) in [(1, true), (2, false)] {
+        assert_eq!(
+            run.account(link, "root", 0, clear(LOGIN_PW)),
+            looked_up(link, "root")
+        );
+        assert_eq!(
+            run.quiet(member(link, Some(0), member_of)),
+            refused(link, AccountRefusal::NotRemoteUser)
+        );
+    }
+}
+
+#[test]
 fn a_user_outside_the_remote_group_can_clear_their_remote_password() {
     let mut run = run();
     let bert = stored("bert", BERT, "bert-remote");
