@@ -271,7 +271,7 @@ fn main() {
     // zbus logs every served call at info and Smithay its GL devices; RUST_LOG
     // turns them back on.
     reprisebus::journal::builder("info,zbus=warn,smithay=warn", journal::init()).init();
-    journal::log_panics();
+    reprisebus::journal::log_panics();
     logbridge::install();
     let cli = Cli::parse();
     // Before the crash restart: a greeter that dies is reprise-login's to count.
