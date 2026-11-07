@@ -195,7 +195,9 @@ The sockets live in `/run/reprise-login` (0755, root):
   logind session is one the daemon started or found at start, and its uid
   is that session's user. A session can say which interface it runs and ask
   for Switch User; it can't start a login or reach another session. A frame
-  that doesn't decode is skipped, and the connection stays open.
+  that doesn't decode is skipped, and the connection stays open. A refused
+  peer is told `refused` before the daemon hangs up; a session refused five
+  times in a row stops calling.
 
 Frames are length-prefixed JSON of at most 64 KiB. A password typed at the
 login screen travels in zeroed buffers from the login screen through the
@@ -213,6 +215,9 @@ instead.
 A worker moves into its logind session's scope when the session opens, out
 of the unit's cgroup. Restarting reprise-login, or a crash, leaves running
 sessions alone; a login still in its PAM conversation ends with the daemon.
+A session whose worker dies is left closing by logind: its compositor ends
+itself once logind reports it closing, and that user's next login first
+stops whatever is left of the session's scope.
 
 ### Switching users
 
