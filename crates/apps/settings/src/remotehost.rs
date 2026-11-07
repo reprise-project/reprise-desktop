@@ -166,6 +166,7 @@ impl SettingsApp {
         if changed {
             self.show_remote(keep);
         }
+        self.ensure_account();
         if registry::open(&self.sheet) == Page::RemoteDesktop {
             self.start_remote(|| {
                 std::thread::sleep(POLL);
@@ -219,6 +220,7 @@ impl SettingsApp {
             keep.as_deref(),
             machine,
         );
+        self.show_account();
     }
 }
 

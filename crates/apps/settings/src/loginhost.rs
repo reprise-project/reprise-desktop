@@ -273,7 +273,7 @@ impl SettingsApp {
     }
 
     /// Run `job` off the loop; tests run it at once.
-    fn login_spawn<T: Send + 'static>(
+    pub(crate) fn login_spawn<T: Send + 'static>(
         &self,
         job: impl FnOnce() -> T + Send + 'static,
     ) -> Receiver<T> {

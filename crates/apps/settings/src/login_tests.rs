@@ -1,6 +1,8 @@
 use super::*;
 use reprisekit::controls::{form, pagelist, propsheet};
 use repriselogin::Interface;
+use repriselogin::account::{AccountRefusal, AccountReply, AccountRequest};
+use repriselogin::frame::{read_msg, write_msg};
 use repriselogin::machine::{LoginConfig, MachineConfig, MachineRemote};
 use std::cell::RefCell;
 use std::io;
@@ -555,4 +557,167 @@ fn second_client_radio_writes_the_key() {
     let table = doc["remote_desktop"].as_table().expect("the section");
     let rd = repriseconf::remote::from_table(&table.to_string().parse().unwrap());
     assert_eq!(rd.second_client, repriseconf::remote::SecondClient::Replace);
+}
+
+const ANSWERED: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A login manager on `dir`'s account socket: one request read per connection, each answered
+/// with the next of `replies`. The requests come back on the receiver.
+fn account_daemon(
+    dir: &Path,
+    replies: Vec<AccountReply>,
+) -> (PathBuf, std::sync::mpsc::Receiver<AccountRequest>) {
+    let path = dir.join("account.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for reply in replies {
+            let Ok((mut s, _)) = listener.accept() else {
+                return;
+            };
+            let Ok(req) = read_msg::<AccountRequest>(&mut s) else {
+                return;
+            };
+            let _ = tx.send(req);
+            let _ = write_msg(&mut s, &reply);
+        }
+    });
+    (path, rx)
+}
+
+/// The app on `dir` asking `socket`, with the Remote Desktop page under the login manager.
+fn managed_app(dir: &Path, socket: PathBuf) -> SettingsApp {
+    let mut a = app(dir);
+    assert!(
+        remote(&a).item(pages::RD_PASSWORD_SET).is_none(),
+        "per-user"
+    );
+    a.account_socket = Some(socket);
+    remote_read(&mut a, managed());
+    a.wake();
+    a
+}
+
+fn press(a: &mut SettingsApp, id: &'static str) {
+    a.sheet_event(propsheet::Event::Page(
+        Page::RemoteDesktop.index(),
+        form::Event::Pressed(id),
+    ));
+}
+
+fn send(a: &mut SettingsApp, typed: &[(&'static str, &str)]) {
+    let d = a.rd_password.as_mut().expect("the dialog is open");
+    for (id, text) in typed {
+        rdpassworddlg::type_into(d, id, text);
+    }
+    let out = d.event(form::Event::Pressed(rdpassworddlg::OK));
+    a.rd_password_outcome(out);
+    a.wake();
+}
+
+#[test]
+fn set_sends_the_login_and_remote_passwords_and_shows_done() {
+    let dir = tmp("rd-set");
+    let (socket, seen) = account_daemon(
+        &dir,
+        vec![
+            AccountReply::Status {
+                remote_password: false,
+            },
+            AccountReply::Done,
+        ],
+    );
+    let mut a = managed_app(&dir, socket);
+    assert_eq!(seen.recv_timeout(ANSWERED), Ok(AccountRequest::Status));
+    assert_eq!(
+        label(remote(&a), "rd_password_label"),
+        "Remote Desktop password:"
+    );
+    assert_eq!(
+        lines(remote(&a), "rd_password_status"),
+        ["Not set: clients log on with your login password over TLS."]
+    );
+    assert!(
+        !lit(remote(&a), pages::RD_PASSWORD_CLEAR),
+        "nothing to clear"
+    );
+
+    press(&mut a, pages::RD_PASSWORD_SET);
+    send(
+        &mut a,
+        &[
+            (rdpassworddlg::LOGIN, "hunter2"),
+            (rdpassworddlg::NEW, "swordfish"),
+            (rdpassworddlg::CONFIRM, "swordfish"),
+        ],
+    );
+    assert_eq!(
+        seen.recv_timeout(ANSWERED),
+        Ok(AccountRequest::SetRemotePassword {
+            login_password: zeroize::Zeroizing::new("hunter2".into()),
+            remote_password: zeroize::Zeroizing::new("swordfish".into()),
+        })
+    );
+    assert!(a.rd_password.is_none(), "Done closes the dialog");
+    assert_eq!(
+        lines(remote(&a), "rd_password_status"),
+        ["Set: clients that use Network Level Authentication log on with it."]
+    );
+    assert!(lit(remote(&a), pages::RD_PASSWORD_CLEAR));
+}
+
+#[test]
+fn a_wrong_login_password_is_said_in_the_dialog() {
+    let dir = tmp("rd-wrong");
+    let (socket, seen) = account_daemon(
+        &dir,
+        vec![
+            AccountReply::Status {
+                remote_password: true,
+            },
+            AccountReply::Refused {
+                reason: AccountRefusal::WrongPassword,
+            },
+        ],
+    );
+    let mut a = managed_app(&dir, socket);
+    assert_eq!(seen.recv_timeout(ANSWERED), Ok(AccountRequest::Status));
+
+    press(&mut a, pages::RD_PASSWORD_CLEAR);
+    send(&mut a, &[(rdpassworddlg::LOGIN, "hunter3")]);
+    assert_eq!(
+        seen.recv_timeout(ANSWERED),
+        Ok(AccountRequest::ClearRemotePassword {
+            login_password: zeroize::Zeroizing::new("hunter3".into()),
+        })
+    );
+    let d = a.rd_password.as_ref().expect("the dialog stays open");
+    assert_eq!(d.why(), "The password is incorrect.");
+    assert_eq!(
+        d.form.edit_text(rdpassworddlg::LOGIN),
+        "",
+        "emptied to type again"
+    );
+    assert_eq!(
+        lines(remote(&a), "rd_password_status"),
+        ["Set: clients that use Network Level Authentication log on with it."],
+        "still set"
+    );
+}
+
+#[test]
+fn without_the_login_manager_nothing_asks_the_account_socket() {
+    let dir = tmp("rd-off");
+    let (socket, seen) = account_daemon(&dir, vec![AccountReply::Done]);
+    let mut a = app(&dir);
+    a.account_socket = Some(socket);
+    remote_read(
+        &mut a,
+        remotehost::Remote {
+            enabled: true,
+            ..remotehost::Remote::default()
+        },
+    );
+    a.wake();
+    assert!(seen.try_recv().is_err());
 }
