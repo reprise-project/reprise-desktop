@@ -12,6 +12,7 @@ description = "TLS and TCP pieces reprise-rdp and reprise-login's Remote Desktop
 workspace = true
 
 [dependencies]
+aws-lc-rs = { version = "1.19", default-features = false, features = ["aws-lc-sys"] }
 libc.workspace = true
 log.workspace = true
 rcgen.workspace = true

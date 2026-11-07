@@ -5,9 +5,15 @@ mod stream;
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd};
 
+use aws_lc_rs::hmac;
 use repriselogin::handover::{Cipher, DirectionKeys, TlsState, TlsVersion};
-use rustls::{ConnectionCommon, ConnectionTrafficSecrets, ProtocolVersion};
+use rustls::{
+    ConnectionCommon, ConnectionTrafficSecrets, ProtocolVersion, ServerConnection,
+    SupportedCipherSuite,
+};
 use zeroize::{Zeroize, Zeroizing};
+
+use crate::cork::Cork;
 
 pub use stream::KtlsStream;
 
@@ -41,7 +47,7 @@ pub fn install(fd: BorrowedFd<'_>, tls: &TlsState) -> io::Result<()> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Direction {
+pub(crate) enum Direction {
     Tx,
     Rx,
 }
@@ -173,6 +179,28 @@ fn setsockopt<T>(fd: BorrowedFd<'_>, name: libc::c_int, value: &T) -> io::Result
     }
 }
 
+/// Reads `name` into `value`, which the kernel fills whole, its key included.
+fn getsockopt<T>(fd: BorrowedFd<'_>, name: libc::c_int, value: &mut T) -> io::Result<()> {
+    let mut len = size_of::<T>() as libc::socklen_t;
+    // SAFETY: `value` points at a live, writable `T` of the length passed.
+    let r = unsafe {
+        libc::getsockopt(
+            fd.as_raw_fd(),
+            libc::SOL_TLS,
+            name,
+            (value as *mut T).cast(),
+            &mut len,
+        )
+    };
+    if r < 0 {
+        Err(io::Error::last_os_error())
+    } else if len as usize != size_of::<T>() {
+        Err(invalid("a crypto info of the wrong length"))
+    } else {
+        Ok(())
+    }
+}
+
 fn key_len(cipher: Cipher) -> usize {
     match cipher {
         Cipher::Aes128Gcm => 16,
@@ -236,6 +264,190 @@ pub fn keys_from_rustls(
     ))
 }
 
+/// The TLS 1.3 application traffic secrets, as rustls's `KeyLog` gives them under
+/// `CLIENT_TRAFFIC_SECRET_0` and `SERVER_TRAFFIC_SECRET_0`.
+pub struct TrafficSecrets {
+    pub client: Zeroizing<Vec<u8>>,
+    pub server: Zeroizing<Vec<u8>>,
+}
+
+/// Takes a server's keys out of rustls once nothing can be lost on the way into the kernel:
+/// `cork` stopped at a record boundary, rustls holds nothing unread or unsent, and its secrets
+/// extract. TLS 1.3 also needs `secrets`, which key updates derive from.
+pub fn hand_over<S>(
+    cork: &Cork<S>,
+    mut conn: ServerConnection,
+    secrets: Option<TrafficSecrets>,
+) -> io::Result<TlsState> {
+    let refused = |why: String| io::Error::other(format!("TLS hand-over refused: {why}"));
+    if !cork.at_boundary() {
+        return Err(refused("a partial record was read".into()));
+    }
+    check_drained(&mut conn)?;
+    let (version, record_limit) = match (conn.protocol_version(), conn.negotiated_cipher_suite()) {
+        (Some(version), Some(SupportedCipherSuite::Tls13(suite))) => {
+            (version, suite.common.confidentiality_limit)
+        }
+        (Some(version), Some(SupportedCipherSuite::Tls12(suite))) => {
+            (version, suite.common.confidentiality_limit)
+        }
+        _ => return Err(refused("the handshake is not done".into())),
+    };
+    let (tx_secret, rx_secret) = match (version, secrets) {
+        (ProtocolVersion::TLSv1_3, Some(s)) => (Some(s.server), Some(s.client)),
+        (ProtocolVersion::TLSv1_3, None) => {
+            return Err(refused("TLS 1.3 without its traffic secrets".into()));
+        }
+        _ => (None, None),
+    };
+    #[allow(deprecated)]
+    let extracted = conn
+        .dangerous_extract_secrets()
+        .map_err(|e| refused(format!("rustls gave no secrets: {e}")))?;
+    let (cipher, tx) = keys_from_rustls(version, extracted.tx.0, extracted.tx.1, tx_secret)?;
+    let (_, rx) = keys_from_rustls(version, extracted.rx.0, extracted.rx.1, rx_secret)?;
+    Ok(TlsState {
+        version: match version {
+            ProtocolVersion::TLSv1_2 => TlsVersion::Tls12,
+            _ => TlsVersion::Tls13,
+        },
+        cipher,
+        tx,
+        rx,
+        record_limit,
+    })
+}
+
+/// How many records a sender keeps in hand below the record limit.
+pub const REKEY_MARGIN: u64 = 1 << 20;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordAction {
+    Continue,
+    KeyUpdate,
+    Close,
+}
+
+/// What a sender whose next record is `seq` does under a limit of `limit` records per key.
+pub fn record_action(version: TlsVersion, seq: u64, limit: u64) -> RecordAction {
+    if seq < limit.saturating_sub(REKEY_MARGIN) {
+        RecordAction::Continue
+    } else if version == TlsVersion::Tls13 {
+        RecordAction::KeyUpdate
+    } else {
+        RecordAction::Close
+    }
+}
+
+/// The traffic secret after a key update (RFC 8446 7.2).
+pub fn next_traffic_secret(cipher: Cipher, secret: &[u8]) -> Zeroizing<Vec<u8>> {
+    let hash = hash(cipher);
+    expand_label(
+        hash,
+        secret,
+        b"traffic upd",
+        hash.digest_algorithm().output_len(),
+    )
+}
+
+/// The record key and iv of a TLS 1.3 traffic secret (RFC 8446 7.3).
+pub fn traffic_keys(cipher: Cipher, secret: &[u8]) -> (Zeroizing<Vec<u8>>, Zeroizing<Vec<u8>>) {
+    let hash = hash(cipher);
+    (
+        expand_label(hash, secret, b"key", key_len(cipher)),
+        expand_label(hash, secret, b"iv", 12),
+    )
+}
+
+/// The hash of the one TLS 1.3 suite using `cipher`.
+fn hash(cipher: Cipher) -> hmac::Algorithm {
+    match cipher {
+        Cipher::Aes256Gcm => hmac::HMAC_SHA384,
+        Cipher::Aes128Gcm | Cipher::Chacha20Poly1305 => hmac::HMAC_SHA256,
+    }
+}
+
+/// HKDF-Expand-Label with an empty context (RFC 8446 7.1), for `len` up to the hash's length,
+/// which one HMAC block covers.
+fn expand_label(
+    hash: hmac::Algorithm,
+    secret: &[u8],
+    label: &[u8],
+    len: usize,
+) -> Zeroizing<Vec<u8>> {
+    assert!(len <= hash.digest_algorithm().output_len());
+    let mut info = Vec::with_capacity(16);
+    info.extend_from_slice(&(len as u16).to_be_bytes());
+    info.push((6 + label.len()) as u8);
+    info.extend_from_slice(b"tls13 ");
+    info.extend_from_slice(label);
+    info.push(0);
+    info.push(1);
+    let block = hmac::sign(&hmac::Key::new(hash, secret), &info);
+    Zeroizing::new(block.as_ref()[..len].to_vec())
+}
+
+/// Whether a TLS 1.3 handshake record is a KeyUpdate asking for one back; any other
+/// handshake message is `InvalidData`.
+pub(crate) fn key_update(version: TlsVersion, record: &[u8]) -> io::Result<bool> {
+    match (version, record) {
+        (TlsVersion::Tls13, [24, 0, 0, 1, requested @ (0 | 1)]) => Ok(*requested == 1),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "a TLS handshake message other than a key update",
+        )),
+    }
+}
+
+/// The keys after a key update, from `keys`' traffic secret, starting at sequence 0.
+pub(crate) fn next_keys(cipher: Cipher, keys: &DirectionKeys) -> io::Result<DirectionKeys> {
+    let secret = keys
+        .secret
+        .as_ref()
+        .ok_or_else(|| invalid("a key update without the traffic secret"))?;
+    let next = next_traffic_secret(cipher, secret);
+    let (key, iv) = traffic_keys(cipher, &next);
+    Ok(DirectionKeys {
+        seq: 0,
+        key,
+        iv,
+        secret: Some(next),
+    })
+}
+
+/// Installs `keys` as `direction`'s keys on a socket already in kernel TLS.
+pub(crate) fn set_keys(
+    fd: BorrowedFd<'_>,
+    direction: Direction,
+    version: TlsVersion,
+    cipher: Cipher,
+    keys: &DirectionKeys,
+) -> io::Result<()> {
+    let name = match direction {
+        Direction::Tx => libc::TLS_TX,
+        Direction::Rx => libc::TLS_RX,
+    };
+    CryptoInfo::new(direction, version, cipher, keys)?.set(fd, name)
+}
+
+/// The sequence number of the next record the kernel sends on `fd`.
+pub(crate) fn sent_seq(fd: BorrowedFd<'_>, cipher: Cipher) -> io::Result<u64> {
+    // SAFETY: these are plain C structs of integers and byte arrays, valid all zero.
+    let mut info = unsafe {
+        match cipher {
+            Cipher::Aes128Gcm => CryptoInfo::Aes128Gcm(std::mem::zeroed()),
+            Cipher::Aes256Gcm => CryptoInfo::Aes256Gcm(std::mem::zeroed()),
+            Cipher::Chacha20Poly1305 => CryptoInfo::Chacha20Poly1305(std::mem::zeroed()),
+        }
+    };
+    let rec_seq = match &mut info {
+        CryptoInfo::Aes128Gcm(c) => getsockopt(fd, libc::TLS_TX, c).map(|()| c.rec_seq),
+        CryptoInfo::Aes256Gcm(c) => getsockopt(fd, libc::TLS_TX, c).map(|()| c.rec_seq),
+        CryptoInfo::Chacha20Poly1305(c) => getsockopt(fd, libc::TLS_TX, c).map(|()| c.rec_seq),
+    }?;
+    Ok(u64::from_be_bytes(rec_seq))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Alert {
     CloseNotify,
@@ -263,10 +475,15 @@ mod tests {
     use std::collections::HashSet;
     use std::io::Write;
 
+    use std::sync::Arc;
+
     use super::*;
     use rustls::crypto::aws_lc_rs::cipher_suite;
     use rustls::crypto::cipher::AeadKey;
-    use rustls::{ClientConnection, ServerConnection, SupportedCipherSuite};
+    use rustls::server::UnbufferedServerConnection;
+    use rustls::unbuffered::ConnectionState;
+    use rustls::{ClientConnection, ServerConfig};
+    use tokio::io::AsyncReadExt;
 
     /// Moves every record `from` has to send into `to` and processes them.
     fn send<A, B>(from: &mut ConnectionCommon<A>, to: &mut ConnectionCommon<B>) {
@@ -283,10 +500,17 @@ mod tests {
 
     /// A client offering only `suite` and a server, in memory and past their handshake.
     fn connected(suite: SupportedCipherSuite) -> (ClientConnection, ServerConnection) {
+        connected_to(suite, fixture::logged_server_config().0)
+    }
+
+    fn connected_to(
+        suite: SupportedCipherSuite,
+        config: Arc<ServerConfig>,
+    ) -> (ClientConnection, ServerConnection) {
         let mut client =
             ClientConnection::new(fixture::client_config(suite), "reprise".try_into().unwrap())
                 .unwrap();
-        let mut server = ServerConnection::new(fixture::server_config()).unwrap();
+        let mut server = ServerConnection::new(config).unwrap();
         while client.is_handshaking() || server.is_handshaking() || server.wants_write() {
             send(&mut client, &mut server);
             send(&mut server, &mut client);
@@ -470,5 +694,208 @@ mod tests {
         let (_, mut server) = connected(suite);
         server.writer().write_all(b"late").unwrap();
         assert!(check_drained(&mut server).is_err(), "a record not yet sent");
+    }
+
+    /// An unbuffered server past its handshake with a client offering only `suite`, and the
+    /// server's key log.
+    fn unbuffered(
+        suite: SupportedCipherSuite,
+    ) -> (UnbufferedServerConnection, Arc<fixture::Secrets>) {
+        let (config, secrets) = fixture::logged_server_config();
+        let mut client =
+            ClientConnection::new(fixture::client_config(suite), "reprise".try_into().unwrap())
+                .unwrap();
+        let mut server = UnbufferedServerConnection::new(config).unwrap();
+        let mut incoming = Vec::new();
+        for _ in 0..10 {
+            while client.wants_write() {
+                client.write_tls(&mut incoming).unwrap();
+            }
+            let mut outgoing = Vec::new();
+            loop {
+                let status = server.process_tls_records(&mut incoming);
+                let discard = status.discard;
+                let more = match status.state.unwrap() {
+                    ConnectionState::EncodeTlsData(mut data) => {
+                        let mut buf = vec![0; 1 << 16];
+                        let n = data.encode(&mut buf).unwrap();
+                        outgoing.extend_from_slice(&buf[..n]);
+                        true
+                    }
+                    ConnectionState::TransmitTlsData(data) => {
+                        data.done();
+                        true
+                    }
+                    ConnectionState::BlockedHandshake | ConnectionState::WriteTraffic(_) => false,
+                    _ => panic!("the handshake reaches an unexpected state"),
+                };
+                incoming.drain(..discard);
+                if !more {
+                    break;
+                }
+            }
+            let mut rd = &outgoing[..];
+            while !rd.is_empty() {
+                client.read_tls(&mut rd).unwrap();
+                client.process_new_packets().unwrap();
+            }
+            if !server.is_handshaking() && !client.is_handshaking() && !client.wants_write() {
+                return (server, secrets);
+            }
+        }
+        panic!("the handshake ends within 10 rounds");
+    }
+
+    fn traffic(secrets: &fixture::Secrets) -> Option<TrafficSecrets> {
+        Some(TrafficSecrets {
+            client: secrets.get("CLIENT_TRAFFIC_SECRET_0")?,
+            server: secrets.get("SERVER_TRAFFIC_SECRET_0")?,
+        })
+    }
+
+    #[test]
+    fn the_next_traffic_secret_matches_rustls() {
+        let suites = [
+            (cipher_suite::TLS13_AES_128_GCM_SHA256, Cipher::Aes128Gcm),
+            (cipher_suite::TLS13_AES_256_GCM_SHA384, Cipher::Aes256Gcm),
+            (
+                cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
+                Cipher::Chacha20Poly1305,
+            ),
+        ];
+        for (suite, cipher) in suites {
+            let name = suite.suite();
+            let (server, secrets) = unbuffered(suite);
+            let TrafficSecrets {
+                client: mut rx,
+                server: mut tx,
+            } = traffic(&secrets).unwrap();
+            let (_, mut kernel) = server.dangerous_into_kernel_connection().unwrap();
+            for generation in 1..=2 {
+                tx = next_traffic_secret(cipher, &tx);
+                rx = next_traffic_secret(cipher, &rx);
+                let updates = [
+                    (&tx, kernel.update_tx_secret().unwrap(), "send"),
+                    (&rx, kernel.update_rx_secret().unwrap(), "receive"),
+                ];
+                for (secret, (seq, theirs), side) in updates {
+                    let (got, theirs) =
+                        keys_from_rustls(ProtocolVersion::TLSv1_3, seq, theirs, None).unwrap();
+                    let (key, iv) = traffic_keys(cipher, secret);
+                    assert_eq!((got, seq), (cipher, 0), "{name:?}");
+                    assert!(
+                        key == theirs.key && iv == theirs.iv,
+                        "{name:?} {side} generation {generation}: the keys equal rustls's"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn record_action_rekeys_tls13_and_closes_tls12_before_the_limit() {
+        const L: u64 = 1 << 24;
+        let cases = [
+            (
+                TlsVersion::Tls13,
+                L - REKEY_MARGIN - 1,
+                L,
+                RecordAction::Continue,
+            ),
+            (
+                TlsVersion::Tls13,
+                L - REKEY_MARGIN,
+                L,
+                RecordAction::KeyUpdate,
+            ),
+            (TlsVersion::Tls12, L - REKEY_MARGIN, L, RecordAction::Close),
+            (TlsVersion::Tls13, 1 << 40, u64::MAX, RecordAction::Continue),
+        ];
+        for (version, seq, limit, action) in cases {
+            assert_eq!(
+                record_action(version, seq, limit),
+                action,
+                "{version:?} at {seq} of {limit}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_whole_tls13_key_update_is_taken() {
+        assert!(!key_update(TlsVersion::Tls13, &[24, 0, 0, 1, 0]).unwrap());
+        assert!(key_update(TlsVersion::Tls13, &[24, 0, 0, 1, 1]).unwrap());
+        let refused: [(TlsVersion, &[u8]); 5] = [
+            (TlsVersion::Tls13, &[24, 0, 0, 1, 2]),
+            (TlsVersion::Tls13, &[24, 0, 0, 1, 0, 24, 0, 0, 1, 0]),
+            (TlsVersion::Tls13, &[4, 0, 0, 1, 0]),
+            (TlsVersion::Tls12, &[24, 0, 0, 1, 0]),
+            (TlsVersion::Tls12, &[0, 0, 0, 0]),
+        ];
+        for (version, record) in refused {
+            let err = key_update(version, record).unwrap_err();
+            assert_eq!(
+                err.kind(),
+                io::ErrorKind::InvalidData,
+                "{version:?} {record:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn hand_over_refuses_a_cut_record_held_data_and_no_extraction() {
+        let suite = cipher_suite::TLS13_AES_128_GCM_SHA256;
+        let boundary = Cork::new(tokio::io::empty());
+        let mut cut = Cork::new(&[23u8, 3, 3][..]);
+        assert_eq!(
+            cut.read(&mut [0; 8]).await.unwrap(),
+            3,
+            "a header cut short"
+        );
+        let refusal = |result: io::Result<TlsState>| result.unwrap_err().to_string();
+
+        let (config, secrets) = fixture::logged_server_config();
+        let (_, server) = connected_to(suite, config);
+        let err = refusal(hand_over(&cut, server, traffic(&secrets)));
+        assert!(err.contains("partial record"), "a cut record: {err}");
+
+        let (config, secrets) = fixture::logged_server_config();
+        let (_, mut server) = connected_to(suite, config);
+        server.writer().write_all(b"late").unwrap();
+        let err = refusal(hand_over(&boundary, server, traffic(&secrets)));
+        assert!(err.contains("rustls holds"), "held data: {err}");
+
+        let (config, secrets) = fixture::logged_server_config();
+        let mut config = (*config).clone();
+        config.enable_secret_extraction = false;
+        let (_, server) = connected_to(suite, Arc::new(config));
+        let err = refusal(hand_over(&boundary, server, traffic(&secrets)));
+        assert!(err.contains("no secrets"), "no extraction: {err}");
+
+        let (_, server) = connected(suite);
+        let err = refusal(hand_over(&boundary, server, None));
+        assert!(
+            err.contains("traffic secrets"),
+            "TLS 1.3 without secrets: {err}"
+        );
+
+        let (config, secrets) = fixture::logged_server_config();
+        let (_, server) = connected_to(suite, config);
+        let tls = hand_over(&boundary, server, traffic(&secrets)).unwrap();
+        let TrafficSecrets { client, server } = traffic(&secrets).unwrap();
+        assert_eq!(
+            (tls.version, tls.cipher, tls.record_limit),
+            (TlsVersion::Tls13, Cipher::Aes128Gcm, 1 << 24)
+        );
+        assert!(
+            tls.tx.secret == Some(server) && tls.rx.secret == Some(client),
+            "a server sends under the server secret"
+        );
+
+        let (_, server) = connected(cipher_suite::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256);
+        let tls = hand_over(&boundary, server, None).unwrap();
+        assert_eq!(
+            (tls.version, tls.record_limit, tls.tx.secret),
+            (TlsVersion::Tls12, u64::MAX, None)
+        );
     }
 }
