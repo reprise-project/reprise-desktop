@@ -331,6 +331,10 @@ pub fn find_program(name: &str, path: &str) -> Option<PathBuf> {
 
 /// Runs one login for the user the daemon's `Begin` names and returns the worker's exit status.
 pub fn worker_main(mode: Mode, mut sock: UnixStream) -> i32 {
+    if let Err(e) = lead_session() {
+        log::error!("worker: its own session: {e}");
+        return 1;
+    }
     // SAFETY: plain signal disposition change; an inherited SIG_IGN would reap the session itself.
     if unsafe { libc::signal(libc::SIGCHLD, libc::SIG_DFL) } == libc::SIG_ERR {
         log::error!("worker: SIGCHLD: {}", io::Error::last_os_error());
@@ -367,7 +371,8 @@ struct Opened<P, H> {
     pam: P,
     account: PasswdEntry,
     greeter_socket: bool,
-    /// Held open for the session's life, so logind's autovt never starts a getty on it.
+    /// Held open for the session's life, so logind's autovt never starts a getty on it, and the
+    /// worker's controlling terminal, so no process of the session can claim it.
     tty: H,
     groups: Vec<libc::gid_t>,
 }
@@ -784,7 +789,9 @@ impl Vts for Console {
     type Held = File;
 
     fn hold(&mut self, vt: u16) -> io::Result<File> {
-        vt::hold(vt)
+        let tty = vt::hold(vt)?;
+        vt::own(&tty)?;
+        Ok(tty)
     }
 
     fn activate_and_wait(&mut self, vt: u16, stop: &dyn Fn() -> bool) -> io::Result<()> {
@@ -792,8 +799,11 @@ impl Vts for Console {
     }
 }
 
-/// The signals the worker unwinds on through `pam_end`, and passes on to a running session.
-const STOP_SIGNALS: [c_int; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP];
+/// The signal the worker unwinds on through `pam_end`, and passes on to a running session.
+const STOP_SIGNALS: [c_int; 1] = [libc::SIGTERM];
+/// What a controlling terminal sends its foreground group, which the worker is once it owns its
+/// VT. A compositor crash can leave the VT in text mode, where Ctrl+C sends SIGINT.
+const TERMINAL_SIGNALS: [c_int; 4] = [libc::SIGHUP, libc::SIGINT, libc::SIGQUIT, libc::SIGTSTP];
 /// The longest a write to the daemon may block.
 const WRITE_WAIT: Duration = Duration::from_secs(5);
 
@@ -806,6 +816,22 @@ fn stopped() -> bool {
 
 extern "C" fn on_stop(_: c_int) {
     STOP.store(true, Ordering::Relaxed);
+}
+
+/// Makes the worker a session leader, which `vt::own` needs, that ignores `TERMINAL_SIGNALS`.
+fn lead_session() -> io::Result<()> {
+    // SAFETY: setsid takes no arguments, and signal sets a disposition, not a handler.
+    unsafe {
+        if libc::setsid() < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        for sig in TERMINAL_SIGNALS {
+            if libc::signal(sig, libc::SIG_IGN) == libc::SIG_ERR {
+                return Err(io::Error::last_os_error());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Points the stop signals at `on_stop`. Without `SA_RESTART`, the blocking call a stop
@@ -865,7 +891,7 @@ fn block_session_signals() -> libc::sigset_t {
     unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
         libc::sigemptyset(&mut set);
-        for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP, libc::SIGCHLD] {
+        for sig in STOP_SIGNALS.into_iter().chain([libc::SIGCHLD]) {
             libc::sigaddset(&mut set, sig);
         }
         libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
@@ -1074,12 +1100,8 @@ impl Launch {
     }
 }
 
-/// Makes the forked session child a session of its own with `/dev/null` as stdin. It gets no
-/// controlling terminal: through `/dev/tty` its VT would let any of its processes VT_ACTIVATE
-/// and take the monitor from the seat's active session.
-///
-/// # Safety
-/// Called only in a child right after `fork`; it makes only async-signal-safe calls.
+/// Makes the forked session child a session of its own with `/dev/null` as stdin and no
+/// controlling terminal, which would let it VT_ACTIVATE. Called only right after `fork`.
 unsafe fn own_session() -> Result<(), &'static [u8]> {
     // SAFETY: setsid, open and dup2 are async-signal-safe and take no pointer but a literal.
     unsafe {
