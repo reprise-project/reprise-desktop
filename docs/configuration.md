@@ -185,6 +185,30 @@ removed file gives the defaults; at startup so does an unreadable one.
 `quality`, `frame_rate` and `encoder` reach a connected client at the next
 frame, and `sound` at once.
 
+## Login manager
+
+`/etc/reprise/login.toml` configures `reprise-login`, the login manager
+([install.md](install.md#login-manager)), for the whole computer. It is read
+when reprise-login starts: `sudo systemctl restart reprise-login` applies a
+change, and running sessions keep running. Only the `[login]` table is
+read. A missing file gives the defaults. A key with a value it can't use
+keeps its default and an unknown key is skipped; a file that isn't TOML
+gives every default. The journal names each (`journalctl -b -u
+reprise-login`).
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `interface` | `"classic"`, `"blue"` or `"glass"`: the login screen's design ([features.md](features.md#login-screen)) | the `[appearance] interface` of the last session that ran under reprise-login; `"classic"` before any |
+| `show_users` | `true` lists the accounts on the Blue and Glass screens, with each one's picture from AccountsService. `false` asks for a typed user name there, as Classic always does | `true` |
+| `autologin_user` | an account name. Each time reprise-login starts with no session running, it logs that user in without a password; a logout brings the login screen. A name the screen wouldn't list shows the login screen, and the journal says why. `""` counts as unset | unset |
+
+The login screen lists accounts with a uid between `UID_MIN` and `UID_MAX`
+of `/etc/login.defs` (1000 and 60000 when unset) and a shell listed in
+`/etc/shells` that isn't `nologin` or `false`, by name, at most 100.
+Classic fills in the user who last logged in, and Glass opens on that
+user's picture. reprise-login keeps that user and the last interface in
+`/var/lib/reprise-login/state.toml`.
+
 ## Lock when away
 
 `[lock] away_device` names a paired Bluetooth device, by address

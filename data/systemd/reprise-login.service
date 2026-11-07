@@ -1,0 +1,23 @@
+[Unit]
+Description=Reprise login manager
+Documentation=https://github.com/reprise-project/reprise-desktop/blob/main/docs/install.md
+Conflicts=getty@tty1.service
+After=systemd-user-sessions.service getty@tty1.service plymouth-quit.service systemd-logind.service
+PartOf=graphical.target
+StartLimitIntervalSec=30
+StartLimitBurst=2
+OnFailure=getty@tty1.service
+
+# No sandboxing directives: every session descends from this service and would inherit them
+# (docs/security.md, Login manager).
+[Service]
+ExecStart=/usr/bin/reprise-login
+Restart=always
+RuntimeDirectory=reprise-login
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+StateDirectory=reprise-login
+StateDirectoryMode=0700
+
+[Install]
+Alias=display-manager.service

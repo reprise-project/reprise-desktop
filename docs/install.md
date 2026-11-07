@@ -45,7 +45,8 @@ not record window titles, notification text, clipboard contents, what is
 typed or what is playing.
 
 On Arch, `packaging/arch/PKGBUILD` packages the compositor, the programs, the
-session file, the PAM files and the portal backend. The programs are one
+session file, the PAM files, the portal backend and the login manager
+([below](#login-manager)). The programs are one
 binary, `/usr/bin/reprise-apps`, and `reprise-notepad` and the other program
 names are symlinks to it. The Remote Desktop server is a binary of its own,
 `/usr/bin/reprise-rdp`, run by the user unit
@@ -74,6 +75,52 @@ URL, so download it first and install the local file:
 
     curl -LO https://github.com/reprise-project/reprise-desktop/releases/download/nightly/reprise-nightly-x86_64.pkg.tar.zst
     sudo pacman -U ./reprise-nightly-x86_64.pkg.tar.zst
+
+## Login manager
+
+The package also installs Reprise's own login manager, `reprise-login`,
+disabled. SDDM, or whichever display manager you have, stays in charge
+until you switch:
+
+    sudo systemctl enable reprise-login --force
+
+then reboot. `--force` moves the `display-manager.service` link over from
+the old display manager. To go back:
+
+    sudo systemctl enable sddm --force
+
+(or another display manager), then reboot.
+
+reprise-login shows the login screen on VT 1 in Classic, Blue or Glass
+([features](features.md#login-screen)) and starts each user's Reprise
+session on a VT of its own, from VT 7 up, through the user's login shell.
+`/etc/reprise/login.toml` picks the interface, whether the screen lists
+users, and a user to log in automatically
+([configuration](configuration.md#login-manager)).
+
+If the login screen fails three times in a row, reprise-login switches to a
+text login on tty2. Ctrl+Alt+F2 reaches one at any time. systemd restarts
+reprise-login itself when it exits, but starts it at most twice in 30 s,
+manual restarts included. Past that it leaves it stopped and starts a text
+login on tty1. Once the cause is fixed, `sudo systemctl reset-failed
+reprise-login` and `sudo systemctl start reprise-login` bring the login
+screen back.
+
+The logs:
+
+    journalctl -b -u reprise-login
+    journalctl -b _UID=$(id -u reprise-greeter)
+
+The first holds reprise-login and its PAM workers, the second the login
+screen itself. A session reprise-login starts writes its output, the
+compositor's log included, under `reprise-session`:
+`journalctl --user -b -t reprise-session`.
+
+A build installed by hand needs `/usr/bin/reprise-login` (the unit's
+`ExecStart`), the unit in `/usr/lib/systemd/system/`, the three PAM files
+from `data/pam.d/` in `/etc/pam.d/`, and the files from `data/sysusers.d/`
+and `data/tmpfiles.d/` applied once with `systemd-sysusers` and
+`systemd-tmpfiles --create`. A package's install runs those two for you.
 
 ## Requirements
 
@@ -109,8 +156,14 @@ URL, so download it first and install the local file:
 
 ### To run
 
-- systemd (logind, the user manager and timedated) and libseat (from seatd;
-  it talks to logind)
+- systemd (logind and pam_systemd, the user manager, timedated, and
+  sysusers and tmpfiles for the login manager) and libseat (from seatd; it
+  talks to logind)
+- For the login manager: the PAM files `reprise-login` (logins typed at the
+  login screen), `reprise-login-greeter` (the login screen's own session)
+  and `reprise-login-autologin` (`[login] autologin_user`), and the system
+  user `reprise-greeter` with its home `/var/lib/reprise-greeter`, which the
+  package's sysusers and tmpfiles files create
 - libudev, libinput 1.26 or later, libdrm, Mesa (GBM and the EGL and OpenGL ES
   drivers), libglvnd and libdisplay-info
 - libxkbcommon and xkeyboard-config, whose registry names the keyboard
@@ -185,14 +238,16 @@ desktop and stays out of the way when it's missing.
   outside CUPS's admin group without the admin password prompt
 - PackageKit, Flatpak and fwupd, for system, Flatpak and firmware updates in
   Software Updates
-- AccountsService, for User Accounts
+- AccountsService, for User Accounts and the user pictures on the login
+  screen
 
 **Security**
 
 - polkit, for the admin password prompt
-- gnome-keyring, for saved passwords and the Secret portal. SDDM's PAM file
-  unlocks it at login, and the lock screen's password unlocks it when it was
-  left locked. Under SDDM autologin PAM has no password, so no login keyring
+- gnome-keyring, for saved passwords and the Secret portal. The login
+  manager's PAM file (SDDM's or `reprise-login`) unlocks it at login, and the
+  lock screen's password unlocks it when it was left locked. Under
+  autologin PAM has no password, so no login keyring
   is created and the Secret portal fails until one exists: create it once by
   running `gnome-keyring-daemon --unlock`, typing the new password and
   Ctrl+D, or by one password login. Each autologin session then asks for
