@@ -129,9 +129,8 @@
       ended(replaced) while a locker client holds the session lock, when
       it is made or at its first set_layout, and nothing is created.
       Otherwise the first object's first set_layout creates one virtual
-      screen per monitor and locks the session if it isn't locked. Only
-      that object's later layouts resize them; once it is destroyed, no
-      layout applies until the last object goes. A later object's first
+      screen per monitor and locks the session if it isn't locked. Any
+      object's later layouts resize them. A later object's first
       set_layout hears the screens that exist. Lock mode lasts until the
       last object is destroyed, until a locker client takes the lock,
       which sends every object ended(replaced), or until the session is
