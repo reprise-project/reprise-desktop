@@ -61,6 +61,12 @@ impl State {
                 self.close_dialog();
                 self.empty_bin();
             }
+            Outcome::SwitchUser => {
+                self.close_dialog();
+                if crate::loginlink::desk_offers(self) {
+                    crate::loginlink::switch_user(self);
+                }
+            }
             Outcome::Notice(d) => self.open_dialog_over(*d),
             Outcome::Run(cmd) => {
                 self.close_dialog();

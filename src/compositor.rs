@@ -405,6 +405,8 @@ pub struct State {
     pub greeter: crate::greeterview::GreeterView,
     /// The write half of reprise-login's link, under `Host::Greeter`.
     pub greeter_link: Option<crate::greeterlink::GreeterLinkTx>,
+    /// The link to reprise-login, set when the session runs under it (`loginlink`).
+    pub login_link: Option<crate::loginlink::LoginLink>,
     pub launcher: Option<crate::launcherview::LauncherView>,
     pub start_panel: Option<crate::startpanelview::StartPanelView>,
     /// The Start panel's frame, kept between opens so an open skips drawing it again.
@@ -763,6 +765,7 @@ impl State {
             host,
             greeter: Default::default(),
             greeter_link: None,
+            login_link: None,
             launcher: None,
             start_panel: None,
             start_backing: Default::default(),

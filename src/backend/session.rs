@@ -48,6 +48,10 @@ pub(crate) fn pause(state: &mut State) {
             state.handle_key(code, false, InputTime::now());
         }
     }
+    // Under reprise-login, Switch User or another VT hands the screen to someone else.
+    if state.login_link.is_some() && !state.console_locked() {
+        crate::lockview::lock(state);
+    }
     let Some(b) = state.backend.as_mut() else {
         return;
     };

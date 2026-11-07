@@ -74,6 +74,7 @@ mod launcherentry;
 mod livepreview;
 mod location;
 mod logbridge;
+mod loginlink;
 mod media;
 mod menuview;
 mod miniview;
@@ -356,6 +357,7 @@ fn run(
     toolkits::refresh(&mut state);
     tray::setup(&mut state);
     backend::init(&mut state)?;
+    loginlink::setup(&mut state);
     // After the seat is ours: a start that cannot take it never stops the scopes.
     spawn::stop_stale_scopes(
         &state.env,

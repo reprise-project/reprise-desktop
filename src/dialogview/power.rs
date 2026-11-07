@@ -7,7 +7,8 @@ use crate::dialog::Dialog;
 impl State {
     /// The Blue Start menu's Log Off button, after the menu closed.
     pub fn blue_log_off(&mut self) {
-        self.open_dialog(Dialog::log_off().always_blue());
+        let d = Dialog::log_off(crate::loginlink::desk_offers(self));
+        self.open_dialog(d.always_blue());
     }
 
     /// The Blue Start menu's Turn Off Computer button, after the menu closed.

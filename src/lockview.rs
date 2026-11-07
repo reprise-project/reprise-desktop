@@ -109,11 +109,12 @@ const FINGER_RETRY_MAX: Duration = Duration::from_secs(30);
 /// Fingerprint conversations in a row that end without a PAM result before retrying stops.
 const FINGER_LOST_MAX: u32 = 5;
 
-/// The OK and Cancel button rects of one output's dialog, in layout coordinates, for hit testing.
+/// The button rects of one output's dialog, in layout coordinates, for hit testing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Buttons {
     pub ok: Rect,
     pub cancel: Rect,
+    pub switch_user: Option<Rect>,
 }
 
 pub struct LockOutput {
@@ -589,6 +590,7 @@ fn raise(state: &mut State, side: Side) {
         state: LockState {
             caps_lock: caps_lock(state, side),
             layout: layout(state),
+            switch_user: crate::loginlink::offered(state, side),
             ..LockState::new()
         },
         user,
@@ -1010,7 +1012,7 @@ fn layout(state: &State) -> Option<String> {
         .flatten()
 }
 
-/// Redraw both sides' dialogs with the Caps Lock and layout they read now.
+/// Redraw both sides' dialogs with the Caps Lock, layout and Switch User they read now.
 pub fn redraw(state: &mut State) {
     if state.lock.console.is_none() && state.lock.remote.is_none() {
         return;
@@ -1018,11 +1020,13 @@ pub fn redraw(state: &mut State) {
     for side in [Side::Console, Side::Remote] {
         let caps = caps_lock(state, side);
         let layout = layout(state);
+        let switch_user = crate::loginlink::offered(state, side);
         let Some(l) = state.lock.on_mut(side) else {
             continue;
         };
         l.state.caps_lock = caps;
         l.state.layout = layout;
+        l.state.switch_user = switch_user;
         let outputs: Vec<Output> = l.outputs.iter().map(|lo| lo.output.clone()).collect();
         for o in &outputs {
             redraw_output(state, side, o);
@@ -1038,11 +1042,11 @@ fn redraw_output(state: &mut State, side: Side, output: &Output) {
     let px = state.config.theme.scaled(scale).icon_size();
     let icon = state.icons.get_shared(LOCK_ICON, px);
     let b = state.layout_box(Some(output));
-    let logical = lock::dialog_layout(&state.config.theme.scaled(1));
     let theme = state.config.theme.scaled(scale);
     let Some(l) = state.lock.on(side) else {
         return;
     };
+    let logical = lock::dialog_layout(&state.config.theme.scaled(1), l.state.switch_user);
     let Some(lo) = l.outputs.iter().find(|lo| lo.output == *output) else {
         return;
     };
@@ -1062,6 +1066,7 @@ fn redraw_output(state: &mut State, side: Side, output: &Output) {
     let buttons = Buttons {
         ok: at(logical.ok),
         cancel: at(logical.cancel),
+        switch_user: logical.switch_user.map(at),
     };
     crate::output::upload_scaled(&mut state.scene, dialog, &canvas, scale);
     state.scene.set_position(dialog, x - b.x, y - b.y);
@@ -1100,6 +1105,9 @@ fn button_at<'a>(
         }
         if b.cancel.contains(x, y) {
             return Some(LockButton::Cancel);
+        }
+        if b.switch_user.is_some_and(|r| r.contains(x, y)) {
+            return Some(LockButton::SwitchUser);
         }
     }
     None
@@ -1349,7 +1357,8 @@ pub fn repeat_backspace(state: &mut State) {
 }
 
 /// A press on `side`'s lock: a locker's surfaces take it through the seat; otherwise a left press on
-/// OK submits, on Cancel clears, and beside the dialog splashes the lock water.
+/// OK submits, on Cancel clears, on Switch User asks for the login screen, and beside the dialog
+/// splashes the lock water.
 pub fn button(state: &mut State, side: Side, button: u32, pos: Point<f64, Logical>) {
     crate::sessionlock::check_alive(state);
     if button != BTN_LEFT || crate::sessionlock::holds_input(state) {
@@ -1363,6 +1372,10 @@ pub fn button(state: &mut State, side: Side, button: u32, pos: Point<f64, Logica
         let Some(b) = hit(l, pos.x, pos.y) else {
             return;
         };
+        if b == LockButton::SwitchUser {
+            crate::loginlink::switch_user(state);
+            return;
+        }
         let submit = l.state.button(b);
         end_abandoned_prompt(l);
         submit
@@ -1424,7 +1437,11 @@ mod tests {
     }
 
     fn buttons(ok: Rect, cancel: Rect) -> Buttons {
-        Buttons { ok, cancel }
+        Buttons {
+            ok,
+            cancel,
+            switch_user: None,
+        }
     }
 
     fn sh(script: &str) -> Command {

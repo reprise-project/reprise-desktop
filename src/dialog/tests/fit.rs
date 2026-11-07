@@ -357,7 +357,7 @@ fn template_dialogs() -> Vec<Dialog> {
     );
     let mut ds = vec![
         Dialog::run(&history()),
-        Dialog::log_off(),
+        Dialog::log_off(false),
         Dialog::turn_off(&power()),
         Dialog::confirm_delete("Quarterly report.txt", path, false, false, false),
         Dialog::confirm_delete("Reports", path, true, true, true),

@@ -1028,6 +1028,7 @@ impl Dialog {
                 erase: *erase,
             },
             DialogAction::EmptyBin => Outcome::EmptyBin,
+            DialogAction::SwitchUser => Outcome::SwitchUser,
             DialogAction::BrowseRun => Outcome::BrowseRun,
             DialogAction::Act(a) => Outcome::Act(a.clone()),
             DialogAction::HideSystemIcon(name) => Outcome::HideSystemIcon(name.clone()),
