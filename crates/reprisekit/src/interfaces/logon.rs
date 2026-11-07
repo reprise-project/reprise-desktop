@@ -2,7 +2,7 @@
 //! has its own.
 
 use crate::interface::Interface;
-use crate::logon::{Logon, LogonLayout};
+use crate::logon::{COLUMN, Logon, LogonLayout};
 use crate::raster::{Canvas, Rect};
 use crate::text::TextRenderer;
 use crate::theme::Theme;
@@ -26,5 +26,13 @@ pub fn draw_logon(
     match m.interface {
         Interface::Blue => blue::logon::draw(c, m, l, theme, text, s),
         Interface::Classic | Interface::Glass => classic::logon::draw(c, m, l, theme, text, s),
+    }
+}
+
+/// How many tiles the interface in force shows across `output`: the host's [`Logon::column`].
+pub fn logon_column(m: &Logon, theme: &Theme, output: Rect) -> usize {
+    match m.interface {
+        Interface::Blue => blue::logon::column(theme, output),
+        Interface::Classic | Interface::Glass => COLUMN,
     }
 }

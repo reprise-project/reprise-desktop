@@ -20,6 +20,11 @@ fn alpha(p: u32) -> u32 {
     p >> 24
 }
 
+fn luma(p: u32) -> u32 {
+    let [b, g, r, _] = p.to_le_bytes();
+    (299 * r as u32 + 587 * g as u32 + 114 * b as u32) / 1000
+}
+
 fn users() -> Vec<LogonUser> {
     [
         ("alice", "Alice Liddell"),
@@ -167,10 +172,9 @@ fn the_bands_and_the_field_take_each_schemes_colours() {
             sc.welcome_band.argb(),
             "{v:?}: the top band's lit rule"
         );
-        assert_ne!(
-            b.get(80, 200),
-            b.get(399, 500),
-            "{v:?}: the glow lights the left"
+        assert!(
+            luma(b.get(80, 200)) > luma(b.get(399, 500)),
+            "{v:?}: the glow side is brighter than the far side"
         );
     }
 }
@@ -244,4 +248,95 @@ fn blue_insets_double_exactly_at_scale_2() {
     assert_eq!(one.get(r.x + 1, y), window, "the fill one in at 1");
     assert_ne!(two.get(2 * r.x + 1, 2 * y), window, "the rim at 2");
     assert_eq!(two.get(2 * r.x + 2, 2 * y), window, "the fill two in at 2");
+}
+
+fn many(n: usize) -> Vec<LogonUser> {
+    (0..n)
+        .map(|i| LogonUser {
+            name: format!("user{i}"),
+            real_name: String::new(),
+            picture: None,
+            note: None,
+        })
+        .collect()
+}
+
+fn tiles_shown(l: &LogonLayout) -> Vec<usize> {
+    l.parts
+        .iter()
+        .filter_map(|&(p, _)| match p {
+            Part::Tile(i) => Some(i),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_focused_and_the_open_tile_stay_in_view_on_a_short_output() {
+    let short = Rect::new(0, 0, 960, 540);
+    let theme = blue_theme(Variant::Blue);
+    let text = TextRenderer::load(&theme.fonts);
+    let mut m = Logon::new(Interface::Blue, many(8), true, None);
+    for _ in 0..7 {
+        m.key(LogonKey::Down);
+    }
+    assert_eq!(m.focus, Part::Tile(7));
+    let l = layout(&m, &theme, &text, short);
+    assert!(l.rect(Part::Tile(7)).is_some(), "the focused last tile");
+    m.key(LogonKey::Enter);
+    assert_eq!(m.screen, Screen::Tile(7));
+    let l = layout(&m, &theme, &text, short);
+    assert!(l.rect(Part::Tile(7)).is_some(), "the open last tile");
+    assert!(l.rect(Part::Password).is_some(), "the open tile's field");
+}
+
+#[test]
+fn column_is_how_many_tiles_the_output_shows() {
+    let theme = blue_theme(Variant::Blue);
+    let text = TextRenderer::load(&theme.fonts);
+    for output in [
+        Rect::new(0, 0, 960, 540),
+        OUTPUT,
+        Rect::new(0, 0, 1920, 1080),
+    ] {
+        let n = column(&theme, output);
+        let m = Logon::new(Interface::Blue, many(12), true, None);
+        let l = layout(&m, &theme, &text, output);
+        assert_eq!(tiles_shown(&l).len(), n, "{output:?}");
+    }
+    assert!(column(&theme, Rect::new(0, 0, 960, 540)) < crate::logon::COLUMN);
+}
+
+#[test]
+fn caps_lock_goes_under_the_field_on_both_screens() {
+    for m in [states().remove(2).1, states().remove(5).1] {
+        let (off, l) = drawn(&m, Variant::Blue, 1);
+        let mut caps = m.clone();
+        caps.caps_lock = true;
+        let (on, _) = drawn(&caps, Variant::Blue, 1);
+        let field = l.rect(Part::Password).unwrap();
+        let row = field.y..field.bottom();
+        let under = field.bottom()..field.bottom() + 2 * LINE;
+        let differs = |ys: std::ops::Range<i32>| {
+            ys.flat_map(|y| (field.x..OUTPUT.width).map(move |x| (x, y)))
+                .any(|(x, y)| off.get(x, y) != on.get(x, y))
+        };
+        assert!(!differs(row), "{:?}: nothing beside the field", m.screen);
+        assert!(differs(under), "{:?}: the notice under it", m.screen);
+    }
+}
+
+#[test]
+fn the_backdrop_is_kept_for_each_output_size() {
+    let sc = Variant::Blue.scheme();
+    let a = cached_backdrop(sc, 64, 48, 1);
+    let b = cached_backdrop(sc, 80, 60, 1);
+    assert!(
+        Rc::ptr_eq(&a, &cached_backdrop(sc, 64, 48, 1)),
+        "the first size"
+    );
+    assert!(
+        Rc::ptr_eq(&b, &cached_backdrop(sc, 80, 60, 1)),
+        "the second size"
+    );
 }
