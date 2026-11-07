@@ -86,6 +86,7 @@ fn main() -> ExitCode {
         nla_users: Rc::default(),
         link: RefCell::new(None),
         host: hostname(),
+        nla_throttle: RefCell::default(),
     });
     tokio::task::LocalSet::new().block_on(&rt, serve(port, ctx))
 }

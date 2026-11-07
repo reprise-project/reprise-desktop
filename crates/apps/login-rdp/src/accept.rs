@@ -27,6 +27,7 @@ use ironrdp_tokio::{FramedWrite, NetworkClient, TokioFramed};
 use repriselogin::account::{nt_hash, same_hash};
 use repriselogin::front::{FrontEvent, FrontRequest, NlaUser, Secret};
 use repriselogin::handover::Step;
+use repriselogin::throttle::Attempt;
 use reprisetls::cert::Identity;
 use reprisetls::cork::Cork;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
@@ -38,7 +39,7 @@ use tokio_rustls::rustls::KeyLog;
 use tokio_rustls::server::TlsStream;
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::limits::{HANDSHAKE, MAX_PREAUTH_BYTES, MAX_RECORDING, MAX_USER};
+use crate::limits::{HANDSHAKE, MAX_PREAUTH_BYTES, MAX_RECORDING, MAX_USER, NlaThrottle, Refusal};
 use crate::link::LinkSender;
 use crate::negotiate;
 
@@ -66,6 +67,7 @@ pub struct Ctx {
     /// The machine's host name. The unit's ProtectHostname= hides later changes, so a new name
     /// applies when the front restarts.
     pub host: String,
+    pub nla_throttle: RefCell<NlaThrottle>,
 }
 
 /// A connection that sent its credentials, waiting for reprise-login's verdict.
@@ -126,6 +128,8 @@ pub enum Refused {
     DelegationMismatch,
     /// reprise-login did not verify the delegated password within `HANDSHAKE`.
     NoVerdict,
+    /// Refused before CredSSP after failed passwords.
+    Throttled(Refusal),
 }
 
 impl fmt::Display for Refused {
@@ -157,6 +161,7 @@ impl fmt::Display for Refused {
                 "reprise-login did not verify the password within {} s",
                 HANDSHAKE.as_secs()
             ),
+            Refused::Throttled(refusal) => refusal.fmt(f),
         }
     }
 }
@@ -313,6 +318,7 @@ pub async fn to_client_info(
         accepted,
         heard,
         asked: false,
+        attempt: None,
     };
     tokio::time::timeout(HANDSHAKE, accept(tcp, link))
         .await
@@ -328,10 +334,18 @@ struct Link<'a> {
     accepted: Instant,
     heard: &'a mut UnboundedReceiver<FrontEvent>,
     asked: bool,
+    /// The password check counted as failed until the delegated password is listed.
+    attempt: Option<Attempt>,
 }
 
 impl Drop for Link<'_> {
     fn drop(&mut self) {
+        // A failed check may have started a pause, which is logged once.
+        if self.attempt.is_some()
+            && let Ok(mut throttle) = self.ctx.nla_throttle.try_borrow_mut()
+        {
+            throttle.paused();
+        }
         if self.asked
             && let Ok(link) = self.ctx.link.try_borrow()
             && let Some(link) = &*link
@@ -467,6 +481,8 @@ async fn credssp(
     steps: &mut Vec<Step>,
     link: &mut Link<'_>,
 ) -> Result<String, Refused> {
+    let attempt = link.ctx.nla_throttle.borrow_mut().check(link.peer.ip());
+    link.attempt = Some(attempt.map_err(Refused::Throttled)?);
     let host = &link.ctx.host;
     acceptor.set_credssp_users(credssp_users(&link.ctx.nla_users.borrow(), host));
     let public_key = link.ctx.identity.public_key();
@@ -521,6 +537,9 @@ impl Link<'_> {
             .any(|u| u.user == user && same_hash(&u.nt_hash, &hash));
         if !listed {
             return Err(Refused::DelegationMismatch);
+        }
+        if let Some(attempt) = self.attempt.take() {
+            (self.ctx.nla_throttle.borrow_mut()).succeeded(self.peer.ip(), attempt);
         }
         let secret = Secret::Delegated(Zeroizing::new(credentials.password.clone()));
         authenticate(
