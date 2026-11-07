@@ -72,7 +72,7 @@ fn lock_mode_lasts_until_the_last_object_goes() {
 }
 
 #[test]
-fn a_second_objects_layout_is_ignored() {
+fn a_later_objects_first_layout_is_ignored_and_its_next_applies() {
     let mut h = Harness::new();
     h.output("eDP-1", 1920, 1080);
     let mut portal = h.connect_portal();
@@ -94,7 +94,29 @@ fn a_second_objects_layout_is_ignored() {
     assert_eq!(size_and_scale(remote), ((1920, 1080), 1.0));
     second.set_layout(&[(0, 0, 1280, 720, 100)]);
     h.roundtrip(&mut portal);
-    assert_eq!(size_and_scale(remote), ((1920, 1080), 1.0));
+    assert_eq!(size_and_scale(remote), ((1280, 720), 1.0));
+    assert_eq!(first.take_screens(), ["REMOTE-1"], "both hear the change");
+}
+
+#[test]
+fn a_later_objects_layout_applies_after_the_first_object_goes() {
+    let mut h = Harness::new();
+    h.output("eDP-1", 1920, 1080);
+    let mut portal = h.connect_portal();
+    let first = portal.lock_screen();
+    first.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut portal);
+    let second = portal.lock_screen();
+    second.set_layout(&[(0, 0, 1920, 1080, 100)]);
+    h.roundtrip(&mut portal);
+    first.object.destroy();
+    h.roundtrip(&mut portal);
+    second.take_screens();
+    second.set_layout(&[(0, 0, 1280, 720, 100), (1280, 0, 1280, 720, 100)]);
+    h.roundtrip(&mut portal);
+    assert_eq!(second.take_screens(), ["REMOTE-1", "REMOTE-2"]);
+    let remote = &crate::virtualout::remote_outputs(&h.state)[0];
+    assert_eq!(size_and_scale(remote), ((1280, 720), 1.0));
 }
 
 #[test]
@@ -330,39 +352,6 @@ fn a_layout_with_extreme_positions_is_refused_without_panicking() {
         lock.take_screens(),
         ["REMOTE-1", "REMOTE-2"],
         "the bounds pass"
-    );
-}
-
-#[test]
-fn after_the_first_object_goes_later_layouts_are_still_ignored() {
-    let mut h = Harness::new();
-    h.output("eDP-1", 1920, 1080);
-    let mut portal = h.connect_portal();
-    let first = portal.lock_screen();
-    let second = portal.lock_screen();
-    first.set_layout(&[(0, 0, 1920, 1080, 100)]);
-    second.set_layout(&[(0, 0, 1920, 1080, 100)]);
-    h.roundtrip(&mut portal);
-    second.take_screens();
-    first.object.destroy();
-    second.set_layout(&[(0, 0, 1280, 720, 100), (1280, 0, 1280, 720, 100)]);
-    h.roundtrip(&mut portal);
-    assert!(second.heard().is_empty(), "nothing changed");
-    assert_eq!(remote_names(&h), ["REMOTE-1"]);
-    let remote = &crate::virtualout::remote_outputs(&h.state)[0];
-    assert_eq!(size_and_scale(remote), ((1920, 1080), 1.0));
-    second.object.destroy();
-    h.roundtrip(&mut portal);
-    let third = portal.lock_screen();
-    third.set_layout(&[(0, 0, 1280, 720, 100)]);
-    h.roundtrip(&mut portal);
-    third.set_layout(&[(0, 0, 2560, 1440, 100)]);
-    h.roundtrip(&mut portal);
-    let remote = &crate::virtualout::remote_outputs(&h.state)[0];
-    assert_eq!(
-        size_and_scale(remote),
-        ((2560, 1440), 1.0),
-        "the next lock mode has a new first object"
     );
 }
 

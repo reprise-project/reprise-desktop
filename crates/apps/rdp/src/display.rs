@@ -220,9 +220,8 @@ impl Display {
         }
     }
 
-    /// Joins the console's run once, or keeps the place its login took over, and says whether it
-    /// locks the console. The run's owner publishes the client's monitors and follows its
-    /// Display Control layouts.
+    /// Joins the console's run once, or keeps the place its login took over; true when it locks
+    /// the console. The run's owner publishes the client's monitors and Display Control layouts.
     fn join(&mut self) -> bool {
         if self.joined.is_none() {
             let size = self.client_size.unwrap_or_else(|| self.told.get());

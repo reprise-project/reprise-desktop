@@ -90,30 +90,21 @@ impl Console {
     /// Joins the run going on in place of its other viewers, taking its layout; None when no
     /// viewer is in a run.
     pub fn take_over(&self) -> Option<Joined> {
-        let joined = {
-            let mut run = self.0.run.lock().unwrap();
-            if run.viewers == 0 {
-                return None;
-            }
-            let id = run.next;
-            run.next += 1;
-            run.viewers += 1;
-            Joined {
-                console: self.clone(),
-                id,
-                lock: run.lock,
-            }
-        };
-        self.take_owner(joined.id);
-        Some(joined)
-    }
-
-    /// The published layout of a lock-mode run follows `viewer` from now on.
-    pub fn take_owner(&self, viewer: u64) {
         let mut run = self.0.run.lock().unwrap();
-        if run.lock {
-            run.owner = Some(viewer);
+        if run.viewers == 0 {
+            return None;
         }
+        let id = run.next;
+        run.next += 1;
+        run.viewers += 1;
+        if run.lock {
+            run.owner = Some(id);
+        }
+        Some(Joined {
+            console: self.clone(),
+            id,
+            lock: run.lock,
+        })
     }
 
     fn publish(&self, layout: Vec<Monitor>) {
@@ -433,8 +424,7 @@ pub(crate) mod tests {
     fn a_replacing_viewer_keeps_lock_mode_and_takes_the_layout() {
         let (console, _config, status) = configured(LaptopScreen::Lock, false);
         let first = console.join(FIRST.to_vec());
-        let replacing = console.join(SECOND.to_vec());
-        console.take_owner(replacing.id);
+        let replacing = console.take_over().expect("the run is going on");
         drop(first);
         assert!(replacing.lock(), "the run stays in lock mode");
         assert_eq!(published(&status), FIRST, "the run goes on");
@@ -468,13 +458,12 @@ pub(crate) mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_viewer_that_takes_the_run_over_after_following_publishes() {
+    async fn a_viewer_that_took_the_run_over_publishes_the_layouts_it_follows() {
         let (console, _config, status) = configured(LaptopScreen::Lock, false);
         let first = console.join(FIRST.to_vec());
-        let later = console.join(SECOND.to_vec());
+        let later = console.take_over().expect("the run is going on");
         let (layouts, rx) = mpsc::unbounded_channel();
         later.follow(rx, |_| {});
-        console.take_owner(later.id);
         drop(first);
         let last = vec![(0, 0, 1440, 900, 100)];
         layouts.send(last.clone()).unwrap();

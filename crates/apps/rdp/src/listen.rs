@@ -205,11 +205,8 @@ pub type Handlers<D, I> = (
     ClientLayout,
 );
 
-/// Serve clients from `intake` for `server.user`, each checked by `logins` and served by
-/// `handlers`, which reports through its [`Shown`] and [`Ending`]. A client arriving with
-/// `max_viewers` connected (one more with `second_client = "replace"`), or from an address in
-/// back-off, is closed at once. On `stop`, [`Leave::stopping`] runs, then every connection is told
-/// the server stopped and this returns once each has closed.
+/// Serve clients from `intake` through `logins` and `handlers`, closing one past `max_viewers`
+/// (one more under `"replace"`) or in back-off. `stop` runs [`Leave::stopping`] and ends them all.
 pub async fn serve<D, I, L>(
     mut server: Server<L>,
     mut intake: impl Intake,

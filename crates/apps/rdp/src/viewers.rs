@@ -97,6 +97,7 @@ impl Viewers {
         self.live.values_mut().for_each(|e| e.end(why));
     }
 
+    /// Ends every connection but `keep`'s, each told `why` once logged in.
     pub fn kick_others(&mut self, keep: ViewerId, why: Kick) {
         (self.live.iter_mut())
             .filter(|(id, _)| **id != keep)
