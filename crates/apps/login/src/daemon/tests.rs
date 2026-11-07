@@ -1289,6 +1289,26 @@ fn the_greeter_waits_for_an_orphan_whatever_asks_for_it() {
 }
 
 #[test]
+fn a_late_session_of_a_timed_out_start_leaves_the_next_starting_login_on_its_vt() {
+    let mut run = Run::booted();
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    run.greeter(GreeterRequest::StartSession);
+    run.on(Input::Timer(Timer::Start(WorkerId(2))));
+    run.greeter(create("bob"));
+    run.worker(3, authed("bob", 1001));
+    run.greeter(GreeterRequest::StartSession);
+    let effects = run.worker(2, started("c2", 1000));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::Log(..), Effect::TerminateSession(id)] if id == "c2"
+        ),
+        "bob's start keeps the console: {effects:?}"
+    );
+}
+
+#[test]
 fn a_timed_out_start_whose_session_comes_up_late_returns_to_the_login_screen() {
     let mut run = Run::booted();
     run.greeter(create("anna"));
