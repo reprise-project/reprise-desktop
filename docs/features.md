@@ -931,7 +931,7 @@ them.
   password set, a client that offers NLA, as xfreerdp3 does by default, logs
   on with that instead; set to TLS it still takes the login password. NLA
   takes the name as `user`, `.\user`, `HOST\user`, `user@host` or `user@`.
-  mstsc is untested.
+  Only xfreerdp has been tried.
 - **Remote Desktop password.** Settings > Remote Desktop says "Remote
   logins to this computer are set on the Login Manager page." in place of
   its on switch, and shows a Remote Desktop password row: Set... asks for

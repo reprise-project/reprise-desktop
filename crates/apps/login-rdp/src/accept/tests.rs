@@ -617,7 +617,7 @@ fn garbage_never_panics() {
 }
 
 /// How a test client runs CredSSP: the connector's own bare NTLM, or NTLM in SPNEGO as
-/// `user` in `domain`, which mstsc and FreeRDP send.
+/// `user` in `domain`, which most RDP clients send.
 enum Credssp {
     Connector,
     Spnego {
