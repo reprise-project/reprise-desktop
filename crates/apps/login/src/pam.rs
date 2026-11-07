@@ -26,6 +26,7 @@ pub(crate) mod ffi {
 
     pub const PAM_USER: c_int = 2;
     pub const PAM_TTY: c_int = 3;
+    pub const PAM_RHOST: c_int = 4;
 
     pub const PAM_ESTABLISH_CRED: c_int = 0x2;
     pub const PAM_DELETE_CRED: c_int = 0x4;
@@ -169,6 +170,17 @@ impl Pam {
         let tty = c_string(tty, "tty")?;
         // SAFETY: the handle is live; libpam copies the string.
         let rc = unsafe { ffi::pam_set_item(self.handle, ffi::PAM_TTY, tty.as_ptr().cast()) };
+        self.check(rc)
+    }
+
+    /// `PAM_RHOST`, the remote client's address; `None` clears it.
+    pub fn set_item_rhost(&mut self, rhost: Option<&str>) -> Result<(), PamError> {
+        let rhost = rhost.map(|r| c_string(r, "remote host")).transpose()?;
+        let item = rhost
+            .as_ref()
+            .map_or(std::ptr::null(), |r| r.as_ptr().cast());
+        // SAFETY: the handle is live; libpam copies the string, and a NULL item clears it.
+        let rc = unsafe { ffi::pam_set_item(self.handle, ffi::PAM_RHOST, item) };
         self.check(rc)
     }
 
