@@ -357,7 +357,11 @@ For each session it starts without a dialog for the server, the portal reads
 the `ConsoleLayout` property of `org.reprise.RemoteDesktop`, only when that
 name's owner is the process that started the session, and passes the
 client's monitors to the compositor through `reprise_input_v1`'s
-`lock_screen` (version 9). The compositor makes one virtual screen per
+`lock_screen` (version 9). reprise-login's hand-over server claims that name
+before it takes a connection and stops while another process holds it; a
+session it started whose layout the portal can't read shares no screen,
+where the user's own server's would share every screen. The compositor
+makes one virtual screen per
 monitor of the first object's layout, in a block to the right of the
 computer's own screens. Any object's later layouts resize them, until the
 last object goes. A layout with no monitor, more than 16, a side outside
