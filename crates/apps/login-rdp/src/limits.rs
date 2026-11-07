@@ -135,18 +135,21 @@ impl Limits {
 pub struct NlaThrottle(Throttle);
 
 impl NlaThrottle {
-    /// Counts a password check from `ip` as failed until it [`succeeded`](Self::succeeded), or
-    /// refuses it while `ip` backs off or every check is paused.
-    pub fn check(&mut self, ip: IpAddr) -> Result<Attempt, Refusal> {
-        let (ip, now) = (place(ip), now());
-        let left = self.0.delay(ip, now);
+    /// Refuses a password check from `ip` while `ip` backs off or every check is paused.
+    pub fn check(&mut self, ip: IpAddr) -> Result<(), Refusal> {
+        let left = self.0.delay(place(ip), now());
         if !left.is_zero() {
             return Err(Refusal::BackedOff(left));
         }
         if self.paused() {
             return Err(Refusal::Paused);
         }
-        Ok(self.0.failed(ip, now))
+        Ok(())
+    }
+
+    /// Counts a password check from `ip` as failed until it [`succeeded`](Self::succeeded).
+    pub fn failed(&mut self, ip: IpAddr) -> Attempt {
+        self.0.failed(place(ip), now())
     }
 
     pub fn succeeded(&mut self, ip: IpAddr, attempt: Attempt) {
