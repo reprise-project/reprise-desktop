@@ -403,10 +403,13 @@ impl Runtime {
                 });
             }
             Effect::TerminateSession(id) => {
-                let l = self.logind.clone();
+                let (l, events) = (self.logind.clone(), self.events.clone());
                 tokio::task::spawn_local(async move {
                     if let Err(e) = l.manager().terminate_session(&id).await {
                         log::warn!("terminating session {id}: {e}");
+                        let seat_active = l.seat_active().await;
+                        let failed = Input::TerminateFailed { id, seat_active };
+                        let _ = events.send(Event::Input(failed));
                     }
                 });
             }
