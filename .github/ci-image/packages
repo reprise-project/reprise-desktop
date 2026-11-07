@@ -21,6 +21,7 @@ python
 rust
 seatd
 shared-mime-info
+systemd
 systemd-libs
 ttf-dejavu
 xorg-xwayland

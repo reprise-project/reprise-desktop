@@ -150,7 +150,7 @@ fn only_programs_with_a_settings_window_are_filed_under_settings() {
     );
 }
 
-/// The package names in the PKGBUILD array `key` (`depends`), version bounds left off.
+/// The entries of the PKGBUILD array `key` (`depends`, `backup`), version bounds left off.
 fn deps(pkgbuild: &str, key: &str) -> Vec<String> {
     let head = format!("\n{key}=(");
     let at = (pkgbuild.find(&head)).unwrap_or_else(|| panic!("the PKGBUILD sets {key}"));
@@ -211,6 +211,33 @@ fn ci_installs_every_pkgbuild_dependency() {
                     "{what} installs {pkgbuild}'s {dep}"
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn every_pam_file_is_backed_up_and_installed() {
+    let pam: BTreeSet<String> = std::fs::read_dir(root().join("data/pam.d"))
+        .expect("data/pam.d lists")
+        .map(|e| {
+            e.expect("data/pam.d entry")
+                .file_name()
+                .into_string()
+                .unwrap()
+        })
+        .collect();
+    assert!(pam.contains("reprise-login-greeter"), "{pam:?}");
+    for path in PKGBUILDS {
+        let text = std::fs::read_to_string(root().join(path)).expect("PKGBUILD reads");
+        let backup = deps(&text, "backup");
+        for name in &pam {
+            let file = format!("etc/pam.d/{name}");
+            assert!(backup.contains(&file), "{path} backs up {file}");
+            let install = format!(r#"install -Dm644 data/pam.d/{name} "$pkgdir/{file}""#);
+            assert!(
+                text.lines().any(|l| l.trim() == install),
+                "{path} installs data/pam.d/{name}"
+            );
         }
     }
 }

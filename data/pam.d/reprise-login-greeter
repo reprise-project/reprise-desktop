@@ -1,0 +1,8 @@
+#%PAM-1.0
+# The login screen's own session, as the reprise-greeter system user, which has no password.
+auth      required  pam_env.so
+auth      required  pam_permit.so
+account   required  pam_permit.so
+password  required  pam_deny.so
+session   required  pam_unix.so
+-session  optional  pam_systemd.so

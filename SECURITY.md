@@ -14,6 +14,8 @@ Anything in this repository, in particular:
 - the compositor (`reprise`): the Wayland protocols it serves, input
   handling, XWayland, the clipboard and screen capture
 - the lock screen and its PAM authentication
+- the login manager (`reprise-login`): its daemon, PAM workers, sockets and
+  login screen
 - the xdg-desktop-portal backend (`reprise-portal`): screen sharing,
   screenshots, the access prompts Flatpak apps go through
 - the polkit agent and the bundled programs (Explorer, Notepad, Settings,
@@ -27,11 +29,13 @@ in scope.
 
 [docs/security.md](docs/security.md) describes the boundaries Reprise draws:
 what an unsandboxed program, a Flatpak and an X11 program can each reach,
-the lock screen, focus and the portal's consent prompts. A way across one of
-those boundaries is a vulnerability. What that page lists as trusted or as a
-known gap (an unsandboxed program capturing the screen, X11 programs reading
-each other's keys, code running as you tampering with Reprise's processes)
-is not, though a proposal to close a gap is welcome as an issue.
+the lock screen, the login manager, focus and the portal's consent prompts.
+A way across one of those boundaries is a vulnerability. What that page
+lists as trusted or as a known gap (an unsandboxed program capturing the
+screen, X11 programs reading each other's keys, code running as you
+tampering with Reprise's processes, a background session taking the screen
+under the login manager) is not, though a proposal to close a gap is welcome
+as an issue.
 
 ## What to include
 
