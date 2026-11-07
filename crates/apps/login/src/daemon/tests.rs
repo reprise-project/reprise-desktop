@@ -151,6 +151,18 @@ fn regreeted(mut effects: Vec<Effect>) -> Vec<Effect> {
     effects
 }
 
+/// The switch to `vt` that ends a resume, with `user` remembered as the last one.
+fn resumed(vt: u16, user: &str) -> Vec<Effect> {
+    vec![
+        Effect::SwitchTo(vt),
+        Effect::Reply(GreeterReply::Success),
+        Effect::Remember(Remembered {
+            last_user: Some(user.into()),
+            last_interface: None,
+        }),
+    ]
+}
+
 fn is_refused(effects: &[Effect]) -> bool {
     matches!(
         effects,
@@ -497,7 +509,7 @@ fn a_login_whose_account_has_a_session_resumes_it_without_starting_one() {
     assert_eq!(run.exited(2), vec![]);
     assert_eq!(
         run.on(Input::Unlocked { id: "c1".into() }),
-        vec![Effect::SwitchTo(7), Effect::Reply(GreeterReply::Success)]
+        resumed(7, "anna")
     );
     assert_eq!(run.exited(1), vec![], "the greeter left");
 }
@@ -519,7 +531,7 @@ fn a_started_session_whose_uid_has_one_already_is_ended_and_that_one_resumed() {
     );
     assert_eq!(
         run.on(Input::Unlocked { id: "c1".into() }),
-        vec![Effect::SwitchTo(7), Effect::Reply(GreeterReply::Success)]
+        resumed(7, "bert")
     );
     assert_eq!(run.removed("c2", Some("c1")), vec![]);
     assert_eq!(run.exited(2), vec![Effect::Disallocate(8)]);
@@ -571,6 +583,27 @@ fn a_reauth_that_resolves_to_an_account_without_a_session_unlocks_nothing() {
 }
 
 #[test]
+fn a_resume_remembers_its_user_as_the_last_one() {
+    let bert = Remembered {
+        last_user: Some("bert".into()),
+        last_interface: None,
+    };
+    let mut run = Run::anna_switched(bert);
+    run.greeter(create("anna"));
+    run.worker(2, authed("anna", 1000));
+    run.greeter(GreeterRequest::StartSession);
+    let effects = run.on(Input::Unlocked { id: "c1".into() });
+    let anna = Remembered {
+        last_user: Some("anna".into()),
+        last_interface: None,
+    };
+    assert!(
+        effects.contains(&Effect::Remember(anna)),
+        "the next login screen picks anna: {effects:?}"
+    );
+}
+
+#[test]
 fn a_login_for_a_user_with_a_session_unlocks_and_switches_to_it() {
     let mut run = Run::new(LoginConfig::default(), Remembered::default());
     run.recover(vec![anna_on_7()]);
@@ -590,7 +623,7 @@ fn a_login_for_a_user_with_a_session_unlocks_and_switches_to_it() {
     assert_eq!(run.greeter(GreeterRequest::StartSession), unlock("c1", 1));
     assert_eq!(
         run.on(Input::Unlocked { id: "c1".into() }),
-        vec![Effect::SwitchTo(7), Effect::Reply(GreeterReply::Success)]
+        resumed(7, "anna")
     );
     assert_eq!(run.on(Input::Timer(Timer::UnlockAck(1))), vec![]);
     assert_eq!(run.exited(1), vec![], "the greeter left after the resume");
@@ -1631,7 +1664,7 @@ fn a_resume_whose_switch_fails_locks_the_session_again_and_keeps_the_login_scree
     assert_eq!(run.greeter(GreeterRequest::StartSession), unlock("c1", 1));
     assert_eq!(
         run.on(Input::Unlocked { id: "c1".into() }),
-        vec![Effect::SwitchTo(7), Effect::Reply(GreeterReply::Success)]
+        resumed(7, "anna")
     );
     assert_eq!(
         run.on(Input::SwitchFailed { vt: 7 }),
