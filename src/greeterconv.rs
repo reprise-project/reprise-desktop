@@ -169,6 +169,7 @@ impl Conversation {
             // An administrator's success the held requests crossed: the computer is going down.
             (Phase::Cancelling, GreeterReply::Success) if answered && self.admin => {
                 self.held.clear();
+                self.power = false;
                 self.phase = Phase::GoingDown;
                 vec![Step::GoingDown]
             }
@@ -737,6 +738,18 @@ mod tests {
         assert!(s.m.busy);
         assert_eq!(s.m.busy_text(), logon::text::shutting_down());
         assert!(!s.c.idle());
+        assert_eq!(s.reply(error(ErrorKind::Failed, "logind")), vec![]);
+        assert!(s.c.idle(), "the dropped power request waits for nothing");
+        assert_eq!(s.m.message, Some(logon::text::power_failed()));
+        s.typed("hunter2");
+        assert_eq!(
+            s.key(LogonKey::Enter),
+            Some(GreeterRequest::PowerAs {
+                action: PowerAction::PowerOff,
+                user: "anna".into()
+            }),
+            "the administrator may try again"
+        );
     }
 
     #[test]
