@@ -62,6 +62,11 @@ fn state(tty: &File) -> io::Result<VtStat> {
     Ok(stat)
 }
 
+/// The VT the console shows now.
+pub fn active() -> io::Result<u16> {
+    Ok(state(&tty0()?)?.v_active)
+}
+
 /// The kernel's bitmask of open VTs 1-15, bit n for VT n.
 pub fn open_mask() -> io::Result<u16> {
     Ok(state(&tty0()?)?.v_state)

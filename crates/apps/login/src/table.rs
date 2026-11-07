@@ -52,6 +52,10 @@ impl Sessions {
         self.entries.iter().find(|e| e.user == user)
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = &SessionEntry> {
+        self.entries.iter()
+    }
+
     pub fn taken_vts(&self) -> BTreeSet<u16> {
         self.entries.iter().map(|e| e.vt).collect()
     }
