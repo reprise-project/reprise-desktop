@@ -417,6 +417,8 @@ struct SettingsApp {
     login_run: fn(&str) -> std::io::Result<std::process::Output>,
     login_users: Option<Receiver<Vec<String>>>,
     login_job: Option<loginhost::Saving>,
+    /// The page's next read of the front's fingerprint.
+    login_poll: Option<Receiver<Option<String>>>,
     /// Your Remote Desktop password's status and requests, asked of `account_socket`.
     account: accounthost::Account,
     account_socket: Option<PathBuf>,
@@ -681,6 +683,7 @@ impl SettingsApp {
             login_run: loginhost::pkexec,
             login_users: None,
             login_job: None,
+            login_poll: None,
             account: accounthost::Account::default(),
             account_socket: accounthost::socket(),
             rd_password: None,
