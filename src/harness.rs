@@ -111,6 +111,11 @@ impl Harness {
     }
 
     pub fn with_config(config: Config) -> Harness {
+        Harness::with_host(config, Host::Bare)
+    }
+
+    /// A state built for `host`, as `reprise --greeter` builds `Host::Greeter`'s.
+    pub fn with_host(config: Config, host: Host) -> Harness {
         let event_loop: EventLoop<'static, State> = EventLoop::try_new().expect("event loop");
         let config_path = scratch().join("config.toml");
         let mut state = State::on_display(
@@ -119,7 +124,7 @@ impl Harness {
             event_loop.handle(),
             event_loop.get_signal(),
             "wayland-test".into(),
-            Host::Bare,
+            host,
         )
         .expect("headless state");
         // A lock would start the fingerprint conversation in /proc/self/exe, the test binary,

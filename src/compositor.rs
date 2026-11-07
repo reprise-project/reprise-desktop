@@ -543,6 +543,7 @@ impl State {
         let env = SessionEnv {
             renderer: "gles2",
             qt_platform_theme: config.toolkits.qt_platform_theme.clone(),
+            refuses_programs: host == Host::Greeter,
             ..SessionEnv::new(
                 socket,
                 &config.theme.colors,
