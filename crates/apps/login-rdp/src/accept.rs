@@ -707,7 +707,7 @@ fn credssp_users(users: &[NlaUser], host: &str) -> Vec<CredsspAuthIdentity> {
 }
 
 /// The recording travels to the session in one frame, so a large one is refused here.
-fn check_recording(steps: &[Step]) -> Result<(), Refused> {
+pub(crate) fn check_recording(steps: &[Step]) -> Result<(), Refused> {
     let bytes: usize = (steps.iter())
         .map(|s| match s {
             Step::Pdu { input, output } => input.len() + output.len(),
