@@ -1,0 +1,49 @@
+//! Glass's login screens: the last user's tile at rest, typed into with the arrow hot, Other user,
+//! the tiles, the error, busy, the power button hot with Caps Lock on and a layout badge.
+
+use reprisekit::art::userpic;
+use reprisekit::interface::Interface;
+use reprisekit::logon::{Logon, LogonKey, LogonUser, Part, UserNote, text};
+use reprisekit::pointer::Interaction;
+
+fn users() -> Vec<LogonUser> {
+    [
+        ("alice", "Alice Liddell"),
+        ("bob", ""),
+        ("carol", "Carol Shaw"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (name, real))| LogonUser {
+        name: name.into(),
+        real_name: real.into(),
+        picture: (i != 1).then(|| userpic::draw(userpic::ALL[i * 3], 256)),
+        note: (i == 1).then_some(UserNote::LoggedOn),
+    })
+    .collect()
+}
+
+pub fn screens() -> Vec<Logon> {
+    let rest = Logon::new(Interface::Glass, users(), true, Some("carol"));
+    let mut typed = rest.clone();
+    typed.key(LogonKey::Text("hunter2"));
+    typed.lit = Some((Part::Submit, Interaction::Hot));
+    let mut other = rest.clone();
+    other.click(Part::SwitchUser);
+    other.click(Part::OtherUser);
+    other.key(LogonKey::Text("dave"));
+    let mut tiles = rest.clone();
+    tiles.click(Part::SwitchUser);
+    tiles.lit = Some((Part::Tile(0), Interaction::Hot));
+    let mut message = typed.clone();
+    message.lit = None;
+    message.fail(text::incorrect());
+    let mut busy = typed.clone();
+    busy.lit = None;
+    busy.set_busy(true);
+    let mut power = rest.clone();
+    power.caps_lock = true;
+    power.layout = Some("EN".into());
+    power.lit = Some((Part::Power, Interaction::Hot));
+    vec![rest, typed, other, tiles, message, busy, power]
+}

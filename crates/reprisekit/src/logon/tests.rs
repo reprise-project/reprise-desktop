@@ -338,3 +338,20 @@ fn access_names_every_field_and_button() {
         "bullets, never the value"
     );
 }
+
+#[test]
+fn the_power_menu_arrow_is_named_for_its_options() {
+    let m = Logon::new(Interface::Glass, users(1), true, None);
+    let l = LogonLayout {
+        output: Rect::new(0, 0, 1024, 768),
+        parts: vec![(Part::PowerMenu, Rect::new(990, 730, 20, 24))],
+        dialog: None,
+    };
+    let mut tree = Tree::new(ax::node(Role::Window, l.output));
+    access(&m, &l, &mut tree);
+    let label = tree
+        .nodes()
+        .find(|(_, n)| n.role() == Role::Button)
+        .and_then(|(_, n)| n.label().map(str::to_owned));
+    assert_eq!(label.as_deref(), Some("Shut down options"));
+}
