@@ -1074,16 +1074,51 @@ fn a_session_removed_after_its_worker_exited_frees_its_vt_once() {
     assert_eq!(run.removed("c2", None), greeter_spawn(3));
 }
 
+fn killed(w: WorkerId) -> Vec<Effect> {
+    vec![
+        Effect::Kill(w),
+        Effect::Arm {
+            timer: Timer::GreeterKill(w),
+            after: KILL_WAIT,
+        },
+    ]
+}
+
 #[test]
 fn a_leaving_greeter_that_lingers_is_killed_when_the_login_screen_is_wanted() {
     let mut run = Run::booted();
     run.log_in(2, "anna", 1000, "c2", 7);
     assert_eq!(
         run.session("c2", SessionRequest::SwitchUser),
-        vec![Effect::Kill(GREETER)]
+        killed(GREETER)
     );
     assert_eq!(run.session("c2", SessionRequest::SwitchUser), vec![]);
     assert_eq!(run.exited(1), greeter_spawn(3));
+}
+
+#[test]
+fn a_leaving_greeter_that_outlives_its_kill_has_its_session_killed() {
+    let mut run = Run::booted();
+    run.worker(1, started("c0", 977));
+    run.log_in(2, "anna", 1000, "c2", 7);
+    assert_eq!(
+        run.session("c2", SessionRequest::SwitchUser),
+        killed(GREETER)
+    );
+    let effects = run.on(Input::Timer(Timer::GreeterKill(GREETER)));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::Log(Level::Warn, _), Effect::KillSession(id)] if id == "c0"
+        ),
+        "{effects:?}"
+    );
+    assert_eq!(run.exited(1), greeter_spawn(3));
+    assert_eq!(
+        run.on(Input::Timer(Timer::GreeterKill(GREETER))),
+        vec![],
+        "a greeter that is gone needs nothing"
+    );
 }
 
 #[test]
@@ -1600,7 +1635,9 @@ fn a_resume_whose_switch_fails_locks_the_session_again_and_keeps_the_login_scree
     );
     assert_eq!(
         run.on(Input::SwitchFailed { vt: 7 }),
-        vec![Effect::LockSession("c1".into()), Effect::Kill(WorkerId(1)),],
+        std::iter::once(Effect::LockSession("c1".into()))
+            .chain(killed(WorkerId(1)))
+            .collect::<Vec<_>>(),
         "the leaving greeter is replaced"
     );
     assert_eq!(run.exited(1), greeter_spawn(3));
@@ -1640,7 +1677,7 @@ fn the_console_moving_to_vt_1_with_no_login_screen_brings_one() {
     run.log_in(2, "anna", 1000, "c1", 7);
     assert_eq!(
         run.on(Input::ConsoleOnGreeterVt),
-        vec![Effect::Kill(WorkerId(1))],
+        killed(WorkerId(1)),
         "the leaving greeter is replaced"
     );
     assert_eq!(run.exited(1), greeter_spawn(3));
