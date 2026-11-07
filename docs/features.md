@@ -554,6 +554,10 @@ the screen takes the interface of the last session.
   badge shows the active one, and clicking it moves to the next.
 - **Autologin.** `[login] autologin_user` logs one user in when the
   computer starts. Logging off brings the login screen.
+- **Remote logins.** A user connected from another computer has a tile
+  that says Connected remotely. Logging in here as that user brings the
+  session to this screen and ends the remote connection
+  ([Remote logins](#remote-logins)).
 - **A safety net.** A session that ends as soon as it starts brings the
   login screen back with a note pointing at its log. A login screen that
   fails three times in a row gives way to a text login on tty2.
@@ -775,7 +779,9 @@ no port forwarding; allow the port in your firewall if you run one.
 - **Login.** Only your own account's name and password log in. A client
   that insists on NLA is refused, and the journal says to choose TLS. After
   a fourth wrong password from an address, each further try waits longer
-  ([security.md](security.md#remote-desktop)).
+  ([security.md](security.md#remote-desktop)). Under reprise-login the
+  login manager takes the connections instead, and NLA works with a Remote
+  Desktop password ([Remote logins](#remote-logins)).
 - **The picture.** In lock mode the client sees the screens made for it,
   each on its own monitor or one in its window (see Lock mode below); a
   client without H.264 shows only one of them after a resize. In show mode
@@ -907,6 +913,55 @@ no port forwarding; allow the port in your firewall if you run one.
   the session stays locked here and its screens take the new viewer's
   monitors. A connection that dies without closing
   ends within about 30 s.
+
+### Remote logins
+
+Under `reprise-login`, the computer takes RDP connections for every user in
+the `reprise-remote` group, whether they are logged in or not.
+[install.md](install.md#remote-logins) says how to turn it on; Settings >
+Login Manager holds its settings, and an administrator's password saves
+them.
+
+- **Connecting.** Point the client at this computer, port 3389 unless set
+  otherwise, with your user name. Over TLS (`xfreerdp3 /v:HOST /u:USER
+  /sec:tls`) you log on with your login password. With a Remote Desktop
+  password set, a client that offers NLA, as xfreerdp3 does by default, logs
+  on with that instead; set to TLS it still takes the login password. NLA
+  takes the name as `user`, `.\user`, `HOST\user`, `user@host` or `user@`.
+  mstsc is untested.
+- **Remote Desktop password.** Settings > Remote Desktop says "Remote
+  logins to this computer are set on the Login Manager page." in place of
+  its on switch, and shows a Remote Desktop password row: Set... asks for
+  your login password and the new one twice, Clear... for your login
+  password. It needs 8 characters or more and must differ from your login
+  password. It is kept as a weak hash, so make it strong
+  ([security.md](security.md#remote-desktop-password)). Locking your login
+  password doesn't clear it.
+- **Into your session.** If you're logged in, here or in the background,
+  the client joins that session, and your Remote Desktop settings (this
+  computer's screen, `second_client`, `max_viewers`, picture and sound)
+  apply as they do to your own server. The port and New Certificate... are greyed: the
+  computer has one certificate for every user, its fingerprint on both
+  pages.
+- **A session in the background.** If you're not logged in, your session
+  starts on a VT of its own and this computer's screen stays as it was, on
+  the login screen or someone else's session. The session is locked here
+  (switching to its VT shows its Unlock dialog), and its clients always
+  work on screens of their own, as in lock mode. Several users can each have one, up to
+  `max_sessions` sessions in all, console ones included.
+- **Leaving.** Disconnecting leaves the session running, and the next
+  connection lands back in it. End disconnected sessions after
+  (`end_disconnected_after`) logs a background session off that long after
+  its last client left, unsaved work included; Never keeps it until you log
+  off.
+- **Power.** While a client is connected to any session, the computer
+  doesn't sleep, and a shut lid darkens the panel instead of
+  running its action. A session in the background never suspends the
+  computer on idle.
+- **Refusals.** A refused login is answered 3 s after the client sent its
+  password, whatever refused it, and the journal of `reprise-login` says
+  why. Failed logins back off per address,
+  as with Remote Desktop ([security.md](security.md#throttle)).
 
 ## Files
 
