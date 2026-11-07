@@ -136,7 +136,7 @@ enum Event {
 type Events = mpsc::UnboundedSender<Event>;
 
 async fn run() -> Result<(), String> {
-    let config = config::load(Path::new(MACHINE_CONFIG)).login;
+    let config = config::load(Path::new(MACHINE_CONFIG));
     let remembered = Remembered::load(Path::new(STATE_PATH));
     let greeter = match users::lookup(GREETER_USER) {
         Ok(Some(account)) => account,
@@ -515,6 +515,12 @@ impl Runtime {
             Effect::Remember(remembered) => self.saver.remember(remembered),
             Effect::Disallocate(vt) => vt::disallocate(vt),
             Effect::Log(level, text) => log::log!(level, "{text}"),
+            effect @ (Effect::ToFront(_)
+            | Effect::LookUp { .. }
+            | Effect::OpenIntake { .. }
+            | Effect::Forward { .. }
+            | Effect::DropConn { .. }
+            | Effect::Inhibit(_)) => log::debug!("no remote login runtime for {effect:?}"),
         }
     }
 
@@ -651,6 +657,7 @@ impl Workers {
             user: job.user.clone(),
             autologin_user: job.autologin_user.clone(),
             greeter_socket: job.greeter_socket,
+            rhost: job.rhost.clone(),
         };
         self.send(id, &begin);
     }
@@ -829,6 +836,7 @@ mod tests {
             user: user.into(),
             autologin_user: None,
             greeter_socket: false,
+            rhost: None,
         }
     }
 
@@ -909,9 +917,14 @@ mod tests {
                     user: "anna".into(),
                     autologin_user: None,
                     greeter_socket: false,
+                    rhost: None,
                 })
                 .unwrap();
-                let start = frame::encode(&ToWorker::Start { vt: 7 }).unwrap();
+                let start = ToWorker::Start {
+                    vt: 7,
+                    background: false,
+                };
+                let start = frame::encode(&start).unwrap();
                 let body = format!(
                     "echo \"$@\" >{o}; head -c {n} <&3 >>{o}",
                     o = out.display(),
@@ -920,7 +933,13 @@ mod tests {
                 let (tx, mut rx) = mpsc::unbounded_channel();
                 let mut w = Workers::new(script(dir.path(), &body), tx);
                 w.spawn(WorkerId(2), &login("anna"));
-                w.send(WorkerId(2), &ToWorker::Start { vt: 7 });
+                w.send(
+                    WorkerId(2),
+                    &ToWorker::Start {
+                        vt: 7,
+                        background: false,
+                    },
+                );
                 until_exited(&mut w, &mut rx, WorkerId(2)).await;
                 let got = std::fs::read(&out).unwrap();
                 let want = [&b"--worker login\n"[..], &begin, &start].concat();
@@ -1025,7 +1044,7 @@ mod tests {
 
     #[test]
     fn boot_starts_before_any_removal_so_an_orphans_end_brings_the_greeter() {
-        use repriselogin::machine::LoginConfig;
+        use repriselogin::machine::MachineConfig;
         let orphan = LogindSession {
             id: "c1".into(),
             user: GREETER_USER.into(),
@@ -1043,7 +1062,7 @@ mod tests {
             user_sessions: 0,
             login_sessions: Vec::new(),
         };
-        let mut daemon = Daemon::new(LoginConfig::default(), Remembered::default());
+        let mut daemon = Daemon::new(MachineConfig::default(), Remembered::default());
         let effects = boot(&mut daemon, vec![orphan], None, &world);
         assert_eq!(effects, [Effect::TerminateSession("c1".into())]);
         let removed = Input::SessionRemoved {

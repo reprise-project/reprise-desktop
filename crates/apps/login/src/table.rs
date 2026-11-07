@@ -13,6 +13,8 @@ pub struct SessionEntry {
     pub vt: u16,
     /// `None` for a session found in logind after a daemon restart.
     pub started: Option<Instant>,
+    /// Started for a remote login, or off seat0's active session when found after a restart.
+    pub background: bool,
 }
 
 /// Every running user session, at most one per user.
@@ -64,10 +66,28 @@ impl Sessions {
         self.entries.is_empty()
     }
 
-    /// The login screen's note for each user, keyed by user name.
-    pub fn notes(&self) -> HashMap<String, Note> {
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn set_background(&mut self, id: &str, background: bool) {
+        if let Some(e) = self.entries.iter_mut().find(|e| e.id == id) {
+            e.background = background;
+        }
+    }
+
+    /// The login screen's note for each user, keyed by user name; `remote` says whether a
+    /// uid's session has remote clients.
+    pub fn notes(&self, remote: impl Fn(u32) -> bool) -> HashMap<String, Note> {
         (self.entries.iter())
-            .map(|e| (e.user.clone(), Note::LoggedOn))
+            .map(|e| {
+                let note = if remote(e.uid) {
+                    Note::Remote
+                } else {
+                    Note::LoggedOn
+                };
+                (e.user.clone(), note)
+            })
             .collect()
     }
 
@@ -93,6 +113,7 @@ mod tests {
             uid: 1000 + vt as u32,
             vt,
             started: Some(Instant::now()),
+            background: false,
         }
     }
 
@@ -122,16 +143,16 @@ mod tests {
     }
 
     #[test]
-    fn notes_mark_every_user_with_a_session_logged_on() {
-        let notes = table().notes();
+    fn notes_mark_every_user_with_a_session_logged_on_or_remote() {
+        let notes = table().notes(|uid| uid == 1008);
         assert_eq!(
             notes,
             HashMap::from([
                 ("anna".to_string(), Note::LoggedOn),
-                ("bert".to_string(), Note::LoggedOn),
+                ("bert".to_string(), Note::Remote),
             ])
         );
-        assert!(Sessions::default().notes().is_empty());
+        assert!(Sessions::default().notes(|_| true).is_empty());
     }
 
     #[test]
@@ -165,6 +186,7 @@ mod tests {
         let mut s = table();
         assert_eq!(s.taken_vts(), BTreeSet::from([7, 8]));
         assert!(!s.is_empty());
+        assert_eq!(s.len(), 2);
         s.remove("3");
         s.remove("5");
         assert!(s.taken_vts().is_empty());
