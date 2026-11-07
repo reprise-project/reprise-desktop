@@ -199,7 +199,6 @@ async fn serve(port: u16, ctx: Rc<Ctx>) -> ExitCode {
                 tcp,
                 peer,
                 conn,
-                accepted,
                 heard,
                 _permit: permit,
             },
@@ -216,7 +215,6 @@ struct Arrival {
     tcp: TcpStream,
     peer: SocketAddr,
     conn: u64,
-    accepted: Instant,
     heard: mpsc::UnboundedReceiver<FrontEvent>,
     /// Held until the connection ends.
     _permit: Permit,
@@ -238,12 +236,11 @@ async fn connection(arrival: Arrival, ctx: Rc<Ctx>, conns: Conns, limits: Rc<Ref
         tcp,
         peer,
         conn,
-        accepted,
         mut heard,
         _permit,
     } = arrival;
     let _forget = Forget(conns.clone(), conn);
-    let pending = match accept::to_client_info(tcp, conn, accepted, &ctx, &mut heard).await {
+    let pending = match accept::to_client_info(tcp, conn, &ctx, &mut heard).await {
         Ok(pending) => pending,
         Err(Refused::Denied { backoff_s }) => {
             log::info!("{peer}: the logon was refused");
@@ -258,7 +255,7 @@ async fn connection(arrival: Arrival, ctx: Rc<Ctx>, conns: Conns, limits: Rc<Ref
     if !pending.nla {
         let secret = Secret::Password(pending.password.clone());
         let user = pending.user.clone();
-        if let Err(e) = accept::authenticate(&ctx, conn, peer, accepted, user, secret) {
+        if let Err(e) = accept::authenticate(&ctx, conn, peer, user, secret) {
             log::warn!("{peer}: reprise-login: {e}");
             return;
         }
@@ -464,7 +461,6 @@ mod tests {
                     tcp,
                     peer,
                     conn: 5,
-                    accepted: start,
                     heard,
                     _permit: permit,
                 };

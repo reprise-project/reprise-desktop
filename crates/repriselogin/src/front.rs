@@ -40,8 +40,6 @@ pub enum FrontRequest {
         peer: SocketAddr,
         user: String,
         secret: Secret,
-        /// Time since the TCP accept.
-        elapsed_ms: u32,
     },
     /// Travels with the client's socket.
     Ready {
@@ -93,7 +91,6 @@ mod tests {
             peer: "[2001:db8::1]:3389".parse().unwrap(),
             user: "anna".into(),
             secret,
-            elapsed_ms: 120,
         }
     }
 
@@ -121,7 +118,7 @@ mod tests {
             assert_eq!(
                 json,
                 format!(
-                    r#"{{"type":"authenticate","conn":7,"peer":"[2001:db8::1]:3389","user":"anna","secret":{{"{kind}":"hunter2"}},"elapsed_ms":120}}"#
+                    r#"{{"type":"authenticate","conn":7,"peer":"[2001:db8::1]:3389","user":"anna","secret":{{"{kind}":"hunter2"}}}}"#
                 )
             );
             assert_eq!(decode::<FrontRequest>(json.as_bytes()).unwrap(), sent);

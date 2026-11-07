@@ -103,7 +103,6 @@ mod tests {
     use tokio::io::AsyncReadExt;
     use tokio::net::{TcpListener, UnixListener};
     use tokio::sync::mpsc;
-    use tokio::time::Instant;
     use tokio_rustls::TlsConnector;
     use tokio_rustls::rustls::crypto::{CryptoProvider, aws_lc_rs};
     use tokio_rustls::rustls::pki_types::ServerName;
@@ -172,7 +171,7 @@ mod tests {
         let client = tokio::spawn(client(listener.local_addr().unwrap(), tls, extra));
         let (tcp, _) = listener.accept().await.unwrap();
         let (_tell, mut heard) = mpsc::unbounded_channel();
-        let pending = accept::to_client_info(tcp, 7, Instant::now(), &ctx(), &mut heard)
+        let pending = accept::to_client_info(tcp, 7, &ctx(), &mut heard)
             .await
             .expect("the client reaches Client Info");
         let suite = pending.tls.get_ref().1.negotiated_cipher_suite().unwrap();

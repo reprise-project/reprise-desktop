@@ -496,8 +496,10 @@ For each login the daemon checks, in order:
 Every refusal waits until 3 s after the login reached the daemon, whatever
 refused it, so an unknown name, a name outside the group, root and a wrong
 password look the same to the client. The daemon's journal (`journalctl -b
--u reprise-login`) names the reason. A client has 10 s from its TCP accept
-to send its credentials, and a login 8 s to reach its session.
+-u reprise-login`) names the reason. A client has 60 s from its TCP accept
+to send its credentials, time for its user to answer a certificate or
+password prompt, and the login then has 8 s to reach its session. The
+caps on connections not yet logged in bound what slow clients hold.
 
 ### Throttle
 
