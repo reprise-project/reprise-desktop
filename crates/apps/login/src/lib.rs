@@ -4,6 +4,7 @@ pub mod greeterruns;
 pub mod ipc;
 pub mod logind;
 pub mod pam;
+pub mod pidfd;
 pub mod remembered;
 pub mod table;
 pub mod users;
