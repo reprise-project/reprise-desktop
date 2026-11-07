@@ -632,6 +632,7 @@ impl Daemon {
                         vt: s.vt,
                         started: Some(now),
                         background: true,
+                        interface: None,
                     });
                     self.arm_disconnected(now, session_id, out);
                 }

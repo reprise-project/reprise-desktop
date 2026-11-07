@@ -1581,6 +1581,7 @@ fn autologin_never_unlocks_a_session_its_user_already_has() {
         vt: 8,
         started: None,
         background: false,
+        interface: None,
     });
     let effects = run.worker(1, started("c2", 1000));
     assert!(
