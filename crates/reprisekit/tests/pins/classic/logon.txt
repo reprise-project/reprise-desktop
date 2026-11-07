@@ -1,12 +1,12 @@
-empty @1 41fcce8fda403c6c
-empty @2 a53aa65876ee4d51
-name filled @1 207ba9b052d25365
-name filled @2 6e0b5964bf4c9738
-message @1 9a02999e8fcf29ac
-message @2 0fde5ac3254e455d
-busy @1 82b7fa3736407794
-busy @2 044802549f1e635d
-caps lock @1 1a90698a3f9b1935
-caps lock @2 f825138162f893b8
-layout badge @1 c5b8ed45e3cc5844
-layout badge @2 a80d9fd763b60b54
+empty @1 7d54511f188a4fdb
+empty @2 b56ab12697fbb048
+name filled @1 1bdf12fc25bfef6f
+name filled @2 b902540f10a4744f
+message @1 9315a780303c62a7
+message @2 8292b384e9203354
+busy @1 6268dd4eb9d7676a
+busy @2 668b304416926dd3
+caps lock @1 b7413fad854dc187
+caps lock @2 d0d78ad76a643ad3
+layout badge @1 474ecb23539233c2
+layout badge @2 36137cb4012c88be
