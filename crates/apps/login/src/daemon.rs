@@ -264,6 +264,8 @@ pub struct Daemon {
     /// starts while one is left.
     orphans: Vec<Orphan>,
     after_orphans: AfterOrphans,
+    /// seat0 showed no session when `recover` ran.
+    seat_empty: bool,
     /// Removals of unknown sessions while a start is in flight, with seat0's active session.
     removed_early: Vec<(String, Option<String>)>,
     notice: Option<Notice>,
@@ -285,6 +287,7 @@ impl Daemon {
             stalled: Vec::new(),
             orphans: Vec::new(),
             after_orphans: AfterOrphans::Nothing,
+            seat_empty: false,
             removed_early: Vec::new(),
             notice: None,
             next_worker: 1,
@@ -316,6 +319,7 @@ impl Daemon {
         seat_active: Option<&str>,
     ) -> Vec<Effect> {
         let mut out = Vec::new();
+        self.seat_empty = seat_active.is_none();
         for s in found {
             if s.seat == "seat0" && s.class == "user" && user_service(&s.service) {
                 if seat_active != Some(&s.id) {
@@ -339,8 +343,9 @@ impl Daemon {
         out
     }
 
-    /// Starts the autologin session or the greeter, unless sessions were recovered. An
-    /// orphaned greeter was showing the login screen, so that choice waits until it is gone.
+    /// Starts the autologin session or the greeter; with sessions recovered, only the greeter
+    /// and only when seat0 shows none. An orphaned greeter was showing the login screen, so
+    /// that choice waits until it is gone.
     pub fn start(&mut self, _now: Instant, world: &World) -> Vec<Effect> {
         let mut out = Vec::new();
         if !self.orphans.is_empty() {
@@ -348,6 +353,9 @@ impl Daemon {
             return out;
         }
         if !self.sessions.is_empty() {
+            if self.seat_empty {
+                self.bring_greeter(&mut out);
+            }
             return out;
         }
         self.autologin_or_greeter(world, &mut out);
