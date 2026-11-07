@@ -320,7 +320,7 @@ impl State {
     pub fn repoint(&mut self, pos: Point<f64, Logical>, time: InputTime) {
         self.pointers.hovered_at = Some(Instant::now());
         self.pointers.owed = None;
-        if self.host == Host::Greeter && self.dialogs.views.is_empty() {
+        if self.host == Host::Greeter && self.dialogs.views.is_empty() && self.menus.is_empty() {
             crate::greeterview::motion(self, pos, time);
             return;
         }

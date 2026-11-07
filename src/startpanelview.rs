@@ -2,7 +2,7 @@ mod draw;
 mod input;
 mod lists;
 mod menus;
-mod picture;
+pub(crate) mod picture;
 mod search;
 #[cfg(test)]
 mod tests;

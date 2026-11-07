@@ -2,7 +2,9 @@
 //! reprise-login as `reprise-greeter`. It exits 0 after a login or SIGTERM and 1 on a lost link.
 
 use std::error::Error;
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use repriselogin::greeter::Greeting;
@@ -53,6 +55,7 @@ fn run(link: GreeterLink, greeting: Greeting) -> Result<bool, Box<dyn Error>> {
     state.keyboard_setup();
     crate::backend::init(&mut state)?;
     crate::idle::setup(&mut state);
+    hold_power_keys();
     crate::greeterview::setup(&mut state, greeting);
     state.greeter_link = Some(link.tx()?);
     link.register(&event_loop.handle())?;
@@ -82,13 +85,59 @@ fn run(link: GreeterLink, greeting: Greeting) -> Result<bool, Box<dyn Error>> {
     Ok(state.greeter.lost)
 }
 
+/// Takes logind's power, suspend and hibernate keys for the greeter's life: the power key opens
+/// the screen's Turn Off, and no key sleeps the machine unasked.
+fn hold_power_keys() {
+    static HELD: OnceLock<OwnedFd> = OnceLock::new();
+    let spawned = std::thread::Builder::new()
+        .name("greeter-keys".into())
+        .spawn(|| {
+            let taken = zbus::block_on(async {
+                let conn = zbus::Connection::system().await?;
+                let reply = conn
+                    .call_method(
+                        Some("org.freedesktop.login1"),
+                        "/org/freedesktop/login1",
+                        Some("org.freedesktop.login1.Manager"),
+                        "Inhibit",
+                        &(
+                            "handle-power-key:handle-suspend-key:handle-hibernate-key",
+                            "reprise",
+                            "the login screen asks before turning off",
+                            "block",
+                        ),
+                    )
+                    .await?;
+                reply.body().deserialize::<zbus::OwnedFd>()
+            });
+            match taken {
+                Ok(fd) => {
+                    let _ = HELD.set(fd.into());
+                }
+                Err(e) => log::info!("greeter: logind keeps the power keys: {e}"),
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("greeter: no thread for the power keys: {e}");
+    }
+}
+
 /// The defaults, in the greeting's interface and keyboard layout, with no idle lock: the login
-/// screen is what a lock would cover.
+/// screen is what a lock would cover. Glass's screen lies over its default wallpaper.
 pub fn config_from(g: &Greeting) -> Config {
     let interface = interface(g.interface);
+    let glass = reprisekit::glass::Settings::default();
+    let wallpaper = (interface == reprisekit::interface::Interface::Glass)
+        .then(|| reprisekit::interfaces::default_wallpaper(interface))
+        .flatten()
+        .map(|b| PathBuf::from(reprisekit::interfaces::resolve_wallpaper(b, &glass).uri()));
     let base = repriseconf::config::Config {
         interface,
         theme: reprisekit::interfaces::theme_for(interface),
+        wallpaper: crate::config::WallpaperConfig {
+            image: wallpaper,
+            ..Default::default()
+        },
         keyboard: crate::config::KeyboardConfig {
             layout: g.keyboard.layout.clone(),
             variant: g.keyboard.variant.clone(),
@@ -158,6 +207,28 @@ mod tests {
         assert_eq!(config.keyboard.layout, "de");
         assert_eq!(config.keyboard.variant, "nodeadkeys");
         assert_eq!(config.keyboard.options, "caps:escape");
+    }
+
+    #[test]
+    fn glass_lies_over_its_default_wallpaper_and_the_others_over_none() {
+        use reprisekit::interface::Interface as Kit;
+        let glass = config_from(&greeting());
+        let want = reprisekit::interfaces::default_wallpaper(Kit::Glass)
+            .map(|b| reprisekit::interfaces::resolve_wallpaper(b, &Default::default()).uri());
+        assert_eq!(
+            glass.wallpaper.image.as_deref().and_then(|p| p.to_str()),
+            want.as_deref()
+        );
+        for i in [
+            repriselogin::Interface::Classic,
+            repriselogin::Interface::Blue,
+        ] {
+            let g = Greeting {
+                interface: i,
+                ..greeting()
+            };
+            assert_eq!(config_from(&g).wallpaper.image, None, "{i:?}");
+        }
     }
 
     #[test]

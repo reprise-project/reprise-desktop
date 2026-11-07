@@ -49,6 +49,7 @@ mod glass;
 mod globalshortcuts;
 mod gpufence;
 mod greeter;
+mod greeterconv;
 mod greeterlink;
 mod greeterview;
 mod handlers;

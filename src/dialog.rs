@@ -66,6 +66,8 @@ pub enum DialogAction {
     EmptyBin,
     /// Lock and hand the screen to the login screen (`loginlink::switch_user`).
     SwitchUser,
+    /// Ask reprise-login to turn the machine off or restart it (`greeterview::power`).
+    GreeterPower(repriselogin::greeter::PowerAction),
     Act(Action),
     HideSystemIcon(String),
     /// Take these `system_icons` off the desktop (none for No), then ask about deleting `files`.
@@ -512,6 +514,7 @@ pub enum Outcome {
     },
     EmptyBin,
     SwitchUser,
+    GreeterPower(repriselogin::greeter::PowerAction),
     /// Delete (Shift+Delete with `shift`) in Browse's list: asked over the dialog as the desktop
     /// asks ([`crate::compositor::State::ask_delete`]).
     AskDelete {

@@ -1827,3 +1827,15 @@ fn the_greeter_gives_keys_only_to_a_vt_switch_and_a_dialog() {
     assert!(chord_allowed(&g, &NEXT));
     assert!(!chord_allowed(&g, &Action::Terminal));
 }
+
+#[test]
+fn the_greeters_open_menu_takes_its_presses() {
+    let menu = Modes {
+        greeter: true,
+        menus_open: true,
+        ..Modes::default()
+    };
+    assert_eq!(r(&menu, &press(KEY_Down, 0)), KeyRoute::Menu(KEY_Down));
+    assert_eq!(r(&menu, &press(KEY_r, MOD_LOGO)), KeyRoute::Menu(KEY_r));
+    assert_eq!(r(&menu, &release(KEY_Down)), KeyRoute::Greeter);
+}

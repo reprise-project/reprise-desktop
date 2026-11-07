@@ -605,8 +605,8 @@ impl State {
     }
 
     /// The layout changed: place the outputs, then refit the desktop to
-    /// them (windows, taskbars, menus, wallpaper, icons, output management
-    /// clients, pointer).
+    /// them (windows, taskbars, menus, wallpaper, icons, the login screen,
+    /// output management clients, pointer).
     pub fn update_layout(&mut self) {
         self.place_outputs();
         self.drop_unused_scales();
@@ -645,6 +645,7 @@ impl State {
             self.redraw_menu(depth);
         }
         self.refit_wallpaper();
+        crate::greeterview::refit(self);
         crate::outputmgmt::publish(self);
         let pos = self.pointer_location();
         let rects: Vec<Rect> = self
