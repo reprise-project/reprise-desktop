@@ -545,8 +545,9 @@ async fn read_greeter(
     }
 }
 
-/// Forwards a session's requests. Only its latest Hello matters, so one waits at a time and
-/// a later one replaces it; a SwitchUser stops the reading until it is queued.
+/// Forwards a session's requests, each with seat0's active session as it was sent. Only its
+/// latest Hello matters, so one waits at a time and a later one replaces it; a SwitchUser
+/// stops the reading until it is queued.
 async fn read_session(stream: UnixStream, id: String, serial: u64, s: Rc<Server>) {
     let mut frames = Frames::new(stream);
     let bad = Spell::default();
@@ -560,7 +561,8 @@ async fn read_session(stream: UnixStream, id: String, serial: u64, s: Rc<Server>
         let next = tokio::select! {
             permit = s.input.reserve(), if hello.is_some() => {
                 let Ok(permit) = permit else { return };
-                permit.send(input(hello.take().expect("a Hello waits"), None));
+                let seat_active = (s.seat_active)().await;
+                permit.send(input(hello.take().expect("a Hello waits"), seat_active));
                 continue;
             }
             next = frames.next() => next,
@@ -586,18 +588,19 @@ async fn read_session(stream: UnixStream, id: String, serial: u64, s: Rc<Server>
             }
             SessionRequest::SwitchUser => {}
         }
+        let seat_active = (s.seat_active)().await;
         if let Some(h) = hello.take()
-            && s.input.send(input(h, None)).await.is_err()
+            && s.input.send(input(h, seat_active.clone())).await.is_err()
         {
             return;
         }
-        let seat_active = (s.seat_active)().await;
         if s.input.send(input(request, seat_active)).await.is_err() {
             return;
         }
     };
     if let Some(h) = hello.take() {
-        let _ = s.input.send(input(h, None)).await;
+        let seat_active = (s.seat_active)().await;
+        let _ = s.input.send(input(h, seat_active)).await;
     }
     if why != FrameError::Closed {
         log::warn!("session {id}: dropping its link: {}", error_kind(&why));
@@ -1187,7 +1190,7 @@ mod tests {
                     request: SessionRequest::Hello {
                         interface: Interface::Glass,
                     },
-                    seat_active: None,
+                    seat_active: Some("3".into()),
                 };
                 let mut heard = vec![next(&mut rx).await];
                 while heard.last() != Some(&glass) {
@@ -1195,6 +1198,29 @@ mod tests {
                 }
                 assert!(heard.len() <= QUEUE + 1, "{} heard", heard.len());
                 assert!(rx.try_recv().is_err(), "nothing follows the last Hello");
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_sessions_hello_carries_seat0s_active_session() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let (_gate, mut rx) = serve_in(dir.path(), ids().0, "3");
+                let mut c = UnixStream::connect(dir.path().join("session.sock"))
+                    .await
+                    .unwrap();
+                send(&mut c, &hello()).await;
+                assert_eq!(
+                    next(&mut rx).await,
+                    Input::Session {
+                        id: "3".into(),
+                        request: hello(),
+                        seat_active: Some("3".into()),
+                    }
+                );
             })
             .await;
     }

@@ -99,8 +99,7 @@ pub enum Input {
     /// The worker process exited, whatever its status: a greeter that was not told to leave
     /// counts as failed either way.
     WorkerExited(WorkerId),
-    /// A request on session `id`'s link; `seat_active` is seat0's active session when a
-    /// `SwitchUser` came, `None` with a `Hello`.
+    /// A request on session `id`'s link; `seat_active` is seat0's active session when it came.
     Session {
         id: String,
         request: SessionRequest,
@@ -473,6 +472,7 @@ impl Daemon {
                     vt: s.vt,
                     started: None,
                     background,
+                    interface: None,
                 });
                 if background {
                     self.arm_disconnected(now, s.id, &mut out);
@@ -912,6 +912,7 @@ impl Daemon {
             vt: s.vt,
             started: None,
             background: false,
+            interface: None,
         });
         Some((s.id, s.vt))
     }
@@ -969,6 +970,7 @@ impl Daemon {
                     vt: a.vt,
                     started: Some(now),
                     background: false,
+                    interface: None,
                 };
                 self.session_started(now, worker, entry, None, out);
             }
@@ -1033,6 +1035,7 @@ impl Daemon {
                     vt,
                     started: Some(now),
                     background: false,
+                    interface: None,
                 };
                 self.session_started(now, worker, entry, c.greeter, out);
             }
@@ -1367,10 +1370,7 @@ impl Daemon {
         }
         match request {
             SessionRequest::Hello { interface } => {
-                if self.remembered.last_interface != Some(interface) {
-                    self.remembered.last_interface = Some(interface);
-                    out.push(Effect::Remember(self.remembered.clone()));
-                }
+                self.hello(id, interface, seat_active.as_deref(), out)
             }
             // Only the session on screen may hand the console to the login screen.
             SessionRequest::SwitchUser if seat_active.as_deref() == Some(id) => {
