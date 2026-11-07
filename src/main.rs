@@ -225,6 +225,7 @@ mod xwayland;
 
 use clap::Parser;
 use compositor::State;
+use smithay::backend::session::Session as _;
 use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction, generic::Generic};
 use std::path::PathBuf;
 
@@ -363,6 +364,8 @@ fn run(
     tray::setup(&mut state);
     backend::init(&mut state)?;
     loginlink::setup(&mut state);
+    let active = (state.backend.as_ref()).is_some_and(|b| b.session.is_active());
+    loginlink::born(&mut state, active);
     // After the seat is ours: a start that cannot take it never stops the scopes.
     spawn::stop_stale_scopes(
         &state.env,

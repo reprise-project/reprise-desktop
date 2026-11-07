@@ -133,6 +133,8 @@ pub struct Backend {
     watch: Option<RegistrationToken>,
     surfaces: HashMap<Head, Surface>,
     parked: HashMap<Head, Parked>,
+    /// The other GPUs an inactive start left closed, opened after the first activation's scan.
+    late_secondaries: Vec<DrmNode>,
     pub dmabuf: Option<(DmabufState, DmabufGlobal)>,
     pub shm_textures: crate::shmtex::ShmTextures,
     pub uploads: crate::dmaupload::Uploads,
@@ -350,9 +352,34 @@ pub fn is_virtual(output: &Output) -> bool {
     screen_of(output) == Some(Screen::Virtual)
 }
 
+/// What `init` does at once and what waits for the session's first activation: an inactive
+/// session holds no DRM master and logind has revoked its input devices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StartPlan {
+    /// Reset the KMS state as the device opens.
+    pub reset: bool,
+    /// Scan connectors and open the other GPUs now, else at the first activation's rescan.
+    pub scan_now: bool,
+    /// Suspend libinput until the activation resumes it.
+    pub suspend_input: bool,
+}
+
+pub(crate) fn start_plan(active: bool) -> StartPlan {
+    StartPlan {
+        reset: active,
+        scan_now: active,
+        suspend_input: !active,
+    }
+}
+
 pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
     let (mut session, notifier) = LibSeatSession::new()?;
     let seat = session.seat();
+    let active = session.is_active();
+    let plan = start_plan(active);
+    if !active {
+        log::info!("session inactive: monitors and input wait for its first activation");
+    }
     let seat_gpus: Vec<DrmNode> = all_gpus(&seat)
         .unwrap_or_default()
         .iter()
@@ -377,7 +404,10 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
     )?;
     let fd = DrmDeviceFd::new(DeviceFd::from(fd));
-    let (drm, drm_notifier) = DrmDevice::new(fd.clone(), true)?;
+    let (mut drm, drm_notifier) = DrmDevice::new(fd.clone(), plan.reset)?;
+    if !active {
+        drm.pause();
+    }
     let gbm = GbmDevice::new(fd)?;
 
     // SAFETY: the EGL display is created on and only used from this thread and outlives the renderer.
@@ -444,6 +474,10 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
     libinput
         .udev_assign_seat(&seat)
         .map_err(|()| format!("libinput: cannot assign seat {seat}"))?;
+    // logind revokes an inactive session's devices; a suspended libinput opens them again on resume.
+    if plan.suspend_input {
+        libinput.suspend();
+    }
     // Read here rather than through Smithay's libinput source, which drops tablet pad events (`inputqueue`).
     state
         .handle
@@ -544,7 +578,7 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
                 back: reset::Return::default(),
                 reset,
                 seat_fd: None,
-                rescan: false,
+                rescan: !plan.scan_now,
                 probe: None,
             },
         ),
@@ -559,12 +593,20 @@ pub fn init(state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
         watch: None,
         surfaces: HashMap::new(),
         parked: HashMap::new(),
+        late_secondaries: Vec::new(),
         dmabuf: Some((dmabuf_state, dmabuf_global)),
         shm_textures,
         uploads,
     });
+    let others = secondaries(state.config.all_gpus, &seat_gpus, node);
+    if !plan.scan_now {
+        if let Some(b) = state.backend.as_mut() {
+            b.late_secondaries = others;
+        }
+        return Ok(());
+    }
     scan_connectors(state, node, &HashMap::new());
-    for other in secondaries(state.config.all_gpus, &seat_gpus, node) {
+    for other in others {
         device_added(state, other);
     }
     if state.scene.outputs().is_empty() {
